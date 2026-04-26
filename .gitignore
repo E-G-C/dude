@@ -1,0 +1,72 @@
+# ============================================================================
+# Dude Coder bundle — ignore ONLY the files Dude ships, by exact path.
+#
+# Drop this .gitignore (or append its contents to your repo's existing one) to
+# use Dude alongside an existing project without committing any bundle file.
+# Anything else under .github/, .github/agents/, .github/skills/, or
+# .github/instructions/ that you (or your team) add yourselves stays tracked
+# normally because it is not listed below.
+#
+# If you DO want to share the bundle with your team, delete the
+# "## Bundle files" section and keep only "## Generated workflow artifacts"
+# and "## Local Dude state".
+# ============================================================================
+
+## Bundle files (every file Dude ships) -------------------------------------
+
+# Coordinator instructions (modular instruction file — coexists with any
+# existing .github/copilot-instructions.md in the host repo)
+.github/instructions/dude.instructions.md
+
+# Coordinator agent
+.github/agents/dude.agent.md
+
+# Default specialists shipped with the bundle
+.github/agents/backend.agent.md
+.github/agents/frontend.agent.md
+.github/agents/lead.agent.md
+.github/agents/reviewer.agent.md
+.github/agents/spec-lead.agent.md
+.github/agents/tester.agent.md
+
+# Default skills shipped with the bundle (each is a directory containing SKILL.md)
+.github/skills/beads-workflow/
+.github/skills/dude-portability/
+.github/skills/feature-definition/
+.github/skills/generic-routing/
+.github/skills/learning-promotion/
+.github/skills/lightweight-execution/
+.github/skills/memory-ledger/
+.github/skills/parallel-dispatch/
+.github/skills/project/
+.github/skills/receiving-code-review/
+.github/skills/reviewer-protocol/
+.github/skills/skill-authoring/
+.github/skills/spec-import-to-beads/
+.github/skills/systematic-debugging/
+.github/skills/team-expansion/
+.github/skills/test-driven-development/
+.github/skills/using-git-worktrees/
+.github/skills/verification-before-completion/
+.github/skills/work-intake/
+
+# Dude's memory store (decisions, guardrails, context, lessons)
+.github/dudestuff/
+
+## Generated workflow artifacts ---------------------------------------------
+
+# Brainstorm intake ledgers
+brainstorm/
+
+# Generated definition packages (spec.md, plan.md, tasks.md, etc.)
+specs/
+
+## Local Dude state --------------------------------------------------------
+
+# Tracked Execution state (Beads + embedded Dolt)
+.beads/
+*.beads.db
+*.beads.db-shm
+*.beads.db-wal
+.dolt/
+
