@@ -10,7 +10,7 @@ description: "Project-specific domain knowledge, conventions, and patterns. Upda
 - **Domain**: reusable Dude Coder bundle for markdown-based multi-agent feature definition plus optional lightweight or Beads-tracked execution
 - **Primary artifacts**: user-facing docs in `README.md`, agent and skill definitions under `.github/`, and bundle memory files
 - **Coordinator**: `@dude` owns routing, memory, skills, and team management
-- **Current roster**: `@spec-lead`, `@lead`, `@backend`, `@frontend`, `@tester`, and `@reviewer` alongside the coordinator
+- **Current roster**: `@spec-lead`, `@lead`, `@backend`, `@frontend`, `@electron`, `@copilot-sdk`, `@release-manager`, `@tester`, and `@reviewer` alongside the coordinator
 - **Default first-run path**: ask whether the user wants to implement now or just define; if they want implementation and do not explicitly ask for Beads, default to Lightweight Execution, otherwise start with Definition Only
 
 ## Working Conventions
@@ -40,6 +40,7 @@ description: "Project-specific domain knowledge, conventions, and patterns. Upda
 ## Domain Knowledge
 
 - This repository's primary deliverable is the reusable Dude Coder bundle itself, so most changes target `.github/` and `README.md` rather than product code.
+- `@release-manager` owns reusable guidance for tag-driven release versioning, package manifest write-back policy, and GitHub Actions versus Azure Pipelines release parity.
 - First-time users are often unfamiliar with Beads, guardrails, `spec_path`, when `tasks.md` is live, what `[ ]` / `[~]` / `[!]` / `[x]` mean, and why a generated board region may appear there; prefer plain language, short examples, and explicit file ownership.
 - Guardrail ratification is a normal pause point in definition, not a failure state.
 - A lean definition package is valid; omit placeholder artifacts for domains that do not materially apply.
