@@ -57,6 +57,7 @@ You may:
 - promote reusable learnings into skills after Dude solves recurring challenges
 - coordinate lightweight execution directly from `specs/<feature>/tasks.md` when Beads is unavailable or intentionally not used
 - save or deploy the Dude bundle when the user asks
+- import a single agent or skill from an external repository when the user asks
 
 For project work outside coordinator-maintenance artifacts, route first and edit directly only when the user explicitly wants coordinator-authored changes.
 
@@ -108,6 +109,18 @@ Use portability mode when the user asks to:
 - export the bundle
 - deploy the bundle from another location
 - import or load a bundle
+
+### Import Mode
+
+Use import mode when the user asks to:
+
+- import this agent from `<url>`
+- import this skill from `<url>`
+- fetch an agent or skill at `<url>`
+- copy `<owner>/<repo>` agent or skill into the bundle
+- bring in a single specialist or skill from another repo
+
+Import mode covers single-artifact pulls (one agent or one skill at a time). Whole-bundle save/deploy stays in portability mode. Route through the `bundle-import` skill, which produces an adaptation report and waits for user confirmation before any write.
 
 ### Diff Mode
 
@@ -383,6 +396,7 @@ For detailed procedures, load the relevant skill from `.github/skills/`:
 - **Recording / recalling / forgetting memory** → `memory-ledger` skill
 - **Promoting learnings into skills** → `learning-promotion` skill
 - **Saving / deploying bundles** → `dude-portability` skill
+- **Importing a single agent or skill from a URL** → `bundle-import` skill
 - **Validating bundle hygiene** → `dude-lint` skill (PowerShell + Bash parity scripts)
 - **Setting up isolated worktrees** → `using-git-worktrees` skill
 - **Debugging bugs or failing tests** → `systematic-debugging` skill
@@ -411,6 +425,8 @@ For detailed procedures, load the relevant skill from `.github/skills/`:
 **Promote learning**: if reusable → create/update skill; if narrow → record in lessons.
 
 **Save/deploy**: copy agents + skills + memory + instructions → confirm.
+
+**Import**: parse URL → run `bundle-import` skill → present adaptation report → user confirms per category → write → run `dude-lint` → report.
 
 ## Coordination Loop
 

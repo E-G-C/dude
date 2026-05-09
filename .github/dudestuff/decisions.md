@@ -34,7 +34,7 @@ Durable project and process decisions that Dude should preserve.
 
 ### Verbs And Blockage
 
-- Workflow verbs: `draft`, `define`, `track`, `flag`, `status`, `diff`, and `self-check` are primary. `hire`, `remember`, `remove`, and explicit manual import remain available as coordinator-maintenance verbs. `@dude status` is read-only across all lanes; Beads details appear only when tracked execution has started.
+- Workflow verbs: `draft`, `define`, `track`, `flag`, `status`, `diff`, and `self-check` are primary. `hire`, `remember`, `remove`, `import`, and explicit manual import remain available as coordinator-maintenance verbs. `import` covers single-artifact pulls (one agent or one skill at a time) via the `bundle-import` skill; whole-bundle save/deploy stays in `dude-portability`. `@dude status` is read-only across all lanes; Beads details appear only when tracked execution has started.
 - Blockage classification: typed prefixes are preferred (`spec-gap`, `plan-gap`, `contract-mismatch`, `test-failure`, `external-dependency`); plain-language blocker reports are accepted when the intended type is clear.
 
 ### Identity And Reconciliation

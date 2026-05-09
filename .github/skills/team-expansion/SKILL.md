@@ -9,6 +9,8 @@ Expand the active roster without introducing confusion or overlapping roles.
 
 ## Workflow
 
+When the user supplies a URL or names an external repository as the source of the agent (e.g. "import this agent from `<url>`", "copy `<owner>/<repo>` agent"), do not author from the template here. Route to the `bundle-import` skill instead, which fetches, adapts, and writes the file with explicit per-category confirmation. This skill stays focused on authoring new agents from scratch in the local bundle.
+
 When the user asks for a new agent:
 
 1. Determine the agent's role and specialization within the project's domain.

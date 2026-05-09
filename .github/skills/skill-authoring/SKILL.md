@@ -9,6 +9,8 @@ Create focused reusable skills that improve how Dude works across repeated tasks
 
 ## Workflow
 
+When the user supplies a URL or names an external repository as the source of the skill (e.g. "import this skill from `<url>`", "bring in the `<name>` skill from `<repo>`"), do not author from scratch here. Route to the `bundle-import` skill instead, which fetches, adapts, and writes the SKILL.md (and confirmed sibling files) with explicit per-category confirmation. This skill stays focused on authoring new skills from scratch in the local bundle.
+
 When the user asks for a skill:
 
 1. Name the skill for the recurring pattern, not the immediate task.

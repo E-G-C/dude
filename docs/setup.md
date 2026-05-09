@@ -174,6 +174,9 @@ Dude Coder includes explicit operational skills for common failure modes:
   verification step after writing brainstorm, definition, agent, skill,
   memory, or task files. See [Validating bundle hygiene](commands.md#validating-bundle-hygiene)
   for direct invocation.
+- `bundle-import` — import a single agent or skill from an external
+  repository with an explicit adaptation report and per-category confirmation
+  before any write. See [Importing agents and skills](commands.md#importing-agents-and-skills).
 
 These skills strengthen execution discipline without changing the main workflow.
 

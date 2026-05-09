@@ -317,6 +317,32 @@ a fast structural check of the bundle.
 (lane banner presence, manual `[x]` flips, append-only log). The two are
 complementary.
 
+### Importing agents and skills
+
+Use the `bundle-import` skill to bring a single agent (`*.agent.md`) or skill
+(`<name>/SKILL.md`) into the bundle from an external repository. The skill
+fetches the source, produces a structured **adaptation report** listing every
+adaptation it would apply (frontmatter strips, Anthropic/Claude tool-name
+references, MCP assumptions, sibling files, referenced skills, overlap with
+local artifacts, missing coordinator-only block, persona drift), and waits
+for explicit per-category confirmation before any write.
+
+No runtime is installed and no remote state is modified. Python or Bash
+siblings are refused by default; the user must confirm them per file.
+Transitive dependencies are never auto-fetched: each one requires a fresh
+`bundle-import` invocation.
+
+Use the import verb when the user supplies a URL or names an external repo:
+
+```text
+@dude import this agent from https://github.com/<owner>/<repo>/blob/<ref>/path/to/file.agent.md
+@dude import this skill from https://github.com/<owner>/<repo>/tree/<ref>/path/to/skill
+@dude dry-run import https://raw.githubusercontent.com/<owner>/<repo>/<ref>/SKILL.md
+```
+
+Whole-bundle save and deploy stays in the `dude-portability` skill; this
+skill is single-artifact only.
+
 ### Reconciliation prompt replies
 
 When `@dude define` reruns against a `tasks.md` that has Lightweight Execution

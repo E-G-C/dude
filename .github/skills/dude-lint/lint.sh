@@ -380,6 +380,79 @@ if [ -d "$ROOT/.github/agents" ]; then
     done < <(find "$ROOT/.github/agents" -maxdepth 1 -type f -name '*.agent.md' -print0 2>/dev/null)
 fi
 
+# --- Check 6: orphan skill references ---------------------------------------
+# Scan all .github/**/*.md for path-form references like
+# `.github/skills/<name>/` and fail when <name> does not resolve to an existing
+# skill directory. Path-form is used (not backtick-name heuristics) because it
+# gives high precision for a FAIL-emitting check.
+VALID_SKILLS=":"
+if [ -d "$ROOT/.github/skills" ]; then
+    while IFS= read -r -d '' dir; do
+        base="$(basename "$dir")"
+        lower="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')"
+        VALID_SKILLS="${VALID_SKILLS}${lower}:"
+    done < <(find "$ROOT/.github/skills" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+fi
+
+valid_skill() {
+    case "$VALID_SKILLS" in
+        *":$1:"*) return 0 ;;
+        *)        return 1 ;;
+    esac
+}
+
+if [ -d "$ROOT/.github" ]; then
+    raw_skill_orphans=""
+    while IFS= read -r -d '' file; do
+        rel="$(relpath "$file")"
+        # Strip fenced code blocks before scanning.
+        content="$(awk '
+            BEGIN { in_fence = 0 }
+            {
+                if ($0 ~ /^[[:space:]]*```/) { in_fence = 1 - in_fence; next }
+                if (!in_fence) print
+            }
+        ' "$file")"
+        tokens="$(printf '%s' "$content" | grep -oE '\.github/skills/[a-z][a-z0-9-]+' | awk '{ sub(/^.*\//, ""); print }' | sort -u || true)"
+        if [ -n "$tokens" ]; then
+            while IFS= read -r name; do
+                [ -z "$name" ] && continue
+                if ! valid_skill "$name"; then
+                    raw_skill_orphans="${raw_skill_orphans}${name}"$'\t'"${rel}"$'\n'
+                fi
+            done <<< "$tokens"
+        fi
+    done < <(find "$ROOT/.github" -type f -name '*.md' -print0 2>/dev/null)
+
+    if [ -n "$raw_skill_orphans" ]; then
+        aggregated="$(printf '%s' "$raw_skill_orphans" | sort -u | awk -F'\t' '
+            {
+                name = $1; file = $2
+                if (!(name in count)) {
+                    count[name] = 1
+                    first[name] = file
+                } else {
+                    count[name]++
+                }
+            }
+            END {
+                for (n in count) {
+                    if (count[n] > 1) {
+                        printf "orphan skill reference .github/skills/%s/ in %s (+%d more)\n", n, first[n], count[n] - 1
+                    } else {
+                        printf "orphan skill reference .github/skills/%s/ in %s\n", n, first[n]
+                    }
+                }
+            }
+        ' | sort)"
+        if [ -n "$aggregated" ]; then
+            while IFS= read -r msg; do
+                fail "$msg"
+            done <<< "$aggregated"
+        fi
+    fi
+fi
+
 # --- Summary -----------------------------------------------------------------
 info "Scanned: $BRAINSTORM_COUNT brainstorm, $TASKFILE_COUNT task file(s), $MEMORYFILE_COUNT memory file(s), $AGENT_COUNT agent(s)"
 info "Findings: $WARN_COUNT warning(s), $FAIL_COUNT failure(s)"

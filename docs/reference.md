@@ -261,7 +261,10 @@ Rule for how routing adapts.
 Dude Coder itself is just markdown, skills, and agents. For the Definition Only
 and Lightweight Execution lanes, there is no dedicated service, build step, or
 package manager to run: drop the files into a repo and move through `draft`,
-`define`, and optional execution from `tasks.md` with `@dude`.
+`define`, and optional execution from `tasks.md` with `@dude`. The optional
+bundle-import flow also runs without a dedicated runtime — it uses only the
+host's fetch and write tools and refuses to install Python, Node, or other
+language runtimes on your behalf.
 
 If you choose the Tracked Execution lane, you still need Beads and, on some
 setups, Dolt. See [Setup and first feature](setup.md) and

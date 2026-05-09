@@ -113,6 +113,17 @@ Keywords and signals:
 - definition package readiness, import readiness
 - spec compliance, quality gate
 
+### Route To Bundle Import
+
+Keywords and signals:
+
+- import this agent, import this skill, fetch agent, fetch skill
+- copy agent, copy skill, bring in agent, bring in skill
+- install agent from `<url>`, install skill from `<url>`
+- a single-file URL ending in `.agent.md` or `SKILL.md`
+
+This is a coordinator-level skill route, not a specialist agent route. The coordinator runs the `bundle-import` skill directly rather than dispatching to a roster member.
+
 ### Beads Tie-Breaking Rules
 
 - If the request is about defining, specifying, planning, or deriving tasks for a feature, prefer spec-lead.

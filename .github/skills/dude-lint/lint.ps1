@@ -329,6 +329,43 @@ if (Test-Path -LiteralPath $agentDir) {
     }
 }
 
+# --- Check 6: orphan skill references ---------------------------------------
+# Scan all .github/**/*.md for path-form references like `.github/skills/<name>/`
+# or `.github/skills/<name>/SKILL.md` and fail when <name> does not resolve to
+# an existing skill directory. Path-form is used (not backtick-name heuristics)
+# because it gives high precision for a FAIL-emitting check.
+$skillsDir = Join-Path $Root ".github/skills"
+$validSkills = New-Object System.Collections.Generic.HashSet[string]
+if (Test-Path -LiteralPath $skillsDir) {
+    Get-ChildItem -LiteralPath $skillsDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        [void]$validSkills.Add($_.Name.ToLower())
+    }
+}
+
+if (Test-Path -LiteralPath $githubDir) {
+    $skillRefs = @{}
+    $allMd2 = Get-ChildItem -LiteralPath $githubDir -Recurse -Filter *.md -File -ErrorAction SilentlyContinue
+    foreach ($file in $allMd2) {
+        $content = Get-Content -LiteralPath $file.FullName -Encoding UTF8 -Raw
+        # Strip fenced code blocks; example/illustrative paths inside fences
+        # often reference hypothetical skills.
+        $stripped = [regex]::Replace($content, '(?s)```.*?```', '')
+        foreach ($m in [regex]::Matches($stripped, '\.github/skills/([a-z][a-z0-9-]+)(?:/|\b)')) {
+            $name = $m.Groups[1].Value.ToLower()
+            if (-not $validSkills.Contains($name)) {
+                if (-not $skillRefs.ContainsKey($name)) { $skillRefs[$name] = @() }
+                $skillRefs[$name] += (Get-RelativePath $file.FullName)
+            }
+        }
+    }
+    foreach ($name in ($skillRefs.Keys | Sort-Object)) {
+        $files = $skillRefs[$name] | Select-Object -Unique
+        $first = $files | Select-Object -First 1
+        $extra = if ($files.Count -gt 1) { " (+$($files.Count - 1) more)" } else { "" }
+        Write-Fail "orphan skill reference '.github/skills/${name}/' in ${first}${extra}"
+    }
+}
+
 # --- Summary -----------------------------------------------------------------
 Write-Info "Scanned: $script:BrainstormCount brainstorm, $script:TaskFileCount task file(s), $script:MemoryFileCount memory file(s), $script:AgentCount agent(s)"
 Write-Info "Findings: $script:WarnCount warning(s), $script:FailCount failure(s)"

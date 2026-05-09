@@ -1,6 +1,6 @@
 ---
 name: "dude-lint"
-description: "Use when validating bundle hygiene: checking brainstorm/tasks file shape, fence balance, durable task IDs, orphan agent-handle references, memory file size, and coordinator-only boundary blocks."
+description: "Use when validating bundle hygiene: checking brainstorm/tasks file shape, fence balance, durable task IDs, orphan agent-handle references, orphan skill-path references, memory file size, and coordinator-only boundary blocks."
 ---
 
 # Dude Lint
@@ -9,7 +9,7 @@ Static validator for the bundle's structural conventions.
 
 ## Purpose
 
-Catch the structural mistakes that would otherwise surface as runtime drift: malformed brainstorms, fence imbalance, stale `spec_path:` pointers, duplicate task IDs, oversized memory files, and orphaned agent-handle references.
+Catch the structural mistakes that would otherwise surface as runtime drift: malformed brainstorms, fence imbalance, stale `spec_path:` pointers, duplicate task IDs, oversized memory files, orphaned agent-handle references, and orphaned skill-path references.
 
 The linter is **read-only** and **dependency-free**. It runs as either PowerShell (`lint.ps1`) or Bash (`lint.sh`); both produce identical findings and exit codes. No Python, Node, or other runtime is required.
 
@@ -29,6 +29,7 @@ Other skills also call this one as their final verification step. When loaded as
 - `lightweight-execution` (close protocol step 6) after the coordinator updates a task glyph or regenerates the board region
 - `spec-import-to-beads` (Import Algorithm step 2) before parsing brainstorm and tasks files
 - `dude-portability` (Deploy step 5) after importing the bundle into a destination repo
+- `bundle-import` (Step 7) after writing imported agent or skill files
 
 ## Usage
 
@@ -76,6 +77,11 @@ Exit code is `0` if no failures, `1` if any check produced a `[FAIL]`. Warnings 
 5. **Coordinator-only boundary block**
    - Fail when any `.github/agents/*.agent.md` (except `dude.agent.md` and `spec-lead.agent.md`) is missing the `**Coordinator-only artifacts:**` block from `team-expansion`. Spec-lead is exempt because its own Rules and Workflow step 11 explicitly authorize it to maintain `status:`, `spec_path:`, and `## Coordinator Log` during definition.
 
+6. **Orphan skill references**
+   - Collect every `.github/skills/<name>/...` path reference under `.github/**/*.md` (excluding fenced code blocks).
+   - Fail for any `<name>` that does not match an existing `.github/skills/<name>/` directory.
+   - Path-form is the only trigger; backticked skill names in prose are not flagged here, since the false-positive rate would be too high for a `[FAIL]` check. Wire-up references in agents and skills should always use the full `.github/skills/<name>/` path so this check can validate them.
+
 ## Output
 
 ```
@@ -83,6 +89,7 @@ Exit code is `0` if no failures, `1` if any check produced a `[FAIL]`. Warnings 
 [FAIL]  brainstorm/auth.md  status: defined but spec_path is missing
 [WARN]  specs/001-auth/tasks.md:14  legacy task ID T003 (consider durable suffix)
 [FAIL]  orphan @designer reference in .github/skills/project/SKILL.md
+[FAIL]  orphan skill reference '.github/skills/made-up-skill/' in .github/agents/lead.agent.md
 [WARN]  .github/dudestuff/decisions.md  35 entries (consider consolidation; threshold is 20)
 [INFO]  Scanned: 1 brainstorm, 1 task file, 4 memory files, 8 agents
 [INFO]  Findings: 2 warnings, 2 failures
