@@ -90,8 +90,9 @@ it also reports Beads state without mutating it.
 | `specs/<feature>/tasks.md`                       | Canonical phased task units plus a derived board view; live only in Lightweight Execution | Do not self-check `[x]`; let Dude mutate task state after routed outcomes and verification. Avoid rewriting task meaning by hand or editing the generated board region directly. | task selection via the generated board view when present, durable-key-first reconciliation, optional `deps:` metadata, and coordinator-owned state updates in Lightweight Execution | Rerun `@dude define <feature>` when scope changes; preserve durable task keys and surviving task state when tasks still mean the same work |
 | Beads issues                                     | Live execution state after import          | through Dude's execution flow                                                 | issue state, dependencies, and close decisions                                                                     | Use `@dude track`, `@dude status`, and Beads commands                                  |
 
-`spec_path`, `status`, and `## Definition Record` are workflow metadata. Let
-Dude maintain them so define and track stay consistent.
+`spec_path`, `status`, and `## Coordinator Log` (legacy name: `## Definition
+Record`) are workflow metadata. Let Dude maintain them so define and track
+stay consistent.
 
 ### Ownership and escalation
 
@@ -218,7 +219,8 @@ In this lane:
 - if you self-check `[x]` by hand without verification evidence on record, Dude
   will downgrade it back to `[~]` on the next pass and post a one-line note. To
   accept your manual completion, say so explicitly ("I verified this manually")
-  so Dude can record the evidence in `## Definition Record`.
+  so Dude can record the evidence in `## Coordinator Log` (legacy name:
+  `## Definition Record`).
 - `tasks.md` may include a Dude-generated board region inside the same file,
   fenced by `<!-- dude:board:start -->` / `<!-- dude:board:end -->`, with
   `## Ready Now`, `## In Progress`, `## Blocked`, and `## Done`. The fenced

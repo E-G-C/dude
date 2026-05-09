@@ -33,12 +33,12 @@ After Dude solves a challenge, decide whether the outcome is:
 
 ### Durable But Narrow
 
-- Add a concise lesson to `.github/dudestuff/lessons.md`.
+- Add a concise lesson to `.github/dudestuff/lessons.md` using the `memory-ledger` skill (which runs its own `dude-lint` verification on the file after writing).
 - Promote later if the pattern repeats.
 
 ### Broadly Reusable
 
-- Create or update `.github/skills/<name>/SKILL.md`.
+- Create or update `.github/skills/<name>/SKILL.md` using the `skill-authoring` skill (which runs its own `dude-lint` verification after creation).
 - Write trigger phrases into the description so Copilot can discover it.
 - Focus on reusable workflow, rules, and anti-patterns.
 

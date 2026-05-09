@@ -293,6 +293,30 @@ Reports `OK` or `Drift: <one-line>` for each of:
 @dude self-check
 ```
 
+### Validating bundle hygiene
+
+Use the `dude-lint` skill to catch structural drift in the bundle itself:
+malformed brainstorms, fence imbalance, stale `spec_path:` pointers, duplicate
+or non-durable task IDs, oversized memory files, orphaned agent-handle
+references, and missing coordinator-only boundary blocks. The linter is
+read-only, dependency-free, and ships parity scripts for both shells.
+
+```pwsh
+pwsh .github/skills/dude-lint/lint.ps1
+```
+
+```bash
+bash .github/skills/dude-lint/lint.sh
+```
+
+Exit code is `0` when no failures are reported; warnings do not fail the run.
+Run it before `@dude track`, before exporting the bundle, or whenever you want
+a fast structural check of the bundle.
+
+`@dude self-check` covers the runtime drift that a static linter cannot see
+(lane banner presence, manual `[x]` flips, append-only log). The two are
+complementary.
+
 ### Reconciliation prompt replies
 
 When `@dude define` reruns against a `tasks.md` that has Lightweight Execution

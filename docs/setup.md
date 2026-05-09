@@ -38,7 +38,8 @@ tracked execution starts, it also reports Beads state.
 
 - Edit `## User Draft`, `## Open Questions`, and `## Assumptions` in
   `brainstorm/<slug>.md`.
-- Leave `status:`, `spec_path:`, and `## Definition Record` to Dude.
+- Leave `status:`, `spec_path:`, and `## Coordinator Log` (legacy name:
+  `## Definition Record`) to Dude.
 - Leave any generated board region in `tasks.md` to Dude.
 - Refresh generated artifacts with `@dude define <feature>` instead of
   hand-maintaining `spec.md`, `plan.md`, or `tasks.md`.
@@ -168,6 +169,11 @@ Dude Coder includes explicit operational skills for common failure modes:
   something is done or fixed
 - `receiving-code-review` — handle review feedback technically instead of
   reflexively
+- `dude-lint` — dependency-free static validator for the bundle itself
+  (PowerShell + Bash parity scripts). Other skills load it as their final
+  verification step after writing brainstorm, definition, agent, skill,
+  memory, or task files. See [Validating bundle hygiene](commands.md#validating-bundle-hygiene)
+  for direct invocation.
 
 These skills strengthen execution discipline without changing the main workflow.
 

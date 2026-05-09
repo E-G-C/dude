@@ -60,7 +60,7 @@ Bad reasons to suggest one:
 - for ordinary single-threaded work that fits comfortably in the current checkout
 - for solo or novice workflows where sequential work in the current checkout is clearly the simpler tradeoff
 
-When suggesting a worktree, give a short reason, explain the cost honestly, and ask for approval before setup. For example: "These two tasks are already independent, and separate branches would keep the current checkout clean. I can create `.worktrees/auth-refactor` on branch `auth-refactor`; that means another directory and a later merge step. Or I can keep the work sequential in the current checkout, which is slower but simpler." 
+When suggesting a worktree, give a short reason, explain the cost honestly, and ask for approval before setup. For example: "These two tasks are already independent, and separate branches would keep the current checkout clean. I can create `.worktrees/auth-refactor` on branch `auth-refactor`; that means another directory and a later merge step. Or I can keep the work sequential in the current checkout, which is slower but simpler."
 
 ## Directory Selection
 

@@ -107,12 +107,13 @@ Manual import still requires a defined brainstorm file as the identity source:
 ## Import Algorithm
 
 1. Select the feature directory using the rules above.
-2. Read `spec.md` to extract feature intent and user stories.
-3. Read `plan.md` to extract architecture, structure, and stack choices.
-4. Read `tasks.md` to extract executable task units and ordering. Parse task headers using the canonical glyph-aware format, capture any indented `deps:` or `blocked-by:` metadata, and ignore the generated board region because it is derived guidance, not canonical task state. Import `[ ]`, `[~]`, and `[!]` task units as open work; skip `[x]` as completed Lightweight Execution history. If any task header or metadata line is malformed, ambiguous, or carries conflicting story labels, stop and request a corrected `tasks.md` before import.
-5. If checked Lightweight Execution history exists, verify that each checked item still maps one-to-one by durable task key, or by task ID, story label, and core intent when a durable key is absent. When that reconciliation is ambiguous after a re-define, stop automatic import. Report three buckets to the user: surviving checked IDs, changed or removed checked IDs, and ambiguous replacements that need confirmation.
-6. Create one Beads epic for the feature if not already represented. The epic exists for grouping, audit, and UI navigation only — it is never an actionable task. Its description must start with `spec: <spec_path>` (the brainstorm's exact `spec_path` value). Keep it out of the ready queue by setting its status to `deferred`; low priority alone is not sufficient.
-7. Create Beads task issues for executable task units. Each issue's `--description` must start with `spec: <spec_path>` as the first line, followed by task details. Map `[ ]` to an open Beads task, `[~]` to an in-progress Beads task, `[!]` to a blocked Beads task when blocker data is available, and skip `[x]` as completed markdown history. Example:
+2. Before parsing, run the `dude-lint` skill (`pwsh .github/skills/dude-lint/lint.ps1` or `bash .github/skills/dude-lint/lint.sh`). The linter validates the brainstorm's `status:` and `spec_path:` fields, the `## Coordinator Log` heading, the `tasks.md` board fences, glyph values, and durable task IDs. If it reports any `[FAIL]`, stop the import and route the structural fix back through `feature-definition` first; importing a malformed package would corrupt the resulting Beads issues.
+3. Read `spec.md` to extract feature intent and user stories.
+4. Read `plan.md` to extract architecture, structure, and stack choices.
+5. Read `tasks.md` to extract executable task units and ordering. Parse task headers using the canonical glyph-aware format, capture any indented `deps:` or `blocked-by:` metadata, and ignore the generated board region because it is derived guidance, not canonical task state. Import `[ ]`, `[~]`, and `[!]` task units as open work; skip `[x]` as completed Lightweight Execution history. If any task header or metadata line is malformed, ambiguous, or carries conflicting story labels, stop and request a corrected `tasks.md` before import.
+6. If checked Lightweight Execution history exists, verify that each checked item still maps one-to-one by durable task key, or by task ID, story label, and core intent when a durable key is absent. When that reconciliation is ambiguous after a re-define, stop automatic import. Report three buckets to the user: surviving checked IDs, changed or removed checked IDs, and ambiguous replacements that need confirmation.
+7. Create one Beads epic for the feature if not already represented. The epic exists for grouping, audit, and UI navigation only — it is never an actionable task. Its description must start with `spec: <spec_path>` (the brainstorm's exact `spec_path` value). Keep it out of the ready queue by setting its status to `deferred`; low priority alone is not sufficient.
+8. Create Beads task issues for executable task units. Each issue's `--description` must start with `spec: <spec_path>` as the first line, followed by task details. Map `[ ]` to an open Beads task, `[~]` to an in-progress Beads task, `[!]` to a blocked Beads task when blocker data is available, and skip `[x]` as completed markdown history. Example:
     ```
         bd create "T006@c7d2f1a9 [US1] Add CSV row mapping" -t task -p 1 \
       --description="spec: specs/001-invoice-exports/spec.md
@@ -121,7 +122,7 @@ Manual import still requires a defined brainstorm file as the identity source:
     Story: US1 — Filtered CSV exports" --json
     ```
     Do not attach imported task issues to the epic with `--parent` or any `parent-child` dependency. In Beads, that relationship blocks readiness; the epic stays as a non-blocking grouping marker, and child tasks are linked to the feature via the description `spec:` prefix and labels instead.
-8. After the `spec:` first line, preserve these details in each issue description:
+9. After the `spec:` first line, preserve these details in each issue description:
      - original task key (e.g., `T012@d4e5f6a7`)
     - original markdown state (e.g., `[~]` or `[!]`)
    - story label (e.g., `US1`)
@@ -130,15 +131,15 @@ Manual import still requires a defined brainstorm file as the identity source:
     - `blocked-by:` reason when present
    - acceptance hints or checkpoint text
    - source artifact path
-9. Verify that every created issue's description starts with `spec: <spec_path>` using the brainstorm's exact `spec_path` value. If a single feature ends up with mixed `spec:` prefixes across issues, automatic handoff cannot reliably detect it as imported. Stop and reconcile before continuing.
-10. If existing issues already use the feature's `spec:` prefix but the brainstorm now points at a different `spec_path`, stop and reconcile the canonical identity before creating or updating more issues.
-11. Derive dependencies using the task structure rules:
+10. Verify that every created issue's description starts with `spec: <spec_path>` using the brainstorm's exact `spec_path` value. If a single feature ends up with mixed `spec:` prefixes across issues, automatic handoff cannot reliably detect it as imported. Stop and reconcile before continuing.
+11. If existing issues already use the feature's `spec:` prefix but the brainstorm now points at a different `spec_path`, stop and reconcile the canonical identity before creating or updating more issues.
+12. Derive dependencies using the task structure rules:
     - explicit `deps:` values become direct issue dependencies first
     - every task in Phase N+1 depends on all tasks in Phase N unless the source already modeled the same blockers explicitly
     - non-`[P]` tasks depend on all earlier tasks in the same phase when no explicit dependency already covers that ordering
     - `[P]` tasks do not depend on sibling tasks unless `deps:` or the source text states a real blocker
-12. If any create or update operation fails mid-import, stop and report the partial state. Do not declare the migration complete while the feature is split across markdown-only state and partial Beads state.
-13. Report created issue count, imported in-progress count, imported blocked count, skipped completed-task count, dependency count, and actionable ready task count.
+13. If any create or update operation fails mid-import, stop and report the partial state. Do not declare the migration complete while the feature is split across markdown-only state and partial Beads state.
+14. Report created issue count, imported in-progress count, imported blocked count, skipped completed-task count, dependency count, and actionable ready task count.
 
 ## Mapping Rules
 

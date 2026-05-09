@@ -4,39 +4,43 @@ Durable project and process decisions that Dude should preserve.
 
 ## Entries
 
-- `brainstorm/<slug>.md` is the file-based intake ledger before definition.
-- Feature definition is handled natively through Dude under `specs/<feature>/`.
-- Default first-run path is one small feature through Definition Only before moving into Lightweight Execution or Beads-tracked execution.
-- When a user wants implementation now and does not explicitly ask for Beads, default to Lightweight Execution instead of requiring a three-way lane choice first.
-- On the first substantive message in a fresh repo with no active `brainstorm/` or `specs/` workflow artifacts, proactively open with the three-question onboarding sequence.
-- If the user's first substantive request already supplies feature count, implement-now versus define, and hard constraints, treat onboarding as satisfied and move directly to the next workflow step instead of re-asking.
-- `@dude track` is the normal handoff from defined features into Beads, and explicit import prompts are a manual fallback.
-- When Beads is unavailable or intentionally not used, `specs/<feature>/tasks.md` is the first-class markdown execution board.
-- Supporting checklist files are advisory during Lightweight Execution and import preparation; `tasks.md` remains the only live execution board before Beads import.
-- Lightweight task headers should prefer durable task IDs such as `T001@a1b2c3d4`; legacy `T001` lines remain acceptable during migration.
-- Lightweight Execution uses four canonical task states: `[ ]` not started, `[~]` in progress, `[!]` blocked, and `[x]` done.
-- Optional indented `deps:` and `blocked-by:` metadata lines are part of the canonical task unit when needed.
-- A Dude-generated board region may live inside `tasks.md` with `## Ready Now`, `## In Progress`, `## Blocked`, and `## Done` sections as derived guidance. It does not count as a second board or source of truth.
-- In Lightweight Execution, only the coordinator mutates task-state glyphs and task metadata after fresh verification evidence or routed workflow changes.
-- A single bounded task may cover closely related code, tests, and docs when one fresh verification step proves the slice.
-- Tracked execution uses Beads as the single live work board after import.
-- After import, `tasks.md` is reference-only and should not be used as the live board.
-- Parallel execution is an internal Dude responsibility during Beads work, not a user-managed workflow step.
-- Git worktrees are opt-in and not part of the default workflow. Dude may recommend them for risky/high-churn changes or truly independent parallel implementation when isolation has a concrete benefit, but not as a blanket response to parallel dispatch or overlapping file edits.
-- If a user declines a worktree suggestion, do not repeat it in the same session unless conditions materially change.
-- TDD is opt-in, not a global rule.
-- Project-wide guardrails live in `.github/dudestuff/guardrails.md`; if no project-specific guardrails exist yet, `@spec-lead` may infer candidate guardrails from repo and definition context, keep them minimal for clearly solo or exploratory repos, and continue with bundle defaults only when the user says `skip`.
-- If guardrail inference yields no new project-specific guardrails beyond bundle defaults, definition continues without a separate guardrail approval pause.
-- Definition packages are lean by default: create only artifacts that materially apply to the feature and omit placeholder files for non-applicable domains.
-- Feature numbering under `specs/` is monotonic: use `max existing prefix + 1` and do not reuse deleted numbers.
-- `status:`, `spec_path:`, and `## Coordinator Log` (legacy name: `## Definition Record`) are Dude-maintained workflow metadata.
-- During Beads-tracked execution, only the coordinator calls `bd close`; specialists report results back.
-- Typed blockage escalation uses these categories: `spec-gap`, `plan-gap`, `contract-mismatch`, `test-failure`, and `external-dependency`.
-- Plain-language blocker reports are accepted when the intended escalation type is clear; typed prefixes remain the preferred shorthand.
-- `draft`, `define`, `track`, `flag`, and `status` are the primary workflow verbs, and other supported commands such as `remember`, `remove`, and explicit manual import remain available.
-- `@dude status` is a read-only orientation command across definition, Lightweight Execution, and tracked-execution lanes; it includes Beads details only when tracked execution has started.
-- Canonical feature identity is shared across definition and execution: brainstorm `spec_path` must match the Beads issue description `spec:` prefix. See `spec-import-to-beads` `## Canonical Feature Identity`.
-- If `spec_path` changes after import, or after Lightweight Execution has already recorded checked task history, reconcile before continuing execution or import.
-- If checked lightweight history cannot be reconciled one-to-one after a re-define, prefer durable task keys first, then fall back to task ID, story label, and core intent; if that is still ambiguous, pause `@dude track`, report surviving versus changed or ambiguous completions, and ask the user to confirm which checkmarks survive.
+### Lanes And Onboarding
+
+- Brainstorm-first workflow: `brainstorm/<slug>.md` is the file-based intake ledger before definition; feature definition is native under `specs/<feature>/`; `@dude track` is the normal handoff into Beads, and explicit manual import is a fallback.
+- First-run default: one small feature through Definition Only. If the user wants implementation and does not explicitly ask for Beads, default to Lightweight Execution instead of requiring a three-way lane choice.
+- Onboarding: in a fresh repo with no active `brainstorm/` or `specs/` artifacts, proactively open with the three-question sequence (one feature vs many, implement-now vs define, hard constraints). If the first substantive request already answers them, treat onboarding as satisfied and move on without re-asking.
 - Ask humans only the questions that materially change scope, hard constraints, approvals, or routing.
-- Tag-driven version normalization is the project standard for both GitHub Actions and Azure Pipelines release workflows: derive the package version from the `v*` tag before packaging, and sync `package.json` plus `package-lock.json` back to the default branch (direct push when allowed, PR fallback when branch protection blocks it).
+
+### Lightweight And Tracked Execution
+
+- Lightweight Execution model: when Beads is unavailable or intentionally not used, `specs/<feature>/tasks.md` is the first-class live markdown board. Canonical state lives in the phased task units below the optional Dude-generated board fence; the fenced `## Ready Now / In Progress / Blocked / Done` region is a derived view, not a second source of truth. Supporting checklist files stay advisory.
+- Task units: prefer durable IDs such as `T001@a1b2c3d4` (legacy `T001` accepted during migration). Four canonical states: `[ ]`, `[~]`, `[!]`, `[x]`. Optional indented `deps:` and `blocked-by:` metadata lines are part of the canonical task unit. A bounded task may cover closely related code, tests, and docs when one fresh verification step proves the whole slice.
+- Coordinator-only mutation: in Lightweight Execution only the coordinator mutates task-state glyphs and task metadata, after fresh verification evidence or routed workflow changes; specialists report results back. During Beads-tracked execution only the coordinator calls `bd close`.
+- After Beads import: Beads is the single live execution board and `tasks.md` is reference-only. Parallel execution is an internal coordination decision during Beads work, not a user-managed workflow step.
+
+### Definition Packages
+
+- Lean by default: create only artifacts that materially apply to the feature; omit placeholder files for non-applicable domains.
+- `specs/` numbering is monotonic — use `max existing prefix + 1` and never reuse deleted numbers.
+- `status:`, `spec_path:`, and `## Coordinator Log` (legacy name: `## Definition Record`) are Dude-maintained workflow metadata.
+
+### Guardrails
+
+- Project-wide guardrails live in `.github/dudestuff/guardrails.md`. When only bundle defaults exist, `@spec-lead` may infer minimal candidate guardrails from repo and definition context (kept minimal for clearly solo or exploratory repos); the user may `skip` to continue with bundle defaults only. If inference yields no new project-specific guardrails, definition continues without a separate guardrail pause.
+
+### Optional Disciplines
+
+- Optional disciplines (worktrees, TDD) are opt-in and not part of the default workflow. Worktrees may be recommended only for risky/high-churn or truly independent parallel work where isolation has a concrete benefit; if a user declines, do not repeat the suggestion in the same session unless conditions materially change.
+
+### Verbs And Blockage
+
+- Workflow verbs: `draft`, `define`, `track`, `flag`, `status`, `diff`, and `self-check` are primary. `hire`, `remember`, `remove`, and explicit manual import remain available as coordinator-maintenance verbs. `@dude status` is read-only across all lanes; Beads details appear only when tracked execution has started.
+- Blockage classification: typed prefixes are preferred (`spec-gap`, `plan-gap`, `contract-mismatch`, `test-failure`, `external-dependency`); plain-language blocker reports are accepted when the intended type is clear.
+
+### Identity And Reconciliation
+
+- Canonical feature identity is shared across definition and execution: brainstorm `spec_path` must match the Beads issue description `spec:` prefix (see `spec-import-to-beads` `## Canonical Feature Identity`). If `spec_path` changes after import — or after Lightweight Execution has already recorded checked task history — reconcile first; prefer durable task keys, then fall back to task ID, story label, and core intent. If still ambiguous, pause `@dude track`, report surviving versus changed or ambiguous completions, and ask the user to confirm which checkmarks survive.
+
+### Release
+
+- Tag-driven release versioning is the project standard for both GitHub Actions and Azure Pipelines: derive the package version from the `v*` tag before packaging, and sync `package.json` plus `package-lock.json` back to the default branch (direct push when allowed, PR fallback when branch protection blocks it).

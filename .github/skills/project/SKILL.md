@@ -10,7 +10,7 @@ description: "Project-specific domain knowledge, conventions, and patterns. Upda
 - **Domain**: reusable Dude Coder bundle for markdown-based multi-agent feature definition plus optional lightweight or Beads-tracked execution
 - **Primary artifacts**: user-facing docs in `README.md`, agent and skill definitions under `.github/`, and bundle memory files
 - **Coordinator**: `@dude` owns routing, memory, skills, and team management
-- **Current roster**: `@spec-lead`, `@lead`, `@backend`, `@frontend`, `@electron`, `@copilot-sdk`, `@release-manager`, `@tester`, and `@reviewer` alongside the coordinator
+- **Current roster**: `@spec-lead`, `@lead`, `@backend`, `@frontend`, `@release-manager`, `@tester`, and `@reviewer` alongside the coordinator
 - **Default first-run path**: ask whether the user wants to implement now or just define; if they want implementation and do not explicitly ask for Beads, default to Lightweight Execution, otherwise start with Definition Only
 
 ## Working Conventions

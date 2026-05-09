@@ -224,15 +224,23 @@ graph TB
     DUDE --> LEAD["@lead\nArchitecture direction"]
     DUDE --> BACKEND["@backend\nServer-side implementation"]
     DUDE --> FRONTEND["@frontend\nUI implementation"]
+    DUDE --> RELEASE["@release-manager\nTag-driven release versioning and pipeline parity"]
     DUDE --> TESTER["@tester\nVerification"]
     DUDE --> REVIEWER["@reviewer\nAcceptance"]
     SPEC -.-> DUDE
     LEAD -.-> DUDE
     BACKEND -.-> DUDE
     FRONTEND -.-> DUDE
+    RELEASE -.-> DUDE
     TESTER -.-> DUDE
     REVIEWER -.-> DUDE
 ```
+
+The roster is dynamic: `@dude` updates routing as agents are added or removed,
+so this map reflects the current default bundle but is not fixed. See
+[`team-expansion`](../.github/skills/team-expansion/SKILL.md) and the
+[`generic-routing`](../.github/skills/generic-routing/SKILL.md) Dynamic Roster
+Rule for how routing adapts.
 
 ## Design Constraints
 

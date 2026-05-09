@@ -79,9 +79,9 @@ access with a password reset email.
 - [ ] Scope is bounded
 - [ ] Open questions are resolved or consciously assumed
 
-## Definition Record
+## Coordinator Log
 
-- No definition events yet
+- No coordinator events yet
 ```
 
 ## 3. Define the package

@@ -66,3 +66,7 @@ Memory files are append-only by default, but they need periodic maintenance:
    four files.
 4. **Promotion is pruning**: when a lesson becomes a skill, remove or shorten
    the lesson entry and reference the skill instead.
+
+## Verification
+
+After writing to any `.github/dudestuff/*.md` file, run the `dude-lint` skill (`pwsh .github/skills/dude-lint/lint.ps1` or `bash .github/skills/dude-lint/lint.sh`). The linter warns when a memory file exceeds the consolidation threshold and confirms no orphan `@<role>` references slipped in. Treat any `[WARN]` on the file you just edited as a prompt to consolidate now rather than later.

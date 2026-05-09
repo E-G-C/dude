@@ -22,6 +22,7 @@ When the user asks for a skill:
    - rules or workflow
    - examples or anti-patterns when useful
 6. Make the description explicit enough that Copilot can discover it later.
+7. Run the `dude-lint` skill (`pwsh .github/skills/dude-lint/lint.ps1` or `bash .github/skills/dude-lint/lint.sh`) to confirm the new file did not introduce orphan `@<role>` references and that the bundle still passes structural checks. Fix any `[FAIL]` before announcing the skill.
 
 ## Description Rules
 

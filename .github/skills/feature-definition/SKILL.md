@@ -338,7 +338,7 @@ Each canonical task header follows this format:
 ```
 
 - `T001` — sequential task ID that stays easy for humans to scan
-- `@a1b2c3d4` — durable task key used for reconciliation across re-define and later Beads handoff
+- `a1b2c3d4` — durable task key suffix used for reconciliation across re-define and later Beads handoff
 - `[P]` — parallel-safe (no dependencies within phase)
 - `[US1]` — maps to User Story 1 from `spec.md`
 - `[Shared]` — setup, foundational, or polish work that supports multiple stories
@@ -465,6 +465,25 @@ Before handoff, verify:
 - no unresolved clarification markers remain
 - each user story is independently testable
 - tasks do not invent scope absent from the spec
+
+## Step 6: Run `dude-lint`
+
+After writing or refreshing `brainstorm/<slug>.md`, `specs/<feature>/spec.md`, `specs/<feature>/tasks.md`, or any other definition artifact, run the `dude-lint` skill. It catches structural mistakes in the files this skill just mutated:
+
+- brainstorm frontmatter, `status:`, `spec_path:` resolution, fence balance, `## Coordinator Log` heading
+- task file board fences, glyph values, durable task IDs, duplicate IDs
+
+Use whichever shell is available:
+
+```pwsh
+pwsh .github/skills/dude-lint/lint.ps1
+```
+
+```bash
+bash .github/skills/dude-lint/lint.sh
+```
+
+If the linter reports `[FAIL]`, fix the structural issue before declaring the package defined. Warnings are advisory but should be reviewed in the same pass. The linter is read-only and dependency-free.
 
 ## Handoff To Beads
 

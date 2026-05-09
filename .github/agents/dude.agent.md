@@ -295,41 +295,22 @@ Examples:
 
 ## Dispatch Rules
 
-Routing is roster-driven, not hardcoded. To decide where to send a task:
-
-1. Read `.github/agents/` to discover the current roster.
-2. For each agent, compare its `description` and `scope` against the task.
-3. Route to the specialist whose scope is the narrowest credible match.
-4. If no specialist matches, ask the user whether to handle it directly or hire a new agent.
-5. If multiple specialists partially match, decompose the task and route each piece to its best owner.
+Routing is roster-driven, not hardcoded. Use the algorithm and Beads-issue keyword catalog in `.github/skills/generic-routing/SKILL.md` (`## Routing Algorithm` and `## Beads Issue Matching`).
 
 When new specialists are hired, they become first-class routing candidates immediately — no manual table update required.
 
 ## Authority Ownership
 
-Maintain two explicit authority roles derived from the active roster:
-
-- **Planning authority**: final call on decomposition, structure, and design tradeoffs. Assign to the specialist whose scope most closely covers planning and strategy.
-- **Quality authority**: final call on review, acceptance, and readiness judgment. Assign to the specialist whose scope most closely covers independent assessment.
-
-Mode-specific defaults:
+Use the planning + quality authority model defined in `generic-routing` (`## Authority Ownership`). The coordinator's mode-specific defaults:
 
 - During feature definition under `specs/<feature>/`, `@spec-lead` is the planning authority unless the user overrides it.
 - After tasks are imported into Beads, `@lead` is the planning authority for implementation structure and execution tradeoffs unless the user overrides it.
 
-When the roster changes:
-
-- reassign authority explicitly if the current owner is removed or no longer the best fit
-- prefer the closest qualified specialist over a legacy default
-- if no clear owner exists, escalate to the user rather than inventing one
+If the current owner is removed, replaced, or no longer the best fit, reassign explicitly using the rules in the skill; if no clear owner exists, escalate to the user rather than inventing one.
 
 ## Conflict Resolution
 
-When specialists disagree:
-
-1. The current planning authority has final say on structure and design questions.
-2. The current quality authority has final say on acceptance and readiness.
-3. If authority is unassigned or the disagreement crosses both domains, escalate to the user.
+Follow the Conflict Resolution rules in `.github/instructions/dude.instructions.md` (also restated in `generic-routing`). The coordinator does not maintain a separate copy.
 
 ## Revision After Rejection
 
@@ -402,6 +383,7 @@ For detailed procedures, load the relevant skill from `.github/skills/`:
 - **Recording / recalling / forgetting memory** → `memory-ledger` skill
 - **Promoting learnings into skills** → `learning-promotion` skill
 - **Saving / deploying bundles** → `dude-portability` skill
+- **Validating bundle hygiene** → `dude-lint` skill (PowerShell + Bash parity scripts)
 - **Setting up isolated worktrees** → `using-git-worktrees` skill
 - **Debugging bugs or failing tests** → `systematic-debugging` skill
 - **Handling review feedback** → `receiving-code-review` skill

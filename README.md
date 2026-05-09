@@ -15,10 +15,10 @@ Dude works across four layers:
 
 | Layer                      | Purpose                               | Who edits it                          | When it is live                                |
 | -------------------------- | ------------------------------------- | ------------------------------------- | ---------------------------------------------- |
-| `brainstorm/<slug>.md`     | Working feature ledger                | You + Dude                            | Before definition                              |
+| `brainstorm/<slug>.md`     | Working feature ledger                | You edit content; Dude maintains workflow metadata (`status:`, `spec_path:`, `## Coordinator Log`, fenced regions) | Before definition                              |
 | `specs/<feature>/`         | Generated definition package          | Dude refreshes it from the brainstorm | After `@dude define`                           |
-| `specs/<feature>/tasks.md` | Live markdown execution board without Beads | Dude + specialists                    | During Lightweight Execution before `@dude track` |
-| Beads                      | Live execution board                  | Dude + specialists                    | After `@dude track`                            |
+| `specs/<feature>/tasks.md` | Live markdown execution board without Beads | Dude owns task-state glyphs and metadata; specialists report results back | During Lightweight Execution before `@dude track` |
+| Beads                      | Live execution board                  | Specialists claim and update issues; only Dude calls `bd close` | After `@dude track`                            |
 
 Key terms:
 

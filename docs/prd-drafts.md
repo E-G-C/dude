@@ -75,7 +75,7 @@ planning:
 The PRD draft remains source input, but Dude turns it into two working layers:
 
 - `brainstorm/<slug>.md` — intake ledger, open questions, assumptions,
-  definition record
+  coordinator log
 - `spec.md` — normalized WHAT and WHY after definition
 - `plan.md` — implementation approach
 - `tasks.md` — phased executable work with durable task IDs, explicit board

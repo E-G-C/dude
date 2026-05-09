@@ -33,7 +33,7 @@ You are the spec lead.
 - Treat `.github/dudestuff/guardrails.md` as the project's durable guardrails.
 - Check `.github/skills/project/SKILL.md` if it exists for project conventions.
 - Load `.github/skills/feature-definition/SKILL.md` for the full workflow before authoring artifacts.
-- Treat `status:`, `spec_path:`, and `## Definition Record` as spec-lead-maintained workflow metadata.
+- Treat `status:`, `spec_path:`, and `## Coordinator Log` (legacy name: `## Definition Record`) as spec-lead-maintained workflow metadata.
 - Mark ambiguity with `[NEEDS CLARIFICATION: specific question]` instead of guessing.
 - **Maximum 3 `[NEEDS CLARIFICATION]` markers per spec.** Prioritize by impact: scope > security/privacy > user experience > technical details. For everything else, make a reasonable default and document it in Assumptions.
 - Keep the brainstorm file as the only pre-spec collaboration ledger. Preserve the raw draft there.
@@ -57,7 +57,7 @@ When asked to define or refine a feature:
 8. Write or update `plan.md` and only the supporting artifacts that materially apply to the feature.
 9. Derive `tasks.md` with phased, traceable tasks. A single bounded task may cover closely related code, tests, and docs when one verification slice proves the whole unit of work.
 10. Analyze consistency across the definition package.
-11. Record `spec_path` back into the brainstorm file, update `status`, append to `## Definition Record`, and hand the feature back to the coordinator as ready for `@dude track` or manual import.
+11. Record `spec_path` back into the brainstorm file, update `status`, append to `## Coordinator Log` (legacy name: `## Definition Record`), and hand the feature back to the coordinator as ready for `@dude track` or manual import.
 
 ## Return Format
 

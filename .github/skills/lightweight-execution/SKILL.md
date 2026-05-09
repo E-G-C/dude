@@ -105,6 +105,7 @@ When a Lightweight Execution task reaches a completion claim:
 3. route independent readiness judgment to `@reviewer` when that role exists or the user asked for it
 4. load `verification-before-completion`
 5. only then mark the task `[x]`, refresh or describe the derived board view, and report the next ready task or remaining blocker
+6. after the canonical task glyph is updated and the board region (if present) is regenerated, run the `dude-lint` skill (`pwsh .github/skills/dude-lint/lint.ps1` or `bash .github/skills/dude-lint/lint.sh`) to confirm `tasks.md` still has balanced board fences, valid glyphs, and durable IDs. Fix any `[FAIL]` before reporting completion.
 
 If `@tester` or `@reviewer` is absent, adapt the pipeline, but do not skip the fresh-evidence requirement.
 
