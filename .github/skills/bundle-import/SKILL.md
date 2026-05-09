@@ -19,12 +19,12 @@ Bring in third-party or cross-repo Dude artifacts (or Claude/Anthropic-flavored 
 
 ## Inputs
 
-Accepted source forms (all transformed to a raw fetch URL):
+Accepted source forms (resolved to either a raw file fetch or a directory listing):
 
 - `https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>` — used as-is
 - `https://github.com/<owner>/<repo>/blob/<ref>/<path>` — rewrite to `raw.githubusercontent.com`
-- `https://github.com/<owner>/<repo>/tree/<ref>/<path>` — treat as a skill directory; primary file is `<path>/SKILL.md`
-- `<owner>/<repo>:<path>` (shorthand) — assume `main` ref unless the user supplies one
+- `https://github.com/<owner>/<repo>/tree/<ref>/<path>` — treat as a directory source; list the directory first, then classify it as a skill directory, an agent directory, or unsupported
+- `<owner>/<repo>:<path>` (shorthand) — assume `main` ref unless the user supplies one; resolve as a file when the path has a known artifact filename, otherwise resolve as a directory source
 
 Reject anything else with a clear reason and stop.
 
@@ -33,34 +33,40 @@ Reject anything else with a clear reason and stop.
 - Path ends in `.agent.md` → kind is **agent**; destination is `.github/agents/<basename>`.
 - Path ends in `.md` under a directory named `agents/` (or otherwise framed as an agent file) and the body is agent-shaped (frontmatter `name`, second-person/third-person directive prose) → kind is **agent**; **normalize the destination filename** to `<basename>.agent.md` and surface the rename in the adaptation report.
 - Path ends in `SKILL.md` → kind is **skill**; destination is `.github/skills/<parent-dirname>/SKILL.md`.
-- Path is a directory URL containing a `SKILL.md` child → kind is **skill**; primary file is `<dir>/SKILL.md`.
-- Path is a directory URL whose children are mostly `*.md` agent files (no `SKILL.md`) → kind is **agent directory**; do **not** auto-fan-out. List the candidate files in the report and require the user to pick which to import; each pick becomes a separate `bundle-import` invocation.
+- Path is a directory source containing a `SKILL.md` child → kind is **skill**; primary file is `<dir>/SKILL.md`.
+- Path is a directory source whose children are mostly `*.md` agent files (no `SKILL.md`) → kind is **agent directory**; do **not** auto-fan-out. List the candidate files in the report and require the user to pick which to import; each pick becomes a separate `bundle-import` invocation.
 - Anything else → refuse with `does not parse as a Dude agent or skill`.
 
 If the destination already exists, do **not** proceed past Step 3 without an explicit `replace` confirmation.
 
 ## Workflow
 
-### Step 1 — Fetch primary file
+### Step 1 — Resolve source, then fetch or list
 
-Use the host's fetch tool against the resolved raw URL. Verify the response parses as Dude-shaped markdown:
+For file sources, use the host's fetch tool against the resolved raw URL. Verify the response parses as Dude-shaped markdown:
 
 - frontmatter delimited by `---`
 - contains `name:` (and `description:` for skills)
 - body has at least one `## ` heading
 
-If parsing fails, stop and report.
+For directory sources, list the directory before attempting a primary fetch. Use the host's repository listing capability when available, or the GitHub contents API equivalent for the resolved owner/repo/ref/path. Do not assume `<dir>/SKILL.md` exists until the listing proves it.
+
+- If the listing contains `SKILL.md`, classify as **skill**, fetch `<dir>/SKILL.md` as the primary file, and validate it with the file-source rules above.
+- If the listing has no `SKILL.md` and mostly contains `*.md` files that look agent-shaped, classify as **agent directory**. Fetch only enough candidate markdown files to validate and report their names, normalized destination filenames, and overlap warnings. Stop at the Step 2 report and require the user to pick one or more candidates; each picked candidate becomes a separate `bundle-import` invocation.
+- If the directory cannot be listed, has neither `SKILL.md` nor agent-shaped markdown files, or mixes unrelated content too heavily to classify safely, stop and report `does not parse as a Dude agent or skill`.
+
+If parsing or listing fails, stop and report.
 
 ### Step 2 — Adaptation report (preview, no writes)
 
 Produce a single structured report with these sections. Surface every item; do not auto-fix.
 
 1. **Detected kind and destination** — `agent`, `skill`, or `agent directory`; absolute destination path; whether destination exists; any filename normalization being applied (e.g., `<name>.md` → `<name>.agent.md`).
-2. **Frontmatter changes** — fields to strip (`compatibility:`, `model:`, `license:`, Claude-specific `tools:`), fields to keep, fields to remap.
+2. **Frontmatter changes** — fields to strip (`compatibility:`, `model:`, Claude-specific `tools:`), fields to keep, fields to remap, and any `license:` value that needs preservation. A `license:` field must not be silently discarded: report whether an existing `LICENSE`/`NOTICE` sibling is available, whether a license sibling should be created from the frontmatter value for a skill import, or whether an agent import should retain a short non-frontmatter `## Source License` section. If no preservation path is confirmed, cancel instead of importing with license metadata lost.
 3. **Anthropic / Claude tool references in body** — list every line containing `Bash`, `Read`, `Write`, `Edit`, `Task`, `present_files`, `claude -p`, `claude --print`, or similar tool-name tokens, with line numbers.
 4. **MCP server assumptions** — list any named MCP server the body relies on.
 5. **Heavy-import flags** — list every line that triggers any of the heavy-import detectors below. Each category is presented as its own opt-in.
-6. **Sibling files (skills only)** — list every `<sibling>` referenced relative to the SKILL.md (e.g., `scripts/foo.py`, `assets/template.html`, `theme-showcase.pdf`). Each sibling is its own opt-in. Classify each as **text-adaptable** (`*.md`, `*.txt`, `*.json`, `*.html`, `*.ps1`, `*.sh`), **binary** (`*.pdf`, `*.png`, `*.jpg`, `*.ico`, `*.woff*`, `*.ttf`, `*.zip`), or **directory** (e.g., `themes/`, `agents/`, `references/`). Binary siblings are copied byte-for-byte without adaptation. Directory siblings require explicit per-directory recursion confirmation; the skill never recursively pulls a directory by default.
+6. **Sibling files (skills only)** — list every `<sibling>` referenced relative to the SKILL.md (e.g., `scripts/foo.py`, `assets/template.html`, `theme-showcase.pdf`) plus any license-preservation sibling from item 2. Each sibling is its own opt-in. Classify each as **text-adaptable** (`*.md`, `*.txt`, `*.json`, `*.html`, `*.ps1`, `*.sh`), **binary** (`*.pdf`, `*.png`, `*.jpg`, `*.ico`, `*.woff*`, `*.ttf`, `*.zip`), or **directory** (e.g., `themes/`, `agents/`, `references/`). Binary siblings are copied byte-for-byte without adaptation. Directory siblings require explicit per-directory recursion confirmation, but confirming a directory does not confirm executable children inside it: list directory children before writing, classify each child, and require per-file confirmation for executable files. The skill never recursively pulls a directory by default.
 7. **Referenced skills (agents only)** — list every `.github/skills/<name>/` path **and** every bare `skills/<name>` path mentioned in the body, and whether `<name>` already exists locally. Bare-path references that point at the source repo's structure (not the destination's `.github/skills/`) should be flagged for adaptation: either rewrite to `.github/skills/<name>/` if the dependency is being imported, or strip the reference entirely if it is not.
 8. **Referenced handles (agents only)** — list every `@<role>` referenced and whether the role already exists in the local roster.
 9. **Overlap warnings** — list any local agent/skill whose `description:` shares ≥30% token overlap with the imported artifact, or whose scope/purpose section overlaps semantically.
@@ -83,8 +89,10 @@ Never write files before this gate clears.
 Apply only the confirmed adaptations to the in-memory copy:
 
 - strip/remap frontmatter per Step 2 item 2
+- preserve confirmed license metadata outside stripped frontmatter, using the reported `LICENSE`/`NOTICE` sibling path for skills or a `## Source License` section for agents
 - insert the canonical coordinator-only block for non-coordinator-equivalent agents (see Adaptation Rules below)
 - replace tool-name references with generic phrasing **only** when that category was confirmed
+- apply confirmed referenced-skill path changes, including rewriting bare `skills/<name>` references to `.github/skills/<name>/` when the dependency exists or is being imported, or stripping the reference when the dependency is intentionally skipped
 - normalize line endings to the destination repo's convention
 - leave persona drift untouched unless the user explicitly confirmed that category
 
@@ -97,9 +105,11 @@ Use the host's write tool to create or replace the destination file. Report the 
 For each sibling the user confirmed in Step 2 item 6:
 
 - fetch from the parallel path in the source repo
-- adapt (same rules)
+- adapt text-adaptable siblings with the same confirmed text rules as the primary file
+- copy binary siblings byte-for-byte without frontmatter, prose, or line-ending adaptation
 - write under `.github/skills/<name>/<sibling>`
-- if the sibling is `*.py`, `*.js`, or another executable type and was *not* explicitly confirmed by the user as that filetype, refuse and note it in the final summary
+- for confirmed directory siblings, list children first and apply this same classification recursively; a directory confirmation only permits traversal, not automatic writing of every child
+- if the sibling or any discovered directory child is `*.py`, `*.js`, `*.sh`, or another executable type and was *not* explicitly confirmed by the user as that specific file, refuse and note it in the final summary
 
 ### Step 7 — Run `dude-lint`
 
@@ -130,7 +140,7 @@ For agents: list every referenced skill not yet present locally. For each, ask w
 | `claude -p`, `claude --print`, `present_files` | Flag as Claude-CLI-only; note in summary. |
 | `compatibility:` frontmatter               | Strip.                                       |
 | `model:` frontmatter                       | Strip (Copilot does not enforce this).       |
-| `license:` frontmatter                     | Strip (license info, when needed, lives in a `LICENSE` sibling file). |
+| `license:` frontmatter                     | Strip from frontmatter only after preserving it through a confirmed `LICENSE`/`NOTICE` sibling for skills or a non-frontmatter `## Source License` section for agents; otherwise cancel. |
 | `tools:` frontmatter (Anthropic-style)     | Strip by default; remap only if user opts in. |
 | Persona drift ("I am Claude," etc.)        | Flag, do not auto-rewrite.                   |
 | Missing coordinator-only block (non-coord agent) | Insert canonical block during Step 4. |
@@ -148,6 +158,7 @@ Coordinator-equivalent agents (skip block insertion): files named `dude.agent.md
 Each trigger below escalates the source to "needs explicit per-category confirmation" in Step 2 item 5. The user can still proceed; the skill simply refuses to silently pull executable code or runtime-dependent patterns.
 
 - any `python`, `python3`, `pip`, `python -m` invocation in the body
+- any generic shell invocation (`bash`, `sh`, `zsh`, `pwsh`, `powershell`, or shell command block) that is not clearly part of the artifact's declared shell/git/build domain
 - any `*.py` sibling file
 - any `nohup`, background-server pattern, or `webbrowser.open()` reference
 - HTML viewer / eval-viewer references
@@ -155,7 +166,7 @@ Each trigger below escalates the source to "needs explicit per-category confirma
 - subagent-driven evaluation loops
 - explicit MCP server names not present in the destination
 
-**Domain-aware suppression:** when the imported artifact's primary domain is itself shell/git/build tooling (declared in frontmatter `name` or `description`, e.g., `using-git-worktrees`, `npm-release`, `cargo-build`), suppress the generic "any bash invocation" heuristic for shell snippets that match the declared domain. The Python/HTML/subagent triggers above still fire. The intent is to avoid drowning a legitimately bash-centric skill in noise while still catching cross-domain runtime dependencies.
+**Domain-aware suppression:** when the imported artifact's primary domain is itself shell/git/build tooling (declared in frontmatter `name` or `description`, e.g., `using-git-worktrees`, `npm-release`, `cargo-build`), suppress the generic shell-invocation heuristic for shell snippets that match the declared domain. The Python/HTML/subagent triggers above still fire. The intent is to avoid drowning a legitimately shell-centric skill in noise while still catching cross-domain runtime dependencies.
 
 ## Overlap Detection
 
