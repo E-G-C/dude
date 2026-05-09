@@ -31,8 +31,10 @@ Reject anything else with a clear reason and stop.
 ## Detection Rules
 
 - Path ends in `.agent.md` → kind is **agent**; destination is `.github/agents/<basename>`.
+- Path ends in `.md` under a directory named `agents/` (or otherwise framed as an agent file) and the body is agent-shaped (frontmatter `name`, second-person/third-person directive prose) → kind is **agent**; **normalize the destination filename** to `<basename>.agent.md` and surface the rename in the adaptation report.
 - Path ends in `SKILL.md` → kind is **skill**; destination is `.github/skills/<parent-dirname>/SKILL.md`.
-- Path is a directory URL → kind is **skill**; primary file is `<dir>/SKILL.md`.
+- Path is a directory URL containing a `SKILL.md` child → kind is **skill**; primary file is `<dir>/SKILL.md`.
+- Path is a directory URL whose children are mostly `*.md` agent files (no `SKILL.md`) → kind is **agent directory**; do **not** auto-fan-out. List the candidate files in the report and require the user to pick which to import; each pick becomes a separate `bundle-import` invocation.
 - Anything else → refuse with `does not parse as a Dude agent or skill`.
 
 If the destination already exists, do **not** proceed past Step 3 without an explicit `replace` confirmation.
@@ -53,17 +55,17 @@ If parsing fails, stop and report.
 
 Produce a single structured report with these sections. Surface every item; do not auto-fix.
 
-1. **Detected kind and destination** — `agent` or `skill`; absolute destination path; whether destination exists.
-2. **Frontmatter changes** — fields to strip (`compatibility:`, `model:`, Claude-specific `tools:`), fields to keep, fields to remap.
+1. **Detected kind and destination** — `agent`, `skill`, or `agent directory`; absolute destination path; whether destination exists; any filename normalization being applied (e.g., `<name>.md` → `<name>.agent.md`).
+2. **Frontmatter changes** — fields to strip (`compatibility:`, `model:`, `license:`, Claude-specific `tools:`), fields to keep, fields to remap.
 3. **Anthropic / Claude tool references in body** — list every line containing `Bash`, `Read`, `Write`, `Edit`, `Task`, `present_files`, `claude -p`, `claude --print`, or similar tool-name tokens, with line numbers.
 4. **MCP server assumptions** — list any named MCP server the body relies on.
 5. **Heavy-import flags** — list every line that triggers any of the heavy-import detectors below. Each category is presented as its own opt-in.
-6. **Sibling files (skills only)** — list every `<sibling>` referenced relative to the SKILL.md (e.g., `scripts/foo.py`, `assets/template.html`). Each sibling is its own opt-in.
-7. **Referenced skills (agents only)** — list every `.github/skills/<name>/` path mentioned in the body and whether `<name>` already exists locally.
+6. **Sibling files (skills only)** — list every `<sibling>` referenced relative to the SKILL.md (e.g., `scripts/foo.py`, `assets/template.html`, `theme-showcase.pdf`). Each sibling is its own opt-in. Classify each as **text-adaptable** (`*.md`, `*.txt`, `*.json`, `*.html`, `*.ps1`, `*.sh`), **binary** (`*.pdf`, `*.png`, `*.jpg`, `*.ico`, `*.woff*`, `*.ttf`, `*.zip`), or **directory** (e.g., `themes/`, `agents/`, `references/`). Binary siblings are copied byte-for-byte without adaptation. Directory siblings require explicit per-directory recursion confirmation; the skill never recursively pulls a directory by default.
+7. **Referenced skills (agents only)** — list every `.github/skills/<name>/` path **and** every bare `skills/<name>` path mentioned in the body, and whether `<name>` already exists locally. Bare-path references that point at the source repo's structure (not the destination's `.github/skills/`) should be flagged for adaptation: either rewrite to `.github/skills/<name>/` if the dependency is being imported, or strip the reference entirely if it is not.
 8. **Referenced handles (agents only)** — list every `@<role>` referenced and whether the role already exists in the local roster.
 9. **Overlap warnings** — list any local agent/skill whose `description:` shares ≥30% token overlap with the imported artifact, or whose scope/purpose section overlaps semantically.
 10. **Coordinator-only block** — for agents that are not coordinator-equivalents, note that the canonical `**Coordinator-only artifacts:**` block will be inserted during Step 4.
-11. **Persona drift** — flag chatty Claude-style asides ("I am Claude," first-person tutorials, "Anthropic recommends," etc.). Do not auto-rewrite.
+11. **Persona drift** — flag chatty Claude-style asides ("I am Claude," first-person tutorials, "Anthropic recommends," emphatic ALL-CAPS exhortations, etc.). Do not auto-rewrite.
 
 ### Step 3 — User confirmation gate
 
@@ -128,6 +130,7 @@ For agents: list every referenced skill not yet present locally. For each, ask w
 | `claude -p`, `claude --print`, `present_files` | Flag as Claude-CLI-only; note in summary. |
 | `compatibility:` frontmatter               | Strip.                                       |
 | `model:` frontmatter                       | Strip (Copilot does not enforce this).       |
+| `license:` frontmatter                     | Strip (license info, when needed, lives in a `LICENSE` sibling file). |
 | `tools:` frontmatter (Anthropic-style)     | Strip by default; remap only if user opts in. |
 | Persona drift ("I am Claude," etc.)        | Flag, do not auto-rewrite.                   |
 | Missing coordinator-only block (non-coord agent) | Insert canonical block during Step 4. |
@@ -151,6 +154,8 @@ Each trigger below escalates the source to "needs explicit per-category confirma
 - `*.json` evals or benchmark scaffolding
 - subagent-driven evaluation loops
 - explicit MCP server names not present in the destination
+
+**Domain-aware suppression:** when the imported artifact's primary domain is itself shell/git/build tooling (declared in frontmatter `name` or `description`, e.g., `using-git-worktrees`, `npm-release`, `cargo-build`), suppress the generic "any bash invocation" heuristic for shell snippets that match the declared domain. The Python/HTML/subagent triggers above still fire. The intent is to avoid drowning a legitimately bash-centric skill in noise while still catching cross-domain runtime dependencies.
 
 ## Overlap Detection
 
