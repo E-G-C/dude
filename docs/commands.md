@@ -21,13 +21,14 @@ gaps back into definition.
 | `@dude flag [<type>:] <details>` | Route a real blocker or mismatch back to the right owner. Typed prefixes are preferred, but plain language is accepted. |
 | `@dude diff` | Read-only summary of coordinator-owned writes since your previous message. |
 | `@dude self-check` | Read-only verification that Dude followed its own rules (banner, fences, log, no silent `[x]` drift). |
-| `@dude hire a <role>` | Add a new specialist to the active roster (creates `.github/agents/<name>.agent.md`). |
+| `@dude hire a <role>` | Add a new specialist to the active roster (creates `.github/agents/dude-local-<slug>.agent.md` for project-local agents). |
 | `@dude list the team` / `@dude show roster` | Read-only summary of the current specialists and their scopes. |
 | `@dude remove <role>` / `@dude modify <role>` | Remove or adjust an existing specialist. |
 | `@dude remember: <fact>` | Save a durable constraint, decision, or project fact. |
+| `@dude upgrade [--dry-run|--rollback|--ref <ref>]` | Refresh the installed Dude bundle from upstream while preserving project memory and active work. |
 | `@dude import tasks from specs/<feature>/ into Beads` | Manually import a defined package into Beads when you do not want the normal automatic handoff. |
 
-Preferred workflow verbs are `draft`, `define`, `status`, `track`, `flag`, `diff`, and `self-check`. `hire`, `remember`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
+Preferred workflow verbs are `draft`, `define`, `status`, `track`, `flag`, `diff`, and `self-check`. `hire`, `remember`, `upgrade`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
 
 ### `@dude draft`
 
@@ -249,7 +250,7 @@ Action: flag
 Classified as: spec-gap
 Updated:
 - Blockage recorded as spec-gap
-- Routed to @spec-lead for definition updates
+- Routed to @dude-spec-lead for definition updates
 Next:
 - Review the revised package when the flagged gap is resolved
 Blockers:
@@ -319,7 +320,7 @@ complementary.
 
 ### Importing agents and skills
 
-Use the `bundle-import` skill to bring a single agent (`*.agent.md`) or skill
+Use the `dude-bundle-import` skill to bring a single agent (`*.agent.md`) or skill
 (`<name>/SKILL.md`) into the bundle from an external repository. The skill
 fetches the source, produces a structured **adaptation report** listing every
 adaptation it would apply (frontmatter strips, Anthropic/Claude tool-name
@@ -330,7 +331,7 @@ for explicit per-category confirmation before any write.
 No runtime is installed and no remote state is modified. Python or Bash
 siblings are refused by default; the user must confirm them per file.
 Transitive dependencies are never auto-fetched: each one requires a fresh
-`bundle-import` invocation.
+`dude-bundle-import` invocation.
 
 Use the import verb when the user supplies a URL or names an external repo:
 
@@ -342,6 +343,58 @@ Use the import verb when the user supplies a URL or names an external repo:
 
 Whole-bundle save and deploy stays in the `dude-portability` skill; this
 skill is single-artifact only.
+
+### Upgrading the bundle
+
+Use the `dude-bundle-upgrade` skill to refresh the installed Dude engine from its
+source repo. The skill reads `.github/dudestuff/bundle-manifest.md`, compares
+the portable `.github` payload hashes against upstream, fetches the configured
+upstream ref into an OS temp directory for dry-run/apply, produces an upgrade
+report, and waits for the explicit `confirm upgrade` token before writing.
+
+The simple flow is status, dry-run, upgrade, rollback if needed:
+
+```text
+@dude status
+@dude upgrade --dry-run
+@dude upgrade
+@dude upgrade --rollback
+```
+
+Useful variants:
+
+```text
+@dude upgrade --ref v1.4.0
+@dude upgrade --source https://github.com/<owner>/<repo>
+@dude upgrade --allow-dirty
+```
+
+Only base-owned files listed in the manifest are candidates for replacement.
+Project memory, `.github/skills/project/`, custom agents/skills,
+`.github/copilot-instructions.md`, `brainstorm/`, `specs/`, Beads, and product
+source are preserved. Root files and repository docs are intentionally excluded
+from the upgrade payload. Current installs must already have a seeded manifest;
+legacy manifest reconstruction is intentionally unsupported.
+
+`installed_sha` identifies the last applied upstream source for orientation.
+`@dude status` should report upgrade availability from payload hash differences,
+so a newer upstream commit that changes only repo docs does not force an engine
+upgrade prompt.
+
+`bundle_version` is an informational release stamp in the manifest. Bump it for
+material bundle releases so downstream upgrade reports can show a meaningful
+human-readable version alongside the hash-based payload check.
+
+If a local custom agent or skill path collides with a new upstream base path,
+the upgrade report blocks normal apply instead of overwriting the local file.
+Resolve by renaming the local artifact and rerunning, or explicitly use
+`confirm upgrade skip-collisions` to defer the upstream addition.
+
+Use reserved `dude-local-` paths for project-owned artifacts:
+`.github/agents/dude-local-<slug>.agent.md` and `.github/skills/dude-local-<slug>/`.
+The core bundle manifest is not allowed to claim those names.
+If users bypass Dude and create unprefixed custom agents or skills by hand,
+`dude-lint` warns so they can rename before a future upstream path collision.
 
 ### Reconciliation prompt replies
 
@@ -456,8 +509,8 @@ Common prompt shapes:
 @dude remember: exports must always include the internal audit identifier
 ```
 
-Under the hood Dude follows the [team-expansion](../.github/skills/team-expansion/SKILL.md)
-skill: it infers the role, creates `.github/agents/<name>.agent.md` with scope
+Under the hood Dude follows the [dude-team-expansion](../.github/skills/dude-team-expansion/SKILL.md)
+skill: it infers the role, creates `.github/agents/dude-local-<slug>.agent.md` with scope
 and boundaries, and reports the addition. Routing picks up the new specialist
 on the very next dispatch.
 

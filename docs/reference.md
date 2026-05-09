@@ -4,7 +4,7 @@
 
 ## Feature Definition Workflow
 
-`@spec-lead` keeps intake in `brainstorm/<slug>.md`, then creates a reusable
+`@dude-spec-lead` keeps intake in `brainstorm/<slug>.md`, then creates a reusable
 definition package under `specs/<feature>/` when you define it. Use
 [Workflow modes and lifecycle](workflow.md) for the first-run lane choice, file
 lifecycle, and rerun expectations; this page is the deeper reference.
@@ -12,7 +12,7 @@ lifecycle, and rerun expectations; this page is the deeper reference.
 ```mermaid
 flowchart TD
     A["User idea or PRD"] --> B["brainstorm/<slug>.md"]
-    B --> C["@dude routes to @spec-lead"]
+    B --> C["@dude routes to @dude-spec-lead"]
     C --> D["Define into specs/<feature>/"]
     D --> E["Write spec.md\nWHAT + WHY\n(technology-agnostic)"]
     E --> CL{"Ambiguity?\n(max 3 markers)"}
@@ -69,13 +69,13 @@ specs/
 - Only create supporting artifacts the feature actually needs.
 - A lean package is valid; omit placeholder artifacts for domains that do not
   materially apply.
-- During feature definition, `@spec-lead` is the planning authority for the
+- During feature definition, `@dude-spec-lead` is the planning authority for the
   package.
-- `@lead` may review architecture sanity and implementation structure before
+- `@dude-lead` may review architecture sanity and implementation structure before
   import.
-- `@reviewer` may perform independent readiness review on the definition
+- `@dude-reviewer` may perform independent readiness review on the definition
   package.
-- `@tester` is not part of the definition path by default.
+- `@dude-tester` is not part of the definition path by default.
 
 ### Spec Structure
 
@@ -183,10 +183,10 @@ flowchart TD
     REPORT --> PIPELINE["Coordinator runs delivery pipeline"]
     PIPELINE --> CLOSE["Coordinator calls bd close"]
     FLAG --> ESCALATE{"Blockage type?"}
-    ESCALATE -->|spec-gap| SPECFIX["Route to @spec-lead"]
-    ESCALATE -->|plan-gap| LEADFIX["Route to @lead"]
-    ESCALATE -->|contract-mismatch| CONTRACT["Route to @spec-lead"]
-    ESCALATE -->|test-failure| DEBUG["systematic-debugging"]
+    ESCALATE -->|spec-gap| SPECFIX["Route to @dude-spec-lead"]
+    ESCALATE -->|plan-gap| LEADFIX["Route to @dude-lead"]
+    ESCALATE -->|contract-mismatch| CONTRACT["Route to @dude-spec-lead"]
+    ESCALATE -->|test-failure| DEBUG["dude-systematic-debugging"]
     ESCALATE -->|external| USER["Escalate to user"]
     SPECFIX --> READY
     LEADFIX --> READY
@@ -220,13 +220,13 @@ map.
 ```mermaid
 graph TB
     USER(["You"]) --> DUDE
-    DUDE --> SPEC["@spec-lead\nFeature definition"]
-    DUDE --> LEAD["@lead\nArchitecture direction"]
-    DUDE --> BACKEND["@backend\nServer-side implementation"]
-    DUDE --> FRONTEND["@frontend\nUI implementation"]
-    DUDE --> RELEASE["@release-manager\nTag-driven release versioning and pipeline parity"]
-    DUDE --> TESTER["@tester\nVerification"]
-    DUDE --> REVIEWER["@reviewer\nAcceptance"]
+    DUDE --> SPEC["@dude-spec-lead\nFeature definition"]
+    DUDE --> LEAD["@dude-lead\nArchitecture direction"]
+    DUDE --> BACKEND["@dude-backend\nServer-side implementation"]
+    DUDE --> FRONTEND["@dude-frontend\nUI implementation"]
+    DUDE --> RELEASE["@dude-release-manager\nTag-driven release versioning and pipeline parity"]
+    DUDE --> TESTER["@dude-tester\nVerification"]
+    DUDE --> REVIEWER["@dude-reviewer\nAcceptance"]
     SPEC -.-> DUDE
     LEAD -.-> DUDE
     BACKEND -.-> DUDE
@@ -238,8 +238,8 @@ graph TB
 
 The roster is dynamic: `@dude` updates routing as agents are added or removed,
 so this map reflects the current default bundle but is not fixed. See
-[`team-expansion`](../.github/skills/team-expansion/SKILL.md) and the
-[`generic-routing`](../.github/skills/generic-routing/SKILL.md) Dynamic Roster
+[`dude-team-expansion`](../.github/skills/dude-team-expansion/SKILL.md) and the
+[`dude-generic-routing`](../.github/skills/dude-generic-routing/SKILL.md) Dynamic Roster
 Rule for how routing adapts.
 
 ## Design Constraints

@@ -31,8 +31,8 @@ The minimum useful setup is:
 If you are not sure which artifact is live after any step, run `@dude status`.
 In Definition Only it points you back to the current brainstorm file or
 generated package; in Lightweight Execution it points to `tasks.md` and the
-generated board view there; after
-tracked execution starts, it also reports Beads state.
+generated board view there; after tracked execution starts, it also reports
+Beads state.
 
 ### Editing rule of thumb
 
@@ -59,40 +59,9 @@ your approval before planning continues. Add decisions, context, and lessons
 incrementally as they emerge.
 
 Depending on current project guardrails, `@dude define` either completes the
-package immediately or pauses briefly for this approval step before planning
-continues.
-
-For example, after `@dude define authentication`, Dude might pause with
-something like:
-
-```text
-Action: define
-Updated:
-- specs/001-authentication/spec.md created or refreshed
-- Candidate guardrails inferred from the repo, current feature, and remembered context
-Next:
-- Accept, edit, reject, or skip the proposed guardrails
-- Planning will continue after guardrails are ratified
-Blockers:
-- `plan.md` and later definition artifacts are paused until guardrails are ratified or bundle defaults are accepted
-
-Proposed guardrails:
-1. Public APIs stay backward compatible for one release.
-    Why: this feature is likely to expose externally consumed auth endpoints.
-2. Authentication and admin actions must emit audit events retained for 90 days.
-    Why: the project already records audit retention as remembered context.
-3. Secrets, reset tokens, and passwords must never appear in logs.
-    Why: the feature handles sensitive authentication data.
-
-Reply with:
-- accept 1,2,3
-- edit 2: Authentication and admin actions must emit audit events retained for 180 days.
-- reject 1
-- skip
-```
-
-If you reply in the same conversation, Dude can continue the paused definition
-immediately. If you return later, rerun `@dude define <feature>` to resume.
+package immediately or pauses briefly to ask whether inferred rules should be
+accepted. This is normal. Reply `accept`, `edit`, `reject`, or `skip`; rerun
+`@dude define <feature>` later if you leave and come back.
 
 ### Guardrails explained
 
@@ -136,8 +105,8 @@ prune agents that do not fit your project:
 @dude remove the frontend agent, this is a backend-only project
 ```
 
-Dude will delete the `.github/agents/frontend.agent.md` file and update its
-routing automatically. The Dynamic Roster Rule in `generic-routing` adapts based
+Dude will delete the `.github/agents/dude-frontend.agent.md` file and update its
+routing automatically. The Dynamic Roster Rule in `dude-generic-routing` adapts based
 on whichever agents remain.
 
 ### Solo developer path
@@ -152,7 +121,7 @@ feature or remove roles you do not want after the first successful
 ```
 
 The current delivery pipeline already adapts when those roles are absent. Dude
-still uses `verification-before-completion` before close, but it does not
+still uses `dude-verification-before-completion` before close, but it does not
 require a separate solo-only workflow or command surface.
 
 If you are only using Dude Coder for feature definition, you can stop at the
@@ -163,24 +132,27 @@ tracked execution and import tasks.
 
 Dude Coder includes explicit operational skills for common failure modes:
 
-- `systematic-debugging` — investigate root cause before changing code
-- `test-driven-development` — optional tests-first implementation aid
-- `verification-before-completion` — require fresh evidence before saying
+- `dude-systematic-debugging` — investigate root cause before changing code
+- `dude-test-driven-development` — optional tests-first implementation aid
+- `dude-verification-before-completion` — require fresh evidence before saying
   something is done or fixed
-- `receiving-code-review` — handle review feedback technically instead of
+- `dude-receiving-code-review` — handle review feedback technically instead of
   reflexively
 - `dude-lint` — dependency-free static validator for the bundle itself
   (PowerShell + Bash parity scripts). Other skills load it as their final
   verification step after writing brainstorm, definition, agent, skill,
   memory, or task files. See [Validating bundle hygiene](commands.md#validating-bundle-hygiene)
   for direct invocation.
-- `bundle-import` — import a single agent or skill from an external
+- `dude-bundle-import` — import a single agent or skill from an external
   repository with an explicit adaptation report and per-category confirmation
   before any write. See [Importing agents and skills](commands.md#importing-agents-and-skills).
+- `dude-bundle-upgrade` — refresh the installed Dude bundle from upstream using a
+  seeded manifest, dry-run report, explicit `confirm upgrade` gate, safety tag,
+  and rollback path. See [Upgrading the bundle](commands.md#upgrading-the-bundle).
 
 These skills strengthen execution discipline without changing the main workflow.
 
-`test-driven-development` is available when the user or project wants
+`dude-test-driven-development` is available when the user or project wants
 tests-first work. There is no global TDD requirement.
 
 ## Workflow Boundaries

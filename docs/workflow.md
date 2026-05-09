@@ -2,79 +2,56 @@
 
 [Back to root README](../README.md) | [Docs index](README.md) | [Commands](commands.md)
 
-## Core Model
+## Simple Model
 
-| Part                                  | Owns                                                                           | Notes                                                                            |
-| ------------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| **@dude**                             | routing, decomposition, handoff, memory, team management                       | top-level coordinator                                                            |
-| **@spec-lead**                        | `brainstorm/<slug>.md`, `spec.md`, `plan.md`, supporting artifacts, `tasks.md` | Dude-driven intake, feature definition, and planning authority during definition |
-| **@lead**                             | architecture sanity, implementation structure, execution tradeoffs             | planning authority after Beads import                                            |
-| **Specialists**                       | implementation, verification, review                                           | work from Beads once imported                                                    |
-| **`specs/<feature>/tasks.md`**        | lightweight execution state                                                    | live markdown execution board before Beads import                                |
-| **Beads**                             | tracked execution state                                                        | single live task board after `@dude track`                                       |
-| **`.github/dudestuff/guardrails.md`** | guardrails                                                                     | durable project rules that steer planning and execution                          |
+Dude always starts the same way: turn one idea into one defined package.
+
+After `@dude define`, choose one of three paths:
+
+| Path | Use it when | Live place |
+|---|---|---|
+| Definition Only | You only need the plan | `specs/<feature>/` |
+| Lightweight Execution | You want to implement without an issue tracker | `specs/<feature>/tasks.md` |
+| Tracked Execution | You want Beads issue tracking | Beads |
 
 ```mermaid
 graph LR
-    USER["User request"] --> DUDE["@dude\nCoordinator"]
-    DUDE --> BRAIN["brainstorm/<slug>.md\nIntake ledger"]
-    BRAIN --> SPEC["@spec-lead\nDefine feature"]
-    SPEC --> ARTIFACTS["specs/<feature>/\nspec.md + plan.md + tasks.md"]
-  ARTIFACTS --> LIGHT["specs/<feature>/tasks.md\nMarkdown execution board"]
-    DUDE --> IMPORT["@dude track\nAutomatic handoff"]
-    ARTIFACTS --> IMPORT
-    IMPORT --> BEADS["Beads\nSingle execution board"]
-    BEADS --> TEAM["@lead / @backend / @frontend / @tester / @reviewer"]
-    TEAM --> DUDE
-    DUDE --> MEMORY["dudestuff\nguardrails, decisions, context, lessons"]
+    IDEA["Idea"] --> DRAFT["@dude draft"]
+    DRAFT --> BRAIN["brainstorm/<feature>.md"]
+    BRAIN --> DEFINE["@dude define"]
+    DEFINE --> PACKAGE["specs/<feature>/"]
+    PACKAGE --> STOP["Definition Only"]
+    PACKAGE --> TASKS["tasks.md"]
+    TASKS --> DONE["Feature done"]
+    PACKAGE --> TRACK_NOW["@dude track now"]
+    TASKS --> TRACK_LATER["@dude track later"]
+    TRACK_NOW --> BEADS["Beads board"]
+    TRACK_LATER --> BEADS
+    BEADS --> DONE
 ```
-
-## Recommended Workflow
-
-Dude Coder supports three normal user-facing lanes: Definition Only,
-Lightweight Execution, and Tracked Execution. Start with Definition Only unless
-you already know you want implementation immediately. If you want implementation
-and do not explicitly ask for Beads, start with Lightweight Execution. If you
-are working solo, the same three lanes still apply.
-
-### Stages At A Glance
-
-There is one definition stage and then either you stop or you implement. If
-you implement, you pick a tracker.
-
-```mermaid
-flowchart TD
-  S1["Stage 1: Definition
-  @dude draft → edit brainstorm → @dude define"]
-  S1 --> Q{Implement?}
-  Q -->|No| S2A["Definition Only
-  specs/<feature>/ is the deliverable"]
-  Q -->|Yes| S2B["Stage 2: Implementation"]
-  S2B --> L{Tracker?}
-  L -->|Markdown board| LW["Lightweight Execution
-  live board: tasks.md"]
-  L -->|Beads| TR["Tracked Execution
-  live board: Beads"]
-  LW -.->|"@dude track later"| TR
-```
-
-| Stage                    | What happens                                                              | Live artifact                | How to enter                  |
-| ------------------------ | ------------------------------------------------------------------------- | ---------------------------- | ----------------------------- |
-| Stage 1: Definition      | Draft a brainstorm, then generate `specs/<feature>/` (spec, plan, tasks). | `brainstorm/<slug>.md` then `specs/<feature>/` | `@dude draft` then `@dude define` |
-| Definition Only          | Stop after Stage 1. Keep the definition package as a reusable artifact.   | `specs/<feature>/` (frozen)  | Choose "just define" up front, or simply stop after `@dude define` |
-| Lightweight Execution    | Implement directly from `tasks.md` as a markdown board. No external tracker. | `specs/<feature>/tasks.md`   | Continue from `tasks.md` after `@dude define` |
-| Tracked Execution        | Import tasks into Beads. Beads becomes the live board.                    | Beads issues                 | `@dude track` (now or later from Lightweight) |
 
 Key rules:
 
-- Stage 1 is always required. You cannot implement without first defining.
-- Definition Only and Implementation are mutually exclusive for a given pass,
-  but Lightweight → Tracked is a one-way upgrade you can take at any time.
-- Once `@dude track` runs, Beads is the only live board and `tasks.md` becomes
-  reference-only.
-- `@dude status` is read-only and works in any stage.
-- During `@dude define`, expect a guardrail pause if new project guardrails are
-  inferred. Reply `accept`, `edit`, `reject`, or `skip` to continue.
+- `@dude draft` creates or refreshes the brainstorm.
+- `@dude define` creates or refreshes the package.
+- Beads is an optional tracker, not the final destination.
+- Lightweight Execution can finish the feature without Beads.
+- `tasks.md` is live only before Beads.
+- Once `@dude track` runs, Beads is live and `tasks.md` is reference only.
+- `@dude status` is always read-only.
+
+## Who Owns What
+
+| Part | Owns | Plain-English version |
+|---|---|---|
+| **@dude** | routing, handoff, memory, team management | the coordinator |
+| **@dude-spec-lead** | brainstorm and definition package | what to build |
+| **@dude-lead** | architecture and execution tradeoffs | how to build after Beads import |
+| **Specialists** | implementation, verification, review | the actual work |
+| **`.github/dudestuff/guardrails.md`** | durable project rules | rules Dude should keep respecting |
+
+During `@dude define`, Dude may pause if it finds new project guardrails that
+need your approval. Reply `accept`, `edit`, `reject`, or `skip` to continue.
 
 When execution finds a broken assumption or missing definition, use
 `@dude flag ...` to route the problem back to the right owner. `@dude status` is
@@ -96,19 +73,19 @@ stay consistent.
 
 ### Ownership and escalation
 
-- During definition, `@spec-lead` owns what to build.
+- During definition, `@dude-spec-lead` owns what to build.
 - In Lightweight Execution, `specs/<feature>/tasks.md` is the live markdown
   execution board and implementation specialists work from it under Dude's
   coordination. Dude owns canonical task-state updates (`[~]`, `[!]`, `[x]`)
   after routed outcomes and verification.
-- After `@dude track`, `@lead` owns how to build it and implementation
+- After `@dude track`, `@dude-lead` owns how to build it and implementation
   specialists own domain work inside their scope.
 - After import, `spec.md`, `plan.md`, and `tasks.md` remain reference artifacts;
   Beads becomes the live execution board.
 - If execution uncovers a real definition problem, use `@dude flag ...` instead
   of patching spec artifacts silently. Typed blockage prefixes are preferred,
   but plain-language flagging is valid when the blocker is obvious.
-- `@reviewer` owns independent readiness judgment when that role is present.
+- `@dude-reviewer` owns independent readiness judgment when that role is present.
 - Only `@dude` closes Beads work, after implementation evidence and any required
   verification or review.
 

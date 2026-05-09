@@ -15,7 +15,7 @@ or run `@dude track` if you want Tracked Execution.
 
 1. Write or collect your PRD draft in markdown.
 2. Ask `@dude` to draft that input.
-3. Let `@spec-lead` normalize it inside `brainstorm/<slug>.md`.
+3. Let `@dude-spec-lead` normalize it inside `brainstorm/<slug>.md`.
 4. Resolve clarification questions in the same brainstorm file.
 5. Define the brainstorm into the normal package.
 6. If you want implementation without Beads, continue from `tasks.md`, starting with the generated board view when present.
@@ -25,12 +25,12 @@ or run `@dude track` if you want Tracked Execution.
 flowchart LR
     PRD["PRD draft\nMarkdown document"] --> DUDE["@dude"]
     DUDE --> BRAIN["brainstorm/<slug>.md\nworking ledger"]
-    BRAIN --> SPEC["@spec-lead\nnormalizes draft"]
+    BRAIN --> SPEC["@dude-spec-lead\nnormalizes draft"]
     SPEC --> CLARIFY{"Material ambiguity?"}
     CLARIFY -->|Yes| Q["Ask focused clarifications"]
     Q --> BRAIN
     CLARIFY -->|No| PACKAGE["Define into specs/<feature>/\nspec.md + plan.md + tasks.md"]
-    PACKAGE --> REVIEW["Optional review\n@lead or @reviewer"]
+    PACKAGE --> REVIEW["Optional review\n@dude-lead or @dude-reviewer"]
     REVIEW --> EXECMODE{"Execution lane?"}
     EXECMODE -->|Definition Only| STOP["Stop at reusable package"]
     EXECMODE -->|Lightweight Execution| LIGHT["Execute from tasks.md\nvia @dude"]

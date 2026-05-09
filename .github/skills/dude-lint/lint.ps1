@@ -97,6 +97,18 @@ function Get-Frontmatter($lines) {
     return $fm
 }
 
+function Normalize-FrontmatterScalar($value) {
+    $text = ([string]$value).Trim()
+    if ($text.Length -ge 2) {
+        $first = $text[0]
+        $last = $text[$text.Length - 1]
+        if (($first -eq '"' -and $last -eq '"') -or ($first -eq "'" -and $last -eq "'")) {
+            return $text.Substring(1, $text.Length - 2)
+        }
+    }
+    return $text
+}
+
 Write-Info "Scanning .github + brainstorm + specs under $Root"
 
 # --- Check 1: brainstorm files ----------------------------------------------
@@ -273,6 +285,226 @@ if (Test-Path -LiteralPath $memDir) {
     }
 }
 
+# --- Check 3a: skill frontmatter names --------------------------------------
+$skillsRootForNames = Join-Path $Root ".github/skills"
+if (Test-Path -LiteralPath $skillsRootForNames) {
+    foreach ($dir in (Get-ChildItem -LiteralPath $skillsRootForNames -Directory -ErrorAction SilentlyContinue)) {
+        $skillFile = Join-Path $dir.FullName "SKILL.md"
+        if (-not (Test-Path -LiteralPath $skillFile)) {
+            Write-Fail "$(Get-RelativePath $dir.FullName)  missing SKILL.md"
+            continue
+        }
+
+        $rel = Get-RelativePath $skillFile
+        $lines = Get-Content -LiteralPath $skillFile -Encoding UTF8
+        $fm = Get-Frontmatter $lines
+        if ($null -eq $fm) {
+            Write-Fail "$rel  missing or malformed YAML frontmatter"
+            continue
+        }
+
+        if (-not $fm.ContainsKey('name')) {
+            Write-Fail "$rel  frontmatter is missing 'name:'"
+            continue
+        }
+
+        $name = Normalize-FrontmatterScalar $fm['name']
+        if ($name -ne $dir.Name) {
+            Write-Fail "$rel  frontmatter name '$name' must match directory '$($dir.Name)'"
+        }
+    }
+}
+
+# --- Check 3b: bundle manifest ---------------------------------------------
+$manifestPath = Join-Path $Root ".github/dudestuff/bundle-manifest.md"
+if (-not (Test-Path -LiteralPath $manifestPath)) {
+    Write-Fail ".github/dudestuff/bundle-manifest.md  missing seeded bundle manifest"
+}
+else {
+    $manifestRel = Get-RelativePath $manifestPath
+    $manifestRaw = Get-Content -LiteralPath $manifestPath -Encoding UTF8 -Raw
+    $manifestMatch = [regex]::Match($manifestRaw, '(?s)```json\s*(\{.*?\})\s*```')
+    if (-not $manifestMatch.Success) {
+        Write-Fail "$manifestRel  missing fenced JSON manifest block"
+    }
+    else {
+        try {
+            $manifest = $manifestMatch.Groups[1].Value | ConvertFrom-Json
+            foreach ($field in @('source_repo', 'source_ref', 'installed_sha', 'installed_at', 'files')) {
+                if (-not ($manifest.PSObject.Properties.Name -contains $field)) {
+                    Write-Fail "$manifestRel  manifest is missing '$field'"
+                }
+            }
+
+            $installedSha = [string]$manifest.installed_sha
+            if ($installedSha -notmatch '^[0-9a-f]{40}$') {
+                Write-Fail "$manifestRel  installed_sha must be a 40-character lowercase git sha"
+            }
+
+            $fileEntries = @()
+            if ($null -ne $manifest.files) {
+                $fileEntries = @($manifest.files.PSObject.Properties)
+            }
+            if ($fileEntries.Count -eq 0) {
+                Write-Fail "$manifestRel  files map must be seeded and non-empty"
+            }
+
+            $overrideByPath = @{}
+            $overrideEntries = @()
+            if (($manifest.PSObject.Properties.Name -contains 'local_overrides') -and $null -ne $manifest.local_overrides) {
+                $overrideEntries = @($manifest.local_overrides.PSObject.Properties)
+                foreach ($override in $overrideEntries) {
+                    $overrideByPath[[string]$override.Name] = $override.Value
+                }
+            }
+
+            $expectedHashes = @{}
+            $actualHashes = @{}
+
+            foreach ($entry in $fileEntries) {
+                $path = [string]$entry.Name
+                $expectedHash = [string]$entry.Value
+                if ([string]::IsNullOrWhiteSpace($path) -or $path -match '\\' -or $path -match '^/' -or $path -match '(^|/)\.\.(/|$)') {
+                    Write-Fail "$manifestRel  invalid manifest path '$path'"
+                    continue
+                }
+                $isReservedLocalPath = (
+                    $path -match '^\.github/agents/dude-local-[^/]+\.agent\.md$' -or
+                    $path -match '^\.github/skills/dude-local-[^/]+/.+$'
+                )
+                if ($isReservedLocalPath) {
+                    Write-Fail "$manifestRel  manifest path '$path' uses the reserved project-local namespace"
+                    continue
+                }
+                $isCorePath = (
+                    $path -eq '.github/agents/dude.agent.md' -or
+                    $path -match '^\.github/agents/dude-[^/]+\.agent\.md$' -or
+                    $path -match '^\.github/skills/dude-[^/]+/.+$' -or
+                    $path -eq '.github/instructions/dude.instructions.md'
+                )
+                if (-not $isCorePath) {
+                    Write-Fail "$manifestRel  manifest path '$path' is outside the dude- core namespace"
+                    continue
+                }
+                if ($expectedHash -notmatch '^[0-9a-f]{64}$') {
+                    Write-Fail "$manifestRel  invalid SHA-256 for '$path'"
+                    continue
+                }
+                $expectedHashes[$path] = $expectedHash
+                $resolvedPath = Join-Path $Root ($path -replace '/', [IO.Path]::DirectorySeparatorChar)
+                if (-not (Test-Path -LiteralPath $resolvedPath)) {
+                    Write-Fail "$manifestRel  manifest file '$path' does not exist"
+                    continue
+                }
+                if ((Get-Item -LiteralPath $resolvedPath).PSIsContainer) {
+                    Write-Fail "$manifestRel  manifest path '$path' resolves to a directory"
+                    continue
+                }
+                $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $resolvedPath).Hash.ToLowerInvariant()
+                $actualHashes[$path] = $actualHash
+                if ($actualHash -ne $expectedHash) {
+                    $hasAcceptedOverride = $false
+                    if ($overrideByPath.ContainsKey($path)) {
+                        $overrideValue = $overrideByPath[$path]
+                        $overrideBaseHash = [string]$overrideValue.base_sha256
+                        $overrideCurrentHash = [string]$overrideValue.current_sha256
+                        if ($overrideBaseHash -eq $expectedHash -and $overrideCurrentHash -eq $actualHash) {
+                            $hasAcceptedOverride = $true
+                        }
+                    }
+                    if (-not $hasAcceptedOverride) {
+                        Write-Fail "$manifestRel  manifest hash mismatch for '$path'"
+                    }
+                }
+            }
+
+            foreach ($override in $overrideEntries) {
+                $path = [string]$override.Name
+                $overrideValue = $override.Value
+                if ([string]::IsNullOrWhiteSpace($path) -or $path -match '\\' -or $path -match '^/' -or $path -match '(^|/)\.\.(/|$)') {
+                    Write-Fail "$manifestRel  invalid local override path '$path'"
+                    continue
+                }
+                if (-not $expectedHashes.ContainsKey($path)) {
+                    Write-Fail "$manifestRel  local override '$path' is not listed in files"
+                    continue
+                }
+                foreach ($field in @('base_sha256', 'current_sha256', 'reason', 'accepted_at')) {
+                    if (-not ($overrideValue.PSObject.Properties.Name -contains $field)) {
+                        Write-Fail "$manifestRel  local override '$path' is missing '$field'"
+                    }
+                }
+                $baseHash = [string]$overrideValue.base_sha256
+                $currentHash = [string]$overrideValue.current_sha256
+                if ($baseHash -notmatch '^[0-9a-f]{64}$') {
+                    Write-Fail "$manifestRel  local override '$path' has invalid base_sha256"
+                    continue
+                }
+                if ($currentHash -notmatch '^[0-9a-f]{64}$') {
+                    Write-Fail "$manifestRel  local override '$path' has invalid current_sha256"
+                    continue
+                }
+                if ($baseHash -ne $expectedHashes[$path]) {
+                    Write-Fail "$manifestRel  local override '$path' base_sha256 does not match files entry"
+                    continue
+                }
+                if ($actualHashes.ContainsKey($path) -and $currentHash -ne $actualHashes[$path]) {
+                    Write-Fail "$manifestRel  local override '$path' current_sha256 does not match the current file"
+                    continue
+                }
+                if ($currentHash -ne $baseHash) {
+                    Write-Warn "$manifestRel  accepted local override for '$path' (hash differs from base)"
+                }
+            }
+        }
+        catch {
+            Write-Fail "$manifestRel  manifest JSON failed to parse: $($_.Exception.Message)"
+        }
+    }
+}
+
+# --- Check 3b: project-local namespace advisories ---------------------------
+# Collect manifest paths (best effort) so unprefixed on-disk artifacts that are
+# already core-owned do not double-warn. Errors here are advisory only.
+$manifestPaths = @{}
+if (Test-Path -LiteralPath $manifestPath) {
+    try {
+        $mraw = Get-Content -LiteralPath $manifestPath -Encoding UTF8 -Raw
+        $mm = [regex]::Match($mraw, '(?s)```json\s*(\{.*?\})\s*```')
+        if ($mm.Success) {
+            $mj = $mm.Groups[1].Value | ConvertFrom-Json
+            if ($null -ne $mj.files) {
+                foreach ($p in $mj.files.PSObject.Properties.Name) { $manifestPaths[$p] = $true }
+            }
+        }
+    } catch {}
+}
+
+$agentDirAdv = Join-Path $Root ".github/agents"
+if (Test-Path -LiteralPath $agentDirAdv) {
+    foreach ($a in (Get-ChildItem -LiteralPath $agentDirAdv -Filter *.agent.md -File -ErrorAction SilentlyContinue)) {
+        $rel = (Get-RelativePath $a.FullName) -replace '\\', '/'
+        if ($manifestPaths.ContainsKey($rel)) { continue }
+        if ($a.Name -eq 'dude.agent.md') { continue }
+        if ($a.Name -like 'dude-local-*') { continue }
+        Write-Warn "$rel  unreserved project-owned agent (rename to .github/agents/dude-local-<slug>.agent.md to avoid future upstream collisions)"
+    }
+}
+
+$skillDirAdv = Join-Path $Root ".github/skills"
+if (Test-Path -LiteralPath $skillDirAdv) {
+    foreach ($d in (Get-ChildItem -LiteralPath $skillDirAdv -Directory -ErrorAction SilentlyContinue)) {
+        $name = $d.Name
+        if ($name -eq 'project') { continue }
+        if ($name -like 'dude-local-*') { continue }
+        $relDir = ".github/skills/$name/"
+        $hasManifestEntry = $false
+        foreach ($k in $manifestPaths.Keys) { if ($k.StartsWith($relDir)) { $hasManifestEntry = $true; break } }
+        if ($hasManifestEntry) { continue }
+        Write-Warn "$relDir  unreserved project-owned skill (rename to .github/skills/dude-local-<slug>/ to avoid future upstream collisions)"
+    }
+}
+
 # --- Check 4: roster orphans ------------------------------------------------
 $agentDir = Join-Path $Root ".github/agents"
 $validRoles = New-Object System.Collections.Generic.HashSet[string]
@@ -296,10 +528,17 @@ if (Test-Path -LiteralPath $githubDir) {
         $content = Get-Content -LiteralPath $file.FullName -Encoding UTF8 -Raw
         # Strip fenced code blocks to reduce noise.
         $stripped = [regex]::Replace($content, '(?s)```.*?```', '')
+        # Strip documentation placeholders like `<slug>` and the optional `-`
+        # immediately preceding them (e.g. `@dude-local-<slug>`).
+        $stripped = [regex]::Replace($stripped, '-?<[a-zA-Z][a-zA-Z0-9_-]*>', '')
         # The negative lookbehind prevents durable task suffixes like
         # T001@a1b2c3d4 from being collected as role references.
         foreach ($m in [regex]::Matches($stripped, '(?<![A-Za-z0-9_])@([a-z][a-z0-9-]+)\b')) {
             $role = $m.Groups[1].Value.ToLower()
+            # Documentation placeholders such as @dude-local-<slug> collapse to
+            # @dude-local after placeholder stripping; real dude-local handles
+            # must still resolve to agent files.
+            if ($role -eq 'dude-local') { continue }
             if (-not $validRoles.Contains($role)) {
                 if (-not $referenced.ContainsKey($role)) { $referenced[$role] = @() }
                 $referenced[$role] += (Get-RelativePath $file.FullName)
@@ -320,7 +559,7 @@ if (Test-Path -LiteralPath $githubDir) {
 if (Test-Path -LiteralPath $agentDir) {
     $agents = Get-ChildItem -LiteralPath $agentDir -Filter *.agent.md -File -ErrorAction SilentlyContinue
     foreach ($a in $agents) {
-        if ($a.Name -in @('dude.agent.md', 'spec-lead.agent.md')) { continue }
+        if ($a.Name -in @('dude.agent.md', 'dude-spec-lead.agent.md')) { continue }
         $rel = Get-RelativePath $a.FullName
         $content = Get-Content -LiteralPath $a.FullName -Encoding UTF8 -Raw
         if ($content -notmatch '\*\*Coordinator-only artifacts:\*\*') {
@@ -350,8 +589,16 @@ if (Test-Path -LiteralPath $githubDir) {
         # Strip fenced code blocks; example/illustrative paths inside fences
         # often reference hypothetical skills.
         $stripped = [regex]::Replace($content, '(?s)```.*?```', '')
+        # Strip documentation placeholders like `<slug>` and the optional `-`
+        # preceding them so paths like `.github/skills/dude-local-<slug>/` do
+        # not get treated as orphan references.
+        $stripped = [regex]::Replace($stripped, '-?<[a-zA-Z][a-zA-Z0-9_-]*>', '')
         foreach ($m in [regex]::Matches($stripped, '\.github/skills/([a-z][a-z0-9-]+)(?:/|\b)')) {
             $name = $m.Groups[1].Value.ToLower()
+            # Documentation placeholders such as .github/skills/dude-local-<slug>/
+            # collapse to dude-local after placeholder stripping; real
+            # dude-local skill paths must still resolve to skill directories.
+            if ($name -eq 'dude-local') { continue }
             if (-not $validSkills.Contains($name)) {
                 if (-not $skillRefs.ContainsKey($name)) { $skillRefs[$name] = @() }
                 $skillRefs[$name] += (Get-RelativePath $file.FullName)

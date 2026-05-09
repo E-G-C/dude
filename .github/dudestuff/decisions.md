@@ -26,7 +26,7 @@ Durable project and process decisions that Dude should preserve.
 
 ### Guardrails
 
-- Project-wide guardrails live in `.github/dudestuff/guardrails.md`. When only bundle defaults exist, `@spec-lead` may infer minimal candidate guardrails from repo and definition context (kept minimal for clearly solo or exploratory repos); the user may `skip` to continue with bundle defaults only. If inference yields no new project-specific guardrails, definition continues without a separate guardrail pause.
+- Project-wide guardrails live in `.github/dudestuff/guardrails.md`. When only bundle defaults exist, `@dude-spec-lead` may infer minimal candidate guardrails from repo and definition context (kept minimal for clearly solo or exploratory repos); the user may `skip` to continue with bundle defaults only. If inference yields no new project-specific guardrails, definition continues without a separate guardrail pause.
 
 ### Optional Disciplines
 
@@ -34,12 +34,12 @@ Durable project and process decisions that Dude should preserve.
 
 ### Verbs And Blockage
 
-- Workflow verbs: `draft`, `define`, `track`, `flag`, `status`, `diff`, and `self-check` are primary. `hire`, `remember`, `remove`, `import`, and explicit manual import remain available as coordinator-maintenance verbs. `import` covers single-artifact pulls (one agent or one skill at a time) via the `bundle-import` skill; whole-bundle save/deploy stays in `dude-portability`. `@dude status` is read-only across all lanes; Beads details appear only when tracked execution has started.
+- Workflow verbs: `draft`, `define`, `track`, `flag`, `status`, `diff`, and `self-check` are primary. `hire`, `remember`, `remove`, `import`, and explicit manual import remain available as coordinator-maintenance verbs. `import` covers single-artifact pulls (one agent or one skill at a time) via the `dude-bundle-import` skill; whole-bundle save/deploy stays in `dude-portability`. `@dude status` is read-only across all lanes; Beads details appear only when tracked execution has started.
 - Blockage classification: typed prefixes are preferred (`spec-gap`, `plan-gap`, `contract-mismatch`, `test-failure`, `external-dependency`); plain-language blocker reports are accepted when the intended type is clear.
 
 ### Identity And Reconciliation
 
-- Canonical feature identity is shared across definition and execution: brainstorm `spec_path` must match the Beads issue description `spec:` prefix (see `spec-import-to-beads` `## Canonical Feature Identity`). If `spec_path` changes after import — or after Lightweight Execution has already recorded checked task history — reconcile first; prefer durable task keys, then fall back to task ID, story label, and core intent. If still ambiguous, pause `@dude track`, report surviving versus changed or ambiguous completions, and ask the user to confirm which checkmarks survive.
+- Canonical feature identity is shared across definition and execution: brainstorm `spec_path` must match the Beads issue description `spec:` prefix (see `dude-spec-import-to-beads` `## Canonical Feature Identity`). If `spec_path` changes after import — or after Lightweight Execution has already recorded checked task history — reconcile first; prefer durable task keys, then fall back to task ID, story label, and core intent. If still ambiguous, pause `@dude track`, report surviving versus changed or ambiguous completions, and ask the user to confirm which checkmarks survive.
 
 ### Release
 

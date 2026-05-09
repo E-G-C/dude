@@ -2,28 +2,21 @@
 
 [Back to root README](../README.md)
 
-Use the root README for the short explanation and the default no-Beads quick
-start. Use these pages when you want the deeper workflow and reference details.
+Start with the root README. It has the simple path and the first-feature quick
+start. Use these pages only when you need setup details, a command reference,
+or advanced behavior.
 
-## Start Here
+## If You Are New
 
-Read in order on a new bundle install:
+Read only what you need:
 
-1. [Setup and first feature](setup.md) — bundle contents, prerequisites,
-   first-session onboarding, guardrails, solo path, and workflow boundaries.
-2. [Workflow modes and lifecycle](workflow.md) — Definition Only, Lightweight
-   Execution, Tracked Execution, file lifecycle, ownership, manual import, and
-   migration behavior.
-3. [Commands and prompt shapes](commands.md) — command reference for `draft`,
-   `define`, `status`, `track`, `flag`, `diff`, `self-check`, plus prompt
-   cookbook examples and bundle-hygiene validation.
+- [Setup and first feature](setup.md) — copy the bundle, start your first feature, and handle guardrails.
+- [Workflow modes and lifecycle](workflow.md) — understand the three choices after `@dude define`: stop, use `tasks.md`, or move to Beads.
+- [Commands and prompt shapes](commands.md) — look up exact commands and example prompts.
 
-## Then Explore As Needed
+## Advanced Topics
 
-- [Starting from a PRD draft](prd-drafts.md) — how to turn an existing PRD into
-  a brainstorm, package, and optional execution flow.
-- [Detailed walkthrough](walkthrough.md) — guided end-to-end example using the
-  built-in authentication sample.
-- [Definition and execution reference](reference.md) — deeper reference for the
-  feature-definition package, execution flow, responsibility map, and design
-  constraints.
+- [Starting from a PRD draft](prd-drafts.md) — turn a longer markdown PRD into Dude files.
+- [Detailed walkthrough](walkthrough.md) — end-to-end example using the built-in authentication sample.
+- [Definition and execution reference](reference.md) — deeper ownership, task, and quality rules.
+- [Upgrading the Dude bundle](upgrading.md) — update Dude itself while preserving project memory and active work.

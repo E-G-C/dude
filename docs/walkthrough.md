@@ -205,7 +205,7 @@ Action: flag
 Classified as: spec-gap
 Updated:
 - Blockage recorded as spec-gap
-- Routed to @spec-lead for definition updates
+- Routed to @dude-spec-lead for definition updates
 Next:
 - Keep the current task unchecked until the blocker is resolved
 ```

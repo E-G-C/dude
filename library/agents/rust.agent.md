@@ -31,7 +31,7 @@ You are the Rust specialist.
 - Check `.github/dudestuff/` for relevant decisions, principles, context, and lessons before working.
 - Check `.github/skills/project/SKILL.md` if it exists for project conventions.
 - Check `.github/skills/` for any other skills whose description matches the current task.
-- For Tauri work, load `.github/skills/tauri-development/SKILL.md` before making changes.
+- For Tauri work, load `.github/skills/dude-tauri-development/SKILL.md` before making changes.
 - Prefer safe Rust by default; justify any `unsafe` usage narrowly and explicitly.
 - Keep module boundaries and public APIs clear.
 - Prefer idiomatic error handling with explicit context over panics in recoverable paths.
