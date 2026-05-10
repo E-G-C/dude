@@ -82,7 +82,7 @@ Exit code is `0` if no failures, `1` if any check produced a `[FAIL]`. Warnings 
    - Fail when a manifest path is absolute, uses backslashes, traverses upward, points to a directory, or does not exist.
    - Fail when a manifest path is outside the upgradeable `.github` core (`.github/agents/*.agent.md`, shipped `.github/skills/*/**` except `.github/skills/project/**`, and `.github/instructions/dude.instructions.md`).
    - Fail when a manifest path uses the reserved project-local namespace (`.github/agents/dude-local-*.agent.md` or `.github/skills/dude-local-*/**`).
-   - Fail when any manifest SHA-256 is malformed or does not match the current on-disk file.
+   - Fail when any manifest SHA-256 is malformed or does not match the current on-disk file. The mismatch may be a local edit or a stale manifest; run `@dude upgrade --dry-run` to classify it, then use the normal `confirm upgrade` flow if the report shows Metadata refresh.
    - Allow a hash mismatch only when `local_overrides[path]` exists, `base_sha256` matches `files[path]`, `current_sha256` matches the current on-disk file, and `reason` plus `accepted_at` are present; accepted local overrides emit `[WARN]`.
    - Fail when a `local_overrides` path is malformed, missing from `files`, has malformed hashes, or no longer matches the current file.
 

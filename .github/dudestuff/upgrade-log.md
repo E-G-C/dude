@@ -12,9 +12,10 @@ Append-only history of `@dude upgrade` events, conflict resolutions, and rollbac
 - replaced: N
 - added:    N
 - removed:  N
+- metadata_refreshed: N
 - conflicts: N (resolved: <keep-mine=a, take-new=b, merged=c, deferred=d>)
 - preserved: <count> project files
-- safety tag: dude-pre-upgrade-<ts>
+- safety tag: dude-pre-upgrade-<ts>|skipped
 - lint: [OK|FAIL]
 - notes: <free-form>
 ```

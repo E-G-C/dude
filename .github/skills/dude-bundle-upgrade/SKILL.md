@@ -43,6 +43,7 @@ Every file under the project is placed into exactly one bucket. The bucket deter
 | **Project-owned** (preserve) | `.github/dudestuff/**` except the two upgrade-owned files, `.github/skills/project/**`, any `*.agent.md` or skill not in the manifest, `.github/copilot-instructions.md` | Never overwritten. |
 | **Repo-local files and work state** (preserve) | `README.md`, `docs/**`, `.gitattributes`, `brainstorm/**`, `specs/**`, Beads database, product source, any path outside `.github/` | Never touched or brought in by upgrade. |
 | **Path collision** (blocking) | a file or directory exists locally, is absent from the local manifest, but appears in the upstream manifest at the same path | Preserve local file and stop before apply unless the user explicitly skips the upstream addition or resolves the collision. |
+| **Metadata refresh** | base-owned file whose current local bytes match the fetched upstream bytes, but whose manifest hash is stale | Refresh the manifest hash without touching file contents. |
 | **Conflicted** | base-owned file whose current SHA-256 differs from its install-time hash in the manifest | Per-file user decision. |
 
 Source of truth for "what is base-owned" is `.github/dudestuff/bundle-manifest.md`. The `files` map stores the clean base SHA-256 for each base-owned file. Optional `local_overrides` entries record user-approved local divergence for base-owned files without weakening the clean base map. This bundle does not support legacy installs without a seeded manifest: if the manifest is missing, empty, or uses placeholder values, refuse the upgrade and restore a current bundle copy first. Files not present in either the local manifest or the upstream manifest fall through to project-owned by default. Repository documentation and root files are intentionally excluded from the upgrade payload; users can read Dude docs in the upstream repository when needed.
@@ -95,7 +96,8 @@ Walk both manifests and the working tree, classifying every file:
 - **Add** — present in upstream manifest, absent locally.
 - **Remove (base-owned)** — present in local manifest, absent in upstream manifest, current local hash matches install-time hash.
 - **Path collision** — present in upstream manifest, absent from local manifest, and already exists locally. Treat as project-owned local knowledge blocking an upstream addition.
-- **Conflict** — base-owned, current local hash differs from install-time hash. Surface with three sub-cases: (a) only local diverged, (b) only upstream diverged, (c) both diverged (true 3-way merge candidate).
+- **Metadata refresh** — base-owned, current local hash differs from the local manifest hash, and current local hash equals the fetched upstream file hash. This is stale metadata, not local divergence; no file-content change is needed.
+- **Conflict** — base-owned, current local hash differs from install-time hash and is not a Metadata refresh. Surface with three sub-cases: (a) only local diverged, (b) only upstream diverged, (c) both diverged (true 3-way merge candidate).
 - **Preserve** — project-owned or work state. List as a count, not per-file.
 - **Unreserved project-owned artifact** — a project-owned agent or skill that is outside the manifest and does not use `dude-local-`. Preserve it, but report it as an advisory because it may collide with a future upstream artifact.
 - **Up to date** — base-owned, no change needed.
@@ -113,6 +115,7 @@ Source: <source_repo> @ <ref>
 Will replace (N): file path  [+a / -b]
 Will add (N):     file path
 Will remove (N):  file path
+Metadata refresh (N): file path  [local and upstream content match; manifest hash is stale]
 Path collisions (N, blocking): file path  [local project-owned path blocks upstream base-owned path]
 Conflicts (N):    file path  [reason]
 Advisories (N):   unreserved project-owned agents/skills that should be renamed to dude-local- when practical
@@ -120,7 +123,7 @@ Preserved:        <count> project-memory files, <count> work-state files
 Up to date (N):   collapsed unless --verbose
 ```
 
-If there are no Replace/Add/Remove/Conflict entries, report `Already up to date` and stop without creating a safety tag.
+If there are no Replace/Add/Remove/Metadata refresh/Conflict entries, report `Already up to date` and stop without creating a safety tag.
 
 If any Path collision entries exist, stop at the report unless the user explicitly chooses `confirm upgrade skip-collisions`. A normal `confirm upgrade` is not accepted while collisions exist, because applying the rest of the remote bundle could make core routing refer to a local artifact with unrelated behavior.
 
@@ -128,14 +131,16 @@ If any Path collision entries exist, stop at the report unless the user explicit
 
 Wait for one of:
 
-- `confirm upgrade` — proceed with all Replace/Add/Remove operations; resolve conflicts interactively in Step 7.
-- `confirm upgrade skip-removals` — apply Replace and Add but leave Remove items in place; report them as deferred.
-- `confirm upgrade skip-collisions` — apply non-colliding changes and leave upstream additions blocked by local project-owned paths uninstalled; record them as deferred. This is advanced and can leave the upgraded core missing optional new upstream artifacts.
+- `confirm upgrade` — proceed with all Replace/Add/Remove/Metadata refresh operations; resolve conflicts interactively in Step 7.
+- `confirm upgrade skip-removals` — apply Replace, Add, and Metadata refresh entries but leave Remove items in place; report them as deferred.
+- `confirm upgrade skip-collisions` — apply non-colliding changes, including Metadata refresh entries, and leave upstream additions blocked by local project-owned paths uninstalled; record them as deferred. This is advanced and can leave the upgraded core missing optional new upstream artifacts.
 - `cancel` — stop, write nothing, delete the cache.
 
 Plain "yes" / "ok" / "go" do not satisfy the gate. The dry-run flag short-circuits this gate by stopping after Step 4.
 
 ### Step 6 — Create safety net
+
+If the plan contains only Metadata refresh entries, skip this step: the apply phase writes only `.github/dudestuff/bundle-manifest.md` and does not touch base-owned file contents.
 
 1. Create a git tag `dude-pre-upgrade-<YYYYMMDD-HHMMSS>` at current HEAD.
 2. Create and switch to branch `chore/dude-upgrade-<short-upstream-sha>`.
@@ -145,10 +150,11 @@ Plain "yes" / "ok" / "go" do not satisfy the gate. The dry-run flag short-circui
 
 In deterministic order:
 
-1. **Add** files.
-2. **Replace** files (overwrite in place).
-3. **Remove** files (only when the local hash matches install-time hash; never delete a file the user has modified).
-4. **Conflict** files, one at a time, prompt:
+1. **Add** files. After each write, compute the manifest hash from the bytes actually written to disk.
+2. **Replace** files (overwrite in place). After each write, compute the manifest hash from the bytes actually written to disk.
+3. **Metadata refresh** entries: leave the local file untouched, update `files[path]` to the fetched upstream file hash, and remove any existing `local_overrides[path]` entry because the file is no longer divergent.
+4. **Remove** files (only when the local hash matches install-time hash; never delete a file the user has modified).
+5. **Conflict** files, one at a time, prompt:
   - `keep mine` — leave local file unchanged and write or refresh a `local_overrides[path]` entry with `base_sha256` from `files[path]`, `current_sha256` from the current file, `reason`, and `accepted_at`.
    - `take new` — overwrite with upstream.
    - `show diff` — display unified diff, then re-prompt.
@@ -160,14 +166,14 @@ Path collisions are never overwritten during Step 7. The recommended resolution 
 
 Conflict outcomes affect future protection:
 
-- `take new` updates that file's manifest hash to the upstream hash and removes any existing `local_overrides[path]` entry.
+- `take new` overwrites the file, updates that file's manifest hash from the bytes written to disk, and removes any existing `local_overrides[path]` entry.
 - `keep mine` leaves that file's previous manifest hash unchanged and records `local_overrides[path]`, so future upgrades continue to detect it as locally modified while `dude-lint` can distinguish approved divergence from accidental drift.
 - `merge` leaves that file's previous manifest hash unchanged and records `local_overrides[path]` unless the user explicitly says `accept merged as base`; `accept merged as base` updates `files[path]` to the merged file hash and removes any override.
 
 ### Step 8 — Update manifest and log
 
-1. Rewrite `.github/dudestuff/bundle-manifest.md` with the new `source_ref`, `installed_sha`, `installed_at`, refreshed `files` hashes for clean base files only, and `local_overrides` for accepted local divergence. Do not replace `files[path]` hashes for `keep mine` or unaccepted `merge` conflicts.
-2. Append an entry to `.github/dudestuff/upgrade-log.md` with timestamp, from→to sha, counts per bucket, conflict resolutions, accepted local overrides, and pending deferrals.
+1. Rewrite `.github/dudestuff/bundle-manifest.md` with the new `source_ref`, `installed_sha`, `installed_at`, refreshed `files` hashes for clean base files only, and `local_overrides` for accepted local divergence. Use hashes computed from the actual local bytes after Add, Replace, take-new Conflict, and Metadata refresh handling; do not copy stale hashes from the upstream manifest blindly. Do not replace `files[path]` hashes for `keep mine` or unaccepted `merge` conflicts.
+2. Append an entry to `.github/dudestuff/upgrade-log.md` with timestamp, from→to sha, counts per bucket, metadata refreshes, conflict resolutions, accepted local overrides, and pending deferrals.
 
 ### Step 9 — Verify
 
@@ -184,7 +190,8 @@ Report:
 
 - `from <sha> → to <sha>`
 - counts: replaced, added, removed, conflicts (resolved by category), preserved, deferred
-- safety tag and branch names for rollback
+- metadata refresh count, when non-zero
+- safety tag and branch names for rollback, or `skipped` when the upgrade contained only Metadata refresh entries
 - any new upstream agent or skill the user may want to enable
 - next-step suggestions (e.g., `git diff main...HEAD` to review, then merge/PR)
 

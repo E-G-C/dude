@@ -413,7 +413,7 @@ else {
                         }
                     }
                     if (-not $hasAcceptedOverride) {
-                        Write-Fail "$manifestRel  manifest hash mismatch for '$path'"
+                        Write-Fail "$manifestRel  manifest hash mismatch for '$path' (local edit or stale manifest; run @dude upgrade --dry-run to classify, then confirm upgrade if it reports Metadata refresh)"
                     }
                 }
             }

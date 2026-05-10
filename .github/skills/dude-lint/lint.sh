@@ -501,7 +501,7 @@ else
                     fi
                 fi
                 if [ "$has_override" -ne 1 ]; then
-                    fail "$manifest_rel  manifest hash mismatch for '$path'"
+                    fail "$manifest_rel  manifest hash mismatch for '$path' (local edit or stale manifest; run @dude upgrade --dry-run to classify, then confirm upgrade if it reports Metadata refresh)"
                 fi
             fi
         done <<< "$manifest_entries"
