@@ -57,13 +57,14 @@ Action: draft
 Updated:
 - brainstorm/authentication.md created or refreshed
 Next:
-- Review the brainstorm and answer any open questions
+- Review the brainstorm, then edit the draft or answer any open-question prompts
 - Run @dude define authentication when the draft is ready
 ```
 
-Edit `brainstorm/<slug>.md` to answer `## Open Questions` or adjust
-`## Assumptions`, then rerun `@dude draft <feature>` to re-normalize the same
-file or `@dude define <feature>` when you are ready to continue.
+Edit `brainstorm/<slug>.md` to replace `**Your answer:** _Type your answer
+here._` below each open question or adjust `## Assumptions`, then rerun
+`@dude draft <feature>` to re-normalize the same file or `@dude define
+<feature>` when you are ready to continue.
 
 ### `@dude define`
 

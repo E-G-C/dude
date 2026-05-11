@@ -36,7 +36,12 @@ spec_path:
 [raw user input]
 
 ## Open Questions
-- [focused clarification question]
+
+Review the draft above. Either edit it directly or answer the questions below.
+
+### Q1. [focused clarification question]
+
+**Your answer:** _Type your answer here._
 
 <!-- dude:managed:start -->
 ## Coordinator Log
@@ -50,6 +55,14 @@ Dude adds the additional managed sections (`## Normalized Intent`, `## Constrain
 ## User Draft
 [raw user input]
 
+## Open Questions
+
+Review the draft above. Either edit it directly or answer the questions below.
+
+### Q1. ...
+
+**Your answer:** _Type your answer here._
+
 <!-- dude:managed:start -->
 ## Normalized Intent
 - ...
@@ -57,9 +70,6 @@ Dude adds the additional managed sections (`## Normalized Intent`, `## Constrain
 ## Constraints
 - ...
 <!-- dude:managed:end -->
-
-## Open Questions
-- ...
 
 ## Assumptions
 - ...
@@ -78,11 +88,11 @@ Dude adds the additional managed sections (`## Normalized Intent`, `## Constrain
 <!-- dude:managed:end -->
 ```
 
-Keep `## User Draft` intact. Use the other sections to drive clarification and readiness.
+Keep `## User Draft` intact. Place `## Open Questions` immediately after it so the user reads their original idea first, then either edits that draft or answers the active questions. Format each active question as `### QN. <question>` followed by `**Your answer:** _Type your answer here._`; when the user responds, preserve the question and replace the placeholder with their answer.
 
 The `<!-- dude:managed:start -->` / `<!-- dude:managed:end -->` HTML comment fences identify Dude-owned regions. Users should not hand-edit content inside those fences; if they do, restore the correct structure on the next `draft` or `define` and explain what was reset. Comments are invisible in rendered markdown but visible in editors, so they make ownership obvious without disrupting reading.
 
-The `## Open Questions`, `## Assumptions`, and `## Deferred Clarifications` sections sit outside the managed fences because users edit them in place. Omit any of these sections (and any optional managed sections) until they have real content; do not emit empty scaffolding.
+The `## Open Questions`, `## Assumptions`, and `## Deferred Clarifications` sections sit outside the managed fences because users edit them in place. Omit any of these sections (and any optional managed sections) until they have real content; do not emit empty scaffolding. When there are active open questions, `## Open Questions` must be the first section after `## User Draft`.
 
 Treat `status:`, `spec_path:`, and `## Coordinator Log` as Dude-maintained workflow metadata. Users edit the feature content in place, but Dude keeps the bookkeeping consistent for later `define` and `track` steps. The historical name for this section was `## Definition Record`; existing brainstorms with that heading should be renamed to `## Coordinator Log` on the next `draft` or `define` refresh.
 
@@ -132,7 +142,7 @@ When definition succeeds, write the chosen `spec_path` back into the brainstorm 
 ### Section Responsibilities
 
 - Users control `## User Draft`.
-- Users answer `## Open Questions` in place.
+- Users answer `## Open Questions` in place, below each visible `**Your answer:**` prompt.
 - Users may edit `## Assumptions` when clarifying or overriding defaults.
 - Dude maintains `## Normalized Intent`, `## Constraints`, `## Definition Checklist`, and `## Coordinator Log`.
 - Dude maintains the brainstorm frontmatter bookkeeping: `status:` and `spec_path:`.
@@ -151,7 +161,7 @@ On `draft` or other early-stage requests:
 1. Create or identify `brainstorm/<slug>.md`.
 2. Preserve the raw user draft in `## User Draft`.
 3. Normalize the requested outcome in `## Normalized Intent`.
-4. Record constraints, assumptions, and any new focused open questions in the same file without discarding or reopening questions the user already resolved, and without changing existing assumption bullets unless the latest request explicitly requires it.
+4. Record constraints, assumptions, and any new focused open questions in the same file without discarding or reopening questions the user already resolved, and without changing existing assumption bullets unless the latest request explicitly requires it. Keep active open questions immediately after `## User Draft` and use the `### QN.` / `**Your answer:** _Type your answer here._` format.
 5. Keep the file in `status: draft` until definition is requested.
 6. Do not create `specs/<feature>/` yet unless the user has asked for definition or the workflow explicitly moves to that stage.
 

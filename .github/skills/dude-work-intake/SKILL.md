@@ -49,6 +49,7 @@ specialists don't contradict past decisions or repeat solved problems.
 
 - Keep one working ledger per feature under `brainstorm/<slug>.md`.
 - Preserve the raw user draft inside `## User Draft`.
+- Place active `## Open Questions` immediately after `## User Draft`, with each question followed by a visible `**Your answer:** _Type your answer here._` slot.
 - Put Dude normalization, assumptions, open questions, and the definition checklist in the same file.
 - If clarification is needed, keep it in the brainstorm file instead of scattering it across chat.
 - The user may answer by editing the same file and asking Dude to draft it again.

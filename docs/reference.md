@@ -61,6 +61,9 @@ specs/
 - `tasks.md` may include a Dude-generated board region inside the same file
   with `## Ready Now`, `## In Progress`, `## Blocked`, and `## Done`. It is
   derived guidance, not a second board.
+- Active `## Open Questions` belong immediately after `## User Draft`, with
+  each question formatted as `### QN. ...` followed by a visible
+  `**Your answer:** _Type your answer here._` slot.
 - `.github/dudestuff/guardrails.md` holds the project's durable guardrails. Dude
   may infer candidates once it understands what is being built, but
   project-specific entries are ratified by the user. If no new project-specific

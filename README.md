@@ -38,7 +38,7 @@ One rule keeps the workflow clear: there is only one live place at a time.
 
 | If you are here | The live place is | What you do |
 |---|---|---|
-| Shaping the idea | `brainstorm/<feature>.md` | Edit the idea and answer questions |
+| Shaping the idea | `brainstorm/<feature>.md` | Review the draft, edit it if needed, and answer questions |
 | Defined, not implementing | `specs/<feature>/` | Read the spec and plan |
 | Implementing without Beads | `specs/<feature>/tasks.md` | Ask Dude for the next task |
 | Implementing with Beads | Beads | Track the same work as issues until it is done |
@@ -50,7 +50,7 @@ Use this path for your first feature.
 1. Tell Dude whether this is one feature and whether you want to implement now.
 2. Write your idea in chat or in a markdown file.
 3. Draft the feature from that idea.
-4. Open `brainstorm/<feature>.md` and improve the idea before defining it.
+4. Open `brainstorm/<feature>.md`, read the `## User Draft`, then either improve the draft or answer the `## Open Questions` prompts below it.
 5. Define the feature. A defined feature is the "formalized" version of your idea and creates `spec.md`, `plan.md`, and `tasks.md` in a new folder under `specs/`.
 6. If you want implementation, ask for the next task.
 
@@ -58,16 +58,18 @@ Writing your idea in a file is often the best way to start. Sit with it, add
 rough notes, examples, questions, and constraints, then ask Dude to draft from
 that file. Dude will turn it into `brainstorm/<feature>.md`.
 
-The brainstorm review is important too. Use it to answer Dude's questions,
-correct bad assumptions, and describe the feature in more detail. The better
-the brainstorm, the better the formal spec, plan, and tasks will be.
+The brainstorm review is important too. Read your original draft first, then
+either change it directly or answer Dude's questions in the visible
+`**Your answer:**` slots. Use the same pass to correct bad assumptions and
+describe the feature in more detail. The better the brainstorm, the better the
+formal spec, plan, and tasks will be.
 
 Minimal example:
 
 ```text
 # Write your rough idea in ideas/expense-entry.md first.
 @dude draft ideas/expense-entry.md
-# Open brainstorm/expense-entry.md, then add detail and answer questions.
+# Open brainstorm/expense-entry.md, then read the draft and answer the prompts.
 @dude define expense-entry
 @dude status
 @dude implement the next task for expense-entry without Beads

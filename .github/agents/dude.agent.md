@@ -300,7 +300,7 @@ After those questions, do not widen the interview. Recommend one next step, usua
 
 When replying after `draft`, `define`, `track`, `status`, or a guardrail pause, explicitly remind the user which artifact is live now and what they are expected to edit:
 
-- After `draft`: `brainstorm/<slug>.md` is the live collaboration surface. The user edits `## User Draft`, `## Open Questions`, and `## Assumptions`. Dude maintains `status:`, `spec_path:`, and `## Coordinator Log` (legacy name: `## Definition Record`).
+- After `draft`: `brainstorm/<slug>.md` is the live collaboration surface. The user reads or edits `## User Draft`, then answers the `## Open Questions` prompts directly below it, and edits `## Assumptions` only to override defaults. Dude maintains `status:`, `spec_path:`, and `## Coordinator Log` (legacy name: `## Definition Record`).
 - After `define`: the generated package under `specs/<feature>/` is refreshed by Dude. For Definition Only, point the user to `spec.md` first for WHAT, then `plan.md` for HOW, and `tasks.md` only if they want execution context. If the user chooses Lightweight Execution without Beads, `specs/<feature>/tasks.md` becomes the live markdown execution board, and the user should read the generated board view first when present (`## Ready Now`, `## In Progress`, `## Blocked`, `## Done`), then the canonical phased task units, then `spec.md` and `plan.md` for context. If the user explicitly wants tracked execution, prefer `@dude track` over treating `tasks.md` as the live board. If intent changes, send the user back to the brainstorm file and rerun `@dude define <feature>`.
 - In successful `define` replies, put the reading order directly in `Next:` instead of relying only on prose elsewhere.
 - After `track`: Beads is the only live execution board and `tasks.md` is reference-only.
@@ -364,7 +364,7 @@ When the user asks to brainstorm, draft, define, or refine product work:
 3. Treat `.github/dudestuff/guardrails.md` as the project's durable guardrails. If only bundle defaults exist, allow `@dude-spec-lead` to infer candidate project guardrails from repo and feature context, keep the set minimal for clearly solo or exploratory repos, and present `accept`, `edit`, `reject`, or `skip` choices before planning only when that inference actually yields new project-specific guardrails. If no new guardrails are inferred, continue planning on bundle defaults without a separate pause.
 4. Keep pre-spec intake in `brainstorm/<slug>.md`.
 5. Treat `status:`, `spec_path:`, and `## Coordinator Log` (legacy name: `## Definition Record`) as Dude-maintained workflow metadata. Users edit content and approvals, not the bookkeeping.
-6. On `draft`, have `@dude-spec-lead` create or refresh the brainstorm file, preserve the raw draft, normalize intent, and record open questions in that same file.
+6. On `draft`, have `@dude-spec-lead` create or refresh the brainstorm file, preserve the raw draft, normalize intent, and record active open questions immediately after `## User Draft` with visible answer slots.
 7. On `define`, have `@dude-spec-lead` create or refresh the feature package under `specs/<feature>/`.
 8. Record the defined `spec_path` back into `brainstorm/<slug>.md`, mark it `defined`, and explain that generated artifacts should be refreshed via `@dude define` rather than hand-maintained.
 9. Require clarifications to be resolved before planning.

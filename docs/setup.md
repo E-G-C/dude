@@ -36,8 +36,9 @@ Beads state.
 
 ### Editing rule of thumb
 
-- Edit `## User Draft`, `## Open Questions`, and `## Assumptions` in
-  `brainstorm/<slug>.md`.
+- Read `## User Draft`, edit it if needed, answer the `**Your answer:**` slots
+  in `## Open Questions`, and update `## Assumptions` only when overriding a
+  default in `brainstorm/<slug>.md`.
 - Leave `status:`, `spec_path:`, and `## Coordinator Log` (legacy name:
   `## Definition Record`) to Dude.
 - Leave any generated board region in `tasks.md` to Dude.

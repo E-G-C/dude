@@ -50,6 +50,14 @@ spec_path:
 Users need to sign in with email and password, sign out safely, and recover
 access with a password reset email.
 
+## Open Questions
+
+Review the draft above. Either edit it directly or answer the questions below.
+
+### Q1. Should account creation/sign-up be included in this feature or deferred?
+
+**Your answer:** _Type your answer here._
+
 ## Normalized Intent
 
 - Support email/password sign-in for existing users
@@ -61,10 +69,6 @@ access with a password reset email.
 - Authentication errors must be understandable to end users
 - Password reset links expire after 30 minutes
 - Audit events are retained for 90 days
-
-## Open Questions
-
-- None currently
 
 ## Assumptions
 

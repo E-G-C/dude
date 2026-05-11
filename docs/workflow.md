@@ -62,7 +62,7 @@ it also reports Beads state without mutating it.
 
 | Artifact                                         | Purpose                      | Human edits                                                               | Dude maintains                                                                                                     | How to keep it fresh                                            |
 | ------------------------------------------------ | ---------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
-| `brainstorm/<slug>.md`                           | Working feature ledger                     | `## User Draft`, answers in `## Open Questions`, assumption overrides, and items in `## Deferred Clarifications`     | Content inside `<!-- dude:managed:start --> ... <!-- dude:managed:end -->` fences (`## Normalized Intent`, `## Constraints`, `## Definition Checklist`, `## Coordinator Log`), plus `status` and `spec_path` | Rerun `@dude draft` or `@dude define` after edits                                      |
+| `brainstorm/<slug>.md`                           | Working feature ledger                     | `## User Draft`, `**Your answer:**` slots in `## Open Questions`, assumption overrides, and items in `## Deferred Clarifications`     | Content inside `<!-- dude:managed:start --> ... <!-- dude:managed:end -->` fences (`## Normalized Intent`, `## Constraints`, `## Definition Checklist`, `## Coordinator Log`), plus `status` and `spec_path` | Rerun `@dude draft` or `@dude define` after edits                                      |
 | `specs/<feature>/spec.md`, `plan.md`             | Generated definition package               | Prefer editing the brainstorm instead of hand-editing these files             | the definition package contents                                                                                    | Rerun `@dude define <feature>` when scope or assumptions change                        |
 | `specs/<feature>/tasks.md`                       | Canonical phased task units plus a derived board view; live only in Lightweight Execution | Do not self-check `[x]`; let Dude mutate task state after routed outcomes and verification. Avoid rewriting task meaning by hand or editing the generated board region directly. | task selection via the generated board view when present, durable-key-first reconciliation, optional `deps:` metadata, and coordinator-owned state updates in Lightweight Execution | Rerun `@dude define <feature>` when scope changes; preserve durable task keys and surviving task state when tasks still mean the same work |
 | Beads issues                                     | Live execution state after import          | through Dude's execution flow                                                 | issue state, dependencies, and close decisions                                                                     | Use `@dude track`, `@dude status`, and Beads commands                                  |
@@ -126,14 +126,15 @@ collaboration surface.
 
 Inside `brainstorm/<slug>.md`:
 
-- edit `## User Draft` if the desired outcome changed
-- answer `## Open Questions` in place
+- read `## User Draft` first, then edit it if the desired outcome changed
+- answer each `## Open Questions` prompt by replacing its `**Your answer:** _Type your answer here._` placeholder
 - update `## Assumptions` only when you want to override a default
 - promote items from `## Deferred Clarifications` back into the active set when their priority rises
 - leave anything inside `<!-- dude:managed:start --> ... <!-- dude:managed:end -->` fences (`## Normalized Intent`, `## Constraints`, `## Definition Checklist`, `## Coordinator Log`), as well as `status` and `spec_path`, to Dude. Hand-edits inside the fences will be reset on the next `draft` or `define`.
 
-To answer clarifications, edit `brainstorm/<slug>.md` directly: update
-`## Open Questions` in place or adjust `## Assumptions`, then rerun
+To answer clarifications, edit `brainstorm/<slug>.md` directly: replace the
+`**Your answer:**` placeholder below each relevant question or adjust
+`## Assumptions`, then rerun
 `@dude draft <feature>` to re-normalize the file or `@dude define <feature>` to
 continue.
 
