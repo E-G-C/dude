@@ -11,7 +11,7 @@ Upgrades are preview-then-confirm. Nothing is written to the working tree before
 
 ## Purpose
 
-Make engine updates routine, safe, and reversible. The user runs `@dude upgrade` and gets a clear report of what would change, confirms, and the bundle updates itself in place — without touching project memory, custom roster, or in-flight work.
+Make engine updates routine, safe, and reversible. The user runs `@dude upgrade` and gets a clear report of what would change. After `confirm upgrade`, Dude applies the upgrade, verifies it, commits it, merges it back to the starting branch, and pushes — without touching project memory, custom roster, or in-flight work.
 
 ## When To Run
 
@@ -67,6 +67,7 @@ The namespace is preventive, not the only safety mechanism. A user can still byp
 2. If the working tree is dirty (`git status --porcelain` non-empty) and the user did not pass `--allow-dirty`, refuse.
 3. Resolve the upstream source: `--source` flag → manifest `source_repo` → hardcoded fallback (the canonical Dude repo URL).
 4. Resolve the upstream ref: `--ref` flag → manifest `source_ref` → `main`.
+5. Record the current branch as the target branch for final publish. If the repository is in detached HEAD state, refuse autonomous publish and ask the user to check out the intended target branch before upgrading.
 
 ### Step 2 — Fetch upstream
 
@@ -184,7 +185,20 @@ Run `dude-lint` (either `pwsh .github/skills/dude-lint/lint.ps1` or `bash .githu
 
 On all `[OK]`, continue to Step 10.
 
-### Step 10 — Final summary
+### Step 10 — Publish successful upgrade
+
+After `dude-lint` passes, complete the upgrade without another user prompt. The earlier `confirm upgrade` authorizes the full successful path: apply, verify, commit, merge back to the target branch, and push.
+
+1. Stage only files changed by the upgrade plan, `.github/dudestuff/bundle-manifest.md`, and `.github/dudestuff/upgrade-log.md`.
+2. Commit on the upgrade branch with a concise message such as `chore: upgrade Dude bundle to <short-upstream-sha>`.
+3. Switch back to the target branch recorded in Step 1.
+4. Fast-forward merge the upgrade branch into the target branch. If fast-forward is not possible, stop and report the exact branch state instead of creating an automatic merge commit.
+5. Push the target branch to its configured upstream. If no upstream is configured or the push is rejected by permissions, protection rules, or remote changes, stop and report the exact push command the user should run after resolving that external blocker.
+6. Leave the safety tag and upgrade branch in place for rollback/audit unless the user explicitly asks to clean them up.
+
+For plans containing only Metadata refresh entries, no upgrade branch exists. After lint passes, stage `.github/dudestuff/bundle-manifest.md` and `.github/dudestuff/upgrade-log.md`, commit directly on the target branch, and push the target branch to its configured upstream.
+
+### Step 11 — Final summary
 
 Report:
 
@@ -192,8 +206,9 @@ Report:
 - counts: replaced, added, removed, conflicts (resolved by category), preserved, deferred
 - metadata refresh count, when non-zero
 - safety tag and branch names for rollback, or `skipped` when the upgrade contained only Metadata refresh entries
+- target branch merge and push result
 - any new upstream agent or skill the user may want to enable
-- next-step suggestions (e.g., `git diff main...HEAD` to review, then merge/PR)
+- any remaining next step only when publish was blocked by an external condition
 
 ## Rollback
 
@@ -201,20 +216,18 @@ Report:
 
 1. Find the most recent `dude-pre-upgrade-*` tag.
 2. Refuse if the working tree is dirty unless `--allow-dirty` is passed.
-3. `git reset --hard <tag>` on the upgrade branch (or current branch if it descends from the tag).
-4. Restore the prior `bundle-manifest.md` from the tagged commit.
-5. Append a rollback entry to `upgrade-log.md`.
-6. Run `dude-lint`.
-7. Report the restored sha and any cleanup the user should do (delete the safety branch, delete the tag once satisfied).
+3. If the upgrade was not pushed, `git reset --hard <tag>` on the upgrade branch (or current branch if it descends from the tag), restore the prior `bundle-manifest.md` from the tagged commit, append a rollback entry to `upgrade-log.md`, run `dude-lint`, and report the restored sha.
+4. If the upgrade was already merged and pushed to the target branch, do not force-push. Create a normal rollback commit on the target branch by restoring the upgrade-owned and base-owned files from the safety tag, append a rollback entry to `upgrade-log.md`, run `dude-lint`, commit, and push the rollback commit.
+5. Report any cleanup the user should do after they are satisfied, such as deleting the safety branch or safety tag.
 
 ## Boundaries
 
-- Never auto-push, auto-merge, or modify remote state.
+- Never auto-push, auto-merge, or modify remote state before the user confirms the upgrade plan. After `confirm upgrade` and successful verification, merge the upgrade branch back to the target branch and push as part of the normal upgrade flow.
 - Never delete or modify any file under `.github/dudestuff/` except the upgrade-owned manifest and upgrade log this skill itself owns.
 - Never delete or modify `.github/skills/project/`.
 - Never modify `.github/copilot-instructions.md`.
 - Never touch `brainstorm/`, `specs/`, Beads, or product source.
-- Never run upgrade on a dirty working tree without explicit `--allow-dirty`. When `--allow-dirty` is used, uncommitted local changes are interleaved with upgrade writes; a subsequent `--rollback` performs a `git reset --hard` to the safety tag and will discard those uncommitted changes. Commit or stash first when in doubt.
+- Never run upgrade on a dirty working tree without explicit `--allow-dirty`. When `--allow-dirty` is used, uncommitted local changes are interleaved with upgrade writes; a subsequent unpublished rollback may perform a `git reset --hard` to the safety tag and will discard those uncommitted changes. Commit or stash first when in doubt.
 - Never proceed past Step 4 without an explicit confirmation token.
 - Never recurse into transitive bundle composition (a single upgrade pulls one upstream bundle, not bundle-of-bundles).
 - For non-git projects, the safety net degrades to a timestamped backup directory under the OS temp `dude-upgrade-cache/backups/<ts>/`; rollback restores from there.

@@ -21,7 +21,7 @@ This file pins the upstream Dude bundle version associated with the current inst
     ".github/instructions/dude.instructions.md": "dca942ef53b5a306f1b4b6d5f79028de8eebf34b7d3a6de3c0d4a97ebb198cc7",
     ".github/skills/dude-beads-workflow/SKILL.md": "cd35bffb51ea1161f1c78e9d484d29eb1ed647b0ef70b27d62c0430e7062acc0",
     ".github/skills/dude-bundle-import/SKILL.md": "69a887e7c90222002dd147a0033e0862db00d72498aa48052d548bef2241d5eb",
-    ".github/skills/dude-bundle-upgrade/SKILL.md": "ac301ed037f618bfa13aa17723f40c281eb873f8ccf2f1c28632e22abb4522bc",
+    ".github/skills/dude-bundle-upgrade/SKILL.md": "499f59b04999c902a1ec7dee63dea7d51337aa3bbd252d09f9ea17d76bf3b3c3",
     ".github/skills/dude-feature-definition/SKILL.md": "560fa92adf190032785fd9e73e706538d88b2c72373d5efbbd1fb3f7ade5674a",
     ".github/skills/dude-generic-routing/SKILL.md": "400619a04b8e9c3ef06ef06252fc8fac9733bfd739f1bc4219ffe1c6af1b7e6f",
     ".github/skills/dude-learning-promotion/SKILL.md": "c1c43b8ed3cf66829431fa13636755bdf3edfdf941db7189d7c15f322787d754",
