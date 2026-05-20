@@ -144,7 +144,13 @@ Keep the blocked task `[!]` until the blocker is resolved or the plan changes.
 
 - If the user later enables Beads, stop using this lane and hand off through the normal `@dude track` flow.
 - `dude-spec-import-to-beads` owns the import semantics, including `[ ]` / `[~]` / `[!]` mapping into Beads, skipped completed-history reporting for `[x]`, and stop conditions for `spec_path` drift, reconciliation ambiguity, or partial import failure.
-- After import, Beads becomes the only live execution board and `tasks.md` returns to reference context.
+- After import, Beads becomes the only live execution board and source of truth. `tasks.md` may still receive one-way Beads-derived mirror updates for portability, but it is not authoritative while tracked execution is active.
+
+## Switching Back From Beads
+
+If the user needs to continue without Beads after tracked execution has started, first prefer an explicit `@dude sync Beads to tasks.md` while Beads is still available. That sync makes `tasks.md` current as a Beads-derived snapshot before Lightweight Execution resumes.
+
+If Beads is already unavailable, do not assume stale `tasks.md` state is complete. Report that the file is only as current as the last successful Beads-to-markdown mirror, then ask the user whether to continue from that snapshot or wait until Beads is available for a full sync. Once the user chooses to resume from the snapshot, `tasks.md` becomes the live markdown execution board again and normal Lightweight Execution rules apply.
 
 ## Avoid
 

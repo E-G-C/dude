@@ -28,7 +28,7 @@ This skill is optional. It is not part of Dude Coder's default workflow.
 - the tasks still compete for the same files or artifacts in a way that would likely create merge conflicts anyway
 - the user already declined a worktree suggestion in the current session and the conditions have not materially changed
 
-Worktrees do not change the live execution system. In Lightweight Execution, `tasks.md` remains the live markdown execution board; after Beads import, Beads remains the live execution board. A worktree only changes where code is edited.
+Worktrees do not change the live execution system. In Lightweight Execution, `tasks.md` remains the live markdown execution board; after Beads import, Beads remains the live execution board and any `tasks.md` updates are only a non-authoritative Beads mirror. A worktree only changes where code is edited.
 
 ## Proactive Suggestion Rule
 

@@ -19,7 +19,41 @@ Standard workflow for all Dude specialists when working on tasks tracked in Bead
 - A feature's identity is the brainstorm `spec_path:` value (full path to `spec.md`, e.g. `specs/001-feature-name/spec.md`). Every Beads issue imported from that feature carries the same value as a `spec:` prefix in the first line of its description. See `dude-spec-import-to-beads` for the canonical-identity rule.
 - A feature is considered `imported` when at least one Beads issue has a description starting with `spec: <spec_path>` matching the brainstorm's `spec_path` (literal match).
 - A feature is considered `active` when it currently has ready or in-progress Beads work.
-- After import, `tasks.md` is reference-only; Beads is the live board.
+- After import, Beads is the live board and source of truth.
+- After import, `tasks.md` is not used for readiness or completion decisions. It may be kept as a one-way, non-authoritative portability mirror of Beads state so the feature can later be reconciled back to Lightweight Execution.
+
+## Beads-To-Markdown Mirror
+
+The mirror is one-way: Beads -> `tasks.md`. While tracked execution is active, never use `tasks.md` to override Beads.
+
+When the coordinator changes Beads execution state, mirror the result to the matching canonical task unit in `specs/<feature>/tasks.md` when all of these are true:
+
+- the Beads issue description starts with `spec: <spec_path>`
+- the Beads issue title or description contains an original task key such as `T012@a1b2c3d4`, or a legacy task ID such as `T012` when no durable suffix exists
+- exactly one canonical task header in that feature's `tasks.md` has the same durable key; if no durable key exists, exactly one header matches by task ID, story label, and core task intent
+
+Mirror status mapping:
+
+| Beads status | Markdown glyph |
+|--------------|----------------|
+| `open` | `[ ]` |
+| `in_progress` | `[~]` |
+| `blocked` | `[!]` |
+| `closed` | `[x]` |
+
+Mirror only the task-state glyph and Beads-derived blocker metadata when needed. Preserve the task key, labels, description, explicit `deps:`, and human-authored task text. If a generated board region is present, regenerate it as a complete replacement from the canonical task units.
+
+Append a concise line to the companion brainstorm's `## Coordinator Log` for every successful mirror write, for example:
+
+```text
+2026-05-19 14:22 — mirrored Beads close dude-abc to tasks.md T012@a1b2c3d4
+```
+
+After mutating `tasks.md`, run the `dude-lint` skill (`pwsh .github/skills/dude-lint/lint.ps1` or `bash .github/skills/dude-lint/lint.sh`) and fix any `[FAIL]` before reporting the mirror as successful.
+
+If the task key is missing, `tasks.md` is missing, the key maps to zero or multiple task headers, fallback matching is ambiguous, the board fence is malformed, or the companion brainstorm cannot be identified, do not guess. Keep the Beads state as authoritative, report that the Beads operation succeeded but markdown mirroring was skipped, and ask the user to run an explicit Beads-to-markdown sync or reconcile the task identity.
+
+`@dude sync Beads to tasks.md` is the explicit reconciliation command for manual Beads changes, machine switching, or stale mirrors. It scans Beads issues by `spec:` prefix, applies the status mapping above to every unambiguous task key, regenerates the board region, appends Coordinator Log entries, runs `dude-lint`, and reports imported, mirrored, skipped, and ambiguous counts. It is mutating and must not run as part of `@dude status`.
 
 ## Before Starting Work
 
@@ -110,6 +144,8 @@ bd close <id> --reason "Completed: <one-line summary of what was done>" --json
 
 This automatically unblocks any tasks that were waiting on this one.
 
+After `bd close` succeeds, the coordinator must run the Beads-to-markdown mirror for the closed issue before reporting completion. The mirror updates the matching canonical task header in `tasks.md` to `[x]`, refreshes the derived board region when present, records the sync in the brainstorm Coordinator Log, and runs `dude-lint`. If mirroring cannot be completed safely, report the skipped mirror separately from the successful Beads close.
+
 ## Status Values
 
 | Status | Meaning |
@@ -133,7 +169,8 @@ This automatically unblocks any tasks that were waiting on this one.
 ## Rules
 
 - Always use `--json` flag for reliable output parsing.
-- Never create tasks outside Beads — it is the single source of truth.
+- Never create tasks outside Beads — it is the single source of truth while tracked execution is active.
+- Do not read `tasks.md` as the live board after import. It may only receive Beads-derived mirror updates or explicit Beads-to-markdown sync results.
 - Always claim before working — never skip the claim step.
 - Do not call `bd close` yourself — report results to the coordinator, who owns the close decision.
 - Ignore epics or other grouping issues in `bd ready` output; they are not executable tasks.

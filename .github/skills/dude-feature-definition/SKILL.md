@@ -154,7 +154,7 @@ When definition succeeds, write the chosen `spec_path` back into the brainstorm 
 - Re-running `draft` may add new focused open questions only when the latest request introduces new ambiguity or materially changes scope.
 - If a user edits Dude-maintained bookkeeping without clear intent, restore the correct structure and explain the change instead of silently carrying broken metadata forward.
 
-If the feature later enters Lightweight Execution, `tasks.md` may serve as the live markdown execution board until Beads import. It may also carry a Dude-generated board region inside the same file with `## Ready Now`, `## In Progress`, `## Blocked`, and `## Done` sections; those sections are derived guidance, not a second ledger. If the feature is later imported into Beads, `tasks.md` becomes reference-only. Refresh generated artifacts through `define`; do not create a second execution ledger.
+If the feature later enters Lightweight Execution, `tasks.md` may serve as the live markdown execution board until Beads import. It may also carry a Dude-generated board region inside the same file with `## Ready Now`, `## In Progress`, `## Blocked`, and `## Done` sections; those sections are derived guidance, not a second ledger. If the feature is later imported into Beads, Beads becomes authoritative and `tasks.md` may only be updated as a one-way portability mirror from Beads. Refresh generated artifacts through `define`; do not create a second execution ledger.
 
 On `draft` or other early-stage requests:
 
@@ -428,7 +428,7 @@ Before handing a defined package back to the coordinator as import-ready, verify
 - `spec_path` points to the exact `spec.md` path that will identify the feature later
 - every canonical task header in `tasks.md` matches the compatible task format, any metadata lines are well-formed, and any non-open lightweight-execution headers preserve the same durable key or fallback task ID and labels
 - any generated board region is clearly derived and may be regenerated without changing canonical task state
-- the handoff notes make clear that `tasks.md` may be the live markdown execution board before import, but becomes reference-only after Beads import
+- the handoff notes make clear that `tasks.md` may be the live markdown execution board before import, but becomes only a non-authoritative Beads mirror after Beads import
 
 ### Phase Pattern
 
@@ -506,7 +506,7 @@ After the definition package is clean:
 5. The normal workflow lets `@dude track` import defined features into Beads automatically.
 6. Explicit manual import is a fallback when the user asks for it.
 7. Before import, `tasks.md` may be the live markdown execution board only in Lightweight Execution.
-8. Treat Beads as the live execution board after import.
+8. Treat Beads as the live execution board and source of truth after import; any `tasks.md` updates after that are one-way Beads-derived mirror writes only.
 
 ## Guardrails
 

@@ -28,7 +28,9 @@ description: "Project-specific domain knowledge, conventions, and patterns. Upda
 - In Lightweight Execution, only the coordinator mutates task-state glyphs or task metadata after routed workflow changes and fresh verification evidence.
 - New or refreshed lightweight task lines should prefer durable task IDs such as `T001@a1b2c3d4`; legacy `T001` lines may still appear during migration.
 - One bounded task may combine closely related code, tests, and docs when one fresh verification step proves the slice.
-- Once imported, Beads is the only live execution board and `tasks.md` becomes reference-only.
+- Once imported, Beads is the only live execution board and source of truth. `tasks.md` may be kept updated only as a one-way, non-authoritative Beads mirror for portability and fallback.
+- After Dude closes Beads work, mirror the Beads result back to the matching canonical task unit in `tasks.md` when the task key maps cleanly, preferring durable task keys and falling back only to unambiguous legacy task IDs. Regenerate any derived board region, record the write-back in the brainstorm Coordinator Log, and run `dude-lint`.
+- Use explicit `@dude sync Beads to tasks.md` for stale mirrors, manual Beads changes, or planned fallback from Tracked Execution to Lightweight Execution.
 - Typed `@dude flag` prefixes are preferred, but plain-language blocker reports should still be classified when the intended type is clear.
 - Guardrail ratification accepts `accept`, `edit`, `reject`, or `skip`; `skip` means continue with bundle defaults only.
 - For clearly solo, exploratory, or hobby-style repos, inferred candidate guardrails should stay minimal.
@@ -41,7 +43,7 @@ description: "Project-specific domain knowledge, conventions, and patterns. Upda
 
 - This repository's primary deliverable is the reusable Dude Coder bundle itself, so most changes target `.github/` and `README.md` rather than product code.
 - `@dude-release-manager` owns reusable guidance for tag-driven release versioning, package manifest write-back policy, and GitHub Actions versus Azure Pipelines release parity.
-- First-time users are often unfamiliar with Beads, guardrails, `spec_path`, when `tasks.md` is live, what `[ ]` / `[~]` / `[!]` / `[x]` mean, and why a generated board region may appear there; prefer plain language, short examples, and explicit file ownership.
+- First-time users are often unfamiliar with Beads, guardrails, `spec_path`, when `tasks.md` is live versus mirrored, what `[ ]` / `[~]` / `[!]` / `[x]` mean, and why a generated board region may appear there; prefer plain language, short examples, and explicit file ownership.
 - Guardrail ratification is a normal pause point in definition, not a failure state.
 - A lean definition package is valid; omit placeholder artifacts for domains that do not materially apply.
 - If a draft clearly spans several bounded outcomes, split or narrow it before definition instead of letting one brainstorm file become a roadmap.

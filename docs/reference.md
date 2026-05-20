@@ -58,6 +58,8 @@ specs/
   `T001@a1b2c3d4`.
 - `tasks.md` may become the live markdown execution board only in Lightweight
   Execution before Beads import.
+- After Beads import, Beads is authoritative and `tasks.md` may only be updated
+  as a one-way, non-authoritative mirror from Beads.
 - `tasks.md` may include a Dude-generated board region inside the same file
   with `## Ready Now`, `## In Progress`, `## Blocked`, and `## Done`. It is
   derived guidance, not a second board.
@@ -127,8 +129,10 @@ Each canonical task header in `tasks.md` follows:
 - `blocked-by:` summarizes a blocker when the task is `[!]`
 
 During Lightweight Execution, task headers may move between `[ ]`, `[~]`,
-`[!]`, and `[x]`. Keep the durable task key stable where possible so task state
-can survive a later `@dude define` refresh or Beads handoff.
+`[!]`, and `[x]`. During Tracked Execution, the same glyphs may be updated only
+as Beads-derived mirror state. Keep the durable task key stable where possible
+so task state can survive a later `@dude define` refresh, Beads handoff, or
+explicit Beads-to-markdown sync.
 
 Legacy `T001` lines without a durable suffix remain acceptable during
 migration, but refreshed packages should upgrade them.
@@ -167,8 +171,9 @@ If validation fails, the spec is fixed first (max 3 iterations).
 ## Execution Workflow
 
 This section expands the Tracked Execution lane. Once tasks are imported, Beads
-becomes the only live execution board, and in normal use `@dude track`
-performs the handoff automatically for defined features.
+becomes the only live execution board and source of truth, and in normal use
+`@dude track` performs the handoff automatically for defined features. `tasks.md`
+may still be maintained as a one-way Beads-derived mirror for portability.
 
 ```mermaid
 flowchart TD
@@ -185,6 +190,7 @@ flowchart TD
     RESULT -->|New work| NEW["Create linked Beads issue"]
     REPORT --> PIPELINE["Coordinator runs delivery pipeline"]
     PIPELINE --> CLOSE["Coordinator calls bd close"]
+    CLOSE --> MIRROR["Mirror close to tasks.md\nif task identity maps cleanly"]
     FLAG --> ESCALATE{"Blockage type?"}
     ESCALATE -->|spec-gap| SPECFIX["Route to @dude-spec-lead"]
     ESCALATE -->|plan-gap| LEADFIX["Route to @dude-lead"]
@@ -195,7 +201,7 @@ flowchart TD
     LEADFIX --> READY
     CONTRACT --> READY
     DEBUG --> READY
-    CLOSE --> READY
+    MIRROR --> READY
     NEW --> READY
 ```
 
@@ -206,6 +212,13 @@ flowchart TD
 - Claim before starting: `bd update <id> --claim --json`.
 - Specialists report results to the coordinator — only the coordinator calls
   `bd close`.
+- After `bd close` succeeds, the coordinator mirrors the result to `tasks.md`
+  when the Beads issue maps to exactly one canonical task, preferring durable
+  keys and falling back only to unambiguous legacy task IDs. It refreshes any
+  derived board region, records the write-back in `## Coordinator Log`, and runs
+  the Dude linter.
+- Use `@dude sync Beads to tasks.md` to refresh the full markdown mirror after
+  manual Beads changes or before a planned fallback to Lightweight Execution.
 - Create discovered follow-up work in Beads.
 - Use typed `@dude flag ...` escalation exactly as summarized in the workflow
   guide.
@@ -213,7 +226,8 @@ flowchart TD
   query Beads when tracked execution is already active.
 - Dude handles parallel execution internally when multiple ready tasks are safe
   to fan out.
-- Do not use `tasks.md` as the live board after import.
+- Do not use `tasks.md` as the live board after import; it is only a
+  non-authoritative Beads mirror when updated in this lane.
 
 ## Responsibility Map
 
@@ -249,11 +263,14 @@ Rule for how routing adapts.
 
 - Do not introduce a second task system.
 - Use `tasks.md` as the live markdown execution board only in Lightweight Execution.
+- After Beads import, allow `tasks.md` updates only as one-way Beads-derived
+  mirror writes or explicit `@dude sync Beads to tasks.md` results.
 - A generated board region inside `tasks.md` is acceptable because it is
   derived from the canonical task units; a separate file is not.
 - Do not introduce hidden state files when the brainstorm ledger or Beads
   already carry the needed state.
-- Do not track execution anywhere except Beads once imported.
+- Do not track execution anywhere except Beads once imported; markdown mirror
+  writes are snapshots, not a second task system.
 - Do not turn `@dude status` into a mutating command.
 - Do not skip clarification when the feature is materially ambiguous.
 - Do not mix implementation code into feature-definition artifacts.

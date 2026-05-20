@@ -34,14 +34,16 @@ flowchart LR
 Beads is not the destination. It is only an optional tracking board. You can
 finish the feature through `tasks.md` without ever using Beads.
 
-One rule keeps the workflow clear: there is only one live place at a time.
+One rule keeps the workflow clear: there is only one authoritative live place at
+a time. When Beads is live, Dude may still keep `tasks.md` updated as a
+portable mirror, but that mirror does not decide what is ready or done.
 
 | If you are here | The live place is | What you do |
 |---|---|---|
 | Shaping the idea | `brainstorm/<feature>.md` | Review the draft, edit it if needed, and answer questions |
 | Defined, not implementing | `specs/<feature>/` | Read the spec and plan |
 | Implementing without Beads | `specs/<feature>/tasks.md` | Ask Dude for the next task |
-| Implementing with Beads | Beads | Track the same work as issues until it is done |
+| Implementing with Beads | Beads | Track the same work as issues until it is done; `tasks.md` may mirror Beads for fallback |
 
 ## Quick Start
 
@@ -110,7 +112,8 @@ In plain English:
 - `brainstorm/...` is the living document, a working note between you and Dude.
 - `spec.md` says what the feature must do.
 - `plan.md` says how the project should build it.
-- `tasks.md` is the work list if you choose to implement without Beads.
+- `tasks.md` is the work list if you choose to implement without Beads, and a
+  non-authoritative mirror when Beads is active.
 
 Let Dude maintain workflow bookkeeping like `status:`, `spec_path:`, generated
 board sections, and task checkboxes. You edit the idea and answers; Dude keeps
@@ -125,6 +128,7 @@ the workflow state tidy.
 | `@dude status` | See where you are and what is live |
 | `@dude implement the next task for <feature> without Beads` | Keep going from `tasks.md` |
 | `@dude track` | Move work into Beads when you want issue tracking |
+| `@dude sync Beads to tasks.md` | Refresh the markdown mirror from Beads before fallback or after manual Beads changes |
 | `@dude flag <problem>` | Send a blocker or bad assumption back to the right place |
 
 `@dude status`, `@dude diff`, and `@dude self-check` are read-only orientation
@@ -166,6 +170,11 @@ benefits from a dedicated external board.
 If you are not there yet, keep using `tasks.md` as the live markdown execution
 board with its derived `Ready / In Progress / Blocked / Done` view and avoid
 the extra setup overhead.
+
+If you do use Beads, Beads stays authoritative. Dude mirrors successful Beads
+closes back into `tasks.md` when the task key maps cleanly, and you can run
+`@dude sync Beads to tasks.md` before switching machines or falling back to
+Lightweight Execution.
 
 ## Detailed Docs
 

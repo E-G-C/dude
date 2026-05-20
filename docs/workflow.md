@@ -37,7 +37,8 @@ Key rules:
 - Beads is an optional tracker, not the final destination.
 - Lightweight Execution can finish the feature without Beads.
 - `tasks.md` is live only before Beads.
-- Once `@dude track` runs, Beads is live and `tasks.md` is reference only.
+- Once `@dude track` runs, Beads is live and authoritative.
+- While Beads is live, `tasks.md` may be kept as a one-way mirror for portability, but it is not used to choose ready work or decide completion.
 - `@dude status` is always read-only.
 
 ## Who Owns What
@@ -64,8 +65,8 @@ it also reports Beads state without mutating it.
 | ------------------------------------------------ | ---------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
 | `brainstorm/<slug>.md`                           | Working feature ledger                     | `## User Draft`, `**Your answer:**` slots in `## Open Questions`, assumption overrides, and items in `## Deferred Clarifications`     | Content inside `<!-- dude:managed:start --> ... <!-- dude:managed:end -->` fences (`## Normalized Intent`, `## Constraints`, `## Definition Checklist`, `## Coordinator Log`), plus `status` and `spec_path` | Rerun `@dude draft` or `@dude define` after edits                                      |
 | `specs/<feature>/spec.md`, `plan.md`             | Generated definition package               | Prefer editing the brainstorm instead of hand-editing these files             | the definition package contents                                                                                    | Rerun `@dude define <feature>` when scope or assumptions change                        |
-| `specs/<feature>/tasks.md`                       | Canonical phased task units plus a derived board view; live only in Lightweight Execution | Do not self-check `[x]`; let Dude mutate task state after routed outcomes and verification. Avoid rewriting task meaning by hand or editing the generated board region directly. | task selection via the generated board view when present, durable-key-first reconciliation, optional `deps:` metadata, and coordinator-owned state updates in Lightweight Execution | Rerun `@dude define <feature>` when scope changes; preserve durable task keys and surviving task state when tasks still mean the same work |
-| Beads issues                                     | Live execution state after import          | through Dude's execution flow                                                 | issue state, dependencies, and close decisions                                                                     | Use `@dude track`, `@dude status`, and Beads commands                                  |
+| `specs/<feature>/tasks.md`                       | Canonical phased task units plus a derived board view; live in Lightweight Execution and mirrored from Beads in Tracked Execution | Do not self-check `[x]`; let Dude mutate task state after routed outcomes and verification. Avoid rewriting task meaning by hand or editing the generated board region directly. | task selection via the generated board view when live, durable-key-first reconciliation, optional `deps:` metadata, coordinator-owned state updates in Lightweight Execution, and one-way Beads-derived mirror writes in Tracked Execution | Rerun `@dude define <feature>` when scope changes; preserve durable task keys and surviving task state when tasks still mean the same work. Use `@dude sync Beads to tasks.md` to refresh the mirror from Beads. |
+| Beads issues                                     | Live execution state after import          | through Dude's execution flow                                                 | issue state, dependencies, close decisions, and authoritative state while tracked execution is active                                                                     | Use `@dude track`, `@dude status`, `@dude sync Beads to tasks.md`, and Beads commands                                  |
 
 `spec_path`, `status`, and `## Coordinator Log` (legacy name: `## Definition
 Record`) are workflow metadata. Let Dude maintain them so define and track
@@ -81,7 +82,8 @@ stay consistent.
 - After `@dude track`, `@dude-lead` owns how to build it and implementation
   specialists own domain work inside their scope.
 - After import, `spec.md`, `plan.md`, and `tasks.md` remain reference artifacts;
-  Beads becomes the live execution board.
+  Beads becomes the live execution board. `tasks.md` may receive one-way mirror
+  updates from Beads, but Beads remains the authority.
 - If execution uncovers a real definition problem, use `@dude flag ...` instead
   of patching spec artifacts silently. Typed blockage prefixes are preferred,
   but plain-language flagging is valid when the blocker is obvious.
@@ -305,10 +307,17 @@ what is ready next without mutating anything.
 
 ### After `@dude track`: what changes?
 
-- Beads is now the live board for execution state.
+- Beads is now the live board and source of truth for execution state.
 - If you were using Lightweight Execution first, checked tasks remain in
   `tasks.md` as history and only remaining open work should have moved into
   Beads.
+- After Dude closes Beads work, Dude mirrors the result back to the matching
+  canonical task unit in `tasks.md` when the task key maps cleanly, preferring
+  durable keys and falling back only to unambiguous legacy task IDs. It then
+  regenerates any derived board region, records the sync in `## Coordinator Log`,
+  and runs the Dude linter.
+- `tasks.md` is a portability mirror in this lane. It is not used to choose ready
+  work, override Beads, or decide completion while tracked execution is active.
 - The import should report imported open-task count and skipped completed-task
   count so the migration is explicit.
 - If checked Lightweight history no longer maps one-to-one to the current task
@@ -324,6 +333,27 @@ what is ready next without mutating anything.
 - If execution reveals a missing requirement or mismatch, use `@dude flag ...`
   so the issue routes back to the right owner.
 
+### Beads-To-Markdown Sync
+
+Dude mirrors Beads state back to `tasks.md` after coordinator-owned Beads closes.
+If Beads was changed manually, or you want to switch machines before continuing
+without Beads, run:
+
+```text
+@dude sync Beads to tasks.md
+```
+
+That command is mutating. It reads Beads issues grouped by their `spec:` prefix,
+maps unambiguous task keys back to canonical task units, updates glyphs, refreshes
+the derived board region, records Coordinator Log entries, and reports anything
+that could not be mapped safely. Durable keys are preferred; legacy task IDs are
+accepted only when the story label and core task intent make the match clear.
+`@dude status` never performs this sync.
+
+If Beads is unavailable and you already have a recent mirror, you can choose to
+resume Lightweight Execution from that snapshot. Dude should tell you that the
+snapshot is only as current as the last successful mirror or sync.
+
 ### Before you run `@dude track`
 
 - The current answers live in `brainstorm/<slug>.md`, not only in chat.
@@ -333,6 +363,8 @@ what is ready next without mutating anything.
 - If you are switching from Lightweight Execution, `tasks.md` accurately marks
   task state with `[ ]`, `[~]`, `[!]`, and `[x]`, and any durable task keys
   still reflect the surviving task meanings.
+- If you are switching back from Beads to Lightweight Execution, run
+  `@dude sync Beads to tasks.md` first while Beads is still available.
 - If `spec_path` or task meaning changed materially during re-define,
   reconcile that before import instead of carrying stale completion history.
 - If Dude cannot reconcile checked history one-to-one after a re-define, expect
@@ -354,6 +386,9 @@ what is ready next without mutating anything.
 - `@dude track` did not compile anything: that is expected; see [Commands and prompt shapes](commands.md).
 - `@dude track` imported work but `tasks.md` is still present: that is expected;
   see `After @dude track: what changes?` above.
+- You used Beads on one machine but need to continue without it elsewhere: run
+  `@dude sync Beads to tasks.md` before leaving the Beads-capable machine, then
+  continue in Lightweight Execution from the mirrored snapshot.
 - `bd init` failed on Windows: use the manual Dolt server-mode path in
   `Tracked Execution` instead of retrying plain `bd init`.
 

@@ -303,7 +303,7 @@ When replying after `draft`, `define`, `track`, `status`, or a guardrail pause, 
 - After `draft`: `brainstorm/<slug>.md` is the live collaboration surface. The user reads or edits `## User Draft`, then answers the `## Open Questions` prompts directly below it, and edits `## Assumptions` only to override defaults. Dude maintains `status:`, `spec_path:`, and `## Coordinator Log` (legacy name: `## Definition Record`).
 - After `define`: the generated package under `specs/<feature>/` is refreshed by Dude. For Definition Only, point the user to `spec.md` first for WHAT, then `plan.md` for HOW, and `tasks.md` only if they want execution context. If the user chooses Lightweight Execution without Beads, `specs/<feature>/tasks.md` becomes the live markdown execution board, and the user should read the generated board view first when present (`## Ready Now`, `## In Progress`, `## Blocked`, `## Done`), then the canonical phased task units, then `spec.md` and `plan.md` for context. If the user explicitly wants tracked execution, prefer `@dude track` over treating `tasks.md` as the live board. If intent changes, send the user back to the brainstorm file and rerun `@dude define <feature>`.
 - In successful `define` replies, put the reading order directly in `Next:` instead of relying only on prose elsewhere.
-- After `track`: Beads is the only live execution board and `tasks.md` is reference-only.
+- After `track`: Beads is the only live execution board and source of truth. `tasks.md` may be maintained only as a one-way, non-authoritative Beads mirror.
 - After `status`: report the current lane, live artifact or board, next expected action, and blockers. Include task counts when Lightweight Execution is active and Beads counts only when tracked execution has started.
 - On a guardrail pause: the reply must literally include the phrase **"This is a normal checkpoint, not an error."** so first-time users do not mistake the pause for a failure. State that approval is pending and offer direct `accept`, `edit`, `reject`, or `skip` reply shapes. `skip` means continue planning with bundle defaults only and no new project-specific guardrails.
 - If the user is on Windows and chooses tracked execution: surface the Dolt server-mode path early, before repeated plain `bd init` retries.
@@ -374,7 +374,7 @@ When the user asks to brainstorm, draft, define, or refine product work:
 13. If the user wants an independent readiness judgment before execution, route the definition package to `@dude-reviewer`.
 14. Normal workflow does not require explicit manual import. `@dude track` is allowed to hand defined features into Beads automatically.
 15. Before import, `tasks.md` may be the live markdown execution board only when the user intentionally chooses Lightweight Execution or Beads is unavailable.
-16. After import, treat Beads as the only live execution board and remind the user that `tasks.md` is reference-only.
+16. After import, treat Beads as the only live execution board and source of truth. Remind the user that `tasks.md` is not authoritative, though Dude may keep it updated as a one-way Beads mirror.
 
 ## Beads Close Protocol
 
@@ -384,6 +384,7 @@ When executable Beads work reaches a completion claim, use this sequence:
 2. Route verification to `@dude-tester` when relevant or required by the project.
 3. Route independent readiness judgment to `@dude-reviewer` when that role exists or the user asked for it.
 4. Call `bd close` only after fresh evidence from the prior stages is available.
+5. After `bd close` succeeds, mirror the close to the matching canonical task unit in `tasks.md` when the task key maps cleanly, preferring durable keys and falling back only to unambiguous legacy task IDs. Regenerate any derived board region, append the write-back to the brainstorm Coordinator Log, and run `dude-lint`. If the mirror cannot be completed safely, report the skipped mirror without undoing the Beads close.
 
 If `@dude-tester` or `@dude-reviewer` is absent, adapt the pipeline, but do not skip the fresh-evidence requirement.
 
@@ -587,6 +588,7 @@ All specialists follow `.github/skills/dude-beads-workflow/SKILL.md` for command
 - Do not use `@dude status` to import or mutate work.
 - `tasks.md` may be the live markdown execution board only during Lightweight Execution before import.
 - Do not continue to use `tasks.md` as the live execution board after import.
+- After import, `tasks.md` may receive only one-way Beads-derived mirror writes or explicit `@dude sync Beads to tasks.md` results.
 - Do not continue to use the brainstorm file as the live execution board after import.
 - Do not create tasks outside of Beads once Beads is the execution system.
 
@@ -594,8 +596,8 @@ All specialists follow `.github/skills/dude-beads-workflow/SKILL.md` for command
 
 When a specialist returns from Beads-tracked work:
 
-- If the work is complete, run the delivery pipeline (verification via `@dude-tester` if on roster, then acceptance via quality authority if assigned). After the pipeline completes, load `dude-verification-before-completion` and then call `bd close` with a reason.
-- If no `@dude-tester` or quality authority exists on the roster, load `dude-verification-before-completion` directly and then call `bd close`.
+- If the work is complete, run the delivery pipeline (verification via `@dude-tester` if on roster, then acceptance via quality authority if assigned). After the pipeline completes, load `dude-verification-before-completion`, call `bd close` with a reason, and mirror the Beads close to `tasks.md` when the task key maps cleanly.
+- If no `@dude-tester` or quality authority exists on the roster, load `dude-verification-before-completion` directly, call `bd close`, and mirror the Beads close to `tasks.md` when the task key maps cleanly.
 - If the work is blocked, call `bd update <id> --status blocked --json` with the blocker reason.
 - If the work uncovered new work, create linked Beads issues.
 - If review rejects an artifact, route revision to a different agent when possible, not the original author.

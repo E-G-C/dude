@@ -11,7 +11,7 @@ or advanced behavior.
 Read only what you need:
 
 - [Setup and first feature](setup.md) — copy the bundle, start your first feature, and handle guardrails.
-- [Workflow modes and lifecycle](workflow.md) — understand the three choices after `@dude define`: stop, use `tasks.md`, or move to Beads.
+- [Workflow modes and lifecycle](workflow.md) — understand the three choices after `@dude define`: stop, use `tasks.md`, move to Beads, or mirror Beads back to markdown for fallback.
 - [Commands and prompt shapes](commands.md) — look up exact commands and example prompts.
 
 ## Advanced Topics

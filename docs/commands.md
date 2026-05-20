@@ -7,8 +7,9 @@
 Examples below use preferred invocation forms. The short rule is: `draft`
 creates the working feature document, `define` turns it into a reusable package,
 `track` hands that package into Beads when you choose Tracked Execution,
-`status` reports state in all three lanes, and `flag` routes execution-time
-gaps back into definition.
+`status` reports state in all three lanes, `sync Beads to tasks.md` refreshes the
+markdown mirror from Beads, and `flag` routes execution-time gaps back into
+definition.
 
 ### Concise Command List
 
@@ -18,6 +19,7 @@ gaps back into definition.
 | `@dude define <feature>` | Turn a drafted feature into a reusable package under `specs/<feature>/`. |
 | `@dude status` | Read-only report of the current lane, live artifact, next step, and blockers. |
 | `@dude track` | Import or resume tracked execution in Beads. |
+| `@dude sync Beads to tasks.md` | Refresh the non-authoritative markdown mirror from Beads. |
 | `@dude flag [<type>:] <details>` | Route a real blocker or mismatch back to the right owner. Typed prefixes are preferred, but plain language is accepted. |
 | `@dude diff` | Read-only summary of coordinator-owned writes since your previous message. |
 | `@dude self-check` | Read-only verification that Dude followed its own rules (banner, fences, log, no silent `[x]` drift). |
@@ -28,7 +30,7 @@ gaps back into definition.
 | `@dude upgrade [--dry-run|--rollback|--ref <ref>]` | Refresh the installed Dude bundle from upstream while preserving project memory and active work. |
 | `@dude import tasks from specs/<feature>/ into Beads` | Manually import a defined package into Beads when you do not want the normal automatic handoff. |
 
-Preferred workflow verbs are `draft`, `define`, `status`, `track`, `flag`, `diff`, and `self-check`. `hire`, `remember`, `upgrade`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
+Preferred workflow verbs are `draft`, `define`, `status`, `track`, `flag`, `diff`, and `self-check`. `hire`, `remember`, `upgrade`, `sync Beads to tasks.md`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
 
 ### `@dude draft`
 
@@ -114,7 +116,8 @@ Blockers:
 ### `@dude track`
 
 Use this when you want tracked execution in Beads. After import, Beads becomes
-the only live board for task state.
+the only live board and source of truth for task state. `tasks.md` may still be
+updated as a one-way portability mirror from Beads.
 
 Preferred form:
 
@@ -134,10 +137,45 @@ Illustrative result:
 Action: track
 Updated:
 - Imported specs/001-authentication/spec.md into Beads
+- Beads is now authoritative; tasks.md will mirror successful Dude-owned closes
 - Selected ready task T001@a1b2c3d4 for implementation
 Next:
 - Let Dude continue the routed work
 - Or run @dude status for a read-only snapshot
+```
+
+### `@dude sync Beads to tasks.md`
+
+Use this when Beads is active but you want to refresh the markdown mirror, such
+as before switching machines, falling back to Lightweight Execution, or after a
+manual Beads change.
+
+Preferred form:
+
+```text
+@dude sync Beads to tasks.md
+```
+
+Meaning: read Beads as the source of truth, map issue state back to canonical
+task units by durable task key, fall back only to unambiguous legacy task IDs,
+update `tasks.md` as a non-authoritative mirror, refresh the derived board
+region, record Coordinator Log entries, and run the Dude linter. This command is
+mutating and is never implied by `@dude status`.
+
+Illustrative result:
+
+```text
+Lane: Tracked Execution · Live: Beads
+Action: sync Beads to tasks.md
+Updated:
+- Mirrored 8 Beads tasks into specs/001-authentication/tasks.md
+- Refreshed the derived board region
+- Appended Coordinator Log entries for mirrored state changes
+Skipped:
+- 1 Beads issue lacked a matching durable task key
+Next:
+- Continue with @dude track while Beads is available
+- Or resume Lightweight Execution from tasks.md if you are intentionally falling back
 ```
 
 ### `@dude status`
@@ -203,6 +241,7 @@ Updated:
 - Defined features waiting for track: 1
 Next:
 - Run @dude track when you want Dude to continue tracked execution
+- Run @dude sync Beads to tasks.md before planned fallback to Lightweight Execution
 ```
 
 Every reply that touches execution state, routes implementation work, reports

@@ -94,9 +94,10 @@ Manual import still requires a defined brainstorm file as the identity source:
 
 ## After Import
 
-- Beads becomes the only live board for execution state.
+- Beads becomes the only live board and source of truth for execution state.
 - `spec.md`, `plan.md`, `tasks.md`, and supporting artifacts remain as reference context for the specialists.
-- `tasks.md` is reference-only after import; do not use it as a second task board.
+- `tasks.md` is no longer a live board after import; do not use it to choose ready work, override Beads, or close work. It may be maintained as a one-way, non-authoritative portability mirror from Beads.
+- When Dude closes Beads work later, the coordinator mirrors the resulting Beads state back to the matching canonical task unit in `tasks.md` when task identity is unambiguous. See `dude-beads-workflow` for the mirror protocol.
 - If the feature previously used Lightweight Execution, checked `- [x]` task lines remain as history and are not imported again.
 - If the feature previously used Lightweight Execution, `[~]` and `[!]` state should map forward into Beads issue status instead of being silently flattened.
 - Report how many open tasks were imported and how many checked tasks were skipped as Lightweight Execution history.
@@ -171,6 +172,7 @@ When creating Beads issues, translate spec priorities:
 - Do not keep going when `spec_path` drift or task-reconciliation ambiguity makes completed lightweight history unreliable; reconcile first.
 - Do not leave the feature epic as actionable ready work. Defer it or otherwise keep it out of `bd ready` selection.
 - Do not continue to use `tasks.md` as the live execution board after import.
+- Do not treat Beads-to-markdown mirror writes as a second source of truth; they are derived snapshots for portability and fallback only.
 - Do not parse or import the generated board region as if it were canonical task state.
 - Do not attach imported task issues to the feature epic with `--parent` or any other `parent-child` dependency; it blocks the ready queue.
 - Do not ignore partial import failure. Stop and report what was created, what was skipped, and what still needs repair.
