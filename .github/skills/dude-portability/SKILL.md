@@ -38,3 +38,4 @@ When deploying a Dude bundle into a project:
 - keep the `.github` structure intact for portability
 - prefer merge or update behavior over blind replacement when both source and destination have meaningful customizations
 - portability means the markdown bundle should travel cleanly even when frontmatter details need host-specific translation
+- if the user wants a customized copy of a shipped base agent or skill (any file matching the upstream base namespace \u2014 `dude.agent.md`, `dude-<slug>.agent.md`, `dude-<slug>` skill directories, or `dude.instructions.md`, excluding the reserved `dude-local-<slug>` namespace), fork it into a project-owned `dude-local-<slug>` artifact (a `dude-local-<slug>.agent.md` agent or a `dude-local-<slug>/` skill directory). Direct edits to base files are silently overwritten by `@dude upgrade`; the `dude-local-` namespace is the only durable customization path.

@@ -4,48 +4,56 @@
 
 The Dude bundle ships with a manifest and a built-in upgrade skill so you can pull the latest engine version from upstream without losing project memory or in-flight work.
 
+> ## ⚠️ Base files are upstream-owned
+>
+> Every file matching the upstream namespace convention \u2014 `.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md` (slug not starting with `local-`), `.github/skills/dude-<slug>/**` (slug not starting with `local-`), and `.github/instructions/dude.instructions.md` \u2014 is owned by upstream and is **silently overwritten** by `@dude upgrade`. Editing a base agent, skill, or the bundle instructions in place is unsupported \u2014 your changes will be lost on the next upgrade.
+>
+> To customize a default agent or skill, copy it under the reserved `dude-local-<slug>` namespace and edit there:
+>
+> - agents: `.github/agents/dude-local-<slug>.agent.md`
+> - skills: `.github/skills/dude-local-<slug>/`
+>
+> Files under `dude-local-` are project-owned and never touched by upgrade. They are also the place to add new project-specific agents and skills.
+
 ## What gets upgraded vs. preserved
 
 The upgrader treats every file in your project as one of three things:
 
 | Bucket | Examples | What `@dude upgrade` does |
 |---|---|---|
-| **Base-owned** | default agents in `.github/agents/`, default skills in `.github/skills/` except `.github/skills/project/`, `.github/instructions/dude.instructions.md` | Replaced from upstream when newer. |
+| **Base-owned** | default agents in `.github/agents/`, default skills in `.github/skills/` except `.github/skills/project/`, `.github/instructions/dude.instructions.md` | Overwritten unconditionally when upstream differs. Local edits to these paths are discarded. |
 | **Upgrade-owned** | `.github/dudestuff/bundle-manifest.md`, `.github/dudestuff/upgrade-log.md` | Maintained only by the upgrade skill. |
-| **Project-owned** | `.github/dudestuff/*` except the two upgrade-owned files, `.github/skills/project/`, custom agents, custom skills, `.github/copilot-instructions.md` | Never overwritten. |
+| **Project-owned** | `.github/dudestuff/*` except the two upgrade-owned files, `.github/skills/project/`, custom agents, custom skills under `dude-local-*` or other names, `.github/copilot-instructions.md` | Never overwritten. |
 | **Repo-local files and work state** | `README.md`, `docs/`, `.gitattributes`, `brainstorm/`, `specs/`, Beads, your product source | Never touched or brought in by upgrade. |
-| **Path collision** | local custom agent or skill exists at the same path as a new upstream base agent or skill | Blocks normal upgrade apply until resolved or explicitly skipped. |
 
-The source of truth for which files are base-owned is [`.github/dudestuff/bundle-manifest.md`](../.github/dudestuff/bundle-manifest.md). It records the upstream repo, the installed commit sha for orientation, an informational `bundle_version`, and a SHA-256 of every clean base file at install time. Local edits to base files show up as **conflicts** and require an explicit per-file decision during upgrade. If you choose `keep mine`, the upgrader records a `local_overrides` entry with the base hash, current hash, reason, and timestamp; `dude-lint` warns about that accepted divergence instead of failing it. Current Dude installs always ship with a seeded manifest; legacy installs without one are not upgraded in place.
+Base ownership is derived from the **namespace convention** by the upgrader on each run — anything under `.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md`, `.github/skills/dude-<slug>/**`, or `.github/instructions/dude.instructions.md` is base-owned, with the reserved `dude-local-<slug>` namespace explicitly excluded. The local [`.github/dudestuff/bundle-manifest.md`](../.github/dudestuff/bundle-manifest.md) is **metadata only**: it records the upstream repo and the installed commit sha for orientation. There is no `files` array and no per-file SHA-256 hashes; the upgrader compares your on-disk bytes against the fetched upstream tree directly at `plan` time.
 
-`bundle_version` should be bumped when publishing a material bundle change so downstream reports have a readable release label. Payload hashes remain the authoritative upgrade check.
+The authoritative upgrade trigger is whether the upstream commit sha differs from the installed sha.
 
-Upstream documentation is intentionally not part of the manifest. A project using Dude does not need to track Dude's own docs; read them in the Dude repository when needed.
+Upstream documentation is intentionally not part of the upgrade payload. A project using Dude does not need to track Dude's own docs; read them in the Dude repository when needed.
 
-Path collisions protect local knowledge. If you created `.github/skills/foo/` locally and a future Dude release adds its own `.github/skills/foo/`, the upgrader does not overwrite yours and does not pretend the upstream `foo` was installed. The report marks it as a blocking collision. The safest fix is to cancel, rename your local skill or agent to a project-specific path, update local references if needed, then rerun the upgrade. Advanced users can choose `confirm upgrade skip-collisions` to take the rest of the upgrade while leaving the upstream colliding file uninstalled.
+The namespace convention protects local knowledge. If you create a project-local agent or skill under the reserved `dude-local-<slug>` namespace, it sits in a different namespace from upstream `dude-<slug>` artifacts and the upgrader simply does not touch it. There is no collision to resolve.
 
 New project-local artifacts should use the reserved `dude-local-` namespace:
 
 - agents: `.github/agents/dude-local-<slug>.agent.md`
 - skills: `.github/skills/dude-local-<slug>/SKILL.md`
 
-The Dude core bundle must never ship default agents or skills with `dude-local-` names, and `dude-lint` fails if the bundle manifest tries to claim them. This makes path collisions exceptional instead of routine. Older custom artifacts without the prefix remain protected by the collision policy; rename them into `dude-local-` when it is convenient.
+The Dude core bundle must never ship default agents or skills with `dude-local-` names; the engine excludes those names from base enumeration by convention. Anything else outside both the base and `dude-local-` namespaces — say, an agent file `.github/agents/<custom>.agent.md` that does not use the `dude-` prefix at all — is project-owned and never overwritten by upgrade, but `dude-lint` warns about it so it can be renamed before colliding with a future upstream artifact of the same name.
 
-Direct file edits are still possible. If someone manually adds an unprefixed agent or skill (for example `.github/agents/<custom>.agent.md` or `.github/skills/<custom>/`) without going through `@dude hire`, `@dude import`, or `@dude create skill`, Dude cannot prevent the name up front. Instead, `dude-lint` warns that the artifact is project-owned but outside the reserved namespace, and upgrades still preserve it. If upstream later claims the same path, the upgrade report treats it as a blocking path collision.
+Direct file edits are still possible. If someone manually adds an unprefixed agent or skill (for example `.github/agents/<custom>.agent.md` or `.github/skills/<custom>/`) without going through `@dude hire`, `@dude import`, or `@dude create skill`, Dude cannot prevent the name up front. Instead, `dude-lint` warns that the artifact is project-owned but outside the reserved namespace, and upgrades still preserve it.
 
 ## Workflow
 
 The upgrade surface is small on purpose: **status → dry-run → upgrade → (rollback if needed)**.
 
-1. **Check** — `@dude status` reports whether an upgrade payload is available against the manifest's pinned source. The check is based on base-file hashes, not `installed_sha` alone, so upstream commits that touch only repo docs do not create false upgrade prompts.
-2. **Preview** — `@dude upgrade --dry-run` produces an upgrade report listing every file that would be replaced, added, removed, or conflicted, plus the version delta. Nothing is written.
+1. **Check** — `@dude status` reports whether an upgrade is available against the manifest's pinned source. The decision is based on the upstream commit sha against the locally recorded sha.
+2. **Preview** — `@dude upgrade --dry-run` produces an upgrade report listing every file that would be replaced, added, or removed, plus the version delta and per-file line stats. Nothing is written. Use this to spot any local edits to base files you may want to preserve in `dude-local-<slug>` before proceeding.
 3. **Apply** — `@dude upgrade` re-runs the report, then waits for `confirm upgrade`. On confirm it creates a `dude-pre-upgrade-<timestamp>` git tag and a `chore/dude-upgrade-<sha>` branch as a safety net, then applies changes in this order:
    - **Add** new base files.
-   - **Replace** base files where local matches install-time hash.
-   - **Remove** base files dropped upstream (only when local matches install-time hash).
-   - **Path collision** — stop if a local project-owned path blocks a new upstream path, unless explicitly skipped.
-   - **Conflict** — for each base file you locally modified, prompt: `keep mine | take new | show diff | merge`.
-4. **Verify** — runs `dude-lint` automatically. Accepted `local_overrides` produce warnings; any `[FAIL]` triggers a rollback offer before continuing.
+   - **Replace** base files (overwrite from upstream; any local edits are discarded).
+   - **Remove** base files dropped upstream (unless `--skip-removals`).
+4. **Verify** — runs `dude-lint` automatically. Any `[FAIL]` triggers a rollback offer before continuing.
 5. **Review & merge** — `git diff` on the safety branch, then merge or open a PR like any normal change.
 
 ## Common commands
@@ -55,7 +63,6 @@ The upgrade surface is small on purpose: **status → dry-run → upgrade → (r
 | Preview only, no writes | `@dude upgrade --dry-run` |
 | Routine upgrade against the manifest's pinned ref | `@dude upgrade` |
 | Skip removals this run | reply `confirm upgrade skip-removals` at the gate |
-| Preserve local path collisions and defer matching upstream additions | reply `confirm upgrade skip-collisions` at the gate |
 | Pin to a specific upstream version | `@dude upgrade --ref v1.4.0` |
 | Override the upstream source for one run | `@dude upgrade --source <url-or-local-path>` |
 | Allow a dirty working tree | `@dude upgrade --allow-dirty` (refused by default) |
@@ -65,10 +72,10 @@ The upgrade surface is small on purpose: **status → dry-run → upgrade → (r
 
 After any `@dude upgrade`, the following files and directories are byte-identical to what they were before the upgrade:
 
-- everything under `.github/dudestuff/` except `bundle-manifest.md` (rewritten with the new sha, hash table, and any accepted local overrides) and `upgrade-log.md` (one new entry appended)
+- everything under `.github/dudestuff/` except `bundle-manifest.md` (rewritten with the new `installed_sha`) and `upgrade-log.md` (one new entry appended)
 - everything under `.github/skills/project/`
-- any agent file under `.github/agents/` not present in the upstream manifest
-- any skill directory under `.github/skills/` not present in the upstream manifest
+- any agent file under `.github/agents/` outside the upstream base namespace (including everything under `dude-local-*`)
+- any skill directory under `.github/skills/` outside the upstream base namespace (including everything under `dude-local-*`)
 - `.github/copilot-instructions.md` if it exists
 - project docs and root files such as `README.md` and `.gitattributes`
 - everything under `brainstorm/`
@@ -78,12 +85,14 @@ After any `@dude upgrade`, the following files and directories are byte-identica
 
 If anything in those locations is touched by the upgrader, that is a bug.
 
+Files matching the upstream base namespace are not preserved. Any local edits to those paths are silently discarded on apply. Use the `dude-local-<slug>` namespace to keep customizations of shipped agents or skills.
+
 ## Rollback
 
 `@dude upgrade --rollback`:
 
 1. Resets to the most recent `dude-pre-upgrade-*` tag.
-2. Restores the prior `bundle-manifest.md`.
+2. Restores the prior `bundle-manifest.md` from the tagged commit.
 3. Appends a rollback entry to `upgrade-log.md`.
 4. Re-runs `dude-lint`.
 

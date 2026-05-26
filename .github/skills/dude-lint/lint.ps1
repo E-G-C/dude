@@ -218,8 +218,11 @@ if (Test-Path -LiteralPath $specsDir) {
         $seenIds = @{}
         $inBoard = $false
         $inHistory = $false
+        $historySeen = $false
+        $inDiscovered = $false
         $taskLinePattern = '^\s*-\s*\[(.)\]\s+'
         $canonicalTaskPattern = '^- \[( |~|!|x)\] (T\d{3,}(?:@[a-z0-9]{8})?) (\[P\] )?\[(US\d+|Shared)\] (.+)$'
+        $beadsTagPattern = '\(Beads:\s*[A-Za-z0-9_-]+(\s*;[^)]*)?\)'
 
         for ($i = 0; $i -lt $lines.Count; $i++) {
             $ln = $lines[$i]
@@ -233,11 +236,34 @@ if (Test-Path -LiteralPath $specsDir) {
                 if ($ln -match '^\s*<!--\s*dude:board:end\s*-->\s*$') { $inBoard = $false }
                 continue
             }
+            if ($inHistory) {
+                if ($ln -match '^##\s+') {
+                    # Exit history mode so the H2 can be classified by the
+                    # checks below (it may be a benign prose appendix like
+                    # ## Notes, a duplicate history, or a canonical task
+                    # section that should not appear here). Sticky
+                    # $historySeen lets the task-line check flag any
+                    # canonical task row that ends up below history.
+                    $inHistory = $false
+                }
+                else { continue }
+            }
             if ($ln -match '^##\s+Lightweight\s+Execution\s+History\b') {
+                if ($historySeen) {
+                    Write-Fail "${rel}:${lineNo}  duplicate ## Lightweight Execution History section (only one history block is allowed)"
+                }
                 $inHistory = $true
+                $historySeen = $true
+                $inDiscovered = $false
                 continue
             }
-            if ($inHistory) { continue }
+            if ($ln -match '^##\s+Discovered\s+During\s+Execution\b') {
+                $inDiscovered = $true
+                continue
+            }
+            if ($inDiscovered -and $ln -match '^##\s') {
+                $inDiscovered = $false
+            }
 
             if ($ln -match $taskLinePattern) {
                 $glyph = $matches[1]
@@ -264,6 +290,28 @@ if (Test-Path -LiteralPath $specsDir) {
                 }
                 else {
                     $seenIds[$id] = $lineNo
+                }
+
+                $num = 0
+                if ($id -match '^T(\d+)') { $num = [int]$matches[1] }
+                $inReservedRange = ($num -ge 9001 -and $num -le 9999)
+
+                if ($historySeen -and -not $inHistory) {
+                    Write-Fail "${rel}:${lineNo}  canonical task row '$id' appears below ## Lightweight Execution History; history must remain the final task section (move new tasks above it)"
+                }
+
+                if ($inDiscovered) {
+                    if (-not $inReservedRange) {
+                        Write-Fail "${rel}:${lineNo}  task '$id' under ## Discovered During Execution must be in reserved range T9001-T9999"
+                    }
+                    if ($ln -notmatch $beadsTagPattern) {
+                        Write-Warn "${rel}:${lineNo}  task '$id' under ## Discovered During Execution is missing its (Beads: <id>) tag (re-import would create a duplicate)"
+                    }
+                }
+                else {
+                    if ($num -ge 9000) {
+                        Write-Fail "${rel}:${lineNo}  task '$id' uses reserved discovered boundary T9000-T9999 outside ## Discovered During Execution"
+                    }
                 }
             }
         }
@@ -316,6 +364,10 @@ if (Test-Path -LiteralPath $skillsRootForNames) {
 }
 
 # --- Check 3b: bundle manifest ---------------------------------------------
+# The manifest is metadata only — exactly four metadata fields, no files
+# array, no per-file hashes. Base ownership is derived from the namespace
+# convention by the engine. We validate the exact field set and the
+# installed_sha shape.
 $manifestPath = Join-Path $Root ".github/dudestuff/bundle-manifest.md"
 if (-not (Test-Path -LiteralPath $manifestPath)) {
     Write-Fail ".github/dudestuff/bundle-manifest.md  missing seeded bundle manifest"
@@ -330,7 +382,14 @@ else {
     else {
         try {
             $manifest = $manifestMatch.Groups[1].Value | ConvertFrom-Json
-            foreach ($field in @('source_repo', 'source_ref', 'installed_sha', 'installed_at', 'files')) {
+            $allowedFields = @('source_repo', 'source_ref', 'installed_sha', 'installed_at')
+            foreach ($field in $manifest.PSObject.Properties.Name) {
+                if ($allowedFields -notcontains $field) {
+                    Write-Fail "$manifestRel  manifest has unsupported field '$field'"
+                }
+            }
+
+            foreach ($field in $allowedFields) {
                 if (-not ($manifest.PSObject.Properties.Name -contains $field)) {
                     Write-Fail "$manifestRel  manifest is missing '$field'"
                 }
@@ -340,122 +399,6 @@ else {
             if ($installedSha -notmatch '^[0-9a-f]{40}$') {
                 Write-Fail "$manifestRel  installed_sha must be a 40-character lowercase git sha"
             }
-
-            $fileEntries = @()
-            if ($null -ne $manifest.files) {
-                $fileEntries = @($manifest.files.PSObject.Properties)
-            }
-            if ($fileEntries.Count -eq 0) {
-                Write-Fail "$manifestRel  files map must be seeded and non-empty"
-            }
-
-            $overrideByPath = @{}
-            $overrideEntries = @()
-            if (($manifest.PSObject.Properties.Name -contains 'local_overrides') -and $null -ne $manifest.local_overrides) {
-                $overrideEntries = @($manifest.local_overrides.PSObject.Properties)
-                foreach ($override in $overrideEntries) {
-                    $overrideByPath[[string]$override.Name] = $override.Value
-                }
-            }
-
-            $expectedHashes = @{}
-            $actualHashes = @{}
-
-            foreach ($entry in $fileEntries) {
-                $path = [string]$entry.Name
-                $expectedHash = [string]$entry.Value
-                if ([string]::IsNullOrWhiteSpace($path) -or $path -match '\\' -or $path -match '^/' -or $path -match '(^|/)\.\.(/|$)') {
-                    Write-Fail "$manifestRel  invalid manifest path '$path'"
-                    continue
-                }
-                $isReservedLocalPath = (
-                    $path -match '^\.github/agents/dude-local-[^/]+\.agent\.md$' -or
-                    $path -match '^\.github/skills/dude-local-[^/]+/.+$'
-                )
-                if ($isReservedLocalPath) {
-                    Write-Fail "$manifestRel  manifest path '$path' uses the reserved project-local namespace"
-                    continue
-                }
-                $isCorePath = (
-                    $path -eq '.github/agents/dude.agent.md' -or
-                    $path -match '^\.github/agents/dude-[^/]+\.agent\.md$' -or
-                    $path -match '^\.github/skills/dude-[^/]+/.+$' -or
-                    $path -eq '.github/instructions/dude.instructions.md'
-                )
-                if (-not $isCorePath) {
-                    Write-Fail "$manifestRel  manifest path '$path' is outside the dude- core namespace"
-                    continue
-                }
-                if ($expectedHash -notmatch '^[0-9a-f]{64}$') {
-                    Write-Fail "$manifestRel  invalid SHA-256 for '$path'"
-                    continue
-                }
-                $expectedHashes[$path] = $expectedHash
-                $resolvedPath = Join-Path $Root ($path -replace '/', [IO.Path]::DirectorySeparatorChar)
-                if (-not (Test-Path -LiteralPath $resolvedPath)) {
-                    Write-Fail "$manifestRel  manifest file '$path' does not exist"
-                    continue
-                }
-                if ((Get-Item -LiteralPath $resolvedPath).PSIsContainer) {
-                    Write-Fail "$manifestRel  manifest path '$path' resolves to a directory"
-                    continue
-                }
-                $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $resolvedPath).Hash.ToLowerInvariant()
-                $actualHashes[$path] = $actualHash
-                if ($actualHash -ne $expectedHash) {
-                    $hasAcceptedOverride = $false
-                    if ($overrideByPath.ContainsKey($path)) {
-                        $overrideValue = $overrideByPath[$path]
-                        $overrideBaseHash = [string]$overrideValue.base_sha256
-                        $overrideCurrentHash = [string]$overrideValue.current_sha256
-                        if ($overrideBaseHash -eq $expectedHash -and $overrideCurrentHash -eq $actualHash) {
-                            $hasAcceptedOverride = $true
-                        }
-                    }
-                    if (-not $hasAcceptedOverride) {
-                        Write-Fail "$manifestRel  manifest hash mismatch for '$path' (local edit or stale manifest; run @dude upgrade --dry-run to classify, then confirm upgrade if it reports Metadata refresh)"
-                    }
-                }
-            }
-
-            foreach ($override in $overrideEntries) {
-                $path = [string]$override.Name
-                $overrideValue = $override.Value
-                if ([string]::IsNullOrWhiteSpace($path) -or $path -match '\\' -or $path -match '^/' -or $path -match '(^|/)\.\.(/|$)') {
-                    Write-Fail "$manifestRel  invalid local override path '$path'"
-                    continue
-                }
-                if (-not $expectedHashes.ContainsKey($path)) {
-                    Write-Fail "$manifestRel  local override '$path' is not listed in files"
-                    continue
-                }
-                foreach ($field in @('base_sha256', 'current_sha256', 'reason', 'accepted_at')) {
-                    if (-not ($overrideValue.PSObject.Properties.Name -contains $field)) {
-                        Write-Fail "$manifestRel  local override '$path' is missing '$field'"
-                    }
-                }
-                $baseHash = [string]$overrideValue.base_sha256
-                $currentHash = [string]$overrideValue.current_sha256
-                if ($baseHash -notmatch '^[0-9a-f]{64}$') {
-                    Write-Fail "$manifestRel  local override '$path' has invalid base_sha256"
-                    continue
-                }
-                if ($currentHash -notmatch '^[0-9a-f]{64}$') {
-                    Write-Fail "$manifestRel  local override '$path' has invalid current_sha256"
-                    continue
-                }
-                if ($baseHash -ne $expectedHashes[$path]) {
-                    Write-Fail "$manifestRel  local override '$path' base_sha256 does not match files entry"
-                    continue
-                }
-                if ($actualHashes.ContainsKey($path) -and $currentHash -ne $actualHashes[$path]) {
-                    Write-Fail "$manifestRel  local override '$path' current_sha256 does not match the current file"
-                    continue
-                }
-                if ($currentHash -ne $baseHash) {
-                    Write-Warn "$manifestRel  accepted local override for '$path' (hash differs from base)"
-                }
-            }
         }
         catch {
             Write-Fail "$manifestRel  manifest JSON failed to parse: $($_.Exception.Message)"
@@ -463,30 +406,23 @@ else {
     }
 }
 
-# --- Check 3b: project-local namespace advisories ---------------------------
-# Collect manifest paths (best effort) so unprefixed on-disk artifacts that are
-# already core-owned do not double-warn. Errors here are advisory only.
-$manifestPaths = @{}
-if (Test-Path -LiteralPath $manifestPath) {
-    try {
-        $mraw = Get-Content -LiteralPath $manifestPath -Encoding UTF8 -Raw
-        $mm = [regex]::Match($mraw, '(?s)```json\s*(\{.*?\})\s*```')
-        if ($mm.Success) {
-            $mj = $mm.Groups[1].Value | ConvertFrom-Json
-            if ($null -ne $mj.files) {
-                foreach ($p in $mj.files.PSObject.Properties.Name) { $manifestPaths[$p] = $true }
-            }
-        }
-    } catch {}
-}
+# --- Check 3c: project-local namespace advisories ---------------------------
+# Base ownership is derived from the namespace convention:
+#   .github/agents/dude.agent.md
+#   .github/agents/dude-<slug>.agent.md          (slug NOT 'local-...')
+#   .github/skills/dude-<slug>/**                (slug NOT 'local-...')
+#   .github/instructions/dude.instructions.md
+# Project-owned items use the reserved dude-local-<slug> namespace. Anything
+# else in .github/agents/ or top-level .github/skills/ is unreserved and
+# warned about so it can be renamed before colliding with future upstream.
 
 $agentDirAdv = Join-Path $Root ".github/agents"
 if (Test-Path -LiteralPath $agentDirAdv) {
     foreach ($a in (Get-ChildItem -LiteralPath $agentDirAdv -Filter *.agent.md -File -ErrorAction SilentlyContinue)) {
         $rel = (Get-RelativePath $a.FullName) -replace '\\', '/'
-        if ($manifestPaths.ContainsKey($rel)) { continue }
         if ($a.Name -eq 'dude.agent.md') { continue }
         if ($a.Name -like 'dude-local-*') { continue }
+        if ($a.Name -like 'dude-*')       { continue }
         Write-Warn "$rel  unreserved project-owned agent (rename to .github/agents/dude-local-<slug>.agent.md to avoid future upstream collisions)"
     }
 }
@@ -497,10 +433,8 @@ if (Test-Path -LiteralPath $skillDirAdv) {
         $name = $d.Name
         if ($name -eq 'project') { continue }
         if ($name -like 'dude-local-*') { continue }
+        if ($name -like 'dude-*')       { continue }
         $relDir = ".github/skills/$name/"
-        $hasManifestEntry = $false
-        foreach ($k in $manifestPaths.Keys) { if ($k.StartsWith($relDir)) { $hasManifestEntry = $true; break } }
-        if ($hasManifestEntry) { continue }
         Write-Warn "$relDir  unreserved project-owned skill (rename to .github/skills/dude-local-<slug>/ to avoid future upstream collisions)"
     }
 }

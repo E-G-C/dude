@@ -1,6 +1,6 @@
 ---
 name: "dude-beads-workflow"
-description: "Use when working with Beads issue tracking: bd ready, bd create, bd update, bd close, claiming tasks, resume-first execution, pending work, blocked work, discovered bugs, or execution status."
+description: "Use when working with Beads issue tracking: bd ready, bd create, bd update, bd close, claiming tasks, resume-first execution, pending work, blocked work, discovered bugs, execution status, mirroring Beads state back to tasks.md, or running @dude sync Beads to tasks.md."
 ---
 
 # Beads Workflow
@@ -26,11 +26,16 @@ Standard workflow for all Dude specialists when working on tasks tracked in Bead
 
 The mirror is one-way: Beads -> `tasks.md`. While tracked execution is active, never use `tasks.md` to override Beads.
 
+Throughout this skill, an **executable Beads issue** is one whose Beads `type` is not `epic`. Non-executable grouping issues — specifically the deferred feature epic created by `dude-spec-import-to-beads` and any other `type=epic` issue — never participate in mirror writes or mirror verification. A **representable** issue is an executable issue whose Beads status maps to a markdown glyph in the table below; deferred executable issues are reportable as `unsupported` but are not silently mirrored.
+
 When the coordinator changes Beads execution state, mirror the result to the matching canonical task unit in `specs/<feature>/tasks.md` when all of these are true:
 
 - the Beads issue description starts with `spec: <spec_path>`
-- the Beads issue title or description contains an original task key such as `T012@a1b2c3d4`, or a legacy task ID such as `T012` when no durable suffix exists
-- exactly one canonical task header in that feature's `tasks.md` has the same durable key; if no durable key exists, exactly one header matches by task ID, story label, and core task intent
+- the issue is executable (see definition above)
+- exactly one canonical task header in that feature's `tasks.md` matches the Beads issue by one of the following channels, evaluated in this order:
+  1. **durable key** — the Beads issue title or description contains an original task key such as `T012@a1b2c3d4`, and exactly one task header carries the same durable key
+  2. **legacy key** — no durable key exists on either side, and exactly one task header matches by task ID, story label, and core task intent
+  3. **Beads tag** — exactly one task header in the feature's `tasks.md` carries a previously generated `(Beads: <id>)` tag whose `<id>` is the closed/updated Beads issue ID (recognized by the regex `\(Beads:\s*([A-Za-z0-9_-]+)(?:\s*;[^)]*)?\)`)
 
 Mirror status mapping:
 
@@ -40,20 +45,58 @@ Mirror status mapping:
 | `in_progress` | `[~]` |
 | `blocked` | `[!]` |
 | `closed` | `[x]` |
+| `deferred` | skip grouping issues; report executable issues as unsupported |
+
+`deferred` is reserved by Dude for non-executable grouping issues such as the feature epic created by `dude-spec-import-to-beads`. Those issues do not correspond to any canonical task header in `tasks.md`, so mirror skips them silently and does not report them as ambiguous. If an executable task is deferred in Beads, do not silently drop it: report it as unsupported by the current markdown glyph set and ask whether to keep it only in Beads, reopen it, or represent it as blocked.
 
 Mirror only the task-state glyph and Beads-derived blocker metadata when needed. Preserve the task key, labels, description, explicit `deps:`, and human-authored task text. If a generated board region is present, regenerate it as a complete replacement from the canonical task units.
 
-Append a concise line to the companion brainstorm's `## Coordinator Log` for every successful mirror write, for example:
+Append a concise line to the companion brainstorm's `## Coordinator Log` for every successful mirror write or sync-driven append. Use one of these stable forms (timestamp is ISO local time):
 
 ```text
 2026-05-19 14:22 — mirrored Beads close dude-abc to tasks.md T012@a1b2c3d4
+2026-05-19 14:23 — mirrored Beads status in_progress dude-def to tasks.md T013@77aa11bb
+2026-05-19 14:24 — appended discovered Beads issue dude-xyz to tasks.md as T9001@4f2a91c0
+2026-05-19 14:25 — sync reported mirror drift: 2 stale, 0 ambiguous, 1 unsupported
 ```
+
+Report-only entries (the last form) are appended only by explicit `@dude sync` runs that surface drift, never by `@dude status`.
 
 After mutating `tasks.md`, run the `dude-lint` skill (`pwsh .github/skills/dude-lint/lint.ps1` or `bash .github/skills/dude-lint/lint.sh`) and fix any `[FAIL]` before reporting the mirror as successful.
 
 If the task key is missing, `tasks.md` is missing, the key maps to zero or multiple task headers, fallback matching is ambiguous, the board fence is malformed, or the companion brainstorm cannot be identified, do not guess. Keep the Beads state as authoritative, report that the Beads operation succeeded but markdown mirroring was skipped, and ask the user to run an explicit Beads-to-markdown sync or reconcile the task identity.
 
-`@dude sync Beads to tasks.md` is the explicit reconciliation command for manual Beads changes, machine switching, or stale mirrors. It scans Beads issues by `spec:` prefix, applies the status mapping above to every unambiguous task key, regenerates the board region, appends Coordinator Log entries, runs `dude-lint`, and reports imported, mirrored, skipped, and ambiguous counts. It is mutating and must not run as part of `@dude status`.
+`@dude sync Beads to tasks.md` is the explicit reconciliation command for manual Beads changes, machine switching, or stale mirrors. It scans Beads issues by `spec:` prefix, applies the status mapping above to every unambiguous task key, regenerates the board region, appends Coordinator Log entries, runs `dude-lint`, and reports imported, mirrored, skipped, ambiguous, unsupported, and appended counts. It is mutating and must not run as part of `@dude status`.
+
+### Discovered Beads Work
+
+Beads issues created mid-flight (for example with `bd create ... --deps discovered-from:<id>`) carry a `spec:` prefix but have no matching task header in `tasks.md` until the first sync. The close-time auto-mirror never appends new headers; once a discovered issue has been surfaced by `@dude sync Beads to tasks.md`, however, the `(Beads: <id>)` tag arm of the mirror match rules above lets later close-time mirror writes update that appended header (for example, flipping it to `[x]` when the discovered Beads issue closes).
+
+`@dude sync Beads to tasks.md` is the only path that surfaces discovered work in `tasks.md`. When the sync finds an executable open, in-progress, or blocked Beads issue with a `spec:` prefix and no matching durable key, unambiguous legacy ID, or previously generated `(Beads: <id>)` tag in that feature's `tasks.md`, it appends a new canonical task unit under a `## Discovered During Execution` section (creating that section if it does not yet exist). If `## Lightweight Execution History` is present, insert `## Discovered During Execution` immediately above it; otherwise append `## Discovered During Execution` as the final section in the file. The history block, when present, must remain the terminal archive section. The appended unit must use the normal task-header schema so `dude-lint`, Lightweight Execution, and future imports still understand it:
+
+- TNNN is allocated from the **reserved discovered range `T9001`–`T9999`**, using the next free integer above the highest existing `T9NNN` header in that file (start at `T9001` when none exists). Spec-derived tasks emitted by `dude-feature-definition` stay below `T9000`, so re-defining the feature cannot collide with appended discovered work.
+- the durable suffix is **the first 8 hex characters of `sha256(<beads-id>)` (lowercase)** — this is a rule, not an example, so two machines syncing the same Beads database always produce the same header. On the rare event of a collision against an existing suffix in the same file, append `-1`, `-2`, ... to the Beads ID input before hashing and record the salt in the matching parenthetical (e.g. `Beads: dude-xyz; suffix-salt: 1`).
+- `[Shared]` as the story label unless the Beads issue unambiguously maps to a specific user story
+- the Beads issue title as the task text, ending with a stable `(Beads: <id>)` tag and, when present, `; discovered from: <parent-id>` inside the same parenthetical
+- the original status glyph from the mapping above
+
+Do not introduce a separate `D...` task namespace or new metadata keys such as `discovered-from:`; those are not part of the canonical task format. The generated `(Beads: <id>)` tag is the future matching anchor when the Beads issue itself still lacks a generated task key, and the close-time mirror match rules above explicitly accept it as the third match channel.
+
+The sync report lists every appended entry separately from regular mirror writes so the user can keep, retitle, or remove them before continuing. Closed Beads issues with no matching task header are reported as skipped rather than appended, because back-filling completed history into `tasks.md` is the user's decision.
+
+### Mirror Verification
+
+`@dude status` is read-only and does not perform a sync. When tracked execution is active, treat the mirror line as a trustworthy portability check, not a cheap mtime hint. Query Beads with `bd list --json`, group issues by `spec:` prefix, read the matching `tasks.md`, and verify the markdown snapshot against Beads without writing anything.
+
+- `Mirror: verified current` when every executable, representable Beads issue for the feature maps to exactly one canonical task header by durable task key, legacy fallback, or generated `(Beads: <id>)` tag, and each mapped header has the glyph required by the status mapping above
+- `Mirror: stale — run @dude sync Beads to tasks.md` when any executable open, in-progress, blocked, or closed Beads issue is missing from `tasks.md`, maps ambiguously, or has a mismatched glyph
+- `Mirror: unsupported — deferred executable Beads task <id>` when the feature contains a deferred executable issue that cannot be represented by the current markdown glyph set
+- `Mirror: not present` when no `tasks.md` exists for the active feature
+- `Mirror: unknown — <reason>` when Beads or the filesystem cannot be read well enough to verify the snapshot
+
+When more than one condition would apply for a single feature, report the most actionable one in this priority order: `unknown` > `stale` > `unsupported` > `not present` > `verified current`. Additional non-actionable conditions for the same feature may be appended as a secondary `Mirror notes:` line so nothing is hidden.
+
+Non-executable grouping issues, including deferred epics, do not participate in mirror verification. The check is informational but must be accurate: do not report `verified current` from file modification times alone.
 
 ## Before Starting Work
 

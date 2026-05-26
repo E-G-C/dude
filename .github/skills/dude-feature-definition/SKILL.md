@@ -375,7 +375,7 @@ The **first line of `tasks.md`** (above the board fence) must be an audit-log br
 <!-- audit log: brainstorm/<slug>.md#coordinator-log -->
 ```
 
-If `tasks.md` may also include a `## Lightweight Execution History` block (created when the user replies `archive dropped` to a reconciliation prompt), that block lives at the **bottom** of the file, holds dropped task rows that previously carried `[x]` / `[~]` / `[!]` state, and is **read-only context**:
+If `tasks.md` may also include a `## Lightweight Execution History` block (created when the user replies `archive dropped` to a reconciliation prompt), that block must be the **final task section** of the file — when `## Discovered During Execution` is also present, the discovered section is preserved immediately above it. The history block holds dropped task rows that previously carried `[x]` / `[~]` / `[!]` state, and is **read-only context**:
 
 - it is never re-parsed as canonical task units on later `define` runs
 - it is never regenerated, rewritten, or pruned by `define`
@@ -383,6 +383,16 @@ If `tasks.md` may also include a `## Lightweight Execution History` block (creat
 - once a row lands there, it stays there as evidence of work that was completed before a re-define dropped the task
 
 The import-readiness checks and parallel-dispatch rules ignore this block entirely.
+
+`tasks.md` may also include a `## Discovered During Execution` section, owned by `@dude sync Beads to tasks.md` and described in `dude-beads-workflow`. This section holds task headers in the reserved **`T9001`–`T9999`** range that mirror Beads issues created mid-flight (each carries a `(Beads: <id>)` tag in its description). `@dude define` must treat it as preserved context:
+
+- it is never re-parsed as spec-derived canonical task units on later `define` runs
+- it is never regenerated, rewritten, pruned, or re-keyed by `define`; preserve the section verbatim when refreshing the rest of `tasks.md`
+- when `## Lightweight Execution History` is also present, preserve `## Discovered During Execution` immediately before it because the history block is terminal archive context
+- it does not appear in the generated board region
+- it is excluded from the Re-define Reconciliation Gate (its rows never appear in the `kept`, `changed`, `dropped`, or `new` buckets)
+
+Spec-derived task headers emitted by `define` must use `TNNN` values **below `T9000`**, leaving the `T9001`–`T9999` range exclusively for sync-appended discovered work. This keeps re-define and sync free of TNNN collisions even if discovered work was appended between two `define` runs.
 
 A single bounded task may cover closely related code, tests, and documentation when one independent test or verification command proves the whole slice. Do not split tasks mechanically just to separate artifact types.
 
@@ -413,7 +423,7 @@ This gate is a hard stop, not advisory:
 - `reject reconcile` — abort; keep the existing `tasks.md` and revisit the brainstorm
 - `keep T003` / `keep T003@a1b2c3d4` — force-preserve a row Dude wanted to drop
 - `drop T003` / `drop T003@a1b2c3d4` — force-drop a row Dude wanted to keep
-- `archive dropped` — move dropped rows into a `## Lightweight Execution History` block at the bottom of `tasks.md` instead of discarding them
+- `archive dropped` — move dropped rows into a `## Lightweight Execution History` block at the end of `tasks.md` (preserved below any existing `## Discovered During Execution` section so history remains the terminal archive) instead of discarding them
 
 Multiple tokens may be combined in one reply (`keep T003, drop T005, confirm reconcile`).
 

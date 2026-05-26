@@ -157,8 +157,8 @@ feature work.
 @dude upgrade --rollback
 ```
 
-The safe path is preview, apply, rollback only if needed. Details like manifest
-hashes, local overrides, path collisions, and `bundle_version` live in
+The safe path is preview, apply, rollback only if needed. Details like
+manifest metadata and the namespace convention for base ownership live in
 [docs/upgrading.md](docs/upgrading.md).
 
 ## When To Add Beads
@@ -174,7 +174,8 @@ the extra setup overhead.
 If you do use Beads, Beads stays authoritative. Dude mirrors successful Beads
 closes back into `tasks.md` when the task key maps cleanly, and you can run
 `@dude sync Beads to tasks.md` before switching machines or falling back to
-Lightweight Execution.
+Lightweight Execution. `@dude status` can verify whether the mirror is current,
+but it stays read-only and never performs the sync for you.
 
 ## Detailed Docs
 

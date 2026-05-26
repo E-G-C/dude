@@ -18,7 +18,7 @@ Use:
 
 Two additional files in the same directory are owned by the `dude-bundle-upgrade` skill and should not be hand-edited as memory entries:
 
-- `.github/dudestuff/bundle-manifest.md` — install-time manifest of base-owned files and the upstream sha they came from.
+- `.github/dudestuff/bundle-manifest.md` — install-time pin of the upstream source and the installed commit sha.
 - `.github/dudestuff/upgrade-log.md` — append-only history of `@dude upgrade` events and rollbacks.
 
 ## Writing Rules

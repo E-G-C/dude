@@ -228,12 +228,34 @@ if [ -d "$ROOT/specs" ]; then
                     }
                     next
                 }
+                if (in_history == 1) {
+                    if ($0 ~ /^##[[:space:]]+/) {
+                        # Exit history mode so the H2 can be classified by the
+                        # checks below (it may be a benign prose appendix like
+                        # ## Notes, a duplicate history, or a canonical task
+                        # section that should not appear here). Sticky
+                        # history_seen lets the task-line check flag any
+                        # canonical task row that ends up below history.
+                        in_history = 0
+                    } else {
+                        next
+                    }
+                }
                 if ($0 ~ /^##[[:space:]]+Lightweight[[:space:]]+Execution[[:space:]]+History([[:space:]]|$)/) {
+                    if (history_seen == 1) {
+                        printf "FAIL\t%s:%d  duplicate ## Lightweight Execution History section (only one history block is allowed)\n", rel, line
+                    }
                     in_history = 1
+                    history_seen = 1
+                    in_discovered = 0
                     next
                 }
-                if (in_history == 1) {
+                if ($0 ~ /^##[[:space:]]+Discovered[[:space:]]+During[[:space:]]+Execution([[:space:]]|$)/) {
+                    in_discovered = 1
                     next
+                }
+                if (in_discovered == 1 && $0 ~ /^##[[:space:]]/) {
+                    in_discovered = 0
                 }
 
                 if ($0 ~ /^[[:space:]]*-[[:space:]]*\[.\][[:space:]]+/) {
@@ -260,6 +282,30 @@ if [ -d "$ROOT/specs" ]; then
                         printf "FAIL\t%s:%d  duplicate task ID %s (first seen line %d)\n", rel, line, id, seen[id]
                     } else {
                         seen[id] = line
+                    }
+
+                    num_str = ""
+                    if (match(id, "T[0-9]+")) {
+                        num_str = substr(id, RSTART + 1, RLENGTH - 1)
+                    }
+                    num = num_str + 0
+                    in_reserved_range = (num >= 9001 && num <= 9999)
+
+                    if (history_seen == 1 && in_history == 0) {
+                        printf "FAIL\t%s:%d  canonical task row %s appears below ## Lightweight Execution History; history must remain the final task section (move new tasks above it)\n", rel, line, id
+                    }
+
+                    if (in_discovered == 1) {
+                        if (!in_reserved_range) {
+                            printf "FAIL\t%s:%d  task %s under ## Discovered During Execution must be in reserved range T9001-T9999\n", rel, line, id
+                        }
+                        if ($0 !~ /\(Beads:[[:space:]]*[A-Za-z0-9_-]+([[:space:]]*;[^)]*)?\)/) {
+                            printf "WARN\t%s:%d  task %s under ## Discovered During Execution is missing its (Beads: <id>) tag (re-import would create a duplicate)\n", rel, line, id
+                        }
+                    } else {
+                        if (num >= 9000) {
+                            printf "FAIL\t%s:%d  task %s uses reserved discovered boundary T9000-T9999 outside ## Discovered During Execution\n", rel, line, id
+                        }
                     }
                 }
             }
@@ -316,15 +362,11 @@ if [ -d "$ROOT/.github/skills" ]; then
 fi
 
 # --- Check 3b: bundle manifest ---------------------------------------------
+# The manifest is metadata only — exactly four metadata fields, no files
+# array, no per-file hashes. Base ownership is derived from the namespace
+# convention by the engine. We validate the exact field set and the
+# installed_sha shape.
 MANIFEST="$ROOT/.github/dudestuff/bundle-manifest.md"
-
-file_sha256() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{ print tolower($1) }'
-    else
-        shasum -a 256 "$1" | awk '{ print tolower($1) }'
-    fi
-}
 
 if [ ! -f "$MANIFEST" ]; then
     fail ".github/dudestuff/bundle-manifest.md  missing seeded bundle manifest"
@@ -340,257 +382,49 @@ else
     if [ -z "$manifest_json" ]; then
         fail "$manifest_rel  missing fenced JSON manifest block"
     else
-        manifest_syntax_errors="$(printf '%s\n' "$manifest_json" | awk '
-            BEGIN { state = 0; file_count = 0; override_count = 0; prev_file_no_comma = 0; prev_file_had_comma = 0 }
-            /^[[:space:]]*$/ { next }
-            state == 0 {
-                if ($0 ~ /^[[:space:]]*\{[[:space:]]*$/) { state = 1; next }
-                printf "manifest JSON must start with an object at line %d\n", NR; state = 99; next
-            }
-            state == 1 {
-                if ($0 ~ /^[[:space:]]*"(source_repo|source_ref|installed_sha|installed_at|bundle_version)"[[:space:]]*:[[:space:]]*"[^"]*"[[:space:]]*,[[:space:]]*$/) { next }
-                if ($0 ~ /^[[:space:]]*"files"[[:space:]]*:[[:space:]]*\{[[:space:]]*$/) { state = 2; next }
-                if ($0 ~ /^[[:space:]]*"local_overrides"[[:space:]]*:[[:space:]]*\{[[:space:]]*\}[[:space:]]*,?[[:space:]]*$/) { next }
-                if ($0 ~ /^[[:space:]]*"local_overrides"[[:space:]]*:[[:space:]]*\{[[:space:]]*$/) { state = 5; next }
-                if ($0 ~ /^[[:space:]]*\}[[:space:]]*$/) { state = 4; next }
-                printf "unexpected manifest field syntax at line %d\n", NR; state = 99; next
-            }
-            state == 2 {
-                if ($0 ~ /^[[:space:]]*}[,]?[[:space:]]*$/) {
-                    if (file_count > 0 && prev_file_had_comma == 1) {
-                        printf "manifest files map has a trailing comma before line %d\n", NR
-                    }
-                    state = ($0 ~ /,[[:space:]]*$/) ? 1 : 3
-                    next
-                }
-                if ($0 ~ /^[[:space:]]*"[^"]+"[[:space:]]*:[[:space:]]*"[0-9a-f]{64}"[[:space:]]*,?[[:space:]]*$/) {
-                    if (file_count > 0 && prev_file_no_comma == 1) {
-                        printf "manifest files entry before line %d is missing a trailing comma\n", NR
-                    }
-                    file_count++
-                    prev_file_had_comma = ($0 ~ /,[[:space:]]*$/) ? 1 : 0
-                    prev_file_no_comma = (prev_file_had_comma == 1) ? 0 : 1
-                    next
-                }
-                printf "unexpected manifest files entry syntax at line %d\n", NR; state = 99; next
-            }
-            state == 3 {
-                if ($0 ~ /^[[:space:]]*}[[:space:]]*$/) { state = 4; next }
-                printf "manifest JSON has trailing content at line %d\n", NR; state = 99; next
-            }
-            state == 4 {
-                printf "manifest JSON has trailing content at line %d\n", NR; state = 99; next
-            }
-            state == 5 {
-                if ($0 ~ /^[[:space:]]*}[,]?[[:space:]]*$/) { state = ($0 ~ /,[[:space:]]*$/) ? 1 : 3; next }
-                if ($0 ~ /^[[:space:]]*"[^"]+"[[:space:]]*:[[:space:]]*\{[[:space:]]*$/) { state = 6; override_count++; next }
-                if ($0 ~ /^[[:space:]]*"[^"]+"[[:space:]]*:[[:space:]]*\{.*\}[[:space:]]*,?[[:space:]]*$/) { override_count++; next }
-                printf "unexpected local_overrides entry syntax at line %d\n", NR; state = 99; next
-            }
-            state == 6 {
-                if ($0 ~ /^[[:space:]]*"(base_sha256|current_sha256|reason|accepted_at)"[[:space:]]*:[[:space:]]*"[^"]*"[[:space:]]*,?[[:space:]]*$/) { next }
-                if ($0 ~ /^[[:space:]]*}[,]?[[:space:]]*$/) { state = 5; next }
-                printf "unexpected local_overrides field syntax at line %d\n", NR; state = 99; next
-            }
-            END {
-                if (state != 4 && state != 99) {
-                    printf "manifest JSON ended before the object closed\n"
-                }
-            }
-        ')"
-        if [ -n "$manifest_syntax_errors" ]; then
-            while IFS= read -r err; do
-                [ -n "$err" ] && fail "$manifest_rel  $err"
-            done <<< "$manifest_syntax_errors"
+        source_repo="$(printf '%s\n' "$manifest_json" | awk -F'"' '/"source_repo"[[:space:]]*:/ { print $4; exit }')"
+        source_ref="$(printf '%s\n' "$manifest_json" | awk -F'"' '/"source_ref"[[:space:]]*:/ { print $4; exit }')"
+        installed_sha="$(printf '%s\n' "$manifest_json" | awk -F'"' '/"installed_sha"[[:space:]]*:/ { print $4; exit }')"
+        installed_at="$(printf '%s\n' "$manifest_json" | awk -F'"' '/"installed_at"[[:space:]]*:/ { print $4; exit }')"
+        manifest_keys="$(printf '%s\n' "$manifest_json" | awk -F'"' '/^[[:space:]]*"[A-Za-z_][A-Za-z0-9_]*"[[:space:]]*:/ { print $2 }')"
+
+        if [ -n "$manifest_keys" ]; then
+            while IFS= read -r key; do
+                [ -z "$key" ] && continue
+                case "$key" in
+                    source_repo|source_ref|installed_sha|installed_at) ;;
+                    *) fail "$manifest_rel  manifest has unsupported field '$key'" ;;
+                esac
+            done <<< "$manifest_keys"
         fi
 
-        source_repo="$(printf '%s\n' "$manifest_json" | awk -F'"' '/"files"[[:space:]]*:/ { exit } /"source_repo"[[:space:]]*:/ { print $4; exit }')"
-        source_ref="$(printf '%s\n' "$manifest_json" | awk -F'"' '/"files"[[:space:]]*:/ { exit } /"source_ref"[[:space:]]*:/ { print $4; exit }')"
-        installed_sha="$(printf '%s\n' "$manifest_json" | awk -F'"' '/"files"[[:space:]]*:/ { exit } /"installed_sha"[[:space:]]*:/ { print $4; exit }')"
-        installed_at="$(printf '%s\n' "$manifest_json" | awk -F'"' '/"files"[[:space:]]*:/ { exit } /"installed_at"[[:space:]]*:/ { print $4; exit }')"
-
-        [ -z "$source_repo" ] && fail "$manifest_rel  manifest is missing source_repo"
-        [ -z "$source_ref" ] && fail "$manifest_rel  manifest is missing source_ref"
-        [ -z "$installed_at" ] && fail "$manifest_rel  manifest is missing installed_at"
+        [ -z "$source_repo" ]    && fail "$manifest_rel  manifest is missing source_repo"
+        [ -z "$source_ref" ]     && fail "$manifest_rel  manifest is missing source_ref"
+        [ -z "$installed_at" ]   && fail "$manifest_rel  manifest is missing installed_at"
         if ! printf '%s' "$installed_sha" | grep -qE '^[0-9a-f]{40}$'; then
             fail "$manifest_rel  installed_sha must be a 40-character lowercase git sha"
-        fi
-
-        manifest_entries="$(printf '%s\n' "$manifest_json" | awk '
-            /"files"[[:space:]]*:[[:space:]]*\{/ { in_files = 1; next }
-            in_files == 1 && /^[[:space:]]*}[,]?[[:space:]]*$/ { exit }
-            in_files == 1 { print }
-        ')"
-
-        override_data="$(printf '%s\n' "$manifest_json" | awk -F'"' '
-            /"local_overrides"[[:space:]]*:[[:space:]]*\{/ { in_overrides = 1; next }
-            in_overrides == 1 && override_path == "" && /^[[:space:]]*}[,]?[[:space:]]*$/ { exit }
-            in_overrides == 1 && override_path == "" && /^[[:space:]]*"[^"]+"[[:space:]]*:[[:space:]]*\{/ {
-                override_path = $2
-                base = ""; current = ""; reason = 0; accepted = 0
-                for (i = 4; i <= NF; i += 2) {
-                    if ($i == "base_sha256") base = $(i + 2)
-                    if ($i == "current_sha256") current = $(i + 2)
-                    if ($i == "reason") reason = 1
-                    if ($i == "accepted_at") accepted = 1
-                }
-                if ($0 ~ /}[[:space:]]*,?[[:space:]]*$/) {
-                    printf "%s\t%s\t%s\t%d\t%d\n", override_path, base, current, reason, accepted
-                    override_path = ""
-                }
-                next
-            }
-            in_overrides == 1 && override_path != "" {
-                for (i = 2; i <= NF; i += 2) {
-                    if ($i == "base_sha256") base = $(i + 2)
-                    if ($i == "current_sha256") current = $(i + 2)
-                    if ($i == "reason") reason = 1
-                    if ($i == "accepted_at") accepted = 1
-                }
-                if ($0 ~ /^[[:space:]]*}[,]?[[:space:]]*$/) {
-                    printf "%s\t%s\t%s\t%d\t%d\n", override_path, base, current, reason, accepted
-                    override_path = ""
-                }
-            }
-        ')"
-
-        EXPECTED_DATA=""
-        ACTUAL_DATA=""
-        manifest_count=0
-        while IFS= read -r line; do
-            [ -z "$line" ] && continue
-            path="$(printf '%s\n' "$line" | awk -F'"' '{ print $2 }')"
-            expected_hash="$(printf '%s\n' "$line" | awk -F'"' '{ print $4 }')"
-            [ -z "$path" ] && continue
-            manifest_count=$((manifest_count + 1))
-
-            case "$path" in
-                /*|*\\*|*../*|../*) fail "$manifest_rel  invalid manifest path '$path'"; continue ;;
-            esac
-            case "$path" in
-                .github/agents/dude-local-*.agent.md|.github/skills/dude-local-*/*) fail "$manifest_rel  manifest path '$path' uses the reserved project-local namespace"; continue ;;
-                .github/agents/dude.agent.md|.github/instructions/dude.instructions.md) ;;
-                .github/agents/dude-*.agent.md) ;;
-                .github/skills/dude-*/*) ;;
-                *) fail "$manifest_rel  manifest path '$path' is outside the dude- core namespace"; continue ;;
-            esac
-            if ! printf '%s' "$expected_hash" | grep -qE '^[0-9a-f]{64}$'; then
-                fail "$manifest_rel  invalid SHA-256 for '$path'"
-                continue
-            fi
-            EXPECTED_DATA="${EXPECTED_DATA}${path}"$'\t'"${expected_hash}"$'\n'
-            full_path="$ROOT/$path"
-            if [ ! -e "$full_path" ]; then
-                fail "$manifest_rel  manifest file '$path' does not exist"
-                continue
-            fi
-            if [ -d "$full_path" ]; then
-                fail "$manifest_rel  manifest path '$path' resolves to a directory"
-                continue
-            fi
-            actual_hash="$(file_sha256 "$full_path")"
-            ACTUAL_DATA="${ACTUAL_DATA}${path}"$'\t'"${actual_hash}"$'\n'
-            if [ "$actual_hash" != "$expected_hash" ]; then
-                has_override=0
-                override_line="$(printf '%s' "$override_data" | awk -F'\t' -v p="$path" '$1 == p { print; exit }')"
-                if [ -n "$override_line" ]; then
-                    override_base="$(printf '%s\n' "$override_line" | awk -F'\t' '{ print $2 }')"
-                    override_current="$(printf '%s\n' "$override_line" | awk -F'\t' '{ print $3 }')"
-                    if [ "$override_base" = "$expected_hash" ] && [ "$override_current" = "$actual_hash" ]; then
-                        has_override=1
-                    fi
-                fi
-                if [ "$has_override" -ne 1 ]; then
-                    fail "$manifest_rel  manifest hash mismatch for '$path' (local edit or stale manifest; run @dude upgrade --dry-run to classify, then confirm upgrade if it reports Metadata refresh)"
-                fi
-            fi
-        done <<< "$manifest_entries"
-
-        if [ "$manifest_count" -eq 0 ]; then
-            fail "$manifest_rel  files map must be seeded and non-empty"
-        fi
-
-        if [ -n "$override_data" ]; then
-            while IFS=$'\t' read -r override_path override_base override_current override_reason override_accepted; do
-                [ -z "$override_path" ] && continue
-                case "$override_path" in
-                    /*|*\\*|*../*|../*) fail "$manifest_rel  invalid local override path '$override_path'"; continue ;;
-                esac
-                expected_line="$(printf '%s' "$EXPECTED_DATA" | awk -F'\t' -v p="$override_path" '$1 == p { print; exit }')"
-                if [ -z "$expected_line" ]; then
-                    fail "$manifest_rel  local override '$override_path' is not listed in files"
-                    continue
-                fi
-                expected_hash="$(printf '%s\n' "$expected_line" | awk -F'\t' '{ print $2 }')"
-                if ! printf '%s' "$override_base" | grep -qE '^[0-9a-f]{64}$'; then
-                    fail "$manifest_rel  local override '$override_path' has invalid base_sha256"
-                    continue
-                fi
-                if ! printf '%s' "$override_current" | grep -qE '^[0-9a-f]{64}$'; then
-                    fail "$manifest_rel  local override '$override_path' has invalid current_sha256"
-                    continue
-                fi
-                if [ "$override_reason" != "1" ]; then
-                    fail "$manifest_rel  local override '$override_path' is missing 'reason'"
-                fi
-                if [ "$override_accepted" != "1" ]; then
-                    fail "$manifest_rel  local override '$override_path' is missing 'accepted_at'"
-                fi
-                if [ "$override_base" != "$expected_hash" ]; then
-                    fail "$manifest_rel  local override '$override_path' base_sha256 does not match files entry"
-                    continue
-                fi
-                actual_line="$(printf '%s' "$ACTUAL_DATA" | awk -F'\t' -v p="$override_path" '$1 == p { print; exit }')"
-                actual_hash="$(printf '%s\n' "$actual_line" | awk -F'\t' '{ print $2 }')"
-                if [ -n "$actual_hash" ] && [ "$override_current" != "$actual_hash" ]; then
-                    fail "$manifest_rel  local override '$override_path' current_sha256 does not match the current file"
-                    continue
-                fi
-                if [ "$override_current" != "$override_base" ]; then
-                    warn "$manifest_rel  accepted local override for '$override_path' (hash differs from base)"
-                fi
-            done <<< "$override_data"
         fi
     fi
 fi
 
-# --- Check 3b: project-local namespace advisories ---------------------------
-# Build a quick lookup of manifest paths so on-disk artifacts already covered
-# by core do not double-warn.
-MANIFEST_PATHS=":"
-if [ -f "$MANIFEST" ]; then
-    while IFS= read -r line; do
-        path="$(printf '%s\n' "$line" | awk -F'"' '{ print $2 }')"
-        [ -n "$path" ] && MANIFEST_PATHS="${MANIFEST_PATHS}${path}:"
-    done < <(awk '
-        /"files"[[:space:]]*:[[:space:]]*\{/ { in_files = 1; next }
-        in_files == 1 && /^[[:space:]]*}[,]?[[:space:]]*$/ { exit }
-        in_files == 1 { print }
-    ' "$MANIFEST")
-fi
-
-manifest_has_path() {
-    case "$MANIFEST_PATHS" in
-        *":$1:"*) return 0 ;;
-        *)        return 1 ;;
-    esac
-}
-
-manifest_has_prefix() {
-    case "$MANIFEST_PATHS" in
-        *":$1"*) return 0 ;;
-        *)       return 1 ;;
-    esac
-}
+# --- Check 3c: project-local namespace advisories ---------------------------
+# Base ownership is derived from the namespace convention:
+#   .github/agents/dude.agent.md
+#   .github/agents/dude-<slug>.agent.md          (slug NOT 'local-...')
+#   .github/skills/dude-<slug>/**                (slug NOT 'local-...')
+#   .github/instructions/dude.instructions.md
+# Project-owned items use the reserved dude-local-<slug> namespace. Anything
+# else in .github/agents/ or top-level .github/skills/ is unreserved and
+# warned about so it can be renamed before colliding with future upstream.
 
 if [ -d "$ROOT/.github/agents" ]; then
     while IFS= read -r -d '' f; do
         bn="$(basename "$f")"
         rel=".github/agents/$bn"
-        manifest_has_path "$rel" && continue
         [ "$bn" = "dude.agent.md" ] && continue
         case "$bn" in
             dude-local-*) continue ;;
+            dude-*)       continue ;;
         esac
         warn "$rel  unreserved project-owned agent (rename to .github/agents/dude-local-<slug>.agent.md to avoid future upstream collisions)"
     done < <(find "$ROOT/.github/agents" -maxdepth 1 -type f -name '*.agent.md' -print0 2>/dev/null)
@@ -602,9 +436,9 @@ if [ -d "$ROOT/.github/skills" ]; then
         [ "$bn" = "project" ] && continue
         case "$bn" in
             dude-local-*) continue ;;
+            dude-*)       continue ;;
         esac
         rel=".github/skills/$bn/"
-        manifest_has_prefix "$rel" && continue
         warn "$rel  unreserved project-owned skill (rename to .github/skills/dude-local-<slug>/ to avoid future upstream collisions)"
     done < <(find "$ROOT/.github/skills" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
 fi

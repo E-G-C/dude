@@ -150,6 +150,20 @@ Use this when Beads is active but you want to refresh the markdown mirror, such
 as before switching machines, falling back to Lightweight Execution, or after a
 manual Beads change.
 
+**Automatic mirror (no command needed):** when Dude itself closes or updates a
+Beads issue, it mirrors the new status glyph back into the matching task row in
+`tasks.md` and regenerates the derived board region. You only need the explicit
+command below when the auto-mirror cannot run or has fallen behind.
+
+**Run this command manually when:**
+
+- Beads was changed outside Dude (for example a direct `bd update` or `bd close`).
+- A discovered Beads issue was created mid-flight; close-time auto-mirror never
+  appends new task headers and reports the mirror as skipped until you sync.
+- You are about to switch machines, fall back to Lightweight Execution, or hand
+  the feature off.
+- `@dude status` reports `Mirror: stale — run @dude sync Beads to tasks.md`.
+
 Preferred form:
 
 ```text
@@ -169,10 +183,11 @@ Lane: Tracked Execution · Live: Beads
 Action: sync Beads to tasks.md
 Updated:
 - Mirrored 8 Beads tasks into specs/001-authentication/tasks.md
+- Appended 1 discovered Beads issue under ## Discovered During Execution as T9001@4f2a91c0 [Shared] ... (Beads: dude-abc)
 - Refreshed the derived board region
 - Appended Coordinator Log entries for mirrored state changes
 Skipped:
-- 1 Beads issue lacked a matching durable task key
+- 1 Beads issue lacked a matching durable task key and was closed (not appended)
 Next:
 - Continue with @dude track while Beads is available
 - Or resume Lightweight Execution from tasks.md if you are intentionally falling back
@@ -239,6 +254,7 @@ Updated:
 - Ready tasks: 2
 - In progress: 1
 - Defined features waiting for track: 1
+- Mirror: stale — run @dude sync Beads to tasks.md
 Next:
 - Run @dude track when you want Dude to continue tracked execution
 - Run @dude sync Beads to tasks.md before planned fallback to Lightweight Execution
@@ -388,9 +404,10 @@ skill is single-artifact only.
 
 Use the `dude-bundle-upgrade` skill to refresh the installed Dude engine from its
 source repo. The skill reads `.github/dudestuff/bundle-manifest.md`, compares
-the portable `.github` payload hashes against upstream, fetches the configured
-upstream ref into an OS temp directory for dry-run/apply, produces an upgrade
-report, and waits for the explicit `confirm upgrade` token before writing.
+the upstream commit sha against the locally recorded sha, fetches the
+configured upstream ref into an OS temp directory for dry-run/apply, produces
+an upgrade report, and waits for the explicit `confirm upgrade` token before
+writing.
 
 The simple flow is status, dry-run, upgrade, rollback if needed:
 
@@ -409,32 +426,32 @@ Useful variants:
 @dude upgrade --allow-dirty
 ```
 
-Only base-owned files listed in the manifest are candidates for replacement.
-Project memory, `.github/skills/project/`, custom agents/skills,
+Only base-owned files — those matching the namespace convention
+(`.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md`,
+`.github/skills/dude-<slug>/**`, `.github/instructions/dude.instructions.md`,
+excluding the reserved `dude-local-<slug>` namespace) — are candidates for
+replacement. Project memory, `.github/skills/project/`, custom agents/skills,
 `.github/copilot-instructions.md`, `brainstorm/`, `specs/`, Beads, and product
 source are preserved. Root files and repository docs are intentionally excluded
 from the upgrade payload. Current installs must already have a seeded manifest;
 legacy manifest reconstruction is intentionally unsupported.
 
+> Base files matching the upstream namespace convention are upstream-owned and
+> are silently overwritten on apply. To customize a default agent or skill,
+> copy it under `dude-local-<slug>` first and edit there — direct edits to
+> base files are discarded by `@dude upgrade`.
+
 `installed_sha` identifies the last applied upstream source for orientation.
-`@dude status` should report upgrade availability from payload hash differences,
-so a newer upstream commit that changes only repo docs does not force an engine
-upgrade prompt.
-
-`bundle_version` is an informational release stamp in the manifest. Bump it for
-material bundle releases so downstream upgrade reports can show a meaningful
-human-readable version alongside the hash-based payload check.
-
-If a local custom agent or skill path collides with a new upstream base path,
-the upgrade report blocks normal apply instead of overwriting the local file.
-Resolve by renaming the local artifact and rerunning, or explicitly use
-`confirm upgrade skip-collisions` to defer the upstream addition.
+`@dude status` reports upgrade availability when the upstream commit sha
+differs from the locally recorded sha.
 
 Use reserved `dude-local-` paths for project-owned artifacts:
 `.github/agents/dude-local-<slug>.agent.md` and `.github/skills/dude-local-<slug>/`.
-The core bundle manifest is not allowed to claim those names.
+The namespace convention guarantees those will never collide with upstream
+`dude-<slug>` artifacts on upgrade.
 If users bypass Dude and create unprefixed custom agents or skills by hand,
-`dude-lint` warns so they can rename before a future upstream path collision.
+`dude-lint` warns so they can rename before a future upstream artifact appears
+at the same path.
 
 ### Reconciliation prompt replies
 
@@ -448,7 +465,7 @@ it):
 - `reject reconcile` — abort; keep the existing `tasks.md`
 - `keep T0NN` — force-preserve a row Dude wanted to drop
 - `drop T0NN` — force-drop a row Dude wanted to keep
-- `archive dropped` — move dropped rows into a `## Lightweight Execution History` block at the bottom of `tasks.md` instead of discarding them
+- `archive dropped` — move dropped rows into a `## Lightweight Execution History` block at the end of `tasks.md` (preserved below any existing `## Discovered During Execution` section) instead of discarding them
 
 Multiple tokens may be combined: `keep T003, drop T005, confirm reconcile`.
 

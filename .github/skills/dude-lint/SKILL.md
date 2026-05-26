@@ -1,6 +1,6 @@
 ---
 name: "dude-lint"
-description: "Use when validating bundle hygiene: checking brainstorm/tasks file shape, fence balance, durable task IDs, skill frontmatter names, bundle manifest shape/hashes, orphan agent-handle references, orphan skill-path references, memory file size, and coordinator-only boundary blocks."
+description: "Use when validating bundle hygiene: checking brainstorm/tasks file shape, fence balance, durable task IDs, skill frontmatter names, bundle manifest shape, orphan agent-handle references, orphan skill-path references, memory file size, and coordinator-only boundary blocks."
 ---
 
 # Dude Lint
@@ -9,7 +9,7 @@ Static validator for the bundle's structural conventions.
 
 ## Purpose
 
-Catch the structural mistakes that would otherwise surface as runtime drift: malformed brainstorms, fence imbalance, stale `spec_path:` pointers, duplicate task IDs, oversized memory files, skill frontmatter/name drift, stale bundle manifest hashes, orphaned agent-handle references, and orphaned skill-path references.
+Catch the structural mistakes that would otherwise surface as runtime drift: malformed brainstorms, fence imbalance, stale `spec_path:` pointers, duplicate task IDs, oversized memory files, skill frontmatter/name drift, bundle manifest shape violations, orphaned agent-handle references, and orphaned skill-path references.
 
 The linter is **read-only** and **dependency-free**. It runs as either PowerShell (`lint.ps1`) or Bash (`lint.sh`); both produce identical findings and exit codes. No Python, Node, or other runtime is required.
 
@@ -61,7 +61,9 @@ Exit code is `0` if no failures, `1` if any check produced a `[FAIL]`. Warnings 
 
 2. **Task files** (`specs/*/tasks.md`)
    - `<!-- dude:board:start -->` / `<!-- dude:board:end -->` fence pairs are balanced, ordered, and at most one pair exists. When the fence sequence is malformed, the parser does **not** enter board-skip mode, so canonical task rows after a stray fence are still validated.
-   - The generated board region and `## Lightweight Execution History` block are ignored for canonical task validation.
+   - The generated board region is ignored for canonical task validation.
+   - `## Lightweight Execution History` is terminal archive context: task rows inside it are ignored. Sections after history (for example a `## Notes` appendix) are allowed and parsed normally, but a duplicate `## Lightweight Execution History` heading fails, and any canonical task row that appears below history fails so active or mirrored task rows cannot be hidden under the archive.
+   - `## Discovered During Execution` task rows must use the reserved `T9001`-`T9999` range and carry a well-formed `(Beads: <id>)` tag with optional semicolon metadata inside the closing parenthesis. `T9000` and higher task IDs outside this section fail so spec-derived tasks stay below `T9000`.
    - Canonical task headers match the import-compatible shape from `dude-spec-import-to-beads`: `- [ ] T001@a1b2c3d4 [P] [US1|Shared] Description`.
    - Task glyphs are exactly one of ` `, `~`, `!`, `x`.
    - Durable task IDs match `T\d{3,}@[a-z0-9]{8}` or legacy `T\d{3,}` (legacy emits a soft warning).
@@ -78,17 +80,12 @@ Exit code is `0` if no failures, `1` if any check produced a `[FAIL]`. Warnings 
 5. **Bundle manifest** (`.github/dudestuff/bundle-manifest.md`)
    - Fail when the seeded manifest is missing.
    - Fail when the fenced JSON manifest block is missing or malformed.
-   - Fail when required fields are absent, `installed_sha` is not a 40-character lowercase git sha, or the `files` map is empty.
-   - Fail when a manifest path is absolute, uses backslashes, traverses upward, points to a directory, or does not exist.
-   - Fail when a manifest path is outside the upgradeable `.github` core (`.github/agents/*.agent.md`, shipped `.github/skills/*/**` except `.github/skills/project/**`, and `.github/instructions/dude.instructions.md`).
-   - Fail when a manifest path uses the reserved project-local namespace (`.github/agents/dude-local-*.agent.md` or `.github/skills/dude-local-*/**`).
-   - Fail when any manifest SHA-256 is malformed or does not match the current on-disk file. The mismatch may be a local edit or a stale manifest; run `@dude upgrade --dry-run` to classify it, then use the normal `confirm upgrade` flow if the report shows Metadata refresh.
-   - Allow a hash mismatch only when `local_overrides[path]` exists, `base_sha256` matches `files[path]`, `current_sha256` matches the current on-disk file, and `reason` plus `accepted_at` are present; accepted local overrides emit `[WARN]`.
-   - Fail when a `local_overrides` path is malformed, missing from `files`, has malformed hashes, or no longer matches the current file.
+   - Fail when the manifest contains anything other than the four metadata fields (`source_repo`, `source_ref`, `installed_sha`, `installed_at`), when any required field is absent, or when `installed_sha` is not a 40-character lowercase git sha.
+   - The manifest is **metadata only**: no `files` array, no per-file hashes. Base ownership is derived from the namespace convention by the engine, not from a manifest list. Local edits to base files are silently overwritten on `@dude upgrade`; use the reserved `dude-local-<slug>` namespace to fork base files you want to customize.
 
 6. **Project-local namespace advisories**
-   - Warn when an agent under `.github/agents/` is not in the manifest and does not use `.github/agents/dude-local-<slug>.agent.md`.
-   - Warn when a skill directory under `.github/skills/` is not in the manifest and does not use `.github/skills/dude-local-<slug>/`, including unmanifested `dude-*` directories that look like upstream/core names.
+   - Warn when an agent file under `.github/agents/` is neither `dude.agent.md` nor matches `dude-<slug>.agent.md` (with or without the `local-` prefix). The recommendation is to rename to `.github/agents/dude-local-<slug>.agent.md`.
+   - Warn when a top-level skill directory under `.github/skills/` does not match `dude-<slug>` (with or without the `local-` prefix) and is not the reserved `.github/skills/project/` skill. The recommendation is to rename to `.github/skills/dude-local-<slug>/`.
    - Exempt `.github/skills/project/`, which is the reserved project knowledge skill.
 
 7. **Roster orphans**

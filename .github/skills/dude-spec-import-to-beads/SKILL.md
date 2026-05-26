@@ -70,6 +70,8 @@ Compatible task-header regex (Python `re` syntax, defined in `dude-feature-defin
 ```
 
 Every canonical task header line must match this pattern. Indented metadata lines must follow `  deps: ...` or `  blocked-by: ...` and belong to the immediately preceding task header. Lightweight-execution headers may appear as `[ ]`, `[~]`, `[!]`, or `[x]`; import `[ ]`, `[~]`, and `[!]` as open work, and skip `[x]` as completed history. Legacy `T001` lines without a durable suffix remain acceptable during migration. If a task header is malformed, metadata is orphaned, or labels conflict, stop the import and fix `tasks.md` first. Phase headings, Goal, Independent Test, Checkpoint, generated board-region lines, and other structural prose lines are not task headers and are skipped during import.
+
+Task headers in the **`T9001`–`T9999`** range live in the reserved discovered range owned by `@dude sync Beads to tasks.md` and almost always carry a `(Beads: <id>)` tag in their description. When such a tag is present and resolves to an existing Beads issue for this feature, the per-task dedup rule in the import algorithm skips that header (see Algorithm step 5). When no tag is present or the tag resolves to nothing, treat the `T9NNN` header as malformed and stop the import — the discovered range is not for human-authored work and re-importing it without a tag would create a duplicate Beads issue.
 - `[US1]`, `[US2]` story labels
 - `[Shared]` for cross-story setup, foundational, or polish work
 - phased ordering
@@ -112,6 +114,7 @@ Manual import still requires a defined brainstorm file as the identity source:
 3. Read `spec.md` to extract feature intent and user stories.
 4. Read `plan.md` to extract architecture, structure, and stack choices.
 5. Read `tasks.md` to extract executable task units and ordering. Parse task headers using the canonical glyph-aware format, capture any indented `deps:` or `blocked-by:` metadata, and ignore the generated board region because it is derived guidance, not canonical task state. Import `[ ]`, `[~]`, and `[!]` task units as open work; skip `[x]` as completed Lightweight Execution history. If any task header or metadata line is malformed, ambiguous, or carries conflicting story labels, stop and request a corrected `tasks.md` before import.
+   - Task headers under a `## Discovered During Execution` section (appended by `@dude sync Beads to tasks.md`, see `dude-beads-workflow`) are already represented in Beads. Before creating an issue for any task header in `tasks.md`, scan its description for a `(Beads: <id>)` tag using the regex `\(Beads:\s*([A-Za-z0-9_-]+)(?:\s*;[^)]*)?\)`. If a tag is present **and** an existing Beads issue with that ID has a description starting with `spec: <spec_path>` for the current feature, skip the import for that header — the canonical task and the Beads issue are already linked. If the tag is present but the referenced Beads issue does not exist or carries a different `spec:` prefix, stop and report the orphan tag instead of guessing.
 6. If checked Lightweight Execution history exists, verify that each checked item still maps one-to-one by durable task key, or by task ID, story label, and core intent when a durable key is absent. When that reconciliation is ambiguous after a re-define, stop automatic import. Report three buckets to the user: surviving checked IDs, changed or removed checked IDs, and ambiguous replacements that need confirmation.
 7. Create one Beads epic for the feature if not already represented. The epic exists for grouping, audit, and UI navigation only — it is never an actionable task. Its description must start with `spec: <spec_path>` (the brainstorm's exact `spec_path` value). Keep it out of the ready queue by setting its status to `deferred`; low priority alone is not sufficient.
 8. Create Beads task issues for executable task units. Each issue's `--description` must start with `spec: <spec_path>` as the first line, followed by task details. Map `[ ]` to an open Beads task, `[~]` to an in-progress Beads task, `[!]` to a blocked Beads task when blocker data is available, and skip `[x]` as completed markdown history. Example:
@@ -166,6 +169,7 @@ When creating Beads issues, translate spec priorities:
 
 ## Guardrails
 
+- Do not re-import task headers that already carry a `(Beads: <id>)` tag whose referenced Beads issue exists for the same feature; they were written by `@dude sync Beads to tasks.md` and are already linked.
 - Do not auto-import from `@dude status` or other read-only commands.
 - Do not guess a defined feature when the brainstorm file is missing `spec_path:` or points to a missing package.
 - Do not keep going when the brainstorm's `spec_path` and imported Beads issue prefixes disagree; reconcile first.

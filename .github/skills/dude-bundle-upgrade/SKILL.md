@@ -7,11 +7,13 @@ description: "Use when the user wants to upgrade the Dude bundle itself, pull th
 
 Pull the newest base Dude bundle from its source repo and overlay it onto this project, replacing only base-owned engine files (default agents, default skills, and the bundle instructions under `.github/`). Preserve everything project-local: project memory, project skills, project-custom agents and skills, `.github/copilot-instructions.md`, root files, repository docs, and all work state under `brainstorm/`, `specs/`, and Beads.
 
-Upgrades are preview-then-confirm. Nothing is written to the working tree before the user confirms the upgrade plan.
+Upgrades are preview-then-confirm. The `upgrade.sh` script does the heavy lifting for status, plan, apply, and rollback; the LLM orchestrates the conversation, surfaces the report, and translates the user's confirmation phrase into the apply invocation. Nothing is written to the working tree before the user confirms the upgrade plan.
+
+> **Base files are upstream-owned.** Every file matching the dude base namespace convention (the `dude.agent.md` / `dude-<slug>.agent.md` agents, `dude-<slug>` skill directories, and the `dude.instructions.md` instructions file) is owned by upstream and is silently overwritten on apply. Editing a base file in place is unsupported \u2014 those edits will be lost on the next upgrade. To customize a default agent or skill, copy it under the reserved `dude-local-<slug>` namespace and edit there. See [Reserved Project Namespace](#reserved-project-namespace).
 
 ## Purpose
 
-Make engine updates routine, safe, and reversible. The user runs `@dude upgrade` and gets a clear report of what would change. After `confirm upgrade`, Dude applies the upgrade, verifies it, commits it, merges it back to the starting branch, and pushes — without touching project memory, custom roster, or in-flight work.
+Make engine updates routine, safe, and reversible. The user runs `@dude upgrade` and gets a clear report of what would change. After `confirm upgrade`, Dude applies the upgrade, verifies it, and commits it on a safety branch. Publish (merge + push) is a deliberate opt-in step, not automatic.
 
 ## When To Run
 
@@ -25,28 +27,203 @@ Do **not** run on routine project work. This skill is coordinator-maintenance, e
 
 Accepted invocation forms:
 
-- `@dude upgrade` — fetch the upstream ref recorded in the manifest and apply.
+- `@dude upgrade` — fetch the upstream ref recorded in the manifest and apply after confirmation.
 - `@dude upgrade --dry-run` — produce the upgrade report only, write nothing.
 - `@dude upgrade --ref <branch|tag|sha>` — override the manifest-pinned ref.
 - `@dude upgrade --source <url-or-local-path>` — override the source repo for this run.
 - `@dude upgrade --rollback` — restore from the most recent pre-upgrade safety tag.
 - `@dude upgrade --allow-dirty` — proceed even when the working tree has uncommitted changes (default is to refuse).
 
-## File Classification
+## Script Contract
 
-Every file under the project is placed into exactly one bucket. The bucket determines whether the upgrade may write to it.
+The `upgrade.sh` engine handles fetch, classification, and reporting. The LLM never re-derives this work. Both Bash and PowerShell parity scripts ship the same contract; use whichever is available.
 
-| Bucket | Examples | Behavior |
+### Subcommands
+
+| Subcommand | Purpose | Writes? |
 |---|---|---|
-| **Base-owned** (replaceable) | `.github/agents/<roster>/*.agent.md` listed in the manifest, `.github/skills/<skill>/**` listed in the manifest except `.github/skills/project/**`, `.github/instructions/dude.instructions.md` | Replaced by upstream version. |
-| **Upgrade-owned** (operational) | `.github/dudestuff/bundle-manifest.md`, `.github/dudestuff/upgrade-log.md` | Maintained only by this skill. |
-| **Project-owned** (preserve) | `.github/dudestuff/**` except the two upgrade-owned files, `.github/skills/project/**`, any `*.agent.md` or skill not in the manifest, `.github/copilot-instructions.md` | Never overwritten. |
-| **Repo-local files and work state** (preserve) | `README.md`, `docs/**`, `.gitattributes`, `brainstorm/**`, `specs/**`, Beads database, product source, any path outside `.github/` | Never touched or brought in by upgrade. |
-| **Path collision** (blocking) | a file or directory exists locally, is absent from the local manifest, but appears in the upstream manifest at the same path | Preserve local file and stop before apply unless the user explicitly skips the upstream addition or resolves the collision. |
-| **Metadata refresh** | base-owned file whose current local bytes match the fetched upstream bytes, but whose manifest hash is stale | Refresh the manifest hash without touching file contents. |
-| **Conflicted** | base-owned file whose current SHA-256 differs from its install-time hash in the manifest | Per-file user decision. |
+| `status`   | Compare local manifest against upstream manifest. Cheap availability check. | No |
+| `plan`     | Fetch full upstream tree, classify every file, persist a plan JSON for apply. | No (cache only) |
+| `apply`    | Apply a persisted plan: safety tag + branch, file ops, manifest rewrite, log append, lint, commit. | Yes |
+| `rollback` | `git reset --hard` to the most recent (or named) `dude-pre-upgrade-*` safety tag, append rollback log entry, lint. | Yes |
+| `help`     | Print usage. | No |
+| `version`  | Print engine version. | No |
 
-Source of truth for "what is base-owned" is `.github/dudestuff/bundle-manifest.md`. The `files` map stores the clean base SHA-256 for each base-owned file. Optional `local_overrides` entries record user-approved local divergence for base-owned files without weakening the clean base map. This bundle does not support legacy installs without a seeded manifest: if the manifest is missing, empty, or uses placeholder values, refuse the upgrade and restore a current bundle copy first. Files not present in either the local manifest or the upstream manifest fall through to project-owned by default. Repository documentation and root files are intentionally excluded from the upgrade payload; users can read Dude docs in the upstream repository when needed.
+Invocation (Bash or PowerShell — same contract):
+
+```bash
+bash .github/skills/dude-bundle-upgrade/upgrade.sh status   --format json
+bash .github/skills/dude-bundle-upgrade/upgrade.sh plan     --format json [--ref <r>] [--source <s>] [--out <path>]
+bash .github/skills/dude-bundle-upgrade/upgrade.sh apply    --plan <id|path> --confirm confirm-upgrade \
+        [--skip-removals] [--allow-dirty] [--format text|json]
+bash .github/skills/dude-bundle-upgrade/upgrade.sh rollback [--tag <name>] [--allow-dirty] [--format text|json]
+```
+
+```powershell
+pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 status   --format json
+pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 plan     --format json [--ref <r>] [--source <s>] [--out <path>]
+pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 apply    --plan <id|path> --confirm confirm-upgrade `
+        [--skip-removals] [--allow-dirty] [--format text|json]
+pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 rollback [--tag <name>] [--allow-dirty] [--format text|json]
+```
+
+`apply` does not push or merge. It leaves the upgrade commit on a local `chore/dude-upgrade-<short-sha>` branch for the user to review and merge themselves. The `--confirm` value is the literal token `confirm-upgrade`; the LLM maps the user-facing phrase `confirm upgrade [skip-removals]` into the corresponding flag combination.
+
+### Exit Codes
+
+| Code | Meaning |
+|---|---|
+| 0 | up-to-date, informational output, successful apply, or successful rollback |
+| 10 | plan ready, changes detected |
+| 40 | invalid input, malformed manifest, unreachable upstream, or post-apply lint failure |
+
+### JSON Shapes
+
+`status` JSON:
+
+```json
+{
+  "status": "up_to_date|upgrade_available|offline|error",
+  "source": "<url-or-path>",
+  "ref": "<branch|tag|sha>",
+  "installed_sha": "<40-char-sha>",
+  "installed_at": "<iso-8601>",
+  "upstream_sha": "<sha-or-empty>",
+  "detail": "<reason-when-offline-or-error>"
+}
+```
+
+`status` compares the upstream `installed_sha` against the locally recorded `installed_sha`. The status command does not classify file deltas; run `plan` for the full per-file picture.
+
+`plan` JSON:
+
+```json
+{
+  "plan_id": "<ts>-<from>-<to>",
+  "created_at": "<iso-8601>",
+  "ttl_warn_at": "<created+1h>",
+  "ttl_expire_at": "<created+24h>",
+  "source": "...", "ref": "...",
+  "from_sha": "...", "to_sha": "...",
+  "cache_dir": "<absolute-path-of-fetched-upstream-tree>",
+  "summary": {
+    "replace": N, "add": N, "remove": N,
+    "advisory": N, "up_to_date": N
+  },
+  "buckets": {
+    "replace":  [{"path","added_lines","removed_lines"}],
+    "add":      [{"path"}],
+    "remove":   [{"path"}],
+    "advisory": [{"path","kind"}]
+  }
+}
+```
+
+Plans are persisted to `$TMPDIR/dude-upgrade-cache/plans/<plan_id>.json` so a later `apply` can re-validate them. Plans carry a TTL (`ttl_warn_at` at +1h, `ttl_expire_at` at +24h); `apply` refuses an expired plan and requires a fresh `plan` invocation.
+
+## Workflow
+
+### Step 1 — Status (script)
+
+Run `upgrade.sh status --format json` and parse the result. If `status` is `up_to_date`, report and stop. If `offline`, report and offer the user a re-try. Otherwise continue to Step 2.
+
+### Step 2 — Plan (script)
+
+Run `upgrade.sh plan --format json` (pass `--ref` / `--source` if the user provided overrides). Read the persisted plan from `plans/<plan_id>.json` so subsequent steps reference the same plan_id.
+
+Summarize the plan for the user using the `summary` counts plus a short bulleted list per non-empty bucket. Show file paths. For `replace` entries, include `[+a / -b]` line stats from `added_lines` / `removed_lines`.
+
+If the exit code was 0 and the summary is empty, report "Already up to date" and stop without creating a safety net.
+
+If `--dry-run`, stop here.
+
+### Step 3 — Confirmation gate
+
+Wait for one of:
+
+- `confirm upgrade` — proceed with all Replace, Add, and Remove operations.
+- `confirm upgrade skip-removals` — apply Replace and Add entries but leave Remove items in place; report them as deferred.
+- `cancel` — stop, write nothing.
+
+Plain "yes" / "ok" / "go" do not satisfy the gate.
+
+Before confirming, surface a single warning summarizing local edits that will be discarded. The recommended source is one `git diff <installed_sha> -- <replace_and_remove_paths>` invocation: anything non-empty in that diff is local divergence about to be overwritten. The user should either rename those files to `dude-local-<slug>` first or accept the loss.
+
+### Step 4 — Apply (script)
+
+The script does the entire write phase in one invocation. Translate the user's confirmation phrase into flags and run:
+
+```bash
+bash .github/skills/dude-bundle-upgrade/upgrade.sh apply \
+    --plan <plan_id-or-path> --confirm confirm-upgrade \
+    [--skip-removals] [--allow-dirty] \
+    [--format text|json]
+```
+
+Or, equivalently, with PowerShell:
+
+```powershell
+pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 apply `
+    --plan <plan_id-or-path> --confirm confirm-upgrade `
+    [--skip-removals] [--allow-dirty] `
+    [--format text|json]
+```
+
+Mapping from user-facing phrase to flags:
+
+| User phrase | Flags |
+|---|---|
+| `confirm upgrade` | `--confirm confirm-upgrade` |
+| `confirm upgrade skip-removals` | `--confirm confirm-upgrade --skip-removals` |
+
+In one pass the script:
+
+1. Re-validates the plan: matches `from_sha` against the current local `installed_sha`, confirms the cache directory still exists, refuses an expired plan.
+2. Refuses a dirty working tree unless `--allow-dirty` was passed.
+3. Re-classifies the upstream tree to refresh the bucket counts (defensive against stale plans).
+4. Creates safety tag `dude-pre-upgrade-<YYYYMMDD-HHMMSS>` at current HEAD and switches to branch `chore/dude-upgrade-<short-to-sha>` (timestamp suffix on collision).
+5. Applies file ops: Add (copy in), Replace (overwrite), Remove (delete unless `--skip-removals`).
+6. Rewrites the fenced JSON block in `.github/dudestuff/bundle-manifest.md`, preserving the surrounding markdown. Updates `source_repo`, `source_ref`, `installed_sha`, and `installed_at`. The manifest is metadata only — there is no `files` array to refresh.
+7. Appends a structured entry to `.github/dudestuff/upgrade-log.md` matching its Entry shape.
+8. Runs `bash .github/skills/dude-lint/lint.sh` and patches the lint result into the just-written log entry.
+9. Stages the manifest, log, and every touched path; commits on the upgrade branch with message `chore: upgrade Dude bundle to <short-sha>`. Does not push, merge, or modify remote state.
+
+On `lint = [FAIL]` the script exits 40 and prints the suggested `rollback --tag <safety_tag>` command.
+
+### Step 5 — Surface the result
+
+Relay the apply output to the user:
+
+- `from <sha> → to <sha>`
+- per-bucket counts (replaced, added, removed, removals deferred)
+- safety tag and upgrade branch names
+- lint result
+- the suggested review command (`git diff <target-branch>...<upgrade-branch>`) plus a reminder that merge is a manual user step
+- any new upstream agent or skill the user may want to enable
+
+## Rollback
+
+`@dude upgrade --rollback` maps to:
+
+```bash
+bash .github/skills/dude-bundle-upgrade/upgrade.sh rollback [--tag <name>] [--allow-dirty] [--format text|json]
+```
+
+Or PowerShell:
+
+```powershell
+pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 rollback [--tag <name>] [--allow-dirty] [--format text|json]
+```
+
+The script:
+
+1. Refuses a dirty working tree unless `--allow-dirty`.
+2. Selects the most recent `dude-pre-upgrade-*` tag (or the one passed via `--tag`).
+3. Runs `git reset --hard <tag>` on the current branch.
+4. Appends a rollback entry to `upgrade-log.md` (left uncommitted; the user decides whether to commit or discard it).
+5. Runs `dude-lint` and reports the restored sha plus the lint result.
+
+The **already-merged** path (creating a rollback commit on the target branch by restoring base-owned files from the safety tag, rather than force-pushing) is not yet automated. For now: invoke `rollback` from a fresh branch off the target, then merge that rollback branch via a normal PR. Force-push is never used.
 
 ## Reserved Project Namespace
 
@@ -55,210 +232,70 @@ Project-local agents and skills should use the reserved `dude-local-` namespace:
 - agents: `.github/agents/dude-local-<slug>.agent.md`
 - skills: `.github/skills/dude-local-<slug>/SKILL.md`
 
-Upstream/base Dude artifacts must never use `dude-local-` names and must never include `dude-local-` paths in `.github/dudestuff/bundle-manifest.md`. If a fetched upstream manifest contains a reserved `dude-local-` path, abort before building the plan and report the upstream bundle as invalid. If a downstream project has older custom artifacts without `dude-local-`, preserve them under the collision rules, but new local artifacts should be renamed into the reserved namespace when practical.
+Upstream/base Dude artifacts must never use `dude-local-` names. The upgrade engine treats any path whose name matches `dude-local-*` as project-owned and excludes it from base ownership.
 
-The namespace is preventive, not the only safety mechanism. A user can still bypass Dude and manually create an unprefixed agent or skill (for example `.github/agents/<custom>.agent.md` or `.github/skills/<custom>/`). Treat those as project-owned if they are not in the local manifest, warn that they are unreserved local artifacts, and preserve them. If a future upstream manifest claims the same path, the normal Path collision bucket protects the local file.
+The namespace is the **primary** safety mechanism for keeping project work across upgrades. If you fork a base agent or skill by copying it under `dude-local-<slug>`, your copy is project-owned and is never touched by upgrade. Editing the original base file is unsupported and your changes will be lost on the next upgrade.
 
-## Workflow
+Unprefixed user-created artifacts (an agent file or top-level skill directory that is neither `dude.agent.md` nor matches `dude-<slug>` / `dude-local-<slug>`) surface as `advisory` entries in the plan and are still preserved. Rename them into `dude-local-` when practical.
 
-### Step 1 — Pre-flight
+## File Classification (reference)
 
-1. Verify `.github/dudestuff/bundle-manifest.md` exists, parses, has a non-placeholder `installed_sha`, and has a non-empty `files` map. If missing or malformed, refuse and tell the user to restore a current bundle copy. Do not attempt bootstrap or backward-compatible reconstruction.
-2. If the working tree is dirty (`git status --porcelain` non-empty) and the user did not pass `--allow-dirty`, refuse.
-3. Resolve the upstream source: `--source` flag → manifest `source_repo` → hardcoded fallback (the canonical Dude repo URL).
-4. Resolve the upstream ref: `--ref` flag → manifest `source_ref` → `main`.
-5. Record the current branch as the target branch for final publish. If the repository is in detached HEAD state, refuse autonomous publish and ask the user to check out the intended target branch before upgrading.
+The script classifies every base-owned file into one of the buckets below. Base ownership is derived from the **namespace convention** (see [Manifest Shape](#manifest-shape) for the full pattern list) — the engine enumerates the live tree under each side and treats agents named `dude.agent.md` or `dude-<slug>.agent.md`, skill directories named `dude-<slug>/**`, and the bundle instructions file `dude.instructions.md` as base-owned, with the reserved `dude-local-<slug>` namespace explicitly excluded. There is no manifest `files` array; the manifest is metadata only.
 
-### Step 2 — Fetch upstream
+Classification is done by **byte comparison** of local disk content vs the fetched upstream tree. There are no per-file hashes anywhere in the workflow.
 
-Try transports in order until one succeeds; cache under the operating system temp directory at `dude-upgrade-cache/<short-sha>/`, outside the repository:
-
-1. For branch or tag refs, `git clone --depth=1 --branch <ref> <source>` to a temp directory.
-2. For raw commit SHA refs, shallow clone the default branch, `git fetch --depth=1 <source> <sha>`, then `git checkout <sha>`.
-3. GitHub tarball download + extract for `https://github.com/<owner>/<repo>` sources.
-4. Local path copy when `<source>` is a filesystem path.
-
-Validate the fetched tree contains all of:
-
-- `.github/agents/`
-- `.github/skills/dude-lint/`
-- `.github/instructions/dude.instructions.md`
-- `.github/dudestuff/bundle-manifest.md`
-
-If any are missing, abort before any write and report the validation failure.
-
-Also validate that the fetched upstream manifest does not contain reserved project-local paths: `.github/agents/dude-local-*.agent.md` or `.github/skills/dude-local-*/**`. If any are present, abort and report an upstream bundle namespace violation.
-
-### Step 3 — Build the upgrade plan (no writes)
-
-Walk both manifests and the working tree, classifying every file:
-
-- **Replace** — base-owned, current local hash matches install-time hash, upstream version differs.
-- **Add** — present in upstream manifest, absent locally.
-- **Remove (base-owned)** — present in local manifest, absent in upstream manifest, current local hash matches install-time hash.
-- **Path collision** — present in upstream manifest, absent from local manifest, and already exists locally. Treat as project-owned local knowledge blocking an upstream addition.
-- **Metadata refresh** — base-owned, current local hash differs from the local manifest hash, and current local hash equals the fetched upstream file hash. This is stale metadata, not local divergence; no file-content change is needed.
-- **Conflict** — base-owned, current local hash differs from install-time hash and is not a Metadata refresh. Surface with three sub-cases: (a) only local diverged, (b) only upstream diverged, (c) both diverged (true 3-way merge candidate).
-- **Preserve** — project-owned or work state. List as a count, not per-file.
-- **Unreserved project-owned artifact** — a project-owned agent or skill that is outside the manifest and does not use `dude-local-`. Preserve it, but report it as an advisory because it may collide with a future upstream artifact.
-- **Up to date** — base-owned, no change needed.
-
-Compute per-file diff line counts (`+a / −b`) for Replace and Conflict. For status and dry-run reporting, treat payload hash parity as the practical up-to-date check: compare the local manifest `files` map plus any accepted `local_overrides` against the upstream manifest payload, not `installed_sha` alone. `installed_sha` is orientation for the last applied upstream source; it may differ when upstream commits touch repo-local files outside the portable bundle payload.
-
-### Step 4 — Render the upgrade report
-
-Present a single structured report to the user:
-
-```
-Upgrade report: <local-sha> → <upstream-sha>
-Source: <source_repo> @ <ref>
-
-Will replace (N): file path  [+a / -b]
-Will add (N):     file path
-Will remove (N):  file path
-Metadata refresh (N): file path  [local and upstream content match; manifest hash is stale]
-Path collisions (N, blocking): file path  [local project-owned path blocks upstream base-owned path]
-Conflicts (N):    file path  [reason]
-Advisories (N):   unreserved project-owned agents/skills that should be renamed to dude-local- when practical
-Preserved:        <count> project-memory files, <count> work-state files
-Up to date (N):   collapsed unless --verbose
-```
-
-If there are no Replace/Add/Remove/Metadata refresh/Conflict entries, report `Already up to date` and stop without creating a safety tag.
-
-If any Path collision entries exist, stop at the report unless the user explicitly chooses `confirm upgrade skip-collisions`. A normal `confirm upgrade` is not accepted while collisions exist, because applying the rest of the remote bundle could make core routing refer to a local artifact with unrelated behavior.
-
-### Step 5 — User confirmation gate
-
-Wait for one of:
-
-- `confirm upgrade` — proceed with all Replace/Add/Remove/Metadata refresh operations; resolve conflicts interactively in Step 7.
-- `confirm upgrade skip-removals` — apply Replace, Add, and Metadata refresh entries but leave Remove items in place; report them as deferred.
-- `confirm upgrade skip-collisions` — apply non-colliding changes, including Metadata refresh entries, and leave upstream additions blocked by local project-owned paths uninstalled; record them as deferred. This is advanced and can leave the upgraded core missing optional new upstream artifacts.
-- `cancel` — stop, write nothing, delete the cache.
-
-Plain "yes" / "ok" / "go" do not satisfy the gate. The dry-run flag short-circuits this gate by stopping after Step 4.
-
-### Step 6 — Create safety net
-
-If the plan contains only Metadata refresh entries, skip this step: the apply phase writes only `.github/dudestuff/bundle-manifest.md` and does not touch base-owned file contents.
-
-1. Create a git tag `dude-pre-upgrade-<YYYYMMDD-HHMMSS>` at current HEAD.
-2. Create and switch to branch `chore/dude-upgrade-<short-upstream-sha>`.
-3. Record the tag name in memory for the rollback command.
-
-### Step 7 — Apply changes
-
-In deterministic order:
-
-1. **Add** files. After each write, compute the manifest hash from the bytes actually written to disk.
-2. **Replace** files (overwrite in place). After each write, compute the manifest hash from the bytes actually written to disk.
-3. **Metadata refresh** entries: leave the local file untouched, update `files[path]` to the fetched upstream file hash, and remove any existing `local_overrides[path]` entry because the file is no longer divergent.
-4. **Remove** files (only when the local hash matches install-time hash; never delete a file the user has modified).
-5. **Conflict** files, one at a time, prompt:
-  - `keep mine` — leave local file unchanged and write or refresh a `local_overrides[path]` entry with `base_sha256` from `files[path]`, `current_sha256` from the current file, `reason`, and `accepted_at`.
-   - `take new` — overwrite with upstream.
-   - `show diff` — display unified diff, then re-prompt.
-   - `merge` — invoke `git merge-file <local> <install-time> <upstream>` when the install-time blob is reconstructable from git history; otherwise fall back to `take new` after explicit confirmation.
-
-Skip every Preserve-bucket file. Do not modify any file outside the manifest's base-owned set.
-
-Path collisions are never overwritten during Step 7. The recommended resolution is to cancel, rename the local agent or skill to a project-specific path, update any local references or routing assumptions, and rerun the upgrade. If the user instead chooses `confirm upgrade skip-collisions`, leave the local path untouched and do not add that upstream path to the refreshed manifest.
-
-Conflict outcomes affect future protection:
-
-- `take new` overwrites the file, updates that file's manifest hash from the bytes written to disk, and removes any existing `local_overrides[path]` entry.
-- `keep mine` leaves that file's previous manifest hash unchanged and records `local_overrides[path]`, so future upgrades continue to detect it as locally modified while `dude-lint` can distinguish approved divergence from accidental drift.
-- `merge` leaves that file's previous manifest hash unchanged and records `local_overrides[path]` unless the user explicitly says `accept merged as base`; `accept merged as base` updates `files[path]` to the merged file hash and removes any override.
-
-### Step 8 — Update manifest and log
-
-1. Rewrite `.github/dudestuff/bundle-manifest.md` with the new `source_ref`, `installed_sha`, `installed_at`, refreshed `files` hashes for clean base files only, and `local_overrides` for accepted local divergence. Use hashes computed from the actual local bytes after Add, Replace, take-new Conflict, and Metadata refresh handling; do not copy stale hashes from the upstream manifest blindly. Do not replace `files[path]` hashes for `keep mine` or unaccepted `merge` conflicts.
-2. Append an entry to `.github/dudestuff/upgrade-log.md` with timestamp, from→to sha, counts per bucket, metadata refreshes, conflict resolutions, accepted local overrides, and pending deferrals.
-
-### Step 9 — Verify
-
-Run `dude-lint` (either `pwsh .github/skills/dude-lint/lint.ps1` or `bash .github/skills/dude-lint/lint.sh`; both produce identical findings). Accepted `local_overrides` produce warnings, not failures, when the recorded current hash matches the local file. On any `[FAIL]`:
-
-1. Report the failure.
-2. Offer rollback: `rollback` (reset to safety tag, delete branch) or `keep` (leave the current state and resolve manually).
-
-On all `[OK]`, continue to Step 10.
-
-### Step 10 — Publish successful upgrade
-
-After `dude-lint` passes, complete the upgrade without another user prompt. The earlier `confirm upgrade` authorizes the full successful path: apply, verify, commit, merge back to the target branch, and push.
-
-1. Stage only files changed by the upgrade plan, `.github/dudestuff/bundle-manifest.md`, and `.github/dudestuff/upgrade-log.md`.
-2. Commit on the upgrade branch with a concise message such as `chore: upgrade Dude bundle to <short-upstream-sha>`.
-3. Switch back to the target branch recorded in Step 1.
-4. Fast-forward merge the upgrade branch into the target branch. If fast-forward is not possible, stop and report the exact branch state instead of creating an automatic merge commit.
-5. Push the target branch to its configured upstream. If no upstream is configured or the push is rejected by permissions, protection rules, or remote changes, stop and report the exact push command the user should run after resolving that external blocker.
-6. Leave the safety tag and upgrade branch in place for rollback/audit unless the user explicitly asks to clean them up.
-
-For plans containing only Metadata refresh entries, no upgrade branch exists. After lint passes, stage `.github/dudestuff/bundle-manifest.md` and `.github/dudestuff/upgrade-log.md`, commit directly on the target branch, and push the target branch to its configured upstream.
-
-### Step 11 — Final summary
-
-Report:
-
-- `from <sha> → to <sha>`
-- counts: replaced, added, removed, conflicts (resolved by category), preserved, deferred
-- metadata refresh count, when non-zero
-- safety tag and branch names for rollback, or `skipped` when the upgrade contained only Metadata refresh entries
-- target branch merge and push result
-- any new upstream agent or skill the user may want to enable
-- any remaining next step only when publish was blocked by an external condition
-
-## Rollback
-
-`@dude upgrade --rollback`:
-
-1. Find the most recent `dude-pre-upgrade-*` tag.
-2. Refuse if the working tree is dirty unless `--allow-dirty` is passed.
-3. If the upgrade was not pushed, `git reset --hard <tag>` on the upgrade branch (or current branch if it descends from the tag), restore the prior `bundle-manifest.md` from the tagged commit, append a rollback entry to `upgrade-log.md`, run `dude-lint`, and report the restored sha.
-4. If the upgrade was already merged and pushed to the target branch, do not force-push. Create a normal rollback commit on the target branch by restoring the upgrade-owned and base-owned files from the safety tag, append a rollback entry to `upgrade-log.md`, run `dude-lint`, commit, and push the rollback commit.
-5. Report any cleanup the user should do after they are satisfied, such as deleting the safety branch or safety tag.
+| Bucket | Behavior |
+|---|---|
+| Replace | Base path on both sides; local on-disk bytes differ from upstream. Overwrite local with upstream. Any local edits are discarded. |
+| Add | Base path only in the upstream tree. Copy upstream in. |
+| Remove | Base path only in the local tree (upstream dropped it). Delete local file (unless `--skip-removals`). |
+| Advisory | Project-owned agent or skill outside both the base and `dude-local-` namespaces. Preserved; flagged for rename. |
+| Up to date | Base path on both sides; bytes match. Skip silently. |
 
 ## Boundaries
 
-- Never auto-push, auto-merge, or modify remote state before the user confirms the upgrade plan. After `confirm upgrade` and successful verification, merge the upgrade branch back to the target branch and push as part of the normal upgrade flow.
-- Never delete or modify any file under `.github/dudestuff/` except the upgrade-owned manifest and upgrade log this skill itself owns.
+- Never auto-push, auto-merge, or modify remote state. The upgrade branch is the deliverable; merging is a user action.
+- Never delete or modify any file under `.github/dudestuff/` except the upgrade-owned `bundle-manifest.md` and `upgrade-log.md`.
 - Never delete or modify `.github/skills/project/`.
 - Never modify `.github/copilot-instructions.md`.
 - Never touch `brainstorm/`, `specs/`, Beads, or product source.
-- Never run upgrade on a dirty working tree without explicit `--allow-dirty`. When `--allow-dirty` is used, uncommitted local changes are interleaved with upgrade writes; a subsequent unpublished rollback may perform a `git reset --hard` to the safety tag and will discard those uncommitted changes. Commit or stash first when in doubt.
-- Never proceed past Step 4 without an explicit confirmation token.
-- Never recurse into transitive bundle composition (a single upgrade pulls one upstream bundle, not bundle-of-bundles).
-- For non-git projects, the safety net degrades to a timestamped backup directory under the OS temp `dude-upgrade-cache/backups/<ts>/`; rollback restores from there.
+- Never run upgrade on a dirty working tree without explicit `--allow-dirty`. When `--allow-dirty` is used, uncommitted local changes are interleaved with upgrade writes; a subsequent unpublished rollback may `git reset --hard` to the safety tag and discard those uncommitted changes.
+- Never proceed past the confirmation gate without an explicit confirmation token.
+- Never recurse into transitive bundle composition (one upgrade pulls one upstream bundle).
+
+## Pre-flight Requirements
+
+The script enforces these; the LLM does not need to re-check:
+
+- `git` is installed and the project root is inside a git working tree. The upgrade workflow uses git for safety tags, branches, rollback, and pre-overwrite drift detection; non-git projects must run `git init` before upgrading.
+- `.github/dudestuff/bundle-manifest.md` exists, parses, and uses the exact metadata shape (`source_repo`, `source_ref`, `installed_sha`, `installed_at`).
+- Upstream tree must contain `.github/agents/`, `.github/skills/dude-lint/`, `.github/instructions/dude.instructions.md`, and `.github/dudestuff/bundle-manifest.md`.
+- Upstream manifest must use the same exact metadata shape.
+
+For local-path upstream sources, the source directory must carry its own seeded `bundle-manifest.md`; the script copies its `installed_sha` forward. Local sources without a seeded manifest are refused.
 
 ## Manifest Shape
 
-`.github/dudestuff/bundle-manifest.md` contains a single fenced JSON block:
+`.github/dudestuff/bundle-manifest.md` contains a single fenced JSON block. The manifest is **metadata only**: it carries the upstream source pin and the installed commit, and nothing else.
 
 ```json
 {
   "source_repo": "https://github.com/<owner>/<repo>",
   "source_ref": "main",
   "installed_sha": "<commit-sha>",
-  "installed_at": "<iso-8601-timestamp>",
-  "bundle_version": "<semver-or-date>",
-    "files": {
-    ".github/agents/dude.agent.md": "<sha256>",
-    ".github/skills/dude-lint/lint.ps1": "<sha256>",
-    ".github/skills/dude-lint/lint.sh": "<sha256>",
-    ".github/skills/dude-lint/SKILL.md": "<sha256>",
-    ".github/instructions/dude.instructions.md": "<sha256>"
-  },
-  "local_overrides": {
-    ".github/agents/dude.agent.md": {
-      "base_sha256": "<sha256-from-files-map>",
-      "current_sha256": "<sha256-of-current-local-file>",
-      "reason": "kept local coordinator customization during upgrade",
-      "accepted_at": "<iso-8601-timestamp>"
-    }
-  }
+  "installed_at": "<iso-8601-timestamp>"
 }
 ```
 
-The `files` map enumerates every clean base-owned file at install time or after the latest accepted base refresh. It is intentionally scoped to the portable `.github` core: shipped agents, shipped skills except `.github/skills/project/`, and `.github/instructions/dude.instructions.md`. Anything not in this map is treated as project-owned during upgrade classification. `local_overrides` is optional and should be `{}` when no accepted local divergence exists.
+Base ownership is derived from the **namespace convention** by the engine on each run:
+
+```text
+.github/agents/dude.agent.md
+.github/agents/dude-<slug>.agent.md         # <slug> must NOT start with "local-"
+.github/skills/dude-<slug>/**               # <slug> must NOT start with "local-"
+.github/instructions/dude.instructions.md
+```
+
+Anything else is project-owned and never touched by upgrade. The reserved `dude-local-<slug>` namespace is explicitly project-owned and excluded from base enumeration.
+
+Bundle version `0.4.0` is a hard schema boundary: manifests with a `files` array or any other extra field are invalid. The namespace convention replaces the old path-list model entirely. The workflow protects local divergence by warning before overwriting (Step 3) and creating a safety tag (Step 4), not by tracking per-file accept decisions.

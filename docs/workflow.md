@@ -336,6 +336,17 @@ what is ready next without mutating anything.
 ### Beads-To-Markdown Sync
 
 Dude mirrors Beads state back to `tasks.md` after coordinator-owned Beads closes.
+
+**Automatic vs manual at a glance:**
+
+| Trigger | Mode | Who initiates |
+|---|---|---|
+| Dude closes or updates a Beads issue itself | automatic close-time mirror | Dude |
+| You ran `bd update`/`bd close`/`bd create` directly | manual sync | you |
+| Discovered Beads issue (`bd create ... --deps discovered-from:<id>`) needs a markdown header | manual sync | you |
+| Switching machines or falling back to Lightweight Execution | manual sync | you |
+| `@dude status` reports `Mirror: stale — run @dude sync Beads to tasks.md` | manual sync | you |
+
 If Beads was changed manually, or you want to switch machines before continuing
 without Beads, run:
 
@@ -349,6 +360,25 @@ the derived board region, records Coordinator Log entries, and reports anything
 that could not be mapped safely. Durable keys are preferred; legacy task IDs are
 accepted only when the story label and core task intent make the match clear.
 `@dude status` never performs this sync.
+
+Beads work discovered mid-flight (created with `bd create ... --deps
+discovered-from:<id>`) has no matching task header in `tasks.md`. Close-time
+auto-mirror does not append new task headers; it reports the markdown mirror as
+skipped and points to explicit sync. The explicit `@dude sync Beads to tasks.md`
+command is the one that surfaces them: open, in-progress, and blocked discovered
+issues are appended under a `## Discovered During Execution` section as normal
+canonical task headers in the reserved `T9001`-`T9999` range (for example,
+`T9001@xxxxxxxx [Shared] ...`). The durable suffix is derived deterministically
+from the Beads issue ID, and the task text keeps a stable `(Beads: <id>)` tag so
+later sync and status checks can match it again. Closed discovered issues are
+reported as skipped instead of back-filled.
+
+`@dude status` reports a trustworthy `Mirror:` line per active feature when
+tracked execution is live. It reads Beads and `tasks.md`, verifies that each
+representable executable Beads issue has one matching canonical task header with
+the expected glyph, and reports `verified current`, `stale — run @dude sync
+Beads to tasks.md`, `unsupported`, `not present`, or `unknown`. It never uses
+file modification time alone, and it never runs the sync.
 
 If Beads is unavailable and you already have a recent mirror, you can choose to
 resume Lightweight Execution from that snapshot. Dude should tell you that the
