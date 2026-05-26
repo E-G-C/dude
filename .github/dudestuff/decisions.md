@@ -39,7 +39,7 @@ Durable project and process decisions that Dude should preserve.
 
 ### Identity And Reconciliation
 
-- Canonical feature identity is shared across definition and execution: brainstorm `spec_path` must match the Beads issue description `spec:` prefix (see `dude-spec-import-to-beads` `## Canonical Feature Identity`). If `spec_path` changes after import — or after Lightweight Execution has already recorded checked task history — reconcile first; prefer durable task keys, then fall back to task ID, story label, and core intent. If still ambiguous, pause `@dude track`, report surviving versus changed or ambiguous completions, and ask the user to confirm which checkmarks survive.
+- Canonical feature identity is shared across definition and execution: brainstorm `spec_path` must match the Beads issue description `spec:` prefix (see `dude-spec-import-to-beads` `## Canonical Feature Identity`). If `spec_path` changes after import — or after Lightweight Execution has already recorded checked task history — reconcile by durable task key. If the mapping is ambiguous, pause `@dude track`, report surviving versus changed or ambiguous completions, and ask the user to confirm which checkmarks survive.
 
 ### Release
 

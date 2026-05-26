@@ -396,7 +396,7 @@ A single bounded task may cover closely related code, tests, and documentation w
 
 During Lightweight Execution, task headers may move between `[ ]`, `[~]`, `[!]`, and `[x]`. Keep the human task ID stable where the task still means the same work, and preserve the durable task key whenever the same task survives a re-define, so state can be reconciled instead of silently lost.
 
-Only preserve a non-open task automatically when the durable task key still matches. If the key is absent, fall back to the task ID, story label, and core intent. If a task is split, merged, re-scoped, or moved to a different story or goal, do not silently carry completion or blockage forward. Explain the reconciliation in the coordinator response and leave the resulting tasks open unless the mapping is truly one-to-one.
+Only preserve a non-open task automatically when the durable task key still matches. If the durable key is missing or differs, treat the task as new and leave it open. If a task is split, merged, re-scoped, or moved to a different story or goal, do not silently carry completion or blockage forward. Explain the reconciliation in the coordinator response and leave the resulting tasks open unless the mapping is truly one-to-one.
 
 ### Re-define Reconciliation Gate
 

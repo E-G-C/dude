@@ -57,7 +57,7 @@ Once `@dude track` imports the feature into Beads, stop using this skill and swi
 - Only the coordinator mutates task-state glyphs and task metadata in `tasks.md`; specialists report progress, blockers, and completion back to Dude.
 - A bounded task may cover closely related code, tests, and docs when one fresh verification command proves the full slice; do not split work just to separate artifact types.
 - If a task is blocked, mark it `[!]`, record a `blocked-by:` note when practical, and route the blocker with `@dude flag ...`.
-- If `define` is rerun, preserve existing `[x]`, `[~]`, or `[!]` state only when the durable task key still matches and the task still means the same work. If a durable key is absent, fall back to task ID, story label, and core intent. If a task is split, merged, or materially re-scoped, explain the reconciliation instead of silently mapping old state onto new work.
+- If `define` is rerun, preserve existing `[x]`, `[~]`, or `[!]` state only when the durable task key still matches and the task still means the same work. If the durable key is missing or differs, treat the task as new. If a task is split, merged, or materially re-scoped, explain the reconciliation instead of silently mapping old state onto new work.
 
 ## Selecting work
 
