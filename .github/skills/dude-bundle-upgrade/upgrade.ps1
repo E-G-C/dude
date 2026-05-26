@@ -12,7 +12,6 @@
 #   apply      apply a persisted plan: safety tag + branch + writes + commit
 #   rollback   reset HEAD to the most recent dude-pre-upgrade-* safety tag
 #   help       print usage
-#   version    print engine version
 #
 # Exit codes:
 #   0   no changes (up_to_date) or successful action
@@ -20,9 +19,8 @@
 #   40  invalid input, malformed manifest, unreachable upstream, or post-apply lint failure
 #
 # Manifest format: metadata only. The fenced JSON block carries source_repo,
-# source_ref, installed_sha, and installed_at — no files array, no per-file
-# hashes. Base ownership is derived from the namespace convention by the
-# engine.
+# source_ref, installed_sha, and installed_at. Base ownership is derived from
+# the namespace convention by the engine.
 #
 # Dependencies: PowerShell 7+, git, plus either Invoke-WebRequest (built-in)
 # or curl on PATH for the GitHub raw fast path. tar is not required (PS uses
@@ -42,7 +40,6 @@ Set-StrictMode -Version 3.0
 
 # ----- globals ---------------------------------------------------------------
 
-$script:VERSION = '0.4.0'
 $script:ROOT = (Get-Location).Path
 $script:CACHE_ROOT = Join-Path ([System.IO.Path]::GetTempPath()) 'dude-upgrade-cache'
 $script:PLANS_DIR = Join-Path $script:CACHE_ROOT 'plans'
@@ -175,8 +172,8 @@ function Test-MetadataManifest {
 
 # ----- base-path enumeration (namespace convention) --------------------------
 #
-# The metadata-only manifest carries no files array; base ownership is derived
-# from the namespace convention by the engine. Anything under
+# Base ownership is derived from the namespace convention by the engine.
+# Anything under
 #   .github/agents/dude.agent.md
 #   .github/agents/dude-<slug>.agent.md           (slug NOT starting with 'local-')
 #   .github/skills/dude-<slug>/**                 (slug NOT starting with 'local-')
@@ -244,7 +241,7 @@ $script:LOCAL_INSTALLED_AT = ''
 
 function Test-LocalManifest {
     # Load $script:LOCAL_MANIFEST_PATH into the LOCAL_* globals. Return $true
-    # on success, $false on missing/malformed or non-0.4.0 manifest shape.
+    # on success, $false on missing or malformed manifest.
     if (-not (Test-Path -LiteralPath $script:LOCAL_MANIFEST_PATH)) { return $false }
     $m = Get-ManifestObject -Path $script:LOCAL_MANIFEST_PATH
     if ($null -eq $m) { return $false }
@@ -405,10 +402,7 @@ function Get-TreeHeadSha {
 
 function Resolve-UpstreamSha {
     # Resolve the live upstream ref to a commit sha. This is the authoritative
-    # upgrade trigger: the upstream manifest's installed_sha is a self-report
-    # and may be stale relative to actual base-file changes, so we prefer the
-    # live ref HEAD whenever it can be discovered. Returns '' on failure;
-    # callers fall back to the upstream manifest's installed_sha.
+    # upgrade trigger. Returns '' on failure.
     if (Test-Path -LiteralPath $script:UPSTREAM_SOURCE -PathType Container) {
         if (Test-Path -LiteralPath (Join-Path $script:UPSTREAM_SOURCE '.git')) {
             if (Get-Command git -ErrorAction SilentlyContinue) {
@@ -481,11 +475,10 @@ function Get-DiffPlusMinus {
 }
 
 function Invoke-ClassifyPlan {
-    # Classification model (namespace-based, no manifest files array, no
-    # per-file hashes):
+    # Classification model (namespace-based):
     #   * Base ownership is derived via Get-BasePaths.
     #   * Local edits to base files are detected at apply time via the on-disk
-    #     byte compare here, not by hashing the manifest.
+    #     byte compare here.
     #   * Buckets:
     #       replace    -- base path on both sides, on-disk bytes differ from upstream
     #       add        -- base path only in the upstream tree
@@ -741,9 +734,8 @@ function Emit-ApplyJson {
 
 function Write-LocalManifest {
     # Rewrites only the fenced ```json ... ``` block in the local manifest,
-    # preserving surrounding markdown. The manifest is metadata only
-    # (no files array, no per-file hashes). Base ownership is derived from the
-    # namespace convention by the engine.
+    # preserving surrounding markdown. The manifest is metadata only. Base
+    # ownership is derived from the namespace convention by the engine.
     param(
         [string]$SourceRepo, [string]$SourceRef, [string]$InstalledSha,
         [string]$InstalledAt
@@ -909,8 +901,6 @@ function Get-GitDirty {
 
 # ----- subcommands -----------------------------------------------------------
 
-function Show-Version { [Console]::Out.WriteLine($script:VERSION) }
-
 function Show-Help {
     $help = @'
 upgrade.ps1 — engine for dude-bundle-upgrade (PowerShell parity).
@@ -924,7 +914,6 @@ SUBCOMMANDS
   apply      apply a persisted plan: safety tag + branch + writes + commit
   rollback   reset HEAD to the most recent dude-pre-upgrade-* safety tag
   help       this message
-  version    print the script version
 
 FLAGS (status, plan)
   --format text|json   output format (default: text)
@@ -1018,11 +1007,9 @@ function Invoke-Status {
         }
         return 40
     }
-    # Authoritative trigger: live upstream ref HEAD. The upstream manifest's
-    # installed_sha is only a self-report and can lag behind real base-file
-    # changes when an upstream contributor forgets to bump it; falling back to
-    # it would hide upgrades. Use the manifest field only when HEAD discovery
-    # is unavailable (no git / opaque source).
+    # Authoritative trigger: live upstream ref HEAD. Fall back to the upstream
+    # manifest's installed_sha only when HEAD discovery is unavailable (no git
+    # / opaque source).
     $upstreamSha = Resolve-UpstreamSha
     if ([string]::IsNullOrEmpty($upstreamSha)) {
         $upstreamSha = if ($upstreamManifest.PSObject.Properties.Name -contains 'installed_sha') { [string]$upstreamManifest.installed_sha } else { '' }
@@ -1073,8 +1060,8 @@ function Invoke-Plan {
 
     Invoke-ClassifyPlan -UpstreamTree $utree
 
-    # Prefer the fetched tree's HEAD sha (live truth) over the upstream
-    # manifest's self-reported installed_sha (may be stale).
+    # Prefer the fetched tree's HEAD sha; fall back to the upstream manifest's
+    # installed_sha when git is unavailable.
     $upstreamSha = Get-TreeHeadSha -Dir $utree
     if (-not $upstreamSha) {
         $upstreamSha = if ($upstreamManifest.PSObject.Properties.Name -contains 'installed_sha') { [string]$upstreamManifest.installed_sha } else { '' }
@@ -1370,7 +1357,6 @@ switch ($Command) {
     'apply'    { $exitCode = Invoke-Apply    -ArgList $argsArray }
     'rollback' { $exitCode = Invoke-Rollback -ArgList $argsArray }
     'help'     { Show-Help;    $exitCode = 0 }
-    'version'  { Show-Version; $exitCode = 0 }
     default    { Write-Err "unknown subcommand: $Command"; Show-Help; $exitCode = 40 }
 }
 

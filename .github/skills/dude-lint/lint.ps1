@@ -356,10 +356,9 @@ if (Test-Path -LiteralPath $skillsRootForNames) {
 }
 
 # --- Check 3b: bundle manifest ---------------------------------------------
-# The manifest is metadata only — exactly four metadata fields, no files
-# array, no per-file hashes. Base ownership is derived from the namespace
-# convention by the engine. We validate the exact field set and the
-# installed_sha shape.
+# The manifest is metadata only — exactly four metadata fields. Base ownership
+# is derived from the namespace convention by the engine. We validate the
+# exact field set and the installed_sha shape.
 $manifestPath = Join-Path $Root ".github/dudestuff/bundle-manifest.md"
 if (-not (Test-Path -LiteralPath $manifestPath)) {
     Write-Fail ".github/dudestuff/bundle-manifest.md  missing seeded bundle manifest"

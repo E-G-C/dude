@@ -47,7 +47,6 @@ The `upgrade.sh` engine handles fetch, classification, and reporting. The LLM ne
 | `apply`    | Apply a persisted plan: safety tag + branch, file ops, manifest rewrite, log append, lint, commit. | Yes |
 | `rollback` | `git reset --hard` to the most recent (or named) `dude-pre-upgrade-*` safety tag, append rollback log entry, lint. | Yes |
 | `help`     | Print usage. | No |
-| `version`  | Print engine version. | No |
 
 Invocation (Bash or PowerShell — same contract):
 
@@ -93,7 +92,7 @@ pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 rollback [--tag <name>] [--a
 }
 ```
 
-`status` compares the live upstream ref HEAD against the locally recorded `installed_sha`. The upstream HEAD is discovered with `git ls-remote <source> <ref>` for remote sources and `git rev-parse HEAD` for local-path sources, falling back to the upstream manifest's `installed_sha` only when HEAD discovery is unavailable (no git on PATH, opaque source). The status command does not classify file deltas; run `plan` for the full per-file picture.
+`status` compares the live upstream ref HEAD against the locally recorded `installed_sha`. The upstream HEAD is discovered with `git ls-remote <source> <ref>` for remote sources and `git rev-parse HEAD` for local-path sources. When HEAD discovery is unavailable (no git on PATH, opaque source), the upstream manifest's `installed_sha` is used. The status command does not classify file deltas; run `plan` for the full per-file picture.
 
 `plan` JSON:
 
@@ -242,7 +241,7 @@ Unprefixed user-created artifacts (an agent file or top-level skill directory th
 
 The script classifies every base-owned file into one of the buckets below. Base ownership is derived from the **namespace convention** (see [Manifest Shape](#manifest-shape) for the full pattern list) — the engine enumerates the live tree under each side and treats agents named `dude.agent.md` or `dude-<slug>.agent.md`, skill directories named `dude-<slug>/**`, and the bundle instructions file `dude.instructions.md` as base-owned, with the reserved `dude-local-<slug>` namespace explicitly excluded. There is no manifest `files` array; the manifest is metadata only.
 
-Classification is done by **byte comparison** of local disk content vs the fetched upstream tree. There are no per-file hashes anywhere in the workflow.
+Classification is done by **byte comparison** of local disk content vs the fetched upstream tree.
 
 | Bucket | Behavior |
 |---|---|
@@ -297,5 +296,3 @@ Base ownership is derived from the **namespace convention** by the engine on eac
 ```
 
 Anything else is project-owned and never touched by upgrade. The reserved `dude-local-<slug>` namespace is explicitly project-owned and excluded from base enumeration.
-
-Bundle version `0.4.0` is a hard schema boundary: manifests with a `files` array or any other extra field are invalid. The namespace convention replaces the old path-list model entirely. The workflow protects local divergence by warning before overwriting (Step 3) and creating a safety tag (Step 4), not by tracking per-file accept decisions.

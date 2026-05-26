@@ -10,17 +10,16 @@
 #   rollback  reset HEAD to the most recent dude-pre-upgrade-* safety tag
 #
 # Manifest format: metadata only — the manifest carries source_repo,
-# source_ref, installed_sha, and installed_at. There is no `files` array.
-# Base ownership is determined purely by the namespace
-# convention: `.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md`,
-# `.github/skills/dude-<slug>/**`, and `.github/instructions/dude.instructions.md`,
-# excluding the reserved `dude-local-<slug>` namespace which is project-owned.
-# Base files are always overwritten from upstream on apply; per-file SHA-256
-# hashes and the `local_overrides` mechanism are gone. Editing any base-owned
-# file is unsupported; users who want a customized variant must fork to the
-# reserved `dude-local-<slug>` namespace. The upgrader silently overwrites
-# anything under the base namespace (with a pre-overwrite git diff warning at
-# apply time).
+# source_ref, installed_sha, and installed_at. Base ownership is determined
+# purely by the namespace convention: `.github/agents/dude.agent.md`,
+# `.github/agents/dude-<slug>.agent.md`, `.github/skills/dude-<slug>/**`, and
+# `.github/instructions/dude.instructions.md`, excluding the reserved
+# `dude-local-<slug>` namespace which is project-owned. Base files are always
+# overwritten from upstream on apply. Editing any base-owned file is
+# unsupported; users who want a customized variant must fork to the reserved
+# `dude-local-<slug>` namespace. The upgrader silently overwrites anything
+# under the base namespace (with a pre-overwrite git diff warning at apply
+# time).
 #
 # Dependency baseline (matches dude-lint plus network tools):
 #   POSIX bash, awk, grep, sha256sum or shasum, diff, cmp, find,
@@ -36,26 +35,17 @@
 #   bash .github/skills/dude-bundle-upgrade/upgrade.sh apply    --plan <id|path> --confirm confirm-upgrade [--skip-removals] [--allow-dirty] [--format text|json]
 #   bash .github/skills/dude-bundle-upgrade/upgrade.sh rollback [--tag <name>] [--allow-dirty] [--format text|json]
 #   bash .github/skills/dude-bundle-upgrade/upgrade.sh help
-#   bash .github/skills/dude-bundle-upgrade/upgrade.sh version
 #
 # Exit codes:
 #   0   no changes (up_to_date) or successful action
 #   10  plan ready, changes detected
 #   40  invalid input, malformed manifest, unreachable upstream, or post-apply lint failure
 #
-# (Exit 20 / collision bucket existed in pre-0.4 versions when local files
-#  could share a path with a new upstream base file. The 0.4 namespace model
-#  eliminates such collisions by construction, so it is gone. Exit 30 /
-#  conflict bucket existed in pre-0.3 versions for per-file user decisions;
-#  the no-hashes design has no conflicts to resolve, so it is also gone.)
-#
 # JSON output on stdout is the machine contract.
 # Text output on stdout is human-facing.
 # All diagnostics go to stderr.
 
 set -u
-
-VERSION="0.4.0"
 
 # ----- globals ---------------------------------------------------------------
 
@@ -408,17 +398,14 @@ tree_head_sha() {
 }
 
 # Resolve the live upstream ref to a commit sha. This is the authoritative
-# upgrade trigger: the upstream manifest's installed_sha is a self-report and
-# may be stale relative to actual base-file changes, so we prefer the live ref
-# HEAD whenever it can be discovered.
+# upgrade trigger.
 #
 # Discovery order:
 #   1. local-path source: git rev-parse HEAD inside the source dir
 #   2. remote source: git ls-remote <source> <ref>
 #   3. ref that already looks like a full sha: pass through
 #
-# Prints the sha on success, empty string on failure. Callers fall back to the
-# upstream manifest's installed_sha when this returns empty (offline / no git).
+# Prints the sha on success, empty string on failure.
 resolve_upstream_sha() {
     if [ -d "$UPSTREAM_SOURCE" ]; then
         if [ -d "$UPSTREAM_SOURCE/.git" ] && command -v git >/dev/null 2>&1; then
@@ -446,7 +433,7 @@ resolve_upstream_sha() {
 # ----- upstream manifest validation -----------------------------------------
 
 # validate_upstream_manifest <json-text> — print error lines and return
-# non-zero unless the upstream manifest is exactly the 0.4.0 metadata shape.
+# non-zero unless the upstream manifest matches the metadata shape.
 validate_upstream_manifest() {
     validate_metadata_manifest "$1" "upstream manifest"
 }
@@ -484,15 +471,14 @@ diff_plus_minus() {
 
 # classify_plan <upstream_tree>
 #
-# Classification model (namespace-based, no manifest files array, no per-file
-# hashes):
+# Classification model (namespace-based):
 #   * Base ownership is derived from the namespace convention via
 #     enumerate_base_paths: anything under .github/agents/dude*.agent.md,
 #     .github/skills/dude-*/**, or .github/instructions/dude.instructions.md
 #     is base-owned (excluding the reserved .github/agents/dude-local-*.agent.md
 #     and .github/skills/dude-local-*/** project namespaces).
 #   * Local edits to base files are detected at apply time via a single
-#     git diff <installed_sha> -- <files>, not by hashing.
+#     git diff <installed_sha> -- <files>.
 #   * Buckets:
 #       replace    -- base path on both sides, on-disk bytes differ from upstream
 #       add        -- base path only in the upstream tree
@@ -787,7 +773,6 @@ SUBCOMMANDS
   apply      apply a persisted plan: safety tag + branch + writes + commit
   rollback   reset HEAD to the most recent dude-pre-upgrade-* safety tag
   help       this message
-  version    print the script version
 
 FLAGS (status, plan)
   --format text|json   output format (default: text)
@@ -828,10 +813,6 @@ ENVIRONMENT
   UPGRADE_DEBUG=1      enable debug logging on stderr
   TMPDIR               override default /tmp for the upgrade cache
 EOF
-}
-
-cmd_version() {
-    printf '%s\n' "$VERSION"
 }
 
 # Parse common flags for status/plan; populates FLAG_FORMAT, FLAG_SOURCE,
@@ -951,11 +932,9 @@ cmd_status() {
         return 40
     fi
 
-    # Authoritative trigger: live upstream ref HEAD. The upstream manifest's
-    # installed_sha is only a self-report and can lag behind real base-file
-    # changes when an upstream contributor forgets to bump it; falling back to
-    # it would hide upgrades. Use the manifest field only when HEAD discovery
-    # is unavailable (no git / opaque source).
+    # Authoritative trigger: live upstream ref HEAD. Fall back to the upstream
+    # manifest's installed_sha only when HEAD discovery is unavailable (no git
+    # / opaque source).
     local upstream_sha
     upstream_sha="$(resolve_upstream_sha)"
     if [ -z "$upstream_sha" ]; then
@@ -1033,8 +1012,8 @@ cmd_plan() {
 
     classify_plan "$utree"
 
-    # Prefer the fetched tree's HEAD sha (live truth) over the upstream
-    # manifest's self-reported installed_sha (may be stale).
+    # Prefer the fetched tree's HEAD sha; fall back to the upstream manifest's
+    # installed_sha when git is unavailable.
     local upstream_sha
     upstream_sha="$(tree_head_sha "$utree")"
     [ -z "$upstream_sha" ] && upstream_sha="$(manifest_top_field "$ujson" installed_sha)"
@@ -1196,8 +1175,8 @@ iso_to_epoch() {
 # write_manifest <source_repo> <source_ref> <installed_sha> <installed_at>
 # Rewrites only the fenced ```json ... ``` block in $LOCAL_MANIFEST_PATH,
 # preserving the surrounding markdown wrapper. The manifest is metadata
-# only: no files array, no per-file hashes. Base ownership is derived from
-# the namespace convention by the engine.
+# only. Base ownership is derived from the namespace convention by the
+# engine.
 write_manifest() {
     local source_repo="$1" source_ref="$2" installed_sha="$3"
     local installed_at="$4"
@@ -1584,7 +1563,6 @@ main() {
         apply)     cmd_apply "$@" ;;
         rollback)  cmd_rollback "$@" ;;
         help|-h|--help) cmd_help ;;
-        version|--version) cmd_version ;;
         *)
             log_error "unknown subcommand: $sub"
             cmd_help

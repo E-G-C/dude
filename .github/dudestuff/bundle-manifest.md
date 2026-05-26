@@ -13,7 +13,7 @@ This file pins the upstream Dude bundle version associated with the current inst
 
 ## Notes
 
-- The manifest is **metadata only**: it carries the upstream source pin and the installed commit, and nothing else. There is no `files` array and no per-file hashes.
+- The manifest is **metadata only**: it carries the upstream source pin and the installed commit, and nothing else.
 - `installed_sha` is the commit this bundle was last installed from. It is auto-maintained by `@dude upgrade` (rewritten to the live upstream HEAD after a successful apply). The authoritative upgrade trigger is the live upstream ref HEAD vs. this field — `@dude status` reads upstream HEAD with `git ls-remote` (remote sources) or `git rev-parse HEAD` (local-path sources), so this field never has to be hand-bumped by an upstream contributor for downstream installs to see new base-file changes.
 - Base ownership is derived from the **namespace convention** by the engine:
 

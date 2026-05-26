@@ -356,10 +356,9 @@ if [ -d "$ROOT/.github/skills" ]; then
 fi
 
 # --- Check 3b: bundle manifest ---------------------------------------------
-# The manifest is metadata only — exactly four metadata fields, no files
-# array, no per-file hashes. Base ownership is derived from the namespace
-# convention by the engine. We validate the exact field set and the
-# installed_sha shape.
+# The manifest is metadata only — exactly four metadata fields. Base ownership
+# is derived from the namespace convention by the engine. We validate the
+# exact field set and the installed_sha shape.
 MANIFEST="$ROOT/.github/dudestuff/bundle-manifest.md"
 
 if [ ! -f "$MANIFEST" ]; then
