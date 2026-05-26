@@ -226,3 +226,7 @@ After `bd close` succeeds, the coordinator must run the Beads-to-markdown mirror
 4. Execute and validate.
 5. Report results to the coordinator.
 6. Query ready work again.
+
+### Continuous Work
+
+When the user invokes `@dude work` while Tracked Execution is the active lane, load `dude-work` and let it drive the ready loop above. The claim discipline (`bd update <id> --claim --json`), the coordinator-only close decision (`bd close`), the Beads Close Protocol, the markdown mirror, and `dude-lint` after each write all still apply per iteration. The default cap is `--max 3`. See `dude-work` for the full grammar and stop conditions.

@@ -141,7 +141,7 @@ Execution:
 
 ```text
 @dude status
-@dude implement the next task for authentication without Beads
+@dude work authentication --max 1
 ```
 
 At that point, `specs/001-authentication/tasks.md` is the live markdown
@@ -173,7 +173,7 @@ Updated:
 Next:
 - Continue execution from tasks.md
 
-You: @dude implement the next task for authentication without Beads
+You: @dude work authentication --max 1
 
 Dude:
 Lane: Lightweight Execution · Live: specs/001-authentication/tasks.md

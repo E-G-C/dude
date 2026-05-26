@@ -73,6 +73,10 @@ Once `@dude track` imports the feature into Beads, stop using this skill and swi
    - within a phase, non-`[P]` tasks follow order and `[P]` tasks may run together when safe under `dude-parallel-dispatch`
 6. Route to the narrowest credible specialist.
 
+### Continuous Work
+
+When the user invokes `@dude work` (with or without `<feature>`, `--max N`, `--until blocked`, or `--parallel N`), load `dude-work` and let it iterate the selection rules above in this lane. Each iteration still runs the Lightweight Close Protocol below; `@dude work` does not bypass verification, the coordinator-only mutation rule, or `dude-lint`. The default cap is `--max 3`. See `dude-work` for the full grammar and stop conditions.
+
 ## Completion
 
 - Specialists report implementation results back to the coordinator; they do not mutate task glyphs or metadata themselves.

@@ -40,6 +40,7 @@ Key rules:
 - Once `@dude track` runs, Beads is live and authoritative.
 - While Beads is live, `tasks.md` may be kept as a one-way mirror for portability, but it is not used to choose ready work or decide completion.
 - `@dude status` is always read-only.
+- `@dude work` is an optional accelerator (not a new lane in the diagram above): it repeats iterations inside whichever execution lane is already live and stops on the first natural boundary. See [Optional Continuous Work](#optional-continuous-work).
 
 ## Who Owns What
 
@@ -223,7 +224,7 @@ Illustrative prompts:
 
 ```text
 @dude status
-@dude implement the next task for authentication without Beads
+@dude work authentication --max 1
 ```
 
 `@dude status` should now report Lightweight Execution with
@@ -247,6 +248,49 @@ Run `@dude track` only after Beads is ready. Checked `- [x]` tasks stay in
 Beads with matching state and dependency data. After import, Dude should report
 how many task units moved into Beads by state and how many completed tasks were
 skipped as Lightweight Execution history.
+
+### Optional Continuous Work
+
+`@dude work` is an optional accelerator that runs the next few ready tasks
+back-to-back inside whichever execution lane is already live. It is **not a new
+lane** — it does not replace Lightweight or Tracked Execution, it iterates
+inside one of them and stops on the first natural boundary.
+
+Use it when you want Dude to keep going without re-issuing one verb per task:
+
+```text
+@dude work expense-entry --max 3
+@dude work --until blocked
+```
+
+Lane detection runs once at the start:
+
+- If Beads has any ready or in-progress executable issue, the active lane is
+  Tracked Execution. The `<feature>` argument is informational; Beads decides
+  the ready order.
+- Otherwise the active lane is Lightweight Execution for the named `<feature>`
+  (or the single unambiguous defined feature with non-`[x]` task units).
+- If no execution lane is live, `@dude work` refuses with a one-line message
+  pointing to `@dude define` or `@dude track`.
+
+Each iteration still runs the active lane's close protocol (Lightweight Close
+Protocol or Beads Close Protocol). `dude-verification-before-completion`,
+coordinator-only mutation of task glyphs, and `dude-lint` after every write
+all still apply per iteration. The default cap is `--max 3`; the soft ceiling
+is `--max 25`.
+
+`@dude work` stops on the first of: no ready task, a real blocker, failed
+verification, reviewer rejection, required clarification, two consecutive
+failed attempts on the same task, ambiguous state, tool error, or `--max`
+reached. It never imports features, never auto-commits, never edits `spec.md`,
+`plan.md`, or brainstorm content, and never creates a new state file. Use
+[`@dude flag ...`](commands.md#dude-flag) for definition gaps, and `@dude track`
+to enable Beads.
+
+The full grammar, stop conditions, and reporting shape are documented in
+[Commands and prompt shapes](commands.md#dude-work). The skill that defines
+the iteration protocol lives at
+[`.github/skills/dude-work/SKILL.md`](../.github/skills/dude-work/SKILL.md).
 
 ### Tracked Execution
 

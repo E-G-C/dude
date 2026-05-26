@@ -74,7 +74,7 @@ Minimal example:
 # Open brainstorm/expense-entry.md, then read the draft and answer the prompts.
 @dude define expense-entry
 @dude status
-@dude implement the next task for expense-entry without Beads
+@dude work expense-entry --max 3
 ```
 
 If you only want a plan, use this instead:
@@ -126,7 +126,7 @@ the workflow state tidy.
 | `@dude draft <feature-or-file.md>` | Start or refresh the brainstorm from a feature name, description, or markdown file |
 | `@dude define <feature>` | Turn the brainstorm into spec, plan, and tasks |
 | `@dude status` | See where you are and what is live |
-| `@dude implement the next task for <feature> without Beads` | Keep going from `tasks.md` |
+| `@dude work [<feature>] [--max N]` | Keep going: run the next few ready tasks in whichever lane is already live |
 | `@dude track` | Move work into Beads when you want issue tracking |
 | `@dude sync Beads to tasks.md` | Refresh the markdown mirror from Beads before fallback or after manual Beads changes |
 | `@dude flag <problem>` | Send a blocker or bad assumption back to the right place |
@@ -176,6 +176,20 @@ closes back into `tasks.md` when the task key maps cleanly, and you can run
 `@dude sync Beads to tasks.md` before switching machines or falling back to
 Lightweight Execution. `@dude status` can verify whether the mirror is current,
 but it stays read-only and never performs the sync for you.
+
+### Optional: keep working
+
+Use `@dude work` when you want Dude to run the next few ready tasks without
+re-issuing one verb per task. It is not a new lane — it runs inside whichever
+execution lane is already live (Lightweight from `tasks.md` or Tracked from
+Beads) and stops on the first natural boundary (no ready task, a real blocker,
+failed verification, or the configured limit). Default cap is `--max 3`. The
+full verb is documented in [docs/commands.md](docs/commands.md#dude-work).
+
+```text
+@dude work expense-entry --max 3
+@dude work --until blocked
+```
 
 ## Detailed Docs
 

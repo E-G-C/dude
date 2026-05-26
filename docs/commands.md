@@ -7,9 +7,10 @@
 Examples below use preferred invocation forms. The short rule is: `draft`
 creates the working feature document, `define` turns it into a reusable package,
 `track` hands that package into Beads when you choose Tracked Execution,
-`status` reports state in all three lanes, `sync Beads to tasks.md` refreshes the
-markdown mirror from Beads, and `flag` routes execution-time gaps back into
-definition.
+`work` runs the next few ready tasks in whichever execution lane is already
+live, `status` reports state in all three lanes, `sync Beads to tasks.md`
+refreshes the markdown mirror from Beads, and `flag` routes execution-time gaps
+back into definition.
 
 ### Concise Command List
 
@@ -19,6 +20,7 @@ definition.
 | `@dude define <feature>` | Turn a drafted feature into a reusable package under `specs/<feature>/`. |
 | `@dude status` | Read-only report of the current lane, live artifact, next step, and blockers. |
 | `@dude track` | Import or resume tracked execution in Beads. |
+| `@dude work [<feature>] [--max N] [--until blocked] [--parallel N]` | Run the next few ready tasks back-to-back inside whichever execution lane is already live. Not a new lane. |
 | `@dude sync Beads to tasks.md` | Refresh the non-authoritative markdown mirror from Beads. |
 | `@dude flag [<type>:] <details>` | Route a real blocker or mismatch back to the right owner. Typed prefixes are preferred, but plain language is accepted. |
 | `@dude diff` | Read-only summary of coordinator-owned writes since your previous message. |
@@ -30,7 +32,7 @@ definition.
 | `@dude upgrade [--dry-run|--rollback|--ref <ref>]` | Refresh the installed Dude bundle from upstream while preserving project memory and active work. |
 | `@dude import tasks from specs/<feature>/ into Beads` | Manually import a defined package into Beads when you do not want the normal automatic handoff. |
 
-Preferred workflow verbs are `draft`, `define`, `status`, `track`, `flag`, `diff`, and `self-check`. `hire`, `remember`, `upgrade`, `sync Beads to tasks.md`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
+Preferred workflow verbs are `draft`, `define`, `status`, `track`, `work`, `flag`, `diff`, and `self-check`. `hire`, `remember`, `upgrade`, `sync Beads to tasks.md`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
 
 ### `@dude draft`
 
@@ -143,6 +145,103 @@ Next:
 - Let Dude continue the routed work
 - Or run @dude status for a read-only snapshot
 ```
+
+### `@dude work`
+
+Use this when you want Dude to run the next few ready tasks back-to-back
+without re-issuing one verb per task. It is **not a new workflow lane**. It
+iterates inside whichever execution lane is already live (Lightweight from
+`specs/<feature>/tasks.md` or Tracked from Beads) and stops on the first
+natural boundary.
+
+Preferred form:
+
+```text
+@dude work [<feature>] [--max N] [--until blocked] [--parallel N]
+```
+
+Meaning: keep running the next ready task back-to-back in the active execution
+lane until a stop condition fires.
+
+Flags:
+
+- `<feature>` — optional Lightweight-Execution feature slug. Ignored when Beads is the active lane (Beads has its own ready set).
+- `--max N` — maximum number of iterations. Default `3`. Hard floor `1`, soft ceiling `25`.
+- `--until blocked` — alias for "run until the first natural stop", capped at the soft ceiling. Implies `--max 25` unless you pass a different `--max`.
+- `--parallel N` — fan-out width. Default `1`. Soft ceiling `2` (Dude warns and requires explicit confirmation above `2`).
+
+Lane detection runs **once** at the start: if `bd list --json` returns one or
+more issues, the active lane is Tracked Execution (per `dude-beads-workflow`,
+after import Beads is authoritative even when no work is currently
+executable); if Beads has issues but nothing ready or in-progress, the verb
+stops with `no ready Beads work` rather than falling through to Lightweight.
+Otherwise the active lane is Lightweight Execution for the named `<feature>`
+(or the single unambiguous defined feature with non-`[x]` task units). If no
+execution lane is live, the verb refuses with a one-line message pointing to
+`@dude define` or `@dude track`.
+
+Each iteration still runs the active lane's close protocol (Lightweight Close
+Protocol or Beads Close Protocol). `dude-verification-before-completion`,
+coordinator-only mutation of task glyphs, and `dude-lint` after every write
+all still apply per iteration. `@dude work` never imports features, never
+auto-commits, never edits user-authored `spec.md` / `plan.md` / brainstorm
+content (`## User Draft`, open-question answers, `## Assumptions`), and never
+creates a new state file. Coordinator-maintained metadata
+(`## Coordinator Log`, `status:`, `spec_path:`) is still updated per the
+coordinator-only mutation rule.
+
+Illustrative result — Lightweight Execution:
+
+```text
+Lane: Lightweight Execution · Live: specs/001-expense-entry/tasks.md
+Action: work
+Updated:
+- Iteration 1/3: T003@a1b2c3d4 implemented, verified, marked [x]
+- Iteration 2/3: T004@e4f5g6h7 implemented, verified, marked [x]
+- Iteration 3/3: T005@91ac4e2f implemented, verified, marked [x]
+- 3 Coordinator Log entries appended to brainstorm/expense-entry.md
+- dude-lint: ok after each iteration
+Next:
+- Run @dude work expense-entry --max 3 to continue
+- Or @dude status for a read-only snapshot
+```
+
+Illustrative result — Tracked Execution with an early stop:
+
+```text
+Lane: Tracked Execution · Live: Beads
+Action: work
+Updated:
+- Iteration 1/5: dude-abc closed, mirrored to T012@a1b2c3d4
+- Iteration 2/5: dude-def claimed and implemented; verification failed
+Blockers:
+- Stopped after iteration 2: verification failed on dude-def
+Next:
+- Run @dude flag test-failure: <details> to route the failure, or fix the test and re-run @dude work
+```
+
+Illustrative result — refusal when no execution lane is live:
+
+```text
+Action: work
+Next: No active execution lane. Run @dude define <feature> to define one, or @dude track to enable Beads tracking, then @dude work.
+```
+
+Stop conditions (uniform across both lanes):
+
+- no ready task remains
+- task blocks (specialist reports a blocker)
+- verification fails (`dude-verification-before-completion`)
+- reviewer rejects (`@dude-reviewer` when present)
+- clarification required from the user
+- two consecutive failed attempts on the same task
+- ambiguous state (lane drift, fence imbalance, identity mismatch)
+- tool error during an iteration
+- `--max` reached
+
+`@dude work` is the optional accelerator described in
+[docs/workflow.md](workflow.md). The full skill lives at
+[.github/skills/dude-work/SKILL.md](../.github/skills/dude-work/SKILL.md).
 
 ### `@dude sync Beads to tasks.md`
 
@@ -485,7 +584,7 @@ Prefer short, explicit prompts that name the feature and the lane you want:
 @dude draft authentication
 @dude define authentication
 @dude status
-@dude implement the next task for authentication without Beads
+@dude work authentication --max 1
 @dude track
 @dude flag spec-gap: authentication does not define lockout behavior
 ```
@@ -494,7 +593,7 @@ Good prompt-shape rules:
 
 - name one feature, not a whole roadmap
 - if the request spans several bounded outcomes, split them before `draft`
-- say `without Beads` when you want Lightweight Execution
+- prefer `@dude work <feature> --max 1` (Lightweight) or `@dude work` (Tracked) over natural-language paraphrases like `implement the next task`; the natural-language form still works as a fallback
 - typed `flag` prefixes are preferred for real blockers, but plain language is accepted when the intended type is obvious
 - use `status` when you want orientation without changing state
 
@@ -533,7 +632,7 @@ After that, Dude should recommend one next step, usually
 
 ```text
 @dude status
-@dude implement the next task for exports without Beads
+@dude work exports --max 1
 ```
 
 ### Manual import fallback

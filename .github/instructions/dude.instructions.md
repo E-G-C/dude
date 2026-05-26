@@ -48,6 +48,7 @@ Execution is optional after definition. If the user wants implementation and doe
 18. After the coordinator closes Beads work, it mirrors that Beads result back to the matching canonical task unit in `tasks.md` when the durable task key maps cleanly, regenerates any derived board region, and records the write-back in the brainstorm Coordinator Log. Mirror failures do not undo the Beads close, but they must be reported.
 19. If new work is discovered during Beads-backed execution, create a linked Beads issue.
 20. When multiple ready tasks are truly independent, Dude may dispatch them in parallel as an internal coordination decision.
+21. `@dude work` is the optional continuous-execution accelerator. It runs ready tasks back-to-back inside whichever lane is already live (Lightweight or Tracked Execution), defaults to `--max 3` iterations, and is not a new lane. It never imports features, never auto-commits, never edits definition artifacts, never bypasses the close protocol for the active lane, and stops on the first natural boundary (no ready task, blocker, failed verification, reviewer rejection, required clarification, two consecutive failed attempts on the same task, ambiguous state, tool error, or `--max` reached).
 
 ## Skill Awareness
 

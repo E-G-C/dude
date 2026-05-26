@@ -27,6 +27,7 @@ The minimum useful setup is:
 - copy `.github/` into the target repository
 - optionally remember one to three durable constraints
 - start with `@dude draft <feature>`
+- once `@dude define <feature>` completes, the easiest way to continue is `@dude work <feature>` — it runs the next few ready tasks in whichever execution lane is live and stops on the first natural boundary (see [Optional Continuous Work](workflow.md#optional-continuous-work))
 
 If you are not sure which artifact is live after any step, run `@dude status`.
 In Definition Only it points you back to the current brainstorm file or
