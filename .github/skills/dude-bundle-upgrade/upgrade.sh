@@ -407,6 +407,42 @@ tree_head_sha() {
     fi
 }
 
+# Resolve the live upstream ref to a commit sha. This is the authoritative
+# upgrade trigger: the upstream manifest's installed_sha is a self-report and
+# may be stale relative to actual base-file changes, so we prefer the live ref
+# HEAD whenever it can be discovered.
+#
+# Discovery order:
+#   1. local-path source: git rev-parse HEAD inside the source dir
+#   2. remote source: git ls-remote <source> <ref>
+#   3. ref that already looks like a full sha: pass through
+#
+# Prints the sha on success, empty string on failure. Callers fall back to the
+# upstream manifest's installed_sha when this returns empty (offline / no git).
+resolve_upstream_sha() {
+    if [ -d "$UPSTREAM_SOURCE" ]; then
+        if [ -d "$UPSTREAM_SOURCE/.git" ] && command -v git >/dev/null 2>&1; then
+            ( cd "$UPSTREAM_SOURCE" && git rev-parse HEAD 2>/dev/null ) || true
+        fi
+        return
+    fi
+
+    if ! command -v git >/dev/null 2>&1; then
+        return
+    fi
+
+    local out
+    out="$(git ls-remote "$UPSTREAM_SOURCE" "$UPSTREAM_REF" 2>/dev/null | awk 'NR==1 {print $1}')"
+    if [ -n "$out" ]; then
+        printf '%s\n' "$out"
+        return
+    fi
+
+    if printf '%s' "$UPSTREAM_REF" | grep -qE '^[0-9a-f]{40}$'; then
+        printf '%s\n' "$UPSTREAM_REF"
+    fi
+}
+
 # ----- upstream manifest validation -----------------------------------------
 
 # validate_upstream_manifest <json-text> — print error lines and return
@@ -915,12 +951,20 @@ cmd_status() {
         return 40
     fi
 
+    # Authoritative trigger: live upstream ref HEAD. The upstream manifest's
+    # installed_sha is only a self-report and can lag behind real base-file
+    # changes when an upstream contributor forgets to bump it; falling back to
+    # it would hide upgrades. Use the manifest field only when HEAD discovery
+    # is unavailable (no git / opaque source).
     local upstream_sha
-    upstream_sha="$(manifest_top_field "$ujson" installed_sha)"
+    upstream_sha="$(resolve_upstream_sha)"
+    if [ -z "$upstream_sha" ]; then
+        upstream_sha="$(manifest_top_field "$ujson" installed_sha)"
+    fi
 
-    # Sha-only compare: an upgrade is available when upstream installed_sha
-    # differs from local installed_sha. File-level drift on overlapping paths
-    # is reported by `plan`, not here.
+    # Sha-only compare: an upgrade is available when the upstream HEAD sha
+    # differs from the locally recorded installed_sha. File-level drift on
+    # overlapping paths is reported by `plan`, not here.
     local kind
     if [ -n "$upstream_sha" ] && [ "$upstream_sha" = "$LOCAL_INSTALLED_SHA" ]; then
         kind="up_to_date"
@@ -989,9 +1033,11 @@ cmd_plan() {
 
     classify_plan "$utree"
 
+    # Prefer the fetched tree's HEAD sha (live truth) over the upstream
+    # manifest's self-reported installed_sha (may be stale).
     local upstream_sha
-    upstream_sha="$(manifest_top_field "$ujson" installed_sha)"
-    [ -z "$upstream_sha" ] && upstream_sha="$(tree_head_sha "$utree")"
+    upstream_sha="$(tree_head_sha "$utree")"
+    [ -z "$upstream_sha" ] && upstream_sha="$(manifest_top_field "$ujson" installed_sha)"
     local from_sha="$LOCAL_INSTALLED_SHA"
     local created_at
     created_at="$(iso_now)"

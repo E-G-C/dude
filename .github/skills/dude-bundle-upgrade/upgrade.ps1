@@ -403,6 +403,36 @@ function Get-TreeHeadSha {
     return ([string]$sha).Trim()
 }
 
+function Resolve-UpstreamSha {
+    # Resolve the live upstream ref to a commit sha. This is the authoritative
+    # upgrade trigger: the upstream manifest's installed_sha is a self-report
+    # and may be stale relative to actual base-file changes, so we prefer the
+    # live ref HEAD whenever it can be discovered. Returns '' on failure;
+    # callers fall back to the upstream manifest's installed_sha.
+    if (Test-Path -LiteralPath $script:UPSTREAM_SOURCE -PathType Container) {
+        if (Test-Path -LiteralPath (Join-Path $script:UPSTREAM_SOURCE '.git')) {
+            if (Get-Command git -ErrorAction SilentlyContinue) {
+                $sha = & git -C $script:UPSTREAM_SOURCE rev-parse HEAD 2>$null
+                if ($LASTEXITCODE -eq 0) { return ([string]$sha).Trim() }
+            }
+        }
+        return ''
+    }
+
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return '' }
+    $out = & git ls-remote $script:UPSTREAM_SOURCE $script:UPSTREAM_REF 2>$null
+    if ($LASTEXITCODE -eq 0 -and $out) {
+        $first = ($out -split "`n")[0]
+        if ($first) {
+            $parts = $first -split '\s+'
+            if ($parts.Length -ge 1 -and $parts[0]) { return $parts[0].Trim() }
+        }
+    }
+
+    if ($script:UPSTREAM_REF -match '^[0-9a-f]{40}$') { return $script:UPSTREAM_REF }
+    return ''
+}
+
 # ----- upstream manifest validation ------------------------------------------
 
 function Test-UpstreamManifest {
@@ -988,10 +1018,18 @@ function Invoke-Status {
         }
         return 40
     }
-    $upstreamSha = if ($upstreamManifest.PSObject.Properties.Name -contains 'installed_sha') { [string]$upstreamManifest.installed_sha } else { '' }
+    # Authoritative trigger: live upstream ref HEAD. The upstream manifest's
+    # installed_sha is only a self-report and can lag behind real base-file
+    # changes when an upstream contributor forgets to bump it; falling back to
+    # it would hide upgrades. Use the manifest field only when HEAD discovery
+    # is unavailable (no git / opaque source).
+    $upstreamSha = Resolve-UpstreamSha
+    if ([string]::IsNullOrEmpty($upstreamSha)) {
+        $upstreamSha = if ($upstreamManifest.PSObject.Properties.Name -contains 'installed_sha') { [string]$upstreamManifest.installed_sha } else { '' }
+    }
 
-    # Status compares installed_sha only. Differences in the on-disk namespace
-    # are surfaced by `plan`, not by status.
+    # Status compares HEAD sha against the locally recorded installed_sha.
+    # Differences in the on-disk namespace are surfaced by `plan`, not here.
     $kind = if ($upstreamSha -and ($upstreamSha -eq $script:LOCAL_INSTALLED_SHA)) { 'up_to_date' } else { 'upgrade_available' }
     if ($flags.Format -eq 'json') { Emit-StatusJson $kind $upstreamSha '' }
     else { Emit-StatusText $kind $upstreamSha '' }
@@ -1035,8 +1073,12 @@ function Invoke-Plan {
 
     Invoke-ClassifyPlan -UpstreamTree $utree
 
-    $upstreamSha = if ($upstreamManifest.PSObject.Properties.Name -contains 'installed_sha') { [string]$upstreamManifest.installed_sha } else { '' }
-    if (-not $upstreamSha) { $upstreamSha = Get-TreeHeadSha -Dir $utree }
+    # Prefer the fetched tree's HEAD sha (live truth) over the upstream
+    # manifest's self-reported installed_sha (may be stale).
+    $upstreamSha = Get-TreeHeadSha -Dir $utree
+    if (-not $upstreamSha) {
+        $upstreamSha = if ($upstreamManifest.PSObject.Properties.Name -contains 'installed_sha') { [string]$upstreamManifest.installed_sha } else { '' }
+    }
     $fromSha = $script:LOCAL_INSTALLED_SHA
     $createdAt = Get-IsoNow
     $stamp = Get-StampNow

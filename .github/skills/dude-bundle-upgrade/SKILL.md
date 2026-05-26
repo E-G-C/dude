@@ -93,7 +93,7 @@ pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 rollback [--tag <name>] [--a
 }
 ```
 
-`status` compares the upstream `installed_sha` against the locally recorded `installed_sha`. The status command does not classify file deltas; run `plan` for the full per-file picture.
+`status` compares the live upstream ref HEAD against the locally recorded `installed_sha`. The upstream HEAD is discovered with `git ls-remote <source> <ref>` for remote sources and `git rev-parse HEAD` for local-path sources, falling back to the upstream manifest's `installed_sha` only when HEAD discovery is unavailable (no git on PATH, opaque source). The status command does not classify file deltas; run `plan` for the full per-file picture.
 
 `plan` JSON:
 
@@ -272,7 +272,7 @@ The script enforces these; the LLM does not need to re-check:
 - Upstream tree must contain `.github/agents/`, `.github/skills/dude-lint/`, `.github/instructions/dude.instructions.md`, and `.github/dudestuff/bundle-manifest.md`.
 - Upstream manifest must use the same exact metadata shape.
 
-For local-path upstream sources, the source directory must carry its own seeded `bundle-manifest.md`; the script copies its `installed_sha` forward. Local sources without a seeded manifest are refused.
+For local-path upstream sources, the source directory must carry its own seeded `bundle-manifest.md`; the script reads the live HEAD of that directory (`git rev-parse HEAD`) and copies it forward as the new local `installed_sha`. Local sources without a seeded manifest are refused.
 
 ## Manifest Shape
 

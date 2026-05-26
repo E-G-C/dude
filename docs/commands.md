@@ -404,10 +404,10 @@ skill is single-artifact only.
 
 Use the `dude-bundle-upgrade` skill to refresh the installed Dude engine from its
 source repo. The skill reads `.github/dudestuff/bundle-manifest.md`, compares
-the upstream commit sha against the locally recorded sha, fetches the
-configured upstream ref into an OS temp directory for dry-run/apply, produces
-an upgrade report, and waits for the explicit `confirm upgrade` token before
-writing.
+the live upstream ref HEAD against the locally recorded `installed_sha`,
+fetches the configured upstream ref into an OS temp directory for
+dry-run/apply, produces an upgrade report, and waits for the explicit
+`confirm upgrade` token before writing.
 
 The simple flow is status, dry-run, upgrade, rollback if needed:
 
@@ -442,8 +442,11 @@ legacy manifest reconstruction is intentionally unsupported.
 > base files are discarded by `@dude upgrade`.
 
 `installed_sha` identifies the last applied upstream source for orientation.
-`@dude status` reports upgrade availability when the upstream commit sha
-differs from the locally recorded sha.
+`@dude status` reports upgrade availability when the live upstream ref HEAD
+differs from the locally recorded `installed_sha`; the upstream HEAD is read
+with `git ls-remote` (remote sources) or `git rev-parse HEAD` (local-path
+sources), so an upstream contributor never has to manually bump a field inside
+the upstream manifest for downstream installs to see new bundle changes.
 
 Use reserved `dude-local-` paths for project-owned artifacts:
 `.github/agents/dude-local-<slug>.agent.md` and `.github/skills/dude-local-<slug>/`.
