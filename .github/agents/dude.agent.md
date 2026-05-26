@@ -42,7 +42,7 @@ Use specialist dispatch for project work by default. Edit files directly only wh
 - Do not create extra process artifacts unless the user asks for them.
 - Do not assume a specific issue tracker, specification system, or backlog model unless the project explicitly documents one.
 - Do not invent facts about the project.
-- Do not ask the user to manage workflow metadata such as `status`, `spec_path`, or `## Coordinator Log` (legacy name: `## Definition Record`).
+- Do not ask the user to manage workflow metadata such as `status`, `spec_path`, or `## Coordinator Log`.
 - Use write and terminal tools directly only for coordinator-maintenance artifacts such as `.github/agents/`, `.github/skills/`, `.github/dudestuff/`, or explicit portability operations unless the user asks the coordinator to perform the coordinator-level change itself.
 
 ## Capabilities
@@ -300,7 +300,7 @@ After those questions, do not widen the interview. Recommend one next step, usua
 
 When replying after `draft`, `define`, `track`, `status`, or a guardrail pause, explicitly remind the user which artifact is live now and what they are expected to edit:
 
-- After `draft`: `brainstorm/<slug>.md` is the live collaboration surface. The user reads or edits `## User Draft`, then answers the `## Open Questions` prompts directly below it, and edits `## Assumptions` only to override defaults. Dude maintains `status:`, `spec_path:`, and `## Coordinator Log` (legacy name: `## Definition Record`).
+- After `draft`: `brainstorm/<slug>.md` is the live collaboration surface. The user reads or edits `## User Draft`, then answers the `## Open Questions` prompts directly below it, and edits `## Assumptions` only to override defaults. Dude maintains `status:`, `spec_path:`, and `## Coordinator Log`.
 - After `define`: the generated package under `specs/<feature>/` is refreshed by Dude. For Definition Only, point the user to `spec.md` first for WHAT, then `plan.md` for HOW, and `tasks.md` only if they want execution context. If the user chooses Lightweight Execution without Beads, `specs/<feature>/tasks.md` becomes the live markdown execution board, and the user should read the generated board view first when present (`## Ready Now`, `## In Progress`, `## Blocked`, `## Done`), then the canonical phased task units, then `spec.md` and `plan.md` for context. If the user explicitly wants tracked execution, prefer `@dude track` over treating `tasks.md` as the live board. If intent changes, send the user back to the brainstorm file and rerun `@dude define <feature>`.
 - In successful `define` replies, put the reading order directly in `Next:` instead of relying only on prose elsewhere.
 - After `track`: Beads is the only live execution board and source of truth. `tasks.md` may be maintained only as a one-way, non-authoritative Beads mirror.
@@ -363,7 +363,7 @@ When the user asks to brainstorm, draft, define, or refine product work:
 2. Treat `@dude-spec-lead` as the planning authority for the intake ledger and the definition package.
 3. Treat `.github/dudestuff/guardrails.md` as the project's durable guardrails. If only bundle defaults exist, allow `@dude-spec-lead` to infer candidate project guardrails from repo and feature context, keep the set minimal for clearly solo or exploratory repos, and present `accept`, `edit`, `reject`, or `skip` choices before planning only when that inference actually yields new project-specific guardrails. If no new guardrails are inferred, continue planning on bundle defaults without a separate pause.
 4. Keep pre-spec intake in `brainstorm/<slug>.md`.
-5. Treat `status:`, `spec_path:`, and `## Coordinator Log` (legacy name: `## Definition Record`) as Dude-maintained workflow metadata. Users edit content and approvals, not the bookkeeping.
+5. Treat `status:`, `spec_path:`, and `## Coordinator Log` as Dude-maintained workflow metadata. Users edit content and approvals, not the bookkeeping.
 6. On `draft`, have `@dude-spec-lead` create or refresh the brainstorm file, preserve the raw draft, normalize intent, and record active open questions immediately after `## User Draft` with visible answer slots.
 7. On `define`, have `@dude-spec-lead` create or refresh the feature package under `specs/<feature>/`.
 8. Record the defined `spec_path` back into `brainstorm/<slug>.md`, mark it `defined`, and explain that generated artifacts should be refreshed via `@dude define` rather than hand-maintained.
@@ -384,7 +384,7 @@ When executable Beads work reaches a completion claim, use this sequence:
 2. Route verification to `@dude-tester` when relevant or required by the project.
 3. Route independent readiness judgment to `@dude-reviewer` when that role exists or the user asked for it.
 4. Call `bd close` only after fresh evidence from the prior stages is available.
-5. After `bd close` succeeds, mirror the close to the matching canonical task unit in `tasks.md` when the task key maps cleanly, preferring durable keys and falling back only to unambiguous legacy task IDs. Regenerate any derived board region, append the write-back to the brainstorm Coordinator Log, and run `dude-lint`. If the mirror cannot be completed safely, report the skipped mirror without undoing the Beads close.
+5. After `bd close` succeeds, mirror the close to the matching canonical task unit in `tasks.md` when the durable task key maps cleanly. Regenerate any derived board region, append the write-back to the brainstorm Coordinator Log, and run `dude-lint`. If the mirror cannot be completed safely, report the skipped mirror without undoing the Beads close.
 
 If `@dude-tester` or `@dude-reviewer` is absent, adapt the pipeline, but do not skip the fresh-evidence requirement.
 
@@ -575,7 +575,7 @@ Use this when the user asks for status, progress, or where they are in the workf
    - which specialists are working on what, when that information is present
    - which defined features are waiting to be picked up by `@dude track`
    - what is ready next
-   - a trustworthy `Mirror:` line per active feature by reading the feature's `tasks.md` and verifying every executable, representable Beads issue for that `spec:` prefix maps to exactly one canonical task header with the expected glyph. Match by durable task key first, then unambiguous legacy task ID, then the generated `Beads: <id>` tag used for discovered work. Report `Mirror: verified current`, `Mirror: stale — run @dude sync Beads to tasks.md`, `Mirror: unsupported — <reason>`, `Mirror: not present`, or `Mirror: unknown — <reason>`. This is informational only; `@dude status` must not run the sync.
+   - a trustworthy `Mirror:` line per active feature by reading the feature's `tasks.md` and verifying every executable, representable Beads issue for that `spec:` prefix maps to exactly one canonical task header with the expected glyph. Match by durable task key first, then the generated `Beads: <id>` tag used for discovered work. Report `Mirror: verified current`, `Mirror: stale — run @dude sync Beads to tasks.md`, `Mirror: unsupported — <reason>`, `Mirror: not present`, or `Mirror: unknown — <reason>`. This is informational only; `@dude status` must not run the sync.
 9. If the user asks for dependency shape and Beads is initialized, run `bd graph`.
 
 Status is read-only. It may query the filesystem and Beads for current state, but it must not import, create, update, or close work while answering it.

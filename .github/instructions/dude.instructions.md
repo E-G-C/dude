@@ -28,7 +28,7 @@ instructions provide only the shared rules that apply to **every** agent.
 1. Dude accepts early feature input in `brainstorm/<slug>.md` and defines it into `specs/<feature>/`.
 2. The `@dude-spec-lead` specialist owns the intake and feature-definition lifecycle.
 3. `brainstorm/<slug>.md` is the only pre-spec intake ledger. Keep `status: draft|defined` and `spec_path:` there instead of creating extra state files.
-4. Users edit brainstorm content in place, but workflow metadata such as `status:`, `spec_path:`, and `## Coordinator Log` (legacy name: `## Definition Record`) remain Dude-maintained.
+4. Users edit brainstorm content in place, but workflow metadata such as `status:`, `spec_path:`, and `## Coordinator Log` remain Dude-maintained.
 5. Project-level guardrails in `.github/dudestuff/guardrails.md` provide durable planning and execution constraints.
 6. If only bundle defaults exist, users may `accept`, `edit`, `reject`, or `skip` inferred project guardrails. `skip` means continue with bundle defaults only. If no new project-specific guardrails are inferred, definition may continue without a separate guardrail pause.
 7. `spec.md` must be technology-agnostic. Maximum 3 `[NEEDS CLARIFICATION]` markers, prioritized: scope > security > UX > technical.
@@ -45,7 +45,7 @@ Execution is optional after definition. If the user wants implementation and doe
 15. All specialists follow `.github/skills/dude-beads-workflow/SKILL.md` for claiming and executing tasks after Beads import. Lightweight Execution uses `.github/skills/dude-lightweight-execution/SKILL.md` instead.
 16. In Lightweight Execution, only the coordinator mutates canonical task state after fresh verification evidence or routed workflow changes, preserving the durable task key, optional dependency metadata, and the rest of the task unit.
 17. Supporting checklist files remain reference context during Lightweight Execution; `specs/<feature>/tasks.md` is the single live execution board before import, and any Dude-generated board region inside that file is derived guidance rather than a second board.
-18. After the coordinator closes Beads work, it mirrors that Beads result back to the matching canonical task unit in `tasks.md` when the task key maps cleanly, preferring durable task keys and falling back only to unambiguous legacy task IDs, regenerates any derived board region, and records the write-back in the brainstorm Coordinator Log. Mirror failures do not undo the Beads close, but they must be reported.
+18. After the coordinator closes Beads work, it mirrors that Beads result back to the matching canonical task unit in `tasks.md` when the durable task key maps cleanly, regenerates any derived board region, and records the write-back in the brainstorm Coordinator Log. Mirror failures do not undo the Beads close, but they must be reported.
 19. If new work is discovered during Beads-backed execution, create a linked Beads issue.
 20. When multiple ready tasks are truly independent, Dude may dispatch them in parallel as an internal coordination decision.
 

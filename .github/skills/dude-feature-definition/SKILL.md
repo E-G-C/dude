@@ -94,7 +94,7 @@ The `<!-- dude:managed:start -->` / `<!-- dude:managed:end -->` HTML comment fen
 
 The `## Open Questions`, `## Assumptions`, and `## Deferred Clarifications` sections sit outside the managed fences because users edit them in place. Omit any of these sections (and any optional managed sections) until they have real content; do not emit empty scaffolding. When there are active open questions, `## Open Questions` must be the first section after `## User Draft`.
 
-Treat `status:`, `spec_path:`, and `## Coordinator Log` as Dude-maintained workflow metadata. Users edit the feature content in place, but Dude keeps the bookkeeping consistent for later `define` and `track` steps. The historical name for this section was `## Definition Record`; existing brainstorms with that heading should be renamed to `## Coordinator Log` on the next `draft` or `define` refresh.
+Treat `status:`, `spec_path:`, and `## Coordinator Log` as Dude-maintained workflow metadata. Users edit the feature content in place, but Dude keeps the bookkeeping consistent for later `define` and `track` steps.
 
 Valid `status:` values are `draft` and `defined`.
 
@@ -357,12 +357,10 @@ Each canonical task header follows this format:
 - optional indented `blocked-by:` lines summarize a blocker and are expected when the task header is `[!]`
 - Description should include concrete file paths when possible
 
-Preferred emitted format uses the durable suffix. Legacy `T001` lines remain acceptable during migration and should be upgraded on the next `define` refresh.
-
-Compatibility regex for canonical task header lines (Python `re` syntax):
+Canonical regex for task header lines (Python `re` syntax):
 
 ```
-^- \[( |~|!|x)\] (T\d{3,}(?:@[a-z0-9]{8})?) (\[P\] )?\[(US\d+|Shared)\] (.+)$
+^- \[( |~|!|x)\] (T\d{3,}@[a-z0-9]{8}) (\[P\] )?\[(US\d+|Shared)\] (.+)$
 ```
 
 Lines starting with a task-state glyph (`- [ ]`, `- [~]`, `- [!]`, or `- [x]`) that do not match this pattern should be treated as malformed. Stop import and request a corrected `tasks.md`. Indented metadata lines must follow `  deps: ...` or `  blocked-by: ...` and belong to the immediately preceding task header.
@@ -436,7 +434,7 @@ Before handing a defined package back to the coordinator as import-ready, verify
 - `spec.md` has no unresolved `[NEEDS CLARIFICATION]` markers
 - the brainstorm file is ready to carry `status: defined`
 - `spec_path` points to the exact `spec.md` path that will identify the feature later
-- every canonical task header in `tasks.md` matches the compatible task format, any metadata lines are well-formed, and any non-open lightweight-execution headers preserve the same durable key or fallback task ID and labels
+- every canonical task header in `tasks.md` matches the canonical task format, any metadata lines are well-formed, and any non-open lightweight-execution headers preserve the same durable key and labels
 - any generated board region is clearly derived and may be regenerated without changing canonical task state
 - the handoff notes make clear that `tasks.md` may be the live markdown execution board before import, but becomes only a non-authoritative Beads mirror after Beads import
 

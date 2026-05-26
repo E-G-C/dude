@@ -68,9 +68,8 @@ it also reports Beads state without mutating it.
 | `specs/<feature>/tasks.md`                       | Canonical phased task units plus a derived board view; live in Lightweight Execution and mirrored from Beads in Tracked Execution | Do not self-check `[x]`; let Dude mutate task state after routed outcomes and verification. Avoid rewriting task meaning by hand or editing the generated board region directly. | task selection via the generated board view when live, durable-key-first reconciliation, optional `deps:` metadata, coordinator-owned state updates in Lightweight Execution, and one-way Beads-derived mirror writes in Tracked Execution | Rerun `@dude define <feature>` when scope changes; preserve durable task keys and surviving task state when tasks still mean the same work. Use `@dude sync Beads to tasks.md` to refresh the mirror from Beads. |
 | Beads issues                                     | Live execution state after import          | through Dude's execution flow                                                 | issue state, dependencies, close decisions, and authoritative state while tracked execution is active                                                                     | Use `@dude track`, `@dude status`, `@dude sync Beads to tasks.md`, and Beads commands                                  |
 
-`spec_path`, `status`, and `## Coordinator Log` (legacy name: `## Definition
-Record`) are workflow metadata. Let Dude maintain them so define and track
-stay consistent.
+`spec_path`, `status`, and `## Coordinator Log` are workflow metadata. Let Dude
+maintain them so define and track stay consistent.
 
 ### Ownership and escalation
 
@@ -199,8 +198,7 @@ In this lane:
 - if you self-check `[x]` by hand without verification evidence on record, Dude
   will downgrade it back to `[~]` on the next pass and post a one-line note. To
   accept your manual completion, say so explicitly ("I verified this manually")
-  so Dude can record the evidence in `## Coordinator Log` (legacy name:
-  `## Definition Record`).
+  so Dude can record the evidence in `## Coordinator Log`.
 - `tasks.md` may include a Dude-generated board region inside the same file,
   fenced by `<!-- dude:board:start -->` / `<!-- dude:board:end -->`, with
   `## Ready Now`, `## In Progress`, `## Blocked`, and `## Done`. The fenced
@@ -210,8 +208,7 @@ In this lane:
   second execution board
 - if you rerun `@dude define <feature>`, surviving `[x]`, `[~]`, or `[!]`
   state should be preserved by durable task key when the task still means the
-  same work, or by task ID, story label, and core intent when the durable key
-  is absent
+  same work
 - if a non-open task was split, merged, or materially re-scoped, Dude posts a
   reconciliation table (kept / changed / dropped / new) before writing the new
   file. If any dropped row previously held `[x]`, `[~]`, or `[!]` state, Dude
@@ -312,20 +309,17 @@ what is ready next without mutating anything.
   `tasks.md` as history and only remaining open work should have moved into
   Beads.
 - After Dude closes Beads work, Dude mirrors the result back to the matching
-  canonical task unit in `tasks.md` when the task key maps cleanly, preferring
-  durable keys and falling back only to unambiguous legacy task IDs. It then
-  regenerates any derived board region, records the sync in `## Coordinator Log`,
-  and runs the Dude linter.
+  canonical task unit in `tasks.md` when the durable task key maps cleanly. It
+  then regenerates any derived board region, records the sync in
+  `## Coordinator Log`, and runs the Dude linter.
 - `tasks.md` is a portability mirror in this lane. It is not used to choose ready
   work, override Beads, or decide completion while tracked execution is active.
 - The import should report imported open-task count and skipped completed-task
-  count so the migration is explicit.
+  count so the handoff is explicit.
 - If checked Lightweight history no longer maps one-to-one to the current task
   keys after a re-define, Dude should pause import, report which checked IDs
   still survive versus which are changed or ambiguous, and ask you to confirm
-  which completions still count before creating more Beads work. If a durable
-  key is absent, Dude should fall back to task ID, story label, and core
-  intent.
+  which completions still count before creating more Beads work.
 - `spec.md`, `plan.md`, `tasks.md`, and related artifacts stay as reference
   context.
 - If the intended feature meaning changes, update the brainstorm and rerun
@@ -355,11 +349,9 @@ without Beads, run:
 ```
 
 That command is mutating. It reads Beads issues grouped by their `spec:` prefix,
-maps unambiguous task keys back to canonical task units, updates glyphs, refreshes
+maps durable task keys back to canonical task units, updates glyphs, refreshes
 the derived board region, records Coordinator Log entries, and reports anything
-that could not be mapped safely. Durable keys are preferred; legacy task IDs are
-accepted only when the story label and core task intent make the match clear.
-`@dude status` never performs this sync.
+that could not be mapped safely. `@dude status` never performs this sync.
 
 Beads work discovered mid-flight (created with `bd create ... --deps
 discovered-from:<id>`) has no matching task header in `tasks.md`. Close-time

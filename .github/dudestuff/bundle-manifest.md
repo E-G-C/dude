@@ -29,4 +29,4 @@ This file pins the upstream Dude bundle version associated with the current inst
 - Anything outside both the base and `dude-local-` namespaces is project-owned and never overwritten by `@dude upgrade`. Lint will warn about unreserved agents and skills so they can be renamed before colliding with a future upstream.
 - **Base files are upstream-owned.** Editing any file under the base namespace directly is unsupported — those changes will be silently overwritten on the next `@dude upgrade`. To customize a base agent or skill, copy it under the reserved `dude-local-<slug>` namespace and edit there. See `dude-portability` and `docs/upgrading.md`.
 - The namespace convention is the sole source of truth for base ownership; the engine enumerates the live tree on each run.
-- This manifest is intentionally seeded. Legacy or empty manifests are unsupported.
+- This manifest is intentionally seeded and required. Empty or missing manifests are unsupported.

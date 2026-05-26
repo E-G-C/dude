@@ -178,10 +178,7 @@ if [ -d "$ROOT/brainstorm" ]; then
         fi
 
         has_log=$(grep -c '^##[[:space:]]\+Coordinator[[:space:]]\+Log\b' "$file" || true)
-        has_legacy=$(grep -c '^##[[:space:]]\+Definition[[:space:]]\+Record\b' "$file" || true)
-        if [ "$has_log" -eq 0 ] && [ "$has_legacy" -gt 0 ]; then
-            warn "$rel  uses legacy '## Definition Record' heading; rename to '## Coordinator Log'"
-        elif [ "$has_log" -eq 0 ] && [ "$has_legacy" -eq 0 ]; then
+        if [ "$has_log" -eq 0 ]; then
             warn "$rel  missing '## Coordinator Log' section"
         fi
     done < <(find "$ROOT/brainstorm" -maxdepth 1 -type f -name '*.md' -print0 2>/dev/null)
@@ -266,17 +263,14 @@ if [ -d "$ROOT/specs" ]; then
                         next
                     }
 
-                    if ($0 !~ /^- \[( |~|!|x)\] T[0-9][0-9][0-9]+(@[a-z0-9]{8})? (\[P\] )?\[(US[0-9]+|Shared)\] .+$/) {
+                    if ($0 !~ /^- \[( |~|!|x)\] T[0-9][0-9][0-9]+@[a-z0-9]{8} (\[P\] )?\[(US[0-9]+|Shared)\] .+$/) {
                         printf "FAIL\t%s:%d  malformed task header (expected: - [ ] T001@a1b2c3d4 [P] [US1|Shared] Description)\n", rel, line
                         next
                     }
 
                     id = ""
-                    if (match($0, "T[0-9][0-9][0-9]+(@[a-z0-9]{8})?")) {
+                    if (match($0, "T[0-9][0-9][0-9]+@[a-z0-9]{8}")) {
                         id = substr($0, RSTART, RLENGTH)
-                    }
-                    if (id !~ /@[a-z0-9]{8}$/) {
-                        printf "WARN\t%s:%d  legacy task ID %s (consider adding a durable @xxxxxxxx suffix)\n", rel, line, id
                     }
                     if (id in seen) {
                         printf "FAIL\t%s:%d  duplicate task ID %s (first seen line %d)\n", rel, line, id, seen[id]

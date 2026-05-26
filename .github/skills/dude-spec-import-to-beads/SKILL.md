@@ -66,10 +66,10 @@ specs/
 Compatible task-header regex (Python `re` syntax, defined in `dude-feature-definition` skill):
 
 ```
-^- \[( |~|!|x)\] (T\d{3,}(?:@[a-z0-9]{8})?) (\[P\] )?\[(US\d+|Shared)\] (.+)$
+^- \[( |~|!|x)\] (T\d{3,}@[a-z0-9]{8}) (\[P\] )?\[(US\d+|Shared)\] (.+)$
 ```
 
-Every canonical task header line must match this pattern. Indented metadata lines must follow `  deps: ...` or `  blocked-by: ...` and belong to the immediately preceding task header. Lightweight-execution headers may appear as `[ ]`, `[~]`, `[!]`, or `[x]`; import `[ ]`, `[~]`, and `[!]` as open work, and skip `[x]` as completed history. Legacy `T001` lines without a durable suffix remain acceptable during migration. If a task header is malformed, metadata is orphaned, or labels conflict, stop the import and fix `tasks.md` first. Phase headings, Goal, Independent Test, Checkpoint, generated board-region lines, and other structural prose lines are not task headers and are skipped during import.
+Every canonical task header line must match this pattern. Indented metadata lines must follow `  deps: ...` or `  blocked-by: ...` and belong to the immediately preceding task header. Lightweight-execution headers may appear as `[ ]`, `[~]`, `[!]`, or `[x]`; import `[ ]`, `[~]`, and `[!]` as open work, and skip `[x]` as completed history. If a task header is malformed, metadata is orphaned, or labels conflict, stop the import and fix `tasks.md` first. Phase headings, Goal, Independent Test, Checkpoint, generated board-region lines, and other structural prose lines are not task headers and are skipped during import.
 
 Task headers in the **`T9001`–`T9999`** range live in the reserved discovered range owned by `@dude sync Beads to tasks.md` and almost always carry a `(Beads: <id>)` tag in their description. When such a tag is present and resolves to an existing Beads issue for this feature, the per-task dedup rule in the import algorithm skips that header (see Algorithm step 5). When no tag is present or the tag resolves to nothing, treat the `T9NNN` header as malformed and stop the import — the discovered range is not for human-authored work and re-importing it without a tag would create a duplicate Beads issue.
 - `[US1]`, `[US2]` story labels
@@ -142,7 +142,7 @@ Manual import still requires a defined brainstorm file as the identity source:
     - every task in Phase N+1 depends on all tasks in Phase N unless the source already modeled the same blockers explicitly
     - non-`[P]` tasks depend on all earlier tasks in the same phase when no explicit dependency already covers that ordering
     - `[P]` tasks do not depend on sibling tasks unless `deps:` or the source text states a real blocker
-13. If any create or update operation fails mid-import, stop and report the partial state. Do not declare the migration complete while the feature is split across markdown-only state and partial Beads state.
+13. If any create or update operation fails mid-import, stop and report the partial state. Do not declare the import complete while the feature is split across markdown-only state and partial Beads state.
 14. Report created issue count, imported in-progress count, imported blocked count, skipped completed-task count, dependency count, and actionable ready task count.
 
 ## Mapping Rules

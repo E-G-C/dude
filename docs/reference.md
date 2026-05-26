@@ -134,9 +134,6 @@ as Beads-derived mirror state. Keep the durable task key stable where possible
 so task state can survive a later `@dude define` refresh, Beads handoff, or
 explicit Beads-to-markdown sync.
 
-Legacy `T001` lines without a durable suffix remain acceptable during
-migration, but refreshed packages should upgrade them.
-
 A bounded task may include closely related code, tests, and documentation when
 one independent verification step proves the whole slice. Supporting checklist
 files stay advisory during Lightweight Execution; `tasks.md` remains the single
@@ -213,10 +210,9 @@ flowchart TD
 - Specialists report results to the coordinator — only the coordinator calls
   `bd close`.
 - After `bd close` succeeds, the coordinator mirrors the result to `tasks.md`
-  when the Beads issue maps to exactly one canonical task, preferring durable
-  keys and falling back only to unambiguous legacy task IDs. It refreshes any
-  derived board region, records the write-back in `## Coordinator Log`, and runs
-  the Dude linter.
+  when the Beads issue maps to exactly one canonical task by durable task key.
+  It refreshes any derived board region, records the write-back in
+  `## Coordinator Log`, and runs the Dude linter.
 - Use `@dude sync Beads to tasks.md` to refresh the full markdown mirror after
   manual Beads changes or before a planned fallback to Lightweight Execution.
 - Create discovered follow-up work in Beads.

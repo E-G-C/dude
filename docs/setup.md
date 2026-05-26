@@ -39,8 +39,7 @@ Beads state.
 - Read `## User Draft`, edit it if needed, answer the `**Your answer:**` slots
   in `## Open Questions`, and update `## Assumptions` only when overriding a
   default in `brainstorm/<slug>.md`.
-- Leave `status:`, `spec_path:`, and `## Coordinator Log` (legacy name:
-  `## Definition Record`) to Dude.
+- Leave `status:`, `spec_path:`, and `## Coordinator Log` to Dude.
 - Leave any generated board region in `tasks.md` to Dude.
 - Refresh generated artifacts with `@dude define <feature>` instead of
   hand-maintaining `spec.md`, `plan.md`, or `tasks.md`.

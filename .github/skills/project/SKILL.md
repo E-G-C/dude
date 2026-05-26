@@ -20,16 +20,16 @@ description: "Project-specific domain knowledge, conventions, and patterns. Upda
 - `brainstorm/<slug>.md` is the working ledger before definition.
 - Refresh `specs/<feature>/` artifacts via `@dude define` instead of hand-maintaining generated state.
 - `@dude status` is a read-only orientation command across definition, Lightweight Execution, and Tracked Execution; it must not import or mutate work.
-- `status:`, `spec_path:`, and `## Coordinator Log` (legacy name: `## Definition Record`) are Dude-maintained workflow metadata.
+- `status:`, `spec_path:`, and `## Coordinator Log` are Dude-maintained workflow metadata.
 - `@dude track` means import or resume tracked execution in Beads; it does not compile the app.
 - When Beads is unavailable or intentionally not used, `specs/<feature>/tasks.md` is the first-class markdown execution board.
 - Supporting checklist files are advisory during Lightweight Execution; `tasks.md` remains the single live execution board before import, and any Dude-generated board region inside that file is derived guidance rather than a second board.
 - In Lightweight Execution, canonical task headers may use `[ ]`, `[~]`, `[!]`, and `[x]`, with optional indented `deps:` and `blocked-by:` metadata lines.
 - In Lightweight Execution, only the coordinator mutates task-state glyphs or task metadata after routed workflow changes and fresh verification evidence.
-- New or refreshed lightweight task lines should prefer durable task IDs such as `T001@a1b2c3d4`; legacy `T001` lines may still appear during migration.
+- Lightweight task lines use durable task IDs such as `T001@a1b2c3d4`.
 - One bounded task may combine closely related code, tests, and docs when one fresh verification step proves the slice.
 - Once imported, Beads is the only live execution board and source of truth. `tasks.md` may be kept updated only as a one-way, non-authoritative Beads mirror for portability and fallback.
-- After Dude closes Beads work, mirror the Beads result back to the matching canonical task unit in `tasks.md` when the task key maps cleanly, preferring durable task keys and falling back only to unambiguous legacy task IDs. Regenerate any derived board region, record the write-back in the brainstorm Coordinator Log, and run `dude-lint`.
+- After Dude closes Beads work, mirror the Beads result back to the matching canonical task unit in `tasks.md` when the durable task key maps cleanly. Regenerate any derived board region, record the write-back in the brainstorm Coordinator Log, and run `dude-lint`.
 - Use explicit `@dude sync Beads to tasks.md` for stale mirrors, manual Beads changes, or planned fallback from Tracked Execution to Lightweight Execution.
 - Typed `@dude flag` prefixes are preferred, but plain-language blocker reports should still be classified when the intended type is clear.
 - Guardrail ratification accepts `accept`, `edit`, `reject`, or `skip`; `skip` means continue with bundle defaults only.

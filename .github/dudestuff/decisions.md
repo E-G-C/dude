@@ -14,15 +14,15 @@ Durable project and process decisions that Dude should preserve.
 ### Lightweight And Tracked Execution
 
 - Lightweight Execution model: when Beads is unavailable or intentionally not used, `specs/<feature>/tasks.md` is the first-class live markdown board. Canonical state lives in the phased task units below the optional Dude-generated board fence; the fenced `## Ready Now / In Progress / Blocked / Done` region is a derived view, not a second source of truth. Supporting checklist files stay advisory.
-- Task units: prefer durable IDs such as `T001@a1b2c3d4` (legacy `T001` accepted during migration). Four canonical states: `[ ]`, `[~]`, `[!]`, `[x]`. Optional indented `deps:` and `blocked-by:` metadata lines are part of the canonical task unit. A bounded task may cover closely related code, tests, and docs when one fresh verification step proves the whole slice.
+- Task units: use durable IDs such as `T001@a1b2c3d4`. Four canonical states: `[ ]`, `[~]`, `[!]`, `[x]`. Optional indented `deps:` and `blocked-by:` metadata lines are part of the canonical task unit. A bounded task may cover closely related code, tests, and docs when one fresh verification step proves the whole slice.
 - Coordinator-only mutation: in Lightweight Execution only the coordinator mutates task-state glyphs and task metadata, after fresh verification evidence or routed workflow changes; specialists report results back. During Beads-tracked execution only the coordinator calls `bd close`.
-- After Beads import: Beads is the single live execution board and source of truth. `tasks.md` may be maintained only as a one-way, non-authoritative Beads mirror for portability and fallback. After Dude closes Beads work, the coordinator mirrors the result to the matching canonical task unit when identity is unambiguous, preferring durable keys and falling back only to clean legacy task ID matches, regenerates any derived board region, records the write-back in the brainstorm Coordinator Log, and runs `dude-lint`. Parallel execution is an internal coordination decision during Beads work, not a user-managed workflow step.
+- After Beads import: Beads is the single live execution board and source of truth. `tasks.md` may be maintained only as a one-way, non-authoritative Beads mirror for portability and fallback. After Dude closes Beads work, the coordinator mirrors the result to the matching canonical task unit when the durable task key maps cleanly, regenerates any derived board region, records the write-back in the brainstorm Coordinator Log, and runs `dude-lint`. Parallel execution is an internal coordination decision during Beads work, not a user-managed workflow step.
 
 ### Definition Packages
 
 - Lean by default: create only artifacts that materially apply to the feature; omit placeholder files for non-applicable domains.
 - `specs/` numbering is monotonic — use `max existing prefix + 1` and never reuse deleted numbers.
-- `status:`, `spec_path:`, and `## Coordinator Log` (legacy name: `## Definition Record`) are Dude-maintained workflow metadata.
+- `status:`, `spec_path:`, and `## Coordinator Log` are Dude-maintained workflow metadata.
 
 ### Guardrails
 

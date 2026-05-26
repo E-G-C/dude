@@ -171,11 +171,7 @@ if (Test-Path -LiteralPath $brainstormDir) {
         }
 
         $hasCoordLog = $body -match '(?m)^##\s+Coordinator\s+Log\b'
-        $hasDefRecord = $body -match '(?m)^##\s+Definition\s+Record\b'
-        if (-not $hasCoordLog -and $hasDefRecord) {
-            Write-Warn "$rel  uses legacy '## Definition Record' heading; rename to '## Coordinator Log'"
-        }
-        elseif (-not $hasCoordLog -and -not $hasDefRecord) {
+        if (-not $hasCoordLog) {
             Write-Warn "$rel  missing '## Coordinator Log' section"
         }
     }
@@ -221,7 +217,7 @@ if (Test-Path -LiteralPath $specsDir) {
         $historySeen = $false
         $inDiscovered = $false
         $taskLinePattern = '^\s*-\s*\[(.)\]\s+'
-        $canonicalTaskPattern = '^- \[( |~|!|x)\] (T\d{3,}(?:@[a-z0-9]{8})?) (\[P\] )?\[(US\d+|Shared)\] (.+)$'
+        $canonicalTaskPattern = '^- \[( |~|!|x)\] (T\d{3,}@[a-z0-9]{8}) (\[P\] )?\[(US\d+|Shared)\] (.+)$'
         $beadsTagPattern = '\(Beads:\s*[A-Za-z0-9_-]+(\s*;[^)]*)?\)'
 
         for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -279,10 +275,6 @@ if (Test-Path -LiteralPath $specsDir) {
                 else {
                     Write-Fail "${rel}:${lineNo}  malformed task header (expected: - [ ] T001@a1b2c3d4 [P] [US1|Shared] Description)"
                     continue
-                }
-
-                if ($id -notmatch '@[a-z0-9]{8}$') {
-                    Write-Warn "${rel}:${lineNo}  legacy task ID '$id' (consider adding a durable @xxxxxxxx suffix)"
                 }
 
                 if ($seenIds.ContainsKey($id)) {

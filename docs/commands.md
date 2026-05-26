@@ -171,10 +171,9 @@ Preferred form:
 ```
 
 Meaning: read Beads as the source of truth, map issue state back to canonical
-task units by durable task key, fall back only to unambiguous legacy task IDs,
-update `tasks.md` as a non-authoritative mirror, refresh the derived board
-region, record Coordinator Log entries, and run the Dude linter. This command is
-mutating and is never implied by `@dude status`.
+task units by durable task key, update `tasks.md` as a non-authoritative mirror,
+refresh the derived board region, record Coordinator Log entries, and run the
+Dude linter. This command is mutating and is never implied by `@dude status`.
 
 Illustrative result:
 
@@ -433,8 +432,7 @@ excluding the reserved `dude-local-<slug>` namespace) — are candidates for
 replacement. Project memory, `.github/skills/project/`, custom agents/skills,
 `.github/copilot-instructions.md`, `brainstorm/`, `specs/`, Beads, and product
 source are preserved. Root files and repository docs are intentionally excluded
-from the upgrade payload. Current installs must already have a seeded manifest;
-legacy manifest reconstruction is intentionally unsupported.
+from the upgrade payload. Current installs must have a seeded manifest.
 
 > Base files matching the upstream namespace convention are upstream-owned and
 > are silently overwritten on apply. To customize a default agent or skill,

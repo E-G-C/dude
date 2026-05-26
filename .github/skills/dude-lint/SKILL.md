@@ -57,7 +57,7 @@ Exit code is `0` if no failures, `1` if any check produced a `[FAIL]`. Warnings 
    - `status:` is `draft` or `defined`.
    - When `status: defined`, `spec_path:` is set, structurally matches `specs/<feature>/spec.md` with forward slashes, and resolves to an existing file (not a directory).
    - `<!-- dude:managed:start -->` / `<!-- dude:managed:end -->` fence pairs are both balanced **and** well-ordered (start, end, start, end, ...). Out-of-order or nested regions fail with the offending line number.
-   - A `## Coordinator Log` heading is present (or `## Definition Record` is flagged as a rename candidate).
+   - A `## Coordinator Log` heading is present.
 
 2. **Task files** (`specs/*/tasks.md`)
    - `<!-- dude:board:start -->` / `<!-- dude:board:end -->` fence pairs are balanced, ordered, and at most one pair exists. When the fence sequence is malformed, the parser does **not** enter board-skip mode, so canonical task rows after a stray fence are still validated.
@@ -66,7 +66,7 @@ Exit code is `0` if no failures, `1` if any check produced a `[FAIL]`. Warnings 
    - `## Discovered During Execution` task rows must use the reserved `T9001`-`T9999` range and carry a well-formed `(Beads: <id>)` tag with optional semicolon metadata inside the closing parenthesis. `T9000` and higher task IDs outside this section fail so spec-derived tasks stay below `T9000`.
    - Canonical task headers match the import-compatible shape from `dude-spec-import-to-beads`: `- [ ] T001@a1b2c3d4 [P] [US1|Shared] Description`.
    - Task glyphs are exactly one of ` `, `~`, `!`, `x`.
-   - Durable task IDs match `T\d{3,}@[a-z0-9]{8}` or legacy `T\d{3,}` (legacy emits a soft warning).
+   - Durable task IDs match `T\d{3,}@[a-z0-9]{8}`.
    - No duplicate canonical task IDs within the same file.
 
 3. **Memory files** (`.github/dudestuff/*.md`)
@@ -108,7 +108,6 @@ Exit code is `0` if no failures, `1` if any check produced a `[FAIL]`. Warnings 
 ```
 [INFO]  Scanning .github + brainstorm + specs under <root>
 [FAIL]  brainstorm/auth.md  status: defined but spec_path is missing
-[WARN]  specs/001-auth/tasks.md:14  legacy task ID T003 (consider durable suffix)
 [FAIL]  orphan @designer reference in .github/skills/project/SKILL.md
 [FAIL]  orphan skill reference '.github/skills/made-up-skill/' in .github/agents/dude-lead.agent.md
 [WARN]  .github/dudestuff/decisions.md  35 entries (consider consolidation; threshold is 20)

@@ -29,7 +29,7 @@ Once `@dude track` imports the feature into Beads, stop using this skill and swi
 - That derived board region may include `## Ready Now`, `## In Progress`, `## Blocked`, and `## Done` sections. It is a computed view, not the canonical task state.
 - Canonical state lives in the phased task units **below** the fenced board region: one task header line plus any indented metadata lines such as `deps:` or `blocked-by:`.
 - The first line of the canonical task list (immediately after the closing board fence) should carry the notice `<!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->` so editors see the boundary.
-- The companion `brainstorm/<slug>.md` carries the append-only `## Coordinator Log` (legacy name: `## Definition Record`) where Dude records every coordinator-owned mutation: state changes, board regenerations, reconciliations, and accepted manual completions.
+- The companion `brainstorm/<slug>.md` carries the append-only `## Coordinator Log` where Dude records every coordinator-owned mutation: state changes, board regenerations, reconciliations, and accepted manual completions.
 - `spec.md`, `plan.md`, and supporting artifacts remain reference context.
 - Supporting checklist files remain advisory reference unless the project explicitly says otherwise.
 - Do not treat supporting checklist files as a second live execution board.
@@ -42,7 +42,7 @@ Once `@dude track` imports the feature into Beads, stop using this skill and swi
 - `- [~]` means in progress.
 - `- [!]` means blocked.
 - `- [x]` means done in Lightweight Execution.
-- Newly refreshed packages should prefer durable task IDs such as `T001@a1b2c3d4`; legacy `T001` lines remain valid during migration and should be upgraded on the next `@dude define` refresh.
+- Lightweight task lines use durable task IDs such as `T001@a1b2c3d4`.
 - Canonical task headers use this shape:
 
 ```markdown
