@@ -1,6 +1,6 @@
 ---
 name: "dude-generic-routing"
-description: "Use when matching a user request, subtask, or Beads issue to the right specialist agent in the active roster."
+description: "Use when matching a user request, subtask, or task to the right specialist agent in the active roster."
 ---
 
 # Generic Routing
@@ -35,7 +35,7 @@ Maintain explicit owners for:
 Mode-specific defaults:
 
 - During feature definition under `specs/<feature>/`, default planning authority to `@dude-spec-lead`.
-- After Beads import, default planning authority to `@dude-lead` for implementation structure and execution tradeoffs.
+- During implementation, default planning authority to `@dude-lead` for implementation structure and execution tradeoffs.
 - When a dedicated independent reviewer exists, default quality authority to that reviewer.
 
 If the current owner is removed, replaced, or no longer the best fit, update the coordinator's routing guidance explicitly. If no clear owner exists, escalate to the user instead of inventing one.
@@ -52,9 +52,9 @@ When specialists disagree:
 
 The roster is whatever currently exists under `.github/agents/`. There are no permanent defaults. When agents are added or removed, the routing adapts automatically based on their scope descriptions.
 
-## Beads Issue Matching
+## Task Matching
 
-Use these heuristics when interpreting Beads issue text and labels during task dispatch. The keyword catalog supplements the generic routing algorithm above.
+Use these heuristics when interpreting task text and labels during dispatch. The keyword catalog supplements the generic routing algorithm above.
 
 ### Route To Spec Lead
 
@@ -124,20 +124,20 @@ Keywords and signals:
 
 This is a coordinator-level skill route, not a specialist agent route. The coordinator runs the `dude-bundle-import` skill directly rather than dispatching to a roster member.
 
-### Beads Tie-Breaking Rules
+### Task Tie-Breaking Rules
 
 - If the request is about defining, specifying, planning, or deriving tasks for a feature, prefer spec-lead.
-- If the issue is mostly implementation, prefer backend or frontend over tester.
-- If the issue is explicitly about validation, prefer tester.
-- If the issue is about independent judgment after implementation, prefer reviewer.
-- If the issue mixes backend and frontend work, split it into multiple Beads issues if the pieces can be executed independently.
-- If the issue is about project structure or tooling, prefer lead.
+- If the task is mostly implementation, prefer an implementation specialist over tester.
+- If the task is explicitly about validation, prefer tester.
+- If the task is about independent judgment after implementation, prefer reviewer.
+- If the task mixes separable concerns, split it into independent tasks when the pieces can be executed independently.
+- If the task is about project structure or tooling, prefer lead.
 
 ### Coordinator Summary Pattern
 
 When routing, state:
 
-- issue ID
+- task ID (when present)
 - short task name
 - assigned specialist
 - one-line reason for the assignment
