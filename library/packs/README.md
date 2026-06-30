@@ -23,6 +23,12 @@ namespace, which the engine treats as a distinct ownership tier:
 | `release` | release-manager agent + tag / pipeline-parity / writeback skills | you ship versioned releases via GitHub Actions or Azure Pipelines |
 | `web` | backend + frontend specialist agents | you build web apps (APIs + UI) |
 | `practices` | tests-first (TDD) workflow skill | you want a tests-first implementation discipline |
+| `hugo` | 5 Hugo specialist agents + 7 skills + instructions + prompts | you build or maintain Hugo static sites |
+| `docsy` | Docsy theme expert + theme skill + Docsy-specific prompts | you use the Docsy Hugo theme (pairs with `hugo`) |
+| `ms-brand` | Microsoft visual-brand stylist + brand reference assets | you apply Microsoft branding to a site (pairs with `hugo` / `docsy`) |
+| `rust` | Rust specialist agent + Tauri development skill | you write Rust or build Tauri desktop/mobile apps |
+| `fluent-ui` | Fluent UI React v9 specialist agent | you build UIs with `@fluentui/react-components` |
+| `copilot-sdk` | GitHub Copilot SDK specialist agent | you build apps on the Copilot SDK |
 
 Packs are added to this table as they are migrated out of core.
 
