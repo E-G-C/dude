@@ -7,7 +7,7 @@ description: "Use when the user wants to upgrade the Dude bundle itself, pull th
 
 Pull the newest base Dude bundle from its source repo and overlay it onto this project, replacing only base-owned engine files (default agents, default skills, and the bundle instructions under `.github/`). Preserve everything project-local: project memory, project skills, project-custom agents and skills, `.github/copilot-instructions.md`, root files, repository docs, and all work state under `brainstorm/`, `specs/`, and Beads.
 
-Upgrades are preview-then-confirm. The `upgrade.sh` script does the heavy lifting for status, plan, apply, and rollback; the LLM orchestrates the conversation, surfaces the report, and translates the user's confirmation phrase into the apply invocation. Nothing is written to the working tree before the user confirms the upgrade plan.
+Upgrades are preview-then-confirm. The `upgrade.mjs` script does the heavy lifting for status, plan, apply, and rollback; the LLM orchestrates the conversation, surfaces the report, and translates the user's confirmation phrase into the apply invocation. Nothing is written to the working tree before the user confirms the upgrade plan.
 
 > **Base files are upstream-owned.** Every file matching the dude base namespace convention (the `dude.agent.md` / `dude-<slug>.agent.md` agents, `dude-<slug>` skill directories, and the `dude.instructions.md` instructions file) is owned by upstream and is silently overwritten on apply. Editing a base file in place is unsupported \u2014 those edits will be lost on the next upgrade. To customize a default agent or skill, copy it under the reserved `dude-local-<slug>` namespace and edit there. See [Reserved Project Namespace](#reserved-project-namespace).
 
@@ -36,7 +36,7 @@ Accepted invocation forms:
 
 ## Script Contract
 
-The `upgrade.sh` engine handles fetch, classification, and reporting. The LLM never re-derives this work. Both Bash and PowerShell parity scripts ship the same contract; use whichever is available.
+The `upgrade.mjs` engine handles fetch, classification, and reporting. The LLM never re-derives this work. It runs on Node (>= 20 LTS) and shares the namespace/ownership classifier in `.github/skills/dude-engine/lib/ownership.mjs` with `dude-lint`.
 
 ### Subcommands
 
@@ -48,22 +48,14 @@ The `upgrade.sh` engine handles fetch, classification, and reporting. The LLM ne
 | `rollback` | `git reset --hard` to the most recent (or named) `dude-pre-upgrade-*` safety tag, append rollback log entry, lint. | Yes |
 | `help`     | Print usage. | No |
 
-Invocation (Bash or PowerShell — same contract):
+Invocation (Node >= 20 LTS):
 
 ```bash
-bash .github/skills/dude-bundle-upgrade/upgrade.sh status   --format json
-bash .github/skills/dude-bundle-upgrade/upgrade.sh plan     --format json [--ref <r>] [--source <s>] [--out <path>]
-bash .github/skills/dude-bundle-upgrade/upgrade.sh apply    --plan <id|path> --confirm confirm-upgrade \
+node .github/skills/dude-bundle-upgrade/upgrade.mjs status   --format json
+node .github/skills/dude-bundle-upgrade/upgrade.mjs plan     --format json [--ref <r>] [--source <s>] [--out <path>]
+node .github/skills/dude-bundle-upgrade/upgrade.mjs apply    --plan <id|path> --confirm confirm-upgrade \
         [--skip-removals] [--allow-dirty] [--format text|json]
-bash .github/skills/dude-bundle-upgrade/upgrade.sh rollback [--tag <name>] [--allow-dirty] [--format text|json]
-```
-
-```powershell
-pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 status   --format json
-pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 plan     --format json [--ref <r>] [--source <s>] [--out <path>]
-pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 apply    --plan <id|path> --confirm confirm-upgrade `
-        [--skip-removals] [--allow-dirty] [--format text|json]
-pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 rollback [--tag <name>] [--allow-dirty] [--format text|json]
+node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback [--tag <name>] [--allow-dirty] [--format text|json]
 ```
 
 `apply` does not push or merge. It leaves the upgrade commit on a local `chore/dude-upgrade-<short-sha>` branch for the user to review and merge themselves. The `--confirm` value is the literal token `confirm-upgrade`; the LLM maps the user-facing phrase `confirm upgrade [skip-removals]` into the corresponding flag combination.
@@ -124,11 +116,11 @@ Plans are persisted to `$TMPDIR/dude-upgrade-cache/plans/<plan_id>.json` so a la
 
 ### Step 1 — Status (script)
 
-Run `upgrade.sh status --format json` and parse the result. If `status` is `up_to_date`, report and stop. If `offline`, report and offer the user a re-try. Otherwise continue to Step 2.
+Run `upgrade.mjs status --format json` and parse the result. If `status` is `up_to_date`, report and stop. If `offline`, report and offer the user a re-try. Otherwise continue to Step 2.
 
 ### Step 2 — Plan (script)
 
-Run `upgrade.sh plan --format json` (pass `--ref` / `--source` if the user provided overrides). Read the persisted plan from `plans/<plan_id>.json` so subsequent steps reference the same plan_id.
+Run `upgrade.mjs plan --format json` (pass `--ref` / `--source` if the user provided overrides). Read the persisted plan from `plans/<plan_id>.json` so subsequent steps reference the same plan_id.
 
 Summarize the plan for the user using the `summary` counts plus a short bulleted list per non-empty bucket. Show file paths. For `replace` entries, include `[+a / -b]` line stats from `added_lines` / `removed_lines`.
 
@@ -153,18 +145,9 @@ Before confirming, surface a single warning summarizing local edits that will be
 The script does the entire write phase in one invocation. Translate the user's confirmation phrase into flags and run:
 
 ```bash
-bash .github/skills/dude-bundle-upgrade/upgrade.sh apply \
+node .github/skills/dude-bundle-upgrade/upgrade.mjs apply \
     --plan <plan_id-or-path> --confirm confirm-upgrade \
     [--skip-removals] [--allow-dirty] \
-    [--format text|json]
-```
-
-Or, equivalently, with PowerShell:
-
-```powershell
-pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 apply `
-    --plan <plan_id-or-path> --confirm confirm-upgrade `
-    [--skip-removals] [--allow-dirty] `
     [--format text|json]
 ```
 
@@ -184,7 +167,7 @@ In one pass the script:
 5. Applies file ops: Add (copy in), Replace (overwrite), Remove (delete unless `--skip-removals`).
 6. Rewrites the fenced JSON block in `.github/dudestuff/bundle-manifest.md`, preserving the surrounding markdown. Updates `source_repo`, `source_ref`, `installed_sha`, and `installed_at`. The manifest is metadata only — there is no `files` array to refresh.
 7. Appends a structured entry to `.github/dudestuff/upgrade-log.md` matching its Entry shape.
-8. Runs `bash .github/skills/dude-lint/lint.sh` and patches the lint result into the just-written log entry.
+8. Runs `node .github/skills/dude-lint/lint.mjs` and patches the lint result into the just-written log entry.
 9. Stages the manifest, log, and every touched path; commits on the upgrade branch with message `chore: upgrade Dude bundle to <short-sha>`. Does not push, merge, or modify remote state.
 
 On `lint = [FAIL]` the script exits 40 and prints the suggested `rollback --tag <safety_tag>` command.
@@ -205,13 +188,7 @@ Relay the apply output to the user:
 `@dude upgrade --rollback` maps to:
 
 ```bash
-bash .github/skills/dude-bundle-upgrade/upgrade.sh rollback [--tag <name>] [--allow-dirty] [--format text|json]
-```
-
-Or PowerShell:
-
-```powershell
-pwsh .github/skills/dude-bundle-upgrade/upgrade.ps1 rollback [--tag <name>] [--allow-dirty] [--format text|json]
+node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback [--tag <name>] [--allow-dirty] [--format text|json]
 ```
 
 The script:

@@ -74,4 +74,4 @@ Memory files are append-only by default, but they need periodic maintenance:
 
 ## Verification
 
-After writing to any `.github/dudestuff/*.md` file, run the `dude-lint` skill (`pwsh .github/skills/dude-lint/lint.ps1` or `bash .github/skills/dude-lint/lint.sh`). The linter warns when a memory file exceeds the consolidation threshold and confirms no orphan `@<role>` references slipped in. Treat any `[WARN]` on the file you just edited as a prompt to consolidate now rather than later.
+After writing to any `.github/dudestuff/*.md` file, run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`). The linter warns when a memory file exceeds the consolidation threshold and confirms no orphan `@<role>` references slipped in. Treat any `[WARN]` on the file you just edited as a prompt to consolidate now rather than later.

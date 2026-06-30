@@ -491,17 +491,13 @@ After writing or refreshing `brainstorm/<slug>.md`, `specs/<feature>/spec.md`, `
 - brainstorm frontmatter, `status:`, `spec_path:` resolution, fence balance, `## Coordinator Log` heading
 - task file board fences, glyph values, durable task IDs, duplicate IDs
 
-Use whichever shell is available:
-
-```pwsh
-pwsh .github/skills/dude-lint/lint.ps1
-```
+Run it with Node:
 
 ```bash
-bash .github/skills/dude-lint/lint.sh
+node .github/skills/dude-lint/lint.mjs
 ```
 
-If the linter reports `[FAIL]`, fix the structural issue before declaring the package defined. Warnings are advisory but should be reviewed in the same pass. The linter is read-only and dependency-free.
+If the linter reports `[FAIL]`, fix the structural issue before declaring the package defined. Warnings are advisory but should be reviewed in the same pass. The linter is read-only and runs on Node.
 
 ## Handoff To Beads
 

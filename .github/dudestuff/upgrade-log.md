@@ -4,7 +4,7 @@ Append-only history of `@dude upgrade` events and rollbacks. Maintained by the `
 
 ## Entry shape
 
-Upgrade entries (written by `upgrade.sh apply`):
+Upgrade entries (written by `upgrade.mjs apply`):
 
 ```
 ## <YYYY-MM-DD HH:MM:SS> — upgrade
@@ -21,7 +21,7 @@ Upgrade entries (written by `upgrade.sh apply`):
 - notes: plan_id=<id>; branch=<upgrade-branch>
 ```
 
-Rollback entries (written by `upgrade.sh rollback`, appended uncommitted):
+Rollback entries (written by `upgrade.mjs rollback`, appended uncommitted):
 
 ```
 ## <YYYY-MM-DD HH:MM:SS> — rollback

@@ -41,7 +41,7 @@ node .github/skills/dude-lint/lint.mjs
 node .github/skills/dude-lint/lint.mjs /path/to/repo
 ```
 
-`lint.mjs` is the single, canonical implementation. The legacy `lint.sh` / `lint.ps1` scripts remain temporarily for backward compatibility and will be retired; new callers should invoke `lint.mjs` directly.
+`lint.mjs` is the single, canonical implementation. The previous `lint.sh` / `lint.ps1` parity scripts have been removed; all callers now invoke `lint.mjs` via `node`.
 
 The shared namespace/ownership logic lives in `.github/skills/dude-engine/lib/ownership.mjs` and is reused by `dude-bundle-upgrade`, so both tools classify the core / pack / local tiers identically.
 

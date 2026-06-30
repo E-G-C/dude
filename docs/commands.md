@@ -455,14 +455,10 @@ Use the `dude-lint` skill to catch structural drift in the bundle itself:
 malformed brainstorms, fence imbalance, stale `spec_path:` pointers, duplicate
 or non-durable task IDs, oversized memory files, orphaned agent-handle
 references, and missing coordinator-only boundary blocks. The linter is
-read-only, dependency-free, and ships parity scripts for both shells.
-
-```pwsh
-pwsh .github/skills/dude-lint/lint.ps1
-```
+read-only and runs on Node (>= 20 LTS).
 
 ```bash
-bash .github/skills/dude-lint/lint.sh
+node .github/skills/dude-lint/lint.mjs
 ```
 
 Exit code is `0` when no failures are reported; warnings do not fail the run.

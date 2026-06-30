@@ -139,8 +139,8 @@ Dude Coder includes explicit operational skills for common failure modes:
   something is done or fixed
 - `dude-receiving-code-review` — handle review feedback technically instead of
   reflexively
-- `dude-lint` — dependency-free static validator for the bundle itself
-  (PowerShell + Bash parity scripts). Other skills load it as their final
+- `dude-lint` — static validator for the bundle itself, run on Node
+  (`node .github/skills/dude-lint/lint.mjs`). Other skills load it as their final
   verification step after writing brainstorm, definition, agent, skill,
   memory, or task files. See [Validating bundle hygiene](commands.md#validating-bundle-hygiene)
   for direct invocation.

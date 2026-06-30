@@ -61,7 +61,7 @@ Append a concise line to the companion brainstorm's `## Coordinator Log` for eve
 
 Report-only entries (the last form) are appended only by explicit `@dude sync` runs that surface drift, never by `@dude status`.
 
-After mutating `tasks.md`, run the `dude-lint` skill (`pwsh .github/skills/dude-lint/lint.ps1` or `bash .github/skills/dude-lint/lint.sh`) and fix any `[FAIL]` before reporting the mirror as successful.
+After mutating `tasks.md`, run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`) and fix any `[FAIL]` before reporting the mirror as successful.
 
 If the task key is missing, `tasks.md` is missing, the key maps to zero or multiple task headers, the board fence is malformed, or the companion brainstorm cannot be identified, do not guess. Keep the Beads state as authoritative, report that the Beads operation succeeded but markdown mirroring was skipped, and ask the user to run an explicit Beads-to-markdown sync or reconcile the task identity.
 

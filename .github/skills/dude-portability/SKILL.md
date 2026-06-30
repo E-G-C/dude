@@ -29,7 +29,7 @@ When deploying a Dude bundle into a project:
 2. copy agents, skills, memory, and instructions into the target `.github/` structure
 3. adapt runtime-specific frontmatter such as `model` and `tools` when the target host differs from the source host
 4. verify the coordinator and routing files exist after copy
-5. run the `dude-lint` skill against the destination (`pwsh .github/skills/dude-lint/lint.ps1` or `bash .github/skills/dude-lint/lint.sh`) to confirm the bundle imported cleanly: every agent file carries the coordinator-only block (with the documented exemptions), no orphan `@<role>` references exist, and memory files are within the consolidation threshold
+5. run the `dude-lint` skill against the destination (`node .github/skills/dude-lint/lint.mjs`) to confirm the bundle imported cleanly: every agent file carries the coordinator-only block (with the documented exemptions), no orphan `@<role>` references exist, and memory files are within the consolidation threshold
 6. confirm what was imported
 
 ## Guardrails

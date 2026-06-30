@@ -23,7 +23,7 @@ When the user asks for a new agent:
    - memory awareness
    - concise return format
 5. Update coordinator routing and any authority ownership so the agent becomes reachable without ambiguity.
-6. Run the `dude-lint` skill (`pwsh .github/skills/dude-lint/lint.ps1` or `bash .github/skills/dude-lint/lint.sh`) to verify the new agent file carries the required `**Coordinator-only artifacts:**` block and that no orphan `@<role>` references were introduced. Fix any `[FAIL]` before announcing the new specialist.
+6. Run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`) to verify the new agent file carries the required `**Coordinator-only artifacts:**` block and that no orphan `@<role>` references were introduced. Fix any `[FAIL]` before announcing the new specialist.
 7. Confirm the new specialist and when to use it.
 
 ## Design Rules
