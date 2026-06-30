@@ -13,6 +13,7 @@ Standard workflow for all Dude specialists when working on tasks tracked in Bead
 - Before selecting new work, the coordinator may import defined brainstorms whose `spec_path` is not yet represented in Beads.
 - When tracked execution is active, `@dude status` reports Beads state and defined features waiting for execution, but it must not import or mutate work.
 - If tracked execution is being enabled on Windows and Beads is not initialized yet, point the user to the Dolt server-mode setup instead of retrying plain `bd init` after embedded-Dolt or CGO failures.
+- When new work is discovered during tracked execution, create a linked Beads issue rather than silently expanding scope.
 
 ## Feature Lifecycle After Import
 

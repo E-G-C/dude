@@ -5,7 +5,7 @@ description: "Dude Coder bundle — coordinator, definition, and execution rules
 
 # Copilot Instructions — Dude Coder
 
-This workspace uses the Dude model under `.github/` with native feature definition and optional execution from `tasks.md` or Beads.
+This workspace uses the Dude model under `.github/` with native feature definition and execution from `specs/<feature>/tasks.md`. Tracked execution via Beads is available through the optional **beads pack**.
 
 These instructions live at `.github/instructions/dude.instructions.md` so they coexist with any existing `.github/copilot-instructions.md` your repo already ships. Both files are loaded together by Copilot.
 
@@ -33,22 +33,20 @@ instructions provide only the shared rules that apply to **every** agent.
 6. If only bundle defaults exist, users may `accept`, `edit`, `reject`, or `skip` inferred project guardrails. `skip` means continue with bundle defaults only. If no new project-specific guardrails are inferred, definition may continue without a separate guardrail pause.
 7. `spec.md` must be technology-agnostic. Maximum 3 `[NEEDS CLARIFICATION]` markers, prioritized: scope > security > UX > technical.
 8. `spec.md` must pass a quality gate (all sections complete, requirements testable, no impl details) before `plan.md` is written.
-9. During intake and feature definition, `@dude-spec-lead` is the planning authority for `brainstorm/<slug>.md` and `specs/<feature>/` artifacts; after import, `@dude-lead` owns implementation architecture unless the user overrides it.
+9. During intake and feature definition, `@dude-spec-lead` is the planning authority for `brainstorm/<slug>.md` and `specs/<feature>/` artifacts; during implementation, `@dude-lead` owns implementation architecture unless the user overrides it.
 10. Definition packages do not go to `@dude-tester` by default. Use `@dude-lead` for architecture sanity and `@dude-reviewer` for optional independent readiness judgment.
 11. `@dude track` is the normal handoff into Beads. It may import defined brainstorms automatically. Explicit `@dude import tasks from specs/<feature>/ into Beads` is a manual fallback.
 
-Execution is optional after definition. If the user wants implementation and does not explicitly ask for Beads, default to Lightweight Execution from `specs/<feature>/tasks.md`. Once `@dude track` or a manual import moves work into Beads, rules 12-17 apply.
+Execution is optional after definition. The core execution lane is **Lightweight Execution** from `specs/<feature>/tasks.md`: when the user wants implementation, default to it and do not ask them to choose a lane. Tracked execution via Beads is provided by the optional **beads pack** (the `dude-beads-workflow` and `dude-spec-import-to-beads` skills); it activates only when that pack is installed and the user opts in with `@dude track`. Rules 12-17 are lane-agnostic.
 
-12. Beads is the source of truth for pending and completed execution work after import.
-13. Once tasks are imported into Beads, do not continue tracking from `tasks.md` or use the brainstorm file as the live execution board; those artifacts become reference context. `tasks.md` may be maintained as a one-way, non-authoritative portability mirror of Beads state, but Beads remains the only authority while tracked execution is active.
-14. `@dude status` is read-only. It may report current workflow state across definition, Lightweight Execution, and Tracked Execution, including defined features waiting for execution, but it must not import or mutate work state.
-15. All specialists follow `.github/skills/dude-beads-workflow/SKILL.md` for claiming and executing tasks after Beads import. Lightweight Execution uses `.github/skills/dude-lightweight-execution/SKILL.md` instead.
-16. In Lightweight Execution, only the coordinator mutates canonical task state after fresh verification evidence or routed workflow changes, preserving the durable task key, optional dependency metadata, and the rest of the task unit.
-17. Supporting checklist files remain reference context during Lightweight Execution; `specs/<feature>/tasks.md` is the single live execution board before import, and any Dude-generated board region inside that file is derived guidance rather than a second board.
-18. After the coordinator closes Beads work, it mirrors that Beads result back to the matching canonical task unit in `tasks.md` when the durable task key maps cleanly, regenerates any derived board region, and records the write-back in the brainstorm Coordinator Log. Mirror failures do not undo the Beads close, but they must be reported.
-19. If new work is discovered during Beads-backed execution, create a linked Beads issue.
-20. When multiple ready tasks are truly independent, Dude may dispatch them in parallel as an internal coordination decision.
-21. `@dude work` is the optional continuous-execution accelerator. It runs ready tasks back-to-back inside whichever lane is already live (Lightweight or Tracked Execution), defaults to `--max 3` iterations, and is not a new lane. It never imports features, never auto-commits, never edits definition artifacts, never bypasses the close protocol for the active lane, and stops on the first natural boundary (no ready task, blocker, failed verification, reviewer rejection, required clarification, two consecutive failed attempts on the same task, ambiguous state, tool error, or `--max` reached).
+12. `@dude status` is read-only. It may report current workflow state across definition and execution, including defined features waiting for execution, but it must not import or mutate work state.
+13. Specialists follow `.github/skills/dude-lightweight-execution/SKILL.md` for selecting and executing tasks. When the beads pack is installed and tracked execution is active, `.github/skills/dude-beads-workflow/SKILL.md` governs claiming and execution instead.
+14. Only the coordinator mutates canonical task state, and only after fresh verification evidence or routed workflow changes, preserving the durable task key, optional dependency metadata, and the rest of the task unit.
+15. Supporting checklist files remain reference context; `specs/<feature>/tasks.md` is the single live execution board, and any Dude-generated board region inside that file is derived guidance rather than a second board.
+16. When multiple ready tasks are truly independent, Dude may dispatch them in parallel as an internal coordination decision.
+17. `@dude work` is the optional continuous-execution accelerator. It runs ready tasks back-to-back inside the active lane, defaults to `--max 3` iterations, and is not a new lane. It never auto-commits, never edits definition artifacts, never bypasses the close protocol for the active lane, and stops on the first natural boundary (no ready task, blocker, failed verification, reviewer rejection, required clarification, two consecutive failed attempts on the same task, ambiguous state, tool error, or `--max` reached).
+
+Tracked-execution specifics — Beads as the source of truth after import, the one-way `tasks.md` mirror, and discovered-work issue creation — live in `dude-beads-workflow` and apply only when the beads pack is installed.
 
 ## Skill Awareness
 
@@ -80,14 +78,14 @@ When specialists disagree on a design or implementation choice:
 - For feature-definition artifacts under `specs/<feature>/`, default to `@dude-spec-lead` -> optional `@dude-lead` architecture sanity -> optional `@dude-reviewer` readiness judgment.
 - For implementation and other executable artifacts, default to implementation -> verification (usually `@dude-tester`, if present) -> optional independent review -> coordinator close unless the user explicitly asks for lighter handling.
 - For direct answers, roster updates, memory updates, and other coordinator-maintenance work, avoid forcing the full delivery pipeline.
-- Any completion claim must be backed by fresh verification evidence before `@dude` closes Beads work or marks a Lightweight Execution task `[x]`.
+- Any completion claim must be backed by fresh verification evidence before `@dude` marks an execution task `[x]` (or closes tracked-execution work when the beads pack is installed).
 
 ## Project Stance
 
 - Respect existing project conventions.
 - Ask only the smallest set of clarification questions that materially change scope, hard constraints, approvals, or routing.
 - Avoid introducing process overhead for simple tasks.
-- Prefer the Definition Only lane for a user's first real feature unless the user explicitly wants implementation now. If they want implementation and do not explicitly ask for Beads, default to Lightweight Execution.
+- Prefer the Definition Only lane for a user's first real feature unless the user explicitly wants implementation now. If they want implementation, default to Lightweight Execution from `specs/<feature>/tasks.md`.
 - Keep new agents narrow and useful instead of creating overlapping roles.
 - Keep new skills reusable and scoped to recurring patterns, not one-off tasks.
 - Keep memory entries concise, durable, and worth reusing.
