@@ -228,6 +228,74 @@ After `bd close` succeeds, the coordinator must run the Beads-to-markdown mirror
 5. Report results to the coordinator.
 6. Query ready work again.
 
+## Coordinator Orchestration
+
+These are the coordinator-side flows for tracked execution. They apply only when this pack is installed and the user has opted into tracked execution. In lean core (pack absent), the coordinator uses Lightweight Execution from `specs/<feature>/tasks.md` instead. Only the coordinator calls `bd close`.
+
+### Manual Import
+
+Use this only when the user explicitly asks to import execution work from `specs/` into Beads instead of using `@dude track`. Manual import still requires a defined brainstorm file as the identity source:
+
+1. Resolve the feature directory from the user's input or from `specs/`.
+2. Scan `brainstorm/` for a file whose `spec_path` matches `<selected-dir>/spec.md`. If no matching brainstorm file exists, stop and tell the user to run `@dude draft <feature>` first so a brainstorm ledger is created and later defined.
+3. Load `dude-pack-beads-spec-import` and follow the Import Algorithm for reading artifacts, parsing task lines, creating Beads issues, deriving dependencies, and mapping priorities.
+4. After import, run `bd ready --json`, discard epics or other non-executable grouping issues from that ready set, and report how many task issues were created and how many actionable tasks are ready.
+
+### Automatic Feature Handoff
+
+Use this during `@dude track` before selecting new ready work.
+
+1. Load `dude-pack-beads-spec-import` and follow its `## Canonical Feature Identity` rule: brainstorm `spec_path` and the Beads issue description `spec:` prefix must carry the same value (the full path to the feature's `spec.md`).
+2. Scan `brainstorm/` for files marked `status: defined` with a populated `spec_path:`.
+3. For each defined entry, run `bd list --json` and check whether any issue's description starts with `spec: <spec_path>` (literal string match). Import the feature only when no such issue exists; otherwise skip it.
+4. Do not ask the user for a `specs/<feature>/` path during this automatic handoff; the brainstorm file is the pointer.
+5. If a defined brainstorm points to a missing or malformed package, stop and report the fix needed instead of guessing.
+
+### Work Loop
+
+Use this when the user asks to track work, continue work, or take the next ready issue. Each dispatched specialist follows this skill for claiming and context reading; specialists report results back and only the coordinator calls `bd close`.
+
+1. Run `bd list --status in_progress --json`.
+2. If one or more tasks are already in progress, resume or report them before claiming new work.
+3. Run the automatic feature handoff for defined brainstorms.
+4. Run `bd ready --json --limit 5`.
+5. Discard epics or other non-executable grouping issues from the ready set before dispatch.
+6. If no actionable tasks are ready, report that all work is done, in progress, or blocked, and include any defined features that still need manual repair before they can be imported.
+7. Preserve Beads ready order as the default dispatch order.
+8. For each ready task: match it to the best specialist using normal roster-driven routing (load `.github/skills/dude-generic-routing/SKILL.md` and its `## Task Matching` section if useful); include ID, title, description, labels, and the `spec:` prefix in the delegation; dispatch to the owning specialist.
+9. If multiple ready tasks are truly independent, use the normal parallel-dispatch rules; launch at most 2 specialists in parallel by default; do not parallelize tasks that compete for the same artifacts or feature decision point.
+10. After delegated work completes, run `bd ready --json` again to check for newly unblocked work.
+11. Report round progress, including completed work and newly ready issues.
+
+### Status (tracked)
+
+When `@dude status` runs and a tracked board is initialized, append:
+
+1. Pre-check Beads initialization only if tracked execution has started; if not initialized, report that tracked execution has not started yet and point to setup before any further `bd` commands.
+2. Run `bd list --json` (filter by status and `spec:` prefix) and `bd ready --json`.
+3. Report total / done / in progress / ready / blocked; who is working on what; which defined features await `@dude track`; what is ready next.
+4. Add a trustworthy `Mirror:` line per active feature by reading the feature's `tasks.md` and verifying every executable, representable Beads issue for that `spec:` prefix maps to exactly one canonical task header with the expected glyph (match by durable task key first, then the `Beads: <id>` tag). Report `Mirror: verified current`, `Mirror: stale — run @dude sync Beads to tasks.md`, `Mirror: unsupported — <reason>`, `Mirror: not present`, or `Mirror: unknown — <reason>`. Informational only; status must not run the sync.
+5. Run `bd graph` when the user asks for dependency shape.
+
+Status is read-only.
+
+### Discipline
+
+- `@dude track` is the normal automatic handoff from defined features into Beads; explicit manual import is a fallback.
+- Do not use `@dude status` to import or mutate work.
+- `tasks.md` may be the live markdown board only during Lightweight Execution before import; after import it receives only one-way Beads-derived mirror writes or explicit `@dude sync Beads to tasks.md` results.
+- Do not continue to use the brainstorm file as the live board after import, and do not create tasks outside Beads once Beads is the execution system.
+
+### Completion
+
+When a specialist returns from tracked work:
+
+- If complete, run the delivery pipeline (verification via `@dude-tester` if on roster, then acceptance via the quality authority if assigned), load `dude-verification-before-completion`, call `bd close` with a reason, and mirror the close to `tasks.md` when the task key maps cleanly.
+- If no `@dude-tester` or quality authority exists, load `dude-verification-before-completion` directly, call `bd close`, and mirror.
+- If blocked, call `bd update <id> --status blocked --json` with the blocker reason.
+- If new work is uncovered, create linked Beads issues.
+- If review rejects an artifact, route revision to a different agent when possible, not the original author.
+
 ### Continuous Work
 
 When the user invokes `@dude work` while Tracked Execution is the active lane, load `dude-work` and let it drive the ready loop above. The claim discipline (`bd update <id> --claim --json`), the coordinator-only close decision (`bd close`), the Beads Close Protocol, the markdown mirror, and `dude-lint` after each write all still apply per iteration. The default cap is `--max 3`. See `dude-work` for the full grammar and stop conditions.
