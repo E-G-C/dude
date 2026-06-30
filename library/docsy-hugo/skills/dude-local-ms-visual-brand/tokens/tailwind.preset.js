@@ -1,0 +1,137 @@
+/**
+ * Microsoft Visual Brand — Tailwind preset (internal use).
+ * Usage:
+ *   // tailwind.config.js
+ *   const msBrand = require('./.github/skills/dude-local-ms-visual-brand/tokens/tailwind.preset.js');
+ *   module.exports = { presets: [msBrand], content: [...] };
+ */
+module.exports = {
+  theme: {
+    extend: {
+      colors: {
+        ms: {
+          red: '#F25022',
+          green: '#7FBA00',
+          blue: '#00A4EF',
+          yellow: '#FFB900',
+          gray: '#737373',
+          bg: '#FFFFFF',
+          'bg-subtle': '#F3F2F1',
+          'bg-dark': '#1B1A19',
+          border: '#E1DFDD',
+          text: '#201F1E',
+          'text-muted': '#605E5C',
+          'text-on-dark': '#FFFFFF',
+          primary: '#00A4EF',
+          success: '#7FBA00',
+          warning: '#FFB900',
+          danger: '#F25022',
+        },
+      },
+      fontFamily: {
+        'ms-body': [
+          'Segoe UI Variable Text',
+          'Segoe UI Variable',
+          'Segoe UI',
+          'system-ui',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'Helvetica Neue',
+          'Helvetica',
+          'Arial',
+          'sans-serif',
+        ],
+        'ms-heading': [
+          'Segoe UI Variable Text',
+          'Segoe UI Variable',
+          'Segoe UI',
+          'system-ui',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'Helvetica Neue',
+          'Helvetica',
+          'Arial',
+          'sans-serif',
+        ],
+        'ms-docs': [
+          'Segoe UI Variable Text',
+          'Segoe UI Variable',
+          'Segoe UI',
+          'system-ui',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'Helvetica Neue',
+          'Helvetica',
+          'Arial',
+          'sans-serif',
+        ],
+        'ms-mono': [
+          'Cascadia Code',
+          'Cascadia Mono',
+          'Consolas',
+          'Courier New',
+          'monospace',
+        ],
+        'ms-docs-mono': [
+          'SFMono-Regular',
+          'Consolas',
+          'Liberation Mono',
+          'Menlo',
+          'Courier',
+          'monospace',
+        ],
+      },
+      fontSize: {
+        'ms-display': ['48px', { lineHeight: '1.15', fontWeight: '600' }],
+        'ms-h1': ['36px', { lineHeight: '1.2', fontWeight: '600' }],
+        'ms-h2': ['28px', { lineHeight: '1.25', fontWeight: '600' }],
+        'ms-h3': ['22px', { lineHeight: '1.3', fontWeight: '600' }],
+        'ms-h4': ['18px', { lineHeight: '1.35', fontWeight: '600' }],
+        'ms-body-lg': ['18px', { lineHeight: '1.5' }],
+        'ms-body': ['16px', { lineHeight: '1.5' }],
+        'ms-caption': ['13px', { lineHeight: '1.4' }],
+        'ms-micro': ['11px', { lineHeight: '1.3' }],
+        'ms-docs-title': ['40px', { lineHeight: '52px', fontWeight: '600' }],
+        'ms-docs-h2': ['32px', { lineHeight: '1.3', fontWeight: '600' }],
+        'ms-docs-h3': ['28px', { lineHeight: '1.3', fontWeight: '600' }],
+        'ms-docs-body': ['16px', { lineHeight: '28px' }],
+        'ms-docs-compact': ['14px', { lineHeight: '1.5' }],
+        'ms-docs-code': ['14px', { lineHeight: '19px' }],
+      },
+      maxWidth: {
+        'ms-docs': '100%',
+        'ms-docs-readable': '688px',
+        'ms-docs-wide': '100%',
+      },
+      spacing: {
+        'ms-1': '4px',
+        'ms-2': '8px',
+        'ms-3': '12px',
+        'ms-4': '16px',
+        'ms-5': '24px',
+        'ms-6': '32px',
+        'ms-7': '48px',
+        'ms-8': '64px',
+      },
+      borderRadius: {
+        'ms-sm': '2px',
+        'ms-md': '4px',
+        'ms-lg': '8px',
+        'ms-pill': '9999px',
+      },
+      boxShadow: {
+        'ms-1': '0 1px 2px rgba(0,0,0,0.08)',
+        'ms-2': '0 2px 6px rgba(0,0,0,0.10)',
+        'ms-3': '0 4px 12px rgba(0,0,0,0.12)',
+      },
+      transitionDuration: {
+        'ms-micro': '150ms',
+        'ms-standard': '250ms',
+        'ms-entrance': '400ms',
+      },
+      transitionTimingFunction: {
+        'ms-enter': 'cubic-bezier(0.1, 0.9, 0.2, 1)',
+      },
+    },
+  },
+};

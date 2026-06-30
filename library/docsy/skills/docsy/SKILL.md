@@ -5,7 +5,7 @@ description: Authoritative reference for the Docsy Hugo theme — installation, 
 
 # Docsy Reference Skill
 
-Dense, source-of-truth reference. Cite the in-repo doc pages under `docs/` when pointing the user to longer explanations.
+Dense, source-of-truth reference. Use this file as the portable source for Docsy details; do not depend on sibling repository documentation directories being present.
 
 ---
 
@@ -25,7 +25,7 @@ hugo mod get github.com/google/docsy@vX.Y.Z
 ```toml
 [module]
   proxy = "direct"
-  # replacements = "github.com/google/docsy -> ../../docsy"  # local dev only
+  # replacements = "github.com/google/docsy -> <local-docsy-checkout>"  # local dev only
   [module.hugoVersion]
     extended = true
     min = "0.146.0"
@@ -498,22 +498,20 @@ Deploy: `hugo --gc --minify && hugo deploy` (auto-invalidates CloudFront). Usefu
 
 ---
 
-## 17. Docsy site contributor workflow (this repo)
+## 17. Upstream Docsy contribution (optional)
 
-```bash
-git clone https://github.com/google/docsy.git
-cd docsy/docsy.dev
-hugo server --themesDir ../..
-```
-- `npm run check:format` / `npm run fix:format` (Prettier). Wrap Hugo directives Prettier mangles in `<!-- prettier-ignore-start -->` / `<!-- prettier-ignore-end -->`.
-- Agent-docs scorecard: `npm run serve` + `npm run check:afdocs:dev` → writes `docs/content/agent-support/afdocs-scorecard.txt`. Config: `docsy.dev/agent-docs.config.yml`.
-- Docker: `docker-compose build && DOCSY_USER=$(id -u):$(id -g) docker-compose up`.
+For upstream Docsy theme contribution, follow the upstream repository's contributor instructions. For regular Docsy site work, use this portable bundle's install, configuration, content, deployment, and troubleshooting sections instead of assuming any local upstream checkout layout.
+
+General portable notes:
+- Use the project's configured formatter or `npm run check:format` / `npm run fix:format` when those scripts exist.
+- Wrap Hugo directives that a formatter mangles in `<!-- prettier-ignore-start -->` / `<!-- prettier-ignore-end -->`.
+- Use the project's own Docker, CI, or scorecard scripts only when they are present in that project.
 
 ---
 
 ## 18. AI-agent support (experimental)
 
-Opt-in features that make site content discoverable/consumable by AI agents and automated tools. Tracking issue: google/docsy#2614. Doc: [docs/content/agent-support/index.md](../../docs/content/agent-support/index.md).
+Opt-in features that make site content discoverable/consumable by AI agents and automated tools. This feature is experimental; use the examples in this section as the portable reference.
 
 ### Markdown output
 Add `markdown` to the Hugo `outputs` map for each page kind you want to expose. The `outputs` map is a **full replacement per kind, not a merge** — keep every format the kind already uses (`RSS`, `print`, …) when adding `markdown`.
@@ -542,7 +540,7 @@ outputs:
 - Per shortcode: add output-format-specific shortcode templates so they emit Markdown-friendly content.
 
 ### Validation
-Docsy uses [AFDocs](https://afdocs.dev/) to score agent-facing support (Markdown URLs, `llms.txt`, related checks). In this repo: `npm run serve` + `npm run check:afdocs:dev` → writes `docs/content/agent-support/afdocs-scorecard.txt`. Config: `docsy.dev/agent-docs.config.yml`. See [project/build/ci-cd.md](../../project/build/ci-cd.md).
+Docsy projects can use AFDocs to score agent-facing support (Markdown URLs, `llms.txt`, related checks). If a project includes an AFDocs configuration, run the project's documented scorecard command after building or serving the site.
 
 **Server-side (out of Docsy scope):** sites may add content negotiation honoring `Accept: text/markdown` on the same URL as HTML.
 

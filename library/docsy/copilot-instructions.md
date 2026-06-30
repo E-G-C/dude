@@ -1,6 +1,6 @@
 # Copilot Instructions — Docsy Hugo Theme
 
-This workspace is the **user-facing documentation site for the [Docsy](https://github.com/google/docsy) Hugo theme**. Use these instructions when assisting any developer who is building a Hugo site with Docsy, contributing to these docs, or troubleshooting a Docsy project.
+This portable `.github/` bundle supports developers who are building, maintaining, or troubleshooting a Hugo site that uses the [Docsy](https://github.com/google/docsy) theme. It must remain self-contained: do not rely on sibling repository directories being present.
 
 ## What Docsy is (one-paragraph mental model)
 
@@ -10,7 +10,7 @@ Docsy is a **Hugo theme built on Bootstrap 5 + SCSS** for technical/product docu
 
 1. **Always require Hugo extended** (SCSS support) and Node LTS. Min Hugo version per the example site's `hugo.toml` (currently `0.146+`).
 2. **Default config file is `hugo.toml`** (Hugo ≥0.110). Treat `hugo.yaml` / `hugo.json` / legacy `config.*` as equivalent — match whichever the user already has.
-3. **Hugo Module install is the recommended path.** Only suggest git submodule / NPM / clone when the user explicitly wants them or already uses them. See [docs/get-started/_index.md](docs/get-started/_index.md).
+3. **Hugo Module install is the recommended path.** Only suggest git submodule / NPM / clone when the user explicitly wants them or already uses them. Use the install section of [.github/skills/docsy/SKILL.md](.github/skills/docsy/SKILL.md) for the exact commands.
 4. **One search engine at a time** — GCS, Algolia, or Lunr offline. Never enable two.
 5. **`[languages]` must appear before `[module]`** in `hugo.toml` for multilingual sites.
 6. **Shortcode delimiters matter**: `{{< name >}}` for raw/HTML bodies, `{{% name %}}` for Markdown bodies. Markdown-style headings inside `{{% %}}` shortcodes appear in the TOC.
@@ -21,29 +21,25 @@ Docsy is a **Hugo theme built on Bootstrap 5 + SCSS** for technical/product docu
    Shadowing other files in `assets/scss/td/` is unsupported (no SemVer stability).
 8. **Production-only features**: Google Analytics, Google Custom Search, and the Lunr index only build under `hugo` (env=production), not `hugo server` (env=development). Use `hugo -e production` to test.
 9. **`ref`/`relref` do not resolve `_index`/`index` pages** — use site-rooted relative links instead.
-10. **Don't invent shortcode names or parameters.** Use only the ones documented in [docs/content/shortcodes/index.md](docs/content/shortcodes/index.md) and the skill reference.
-11. **Hugo `outputs` map is a full replacement per page kind, not a merge.** When enabling agent-support (`markdown`, `LLMS`) or `print`, re-list every format that kind already used (`RSS`, `print`, …) or they silently disappear. See [docs/content/agent-support/index.md](docs/content/agent-support/index.md).
+10. **Don't invent shortcode names or parameters.** Use only the shortcode names and parameters captured in [.github/skills/docsy/SKILL.md](.github/skills/docsy/SKILL.md).
+11. **Hugo `outputs` map is a full replacement per page kind, not a merge.** When enabling agent-support (`markdown`, `LLMS`) or `print`, re-list every format that kind already used (`RSS`, `print`, …) or they silently disappear. The agent-support section of [.github/skills/docsy/SKILL.md](.github/skills/docsy/SKILL.md) has the portable examples.
 
-## Repository layout (this docs site)
+## Portable Bundle Layout
 
 ```
-content equivalent → top-level dirs: _index.md, about/, blog/, community/, docs/, examples/, project/, tests/
-docs/              ← the user-facing Docsy User Guide (most editing happens here)
-docs/content/      ← authoring (shortcodes, navigation, search, taxonomy, …)
-docs/get-started/  ← installation, configuration, quickstart, docsy-as-module/
-docs/deployment/   ← github-pages, netlify, amazon, local
-docs/best-practices/, docs/updating/
-project/           ← contributor docs (style guide, build, repo)
-blog/              ← release notes & news (YYYY/ subdirs)
-tests/             ← regression pages for layouts/shortcodes
+.github/copilot-instructions.md      always-on Docsy guidance
+.github/skills/docsy/SKILL.md        authoritative portable Docsy reference
+.github/instructions/*.instructions.md  file-scoped rules
+.github/prompts/*.prompt.md          task workflows
+.github/agents/docsy-expert.agent.md specialist Docsy agent
 ```
 
-When editing this site, the **live preview command** is run from `docsy.dev/` inside the upstream theme repo:
+When previewing a Docsy site, start with:
 ```bash
-hugo server --themesDir ../..
+hugo server
 ```
 
-## Style guide (writing) — see [project/style-guide.md](project/style-guide.md)
+## Style Guide (Writing)
 
 - Follow the **Google Developer Documentation Style Guide**.
 - Front matter: don't quote strings unless required; omit `linkTitle` when equal to `title`.
@@ -59,7 +55,7 @@ hugo server --themesDir ../..
 
 ## Default answering posture
 
-- Give the user a **minimal working example first** (config snippet, shortcode call, or command), then link to the deeper doc page in this repo.
+- Give the user a **minimal working example first** (config snippet, shortcode call, or command), then point to the relevant section of [.github/skills/docsy/SKILL.md](.github/skills/docsy/SKILL.md).
 - Always include **the exact file path** the user should edit and the **exact section** in the config (e.g. `[params.ui]`, `[module.imports]`).
 - When a feature has a known gotcha, mention it inline — don't make the user discover it.
 - Avoid suggesting changes to internal Docsy partials/SCSS unless the user has confirmed they accept the unsupported-customization tradeoff.

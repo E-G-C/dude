@@ -16,4 +16,4 @@ For every target:
 - Verify Hugo **extended** is being installed.
 - Verify Node LTS + `npm ci` runs before `hugo` (PostCSS pipeline).
 - Confirm `baseURL` in `hugo.toml` matches the deployment URL.
-- Detail full reference: [docs/deployment/](../../docs/deployment/).
+- Use the deployment recipes in [skill §16](../skills/docsy/SKILL.md#16-deployment) as the full portable reference.

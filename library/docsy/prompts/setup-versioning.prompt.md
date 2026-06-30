@@ -36,4 +36,4 @@ This shows a banner telling readers they're viewing archived docs and links to t
 - The version dropdown appears in the navbar.
 - `version_menu_pagelinks: true` resolves to the current page in other versions where it exists.
 
-Point the user at [docs/content/versioning.md](../../docs/content/versioning.md).
+Point the user at [skill §11](../skills/docsy/SKILL.md#11-versioning).

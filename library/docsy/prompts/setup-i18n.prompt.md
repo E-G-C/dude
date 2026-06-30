@@ -42,4 +42,4 @@ Set `languageDirection: rtl` on the language, then `npm install rtlcss --save-de
 - The language selector appears in the navbar.
 - Each language's home page renders; check the `defaultContentLanguageInSubdir` URL effect.
 
-Point the user at [docs/language.md](../../docs/language.md) for the full guide.
+Point the user at [skill §12](../skills/docsy/SKILL.md#12-i18n) for the full portable guide.

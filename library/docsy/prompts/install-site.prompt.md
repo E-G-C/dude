@@ -38,7 +38,7 @@ Then add the `[module]` block to `hugo.toml` (`extended = true`, `min` Hugo vers
 
 ## 5. Next steps
 Point the user to:
-- [docs/get-started/basic-configuration.md](../../docs/get-started/basic-configuration.md) to set `baseURL`, title, repo links.
-- `/customize-theme`, `/setup-search`, `/new-docs-page` prompts for the next tasks.
+- the site config section of [skill §4](../skills/docsy/SKILL.md#4-site-config-hugotoml--hugoyaml--key-blocks) to set `baseURL`, title, and repository links.
+- the theme, search, and new-page prompts for the next tasks.
 
 Don't set `theme: docsy` when using Hugo Modules — it's redundant.

@@ -21,7 +21,7 @@ This folder bundles everything an LLM (GitHub Copilot, Claude, etc.) needs to he
 | [prompts/setup-versioning.prompt.md](prompts/setup-versioning.prompt.md) | Version dropdown / archived banner | `/setup-versioning` |
 | [prompts/enable-agent-support.prompt.md](prompts/enable-agent-support.prompt.md) | Markdown output + `llms.txt` for AI agents | `/enable-agent-support` |
 | [prompts/setup-deployment.prompt.md](prompts/setup-deployment.prompt.md) | GitHub Pages / Netlify / S3+CloudFront setup | `/setup-deployment` |
-| Update Docsy prompt | Update/upgrade Docsy or convert between install methods | Prompt command in chat |
+| [prompts/update-docsy.prompt.md](prompts/update-docsy.prompt.md) | Update/upgrade Docsy or convert between install methods | `/update-docsy` |
 | [prompts/troubleshoot-build.prompt.md](prompts/troubleshoot-build.prompt.md) | Diagnostic checklist for build/render failures | `/troubleshoot-build` |
 | [agents/docsy-expert.agent.md](agents/docsy-expert.agent.md) | Subagent definition for end-to-end Docsy tasks | Invoke by name |
 

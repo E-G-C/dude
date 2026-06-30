@@ -35,4 +35,4 @@ Run through this checklist before deep-diving. Ask the user for the exact error 
 ## 6. Production-only behavior
 - GA / GCS / Lunr index missing in `hugo server`? Run `hugo -e production` or `hugo` to test — those features build only in production.
 
-Once you've isolated the failure, point the user at the relevant doc page in [docs/get-started/known_issues.md](../../docs/get-started/known_issues.md) or the matching deployment / configuration page.
+Once you've isolated the failure, point the user at the relevant section of [skill §19](../skills/docsy/SKILL.md#19-gotchas--check-these-first-when-something-breaks) or the matching configuration/deployment section in the skill.

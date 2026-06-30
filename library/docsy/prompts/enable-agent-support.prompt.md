@@ -3,7 +3,7 @@ agent: agent
 description: Enable Docsy's AI-agent support — Markdown output and llms.txt.
 ---
 
-Help the user expose machine-readable content for AI agents. This is **experimental** (google/docsy#2614). Reference [skill §18](../skills/docsy/SKILL.md#18-ai-agent-support-experimental) and [docs/content/agent-support/index.md](../../docs/content/agent-support/index.md).
+Help the user expose machine-readable content for AI agents. This is **experimental**. Reference [skill §18](../skills/docsy/SKILL.md#18-ai-agent-support-experimental).
 
 ## Critical gotcha
 Hugo's `outputs` map is a **full replacement per page kind, not a merge**. When you add `markdown`/`LLMS`, you must re-list every format that kind already used (`RSS`, `print`, …) or they silently disappear.
@@ -37,4 +37,4 @@ Docsy generates `/llms.txt` listing the home page, main-menu pages, and Markdown
 ## Verify
 - Build (`hugo`), then check a page has a `.md` alternate and the **View Markdown** link.
 - Confirm `/llms.txt` exists at the site root.
-- Optionally score with [AFDocs](https://afdocs.dev/) (`npm run check:afdocs:dev` in this repo).
+- Optionally score with AFDocs if the user's project includes an AFDocs configuration and script.

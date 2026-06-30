@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MS Brand — Header & Footer patterns</title>
+  <link rel="stylesheet" href="../tokens/ms-brand.css" />
+  <style>
+    body { margin: 0; }
+    section { padding: var(--ms-space-6) var(--ms-space-5); }
+    section + section { border-top: 1px solid var(--ms-border); }
+    .row { display: flex; align-items: center; gap: var(--ms-space-3); }
+    .spacer { flex: 1; }
+    .ms-link { color: var(--ms-color-primary); text-decoration: none; font-weight: var(--ms-fw-semibold); }
+    .ms-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body class="ms-brand">
+
+  <!-- 1. Light header -->
+  <section>
+    <div class="row">
+      <span class="ms-logo-mark" aria-hidden="true"></span>
+      <strong style="color: var(--ms-gray);">Microsoft</strong>
+      <span class="spacer"></span>
+      <a class="ms-link" href="#">Docs</a>
+      <a class="ms-link" href="#">Sign in</a>
+    </div>
+  </section>
+
+  <!-- 2. Dark header -->
+  <section data-ms-theme="dark" style="background: var(--ms-bg-dark); color: var(--ms-text-on-dark);">
+    <div class="row">
+      <span class="ms-logo-mark" aria-hidden="true"></span>
+      <strong style="color: #fff;">Microsoft</strong>
+      <span class="spacer"></span>
+      <a class="ms-link" href="#" style="color: var(--ms-blue);">Docs</a>
+      <a class="ms-link" href="#" style="color: #fff;">Sign in</a>
+    </div>
+  </section>
+
+  <!-- 3. Compact footer -->
+  <section style="color: var(--ms-text-muted); font-size: var(--ms-fs-caption);">
+    <div class="row">
+      <span class="ms-logo-mark" aria-hidden="true" style="width:16px;height:16px;"></span>
+      <span>© 2026 Microsoft Corporation — Internal</span>
+      <span class="spacer"></span>
+      <a class="ms-link" href="#" style="font-size: var(--ms-fs-caption);">Privacy</a>
+      <a class="ms-link" href="#" style="font-size: var(--ms-fs-caption);">Accessibility</a>
+    </div>
+  </section>
+
+</body>
+</html>

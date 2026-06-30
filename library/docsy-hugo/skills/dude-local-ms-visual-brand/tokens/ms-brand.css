@@ -1,0 +1,425 @@
+/* ============================================================
+ * Microsoft Visual Brand — Design Tokens (CSS Custom Properties)
+ * Internal use only. See ../reference/sources.md for canonical refs.
+ * ============================================================ */
+
+:root {
+  /* --- Core brand colors (the four squares + wordmark) --- */
+  --ms-red:    #F25022;
+  --ms-green:  #7FBA00;
+  --ms-blue:   #00A4EF;
+  --ms-yellow: #FFB900;
+  --ms-gray:   #737373; /* wordmark gray on light backgrounds */
+
+  /* --- Neutrals (internal pairing palette) --- */
+  --ms-bg:           #FFFFFF;
+  --ms-bg-subtle:    #F3F2F1;
+  --ms-bg-dark:      #1B1A19;
+  --ms-border:       #E1DFDD;
+  --ms-text:         #201F1E;
+  --ms-text-muted:   #605E5C;
+  --ms-text-on-dark: #FFFFFF;
+
+  /* --- Semantic mappings --- */
+  --ms-color-primary:     var(--ms-blue);
+  --ms-color-success:     var(--ms-green);
+  --ms-color-warning:     var(--ms-yellow);
+  --ms-color-danger:      var(--ms-red);
+  --ms-color-accent:      var(--ms-blue);
+  --ms-color-focus-ring:  var(--ms-blue);
+
+  /* --- Typography --- */
+  --ms-font-body:    "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI",
+                     system-ui, -apple-system, BlinkMacSystemFont,
+                     "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --ms-font-heading: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI",
+                     system-ui, -apple-system, BlinkMacSystemFont,
+                     "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --ms-font-mono:    "Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace;
+  --ms-font-docs:    "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI",
+                     system-ui, -apple-system, BlinkMacSystemFont,
+                     "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --ms-font-docs-mono: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace;
+
+  --ms-fs-display:    48px;
+  --ms-fs-h1:         36px;
+  --ms-fs-h2:         28px;
+  --ms-fs-h3:         22px;
+  --ms-fs-h4:         18px;
+  --ms-fs-body-lg:    18px;
+  --ms-fs-body:       16px;
+  --ms-fs-caption:    13px;
+  --ms-fs-micro:      11px;
+
+  --ms-fw-regular:    400;
+  --ms-fw-semibold:   600;
+  --ms-fw-bold:       700;
+
+  --ms-lh-display:    1.15;
+  --ms-lh-h1:         1.2;
+  --ms-lh-h2:         1.25;
+  --ms-lh-h3:         1.3;
+  --ms-lh-h4:         1.35;
+  --ms-lh-body:       1.5;
+  --ms-lh-caption:    1.4;
+  --ms-lh-micro:      1.3;
+  --ms-lh-tight:      var(--ms-lh-h1);
+  --ms-lh-normal:     var(--ms-lh-body);
+
+  /* --- Documentation surfaces (inspired by Microsoft Learn article pages) --- */
+  --ms-docs-content-width: 100%;
+  --ms-docs-readable-width: 688px;
+  --ms-docs-wide-width: 100%;
+  --ms-docs-fs-title:      40px;
+  --ms-docs-fs-h2:         32px;
+  --ms-docs-fs-h3:         28px;
+  --ms-docs-fs-body:       16px;
+  --ms-docs-fs-compact:    14px;
+  --ms-docs-fs-code:       14px;
+  --ms-docs-lh-title:      52px;
+  --ms-docs-lh-h2:         1.3;
+  --ms-docs-lh-h3:         1.3;
+  --ms-docs-lh-body:       28px;
+  --ms-docs-lh-list:       1.8;
+  --ms-docs-lh-compact:    1.5;
+  --ms-docs-lh-code:       19px;
+  --ms-docs-link:          #0065B3;
+  --ms-docs-code-bg:       var(--ms-bg-subtle);
+  --ms-docs-tip-bg:        #DFF6DD;
+  --ms-docs-tip-border:    #107C10;
+  --ms-docs-tip-text:      var(--ms-text);
+
+  /* --- Spacing (8-pt base) --- */
+  --ms-space-0:  0px;
+  --ms-space-1:  4px;
+  --ms-space-2:  8px;
+  --ms-space-3:  12px;
+  --ms-space-4:  16px;
+  --ms-space-5:  24px;
+  --ms-space-6:  32px;
+  --ms-space-7:  48px;
+  --ms-space-8:  64px;
+
+  /* --- Radii --- */
+  --ms-radius-sm:   2px;
+  --ms-radius-md:   4px;
+  --ms-radius-lg:   8px;
+  --ms-radius-pill: 9999px;
+
+  /* --- Elevation --- */
+  --ms-elev-1: 0 1px 2px rgba(0,0,0,0.08);
+  --ms-elev-2: 0 2px 6px rgba(0,0,0,0.10);
+  --ms-elev-3: 0 4px 12px rgba(0,0,0,0.12);
+
+  /* --- Motion --- */
+  --ms-dur-micro:    150ms;
+  --ms-dur-standard: 250ms;
+  --ms-dur-entrance: 400ms;
+  --ms-ease-enter:   cubic-bezier(0.1, 0.9, 0.2, 1);
+  --ms-ease-exit:    ease-out;
+}
+
+/* Optional dark surface: scope to a container or use a media query. */
+.ms-theme-dark,
+[data-ms-theme="dark"] {
+  --ms-bg:         var(--ms-bg-dark);
+  --ms-bg-subtle:  #2B2A29;
+  --ms-border:     #3B3A39;
+  --ms-text:       var(--ms-text-on-dark);
+  --ms-text-muted: #C8C6C4;
+  --ms-docs-link:       #75B6E7;
+  --ms-docs-code-bg:    #404040;
+  --ms-docs-tip-bg:     #054B16;
+  --ms-docs-tip-border: #DFF6DD;
+  --ms-docs-tip-text:   #DFF6DD;
+}
+
+/* ============================================================
+ * Base resets (opt-in: apply class .ms-brand to a root element)
+ * ============================================================ */
+
+.ms-brand {
+  font-family: var(--ms-font-body);
+  font-optical-sizing: auto;
+  font-size: var(--ms-fs-body);
+  line-height: var(--ms-lh-normal);
+  letter-spacing: 0;
+  color: var(--ms-text);
+  background: var(--ms-bg);
+}
+
+.ms-brand h1, .ms-brand .ms-h1 {
+  font-family: var(--ms-font-heading);
+  font-size: var(--ms-fs-h1);
+  font-weight: var(--ms-fw-semibold);
+  line-height: var(--ms-lh-h1);
+  margin: 0 0 var(--ms-space-4);
+}
+.ms-brand h2, .ms-brand .ms-h2 {
+  font-family: var(--ms-font-heading);
+  font-size: var(--ms-fs-h2);
+  font-weight: var(--ms-fw-semibold);
+  line-height: var(--ms-lh-h2);
+  margin: var(--ms-space-6) 0 var(--ms-space-3);
+}
+.ms-brand h3, .ms-brand .ms-h3 {
+  font-family: var(--ms-font-heading);
+  font-size: var(--ms-fs-h3);
+  font-weight: var(--ms-fw-semibold);
+  line-height: var(--ms-lh-h3);
+  margin: var(--ms-space-5) 0 var(--ms-space-2);
+}
+.ms-brand h4, .ms-brand .ms-h4 {
+  font-family: var(--ms-font-heading);
+  font-size: var(--ms-fs-h4);
+  font-weight: var(--ms-fw-semibold);
+  line-height: var(--ms-lh-h4);
+  margin: var(--ms-space-4) 0 var(--ms-space-2);
+}
+
+.ms-brand code, .ms-brand pre { font-family: var(--ms-font-mono); }
+
+/* ============================================================
+ * Documentation surfaces (Microsoft Learn-inspired)
+ * ============================================================ */
+
+.ms-docs {
+  font-family: var(--ms-font-docs);
+  font-optical-sizing: auto;
+  font-size: var(--ms-docs-fs-body);
+  line-height: var(--ms-docs-lh-body);
+  letter-spacing: 0;
+  color: var(--ms-text);
+  background: var(--ms-bg);
+}
+
+.ms-docs-content,
+.ms-docs .content {
+  width: 100%;
+  max-width: var(--ms-docs-content-width);
+}
+
+.ms-docs-readable,
+.ms-docs-content > :where(h1, h2, h3, h4, p, ul, ol, dl, blockquote, .lead, .ms-docs-alert, .ms-docs-tip),
+.ms-docs .content > :where(h1, h2, h3, h4, p, ul, ol, dl, blockquote, .lead, .ms-docs-alert, .ms-docs-tip),
+.ms-docs .td-content > :where(h1, h2, h3, h4, p, ul, ol, dl, blockquote, .lead, .ms-docs-alert, .ms-docs-tip) {
+  max-width: var(--ms-docs-readable-width);
+}
+
+.ms-docs-wide,
+.ms-docs-content > :where(table, pre, .td-table, .table-responsive),
+.ms-docs .content > :where(table, pre, .td-table, .table-responsive),
+.ms-docs .td-content > :where(table, pre, .td-table, .table-responsive) {
+  width: 100%;
+  max-width: var(--ms-docs-wide-width);
+}
+
+.ms-docs h1,
+.ms-docs .ms-docs-title {
+  font-family: var(--ms-font-docs);
+  font-size: var(--ms-docs-fs-title);
+  font-weight: var(--ms-fw-semibold);
+  line-height: var(--ms-docs-lh-title);
+  margin: 20px 0;
+}
+
+.ms-docs h2,
+.ms-docs .ms-docs-h2 {
+  font-family: var(--ms-font-docs);
+  font-size: var(--ms-docs-fs-h2);
+  font-weight: var(--ms-fw-semibold);
+  line-height: var(--ms-docs-lh-h2);
+  margin: 20px 0;
+}
+
+.ms-docs h3,
+.ms-docs .ms-docs-h3 {
+  font-family: var(--ms-font-docs);
+  font-size: var(--ms-docs-fs-h3);
+  font-weight: var(--ms-fw-semibold);
+  line-height: var(--ms-docs-lh-h3);
+  margin: 20px 0;
+}
+
+.ms-docs p {
+  margin: var(--ms-space-4) 0;
+}
+
+.ms-docs a {
+  color: var(--ms-docs-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ms-docs ul,
+.ms-docs ol {
+  margin: var(--ms-space-4) 0;
+  padding-left: var(--ms-space-5);
+  line-height: var(--ms-docs-lh-list);
+}
+
+.ms-docs table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: var(--ms-space-4) 0;
+  border: 1px solid var(--ms-border);
+  font-size: var(--ms-docs-fs-compact);
+  line-height: var(--ms-docs-lh-compact);
+}
+
+.ms-docs th,
+.ms-docs td {
+  padding: var(--ms-space-2);
+  border: 1px solid var(--ms-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.ms-docs th {
+  font-weight: var(--ms-fw-bold);
+}
+
+.ms-docs pre,
+.ms-docs code {
+  font-family: var(--ms-font-docs-mono);
+}
+
+.ms-docs pre {
+  overflow: auto;
+  margin: var(--ms-space-4) 0;
+  padding: var(--ms-space-3);
+  background: var(--ms-bg-dark);
+  color: var(--ms-text-on-dark);
+  border-radius: var(--ms-radius-md);
+  font-size: var(--ms-docs-fs-code);
+  line-height: var(--ms-docs-lh-code);
+}
+
+.ms-docs :not(pre) > code {
+  padding: 0.1em 0.2em;
+  border-radius: 3px;
+  background: var(--ms-docs-code-bg);
+  font-size: 0.85em;
+}
+
+.ms-docs-tabs,
+.ms-docs [role="tablist"] {
+  display: flex;
+  gap: 0;
+  margin: var(--ms-space-4) 0 0;
+  padding-top: var(--ms-space-1);
+  border-bottom: 1px solid var(--ms-border);
+}
+
+.ms-docs-tab,
+.ms-docs [role="tab"] {
+  appearance: none;
+  margin: 0 -1px 0 0;
+  padding: var(--ms-space-1) 14px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  background: transparent;
+  color: var(--ms-text);
+  font: inherit;
+  font-size: var(--ms-docs-fs-compact);
+  line-height: 1.75;
+  cursor: pointer;
+}
+
+.ms-docs-tab[aria-selected="true"],
+.ms-docs [role="tab"][aria-selected="true"] {
+  border-color: var(--ms-border);
+  border-radius: var(--ms-radius-md) var(--ms-radius-md) 0 0;
+  background: var(--ms-bg);
+  font-weight: var(--ms-fw-semibold);
+}
+
+.ms-docs-alert,
+.ms-docs-tip {
+  margin: var(--ms-space-4) 0;
+  padding: var(--ms-space-4);
+  border: 1px solid var(--ms-docs-tip-border);
+  border-radius: 6px;
+  background: var(--ms-docs-tip-bg);
+  color: var(--ms-docs-tip-text);
+}
+
+.ms-docs-alert > :first-child,
+.ms-docs-tip > :first-child {
+  margin-top: 0;
+}
+
+.ms-docs-alert > :last-child,
+.ms-docs-tip > :last-child {
+  margin-bottom: 0;
+}
+
+/* ============================================================
+ * Buttons
+ * ============================================================ */
+
+.ms-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ms-space-2);
+  height: 40px;
+  padding: 0 var(--ms-space-4);
+  border-radius: var(--ms-radius-md);
+  border: 1px solid transparent;
+  font-family: var(--ms-font-body);
+  font-optical-sizing: auto;
+  font-size: var(--ms-fs-body);
+  font-weight: var(--ms-fw-semibold);
+  line-height: 1;
+  letter-spacing: 0;
+  cursor: pointer;
+  transition: background var(--ms-dur-micro) var(--ms-ease-exit),
+              box-shadow var(--ms-dur-micro) var(--ms-ease-exit);
+}
+.ms-btn:focus-visible {
+  outline: 2px solid var(--ms-color-focus-ring);
+  outline-offset: 2px;
+}
+
+.ms-btn-primary     { background: var(--ms-color-primary); color: #fff; }
+.ms-btn-primary:hover     { filter: brightness(0.95); }
+.ms-btn-secondary   { background: transparent; color: var(--ms-text); border-color: var(--ms-border); }
+.ms-btn-secondary:hover   { background: var(--ms-bg-subtle); }
+.ms-btn-subtle      { background: var(--ms-bg-subtle); color: var(--ms-text); }
+.ms-btn-subtle:hover      { background: var(--ms-border); }
+.ms-btn-destructive { background: var(--ms-color-danger); color: #fff; }
+.ms-btn-destructive:hover { filter: brightness(0.95); }
+
+/* ============================================================
+ * Cards
+ * ============================================================ */
+
+.ms-card {
+  background: var(--ms-bg);
+  border: 1px solid var(--ms-border);
+  border-radius: var(--ms-radius-lg);
+  padding: var(--ms-space-5);
+  box-shadow: var(--ms-elev-1);
+}
+
+/* ============================================================
+ * Logo mark (internal standard)
+ *
+ * Uses the Microsoft four-square geometry: 10x10 squares in a 21x21
+ * field with a 1-unit gap. The layered backgrounds avoid data-URI
+ * images, so the mark works under stricter internal app CSPs.
+ * ============================================================ */
+
+.ms-logo-mark {
+  --ms-logo-square-size: 47.619047619%; /* 10 / 21 */
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  background:
+    linear-gradient(var(--ms-red), var(--ms-red)) 0 0 / var(--ms-logo-square-size) var(--ms-logo-square-size) no-repeat,
+    linear-gradient(var(--ms-green), var(--ms-green)) 100% 0 / var(--ms-logo-square-size) var(--ms-logo-square-size) no-repeat,
+    linear-gradient(var(--ms-blue), var(--ms-blue)) 0 100% / var(--ms-logo-square-size) var(--ms-logo-square-size) no-repeat,
+    linear-gradient(var(--ms-yellow), var(--ms-yellow)) 100% 100% / var(--ms-logo-square-size) var(--ms-logo-square-size) no-repeat;
+}

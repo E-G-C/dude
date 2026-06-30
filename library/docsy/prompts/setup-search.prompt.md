@@ -45,4 +45,4 @@ params:
 ## Custom
 Override `layouts/_partials/search-input.html`, `assets/scss/td/_search.scss`, `assets/js/search.js`.
 
-Always verify only one search param family is set, then point the user at [docs/content/search.md](../../docs/content/search.md).
+Always verify only one search param family is set, then point the user at [skill §8](../skills/docsy/SKILL.md#8-search--pick-exactly-one).

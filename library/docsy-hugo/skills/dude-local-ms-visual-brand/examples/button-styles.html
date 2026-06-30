@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MS Brand — Buttons</title>
+  <link rel="stylesheet" href="../tokens/ms-brand.css" />
+  <style>
+    body { margin: 0; padding: var(--ms-space-6); }
+    .group { display: flex; gap: var(--ms-space-3); flex-wrap: wrap; margin-bottom: var(--ms-space-5); }
+    h2 { margin-bottom: var(--ms-space-2); }
+  </style>
+</head>
+<body class="ms-brand">
+
+  <h2 class="ms-h2">Buttons — default</h2>
+  <div class="group">
+    <button class="ms-btn ms-btn-primary">Primary</button>
+    <button class="ms-btn ms-btn-secondary">Secondary</button>
+    <button class="ms-btn ms-btn-subtle">Subtle</button>
+    <button class="ms-btn ms-btn-destructive">Destructive</button>
+  </div>
+
+  <h2 class="ms-h2">Buttons — focus state</h2>
+  <p style="color: var(--ms-text-muted);">Tab into each button to see the focus ring.</p>
+  <div class="group">
+    <button class="ms-btn ms-btn-primary">Primary</button>
+    <button class="ms-btn ms-btn-secondary">Secondary</button>
+  </div>
+
+  <h2 class="ms-h2">Compact (32 px)</h2>
+  <div class="group">
+    <button class="ms-btn ms-btn-primary" style="height:32px;">Save</button>
+    <button class="ms-btn ms-btn-secondary" style="height:32px;">Cancel</button>
+  </div>
+
+</body>
+</html>
