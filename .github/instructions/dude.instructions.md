@@ -63,7 +63,7 @@ before starting work:
 1. For bugs, failing tests, and unexpected behavior, use `dude-systematic-debugging` before proposing or implementing fixes.
 2. Before claiming work is complete, fixed, passing, or ready, use `dude-verification-before-completion` and rely on fresh evidence.
 3. When receiving review feedback or rejection findings, use `dude-receiving-code-review` before implementing or disputing the requested changes.
-4. `dude-test-driven-development` is available as an optional implementation aid when the user explicitly wants tests-first work, when project conventions require it, or when a bugfix benefits from a regression-first workflow.
+4. When the practices pack is installed, `dude-pack-practices-tdd` is available as an optional tests-first implementation aid — when the user explicitly wants tests-first work, when project conventions require it, or when a bugfix benefits from a regression-first workflow.
 
 ## Conflict Resolution
 

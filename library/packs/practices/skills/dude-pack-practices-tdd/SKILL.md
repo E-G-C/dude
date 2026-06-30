@@ -1,5 +1,5 @@
 ---
-name: "dude-test-driven-development"
+name: "dude-pack-practices-tdd"
 description: "Use when implementing a feature or bugfix with a tests-first workflow, especially when the user requests TDD or a bugfix needs a regression-first fix."
 ---
 

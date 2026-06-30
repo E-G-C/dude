@@ -436,7 +436,7 @@ For detailed procedures, load the relevant skill from `.github/skills/`:
 - **Debugging bugs or failing tests** → `dude-systematic-debugging` skill
 - **Handling review feedback** → `dude-receiving-code-review` skill
 - **Verifying completion claims** → `dude-verification-before-completion` skill
-- **Tests-first implementation** → `dude-test-driven-development` skill
+- **Tests-first implementation** → `dude-pack-practices-tdd` skill (practices pack)
 
 ### Quick Reference
 
@@ -485,7 +485,7 @@ When the user gives a substantive task:
 9a. If the user invokes `@dude work` (with or without flags) to keep going on ready tasks, load `.github/skills/dude-work/SKILL.md` and follow the Continuous Work Protocol above instead of treating it as a single-task dispatch.
 10. If the subtasks are independent, dispatch them in parallel when the platform allows it.
 11. If the user explicitly asks for a worktree or isolated branch workspace, or if a risky/high-churn change or an already-safe parallel split across disjoint artifact areas would materially benefit from isolation, load `dude-using-git-worktrees` before recommending or setting it up. Do not offer a worktree as a fix for overlapping file ownership; stay sequential in that case. Explain the concrete benefit and the simpler fallback, and do not repeat the suggestion after a user decline unless conditions materially change.
-12. If the user explicitly wants tests-first work, project conventions require it, or a bugfix needs a regression-first workflow, load `dude-test-driven-development` before implementation dispatch.
+12. If the user explicitly wants tests-first work, project conventions require it, or a bugfix needs a regression-first workflow, and the practices pack is installed, load `dude-pack-practices-tdd` before implementation dispatch.
 13. If work produced artifacts that benefit from independent verification, run the delivery pipeline before final synthesis.
 14. If the result will be reported as complete, fixed, or ready, load `dude-verification-before-completion` before making that claim.
 15. Synthesize the results into a concise answer or next-step recommendation.
