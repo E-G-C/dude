@@ -29,6 +29,9 @@ namespace, which the engine treats as a distinct ownership tier:
 | `rust` | Rust specialist agent + Tauri development skill | you write Rust or build Tauri desktop/mobile apps |
 | `fluent-ui` | Fluent UI React v9 specialist agent | you build UIs with `@fluentui/react-components` |
 | `copilot-sdk` | GitHub Copilot SDK specialist agent | you build apps on the Copilot SDK |
+| `newsroom` | newsroom writer + event deep-fetcher agents + article / calendar-event / static-safe-time skills | you publish news & events to a Hugo/Docsy site's News section |
+| `writing` | avoid-AI-writing-tropes prose-quality skill | you want a canonical guard against AI writing tells |
+| `design` | design-proposal lane skill (propose → mockup → preview → approve → apply) | you want a visual design workflow overlaid on the task lifecycle |
 
 Packs are added to this table as they are migrated out of core.
 
