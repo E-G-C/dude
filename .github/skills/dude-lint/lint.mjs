@@ -216,10 +216,16 @@ function stripFencesAndPlaceholders(content) {
   }
   return out
     .join('\n')
-    // Strip inline `code` spans so code-syntax tokens (e.g. SCSS `@import`,
-    // shell `@-d`, paths inside backticks) don't get mistaken for Dude
-    // handles or skill references.
-    .replace(/`[^`\n]*`/g, '')
+    // From inline `code` spans, keep only real Dude references (handles and
+    // skill paths) and drop the rest. This stops code-syntax tokens such as
+    // SCSS `@import` / `@use`, JSDoc `@param`, or shell flags from registering
+    // as Dude handles, while still validating backticked references like
+    // `@dude-pack-hugo-site-architect` — even when a span mixes both, e.g.
+    // `@use ".github/skills/dude-pack-ms-brand-visual/..." as ms`.
+    .replace(/`[^`\n]*`/g, (span) => {
+      const refs = span.match(/@dude\b[\w-]*|\.github\/skills\/dude-[\w-]*/g);
+      return refs ? refs.join(' ') : '';
+    })
     .replace(/-<[A-Za-z][A-Za-z0-9_-]*>/g, '')
     .replace(/<[A-Za-z][A-Za-z0-9_-]*>/g, '');
 }
