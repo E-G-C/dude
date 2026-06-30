@@ -29,6 +29,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { belongsToPack } from '../dude-engine/lib/ownership.mjs';
 
 const PACK_NAME_RE = /^[a-z][a-z0-9-]*[a-z0-9]$/;
@@ -492,9 +493,27 @@ function main() {
   process.exit(r.code);
 }
 
+/**
+ * Is this module being executed directly (vs. imported)? Robust to script
+ * paths that contain spaces (percent-encoded in a `file://` URL) and to symlinks
+ * (e.g. macOS `/tmp` -> `/private/tmp`), where `import.meta.url` is realpath-
+ * resolved but `process.argv[1]` is not.
+ * @param {string} metaUrl `import.meta.url`
+ * @param {string | undefined} argv1 `process.argv[1]`
+ * @returns {boolean}
+ */
+function isMainModule(metaUrl, argv1) {
+  if (!argv1) return false;
+  try {
+    return fs.realpathSync(fileURLToPath(metaUrl)) === fs.realpathSync(path.resolve(argv1));
+  } catch {
+    return false;
+  }
+}
+
 // Run only when invoked directly (allows importing for tests).
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url, process.argv[1])) {
   main();
 }
 
-export { cmdAdd, cmdRemove, cmdList, cmdStatus, readProfile, availablePacks, packArtifacts };
+export { cmdAdd, cmdRemove, cmdList, cmdStatus, readProfile, availablePacks, packArtifacts, isMainModule };

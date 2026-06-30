@@ -219,7 +219,10 @@ export function enumerateCorePaths(root) {
       if (!entry.isDirectory()) continue;
       if (classifyPath(`.github/skills/${entry.name}/`) !== TIER.CORE) continue;
       for (const abs of walkFiles(path.join(skillsDir, entry.name))) {
-        results.push(abs.slice(root.length + 1).split(path.sep).join('/'));
+        // path.relative is robust whether `root` is absolute or relative;
+        // a naive `abs.slice(root.length + 1)` corrupts paths when `root`
+        // is relative (e.g. `.`), because path.join collapses the `./`.
+        results.push(path.relative(root, abs).split(path.sep).join('/'));
       }
     }
   }

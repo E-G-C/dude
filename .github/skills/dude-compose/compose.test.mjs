@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-import { cmdAdd, cmdRemove, cmdList, cmdStatus, readProfile } from './compose.mjs';
+import { cmdAdd, cmdRemove, cmdList, cmdStatus, readProfile, isMainModule } from './compose.mjs';
 
 /**
  * Build a throwaway bundle root with a minimal `.github/` and a small pack
@@ -171,5 +172,23 @@ test('status reflects installed packs', () => {
     assert.deepEqual(r.result.enabled_packs, ['demo']);
   } finally {
     cleanup(root);
+  }
+});
+
+test('isMainModule matches a direct run whose path contains spaces', () => {
+  // Real files in a spaced temp dir, so realpath resolution succeeds and the
+  // macOS `/tmp` -> `/private/tmp` symlink is normalized on both sides.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude main mod '));
+  try {
+    const scriptPath = path.join(dir, 'compose.mjs');
+    const otherPath = path.join(dir, 'other.mjs');
+    fs.writeFileSync(scriptPath, '');
+    fs.writeFileSync(otherPath, '');
+    const url = pathToFileURL(scriptPath).href; // file://... with %20 for spaces
+    assert.equal(isMainModule(url, scriptPath), true);
+    assert.equal(isMainModule(url, otherPath), false);
+    assert.equal(isMainModule(url, undefined), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -105,3 +105,32 @@ test('enumerateCorePaths returns only core files, sorted', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('enumerateCorePaths does not corrupt paths when root is relative', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-ownership-rel-'));
+  try {
+    /** @param {string} rel */
+    const touch = (rel) => {
+      const abs = path.join(root, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, '');
+    };
+    touch('.github/agents/dude.agent.md');
+    touch('.github/instructions/dude.instructions.md');
+    touch('.github/skills/dude-lint/lint.mjs');
+
+    const expected = [
+      '.github/agents/dude.agent.md',
+      '.github/instructions/dude.instructions.md',
+      '.github/skills/dude-lint/lint.mjs',
+    ];
+
+    // Absolute root and an equivalent relative root must yield identical,
+    // uncorrupted results (regression for `.`-style local upgrade sources).
+    const relRoot = path.relative(process.cwd(), root) || '.';
+    assert.deepEqual(enumerateCorePaths(root), expected);
+    assert.deepEqual(enumerateCorePaths(relRoot), expected);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
