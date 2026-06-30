@@ -78,24 +78,6 @@ Keywords and signals:
 - module boundaries, configuration
 - Phase 1 (Setup) or Phase 2 (Foundational) labels
 
-### Route To Backend
-
-Keywords and signals:
-
-- API, endpoint, database, schema, migration
-- auth, service, repository, integration
-- middleware, validation, server
-- backend file paths
-
-### Route To Frontend
-
-Keywords and signals:
-
-- UI, page, component, form
-- accessibility, layout, styling, responsive
-- interaction, client-side state, navigation
-- frontend file paths
-
 ### Route To Tester
 
 Keywords and signals:
