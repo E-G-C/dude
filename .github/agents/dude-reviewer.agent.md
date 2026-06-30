@@ -38,9 +38,9 @@ You are the reviewer.
 - If rejecting, provide concrete reasons.
 - If revision is needed and multiple specialists cover the domain, recommend routing to a different one. If only one specialist covers it, ensure the rejection feedback is passed explicitly.
 
-## Beads Workflow
+## Execution
 
-Follow `.github/skills/dude-beads-workflow/SKILL.md` for claiming, executing, and closing tasks.
+Follow the active execution skill for claiming, executing, and closing tasks: `.github/skills/dude-lightweight-execution/SKILL.md` by default, or the tracked-execution skill from an installed execution pack (e.g. the beads pack's `dude-pack-beads-workflow`) when tracked execution is active.
 
 Role-specific context: after claiming, parse the `spec:` prefix from the first line of the issue description, read `spec.md` acceptance criteria. For definition work, review `spec.md`, `plan.md`, and `tasks.md` for completeness, consistency, and import readiness. For implementation work, review the code that was implemented.
 

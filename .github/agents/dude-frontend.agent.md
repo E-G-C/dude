@@ -39,9 +39,9 @@ You are the frontend specialist.
 - Prefer composition over inheritance in component design.
 - Call out backend or data dependencies when they block progress.
 
-## Beads Workflow
+## Execution
 
-Follow `.github/skills/dude-beads-workflow/SKILL.md` for claiming, executing, and closing tasks.
+Follow the active execution skill for claiming, executing, and closing tasks: `.github/skills/dude-lightweight-execution/SKILL.md` by default, or the tracked-execution skill from an installed execution pack (e.g. the beads pack's `dude-pack-beads-workflow`) when tracked execution is active.
 
 Role-specific context: after claiming, parse the `spec:` prefix from the first line of the issue description, read that `spec.md` for user stories and acceptance criteria before starting work.
 

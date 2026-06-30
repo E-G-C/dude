@@ -1,5 +1,5 @@
 ---
-name: "dude-beads-workflow"
+name: "dude-pack-beads-workflow"
 description: "Use when working with Beads issue tracking: bd ready, bd create, bd update, bd close, claiming tasks, resume-first execution, pending work, blocked work, discovered bugs, execution status, mirroring Beads state back to tasks.md, or running @dude sync Beads to tasks.md."
 ---
 
@@ -17,7 +17,7 @@ Standard workflow for all Dude specialists when working on tasks tracked in Bead
 
 ## Feature Lifecycle After Import
 
-- A feature's identity is the brainstorm `spec_path:` value (full path to `spec.md`, e.g. `specs/001-feature-name/spec.md`). Every Beads issue imported from that feature carries the same value as a `spec:` prefix in the first line of its description. See `dude-spec-import-to-beads` for the canonical-identity rule.
+- A feature's identity is the brainstorm `spec_path:` value (full path to `spec.md`, e.g. `specs/001-feature-name/spec.md`). Every Beads issue imported from that feature carries the same value as a `spec:` prefix in the first line of its description. See `dude-pack-beads-spec-import` for the canonical-identity rule.
 - A feature is considered `imported` when at least one Beads issue has a description starting with `spec: <spec_path>` matching the brainstorm's `spec_path` (literal match).
 - A feature is considered `active` when it currently has ready or in-progress Beads work.
 - After import, Beads is the live board and source of truth.
@@ -27,7 +27,7 @@ Standard workflow for all Dude specialists when working on tasks tracked in Bead
 
 The mirror is one-way: Beads -> `tasks.md`. While tracked execution is active, never use `tasks.md` to override Beads.
 
-Throughout this skill, an **executable Beads issue** is one whose Beads `type` is not `epic`. Non-executable grouping issues — specifically the deferred feature epic created by `dude-spec-import-to-beads` and any other `type=epic` issue — never participate in mirror writes or mirror verification. A **representable** issue is an executable issue whose Beads status maps to a markdown glyph in the table below; deferred executable issues are reportable as `unsupported` but are not silently mirrored.
+Throughout this skill, an **executable Beads issue** is one whose Beads `type` is not `epic`. Non-executable grouping issues — specifically the deferred feature epic created by `dude-pack-beads-spec-import` and any other `type=epic` issue — never participate in mirror writes or mirror verification. A **representable** issue is an executable issue whose Beads status maps to a markdown glyph in the table below; deferred executable issues are reportable as `unsupported` but are not silently mirrored.
 
 When the coordinator changes Beads execution state, mirror the result to the matching canonical task unit in `specs/<feature>/tasks.md` when all of these are true:
 
@@ -47,7 +47,7 @@ Mirror status mapping:
 | `closed` | `[x]` |
 | `deferred` | skip grouping issues; report executable issues as unsupported |
 
-`deferred` is reserved by Dude for non-executable grouping issues such as the feature epic created by `dude-spec-import-to-beads`. Those issues do not correspond to any canonical task header in `tasks.md`, so mirror skips them silently and does not report them as ambiguous. If an executable task is deferred in Beads, do not silently drop it: report it as unsupported by the current markdown glyph set and ask whether to keep it only in Beads, reopen it, or represent it as blocked.
+`deferred` is reserved by Dude for non-executable grouping issues such as the feature epic created by `dude-pack-beads-spec-import`. Those issues do not correspond to any canonical task header in `tasks.md`, so mirror skips them silently and does not report them as ambiguous. If an executable task is deferred in Beads, do not silently drop it: report it as unsupported by the current markdown glyph set and ask whether to keep it only in Beads, reopen it, or represent it as blocked.
 
 Mirror only the task-state glyph and Beads-derived blocker metadata when needed. Preserve the task key, labels, description, explicit `deps:`, and human-authored task text. If a generated board region is present, regenerate it as a complete replacement from the canonical task units.
 

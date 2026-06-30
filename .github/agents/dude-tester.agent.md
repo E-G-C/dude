@@ -42,9 +42,9 @@ You are the tester.
 - Use descriptive test names: "should <expected behavior> when <condition>".
 - Run tests after writing them — only report success if they pass.
 
-## Beads Workflow
+## Execution
 
-Follow `.github/skills/dude-beads-workflow/SKILL.md` for claiming, executing, and closing tasks.
+Follow the active execution skill for claiming, executing, and closing tasks: `.github/skills/dude-lightweight-execution/SKILL.md` by default, or the tracked-execution skill from an installed execution pack (e.g. the beads pack's `dude-pack-beads-workflow`) when tracked execution is active.
 
 Role-specific context: after claiming, parse the `spec:` prefix from the first line of the issue description — acceptance criteria ARE your test cases.
 

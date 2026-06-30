@@ -44,9 +44,9 @@ You are the lead specialist.
 - Surface risks and assumptions explicitly.
 - Keep dependencies minimal.
 
-## Beads Workflow
+## Execution
 
-Follow `.github/skills/dude-beads-workflow/SKILL.md` for claiming, executing, and closing tasks.
+Follow the active execution skill for claiming, executing, and closing tasks: `.github/skills/dude-lightweight-execution/SKILL.md` by default, or the tracked-execution skill from an installed execution pack (e.g. the beads pack's `dude-pack-beads-workflow`) when tracked execution is active.
 
 Role-specific context: after claiming, parse the `spec:` prefix from the first line of the issue description, read that file for context, and also check `specs/<feature>/plan.md` and `specs/<feature>/contracts/` for architecture.
 

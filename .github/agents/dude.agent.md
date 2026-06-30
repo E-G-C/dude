@@ -541,14 +541,14 @@ Manual import still requires a defined brainstorm file as the identity source:
 
 1. Resolve the feature directory from the user's input or from `specs/`.
 2. Scan `brainstorm/` for a file whose `spec_path` matches `<selected-dir>/spec.md`. If no matching brainstorm file exists, stop and tell the user to run `@dude draft <feature>` first so a brainstorm ledger is created and later defined.
-3. Load `.github/skills/dude-spec-import-to-beads/SKILL.md` and follow the Import Algorithm for reading artifacts, parsing task lines, creating Beads issues, deriving dependencies, and mapping priorities.
+3. Load the beads pack's `dude-pack-beads-spec-import` skill and follow the Import Algorithm for reading artifacts, parsing task lines, creating Beads issues, deriving dependencies, and mapping priorities.
 4. After import, run `bd ready --json`, discard epics or other non-executable grouping issues from that ready set, and report how many task issues were created and how many actionable tasks are ready.
 
 ## Automatic Feature Handoff
 
 Use this during `@dude track` before selecting new ready work.
 
-1. Load `.github/skills/dude-spec-import-to-beads/SKILL.md` and follow its `## Canonical Feature Identity` rule: brainstorm `spec_path` and the Beads issue description `spec:` prefix must carry the same value (the full path to the feature's `spec.md`).
+1. Load the beads pack's `dude-pack-beads-spec-import` skill and follow its `## Canonical Feature Identity` rule: brainstorm `spec_path` and the Beads issue description `spec:` prefix must carry the same value (the full path to the feature's `spec.md`).
 2. Scan `brainstorm/` for files marked `status: defined` with a populated `spec_path:`.
 3. For each defined entry, run `bd list --json` and check whether any issue's description starts with `spec: <spec_path>` (literal string match). Import the feature only when no such issue exists; otherwise skip it.
 4. Do not ask the user for a `specs/<feature>/` path during this automatic handoff; the brainstorm file is the pointer.
@@ -558,7 +558,7 @@ Use this during `@dude track` before selecting new ready work.
 
 Use this only when the project explicitly uses Beads and the user asks to track work, continue work, or take the next ready issue.
 
-Each dispatched specialist follows the standard Beads workflow in `.github/skills/dude-beads-workflow/SKILL.md` for claiming and context reading. Specialists report results back to the coordinator; only the coordinator calls `bd close`.
+Each dispatched specialist follows the beads pack's `dude-pack-beads-workflow` skill for claiming and context reading. Specialists report results back to the coordinator; only the coordinator calls `bd close`.
 
 1. Run `bd list --status in_progress --json`.
 2. If one or more tasks are already in progress, resume or report them before claiming new work.
@@ -568,7 +568,7 @@ Each dispatched specialist follows the standard Beads workflow in `.github/skill
 6. If no actionable tasks are ready, report that all work is done, in progress, or blocked, and include any defined features that still need manual repair before they can be imported.
 7. Preserve Beads ready order as the default dispatch order.
 8. For each ready task:
-   - match it to the best specialist using the normal roster-driven routing rules; if useful, load `.github/skills/dude-generic-routing/SKILL.md` and its `## Beads Issue Matching` section to interpret issue text and labels
+   - match it to the best specialist using the normal roster-driven routing rules; if useful, load `.github/skills/dude-generic-routing/SKILL.md` and its `## Task Matching` section to interpret task text and labels
    - include the task details in the delegation context: ID, title, description, labels, and the `spec:` prefix from the description
    - dispatch to the owning specialist
 9. If multiple ready tasks are truly independent, use the normal parallel-dispatch rules before fanning out. Launch at most 2 specialists in parallel by default, and do not parallelize tasks that compete for the same artifacts or feature decision point.
@@ -604,7 +604,7 @@ Status is read-only. It may query the filesystem and Beads for current state, bu
 
 ## Beads Discipline
 
-All specialists follow `.github/skills/dude-beads-workflow/SKILL.md` for command usage and claiming. Only the coordinator calls `bd close` — specialists report results back. The coordinator-specific rules below govern authority and source of truth:
+All specialists follow the beads pack's `dude-pack-beads-workflow` skill for command usage and claiming. Only the coordinator calls `bd close` — specialists report results back. The coordinator-specific rules below govern authority and source of truth:
 
 - `@dude track` is the normal automatic handoff from defined features into Beads.
 - Explicit manual import is a fallback for advanced cases.
