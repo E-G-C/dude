@@ -1,0 +1,34 @@
+# =============================================================================
+#  Newsroom settings for the SECI AI Community Docsy site.
+#
+#  This skill writes a news article into content/news/ that the site's own
+#  template renders. Styling comes from the site theme, so there are no colors,
+#  fonts, or HTML settings here. Edit the values below to change the defaults.
+# =============================================================================
+
+site:
+  community: "the SECI AI Community"
+  newsDir: "content/news"
+  # Files are named with a date prefix that matches the front-matter `date`.
+  filenamePattern: "YYYY-MM-DD-slug.md"
+  baseURL: "https://cloudops-innovation.github.io/SECI-AI-Community/"
+
+# Front matter the news template (layouts/news/single.html) reads.
+frontmatter:
+  required: ["title", "date", "author", "categories", "summary", "tags"]
+  optional: ["image"]
+  # categories[0] sets the card badge and color in the news feed. For a NEWS
+  # article pick exactly one of these:
+  newsCategories: ["Breaking", "Announcements", "Community", "Learning"]
+  # "Events" (or any event_* field) routes to the event layout instead. For event
+  # invites use the dude-pack-newsroom-event-from-calendar skill, not this one.
+  tagStyle: "lowercase, hyphenated, 2 to 5 tags (for example: sre-agent, incident-management)"
+  authorNote: "Use the presenter or owner's real name; the template builds the avatar initials from it."
+
+voice:
+  # Used when no author is given. Prefer a real person's name when you have one.
+  defaultAuthor: "The SECI AI Community"
+  tone: >-
+    Plain, factual, and warm. Write like an engineer telling a coworker what happened
+    and why it is useful. No hype and no sales voice. Avoid the AI writing tells listed
+    in references/editorial-guide.md section 3, including overused em dashes.

@@ -1,0 +1,131 @@
+{{- /*
+  REFERENCE TEMPLATE — static-safe "next event" strip (skill: dude-pack-newsroom-static-safe-time).
+
+  This is a copy-paste starting point, NOT a wired-in shortcode. It demonstrates
+  the full pattern: the build emits event DATA + a no-JS fallback; an inline
+  script picks the soonest upcoming event from the VISITOR'S clock at page load,
+  resolving same-day ties by start time and hinting at same-day siblings.
+
+  Adapt the gather query, the markup, and the class names to your component.
+  The same shape generalizes to an events calendar (partition into
+  next/upcoming/past) or a countdown (diff the chosen day from `today`).
+*/ -}}
+{{- $news := site.GetPage "/news" -}}
+{{- $eventsURL := "/news/events/" | relLangURL -}}
+{{- with site.GetPage "/news/events" }}{{ $eventsURL = .RelPermalink }}{{ end -}}
+{{- $events := where $news.RegularPages "Params.categories" "intersect" (slice "Events") -}}
+{{- $events = where $events "Params.list_exclude" "!=" true -}}
+
+{{- /* Build DATA only — no build-time "next" decision. time.AsTime because
+       event_date reads as a STRING and would fail .Format otherwise. */ -}}
+{{- $data := slice -}}
+{{- range $events -}}
+  {{- $ed := time.AsTime (.Params.event_date | default .Date) -}}
+  {{- $data = $data | append (dict
+        "title"    .Title
+        "url"      .RelPermalink
+        "day"      ($ed.Format "2006-01-02")
+        "time"     (.Params.event_time | default "")
+        "location" (.Params.location | default "")
+        "host"     (.Params.host | default "")
+  ) -}}
+{{- end -}}
+
+{{- if gt (len $data) 0 }}
+<div data-next-root>
+  {{- /* DATA ISLAND — safeJS stops html/template re-encoding the jsonify output
+         (which would yield a quoted string, breaking JSON.parse → forEach). */ -}}
+  <script type="application/json" data-next-events>{{ $data | jsonify | safeJS }}</script>
+
+  <a class="next" data-next href="#" hidden>
+    <span class="next__date">
+      <span data-next-mon></span><span data-next-day></span><span data-next-dow></span>
+    </span>
+    <span class="next__body">
+      <span class="next__chips">
+        <span class="next__flag">Next event</span>
+        <span data-next-rel></span>
+        <span data-next-more hidden></span>
+      </span>
+      <span class="next__title" data-next-title></span>
+      <span class="next__metas">
+        <span><span data-next-when></span></span>
+        <span data-next-loc-wrap>· <span data-next-loc></span></span>
+        <span data-next-host-wrap>· Hosted by <span data-next-host></span></span>
+      </span>
+    </span>
+  </a>
+
+  {{- /* NO-JS FALLBACK — indexable, works with scripts disabled. */ -}}
+  <noscript><a class="next-fallback" href="{{ $eventsURL }}">See upcoming events &rarr;</a></noscript>
+
+  <script>
+  (function () {
+    var root = document.querySelector("[data-next-root]");
+    if (!root) return;
+    var island = root.querySelector("[data-next-events]");
+    var strip = root.querySelector("[data-next]");
+    if (!island || !strip) return;
+
+    var events;
+    try { events = JSON.parse(island.textContent); } catch (e) { return; } // leave fallback
+    if (!events || !events.length) return;
+
+    function pad(n) { return (n < 10 ? "0" : "") + n; }
+    function ymd(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+    function dayDate(key) { var p = key.split("-"); return new Date(+p[0], +p[1] - 1, +p[2]); }
+    function set(sel, val) { var el = strip.querySelector(sel); if (el) el.textContent = val; }
+
+    // Build labels from explicit arrays (avoids broken toLocaleDateString combos).
+    var MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    var DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+    function render() {
+      var today = new Date(); today.setHours(0, 0, 0, 0);
+      var tkey = ymd(today);
+
+      // Soonest day, then earliest start time (no-time items sort first).
+      var upcoming = events
+        .filter(function (e) { return e.day >= tkey; })
+        .sort(function (a, b) {
+          if (a.day !== b.day) return a.day < b.day ? -1 : 1;
+          return (a.time || "") < (b.time || "") ? -1 : (a.time || "") > (b.time || "") ? 1 : 0;
+        });
+      if (!upcoming.length) { strip.hidden = true; return; } // nothing upcoming → hide
+
+      var ev = upcoming[0];
+      var sameDay = upcoming.filter(function (e) { return e.day === ev.day; }).length;
+      var d = dayDate(ev.day);
+      var diff = Math.round((dayDate(ev.day) - today) / 86400000);
+      var rel = diff === 0 ? "Today" : diff === 1 ? "Tomorrow" : "In " + diff + " days";
+
+      set("[data-next-mon]", MON[d.getMonth()]);
+      set("[data-next-day]", d.getDate());
+      set("[data-next-dow]", DOW[d.getDay()]);
+      set("[data-next-rel]", rel);
+      set("[data-next-title]", ev.title);
+      set("[data-next-when]", DOW[d.getDay()] + ", " + MON[d.getMonth()] + " " + d.getDate() + (ev.time ? " · " + ev.time : ""));
+
+      var locWrap = strip.querySelector("[data-next-loc-wrap]");
+      if (ev.location) { set("[data-next-loc]", ev.location); locWrap.hidden = false; } else if (locWrap) { locWrap.hidden = true; }
+      var hostWrap = strip.querySelector("[data-next-host-wrap]");
+      if (ev.host) { set("[data-next-host]", ev.host); hostWrap.hidden = false; } else if (hostWrap) { hostWrap.hidden = true; }
+
+      var moreEl = strip.querySelector("[data-next-more]");
+      if (moreEl) {
+        if (sameDay > 1) { moreEl.textContent = "+" + (sameDay - 1) + " more that day"; moreEl.hidden = false; }
+        else { moreEl.hidden = true; }
+      }
+
+      strip.setAttribute("href", ev.url || "#");
+      strip.hidden = false;
+    }
+
+    render();
+    // Re-run the selection (not a reload) when a long-open tab regains focus,
+    // so it never shows a stale "next" after midnight rolls over.
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) render(); });
+  })();
+  </script>
+</div>
+{{- end -}}
