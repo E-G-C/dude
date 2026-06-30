@@ -1,0 +1,129 @@
+{
+  "$schema": "https://design-tokens.github.io/community-group/format/",
+  "$description": "Microsoft Visual Brand tokens — internal use. See ../reference/sources.md.",
+  "color": {
+    "brand": {
+      "red":    { "$value": "#F25022", "$type": "color", "$description": "Top-left logo square" },
+      "green":  { "$value": "#7FBA00", "$type": "color", "$description": "Top-right logo square" },
+      "blue":   { "$value": "#00A4EF", "$type": "color", "$description": "Bottom-left logo square; default primary accent" },
+      "yellow": { "$value": "#FFB900", "$type": "color", "$description": "Bottom-right logo square" },
+      "gray":   { "$value": "#737373", "$type": "color", "$description": "Wordmark gray on light backgrounds" }
+    },
+    "neutral": {
+      "bg":         { "$value": "#FFFFFF", "$type": "color" },
+      "bg-subtle":  { "$value": "#F3F2F1", "$type": "color" },
+      "bg-dark":    { "$value": "#1B1A19", "$type": "color" },
+      "border":     { "$value": "#E1DFDD", "$type": "color" },
+      "text":       { "$value": "#201F1E", "$type": "color" },
+      "text-muted": { "$value": "#605E5C", "$type": "color" },
+      "text-on-dark": { "$value": "#FFFFFF", "$type": "color" }
+    },
+    "semantic": {
+      "primary": { "$value": "{color.brand.blue}",   "$type": "color" },
+      "success": { "$value": "{color.brand.green}",  "$type": "color" },
+      "warning": { "$value": "{color.brand.yellow}", "$type": "color" },
+      "danger":  { "$value": "{color.brand.red}",    "$type": "color" }
+    }
+  },
+  "font": {
+    "family": {
+      "body":    { "$value": "\"Segoe UI Variable Text\", \"Segoe UI Variable\", \"Segoe UI\", system-ui, -apple-system, BlinkMacSystemFont, \"Helvetica Neue\", Helvetica, Arial, sans-serif", "$type": "fontFamily" },
+      "heading": { "$value": "\"Segoe UI Variable Text\", \"Segoe UI Variable\", \"Segoe UI\", system-ui, -apple-system, BlinkMacSystemFont, \"Helvetica Neue\", Helvetica, Arial, sans-serif", "$type": "fontFamily" },
+      "mono":    { "$value": "\"Cascadia Code\", \"Cascadia Mono\", Consolas, \"Courier New\", monospace", "$type": "fontFamily" },
+      "docs":    { "$value": "\"Segoe UI Variable Text\", \"Segoe UI Variable\", \"Segoe UI\", system-ui, -apple-system, BlinkMacSystemFont, \"Helvetica Neue\", Helvetica, Arial, sans-serif", "$type": "fontFamily" },
+      "docs-mono": { "$value": "SFMono-Regular, Consolas, \"Liberation Mono\", Menlo, Courier, monospace", "$type": "fontFamily" }
+    },
+    "weight": {
+      "regular":  { "$value": 400, "$type": "fontWeight" },
+      "semibold": { "$value": 600, "$type": "fontWeight" },
+      "bold":     { "$value": 700, "$type": "fontWeight" }
+    },
+    "size": {
+      "display":  { "$value": "48px", "$type": "dimension" },
+      "h1":       { "$value": "36px", "$type": "dimension" },
+      "h2":       { "$value": "28px", "$type": "dimension" },
+      "h3":       { "$value": "22px", "$type": "dimension" },
+      "h4":       { "$value": "18px", "$type": "dimension" },
+      "body-lg":  { "$value": "18px", "$type": "dimension" },
+      "body":     { "$value": "16px", "$type": "dimension" },
+      "caption":  { "$value": "13px", "$type": "dimension" },
+      "micro":    { "$value": "11px", "$type": "dimension" }
+    },
+    "lineHeight": {
+      "display": { "$value": 1.15, "$type": "number" },
+      "h1":      { "$value": 1.2, "$type": "number" },
+      "h2":      { "$value": 1.25, "$type": "number" },
+      "h3":      { "$value": 1.3, "$type": "number" },
+      "h4":      { "$value": 1.35, "$type": "number" },
+      "body":    { "$value": 1.5, "$type": "number" },
+      "caption": { "$value": 1.4, "$type": "number" },
+      "micro":   { "$value": 1.3, "$type": "number" },
+      "tight":   { "$value": "{font.lineHeight.h1}", "$type": "number" },
+      "normal":  { "$value": "{font.lineHeight.body}", "$type": "number" }
+    }
+  },
+  "docs": {
+    "contentWidth": { "$value": "100%", "$type": "dimension", "$description": "Full available documentation content area; constrain prose separately." },
+    "readableWidth": { "$value": "688px", "$type": "dimension", "$description": "Microsoft Learn-inspired prose measure for paragraphs, headings, and lists." },
+    "wideWidth": { "$value": "100%", "$type": "dimension", "$description": "Wide documentation elements such as tables and code blocks." },
+    "fontSize": {
+      "title":   { "$value": "40px", "$type": "dimension" },
+      "h2":      { "$value": "32px", "$type": "dimension" },
+      "h3":      { "$value": "28px", "$type": "dimension" },
+      "body":    { "$value": "16px", "$type": "dimension" },
+      "compact": { "$value": "14px", "$type": "dimension" },
+      "code":    { "$value": "14px", "$type": "dimension" }
+    },
+    "lineHeight": {
+      "title":   { "$value": "52px", "$type": "dimension" },
+      "h2":      { "$value": 1.3, "$type": "number" },
+      "h3":      { "$value": 1.3, "$type": "number" },
+      "body":    { "$value": "28px", "$type": "dimension" },
+      "list":    { "$value": 1.8, "$type": "number" },
+      "compact": { "$value": 1.5, "$type": "number" },
+      "code":    { "$value": "19px", "$type": "dimension" }
+    },
+    "color": {
+      "link":          { "$value": "#0065B3", "$type": "color" },
+      "link-on-dark":  { "$value": "#75B6E7", "$type": "color" },
+      "code-bg":       { "$value": "{color.neutral.bg-subtle}", "$type": "color" },
+      "code-bg-dark":  { "$value": "#404040", "$type": "color" },
+      "tip-bg":        { "$value": "#DFF6DD", "$type": "color" },
+      "tip-border":    { "$value": "#107C10", "$type": "color" },
+      "tip-bg-dark":   { "$value": "#054B16", "$type": "color" },
+      "tip-text-dark": { "$value": "#DFF6DD", "$type": "color" }
+    }
+  },
+  "space": {
+    "1": { "$value": "4px",  "$type": "dimension" },
+    "2": { "$value": "8px",  "$type": "dimension" },
+    "3": { "$value": "12px", "$type": "dimension" },
+    "4": { "$value": "16px", "$type": "dimension" },
+    "5": { "$value": "24px", "$type": "dimension" },
+    "6": { "$value": "32px", "$type": "dimension" },
+    "7": { "$value": "48px", "$type": "dimension" },
+    "8": { "$value": "64px", "$type": "dimension" }
+  },
+  "radius": {
+    "sm":   { "$value": "2px",    "$type": "dimension" },
+    "md":   { "$value": "4px",    "$type": "dimension" },
+    "lg":   { "$value": "8px",    "$type": "dimension" },
+    "pill": { "$value": "9999px", "$type": "dimension" }
+  },
+  "elevation": {
+    "1": { "$value": "0 1px 2px rgba(0,0,0,0.08)",  "$type": "shadow" },
+    "2": { "$value": "0 2px 6px rgba(0,0,0,0.10)",  "$type": "shadow" },
+    "3": { "$value": "0 4px 12px rgba(0,0,0,0.12)", "$type": "shadow" }
+  },
+  "motion": {
+    "duration": {
+      "micro":    { "$value": "150ms", "$type": "duration" },
+      "standard": { "$value": "250ms", "$type": "duration" },
+      "entrance": { "$value": "400ms", "$type": "duration" }
+    },
+    "easing": {
+      "enter": { "$value": "cubic-bezier(0.1, 0.9, 0.2, 1)", "$type": "cubicBezier" },
+      "exit":  { "$value": "cubic-bezier(0, 0, 0.2, 1)", "$type": "cubicBezier" }
+    }
+  }
+}
