@@ -517,8 +517,12 @@ for (const file of walkMatch(path.join(ROOT, '.github'), (n) => n.endsWith('.md'
 }
 for (const role of [...orphanHandles.keys()].sort()) {
   const { first, count } = /** @type {{first: string, count: number}} */ (orphanHandles.get(role));
-  if (count > 1) fail(`orphan @${role} reference in ${first} (+${count - 1} more)`);
-  else fail(`orphan @${role} reference in ${first}`);
+  // Refs to other pack agents (`@dude-pack-<pack>-<slug>`) downgrade to a
+  // warning: a sibling pack may not be installed in this bundle, and pack
+  // routing legitimately mentions specialists from related packs.
+  const report = role.startsWith('dude-pack-') ? warn : fail;
+  if (count > 1) report(`orphan @${role} reference in ${first} (+${count - 1} more)`);
+  else report(`orphan @${role} reference in ${first}`);
 }
 
 // --- Check 5: coordinator-only block in non-dude / non-spec-lead agents ------
@@ -557,8 +561,12 @@ for (const file of walkMatch(path.join(ROOT, '.github'), (n) => n.endsWith('.md'
 }
 for (const name of [...orphanSkills.keys()].sort()) {
   const { first, count } = /** @type {{first: string, count: number}} */ (orphanSkills.get(name));
-  if (count > 1) fail(`orphan skill reference .github/skills/${name}/ in ${first} (+${count - 1} more)`);
-  else fail(`orphan skill reference .github/skills/${name}/ in ${first}`);
+  // Refs to other pack skills (`.github/skills/dude-pack-<pack>-<slug>/`)
+  // downgrade to a warning for the same reason as @-handle refs above: a
+  // sibling pack may not be installed in this bundle.
+  const report = name.startsWith('dude-pack-') ? warn : fail;
+  if (count > 1) report(`orphan skill reference .github/skills/${name}/ in ${first} (+${count - 1} more)`);
+  else report(`orphan skill reference .github/skills/${name}/ in ${first}`);
 }
 
 // --- Summary -----------------------------------------------------------------
