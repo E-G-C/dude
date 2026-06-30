@@ -216,6 +216,10 @@ function stripFencesAndPlaceholders(content) {
   }
   return out
     .join('\n')
+    // Strip inline `code` spans so code-syntax tokens (e.g. SCSS `@import`,
+    // shell `@-d`, paths inside backticks) don't get mistaken for Dude
+    // handles or skill references.
+    .replace(/`[^`\n]*`/g, '')
     .replace(/-<[A-Za-z][A-Za-z0-9_-]*>/g, '')
     .replace(/<[A-Za-z][A-Za-z0-9_-]*>/g, '');
 }
