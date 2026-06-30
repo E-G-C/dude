@@ -11,7 +11,7 @@ Static validator for the bundle's structural conventions.
 
 Catch the structural mistakes that would otherwise surface as runtime drift: malformed brainstorms, fence imbalance, stale `spec_path:` pointers, duplicate task IDs, oversized memory files, skill frontmatter/name drift, bundle manifest shape violations, orphaned agent-handle references, and orphaned skill-path references.
 
-The linter is **read-only** and **dependency-free**. It runs as either PowerShell (`lint.ps1`) or Bash (`lint.sh`); both produce identical findings and exit codes. No Python, Node, or other runtime is required.
+The linter is **read-only** and dependency-free beyond Node.js itself (Node >= 20 LTS, standard library only). It runs as a single Node script (`lint.mjs`). Node is a documented maintenance-time dependency: it is required only to run bundle tooling such as this linter and `@dude upgrade`, not for normal project work.
 
 ## When To Run
 
@@ -34,21 +34,24 @@ Other skills also call this one as their final verification step. When loaded as
 
 ## Usage
 
-PowerShell (works on Windows, macOS, Linux with `pwsh`):
-
-```pwsh
-pwsh .github/skills/dude-lint/lint.ps1
-pwsh .github/skills/dude-lint/lint.ps1 -Root C:\Work\AI\dude
-```
-
-Bash (works on macOS, Linux, WSL, Git Bash; uses only Bash 3.2-safe constructs so it runs under stock macOS `/bin/bash`):
+Node.js (>= 20 LTS; works on Windows, macOS, Linux):
 
 ```bash
-bash .github/skills/dude-lint/lint.sh
-bash .github/skills/dude-lint/lint.sh /path/to/repo
+node .github/skills/dude-lint/lint.mjs
+node .github/skills/dude-lint/lint.mjs /path/to/repo
 ```
 
+`lint.mjs` is the single, canonical implementation. The legacy `lint.sh` / `lint.ps1` scripts remain temporarily for backward compatibility and will be retired; new callers should invoke `lint.mjs` directly.
+
+The shared namespace/ownership logic lives in `.github/skills/dude-engine/lib/ownership.mjs` and is reused by `dude-bundle-upgrade`, so both tools classify the core / pack / local tiers identically.
+
 Exit code is `0` if no failures, `1` if any check produced a `[FAIL]`. Warnings do not fail the run.
+
+Unit tests for the shared ownership module:
+
+```bash
+node --test .github/skills/dude-engine/lib/ownership.test.mjs
+```
 
 ## Checks
 
@@ -83,16 +86,17 @@ Exit code is `0` if no failures, `1` if any check produced a `[FAIL]`. Warnings 
    - Fail when the manifest contains anything other than the four metadata fields (`source_repo`, `source_ref`, `installed_sha`, `installed_at`), when any required field is absent, or when `installed_sha` is not a 40-character lowercase git sha.
    - The manifest is **metadata only**. Base ownership is derived from the namespace convention by the engine, not from a manifest list. Local edits to base files are silently overwritten on `@dude upgrade`; use the reserved `dude-local-<slug>` namespace to fork base files you want to customize.
 
-6. **Project-local namespace advisories**
-   - Warn when an agent file under `.github/agents/` is neither `dude.agent.md` nor matches `dude-<slug>.agent.md` (with or without the `local-` prefix). The recommendation is to rename to `.github/agents/dude-local-<slug>.agent.md`.
-   - Warn when a top-level skill directory under `.github/skills/` does not match `dude-<slug>` (with or without the `local-` prefix) and is not the reserved `.github/skills/project/` skill. The recommendation is to rename to `.github/skills/dude-local-<slug>/`.
+6. **Namespace advisories (core / pack / local tiers)**
+   - Ownership is derived from the namespace convention by the shared classifier in `dude-engine`. Three reserved tiers are never warned: **core** (`dude.agent.md`, `dude-<slug>.agent.md`, `dude-<slug>/` skills), **pack** (`dude-pack-<pack>-<slug>`), and **local** (`dude-local-<slug>`).
+   - Warn when an agent file under `.github/agents/` falls outside all three tiers (an unreserved, project-owned agent). The recommendation is to rename to `.github/agents/dude-local-<slug>.agent.md`.
+   - Warn when a top-level skill directory under `.github/skills/` falls outside all three tiers and is not the reserved `.github/skills/project/` skill. The recommendation is to rename to `.github/skills/dude-local-<slug>/`.
    - Exempt `.github/skills/project/`, which is the reserved project knowledge skill.
 
 7. **Roster orphans**
    - Collect every `@<role>` reference under `.github/` (excluding fenced code blocks, including indented fences, and the `dude` and `dude-lint` allowlist).
    - Only collect `@<role>` when the `@` is not preceded by an alphanumeric or underscore character, so durable task IDs like `T001@g7h8i9j0` are not reported as orphan roles.
    - Fail for any handle that does not match an existing `.github/agents/<name>.agent.md`.
-   - Placeholder examples such as `@dude-local-<slug>` are ignored after placeholder stripping, but real `@dude-local-*` handles must resolve to actual agent files.
+   - Placeholder examples such as `@dude-local-<slug>` and `@dude-pack-<pack>-<slug>` are ignored after placeholder stripping, but real `@dude-local-*` and `@dude-pack-*` handles must resolve to actual agent files.
 
 8. **Coordinator-only boundary block**
    - Fail when any `.github/agents/*.agent.md` (except `dude.agent.md` and `dude-spec-lead.agent.md`) is missing the `**Coordinator-only artifacts:**` block from `dude-team-expansion`. Spec-lead is exempt because its own Rules and Workflow step 11 explicitly authorize it to maintain `status:`, `spec_path:`, and `## Coordinator Log` during definition.
@@ -100,7 +104,7 @@ Exit code is `0` if no failures, `1` if any check produced a `[FAIL]`. Warnings 
 9. **Orphan skill references**
    - Collect every `.github/skills/<name>/...` path reference under `.github/**/*.md` (excluding fenced code blocks).
    - Fail for any `<name>` that does not match an existing `.github/skills/<name>/` directory.
-   - Placeholder examples such as `.github/skills/dude-local-<slug>/` are ignored after placeholder stripping, but real `.github/skills/dude-local-*/` references must resolve to actual skill directories.
+   - Placeholder examples such as `.github/skills/dude-local-<slug>/` and `.github/skills/dude-pack-<pack>-<slug>/` are ignored after placeholder stripping, but real `.github/skills/dude-local-*/` and `.github/skills/dude-pack-*/` references must resolve to actual skill directories.
    - Path-form is the only trigger; backticked skill names in prose are not flagged here, since the false-positive rate would be too high for a `[FAIL]` check. Wire-up references in agents and skills should always use the full `.github/skills/<name>/` path so this check can validate them.
 
 ## Output
