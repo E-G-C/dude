@@ -235,19 +235,17 @@ graph TB
     USER(["You"]) --> DUDE
     DUDE --> SPEC["@dude-spec-lead\nFeature definition"]
     DUDE --> LEAD["@dude-lead\nArchitecture direction"]
-    DUDE --> BACKEND["@dude-backend\nServer-side implementation"]
-    DUDE --> FRONTEND["@dude-frontend\nUI implementation"]
-    DUDE --> RELEASE["@dude-release-manager\nTag-driven release versioning and pipeline parity"]
     DUDE --> TESTER["@dude-tester\nVerification"]
     DUDE --> REVIEWER["@dude-reviewer\nAcceptance"]
     SPEC -.-> DUDE
     LEAD -.-> DUDE
-    BACKEND -.-> DUDE
-    FRONTEND -.-> DUDE
-    RELEASE -.-> DUDE
     TESTER -.-> DUDE
     REVIEWER -.-> DUDE
 ```
+
+This is the lean **core** roster. Installing a pack can add specialists — the
+**web** pack adds `@dude-pack-web-backend` and `@dude-pack-web-frontend`, and the
+**release** pack adds `@dude-pack-release-manager`.
 
 The roster is dynamic: `@dude` updates routing as agents are added or removed,
 so this map reflects the current default bundle but is not fixed. See

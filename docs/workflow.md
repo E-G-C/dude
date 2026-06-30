@@ -11,8 +11,8 @@ After `@dude define`, choose one of three paths:
 | Path | Use it when | Live place |
 |---|---|---|
 | Definition Only | You only need the plan | `specs/<feature>/` |
-| Lightweight Execution | You want to implement without an issue tracker | `specs/<feature>/tasks.md` |
-| Tracked Execution | You want Beads issue tracking | Beads |
+| Lightweight Execution | You want to implement without an issue tracker (core default) | `specs/<feature>/tasks.md` |
+| Tracked Execution (beads pack) | You want issue tracking on a board — install with `@dude add pack beads` | the tracked board |
 
 ```mermaid
 graph LR
@@ -23,22 +23,21 @@ graph LR
     PACKAGE --> STOP["Definition Only"]
     PACKAGE --> TASKS["tasks.md"]
     TASKS --> DONE["Feature done"]
-    PACKAGE --> TRACK_NOW["@dude track now"]
-    TASKS --> TRACK_LATER["@dude track later"]
-    TRACK_NOW --> BEADS["Beads board"]
-    TRACK_LATER --> BEADS
-    BEADS --> DONE
+    PACKAGE -.->|optional: beads pack| TRACK["@dude track"]
+    TASKS -.->|optional: beads pack| TRACK
+    TRACK -.-> BOARD["Tracked board"]
+    BOARD -.-> DONE
 ```
 
 Key rules:
 
 - `@dude draft` creates or refreshes the brainstorm.
 - `@dude define` creates or refreshes the package.
-- Beads is an optional tracker, not the final destination.
-- Lightweight Execution can finish the feature without Beads.
-- `tasks.md` is live only before Beads.
-- Once `@dude track` runs, Beads is live and authoritative.
-- While Beads is live, `tasks.md` may be kept as a one-way mirror for portability, but it is not used to choose ready work or decide completion.
+- Lightweight Execution from `tasks.md` is the core default and can finish the feature on its own.
+- Tracked execution is optional and comes from the **beads pack** (`@dude add pack beads`); it is not the final destination.
+- `tasks.md` is live until you import to a tracked board.
+- Once `@dude track` runs (beads pack), the tracked board is live and authoritative.
+- While the tracked board is live, `tasks.md` may be kept as a one-way mirror for portability, but it is not used to choose ready work or decide completion.
 - `@dude status` is always read-only.
 - `@dude work` is an optional accelerator (not a new lane in the diagram above): it repeats iterations inside whichever execution lane is already live and stops on the first natural boundary. See [Optional Continuous Work](#optional-continuous-work).
 

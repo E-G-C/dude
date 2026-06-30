@@ -10,8 +10,11 @@ The simple idea:
 3. Dude turns that brainstorm into a spec, plan, and task list.
 4. You either stop there or implement from the task list.
 
-You do not need Beads, extra setup, or a big process to start. Use Beads later
-only when you want a real issue tracker.
+You do not need extra setup or a big process to start. The lean core handles
+the whole flow — define a feature, then implement straight from `tasks.md`.
+When you want more — a tracked issue board, release tooling, web specialists, or
+tests-first discipline — you add an optional **pack**. Nothing domain-specific
+is loaded until you ask for it.
 
 ## The Whole Flow
 
@@ -22,28 +25,27 @@ flowchart LR
   BRAIN --> DEFINE["@dude define"]
   DEFINE --> PACKAGE["specs/<feature>/\nspec.md + plan.md + tasks.md"]
   PACKAGE --> STOP["Stop here\nDefinition Only"]
-  PACKAGE --> TASKS["Implement from tasks.md\nNo Beads"]
+  PACKAGE --> TASKS["Implement from tasks.md\n(Lightweight, core default)"]
   TASKS --> DONE["Feature done"]
-  PACKAGE --> TRACK_NOW["@dude track\nUse Beads now"]
-  TASKS --> TRACK_LATER["@dude track\nUse Beads later"]
-  TRACK_NOW --> BEADS["Beads board"]
-  TRACK_LATER --> BEADS
-  BEADS --> DONE
+  PACKAGE -.->|optional: beads pack| TRACK["@dude track\nTracked board"]
+  TASKS -.->|optional: beads pack| TRACK
+  TRACK -.-> DONE
 ```
 
-Beads is not the destination. It is only an optional tracking board. You can
-finish the feature through `tasks.md` without ever using Beads.
+The core default is **Lightweight Execution**: implement straight from
+`tasks.md`. A tracked issue board is optional and comes from the **beads pack**
+(`@dude add pack beads`); it is not required to finish a feature.
 
 One rule keeps the workflow clear: there is only one authoritative live place at
-a time. When Beads is live, Dude may still keep `tasks.md` updated as a
+a time. When a tracked board is live, Dude may still keep `tasks.md` updated as a
 portable mirror, but that mirror does not decide what is ready or done.
 
 | If you are here | The live place is | What you do |
 |---|---|---|
 | Shaping the idea | `brainstorm/<feature>.md` | Review the draft, edit it if needed, and answer questions |
 | Defined, not implementing | `specs/<feature>/` | Read the spec and plan |
-| Implementing without Beads | `specs/<feature>/tasks.md` | Ask Dude for the next task |
-| Implementing with Beads | Beads | Track the same work as issues until it is done; `tasks.md` may mirror Beads for fallback |
+| Implementing (core default) | `specs/<feature>/tasks.md` | Ask Dude for the next task |
+| Implementing on a tracked board (beads pack) | the tracked board | Track the same work as issues until done; `tasks.md` may mirror it for fallback |
 
 ## Quick Start
 
@@ -112,8 +114,8 @@ In plain English:
 - `brainstorm/...` is the living document, a working note between you and Dude.
 - `spec.md` says what the feature must do.
 - `plan.md` says how the project should build it.
-- `tasks.md` is the work list if you choose to implement without Beads, and a
-  non-authoritative mirror when Beads is active.
+- `tasks.md` is the work list for Lightweight Execution (the core default), and
+  a non-authoritative mirror when a tracked board (beads pack) is active.
 
 Let Dude maintain workflow bookkeeping like `status:`, `spec_path:`, generated
 board sections, and task checkboxes. You edit the idea and answers; Dude keeps
@@ -127,8 +129,10 @@ the workflow state tidy.
 | `@dude define <feature>` | Turn the brainstorm into spec, plan, and tasks |
 | `@dude status` | See where you are and what is live |
 | `@dude work [<feature>] [--max N]` | Keep going: run the next few ready tasks in whichever lane is already live |
-| `@dude track` | Move work into Beads when you want issue tracking |
-| `@dude sync Beads to tasks.md` | Refresh the markdown mirror from Beads before fallback or after manual Beads changes |
+| `@dude list packs` | See available and installed optional packs |
+| `@dude add pack <name>` | Install an optional capability (e.g. `beads`, `release`, `web`, `practices`) |
+| `@dude track` | Move work onto a tracked board (requires the `beads` pack) |
+| `@dude sync Beads to tasks.md` | Refresh the markdown mirror from the tracked board (beads pack) |
 | `@dude flag <problem>` | Send a blocker or bad assumption back to the right place |
 
 `@dude status`, `@dude diff`, and `@dude self-check` are read-only orientation
@@ -138,12 +142,14 @@ commands. They are safe to run when you are unsure.
 
 ```text
 .
-├── .github/   # portable Dude Coder bundle
+├── .github/   # portable lean-core Dude bundle
+├── library/   # optional pack catalog (install with @dude add pack)
 ├── docs/      # detailed guides and reference material
 └── README.md  # short entrypoint and default quick start
 ```
 
-- `.github/` is the portable bundle you copy into another repository.
+- `.github/` is the portable lean-core bundle you copy into another repository.
+- `library/packs/` is the catalog of optional packs you install on demand.
 - `docs/` is the repo-local documentation set for deeper workflow details.
 
 ## Updating Dude Later
@@ -161,30 +167,52 @@ The safe path is preview, apply, rollback only if needed. Details like
 manifest metadata and the namespace convention for base ownership live in
 [docs/upgrading.md](docs/upgrading.md).
 
-## When To Add Beads
+## Packs (Optional Expansions)
 
-Stay in Lightweight Execution by default. Add Beads only when you want issue-
-level tracked execution, richer multi-user history, or longer-running work that
-benefits from a dedicated external board.
+The bundle under `.github/` ships only the lean core — the feature workflow that
+every project needs. Everything domain- or workflow-specific lives in the
+catalog at [library/packs/](library/packs/README.md) and installs only when you
+ask. Think of it as a small baseplate with bricks you snap on as needed.
 
-If you are not there yet, keep using `tasks.md` as the live markdown execution
-board with its derived `Ready / In Progress / Blocked / Done` view and avoid
-the extra setup overhead.
+| Pack | Adds | Install when |
+|---|---|---|
+| `beads` | a tracked issue board (import, claim/close, mirror) | you want issue-level tracking instead of `tasks.md` |
+| `release` | a release-manager agent + tag / pipeline-parity / write-back skills | you ship versioned releases |
+| `web` | backend and frontend specialist agents | you build web apps (APIs + UI) |
+| `practices` | a tests-first (TDD) workflow skill | you want tests-first discipline |
 
-If you do use Beads, Beads stays authoritative. Dude mirrors successful Beads
-closes back into `tasks.md` when the task key maps cleanly, and you can run
-`@dude sync Beads to tasks.md` before switching machines or falling back to
-Lightweight Execution. `@dude status` can verify whether the mirror is current,
-but it stays read-only and never performs the sync for you.
+```text
+@dude list packs
+@dude add pack beads
+@dude remove pack beads
+```
+
+Installed packs use the reserved `dude-pack-*` namespace and are **preserved**
+across `@dude upgrade` — a core refresh never deletes what you installed.
+
+### When to add the beads pack
+
+Stay in Lightweight Execution by default. Add the `beads` pack only when you
+want issue-level tracked execution, richer multi-user history, or longer-running
+work that benefits from a dedicated external board. If you are not there yet,
+keep using `tasks.md` as the live board with its derived
+`Ready / In Progress / Blocked / Done` view and avoid the extra setup overhead.
+
+When the beads pack is active, the tracked board stays authoritative. Dude
+mirrors successful closes back into `tasks.md` when the task key maps cleanly,
+and you can run `@dude sync Beads to tasks.md` before switching machines or
+falling back to Lightweight Execution. `@dude status` can verify whether the
+mirror is current, but it stays read-only and never performs the sync for you.
 
 ### Optional: keep working
 
 Use `@dude work` when you want Dude to run the next few ready tasks without
 re-issuing one verb per task. It is not a new lane — it runs inside whichever
-execution lane is already live (Lightweight from `tasks.md` or Tracked from
-Beads) and stops on the first natural boundary (no ready task, a real blocker,
-failed verification, or the configured limit). Default cap is `--max 3`. The
-full verb is documented in [docs/commands.md](docs/commands.md#dude-work).
+execution lane is already live (Lightweight from `tasks.md`, or a tracked board
+when the beads pack is installed) and stops on the first natural boundary (no
+ready task, a real blocker, failed verification, or the configured limit).
+Default cap is `--max 3`. The full verb is documented in
+[docs/commands.md](docs/commands.md#dude-work).
 
 ```text
 @dude work expense-entry --max 3
@@ -201,4 +229,5 @@ Read these only when you need more than the quick start:
 - [Commands and prompt shapes](docs/commands.md) — full command reference.
 - [Starting from a PRD draft](docs/prd-drafts.md) — use a longer product draft as input.
 - [Definition and execution reference](docs/reference.md) — advanced details and ownership rules.
+- [Pack catalog](library/packs/README.md) — optional expansions and how to install them.
 - [Upgrading the bundle](docs/upgrading.md) — update Dude itself safely.

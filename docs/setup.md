@@ -2,7 +2,7 @@
 
 [Back to root README](../README.md) | [Docs index](README.md) | [Workflow modes](workflow.md)
 
-Use the root README for the short no-Beads quick start and the basic repo
+Use the root README for the short lean-core quick start and the basic repo
 layout. This page owns the deeper setup material: prerequisites, first real
 feature setup, guardrails, advanced memory seeding, roster changes, and
 workflow boundaries.
@@ -10,9 +10,10 @@ workflow boundaries.
 ## Prerequisites
 
 - GitHub Copilot (VS Code or CLI)
-- Beads if you want tracked execution:
+- Node.js >= 20 for the bundle-maintenance scripts (lint, upgrade, pack compose)
+- Beads only if you install the **beads pack** for tracked execution:
   `go install github.com/steveyegge/beads/cmd/bd@latest`
-- On Windows, keep the manual Dolt server-mode steps from [Workflow modes and lifecycle](workflow.md)
+- On Windows, if you use the beads pack, keep the manual Dolt server-mode steps from [Workflow modes and lifecycle](workflow.md)
   handy before you run `bd init`. If embedded Dolt or CGO fails, switch to that
   path immediately instead of retrying plain `bd init`.
 
@@ -24,7 +25,8 @@ feature as long as you provide the desired outcome and any hard constraints.
 
 The minimum useful setup is:
 
-- copy `.github/` into the target repository
+- copy `.github/` into the target repository (and `library/` if you want to install optional packs)
+- optionally install packs you need with `@dude add pack <name>`
 - optionally remember one to three durable constraints
 - start with `@dude draft <feature>`
 - once `@dude define <feature>` completes, the easiest way to continue is `@dude work <feature>` — it runs the next few ready tasks in whichever execution lane is live and stops on the first natural boundary (see [Optional Continuous Work](workflow.md#optional-continuous-work))
@@ -100,15 +102,16 @@ More example prompts:
 ### Optional: customize the roster after your first feature
 
 Once you have completed your first successful `draft -> define` loop, you can
-prune agents that do not fit your project:
+prune agents that do not fit your project. For example, if you installed the
+web pack on a backend-only project:
 
 ```text
 @dude remove the frontend agent, this is a backend-only project
 ```
 
-Dude will delete the `.github/agents/dude-frontend.agent.md` file and update its
-routing automatically. The Dynamic Roster Rule in `dude-generic-routing` adapts based
-on whichever agents remain.
+Dude will delete the `.github/agents/dude-pack-web-frontend.agent.md` file and
+update its routing automatically. The Dynamic Roster Rule in
+`dude-generic-routing` adapts based on whichever agents remain.
 
 ### Solo developer path
 
@@ -126,15 +129,15 @@ still uses `dude-verification-before-completion` before close, but it does not
 require a separate solo-only workflow or command surface.
 
 If you are only using Dude Coder for feature definition, you can stop at the
-`specs/<feature>/` package. Beads-specific execution rules apply once you choose
-tracked execution and import tasks.
+`specs/<feature>/` package. Tracked-execution rules (from the beads pack) apply
+only once you install it, choose tracked execution, and import tasks.
 
 ## Operational Skills
 
 Dude Coder includes explicit operational skills for common failure modes:
 
 - `dude-systematic-debugging` — investigate root cause before changing code
-- `dude-test-driven-development` — optional tests-first implementation aid
+- `dude-pack-practices-tdd` — optional tests-first implementation aid (practices pack)
 - `dude-verification-before-completion` — require fresh evidence before saying
   something is done or fixed
 - `dude-receiving-code-review` — handle review feedback technically instead of
@@ -153,8 +156,9 @@ Dude Coder includes explicit operational skills for common failure modes:
 
 These skills strengthen execution discipline without changing the main workflow.
 
-`dude-test-driven-development` is available when the user or project wants
-tests-first work. There is no global TDD requirement.
+The practices pack's `dude-pack-practices-tdd` is available when the user or
+project wants tests-first work, once the pack is installed. There is no global
+TDD requirement.
 
 ## Workflow Boundaries
 

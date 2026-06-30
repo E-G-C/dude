@@ -6,11 +6,11 @@
 
 Examples below use preferred invocation forms. The short rule is: `draft`
 creates the working feature document, `define` turns it into a reusable package,
-`track` hands that package into Beads when you choose Tracked Execution,
 `work` runs the next few ready tasks in whichever execution lane is already
-live, `status` reports state in all three lanes, `sync Beads to tasks.md`
-refreshes the markdown mirror from Beads, and `flag` routes execution-time gaps
-back into definition.
+live, `status` reports the current lane and live artifact, and `flag` routes
+execution-time gaps back into definition. Tracked execution (`track`,
+`sync Beads to tasks.md`) is provided by the optional **beads pack** — install
+it with `@dude add pack beads`.
 
 ### Concise Command List
 
@@ -19,9 +19,11 @@ back into definition.
 | `@dude draft <feature>` | Create or refresh the brainstorm ledger for one feature. |
 | `@dude define <feature>` | Turn a drafted feature into a reusable package under `specs/<feature>/`. |
 | `@dude status` | Read-only report of the current lane, live artifact, next step, and blockers. |
-| `@dude track` | Import or resume tracked execution in Beads. |
 | `@dude work [<feature>] [--max N] [--until blocked] [--parallel N]` | Run the next few ready tasks back-to-back inside whichever execution lane is already live. Not a new lane. |
-| `@dude sync Beads to tasks.md` | Refresh the non-authoritative markdown mirror from Beads. |
+| `@dude list packs` | Read-only list of available and installed optional packs. |
+| `@dude add pack <name>` / `@dude remove pack <name>` | Install or uninstall an optional capability pack (e.g. `beads`, `release`, `web`, `practices`). |
+| `@dude track` | Import or resume tracked execution on a tracked board. Requires the `beads` pack. |
+| `@dude sync Beads to tasks.md` | Refresh the non-authoritative markdown mirror from the tracked board (beads pack). |
 | `@dude flag [<type>:] <details>` | Route a real blocker or mismatch back to the right owner. Typed prefixes are preferred, but plain language is accepted. |
 | `@dude diff` | Read-only summary of coordinator-owned writes since your previous message. |
 | `@dude self-check` | Read-only verification that Dude followed its own rules (banner, fences, log, no silent `[x]` drift). |
@@ -30,7 +32,7 @@ back into definition.
 | `@dude remove <role>` / `@dude modify <role>` | Remove or adjust an existing specialist. |
 | `@dude remember: <fact>` | Save a durable constraint, decision, or project fact. |
 | `@dude upgrade [--dry-run|--rollback|--ref <ref>]` | Refresh the installed Dude bundle from upstream while preserving project memory and active work. |
-| `@dude import tasks from specs/<feature>/ into Beads` | Manually import a defined package into Beads when you do not want the normal automatic handoff. |
+| `@dude import tasks from specs/<feature>/ into Beads` | Manually import a defined package into Beads when you do not want the normal automatic handoff. Requires the `beads` pack. |
 
 Preferred workflow verbs are `draft`, `define`, `status`, `track`, `work`, `flag`, `diff`, and `self-check`. `hire`, `remember`, `upgrade`, `sync Beads to tasks.md`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
 
@@ -117,9 +119,11 @@ Blockers:
 
 ### `@dude track`
 
-Use this when you want tracked execution in Beads. After import, Beads becomes
-the only live board and source of truth for task state. `tasks.md` may still be
-updated as a one-way portability mirror from Beads.
+Use this when you want tracked execution on a Beads board. It requires the
+**beads pack** — if it is not installed yet, run `@dude add pack beads` first.
+After import, Beads becomes the only live board and source of truth for task
+state. `tasks.md` may still be updated as a one-way portability mirror from
+Beads.
 
 Preferred form:
 
@@ -170,12 +174,13 @@ Flags:
 - `--until blocked` — alias for "run until the first natural stop", capped at the soft ceiling. Implies `--max 25` unless you pass a different `--max`.
 - `--parallel N` — fan-out width. Default `1`. Soft ceiling `2` (Dude warns and requires explicit confirmation above `2`).
 
-Lane detection runs **once** at the start: if `bd list --json` returns one or
-more issues, the active lane is Tracked Execution (per `dude-beads-workflow`,
-after import Beads is authoritative even when no work is currently
-executable); if Beads has issues but nothing ready or in-progress, the verb
-stops with `no ready Beads work` rather than falling through to Lightweight.
-Otherwise the active lane is Lightweight Execution for the named `<feature>`
+Lane detection runs **once** at the start. When the **beads pack** is installed
+and `bd list --json` returns one or more issues, the active lane is Tracked
+Execution (per the pack's `dude-pack-beads-workflow`, after import the tracked
+board is authoritative even when no work is currently executable); if the board
+has issues but nothing ready or in-progress, the verb stops with `no ready Beads
+work` rather than falling through to Lightweight. Otherwise the active lane is
+Lightweight Execution for the named `<feature>`
 (or the single unambiguous defined feature with non-`[x]` task units). If no
 execution lane is live, the verb refuses with a one-line message pointing to
 `@dude define` or `@dude track`.

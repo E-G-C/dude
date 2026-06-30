@@ -11,11 +11,12 @@ or advanced behavior.
 Read only what you need:
 
 - [Setup and first feature](setup.md) — copy the bundle, start your first feature, and handle guardrails.
-- [Workflow modes and lifecycle](workflow.md) — understand the three choices after `@dude define`: stop, use `tasks.md`, move to Beads, or mirror Beads back to markdown for fallback.
+- [Workflow modes and lifecycle](workflow.md) — understand the choices after `@dude define`: stop, or implement from `tasks.md` (and optionally add a tracked board with the beads pack).
 - [Commands and prompt shapes](commands.md) — look up exact commands and example prompts.
 
 ## Advanced Topics
 
+- [Pack catalog](../library/packs/README.md) — optional expansions (beads, release, web, practices) and how to install them.
 - [Starting from a PRD draft](prd-drafts.md) — turn a longer markdown PRD into Dude files.
 - [Detailed walkthrough](walkthrough.md) — end-to-end example using the built-in authentication sample.
 - [Definition and execution reference](reference.md) — deeper ownership, task, and quality rules.

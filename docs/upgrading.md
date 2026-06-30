@@ -6,7 +6,9 @@ The Dude bundle ships with a manifest and a built-in upgrade skill so you can pu
 
 > ## ⚠️ Base files are upstream-owned
 >
-> Every file matching the upstream namespace convention \u2014 `.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md` (slug not starting with `local-`), `.github/skills/dude-<slug>/**` (slug not starting with `local-`), and `.github/instructions/dude.instructions.md` \u2014 is owned by upstream and is **silently overwritten** by `@dude upgrade`. Editing a base agent, skill, or the bundle instructions in place is unsupported \u2014 your changes will be lost on the next upgrade.
+> Every file matching the upstream namespace convention — `.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md` (slug not starting with `local-` or `pack-`), `.github/skills/dude-<slug>/**` (slug not starting with `local-` or `pack-`), and `.github/instructions/dude.instructions.md` — is owned by upstream and is **silently overwritten** by `@dude upgrade`. Editing a base agent, skill, or the bundle instructions in place is unsupported — your changes will be lost on the next upgrade.
+>
+> Installed **packs** (the reserved `dude-pack-<pack>-<slug>` namespace, managed by `dude-compose`) are their own tier and are **preserved** across upgrades — a core refresh never overwrites or deletes them.
 >
 > To customize a default agent or skill, copy it under the reserved `dude-local-<slug>` namespace and edit there:
 >
@@ -22,11 +24,12 @@ The upgrader treats every file in your project as one of three things:
 | Bucket | Examples | What `@dude upgrade` does |
 |---|---|---|
 | **Base-owned** | default agents in `.github/agents/`, default skills in `.github/skills/` except `.github/skills/project/`, `.github/instructions/dude.instructions.md` | Overwritten unconditionally when upstream differs. Local edits to these paths are discarded. |
+| **Pack-owned** | installed packs under `.github/agents/dude-pack-*` and `.github/skills/dude-pack-*/`, and `.github/dudestuff/profile.md` | Never overwritten or deleted by a core upgrade. Added/removed only by `dude-compose` (`@dude add/remove pack`). |
 | **Upgrade-owned** | `.github/dudestuff/bundle-manifest.md`, `.github/dudestuff/upgrade-log.md` | Maintained only by the upgrade skill. |
 | **Project-owned** | `.github/dudestuff/*` except the two upgrade-owned files, `.github/skills/project/`, custom agents, custom skills under `dude-local-*` or other names, `.github/copilot-instructions.md` | Never overwritten. |
 | **Repo-local files and work state** | `README.md`, `docs/`, `.gitattributes`, `brainstorm/`, `specs/`, Beads, your product source | Never touched or brought in by upgrade. |
 
-Base ownership is derived from the **namespace convention** by the upgrader on each run — anything under `.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md`, `.github/skills/dude-<slug>/**`, or `.github/instructions/dude.instructions.md` is base-owned, with the reserved `dude-local-<slug>` namespace explicitly excluded. The local [`.github/dudestuff/bundle-manifest.md`](../.github/dudestuff/bundle-manifest.md) is **metadata only**: it records the upstream repo and the installed commit sha for orientation. The upgrader compares your on-disk bytes against the fetched upstream tree directly at `plan` time.
+Base ownership is derived from the **namespace convention** by the upgrader on each run — anything under `.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md`, `.github/skills/dude-<slug>/**`, or `.github/instructions/dude.instructions.md` is base-owned, with the reserved `dude-local-<slug>` and `dude-pack-<pack>-<slug>` namespaces explicitly excluded (project-owned and pack-owned respectively). The local [`.github/dudestuff/bundle-manifest.md`](../.github/dudestuff/bundle-manifest.md) is **metadata only**: it records the upstream repo and the installed commit sha for orientation. The upgrader compares your on-disk bytes against the fetched upstream tree directly at `plan` time.
 
 The authoritative upgrade trigger is whether the live upstream ref HEAD differs from the locally recorded `installed_sha`. `@dude status` discovers the upstream HEAD with `git ls-remote` (remote sources) or `git rev-parse HEAD` (local-path sources). When HEAD discovery is unavailable, the upstream manifest's `installed_sha` is used.
 

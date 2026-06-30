@@ -218,13 +218,14 @@ The point of this lane is that you can keep moving with one live markdown
 execution board and no Beads setup, then switch to `@dude track` later if you
 want Beads-backed tracked execution.
 
-## 5. Track in Beads
+## 5. Track in Beads (optional pack)
 
-When you want tracked execution, hand the defined feature into Beads. Use the
-`Before you run @dude track` checklist in [Workflow modes and lifecycle](workflow.md)
-first:
+When you want tracked execution, install the **beads pack** and hand the defined
+feature onto the board. Use the `Before you run @dude track` checklist in
+[Workflow modes and lifecycle](workflow.md) first:
 
 ```text
+@dude add pack beads
 @dude track
 @dude status
 ```
