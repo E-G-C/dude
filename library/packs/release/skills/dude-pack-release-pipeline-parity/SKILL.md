@@ -1,5 +1,5 @@
 ---
-name: "dude-release-pipeline-parity"
+name: "dude-pack-release-pipeline-parity"
 description: "Use when GitHub Actions and Azure Pipelines should behave the same for releases, when one pipeline normalizes versions or publishes assets differently than another, or when comparing release packaging, signing, asset upload, and publish behavior across release systems."
 ---
 

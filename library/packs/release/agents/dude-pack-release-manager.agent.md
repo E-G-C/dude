@@ -30,9 +30,9 @@ You are the release manager.
 - Check `.github/dudestuff/` for relevant decisions, guardrails, context, and lessons before working.
 - Check `.github/skills/project/SKILL.md` if it exists for project conventions.
 - Check `.github/skills/` for any other skills whose description matches the current task.
-- Load `dude-tag-driven-release-versioning` for tag-based version sync or manifest bump questions.
-- Load `dude-release-pipeline-parity` when reconciling GitHub Actions and Azure DevOps behavior.
-- Load `dude-release-writeback-via-pr` when the default branch is protected or a direct workflow push is blocked.
+- Load `dude-pack-release-tag-driven-versioning` for tag-based version sync or manifest bump questions.
+- Load `dude-pack-release-pipeline-parity` when reconciling GitHub Actions and Azure DevOps behavior.
+- Load `dude-pack-release-writeback-via-pr` when the default branch is protected or a direct workflow push is blocked.
 - Distinguish build-time version normalization from committed repo synchronization.
 - If repo-state sync is required, update `package.json` and `package-lock.json` together.
 - Prefer a direct workflow push only when the token has explicit permission; otherwise switch to the PR-based sync path.

@@ -1,5 +1,5 @@
 ---
-name: "dude-tag-driven-release-versioning"
+name: "dude-pack-release-tag-driven-versioning"
 description: "Use when a release is triggered from a git tag, when `package.json` should match the tag version, when deciding whether a version bump must be manual, or when implementing tag-based version sync in GitHub Actions or Azure Pipelines."
 ---
 

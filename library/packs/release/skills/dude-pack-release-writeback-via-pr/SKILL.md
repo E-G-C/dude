@@ -1,5 +1,5 @@
 ---
-name: "dude-release-writeback-via-pr"
+name: "dude-pack-release-writeback-via-pr"
 description: "Use when a release workflow needs to sync `package.json` and `package-lock.json` back to a protected default branch, when a direct workflow push is blocked by branch protection, or when choosing between a direct push and a pull-request-based version write-back."
 ---
 
@@ -55,7 +55,7 @@ Provide a safe write-back path for tag-driven release version sync when the defa
 
 ## Decision Guide
 
-- "Push works and is allowed?" Use direct push from `dude-tag-driven-release-versioning`.
+- "Push works and is allowed?" Use direct push from `dude-pack-release-tag-driven-versioning`.
 - "Push is blocked by protection?" Use this PR path.
 - "Team requires review of every version bump?" Use this PR path even if push would succeed.
 
