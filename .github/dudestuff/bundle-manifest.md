@@ -19,11 +19,12 @@ This file pins the upstream Dude bundle version associated with the current inst
 
   ```text
   .github/agents/dude.agent.md
-  .github/agents/dude-<slug>.agent.md          (slug NOT starting with 'local-')
-  .github/skills/dude-<slug>/**                (slug NOT starting with 'local-')
+  .github/agents/dude-<slug>.agent.md          (slug NOT starting with 'local-' or 'pack-')
+  .github/skills/dude-<slug>/**                (slug NOT starting with 'local-' or 'pack-')
   .github/instructions/dude.instructions.md
   ```
 
+- The reserved `dude-pack-<pack>-<slug>` namespace is an installed **pack** (from `library/packs/`, managed by `dude-compose`). It is its own ownership tier: project-owned in practice and **preserved** by `@dude upgrade` — core refreshes never overwrite or delete installed packs.
 - The reserved `dude-local-<slug>` namespace is project-owned and is never touched by upgrade.
 - The `project` skill is project-owned and not part of the upgrade payload.
 - Anything outside both the base and `dude-local-` namespaces is project-owned and never overwritten by `@dude upgrade`. Lint will warn about unreserved agents and skills so they can be renamed before colliding with a future upstream.

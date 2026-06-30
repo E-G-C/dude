@@ -133,6 +133,17 @@ Use upgrade mode when the user asks to:
 
 Upgrade mode is engine maintenance, not project work. Route through the `dude-bundle-upgrade` skill, which produces an upgrade report against `.github/dudestuff/bundle-manifest.md`, waits for the explicit `confirm upgrade` token, creates a `dude-pre-upgrade-<ts>` safety tag, applies only base-owned changes, runs `dude-lint`, and offers rollback on failure. Project memory under `.github/dudestuff/` is preserved except for the upgrade-owned manifest/log files; project skills under `.github/skills/project/`, custom agents/skills, `.github/copilot-instructions.md`, and all work state under `brainstorm/`, `specs/`, and Beads are never touched. Project-local agents and skills should use the reserved `dude-local-<slug>` namespace; the upgrade engine derives base ownership from the `dude.agent.md` / `dude-<slug>.agent.md` / `dude-<slug>/**` / `dude.instructions.md` namespace convention and never touches `dude-local-*` or other non-base paths.
 
+### Pack Mode
+
+Use pack mode when the user asks to:
+
+- add, install, or enable an optional pack (`@dude add pack <name>`)
+- remove, uninstall, or disable a pack (`@dude remove pack <name>`)
+- list available or installed packs (`@dude list packs`)
+- gain a capability that lives in a pack (tracked execution, release tooling, web specialists, TDD)
+
+Packs are optional capability bricks in `library/packs/`, installed into `.github/` under the reserved `dude-pack-<name>-*` namespace that `@dude upgrade` preserves. Route through the `dude-compose` skill, which previews the change, runs `node .github/skills/dude-compose/compose.mjs add|remove <name>`, records the install in `.github/dudestuff/profile.md`, and runs `dude-lint`. Never install a pack without explicit user intent.
+
 ### Diff Mode
 
 Use diff mode when the user asks:
@@ -430,6 +441,7 @@ For detailed procedures, load the relevant skill from `.github/skills/`:
 - **Promoting learnings into skills** → `dude-learning-promotion` skill
 - **Saving / deploying bundles** → `dude-portability` skill
 - **Importing a single agent or skill from a URL** → `dude-bundle-import` skill
+- **Installing / removing / listing capability packs** → `dude-compose` skill
 - **Upgrading the Dude bundle itself from upstream** → `dude-bundle-upgrade` skill
 - **Validating bundle hygiene** → `dude-lint` skill (Node)
 - **Setting up isolated worktrees** → `dude-using-git-worktrees` skill
