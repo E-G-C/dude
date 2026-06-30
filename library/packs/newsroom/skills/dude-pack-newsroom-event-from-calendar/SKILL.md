@@ -242,7 +242,7 @@ hugo --quiet ; "EXIT: $LASTEXITCODE"
 Test-Path 'public/news/<PUBLISH-DATE>-<slug>/index.html'
 Select-String -Path 'public/news/events/index.html' -Pattern '<TITLE FRAGMENT>' -SimpleMatch
 # Timezone: confirm the absolute instant carries a UTC offset (drives conversion)
-Select-String -Path 'content/news/<PUBLISH-DATE>-<slug>.md' -Pattern 'event_start:.*[+-]\d\d:\d\d' 
+Select-String -Path 'content/news/<PUBLISH-DATE>-<slug>.md' -Pattern 'event_start:.*[+-]\d\d:\d\d'
 ```
 
 Pass criteria: build exits `0`, the event's own detail page exists, the title
