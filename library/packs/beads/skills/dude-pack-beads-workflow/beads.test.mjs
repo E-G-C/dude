@@ -26,7 +26,9 @@ const FIXTURE = `## Setup
    deps: T001@aaaaaaaa
 
 ## User Story 1
-- [~] T003@cccccccc [US1] Build
+- [~] T003@cccccccc [US1] Build the "core"
+- [!] T004@dddddddd [US1] Blocked bit
+   blocked-by: waiting
 `;
 
 /** @param {string} src @param {string} dest */
@@ -63,17 +65,25 @@ test('beads.mjs resolves the core engine post-install and plans an import', () =
     const r = runNode(script, ['plan-import', file, '--spec', 'specs/x/spec.md', '--json']);
     assert.equal(r.code, 0, r.out);
     const plan = JSON.parse(r.out);
-    // T001 is done -> skipped; T002 + T003 open
+    // T001 is done -> skipped; T002 + T003 + T004 open
     assert.deepEqual(plan.skipped_done, ['T001@aaaaaaaa']);
-    assert.deepEqual(plan.issues.map((i) => i.key).sort(), ['T002@bbbbbbbb', 'T003@cccccccc']);
-    // dep among open tasks: US1 (T003) depends on Foundational (T002); the
-    // explicit T002->T001 edge is dropped because T001 is already done.
+    assert.deepEqual(plan.issues.map((i) => i.key).sort(), ['T002@bbbbbbbb', 'T003@cccccccc', 'T004@dddddddd']);
+    // dep among open tasks: US1 depends on Foundational; explicit T002->T001
+    // edge dropped because T001 is done.
     assert.ok(plan.deps.some((e) => e.from === 'T003@cccccccc' && e.to === 'T002@bbbbbbbb'));
     assert.ok(!plan.deps.some((e) => e.to === 'T001@aaaaaaaa'));
-    // each issue description carries the canonical identity + priority
     assert.ok(plan.issues.every((i) => i.description.startsWith('spec: specs/x/spec.md')));
     assert.ok(plan.epic.status === 'deferred');
     assert.ok(plan.commands.some((c) => c.startsWith('bd create') && c.includes('-t epic')));
+    // finding 3: [~]/[!] carry status on create
+    assert.ok(plan.commands.some((c) => c.includes('T003@cccccccc') && c.includes('--status=in_progress')));
+    assert.ok(plan.commands.some((c) => c.includes('T004@dddddddd') && c.includes('--status=blocked')));
+    // finding 2: POSIX single-quoting leaves inner double quotes literal (no \\")
+    assert.ok(plan.commands.some((c) => c.includes('Build the "core"')));
+    assert.ok(!plan.commands.some((c) => c.includes('Build the \\"core')));
+    // finding 1: deps are post-create notes, never broken `bd dep <key>` commands
+    assert.ok(!plan.commands.some((c) => c.startsWith('bd dep')));
+    assert.ok(plan.commands.some((c) => c.startsWith('# dependencies')));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -106,6 +116,26 @@ test('beads.mjs mirror applies bd statuses back into tasks.md', () => {
     const out = fs.readFileSync(file, 'utf8');
     assert.ok(out.includes('- [x] T002@bbbbbbbb [US1] Schema'), out);
     assert.match(r.out, /bd issue key not in tasks.md: T999@zzzzzzzz/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('beads.mjs mirror --spec ignores issues from other features (finding 4)', () => {
+  const { root, script, file } = stage();
+  try {
+    const bd = [
+      { description: 'spec: specs/x/spec.md\nTask: T002@bbbbbbbb', status: 'closed' },
+      // same task key but a DIFFERENT feature's spec — must be ignored
+      { description: 'spec: specs/other/spec.md\nTask: T003@cccccccc', status: 'closed' },
+    ];
+    const bdFile = path.join(root, 'bd.json');
+    fs.writeFileSync(bdFile, JSON.stringify(bd));
+    const r = runNode(script, ['mirror', file, '--from', bdFile, '--spec', 'specs/x/spec.md', '--write']);
+    assert.equal(r.code, 0, r.out);
+    const out = fs.readFileSync(file, 'utf8');
+    assert.ok(out.includes('- [x] T002@bbbbbbbb [US1] Schema'), 'ours applied');
+    assert.ok(out.includes('- [~] T003@cccccccc'), 'other feature not applied');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

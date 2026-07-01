@@ -14,9 +14,10 @@
  *       open tasks, and ready-to-run `bd create` / `bd dep` commands. Each issue
  *       description starts with `spec: <spec_path>` (the canonical identity).
  *
- *   mirror <tasks.md> --from <bd-list.json> [--write]
+ *   mirror <tasks.md> --from <bd-list.json> [--spec <spec_path>] [--write]
  *       Given `bd list --json`, map each issue's task key + status back to a
  *       canonical glyph and apply the batch to tasks.md (the one-way mirror).
+ *       Pass --spec to only mirror issues carrying that `spec:` identity.
  *
  * NOTE: this pack script imports the core engine at `../dude-engine/lib/...`,
  * which resolves only once installed under `.github/skills/`. It is validated
@@ -52,9 +53,28 @@ function priorityOf(t) {
   return 2;
 }
 
-/** @param {string} s @returns {string} shell-safe double-quoted string */
-function q(s) {
-  return `"${String(s).replace(/"/g, '\\"')}"`;
+/**
+ * POSIX single-quote a string so it is safe to embed in an emitted shell
+ * command. Single quotes disable all shell interpretation; the only escape is
+ * for a literal single quote (`'` -> `'\''`). Prevents command injection from
+ * user-authored task text (finding: shell-safety).
+ * @param {string} s
+ * @returns {string}
+ */
+function shq(s) {
+  return `'${String(s).replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * The `bd create` status flag for a non-open glyph, so `[~]`/`[!]` import as
+ * in-progress / blocked rather than silently coming in as open.
+ * @param {string} glyph
+ * @returns {string}
+ */
+function statusFlag(glyph) {
+  if (glyph === '~') return ' --status=in_progress';
+  if (glyph === '!') return ' --status=blocked';
+  return '';
 }
 
 /**
@@ -96,11 +116,20 @@ export function planImport(parsed, { specPath, title }) {
 
   /** @type {string[]} */
   const commands = [];
-  commands.push(`bd create ${q(epic.title)} -t epic --status=deferred --description=${q(epic.description)} --json`);
+  commands.push(`bd create ${shq(epic.title)} -t epic --status=deferred --description=${shq(epic.description)} --json`);
   for (const it of issues) {
-    commands.push(`bd create ${q(it.title)} -t task -p ${it.priority} --description=${q(it.description)} --json`);
+    commands.push(
+      `bd create ${shq(it.title)} -t task -p ${it.priority}${statusFlag(it.state)} --description=${shq(it.description)} --json`,
+    );
   }
-  for (const e of deps) commands.push(`bd dep ${q(e.from)} ${q(e.to)}   # ${e.from} depends on ${e.to}`);
+  // Dependencies cannot be wired until the created issues have Beads IDs, so
+  // emit them as post-create notes (task-key edges) rather than broken
+  // `bd dep <task-key> <task-key>` commands. The structured `deps` array below
+  // carries the same edges for a follow-up tool.
+  if (deps.length) {
+    commands.push('# dependencies — after create, map each task key to its Beads id, then run bd dep:');
+    for (const e of deps) commands.push(`#   ${e.from} depends on ${e.to}`);
+  }
 
   return { spec_path: specPath, epic, issues, deps, skipped_done, commands };
 }
@@ -121,14 +150,18 @@ export function issueToState(issue) {
 }
 
 /**
- * Build a {taskId: glyph} map from a `bd list --json` array.
+ * Build a {taskId: glyph} map from a `bd list --json` array. When `specPath` is
+ * given, only issues whose description starts with `spec: <specPath>` are
+ * considered, so a mirror never applies another feature's state.
  * @param {any[]} bdIssues
+ * @param {string} [specPath]
  * @returns {Record<string, string>}
  */
-export function mirrorMap(bdIssues) {
+export function mirrorMap(bdIssues, specPath) {
   /** @type {Record<string,string>} */
   const map = {};
   for (const issue of Array.isArray(bdIssues) ? bdIssues : []) {
+    if (specPath && !String(issue.description || '').startsWith(`spec: ${specPath}`)) continue;
     const s = issueToState(issue);
     if (s) map[s.key] = s.glyph;
   }
@@ -171,7 +204,7 @@ function main() {
   const HELP =
     'usage:\n' +
     '  node beads.mjs plan-import <tasks.md> --spec <spec_path> [--title "..."] [--json]\n' +
-    '  node beads.mjs mirror <tasks.md> --from <bd-list.json> [--write]\n';
+    '  node beads.mjs mirror <tasks.md> --from <bd-list.json> [--spec <spec_path>] [--write]\n';
   if (args.help || !args.cmd || !args.file) {
     process.stdout.write(HELP);
     process.exit(args.help ? 0 : 1);
@@ -197,7 +230,7 @@ function main() {
     if (args.cmd === 'mirror') {
       if (!args.from) throw new Error('mirror requires --from <bd-list.json>');
       const bd = JSON.parse(fs.readFileSync(args.from, 'utf8'));
-      const map = mirrorMap(Array.isArray(bd) ? bd : bd.issues || []);
+        const map = mirrorMap(Array.isArray(bd) ? bd : bd.issues || [], args.spec);
       const result = applyStates(parsed, map);
       if (args.write) {
         fs.writeFileSync(args.file, result.content);
