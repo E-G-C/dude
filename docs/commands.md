@@ -470,6 +470,19 @@ Exit code is `0` when no failures are reported; warnings do not fail the run.
 Run it before `@dude track`, before exporting the bundle, or whenever you want
 a fast structural check of the bundle.
 
+Pack **sources** under `library/packs/` are not scanned by `dude-lint` directly
+(it only sees `.github/`). `dude-compose verify` closes that gap by temp-
+installing every catalog pack into a throwaway bundle, linting the result, then
+removing it and checking for leftovers:
+
+```bash
+node .github/skills/dude-compose/compose.mjs verify
+```
+
+It exits `2` if any pack lints with a failure or leaves artifacts behind.
+Expected sibling-pack **warnings** (e.g. `hugo` referencing `docsy`/`ms-brand`
+when they are not installed alongside) do not fail the run.
+
 `@dude self-check` covers the runtime drift that a static linter cannot see
 (lane banner presence, manual `[x]` flips, append-only log). The two are
 complementary.
@@ -489,6 +502,20 @@ siblings are refused by default; the user must confirm them per file.
 Transitive dependencies are never auto-fetched: each one requires a fresh
 `dude-bundle-import` invocation.
 
+The deterministic prep behind the report — the GitHub `blob` -> `raw` URL
+rewrite, the frontmatter strip plan (`compatibility`, `model`, Claude-style
+`tools`), the `dude-local-*` destination naming, line-ending normalization, and
+token-overlap scoring against existing local artifacts — is computed by
+`dude-bundle-import/import.mjs`:
+
+```bash
+node .github/skills/dude-bundle-import/import.mjs analyze <url|path> --json   # adaptation report
+node .github/skills/dude-bundle-import/import.mjs apply   <url|path> --plan plan.json
+```
+
+`analyze` never writes; `apply` executes a confirmed plan and refuses unless a
+`license_disposition` is recorded when the source carries license metadata.
+
 Use the import verb when the user supplies a URL or names an external repo:
 
 ```text
@@ -499,6 +526,35 @@ Use the import verb when the user supplies a URL or names an external repo:
 
 Whole-bundle save and deploy stays in the `dude-portability` skill; this
 skill is single-artifact only.
+
+### Engine scripts (deterministic helpers)
+
+The bundle ships small, dependency-free Node (>= 20 LTS) scripts that do the
+mechanical, error-prone work — parsing, deriving, validating, normalizing — so
+agents keep the judgment (routing, “is it really done”, license/scope calls).
+The coordinator invokes them; they are not a background service.
+
+| Script | Purpose |
+|---|---|
+| `dude-lint/lint.mjs` | structural hygiene of the bundle (read-only) |
+| `dude-compose/compose.mjs` | `list` / `status` / `add` / `remove` / `verify` optional packs |
+| `dude-bundle-upgrade/upgrade.mjs` | refresh core files from the upstream source |
+| `dude-lightweight-execution/board.mjs` | `parse` / `ready` / `next` / `render` / `set` / `apply-states` / `diff` on `tasks.md` |
+| `dude-team-expansion/scaffold-agent.mjs` | emit a lint-clean `.agent.md` skeleton (`--pack` updates `pack.md`) |
+| `dude-skill-authoring/scaffold-skill.mjs` | emit a lint-clean `SKILL.md` skeleton (`--pack` updates `pack.md`) |
+| `dude-bundle-import/import.mjs` | `analyze` / `apply` the mechanical import prep |
+| `dude-memory-ledger/memory.mjs` | `append` a memory entry, refusing near-duplicates |
+| `dude-engine/lib/*.mjs` | shared engine libraries (ownership, tasks, text, text-analysis, pack-manifest) |
+
+Installed packs may ship their own scripts too — e.g. the `beads` pack's
+`dude-pack-beads-workflow/beads.mjs` (`plan-import` a `tasks.md` into `bd`
+commands, and `mirror` `bd list --json` state back into `tasks.md`).
+
+The mutating commands (`board render`/`set`/`apply-states`, `beads mirror`) are
+**non-mutating by default** — they print a preview; pass `--write` to apply and
+refresh the coordinator snapshot. `memory append` refuses a near-duplicate unless
+`--force`. Every engine script exits `0` on success, `1` on usage error, `2` on
+operation error.
 
 ### Upgrading the bundle
 

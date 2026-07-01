@@ -270,15 +270,22 @@ Rule for how routing adapts.
 - Do not mix implementation code into feature-definition artifacts.
 - Do not let `tasks.md` drift away from `spec.md` and `plan.md`.
 
-## No Dedicated Runtime Required
+## Runtime And Optional Engine Scripts
 
 Dude Coder itself is just markdown, skills, and agents. For the Definition Only
-and Lightweight Execution lanes, there is no dedicated service, build step, or
-package manager to run: drop the files into a repo and move through `draft`,
-`define`, and optional execution from `tasks.md` with `@dude`. The optional
-bundle-import flow also runs without a dedicated runtime — it uses only the
-host's fetch and write tools and refuses to install Python, Node, or other
-language runtimes on your behalf.
+and Lightweight Execution lanes there is no dedicated service, daemon, or build
+step: drop the files into a repo and move through `draft`, `define`, and optional
+execution from `tasks.md` with `@dude`.
+
+The bundle does ship a small set of **optional, dependency-free Node (>= 20 LTS)
+engine scripts** for the mechanical work that has to be exact — bundle hygiene
+(`dude-lint`), pack install/verify (`dude-compose`), core upgrades
+(`dude-bundle-upgrade`), the `tasks.md` board (`board.mjs`), agent/skill
+scaffolding, import prep, and memory appends. They are additive helpers the
+coordinator invokes; nothing runs as a background service. No language runtime is
+installed on your behalf — the import flow only reads and writes files and never
+triggers a Python, Node, or other runtime install for an imported artifact. See
+[Engine scripts](commands.md#engine-scripts-deterministic-helpers) for the list.
 
 If you choose the Tracked Execution lane, you still need Beads and, on some
 setups, Dolt. See [Setup and first feature](setup.md) and
