@@ -245,6 +245,27 @@ test('add fetches via the bundle manifest source when absent locally', () => {
   }
 });
 
+test('add normalizes CRLF/trailing-ws in a fetched pack (not the local catalog)', () => {
+  const root = bareRoot();
+  const up = upstreamWith('crlfy');
+  try {
+    // give the upstream skill CRLF + trailing whitespace + no final newline
+    const upSkill = path.join(up, 'library/packs/crlfy/skills/dude-pack-crlfy-s/SKILL.md');
+    fs.writeFileSync(upSkill, '---\r\nname: dude-pack-crlfy-s\r\ndescription: "s"  \r\n---\r\n# S');
+    const r = cmdAdd({ root, library: path.join(root, 'library', 'packs'), name: 'crlfy', force: false, source: up });
+    assert.equal(r.ok, true, r.error);
+    const installed = fs.readFileSync(path.join(root, '.github/skills/dude-pack-crlfy-s/SKILL.md'), 'utf8');
+    assert.ok(!installed.includes('\r'), 'installed copy has no CR');
+    assert.ok(!/[ \t]\n/.test(installed), 'installed copy has no trailing ws');
+    assert.ok(installed.endsWith('\n'), 'installed copy has a final newline');
+    // the upstream source must be left untouched
+    assert.ok(fs.readFileSync(upSkill, 'utf8').includes('\r'), 'source keeps its CRLF');
+  } finally {
+    cleanup(root);
+    cleanup(up);
+  }
+});
+
 test('add --no-fetch refuses to fetch a pack absent from the local catalog', () => {
   const root = bareRoot();
   try {

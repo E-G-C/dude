@@ -40,6 +40,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { belongsToPack } from '../dude-engine/lib/ownership.mjs';
+import { normalizePath } from '../dude-engine/lib/text.mjs';
 
 const PACK_NAME_RE = /^[a-z][a-z0-9-]*[a-z0-9]$/;
 const COPY_DIRS = ['agents', 'skills', 'instructions', 'prompts'];
@@ -402,6 +403,14 @@ function cmdAdd({ root, library, name, force, fetch = true, source, ref }) {
   for (const a of artifacts) {
     copyRecursive(a.srcAbs, path.join(root, a.destRel));
     written.push(a.destRel);
+  }
+
+  // Packs fetched from an upstream source may carry CRLF / trailing whitespace;
+  // normalize the INSTALLED copy so the bundle stays lint-clean. Never touch the
+  // source tree or the local catalog (origin === 'local' installs are left as-is
+  // because they are the editable copy the author maintains).
+  if (origin !== 'local') {
+    for (const destRel of written) normalizePath(path.join(root, destRel));
   }
 
   profile.enabled_packs.push(name);
