@@ -12,6 +12,7 @@ import {
   renderBoard,
   boardIsStale,
   setTaskState,
+  applyStates,
   toGlyph,
   glyphsOf,
   diffAgainstSnapshot,
@@ -154,6 +155,17 @@ test('parseTasks accepts the canonical alnum (non-hex) durable suffix', () => {
   assert.equal(p.tasks.length, 2, JSON.stringify(p.warnings));
   assert.equal(p.warnings.length, 0, `no malformed warnings: ${p.warnings.join('; ')}`);
   assert.equal(nextTask(p).id, 'T002@g7h8i9j0');
+});
+
+test('applyStates batch-updates matching glyphs and reports unknown ids', () => {
+  const p = parseTasks(FIXTURE);
+  const r = applyStates(p, { 'T002@bbbbbbbb': 'done', 'T004@dddddddd': '!', 'T999@zzzzzzzz': 'x' });
+  assert.deepEqual(r.applied.sort(), ['T002@bbbbbbbb', 'T004@dddddddd']);
+  assert.deepEqual(r.unknown, ['T999@zzzzzzzz']);
+  assert.ok(r.content.includes('- [x] T002@bbbbbbbb [P] Foundational schema'));
+  assert.ok(r.content.includes('- [!] T004@dddddddd In progress task'));
+  // unrelated tasks untouched
+  assert.ok(r.content.includes('- [ ] T005@eeeeeeee Final polish'));
 });
 
 test('board fence content is ignored when parsing canonical state', () => {

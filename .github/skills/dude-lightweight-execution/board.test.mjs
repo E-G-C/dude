@@ -149,6 +149,21 @@ test('diff without a snapshot reports no baseline', () => {
   }
 });
 
+test('apply-states --write batch-updates glyphs, warns unknown, refreshes snapshot', () => {
+  const { root, file } = scaffold();
+  try {
+    const mapFile = path.join(root, 'map.json');
+    fs.writeFileSync(mapFile, JSON.stringify({ 'T002@bbbbbbbb': 'done', 'T404@00000000': 'x' }));
+    const r = capture(() => run({ cmd: 'apply-states', file, root, fromPath: mapFile, write: true }));
+    assert.equal(r.code, 0);
+    assert.match(r.out, /unknown task id in map: T404@00000000/);
+    assert.ok(fs.readFileSync(file, 'utf8').includes('- [x] T002@bbbbbbbb Foundational schema'));
+    assert.equal(readSnapshot(root)['specs/x/tasks.md'].glyphs['T002@bbbbbbbb'], 'x');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('missing file exits 2; usage without args exits 1', () => {
   assert.equal(capture(() => run({ cmd: 'next', file: '/nope/tasks.md', root: '/tmp' })).code, 2);
   assert.equal(capture(() => run({ help: false })).code, 1);

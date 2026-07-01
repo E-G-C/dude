@@ -11,6 +11,7 @@
  *   next   <tasks.md>                           the single top ready task id
  *   render <tasks.md> [--stdout|--check|--write] regenerate the fenced board
  *   set    <tasks.md> <id> <state> [--write] [--blocked-by "..."]
+ *   apply-states <tasks.md> --from <map.json> [--write]   batch glyph sync
  *   diff   <tasks.md> [--json]                  human-applied [x] vs snapshot
  *
  * Non-mutating by default. `--write` rewrites the file AND refreshes the
@@ -31,6 +32,7 @@ import {
   renderBoard,
   boardIsStale,
   setTaskState,
+  applyStates,
   glyphsOf,
   diffAgainstSnapshot,
 } from '../dude-engine/lib/tasks.mjs';
@@ -75,6 +77,7 @@ function parseArgs(argv) {
     else if (a === '--write') out.write = true;
     else if (a === '--help' || a === '-h') out.help = true;
     else if (a === '--root') out.root = argv[++i];
+    else if (a === '--from') out.fromPath = argv[++i];
     else if (a === '--blocked-by') out.blockedBy = argv[++i];
     else if (a.startsWith('--')) out.help = true;
     else pos.push(a);
@@ -94,6 +97,7 @@ Usage:
   node board.mjs next   <tasks.md>
   node board.mjs render <tasks.md> [--stdout|--check|--write]
   node board.mjs set    <tasks.md> <id> <state> [--write] [--blocked-by "..."]
+  node board.mjs apply-states <tasks.md> --from <map.json> [--write]
   node board.mjs diff   <tasks.md> [--json]
 
 Flags: --root <dir> (snapshot anchor, default cwd), --json
@@ -172,6 +176,30 @@ function run(args) {
       const before = content.split('\n')[result.task.headerLine];
       const after = result.content.split('\n')[result.task.headerLine];
       process.stdout.write(`- ${before}\n+ ${after}\n(dry run; pass --write to apply)\n`);
+      return 0;
+    }
+    case 'apply-states': {
+      if (!args.fromPath) {
+        process.stderr.write('[FAIL] apply-states requires --from <map.json>\n');
+        return 1;
+      }
+      /** @type {Record<string,string>} */
+      let statesMap;
+      try {
+        statesMap = JSON.parse(fs.readFileSync(args.fromPath, 'utf8'));
+      } catch (err) {
+        process.stderr.write(`[FAIL] cannot read map: ${err instanceof Error ? err.message : String(err)}\n`);
+        return 2;
+      }
+      const result = applyStates(parsed, statesMap);
+      if (args.write) {
+        fs.writeFileSync(file, result.content);
+        writeSnapshotEntry(args.root, relKey, glyphsOf(parseTasks(result.content)));
+        process.stdout.write(`[OK] applied ${result.applied.length} state(s) in ${args.file}\n`);
+      } else {
+        process.stdout.write(`${result.applied.length} state(s) would change (dry run; pass --write)\n`);
+      }
+      for (const id of result.unknown) process.stdout.write(`[WARN] unknown task id in map: ${id}\n`);
       return 0;
     }
     case 'diff': {

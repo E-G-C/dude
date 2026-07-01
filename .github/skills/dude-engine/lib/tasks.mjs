@@ -347,8 +347,30 @@ export function setTaskState(parsed, id, state, opts = {}) {
   return { content: `${lines.join('\n').replace(/\n+$/, '')}\n`, task };
 }
 
-/* --------------------------------------------------------------- snapshot */
+/**
+ * Apply many glyph updates in one pass. The mechanical core of a state sync
+ * (e.g. mirroring a Beads board back into `tasks.md`): given a map of
+ * `{ taskId: glyph|state }`, rewrite each matching header. Pure.
+ * @param {ReturnType<typeof parseTasks>} parsed
+ * @param {Record<string, string>} statesMap
+ * @returns {{ content: string, applied: string[], unknown: string[] }}
+ */
+export function applyStates(parsed, statesMap) {
+  const lines = parsed.lines.slice();
+  /** @type {string[]} */
+  const applied = [];
+  for (const t of parsed.tasks) {
+    if (Object.prototype.hasOwnProperty.call(statesMap, t.id)) {
+      const glyph = toGlyph(statesMap[t.id]);
+      lines[t.headerLine] = lines[t.headerLine].replace(/^- \[[^\]]*\]/, `- [${glyph}]`);
+      applied.push(t.id);
+    }
+  }
+  const unknown = Object.keys(statesMap).filter((id) => !parsed.byId.has(id));
+  return { content: `${lines.join('\n').replace(/\n+$/, '')}\n`, applied, unknown };
+}
 
+/* --------------------------------------------------------------- snapshot */
 /**
  * @param {ReturnType<typeof parseTasks>} parsed
  * @returns {Record<string, string>} id -> glyph for every task.
