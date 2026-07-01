@@ -142,6 +142,20 @@ test('diffAgainstSnapshot flags human-applied [x] without a baseline record', ()
   assert.equal(diffAgainstSnapshot(parseTasks(hand), undefined).baseline, false);
 });
 
+test('parseTasks accepts the canonical alnum (non-hex) durable suffix', () => {
+  // durable suffixes are [a-z0-9]{8}, not hex — e.g. e4f5g6h7, g7h8i9j0
+  const c = `## Setup
+- [x] T001@e4f5g6h7 Setup
+## Foundational
+- [ ] T002@g7h8i9j0 Real work
+   deps: T001@e4f5g6h7
+`;
+  const p = parseTasks(c);
+  assert.equal(p.tasks.length, 2, JSON.stringify(p.warnings));
+  assert.equal(p.warnings.length, 0, `no malformed warnings: ${p.warnings.join('; ')}`);
+  assert.equal(nextTask(p).id, 'T002@g7h8i9j0');
+});
+
 test('board fence content is ignored when parsing canonical state', () => {
   const withBoard = renderBoard(parseTasks(FIXTURE));
   const p = parseTasks(withBoard);

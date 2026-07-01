@@ -37,7 +37,7 @@ export const GLYPH_STATE = { ' ': 'todo', '~': 'in-progress', '!': 'blocked', x:
 /** @type {Record<string, string>} state name -> glyph */
 export const STATE_GLYPH = { todo: ' ', 'in-progress': '~', blocked: '!', done: 'x' };
 
-const HEADER_RE = /^- \[( |~|!|x)\] (T\d+@[0-9a-f]{8})( \[P\])?( \[[^\]]+\])? (.+)$/;
+const HEADER_RE = /^- \[( |~|!|x)\] (T\d{3,}@[a-z0-9]{8})( \[P\])?( \[[^\]]+\])? (.+)$/;
 const LOOSE_HEADER_RE = /^- \[[^\]]*\]/;
 const HEADING_RE = /^#{2,3}\s+(.+?)\s*$/;
 
