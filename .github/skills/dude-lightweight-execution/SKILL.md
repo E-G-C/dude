@@ -59,6 +59,26 @@ Once `@dude track` imports the feature into Beads, stop using this skill and swi
 - If a task is blocked, mark it `[!]`, record a `blocked-by:` note when practical, and route the blocker with `@dude flag ...`.
 - If `define` is rerun, preserve existing `[x]`, `[~]`, or `[!]` state only when the durable task key still matches and the task still means the same work. If the durable key is missing or differs, treat the task as new. If a task is split, merged, or materially re-scoped, explain the reconciliation instead of silently mapping old state onto new work.
 
+## Board engine (`board.mjs`)
+
+The deterministic `tasks.md` work — parsing durable IDs, computing the ready set,
+regenerating the fenced board region, flipping a glyph, and detecting
+human-applied `[x]` — is owned by a script so it never has to be done by hand:
+
+```bash
+node .github/skills/dude-lightweight-execution/board.mjs next   specs/<feature>/tasks.md
+node .github/skills/dude-lightweight-execution/board.mjs ready  specs/<feature>/tasks.md --json
+node .github/skills/dude-lightweight-execution/board.mjs render specs/<feature>/tasks.md --write   # regenerate the fenced board
+node .github/skills/dude-lightweight-execution/board.mjs set    specs/<feature>/tasks.md T0NN@sha8 done --write
+node .github/skills/dude-lightweight-execution/board.mjs diff   specs/<feature>/tasks.md            # human-applied [x] without a baseline
+```
+
+`render` and `set` are **non-mutating by default** (they print); `--write` edits
+the file and refreshes the coordinator snapshot at
+`.github/dudestuff/task-state.json`. The engine is the source of the grammar;
+this skill keeps the judgment (which specialist, is it really done, scope calls).
+Only the coordinator runs the mutating (`--write`) commands.
+
 ## Selecting work
 
 1. Read `spec.md`, `plan.md`, and any supporting artifacts that materially apply before selecting work or routing implementation.

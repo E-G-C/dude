@@ -1,0 +1,206 @@
+#!/usr/bin/env node
+// @ts-check
+/**
+ * board.mjs — thin CLI over the `tasks.md` engine (`dude-engine/lib/tasks.mjs`).
+ *
+ * Deterministic read/derive/mutate for the Lightweight Execution board. The
+ * coordinator calls these subcommands instead of hand-parsing `tasks.md`.
+ *
+ *   parse  <tasks.md> [--json]                  structured parse (+ warnings)
+ *   ready  <tasks.md> [--json]                  ready-now task list
+ *   next   <tasks.md>                           the single top ready task id
+ *   render <tasks.md> [--stdout|--check|--write] regenerate the fenced board
+ *   set    <tasks.md> <id> <state> [--write] [--blocked-by "..."]
+ *   diff   <tasks.md> [--json]                  human-applied [x] vs snapshot
+ *
+ * Non-mutating by default. `--write` rewrites the file AND refreshes the
+ * coordinator-state snapshot at <root>/.github/dudestuff/task-state.json.
+ *
+ * Flags: --root <dir> (default cwd; anchors the snapshot key), --json.
+ * Exit codes: 0 ok, 1 usage, 2 operation error, 3 `render --check` found stale.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import {
+  parseTasks,
+  readyTasks,
+  nextTask,
+  renderBoard,
+  boardIsStale,
+  setTaskState,
+  glyphsOf,
+  diffAgainstSnapshot,
+} from '../dude-engine/lib/tasks.mjs';
+
+/** @param {string} root */
+function snapshotPath(root) {
+  return path.join(root, '.github', 'dudestuff', 'task-state.json');
+}
+
+/** @param {string} root @returns {Record<string, { glyphs: Record<string,string>, updated_at: string }>} */
+function readSnapshot(root) {
+  const p = snapshotPath(root);
+  try {
+    const o = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return o && typeof o === 'object' ? o : {};
+  } catch {
+    return {};
+  }
+}
+
+/** @param {string} root @param {string} relKey @param {Record<string,string>} glyphs */
+function writeSnapshotEntry(root, relKey, glyphs) {
+  const snap = readSnapshot(root);
+  snap[relKey] = { glyphs, updated_at: new Date().toISOString() };
+  const ordered = {};
+  for (const k of Object.keys(snap).sort()) ordered[k] = snap[k];
+  fs.mkdirSync(path.dirname(snapshotPath(root)), { recursive: true });
+  fs.writeFileSync(snapshotPath(root), `${JSON.stringify(ordered, null, 2)}\n`);
+}
+
+/** @param {string[]} argv */
+function parseArgs(argv) {
+  /** @type {any} */
+  const out = { root: process.cwd(), json: false, stdout: false, check: false, write: false, help: false };
+  /** @type {string[]} */
+  const pos = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--json') out.json = true;
+    else if (a === '--stdout') out.stdout = true;
+    else if (a === '--check') out.check = true;
+    else if (a === '--write') out.write = true;
+    else if (a === '--help' || a === '-h') out.help = true;
+    else if (a === '--root') out.root = argv[++i];
+    else if (a === '--blocked-by') out.blockedBy = argv[++i];
+    else if (a.startsWith('--')) out.help = true;
+    else pos.push(a);
+  }
+  out.cmd = pos[0];
+  out.file = pos[1];
+  out.id = pos[2];
+  out.state = pos[3];
+  return out;
+}
+
+const HELP = `board — tasks.md engine CLI
+
+Usage:
+  node board.mjs parse  <tasks.md> [--json]
+  node board.mjs ready  <tasks.md> [--json]
+  node board.mjs next   <tasks.md>
+  node board.mjs render <tasks.md> [--stdout|--check|--write]
+  node board.mjs set    <tasks.md> <id> <state> [--write] [--blocked-by "..."]
+  node board.mjs diff   <tasks.md> [--json]
+
+Flags: --root <dir> (snapshot anchor, default cwd), --json
+`;
+
+/** @param {any} args @returns {number} exit code */
+function run(args) {
+  if (args.help || !args.cmd || !args.file) {
+    process.stdout.write(HELP);
+    return args.help ? 0 : 1;
+  }
+  const file = path.resolve(args.file);
+  if (!fs.existsSync(file)) {
+    process.stderr.write(`[FAIL] file not found: ${args.file}\n`);
+    return 2;
+  }
+  const content = fs.readFileSync(file, 'utf8');
+  const parsed = parseTasks(content, { path: file });
+  const relKey = path.relative(args.root, file).split(path.sep).join('/');
+
+  switch (args.cmd) {
+    case 'parse': {
+      if (args.json) process.stdout.write(`${JSON.stringify({ tasks: parsed.tasks, warnings: parsed.warnings }, null, 2)}\n`);
+      else {
+        for (const t of parsed.tasks) process.stdout.write(`[${t.glyph}] ${t.id} ${t.description}\n`);
+        for (const w of parsed.warnings) process.stdout.write(`[WARN] ${w}\n`);
+      }
+      return 0;
+    }
+    case 'ready': {
+      const ready = readyTasks(parsed);
+      if (args.json) process.stdout.write(`${JSON.stringify(ready.map((t) => t.id), null, 2)}\n`);
+      else if (ready.length === 0) process.stdout.write('(no ready tasks)\n');
+      else for (const t of ready) process.stdout.write(`${t.id} ${t.description}\n`);
+      return 0;
+    }
+    case 'next': {
+      const t = nextTask(parsed);
+      if (t) process.stdout.write(`${t.id}\n`);
+      return 0;
+    }
+    case 'render': {
+      const rendered = renderBoard(parsed);
+      if (args.check) {
+        const stale = boardIsStale(parsed);
+        process.stdout.write(stale ? '[STALE] board differs from a fresh render\n' : '[OK] board up to date\n');
+        return stale ? 3 : 0;
+      }
+      if (args.write) {
+        fs.writeFileSync(file, rendered);
+        writeSnapshotEntry(args.root, relKey, glyphsOf(parseTasks(rendered)));
+        process.stdout.write(`[OK] rendered board in ${args.file}\n`);
+        return 0;
+      }
+      process.stdout.write(rendered); // default: --stdout
+      return 0;
+    }
+    case 'set': {
+      if (!args.id || !args.state) {
+        process.stderr.write('[FAIL] set requires <id> <state>\n');
+        return 1;
+      }
+      let result;
+      try {
+        result = setTaskState(parsed, args.id, args.state, args.blockedBy != null ? { blockedBy: args.blockedBy } : {});
+      } catch (err) {
+        process.stderr.write(`[FAIL] ${err instanceof Error ? err.message : String(err)}\n`);
+        return 2;
+      }
+      if (args.write) {
+        fs.writeFileSync(file, result.content);
+        writeSnapshotEntry(args.root, relKey, glyphsOf(parseTasks(result.content)));
+        process.stdout.write(`[OK] ${args.id} set to "${args.state}" in ${args.file}\n`);
+        return 0;
+      }
+      const before = content.split('\n')[result.task.headerLine];
+      const after = result.content.split('\n')[result.task.headerLine];
+      process.stdout.write(`- ${before}\n+ ${after}\n(dry run; pass --write to apply)\n`);
+      return 0;
+    }
+    case 'diff': {
+      const snap = readSnapshot(args.root)[relKey]?.glyphs;
+      const d = diffAgainstSnapshot(parsed, snap);
+      if (args.json) process.stdout.write(`${JSON.stringify(d, null, 2)}\n`);
+      else if (!d.baseline) process.stdout.write('(no snapshot baseline yet)\n');
+      else if (d.unexpectedDone.length === 0) process.stdout.write('[OK] no human-applied [x] without a recorded baseline\n');
+      else for (const id of d.unexpectedDone) process.stdout.write(`[UNVERIFIED-DONE] ${id}\n`);
+      return 0;
+    }
+    default:
+      process.stderr.write(`[FAIL] unknown command: ${args.cmd}\n`);
+      return 1;
+  }
+}
+
+/** @param {string} metaUrl @param {string|undefined} argv1 @returns {boolean} */
+export function isMainModule(metaUrl, argv1) {
+  if (!argv1) return false;
+  try {
+    return fs.realpathSync(fileURLToPath(metaUrl)) === fs.realpathSync(path.resolve(argv1));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule(import.meta.url, process.argv[1])) {
+  process.exit(run(parseArgs(process.argv.slice(2))));
+}
+
+export { run, parseArgs, readSnapshot, writeSnapshotEntry, snapshotPath };
