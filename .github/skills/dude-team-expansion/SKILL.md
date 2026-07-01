@@ -26,6 +26,21 @@ When the user asks for a new agent:
 6. Run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`) to verify the new agent file carries the required `**Coordinator-only artifacts:**` block and that no orphan `@<role>` references were introduced. Fix any `[FAIL]` before announcing the new specialist.
 7. Confirm the new specialist and when to use it.
 
+## Scaffolder (`scaffold-agent.mjs`)
+
+To create the file with the required shape in one deterministic step (frontmatter,
+the mandatory `**Coordinator-only artifacts:**` block, LF endings — guaranteed
+lint-clean), use the scaffolder instead of hand-writing the skeleton:
+
+```bash
+node .github/skills/dude-team-expansion/scaffold-agent.mjs <slug> [--role "..."] [--desc "..."]
+node .github/skills/dude-team-expansion/scaffold-agent.mjs <slug> --pack <name>   # dude-pack-<name>-<slug> + pack.md provides
+```
+
+Local (default) writes `dude-local-<slug>.agent.md`; `--pack` writes the pack
+artifact and inserts the id into that pack's `pack.md` `provides.agents`. Then
+fill in the scope/boundaries/rules content and update coordinator routing.
+
 ## Design Rules
 
 - Prefer narrow specialists with a clear lane.

@@ -27,6 +27,21 @@ When the user asks for a skill:
 7. Make the description explicit enough that Copilot can discover it later.
 8. Run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`) to confirm the new file did not introduce orphan `@<role>` references and that the bundle still passes structural checks. Fix any `[FAIL]` before announcing the skill.
 
+## Scaffolder (`scaffold-skill.mjs`)
+
+To create the skill directory + `SKILL.md` with the frontmatter `name:` already
+matching the directory (the rule dude-lint enforces) and LF endings, use the
+scaffolder instead of hand-writing the skeleton:
+
+```bash
+node .github/skills/dude-skill-authoring/scaffold-skill.mjs <slug> [--desc "..."] [--arg-hint "..."]
+node .github/skills/dude-skill-authoring/scaffold-skill.mjs <slug> --pack <name>   # dude-pack-<name>-<slug> + pack.md provides
+```
+
+Local (default) writes `.github/skills/dude-local-<slug>/SKILL.md`; `--pack`
+writes the pack skill and inserts the id into that pack's `pack.md`
+`provides.skills`. Then write the purpose/procedure content.
+
 ## Description Rules
 
 - Start descriptions with `Use when`.
