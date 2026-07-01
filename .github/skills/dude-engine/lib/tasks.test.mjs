@@ -9,6 +9,7 @@ import {
   parseTasks,
   readyTasks,
   nextTask,
+  deriveDependencies,
   renderBoard,
   boardIsStale,
   setTaskState,
@@ -155,6 +156,22 @@ test('parseTasks accepts the canonical alnum (non-hex) durable suffix', () => {
   assert.equal(p.tasks.length, 2, JSON.stringify(p.warnings));
   assert.equal(p.warnings.length, 0, `no malformed warnings: ${p.warnings.join('; ')}`);
   assert.equal(nextTask(p).id, 'T002@g7h8i9j0');
+});
+
+test('deriveDependencies: explicit deps + phase gating + intra-phase order', () => {
+  const edges = deriveDependencies(parseTasks(FIXTURE));
+  const has = (from, to) => edges.some((e) => e.from === from && e.to === to);
+  // explicit
+  assert.ok(has('T002@bbbbbbbb', 'T001@aaaaaaaa'));
+  assert.ok(has('T003@cccccccc', 'T002@bbbbbbbb'));
+  // phase gating: US1 depends on Foundational; Polish on US1
+  assert.ok(has('T004@dddddddd', 'T002@bbbbbbbb'));
+  assert.ok(has('T005@eeeeeeee', 'T003@cccccccc'));
+  assert.ok(has('T005@eeeeeeee', 'T004@dddddddd'));
+  // intra-phase: T004 (non-[P]) depends on earlier T003 in US1
+  assert.ok(has('T004@dddddddd', 'T003@cccccccc'));
+  // [P] task T002 has no forced sibling edge beyond explicit; no self edges
+  assert.ok(!edges.some((e) => e.from === e.to));
 });
 
 test('applyStates batch-updates matching glyphs and reports unknown ids', () => {

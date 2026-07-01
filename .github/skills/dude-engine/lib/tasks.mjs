@@ -205,6 +205,55 @@ export function nextTask(parsed) {
   return readyTasks(parsed)[0] || null;
 }
 
+/**
+ * Derive the implied dependency graph of a `tasks.md`, used when importing into
+ * a tracker (e.g. Beads). Deterministic. Edge `{from, to}` means `from` depends
+ * on `to` (to must finish first). Rules mirror the import algorithm:
+ *   1. explicit `deps:` become direct edges;
+ *   2. phase gating — every task depends on all tasks in the immediately
+ *      preceding phase (transitively gates earlier phases too);
+ *   3. intra-phase ordering — a non-`[P]` task depends on all earlier tasks in
+ *      its own phase; `[P]` tasks have no sibling edges beyond explicit `deps`.
+ * Duplicate and self edges are removed.
+ * @param {ReturnType<typeof parseTasks>} parsed
+ * @returns {{ from: string, to: string }[]}
+ */
+export function deriveDependencies(parsed) {
+  const tasks = parsed.tasks;
+  const phases = [...new Set(tasks.map((t) => t.order))].sort((a, b) => a - b);
+  /** @type {Map<number, Task[]>} */
+  const byPhase = new Map(
+    phases.map((o) => [o, tasks.filter((t) => t.order === o).sort((a, b) => a.num - b.num)]),
+  );
+  /** @type {{from:string,to:string}[]} */
+  const edges = [];
+  const seen = new Set();
+  const add = (from, to) => {
+    if (from === to) return;
+    const k = `${from}\u0000${to}`;
+    if (!seen.has(k)) {
+      seen.add(k);
+      edges.push({ from, to });
+    }
+  };
+  // 1. explicit deps (only to known ids)
+  for (const t of tasks) for (const d of t.deps) if (parsed.byId.has(d)) add(t.id, d);
+  // 2. phase gating: depend on all tasks in the immediately preceding phase
+  for (let i = 1; i < phases.length; i++) {
+    const prev = byPhase.get(phases[i - 1]) || [];
+    for (const t of byPhase.get(phases[i]) || []) for (const p of prev) add(t.id, p.id);
+  }
+  // 3. intra-phase ordering for non-[P] tasks
+  for (const o of phases) {
+    const group = byPhase.get(o) || [];
+    for (let i = 0; i < group.length; i++) {
+      if (group[i].parallel) continue;
+      for (let j = 0; j < i; j++) add(group[i].id, group[j].id);
+    }
+  }
+  return edges;
+}
+
 /** @param {Task} t @returns {string} board line for a task */
 function boardEntry(t) {
   return `- ${t.id}${t.label ? ` [${t.label}]` : ''} ${t.description}`;

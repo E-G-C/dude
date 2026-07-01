@@ -27,6 +27,20 @@ Standard workflow for all Dude specialists when working on tasks tracked in Bead
 
 The mirror is one-way: Beads -> `tasks.md`. While tracked execution is active, never use `tasks.md` to override Beads.
 
+### Mechanical helper (`beads.mjs mirror`)
+
+The glyph-application core of the mirror is scripted:
+
+```bash
+node .github/skills/dude-pack-beads-workflow/beads.mjs mirror specs/<feature>/tasks.md --from bd-list.json --write
+```
+
+Given `bd list --json`, it maps each issue's task key + status to a canonical
+glyph and applies the batch to `tasks.md` (skipping keys with no matching
+header). It does **not** resolve ambiguity, append discovered-work sections, or
+manage `(Beads: <id>)` tags — those match and reconcile rules below stay with the
+coordinator. Run `dude-lint` after.
+
 Throughout this skill, an **executable Beads issue** is one whose Beads `type` is not `epic`. Non-executable grouping issues — specifically the deferred feature epic created by `dude-pack-beads-spec-import` and any other `type=epic` issue — never participate in mirror writes or mirror verification. A **representable** issue is an executable issue whose Beads status maps to a markdown glyph in the table below; deferred executable issues are reportable as `unsupported` but are not silently mirrored.
 
 When the coordinator changes Beads execution state, mirror the result to the matching canonical task unit in `specs/<feature>/tasks.md` when all of these are true:

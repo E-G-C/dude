@@ -107,6 +107,21 @@ Manual import still requires a defined brainstorm file as the identity source:
 - If the intended feature meaning changes, refresh the package via `@dude define <feature>` and reconcile import state instead of hand-editing task status in markdown.
 - If execution finds a missing requirement or mismatch, route it back through `@dude flag ...` rather than silently changing canonical metadata.
 
+## Mechanical helper (`beads.mjs plan-import`)
+
+The deterministic part of import — parsing `tasks.md`, skipping `[x]` history,
+deriving the dependency graph (explicit `deps:` + phase gating + intra-phase
+order), mapping priorities, and shaping the `bd create` / `bd dep` commands with
+the `spec:` identity prefix — is scripted:
+
+```bash
+node .github/skills/dude-pack-beads-workflow/beads.mjs plan-import specs/<feature>/tasks.md --spec specs/<feature>/spec.md --json
+```
+
+It refuses a malformed `tasks.md` (run `dude-lint` first, per Algorithm step 2).
+The plan is a **preview**: the coordinator still runs the emitted commands and
+owns the canonical-identity and reconciliation checks in the algorithm below.
+
 ## Import Algorithm
 
 1. Select the feature directory using the rules above.
