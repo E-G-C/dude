@@ -129,7 +129,7 @@ When a Lightweight Execution task reaches a completion claim:
 3. route independent readiness judgment to `@dude-reviewer` when that role exists or the user asked for it
 4. load `dude-verification-before-completion`
 5. only then mark the task `[x]`, refresh or describe the derived board view, and report the next ready task or remaining blocker
-6. after the canonical task glyph is updated and the board region (if present) is regenerated, run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`) to confirm `tasks.md` still has balanced board fences, valid glyphs, and durable IDs. Fix any `[FAIL]` before reporting completion.
+6. apply the glyph with `board.mjs set <id> <state> --write` and regenerate the derived view with `board.mjs render --write` (both refresh the coordinator snapshot), then run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`) to confirm `tasks.md` still has balanced board fences, valid glyphs, and durable IDs. Fix any `[FAIL]` before reporting completion.
 
 If `@dude-tester` or `@dude-reviewer` is absent, adapt the pipeline, but do not skip the fresh-evidence requirement.
 

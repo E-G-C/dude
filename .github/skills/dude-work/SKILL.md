@@ -168,6 +168,7 @@ If a user asks for any of the above as part of `@dude work`, refuse the bundled 
 ## References
 
 - `dude-lightweight-execution` — selection rules, canonical task units, Lightweight Close Protocol
+- `board.mjs` (in `dude-lightweight-execution`) — deterministic `tasks.md` parse/ready/next/render/set/diff
 - `dude-beads-workflow` — claim/close discipline, ready loop, mirror rules
 - `dude-verification-before-completion` — per-iteration evidence gate
 - `dude-systematic-debugging` — used when a task fails verification mid-loop
