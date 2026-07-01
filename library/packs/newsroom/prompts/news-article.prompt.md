@@ -2,7 +2,7 @@
 description: "Turn a meeting or call transcript or rough notes into a news article for the SECI AI Community site's News section (content/news/), using the bundled Newsroom skill. Use for write-ups, launch or milestone announcements, project updates, and tech-talk recaps."
 name: "News article"
 argument-hint: "path to a transcript/notes file (or select the text / open the file first)"
-agent: dude-pack-newsroom-writer
+agent: Newsroom
 ---
 Write a community news article from the source material using the bundled **Newsroom** skill.
 Follow the skill's front-matter schema, file location, and voice instead of an ad hoc format.
