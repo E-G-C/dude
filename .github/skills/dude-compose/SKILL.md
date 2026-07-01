@@ -31,19 +31,24 @@ Node >= 20.
 ```bash
 node .github/skills/dude-compose/compose.mjs list            # catalog + installed flag
 node .github/skills/dude-compose/compose.mjs status          # installed packs
-node .github/skills/dude-compose/compose.mjs add <name>      # install
+node .github/skills/dude-compose/compose.mjs add <name>      # install (local or fetched)
 node .github/skills/dude-compose/compose.mjs remove <name>   # uninstall
+node .github/skills/dude-compose/compose.mjs verify          # temp-install + lint every pack
 ```
 
 Flags: `--root <dir>` (bundle root, default cwd), `--library <dir>` (catalog,
-default `<root>/library/packs`), `--json` (machine output), `--force`
-(overwrite existing destinations on add). Exit codes: `0` ok, `1` usage, `2`
-operation error.
+default `<root>/library/packs`), `--source <repo>` / `--ref <ref>` (upstream for
+the `add` fetch fallback; default the bundle manifest's `source_repo` /
+`source_ref`), `--no-fetch` (never fetch — require the pack locally), `--json`
+(machine output), `--force` (overwrite existing destinations on add). Exit
+codes: `0` ok, `1` usage, `2` operation error.
 
 ## Add Flow (coordinator)
 
 1. Run `node .github/skills/dude-compose/compose.mjs list --json` to confirm the
-   pack exists in the catalog and is not already installed.
+   pack is not already installed. If it is not in the local catalog, `add` will
+   fetch it from the bundle's configured upstream source (see Catalog
+   Resolution) — tell the user it will be fetched.
 2. **Preview, then confirm.** Tell the user exactly what will be written
    (the pack's `dude-pack-<name>-*` agents and skills) and any `requires:` tools
    from `library/packs/<name>/pack.md`. Wait for confirmation before writing.
@@ -64,20 +69,34 @@ operation error.
 
 ## Catalog Resolution
 
-`compose.mjs` reads packs from `<root>/library/packs/`. This is present in the
-Dude source/dogfood repo and in any install that vendors the catalog.
+`add` resolves a pack's source in this order:
 
-If a lean-core install does **not** carry a local `library/packs/`, the pack
-source must first be made available before `add` can run:
+1. **Local catalog** — `<root>/library/packs/<name>/`. Present in the Dude
+   source/dogfood repo and in any install that vendors the catalog. Always wins
+   (it is the copy you can edit).
+2. **Fetch fallback** — when the pack is absent locally, `compose.mjs` fetches
+   `library/packs/<name>/` from the bundle's upstream source. The source is read
+   from `.github/dudestuff/bundle-manifest.md` (`source_repo` / `source_ref`) —
+   the same trusted pin `dude-bundle-upgrade` already uses — or overridden with
+   `--source` / `--ref`. Local-path sources are read in place; remote sources are
+   shallow-cloned into a per-source cache under the OS temp dir and reused.
 
-- Preferred: fetch `library/packs/<name>/` from the bundle's upstream
-  (`source_repo` / `source_ref` in `.github/dudestuff/bundle-manifest.md`) into
-  a local `library/packs/<name>/`, then run `add` — reuse the fetch approach
-  from `dude-bundle-import` / `dude-bundle-upgrade`.
-- Alternative: vendor the whole `library/` once via `dude-portability`.
+`--no-fetch` disables step 2 (require the pack locally). The fetch reuses only
+the manifest's existing source pin; it does not invent arbitrary URLs. `git` is
+required for remote sources. For a fully offline/vendored install, use
+`dude-portability` to vendor the whole `library/` once.
 
-Do not invent network calls inside `compose.mjs`; keep the script's job to local
-copy/remove + profile bookkeeping.
+## Verify (pack-source lint)
+
+`node .github/skills/dude-compose/compose.mjs verify` validates every catalog
+pack by temp-installing it into a throwaway copy of the current bundle, running
+`dude-lint` against the result, then removing it and checking for leftovers. Use
+it before publishing a pack or in CI. Exit code `2` if any pack lints with a
+failure or leaves artifacts behind.
+
+Expected sibling-pack **warnings** (not failures) when a pack references another
+pack not installed alongside it: `hugo` -> docsy/ms-brand, `design` -> ms-brand,
+`fluent-ui` -> web. Warnings are fine; only failures block.
 
 ## Rules
 

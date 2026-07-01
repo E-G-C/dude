@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { cmdAdd, cmdRemove, cmdList, cmdStatus, readProfile, isMainModule } from './compose.mjs';
+import { cmdAdd, cmdRemove, cmdList, cmdStatus, cmdVerify, readProfile, isMainModule } from './compose.mjs';
 
 /**
  * Build a throwaway bundle root with a minimal `.github/` and a small pack
@@ -38,6 +38,47 @@ function scaffold() {
 /** @param {string} root */
 function cleanup(root) {
   fs.rmSync(root, { recursive: true, force: true });
+}
+
+/**
+ * A bundle root with an empty `.github/` and an empty local catalog (no packs).
+ * @returns {string}
+ */
+function bareRoot() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-compose-root-'));
+  for (const d of ['agents', 'skills', 'instructions', 'prompts', 'dudestuff']) {
+    fs.mkdirSync(path.join(root, '.github', d), { recursive: true });
+  }
+  fs.mkdirSync(path.join(root, 'library', 'packs'), { recursive: true });
+  return root;
+}
+
+/**
+ * A throwaway "upstream" tree containing a single skill-only pack at
+ * `library/packs/<name>/`. Returns the tree root (caller removes it).
+ * @param {string} name
+ * @returns {string}
+ */
+function upstreamWith(name) {
+  const up = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-compose-upstream-'));
+  const pk = path.join(up, 'library', 'packs', name);
+  fs.mkdirSync(path.join(pk, 'skills', `dude-pack-${name}-s`), { recursive: true });
+  fs.writeFileSync(path.join(pk, 'pack.md'), `---\nname: ${name}\ndescription: "x"\n---\n# ${name}\n`);
+  fs.writeFileSync(
+    path.join(pk, 'skills', `dude-pack-${name}-s`, 'SKILL.md'),
+    `---\nname: dude-pack-${name}-s\ndescription: "s"\n---\n# S\n`
+  );
+  return up;
+}
+
+/** @param {string} sourceRepo @returns {string} a seeded bundle-manifest.md body */
+function manifestBody(sourceRepo) {
+  const json = JSON.stringify(
+    { source_repo: sourceRepo, source_ref: 'main', installed_sha: '0'.repeat(40), installed_at: '2026-01-01T00:00:00Z' },
+    null,
+    2
+  );
+  return `# Bundle Manifest\n\n\`\`\`json\n${json}\n\`\`\`\n`;
 }
 
 test('add installs artifacts and records the profile', () => {
@@ -170,6 +211,82 @@ test('status reflects installed packs', () => {
     cmdAdd({ root, library: lib, name: 'demo', force: false });
     const r = cmdStatus({ root });
     assert.deepEqual(r.result.enabled_packs, ['demo']);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('add fetches from an explicit --source when absent locally', () => {
+  const root = bareRoot();
+  const up = upstreamWith('remote');
+  try {
+    const r = cmdAdd({ root, library: path.join(root, 'library', 'packs'), name: 'remote', force: false, source: up });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.result.origin, `source ${up}`);
+    assert.ok(fs.existsSync(path.join(root, '.github/skills/dude-pack-remote-s/SKILL.md')));
+    assert.deepEqual(readProfile(root).enabled_packs, ['remote']);
+  } finally {
+    cleanup(root);
+    cleanup(up);
+  }
+});
+
+test('add fetches via the bundle manifest source when absent locally', () => {
+  const root = bareRoot();
+  const up = upstreamWith('fromman');
+  try {
+    fs.writeFileSync(path.join(root, '.github/dudestuff/bundle-manifest.md'), manifestBody(up));
+    const r = cmdAdd({ root, library: path.join(root, 'library', 'packs'), name: 'fromman', force: false });
+    assert.equal(r.ok, true, r.error);
+    assert.ok(fs.existsSync(path.join(root, '.github/skills/dude-pack-fromman-s/SKILL.md')));
+  } finally {
+    cleanup(root);
+    cleanup(up);
+  }
+});
+
+test('add --no-fetch refuses to fetch a pack absent from the local catalog', () => {
+  const root = bareRoot();
+  try {
+    const r = cmdAdd({ root, library: path.join(root, 'library', 'packs'), name: 'ghost', force: false, fetch: false });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 2);
+    assert.match(r.error || '', /not found in catalog/);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('verify reports OK for a clean pack and FAIL for a broken one', () => {
+  const root = bareRoot();
+  try {
+    fs.writeFileSync(path.join(root, '.github/dudestuff/bundle-manifest.md'), manifestBody('https://github.com/x/y'));
+    const lib = path.join(root, 'library', 'packs');
+    // clean skill-only pack
+    const good = path.join(lib, 'good');
+    fs.mkdirSync(path.join(good, 'skills', 'dude-pack-good-s'), { recursive: true });
+    fs.writeFileSync(path.join(good, 'pack.md'), '---\nname: good\ndescription: "g"\n---\n# good\n');
+    fs.writeFileSync(
+      path.join(good, 'skills', 'dude-pack-good-s', 'SKILL.md'),
+      '---\nname: dude-pack-good-s\ndescription: "s"\n---\n# S\n'
+    );
+    // broken pack: unbackticked reference to a nonexistent agent handle
+    const bad = path.join(lib, 'bad');
+    fs.mkdirSync(path.join(bad, 'skills', 'dude-pack-bad-s'), { recursive: true });
+    fs.writeFileSync(path.join(bad, 'pack.md'), '---\nname: bad\ndescription: "b"\n---\n# bad\n');
+    fs.writeFileSync(
+      path.join(bad, 'skills', 'dude-pack-bad-s', 'SKILL.md'),
+      '---\nname: dude-pack-bad-s\ndescription: "s"\n---\n# S\n\nRoute to @dude-nonexistent-agent for help.\n'
+    );
+
+    const r = cmdVerify({ root, library: lib });
+    assert.equal(r.result.verified.length, 2);
+    const goodRes = r.result.verified.find((/** @type {any} */ v) => v.name === 'good');
+    const badRes = r.result.verified.find((/** @type {any} */ v) => v.name === 'bad');
+    assert.equal(goodRes.failures, 0, JSON.stringify(goodRes));
+    assert.ok(badRes.failures > 0, JSON.stringify(badRes));
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 2);
   } finally {
     cleanup(root);
   }

@@ -78,24 +78,25 @@ hooks:                            # optional: core extension points it fills
 
 ## Installing / removing
 
-- `@dude add pack <name>` — copies `library/packs/<name>/` contents into
-  `.github/`, records the pack in `.github/dudestuff/profile.md`, and runs lint.
-- `@dude remove pack <name>` — deletes the pack's `dude-pack-<name>-*` artifacts,
-  updates the profile, and runs lint.
-
-The compose mechanism lands with the pack-runtime phase.
+- `@dude add pack <name>` — installs the pack's `dude-pack-<name>-*` artifacts
+  into `.github/`, records the exact file list in `.github/dudestuff/profile.md`,
+  and runs lint. The source is the local `library/packs/<name>/` when present,
+  otherwise it is fetched from the bundle's configured upstream (`source_repo` /
+  `source_ref` in the bundle manifest); `--no-fetch` disables the fallback.
+- `@dude remove pack <name>` — deletes exactly what was installed (from the
+  profile's removal manifest), updates the profile, and runs lint.
 
 ## Verifying a pack
 
 The core linter scans only `.github/`, so pack sources under `library/packs/`
-are validated by **installing into a throwaway copy and linting**:
+are validated by temp-installing and linting. `dude-compose` does this for every
+catalog pack in one command:
 
 ```bash
-tmp=$(mktemp -d)
-cp -R .github "$tmp/.github"
-cp -R library/packs/<name>/agents/. "$tmp/.github/agents/" 2>/dev/null || true
-cp -R library/packs/<name>/skills/. "$tmp/.github/skills/" 2>/dev/null || true
-node .github/skills/dude-lint/lint.mjs "$tmp"
+node .github/skills/dude-compose/compose.mjs verify
 ```
 
-A pack is valid when the install lints clean (exit 0).
+It temp-installs each pack into a throwaway copy of the bundle, runs
+`dude-lint`, removes the pack, and checks for leftovers. Exit code `2` if any
+pack lints with a failure. Sibling-pack **warnings** (e.g. `hugo` referencing
+docsy/ms-brand when they are not installed) are expected and do not fail.

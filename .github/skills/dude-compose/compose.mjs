@@ -15,12 +15,18 @@
  * Commands:
  *   list                 available packs (catalog) + installed flag
  *   status               installed packs (from profile)
- *   add <name>           install pack <name> from the catalog into .github/
+ *   add <name>           install pack <name> into .github/ (local catalog, or
+ *                        fetched from the bundle's upstream source when absent)
  *   remove <name>        uninstall pack <name> (delete what was installed)
+ *   verify               temp-install + lint every catalog pack (source lint)
  *
  * Flags:
  *   --root <dir>      bundle root (default: cwd). `.github` lives at <root>/.github
  *   --library <dir>   pack catalog dir (default: <root>/library/packs)
+ *   --source <repo>   upstream source for the add fetch fallback (default: the
+ *                     bundle manifest's source_repo)
+ *   --ref <ref>       upstream ref for the fetch fallback (default: manifest / main)
+ *   --no-fetch        never fetch; require the pack in the local catalog
  *   --json            machine-readable output
  *   --force           overwrite existing destination files on add
  *
@@ -28,12 +34,16 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { belongsToPack } from '../dude-engine/lib/ownership.mjs';
 
 const PACK_NAME_RE = /^[a-z][a-z0-9-]*[a-z0-9]$/;
 const COPY_DIRS = ['agents', 'skills', 'instructions', 'prompts'];
+const CACHE_ROOT = path.join(os.tmpdir(), 'dude-compose-cache');
 
 /** @typedef {{ enabled_packs: string[], installed: Record<string, { files: string[], installed_at: string }> }} Profile */
 
@@ -224,6 +234,104 @@ function packArtifacts(packDir) {
   return out;
 }
 
+/* ------------------------------------------------------------ source fetch */
+
+/**
+ * Read the bundle manifest's upstream source pin, if present and usable.
+ * @param {string} root
+ * @returns {{ source_repo: string, source_ref: string } | null}
+ */
+function readManifestSource(root) {
+  const p = path.join(root, '.github', 'dudestuff', 'bundle-manifest.md');
+  if (!exists(p)) return null;
+  const m = /```json\s*\r?\n([\s\S]*?)\r?\n```/.exec(fs.readFileSync(p, 'utf8'));
+  if (!m) return null;
+  try {
+    const o = JSON.parse(m[1]);
+    const source_repo = typeof o.source_repo === 'string' ? o.source_repo : '';
+    if (!source_repo) return null;
+    const source_ref = typeof o.source_ref === 'string' && o.source_ref ? o.source_ref : 'main';
+    return { source_repo, source_ref };
+  } catch {
+    return null;
+  }
+}
+
+/** @param {string[]} args @param {string} [cwd] @returns {number} exit status */
+function git(args, cwd) {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  return r.status == null ? 1 : r.status;
+}
+/** @returns {boolean} */
+function hasGit() {
+  return spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0;
+}
+
+/**
+ * Resolve a source tree for an upstream source + ref. Local-dir sources are
+ * used in place; remote sources are shallow-cloned into a per-source cache and
+ * reused across calls.
+ * @param {string} source repo URL or local path
+ * @param {string} ref
+ * @returns {{ tree: string } | { error: string }}
+ */
+function resolveSourceTree(source, ref) {
+  if (isDir(source)) return { tree: source };
+  if (!hasGit()) return { error: 'git is required to fetch a pack from a remote source' };
+  fs.mkdirSync(CACHE_ROOT, { recursive: true });
+  const key = crypto.createHash('sha256').update(`${source}|${ref}`).digest('hex').slice(0, 12);
+  const dest = path.join(CACHE_ROOT, `src-${key}`);
+  if (isDir(path.join(dest, '.git'))) return { tree: dest };
+  removePath(dest);
+  if (git(['clone', '--quiet', '--depth=1', '--branch', ref, source, dest]) === 0) {
+    return { tree: dest };
+  }
+  if (git(['clone', '--quiet', source, dest]) === 0 && git(['checkout', '--quiet', ref], dest) === 0) {
+    return { tree: dest };
+  }
+  removePath(dest);
+  return { error: `failed to fetch source ${source} @ ${ref}` };
+}
+
+/**
+ * Resolve a pack's source directory. Prefers the local catalog, then falls back
+ * to the bundle's configured upstream source (or an explicit override), so a
+ * pack can be installed even when `library/packs/` is not vendored locally.
+ * @param {{ root: string, library: string, name: string, fetch: boolean, source?: string, ref?: string }} a
+ * @returns {{ packDir: string, origin: string } | { error: string }}
+ */
+function resolvePackDir({ root, library, name, fetch, source, ref }) {
+  const localDir = path.join(library, name);
+  if (isDir(localDir) && exists(path.join(localDir, 'pack.md'))) {
+    return { packDir: localDir, origin: 'local' };
+  }
+  if (fetch === false) {
+    return { error: `pack not found in catalog: ${rel(localDir)}` };
+  }
+  let src = source || '';
+  let sref = ref || '';
+  if (!src) {
+    const man = readManifestSource(root);
+    if (man) {
+      src = man.source_repo;
+      if (!sref) sref = man.source_ref;
+    }
+  }
+  if (!src) {
+    return {
+      error: `pack "${name}" is not in the local catalog and no upstream source is configured (seed .github/dudestuff/bundle-manifest.md or pass --source)`,
+    };
+  }
+  if (!sref) sref = 'main';
+  const tree = resolveSourceTree(src, sref);
+  if ('error' in tree) return { error: tree.error };
+  const fetchedDir = path.join(tree.tree, 'library', 'packs', name);
+  if (isDir(fetchedDir) && exists(path.join(fetchedDir, 'pack.md'))) {
+    return { packDir: fetchedDir, origin: isDir(src) ? `source ${src}` : `${src} @ ${sref}` };
+  }
+  return { error: `pack "${name}" not found in source ${src}${isDir(src) ? '' : ` @ ${sref}`}` };
+}
+
 /* ----------------------------------------------------------------- commands */
 
 /**
@@ -244,22 +352,24 @@ function artifactInNamespace(relPath, packName) {
  * @param {{ root: string, library: string, name: string, force: boolean }} args
  * @returns {{ ok: boolean, code: number, result?: any, error?: string }}
  */
-function cmdAdd({ root, library, name, force }) {
+function cmdAdd({ root, library, name, force, fetch = true, source, ref }) {
   if (!PACK_NAME_RE.test(name)) {
     return { ok: false, code: 1, error: `invalid pack name: ${name}` };
-  }
-  const packDir = path.join(library, name);
-  if (!isDir(packDir) || !exists(path.join(packDir, 'pack.md'))) {
-    return { ok: false, code: 2, error: `pack not found in catalog: ${rel(packDir)}` };
-  }
-  const manifestName = frontmatterName(fs.readFileSync(path.join(packDir, 'pack.md'), 'utf8'));
-  if (manifestName && manifestName !== name) {
-    return { ok: false, code: 2, error: `pack.md name "${manifestName}" does not match directory "${name}"` };
   }
 
   const profile = readProfile(root);
   if (profile.enabled_packs.includes(name)) {
     return { ok: true, code: 0, result: { added: name, files: [], alreadyInstalled: true } };
+  }
+
+  const resolved = resolvePackDir({ root, library, name, fetch, source, ref });
+  if ('error' in resolved) {
+    return { ok: false, code: 2, error: resolved.error };
+  }
+  const { packDir, origin } = resolved;
+  const manifestName = frontmatterName(fs.readFileSync(path.join(packDir, 'pack.md'), 'utf8'));
+  if (manifestName && manifestName !== name) {
+    return { ok: false, code: 2, error: `pack.md name "${manifestName}" does not match directory "${name}"` };
   }
 
   // Prefix-collision guard: pack names must not be hyphen-prefixes of one
@@ -298,7 +408,7 @@ function cmdAdd({ root, library, name, force }) {
   profile.installed[name] = { files: written, installed_at: new Date().toISOString() };
   writeProfile(root, profile);
 
-  return { ok: true, code: 0, result: { added: name, files: written.sort() } };
+  return { ok: true, code: 0, result: { added: name, files: written.sort(), origin } };
 }
 
 /**
@@ -384,6 +494,62 @@ function cmdStatus({ root }) {
   };
 }
 
+/**
+ * Verify catalog packs by temp-installing each into a throwaway copy of the
+ * current bundle and running dude-lint against it. Reports per-pack warning /
+ * failure / leftover counts. This is the pack-source lint integration: it
+ * surfaces issues (stale handles, malformed frontmatter, removal leftovers)
+ * that the core linter cannot see while a pack still lives under library/packs/.
+ * @param {{ root: string, library: string }} a
+ * @returns {{ ok: boolean, code: number, result: any }}
+ */
+function cmdVerify({ root, library }) {
+  const lintPath = fileURLToPath(new URL('../dude-lint/lint.mjs', import.meta.url));
+  const coreDirs = ['agents', 'skills', 'instructions', 'prompts', 'dudestuff'];
+  const names = availablePacks(library);
+  /** @type {{ name: string, warnings: number, failures: number, leftovers: number, error?: string }[]} */
+  const verified = [];
+
+  for (const name of names) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `dude-verify-${name}-`));
+    try {
+      for (const d of coreDirs) {
+        const srcAbs = path.join(root, '.github', d);
+        if (isDir(srcAbs)) copyRecursive(srcAbs, path.join(tmp, '.github', d));
+      }
+      const libSrc = path.join(root, 'library');
+      if (isDir(libSrc)) copyRecursive(libSrc, path.join(tmp, 'library'));
+
+      const add = cmdAdd({ root: tmp, library: path.join(tmp, 'library', 'packs'), name, force: false, fetch: false });
+      if (!add.ok) {
+        verified.push({ name, warnings: 0, failures: 1, leftovers: 0, error: add.error });
+        continue;
+      }
+      const lint = spawnSync(process.execPath, [lintPath, tmp], { encoding: 'utf8' });
+      const out = `${lint.stdout || ''}${lint.stderr || ''}`;
+      const m = /Findings:\s*(\d+)\s*warning\(s\),\s*(\d+)\s*failure\(s\)/.exec(out);
+      const warnings = m ? Number(m[1]) : 0;
+      const failures = m ? Number(m[2]) : lint.status ? 1 : 0;
+
+      cmdRemove({ root: tmp, name });
+      let leftovers = 0;
+      for (const sub of ['agents', 'skills']) {
+        const subAbs = path.join(tmp, '.github', sub);
+        if (!isDir(subAbs)) continue;
+        for (const e of fs.readdirSync(subAbs)) {
+          if (belongsToPack(rel(path.join('.github', sub, e)), name)) leftovers += 1;
+        }
+      }
+      verified.push({ name, warnings, failures, leftovers });
+    } finally {
+      removePath(tmp);
+    }
+  }
+
+  const anyFail = verified.some((v) => v.failures > 0 || v.leftovers > 0 || v.error);
+  return { ok: !anyFail, code: anyFail ? 2 : 0, result: { verified } };
+}
+
 /* --------------------------------------------------------------------- cli */
 
 const HELP = `dude-compose — install / remove optional packs
@@ -393,10 +559,14 @@ Usage:
   node compose.mjs status               list installed packs
   node compose.mjs add <name>           install a pack into .github/
   node compose.mjs remove <name>        uninstall a pack
+  node compose.mjs verify               temp-install + lint every catalog pack
 
 Flags:
   --root <dir>      bundle root (default: cwd)
   --library <dir>   pack catalog (default: <root>/library/packs)
+  --source <repo>   upstream source for the add fetch fallback (default: manifest)
+  --ref <ref>       upstream ref for the fetch fallback (default: manifest / main)
+  --no-fetch        never fetch; require the pack in the local catalog
   --json            machine-readable output
   --force           overwrite existing files on add
 `;
@@ -407,16 +577,19 @@ Flags:
  */
 function parseArgs(argv) {
   /** @type {any} */
-  const out = { root: process.cwd(), json: false, force: false, help: false };
+  const out = { root: process.cwd(), json: false, force: false, fetch: true, help: false };
   /** @type {string[]} */
   const positionals = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') out.json = true;
     else if (a === '--force') out.force = true;
+    else if (a === '--no-fetch') out.fetch = false;
     else if (a === '--help' || a === '-h') out.help = true;
     else if (a === '--root') out.root = argv[++i];
     else if (a === '--library') out.library = argv[++i];
+    else if (a === '--source') out.source = argv[++i];
+    else if (a === '--ref') out.ref = argv[++i];
     else if (a.startsWith('--')) out.help = true;
     else positionals.push(a);
   }
@@ -441,15 +614,24 @@ function report(r, json) {
       process.stdout.write(`${p.installed ? '[x]' : '[ ]'} ${p.name}${p.description ? ' — ' + p.description : ''}\n`);
     }
   } else if (res.added) {
+    const from = res.origin && res.origin !== 'local' ? ` from ${res.origin}` : '';
     process.stdout.write(
       res.alreadyInstalled
         ? `[INFO] pack "${res.added}" already installed\n`
-        : `[OK] installed pack "${res.added}" (${res.files.length} item(s))\n`
+        : `[OK] installed pack "${res.added}" (${res.files.length} item(s))${from}\n`
     );
   } else if (res.removed) {
     process.stdout.write(`[OK] removed pack "${res.removed}" (${res.files.length} item(s))\n`);
   } else if (res.enabled_packs) {
     process.stdout.write(res.enabled_packs.length ? `Installed: ${res.enabled_packs.join(', ')}\n` : 'No packs installed.\n');
+  } else if (res.verified) {
+    for (const v of res.verified) {
+      const bad = v.failures > 0 || v.leftovers > 0 || v.error;
+      const detail = v.error
+        ? `error: ${v.error}`
+        : `${v.warnings} warning(s), ${v.failures} failure(s), ${v.leftovers} leftover(s)`;
+      process.stdout.write(`${bad ? '[FAIL]' : '[OK]  '} ${v.name} — ${detail}\n`);
+    }
   }
 }
 
@@ -475,7 +657,7 @@ function main() {
       if (!args.name) {
         r = { ok: false, code: 1, error: 'add requires a pack name' };
       } else {
-        r = cmdAdd({ root, library, name: args.name, force: args.force });
+        r = cmdAdd({ root, library, name: args.name, force: args.force, fetch: args.fetch, source: args.source, ref: args.ref });
       }
       break;
     case 'remove':
@@ -484,6 +666,9 @@ function main() {
       } else {
         r = cmdRemove({ root, name: args.name });
       }
+      break;
+    case 'verify':
+      r = cmdVerify({ root, library });
       break;
     default:
       r = { ok: false, code: 1, error: `unknown command: ${args.cmd}` };
@@ -516,4 +701,16 @@ if (isMainModule(import.meta.url, process.argv[1])) {
   main();
 }
 
-export { cmdAdd, cmdRemove, cmdList, cmdStatus, readProfile, availablePacks, packArtifacts, isMainModule };
+export {
+  cmdAdd,
+  cmdRemove,
+  cmdList,
+  cmdStatus,
+  cmdVerify,
+  readProfile,
+  availablePacks,
+  packArtifacts,
+  resolvePackDir,
+  readManifestSource,
+  isMainModule,
+};
