@@ -11,6 +11,24 @@ Fetch a single agent (`*.agent.md`) or skill (`<name>/SKILL.md`) from an externa
 
 Bring in third-party or cross-repo Dude artifacts (or Claude/Anthropic-flavored skills, with caveats) without polluting the bundle. The skill produces a structured **adaptation report** before any file is written; the user confirms per category, then writes happen.
 
+## Mechanical prep (`import.mjs`)
+
+The deterministic parts — URL rewrite (github `blob` -> `raw`), frontmatter
+parsing, the strip plan (`compatibility`, `model`, Claude-style `tools`),
+destination filename normalization to `dude-local-*`, line-ending counting, and
+token-overlap against existing local artifacts — are computed by a script so the
+report is reliable:
+
+```bash
+node .github/skills/dude-bundle-import/import.mjs analyze <url|path> --json   # adaptation report
+node .github/skills/dude-bundle-import/import.mjs apply   <url|path> --plan plan.json
+```
+
+`analyze` never writes. `apply` executes a confirmed plan and refuses unless the
+plan records a `license_disposition` when the source carries license metadata.
+The judgment calls below (license path, persona drift, opt-in tool remap) stay
+with the coordinator; the script only prepares and executes the mechanical edits.
+
 ## When To Run
 
 - User supplies a URL to a `*.agent.md` or `SKILL.md` and asks to import, fetch, copy, or install it.
