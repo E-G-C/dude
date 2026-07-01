@@ -103,25 +103,28 @@ export function detectKind(source, content) {
 }
 
 /**
- * Normalize an imported agent basename to the `dude-local-*` namespace.
- * @param {string} basename e.g. `security.agent.md` or `dude-pack-x-y.agent.md`
+ * Normalize an imported agent basename to the `dude-local-*` namespace. Strips
+ * only the literal `dude-local-` / `dude-pack-` prefix (not a pack segment), so
+ * multi-token pack names survive: `dude-pack-ms-brand-stylist` -> `ms-brand-stylist`.
+ * @param {string} basename e.g. `security.agent.md` or `dude-pack-ms-brand-stylist.agent.md`
  * @returns {string} destination filename, e.g. `dude-local-security.agent.md`
  */
 export function normalizeAgentDest(basename) {
-  let stem = basename.replace(/\.agent\.md$/, '').replace(/\.md$/, '');
-  stem = stem.replace(/^dude-local-/, '').replace(/^dude-pack-[a-z0-9]+-/, '');
+  const stem = basename
+    .replace(/\.agent\.md$/, '')
+    .replace(/\.md$/, '')
+    .replace(/^dude-(?:local|pack)-/, '');
   return `dude-local-${stem}.agent.md`;
 }
 
 /**
  * Normalize an imported skill name to a `dude-local-*` destination directory.
+ * Strips only the literal `dude-local-` / `dude-pack-` prefix (lossless).
  * @param {string} name skill frontmatter `name` (or a fallback)
  * @returns {string} destination directory, e.g. `dude-local-my-skill`
  */
 export function normalizeSkillDir(name) {
-  const stem = String(name || 'imported')
-    .replace(/^dude-local-/, '')
-    .replace(/^dude-pack-[a-z0-9]+-/, '');
+  const stem = String(name || 'imported').replace(/^dude-(?:local|pack)-/, '');
   return `dude-local-${stem}`;
 }
 

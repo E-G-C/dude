@@ -45,8 +45,10 @@ test('detectKind + dest normalization', () => {
   assert.equal(detectKind('repo/agents/foo.md', '---\nname: Y\n---\n'), 'agent');
   assert.equal(detectKind('notes.md', 'plain text'), 'unknown');
   assert.equal(normalizeAgentDest('security.agent.md'), 'dude-local-security.agent.md');
-  assert.equal(normalizeAgentDest('dude-pack-web-backend.agent.md'), 'dude-local-backend.agent.md');
-  assert.equal(normalizeSkillDir('dude-pack-hugo-site-builder'), 'dude-local-site-builder');
+  assert.equal(normalizeAgentDest('dude-pack-web-backend.agent.md'), 'dude-local-web-backend.agent.md');
+  assert.equal(normalizeAgentDest('dude-pack-ms-brand-stylist.agent.md'), 'dude-local-ms-brand-stylist.agent.md');
+  assert.equal(normalizeSkillDir('dude-pack-hugo-site-builder'), 'dude-local-hugo-site-builder');
+  assert.equal(normalizeSkillDir('dude-pack-ms-brand-visual'), 'dude-local-ms-brand-visual');
   assert.equal(normalizeSkillDir('my-skill'), 'dude-local-my-skill');
 });
 
