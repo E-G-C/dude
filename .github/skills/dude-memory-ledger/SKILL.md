@@ -72,6 +72,22 @@ Memory files are append-only by default, but they need periodic maintenance:
 4. **Promotion is pruning**: when a lesson becomes a skill, remove or shorten
    the lesson entry and reference the skill instead.
 
+## Append helper (`memory.mjs`)
+
+To add an entry consistently and avoid silently duplicating an existing note,
+use the append helper — it formats the bullet, scores token-overlap against the
+existing entries, and refuses a near-duplicate (unless `--force`) instead of
+piling on a contradiction:
+
+```bash
+node .github/skills/dude-memory-ledger/memory.mjs append .github/dudestuff/decisions.md --text "the decision"
+node .github/skills/dude-memory-ledger/memory.mjs append .github/dudestuff/lessons.md   --text "the lesson" --check
+```
+
+It also warns when the file crosses the consolidation threshold. The judgment —
+whether to consolidate, reword, or force a similar-but-distinct entry — stays
+with you.
+
 ## Verification
 
 After writing to any `.github/dudestuff/*.md` file, run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`). The linter warns when a memory file exceeds the consolidation threshold and confirms no orphan `@<role>` references slipped in. Treat any `[WARN]` on the file you just edited as a prompt to consolidate now rather than later.
