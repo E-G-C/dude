@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['20', '22']
+    name: validate (node ${{ matrix.node-version }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # Dependency-free ESM: no install step. Pass test files explicitly because
+      # bare `node --test` discovery does not recurse this tree reliably.
+      - name: Unit tests
+        run: find . -name '*.test.mjs' -print0 | xargs -0 node --test
+
+      - name: Bundle lint
+        run: node .github/skills/dude-lint/lint.mjs .
+
+      - name: Pack source verify
+        run: node .github/skills/dude-compose/compose.mjs verify

@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # required to create a GitHub Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Gate: a release must pass the same checks as CI.
+      - name: Unit tests
+        run: find . -name '*.test.mjs' -print0 | xargs -0 node --test
+
+      - name: Bundle lint
+        run: node .github/skills/dude-lint/lint.mjs .
+
+      - name: Pack source verify
+        run: node .github/skills/dude-compose/compose.mjs verify
+
+      # Stage the deployable core bundle: core-tier minus tests + seeds.
+      - name: Build release bundle
+        run: node scripts/build-release.mjs --out dist --sha "$GITHUB_SHA"
+
+      # Defense in depth: the staged bundle must itself lint clean.
+      - name: Verify staged bundle
+        run: node .github/skills/dude-lint/lint.mjs dist
+
+      - name: Package
+        run: |
+          cd dist
+          zip -r "../dude-bundle-${GITHUB_REF_NAME}.zip" .github
+          cd ..
+          ls -la dude-bundle-*.zip
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "dude-bundle-${GITHUB_REF_NAME}.zip" --generate-notes
