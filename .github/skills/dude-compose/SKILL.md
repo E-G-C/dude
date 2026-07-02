@@ -29,7 +29,7 @@ The deterministic file work is done by a dependency-free Node script. Targets
 Node >= 20.
 
 ```bash
-node .github/skills/dude-compose/compose.mjs list            # catalog + installed flag
+node .github/skills/dude-compose/compose.mjs list            # catalog (local or fetched) + installed flag
 node .github/skills/dude-compose/compose.mjs status          # installed packs
 node .github/skills/dude-compose/compose.mjs add <name>      # install (local or fetched)
 node .github/skills/dude-compose/compose.mjs remove <name>   # uninstall
@@ -38,7 +38,7 @@ node .github/skills/dude-compose/compose.mjs verify          # temp-install + li
 
 Flags: `--root <dir>` (bundle root, default cwd), `--library <dir>` (catalog,
 default `<root>/library/packs`), `--source <repo>` / `--ref <ref>` (upstream for
-the `add` fetch fallback; default the bundle manifest's `source_repo` /
+the `add`/`list` fetch fallback; default the bundle manifest's `source_repo` /
 `source_ref`), `--no-fetch` (never fetch — require the pack locally), `--json`
 (machine output), `--force` (overwrite existing destinations on add). Exit
 codes: `0` ok, `1` usage, `2` operation error.
@@ -69,22 +69,25 @@ codes: `0` ok, `1` usage, `2` operation error.
 
 ## Catalog Resolution
 
-`add` resolves a pack's source in this order:
+`add` and `list` resolve the pack catalog in this order:
 
-1. **Local catalog** — `<root>/library/packs/<name>/`. Present in the Dude
+1. **Local catalog** — `<root>/library/packs/`. Present in the Dude
    source/dogfood repo and in any install that vendors the catalog. Always wins
    (it is the copy you can edit).
-2. **Fetch fallback** — when the pack is absent locally, `compose.mjs` fetches
-   `library/packs/<name>/` from the bundle's upstream source. The source is read
+2. **Fetch fallback** — when the local catalog is absent (a released core ships
+   no `library/`), `compose.mjs` fetches the catalog from the bundle's upstream
+   source. `add` fetches the single `library/packs/<name>/`; `list` reads the
+   whole `library/packs/` to enumerate installable packs. The source is read
    from `.github/dudestuff/bundle-manifest.md` (`source_repo` / `source_ref`) —
    the same trusted pin `dude-bundle-upgrade` already uses — or overridden with
    `--source` / `--ref`. Local-path sources are read in place; remote sources are
    shallow-cloned into a per-source cache under the OS temp dir and reused.
 
-`--no-fetch` disables step 2 (require the pack locally). The fetch reuses only
-the manifest's existing source pin; it does not invent arbitrary URLs. `git` is
-required for remote sources. For a fully offline/vendored install, use
-`dude-portability` to vendor the whole `library/` once.
+`--no-fetch` disables step 2 (require the pack locally; `list` then shows only
+the local catalog, which may be empty). The fetch reuses only the manifest's
+existing source pin; it does not invent arbitrary URLs. `git` is required for
+remote sources. For a fully offline/vendored install, use `dude-portability` to
+vendor the whole `library/` once.
 
 ## Verify (pack-source lint)
 

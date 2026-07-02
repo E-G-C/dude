@@ -142,7 +142,7 @@ Use pack mode when the user asks to:
 - list available or installed packs (`@dude list packs`)
 - gain a capability that lives in a pack (tracked execution, release tooling, web specialists, TDD)
 
-Packs are optional capability bricks in `library/packs/`, installed into `.github/` under the reserved `dude-pack-<name>-*` namespace that `@dude upgrade` preserves. Route through the `dude-compose` skill, which previews the change, runs `node .github/skills/dude-compose/compose.mjs add|remove <name>`, records the install in `.github/dudestuff/profile.md`, and runs `dude-lint`. Never install a pack without explicit user intent.
+Packs are optional capability bricks drawn from the bundle's pack catalog — a local `library/packs/` when the repo vendors one, otherwise the upstream source recorded in `.github/dudestuff/bundle-manifest.md` (a released core ships no local `library/`). They install into `.github/` under the reserved `dude-pack-<name>-*` namespace that `@dude upgrade` preserves. Route through the `dude-compose` skill, which previews the change, runs `node .github/skills/dude-compose/compose.mjs add|remove <name>` (both `list` and `add` fetch from the manifest's upstream source when no local catalog is present), records the install in `.github/dudestuff/profile.md`, and runs `dude-lint`. Never install a pack without explicit user intent.
 
 ### Diff Mode
 

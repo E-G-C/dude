@@ -13,7 +13,8 @@
  * Dependency-free ESM. Targets Node >= 20. Run `node compose.mjs --help`.
  *
  * Commands:
- *   list                 available packs (catalog) + installed flag
+ *   list                 available packs (local catalog, or fetched from the
+ *                        bundle's upstream source) + installed flag
  *   status               installed packs (from profile)
  *   add <name>           install pack <name> into .github/ (local catalog, or
  *                        fetched from the bundle's upstream source when absent)
@@ -23,8 +24,8 @@
  * Flags:
  *   --root <dir>      bundle root (default: cwd). `.github` lives at <root>/.github
  *   --library <dir>   pack catalog dir (default: <root>/library/packs)
- *   --source <repo>   upstream source for the add fetch fallback (default: the
- *                     bundle manifest's source_repo)
+ *   --source <repo>   upstream source for the add/list fetch fallback (default:
+ *                     the bundle manifest's source_repo)
  *   --ref <ref>       upstream ref for the fetch fallback (default: manifest / main)
  *   --no-fetch        never fetch; require the pack in the local catalog
  *   --json            machine-readable output
@@ -333,6 +334,38 @@ function resolvePackDir({ root, library, name, fetch, source, ref }) {
   return { error: `pack "${name}" not found in source ${src}${isDir(src) ? '' : ` @ ${sref}`}` };
 }
 
+/**
+ * Resolve the catalog directory to enumerate for `list`. Prefers a local
+ * `library/packs/` when the repo vendors one; otherwise (a released core ships
+ * no local catalog) falls back to the bundle's configured upstream source so
+ * `list` can still show installable packs. Never throws: any fetch problem
+ * degrades to the (usually empty) local view with the error surfaced as a note.
+ * @param {{ root: string, library: string, fetch: boolean, source?: string, ref?: string }} a
+ * @returns {{ dir: string, origin: string, error?: string }}
+ */
+function resolveCatalogDir({ root, library, fetch, source, ref }) {
+  if (isDir(library)) return { dir: library, origin: 'local' };
+  if (fetch === false) return { dir: library, origin: 'local' };
+  let src = source || '';
+  let sref = ref || '';
+  if (!src) {
+    const man = readManifestSource(root);
+    if (man) {
+      src = man.source_repo;
+      if (!sref) sref = man.source_ref;
+    }
+  }
+  if (!src) return { dir: library, origin: 'local' };
+  if (!sref) sref = 'main';
+  const tree = resolveSourceTree(src, sref);
+  if ('error' in tree) return { dir: library, origin: 'local', error: tree.error };
+  const catalog = path.join(tree.tree, 'library', 'packs');
+  if (isDir(catalog)) {
+    return { dir: catalog, origin: isDir(src) ? `source ${src}` : `${src} @ ${sref}` };
+  }
+  return { dir: library, origin: 'local', error: `no pack catalog found in ${src}${isDir(src) ? '' : ` @ ${sref}`}` };
+}
+
 /* ----------------------------------------------------------------- commands */
 
 /**
@@ -470,16 +503,17 @@ function cmdRemove({ root, name }) {
 }
 
 /**
- * @param {{ root: string, library: string }} args
+ * @param {{ root: string, library: string, fetch?: boolean, source?: string, ref?: string }} args
  * @returns {{ ok: boolean, code: number, result: any }}
  */
-function cmdList({ root, library }) {
+function cmdList({ root, library, fetch = true, source, ref }) {
   const profile = readProfile(root);
   const installedSet = new Set(profile.enabled_packs);
-  const packs = availablePacks(library).map((name) => {
+  const cat = resolveCatalogDir({ root, library, fetch, source, ref });
+  const packs = availablePacks(cat.dir).map((name) => {
     let description = '';
     try {
-      const text = fs.readFileSync(path.join(library, name, 'pack.md'), 'utf8');
+      const text = fs.readFileSync(path.join(cat.dir, name, 'pack.md'), 'utf8');
       const m = /^description\s*:\s*(.+)$/m.exec(text);
       if (m) description = m[1].trim().replace(/^["']|["']$/g, '');
     } catch {
@@ -487,7 +521,16 @@ function cmdList({ root, library }) {
     }
     return { name, installed: installedSet.has(name), description };
   });
-  return { ok: true, code: 0, result: { packs, enabled_packs: [...installedSet].sort() } };
+  return {
+    ok: true,
+    code: 0,
+    result: {
+      packs,
+      enabled_packs: [...installedSet].sort(),
+      origin: cat.origin,
+      ...(cat.error ? { note: cat.error } : {}),
+    },
+  };
 }
 
 /**
@@ -564,7 +607,7 @@ function cmdVerify({ root, library }) {
 const HELP = `dude-compose — install / remove optional packs
 
 Usage:
-  node compose.mjs list                 list catalog packs + installed flag
+  node compose.mjs list                 list catalog packs (local or fetched) + installed
   node compose.mjs status               list installed packs
   node compose.mjs add <name>           install a pack into .github/
   node compose.mjs remove <name>        uninstall a pack
@@ -573,7 +616,7 @@ Usage:
 Flags:
   --root <dir>      bundle root (default: cwd)
   --library <dir>   pack catalog (default: <root>/library/packs)
-  --source <repo>   upstream source for the add fetch fallback (default: manifest)
+  --source <repo>   upstream source for the add/list fetch fallback (default: manifest)
   --ref <ref>       upstream ref for the fetch fallback (default: manifest / main)
   --no-fetch        never fetch; require the pack in the local catalog
   --json            machine-readable output
@@ -619,9 +662,16 @@ function report(r, json) {
   }
   const res = r.result || {};
   if (res.packs) {
+    if (res.origin && res.origin !== 'local') {
+      process.stdout.write(`# catalog: ${res.origin}\n`);
+    }
     for (const p of res.packs) {
       process.stdout.write(`${p.installed ? '[x]' : '[ ]'} ${p.name}${p.description ? ' — ' + p.description : ''}\n`);
     }
+    if (res.packs.length === 0) {
+      process.stdout.write('No packs available in the catalog.\n');
+    }
+    if (res.note) process.stderr.write(`[INFO] ${res.note}\n`);
   } else if (res.added) {
     const from = res.origin && res.origin !== 'local' ? ` from ${res.origin}` : '';
     process.stdout.write(
@@ -657,7 +707,7 @@ function main() {
   let r;
   switch (args.cmd) {
     case 'list':
-      r = cmdList({ root, library });
+      r = cmdList({ root, library, fetch: args.fetch, source: args.source, ref: args.ref });
       break;
     case 'status':
       r = cmdStatus({ root });
@@ -720,6 +770,7 @@ export {
   availablePacks,
   packArtifacts,
   resolvePackDir,
+  resolveCatalogDir,
   readManifestSource,
   isMainModule,
 };

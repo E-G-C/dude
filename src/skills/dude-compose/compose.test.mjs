@@ -245,6 +245,41 @@ test('add fetches via the bundle manifest source when absent locally', () => {
   }
 });
 
+test('list falls back to the manifest upstream source when no local catalog', () => {
+  const root = bareRoot();
+  const up = upstreamWith('remotelist');
+  try {
+    // a released core ships no local library/ at all
+    fs.rmSync(path.join(root, 'library'), { recursive: true, force: true });
+    fs.writeFileSync(path.join(root, '.github/dudestuff/bundle-manifest.md'), manifestBody(up));
+    const r = cmdList({ root, library: path.join(root, 'library', 'packs') });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.result.origin, `source ${up}`);
+    const found = r.result.packs.find((/** @type {any} */ p) => p.name === 'remotelist');
+    assert.ok(found, 'remote pack listed via upstream fallback');
+    assert.equal(found.installed, false);
+  } finally {
+    cleanup(root);
+    cleanup(up);
+  }
+});
+
+test('list does not fetch under --no-fetch when no local catalog', () => {
+  const root = bareRoot();
+  const up = upstreamWith('nope');
+  try {
+    fs.rmSync(path.join(root, 'library'), { recursive: true, force: true });
+    fs.writeFileSync(path.join(root, '.github/dudestuff/bundle-manifest.md'), manifestBody(up));
+    const r = cmdList({ root, library: path.join(root, 'library', 'packs'), fetch: false });
+    assert.equal(r.ok, true);
+    assert.equal(r.result.origin, 'local');
+    assert.equal(r.result.packs.length, 0);
+  } finally {
+    cleanup(root);
+    cleanup(up);
+  }
+});
+
 test('add normalizes CRLF/trailing-ws in a fetched pack (not the local catalog)', () => {
   const root = bareRoot();
   const up = upstreamWith('crlfy');
