@@ -8,7 +8,8 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
 ```json
 {
   "enabled_packs": [
-    "authoring"
+    "authoring",
+    "coding"
   ],
   "installed": {
     "authoring": {
@@ -23,6 +24,15 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
         ".github/skills/dude-pack-authoring-prompt-conventions"
       ],
       "installed_at": "2026-07-02T02:40:31.370Z"
+    },
+    "coding": {
+      "files": [
+        ".github/agents/dude-pack-coding-architect.agent.md",
+        ".github/agents/dude-pack-coding-coder.agent.md",
+        ".github/agents/dude-pack-coding-reviewer.agent.md",
+        ".github/agents/dude-pack-coding-tester.agent.md"
+      ],
+      "installed_at": "2026-07-02T03:41:56.404Z"
     }
   }
 }
