@@ -33,3 +33,19 @@ jobs:
 
       - name: Pack source verify
         run: node .github/skills/dude-compose/compose.mjs verify
+
+      # The product core lives in src/; build the release bundle and lint it.
+      - name: Product build + lint
+        run: |
+          node scripts/build-release.mjs --out dist --sha "$GITHUB_SHA"
+          node .github/skills/dude-lint/lint.mjs dist
+
+      # The committed dev bundle under .github/ must match src/ (build-dev output).
+      - name: Dev-bundle drift check
+        run: |
+          node scripts/build-dev.mjs
+          if [ -n "$(git status --porcelain -- .github)" ]; then
+            echo "::error::.github dev bundle is out of sync with src/ — run: node scripts/build-dev.mjs"
+            git status --porcelain -- .github
+            exit 1
+          fi

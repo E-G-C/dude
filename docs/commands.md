@@ -556,6 +556,30 @@ refresh the coordinator snapshot. `memory append` refuses a near-duplicate unles
 `--force`. Every engine script exits `0` on success, `1` on usage error, `2` on
 operation error.
 
+### Repo layout: source vs built bundle
+
+This repository keeps the product **core** in `src/` — the `dude` / `dude-<slug>`
+agents, `dude-<slug>` skills (including the engine libraries and their tests),
+and `dude.instructions.md`. `.github/` holds the **built dev bundle**: the core
+synced from `src/` by `scripts/build-dev.mjs`, plus the installed `authoring`
+pack, so the maintainer's own `@dude` works. Consumers never see `src/`.
+
+- `scripts/build-release.mjs` stages a test-free core bundle from `src/` into a
+  `.github/`-shaped release artifact.
+- `scripts/build-dev.mjs` syncs `src/` core into `.github/` (minus tests), while
+  preserving `project`, `dudestuff`, `workflows`, and installed packs.
+- Run `scripts/build-dev.mjs` after editing `src/`; CI fails if `.github/` drifts
+  out of sync with `src/`.
+
+### Releases and CI
+
+`.github/workflows/ci.yml` runs on every push and PR (Node 20 + 22): unit tests,
+bundle lint, pack-source verify, a product build + lint, and the dev-bundle
+drift check. `.github/workflows/release.yml` runs on a `v*` tag: it gates on the
+same checks, builds the core bundle with `scripts/build-release.mjs`, and
+publishes a `dude-bundle-<tag>.zip` to a GitHub Release. Unzip it at a repo root
+to drop the bundle into `.github/`.
+
 ### Upgrading the bundle
 
 Use the `dude-bundle-upgrade` skill to refresh the installed Dude engine from its

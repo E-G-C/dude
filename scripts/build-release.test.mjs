@@ -20,7 +20,7 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
-const lintScript = path.join(repoRoot, '.github/skills/dude-lint/lint.mjs');
+const lintScript = path.join(repoRoot, 'src/skills/dude-lint/lint.mjs');
 
 test('isReleaseFile keeps core files and drops tests / packs / local / project-owned', () => {
   assert.equal(isReleaseFile('.github/agents/dude.agent.md'), true);

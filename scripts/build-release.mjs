@@ -2,16 +2,16 @@
 /**
  * build-release.mjs — assemble the deployable Dude core bundle from this repo.
  *
- * The repo is SOURCE; the release is DISTRIBUTION. This script stages the
- * consumer-facing bundle into `<out>/.github/...`, so a consumer unzips it at
- * their repo root and the files land in `.github/`.
+ * The product core lives in `src/`; the release is DISTRIBUTION. This script
+ * reads `src/` and stages the consumer-facing bundle into `<out>/.github/...`
+ * (mapping `src/<x>` -> `.github/<x>`), so a consumer unzips it at their repo
+ * root and the files land in `.github/`.
  *
  * Ships: core-tier files only (the `dude` / `dude-<slug>` agents, `dude-<slug>`
  * skill directories, and `dude.instructions.md`) MINUS every test file, plus a
  * generic `project` skill stub and a seeded bundle manifest.
- * Excluded: `*.test.mjs`, installed packs (`dude-pack-*`), project-local
- * customizations (`dude-local-*`), this repo's own project knowledge and dev
- * memory, `.github/workflows/`, and everything outside `.github/`.
+ * Excluded: `*.test.mjs`, packs (`dude-pack-*`), project-local customizations
+ * (`dude-local-*`), and everything outside the core namespace.
  *
  * Dependency-free ESM. Targets Node >= 20. Run `node build-release.mjs --help`.
  *
@@ -20,7 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isCorePath } from '../.github/skills/dude-engine/lib/ownership.mjs';
+import { isCorePath } from '../src/skills/dude-engine/lib/ownership.mjs';
 
 /** Generic project-knowledge stub shipped in a fresh bundle. */
 export const PROJECT_STUB = `---
@@ -95,26 +95,51 @@ function walk(dir) {
 }
 
 /**
- * Stage the release bundle into `<outDir>/.github/...`.
+ * Map a `src/`-relative path to its deployed `.github/` path.
+ * @param {string} srcRel
+ * @returns {string}
+ */
+export function srcToDeploy(srcRel) {
+  return String(srcRel).replace(/\\/g, '/').replace(/^\.\//, '').replace(/^src\//, '.github/');
+}
+
+/**
+ * List core-tier source files under `src/`, paired with their deployed
+ * `.github/` paths. Shared by the release build and the dev-bundle build.
+ * @param {string} repoRoot
+ * @returns {{ abs: string, deployRel: string }[]}
+ */
+export function listCoreSourceFiles(repoRoot) {
+  const srcDir = path.join(repoRoot, 'src');
+  /** @type {{ abs: string, deployRel: string }[]} */
+  const out = [];
+  for (const abs of walk(srcDir)) {
+    const srcRel = path.relative(repoRoot, abs).replace(/\\/g, '/');
+    const deployRel = srcToDeploy(srcRel);
+    if (isReleaseFile(deployRel)) out.push({ abs, deployRel });
+  }
+  return out;
+}
+
+/**
+ * Stage the release bundle into `<outDir>/.github/...` from `src/`.
  * @param {{ repoRoot: string, outDir: string, sha?: string, at?: string }} opts
  * @returns {{ files: string[], out: string }}
  */
 export function buildRelease({ repoRoot, outDir, sha, at }) {
-  const githubDir = path.join(repoRoot, '.github');
-  if (!fs.existsSync(githubDir)) {
-    throw new Error(`no .github/ under repo root: ${repoRoot}`);
+  const srcDir = path.join(repoRoot, 'src');
+  if (!fs.existsSync(srcDir)) {
+    throw new Error(`no src/ under repo root: ${repoRoot}`);
   }
   fs.rmSync(outDir, { recursive: true, force: true });
 
   /** @type {string[]} */
   const written = [];
-  for (const abs of walk(githubDir)) {
-    const rel = path.relative(repoRoot, abs).replace(/\\/g, '/');
-    if (!isReleaseFile(rel)) continue;
-    const dest = path.join(outDir, rel);
+  for (const { abs, deployRel } of listCoreSourceFiles(repoRoot)) {
+    const dest = path.join(outDir, deployRel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.copyFileSync(abs, dest);
-    written.push(rel);
+    written.push(deployRel);
   }
 
   // Seed: generic project skill stub (replaces this repo's own project knowledge).
@@ -125,8 +150,9 @@ export function buildRelease({ repoRoot, outDir, sha, at }) {
   written.push(projRel);
 
   // Seed: bundle manifest (required by lint; carries the upstream source pin).
+  // The template still lives in .github/dudestuff (dev state), not src/.
   const manRel = '.github/dudestuff/bundle-manifest.md';
-  const manSrc = path.join(githubDir, 'dudestuff', 'bundle-manifest.md');
+  const manSrc = path.join(repoRoot, '.github', 'dudestuff', 'bundle-manifest.md');
   if (fs.existsSync(manSrc)) {
     const seeded = seedManifest(fs.readFileSync(manSrc, 'utf8'), sha, at);
     const manDest = path.join(outDir, manRel);

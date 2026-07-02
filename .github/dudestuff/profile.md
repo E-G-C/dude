@@ -7,8 +7,24 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
 
 ```json
 {
-  "enabled_packs": [],
-  "installed": {}
+  "enabled_packs": [
+    "authoring"
+  ],
+  "installed": {
+    "authoring": {
+      "files": [
+        ".github/agents/dude-pack-authoring-agent-smith.agent.md",
+        ".github/agents/dude-pack-authoring-instruction-smith.agent.md",
+        ".github/agents/dude-pack-authoring-pack-smith.agent.md",
+        ".github/agents/dude-pack-authoring-prompt-smith.agent.md",
+        ".github/agents/dude-pack-authoring-skill-smith.agent.md",
+        ".github/skills/dude-pack-authoring-instruction-conventions",
+        ".github/skills/dude-pack-authoring-pack-conventions",
+        ".github/skills/dude-pack-authoring-prompt-conventions"
+      ],
+      "installed_at": "2026-07-02T02:40:31.370Z"
+    }
+  }
 }
 ```
 
@@ -19,4 +35,3 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
   that pack; `remove` deletes precisely these.
 - Installed pack artifacts use the `dude-pack-<name>-*` namespace, which
   `@dude upgrade` preserves across core refreshes.
-- This lean-core repo ships pack-free: `enabled_packs` is empty by default.
