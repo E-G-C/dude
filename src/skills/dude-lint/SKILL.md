@@ -83,7 +83,7 @@ node --test .github/skills/dude-engine/lib/ownership.test.mjs
 5. **Bundle manifest** (`.github/dudestuff/bundle-manifest.md`)
    - Fail when the seeded manifest is missing.
    - Fail when the fenced JSON manifest block is missing or malformed.
-   - Fail when the manifest contains anything other than the four metadata fields (`source_repo`, `source_ref`, `installed_sha`, `installed_at`), when any required field is absent, or when `installed_sha` is not a 40-character lowercase git sha.
+   - Fail when the manifest contains anything other than the metadata fields (`source_repo`, `source_ref`, `installed_ref`), or when a required field (`source_repo` / `source_ref`) is absent. `installed_ref` is optional.
    - The manifest is **metadata only**. Base ownership is derived from the namespace convention by the engine, not from a manifest list. Local edits to base files are silently overwritten on `@dude upgrade`; use the reserved `dude-local-<slug>` namespace to fork base files you want to customize.
 
 6. **Namespace advisories (core / pack / local tiers)**

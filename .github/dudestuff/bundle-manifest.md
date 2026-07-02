@@ -1,21 +1,20 @@
 # Bundle Manifest
 
-This file pins the upstream Dude bundle version associated with the current install. `@dude upgrade` reads it to know which upstream source the upgrade should target and which installed commit the local bundle is currently at.
+This file pins the upstream Dude bundle version associated with the current install. `@dude upgrade` reads it to know which upstream source the upgrade should target and which release version the local bundle is currently on.
 
 ```json
 {
   "source_repo": "https://github.com/E-G-C/dude",
   "source_ref": "main",
-  "installed_sha": "55f6fd6b87750bd16d866e68163849d6846d47f1",
-  "installed_at": "2026-05-26T15:02:11Z"
+  "installed_ref": "main"
 }
 ```
 
 ## Notes
 
-- The manifest is **metadata only**: it carries the upstream source pin and the installed commit, and nothing else. There is no `files` array and no per-file hashes.
-- `installed_sha` is the commit this bundle was last installed from. It is auto-maintained by `@dude upgrade` (rewritten to the live upstream HEAD after a successful apply). The authoritative upgrade trigger is the live upstream ref HEAD vs. this field — `@dude status` reads upstream HEAD with `git ls-remote` (remote sources) or `git rev-parse HEAD` (local-path sources), so this field never has to be hand-bumped by an upstream contributor for downstream installs to see new base-file changes.
-- `source_ref` selects the upgrade channel. The sentinel `latest` (seeded into released bundles by `build-release`) tracks the newest **stable** `vX.Y.Z` release tag: `@dude upgrade` resolves it to the highest release tag on each run and records that release's commit in `installed_sha`, so upgrading always moves between published releases (pre-release tags like `v1.0.0-rc1` are ignored). A concrete `vX.Y.Z` pins to one release; a branch name such as `main` — used by this source repo, which is itself upstream — tracks that branch's HEAD.
+- The manifest is **metadata only**: it carries the upstream source pin and the installed version, and nothing else. There is no `files` array and no per-file hashes.
+- `installed_ref` is the release version this bundle was last installed from (e.g. `v1.2.0`), or a branch name for a branch-tracking install. It is auto-maintained by `@dude upgrade` (rewritten after a successful apply) and is optional — a fresh or un-versioned install may leave it empty. `@dude status` compares it against the newest release tag resolved from the source (`git ls-remote --tags`), so it never has to be hand-bumped.
+- `source_ref` selects the upgrade channel. The sentinel `latest` (seeded into released bundles by `build-release`) tracks the newest **stable** `vX.Y.Z` release tag: `@dude upgrade` resolves it to the highest release tag on each run and records that release's tag in `installed_ref`, so upgrading always moves between published releases (pre-release tags like `v1.0.0-rc1` are ignored). A concrete `vX.Y.Z` pins to one release; a branch name such as `main` — used by this source repo, which is itself upstream — tracks that branch by name.
 - Base ownership is derived from the **namespace convention** by the engine:
 
   ```text

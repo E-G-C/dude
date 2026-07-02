@@ -438,7 +438,7 @@ for (const dir of listDirs(path.join(ROOT, '.github/skills'))) {
 
 // --- Check 3b: bundle manifest ----------------------------------------------
 const MANIFEST = path.join(ROOT, '.github/dudestuff/bundle-manifest.md');
-const ALLOWED_MANIFEST_KEYS = new Set(['source_repo', 'source_ref', 'installed_sha', 'installed_at']);
+const ALLOWED_MANIFEST_KEYS = new Set(['source_repo', 'source_ref', 'installed_ref']);
 if (!exists(MANIFEST)) {
   fail('.github/dudestuff/bundle-manifest.md  missing seeded bundle manifest');
 } else {
@@ -465,9 +465,8 @@ if (!exists(MANIFEST)) {
       }
       if (!parsed.source_repo) fail(`${manifestRel}  manifest is missing source_repo`);
       if (!parsed.source_ref) fail(`${manifestRel}  manifest is missing source_ref`);
-      if (!parsed.installed_at) fail(`${manifestRel}  manifest is missing installed_at`);
-      if (!/^[0-9a-f]{40}$/.test(String(parsed.installed_sha || ''))) {
-        fail(`${manifestRel}  installed_sha must be a 40-character lowercase git sha`);
+      if (parsed.installed_ref !== undefined && typeof parsed.installed_ref !== 'string') {
+        fail(`${manifestRel}  installed_ref must be a string`);
       }
     }
   }

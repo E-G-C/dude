@@ -39,35 +39,33 @@ test('isReleaseFile keeps core files and drops tests / packs / local / project-o
   assert.equal(isReleaseFile('.github/workflows/ci.yml'), false);
 });
 
-test('seedManifest rewrites installed_sha / installed_at only when provided', () => {
-  const src = '```json\n{\n  "installed_sha": "OLD",\n  "installed_at": "OLDAT"\n}\n```';
-  const out = seedManifest(src, 'b'.repeat(40), '2026-07-01T00:00:00Z');
-  assert.match(out, /"installed_sha": "b{40}"/);
-  assert.match(out, /"installed_at": "2026-07-01T00:00:00Z"/);
-  assert.equal(seedManifest(src), src); // no source_ref/args -> no-op on this fixture
+test('seedManifest forces the release channel and stamps installed_ref', () => {
+  const src = '```json\n{\n  "source_ref": "main",\n  "installed_ref": "main"\n}\n```';
+  const out = seedManifest(src, 'v1.2.0');
+  assert.match(out, /"source_ref": "latest"/);
+  assert.match(out, /"installed_ref": "v1\.2\.0"/);
 });
 
-test('seedManifest forces source_ref to the release channel', () => {
-  const src = '```json\n{\n  "source_ref": "main",\n  "installed_sha": "OLD",\n  "installed_at": "OLDAT"\n}\n```';
-  const out = seedManifest(src, 'c'.repeat(40), '2026-07-02T00:00:00Z');
+test('seedManifest sets the channel even without a tag', () => {
+  const src = '```json\n{\n  "source_ref": "main",\n  "installed_ref": "main"\n}\n```';
+  const out = seedManifest(src);
   assert.match(out, /"source_ref": "latest"/);
-  assert.match(out, /"installed_sha": "c{40}"/);
+  assert.match(out, /"installed_ref": "main"/); // left as-is when no tag is given
 });
 
 test('parseArgs flags unknown args and parses options', () => {
   assert.equal(parseArgs(['--bogus']).error, true);
   assert.equal(parseArgs(['--help']).help, true);
-  const a = parseArgs(['--out', 'x', '--sha', 'y', '--repo', 'r']);
+  const a = parseArgs(['--out', 'x', '--tag', 'v1.2.0', '--repo', 'r']);
   assert.equal(a.out, 'x');
-  assert.equal(a.sha, 'y');
+  assert.equal(a.tag, 'v1.2.0');
   assert.equal(a.repo, 'r');
 });
 
 test('buildRelease stages a lint-clean core bundle with no test files', () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-rel-'));
   try {
-    const sha = 'a'.repeat(40);
-    const r = buildRelease({ repoRoot, outDir, sha, at: '2026-07-01T00:00:00Z' });
+    const r = buildRelease({ repoRoot, outDir, ref: 'v9.9.9' });
     assert.ok(r.files.length > 20, `expected many files, got ${r.files.length}`);
 
     // no test files anywhere in the staged bundle
@@ -95,9 +93,9 @@ test('buildRelease stages a lint-clean core bundle with no test files', () => {
     assert.equal(proj, PROJECT_STUB);
     assert.doesNotMatch(proj, /dude-spec-lead|reusable Dude Coder bundle/);
 
-    // manifest seeded with the release sha + release channel
+    // manifest seeded with the release version + release channel
     const man = fs.readFileSync(path.join(outDir, '.github/dudestuff/bundle-manifest.md'), 'utf8');
-    assert.match(man, /"installed_sha": "a{40}"/);
+    assert.match(man, /"installed_ref": "v9\.9\.9"/);
     assert.match(man, /"source_ref": "latest"/);
 
     // the staged bundle itself passes lint

@@ -29,7 +29,7 @@ jobs:
 
       # Stage the deployable core bundle: core-tier minus tests + seeds.
       - name: Build release bundle
-        run: node scripts/build-release.mjs --out dist --sha "$GITHUB_SHA"
+        run: node scripts/build-release.mjs --out dist --tag "$GITHUB_REF_NAME"
 
       # Defense in depth: the staged bundle must itself lint clean.
       - name: Verify staged bundle

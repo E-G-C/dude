@@ -74,7 +74,7 @@ function upstreamWith(name) {
 /** @param {string} sourceRepo @returns {string} a seeded bundle-manifest.md body */
 function manifestBody(sourceRepo) {
   const json = JSON.stringify(
-    { source_repo: sourceRepo, source_ref: 'main', installed_sha: '0'.repeat(40), installed_at: '2026-01-01T00:00:00Z' },
+    { source_repo: sourceRepo, source_ref: 'main', installed_ref: 'main' },
     null,
     2
   );

@@ -89,6 +89,8 @@ const exists = (p) => {
 const read = (p) => fs.readFileSync(p, 'utf8');
 /** @param {string} s @returns {string} */
 const shortSha = (s) => String(s).slice(0, 12);
+/** @param {string} r @returns {string} filesystem-safe form of a git ref */
+const sanitizeRef = (r) => String(r).replace(/[^A-Za-z0-9._-]/g, '_') || 'none';
 
 /** @returns {string} ISO-8601 UTC with no milliseconds. */
 const isoNow = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -148,16 +150,16 @@ function validateMetadataManifest(obj, label) {
   const errors = [];
   if (!obj) return [`${label} JSON is malformed`];
   for (const key of Object.keys(obj)) {
-    if (!['source_repo', 'source_ref', 'installed_sha', 'installed_at'].includes(key)) {
+    if (!['source_repo', 'source_ref', 'installed_ref'].includes(key)) {
       errors.push(`${label} has unsupported field '${key}'`);
     }
   }
   if (!obj.source_repo) errors.push(`${label} is missing source_repo`);
   if (!obj.source_ref) errors.push(`${label} is missing source_ref`);
-  if (!obj.installed_sha) errors.push(`${label} is missing installed_sha`);
-  if (!obj.installed_at) errors.push(`${label} is missing installed_at`);
-  if (obj.installed_sha && !/^[0-9a-f]{40}$/.test(String(obj.installed_sha))) {
-    errors.push(`${label} installed_sha is not a 40-char hex sha`);
+  // installed_ref is optional (empty on a fresh install) but, when present,
+  // must be a string — a version tag or a branch/ref name, never a raw sha.
+  if (obj.installed_ref !== undefined && typeof obj.installed_ref !== 'string') {
+    errors.push(`${label} installed_ref must be a string`);
   }
   return errors;
 }
@@ -166,8 +168,7 @@ const local = {
   json: /** @type {Record<string, unknown> | null} */ (null),
   source_repo: '',
   source_ref: '',
-  installed_sha: '',
-  installed_at: '',
+  installed_ref: '',
 };
 /** @returns {boolean} true on success */
 function loadLocalManifest() {
@@ -180,8 +181,7 @@ function loadLocalManifest() {
   local.json = obj;
   local.source_repo = String(obj.source_repo || '');
   local.source_ref = String(obj.source_ref || '');
-  local.installed_sha = String(obj.installed_sha || '');
-  local.installed_at = String(obj.installed_at || '');
+  local.installed_ref = String(obj.installed_ref || '');
   return true;
 }
 
@@ -354,33 +354,6 @@ function fetchUpstreamTree() {
   return null;
 }
 
-/** @param {string} dir @returns {string} */
-function treeHeadSha(dir) {
-  if (isDir(path.join(dir, '.git')) && hasGit()) {
-    const r = git(['rev-parse', 'HEAD'], dir);
-    if (r.status === 0) return r.stdout.trim();
-  }
-  return '';
-}
-/** @returns {string} the authoritative live upstream sha, or '' */
-function resolveUpstreamSha() {
-  if (isDir(upstream.source)) {
-    if (isDir(path.join(upstream.source, '.git')) && hasGit()) {
-      const r = git(['rev-parse', 'HEAD'], upstream.source);
-      if (r.status === 0) return r.stdout.trim();
-    }
-    return '';
-  }
-  if (!hasGit()) return '';
-  const r = git(['ls-remote', upstream.source, upstream.resolvedRef]);
-  if (r.status === 0) {
-    const first = r.stdout.split('\n')[0];
-    if (first) return first.split(/\s+/)[0];
-  }
-  if (/^[0-9a-f]{40}$/.test(upstream.resolvedRef)) return upstream.resolvedRef;
-  return '';
-}
-
 // ----- classification --------------------------------------------------------
 /**
  * LCS length of two line arrays (rolling DP).
@@ -498,9 +471,9 @@ export function classifyPlan(utree, root = ROOT) {
 
 // ----- emitters --------------------------------------------------------------
 /**
- * @param {string} kind @param {string} upstreamSha @param {string} detail
+ * @param {string} kind @param {string} upstreamRef @param {string} detail
  */
-function emitStatusText(kind, upstreamSha, detail) {
+function emitStatusText(kind, upstreamRef, detail) {
   let head;
   if (kind === 'up_to_date') head = `${GRN}up to date${RST}`;
   else if (kind === 'upgrade_available') head = `${YEL}upgrade available${RST}`;
@@ -508,25 +481,24 @@ function emitStatusText(kind, upstreamSha, detail) {
   else head = `${RED}error (${detail})${RST}`;
   out(`Bundle: ${head}\n`);
   out(`  Source:    ${upstream.source} @ ${refDisplay()}\n`);
-  out(`  Installed: ${shortSha(local.installed_sha)} (${local.installed_at})\n`);
-  if ((kind === 'upgrade_available' || kind === 'up_to_date') && upstreamSha) {
-    out(`  Upstream:  ${shortSha(upstreamSha)}\n`);
+  out(`  Installed: ${local.installed_ref || '(none)'}\n`);
+  if ((kind === 'upgrade_available' || kind === 'up_to_date') && upstreamRef) {
+    out(`  Latest:    ${upstreamRef}\n`);
   }
   if (kind === 'upgrade_available') out('  Next:      @dude upgrade --dry-run\n');
 }
 /**
- * @param {string} kind @param {string} upstreamSha @param {string} detail
+ * @param {string} kind @param {string} upstreamRef @param {string} detail
  */
-function emitStatusJson(kind, upstreamSha, detail) {
+function emitStatusJson(kind, upstreamRef, detail) {
   out(
     `${JSON.stringify(
       {
         status: kind,
         source: upstream.source,
         ref: upstream.ref,
-        installed_sha: local.installed_sha,
-        installed_at: local.installed_at,
-        upstream_sha: upstreamSha,
+        installed_ref: local.installed_ref,
+        upstream_ref: upstreamRef,
         detail,
       },
       null,
@@ -536,11 +508,11 @@ function emitStatusJson(kind, upstreamSha, detail) {
 }
 
 /**
- * @param {Plan} plan @param {string} planId @param {string} fromSha
- * @param {string} toSha @param {string} cacheDir
+ * @param {Plan} plan @param {string} planId @param {string} fromRef
+ * @param {string} toRef @param {string} cacheDir
  */
-function emitPlanText(plan, planId, fromSha, toSha, cacheDir) {
-  out(`Upgrade report: ${shortSha(fromSha)} -> ${shortSha(toSha)}\n`);
+function emitPlanText(plan, planId, fromRef, toRef, cacheDir) {
+  out(`Upgrade report: ${fromRef || '(none)'} -> ${toRef}\n`);
   out(`Source: ${upstream.source} @ ${refDisplay()}\n`);
   out(`Plan ID: ${planId}\n`);
   out(`Cache: ${cacheDir}\n\n`);
@@ -577,7 +549,7 @@ function emitPlanText(plan, planId, fromSha, toSha, cacheDir) {
 
 /**
  * @param {Plan} plan
- * @param {{plan_id: string, from_sha: string, to_sha: string, cache_dir: string, created_at: string, ttl_warn: string, ttl_expire: string}} meta
+ * @param {{plan_id: string, from_ref: string, to_ref: string, cache_dir: string, created_at: string, ttl_warn: string, ttl_expire: string}} meta
  * @returns {string}
  */
 function buildPlanJson(plan, meta) {
@@ -589,8 +561,8 @@ function buildPlanJson(plan, meta) {
       ttl_expire_at: meta.ttl_expire,
       source: upstream.source,
       ref: upstream.ref,
-      from_sha: meta.from_sha,
-      to_sha: meta.to_sha,
+      from_ref: meta.from_ref,
+      to_ref: meta.to_ref,
       cache_dir: meta.cache_dir,
       summary: {
         replace: plan.replace.length,
@@ -616,9 +588,9 @@ function buildPlanJson(plan, meta) {
  * Rewrite only the fenced ```json block in the local manifest, preserving the
  * surrounding markdown wrapper.
  * @param {string} sourceRepo @param {string} sourceRef
- * @param {string} installedSha @param {string} installedAt
+ * @param {string} installedRef
  */
-function writeManifest(sourceRepo, sourceRef, installedSha, installedAt) {
+function writeManifest(sourceRepo, sourceRef, installedRef) {
   const lines = read(LOCAL_MANIFEST_PATH).split('\n');
   /** @type {string[]} */
   const pre = [];
@@ -645,8 +617,7 @@ function writeManifest(sourceRepo, sourceRef, installedSha, installedAt) {
     {
       source_repo: sourceRepo,
       source_ref: sourceRef,
-      installed_sha: installedSha,
-      installed_at: installedAt,
+      installed_ref: installedRef,
     },
     null,
     2,
@@ -749,12 +720,10 @@ async function cmdStatus(argv) {
     return 40;
   }
 
-  let upstreamSha = resolveUpstreamSha();
-  if (!upstreamSha) upstreamSha = String((obj && obj.installed_sha) || '');
-
-  const kind = upstreamSha && upstreamSha === local.installed_sha ? 'up_to_date' : 'upgrade_available';
-  if (format === 'json') emitStatusJson(kind, upstreamSha, '');
-  else emitStatusText(kind, upstreamSha, '');
+  const upstreamRef = upstream.resolvedRef;
+  const kind = upstreamRef && upstreamRef === local.installed_ref ? 'up_to_date' : 'upgrade_available';
+  if (format === 'json') emitStatusJson(kind, upstreamRef, '');
+  else emitStatusText(kind, upstreamRef, '');
   return 0;
 }
 
@@ -815,18 +784,17 @@ function cmdPlan(argv) {
 
   const plan = classifyPlan(utree);
 
-  let upstreamSha = treeHeadSha(utree);
-  if (!upstreamSha) upstreamSha = String((obj && obj.installed_sha) || '');
-  const fromSha = local.installed_sha;
+  const toRef = upstream.resolvedRef;
+  const fromRef = local.installed_ref;
   const createdAt = isoNow();
-  const planId = `${stampNow()}-${shortSha(fromSha)}-${shortSha(upstreamSha)}`;
+  const planId = `${stampNow()}-${sanitizeRef(fromRef)}-${sanitizeRef(toRef)}`;
 
   fs.mkdirSync(PLANS_DIR, { recursive: true });
   const planPath = path.join(PLANS_DIR, `${planId}.json`);
   const planJson = buildPlanJson(plan, {
     plan_id: planId,
-    from_sha: fromSha,
-    to_sha: upstreamSha,
+    from_ref: fromRef,
+    to_ref: toRef,
     cache_dir: utree,
     created_at: createdAt,
     ttl_warn: isoPlusSeconds(3600),
@@ -837,7 +805,7 @@ function cmdPlan(argv) {
 
   if (format === 'json') out(planJson);
   else {
-    emitPlanText(plan, planId, fromSha, upstreamSha, utree);
+    emitPlanText(plan, planId, fromRef, toRef, utree);
     out(`\nPlan saved: ${planPath}\n`);
   }
 
@@ -884,19 +852,19 @@ function cmdApply(argv) {
     return 40;
   }
   const planObj = parseManifest(read(planPath));
-  if (!planObj || !planObj.to_sha || !planObj.cache_dir) {
+  if (!planObj || !planObj.to_ref || !planObj.cache_dir) {
     logError(`plan file malformed: ${planPath}`);
     return 40;
   }
-  const fromSha = String(planObj.from_sha || '');
-  const toSha = String(planObj.to_sha || '');
+  const fromRef = String(planObj.from_ref || '');
+  const toRef = String(planObj.to_ref || '');
   const cacheDir = String(planObj.cache_dir || '');
   const planSource = String(planObj.source || '');
   const planRef = String(planObj.ref || '');
   const planId = String(planObj.plan_id || '');
 
-  if (fromSha !== local.installed_sha) {
-    logError(`plan from_sha (${fromSha}) does not match local installed_sha (${local.installed_sha})`);
+  if (fromRef !== local.installed_ref) {
+    logError(`plan from_ref (${fromRef}) does not match local installed_ref (${local.installed_ref})`);
     logError("re-run 'plan' to generate a fresh plan");
     return 40;
   }
@@ -936,7 +904,7 @@ function cmdApply(argv) {
 
   // ---- Safety net ----
   const safetyTag = `dude-pre-upgrade-${stampNow()}`;
-  let upgradeBranch = `chore/dude-upgrade-${shortSha(toSha)}`;
+  let upgradeBranch = `chore/dude-upgrade-${sanitizeRef(toRef)}`;
   logInfo(`creating safety tag: ${safetyTag}`);
   if (git(['tag', safetyTag]).status !== 0) {
     logError(`failed to create safety tag: ${safetyTag}`);
@@ -977,7 +945,7 @@ function cmdApply(argv) {
   }
 
   // ---- Rewrite manifest ----
-  writeManifest(planSource, planRef, toSha, isoNow());
+  writeManifest(planSource, planRef, toRef);
 
   // ---- Append upgrade-log entry (placeholder patched after lint) ----
   const logPath = path.join(ROOT, '.github/dudestuff/upgrade-log.md');
@@ -985,8 +953,8 @@ function cmdApply(argv) {
   const ts = isoNow().replace('T', ' ').replace('Z', '');
   const entry =
     `\n## ${ts} — upgrade\n` +
-    `- from: ${fromSha}\n` +
-    `- to:   ${toSha}\n` +
+    `- from: ${fromRef || '(none)'}\n` +
+    `- to:   ${toRef}\n` +
     `- ref:  ${planRef}\n` +
     `- replaced: ${plan.replace.length}\n` +
     `- added:    ${plan.add.length}\n` +
@@ -1005,7 +973,7 @@ function cmdApply(argv) {
   // ---- Stage + commit ----
   git(['add', '-A', '.github/dudestuff/bundle-manifest.md', '.github/dudestuff/upgrade-log.md']);
   for (const p of appliedPaths) git(['add', '-A', p]);
-  if (git(['commit', '-q', '-m', `chore: upgrade Dude bundle to ${shortSha(toSha)}`]).status !== 0) {
+  if (git(['commit', '-q', '-m', `chore: upgrade Dude bundle to ${toRef}`]).status !== 0) {
     logWarn('git commit produced no changes or failed (manifest/log written; review with \'git status\')');
   }
 
@@ -1015,8 +983,8 @@ function cmdApply(argv) {
       `${JSON.stringify(
         {
           status: 'applied',
-          from_sha: fromSha,
-          to_sha: toSha,
+          from_ref: fromRef,
+          to_ref: toRef,
           safety_tag: safetyTag,
           upgrade_branch: upgradeBranch,
           counts: {
@@ -1032,7 +1000,7 @@ function cmdApply(argv) {
       )}\n`,
     );
   } else {
-    out(`Applied: ${shortSha(fromSha)} -> ${shortSha(toSha)}\n`);
+    out(`Applied: ${fromRef || '(none)'} -> ${toRef}\n`);
     out(`  replaced:             ${plan.replace.length}\n`);
     out(`  added:                ${plan.add.length}\n`);
     out(`  removed:              ${actualRemoved}\n`);

@@ -80,15 +80,14 @@ node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback [--tag <name>] [--a
 {
   "status": "up_to_date|upgrade_available|offline|error",
   "source": "<url-or-path>",
-  "ref": "<branch|tag|sha>",
-  "installed_sha": "<40-char-sha>",
-  "installed_at": "<iso-8601>",
-  "upstream_sha": "<sha-or-empty>",
+  "ref": "<latest|tag|branch>",
+  "installed_ref": "<tag-or-branch-or-empty>",
+  "upstream_ref": "<tag-or-empty>",
   "detail": "<reason-when-offline-or-error>"
 }
 ```
 
-`status` compares the live upstream ref HEAD against the locally recorded `installed_sha`. The upstream HEAD is discovered with `git ls-remote <source> <ref>` for remote sources and `git rev-parse HEAD` for local-path sources. When HEAD discovery is unavailable (no git on PATH, opaque source), the upstream manifest's `installed_sha` is used. The status command does not classify file deltas; run `plan` for the full per-file picture.
+`status` compares the locally recorded `installed_ref` against the newest release tag resolved from the source. For the `latest` channel it lists release tags with `git ls-remote --tags <source>` (remote) or `git tag` (local path) and picks the highest stable `vX.Y.Z`; a pinned `vX.Y.Z` or branch ref is compared by name. When the channel is `latest` but no release tag exists yet, it reports `no releases published yet`. The status command does not classify file deltas; run `plan` for the full per-file picture.
 
 `plan` JSON:
 
@@ -142,7 +141,7 @@ Wait for one of:
 
 Plain "yes" / "ok" / "go" do not satisfy the gate.
 
-Before confirming, surface a single warning summarizing local edits that will be discarded. The recommended source is one `git diff <installed_sha> -- <replace_and_remove_paths>` invocation: anything non-empty in that diff is local divergence about to be overwritten. The user should either rename those files to `dude-local-<slug>` first or accept the loss.
+Before confirming, surface a single warning summarizing local edits that will be discarded. Compare each Replace/Remove path against its fetched upstream copy: anything that differs is local divergence about to be overwritten. The user should either rename those files to `dude-local-<slug>` first or accept the loss.
 
 ### Step 4 — Apply (script)
 
@@ -164,15 +163,15 @@ Mapping from user-facing phrase to flags:
 
 In one pass the script:
 
-1. Re-validates the plan: matches `from_sha` against the current local `installed_sha`, confirms the cache directory still exists, refuses an expired plan.
+1. Re-validates the plan: matches `from_ref` against the current local `installed_ref`, confirms the cache directory still exists, refuses an expired plan.
 2. Refuses a dirty working tree unless `--allow-dirty` was passed.
 3. Re-classifies the upstream tree to refresh the bucket counts (defensive against stale plans).
-4. Creates safety tag `dude-pre-upgrade-<YYYYMMDD-HHMMSS>` at current HEAD and switches to branch `chore/dude-upgrade-<short-to-sha>` (timestamp suffix on collision).
+4. Creates safety tag `dude-pre-upgrade-<YYYYMMDD-HHMMSS>` at current HEAD and switches to branch `chore/dude-upgrade-<to-ref>` (timestamp suffix on collision).
 5. Applies file ops: Add (copy in), Replace (overwrite), Remove (delete unless `--skip-removals`).
-6. Rewrites the fenced JSON block in `.github/dudestuff/bundle-manifest.md`, preserving the surrounding markdown. Updates `source_repo`, `source_ref`, `installed_sha`, and `installed_at`. The manifest is metadata only — there is no `files` array to refresh.
+6. Rewrites the fenced JSON block in `.github/dudestuff/bundle-manifest.md`, preserving the surrounding markdown. Updates `source_repo`, `source_ref`, and `installed_ref`. The manifest is metadata only — there is no `files` array to refresh.
 7. Appends a structured entry to `.github/dudestuff/upgrade-log.md` matching its Entry shape.
 8. Runs `node .github/skills/dude-lint/lint.mjs` and patches the lint result into the just-written log entry.
-9. Stages the manifest, log, and every touched path; commits on the upgrade branch with message `chore: upgrade Dude bundle to <short-sha>`. Does not push, merge, or modify remote state.
+9. Stages the manifest, log, and every touched path; commits on the upgrade branch with message `chore: upgrade Dude bundle to <to-ref>`. Does not push, merge, or modify remote state.
 
 On `lint = [FAIL]` the script exits 40 and prints the suggested `rollback --tag <safety_tag>` command.
 
@@ -180,7 +179,7 @@ On `lint = [FAIL]` the script exits 40 and prints the suggested `rollback --tag 
 
 Relay the apply output to the user:
 
-- `from <sha> → to <sha>`
+- `from <ref> → to <ref>`
 - per-bucket counts (replaced, added, removed, removals deferred)
 - safety tag and upgrade branch names
 - lint result
@@ -248,22 +247,21 @@ Classification is done by **byte comparison** of local disk content vs the fetch
 The script enforces these; the LLM does not need to re-check:
 
 - `git` is installed and the project root is inside a git working tree. The upgrade workflow uses git for safety tags, branches, rollback, and pre-overwrite drift detection; non-git projects must run `git init` before upgrading.
-- `.github/dudestuff/bundle-manifest.md` exists, parses, and uses the exact metadata shape (`source_repo`, `source_ref`, `installed_sha`, `installed_at`).
+- `.github/dudestuff/bundle-manifest.md` exists, parses, and uses the exact metadata shape (`source_repo`, `source_ref`, `installed_ref`).
 - Upstream tree must contain `.github/agents/`, `.github/skills/dude-lint/`, `.github/instructions/dude.instructions.md`, and `.github/dudestuff/bundle-manifest.md`.
 - Upstream manifest must use the same exact metadata shape.
 
-For local-path upstream sources, the source directory must carry its own seeded `bundle-manifest.md`; the script reads the live HEAD of that directory (`git rev-parse HEAD`) and copies it forward as the new local `installed_sha`. Local sources without a seeded manifest are refused.
+For local-path upstream sources, the source directory must carry its own seeded `bundle-manifest.md` and be a git repo; release tags are read from it with `git tag`. Local sources without a seeded manifest are refused.
 
 ## Manifest Shape
 
-`.github/dudestuff/bundle-manifest.md` contains a single fenced JSON block. The manifest is **metadata only**: it carries the upstream source pin and the installed commit, and nothing else.
+`.github/dudestuff/bundle-manifest.md` contains a single fenced JSON block. The manifest is **metadata only**: it carries the upstream source pin and the installed version, and nothing else.
 
 ```json
 {
   "source_repo": "https://github.com/<owner>/<repo>",
-  "source_ref": "main",
-  "installed_sha": "<commit-sha>",
-  "installed_at": "<iso-8601-timestamp>"
+  "source_ref": "latest",
+  "installed_ref": "<tag-or-branch>"
 }
 ```
 

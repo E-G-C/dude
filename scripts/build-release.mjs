@@ -65,20 +65,17 @@ export function isReleaseFile(relPath) {
 /**
  * Prepare the manifest for a release artifact: force `source_ref` to the
  * release channel (`latest`) so the deployed bundle upgrades between release
- * tags, and rewrite `installed_sha` / `installed_at` when the release commit is
- * known so it records the commit it was cut from.
+ * tags, and stamp `installed_ref` with the release tag so the install
+ * self-documents its version.
  * @param {string} manifest source manifest markdown
- * @param {string} [sha]
- * @param {string} [at] ISO timestamp
+ * @param {string} [ref] the release tag, e.g. v1.2.0
  * @returns {string}
  */
-export function seedManifest(manifest, sha, at) {
+export function seedManifest(manifest, ref) {
   let out = manifest;
-  // Released bundles track the release channel: `@dude upgrade` resolves the
-  // newest stable `vX.Y.Z` tag rather than following a moving branch.
+  // Released bundles track the release channel and record the release version.
   out = out.replace(/("source_ref":\s*)"[^"]*"/, `$1"latest"`);
-  if (sha) out = out.replace(/("installed_sha":\s*)"[^"]*"/, `$1"${sha}"`);
-  if (at) out = out.replace(/("installed_at":\s*)"[^"]*"/, `$1"${at}"`);
+  if (ref) out = out.replace(/("installed_ref":\s*)"[^"]*"/, `$1"${ref}"`);
   return out;
 }
 
@@ -128,10 +125,10 @@ export function listCoreSourceFiles(repoRoot) {
 
 /**
  * Stage the release bundle into `<outDir>/.github/...` from `src/`.
- * @param {{ repoRoot: string, outDir: string, sha?: string, at?: string }} opts
+ * @param {{ repoRoot: string, outDir: string, ref?: string }} opts
  * @returns {{ files: string[], out: string }}
  */
-export function buildRelease({ repoRoot, outDir, sha, at }) {
+export function buildRelease({ repoRoot, outDir, ref }) {
   const srcDir = path.join(repoRoot, 'src');
   if (!fs.existsSync(srcDir)) {
     throw new Error(`no src/ under repo root: ${repoRoot}`);
@@ -159,7 +156,7 @@ export function buildRelease({ repoRoot, outDir, sha, at }) {
   const manRel = '.github/dudestuff/bundle-manifest.md';
   const manSrc = path.join(repoRoot, '.github', 'dudestuff', 'bundle-manifest.md');
   if (fs.existsSync(manSrc)) {
-    const seeded = seedManifest(fs.readFileSync(manSrc, 'utf8'), sha, at);
+    const seeded = seedManifest(fs.readFileSync(manSrc, 'utf8'), ref);
     const manDest = path.join(outDir, manRel);
     fs.mkdirSync(path.dirname(manDest), { recursive: true });
     fs.writeFileSync(manDest, seeded);
@@ -172,14 +169,13 @@ export function buildRelease({ repoRoot, outDir, sha, at }) {
 
 /** @param {string[]} argv */
 export function parseArgs(argv) {
-  const out = { repo: '.', out: 'dist', sha: '', at: '', help: false, error: false };
+  const out = { repo: '.', out: 'dist', tag: '', help: false, error: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') out.help = true;
     else if (a === '--repo') out.repo = String(argv[++i] ?? '');
     else if (a === '--out') out.out = String(argv[++i] ?? '');
-    else if (a === '--sha') out.sha = String(argv[++i] ?? '');
-    else if (a === '--at') out.at = String(argv[++i] ?? '');
+    else if (a === '--tag') out.tag = String(argv[++i] ?? '');
     else out.error = true;
   }
   return out;
@@ -199,15 +195,14 @@ function main() {
   const a = parseArgs(process.argv.slice(2));
   if (a.help || a.error) {
     process.stdout.write(
-      'usage: node build-release.mjs [--repo .] [--out dist] [--sha <commit>] [--at <iso>]\n'
+      'usage: node build-release.mjs [--repo .] [--out dist] [--tag <release-tag>]\n'
     );
     process.exit(a.error ? 1 : 0);
   }
   try {
     const repoRoot = path.resolve(a.repo);
     const outDir = path.resolve(a.out);
-    const at = a.at || new Date().toISOString();
-    const r = buildRelease({ repoRoot, outDir, sha: a.sha, at });
+    const r = buildRelease({ repoRoot, outDir, ref: a.tag });
     process.stdout.write(`[OK] staged ${r.files.length} file(s) -> ${r.out}\n`);
   } catch (e) {
     process.stderr.write(`[ERROR] ${e instanceof Error ? e.message : String(e)}\n`);
