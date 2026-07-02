@@ -1,4 +1,4 @@
-# Dude Coder Docs
+# Dude Docs
 
 [Back to root README](../README.md)
 

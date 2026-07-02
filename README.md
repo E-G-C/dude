@@ -1,6 +1,6 @@
-# Dude Coder
+# Dude
 
-Dude Coder is a markdown bundle for working with GitHub Copilot on one feature
+Dude is a markdown bundle for working with GitHub Copilot on one feature
 at a time.
 
 The simple idea:

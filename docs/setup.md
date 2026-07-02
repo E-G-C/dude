@@ -115,7 +115,7 @@ update its routing automatically. The Dynamic Roster Rule in
 
 ### Solo developer path
 
-If you are using Dude Coder solo, you can keep the default roster for the first
+If you are using Dude solo, you can keep the default roster for the first
 feature or remove roles you do not want after the first successful
 `draft -> define` loop:
 
@@ -128,13 +128,13 @@ The current delivery pipeline already adapts when those roles are absent. Dude
 still uses `dude-verification-before-completion` before close, but it does not
 require a separate solo-only workflow or command surface.
 
-If you are only using Dude Coder for feature definition, you can stop at the
+If you are only using Dude for feature definition, you can stop at the
 `specs/<feature>/` package. Tracked-execution rules (from the beads pack) apply
 only once you install it, choose tracked execution, and import tasks.
 
 ## Operational Skills
 
-Dude Coder includes explicit operational skills for common failure modes:
+Dude includes explicit operational skills for common failure modes:
 
 - `dude-systematic-debugging` — investigate root cause before changing code
 - `dude-pack-practices-tdd` — optional tests-first implementation aid (practices pack)
@@ -162,13 +162,13 @@ TDD requirement.
 
 ## Workflow Boundaries
 
-Dude Coder focuses on file-based feature intake under `brief/<slug>.md`,
+Dude focuses on file-based feature intake under `brief/<slug>.md`,
 native feature definition under `specs/<feature>/`, and tracked execution in
 Beads.
 
 ### Worktrees are optional, not part of the core workflow
 
-Git worktrees can still be useful, but they are not part of Dude Coder's default
+Git worktrees can still be useful, but they are not part of Dude's default
 operating model. In a downstream Git repository, Dude may suggest a worktree
 when isolated branch work has a concrete benefit, for example during a risky
 high-churn refactor or for truly independent parallel implementation tasks.
@@ -186,7 +186,7 @@ sequential instead of treating worktrees as a conflict fix.
 
 ### Execution stays in @dude, with Beads optional
 
-Dude Coder does not add a separate plan executor or branch-completion workflow.
+Dude does not add a separate plan executor or branch-completion workflow.
 
 Use the three-lane flow in [Workflow modes and lifecycle](workflow.md) as the
 authoritative user-facing model: stop after `@dude define` for Definition Only,

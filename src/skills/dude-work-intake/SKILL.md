@@ -5,7 +5,7 @@ description: "Use when triaging a new request, deciding whether to answer direct
 
 ## Purpose
 
-Establish a lightweight intake flow for Dude Coder work, including the file-based brief stage.
+Establish a lightweight intake flow for Dude work, including the file-based brief stage.
 
 ## First-Session Signals
 

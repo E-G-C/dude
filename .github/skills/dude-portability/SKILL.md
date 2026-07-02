@@ -5,7 +5,7 @@ description: "Use when saving, exporting, importing, or deploying a Dude bundle 
 
 ## Purpose
 
-Preserve Dude Coder as a portable markdown-only bundle.
+Preserve Dude as a portable markdown-only bundle.
 
 > For upgrading an already-installed bundle to a newer upstream version, prefer `dude-bundle-upgrade`. The save/export and deploy/import flows below remain the canonical path for first-time installs and for cross-machine bundle transfers; routine engine refreshes belong in `dude-bundle-upgrade`.
 

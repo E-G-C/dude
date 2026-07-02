@@ -9,7 +9,7 @@ description: "Use when the user explicitly asks for a git worktree, isolated bra
 
 Set up or recommend an isolated git worktree only when isolation has a concrete, explainable benefit.
 
-This skill is optional. It is not part of Dude Coder's default workflow.
+This skill is optional. It is not part of Dude's default workflow.
 
 ## Use When
 

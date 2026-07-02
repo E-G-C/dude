@@ -7,7 +7,7 @@ description: "Project-specific domain knowledge, conventions, and patterns. Upda
 
 ## Project Shape
 
-- **Domain**: reusable Dude Coder bundle for markdown-based multi-agent feature definition plus optional lightweight or Beads-tracked execution
+- **Domain**: reusable Dude bundle for markdown-based multi-agent feature definition plus optional lightweight or Beads-tracked execution
 - **Primary artifacts**: user-facing docs in `README.md`, agent and skill definitions under `.github/`, and bundle memory files
 - **Coordinator**: `@dude` owns routing, memory, skills, and team management
 - **Current roster**: core is the coordinator, `@dude-spec-lead` (definition), and `@dude-reviewer` (readiness). Domain specialists come from installed packs — this repo uses the `authoring` pack (bundle-authoring smiths) and the `coding` pack (coder, tester, architect, code-reviewer).
@@ -41,7 +41,7 @@ description: "Project-specific domain knowledge, conventions, and patterns. Upda
 
 ## Domain Knowledge
 
-- This repository's primary deliverable is the reusable Dude Coder bundle itself, so most changes target `.github/` and `README.md` rather than product code.
+- This repository's primary deliverable is the reusable Dude bundle itself, so most changes target `.github/` and `README.md` rather than product code.
 - First-time users are often unfamiliar with Beads, guardrails, `spec_path`, when `tasks.md` is live versus mirrored, what `[ ]` / `[~]` / `[!]` / `[x]` mean, and why a generated board region may appear there; prefer plain language, short examples, and explicit file ownership.
 - Guardrail ratification is a normal pause point in definition, not a failure state.
 - A lean definition package is valid; omit placeholder artifacts for domains that do not materially apply.

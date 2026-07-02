@@ -30,7 +30,7 @@ flowchart LR
     CLARIFY -->|Yes| Q["Ask focused clarifications"]
     Q --> BRAIN
     CLARIFY -->|No| PACKAGE["Define into specs/<feature>/\nspec.md + plan.md + tasks.md"]
-    PACKAGE --> REVIEW["Optional review\n@dude-lead or @dude-reviewer"]
+    PACKAGE --> REVIEW["Optional review\n@dude-reviewer"]
     REVIEW --> EXECMODE{"Execution lane?"}
     EXECMODE -->|Definition Only| STOP["Stop at reusable package"]
     EXECMODE -->|Lightweight Execution| LIGHT["Execute from tasks.md\nvia @dude"]

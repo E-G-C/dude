@@ -1,9 +1,9 @@
 ---
 applyTo: "**"
-description: "Dude Coder bundle — coordinator, definition, and execution rules. Loaded alongside any existing workspace instructions."
+description: "Dude bundle — coordinator, definition, and execution rules. Loaded alongside any existing workspace instructions."
 ---
 
-# Copilot Instructions — Dude Coder
+# Copilot Instructions — Dude
 
 This workspace uses the Dude model under `.github/` with native feature definition and execution from `specs/<feature>/tasks.md`. Tracked execution via Beads is available through the optional **beads pack**.
 

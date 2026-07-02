@@ -47,7 +47,7 @@ Key rules:
 |---|---|---|
 | **@dude** | routing, handoff, memory, team management | the coordinator |
 | **@dude-spec-lead** | brief and definition package | what to build |
-| **@dude-lead** | architecture and execution tradeoffs | how to build after Beads import |
+| **@dude-pack-coding-architect** _(coding pack)_ | architecture and execution tradeoffs | how to build after import |
 | **Specialists** | implementation, verification, review | the actual work |
 | **`.github/dudestuff/guardrails.md`** | durable project rules | rules Dude should keep respecting |
 
@@ -78,7 +78,7 @@ maintain them so define and track stay consistent.
   execution board and implementation specialists work from it under Dude's
   coordination. Dude owns canonical task-state updates (`[~]`, `[!]`, `[x]`)
   after routed outcomes and verification.
-- After `@dude track`, `@dude-lead` owns how to build it and implementation
+- After `@dude track`, a planning specialist (e.g. the coding pack's architect) owns how to build it and implementation
   specialists own domain work inside their scope.
 - After import, `spec.md`, `plan.md`, and `tasks.md` remain reference artifacts;
   Beads becomes the live execution board. `tasks.md` may receive one-way mirror

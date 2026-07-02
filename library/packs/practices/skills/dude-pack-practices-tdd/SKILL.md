@@ -9,7 +9,7 @@ description: "Use when implementing a feature or bugfix with a tests-first workf
 
 Use a tests-first workflow when the project or user wants stronger implementation rigor.
 
-## Status In Dude Coder
+## Status In Dude
 
 This skill is optional, not mandatory.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 /**
- * Static linter for the Dude Coder bundle (Node port of lint.sh / lint.ps1).
+ * Static linter for the Dude bundle (Node port of lint.sh / lint.ps1).
  *
  * Validates structural conventions across brief/, specs/, and .github/.
  * Read-only. Dependency-free (Node >= 20 stdlib only).

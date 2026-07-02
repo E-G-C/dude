@@ -76,11 +76,11 @@ specs/
   materially apply.
 - During feature definition, `@dude-spec-lead` is the planning authority for the
   package.
-- `@dude-lead` may review architecture sanity and implementation structure before
+- A planning specialist (from a domain pack such as coding) may review architecture sanity and implementation structure before
   import.
 - `@dude-reviewer` may perform independent readiness review on the definition
   package.
-- `@dude-tester` is not part of the definition path by default.
+- A verification specialist is not part of the definition path by default.
 
 ### Spec Structure
 
@@ -190,7 +190,7 @@ flowchart TD
     CLOSE --> MIRROR["Mirror close to tasks.md\nif task identity maps cleanly"]
     FLAG --> ESCALATE{"Blockage type?"}
     ESCALATE -->|spec-gap| SPECFIX["Route to @dude-spec-lead"]
-    ESCALATE -->|plan-gap| LEADFIX["Route to @dude-lead"]
+    ESCALATE -->|plan-gap| LEADFIX["Route to a planning specialist"]
     ESCALATE -->|contract-mismatch| CONTRACT["Route to @dude-spec-lead"]
     ESCALATE -->|test-failure| DEBUG["dude-systematic-debugging"]
     ESCALATE -->|external| USER["Escalate to user"]
@@ -234,18 +234,20 @@ map.
 graph TB
     USER(["You"]) --> DUDE
     DUDE --> SPEC["@dude-spec-lead\nFeature definition"]
-    DUDE --> LEAD["@dude-lead\nArchitecture direction"]
-    DUDE --> TESTER["@dude-tester\nVerification"]
-    DUDE --> REVIEWER["@dude-reviewer\nAcceptance"]
+    DUDE --> REVIEWER["@dude-reviewer\nReadiness / acceptance"]
+    DUDE -.->|coding pack| ARCH["@dude-pack-coding-architect\nArchitecture"]
+    DUDE -.->|coding pack| CODER["@dude-pack-coding-coder\nImplementation"]
+    DUDE -.->|coding pack| TESTER["@dude-pack-coding-tester\nVerification"]
     SPEC -.-> DUDE
-    LEAD -.-> DUDE
-    TESTER -.-> DUDE
     REVIEWER -.-> DUDE
 ```
 
-This is the lean **core** roster. Installing a pack can add specialists — the
-**web** pack adds `@dude-pack-web-backend` and `@dude-pack-web-frontend`, and the
-**release** pack adds `@dude-pack-release-manager`.
+The solid nodes are the lean generic **core** (`@dude-spec-lead` and
+`@dude-reviewer` alongside the coordinator); dotted nodes come from packs.
+Installing a pack adds specialists — the **coding** pack adds the coder / tester
+/ architect / code-reviewer shown above, the **web** pack adds
+`@dude-pack-web-backend` and `@dude-pack-web-frontend`, and the **release** pack
+adds `@dude-pack-release-manager`.
 
 The roster is dynamic: `@dude` updates routing as agents are added or removed,
 so this map reflects the current default bundle but is not fixed. See
@@ -272,7 +274,7 @@ Rule for how routing adapts.
 
 ## Runtime And Optional Engine Scripts
 
-Dude Coder itself is just markdown, skills, and agents. For the Definition Only
+Dude itself is just markdown, skills, and agents. For the Definition Only
 and Lightweight Execution lanes there is no dedicated service, daemon, or build
 step: drop the files into a repo and move through `draft`, `define`, and optional
 execution from `tasks.md` with `@dude`.
