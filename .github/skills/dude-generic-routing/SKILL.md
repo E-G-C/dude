@@ -69,7 +69,9 @@ Keywords and signals:
 - analyze consistency, spec quality
 - `specs/<feature>/` artifacts
 
-### Route To Lead
+### Route To A Planning / Architecture Specialist
+
+Route to whichever roster agent owns architecture and structure (for example a hired architect, or a coding pack's architecture specialist). If none is on the roster, report a roster gap rather than inventing one.
 
 Keywords and signals:
 
@@ -78,7 +80,9 @@ Keywords and signals:
 - module boundaries, configuration
 - Phase 1 (Setup) or Phase 2 (Foundational) labels
 
-### Route To Tester
+### Route To A Verification / Test Specialist
+
+Route to whichever roster agent owns testing and verification (for example a hired tester, or a coding pack's test specialist). If none is on the roster, report a roster gap rather than inventing one.
 
 Keywords and signals:
 
@@ -109,11 +113,11 @@ This is a coordinator-level skill route, not a specialist agent route. The coord
 ### Task Tie-Breaking Rules
 
 - If the request is about defining, specifying, planning, or deriving tasks for a feature, prefer spec-lead.
-- If the task is mostly implementation, prefer an implementation specialist over tester.
-- If the task is explicitly about validation, prefer tester.
+- If the task is mostly implementation, prefer an implementation specialist over a verification specialist.
+- If the task is explicitly about validation, prefer a verification specialist.
 - If the task is about independent judgment after implementation, prefer reviewer.
 - If the task mixes separable concerns, split it into independent tasks when the pieces can be executed independently.
-- If the task is about project structure or tooling, prefer lead.
+- If the task is about project structure or tooling, prefer a planning / architecture specialist.
 
 ### Coordinator Summary Pattern
 
