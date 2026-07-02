@@ -30,9 +30,10 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
         ".github/agents/dude-pack-coding-architect.agent.md",
         ".github/agents/dude-pack-coding-coder.agent.md",
         ".github/agents/dude-pack-coding-reviewer.agent.md",
-        ".github/agents/dude-pack-coding-tester.agent.md"
+        ".github/agents/dude-pack-coding-tester.agent.md",
+        ".github/skills/dude-pack-coding-spec-artifacts"
       ],
-      "installed_at": "2026-07-02T03:41:56.404Z"
+      "installed_at": "2026-07-02T16:18:48.507Z"
     }
   }
 }

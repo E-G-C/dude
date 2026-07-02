@@ -3,7 +3,7 @@ name: coding
 description: "Software-development specialists — coder, tester, architect, and code-reviewer. The coding-domain pack for using Dude on software projects."
 provides:
   agents: [dude-pack-coding-architect, dude-pack-coding-coder, dude-pack-coding-reviewer, dude-pack-coding-tester]
-  skills: []
+  skills: [dude-pack-coding-spec-artifacts]
 requires:
   tools: []
 hooks: []
@@ -32,6 +32,11 @@ not saddled with it.
   maintainability, security (OWASP Top 10), and obvious performance
   anti-patterns, on top of the generic approve/reject that core's
   `dude-reviewer` already provides.
+- `dude-pack-coding-spec-artifacts` — the software overlay for feature
+  definition: the `plan.md` Technical Context fields and the software artifacts
+  (data model, API/schema contracts, quickstart, and ux/test/security checklists)
+  that `@dude-spec-lead` layers on top of the generic `spec`/`plan`/`tasks`
+  package when defining a software feature.
 
 ## When installed
 

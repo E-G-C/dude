@@ -118,20 +118,14 @@ When they materially apply, write feature artifacts under:
 ```text
 specs/
 └── 001-feature-name/
-    ├── spec.md
-    ├── plan.md
-    ├── research.md
-    ├── data-model.md
-    ├── quickstart.md
-    ├── tasks.md
-    ├── contracts/
-    │   ├── api.md
-    │   └── schemas.md
-    └── checklists/
-        ├── ux.md
-        ├── test.md
-        └── security.md
+    ├── spec.md        # WHAT and WHY (always)
+    ├── plan.md        # HOW (when the feature needs a plan)
+    ├── tasks.md       # executable work (when moving to execution)
+    ├── research.md    # decisions and unknowns (optional)
+    └── …              # domain-specific artifacts as needed
 ```
+
+`spec.md`, `plan.md`, `tasks.md`, and `research.md` are the domain-agnostic core of a package. Domains layer their own supporting artifacts on top: a coding project adds a data model, interface contracts, and verification checklists; a design project adds mockups or a visual spec; a content project adds outlines or source lists. When a domain pack is installed, follow its definition guidance for the exact artifact set. Create only what the feature actually needs.
 
 Number features sequentially by scanning existing `specs/` folders and using `max existing prefix + 1`, ignoring deletions.
 
@@ -260,17 +254,14 @@ One paragraph: primary requirement plus technical approach.
 
 #### Technical Context
 
-Fill these fields (mark unknowns as `NEEDS CLARIFICATION`):
+Capture the domain-relevant context the plan depends on, marking unknowns as `NEEDS CLARIFICATION`. Keep the fields to whatever the feature's domain actually needs — a simple feature may need only a couple. When a domain pack is installed, follow its definition guidance for that domain's standard context fields (a coding project, for example, records language/version, dependencies, storage, testing, and target platform). A minimal, domain-neutral shape:
 
 ```markdown
-**Language/Version**: [e.g., Python 3.11, TypeScript 5.x]
-**Primary Dependencies**: [e.g., FastAPI, React]
-**Storage**: [e.g., PostgreSQL, SQLite, N/A]
-**Testing**: [e.g., pytest, vitest]
-**Target Platform**: [e.g., Linux server, browser, iOS]
-**Project Type**: [e.g., library, CLI, web-service, mobile-app]
-**Performance Goals**: [domain-specific or NEEDS CLARIFICATION]
-**Constraints**: [domain-specific or NEEDS CLARIFICATION]
+**Approach**: [the primary method or technology direction, or NEEDS CLARIFICATION]
+**Key Dependencies**: [external systems, tools, or materials this relies on, or N/A]
+**Environment/Platform**: [where this runs or is delivered, or N/A]
+**Performance/Quality Goals**: [domain-specific measures, or NEEDS CLARIFICATION]
+**Constraints**: [domain-specific limits, or NEEDS CLARIFICATION]
 ```
 
 #### Guardrail Check
@@ -310,24 +301,17 @@ If validation fails, fix the spec first. Maximum 3 validation-fix iterations bef
 
 ## Step 3: Write Supporting Artifacts
 
-Create only the artifacts the feature actually needs:
+Create only the artifacts the feature actually needs. The domain-agnostic one is:
 
-- `research.md` for technical decisions and unknowns
-- `data-model.md` for entities and relationships
-- `contracts/api.md` for endpoints and shapes
-- `contracts/schemas.md` for validation or shared data contracts
-- `quickstart.md` for feature smoke-test steps and manual verification flows
-- `checklists/` for focused domain checks when useful
+- `research.md` for decisions, unknowns, and options considered
 
-A lean package is preferred over scaffolding placeholder files for domains that do not apply to the feature.
+Beyond that, supporting artifacts are domain-specific. When a domain pack is installed, follow its definition guidance for the artifacts that domain expects (a coding project, for example, adds a data model, interface contracts, a quickstart, and verification checklists; a design project adds a visual spec; a content project adds outlines or source lists). Create the artifacts that materially apply and nothing more.
+
+A lean package is preferred over scaffolding placeholder files for artifacts that do not apply to the feature.
 
 ### Checklist Files
 
-Checklists are optional, domain-specific quality gates kept alongside the spec. Create a file only when that domain materially applies to the feature.
-
-- `checklists/ux.md` — user-facing quality checks: content copy, empty/loading/error states, accessibility (WCAG 2.1 AA), keyboard navigation, responsive breakpoints, and any design-system conformance the feature must satisfy.
-- `checklists/test.md` — verification coverage the tester must confirm before acceptance: acceptance scenarios from `spec.md`, edge cases, regression hotspots, and any manual QA steps that cannot be automated.
-- `checklists/security.md` — security-relevant checks for the feature: authN/authZ boundaries, input validation at trust boundaries, secret handling, sensitive-data storage and logging, and relevant OWASP Top 10 risks.
+Checklists under `checklists/` are optional, domain-specific quality gates kept alongside the spec. Create one only when that kind of check materially applies to the feature. The specific set is domain-driven: when a domain pack is installed, follow its definition guidance for the checklists that domain expects (a coding project, for example, defines user-experience, test-coverage, and security checklists).
 
 Each checklist is a plain markdown list of `- [ ]` items. Keep items testable and specific to this feature — do not restate generic project rules that already live in `.github/dudestuff/guardrails.md` or `.github/skills/project/SKILL.md`.
 
