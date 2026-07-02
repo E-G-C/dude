@@ -29,9 +29,9 @@ The upgrader treats every file in your project as one of three things:
 | **Project-owned** | `.github/dudestuff/*` except the two upgrade-owned files, `.github/skills/project/`, custom agents, custom skills under `dude-local-*` or other names, `.github/copilot-instructions.md` | Never overwritten. |
 | **Repo-local files and work state** | `README.md`, `docs/`, `.gitattributes`, `brief/`, `specs/`, Beads, your product source | Never touched or brought in by upgrade. |
 
-Base ownership is derived from the **namespace convention** by the upgrader on each run — anything under `.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md`, `.github/skills/dude-<slug>/**`, or `.github/instructions/dude.instructions.md` is base-owned, with the reserved `dude-local-<slug>` and `dude-pack-<pack>-<slug>` namespaces explicitly excluded (project-owned and pack-owned respectively). The local [`.github/dudestuff/bundle-manifest.md`](../.github/dudestuff/bundle-manifest.md) is **metadata only**: it records the upstream repo and the installed commit sha for orientation. The upgrader compares your on-disk bytes against the fetched upstream tree directly at `plan` time.
+Base ownership is derived from the **namespace convention** by the upgrader on each run — anything under `.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md`, `.github/skills/dude-<slug>/**`, or `.github/instructions/dude.instructions.md` is base-owned, with the reserved `dude-local-<slug>` and `dude-pack-<pack>-<slug>` namespaces explicitly excluded (project-owned and pack-owned respectively). The local [`.github/dudestuff/bundle-manifest.md`](../.github/dudestuff/bundle-manifest.md) is **metadata only**: it records the upstream repo and the installed release version (`installed_ref`) for orientation. The upgrader compares your on-disk bytes against the fetched upstream tree directly at `plan` time.
 
-The authoritative upgrade trigger is whether the live upstream ref HEAD differs from the locally recorded `installed_sha`. `@dude status` discovers the upstream HEAD with `git ls-remote` (remote sources) or `git rev-parse HEAD` (local-path sources). When HEAD discovery is unavailable, the upstream manifest's `installed_sha` is used.
+The authoritative upgrade trigger is whether the locally recorded `installed_ref` differs from the newest release the source offers. On the `latest` channel `@dude status` resolves the highest stable `vX.Y.Z` tag with `git ls-remote --tags` (remote sources) or `git tag` (local-path sources); a pinned tag or branch ref is compared by name. When the channel is `latest` but no release tag exists yet, status reports `no releases published yet`.
 
 Upstream documentation is intentionally not part of the upgrade payload. A project using Dude does not need to track Dude's own docs; read them in the Dude repository when needed.
 
@@ -50,7 +50,7 @@ Direct file edits are still possible. If someone manually adds an unprefixed age
 
 The upgrade surface is small on purpose: **status → dry-run → upgrade → (rollback if needed)**.
 
-1. **Check** — `@dude status` reports whether an upgrade is available against the manifest's pinned source. The decision is based on the live upstream ref HEAD (discovered with `git ls-remote` for remote sources, `git rev-parse HEAD` for local-path sources) against the locally recorded `installed_sha`.
+1. **Check** — `@dude status` reports whether an upgrade is available against the manifest's configured source. The decision compares the locally recorded `installed_ref` against the newest release tag on the source (for the `latest` channel, the highest stable `vX.Y.Z`).
 2. **Preview** — `@dude upgrade --dry-run` produces an upgrade report listing every file that would be replaced, added, or removed, plus per-file line stats. Nothing is written. Use this to spot any local edits to base files you may want to preserve in `dude-local-<slug>` before proceeding.
 3. **Apply** — `@dude upgrade` re-runs the report, then waits for `confirm upgrade`. On confirm it creates a `dude-pre-upgrade-<timestamp>` git tag and a `chore/dude-upgrade-<sha>` branch as a safety net, then applies changes in this order:
    - **Add** new base files.
@@ -75,7 +75,7 @@ The upgrade surface is small on purpose: **status → dry-run → upgrade → (r
 
 After any `@dude upgrade`, the following files and directories are byte-identical to what they were before the upgrade:
 
-- everything under `.github/dudestuff/` except `bundle-manifest.md` (rewritten with the new `installed_sha`) and `upgrade-log.md` (one new entry appended)
+- everything under `.github/dudestuff/` except `bundle-manifest.md` (rewritten with the new `installed_ref`) and `upgrade-log.md` (one new entry appended)
 - everything under `.github/skills/project/`
 - any agent file under `.github/agents/` outside the upstream base namespace (including everything under `dude-local-*`)
 - any skill directory under `.github/skills/` outside the upstream base namespace (including everything under `dude-local-*`)

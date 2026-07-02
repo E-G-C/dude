@@ -584,8 +584,8 @@ to drop the bundle into `.github/`.
 
 Use the `dude-bundle-upgrade` skill to refresh the installed Dude engine from its
 source repo. The skill reads `.github/dudestuff/bundle-manifest.md`, compares
-the live upstream ref HEAD against the locally recorded `installed_sha`,
-fetches the configured upstream ref into an OS temp directory for
+the locally recorded `installed_ref` against the newest release tag on the
+source, fetches the resolved release into an OS temp directory for
 dry-run/apply, produces an upgrade report, and waits for the explicit
 `confirm upgrade` token before writing.
 
@@ -620,12 +620,12 @@ from the upgrade payload. A seeded `bundle-manifest.md` is required.
 > copy it under `dude-local-<slug>` first and edit there — direct edits to
 > base files are discarded by `@dude upgrade`.
 
-`installed_sha` identifies the last applied upstream source for orientation.
-`@dude status` reports upgrade availability when the live upstream ref HEAD
-differs from the locally recorded `installed_sha`; the upstream HEAD is read
-with `git ls-remote` (remote sources) or `git rev-parse HEAD` (local-path
-sources), so an upstream contributor never has to manually bump a field inside
-the upstream manifest for downstream installs to see new bundle changes.
+`installed_ref` identifies the installed release version for orientation.
+`@dude status` reports upgrade availability when `installed_ref` differs from the
+newest release the source offers; on the `latest` channel the newest stable
+`vX.Y.Z` tag is discovered with `git ls-remote --tags` (remote) or `git tag`
+(local-path), so an upstream contributor never has to manually bump a field
+inside the upstream manifest for downstream installs to see new releases.
 
 Use reserved `dude-local-` paths for project-owned artifacts:
 `.github/agents/dude-local-<slug>.agent.md` and `.github/skills/dude-local-<slug>/`.

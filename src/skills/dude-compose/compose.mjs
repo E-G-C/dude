@@ -42,6 +42,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { belongsToPack } from '../dude-engine/lib/ownership.mjs';
 import { normalizePath } from '../dude-engine/lib/text.mjs';
+import { resolveReleaseRef } from '../dude-engine/lib/release-channel.mjs';
 
 const PACK_NAME_RE = /^[a-z][a-z0-9-]*[a-z0-9]$/;
 const COPY_DIRS = ['agents', 'skills', 'instructions', 'prompts'];
@@ -280,19 +281,27 @@ function hasGit() {
 function resolveSourceTree(source, ref) {
   if (isDir(source)) return { tree: source };
   if (!hasGit()) return { error: 'git is required to fetch a pack from a remote source' };
+  // Resolve the `latest` release channel to a concrete tag (shared with upgrade)
+  // so a released manifest's `source_ref: latest` fetches packs from the newest
+  // release tag rather than a nonexistent `latest` ref.
+  const chan = resolveReleaseRef(source, ref);
+  if (chan.channel && !chan.resolvedRef) {
+    return { error: `no releases published yet at ${source} (channel: ${ref})` };
+  }
+  const fetchRef = chan.resolvedRef;
   fs.mkdirSync(CACHE_ROOT, { recursive: true });
-  const key = crypto.createHash('sha256').update(`${source}|${ref}`).digest('hex').slice(0, 12);
+  const key = crypto.createHash('sha256').update(`${source}|${fetchRef}`).digest('hex').slice(0, 12);
   const dest = path.join(CACHE_ROOT, `src-${key}`);
   if (isDir(path.join(dest, '.git'))) return { tree: dest };
   removePath(dest);
-  if (git(['clone', '--quiet', '--depth=1', '--branch', ref, source, dest]) === 0) {
+  if (git(['clone', '--quiet', '--depth=1', '--branch', fetchRef, source, dest]) === 0) {
     return { tree: dest };
   }
-  if (git(['clone', '--quiet', source, dest]) === 0 && git(['checkout', '--quiet', ref], dest) === 0) {
+  if (git(['clone', '--quiet', source, dest]) === 0 && git(['checkout', '--quiet', fetchRef], dest) === 0) {
     return { tree: dest };
   }
   removePath(dest);
-  return { error: `failed to fetch source ${source} @ ${ref}` };
+  return { error: `failed to fetch source ${source} @ ${fetchRef}` };
 }
 
 /**

@@ -26,6 +26,10 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { enumerateCorePaths, classifyPath, TIER } from '../dude-engine/lib/ownership.mjs';
+import { resolveReleaseRef, pickLatestReleaseTag } from '../dude-engine/lib/release-channel.mjs';
+
+// Re-exported so existing importers (upgrade.test.mjs) keep a stable entry point.
+export { pickLatestReleaseTag };
 
 const ROOT = process.cwd();
 const CACHE_ROOT = path.join(process.env.TMPDIR || '/tmp', 'dude-upgrade-cache');
@@ -34,10 +38,6 @@ const LOCAL_MANIFEST_PATH = path.join(ROOT, '.github/dudestuff/bundle-manifest.m
 const LINT_PATH = path.join(ROOT, '.github/skills/dude-lint/lint.mjs');
 const DEFAULT_SOURCE = 'https://github.com/E-G-C/dude';
 const DEFAULT_REF = 'main';
-// The release channel: when source_ref is this sentinel, `@dude upgrade`
-// resolves the newest stable `vX.Y.Z` tag instead of tracking a branch.
-const RELEASE_CHANNEL = 'latest';
-const RELEASE_TAG_RE = /^v(\d+)\.(\d+)\.(\d+)$/;
 
 // ----- logging (stderr) ------------------------------------------------------
 const color = Boolean(process.stderr.isTTY);
@@ -186,68 +186,14 @@ function loadLocalManifest() {
 }
 
 // ----- upstream resolution ---------------------------------------------------
-/**
- * Pick the newest stable release tag (highest `vX.Y.Z` by numeric semver;
- * pre-release tags such as `v1.0.0-rc1` are ignored) from a list of tag names.
- * @param {string[]} tagNames
- * @returns {string | null}
- */
-export function pickLatestReleaseTag(tagNames) {
-  /** @type {[number, number, number, string] | null} */
-  let best = null;
-  for (const raw of tagNames) {
-    const name = String(raw).trim();
-    const m = RELEASE_TAG_RE.exec(name);
-    if (!m) continue;
-    const maj = Number(m[1]);
-    const min = Number(m[2]);
-    const pat = Number(m[3]);
-    if (
-      best === null ||
-      maj > best[0] ||
-      (maj === best[0] && min > best[1]) ||
-      (maj === best[0] && min === best[1] && pat > best[2])
-    ) {
-      best = [maj, min, pat, name];
-    }
-  }
-  return best ? best[3] : null;
-}
-
-/**
- * List candidate release tag names for a source (remote URL or local path).
- * @param {string} source
- * @returns {string[]}
- */
-function listSourceTags(source) {
-  if (!hasGit()) return [];
-  if (isDir(source)) {
-    const r = git(['tag', '--list', 'v*'], source);
-    return r.status === 0 ? r.stdout.split('\n').map((s) => s.trim()).filter(Boolean) : [];
-  }
-  const r = git(['ls-remote', '--tags', '--refs', source]);
-  if (r.status !== 0) return [];
-  /** @type {string[]} */
-  const names = [];
-  for (const line of r.stdout.split('\n')) {
-    const m = /refs\/tags\/(\S+)$/.exec(line.trim());
-    if (m) names.push(m[1]);
-  }
-  return names;
-}
-
 const upstream = { source: '', ref: '', resolvedRef: '', channel: false };
 /** @param {string} srcOverride @param {string} refOverride */
 function resolveUpstream(srcOverride, refOverride) {
   upstream.source = srcOverride || local.source_repo || DEFAULT_SOURCE;
   upstream.ref = refOverride || local.source_ref || DEFAULT_REF;
-  if (upstream.ref === RELEASE_CHANNEL) {
-    upstream.channel = true;
-    upstream.resolvedRef = pickLatestReleaseTag(listSourceTags(upstream.source)) || '';
-  } else {
-    upstream.channel = false;
-    upstream.resolvedRef = upstream.ref;
-  }
+  const r = resolveReleaseRef(upstream.source, upstream.ref);
+  upstream.channel = r.channel;
+  upstream.resolvedRef = r.resolvedRef;
 }
 /** @returns {string} human display of the ref (channel shows the resolved tag) */
 function refDisplay() {

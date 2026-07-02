@@ -98,7 +98,7 @@ node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback [--tag <name>] [--a
   "ttl_warn_at": "<created+1h>",
   "ttl_expire_at": "<created+24h>",
   "source": "...", "ref": "...",
-  "from_sha": "...", "to_sha": "...",
+  "from_ref": "...", "to_ref": "...",
   "cache_dir": "<absolute-path-of-fetched-upstream-tree>",
   "summary": {
     "replace": N, "add": N, "remove": N,
