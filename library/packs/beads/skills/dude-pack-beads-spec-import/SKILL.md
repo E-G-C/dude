@@ -7,17 +7,17 @@ description: "Use when importing feature tasks from specs/ into Beads, automatic
 
 How to read Dude-defined feature artifacts and import them into Beads.
 
-Defined brainstorm files may point at definition packages through `spec_path:`. The coordinator can use that pointer for automatic import during `@dude track`.
+Defined brief files may point at definition packages through `spec_path:`. The coordinator can use that pointer for automatic import during `@dude track`.
 
 ## Canonical Feature Identity
 
-One value identifies a defined feature across the brainstorm ledger and Beads:
+One value identifies a defined feature across the brief ledger and Beads:
 
-- The brainstorm `spec_path:` field holds the workspace-relative path to the feature's `spec.md` (for example, `specs/001-feature-name/spec.md`).
+- The brief `spec_path:` field holds the workspace-relative path to the feature's `spec.md` (for example, `specs/001-feature-name/spec.md`).
 - Every Beads issue imported from that feature carries the same value as a **structured first line** in its `--description`: `spec: specs/001-feature-name/spec.md`.
-- A feature is considered "already represented in Beads" iff at least one Beads issue exists whose description starts with `spec: <spec_path>` (literal string match against the brainstorm's `spec_path` value). To check, run `bd list --json` and filter issue descriptions for the prefix.
+- A feature is considered "already represented in Beads" iff at least one Beads issue exists whose description starts with `spec: <spec_path>` (literal string match against the brief's `spec_path` value). To check, run `bd list --json` and filter issue descriptions for the prefix.
 
-The Beads CLI does not have a native `--spec-id` flag. The description prefix is the carrier. Do not use the feature directory, the brainstorm file path, or the epic ID as the identity.
+The Beads CLI does not have a native `--spec-id` flag. The description prefix is the carrier. Do not use the feature directory, the brief file path, or the epic ID as the identity.
 
 Treat `spec_path:` as Dude-maintained metadata. If it changes after import, or after Lightweight Execution has already recorded non-open task state in `tasks.md`, stop and reconcile the affected identity before continuing.
 
@@ -80,18 +80,18 @@ Task headers in the **`T9001`–`T9999`** range live in the reserved discovered 
 
 ### Automatic mode (`@dude track`)
 
-- Scan `brainstorm/` for files with `status: defined` and a populated `spec_path:`.
+- Scan `brief/` for files with `status: defined` and a populated `spec_path:`.
 - For each defined entry, run `bd list --json` (or an equivalent query) and check whether any issue's description starts with `spec: <spec_path>`. If none do, import the feature; otherwise skip it.
-- Use the brainstorm file as the authoritative pointer during this automatic handoff.
+- Use the brief file as the authoritative pointer during this automatic handoff.
 - Do not ask the user for a `specs/<feature>/` path during this automatic mode.
 
 ### Manual mode (explicit import prompt)
 
-Manual import still requires a defined brainstorm file as the identity source:
+Manual import still requires a defined brief file as the identity source:
 
 - Resolve the feature directory from the user's input or from `specs/`.
-- Scan `brainstorm/` for a file whose `spec_path` matches `<selected-dir>/spec.md`. If no matching brainstorm file exists, stop and tell the user to run `@dude draft <feature>` first so a brainstorm ledger is created and later defined.
-- Once the brainstorm file is found, use its `spec_path` as the canonical identity for the import.
+- Scan `brief/` for a file whose `spec_path` matches `<selected-dir>/spec.md`. If no matching brief file exists, stop and tell the user to run `@dude draft <feature>` first so a brief ledger is created and later defined.
+- Once the brief file is found, use its `spec_path` as the canonical identity for the import.
 - Do not guess when multiple feature directories exist in manual mode.
 
 ## After Import
@@ -125,13 +125,13 @@ owns the canonical-identity and reconciliation checks in the algorithm below.
 ## Import Algorithm
 
 1. Select the feature directory using the rules above.
-2. Before parsing, run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`). The linter validates the brainstorm's `status:` and `spec_path:` fields, the `## Coordinator Log` heading, the `tasks.md` board fences, glyph values, and durable task IDs. If it reports any `[FAIL]`, stop the import and route the structural fix back through `dude-feature-definition` first; importing a malformed package would corrupt the resulting Beads issues.
+2. Before parsing, run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`). The linter validates the brief's `status:` and `spec_path:` fields, the `## Coordinator Log` heading, the `tasks.md` board fences, glyph values, and durable task IDs. If it reports any `[FAIL]`, stop the import and route the structural fix back through `dude-feature-definition` first; importing a malformed package would corrupt the resulting Beads issues.
 3. Read `spec.md` to extract feature intent and user stories.
 4. Read `plan.md` to extract architecture, structure, and stack choices.
 5. Read `tasks.md` to extract executable task units and ordering. Parse task headers using the canonical glyph-aware format, capture any indented `deps:` or `blocked-by:` metadata, and ignore the generated board region because it is derived guidance, not canonical task state. Import `[ ]`, `[~]`, and `[!]` task units as open work; skip `[x]` as completed Lightweight Execution history. If any task header or metadata line is malformed, ambiguous, or carries conflicting story labels, stop and request a corrected `tasks.md` before import.
    - Task headers under a `## Discovered During Execution` section (appended by `@dude sync Beads to tasks.md`, see `dude-pack-beads-workflow`) are already represented in Beads. Before creating an issue for any task header in `tasks.md`, scan its description for a `(Beads: <id>)` tag using the regex `\(Beads:\s*([A-Za-z0-9_-]+)(?:\s*;[^)]*)?\)`. If a tag is present **and** an existing Beads issue with that ID has a description starting with `spec: <spec_path>` for the current feature, skip the import for that header — the canonical task and the Beads issue are already linked. If the tag is present but the referenced Beads issue does not exist or carries a different `spec:` prefix, stop and report the orphan tag instead of guessing.
 6. If checked Lightweight Execution history exists, verify that each checked item still maps one-to-one by durable task key. When that reconciliation is ambiguous after a re-define, stop automatic import. Report three buckets to the user: surviving checked IDs, changed or removed checked IDs, and ambiguous replacements that need confirmation.
-7. Create one Beads epic for the feature if not already represented. The epic exists for grouping, audit, and UI navigation only — it is never an actionable task. Its description must start with `spec: <spec_path>` (the brainstorm's exact `spec_path` value). Keep it out of the ready queue by setting its status to `deferred`; low priority alone is not sufficient.
+7. Create one Beads epic for the feature if not already represented. The epic exists for grouping, audit, and UI navigation only — it is never an actionable task. Its description must start with `spec: <spec_path>` (the brief's exact `spec_path` value). Keep it out of the ready queue by setting its status to `deferred`; low priority alone is not sufficient.
 8. Create Beads task issues for executable task units. Each issue's `--description` must start with `spec: <spec_path>` as the first line, followed by task details. Map `[ ]` to an open Beads task, `[~]` to an in-progress Beads task, `[!]` to a blocked Beads task when blocker data is available, and skip `[x]` as completed markdown history. Example:
     ```
         bd create "T006@c7d2f1a9 [US1] Add CSV row mapping" -t task -p 1 \
@@ -150,8 +150,8 @@ owns the canonical-identity and reconciliation checks in the algorithm below.
     - `blocked-by:` reason when present
    - acceptance hints or checkpoint text
    - source artifact path
-10. Verify that every created issue's description starts with `spec: <spec_path>` using the brainstorm's exact `spec_path` value. If a single feature ends up with mixed `spec:` prefixes across issues, automatic handoff cannot reliably detect it as imported. Stop and reconcile before continuing.
-11. If existing issues already use the feature's `spec:` prefix but the brainstorm now points at a different `spec_path`, stop and reconcile the canonical identity before creating or updating more issues.
+10. Verify that every created issue's description starts with `spec: <spec_path>` using the brief's exact `spec_path` value. If a single feature ends up with mixed `spec:` prefixes across issues, automatic handoff cannot reliably detect it as imported. Stop and reconcile before continuing.
+11. If existing issues already use the feature's `spec:` prefix but the brief now points at a different `spec_path`, stop and reconcile the canonical identity before creating or updating more issues.
 12. Derive dependencies using the task structure rules:
     - explicit `deps:` values become direct issue dependencies first
     - every task in Phase N+1 depends on all tasks in Phase N unless the source already modeled the same blockers explicitly
@@ -186,8 +186,8 @@ When creating Beads issues, translate spec priorities:
 
 - Do not re-import task headers that already carry a `(Beads: <id>)` tag whose referenced Beads issue exists for the same feature; they were written by `@dude sync Beads to tasks.md` and are already linked.
 - Do not auto-import from `@dude status` or other read-only commands.
-- Do not guess a defined feature when the brainstorm file is missing `spec_path:` or points to a missing package.
-- Do not keep going when the brainstorm's `spec_path` and imported Beads issue prefixes disagree; reconcile first.
+- Do not guess a defined feature when the brief file is missing `spec_path:` or points to a missing package.
+- Do not keep going when the brief's `spec_path` and imported Beads issue prefixes disagree; reconcile first.
 - Do not keep going when `spec_path` drift or task-reconciliation ambiguity makes completed lightweight history unreliable; reconcile first.
 - Do not leave the feature epic as actionable ready work. Defer it or otherwise keep it out of `bd ready` selection.
 - Do not continue to use `tasks.md` as the live execution board after import.

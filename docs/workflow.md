@@ -17,7 +17,7 @@ After `@dude define`, choose one of three paths:
 ```mermaid
 graph LR
     IDEA["Idea"] --> DRAFT["@dude draft"]
-    DRAFT --> BRAIN["brainstorm/<feature>.md"]
+    DRAFT --> BRAIN["brief/<feature>.md"]
     BRAIN --> DEFINE["@dude define"]
     DEFINE --> PACKAGE["specs/<feature>/"]
     PACKAGE --> STOP["Definition Only"]
@@ -31,7 +31,7 @@ graph LR
 
 Key rules:
 
-- `@dude draft` creates or refreshes the brainstorm.
+- `@dude draft` creates or refreshes the brief.
 - `@dude define` creates or refreshes the package.
 - Lightweight Execution from `tasks.md` is the core default and can finish the feature on its own.
 - Tracked execution is optional and comes from the **beads pack** (`@dude add pack beads`); it is not the final destination.
@@ -46,7 +46,7 @@ Key rules:
 | Part | Owns | Plain-English version |
 |---|---|---|
 | **@dude** | routing, handoff, memory, team management | the coordinator |
-| **@dude-spec-lead** | brainstorm and definition package | what to build |
+| **@dude-spec-lead** | brief and definition package | what to build |
 | **@dude-lead** | architecture and execution tradeoffs | how to build after Beads import |
 | **Specialists** | implementation, verification, review | the actual work |
 | **`.github/dudestuff/guardrails.md`** | durable project rules | rules Dude should keep respecting |
@@ -63,8 +63,8 @@ it also reports Beads state without mutating it.
 
 | Artifact                                         | Purpose                      | Human edits                                                               | Dude maintains                                                                                                     | How to keep it fresh                                            |
 | ------------------------------------------------ | ---------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
-| `brainstorm/<slug>.md`                           | Working feature ledger                     | `## User Draft`, `**Your answer:**` slots in `## Open Questions`, assumption overrides, and items in `## Deferred Clarifications`     | Content inside `<!-- dude:managed:start --> ... <!-- dude:managed:end -->` fences (`## Normalized Intent`, `## Constraints`, `## Definition Checklist`, `## Coordinator Log`), plus `status` and `spec_path` | Rerun `@dude draft` or `@dude define` after edits                                      |
-| `specs/<feature>/spec.md`, `plan.md`             | Generated definition package               | Prefer editing the brainstorm instead of hand-editing these files             | the definition package contents                                                                                    | Rerun `@dude define <feature>` when scope or assumptions change                        |
+| `brief/<slug>.md`                           | Working feature ledger                     | `## User Draft`, `**Your answer:**` slots in `## Open Questions`, assumption overrides, and items in `## Deferred Clarifications`     | Content inside `<!-- dude:managed:start --> ... <!-- dude:managed:end -->` fences (`## Normalized Intent`, `## Constraints`, `## Definition Checklist`, `## Coordinator Log`), plus `status` and `spec_path` | Rerun `@dude draft` or `@dude define` after edits                                      |
+| `specs/<feature>/spec.md`, `plan.md`             | Generated definition package               | Prefer editing the brief instead of hand-editing these files             | the definition package contents                                                                                    | Rerun `@dude define <feature>` when scope or assumptions change                        |
 | `specs/<feature>/tasks.md`                       | Canonical phased task units plus a derived board view; live in Lightweight Execution and mirrored from Beads in Tracked Execution | Do not self-check `[x]`; let Dude mutate task state after routed outcomes and verification. Avoid rewriting task meaning by hand or editing the generated board region directly. | task selection via the generated board view when live, durable-key-first reconciliation, optional `deps:` metadata, coordinator-owned state updates in Lightweight Execution, and one-way Beads-derived mirror writes in Tracked Execution | Rerun `@dude define <feature>` when scope changes; preserve durable task keys and surviving task state when tasks still mean the same work. Use `@dude sync Beads to tasks.md` to refresh the mirror from Beads. |
 | Beads issues                                     | Live execution state after import          | through Dude's execution flow                                                 | issue state, dependencies, close decisions, and authoritative state while tracked execution is active                                                                     | Use `@dude track`, `@dude status`, `@dude sync Beads to tasks.md`, and Beads commands                                  |
 
@@ -92,7 +92,7 @@ maintain them so define and track stay consistent.
 
 ### Definition Only
 
-Use this lane when you want a brainstorm and a reusable definition package, but
+Use this lane when you want a brief and a reusable definition package, but
 you do not want Beads execution tracking yet.
 
 1. Copy the `.github/` bundle into the target repository.
@@ -113,7 +113,7 @@ Set-Location my-project
 @dude draft authentication
 ```
 
-This creates or refreshes `brainstorm/authentication.md`. If the brainstorm
+This creates or refreshes `brief/authentication.md`. If the brief
 already exists, `draft` re-normalizes it in place and preserves `## User Draft`.
 
 If you want Dude to restate where you are before editing, run:
@@ -122,10 +122,10 @@ If you want Dude to restate where you are before editing, run:
 @dude status
 ```
 
-At this point, it should point you to `brainstorm/authentication.md` as the live
+At this point, it should point you to `brief/authentication.md` as the live
 collaboration surface.
 
-Inside `brainstorm/<slug>.md`:
+Inside `brief/<slug>.md`:
 
 - read `## User Draft` first, then edit it if the desired outcome changed
 - answer each `## Open Questions` prompt by replacing its `**Your answer:** _Type your answer here._` placeholder
@@ -133,7 +133,7 @@ Inside `brainstorm/<slug>.md`:
 - promote items from `## Deferred Clarifications` back into the active set when their priority rises
 - leave anything inside `<!-- dude:managed:start --> ... <!-- dude:managed:end -->` fences (`## Normalized Intent`, `## Constraints`, `## Definition Checklist`, `## Coordinator Log`), as well as `status` and `spec_path`, to Dude. Hand-edits inside the fences will be reset on the next `draft` or `define`.
 
-To answer clarifications, edit `brainstorm/<slug>.md` directly: replace the
+To answer clarifications, edit `brief/<slug>.md` directly: replace the
 `**Your answer:**` placeholder below each relevant question or adjust
 `## Assumptions`, then rerun
 `@dude draft <feature>` to re-normalize the file or `@dude define <feature>` to
@@ -145,7 +145,7 @@ continue.
 @dude define authentication
 ```
 
-This creates or refreshes `specs/<feature>/`. If you edit the brainstorm and run
+This creates or refreshes `specs/<feature>/`. If you edit the brief and run
 `define` again, Dude re-reads the draft and resumes the definition workflow
 instead of starting over.
 
@@ -168,7 +168,7 @@ Two normal outcomes are possible:
 If you respond in the same conversation, Dude can continue the paused definition
 immediately. If you return later, rerun `@dude define <feature>` to resume.
 
-If you are unsure whether the live artifact is still the brainstorm or the
+If you are unsure whether the live artifact is still the brief or the
 generated package, run `@dude status` here. After a completed definition pass,
 it should report Definition Only with `specs/<feature>/` as the live artifact
 until you choose Lightweight Execution or `@dude track`.
@@ -282,7 +282,7 @@ is `--max 25`.
 verification, reviewer rejection, required clarification, two consecutive
 failed attempts on the same task, ambiguous state, tool error, or `--max`
 reached. It never imports features, never auto-commits, never edits `spec.md`,
-`plan.md`, or brainstorm content, and never creates a new state file. Use
+`plan.md`, or brief content, and never creates a new state file. Use
 [`@dude flag ...`](commands.md#dude-flag) for definition gaps, and `@dude track`
 to enable Beads.
 
@@ -365,7 +365,7 @@ what is ready next without mutating anything.
   which completions still count before creating more Beads work.
 - `spec.md`, `plan.md`, `tasks.md`, and related artifacts stay as reference
   context.
-- If the intended feature meaning changes, update the brainstorm and rerun
+- If the intended feature meaning changes, update the brief and rerun
   `@dude define <feature>` before another import or reconciliation step.
 - If execution reveals a missing requirement or mismatch, use `@dude flag ...`
   so the issue routes back to the right owner.
@@ -421,9 +421,9 @@ snapshot is only as current as the last successful mirror or sync.
 
 ### Before you run `@dude track`
 
-- The current answers live in `brainstorm/<slug>.md`, not only in chat.
-- `brainstorm/<slug>.md` shows `status: defined` and a populated `spec_path:`.
-- If the brainstorm changed, rerun `@dude define <feature>` first so the
+- The current answers live in `brief/<slug>.md`, not only in chat.
+- `brief/<slug>.md` shows `status: defined` and a populated `spec_path:`.
+- If the brief changed, rerun `@dude define <feature>` first so the
   generated package is fresh.
 - If you are switching from Lightweight Execution, `tasks.md` accurately marks
   task state with `[ ]`, `[~]`, `[!]`, and `[x]`, and any durable task keys
@@ -440,7 +440,7 @@ snapshot is only as current as the last successful mirror or sync.
 
 ### Quick answers for common stalls
 
-- `@dude draft` looked like a no-op: check `brainstorm/`; if the file already
+- `@dude draft` looked like a no-op: check `brief/`; if the file already
   existed, Dude re-normalized it in place.
 - `@dude define` paused before `plan.md`: see [Setup and first feature](setup.md);
   that checkpoint is normal, not a failure.
@@ -459,7 +459,7 @@ snapshot is only as current as the last successful mirror or sync.
 
 ## Advanced: Manual Import
 
-Manual import requires an existing defined brainstorm file. If you want to
+Manual import requires an existing defined brief file. If you want to
 bypass the normal automatic handoff in `@dude track`, you can import a spec
 package directly:
 
@@ -467,8 +467,8 @@ package directly:
 @dude import tasks from specs/<feature>/ into Beads
 ```
 
-The coordinator resolves the brainstorm file whose `spec_path` matches the
-selected feature. If no defined brainstorm exists, you'll be asked to run
+The coordinator resolves the brief file whose `spec_path` matches the
+selected feature. If no defined brief exists, you'll be asked to run
 `@dude draft <feature>` and `@dude define <feature>` first.
 
 If you are switching from Lightweight Execution to Beads later, import the

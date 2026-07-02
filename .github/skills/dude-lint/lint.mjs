@@ -3,7 +3,7 @@
 /**
  * Static linter for the Dude Coder bundle (Node port of lint.sh / lint.ps1).
  *
- * Validates structural conventions across brainstorm/, specs/, and .github/.
+ * Validates structural conventions across brief/, specs/, and .github/.
  * Read-only. Dependency-free (Node >= 20 stdlib only).
  *
  * Usage:
@@ -22,7 +22,7 @@ const ROOT = path.resolve(process.argv[2] || '.');
 const counts = {
   warn: 0,
   fail: 0,
-  brainstorm: 0,
+  brief: 0,
   taskfile: 0,
   memoryfile: 0,
   agent: 0,
@@ -237,11 +237,11 @@ const BOARD_END = /<!--\s*dude:board:end\s*-->/;
 const BOARD_START_ANCHORED = /^\s*<!--\s*dude:board:start\s*-->\s*$/;
 const BOARD_END_ANCHORED = /^\s*<!--\s*dude:board:end\s*-->\s*$/;
 
-info(`Scanning .github + brainstorm + specs under ${ROOT}`);
+info(`Scanning .github + brief + specs under ${ROOT}`);
 
-// --- Check 1: brainstorm files ----------------------------------------------
-for (const file of listFiles(path.join(ROOT, 'brainstorm'), '.md')) {
-  counts.brainstorm += 1;
+// --- Check 1: brief files ----------------------------------------------
+for (const file of listFiles(path.join(ROOT, 'brief'), '.md')) {
+  counts.brief += 1;
   const rel = relpath(file);
   const content = read(file);
 
@@ -581,7 +581,7 @@ for (const name of [...orphanSkills.keys()].sort()) {
 
 // --- Summary -----------------------------------------------------------------
 info(
-  `Scanned: ${counts.brainstorm} brainstorm, ${counts.taskfile} task file(s), ${counts.memoryfile} memory file(s), ${counts.agent} agent(s)`,
+  `Scanned: ${counts.brief} brief, ${counts.taskfile} task file(s), ${counts.memoryfile} memory file(s), ${counts.agent} agent(s)`,
 );
 info(`Findings: ${counts.warn} warning(s), ${counts.fail} failure(s)`);
 

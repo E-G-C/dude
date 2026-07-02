@@ -18,7 +18,7 @@ Give Dude a small amount of real context to plan with:
 
 ## 2. Draft the feature
 
-Ask Dude to turn the feature idea into a brainstorm ledger:
+Ask Dude to turn the feature idea into a brief ledger:
 
 ```text
 @dude draft a feature for email/password authentication with sign-in, sign-out, and password reset for a web app
@@ -30,10 +30,10 @@ If you want a quick orientation checkpoint before editing the draft, run:
 @dude status
 ```
 
-In this phase, Dude should point you back to `brainstorm/authentication.md` as
+In this phase, Dude should point you back to `brief/authentication.md` as
 the live collaboration surface.
 
-The normal result is a file like `brainstorm/authentication.md`:
+The normal result is a file like `brief/authentication.md`:
 
 ```markdown
 ---
@@ -43,7 +43,7 @@ status: draft
 spec_path:
 ---
 
-# Brainstorm: User authentication
+# Brief: User authentication
 
 ## User Draft
 
@@ -96,7 +96,7 @@ Once the draft is clear enough, ask Dude to define the normal spec package:
 @dude define authentication
 ```
 
-If you edit the brainstorm and run `@dude define authentication` again, Dude
+If you edit the brief and run `@dude define authentication` again, Dude
 re-reads the updated draft and refreshes the package instead of starting from
 scratch.
 
@@ -130,7 +130,7 @@ If definition pauses for guardrail approval first, use the setup guidance in
 [Setup and first feature](setup.md) as the expected interaction shape, then
 expect the completed package above.
 
-Once definition completes, `brainstorm/authentication.md` should read
+Once definition completes, `brief/authentication.md` should read
 `status: defined` and have a populated `spec_path:` pointing at
 `specs/001-authentication/spec.md`.
 
@@ -248,5 +248,5 @@ inconsistent, send that feedback back through Dude:
 That is the normal closed loop: draft -> define -> Lightweight Execution or
 track -> flag when needed.
 
-An empty or missing `brainstorm/` or `specs/` directory is fine. Dude can create
+An empty or missing `brief/` or `specs/` directory is fine. Dude can create
 them when drafting or definition starts.

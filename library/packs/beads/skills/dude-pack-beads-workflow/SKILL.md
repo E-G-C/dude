@@ -10,15 +10,15 @@ Standard workflow for all Dude specialists when working on tasks tracked in Bead
 ## Coordinator Handoff
 
 - `@dude track` normally resumes in-progress work first.
-- Before selecting new work, the coordinator may import defined brainstorms whose `spec_path` is not yet represented in Beads.
+- Before selecting new work, the coordinator may import defined briefs whose `spec_path` is not yet represented in Beads.
 - When tracked execution is active, `@dude status` reports Beads state and defined features waiting for execution, but it must not import or mutate work.
 - If tracked execution is being enabled on Windows and Beads is not initialized yet, point the user to the Dolt server-mode setup instead of retrying plain `bd init` after embedded-Dolt or CGO failures.
 - When new work is discovered during tracked execution, create a linked Beads issue rather than silently expanding scope.
 
 ## Feature Lifecycle After Import
 
-- A feature's identity is the brainstorm `spec_path:` value (full path to `spec.md`, e.g. `specs/001-feature-name/spec.md`). Every Beads issue imported from that feature carries the same value as a `spec:` prefix in the first line of its description. See `dude-pack-beads-spec-import` for the canonical-identity rule.
-- A feature is considered `imported` when at least one Beads issue has a description starting with `spec: <spec_path>` matching the brainstorm's `spec_path` (literal match).
+- A feature's identity is the brief `spec_path:` value (full path to `spec.md`, e.g. `specs/001-feature-name/spec.md`). Every Beads issue imported from that feature carries the same value as a `spec:` prefix in the first line of its description. See `dude-pack-beads-spec-import` for the canonical-identity rule.
+- A feature is considered `imported` when at least one Beads issue has a description starting with `spec: <spec_path>` matching the brief's `spec_path` (literal match).
 - A feature is considered `active` when it currently has ready or in-progress Beads work.
 - After import, Beads is the live board and source of truth.
 - After import, `tasks.md` is not used for readiness or completion decisions. It may be kept as a one-way, non-authoritative portability mirror of Beads state so the feature can later be reconciled back to Lightweight Execution.
@@ -65,7 +65,7 @@ Mirror status mapping:
 
 Mirror only the task-state glyph and Beads-derived blocker metadata when needed. Preserve the task key, labels, description, explicit `deps:`, and human-authored task text. If a generated board region is present, regenerate it as a complete replacement from the canonical task units.
 
-Append a concise line to the companion brainstorm's `## Coordinator Log` for every successful mirror write or sync-driven append. Use one of these stable forms (timestamp is ISO local time):
+Append a concise line to the companion brief's `## Coordinator Log` for every successful mirror write or sync-driven append. Use one of these stable forms (timestamp is ISO local time):
 
 ```text
 2026-05-19 14:22 — mirrored Beads close dude-abc to tasks.md T012@a1b2c3d4
@@ -78,7 +78,7 @@ Report-only entries (the last form) are appended only by explicit `@dude sync` r
 
 After mutating `tasks.md`, run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`) and fix any `[FAIL]` before reporting the mirror as successful.
 
-If the task key is missing, `tasks.md` is missing, the key maps to zero or multiple task headers, the board fence is malformed, or the companion brainstorm cannot be identified, do not guess. Keep the Beads state as authoritative, report that the Beads operation succeeded but markdown mirroring was skipped, and ask the user to run an explicit Beads-to-markdown sync or reconcile the task identity.
+If the task key is missing, `tasks.md` is missing, the key maps to zero or multiple task headers, the board fence is malformed, or the companion brief cannot be identified, do not guess. Keep the Beads state as authoritative, report that the Beads operation succeeded but markdown mirroring was skipped, and ask the user to run an explicit Beads-to-markdown sync or reconcile the task identity.
 
 `@dude sync Beads to tasks.md` is the explicit reconciliation command for manual Beads changes, machine switching, or stale mirrors. It scans Beads issues by `spec:` prefix, applies the status mapping above to every unambiguous task key, regenerates the board region, appends Coordinator Log entries, runs `dude-lint`, and reports imported, mirrored, skipped, ambiguous, unsupported, and appended counts. It is mutating and must not run as part of `@dude status`.
 
@@ -201,7 +201,7 @@ bd close <id> --reason "Completed: <one-line summary of what was done>" --json
 
 This automatically unblocks any tasks that were waiting on this one.
 
-After `bd close` succeeds, the coordinator must run the Beads-to-markdown mirror for the closed issue before reporting completion. The mirror updates the matching canonical task header in `tasks.md` to `[x]`, refreshes the derived board region when present, records the sync in the brainstorm Coordinator Log, and runs `dude-lint`. If mirroring cannot be completed safely, report the skipped mirror separately from the successful Beads close.
+After `bd close` succeeds, the coordinator must run the Beads-to-markdown mirror for the closed issue before reporting completion. The mirror updates the matching canonical task header in `tasks.md` to `[x]`, refreshes the derived board region when present, records the sync in the brief Coordinator Log, and runs `dude-lint`. If mirroring cannot be completed safely, report the skipped mirror separately from the successful Beads close.
 
 ## Status Values
 
@@ -248,10 +248,10 @@ These are the coordinator-side flows for tracked execution. They apply only when
 
 ### Manual Import
 
-Use this only when the user explicitly asks to import execution work from `specs/` into Beads instead of using `@dude track`. Manual import still requires a defined brainstorm file as the identity source:
+Use this only when the user explicitly asks to import execution work from `specs/` into Beads instead of using `@dude track`. Manual import still requires a defined brief file as the identity source:
 
 1. Resolve the feature directory from the user's input or from `specs/`.
-2. Scan `brainstorm/` for a file whose `spec_path` matches `<selected-dir>/spec.md`. If no matching brainstorm file exists, stop and tell the user to run `@dude draft <feature>` first so a brainstorm ledger is created and later defined.
+2. Scan `brief/` for a file whose `spec_path` matches `<selected-dir>/spec.md`. If no matching brief file exists, stop and tell the user to run `@dude draft <feature>` first so a brief ledger is created and later defined.
 3. Load `dude-pack-beads-spec-import` and follow the Import Algorithm for reading artifacts, parsing task lines, creating Beads issues, deriving dependencies, and mapping priorities.
 4. After import, run `bd ready --json`, discard epics or other non-executable grouping issues from that ready set, and report how many task issues were created and how many actionable tasks are ready.
 
@@ -259,11 +259,11 @@ Use this only when the user explicitly asks to import execution work from `specs
 
 Use this during `@dude track` before selecting new ready work.
 
-1. Load `dude-pack-beads-spec-import` and follow its `## Canonical Feature Identity` rule: brainstorm `spec_path` and the Beads issue description `spec:` prefix must carry the same value (the full path to the feature's `spec.md`).
-2. Scan `brainstorm/` for files marked `status: defined` with a populated `spec_path:`.
+1. Load `dude-pack-beads-spec-import` and follow its `## Canonical Feature Identity` rule: brief `spec_path` and the Beads issue description `spec:` prefix must carry the same value (the full path to the feature's `spec.md`).
+2. Scan `brief/` for files marked `status: defined` with a populated `spec_path:`.
 3. For each defined entry, run `bd list --json` and check whether any issue's description starts with `spec: <spec_path>` (literal string match). Import the feature only when no such issue exists; otherwise skip it.
-4. Do not ask the user for a `specs/<feature>/` path during this automatic handoff; the brainstorm file is the pointer.
-5. If a defined brainstorm points to a missing or malformed package, stop and report the fix needed instead of guessing.
+4. Do not ask the user for a `specs/<feature>/` path during this automatic handoff; the brief file is the pointer.
+5. If a defined brief points to a missing or malformed package, stop and report the fix needed instead of guessing.
 
 ### Work Loop
 
@@ -271,7 +271,7 @@ Use this when the user asks to track work, continue work, or take the next ready
 
 1. Run `bd list --status in_progress --json`.
 2. If one or more tasks are already in progress, resume or report them before claiming new work.
-3. Run the automatic feature handoff for defined brainstorms.
+3. Run the automatic feature handoff for defined briefs.
 4. Run `bd ready --json --limit 5`.
 5. Discard epics or other non-executable grouping issues from the ready set before dispatch.
 6. If no actionable tasks are ready, report that all work is done, in progress, or blocked, and include any defined features that still need manual repair before they can be imported.
@@ -298,7 +298,7 @@ Status is read-only.
 - `@dude track` is the normal automatic handoff from defined features into Beads; explicit manual import is a fallback.
 - Do not use `@dude status` to import or mutate work.
 - `tasks.md` may be the live markdown board only during Lightweight Execution before import; after import it receives only one-way Beads-derived mirror writes or explicit `@dude sync Beads to tasks.md` results.
-- Do not continue to use the brainstorm file as the live board after import, and do not create tasks outside Beads once Beads is the execution system.
+- Do not continue to use the brief file as the live board after import, and do not create tasks outside Beads once Beads is the execution system.
 
 ### Completion
 

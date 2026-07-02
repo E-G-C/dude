@@ -30,13 +30,13 @@ If the request is only a small implementation fix with no open visual direction,
 The approved proposal is the spec.
 
 ```text
-brainstorm/<slug>.md
+brief/<slug>.md
   -> specs/<feature>/spec.md        # design proposal, then approved design spec
   -> specs/<feature>/design/        # preview(s), screenshots, visual references
   -> specs/<feature>/tasks.md       # apply approved design through normal execution
 ```
 
-`spec_path` still points to `specs/<feature>/spec.md`. A brainstorm can be `status: defined` once `spec.md` exists, even while the design proposal is still exploring or proposed. The design approval gate is controlled by `design_status` inside `spec.md`.
+`spec_path` still points to `specs/<feature>/spec.md`. A brief can be `status: defined` once `spec.md` exists, even while the design proposal is still exploring or proposed. The design approval gate is controlled by `design_status` inside `spec.md`.
 
 ## Mock Iteration
 
@@ -49,7 +49,7 @@ Exploration is normally a **live mock loop**, not a writing exercise. During `de
 - **Provenance:** every field shown in the mock must map to a real content or front-matter source, or be dropped. Do not ship invented sample values such as fake counts or estimated reading times into the real templates.
 - **Buildable affordances:** every actionable element (button, link, form field, share / submit / feedback control) must map to a capability the static site can actually deliver, not just look real. See **Functional Realism** below. Do not mock server-dependent actions — submit feedback, share to Teams, email-this, like / save, login — as if they already worked.
 
-**Settle.** When the user stops correcting a surface and moves on, or asks to wire it in, the direction has *settled* (`design_status: proposed`). At settle, backfill `spec.md` **Visual Intent**, **Proposed Direction**, and the **Revision Log** (retroactive entries are fine), and add a `## Coordinator Log` line in the brainstorm. Settle happens **before** approval; approval is the next gate.
+**Settle.** When the user stops correcting a surface and moves on, or asks to wire it in, the direction has *settled* (`design_status: proposed`). At settle, backfill `spec.md` **Visual Intent**, **Proposed Direction**, and the **Revision Log** (retroactive entries are fine), and add a `## Coordinator Log` line in the brief. Settle happens **before** approval; approval is the next gate.
 
 ## Functional Realism
 
@@ -179,7 +179,7 @@ On approval:
 1. Set `design_status: approved` in `spec.md`.
 2. Set or update `approved_direction:`.
 3. Append a revision-log entry in `spec.md`.
-4. Append a coordinator-log entry in the companion brainstorm.
+4. Append a coordinator-log entry in the companion brief.
 5. Say: `This is a normal checkpoint, not an error.`
 6. Then allow execution from `tasks.md` when the user wants implementation.
 
@@ -223,14 +223,14 @@ Classify visual review results into exactly one bucket:
 | **Matches approved spec** | The implementation matches the approved design and works in context | Keep `design_status: approved`; close the task after verification |
 | **Implementation mismatch** | The approved spec is still right, but the page does not match it | Keep `design_status: approved`; keep the task `[~]` and route back to the implementer |
 | **Design refinement needed** | The approved spec looked good in preview, but the real page reveals the design needs adjustment | Change `design_status: proposed`; append a revision-log entry; mark the current task `[!]` with `blocked-by: design-gap: <reason>`; stop execution until re-approved |
-| **New scope / new idea** | The user wants something beyond the approved proposal | Keep the current work stable; route back through brainstorm/definition for a new or expanded package |
+| **New scope / new idea** | The user wants something beyond the approved proposal | Keep the current work stable; route back through brief/definition for a new or expanded package |
 
 When reopening an approved proposal for refinement:
 
 1. Change `design_status: approved` to `design_status: proposed`.
 2. Keep `approved_direction:` as historical context unless the direction is explicitly withdrawn; add a note in `## Revision Log`.
 3. Append a `## Revision Log` entry such as `YYYY-MM-DD HH:MM UTC - reopened after implementation: <reason>`.
-4. Append a companion `## Coordinator Log` entry in `brainstorm/<slug>.md`.
+4. Append a companion `## Coordinator Log` entry in `brief/<slug>.md`.
 5. Mark the affected task `[!]` and add:
 
    ```markdown
@@ -244,7 +244,7 @@ Use `design-gap` when reporting or flagging this blocker. A design-gap is a desi
 
 ## Routing
 
-- Use `@dude-spec-lead` for maintaining brainstorm metadata and the design-shaped `spec.md` package.
+- Use `@dude-spec-lead` for maintaining brief metadata and the design-shaped `spec.md` package.
 - Use the owning Hugo/Docsy specialist for site-specific implementation or template decisions.
 - Use `@dude-pack-ms-brand-stylist` as visual quality authority for internal Microsoft-branded surfaces.
 - Use `@dude-reviewer` only when an independent readiness judgment is needed.

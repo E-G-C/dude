@@ -22,7 +22,7 @@ Parallel dispatch is appropriate when:
 - Preserve Beads ready order as the default dispatch order.
 - Launch at most 2 specialists in parallel by default unless the user explicitly asks for more. The cap keeps coordination overhead low, makes synthesis predictable, and reduces the chance of context contention on shared artifacts. Raise it only when the user opts in or when the ready set is clearly partitioned across independent features.
 - Prefer tasks from different features or clearly separate artifact areas.
-- Do not parallelize tasks that touch the same brainstorm file, the same spec package, or the same implementation files unless independence is explicit. File overlap is a reason to stay sequential, not a reason to add worktrees.
+- Do not parallelize tasks that touch the same brief file, the same spec package, or the same implementation files unless independence is explicit. File overlap is a reason to stay sequential, not a reason to add worktrees.
 - Do not suggest worktrees for every parallel split. Consider offering them only when the split is already safe and there is a concrete isolation benefit, such as protecting the current checkout during a risky or high-churn refactor, isolating a schema or dependency branch likely to churn many files, or separating two already-independent tasks from different features or artifact trees.
 - If the user already declined a worktree suggestion in the current session and the situation has not materially changed, do not repeat it.
 - After each execution round, re-query Beads before dispatching more work.
@@ -45,7 +45,7 @@ When deciding whether to offer a worktree proactively, use this trigger instead 
 ## Bad Uses
 
 - concurrent edits to the same artifact
-- concurrent edits to the same brainstorm file or definition package
+- concurrent edits to the same brief file or definition package
 - review before implementation is complete
 - tasks with unclear ownership boundaries
 - work that depends on the output of another specialist not yet finished

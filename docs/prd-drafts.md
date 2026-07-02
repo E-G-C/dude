@@ -6,7 +6,7 @@ If you already have a product requirements draft in markdown, treat it as raw
 input for `draft`.
 
 The same three lanes apply when you start from a PRD draft. Dude does not send
-the PRD directly to Beads. It first turns that draft into a working brainstorm
+the PRD directly to Beads. It first turns that draft into a working brief
 ledger, then defines it into the normal package under `specs/<feature>/`. Stop
 there for Definition Only, continue from `tasks.md` for Lightweight Execution,
 or run `@dude track` if you want Tracked Execution.
@@ -15,16 +15,16 @@ or run `@dude track` if you want Tracked Execution.
 
 1. Write or collect your PRD draft in markdown.
 2. Ask `@dude` to draft that input.
-3. Let `@dude-spec-lead` normalize it inside `brainstorm/<slug>.md`.
-4. Resolve clarification questions in the same brainstorm file.
-5. Define the brainstorm into the normal package.
+3. Let `@dude-spec-lead` normalize it inside `brief/<slug>.md`.
+4. Resolve clarification questions in the same brief file.
+5. Define the brief into the normal package.
 6. If you want implementation without Beads, continue from `tasks.md`, starting with the generated board view when present.
 7. If you want tracked execution, run `@dude track`.
 
 ```mermaid
 flowchart LR
     PRD["PRD draft\nMarkdown document"] --> DUDE["@dude"]
-    DUDE --> BRAIN["brainstorm/<slug>.md\nworking ledger"]
+    DUDE --> BRAIN["brief/<slug>.md\nworking ledger"]
     BRAIN --> SPEC["@dude-spec-lead\nnormalizes draft"]
     SPEC --> CLARIFY{"Material ambiguity?"}
     CLARIFY -->|Yes| Q["Ask focused clarifications"]
@@ -67,14 +67,14 @@ If the PRD draft covers more than one feature, ask Dude to split it before
 planning:
 
 ```text
-@dude draft docs/prd/billing.md and split it into separate brainstorm files first
+@dude draft docs/prd/billing.md and split it into separate brief files first
 ```
 
 ## What Dude produces from the PRD
 
 The PRD draft remains source input, but Dude turns it into two working layers:
 
-- `brainstorm/<slug>.md` — intake ledger, open questions, assumptions,
+- `brief/<slug>.md` — intake ledger, open questions, assumptions,
   coordinator log
 - `spec.md` — normalized WHAT and WHY after definition
 - `plan.md` — implementation approach
@@ -84,7 +84,7 @@ The PRD draft remains source input, but Dude turns it into two working layers:
 - supporting artifacts such as `research.md`, `data-model.md`, and `contracts/`
   when needed
 
-This keeps the PRD as product input, the brainstorm file as the collaboration
+This keeps the PRD as product input, the brief file as the collaboration
 surface, and the `specs/<feature>/` package as the implementation-ready output.
 
 ## Suggested review points before definition

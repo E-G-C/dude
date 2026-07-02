@@ -29,11 +29,11 @@ Once `@dude track` imports the feature into Beads, stop using this skill and swi
 - That derived board region may include `## Ready Now`, `## In Progress`, `## Blocked`, and `## Done` sections. It is a computed view, not the canonical task state.
 - Canonical state lives in the phased task units **below** the fenced board region: one task header line plus any indented metadata lines such as `deps:` or `blocked-by:`.
 - The first line of the canonical task list (immediately after the closing board fence) should carry the notice `<!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->` so editors see the boundary.
-- The companion `brainstorm/<slug>.md` carries the append-only `## Coordinator Log` where Dude records every coordinator-owned mutation: state changes, board regenerations, reconciliations, and accepted manual completions.
+- The companion `brief/<slug>.md` carries the append-only `## Coordinator Log` where Dude records every coordinator-owned mutation: state changes, board regenerations, reconciliations, and accepted manual completions.
 - `spec.md`, `plan.md`, and supporting artifacts remain reference context.
 - Supporting checklist files remain advisory reference unless the project explicitly says otherwise.
 - Do not treat supporting checklist files as a second live execution board.
-- `brainstorm/<slug>.md` remains the place to change feature intent; rerun `@dude define <feature>` if definition changes.
+- `brief/<slug>.md` remains the place to change feature intent; rerun `@dude define <feature>` if definition changes.
 - Do not create a second task file, hidden execution ledger, or parallel status document.
 
 ## Task state

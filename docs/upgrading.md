@@ -27,7 +27,7 @@ The upgrader treats every file in your project as one of three things:
 | **Pack-owned** | installed packs under `.github/agents/dude-pack-*` and `.github/skills/dude-pack-*/`, and `.github/dudestuff/profile.md` | Never overwritten or deleted by a core upgrade. Added/removed only by `dude-compose` (`@dude add/remove pack`). |
 | **Upgrade-owned** | `.github/dudestuff/bundle-manifest.md`, `.github/dudestuff/upgrade-log.md` | Maintained only by the upgrade skill. |
 | **Project-owned** | `.github/dudestuff/*` except the two upgrade-owned files, `.github/skills/project/`, custom agents, custom skills under `dude-local-*` or other names, `.github/copilot-instructions.md` | Never overwritten. |
-| **Repo-local files and work state** | `README.md`, `docs/`, `.gitattributes`, `brainstorm/`, `specs/`, Beads, your product source | Never touched or brought in by upgrade. |
+| **Repo-local files and work state** | `README.md`, `docs/`, `.gitattributes`, `brief/`, `specs/`, Beads, your product source | Never touched or brought in by upgrade. |
 
 Base ownership is derived from the **namespace convention** by the upgrader on each run — anything under `.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md`, `.github/skills/dude-<slug>/**`, or `.github/instructions/dude.instructions.md` is base-owned, with the reserved `dude-local-<slug>` and `dude-pack-<pack>-<slug>` namespaces explicitly excluded (project-owned and pack-owned respectively). The local [`.github/dudestuff/bundle-manifest.md`](../.github/dudestuff/bundle-manifest.md) is **metadata only**: it records the upstream repo and the installed commit sha for orientation. The upgrader compares your on-disk bytes against the fetched upstream tree directly at `plan` time.
 
@@ -81,7 +81,7 @@ After any `@dude upgrade`, the following files and directories are byte-identica
 - any skill directory under `.github/skills/` outside the upstream base namespace (including everything under `dude-local-*`)
 - `.github/copilot-instructions.md` if it exists
 - project docs and root files such as `README.md` and `.gitattributes`
-- everything under `brainstorm/`
+- everything under `brief/`
 - everything under `specs/`
 - the Beads database
 - everything outside `.github/`

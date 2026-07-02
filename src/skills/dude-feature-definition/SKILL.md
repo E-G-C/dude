@@ -1,22 +1,22 @@
 ---
 name: "dude-feature-definition"
-description: "Use when drafting a brainstorm file, defining a brainstorm into specs/<feature>/, defining a new feature, clarifying requirements, writing spec.md, planning implementation, deriving tasks.md, or analyzing consistency."
+description: "Use when drafting a brief (brainstorm) file, defining a brief into specs/<feature>/, defining a new feature, clarifying requirements, writing spec.md, planning implementation, deriving tasks.md, or analyzing consistency."
 ---
 
 # Feature Definition
 
-Dude owns feature definition natively. This skill defines the file-based brainstorm intake plus the internal spec -> plan -> tasks workflow that starts at definition.
+Dude owns feature definition natively. This skill defines the file-based brief intake plus the internal spec -> plan -> tasks workflow that starts at definition.
 
 ## Purpose
 
-Maintain a single brainstorm ledger under `brainstorm/<slug>.md`, then create a complete reusable definition package under `specs/<feature>/` when the feature is defined.
+Maintain a single brief ledger under `brief/<slug>.md`, then create a complete reusable definition package under `specs/<feature>/` when the feature is defined.
 
-## Brainstorm Intake File
+## Brief Intake File
 
 Before definition, keep feature intake in:
 
 ```text
-brainstorm/
+brief/
 └── feature-name.md
 ```
 
@@ -30,7 +30,7 @@ status: draft
 spec_path:
 ---
 
-# Brainstorm: Feature title
+# Brief: Feature title
 
 ## User Draft
 [raw user input]
@@ -135,9 +135,9 @@ specs/
 
 Number features sequentially by scanning existing `specs/` folders and using `max existing prefix + 1`, ignoring deletions.
 
-When definition succeeds, write the chosen `spec_path` back into the brainstorm file (full path to `spec.md`, e.g. `specs/001-feature-name/spec.md`) and set `status: defined`.
+When definition succeeds, write the chosen `spec_path` back into the brief file (full path to `spec.md`, e.g. `specs/001-feature-name/spec.md`) and set `status: defined`.
 
-## Step 0: Draft And Maintain `brainstorm/<slug>.md`
+## Step 0: Draft And Maintain `brief/<slug>.md`
 
 ### Section Responsibilities
 
@@ -145,11 +145,11 @@ When definition succeeds, write the chosen `spec_path` back into the brainstorm 
 - Users answer `## Open Questions` in place, below each visible `**Your answer:**` prompt.
 - Users may edit `## Assumptions` when clarifying or overriding defaults.
 - Dude maintains `## Normalized Intent`, `## Constraints`, `## Definition Checklist`, and `## Coordinator Log`.
-- Dude maintains the brainstorm frontmatter bookkeeping: `status:` and `spec_path:`.
+- Dude maintains the brief frontmatter bookkeeping: `status:` and `spec_path:`.
 - Dude may update `## Assumptions` when documenting explicit defaults or resolved ambiguities.
 - Preserve existing assumption bullets by default unless the latest request or a resolved clarification explicitly changes them.
 - Once `## User Draft` is created, do not overwrite it.
-- Re-running `draft` against an existing brainstorm is a re-normalize operation, not a regenerate operation.
+- Re-running `draft` against an existing brief is a re-normalize operation, not a regenerate operation.
 - Re-running `draft` must preserve questions the user already answered or intentionally resolved.
 - Re-running `draft` may add new focused open questions only when the latest request introduces new ambiguity or materially changes scope.
 - If a user edits Dude-maintained bookkeeping without clear intent, restore the correct structure and explain the change instead of silently carrying broken metadata forward.
@@ -158,7 +158,7 @@ If the feature later enters Lightweight Execution, `tasks.md` may serve as the l
 
 On `draft` or other early-stage requests:
 
-1. Create or identify `brainstorm/<slug>.md`.
+1. Create or identify `brief/<slug>.md`.
 2. Preserve the raw user draft in `## User Draft`.
 3. Normalize the requested outcome in `## Normalized Intent`.
 4. Record constraints, assumptions, and any new focused open questions in the same file without discarding or reopening questions the user already resolved, and without changing existing assumption bullets unless the latest request explicitly requires it. Keep active open questions immediately after `## User Draft` and use the `### QN.` / `**Your answer:** _Type your answer here._` format.
@@ -173,9 +173,9 @@ Before treating a draft as one feature, check whether the request looks more lik
 - multiple disjoint user journeys with different success tests
 - unrelated artifact areas or domains that would naturally become separate packages
 - wording like "and also" repeated across separate deliverables
-- a PRD or brainstorm that reads like a backlog rather than one bounded slice
+- a PRD or brief that reads like a backlog rather than one bounded slice
 
-When those signals are present, do not silently carry the scope forward. Ask one narrow split question or recommend separate brainstorm files before definition.
+When those signals are present, do not silently carry the scope forward. Ask one narrow split question or recommend separate brief files before definition.
 
 ## Step 1: Write `spec.md`
 
@@ -183,7 +183,7 @@ When those signals are present, do not silently carry the scope forward. Ask one
 
 Definition creates or refreshes the feature package under `specs/<feature>/`. A lean package is valid when some standard artifacts do not materially apply. From that point onward, the internal workflow stays the same.
 
-Re-running `define` against an in-flight package is a resume operation: re-read the brainstorm, apply newly answered questions or updated assumptions, and refresh the package instead of starting from scratch.
+Re-running `define` against an in-flight package is a resume operation: re-read the brief, apply newly answered questions or updated assumptions, and refresh the package instead of starting from scratch.
 
 ### Required Sections (in order)
 
@@ -245,7 +245,7 @@ Reasonable defaults for unspecified details. Document what was assumed and why.
 - **Maximum 3 markers per spec.** Prioritize by impact: scope > security/privacy > user experience > technical details.
 - For everything else, make an informed default and document it in Assumptions.
 - Do not plan or derive tasks until all markers are resolved.
-- **Never silently drop overflow questions.** When more than 3 ambiguities exist, place the lowest-priority items into `## Deferred Clarifications` in `brainstorm/<slug>.md` so the user can see what was set aside.
+- **Never silently drop overflow questions.** When more than 3 ambiguities exist, place the lowest-priority items into `## Deferred Clarifications` in `brief/<slug>.md` so the user can see what was set aside.
 - **Re-rank deferred items on every `define` rerun.** Compare each `## Deferred Clarifications` entry against the current active `[NEEDS CLARIFICATION]` markers using the same scope > security > UX > technical priority. If a deferred item now outranks an active marker, surface a one-line prompt in the response: `Promote D2 "<question>" over <FR-ID> marker?` and wait for `yes` / `no` before swapping. Do not silently rotate items in or out.
 
 ## Step 2: Write `plan.md`
@@ -367,10 +367,10 @@ Lines starting with a task-state glyph (`- [ ]`, `- [~]`, `- [!]`, or `- [x]`) t
 
 `tasks.md` may also contain a Dude-generated board region near the top of the file, fenced by HTML comments such as `<!-- dude:board:start -->` and `<!-- dude:board:end -->`. The first line inside the fence must be the literal notice `<!-- generated by @dude — do not hand-edit; regenerated on every status/define refresh -->`. The region may include `## Ready Now`, `## In Progress`, `## Blocked`, and `## Done`, is derived wholesale from the canonical task units below it, and is regenerated as a complete replacement (not patched in place); do not parse it as canonical task state.
 
-The **first line of `tasks.md`** (above the board fence) must be an audit-log breadcrumb pointing at the companion brainstorm so users editing `tasks.md` can find where coordinator events are recorded:
+The **first line of `tasks.md`** (above the board fence) must be an audit-log breadcrumb pointing at the companion brief so users editing `tasks.md` can find where coordinator events are recorded:
 
 ```markdown
-<!-- audit log: brainstorm/<slug>.md#coordinator-log -->
+<!-- audit log: brief/<slug>.md#coordinator-log -->
 ```
 
 If `tasks.md` may also include a `## Lightweight Execution History` block (created when the user replies `archive dropped` to a reconciliation prompt), that block must be the **final task section** of the file — when `## Discovered During Execution` is also present, the discovered section is preserved immediately above it. The history block holds dropped task rows that previously carried `[x]` / `[~]` / `[!]` state, and is **read-only context**:
@@ -418,7 +418,7 @@ This gate is a hard stop, not advisory:
 **Reply tokens for the reconciliation prompt** (Dude also accepts plain language and classifies it):
 
 - `confirm reconcile` — accept the table as shown; proceed with the write
-- `reject reconcile` — abort; keep the existing `tasks.md` and revisit the brainstorm
+- `reject reconcile` — abort; keep the existing `tasks.md` and revisit the brief
 - `keep T003` / `keep T003@a1b2c3d4` — force-preserve a row Dude wanted to drop
 - `drop T003` / `drop T003@a1b2c3d4` — force-drop a row Dude wanted to keep
 - `archive dropped` — move dropped rows into a `## Lightweight Execution History` block at the end of `tasks.md` (preserved below any existing `## Discovered During Execution` section so history remains the terminal archive) instead of discarding them
@@ -432,7 +432,7 @@ Phase headings, Goal, Independent Test, Checkpoint, generated board-region lines
 Before handing a defined package back to the coordinator as import-ready, verify that:
 
 - `spec.md` has no unresolved `[NEEDS CLARIFICATION]` markers
-- the brainstorm file is ready to carry `status: defined`
+- the brief file is ready to carry `status: defined`
 - `spec_path` points to the exact `spec.md` path that will identify the feature later
 - every canonical task header in `tasks.md` matches the canonical task format, any metadata lines are well-formed, and any non-open lightweight-execution headers preserve the same durable key and labels
 - any generated board region is clearly derived and may be regenerated without changing canonical task state
@@ -486,9 +486,9 @@ Before handoff, verify:
 
 ## Step 6: Run `dude-lint`
 
-After writing or refreshing `brainstorm/<slug>.md`, `specs/<feature>/spec.md`, `specs/<feature>/tasks.md`, or any other definition artifact, run the `dude-lint` skill. It catches structural mistakes in the files this skill just mutated:
+After writing or refreshing `brief/<slug>.md`, `specs/<feature>/spec.md`, `specs/<feature>/tasks.md`, or any other definition artifact, run the `dude-lint` skill. It catches structural mistakes in the files this skill just mutated:
 
-- brainstorm frontmatter, `status:`, `spec_path:` resolution, fence balance, `## Coordinator Log` heading
+- brief frontmatter, `status:`, `spec_path:` resolution, fence balance, `## Coordinator Log` heading
 - task file board fences, glyph values, durable task IDs, duplicate IDs
 
 Run it with Node:
@@ -514,8 +514,8 @@ After the definition package is clean:
 
 ## Guardrails
 
-- Do not split one feature across multiple brainstorm files unless the user wants separate defined packages.
-- Do not hide pre-spec clarification in chat when it belongs in the brainstorm file.
+- Do not split one feature across multiple brief files unless the user wants separate defined packages.
+- Do not hide pre-spec clarification in chat when it belongs in the brief file.
 - Do not invent a second execution ledger when Lightweight Execution is active; use `tasks.md` until Beads import.
 - Do not bury execution state in markdown after Beads import.
 - Do not mix implementation code into spec artifacts.

@@ -23,19 +23,19 @@ instructions provide only the shared rules that apply to **every** agent.
 6. For engine updates (refreshing default agents, default skills, or bundle instructions from upstream), route to `dude-bundle-upgrade`. Do not hand-edit base-owned files in response to upgrade requests; the upgrade skill preserves project memory, repository docs, root files, and active work automatically.
 7. Project-local agents and skills use the reserved `dude-local-` namespace: `.github/agents/dude-local-<slug>.agent.md` and `.github/skills/dude-local-<slug>/`. Upstream/base Dude artifacts must never claim `dude-local-` names or include them in the bundle manifest.
 
-## Brainstorm + Feature Definition + Execution
+## Brief + Feature Definition + Execution
 
-1. Dude accepts early feature input in `brainstorm/<slug>.md` and defines it into `specs/<feature>/`.
+1. Dude accepts early feature input in `brief/<slug>.md` and defines it into `specs/<feature>/`.
 2. The `@dude-spec-lead` specialist owns the intake and feature-definition lifecycle.
-3. `brainstorm/<slug>.md` is the only pre-spec intake ledger. Keep `status: draft|defined` and `spec_path:` there instead of creating extra state files.
-4. Users edit brainstorm content in place, but workflow metadata such as `status:`, `spec_path:`, and `## Coordinator Log` remain Dude-maintained.
+3. `brief/<slug>.md` is the only pre-spec intake ledger. Keep `status: draft|defined` and `spec_path:` there instead of creating extra state files.
+4. Users edit brief content in place, but workflow metadata such as `status:`, `spec_path:`, and `## Coordinator Log` remain Dude-maintained.
 5. Project-level guardrails in `.github/dudestuff/guardrails.md` provide durable planning and execution constraints.
 6. If only bundle defaults exist, users may `accept`, `edit`, `reject`, or `skip` inferred project guardrails. `skip` means continue with bundle defaults only. If no new project-specific guardrails are inferred, definition may continue without a separate guardrail pause.
 7. `spec.md` must be technology-agnostic. Maximum 3 `[NEEDS CLARIFICATION]` markers, prioritized: scope > security > UX > technical.
 8. `spec.md` must pass a quality gate (all sections complete, requirements testable, no impl details) before `plan.md` is written.
-9. During intake and feature definition, `@dude-spec-lead` is the planning authority for `brainstorm/<slug>.md` and `specs/<feature>/` artifacts; during implementation, `@dude-lead` owns implementation architecture unless the user overrides it.
+9. During intake and feature definition, `@dude-spec-lead` is the planning authority for `brief/<slug>.md` and `specs/<feature>/` artifacts; during implementation, `@dude-lead` owns implementation architecture unless the user overrides it.
 10. Definition packages do not go to `@dude-tester` by default. Use `@dude-lead` for architecture sanity and `@dude-reviewer` for optional independent readiness judgment.
-11. `@dude track` is the normal handoff into Beads. It may import defined brainstorms automatically. Explicit `@dude import tasks from specs/<feature>/ into Beads` is a manual fallback.
+11. `@dude track` is the normal handoff into Beads. It may import defined briefs automatically. Explicit `@dude import tasks from specs/<feature>/ into Beads` is a manual fallback.
 
 Execution is optional after definition. The core execution lane is **Lightweight Execution** from `specs/<feature>/tasks.md`: when the user wants implementation, default to it and do not ask them to choose a lane. Tracked execution via Beads is provided by the optional **beads pack** (the `dude-beads-workflow` and `dude-spec-import-to-beads` skills); it activates only when that pack is installed and the user opts in with `@dude track`. Rules 12-17 are lane-agnostic.
 

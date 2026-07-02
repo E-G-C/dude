@@ -4,14 +4,14 @@
 
 ## Feature Definition Workflow
 
-`@dude-spec-lead` keeps intake in `brainstorm/<slug>.md`, then creates a reusable
+`@dude-spec-lead` keeps intake in `brief/<slug>.md`, then creates a reusable
 definition package under `specs/<feature>/` when you define it. Use
 [Workflow modes and lifecycle](workflow.md) for the first-run lane choice, file
 lifecycle, and rerun expectations; this page is the deeper reference.
 
 ```mermaid
 flowchart TD
-    A["User idea or PRD"] --> B["brainstorm/<slug>.md"]
+    A["User idea or PRD"] --> B["brief/<slug>.md"]
     B --> C["@dude routes to @dude-spec-lead"]
     C --> D["Define into specs/<feature>/"]
     D --> E["Write spec.md\nWHAT + WHY\n(technology-agnostic)"]
@@ -50,7 +50,7 @@ specs/
 
 ### Definition Rules
 
-- `brainstorm/<slug>.md` is the only pre-spec intake ledger.
+- `brief/<slug>.md` is the only pre-spec intake ledger.
 - `spec.md` defines WHAT to build and WHY — no implementation details.
 - `plan.md` defines HOW — tech stack, architecture, project structure.
 - `tasks.md` is derived from the plan, organized by phase and user story.
@@ -106,7 +106,7 @@ specs/
 - For everything else, make an informed default and document it in Assumptions.
 - All markers must be resolved before planning begins.
 - Overflow questions beyond the 3-marker cap go into `## Deferred Clarifications`
-  in `brainstorm/<slug>.md` so nothing is silently dropped. Promote them back
+  in `brief/<slug>.md` so nothing is silently dropped. Promote them back
   into the active set on later `define` runs if their priority rises.
 
 ### Task Structure
@@ -261,7 +261,7 @@ Rule for how routing adapts.
   mirror writes or explicit `@dude sync Beads to tasks.md` results.
 - A generated board region inside `tasks.md` is acceptable because it is
   derived from the canonical task units; a separate file is not.
-- Do not introduce hidden state files when the brainstorm ledger or Beads
+- Do not introduce hidden state files when the brief ledger or Beads
   already carry the needed state.
 - Do not track execution anywhere except Beads once imported; markdown mirror
   writes are snapshots, not a second task system.

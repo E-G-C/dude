@@ -1,6 +1,6 @@
 ---
 name: "dude-lint"
-description: "Use when validating bundle hygiene: checking brainstorm/tasks file shape, fence balance, durable task IDs, skill frontmatter names, bundle manifest shape, orphan agent-handle references, orphan skill-path references, memory file size, and coordinator-only boundary blocks."
+description: "Use when validating bundle hygiene: checking brief/tasks file shape, fence balance, durable task IDs, skill frontmatter names, bundle manifest shape, orphan agent-handle references, orphan skill-path references, memory file size, and coordinator-only boundary blocks."
 ---
 
 # Dude Lint
@@ -9,25 +9,25 @@ Static validator for the bundle's structural conventions.
 
 ## Purpose
 
-Catch the structural mistakes that would otherwise surface as runtime drift: malformed brainstorms, fence imbalance, stale `spec_path:` pointers, duplicate task IDs, oversized memory files, skill frontmatter/name drift, bundle manifest shape violations, orphaned agent-handle references, and orphaned skill-path references.
+Catch the structural mistakes that would otherwise surface as runtime drift: malformed briefs, fence imbalance, stale `spec_path:` pointers, duplicate task IDs, oversized memory files, skill frontmatter/name drift, bundle manifest shape violations, orphaned agent-handle references, and orphaned skill-path references.
 
 The linter is **read-only** and dependency-free beyond Node.js itself (Node >= 20 LTS, standard library only). It runs as a single Node script (`lint.mjs`). Node is a documented maintenance-time dependency: it is required only to run bundle tooling such as this linter and `@dude upgrade`, not for normal project work.
 
 ## When To Run
 
-- Before `@dude track`, to make sure brainstorm and tasks files import cleanly.
+- Before `@dude track`, to make sure brief and tasks files import cleanly.
 - Before publishing or exporting the bundle (see `dude-portability`).
 - After a large refresh of the coordinator artifacts (renamed sections, new agents, large memory edits).
 
 Other skills also call this one as their final verification step. When loaded as part of those flows, run the appropriate script and report `[FAIL]` items back to the calling skill before it declares its work done:
 
-- `dude-feature-definition` (Step 6) after writing or refreshing brainstorm and definition artifacts
+- `dude-feature-definition` (Step 6) after writing or refreshing brief and definition artifacts
 - `dude-team-expansion` (step 6) after creating or modifying an agent file
 - `dude-skill-authoring` (step 7) after creating a new `SKILL.md`
 - `dude-memory-ledger` (Verification) after writing to any `.github/dudestuff/*.md`
 - `dude-learning-promotion` (transitively, via `dude-memory-ledger` for lessons and `dude-skill-authoring` for new skills)
 - `dude-lightweight-execution` (close protocol step 6) after the coordinator updates a task glyph or regenerates the board region
-- `dude-spec-import-to-beads` (Import Algorithm step 2) before parsing brainstorm and tasks files
+- `dude-spec-import-to-beads` (Import Algorithm step 2) before parsing brief and tasks files
 - `dude-portability` (Deploy step 5) after importing the bundle into a destination repo
 - `dude-bundle-import` (Step 7) after writing imported agent or skill files
 - `dude-bundle-upgrade` (Step 9) after writing upgraded base-owned files and refreshing the manifest
@@ -55,7 +55,7 @@ node --test .github/skills/dude-engine/lib/ownership.test.mjs
 
 ## Checks
 
-1. **Brainstorm files** (`brainstorm/*.md`)
+1. **Brief files** (`brief/*.md`)
    - YAML frontmatter present.
    - `status:` is `draft` or `defined`.
    - When `status: defined`, `spec_path:` is set, structurally matches `specs/<feature>/spec.md` with forward slashes, and resolves to an existing file (not a directory).
@@ -110,12 +110,12 @@ node --test .github/skills/dude-engine/lib/ownership.test.mjs
 ## Output
 
 ```
-[INFO]  Scanning .github + brainstorm + specs under <root>
-[FAIL]  brainstorm/auth.md  status: defined but spec_path is missing
+[INFO]  Scanning .github + brief + specs under <root>
+[FAIL]  brief/auth.md  status: defined but spec_path is missing
 [FAIL]  orphan @designer reference in .github/skills/project/SKILL.md
 [FAIL]  orphan skill reference '.github/skills/made-up-skill/' in .github/agents/dude-lead.agent.md
 [WARN]  .github/dudestuff/decisions.md  35 entries (consider consolidation; threshold is 20)
-[INFO]  Scanned: 1 brainstorm, 1 task file, 4 memory files, 8 agents
+[INFO]  Scanned: 1 brief, 1 task file, 4 memory files, 8 agents
 [INFO]  Findings: 2 warnings, 2 failures
 ```
 

@@ -60,7 +60,7 @@ Use these heuristics when interpreting task text and labels during dispatch. The
 
 Keywords and signals:
 
-- brainstorm, draft, define
+- brief, draft, define
 - define feature, write spec, specify
 - feature brief, draft feature
 - clarify requirements, resolve ambiguity

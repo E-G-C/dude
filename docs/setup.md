@@ -32,7 +32,7 @@ The minimum useful setup is:
 - once `@dude define <feature>` completes, the easiest way to continue is `@dude work <feature>` — it runs the next few ready tasks in whichever execution lane is live and stops on the first natural boundary (see [Optional Continuous Work](workflow.md#optional-continuous-work))
 
 If you are not sure which artifact is live after any step, run `@dude status`.
-In Definition Only it points you back to the current brainstorm file or
+In Definition Only it points you back to the current brief file or
 generated package; in Lightweight Execution it points to `tasks.md` and the
 generated board view there; after tracked execution starts, it also reports
 Beads state.
@@ -41,7 +41,7 @@ Beads state.
 
 - Read `## User Draft`, edit it if needed, answer the `**Your answer:**` slots
   in `## Open Questions`, and update `## Assumptions` only when overriding a
-  default in `brainstorm/<slug>.md`.
+  default in `brief/<slug>.md`.
 - Leave `status:`, `spec_path:`, and `## Coordinator Log` to Dude.
 - Leave any generated board region in `tasks.md` to Dude.
 - Refresh generated artifacts with `@dude define <feature>` instead of
@@ -144,7 +144,7 @@ Dude Coder includes explicit operational skills for common failure modes:
   reflexively
 - `dude-lint` — static validator for the bundle itself, run on Node
   (`node .github/skills/dude-lint/lint.mjs`). Other skills load it as their final
-  verification step after writing brainstorm, definition, agent, skill,
+  verification step after writing brief, definition, agent, skill,
   memory, or task files. See [Validating bundle hygiene](commands.md#validating-bundle-hygiene)
   for direct invocation.
 - `dude-bundle-import` — import a single agent or skill from an external
@@ -162,7 +162,7 @@ TDD requirement.
 
 ## Workflow Boundaries
 
-Dude Coder focuses on file-based feature intake under `brainstorm/<slug>.md`,
+Dude Coder focuses on file-based feature intake under `brief/<slug>.md`,
 native feature definition under `specs/<feature>/`, and tracked execution in
 Beads.
 

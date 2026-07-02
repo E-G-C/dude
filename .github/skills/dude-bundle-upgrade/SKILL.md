@@ -5,7 +5,7 @@ description: "Use when the user wants to upgrade the Dude bundle itself, pull th
 
 # Bundle Upgrade
 
-Pull the newest base Dude bundle from its source repo and overlay it onto this project, replacing only base-owned engine files (default agents, default skills, and the bundle instructions under `.github/`). Preserve everything project-local: project memory, project skills, project-custom agents and skills, `.github/copilot-instructions.md`, root files, repository docs, and all work state under `brainstorm/`, `specs/`, and Beads.
+Pull the newest base Dude bundle from its source repo and overlay it onto this project, replacing only base-owned engine files (default agents, default skills, and the bundle instructions under `.github/`). Preserve everything project-local: project memory, project skills, project-custom agents and skills, `.github/copilot-instructions.md`, root files, repository docs, and all work state under `brief/`, `specs/`, and Beads.
 
 Upgrades are preview-then-confirm. The `upgrade.mjs` script does the heavy lifting for status, plan, apply, and rollback; the LLM orchestrates the conversation, surfaces the report, and translates the user's confirmation phrase into the apply invocation. Nothing is written to the working tree before the user confirms the upgrade plan.
 
@@ -234,7 +234,7 @@ Classification is done by **byte comparison** of local disk content vs the fetch
 - Never delete or modify any file under `.github/dudestuff/` except the upgrade-owned `bundle-manifest.md` and `upgrade-log.md`.
 - Never delete or modify `.github/skills/project/`.
 - Never modify `.github/copilot-instructions.md`.
-- Never touch `brainstorm/`, `specs/`, Beads, or product source.
+- Never touch `brief/`, `specs/`, Beads, or product source.
 - Never run upgrade on a dirty working tree without explicit `--allow-dirty`. When `--allow-dirty` is used, uncommitted local changes are interleaved with upgrade writes; a subsequent unpublished rollback may `git reset --hard` to the safety tag and discard those uncommitted changes.
 - Never proceed past the confirmation gate without an explicit confirmation token.
 - Never recurse into transitive bundle composition (one upgrade pulls one upstream bundle).

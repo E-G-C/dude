@@ -16,7 +16,7 @@ it with `@dude add pack beads`.
 
 | Command | Description |
 | ------- | ----------- |
-| `@dude draft <feature>` | Create or refresh the brainstorm ledger for one feature. |
+| `@dude draft <feature>` | Create or refresh the brief ledger for one feature. |
 | `@dude define <feature>` | Turn a drafted feature into a reusable package under `specs/<feature>/`. |
 | `@dude status` | Read-only report of the current lane, live artifact, next step, and blockers. |
 | `@dude work [<feature>] [--max N] [--until blocked] [--parallel N]` | Run the next few ready tasks back-to-back inside whichever execution lane is already live. Not a new lane. |
@@ -39,7 +39,7 @@ Preferred workflow verbs are `draft`, `define`, `status`, `track`, `work`, `flag
 ### `@dude draft`
 
 Use this when you have a raw feature idea, a PRD, or incomplete requirements.
-Dude turns that input into a brainstorm file that you can edit directly.
+Dude turns that input into a brief file that you can edit directly.
 
 Preferred form:
 
@@ -47,7 +47,7 @@ Preferred form:
 @dude draft authentication
 ```
 
-Meaning: create or refresh the brainstorm ledger for a feature.
+Meaning: create or refresh the brief ledger for a feature.
 
 Supported input shapes:
 
@@ -61,20 +61,20 @@ Illustrative result:
 ```text
 Action: draft
 Updated:
-- brainstorm/authentication.md created or refreshed
+- brief/authentication.md created or refreshed
 Next:
-- Review the brainstorm, then edit the draft or answer any open-question prompts
+- Review the brief, then edit the draft or answer any open-question prompts
 - Run @dude define authentication when the draft is ready
 ```
 
-Edit `brainstorm/<slug>.md` to replace `**Your answer:** _Type your answer
+Edit `brief/<slug>.md` to replace `**Your answer:** _Type your answer
 here._` below each open question or adjust `## Assumptions`, then rerun
 `@dude draft <feature>` to re-normalize the same file or `@dude define
 <feature>` when you are ready to continue.
 
 ### `@dude define`
 
-Use this when the brainstorm captures one bounded feature. Dude refreshes the
+Use this when the brief captures one bounded feature. Dude refreshes the
 reusable package under `specs/<feature>/` and may pause once for guardrail
 approval before planning continues.
 
@@ -95,7 +95,7 @@ Definition completed:
 Action: define
 Updated:
 - specs/001-authentication/spec.md created or refreshed
-- brainstorm/authentication.md updated with status: defined and spec_path
+- brief/authentication.md updated with status: defined and spec_path
 Next:
 - Read specs/001-authentication/spec.md first, then plan.md
 - Stop here for definition-only work
@@ -189,7 +189,7 @@ Each iteration still runs the active lane's close protocol (Lightweight Close
 Protocol or Beads Close Protocol). `dude-verification-before-completion`,
 coordinator-only mutation of task glyphs, and `dude-lint` after every write
 all still apply per iteration. `@dude work` never imports features, never
-auto-commits, never edits user-authored `spec.md` / `plan.md` / brainstorm
+auto-commits, never edits user-authored `spec.md` / `plan.md` / brief
 content (`## User Draft`, open-question answers, `## Assumptions`), and never
 creates a new state file. Coordinator-maintained metadata
 (`## Coordinator Log`, `status:`, `spec_path:`) is still updated per the
@@ -204,7 +204,7 @@ Updated:
 - Iteration 1/3: T003@a1b2c3d4 implemented, verified, marked [x]
 - Iteration 2/3: T004@e4f5g6h7 implemented, verified, marked [x]
 - Iteration 3/3: T005@91ac4e2f implemented, verified, marked [x]
-- 3 Coordinator Log entries appended to brainstorm/expense-entry.md
+- 3 Coordinator Log entries appended to brief/expense-entry.md
 - dude-lint: ok after each iteration
 Next:
 - Run @dude work expense-entry --max 3 to continue
@@ -457,7 +457,7 @@ Reports `OK` or `Drift: <one-line>` for each of:
 ### Validating bundle hygiene
 
 Use the `dude-lint` skill to catch structural drift in the bundle itself:
-malformed brainstorms, fence imbalance, stale `spec_path:` pointers, duplicate
+malformed briefs, fence imbalance, stale `spec_path:` pointers, duplicate
 or non-durable task IDs, oversized memory files, orphaned agent-handle
 references, and missing coordinator-only boundary blocks. The linter is
 read-only and runs on Node (>= 20 LTS).
@@ -611,7 +611,7 @@ Only base-owned files — those matching the namespace convention
 `.github/skills/dude-<slug>/**`, `.github/instructions/dude.instructions.md`,
 excluding the reserved `dude-local-<slug>` namespace) — are candidates for
 replacement. Project memory, `.github/skills/project/`, custom agents/skills,
-`.github/copilot-instructions.md`, `brainstorm/`, `specs/`, Beads, and product
+`.github/copilot-instructions.md`, `brief/`, `specs/`, Beads, and product
 source are preserved. Root files and repository docs are intentionally excluded
 from the upgrade payload. A seeded `bundle-manifest.md` is required.
 
@@ -722,7 +722,7 @@ After that, Dude should recommend one next step, usually
 @dude import tasks from specs/<feature>/ into Beads
 ```
 
-Requires a defined brainstorm file whose `spec_path` matches the feature. If
+Requires a defined brief file whose `spec_path` matches the feature. If
 none exists, run `@dude draft <feature>` and `@dude define <feature>` first.
 
 ### Memory and team changes

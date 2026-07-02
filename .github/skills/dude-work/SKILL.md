@@ -64,7 +64,7 @@ For each iteration, until a stop condition fires:
 5. Apply the **Lightweight Close Protocol** from `dude-lightweight-execution`: route verification to `@dude-tester` when relevant, route optional readiness judgment to `@dude-reviewer` when present, load `dude-verification-before-completion`, then have the coordinator mark the task `[x]` and refresh the derived board region. Run `dude-lint` after the write.
 6. If verification fails, mark the task `[!]` with a `blocked-by:` note and stop with reason `verification failed`.
 7. If the specialist reports a blocker, mark the task `[!]`, add `blocked-by:` when practical, route the blocker via `@dude flag ...`, and stop with reason `task blocked`.
-8. Append a one-line entry to the brainstorm `## Coordinator Log` summarizing the iteration outcome.
+8. Append a one-line entry to the brief `## Coordinator Log` summarizing the iteration outcome.
 9. Increment the iteration counter and continue.
 
 ### Tracked Execution branch
@@ -75,7 +75,7 @@ For each iteration, until a stop condition fires:
 2. If no executable ready issue exists, stop with reason `no ready Beads work`.
 3. Coordinator picks the next ready issue and routes it to the narrowest credible specialist. The specialist follows `dude-beads-workflow`: `bd update <id> --claim --json`, reads context from the `spec:` prefix, executes, and reports back.
 4. Apply the **Beads Close Protocol** from `dude.agent.md`: route verification to `@dude-tester` when relevant, route optional readiness judgment to `@dude-reviewer` when present, load `dude-verification-before-completion`, then have only the coordinator call `bd close <id> --reason "..." --json`.
-5. After `bd close` succeeds, mirror the close to the matching canonical task unit in `tasks.md` when the durable task key maps cleanly (per `dude-beads-workflow` mirror rules), regenerate any derived board region, append to the brainstorm `## Coordinator Log`, and run `dude-lint`. A mirror failure does not undo the Beads close; report it and continue.
+5. After `bd close` succeeds, mirror the close to the matching canonical task unit in `tasks.md` when the durable task key maps cleanly (per `dude-beads-workflow` mirror rules), regenerate any derived board region, append to the brief `## Coordinator Log`, and run `dude-lint`. A mirror failure does not undo the Beads close; report it and continue.
 6. If the specialist reports a blocker, run `bd update <id> --status blocked --json`, route the blocker via `@dude flag ...`, and stop with reason `task blocked`.
 7. If verification fails, leave the Beads issue claimed, do not call `bd close`, and stop with reason `verification failed`.
 8. Increment the iteration counter and continue.
@@ -94,7 +94,7 @@ Iteration ends — uniformly across both lanes — on the first of:
 4. **Reviewer rejects.** When `@dude-reviewer` is on the roster and returns a rejection. Reason: `reviewer rejected <task-id>`.
 5. **Clarification required.** The specialist returns a question that materially affects scope, contracts, or guardrails. Reason: `clarification required: <one-line>`.
 6. **Two consecutive failed attempts on the same task.** Per `dude-systematic-debugging` step 6, stop stacking patches. Reason: `two failed attempts on <task-id>`.
-7. **Ambiguous state.** Lane drift (Beads became initialized mid-loop, `tasks.md` fence imbalance, multiple matching task headers for one Beads close, brainstorm identity mismatch). Reason: `ambiguous state: <one-line>`.
+7. **Ambiguous state.** Lane drift (Beads became initialized mid-loop, `tasks.md` fence imbalance, multiple matching task headers for one Beads close, brief identity mismatch). Reason: `ambiguous state: <one-line>`.
 8. **`--max` reached.** Reason: `max iterations reached (<N>)`.
 9. **Tool error during an iteration.** Filesystem write error, `bd` non-zero exit, lint `[FAIL]` that cannot be auto-resolved. Reason: `tool error: <one-line>`.
 
@@ -121,7 +121,7 @@ Updated:
 - Iteration 1/3: T003@a1b2c3d4 implemented, verified, marked [x]
 - Iteration 2/3: T004@e4f5g6h7 implemented, verified, marked [x]
 - Iteration 3/3: T005@91ac4e2f implemented, verified, marked [x]
-- 3 Coordinator Log entries appended to brainstorm/expense-entry.md
+- 3 Coordinator Log entries appended to brief/expense-entry.md
 - dude-lint: ok after each iteration
 Next:
 - Run @dude work expense-entry --max 3 to continue
@@ -155,7 +155,7 @@ Next: No active execution lane. Run @dude define <feature> to define one, or @du
 
 - introduce a new workflow lane (it runs inside Lightweight or Tracked Execution)
 - import features into Beads (use `@dude track` first if Beads is desired)
-- edit `spec.md`, `plan.md`, user-authored brainstorm content (`## User Draft`, open-question answers, `## Assumptions`), or any definition artifact (use `@dude flag` for gaps); coordinator-maintained metadata (`## Coordinator Log`, `status:`, `spec_path:`) is still updated per the coordinator-only mutation rule and the iteration protocol above
+- edit `spec.md`, `plan.md`, user-authored brief content (`## User Draft`, open-question answers, `## Assumptions`), or any definition artifact (use `@dude flag` for gaps); coordinator-maintained metadata (`## Coordinator Log`, `status:`, `spec_path:`) is still updated per the coordinator-only mutation rule and the iteration protocol above
 - bypass `dude-verification-before-completion`, the Lightweight Close Protocol, or the Beads Close Protocol
 - bypass coordinator-only mutation of `tasks.md` task glyphs or Beads close calls
 - commit, push, or otherwise modify VCS state (no auto-commit in v1)
