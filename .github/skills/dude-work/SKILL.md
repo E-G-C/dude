@@ -61,7 +61,7 @@ For each iteration, until a stop condition fires:
 2. If no eligible task remains, stop with reason `no ready task`.
 3. Coordinator moves the task header from `[ ]` to `[~]` and routes it to the narrowest credible specialist using `dude-generic-routing`.
 4. Run the specialist's implementation pass and collect the result.
-5. Apply the **Lightweight Close Protocol** from `dude-lightweight-execution`: route verification to `@dude-tester` when relevant, route optional readiness judgment to `@dude-reviewer` when present, load `dude-verification-before-completion`, then have the coordinator mark the task `[x]` and refresh the derived board region. Run `dude-lint` after the write.
+5. Apply the **Lightweight Close Protocol** from `dude-lightweight-execution`: route verification to a verification specialist when one is on the roster, route optional readiness judgment to `@dude-reviewer` when present, load `dude-verification-before-completion`, then have the coordinator mark the task `[x]` and refresh the derived board region. Run `dude-lint` after the write.
 6. If verification fails, mark the task `[!]` with a `blocked-by:` note and stop with reason `verification failed`.
 7. If the specialist reports a blocker, mark the task `[!]`, add `blocked-by:` when practical, route the blocker via `@dude flag ...`, and stop with reason `task blocked`.
 8. Append a one-line entry to the brief `## Coordinator Log` summarizing the iteration outcome.
@@ -74,7 +74,7 @@ For each iteration, until a stop condition fires:
 1. Run `bd list --status in_progress --json`. If an `in_progress` issue exists, resume it first; otherwise run `bd ready --json --limit 5` and discard non-executable grouping issues (epics, deferred, etc.).
 2. If no executable ready issue exists, stop with reason `no ready Beads work`.
 3. Coordinator picks the next ready issue and routes it to the narrowest credible specialist. The specialist follows `dude-beads-workflow`: `bd update <id> --claim --json`, reads context from the `spec:` prefix, executes, and reports back.
-4. Apply the **Beads Close Protocol** from `dude.agent.md`: route verification to `@dude-tester` when relevant, route optional readiness judgment to `@dude-reviewer` when present, load `dude-verification-before-completion`, then have only the coordinator call `bd close <id> --reason "..." --json`.
+4. Apply the **Beads Close Protocol** from `dude.agent.md`: route verification to a verification specialist when one is on the roster, route optional readiness judgment to `@dude-reviewer` when present, load `dude-verification-before-completion`, then have only the coordinator call `bd close <id> --reason "..." --json`.
 5. After `bd close` succeeds, mirror the close to the matching canonical task unit in `tasks.md` when the durable task key maps cleanly (per `dude-beads-workflow` mirror rules), regenerate any derived board region, append to the brief `## Coordinator Log`, and run `dude-lint`. A mirror failure does not undo the Beads close; report it and continue.
 6. If the specialist reports a blocker, run `bd update <id> --status blocked --json`, route the blocker via `@dude flag ...`, and stop with reason `task blocked`.
 7. If verification fails, leave the Beads issue claimed, do not call `bd close`, and stop with reason `verification failed`.

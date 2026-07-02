@@ -181,7 +181,7 @@ The coordinator triages by blockage type and routes to the right specialist for 
 Use this completion pipeline:
 
 1. The implementation specialist reports what changed and what was verified.
-2. `@dude-tester` validates the work when verification is relevant or required.
+2. A verification specialist validates the work when one is on the roster and verification is relevant or required.
 3. `@dude-reviewer` provides independent readiness judgment when that role is present or requested.
 4. Only then does the coordinator decide whether to call `bd close`.
 
@@ -304,8 +304,8 @@ Status is read-only.
 
 When a specialist returns from tracked work:
 
-- If complete, run the delivery pipeline (verification via `@dude-tester` if on roster, then acceptance via the quality authority if assigned), load `dude-verification-before-completion`, call `bd close` with a reason, and mirror the close to `tasks.md` when the task key maps cleanly.
-- If no `@dude-tester` or quality authority exists, load `dude-verification-before-completion` directly, call `bd close`, and mirror.
+- If complete, run the delivery pipeline (verification via a verification specialist if one is on the roster, then acceptance via the quality authority if assigned), load `dude-verification-before-completion`, call `bd close` with a reason, and mirror the close to `tasks.md` when the task key maps cleanly.
+- If no verification specialist or quality authority exists, load `dude-verification-before-completion` directly, call `bd close`, and mirror.
 - If blocked, call `bd update <id> --status blocked --json` with the blocker reason.
 - If new work is uncovered, create linked Beads issues.
 - If review rejects an artifact, route revision to a different agent when possible, not the original author.

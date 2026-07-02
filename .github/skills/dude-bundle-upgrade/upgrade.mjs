@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { enumerateCorePaths, classifyPath, TIER } from '../dude-engine/lib/ownership.mjs';
 
 const ROOT = process.cwd();
@@ -366,11 +367,12 @@ function filesEqual(a, b) {
 
 /**
  * Classify every core-owned file into replace/add/remove + advisories.
- * @param {string} utree
+ * @param {string} utree upstream tree root
+ * @param {string} [root] local repo root (defaults to the process cwd)
  * @returns {Plan}
  */
-function classifyPlan(utree) {
-  const localPaths = enumerateCorePaths(ROOT);
+export function classifyPlan(utree, root = ROOT) {
+  const localPaths = enumerateCorePaths(root);
   const localSet = new Set(localPaths);
   const upstreamPaths = enumerateCorePaths(utree);
   const upstreamSet = new Set(upstreamPaths);
@@ -379,7 +381,7 @@ function classifyPlan(utree) {
   const plan = { replace: [], add: [], remove: [], advisory: [], upToDate: 0 };
 
   for (const p of upstreamPaths) {
-    const localDisk = path.join(ROOT, p);
+    const localDisk = path.join(root, p);
     const upstreamFile = path.join(utree, p);
     if (!localSet.has(p)) {
       plan.add.push({ path: p });
@@ -402,7 +404,7 @@ function classifyPlan(utree) {
   }
 
   // Advisories: project-tier agents/skills outside core/pack/local namespaces.
-  const agentsDir = path.join(ROOT, '.github/agents');
+  const agentsDir = path.join(root, '.github/agents');
   if (isDir(agentsDir)) {
     for (const e of fs.readdirSync(agentsDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       if (!e.isFile() || !e.name.endsWith('.agent.md')) continue;
@@ -413,7 +415,7 @@ function classifyPlan(utree) {
       }
     }
   }
-  const skillsDir = path.join(ROOT, '.github/skills');
+  const skillsDir = path.join(root, '.github/skills');
   if (isDir(skillsDir)) {
     for (const e of fs.readdirSync(skillsDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       if (!e.isDirectory() || e.name === 'project') continue;
@@ -1118,4 +1120,16 @@ async function main() {
   }
 }
 
-main().then((code) => process.exit(code));
+/** @param {string} metaUrl @param {string|undefined} argv1 @returns {boolean} */
+export function isMainModule(metaUrl, argv1) {
+  if (!argv1) return false;
+  try {
+    return fs.realpathSync(fileURLToPath(metaUrl)) === fs.realpathSync(path.resolve(argv1));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule(import.meta.url, process.argv[1])) {
+  main().then((code) => process.exit(code));
+}

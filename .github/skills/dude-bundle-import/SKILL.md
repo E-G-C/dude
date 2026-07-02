@@ -196,7 +196,7 @@ On both agent and skill imports:
 - flag when overlap ≥ 30% or when the scope/purpose section shares a near-duplicate first paragraph
 - present matches in Step 2 item 9 with three options: **replace**, **coexist** (rename imported file to disambiguate), **cancel**
 
-Examples worth catching: a Claude `skill-creator` overlaps with the local `dude-skill-authoring`; a third-party `architect.agent.md` overlaps with the local `dude-lead.agent.md`.
+Examples worth catching: a Claude `skill-creator` overlaps with the local `dude-skill-authoring`; a third-party `architect.agent.md` overlaps with the coding pack's `dude-pack-coding-architect`.
 
 ## Boundaries
 

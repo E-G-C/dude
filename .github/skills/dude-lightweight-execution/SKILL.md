@@ -125,13 +125,13 @@ Users will sometimes self-check `[x]` in `tasks.md` by reflex. On every `status`
 When a Lightweight Execution task reaches a completion claim:
 
 1. collect the implementation result from the owning specialist
-2. route verification to `@dude-tester` when relevant or required
+2. route verification to a verification specialist when one is on the roster and relevant or required
 3. route independent readiness judgment to `@dude-reviewer` when that role exists or the user asked for it
 4. load `dude-verification-before-completion`
 5. only then mark the task `[x]`, refresh or describe the derived board view, and report the next ready task or remaining blocker
 6. apply the glyph with `board.mjs set <id> <state> --write` and regenerate the derived view with `board.mjs render --write` (both refresh the coordinator snapshot), then run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`) to confirm `tasks.md` still has balanced board fences, valid glyphs, and durable IDs. Fix any `[FAIL]` before reporting completion.
 
-If `@dude-tester` or `@dude-reviewer` is absent, adapt the pipeline, but do not skip the fresh-evidence requirement.
+If no verification specialist or `@dude-reviewer` is on the roster, adapt the pipeline, but do not skip the fresh-evidence requirement.
 
 ## Status
 
@@ -157,9 +157,9 @@ When a task blocks in this lane, the coordinator should mark that task `[!]`, ad
 Typed blockage prefixes are preferred for predictability, but plain-language blocker reports should still be classified by Dude when the intended type is clear.
 
 - `spec-gap` -> `@dude-spec-lead`
-- `plan-gap` -> `@dude-lead`
+- `plan-gap` -> a planning specialist (if on the roster)
 - `contract-mismatch` -> `@dude-spec-lead`
-- `test-failure` -> `@dude-tester` or `dude-systematic-debugging`
+- `test-failure` -> a verification specialist (if on the roster) or `dude-systematic-debugging`
 - `external-dependency` -> escalate to the user
 
 Keep the blocked task `[!]` until the blocker is resolved or the plan changes.

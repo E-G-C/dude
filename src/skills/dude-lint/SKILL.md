@@ -113,7 +113,7 @@ node --test .github/skills/dude-engine/lib/ownership.test.mjs
 [INFO]  Scanning .github + brief + specs under <root>
 [FAIL]  brief/auth.md  status: defined but spec_path is missing
 [FAIL]  orphan @designer reference in .github/skills/project/SKILL.md
-[FAIL]  orphan skill reference '.github/skills/made-up-skill/' in .github/agents/dude-lead.agent.md
+[FAIL]  orphan skill reference '.github/skills/made-up-skill/' in .github/agents/dude-reviewer.agent.md
 [WARN]  .github/dudestuff/decisions.md  35 entries (consider consolidation; threshold is 20)
 [INFO]  Scanned: 1 brief, 1 task file, 4 memory files, 8 agents
 [INFO]  Findings: 2 warnings, 2 failures

@@ -17,7 +17,7 @@ import {
 
 test('classifyPath: core coordinator + instructions', () => {
   assert.equal(classifyPath('.github/agents/dude.agent.md'), TIER.CORE);
-  assert.equal(classifyPath('.github/agents/dude-lead.agent.md'), TIER.CORE);
+  assert.equal(classifyPath('.github/agents/dude-spec-lead.agent.md'), TIER.CORE);
   assert.equal(classifyPath('.github/instructions/dude.instructions.md'), TIER.CORE);
   assert.equal(classifyPath('.github/skills/dude-lint/SKILL.md'), TIER.CORE);
   assert.equal(classifyPath('.github/skills/dude-engine/lib/ownership.mjs'), TIER.CORE);
@@ -54,7 +54,7 @@ test('classifyPath: normalizes separators and prefixes', () => {
 });
 
 test('predicates align with classifyPath', () => {
-  assert.equal(isCorePath('.github/agents/dude-lead.agent.md'), true);
+  assert.equal(isCorePath('.github/agents/dude-spec-lead.agent.md'), true);
   assert.equal(isCorePath('.github/agents/dude-pack-beads-workflow.agent.md'), false);
   assert.equal(isPackPath('.github/agents/dude-pack-beads-workflow.agent.md'), true);
   assert.equal(isLocalPath('.github/skills/dude-local-foo/SKILL.md'), true);
@@ -79,7 +79,7 @@ test('enumerateCorePaths returns only core files, sorted', () => {
     };
 
     touch('.github/agents/dude.agent.md');
-    touch('.github/agents/dude-lead.agent.md');
+    touch('.github/agents/dude-spec-lead.agent.md');
     touch('.github/agents/dude-local-x.agent.md');
     touch('.github/agents/dude-pack-beads-workflow.agent.md');
     touch('.github/agents/custom.agent.md');
@@ -95,7 +95,7 @@ test('enumerateCorePaths returns only core files, sorted', () => {
     const core = enumerateCorePaths(root);
 
     assert.deepEqual(core, [
-      '.github/agents/dude-lead.agent.md',
+      '.github/agents/dude-spec-lead.agent.md',
       '.github/agents/dude.agent.md',
       '.github/instructions/dude.instructions.md',
       '.github/skills/dude-lint/SKILL.md',

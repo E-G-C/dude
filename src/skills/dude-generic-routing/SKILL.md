@@ -35,7 +35,7 @@ Maintain explicit owners for:
 Mode-specific defaults:
 
 - During feature definition under `specs/<feature>/`, default planning authority to `@dude-spec-lead`.
-- During implementation, default planning authority to `@dude-lead` for implementation structure and execution tradeoffs.
+- During implementation, default planning authority to a planning specialist if one is on the roster (else the coordinator) for implementation structure and execution tradeoffs.
 - When a dedicated independent reviewer exists, default quality authority to that reviewer.
 
 If the current owner is removed, replaced, or no longer the best fit, update the coordinator's routing guidance explicitly. If no clear owner exists, escalate to the user instead of inventing one.

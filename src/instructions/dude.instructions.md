@@ -33,8 +33,8 @@ instructions provide only the shared rules that apply to **every** agent.
 6. If only bundle defaults exist, users may `accept`, `edit`, `reject`, or `skip` inferred project guardrails. `skip` means continue with bundle defaults only. If no new project-specific guardrails are inferred, definition may continue without a separate guardrail pause.
 7. `spec.md` must be technology-agnostic. Maximum 3 `[NEEDS CLARIFICATION]` markers, prioritized: scope > security > UX > technical.
 8. `spec.md` must pass a quality gate (all sections complete, requirements testable, no impl details) before `plan.md` is written.
-9. During intake and feature definition, `@dude-spec-lead` is the planning authority for `brief/<slug>.md` and `specs/<feature>/` artifacts; during implementation, `@dude-lead` owns implementation architecture unless the user overrides it.
-10. Definition packages do not go to `@dude-tester` by default. Use `@dude-lead` for architecture sanity and `@dude-reviewer` for optional independent readiness judgment.
+9. During intake and feature definition, `@dude-spec-lead` is the planning authority for `brief/<slug>.md` and `specs/<feature>/` artifacts; during implementation, a planning specialist (if one is on the roster) owns implementation architecture unless the user overrides it.
+10. Definition packages do not go to a verification specialist by default. Use a planning specialist (if one is on the roster) for architecture sanity and `@dude-reviewer` for optional independent readiness judgment.
 11. `@dude track` is the normal handoff into Beads. It may import defined briefs automatically. Explicit `@dude import tasks from specs/<feature>/ into Beads` is a manual fallback.
 
 Execution is optional after definition. The core execution lane is **Lightweight Execution** from `specs/<feature>/tasks.md`: when the user wants implementation, default to it and do not ask them to choose a lane. Tracked execution via Beads is provided by the optional **beads pack** (the `dude-beads-workflow` and `dude-spec-import-to-beads` skills); it activates only when that pack is installed and the user opts in with `@dude track`. Rules 12-17 are lane-agnostic.
@@ -75,8 +75,8 @@ When specialists disagree on a design or implementation choice:
 
 ## Change Closure
 
-- For feature-definition artifacts under `specs/<feature>/`, default to `@dude-spec-lead` -> optional `@dude-lead` architecture sanity -> optional `@dude-reviewer` readiness judgment.
-- For implementation and other executable artifacts, default to implementation -> verification (usually `@dude-tester`, if present) -> optional independent review -> coordinator close unless the user explicitly asks for lighter handling.
+- For feature-definition artifacts under `specs/<feature>/`, default to `@dude-spec-lead` -> optional planning-specialist architecture sanity (if one is on the roster) -> optional `@dude-reviewer` readiness judgment.
+- For implementation and other executable artifacts, default to implementation -> verification (a verification specialist, if present) -> optional independent review -> coordinator close unless the user explicitly asks for lighter handling.
 - For direct answers, roster updates, memory updates, and other coordinator-maintenance work, avoid forcing the full delivery pipeline.
 - Any completion claim must be backed by fresh verification evidence before `@dude` marks an execution task `[x]` (or closes tracked-execution work when the beads pack is installed).
 

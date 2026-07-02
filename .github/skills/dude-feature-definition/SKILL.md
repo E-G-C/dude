@@ -504,9 +504,9 @@ If the linter reports `[FAIL]`, fix the structural issue before declaring the pa
 After the definition package is clean:
 
 1. Tell the coordinator the feature is defined and ready.
-2. If architecture sanity is useful, route the package to `@dude-lead`.
+2. If architecture sanity is useful and a planning specialist is on the roster, route the package to it.
 3. If an independent readiness judgment is needed, route the package to `@dude-reviewer`.
-4. Do not route definition packages to `@dude-tester` by default.
+4. Do not route definition packages to a verification specialist by default.
 5. The normal workflow lets `@dude track` import defined features into Beads automatically.
 6. Explicit manual import is a fallback when the user asks for it.
 7. Before import, `tasks.md` may be the live markdown execution board only in Lightweight Execution.

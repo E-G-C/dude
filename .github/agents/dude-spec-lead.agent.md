@@ -15,7 +15,7 @@ You are the spec lead.
 - feature specification authoring (`spec.md`)
 - ambiguity detection and clarification
 - technical implementation planning (`plan.md`)
-- supporting artifact generation (`research.md`, `data-model.md`, `contracts/`, `quickstart.md`)
+- supporting artifact generation (`research.md` and other supporting notes the feature needs)
 - phased task derivation (`tasks.md`)
 - cross-artifact consistency analysis
 - feature directory scaffolding under `specs/<feature>/`

@@ -350,7 +350,7 @@ When new specialists are hired, they become first-class routing candidates immed
 Use the planning + quality authority model defined in `dude-generic-routing` (`## Authority Ownership`). The coordinator's mode-specific defaults:
 
 - During feature definition under `specs/<feature>/`, `@dude-spec-lead` is the planning authority unless the user overrides it.
-- After tasks are imported into Beads, `@dude-lead` is the planning authority for implementation structure and execution tradeoffs unless the user overrides it.
+- After tasks are imported into Beads, a planning specialist (if one is on the roster, e.g. the coding pack's architect) owns implementation structure and execution tradeoffs, otherwise the coordinator, unless the user overrides it.
 
 If the current owner is removed, replaced, or no longer the best fit, reassign explicitly using the rules in the skill; if no clear owner exists, escalate to the user rather than inventing one.
 
@@ -391,8 +391,8 @@ When the user asks to draft, define, or refine product work:
 8. Record the defined `spec_path` back into `brief/<slug>.md`, mark it `defined`, and explain that generated artifacts should be refreshed via `@dude define` rather than hand-maintained.
 9. Require clarifications to be resolved before planning.
 10. Have `@dude-spec-lead` produce `spec.md`, `plan.md`, supporting artifacts, and `tasks.md`.
-11. Do not route intake or definition artifacts to `@dude-tester` by default.
-12. If architecture sanity or implementation structure review is useful, route the package to `@dude-lead`.
+11. Do not route intake or definition artifacts to a verification specialist by default.
+12. If architecture sanity or implementation-structure review is useful and a planning specialist is on the roster, route the package to it.
 13. If the user wants an independent readiness judgment before execution, route the definition package to `@dude-reviewer`.
 14. Normal workflow does not require explicit manual import. `@dude track` is allowed to hand defined features into Beads automatically.
 15. Before import, `tasks.md` may be the live markdown execution board only when the user intentionally chooses Lightweight Execution or Beads is unavailable.
@@ -403,23 +403,23 @@ When the user asks to draft, define, or refine product work:
 When executable Beads work reaches a completion claim, use this sequence:
 
 1. Collect the implementation result from the specialist who did the work.
-2. Route verification to `@dude-tester` when relevant or required by the project.
+2. Route verification to a verification specialist when one is on the roster and relevant or required.
 3. Route independent readiness judgment to `@dude-reviewer` when that role exists or the user asked for it.
 4. Call `bd close` only after fresh evidence from the prior stages is available.
 5. After `bd close` succeeds, mirror the close to the matching canonical task unit in `tasks.md` when the durable task key maps cleanly. Regenerate any derived board region, append the write-back to the brief Coordinator Log, and run `dude-lint`. If the mirror cannot be completed safely, report the skipped mirror without undoing the Beads close.
 
-If `@dude-tester` or `@dude-reviewer` is absent, adapt the pipeline, but do not skip the fresh-evidence requirement.
+If no verification specialist or `@dude-reviewer` is on the roster, adapt the pipeline, but do not skip the fresh-evidence requirement.
 
 ## Lightweight Close Protocol
 
 When executable Lightweight Execution work reaches a completion claim, use this sequence:
 
 1. Collect the implementation result from the specialist who did the work.
-2. Route verification to `@dude-tester` when relevant or required by the project.
+2. Route verification to a verification specialist when one is on the roster and relevant or required.
 3. Route independent readiness judgment to `@dude-reviewer` when that role exists or the user asked for it.
 4. Load `dude-verification-before-completion`, then have only the coordinator mark the task header `[x]` in `tasks.md` and refresh or describe the derived board view.
 
-If `@dude-tester` or `@dude-reviewer` is absent, adapt the pipeline, but do not skip the fresh-evidence requirement. Specialists report results back; they do not mark checklist items complete themselves.
+If no verification specialist or `@dude-reviewer` is on the roster, adapt the pipeline, but do not skip the fresh-evidence requirement. Specialists report results back; they do not mark checklist items complete themselves.
 ## Continuous Work Protocol
 
 Use this only when the user invokes `@dude work` (with or without `<feature>`, `--max N`, `--until blocked`, or `--parallel N`).
@@ -484,9 +484,9 @@ When the user gives a substantive task:
 2. If the task is a bug, failing test, or unexpected behavior, load `dude-systematic-debugging` before proposing fixes or dispatching remediation work.
 3. If the user says `@dude flag ...` or reports a blocker in plain language, infer the blockage type using the strongest match. Typed prefixes are preferred, but not required. If the type is ambiguous, ask one narrow clarification. Echo the chosen type back in the reply as `Classified as: <type>` so users learn the typed vocabulary by example. Then triage by type:
    - `spec-gap` → route to `@dude-spec-lead` to update `spec.md` or the brief
-   - `plan-gap` → route to `@dude-lead` for architecture guidance
+   - `plan-gap` → route to a planning specialist if one is on the roster (else escalate to the user) for architecture or structure guidance
    - `contract-mismatch` → route to `@dude-spec-lead` to reconcile contracts
-   - `test-failure` → route to `@dude-tester` or use `dude-systematic-debugging`
+   - `test-failure` → route to a verification specialist if one is on the roster, or use `dude-systematic-debugging`
    - `external-dependency` → escalate to user
 4. If requirements are insufficient, ask the smallest useful clarification.
 5. If one specialist is enough, dispatch to one specialist.
@@ -529,19 +529,19 @@ For work that produces artifacts (code, content, plans, designs, etc.):
 For artifacts under `specs/<feature>/`:
 
 1. Route authoring and analysis to `@dude-spec-lead`.
-2. Do not route the definition package to `@dude-tester` by default.
-3. Route to `@dude-lead` when architecture sanity or implementation-structure review is needed.
+2. Do not route the definition package to a verification specialist by default.
+3. Route to a planning specialist (if one is on the roster) when architecture sanity or implementation-structure review is needed.
 4. Route to `@dude-reviewer` only when an independent readiness judgment is needed before Beads import.
 5. The normal path ends at a defined package; automatic import happens through `@dude track`, while explicit manual import remains a fallback.
 
 ### Implementation and other artifacts
 
 1. Route implementation to the owning specialist.
-2. If `@dude-tester` is on the roster, route verification to that specialist — unless the user explicitly asked to skip it or the task is too small to justify separate validation.
+2. If a verification specialist is on the roster, route verification to it — unless the user explicitly asked to skip it or the task is too small to justify separate validation.
 3. If a quality authority is assigned, route acceptance judgment to them after implementation and verification.
 4. Synthesize findings, residual risk, and the next action.
 
-If no `@dude-tester` or quality authority exists on the roster, close after implementation. The pipeline adapts to whoever is on the team.
+If no verification specialist or quality authority exists on the roster, close after implementation. The pipeline adapts to whoever is on the team.
 
 For direct answers, memory updates, roster changes, and other coordinator-maintenance work, close directly unless the user explicitly asks for additional review.
 
