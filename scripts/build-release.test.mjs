@@ -44,7 +44,14 @@ test('seedManifest rewrites installed_sha / installed_at only when provided', ()
   const out = seedManifest(src, 'b'.repeat(40), '2026-07-01T00:00:00Z');
   assert.match(out, /"installed_sha": "b{40}"/);
   assert.match(out, /"installed_at": "2026-07-01T00:00:00Z"/);
-  assert.equal(seedManifest(src), src); // no-op without args
+  assert.equal(seedManifest(src), src); // no source_ref/args -> no-op on this fixture
+});
+
+test('seedManifest forces source_ref to the release channel', () => {
+  const src = '```json\n{\n  "source_ref": "main",\n  "installed_sha": "OLD",\n  "installed_at": "OLDAT"\n}\n```';
+  const out = seedManifest(src, 'c'.repeat(40), '2026-07-02T00:00:00Z');
+  assert.match(out, /"source_ref": "latest"/);
+  assert.match(out, /"installed_sha": "c{40}"/);
 });
 
 test('parseArgs flags unknown args and parses options', () => {
@@ -88,9 +95,10 @@ test('buildRelease stages a lint-clean core bundle with no test files', () => {
     assert.equal(proj, PROJECT_STUB);
     assert.doesNotMatch(proj, /dude-spec-lead|reusable Dude Coder bundle/);
 
-    // manifest seeded with the release sha
+    // manifest seeded with the release sha + release channel
     const man = fs.readFileSync(path.join(outDir, '.github/dudestuff/bundle-manifest.md'), 'utf8');
     assert.match(man, /"installed_sha": "a{40}"/);
+    assert.match(man, /"source_ref": "latest"/);
 
     // the staged bundle itself passes lint
     const lint = spawnSync(process.execPath, [lintScript, outDir], { encoding: 'utf8' });

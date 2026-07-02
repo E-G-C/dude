@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { classifyPlan } from './upgrade.mjs';
+import { classifyPlan, pickLatestReleaseTag } from './upgrade.mjs';
 
 /** @param {string} root @param {string} rel */
 function w(root, rel) {
@@ -42,4 +42,16 @@ test('classifyPlan removes a core agent present locally but absent upstream', ()
     fs.rmSync(local, { recursive: true, force: true });
     fs.rmSync(upstream, { recursive: true, force: true });
   }
+});
+
+test('pickLatestReleaseTag selects the highest stable semver tag (numeric, not lexical)', () => {
+  assert.equal(pickLatestReleaseTag(['v1.0.0', 'v1.2.0', 'v1.10.0', 'v2.0.0']), 'v2.0.0');
+  assert.equal(pickLatestReleaseTag(['v1.9.0', 'v1.10.0']), 'v1.10.0');
+  assert.equal(pickLatestReleaseTag(['v0.0.1']), 'v0.0.1');
+});
+
+test('pickLatestReleaseTag ignores pre-releases and non-release tags', () => {
+  assert.equal(pickLatestReleaseTag(['v1.0.0', 'v2.0.0-rc1', 'nightly', 'release-3']), 'v1.0.0');
+  assert.equal(pickLatestReleaseTag(['v1.2', 'v1', '1.2.3', 'foo', '']), null);
+  assert.equal(pickLatestReleaseTag([]), null);
 });

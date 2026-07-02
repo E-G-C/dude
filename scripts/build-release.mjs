@@ -63,8 +63,10 @@ export function isReleaseFile(relPath) {
 }
 
 /**
- * Rewrite the manifest's `installed_sha` / `installed_at` when a release commit
- * is known, so a freshly-deployed bundle records the commit it was cut from.
+ * Prepare the manifest for a release artifact: force `source_ref` to the
+ * release channel (`latest`) so the deployed bundle upgrades between release
+ * tags, and rewrite `installed_sha` / `installed_at` when the release commit is
+ * known so it records the commit it was cut from.
  * @param {string} manifest source manifest markdown
  * @param {string} [sha]
  * @param {string} [at] ISO timestamp
@@ -72,6 +74,9 @@ export function isReleaseFile(relPath) {
  */
 export function seedManifest(manifest, sha, at) {
   let out = manifest;
+  // Released bundles track the release channel: `@dude upgrade` resolves the
+  // newest stable `vX.Y.Z` tag rather than following a moving branch.
+  out = out.replace(/("source_ref":\s*)"[^"]*"/, `$1"latest"`);
   if (sha) out = out.replace(/("installed_sha":\s*)"[^"]*"/, `$1"${sha}"`);
   if (at) out = out.replace(/("installed_at":\s*)"[^"]*"/, `$1"${at}"`);
   return out;

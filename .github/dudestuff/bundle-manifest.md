@@ -15,6 +15,7 @@ This file pins the upstream Dude bundle version associated with the current inst
 
 - The manifest is **metadata only**: it carries the upstream source pin and the installed commit, and nothing else. There is no `files` array and no per-file hashes.
 - `installed_sha` is the commit this bundle was last installed from. It is auto-maintained by `@dude upgrade` (rewritten to the live upstream HEAD after a successful apply). The authoritative upgrade trigger is the live upstream ref HEAD vs. this field — `@dude status` reads upstream HEAD with `git ls-remote` (remote sources) or `git rev-parse HEAD` (local-path sources), so this field never has to be hand-bumped by an upstream contributor for downstream installs to see new base-file changes.
+- `source_ref` selects the upgrade channel. The sentinel `latest` (seeded into released bundles by `build-release`) tracks the newest **stable** `vX.Y.Z` release tag: `@dude upgrade` resolves it to the highest release tag on each run and records that release's commit in `installed_sha`, so upgrading always moves between published releases (pre-release tags like `v1.0.0-rc1` are ignored). A concrete `vX.Y.Z` pins to one release; a branch name such as `main` — used by this source repo, which is itself upstream — tracks that branch's HEAD.
 - Base ownership is derived from the **namespace convention** by the engine:
 
   ```text

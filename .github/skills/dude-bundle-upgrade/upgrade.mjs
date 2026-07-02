@@ -34,6 +34,10 @@ const LOCAL_MANIFEST_PATH = path.join(ROOT, '.github/dudestuff/bundle-manifest.m
 const LINT_PATH = path.join(ROOT, '.github/skills/dude-lint/lint.mjs');
 const DEFAULT_SOURCE = 'https://github.com/E-G-C/dude';
 const DEFAULT_REF = 'main';
+// The release channel: when source_ref is this sentinel, `@dude upgrade`
+// resolves the newest stable `vX.Y.Z` tag instead of tracking a branch.
+const RELEASE_CHANNEL = 'latest';
+const RELEASE_TAG_RE = /^v(\d+)\.(\d+)\.(\d+)$/;
 
 // ----- logging (stderr) ------------------------------------------------------
 const color = Boolean(process.stderr.isTTY);
@@ -182,11 +186,74 @@ function loadLocalManifest() {
 }
 
 // ----- upstream resolution ---------------------------------------------------
-const upstream = { source: '', ref: '' };
+/**
+ * Pick the newest stable release tag (highest `vX.Y.Z` by numeric semver;
+ * pre-release tags such as `v1.0.0-rc1` are ignored) from a list of tag names.
+ * @param {string[]} tagNames
+ * @returns {string | null}
+ */
+export function pickLatestReleaseTag(tagNames) {
+  /** @type {[number, number, number, string] | null} */
+  let best = null;
+  for (const raw of tagNames) {
+    const name = String(raw).trim();
+    const m = RELEASE_TAG_RE.exec(name);
+    if (!m) continue;
+    const maj = Number(m[1]);
+    const min = Number(m[2]);
+    const pat = Number(m[3]);
+    if (
+      best === null ||
+      maj > best[0] ||
+      (maj === best[0] && min > best[1]) ||
+      (maj === best[0] && min === best[1] && pat > best[2])
+    ) {
+      best = [maj, min, pat, name];
+    }
+  }
+  return best ? best[3] : null;
+}
+
+/**
+ * List candidate release tag names for a source (remote URL or local path).
+ * @param {string} source
+ * @returns {string[]}
+ */
+function listSourceTags(source) {
+  if (!hasGit()) return [];
+  if (isDir(source)) {
+    const r = git(['tag', '--list', 'v*'], source);
+    return r.status === 0 ? r.stdout.split('\n').map((s) => s.trim()).filter(Boolean) : [];
+  }
+  const r = git(['ls-remote', '--tags', '--refs', source]);
+  if (r.status !== 0) return [];
+  /** @type {string[]} */
+  const names = [];
+  for (const line of r.stdout.split('\n')) {
+    const m = /refs\/tags\/(\S+)$/.exec(line.trim());
+    if (m) names.push(m[1]);
+  }
+  return names;
+}
+
+const upstream = { source: '', ref: '', resolvedRef: '', channel: false };
 /** @param {string} srcOverride @param {string} refOverride */
 function resolveUpstream(srcOverride, refOverride) {
   upstream.source = srcOverride || local.source_repo || DEFAULT_SOURCE;
   upstream.ref = refOverride || local.source_ref || DEFAULT_REF;
+  if (upstream.ref === RELEASE_CHANNEL) {
+    upstream.channel = true;
+    upstream.resolvedRef = pickLatestReleaseTag(listSourceTags(upstream.source)) || '';
+  } else {
+    upstream.channel = false;
+    upstream.resolvedRef = upstream.ref;
+  }
+}
+/** @returns {string} human display of the ref (channel shows the resolved tag) */
+function refDisplay() {
+  return upstream.channel && upstream.resolvedRef
+    ? `${upstream.ref} (${upstream.resolvedRef})`
+    : upstream.ref;
 }
 /** @param {string} url @returns {string} owner/repo or '' */
 function githubOwnerRepo(url) {
@@ -215,7 +282,7 @@ async function fetchUpstreamManifestOnly() {
 
   const ownerRepo = githubOwnerRepo(upstream.source);
   if (ownerRepo) {
-    const rawUrl = `https://raw.githubusercontent.com/${ownerRepo}/${upstream.ref}/.github/dudestuff/bundle-manifest.md`;
+    const rawUrl = `https://raw.githubusercontent.com/${ownerRepo}/${upstream.resolvedRef}/.github/dudestuff/bundle-manifest.md`;
     logDebug(`fetching upstream manifest via raw url: ${rawUrl}`);
     try {
       const res = await fetch(rawUrl, { signal: AbortSignal.timeout(30000) });
@@ -230,8 +297,8 @@ async function fetchUpstreamManifestOnly() {
 
   if (hasGit()) {
     const cloneDir = path.join(outDir, 'clone');
-    logDebug(`shallow-cloning upstream for manifest only: ${upstream.source} @ ${upstream.ref}`);
-    const r = git(['clone', '--quiet', '--depth=1', '--branch', upstream.ref, upstream.source, cloneDir]);
+    logDebug(`shallow-cloning upstream for manifest only: ${upstream.source} @ ${upstream.resolvedRef}`);
+    const r = git(['clone', '--quiet', '--depth=1', '--branch', upstream.resolvedRef, upstream.source, cloneDir]);
     const lm = path.join(cloneDir, '.github/dudestuff/bundle-manifest.md');
     if (r.status === 0 && isFile(lm)) {
       fs.copyFileSync(lm, outFile);
@@ -265,7 +332,7 @@ function fetchUpstreamTree() {
 
   const key = crypto
     .createHash('sha256')
-    .update(`${upstream.source}|${upstream.ref}`)
+    .update(`${upstream.source}|${upstream.resolvedRef}`)
     .digest('hex')
     .slice(0, 12);
   const dest = path.join(CACHE_ROOT, `upstream-${key}`);
@@ -275,15 +342,15 @@ function fetchUpstreamTree() {
   }
 
   fs.rmSync(dest, { recursive: true, force: true });
-  logInfo(`fetching upstream tree: ${upstream.source} @ ${upstream.ref}`);
-  if (git(['clone', '--quiet', '--depth=1', '--branch', upstream.ref, upstream.source, dest]).status === 0) {
+  logInfo(`fetching upstream tree: ${upstream.source} @ ${refDisplay()}`);
+  if (git(['clone', '--quiet', '--depth=1', '--branch', upstream.resolvedRef, upstream.source, dest]).status === 0) {
     return dest;
   }
   if (git(['clone', '--quiet', upstream.source, dest]).status === 0) {
-    if (git(['checkout', '--quiet', upstream.ref], dest).status === 0) return dest;
+    if (git(['checkout', '--quiet', upstream.resolvedRef], dest).status === 0) return dest;
   }
   fs.rmSync(dest, { recursive: true, force: true });
-  logError(`failed to fetch upstream from ${upstream.source} @ ${upstream.ref}`);
+  logError(`failed to fetch upstream from ${upstream.source} @ ${refDisplay()}`);
   return null;
 }
 
@@ -305,12 +372,12 @@ function resolveUpstreamSha() {
     return '';
   }
   if (!hasGit()) return '';
-  const r = git(['ls-remote', upstream.source, upstream.ref]);
+  const r = git(['ls-remote', upstream.source, upstream.resolvedRef]);
   if (r.status === 0) {
     const first = r.stdout.split('\n')[0];
     if (first) return first.split(/\s+/)[0];
   }
-  if (/^[0-9a-f]{40}$/.test(upstream.ref)) return upstream.ref;
+  if (/^[0-9a-f]{40}$/.test(upstream.resolvedRef)) return upstream.resolvedRef;
   return '';
 }
 
@@ -440,7 +507,7 @@ function emitStatusText(kind, upstreamSha, detail) {
   else if (kind === 'offline') head = `${YEL}upgrade status unavailable (${detail})${RST}`;
   else head = `${RED}error (${detail})${RST}`;
   out(`Bundle: ${head}\n`);
-  out(`  Source:    ${upstream.source} @ ${upstream.ref}\n`);
+  out(`  Source:    ${upstream.source} @ ${refDisplay()}\n`);
   out(`  Installed: ${shortSha(local.installed_sha)} (${local.installed_at})\n`);
   if ((kind === 'upgrade_available' || kind === 'up_to_date') && upstreamSha) {
     out(`  Upstream:  ${shortSha(upstreamSha)}\n`);
@@ -474,7 +541,7 @@ function emitStatusJson(kind, upstreamSha, detail) {
  */
 function emitPlanText(plan, planId, fromSha, toSha, cacheDir) {
   out(`Upgrade report: ${shortSha(fromSha)} -> ${shortSha(toSha)}\n`);
-  out(`Source: ${upstream.source} @ ${upstream.ref}\n`);
+  out(`Source: ${upstream.source} @ ${refDisplay()}\n`);
   out(`Plan ID: ${planId}\n`);
   out(`Cache: ${cacheDir}\n\n`);
 
@@ -656,6 +723,13 @@ async function cmdStatus(argv) {
   }
   resolveUpstream(flags.source || '', flags.ref || '');
 
+  if (upstream.channel && !upstream.resolvedRef) {
+    const detail = 'no releases published yet';
+    if (format === 'json') emitStatusJson('offline', '', detail);
+    else emitStatusText('offline', '', detail);
+    return 0;
+  }
+
   const manifestPath = await fetchUpstreamManifestOnly();
   if (!manifestPath) {
     if (format === 'json') emitStatusJson('offline', '', 'could not reach upstream');
@@ -705,6 +779,11 @@ function cmdPlan(argv) {
     return 40;
   }
   resolveUpstream(flags.source || '', flags.ref || '');
+
+  if (upstream.channel && !upstream.resolvedRef) {
+    logError('no releases published yet on the release channel; nothing to upgrade to');
+    return 40;
+  }
 
   const utree = fetchUpstreamTree();
   if (!utree) return 40;

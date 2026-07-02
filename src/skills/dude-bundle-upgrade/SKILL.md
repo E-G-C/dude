@@ -34,6 +34,10 @@ Accepted invocation forms:
 - `@dude upgrade --rollback` — restore from the most recent pre-upgrade safety tag.
 - `@dude upgrade --allow-dirty` — proceed even when the working tree has uncommitted changes (default is to refuse).
 
+### Release channel
+
+The manifest `source_ref` is an upgrade channel. Released bundles are seeded with the sentinel `latest`, which resolves to the newest **stable** `vX.Y.Z` tag (pre-releases like `v1.0.0-rc1` are ignored) on every run — so `@dude upgrade` moves the bundle between published releases rather than tracking a moving branch. A concrete `vX.Y.Z` pins to one release, and a branch name (e.g. `main`) tracks that branch's HEAD. Use `--ref` to override the channel for a single run. When the channel is `latest` but no release tags exist yet, `status` reports "no releases published yet" and `plan`/`apply` decline with nothing to do.
+
 ## Script Contract
 
 The `upgrade.mjs` engine handles fetch, classification, and reporting. The LLM never re-derives this work. It runs on Node (>= 20 LTS) and shares the namespace/ownership classifier in `.github/skills/dude-engine/lib/ownership.mjs` with `dude-lint`.
