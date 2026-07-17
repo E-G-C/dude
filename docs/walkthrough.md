@@ -4,7 +4,8 @@
 
 Use this built-in example to learn the normal workflow without any external
 files. The feature is common on most product teams: email/password
-authentication for a web app.
+authentication for a web app. The lifecycle is
+`brainstorm -> idea -> define -> spec -> work`.
 
 ## 1. Add a little project context
 
@@ -16,24 +17,25 @@ Give Dude a small amount of real context to plan with:
 @dude remember: password reset links expire after 30 minutes
 ```
 
-## 2. Draft the feature
+## 2. Brainstorm the idea
 
-Ask Dude to turn the feature idea into a brief ledger:
+Ask Dude to capture the feature in one flat idea file without creating a spec
+package:
 
 ```text
-@dude draft a feature for email/password authentication with sign-in, sign-out, and password reset for a web app
+@dude brainstorm a feature for email/password authentication with sign-in, sign-out, and password reset for a web app
 ```
 
-If you want a quick orientation checkpoint before editing the draft, run:
+If you want a quick orientation checkpoint before editing the idea, run:
 
 ```text
 @dude status
 ```
 
-In this phase, Dude should point you back to `brief/authentication.md` as
+In this phase, Dude should point you back to `.dude/ideas/authentication.md` as
 the live collaboration surface.
 
-The normal result is a file like `brief/authentication.md`:
+The normal result is a file like `.dude/ideas/authentication.md`:
 
 ```markdown
 ---
@@ -43,21 +45,22 @@ status: draft
 spec_path:
 ---
 
-# Brief: User authentication
+# Idea: User authentication
 
-## User Draft
+## Idea
 
 Users need to sign in with email and password, sign out safely, and recover
 access with a password reset email.
 
 ## Open Questions
 
-Review the draft above. Either edit it directly or answer the questions below.
+Review the idea above. Either edit it directly or answer the questions below.
 
 ### Q1. Should account creation/sign-up be included in this feature or deferred?
 
 **Your answer:** _Type your answer here._
 
+<!-- dude:managed:start -->
 ## Normalized Intent
 
 - Support email/password sign-in for existing users
@@ -69,6 +72,7 @@ Review the draft above. Either edit it directly or answer the questions below.
 - Authentication errors must be understandable to end users
 - Password reset links expire after 30 minutes
 - Audit events are retained for 90 days
+<!-- dude:managed:end -->
 
 ## Assumptions
 
@@ -77,6 +81,12 @@ Review the draft above. Either edit it directly or answer the questions below.
 - Sign-in does not lock automatically after repeated failed attempts unless the
   project adds that requirement
 
+## Deferred Clarifications
+
+- Whether users need an active-session list can be revisited after the core
+  sign-in scope is defined
+
+<!-- dude:managed:start -->
 ## Definition Checklist
 
 - [ ] Outcome is clear
@@ -86,22 +96,32 @@ Review the draft above. Either edit it directly or answer the questions below.
 ## Coordinator Log
 
 - No coordinator events yet
+<!-- dude:managed:end -->
 ```
+
+You control `## Idea`, open-question answers, assumptions, and deferred
+clarifications. Dude controls the managed sections, `status:`, `spec_path:`,
+and the append-only Coordinator Log. Informal, typo-heavy, or speech-to-text
+input is valid: initial capture may conservatively clean clear spelling,
+grammar, punctuation, transcription, filler, or repetition problems while
+preserving meaning, tone, uncertainty, incomplete thought, and creative intent.
+Later brainstorm reruns preserve `## Idea` and other user edits unless you
+provide or request a revision.
 
 ## 3. Define the package
 
-Once the draft is clear enough, ask Dude to define the normal spec package:
+Once the idea is clear enough, ask Dude to define the normal spec package:
 
 ```text
 @dude define authentication
 ```
 
-If you edit the brief and run `@dude define authentication` again, Dude
-re-reads the updated draft and refreshes the package instead of starting from
+If you edit `## Idea` and run `@dude define authentication` again, Dude
+re-reads the updated idea and refreshes the package instead of starting from
 scratch.
 
 After definition completes, you can run `@dude status` to confirm that you are
-still in Definition Only and that `specs/001-authentication/` is now the live
+still in Definition Only and that `.dude/specs/001-authentication/` is now the live
 artifact.
 
 The same normal outcomes from [Workflow modes and lifecycle](workflow.md) apply
@@ -113,7 +133,7 @@ paused definition immediately. If you return later, rerun
 If definition completes immediately, the normal package looks like:
 
 ```text
-specs/
+.dude/specs/
 └── 001-authentication/
     ├── spec.md
     ├── plan.md
@@ -130,9 +150,11 @@ If definition pauses for guardrail approval first, use the setup guidance in
 [Setup and first feature](setup.md) as the expected interaction shape, then
 expect the completed package above.
 
-Once definition completes, `brief/authentication.md` should read
-`status: defined` and have a populated `spec_path:` pointing at
-`specs/001-authentication/spec.md`.
+Once definition completes, the same `.dude/ideas/authentication.md` should read
+`status: defined`, have `spec_path:` set exactly to
+`.dude/specs/001-authentication/spec.md`, and contain an appended definition
+event in `## Coordinator Log`. If intent changes later, return to `## Idea` and
+rerun define rather than treating generated spec files as the source of intent.
 
 ## 4. Continue without Beads
 
@@ -144,7 +166,7 @@ Execution:
 @dude work authentication --max 1
 ```
 
-At that point, `specs/001-authentication/tasks.md` is the live markdown
+At that point, `.dude/specs/001-authentication/tasks.md` is the live markdown
 execution board. A generated board view may appear near the top of the file
 with `## Ready Now`, `## In Progress`, `## Blocked`, and `## Done` sections.
 Canonical task headers use `[ ]`, `[~]`, `[!]`, and `[x]`, and `[x]` should be
@@ -160,11 +182,11 @@ This is the shortest realistic no-Beads loop after definition:
 You: @dude status
 
 Dude:
-Lane: Lightweight Execution · Live: specs/001-authentication/tasks.md
+Lane: Lightweight Execution · Live: .dude/specs/001-authentication/tasks.md
 Action: status
 Updated:
 - Current lane: Lightweight Execution
-- Live artifact: specs/001-authentication/tasks.md
+- Live artifact: .dude/specs/001-authentication/tasks.md
 - Not started: 11
 - In progress: 0
 - Blocked: 0
@@ -176,9 +198,9 @@ Next:
 You: @dude work authentication --max 1
 
 Dude:
-Lane: Lightweight Execution · Live: specs/001-authentication/tasks.md
+Lane: Lightweight Execution · Live: .dude/specs/001-authentication/tasks.md
 Routed T001@a1b2c3d4 to the owning specialist and ran the Lightweight close workflow.
-`specs/001-authentication/tasks.md` remains the live markdown execution board, and Dude marked
+`.dude/specs/001-authentication/tasks.md` remains the live markdown execution board, and Dude marked
 T001@a1b2c3d4 complete after verification.
 
 Next:
@@ -188,11 +210,11 @@ Next:
 You: @dude status
 
 Dude:
-Lane: Lightweight Execution · Live: specs/001-authentication/tasks.md
+Lane: Lightweight Execution · Live: .dude/specs/001-authentication/tasks.md
 Action: status
 Updated:
 - Current lane: Lightweight Execution
-- Live artifact: specs/001-authentication/tasks.md
+- Live artifact: .dude/specs/001-authentication/tasks.md
 - Not started: 10
 - In progress: 0
 - Blocked: 0
@@ -204,14 +226,16 @@ Next:
 You: @dude flag authentication does not define lockout behavior after repeated failed sign-in attempts
 
 Dude:
-Lane: Lightweight Execution · Live: specs/001-authentication/tasks.md
+Lane: Lightweight Execution · Live: .dude/specs/001-authentication/tasks.md
 Action: flag
 Classified as: spec-gap
 Updated:
 - Blockage recorded as spec-gap
-- Routed to @dude-spec-lead for definition updates
+- Routed to @dude-spec-lead for analysis and recommendations
 Next:
-- Keep the current task unchecked until the blocker is resolved
+- Run @dude define authentication before any definition artifacts are changed
+Blockers:
+- The current task stays unchecked and blocked until the definition gap is resolved
 ```
 
 The point of this lane is that you can keep moving with one live markdown
@@ -245,8 +269,8 @@ inconsistent, send that feedback back through Dude:
 @dude flag contract-mismatch: the password reset payload in contracts/api.md does not match the backend route
 ```
 
-That is the normal closed loop: draft -> define -> Lightweight Execution or
-track -> flag when needed.
+That is the normal closed loop: brainstorm -> idea -> define -> Lightweight
+Execution or track -> flag when needed.
 
-An empty or missing `brief/` or `specs/` directory is fine. Dude can create
-them when drafting or definition starts.
+An empty or missing `.dude/ideas/` or `.dude/specs/` directory is valid. Dude
+creates the relevant path only when brainstorm or definition starts.

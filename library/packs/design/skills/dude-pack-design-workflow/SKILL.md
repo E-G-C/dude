@@ -9,9 +9,9 @@ Use this skill when the user wants to agree on a visual direction before changin
 
 ## Purpose
 
-Visual work needs a proposal loop before execution. The user approves what they can see, then Dude applies the approved design through the normal `specs/<feature>/tasks.md` execution board.
+Visual work needs a proposal loop before execution. The user approves what they can see, then Dude applies the approved design through the active execution lane.
 
-This is not a separate execution lane. With Beads removed, execution is implicit and singular: once a design proposal is approved, Dude defaults to `tasks.md` execution. The user should not have to name an execution mode.
+This is not a separate execution lane. When no tracked lane is active, approved design work defaults to Lightweight Execution from `.dude/specs/<feature>/tasks.md`; the user does not need to choose a mode. Once `@dude track` activates tracked execution, Beads is the authoritative live board and `tasks.md` is a one-way mirror/portability snapshot only.
 
 ## When This Activates
 
@@ -30,13 +30,22 @@ If the request is only a small implementation fix with no open visual direction,
 The approved proposal is the spec.
 
 ```text
-brief/<slug>.md
-  -> specs/<feature>/spec.md        # design proposal, then approved design spec
-  -> specs/<feature>/design/        # preview(s), screenshots, visual references
-  -> specs/<feature>/tasks.md       # apply approved design through normal execution
+.dude/ideas/<slug>.md                 # canonical flat idea ledger and audit companion
+  -> .dude/specs/<feature>/spec.md        # design proposal, then approved design spec
+  -> .dude/specs/<feature>/design/        # preview(s), screenshots, visual references
+  -> .dude/specs/<feature>/tasks.md       # canonical task units applied through the active execution lane
 ```
 
-`spec_path` still points to `specs/<feature>/spec.md`. A brief can be `status: defined` once `spec.md` exists, even while the design proposal is still exploring or proposed. The design approval gate is controlled by `design_status` inside `spec.md`.
+The uniquely owning idea's `spec_path` still points exactly to `.dude/specs/<feature>/spec.md`. Resolve that owner only from direct flat `.dude/ideas/*.md` ledgers by exact `spec_path` equality. An idea can be `status: defined` once `spec.md` exists even while the design proposal has `design_status: exploring` or `design_status: proposed`; the design approval gate remains `design_status` inside `spec.md`. Exact-file identity semantics are unchanged.
+
+## Mutation Preconditions And Ownership
+
+This workflow mutates idea, spec, or task state during settle, approval, task generation, design close, and refinement. Before any such mutation:
+
+- Resolve exactly one companion idea from direct flat `.dude/ideas/*.md` ledgers whose `spec_path` exactly equals the current package's `.dude/specs/<feature>/spec.md`.
+- If zero or multiple ideas claim that exact path, report canonical idea ownership as ambiguous and stop before any idea, spec, log, status, routing, or task mutation. Never infer ownership from a slug, directory name, or alternate path; exact canonical `spec_path` equality is the only owner match.
+
+Only the coordinator appends to `## Coordinator Log` or mutates idea `status`, design `design_status`, task glyphs, or task metadata. During definition, `@dude-spec-lead` maintains idea metadata and the design-shaped `spec.md` within that ownership boundary.
 
 ## Mock Iteration
 
@@ -44,12 +53,12 @@ Exploration is normally a **live mock loop**, not a writing exercise. During `de
 
 - Build a throwaway `preview.html`, then **edit -> render -> screenshot -> user corrects -> repeat**. The screenshots are the evidence; a full `spec.md` is not required yet.
 - **Refinements are ungated.** Size, spacing, copy, and color tweaks do not need an approval prompt. Only the eventual *direction* sign-off is gated.
-- The scratch preview may live anywhere while exploring (for example under `design/`). Once `spec.md` exists, the accepted preview belongs under `specs/<feature>/design/` and `preview_path:` points at it.
+- The scratch preview may live anywhere while exploring (for example under `design/`). Once `spec.md` exists, the accepted preview belongs under `.dude/specs/<feature>/design/` and `preview_path:` points at it.
 - **Mirror:** if the mock already backs real proposal artifacts (a `proposed/` template or SCSS tree), mirror each accepted mock change into those artifacts in the same turn. If there is no proposal artifact yet, say the mock is still scratch-only.
 - **Provenance:** every field shown in the mock must map to a real content or front-matter source, or be dropped. Do not ship invented sample values such as fake counts or estimated reading times into the real templates.
 - **Buildable affordances:** every actionable element (button, link, form field, share / submit / feedback control) must map to a capability the static site can actually deliver, not just look real. See **Functional Realism** below. Do not mock server-dependent actions — submit feedback, share to Teams, email-this, like / save, login — as if they already worked.
 
-**Settle.** When the user stops correcting a surface and moves on, or asks to wire it in, the direction has *settled* (`design_status: proposed`). At settle, backfill `spec.md` **Visual Intent**, **Proposed Direction**, and the **Revision Log** (retroactive entries are fine), and add a `## Coordinator Log` line in the brief. Settle happens **before** approval; approval is the next gate.
+**Settle.** When the user stops correcting a surface and moves on, or asks to wire it in, the direction has *settled* (`design_status: proposed`). At settle, backfill `spec.md` **Visual Intent**, **Proposed Direction**, and the **Revision Log** (retroactive entries are fine), and have the coordinator append the settle event to the uniquely owning companion idea's `## Coordinator Log`. Settle happens **before** approval; approval is the next gate.
 
 ## Functional Realism
 
@@ -89,7 +98,7 @@ slug: feature-title
 work_type: design
 design_status: exploring # exploring | proposed | approved
 approved_direction:
-preview_path: specs/001-feature-title/design/preview.html
+preview_path: .dude/specs/001-feature-title/design/preview.html
 ---
 ```
 
@@ -155,7 +164,7 @@ Use these sections, omitting sections that do not materially apply:
 Store rendered proposal assets under:
 
 ```text
-specs/<feature>/design/
+.dude/specs/<feature>/design/
   preview.html
   screenshots/
   references/
@@ -179,9 +188,9 @@ On approval:
 1. Set `design_status: approved` in `spec.md`.
 2. Set or update `approved_direction:`.
 3. Append a revision-log entry in `spec.md`.
-4. Append a coordinator-log entry in the companion brief.
+4. Have the coordinator append the approval event to the uniquely owning companion idea's `## Coordinator Log`.
 5. Say: `This is a normal checkpoint, not an error.`
-6. Then allow execution from `tasks.md` when the user wants implementation.
+6. Then allow implementation through the active execution lane (Lightweight Execution from `tasks.md`, or Beads when tracked execution is active) when the user wants implementation.
 
 If the user asks to implement before approval, stop and ask for approval or revision instead of proceeding.
 
@@ -193,7 +202,7 @@ After approval, derive `tasks.md` normally. Design tasks should be phrased as ap
 - [ ] T001@a1b2c3d4 [P] [US1] Apply approved news-card visual treatment to layouts/_shortcodes/news-card.html and assets/scss/_styles_project.scss
 ```
 
-Keep task IDs, glyphs, dependencies, board fences, and coordinator-only mutation rules exactly as defined in `dude-feature-definition` and `dude-lightweight-execution`.
+Keep task IDs, glyphs, dependencies, board fences, and coordinator-only mutation rules exactly as defined in `dude-feature-definition` and `dude-lightweight-execution`. `tasks.md` holds the canonical task units in either lane, but when `@dude track` has activated tracked execution, execution state is governed by Beads per `dude-pack-beads-workflow` and `tasks.md` is a one-way mirror only.
 
 ## Design Close Protocol
 
@@ -208,7 +217,8 @@ When an implementation task applies an approved design, close it only after fres
 5. Compare the result to the approved preview in `spec.md`.
 6. Route visual quality judgment to `@dude-pack-ms-brand-stylist` when brand or visual identity is material.
 7. Classify the result using the Post-Implementation Refinement Loop below.
-8. Only when the result matches the approved spec and works in the real rendered context may the coordinator mark the task `[x]` in `tasks.md`.
+8. Have the coordinator append the close classification and any routing decision to the uniquely owning companion idea's `## Coordinator Log`.
+9. Only when the result matches the approved spec and works in the real rendered context may the coordinator close the task through the active lane: in Lightweight Execution mark the task `[x]` in `tasks.md`; in tracked execution close the Beads issue (`bd close`) and mirror the result one-way to `tasks.md` per `dude-pack-beads-workflow`.
 
 If visual evidence fails, leave the task open or blocked and route the issue with `@dude flag ...`.
 
@@ -222,20 +232,22 @@ Classify visual review results into exactly one bucket:
 | --- | --- | --- |
 | **Matches approved spec** | The implementation matches the approved design and works in context | Keep `design_status: approved`; close the task after verification |
 | **Implementation mismatch** | The approved spec is still right, but the page does not match it | Keep `design_status: approved`; keep the task `[~]` and route back to the implementer |
-| **Design refinement needed** | The approved spec looked good in preview, but the real page reveals the design needs adjustment | Change `design_status: proposed`; append a revision-log entry; mark the current task `[!]` with `blocked-by: design-gap: <reason>`; stop execution until re-approved |
-| **New scope / new idea** | The user wants something beyond the approved proposal | Keep the current work stable; route back through brief/definition for a new or expanded package |
+| **Design refinement needed** | The approved spec looked good in preview, but the real page reveals the design needs adjustment | Change `design_status: proposed`; append a revision-log entry; block the current task through the active lane (Lightweight Execution: mark `[!]` with `blocked-by: design-gap: <reason>` in `tasks.md`; tracked execution: `bd update --status blocked` with the same `design-gap` reason, then mirror per `dude-pack-beads-workflow`); stop execution until re-approved |
+| **New scope / new idea** | The user wants something beyond the approved proposal | Keep the current work stable; route through `@dude brainstorm <idea>` to create or refresh `.dude/ideas/<slug>.md`, then run `@dude define <slug>` for the new or expanded package |
 
 When reopening an approved proposal for refinement:
 
 1. Change `design_status: approved` to `design_status: proposed`.
 2. Keep `approved_direction:` as historical context unless the direction is explicitly withdrawn; add a note in `## Revision Log`.
 3. Append a `## Revision Log` entry such as `YYYY-MM-DD HH:MM UTC - reopened after implementation: <reason>`.
-4. Append a companion `## Coordinator Log` entry in `brief/<slug>.md`.
-5. Mark the affected task `[!]` and add:
+4. Have the coordinator append the reopen reason to the uniquely owning companion idea's `## Coordinator Log` in `.dude/ideas/<slug>.md`.
+5. Have the coordinator block the affected task through the active lane. In Lightweight Execution, mark the task `[!]` in `tasks.md` and add:
 
    ```markdown
    blocked-by: design-gap: approved proposal needs refinement after live-context review
    ```
+
+   In tracked execution, set the Beads issue blocked (`bd update --status blocked`) with the same `design-gap` reason and mirror one-way to `tasks.md` per `dude-pack-beads-workflow`.
 
 6. Say: `This is a normal checkpoint, not an error.`
 7. Require explicit re-approval before execution resumes.
@@ -244,7 +256,8 @@ Use `design-gap` when reporting or flagging this blocker. A design-gap is a desi
 
 ## Routing
 
-- Use `@dude-spec-lead` for maintaining brief metadata and the design-shaped `spec.md` package.
+- For every route concerning an existing design package, first resolve its uniquely owning companion idea by exact `spec_path`; the coordinator appends the routed handoff and reason to that idea's `## Coordinator Log`.
+- Use `@dude-spec-lead` for maintaining idea metadata and the design-shaped `spec.md` package during definition.
 - Use the owning Hugo/Docsy specialist for site-specific implementation or template decisions.
 - Use `@dude-pack-ms-brand-stylist` as visual quality authority for internal Microsoft-branded surfaces.
 - Use `@dude-reviewer` only when an independent readiness judgment is needed.
@@ -252,7 +265,7 @@ Use `design-gap` when reporting or flagging this blocker. A design-gap is a desi
 ## Avoid
 
 - Do not create a separate `design-brief.md` plus `design-proposal.md`; the approved proposal is `spec.md`.
-- Do not ask the user to choose an execution lane; execution defaults to `tasks.md`.
+- Do not ask the user to choose an execution lane; without active tracking, execution defaults to Lightweight Execution from `tasks.md`, and when `@dude track` is active, Beads is the live board with `tasks.md` mirror-only.
 - Do not implement into the live site before `design_status: approved`.
 - Do not keep executing when the rendered implementation exposes a `design-gap`; reopen the proposal and require re-approval.
 - Do not mock affordances the static site cannot deliver (submit feedback, share to Teams, email-this, like / save, login, server-side forms) as if they were real; map every actionable element to a real destination or client-side behavior, or drop it. See **Functional Realism**.

@@ -7,12 +7,12 @@ provides:
   skills:
     - dude-pack-ms-brand-visual
   instructions:
-    - ms-logo-usage.instructions.md
-    - ms-typography.instructions.md
-    - ms-visual-brand.instructions.md
+    - dude-pack-ms-brand-ms-logo-usage.instructions.md
+    - dude-pack-ms-brand-ms-typography.instructions.md
+    - dude-pack-ms-brand-ms-visual-brand.instructions.md
   prompts:
-    - apply-ms-brand.prompt.md
-    - audit-ms-brand.prompt.md
+    - dude-pack-ms-brand-apply-ms-brand.prompt.md
+    - dude-pack-ms-brand-audit-ms-brand.prompt.md
 ---
 
 # Microsoft Brand Pack
@@ -38,14 +38,14 @@ but can layer on any HTML/CSS surface.
 
 ### Instructions
 
-- `ms-logo-usage.instructions.md`
-- `ms-typography.instructions.md`
-- `ms-visual-brand.instructions.md`
+- `dude-pack-ms-brand-ms-logo-usage.instructions.md`
+- `dude-pack-ms-brand-ms-typography.instructions.md`
+- `dude-pack-ms-brand-ms-visual-brand.instructions.md`
 
 ### Prompts
 
-- `apply-ms-brand.prompt.md` — apply the Microsoft brand to a rendered surface.
-- `audit-ms-brand.prompt.md` — audit a surface against the brand rules.
+- `dude-pack-ms-brand-apply-ms-brand.prompt.md` — apply the Microsoft brand to a rendered surface.
+- `dude-pack-ms-brand-audit-ms-brand.prompt.md` — audit a surface against the brand rules.
 
 ## Install / remove
 

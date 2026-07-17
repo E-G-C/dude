@@ -1,508 +1,75 @@
 ---
 name: "dude-feature-definition"
-description: "Use when drafting a brief (brainstorm) file, defining a brief into specs/<feature>/, defining a new feature, clarifying requirements, writing spec.md, planning implementation, deriving tasks.md, or analyzing consistency."
+description: "Use for brainstorm idea capture, explicit feature definition, spec and plan gates, task derivation, reconciliation, and definition lint."
 ---
 
 # Feature Definition
 
-Dude owns feature definition natively. This skill defines the file-based brief intake plus the internal spec -> plan -> tasks workflow that starts at definition.
+`brainstorm` and `define` are separate actions. Maintain one flat idea ledger, then create a lean definition package only on explicit definition.
 
-## Purpose
+## Ownership
 
-Maintain a single brief ledger under `brief/<slug>.md`, then create a complete reusable definition package under `specs/<feature>/` when the feature is defined.
+- `## Idea`, answers in `## Open Questions`, and `## Assumptions` are user-controlled. Preserve meaning, tone, uncertainty, incomplete thought, creative intent, answered questions, assumptions, and user edits.
+- During explicit `brainstorm` or `define`, the coordinator delegates definition writes to the Spec Lead: idea/package artifacts, `status:`, exact `spec_path:`, managed definition regions, and definition `## Coordinator Log` events. Other specialists do not mutate workflow state; execution state and close events remain coordinator-only. Never rewrite prior log entries.
+- A defined feature's identity is the workspace-relative `.dude/specs/<feature>/spec.md` path, not its slug, directory, title, or another artifact.
+- For re-definition, rendered task validation, and execution handoff, require exactly one `status: defined` owner by exact `spec_path:`. Any resolver diagnostic, no owner, or multiple owners stops before mutation. Never infer or fall back from slug, directory, or name.
 
-## Brief Intake File
+## Brainstorm
 
-Before definition, keep feature intake in:
+`brainstorm <idea>` creates or refreshes exactly one direct `.dude/ideas/<slug>.md`; brainstorm does not create or write `.dude/specs/`.
 
-```text
-brief/
-└── feature-name.md
-```
+On first capture, only clear language or transcription errors may be corrected. On rerun, re-normalize managed content without opportunistically rewriting user text. Keep active questions immediately after `## Idea`, preserve resolved questions, answers, assumptions, and user edits, and add only focused questions introduced by new ambiguity. Set `status: draft` and empty `spec_path:` only for a first or still-undefined draft. A rerun of a defined ledger preserves `status: defined` and its exact `spec_path:`; never demote it or orphan its package.
 
-Use this structure. The minimal default template is short on purpose:
+If one ledger contains distinct outcomes with separate success tests, ask one narrow split question before definition. Do not create nested or duplicate intake ledgers.
 
-```markdown
----
-title: Feature title
-slug: feature-name
-status: draft
-spec_path:
----
+## Guardrail And Spec Gates
 
-# Brief: Feature title
+Read project memory and conventions. If only bundle guardrails exist, infer a minimal project-specific candidate set. When candidates exist, pause and say `This is a normal checkpoint, not an error.` `accept` persists the proposed rules to `.dude/memory/guardrails.md`, then resumes definition. `edit` persists only the user-edited accepted rules, then resumes. `reject` persists none and continues with existing project/bundle guardrails. `skip` persists none and continues with bundle defaults only. Only ratified rules persist. With no new guardrails, continue without pausing.
 
-## User Draft
-[raw user input]
+Write and validate the technology-agnostic `spec.md` before `plan.md`. The spec covers WHAT and WHY with prioritized, independently testable user scenarios, edge cases, numbered requirements, applicable entities, measurable success criteria, and assumptions. Allow at most three `[NEEDS CLARIFICATION: ...]` markers, ordered scope, security/privacy, UX, then technical; keep overflow visible as deferred clarification. Resolve all markers before planning or task derivation.
 
-## Open Questions
+The spec gate requires complete sections, testable requirements, measurable technology-agnostic criteria, acceptance scenarios, edge cases, and no implementation details. `plan.md` owns HOW: technical context, one chosen structure, guardrail checks, justified complexity, and phases. Create only materially useful supporting artifacts.
 
-Review the draft above. Either edit it directly or answer the questions below.
+## First Definition Transaction
 
-### Q1. [focused clarification question]
+Initial definition has a prospective owner because no defined owner exists yet:
 
-**Your answer:** _Type your answer here._
+1. Select exactly one explicit direct draft idea by the requested slug or idea path; never use a same-name, recursive, or retired-path fallback.
+2. Derive the next monotonic package number and future exact `spec_path:`. Preflight all direct ideas; identity collisions or ambiguous prospective selection stop before writes.
+3. Stage the complete package, exact task audit breadcrumb, owner transition, and definition log event without mutating.
+4. Return the complete stage to the coordinator. After it verifies the prospective owner and snapshots every affected path, commit the staged package artifacts, that same idea's `status: defined` plus exact `spec_path:`, and the definition event as one delegated atomic transaction. If any write or validation fails, the coordinator restores every pre-write byte and removes every newly created path; neither package nor owner transition may survive alone, and never report a half-transition as defined.
+5. The coordinator runs `node .github/skills/dude-lint/lint.mjs .`; definition readiness requires its reported zero failures.
 
-<!-- dude:managed:start -->
-## Coordinator Log
-- No coordinator events yet
-<!-- dude:managed:end -->
-```
+## Re-definition
 
-Dude adds the additional managed sections (`## Normalized Intent`, `## Constraints`, `## Definition Checklist`) and user-edited sections (`## Assumptions`, `## Deferred Clarifications`) only when they have content. The full layout when populated is:
+Resolve the exact current defined owner before any write. Refresh from user-controlled intent, not from generated spec or plan prose. Preserve `status: defined`, exact `spec_path:`, append-only history, still-applicable supporting artifacts, and preserved task-history sections.
 
-```markdown
-## User Draft
-[raw user input]
+The Spec Lead computes and stages `kept`, `changed`, `dropped`, and `new` rows by durable task key, proposed canonical task units, and exact preservation of archives, `## Discovered During Execution`, and `## Lightweight Execution History`. It may write definition artifacts, metadata, and definition log events only through the explicit `define` delegation; it must not apply task glyphs, task metadata, generated boards, archive/discovered/execution-history state, or execution-reconciliation log events. Preserve state only for a true one-to-one surviving task. Splits, merges, scope changes, missing keys, or different keys remain open unless the mapping is explicit.
 
-## Open Questions
+Dropping any non-open task is a hard pause for user confirmation. The user may confirm, reject, force keep/drop, or archive dropped rows. Archived rows go in terminal `## Lightweight Execution History`, remain read-only evidence, and are never parsed or regenerated. Preserve any `## Discovered During Execution` section verbatim immediately before history; its synced `T9001`-`T9999` rows are outside spec-derived reconciliation.
 
-Review the draft above. Either edit it directly or answer the questions below.
+Return the complete staged definition and reconciliation to the coordinator before either actor writes. The coordinator re-verifies the exact owner and staged mapping, then delegates definition artifact/metadata/definition-log writes to the Spec Lead and exclusively applies glyphs, task metadata, board, archive/discovered/history state, and the execution-reconciliation log event. Pre-write snapshots cover both halves; if either half or lint fails, restore every changed byte and remove every new path. Never leave or report a half-applied re-definition.
 
-### Q1. ...
+## Task Contract
 
-**Your answer:** _Type your answer here._
-
-<!-- dude:managed:start -->
-## Normalized Intent
-- ...
-
-## Constraints
-- ...
-<!-- dude:managed:end -->
-
-## Assumptions
-- ...
-
-## Deferred Clarifications
-- [questions that did not make the top-3 cap; never silently dropped]
-
-<!-- dude:managed:start -->
-## Definition Checklist
-- [ ] Outcome is clear
-- [ ] Scope is bounded
-- [ ] Open questions are resolved or consciously assumed
-
-## Coordinator Log
-- YYYY-MM-DD HH:MM — defined -> specs/NNN-slug/spec.md
-<!-- dude:managed:end -->
-```
-
-Keep `## User Draft` intact. Place `## Open Questions` immediately after it so the user reads their original idea first, then either edits that draft or answers the active questions. Format each active question as `### QN. <question>` followed by `**Your answer:** _Type your answer here._`; when the user responds, preserve the question and replace the placeholder with their answer.
-
-The `<!-- dude:managed:start -->` / `<!-- dude:managed:end -->` HTML comment fences identify Dude-owned regions. Users should not hand-edit content inside those fences; if they do, restore the correct structure on the next `draft` or `define` and explain what was reset. Comments are invisible in rendered markdown but visible in editors, so they make ownership obvious without disrupting reading.
-
-The `## Open Questions`, `## Assumptions`, and `## Deferred Clarifications` sections sit outside the managed fences because users edit them in place. Omit any of these sections (and any optional managed sections) until they have real content; do not emit empty scaffolding. When there are active open questions, `## Open Questions` must be the first section after `## User Draft`.
-
-Treat `status:`, `spec_path:`, and `## Coordinator Log` as Dude-maintained workflow metadata. Users edit the feature content in place, but Dude keeps the bookkeeping consistent for later `define` and `track` steps.
-
-Valid `status:` values are `draft` and `defined`.
-
-`## Coordinator Log` is an append-only audit trail of coordinator-owned mutations. Append one line per event with a UTC timestamp, for example:
-
-- `2026-04-20 14:02 — defined -> specs/001-slug/spec.md`
-- `2026-04-20 15:11 — re-defined after open-question update`
-- `2026-04-20 16:33 — board region regenerated in tasks.md`
-- `2026-04-20 17:05 — reverted T003@a1b2c3d4 from [x] to [~]: no verification evidence`
-- `2026-04-20 17:40 — reconciliation: kept 4, changed 1, dropped 0, new 2`
-- `2026-04-20 18:02 — accepted manual completion of T003@a1b2c3d4 (user attestation)`
-
-Do not rewrite history. The `@dude diff` and `@dude self-check` verbs read this log to report what changed and to detect drift.
-
-`spec_path` is the **canonical identity** of a defined feature. It must hold the workspace-relative path to the feature's `spec.md` file (for example, `specs/001-feature-name/spec.md`), not the feature directory and not any other artifact. Beads issues created from this feature carry the same value as a `spec:` prefix in the first line of their description, and the automatic-handoff detection compares them literally. See `dude-spec-import-to-beads` `## Canonical Feature Identity` for the full rule.
-
-## Feature Directory
-
-When they materially apply, write feature artifacts under:
-
-```text
-specs/
-└── 001-feature-name/
-    ├── spec.md        # WHAT and WHY (always)
-    ├── plan.md        # HOW (when the feature needs a plan)
-    ├── tasks.md       # executable work (when moving to execution)
-    ├── research.md    # decisions and unknowns (optional)
-    └── …              # domain-specific artifacts as needed
-```
-
-`spec.md`, `plan.md`, `tasks.md`, and `research.md` are the domain-agnostic core of a package. Domains layer their own supporting artifacts on top: a coding project adds a data model, interface contracts, and verification checklists; a design project adds mockups or a visual spec; a content project adds outlines or source lists. When a domain pack is installed, follow its definition guidance for the exact artifact set. Create only what the feature actually needs.
-
-Number features sequentially by scanning existing `specs/` folders and using `max existing prefix + 1`, ignoring deletions.
-
-When definition succeeds, write the chosen `spec_path` back into the brief file (full path to `spec.md`, e.g. `specs/001-feature-name/spec.md`) and set `status: defined`.
-
-## Step 0: Draft And Maintain `brief/<slug>.md`
-
-### Section Responsibilities
-
-- Users control `## User Draft`.
-- Users answer `## Open Questions` in place, below each visible `**Your answer:**` prompt.
-- Users may edit `## Assumptions` when clarifying or overriding defaults.
-- Dude maintains `## Normalized Intent`, `## Constraints`, `## Definition Checklist`, and `## Coordinator Log`.
-- Dude maintains the brief frontmatter bookkeeping: `status:` and `spec_path:`.
-- Dude may update `## Assumptions` when documenting explicit defaults or resolved ambiguities.
-- Preserve existing assumption bullets by default unless the latest request or a resolved clarification explicitly changes them.
-- Once `## User Draft` is created, do not overwrite it.
-- Re-running `draft` against an existing brief is a re-normalize operation, not a regenerate operation.
-- Re-running `draft` must preserve questions the user already answered or intentionally resolved.
-- Re-running `draft` may add new focused open questions only when the latest request introduces new ambiguity or materially changes scope.
-- If a user edits Dude-maintained bookkeeping without clear intent, restore the correct structure and explain the change instead of silently carrying broken metadata forward.
-
-If the feature later enters Lightweight Execution, `tasks.md` may serve as the live markdown execution board until Beads import. It may also carry a Dude-generated board region inside the same file with `## Ready Now`, `## In Progress`, `## Blocked`, and `## Done` sections; those sections are derived guidance, not a second ledger. If the feature is later imported into Beads, Beads becomes authoritative and `tasks.md` may only be updated as a one-way portability mirror from Beads. Refresh generated artifacts through `define`; do not create a second execution ledger.
-
-On `draft` or other early-stage requests:
-
-1. Create or identify `brief/<slug>.md`.
-2. Preserve the raw user draft in `## User Draft`.
-3. Normalize the requested outcome in `## Normalized Intent`.
-4. Record constraints, assumptions, and any new focused open questions in the same file without discarding or reopening questions the user already resolved, and without changing existing assumption bullets unless the latest request explicitly requires it. Keep active open questions immediately after `## User Draft` and use the `### QN.` / `**Your answer:** _Type your answer here._` format.
-5. Keep the file in `status: draft` until definition is requested.
-6. Do not create `specs/<feature>/` yet unless the user has asked for definition or the workflow explicitly moves to that stage.
-
-### Scope Sanity During Draft
-
-Before treating a draft as one feature, check whether the request looks more like several separate outcomes or a roadmap. Strong signals include:
-
-- 3 or more distinct user outcomes with separate success tests or acceptance expectations
-- multiple disjoint user journeys with different success tests
-- unrelated artifact areas or domains that would naturally become separate packages
-- wording like "and also" repeated across separate deliverables
-- a PRD or brief that reads like a backlog rather than one bounded slice
-
-When those signals are present, do not silently carry the scope forward. Ask one narrow split question or recommend separate brief files before definition.
-
-## Step 1: Write `spec.md`
-
-`spec.md` defines WHAT to build and WHY. It must be technology-agnostic — no languages, frameworks, or API details.
-
-Definition creates or refreshes the feature package under `specs/<feature>/`. A lean package is valid when some standard artifacts do not materially apply. From that point onward, the internal workflow stays the same.
-
-Re-running `define` against an in-flight package is a resume operation: re-read the brief, apply newly answered questions or updated assumptions, and refresh the package instead of starting from scratch.
-
-### Required Sections (in order)
-
-#### User Scenarios & Testing
-
-Prioritized user stories ordered by importance. Each story must be independently testable — implementing just one should deliver a viable MVP slice.
-
-For each story:
-
-- **Title and priority** (`P1`, `P2`, `P3`)
-- **Why this priority**: value justification
-- **Independent test**: how to verify it works on its own
-- **Acceptance scenarios**: Given/When/Then format
+Canonical task units live below any generated board and use:
 
 ```markdown
-### User Story 1 — [Title] (Priority: P1)
-
-[Plain language description]
-
-**Why this priority**: [value justification]
-
-**Independent Test**: [how to verify this story alone]
-
-**Acceptance Scenarios**:
-
-1. **Given** [state], **When** [action], **Then** [outcome]
-2. **Given** [state], **When** [action], **Then** [outcome]
+- [ ] T001@a1b2c3d4 [P] [US1|Shared] Description with paths
+    deps: T000@e4f5g6h7
+    blocked-by: spec-gap: concise reason
 ```
 
-#### Edge Cases
+States are `[ ]`, `[~]`, `[!]`, and `[x]`. Durable keys survive only while task meaning survives. `[P]` is only a parallel candidate signal; actual fan-out still requires no dependency or blocker relation and known disjoint implementation write sets. `deps:` adds real durable-key blockers; `blocked-by:` explains `[!]`. Spec-derived IDs stay below `T9000`.
 
-Boundary conditions and error scenarios the spec must address.
+`tasks.md` carries the exact owner breadcrumb. An optional balanced Dude board fence is a complete regenerated view of canonical units, never canonical state. Supporting checklists are advisory, not another board. Phases normally progress Setup, Foundational, prioritized User Stories, then Polish; every task traces to the plan and every plan decision to the spec.
 
-#### Functional Requirements
+## Validation And Handoff
 
-Numbered, testable requirements:
-
-- `FR-001`: System MUST [capability]
-- `FR-002`: Users MUST be able to [interaction]
-
-#### Key Entities (when data is involved)
-
-Domain objects, relationships, and key attributes — without implementation details.
-
-#### Success Criteria
-
-Measurable, technology-agnostic outcomes:
-
-- `SC-001`: [quantitative or qualitative measure]
-- `SC-002`: [verifiable without implementation details]
-
-#### Assumptions
-
-Reasonable defaults for unspecified details. Document what was assumed and why.
-
-### Clarification Rules
-
-- Mark genuine ambiguity with `[NEEDS CLARIFICATION: specific question]`.
-- **Maximum 3 markers per spec.** Prioritize by impact: scope > security/privacy > user experience > technical details.
-- For everything else, make an informed default and document it in Assumptions.
-- Do not plan or derive tasks until all markers are resolved.
-- **Never silently drop overflow questions.** When more than 3 ambiguities exist, place the lowest-priority items into `## Deferred Clarifications` in `brief/<slug>.md` so the user can see what was set aside.
-- **Re-rank deferred items on every `define` rerun.** Compare each `## Deferred Clarifications` entry against the current active `[NEEDS CLARIFICATION]` markers using the same scope > security > UX > technical priority. If a deferred item now outranks an active marker, surface a one-line prompt in the response: `Promote D2 "<question>" over <FR-ID> marker?` and wait for `yes` / `no` before swapping. Do not silently rotate items in or out.
-
-## Step 2: Write `plan.md`
-
-`plan.md` defines HOW to build the feature.
-
-### Required Sections
-
-#### Summary
-
-One paragraph: primary requirement plus technical approach.
-
-#### Technical Context
-
-Capture the domain-relevant context the plan depends on, marking unknowns as `NEEDS CLARIFICATION`. Keep the fields to whatever the feature's domain actually needs — a simple feature may need only a couple. When a domain pack is installed, follow its definition guidance for that domain's standard context fields (a coding project, for example, records language/version, dependencies, storage, testing, and target platform). A minimal, domain-neutral shape:
-
-```markdown
-**Approach**: [the primary method or technology direction, or NEEDS CLARIFICATION]
-**Key Dependencies**: [external systems, tools, or materials this relies on, or N/A]
-**Environment/Platform**: [where this runs or is delivered, or N/A]
-**Performance/Quality Goals**: [domain-specific measures, or NEEDS CLARIFICATION]
-**Constraints**: [domain-specific limits, or NEEDS CLARIFICATION]
-```
-
-#### Guardrail Check
-
-Validate against `.github/dudestuff/guardrails.md`. If only bundle defaults exist, infer candidate project guardrails from the current repo, remembered context, and early definition artifacts, keep the set minimal for clearly solo or exploratory repos, and continue planning without a separate pause when that inference yields no new project-specific guardrails. Only present accept/edit/reject/skip choices before planning when there are actual new project-specific guardrails to ratify. `skip` means continue with bundle defaults only and no new project-specific guardrails. Re-check after design.
-
-#### Project Structure
-
-Concrete directory layout for this feature (not options — a single chosen structure with rationale).
-
-#### Complexity Tracking
-
-Only if the guardrail check has violations that must be justified:
-
-```markdown
-| Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
-```
-
-#### Phases
-
-High-level phase breakdown that will feed into `tasks.md`.
-
-## Step 2a: Validate Spec Before Planning
-
-Before writing `plan.md`, validate `spec.md` against these criteria:
-
-- No implementation details (languages, frameworks, APIs) in the spec
-- All mandatory sections completed
-- Requirements are testable and unambiguous
-- Success criteria are measurable and technology-agnostic
-- All acceptance scenarios defined
-- Edge cases identified
-- No unresolved `[NEEDS CLARIFICATION]` markers remain
-
-If validation fails, fix the spec first. Maximum 3 validation-fix iterations before warning the user.
-
-## Step 3: Write Supporting Artifacts
-
-Create only the artifacts the feature actually needs. The domain-agnostic one is:
-
-- `research.md` for decisions, unknowns, and options considered
-
-Beyond that, supporting artifacts are domain-specific. When a domain pack is installed, follow its definition guidance for the artifacts that domain expects (a coding project, for example, adds a data model, interface contracts, a quickstart, and verification checklists; a design project adds a visual spec; a content project adds outlines or source lists). Create the artifacts that materially apply and nothing more.
-
-A lean package is preferred over scaffolding placeholder files for artifacts that do not apply to the feature.
-
-### Checklist Files
-
-Checklists under `checklists/` are optional, domain-specific quality gates kept alongside the spec. Create one only when that kind of check materially applies to the feature. The specific set is domain-driven: when a domain pack is installed, follow its definition guidance for the checklists that domain expects (a coding project, for example, defines user-experience, test-coverage, and security checklists).
-
-Each checklist is a plain markdown list of `- [ ]` items. Keep items testable and specific to this feature — do not restate generic project rules that already live in `.github/dudestuff/guardrails.md` or `.github/skills/project/SKILL.md`.
-
-During Lightweight Execution and Beads import preparation, checklist files are advisory reference, not a second live execution board. Do not mirror `tasks.md` completion state into checklist files unless the project explicitly requires that extra workflow.
-
-## Step 4: Derive `tasks.md`
-
-`tasks.md` converts the plan into executable work.
-
-### Task Format
-
-Each canonical task header follows this format:
-
-```markdown
-- [ ] T001@a1b2c3d4 [P] [US1|Shared] Description with file paths
-    deps: T000@e4f5g6h7, T002@91ac4e2f
-    blocked-by: spec-gap: contract still needs a retry policy
-```
-
-- `T001` — sequential task ID that stays easy for humans to scan
-- `a1b2c3d4` — durable task key suffix used for reconciliation across re-define and later Beads handoff
-- `[P]` — parallel-safe (no dependencies within phase)
-- `[US1]` — maps to User Story 1 from `spec.md`
-- `[Shared]` — setup, foundational, or polish work that supports multiple stories
-- task-state glyphs are: `[ ]` not started, `[~]` in progress, `[!]` blocked, `[x]` done
-- optional indented `deps:` lines list explicit durable-key blockers in addition to the normal phase-order rules
-- optional indented `blocked-by:` lines summarize a blocker and are expected when the task header is `[!]`
-- Description should include concrete file paths when possible
-
-Canonical regex for task header lines (Python `re` syntax):
-
-```
-^- \[( |~|!|x)\] (T\d{3,}@[a-z0-9]{8}) (\[P\] )?\[(US\d+|Shared)\] (.+)$
-```
-
-Lines starting with a task-state glyph (`- [ ]`, `- [~]`, `- [!]`, or `- [x]`) that do not match this pattern should be treated as malformed. Stop import and request a corrected `tasks.md`. Indented metadata lines must follow `  deps: ...` or `  blocked-by: ...` and belong to the immediately preceding task header.
-
-`tasks.md` may also contain a Dude-generated board region near the top of the file, fenced by HTML comments such as `<!-- dude:board:start -->` and `<!-- dude:board:end -->`. The first line inside the fence must be the literal notice `<!-- generated by @dude — do not hand-edit; regenerated on every status/define refresh -->`. The region may include `## Ready Now`, `## In Progress`, `## Blocked`, and `## Done`, is derived wholesale from the canonical task units below it, and is regenerated as a complete replacement (not patched in place); do not parse it as canonical task state.
-
-The **first line of `tasks.md`** (above the board fence) must be an audit-log breadcrumb pointing at the companion brief so users editing `tasks.md` can find where coordinator events are recorded:
-
-```markdown
-<!-- audit log: brief/<slug>.md#coordinator-log -->
-```
-
-If `tasks.md` may also include a `## Lightweight Execution History` block (created when the user replies `archive dropped` to a reconciliation prompt), that block must be the **final task section** of the file — when `## Discovered During Execution` is also present, the discovered section is preserved immediately above it. The history block holds dropped task rows that previously carried `[x]` / `[~]` / `[!]` state, and is **read-only context**:
-
-- it is never re-parsed as canonical task units on later `define` runs
-- it is never regenerated, rewritten, or pruned by `define`
-- it does not appear in the generated board region
-- once a row lands there, it stays there as evidence of work that was completed before a re-define dropped the task
-
-The import-readiness checks and parallel-dispatch rules ignore this block entirely.
-
-`tasks.md` may also include a `## Discovered During Execution` section, owned by `@dude sync Beads to tasks.md` and described in `dude-beads-workflow`. This section holds task headers in the reserved **`T9001`–`T9999`** range that mirror Beads issues created mid-flight (each carries a `(Beads: <id>)` tag in its description). `@dude define` must treat it as preserved context:
-
-- it is never re-parsed as spec-derived canonical task units on later `define` runs
-- it is never regenerated, rewritten, pruned, or re-keyed by `define`; preserve the section verbatim when refreshing the rest of `tasks.md`
-- when `## Lightweight Execution History` is also present, preserve `## Discovered During Execution` immediately before it because the history block is terminal archive context
-- it does not appear in the generated board region
-- it is excluded from the Re-define Reconciliation Gate (its rows never appear in the `kept`, `changed`, `dropped`, or `new` buckets)
-
-Spec-derived task headers emitted by `define` must use `TNNN` values **below `T9000`**, leaving the `T9001`–`T9999` range exclusively for sync-appended discovered work. This keeps re-define and sync free of TNNN collisions even if discovered work was appended between two `define` runs.
-
-A single bounded task may cover closely related code, tests, and documentation when one independent test or verification command proves the whole slice. Do not split tasks mechanically just to separate artifact types.
-
-During Lightweight Execution, task headers may move between `[ ]`, `[~]`, `[!]`, and `[x]`. Keep the human task ID stable where the task still means the same work, and preserve the durable task key whenever the same task survives a re-define, so state can be reconciled instead of silently lost.
-
-Only preserve a non-open task automatically when the durable task key still matches. If the durable key is missing or differs, treat the task as new and leave it open. If a task is split, merged, re-scoped, or moved to a different story or goal, do not silently carry completion or blockage forward. Explain the reconciliation in the coordinator response and leave the resulting tasks open unless the mapping is truly one-to-one.
-
-### Re-define Reconciliation Gate
-
-When `@dude define` refreshes a `tasks.md` that already carries Lightweight Execution state (any `[~]`, `[!]`, or `[x]` task headers), the coordinator response must include a reconciliation table before writing the new file:
-
-| Status | Old key | New key | Action |
-|--------|---------|---------|--------|
-| kept | T003@a1b2c3d4 | T003@a1b2c3d4 | state preserved |
-| changed | T004@e4f5g6h7 | T004@77aa11bb | re-keyed; state preserved |
-| dropped | T005@91ac4e2f | — | task removed; prior `[x]`/`[~]`/`[!]` will be lost |
-| new | — | T009@bb22cc33 | added in this refresh |
-
-This gate is a hard stop, not advisory:
-
-- If any row in `dropped` previously held `[x]`, `[~]`, or `[!]` state, **pause writing the file** and require explicit user confirmation before discarding that history. Suggest moving the dropped task into a Lightweight Execution history block in `tasks.md` if the user wants to keep evidence of completed work.
-- If `dropped` is empty or only contains `[ ]` rows, proceed without confirmation but still surface the table in the response.
-- Always report the table in the coordinator's `Updated:` block so the reconciliation is auditable, and append a one-line summary to `## Coordinator Log` (`reconciliation: kept N, changed N, dropped N, new N`).
-
-**Reply tokens for the reconciliation prompt** (Dude also accepts plain language and classifies it):
-
-- `confirm reconcile` — accept the table as shown; proceed with the write
-- `reject reconcile` — abort; keep the existing `tasks.md` and revisit the brief
-- `keep T003` / `keep T003@a1b2c3d4` — force-preserve a row Dude wanted to drop
-- `drop T003` / `drop T003@a1b2c3d4` — force-drop a row Dude wanted to keep
-- `archive dropped` — move dropped rows into a `## Lightweight Execution History` block at the end of `tasks.md` (preserved below any existing `## Discovered During Execution` section so history remains the terminal archive) instead of discarding them
-
-Multiple tokens may be combined in one reply (`keep T003, drop T005, confirm reconcile`).
-
-Phase headings, Goal, Independent Test, Checkpoint, generated board-region lines, and other structural prose lines are not task headers and are skipped during import. Indented `deps:` and `blocked-by:` lines are task metadata, not standalone task headers.
-
-### Import-Readiness Checks
-
-Before handing a defined package back to the coordinator as import-ready, verify that:
-
-- `spec.md` has no unresolved `[NEEDS CLARIFICATION]` markers
-- the brief file is ready to carry `status: defined`
-- `spec_path` points to the exact `spec.md` path that will identify the feature later
-- every canonical task header in `tasks.md` matches the canonical task format, any metadata lines are well-formed, and any non-open lightweight-execution headers preserve the same durable key and labels
-- any generated board region is clearly derived and may be regenerated without changing canonical task state
-- the handoff notes make clear that `tasks.md` may be the live markdown execution board before import, but becomes only a non-authoritative Beads mirror after Beads import
-
-### Phase Pattern
-
-Use this sequence when it fits the feature:
-
-1. **Phase 1: Setup** — project initialization and basic structure
-2. **Phase 2: Foundational** — blocking prerequisites for all stories (no story work until this phase is complete)
-3. **Phase 3+: User Story N** — one phase per user story, in priority order from `spec.md`
-4. **Final: Polish** — cross-cutting concerns
-
-Setup, foundational, and polish tasks may use `[Shared]` instead of a story label when they unblock multiple stories.
-
-Each user story phase includes:
-
-- **Goal**: brief description of what the story delivers
-- **Independent Test**: how to verify this story on its own
-- **Tests** (optional, only if requested): test tasks FIRST, ensure they fail, then implementation
-- **Implementation**: concrete tasks with file paths
-- **Checkpoint**: "At this point, User Story N should be fully functional"
-
-### Priority Mapping (for Beads import)
-
-- P1 story tasks → priority 1 (high)
-- P2 story tasks → priority 2 (medium)
-- P3 story tasks → priority 3 (low)
-- Setup/foundational → priority 1
-- Polish → priority 3
-
-### Dependency Rules
-
-- Tasks marked `[P]` within a phase have no blocking dependencies on each other.
-- Non-`[P]` tasks depend on all earlier tasks in the same phase.
-- Cross-phase: every task in Phase N+1 depends on ALL tasks of Phase N completing.
-- Optional `deps:` lines add explicit blockers by durable task key and should be used when the default phase ordering is not specific enough.
-- Do not invent dependencies from mere adjacency — only where a real blocker exists.
-
-## Step 5: Analyze Consistency
-
-Before handoff, verify:
-
-- every task traces to a real plan decision or requirement
-- every plan section traces to the spec
-- contracts match the plan
-- no unresolved clarification markers remain
-- each user story is independently testable
-- tasks do not invent scope absent from the spec
-
-## Step 6: Run `dude-lint`
-
-After writing or refreshing `brief/<slug>.md`, `specs/<feature>/spec.md`, `specs/<feature>/tasks.md`, or any other definition artifact, run the `dude-lint` skill. It catches structural mistakes in the files this skill just mutated:
-
-- brief frontmatter, `status:`, `spec_path:` resolution, fence balance, `## Coordinator Log` heading
-- task file board fences, glyph values, durable task IDs, duplicate IDs
-
-Run it with Node:
+Before handoff, verify exact ownership, no unresolved clarification, task grammar and unique durable IDs, balanced fences, requirement/plan/task traceability, independent story tests, and no invented scope. Return the staged definition artifacts, reconciliation when applicable, and risks to the coordinator without claiming terminal or lint execution. The coordinator runs:
 
 ```bash
-node .github/skills/dude-lint/lint.mjs
+node .github/skills/dude-lint/lint.mjs .
 ```
 
-If the linter reports `[FAIL]`, fix the structural issue before declaring the package defined. Warnings are advisory but should be reviewed in the same pass. The linter is read-only and runs on Node.
-
-## Handoff To Beads
-
-After the definition package is clean:
-
-1. Tell the coordinator the feature is defined and ready.
-2. If architecture sanity is useful and a planning specialist is on the roster, route the package to it.
-3. If an independent readiness judgment is needed, route the package to `@dude-reviewer`.
-4. Do not route definition packages to a verification specialist by default.
-5. The normal workflow lets `@dude track` import defined features into Beads automatically.
-6. Explicit manual import is a fallback when the user asks for it.
-7. Before import, `tasks.md` may be the live markdown execution board only in Lightweight Execution.
-8. Treat Beads as the live execution board and source of truth after import; any `tasks.md` updates after that are one-way Beads-derived mirror writes only.
-
-## Guardrails
-
-- Do not split one feature across multiple brief files unless the user wants separate defined packages.
-- Do not hide pre-spec clarification in chat when it belongs in the brief file.
-- Do not invent a second execution ledger when Lightweight Execution is active; use `tasks.md` until Beads import.
-- Do not bury execution state in markdown after Beads import.
-- Do not mix implementation code into spec artifacts.
-- Do not skip clarification when the spec is materially ambiguous.
-- Do not derive tasks before the plan is coherent.
-- Do not let `tasks.md` drift away from the plan.
+No definition readiness claim is allowed until the coordinator reports zero failures. Before tracked import, `tasks.md` may be the sole Lightweight live board. After import, Beads is authoritative and markdown updates are only a one-way non-authoritative mirror. Return changed artifacts, exact `spec_path`, clarification or reconciliation state, readiness, and risks to the coordinator.

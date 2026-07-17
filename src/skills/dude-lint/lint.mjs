@@ -3,7 +3,7 @@
 /**
  * Static linter for the Dude bundle (Node port of lint.sh / lint.ps1).
  *
- * Validates structural conventions across brief/, specs/, and .github/.
+ * Validates structural conventions across `.dude/` and `.github/`.
  * Read-only. Dependency-free (Node >= 20 stdlib only).
  *
  * Usage:
@@ -16,13 +16,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { classifyPath, TIER } from '../dude-engine/lib/ownership.mjs';
+import { inventoryDefinedFeatures } from '../dude-engine/lib/feature.mjs';
+import {
+  BOARD_END as TASK_BOARD_END,
+  BOARD_NOTICE as TASK_BOARD_NOTICE,
+  BOARD_START as TASK_BOARD_START,
+  CANONICAL_NOTICE as TASK_CANONICAL_NOTICE,
+} from '../dude-engine/lib/tasks.mjs';
+import { parseProfileDocument } from '../dude-engine/lib/profile.mjs';
+import { WORKSPACE_PATHS } from '../dude-engine/lib/workspace-paths.mjs';
+import { parseTaskState } from '../dude-engine/lib/task-state.mjs';
 
 const ROOT = path.resolve(process.argv[2] || '.');
 
 const counts = {
   warn: 0,
   fail: 0,
-  brief: 0,
+  idea: 0,
   taskfile: 0,
   memoryfile: 0,
   agent: 0,
@@ -71,6 +81,43 @@ function exists(abs) {
   } catch {
     return false;
   }
+}
+
+/** @param {string} abs @returns {fs.Stats | null} */
+function lstatOrNull(abs) {
+  try {
+    return fs.lstatSync(abs);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+/**
+ * Check a workspace-relative path without following symbolic links.
+ * @param {string} rel
+ * @returns {string | null}
+ */
+function unsafeRegularFileDetail(rel) {
+  let cursor = ROOT;
+  const parts = rel.split('/');
+  for (let index = 0; index < parts.length; index += 1) {
+    cursor = path.join(cursor, parts[index]);
+    const stat = lstatOrNull(cursor);
+    const currentRel = parts.slice(0, index + 1).join('/');
+    if (!stat) return `is missing or does not exist at '${currentRel}'`;
+    if (stat.isSymbolicLink()) return `is not a regular file/unsafe because '${currentRel}' is a symbolic link`;
+    if (index < parts.length - 1 && !stat.isDirectory()) {
+      return `is not a regular file/unsafe because ancestor '${currentRel}' is not a directory`;
+    }
+    if (index === parts.length - 1 && !stat.isFile()) return 'is not a regular file/unsafe';
+  }
+  return null;
+}
+
+/** @param {string} content @returns {string[]} */
+function splitLines(content) {
+  return content.split(/\r\n|\n|\r/);
 }
 
 /**
@@ -237,53 +284,159 @@ const BOARD_END = /<!--\s*dude:board:end\s*-->/;
 const BOARD_START_ANCHORED = /^\s*<!--\s*dude:board:start\s*-->\s*$/;
 const BOARD_END_ANCHORED = /^\s*<!--\s*dude:board:end\s*-->\s*$/;
 
-info(`Scanning .github + brief + specs under ${ROOT}`);
+/** @typedef {{ ideaPath: string, specPath: string }} FeatureRecord */
 
-// --- Check 1: brief files ----------------------------------------------
-for (const file of listFiles(path.join(ROOT, 'brief'), '.md')) {
-  counts.brief += 1;
+/**
+ * Return safe direct Markdown ledgers for body-only structural checks. Feature
+ * inventory already reports every unsafe or unsupported path, so this pass is
+ * deliberately silent when a path cannot be read safely.
+ * @returns {string[]}
+ */
+function structuralIdeaFiles() {
+  let ideasRoot = ROOT;
+  for (const part of WORKSPACE_PATHS.IDEAS_DIR.split('/')) {
+    ideasRoot = path.join(ideasRoot, part);
+    let stat;
+    try {
+      stat = fs.lstatSync(ideasRoot);
+    } catch {
+      return [];
+    }
+    if (!stat || stat.isSymbolicLink() || !stat.isDirectory()) return [];
+  }
+
+  let entries;
+  try {
+    entries = fs.readdirSync(ideasRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+
+  const files = [];
+  for (const entry of entries) {
+    const absolutePath = path.join(ideasRoot, entry.name);
+    let stat;
+    try {
+      stat = fs.lstatSync(absolutePath);
+    } catch {
+      continue;
+    }
+    if (!stat.isSymbolicLink() && stat.isFile() && entry.name.endsWith('.md')) files.push(absolutePath);
+  }
+  return files;
+}
+
+/**
+ * Count exact ledger headings outside CommonMark backtick and tilde fences.
+ * @param {string} content
+ * @returns {{ idea: number, userDraft: number, coordinatorLog: number }}
+ */
+function realLedgerHeadings(content) {
+  const headings = { idea: 0, userDraft: 0, coordinatorLog: 0 };
+  /** @type {{ marker: string, length: number } | null} */
+  let fence = null;
+  for (const line of splitLines(content)) {
+    if (fence) {
+      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+      if (close && close[1][0] === fence.marker && close[1].length >= fence.length) fence = null;
+      continue;
+    }
+    const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
+      fence = { marker: open[1][0], length: open[1].length };
+      continue;
+    }
+    const heading = /^ {0,3}##[ \t]+(Idea|User Draft|Coordinator Log)((?:[ \t]+#+)?[ \t]*)$/.exec(line);
+    if (heading?.[1] === 'Idea') headings.idea += 1;
+    else if (heading?.[1] === 'User Draft') headings.userDraft += 1;
+    else if (heading?.[1] === 'Coordinator Log') headings.coordinatorLog += 1;
+  }
+  return headings;
+}
+
+/**
+ * Validate body-only structure in one canonical idea ledger.
+ * @param {string} file
+ * @param {(message: string) => void} report
+ */
+function validateLedgerStructure(file, report) {
   const rel = relpath(file);
-  const content = read(file);
-
-  if (!hasFrontmatter(content)) {
-    fail(`${rel}  missing or malformed YAML frontmatter`);
-    continue;
+  let content;
+  try {
+    content = read(file);
+  } catch {
+    return;
   }
 
-  const status = readFrontmatter(content, 'status');
-  const specPath = readFrontmatter(content, 'spec_path');
-
-  if (!status) {
-    fail(`${rel}  frontmatter is missing 'status:'`);
-  } else if (status !== 'draft' && status !== 'defined') {
-    warn(`${rel}  unexpected status '${status}' (valid: draft, defined)`);
-  } else if (status === 'defined') {
-    if (!specPath) {
-      fail(`${rel}  status: defined but spec_path is missing`);
-    } else if (specPath.includes('\\') || !/^specs\/[^/]+\/spec\.md$/.test(specPath)) {
-      fail(`${rel}  spec_path '${specPath}' must point at 'specs/<feature>/spec.md'`);
-    } else if (!exists(path.join(ROOT, specPath))) {
-      fail(`${rel}  spec_path '${specPath}' does not resolve to an existing file`);
-    } else if (isDir(path.join(ROOT, specPath))) {
-      fail(`${rel}  spec_path '${specPath}' resolves to a directory, not a file`);
-    }
-  }
-
-  const lines = content.split('\n');
-  const mStart = countLines(lines, MANAGED_START);
-  const mEnd = countLines(lines, MANAGED_END);
-  if (mStart !== mEnd) {
-    fail(`${rel}  unbalanced managed fences (${mStart} start / ${mEnd} end)`);
+  const lines = splitLines(content);
+  const managedStarts = countLines(lines, MANAGED_START);
+  const managedEnds = countLines(lines, MANAGED_END);
+  if (managedStarts !== managedEnds) {
+    report(`${rel}  unbalanced managed fences (${managedStarts} start / ${managedEnds} end)`);
   } else {
-    for (const err of fenceOrderErrors(lines, MANAGED_START, MANAGED_END)) {
-      fail(`${rel}  managed fence: ${err}`);
+    for (const error of fenceOrderErrors(lines, MANAGED_START, MANAGED_END)) {
+      report(`${rel}  managed fence: ${error}`);
     }
   }
 
-  if (!/^##[ \t]+Coordinator[ \t]+Log\b/m.test(content)) {
-    warn(`${rel}  missing '## Coordinator Log' section`);
+  const headings = realLedgerHeadings(content);
+  if (headings.idea === 0) report(`${rel}  missing real '## Idea' heading outside fenced blocks`);
+  else if (headings.idea > 1) report(`${rel}  duplicate real '## Idea' headings outside fenced blocks`);
+  if (headings.userDraft > 0) {
+    report(`${rel}  canonical ideas must not contain the noncanonical '## User Draft' heading outside fenced blocks`);
+  }
+  if (headings.coordinatorLog === 0) {
+    report(`${rel}  missing real '## Coordinator Log' heading outside fenced blocks`);
+  } else if (headings.coordinatorLog > 1) {
+    report(`${rel}  duplicate real '## Coordinator Log' headings outside fenced blocks`);
   }
 }
+
+/**
+ * Print the run summary and exit with the conventional status code (1 when any
+ * failure was recorded, else 0). Centralized so an unsafe workspace root can
+ * terminate deterministically without leaving a half-printed report.
+ */
+function finishAndExit() {
+  info(
+    `Scanned: ${counts.idea} idea(s), ${counts.taskfile} task file(s), ${counts.memoryfile} memory file(s), ${counts.agent} agent(s)`,
+  );
+  info(`Findings: ${counts.warn} warning(s), ${counts.fail} failure(s)`);
+  process.exit(counts.fail > 0 ? 1 : 0);
+}
+
+const rootStat = lstatOrNull(ROOT);
+const workspaceRootSafe = Boolean(rootStat?.isDirectory() && !rootStat.isSymbolicLink());
+if (!rootStat) fail(`workspace root does not exist: ${ROOT}`);
+else if (rootStat.isSymbolicLink()) fail(`workspace root is unsafe because it is a symbolic link: ${ROOT}`);
+else if (!rootStat.isDirectory()) fail(`workspace root is not a directory: ${ROOT}`);
+// A missing, symlinked, or non-directory workspace root is unsafe to traverse:
+// halt immediately so no .dude or .github file is read, scanned, or parsed.
+if (!workspaceRootSafe) finishAndExit();
+
+const featureInventory = inventoryDefinedFeatures({ root: ROOT });
+for (const diagnostic of featureInventory.diagnostics) {
+  const report = diagnostic.severity === 'error' ? fail : warn;
+  report(`${diagnostic.path}  ${diagnostic.message} [${diagnostic.code}]`);
+}
+
+/** @type {Map<string, FeatureRecord>} */
+const featuresByIdeaPath = new Map();
+/** @type {Map<string, FeatureRecord[]>} */
+const ideaOwners = new Map();
+for (const feature of featureInventory.features) {
+  featuresByIdeaPath.set(feature.ideaPath, feature);
+  if (!ideaOwners.has(feature.specPath)) ideaOwners.set(feature.specPath, []);
+  ideaOwners.get(feature.specPath)?.push(feature);
+}
+
+for (const file of structuralIdeaFiles()) {
+  counts.idea += 1;
+  validateLedgerStructure(file, fail);
+}
+
+info(`Scanning .github + .dude under ${ROOT}`);
 
 // --- Check 2: tasks files ---------------------------------------------------
 const TASK_HEADER =
@@ -291,12 +444,86 @@ const TASK_HEADER =
 const TASK_LINE = /^\s*-\s*\[.\]\s+/;
 const TASK_ID = /T[0-9][0-9][0-9]+@[a-z0-9]{8}/;
 const BEADS_TAG = /\(Beads:\s*[A-Za-z0-9_-]+(\s*;[^)]*)?\)/;
+const IDEA_AUDIT = /^<!-- audit log: (\.dude\/ideas\/([^/\\#\s]+\.md))#coordinator-log -->$/;
 
-for (const file of walkMatch(path.join(ROOT, 'specs'), (n) => n === 'tasks.md')) {
+/**
+ * Locate the only machine-owned audit line. A rendered board and its canonical
+ * notice are a generated preamble; otherwise the literal first line owns it.
+ * @param {string[]} lines
+ * @param {boolean} boardValid
+ * @returns {{ line: string, lineNo: number, error: string | null }}
+ */
+function firstCanonicalTaskLine(lines, boardValid) {
+  if (lines[0] !== TASK_BOARD_START) {
+    return { line: lines[0] || '', lineNo: 1, error: null };
+  }
+  if (!boardValid || lines[1] !== TASK_BOARD_NOTICE) {
+    return { line: '', lineNo: 1, error: 'rendered board preamble is malformed or missing its generated notice' };
+  }
+  const boardEnd = lines.indexOf(TASK_BOARD_END, 2);
+  if (boardEnd < 0) {
+    return { line: '', lineNo: 1, error: 'rendered board preamble has no closing board fence' };
+  }
+  let index = boardEnd + 1;
+  while (index < lines.length && lines[index].trim() === '') index += 1;
+  if (lines[index] !== TASK_CANONICAL_NOTICE) {
+    return {
+      line: '',
+      lineNo: index + 1,
+      error: `rendered board preamble must be followed by '${TASK_CANONICAL_NOTICE}'`,
+    };
+  }
+  index += 1;
+  while (index < lines.length && lines[index].trim() === '') index += 1;
+  return { line: lines[index] || '', lineNo: index + 1, error: null };
+}
+
+/**
+ * Require the breadcrumb target to be the unique defined ledger owner.
+ * @param {string} taskRel
+ * @param {string} packageSpec
+ * @param {string} targetPath
+ * @param {Map<string, FeatureRecord>} featuresByIdea
+ * @param {Map<string, FeatureRecord[]>} owners
+ */
+function validateTaskOwner(taskRel, packageSpec, targetPath, featuresByIdea, owners) {
+  const packageOwners = owners.get(packageSpec) || [];
+  const candidates = packageOwners.length > 0
+    ? packageOwners.map((feature) => feature.ideaPath).join(', ')
+    : '(none)';
+  const target = featuresByIdea.get(targetPath);
+  if (packageOwners.length === 0) {
+    fail(
+      `${taskRel}  package ${packageSpec} has no defined idea owner; breadcrumb target ${targetPath}; `
+      + `candidate owners: ${candidates}`,
+    );
+  } else if (!target) {
+    fail(
+      `${taskRel}  audit breadcrumb target ${targetPath} is not a valid defined feature owner for package `
+      + `${packageSpec}; candidate owners: ${candidates}`,
+    );
+  } else if (packageOwners.length !== 1) {
+    fail(
+      `${taskRel}  package ${packageSpec} does not have exactly one valid defined feature owner; `
+      + `breadcrumb target ${targetPath}; `
+      + `candidate owners: ${candidates}`,
+    );
+  } else if (packageOwners[0].ideaPath !== targetPath) {
+    fail(
+      `${taskRel}  audit breadcrumb target mismatch for package ${packageSpec}: ${targetPath} points to `
+      + `${target.specPath}, but the unique owner is ${packageOwners[0].ideaPath}; candidate owners: ${candidates}`,
+    );
+  }
+}
+
+for (const file of walkMatch(path.join(ROOT, ...WORKSPACE_PATHS.SPECS_DIR.split('/')), (n) => n === 'tasks.md')) {
   counts.taskfile += 1;
   const rel = relpath(file);
   const content = read(file);
-  const lines = content.split('\n');
+  const lines = splitLines(content);
+  const packageSpec = `${path.posix.dirname(rel)}/spec.md`;
+  const packageSpecIssue = unsafeRegularFileDetail(packageSpec);
+  if (packageSpecIssue) fail(`${rel}  task package ${packageSpec} ${packageSpecIssue}`);
 
   const bStart = countLines(lines, BOARD_START);
   const bEnd = countLines(lines, BOARD_END);
@@ -312,6 +539,21 @@ for (const file of walkMatch(path.join(ROOT, 'specs'), (n) => n === 'tasks.md'))
     if (errs.length) {
       for (const err of errs) fail(`${rel}  board fence: ${err}`);
       skipBoard = false;
+    }
+  }
+
+  const audit = firstCanonicalTaskLine(lines, skipBoard && bStart === 1 && bEnd === 1);
+  if (audit.error) {
+    fail(`${rel}:${audit.lineNo}  ${audit.error}; the first canonical line must be the exact audit breadcrumb`);
+  } else {
+    const ideaAudit = IDEA_AUDIT.exec(audit.line);
+    if (ideaAudit) {
+      validateTaskOwner(rel, packageSpec, ideaAudit[1], featuresByIdeaPath, ideaOwners);
+    } else {
+      fail(
+        `${rel}:${audit.lineNo}  first canonical line must be exactly `
+        + `'<!-- audit log: .dude/ideas/<slug>.md#coordinator-log -->'`,
+      );
     }
   }
 
@@ -405,8 +647,56 @@ for (const file of walkMatch(path.join(ROOT, 'specs'), (n) => n === 'tasks.md'))
   });
 }
 
+// --- Check 2a: current install profile --------------------------------------
+const profilePath = path.join(ROOT, ...WORKSPACE_PATHS.PROFILE.split('/'));
+const profileIssue = unsafeRegularFileDetail(WORKSPACE_PATHS.PROFILE);
+if (profileIssue) {
+  if (profileIssue.startsWith('is missing')) {
+    fail(`${WORKSPACE_PATHS.PROFILE}  missing current canonical profile`);
+  } else {
+    fail(`${WORKSPACE_PATHS.PROFILE}  ${profileIssue}`);
+  }
+} else {
+  try {
+    const profile = parseProfileDocument(read(profilePath), { root: ROOT });
+    for (const [name, entry] of Object.entries(profile.installed)) {
+      if (!entry.inventory) {
+        fail(`${WORKSPACE_PATHS.PROFILE}  installed.${name} must include a complete current inventory`);
+      }
+    }
+    // enabled_packs must equal the installed key set. parseProfileDocument
+    // already rejects any installed pack missing from enabled_packs (installed
+    // ⊆ enabled); this closes the other direction so the two sets stay exactly
+    // equal (compared as sorted sets).
+    const installedKeys = new Set(Object.keys(profile.installed));
+    const enabledNotInstalled = [...profile.enabled_packs]
+      .filter((name) => !installedKeys.has(name))
+      .sort();
+    if (enabledNotInstalled.length > 0) {
+      fail(
+        `${WORKSPACE_PATHS.PROFILE}  enabled pack(s) not installed: ${enabledNotInstalled.join(', ')}`,
+      );
+    }
+  } catch (error) {
+    fail(
+      `${WORKSPACE_PATHS.PROFILE}  invalid current profile `
+      + `(${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+}
+
+// --- Check 2b: task-state snapshot identity --------------------------------
+const taskStatePath = path.join(ROOT, ...WORKSPACE_PATHS.TASK_STATE.split('/'));
+const taskStateIssue = unsafeRegularFileDetail(WORKSPACE_PATHS.TASK_STATE);
+if (taskStateIssue && !taskStateIssue.startsWith('is missing')) {
+  fail(`${WORKSPACE_PATHS.TASK_STATE}  ${taskStateIssue}`);
+} else if (!taskStateIssue) {
+  const r = parseTaskState(read(taskStatePath));
+  if (r.status === 'corrupt') fail(`${WORKSPACE_PATHS.TASK_STATE}  ${r.reason}`);
+}
+
 // --- Check 3: memory files --------------------------------------------------
-for (const file of listFiles(path.join(ROOT, '.github/dudestuff'), '.md')) {
+for (const file of listFiles(path.join(ROOT, ...WORKSPACE_PATHS.MEMORY_DIR.split('/')), '.md')) {
   counts.memoryfile += 1;
   const rel = relpath(file);
   const bullets = read(file)
@@ -437,10 +727,14 @@ for (const dir of listDirs(path.join(ROOT, '.github/skills'))) {
 }
 
 // --- Check 3b: bundle manifest ----------------------------------------------
-const MANIFEST = path.join(ROOT, '.github/dudestuff/bundle-manifest.md');
+const canonicalManifest = path.join(ROOT, ...WORKSPACE_PATHS.BUNDLE_MANIFEST.split('/'));
+const MANIFEST = canonicalManifest;
 const ALLOWED_MANIFEST_KEYS = new Set(['source_repo', 'source_ref', 'installed_ref']);
-if (!exists(MANIFEST)) {
-  fail('.github/dudestuff/bundle-manifest.md  missing seeded bundle manifest');
+const manifestIssue = unsafeRegularFileDetail(WORKSPACE_PATHS.BUNDLE_MANIFEST);
+if (manifestIssue?.startsWith('is missing')) {
+  fail(`${WORKSPACE_PATHS.BUNDLE_MANIFEST}  missing seeded bundle manifest`);
+} else if (manifestIssue) {
+  fail(`${WORKSPACE_PATHS.BUNDLE_MANIFEST}  ${manifestIssue}`);
 } else {
   const manifestRel = relpath(MANIFEST);
   const manifestContent = read(MANIFEST);
@@ -579,9 +873,4 @@ for (const name of [...orphanSkills.keys()].sort()) {
 }
 
 // --- Summary -----------------------------------------------------------------
-info(
-  `Scanned: ${counts.brief} brief, ${counts.taskfile} task file(s), ${counts.memoryfile} memory file(s), ${counts.agent} agent(s)`,
-);
-info(`Findings: ${counts.warn} warning(s), ${counts.fail} failure(s)`);
-
-process.exit(counts.fail > 0 ? 1 : 0);
+finishAndExit();

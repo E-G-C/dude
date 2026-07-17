@@ -33,7 +33,7 @@ legal/trademark policy or external-facing co-branding.
 5. **Accessibility is part of brand.** WCAG AA contrast, visible focus rings, no
    color-only state.
 6. **Pre-flight an audit.** Before declaring done, run the
-   [audit prompt](../prompts/audit-ms-brand.prompt.md) checklist.
+   [audit prompt](../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md) checklist.
 
 ## Default Workflow
 
@@ -64,8 +64,8 @@ Redirect the user to Microsoft Brand Central for:
 
 | Task                     | File                                                                                                                                                 |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Apply branding to a file | [../prompts/apply-ms-brand.prompt.md](../prompts/apply-ms-brand.prompt.md)                                                                           |
-| Audit a file             | [../prompts/audit-ms-brand.prompt.md](../prompts/audit-ms-brand.prompt.md)                                                                           |
+| Apply branding to a file | [../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md](../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md)                                                                           |
+| Audit a file             | [../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md](../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md)                                                                           |
 | Color values & pairings  | [../skills/dude-pack-ms-brand-visual/reference/colors.md](../skills/dude-pack-ms-brand-visual/reference/colors.md)                                 |
 | Typography               | [../skills/dude-pack-ms-brand-visual/reference/typography.md](../skills/dude-pack-ms-brand-visual/reference/typography.md)                         |
 | Logo placement           | [../skills/dude-pack-ms-brand-visual/reference/logo.md](../skills/dude-pack-ms-brand-visual/reference/logo.md)                                     |

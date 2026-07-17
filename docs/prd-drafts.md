@@ -3,33 +3,34 @@
 [Back to root README](../README.md) | [Docs index](README.md) | [Workflow modes](workflow.md)
 
 If you already have a product requirements draft in markdown, treat it as raw
-input for `draft`.
+input for `@dude brainstorm`.
 
 The same three lanes apply when you start from a PRD draft. Dude does not send
-the PRD directly to Beads. It first turns that draft into a working brief
-ledger, then defines it into the normal package under `specs/<feature>/`. Stop
+the PRD directly to Beads. Brainstorm first captures the source in one flat
+`.dude/ideas/<slug>.md` collaboration file without creating a spec package;
+define then creates the normal package under `.dude/specs/<feature>/`. Stop
 there for Definition Only, continue from `tasks.md` for Lightweight Execution,
 or run `@dude track` if you want Tracked Execution.
 
 ## Practical flow
 
-1. Write or collect your PRD draft in markdown.
-2. Ask `@dude` to draft that input.
-3. Let `@dude-spec-lead` normalize it inside `brief/<slug>.md`.
-4. Resolve clarification questions in the same brief file.
-5. Define the brief into the normal package.
+1. Write or collect your PRD draft or product brief in markdown.
+2. Ask `@dude` to brainstorm that input.
+3. Let `@dude-spec-lead` normalize it inside `.dude/ideas/<slug>.md`.
+4. Resolve clarification questions in the same idea file.
+5. Define the idea into the normal package.
 6. If you want implementation without Beads, continue from `tasks.md`, starting with the generated board view when present.
 7. If you want tracked execution, run `@dude track`.
 
 ```mermaid
 flowchart LR
-    PRD["PRD draft\nMarkdown document"] --> DUDE["@dude"]
-    DUDE --> BRAIN["brief/<slug>.md\nworking ledger"]
-    BRAIN --> SPEC["@dude-spec-lead\nnormalizes draft"]
+  PRD["PRD draft or product brief\nMarkdown document"] --> DUDE["@dude brainstorm"]
+  DUDE --> IDEA[".dude/ideas/<slug>.md\ncollaboration file"]
+  IDEA --> SPEC["@dude-spec-lead\nnormalizes intent"]
     SPEC --> CLARIFY{"Material ambiguity?"}
     CLARIFY -->|Yes| Q["Ask focused clarifications"]
-    Q --> BRAIN
-    CLARIFY -->|No| PACKAGE["Define into specs/<feature>/\nspec.md + plan.md + tasks.md"]
+  Q --> IDEA
+    CLARIFY -->|No| PACKAGE["Define into .dude/specs/<feature>/\nspec.md + plan.md + tasks.md"]
     PACKAGE --> REVIEW["Optional review\n@dude-reviewer"]
     REVIEW --> EXECMODE{"Execution lane?"}
     EXECMODE -->|Definition Only| STOP["Stop at reusable package"]
@@ -42,16 +43,16 @@ flowchart LR
 
 Assume your PRD draft is at `docs/prd/<feature>.md`.
 
-Start with draft:
+Start with brainstorm:
 
 ```text
-@dude draft docs/prd/<feature>.md
+@dude brainstorm docs/prd/<feature>.md
 ```
 
 Then move into the normal package:
 
 ```text
-@dude define <feature>
+@dude define <slug>
 ```
 
 If you want tracked execution afterwards:
@@ -61,20 +62,21 @@ If you want tracked execution afterwards:
 ```
 
 If you want implementation without Beads afterwards, keep working from
-`specs/<feature>/tasks.md` and use `@dude status` for orientation.
+`.dude/specs/<feature>/tasks.md` and use `@dude status` for orientation.
 
 If the PRD draft covers more than one feature, ask Dude to split it before
 planning:
 
 ```text
-@dude draft docs/prd/billing.md and split it into separate brief files first
+@dude brainstorm docs/prd/billing.md and split it into separate idea files before definition
 ```
 
 ## What Dude produces from the PRD
 
-The PRD draft remains source input, but Dude turns it into two working layers:
+The PRD draft or product brief remains source input, but Dude turns it into two
+working layers:
 
-- `brief/<slug>.md` — intake ledger, open questions, assumptions,
+- `.dude/ideas/<slug>.md` — pre-spec collaboration, open questions, assumptions,
   coordinator log
 - `spec.md` — normalized WHAT and WHY after definition
 - `plan.md` — implementation approach
@@ -84,8 +86,10 @@ The PRD draft remains source input, but Dude turns it into two working layers:
 - supporting artifacts such as `research.md`, `data-model.md`, and `contracts/`
   when needed
 
-This keeps the PRD as product input, the brief file as the collaboration
-surface, and the `specs/<feature>/` package as the implementation-ready output.
+This keeps the PRD draft or product brief as source input, the idea file as the
+collaboration surface, and the `.dude/specs/<feature>/` package as the
+implementation-ready output. Roadmap-sized input should produce separate idea
+files so each later definition remains bounded.
 
 ## Suggested review points before definition
 

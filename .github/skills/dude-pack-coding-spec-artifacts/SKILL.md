@@ -1,6 +1,6 @@
 ---
 name: dude-pack-coding-spec-artifacts
-description: "Use when defining a software feature's specs/<feature>/ package: plan.md Technical Context fields (language, dependencies, storage, testing, platform, project type, performance) and the software supporting artifacts — data-model.md, contracts/api.md, contracts/schemas.md, quickstart.md, and ux/test/security(OWASP) checklists."
+description: "Use when defining a software feature's .dude/specs/<feature>/ package: plan.md Technical Context fields (language, dependencies, storage, testing, platform, project type, performance) and the software supporting artifacts — data-model.md, contracts/api.md, contracts/schemas.md, quickstart.md, and ux/test/security(OWASP) checklists."
 argument-hint: "the software feature being defined and which artifacts it needs"
 ---
 
@@ -17,7 +17,7 @@ is still preferred over placeholder scaffolding.
 When they materially apply, a software feature package looks like:
 
 ```text
-specs/
+.dude/specs/
 └── 001-feature-name/
     ├── spec.md
     ├── plan.md
@@ -80,7 +80,7 @@ kind of check materially applies to the feature.
 
 Each checklist is a plain markdown list of `- [ ]` items. Keep items testable and
 specific to this feature — do not restate generic project rules that already live
-in `.github/dudestuff/guardrails.md` or `.github/skills/project/SKILL.md`.
+in `.dude/memory/guardrails.md` or `.github/skills/project/SKILL.md`.
 
 During Lightweight Execution and Beads import preparation, checklist files are
 advisory reference, not a second live execution board. Do not mirror `tasks.md`

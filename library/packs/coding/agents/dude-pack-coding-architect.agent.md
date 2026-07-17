@@ -28,7 +28,7 @@ You are the software architecture specialist.
 
 ## Rules
 
-- Check `.github/dudestuff/` for relevant decisions, guardrails, context, and lessons before working.
+- Check `.dude/memory/` for relevant decisions, guardrails, context, and lessons before working.
 - Check `.github/skills/project/SKILL.md` if it exists for project conventions.
 - Check `.github/skills/` for any other skills whose description matches the current task.
 - When reviewing a definition package, focus on architecture sanity and implementation structure rather than rewriting `spec.md`, `plan.md`, or `tasks.md`.

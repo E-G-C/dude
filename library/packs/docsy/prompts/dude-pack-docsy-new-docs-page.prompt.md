@@ -21,7 +21,7 @@ Then create the file:
   ---
   ```
 - Add a single H1-less intro paragraph, then content with `##` sections.
-- Cite the [content authoring rules](../instructions/docsy-content.instructions.md) when relevant.
+- Cite the [content authoring rules](../instructions/dude-pack-docsy-docsy-content.instructions.md) when relevant.
 
 Do not:
 - Use `ref`/`relref` to `_index.md` / `index.md` pages.

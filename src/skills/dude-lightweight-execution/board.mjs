@@ -15,7 +15,7 @@
  *   diff   <tasks.md> [--json]                  human-applied [x] vs snapshot
  *
  * Non-mutating by default. `--write` rewrites the file AND refreshes the
- * coordinator-state snapshot at <root>/.github/dudestuff/task-state.json.
+ * coordinator-state snapshot at <root>/.dude/state/task-state.json.
  *
  * Flags: --root <dir> (default cwd; anchors the snapshot key), --json.
  * Exit codes: 0 ok, 1 usage, 2 operation error, 3 `render --check` found stale.
@@ -36,31 +36,44 @@ import {
   glyphsOf,
   diffAgainstSnapshot,
 } from '../dude-engine/lib/tasks.mjs';
+import {
+  readTaskState,
+  upsertTaskStateEntry,
+} from '../dude-engine/lib/task-state.mjs';
+import {
+  WORKSPACE_PATHS,
+  resolveMutationPath,
+} from '../dude-engine/lib/workspace-paths.mjs';
 
-/** @param {string} root */
-function snapshotPath(root) {
-  return path.join(root, '.github', 'dudestuff', 'task-state.json');
+/** @param {ReturnType<typeof parseTasks>} parsed @param {string} id @returns {string[]} */
+function taskUnitLines(parsed, id) {
+  const task = parsed.byId.get(id);
+  if (!task) return [];
+  let endLine = task.headerLine + 1;
+  while (endLine < parsed.lines.length && /^\s+\S/.test(parsed.lines[endLine])) endLine++;
+  return parsed.lines.slice(task.headerLine, endLine);
 }
 
-/** @param {string} root @returns {Record<string, { glyphs: Record<string,string>, updated_at: string }>} */
-function readSnapshot(root) {
-  const p = snapshotPath(root);
-  try {
-    const o = JSON.parse(fs.readFileSync(p, 'utf8'));
-    return o && typeof o === 'object' ? o : {};
-  } catch {
-    return {};
-  }
-}
+/** @param {string[]} before @param {string[]} after @returns {{before:string[],after:string[]}} */
+function changedSpan(before, after) {
+  let prefixLength = 0;
+  while (
+    prefixLength < before.length
+    && prefixLength < after.length
+    && before[prefixLength] === after[prefixLength]
+  ) prefixLength++;
 
-/** @param {string} root @param {string} relKey @param {Record<string,string>} glyphs */
-function writeSnapshotEntry(root, relKey, glyphs) {
-  const snap = readSnapshot(root);
-  snap[relKey] = { glyphs, updated_at: new Date().toISOString() };
-  const ordered = {};
-  for (const k of Object.keys(snap).sort()) ordered[k] = snap[k];
-  fs.mkdirSync(path.dirname(snapshotPath(root)), { recursive: true });
-  fs.writeFileSync(snapshotPath(root), `${JSON.stringify(ordered, null, 2)}\n`);
+  let suffixLength = 0;
+  while (
+    suffixLength < before.length - prefixLength
+    && suffixLength < after.length - prefixLength
+    && before[before.length - 1 - suffixLength] === after[after.length - 1 - suffixLength]
+  ) suffixLength++;
+
+  return {
+    before: before.slice(prefixLength, before.length - suffixLength),
+    after: after.slice(prefixLength, after.length - suffixLength),
+  };
 }
 
 /** @param {string[]} argv */
@@ -114,13 +127,52 @@ function run(args) {
     process.stderr.write(`[FAIL] file not found: ${args.file}\n`);
     return 2;
   }
+  const root = path.resolve(args.root);
+  const relKey = path.relative(root, file).split(path.sep).join('/');
   const content = fs.readFileSync(file, 'utf8');
   const parsed = parseTasks(content, { path: file });
-  const relKey = path.relative(args.root, file).split(path.sep).join('/');
+  if (parsed.boardIssue) {
+    if (args.cmd === 'parse' && args.json) {
+      process.stdout.write(`${JSON.stringify({
+        tasks: parsed.tasks,
+        warnings: parsed.warnings,
+        boardIssue: parsed.boardIssue,
+        diagnosticTaskLines: parsed.diagnosticTaskLines,
+      }, null, 2)}\n`);
+    } else {
+      process.stderr.write(`[FAIL] ${parsed.boardIssue}\n`);
+      if (args.cmd === 'parse') {
+        for (const diagnostic of parsed.diagnosticTaskLines) {
+          process.stderr.write(`[DIAG] line ${diagnostic.line}: ${diagnostic.text}\n`);
+        }
+      }
+    }
+    return 2;
+  }
+  if (args.write && !/^\.dude\/specs\/[^/]+\/tasks\.md$/.test(relKey)) {
+    process.stderr.write('[FAIL] writes require .dude/specs/<feature>/tasks.md\n');
+    return 2;
+  }
+  if (args.write) {
+    try {
+      resolveMutationPath(root, relKey);
+      resolveMutationPath(root, WORKSPACE_PATHS.TASK_STATE);
+    } catch (error) {
+      process.stderr.write(`[FAIL] ${error instanceof Error ? error.message : String(error)}\n`);
+      return 2;
+    }
+    const cur = readTaskState(root);
+    if (cur.status === 'corrupt') {
+      process.stderr.write(`[FAIL] corrupt task-state snapshot: ${cur.reason}\n`);
+      return 2;
+    }
+  }
 
   switch (args.cmd) {
     case 'parse': {
-      if (args.json) process.stdout.write(`${JSON.stringify({ tasks: parsed.tasks, warnings: parsed.warnings }, null, 2)}\n`);
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify({ tasks: parsed.tasks, warnings: parsed.warnings }, null, 2)}\n`);
+      }
       else {
         for (const t of parsed.tasks) process.stdout.write(`[${t.glyph}] ${t.id} ${t.description}\n`);
         for (const w of parsed.warnings) process.stdout.write(`[WARN] ${w}\n`);
@@ -148,7 +200,7 @@ function run(args) {
       }
       if (args.write) {
         fs.writeFileSync(file, rendered);
-        writeSnapshotEntry(args.root, relKey, glyphsOf(parseTasks(rendered)));
+        upsertTaskStateEntry(root, relKey, glyphsOf(parseTasks(rendered)));
         process.stdout.write(`[OK] rendered board in ${args.file}\n`);
         return 0;
       }
@@ -169,13 +221,18 @@ function run(args) {
       }
       if (args.write) {
         fs.writeFileSync(file, result.content);
-        writeSnapshotEntry(args.root, relKey, glyphsOf(parseTasks(result.content)));
+        upsertTaskStateEntry(root, relKey, glyphsOf(parseTasks(result.content)));
         process.stdout.write(`[OK] ${args.id} set to "${args.state}" in ${args.file}\n`);
         return 0;
       }
-      const before = content.split('\n')[result.task.headerLine];
-      const after = result.content.split('\n')[result.task.headerLine];
-      process.stdout.write(`- ${before}\n+ ${after}\n(dry run; pass --write to apply)\n`);
+      const afterParsed = parseTasks(result.content, { path: file });
+      const changed = changedSpan(
+        taskUnitLines(parsed, result.task.id),
+        taskUnitLines(afterParsed, result.task.id),
+      );
+      for (const line of changed.before) process.stdout.write(`- ${line}\n`);
+      for (const line of changed.after) process.stdout.write(`+ ${line}\n`);
+      process.stdout.write('(dry run; pass --write to apply)\n');
       return 0;
     }
     case 'apply-states': {
@@ -194,7 +251,7 @@ function run(args) {
       const result = applyStates(parsed, statesMap);
       if (args.write) {
         fs.writeFileSync(file, result.content);
-        writeSnapshotEntry(args.root, relKey, glyphsOf(parseTasks(result.content)));
+        upsertTaskStateEntry(root, relKey, glyphsOf(parseTasks(result.content)));
         process.stdout.write(`[OK] applied ${result.applied.length} state(s) in ${args.file}\n`);
       } else {
         process.stdout.write(`${result.applied.length} state(s) would change (dry run; pass --write)\n`);
@@ -203,7 +260,12 @@ function run(args) {
       return 0;
     }
     case 'diff': {
-      const snap = readSnapshot(args.root)[relKey]?.glyphs;
+      const cur = readTaskState(root);
+      if (cur.status === 'corrupt') {
+        process.stderr.write(`[FAIL] corrupt task-state snapshot: ${cur.reason}\n`);
+        return 2;
+      }
+      const snap = cur.status === 'ok' ? cur.state[relKey]?.glyphs : undefined;
       const d = diffAgainstSnapshot(parsed, snap);
       if (args.json) process.stdout.write(`${JSON.stringify(d, null, 2)}\n`);
       else if (!d.baseline) process.stdout.write('(no snapshot baseline yet)\n');
@@ -231,4 +293,4 @@ if (isMainModule(import.meta.url, process.argv[1])) {
   process.exit(run(parseArgs(process.argv.slice(2))));
 }
 
-export { run, parseArgs, readSnapshot, writeSnapshotEntry, snapshotPath };
+export { run, parseArgs };

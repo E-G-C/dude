@@ -25,26 +25,41 @@ feature as long as you provide the desired outcome and any hard constraints.
 
 The minimum useful setup is:
 
-- copy `.github/` into the target repository (and `library/` if you want to install optional packs)
+- unpack the released bundle at the repository root so `.github/` engine files and seeded `.dude/metadata/` both land in place (and copy `library/` only when you vendor the optional pack catalog)
 - optionally install packs you need with `@dude add pack <name>`
 - optionally remember one to three durable constraints
-- start with `@dude draft <feature>`
-- once `@dude define <feature>` completes, the easiest way to continue is `@dude work <feature>` — it runs the next few ready tasks in whichever execution lane is live and stops on the first natural boundary (see [Optional Continuous Work](workflow.md#optional-continuous-work))
+- start with `@dude brainstorm <idea>`; it writes one flat
+  `.dude/ideas/<slug>.md` file and no spec package
+- run `@dude define <slug>` when the idea is ready, then use
+  `@dude work <feature>` to run the next few ready tasks in whichever execution
+  lane is live and stop on the first natural boundary (see
+  [Optional Continuous Work](workflow.md#optional-continuous-work))
+
+The lifecycle is `brainstorm -> idea -> define -> spec -> work`. Brainstorm and
+define are distinct; definition never starts implicitly during intake.
+
+New installs already seed an inventory-backed empty profile and do not need any
+profile conversion. Current bundles use
+`.dude/metadata/bundle-manifest.md` as the sole manifest and record installed
+pack files in the seeded profile's versioned inventory.
 
 If you are not sure which artifact is live after any step, run `@dude status`.
-In Definition Only it points you back to the current brief file or
+In Definition Only it points you back to the current idea file or
 generated package; in Lightweight Execution it points to `tasks.md` and the
 generated board view there; after tracked execution starts, it also reports
 Beads state.
 
 ### Editing rule of thumb
 
-- Read `## User Draft`, edit it if needed, answer the `**Your answer:**` slots
-  in `## Open Questions`, and update `## Assumptions` only when overriding a
-  default in `brief/<slug>.md`.
-- Leave `status:`, `spec_path:`, and `## Coordinator Log` to Dude.
+- Read the user-controlled `## Idea`, edit it if needed, answer the
+  `**Your answer:**` slots in the immediately following `## Open Questions`,
+  and update `## Assumptions` or `## Deferred Clarifications` when needed in
+  `.dude/ideas/<slug>.md`.
+- Leave managed `## Normalized Intent`, `## Constraints`, and
+  `## Definition Checklist` sections, `status:`, the exact `spec_path:`, and
+  the append-only `## Coordinator Log` to Dude.
 - Leave any generated board region in `tasks.md` to Dude.
-- Refresh generated artifacts with `@dude define <feature>` instead of
+- Refresh generated artifacts with `@dude define <slug>` instead of
   hand-maintaining `spec.md`, `plan.md`, or `tasks.md`.
 - On Windows tracked execution, switch to the manual Dolt server-mode path as
   soon as plain `bd init` shows embedded-Dolt or CGO problems.
@@ -64,7 +79,7 @@ incrementally as they emerge.
 Depending on current project guardrails, `@dude define` either completes the
 package immediately or pauses briefly to ask whether inferred rules should be
 accepted. This is normal. Reply `accept`, `edit`, `reject`, or `skip`; rerun
-`@dude define <feature>` later if you leave and come back.
+`@dude define <slug>` later if you leave and come back.
 
 ### Guardrails explained
 
@@ -74,7 +89,7 @@ accessibility expectations, or security rules such as never logging secrets.
 
 If `@dude define` pauses for guardrails, the workflow is waiting for approval,
 not failing. Accept, edit, reject, or skip the proposed rules in the same
-conversation, or rerun `@dude define <feature>` later to resume from that
+conversation, or rerun `@dude define <slug>` later to resume from that
 checkpoint. `skip` means continue with bundle defaults only and do not add new
 project-specific guardrails for that pause. In clearly solo or exploratory
 repos, the inferred candidate set should usually stay short, and `skip` is a
@@ -82,15 +97,23 @@ normal response when bundle defaults are enough. If no project-specific
 guardrails are inferred beyond bundle defaults, definition should continue
 without a separate pause.
 
+Informal, typo-heavy, dictated, or speech-to-text input is valid during
+brainstorm. Initial capture may conservatively clean clear spelling, grammar,
+punctuation, transcription, filler, and repetition problems while preserving
+meaning, tone, uncertainty, incomplete thought, and creative intent. Later
+brainstorm reruns preserve `## Idea`, answered questions, assumptions, and user
+edits unless you provide or request a revision. When intent changes after
+definition, edit `## Idea` and rerun `@dude define <slug>`.
+
 ### Advanced setup
 
 If you already know durable project guardrails or want to seed bundle memory
 more deliberately from day one:
 
-- add a few real project guardrails to `.github/dudestuff/guardrails.md`
-- capture durable decisions in `.github/dudestuff/decisions.md` as they are made
-- capture important domain facts in `.github/dudestuff/context.md`
-- capture repeated solved patterns in `.github/dudestuff/lessons.md`
+- add a few real project guardrails to `.dude/memory/guardrails.md`
+- capture durable decisions in `.dude/memory/decisions.md` as they are made
+- capture important domain facts in `.dude/memory/context.md`
+- capture repeated solved patterns in `.dude/memory/lessons.md`
 
 More example prompts:
 
@@ -101,7 +124,7 @@ More example prompts:
 
 ### Optional: customize the roster after your first feature
 
-Once you have completed your first successful `draft -> define` loop, you can
+Once you have completed your first successful `brainstorm -> define` loop, you can
 prune agents that do not fit your project. For example, if you installed the
 web pack on a backend-only project:
 
@@ -117,7 +140,7 @@ update its routing automatically. The Dynamic Roster Rule in
 
 If you are using Dude solo, you can keep the default roster for the first
 feature or remove roles you do not want after the first successful
-`draft -> define` loop:
+`brainstorm -> define` loop:
 
 ```text
 @dude remove the tester agent
@@ -129,7 +152,7 @@ still uses `dude-verification-before-completion` before close, but it does not
 require a separate solo-only workflow or command surface.
 
 If you are only using Dude for feature definition, you can stop at the
-`specs/<feature>/` package. Tracked-execution rules (from the beads pack) apply
+  `.dude/specs/<feature>/` package. Tracked-execution rules (from the beads pack) apply
 only once you install it, choose tracked execution, and import tasks.
 
 ## Operational Skills
@@ -144,8 +167,8 @@ Dude includes explicit operational skills for common failure modes:
   reflexively
 - `dude-lint` — static validator for the bundle itself, run on Node
   (`node .github/skills/dude-lint/lint.mjs`). Other skills load it as their final
-  verification step after writing brief, definition, agent, skill,
-  memory, or task files. See [Validating bundle hygiene](commands.md#validating-bundle-hygiene)
+  verification step after writing idea, definition, agent, skill, memory, or
+  task files. See [Validating bundle hygiene](commands.md#validating-bundle-hygiene)
   for direct invocation.
 - `dude-bundle-import` — import a single agent or skill from an external
   repository with an explicit adaptation report and per-category confirmation
@@ -162,9 +185,9 @@ TDD requirement.
 
 ## Workflow Boundaries
 
-Dude focuses on file-based feature intake under `brief/<slug>.md`,
-native feature definition under `specs/<feature>/`, and tracked execution in
-Beads.
+Dude focuses on pre-spec collaboration under `.dude/ideas/<slug>.md`, native
+feature definition under `.dude/specs/<feature>/`, and optional tracked
+execution in Beads.
 
 ### Worktrees are optional, not part of the core workflow
 

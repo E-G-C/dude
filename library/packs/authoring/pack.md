@@ -3,7 +3,7 @@ name: authoring
 description: "Bundle-authoring specialists — expert smiths for creating agents, skills, instructions, prompts, and packs. Dev tooling for building and maintaining Dude bundles."
 provides:
   agents: [dude-pack-authoring-agent-smith, dude-pack-authoring-instruction-smith, dude-pack-authoring-pack-smith, dude-pack-authoring-prompt-smith, dude-pack-authoring-skill-smith]
-  skills: [dude-pack-authoring-instruction-conventions, dude-pack-authoring-pack-conventions, dude-pack-authoring-prompt-conventions]
+  skills: [dude-pack-authoring-instruction-conventions, dude-pack-authoring-pack-conventions, dude-pack-authoring-prompt-audit, dude-pack-authoring-prompt-conventions]
 requires:
   tools: []
 hooks: []
@@ -29,6 +29,10 @@ Five focused smiths, each an expert in one artifact type:
 - `dude-pack-authoring-prompt-smith` — `.prompt.md` files (reusable task prompts).
 - `dude-pack-authoring-pack-smith` — packs (`pack.md` manifest, provides/
   requires/hooks, namespacing, compose/release mechanics).
+- `dude-pack-authoring-prompt-audit` — deterministic, read-only static source
+  footprint audits, optional SHA-pinned tokenizer result data, and strict
+  complete-envelope comparisons. Its test suite stays outside the installable
+  skill directory.
 
 Backed by convention skills for the artifact types that have no core equivalent:
 instruction, prompt, and pack authoring. The agent and skill smiths lean on the

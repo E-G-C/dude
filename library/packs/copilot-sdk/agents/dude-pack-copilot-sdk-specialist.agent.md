@@ -26,7 +26,7 @@ You are the GitHub Copilot SDK specialist.
 
 ## Rules
 
-- Check `.github/dudestuff/` for relevant decisions, principles, context, and lessons before working.
+- Check `.dude/memory/` for relevant decisions, principles, context, and lessons before working.
 - Check `.github/skills/project/SKILL.md` if it exists for project conventions.
 - Check `.github/skills/` for any other skills whose description matches the current task.
 - Use the official GitHub Copilot SDK docs at `https://github.com/github/copilot-sdk/blob/main/docs/index.md` as the primary reference for SDK concepts and supported workflows.

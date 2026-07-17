@@ -5,7 +5,7 @@ description: "Use when the user wants to upgrade the Dude bundle itself, pull th
 
 # Bundle Upgrade
 
-Pull the newest base Dude bundle from its source repo and overlay it onto this project, replacing only base-owned engine files (default agents, default skills, and the bundle instructions under `.github/`). Preserve everything project-local: project memory, project skills, project-custom agents and skills, `.github/copilot-instructions.md`, root files, repository docs, and all work state under `brief/`, `specs/`, and Beads.
+Pull the newest base Dude bundle from its source repo and overlay it onto this project, replacing only base-owned engine files (default agents, default skills, and the bundle instructions under `.github/`). Preserve everything project-local: all project-specific ideas under `.dude/ideas/`, definition specs, memory, execution state, project skills, project-custom agents and skills, `.github/copilot-instructions.md`, root files, repository docs, and Beads. Only the upgrade-owned metadata exceptions named in [Boundaries](#boundaries) may change.
 
 Upgrades are preview-then-confirm. The `upgrade.mjs` script does the heavy lifting for status, plan, apply, and rollback; the LLM orchestrates the conversation, surfaces the report, and translates the user's confirmation phrase into the apply invocation. Nothing is written to the working tree before the user confirms the upgrade plan.
 
@@ -32,15 +32,14 @@ Accepted invocation forms:
 - `@dude upgrade --ref <branch|tag|sha>` — override the manifest-pinned ref.
 - `@dude upgrade --source <url-or-local-path>` — override the source repo for this run.
 - `@dude upgrade --rollback` — restore from the most recent pre-upgrade safety tag.
-- `@dude upgrade --allow-dirty` — proceed even when the working tree has uncommitted changes (default is to refuse).
 
 ### Release channel
 
-The manifest `source_ref` is an upgrade channel. Released bundles are seeded with the sentinel `latest`, which resolves to the newest **stable** `vX.Y.Z` tag (pre-releases like `v1.0.0-rc1` are ignored) on every run — so `@dude upgrade` moves the bundle between published releases rather than tracking a moving branch. A concrete `vX.Y.Z` pins to one release, and a branch name (e.g. `main`) tracks that branch's HEAD. Use `--ref` to override the channel for a single run. When the channel is `latest` but no release tags exist yet, `status` reports "no releases published yet" and `plan`/`apply` decline with nothing to do.
+The manifest `source_ref` is an upgrade channel. For remote sources, released bundles use the sentinel `latest`, which resolves to the newest **stable** `vX.Y.Z` tag (pre-releases like `v1.0.0-rc1` are ignored) on every run. A concrete `vX.Y.Z` pins to one release, and a branch name such as `main` tracks that branch's HEAD. A local-path source must use an explicit branch or tag; `latest` is rejected with that guidance. Use `--ref` to override the channel for a single run. When a remote `latest` channel has no release tags, `status` reports "no releases published yet" and `plan` declines with nothing to do.
 
 ## Script Contract
 
-The `upgrade.mjs` engine handles fetch, classification, and reporting. The LLM never re-derives this work. It runs on Node (>= 20 LTS) and shares the namespace/ownership classifier in `.github/skills/dude-engine/lib/ownership.mjs` with `dude-lint`.
+The `upgrade.mjs` engine handles fetch, classification, validation, and reporting. The LLM never re-derives this work. It runs on Node (>= 20 LTS) and shares the namespace/ownership classifier in `.github/skills/dude-engine/lib/ownership.mjs` with `dude-lint`. `plan` emits a canonical schema-v1 authorization envelope; `apply` validates that exact envelope and executes its persisted buckets without reclassification.
 
 ### Subcommands
 
@@ -58,8 +57,8 @@ Invocation (Node >= 20 LTS):
 node .github/skills/dude-bundle-upgrade/upgrade.mjs status   --format json
 node .github/skills/dude-bundle-upgrade/upgrade.mjs plan     --format json [--ref <r>] [--source <s>] [--out <path>]
 node .github/skills/dude-bundle-upgrade/upgrade.mjs apply    --plan <id|path> --confirm confirm-upgrade \
-        [--skip-removals] [--allow-dirty] [--format text|json]
-node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback [--tag <name>] [--allow-dirty] [--format text|json]
+  [--skip-removals] [--format text|json]
+node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback [--tag <name>] [--format text|json]
 ```
 
 `apply` does not push or merge. It leaves the upgrade commit on a local `chore/dude-upgrade-<short-sha>` branch for the user to review and merge themselves. The `--confirm` value is the literal token `confirm-upgrade`; the LLM maps the user-facing phrase `confirm upgrade [skip-removals]` into the corresponding flag combination.
@@ -87,19 +86,45 @@ node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback [--tag <name>] [--a
 }
 ```
 
-`status` compares the locally recorded `installed_ref` against the newest release tag resolved from the source. For the `latest` channel it lists release tags with `git ls-remote --tags <source>` (remote) or `git tag` (local path) and picks the highest stable `vX.Y.Z`; a pinned `vX.Y.Z` or branch ref is compared by name. When the channel is `latest` but no release tag exists yet, it reports `no releases published yet`. The status command does not classify file deltas; run `plan` for the full per-file picture.
+`status` compares the locally recorded `installed_ref` against the selected remote release or literal ref. For a remote `latest` channel it lists release tags with `git ls-remote --tags <source>` and picks the highest stable `vX.Y.Z`; a pinned tag or branch is compared by name. Local paths reject `latest` and require an explicit branch or tag. The status command does not classify file deltas; run `plan` for the full per-file picture.
 
 `plan` JSON:
 
 ```json
 {
-  "plan_id": "<ts>-<from>-<to>",
+  "kind": "dude-upgrade-plan",
+  "schema_version": 1,
+  "plan_id": "<ts>-<from>-<to>-<random-suffix>",
   "created_at": "<iso-8601>",
   "ttl_warn_at": "<created+1h>",
   "ttl_expire_at": "<created+24h>",
-  "source": "...", "ref": "...",
+  "scope": {
+    "identity_scope": "same-host-filesystem",
+    "workspace_path": "<absolute-path>",
+    "workspace_realpath": "<absolute-realpath>",
+    "workspace_identity": { "device": "<decimal>", "inode": "<decimal>" }
+  },
+  "source": {
+    "type": "local-path|git-remote",
+    "location": "<selected-source>",
+    "identity": "<source-realpath-or-remote-origin>",
+    "requested_ref": "<requested-ref>",
+    "resolved_ref": "<resolved-ref>",
+    "resolved_commit": "<git-commit>"
+  },
   "from_ref": "...", "to_ref": "...",
-  "cache_dir": "<absolute-path-of-fetched-upstream-tree>",
+  "cache": {
+    "root_path": "<absolute-path>",
+    "root_realpath": "<absolute-realpath>",
+    "root_identity": { "device": "<decimal>", "inode": "<decimal>" },
+    "manifest": { "path": ".dude/metadata/bundle-manifest.md", "type": "file", "sha256": "<sha256>" },
+    "inventory": [{ "path": "<core-path>", "type": "file", "sha256": "<sha256>" }]
+  },
+  "local": {
+    "manifest": { "path": ".dude/metadata/bundle-manifest.md", "state": "<expected-state>", "data": "<exact-values>" },
+    "upgrade_log": { "path": ".dude/metadata/upgrade-log.md", "state": "<expected-state>" },
+    "core_inventory": [{ "path": "<core-path>", "state": "<expected-state>" }]
+  },
   "summary": {
     "replace": N, "add": N, "remove": N,
     "advisory": N, "up_to_date": N
@@ -108,12 +133,16 @@ node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback [--tag <name>] [--a
     "replace":  [{"path","added_lines","removed_lines"}],
     "add":      [{"path"}],
     "remove":   [{"path"}],
-    "advisory": [{"path","kind"}]
-  }
+    "advisory": [{"path","kind"}],
+    "up_to_date": [{"path"}]
+  },
+  "digest": "<sha256-of-all-fields-except-digest>"
 }
 ```
 
-Plans are persisted to `$TMPDIR/dude-upgrade-cache/plans/<plan_id>.json` so a later `apply` can re-validate them. Plans carry a TTL (`ttl_warn_at` at +1h, `ttl_expire_at` at +24h); `apply` refuses an expired plan and requires a fresh `plan` invocation.
+An expected mutation state is either `{ "type": "missing" }` or a regular-file record containing its SHA-256. All operation and inventory arrays use canonical code-unit path ordering.
+
+Plans are persisted to `$TMPDIR/dude-upgrade-cache/plans/<plan_id>.json` so a later `apply` can validate the exact reviewed state. Plan IDs include a cryptographically random suffix, and persistence uses exclusive creation with bounded collision retries; existing plan bytes are never overwritten. `--out` is also exclusive and refuses an existing destination. Plans carry a TTL (`ttl_warn_at` at +1h, `ttl_expire_at` at +24h); `apply` refuses an expired plan and requires a fresh `plan` invocation. Older plan schemas are unsupported and must be recreated with the current engine.
 
 ## Workflow
 
@@ -127,7 +156,7 @@ Run `upgrade.mjs plan --format json` (pass `--ref` / `--source` if the user prov
 
 Summarize the plan for the user using the `summary` counts plus a short bulleted list per non-empty bucket. Show file paths. For `replace` entries, include `[+a / -b]` line stats from `added_lines` / `removed_lines`.
 
-If the exit code was 0 and the summary is empty, report "Already up to date" and stop without creating a safety net.
+An empty file-operation summary is a true no-op only when the planned `source_repo`, `source_ref`, and `installed_ref` values already equal the current manifest values. When those values differ, `plan` exits 10 and `apply` performs the reviewed metadata manifest, log, branch, and commit transition even though Add/Replace/Remove are empty. A true no-op apply still requires confirmation and validates all reviewed evidence; it returns without creating a safety tag, branch, log entry, manifest write, or target write.
 
 If `--dry-run`, stop here.
 
@@ -150,7 +179,7 @@ The script does the entire write phase in one invocation. Translate the user's c
 ```bash
 node .github/skills/dude-bundle-upgrade/upgrade.mjs apply \
     --plan <plan_id-or-path> --confirm confirm-upgrade \
-    [--skip-removals] [--allow-dirty] \
+  [--skip-removals] \
     [--format text|json]
 ```
 
@@ -163,15 +192,17 @@ Mapping from user-facing phrase to flags:
 
 In one pass the script:
 
-1. Re-validates the plan: matches `from_ref` against the current local `installed_ref`, confirms the cache directory still exists, refuses an expired plan.
-2. Refuses a dirty working tree unless `--allow-dirty` was passed.
-3. Re-classifies the upstream tree to refresh the bucket counts (defensive against stale plans).
-4. Creates safety tag `dude-pre-upgrade-<YYYYMMDD-HHMMSS>` at current HEAD and switches to branch `chore/dude-upgrade-<to-ref>` (timestamp suffix on collision).
+1. Requires the literal confirmation token, then validates canonical serialization, schema version, digest, timestamps, and expiry.
+2. Requires a clean Git working tree. It validates workspace identity, every path, the exact local manifest bytes and values, the reviewed upgrade-log state, each local core path's expected SHA-256 or missing state, source identity, requested/resolved ref and concrete commit, cache identity, upstream manifest bytes, and every cached core path/type/SHA-256 before the first tag, branch, checkout, log, manifest, or content mutation. Literal refs must resolve exactly; remote `latest` must resolve to the recorded stable tag; local-path `latest` is unsupported.
+3. Retains the validated cached Add/Replace bytes and consumes the persisted Add, Replace, and Remove buckets directly. It never calls classification during apply. `--skip-removals` defers only the persisted Remove bucket, which is still fully validated.
+4. Creates safety tag `dude-pre-upgrade-<YYYYMMDD-HHMMSS>` at current HEAD and switches to branch `chore/dude-upgrade-<to-ref>` (timestamp suffix on collision). Git hooks are disabled only for this upgrade-owned branch checkout and the final upgrade commit.
 5. Applies file ops: Add (copy in), Replace (overwrite), Remove (delete unless `--skip-removals`).
-6. Rewrites the fenced JSON block in `.github/dudestuff/bundle-manifest.md`, preserving the surrounding markdown. Updates `source_repo`, `source_ref`, and `installed_ref`. The manifest is metadata only — there is no `files` array to refresh.
-7. Appends a structured entry to `.github/dudestuff/upgrade-log.md` matching its Entry shape.
+6. Rewrites the fenced JSON block in `.dude/metadata/bundle-manifest.md`, preserving the surrounding markdown. Updates `source_repo`, `source_ref`, and `installed_ref`. The manifest is metadata only — there is no `files` array to refresh.
+7. Appends a structured entry to `.dude/metadata/upgrade-log.md` matching its Entry shape.
 8. Runs `node .github/skills/dude-lint/lint.mjs` and patches the lint result into the just-written log entry.
-9. Stages the manifest, log, and every touched path; commits on the upgrade branch with message `chore: upgrade Dude bundle to <to-ref>`. Does not push, merge, or modify remote state.
+9. Stages the persisted operation paths actually written plus manifest/log, excludes skipped removals, and commits with message `chore: upgrade Dude bundle to <to-ref>`. It does not push, merge, or modify remote state.
+
+If an ordinary operation fails after mutation begins, report the failure and the created safety tag and upgrade branch. Recovery relies on those Git boundaries; the workflow does not promise byte-perfect restoration of arbitrary working-tree state.
 
 On `lint = [FAIL]` the script exits 40 and prints the suggested `rollback --tag <safety_tag>` command.
 
@@ -191,12 +222,12 @@ Relay the apply output to the user:
 `@dude upgrade --rollback` maps to:
 
 ```bash
-node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback [--tag <name>] [--allow-dirty] [--format text|json]
+node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback [--tag <name>] [--format text|json]
 ```
 
 The script:
 
-1. Refuses a dirty working tree unless `--allow-dirty`.
+1. Refuses a dirty working tree.
 2. Selects the most recent `dude-pre-upgrade-*` tag (or the one passed via `--tag`).
 3. Runs `git reset --hard <tag>` on the current branch.
 4. Appends a rollback entry to `upgrade-log.md` (left uncommitted; the user decides whether to commit or discard it).
@@ -234,11 +265,12 @@ Classification is done by **byte comparison** of local disk content vs the fetch
 ## Boundaries
 
 - Never auto-push, auto-merge, or modify remote state. The upgrade branch is the deliverable; merging is a user action.
-- Never delete or modify any file under `.github/dudestuff/` except the upgrade-owned `bundle-manifest.md` and `upgrade-log.md`.
+- Never delete or modify `.dude/` project state except the upgrade-owned `.dude/metadata/bundle-manifest.md` and `.dude/metadata/upgrade-log.md`. All project-specific ideas under `.dude/ideas/` are preserved through every upgrade.
 - Never delete or modify `.github/skills/project/`.
 - Never modify `.github/copilot-instructions.md`.
-- Never touch `brief/`, `specs/`, Beads, or product source.
-- Never run upgrade on a dirty working tree without explicit `--allow-dirty`. When `--allow-dirty` is used, uncommitted local changes are interleaved with upgrade writes; a subsequent unpublished rollback may `git reset --hard` to the safety tag and discard those uncommitted changes.
+- Never touch `.dude/ideas/`, `.dude/specs/`, `.dude/memory/`, `.dude/state/`, Beads, or product source.
+- Never apply or roll back on a dirty working tree. Commit or stash changes first.
+- Path containment and symbolic-link checks assume a locally controlled workspace without concurrent hostile mutation. They detect observed drift but do not claim race-free protection from adversarial transient replacement.
 - Never proceed past the confirmation gate without an explicit confirmation token.
 - Never recurse into transitive bundle composition (one upgrade pulls one upstream bundle).
 
@@ -247,15 +279,20 @@ Classification is done by **byte comparison** of local disk content vs the fetch
 The script enforces these; the LLM does not need to re-check:
 
 - `git` is installed and the project root is inside a git working tree. The upgrade workflow uses git for safety tags, branches, rollback, and pre-overwrite drift detection; non-git projects must run `git init` before upgrading.
-- `.github/dudestuff/bundle-manifest.md` exists, parses, and uses the exact metadata shape (`source_repo`, `source_ref`, `installed_ref`).
-- Upstream tree must contain `.github/agents/`, `.github/skills/dude-lint/`, `.github/instructions/dude.instructions.md`, and `.github/dudestuff/bundle-manifest.md`.
+- `.dude/metadata/bundle-manifest.md` is the sole manifest; it exists locally, parses, and uses the exact metadata shape (`source_repo`, `source_ref`, `installed_ref`).
+- Upstream tree must contain `.github/agents/`, `.github/skills/dude-lint/`, `.github/instructions/dude.instructions.md`, and `.dude/metadata/bundle-manifest.md`. No old-path fallback is accepted.
 - Upstream manifest must use the same exact metadata shape.
 
-For local-path upstream sources, the source directory must carry its own seeded `bundle-manifest.md` and be a git repo; release tags are read from it with `git tag`. Local sources without a seeded manifest are refused.
+For local-path upstream sources, the source directory must carry its own canonical seeded `bundle-manifest.md`, be a git repo, and use an explicit branch or tag. Local `latest` and local sources without canonical seeded metadata are refused.
+
+This is forward-only. A pre-`.dude` upgrader cannot consume a current release
+directly. Recovery is to install or copy a current bundle engine, or reinstall
+the current bundle while preserving project data. Older project state requires
+external or manual recovery; there is no in-bundle migration workflow.
 
 ## Manifest Shape
 
-`.github/dudestuff/bundle-manifest.md` contains a single fenced JSON block. The manifest is **metadata only**: it carries the upstream source pin and the installed version, and nothing else.
+`.dude/metadata/bundle-manifest.md` contains a single fenced JSON block. The manifest is **metadata only**: it carries the upstream source pin and the installed version, and nothing else.
 
 ```json
 {

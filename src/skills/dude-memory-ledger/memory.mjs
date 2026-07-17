@@ -2,7 +2,7 @@
 // @ts-check
 /**
  * memory.mjs — consistent append + supersede-scan for the Dude memory ledger
- * files under `.github/dudestuff/` (decisions / guardrails / context / lessons).
+ * files under `.dude/memory/` (decisions / guardrails / context / lessons).
  *
  * Appends one bullet entry, but first scores token-overlap against existing
  * entries so a near-duplicate is refused (not silently duplicated), and warns
@@ -22,11 +22,34 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeString } from '../dude-engine/lib/text.mjs';
 import { overlapScore, rankOverlap } from '../dude-engine/lib/text-analysis.mjs';
+import {
+  WORKSPACE_PATHS,
+  normalizeWorkspacePath,
+  resolveMutationPath,
+} from '../dude-engine/lib/workspace-paths.mjs';
 
 /** A new entry at or above this overlap with an existing one is a near-duplicate. */
 export const DUP_THRESHOLD = 0.8;
 /** Files with at least this many entries get a consolidation warning. */
 export const CONSOLIDATE_AT = 20;
+const MEMORY_FILES = new Set(['decisions.md', 'guardrails.md', 'context.md', 'lessons.md']);
+
+/**
+ * @param {string} file
+ * @param {string} root
+ * @returns {{ ok: boolean, error?: string }}
+ */
+export function validateMemoryTarget(file, root = process.cwd()) {
+  const relative = normalizeWorkspacePath(path.relative(path.resolve(root), path.resolve(file)));
+  const match = /^\.dude\/memory\/([^/]+)$/.exec(relative);
+  if (!match || !MEMORY_FILES.has(match[1])) {
+    return {
+      ok: false,
+      error: `memory writes must target ${WORKSPACE_PATHS.MEMORY_DIR}/{decisions,guardrails,context,lessons}.md`,
+    };
+  }
+  return { ok: true };
+}
 
 /**
  * Extract top-level bullet entries (`- ...` / `* ...`) from a memory file.
@@ -73,11 +96,30 @@ export function analyzeAppend(content, text) {
 }
 
 /**
- * @param {{ file: string, text: string, force?: boolean, check?: boolean }} opts
+ * @param {{ file: string, text: string, force?: boolean, check?: boolean, root?: string }} opts
  * @returns {{ ok: boolean, code: number, warnings: string[], wrote: boolean, error?: string }}
  */
-export function appendToFile({ file, text, force = false, check = false }) {
-  const content = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+export function appendToFile({ file, text, force = false, check = false, root = process.cwd() }) {
+  const target = validateMemoryTarget(file, root);
+  if (!check && !target.ok) {
+    return { ok: false, code: 2, warnings: [], wrote: false, error: target.error };
+  }
+  let mutationFile = path.resolve(file);
+  if (!check) {
+    try {
+      const relative = normalizeWorkspacePath(path.relative(path.resolve(root), mutationFile));
+      mutationFile = resolveMutationPath(root, relative);
+    } catch (error) {
+      return {
+        ok: false,
+        code: 2,
+        warnings: [],
+        wrote: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  const content = fs.existsSync(mutationFile) ? fs.readFileSync(mutationFile, 'utf8') : '';
   const { entryCount, overlaps, maxScore } = analyzeAppend(content, text);
   /** @type {string[]} */
   const warnings = [];
@@ -100,8 +142,8 @@ export function appendToFile({ file, text, force = false, check = false }) {
     };
   }
 
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, appendEntry(content, text));
+  fs.mkdirSync(path.dirname(mutationFile), { recursive: true });
+  fs.writeFileSync(mutationFile, appendEntry(content, text));
   return { ok: true, code: 0, warnings, wrote: true };
 }
 
@@ -153,7 +195,7 @@ function main() {
     process.stderr.write('[FAIL] no entry text (use --text "..." or --from-stdin)\n');
     process.exit(1);
   }
-  const r = appendToFile({ file: args.file, text, force: args.force, check: args.check });
+  const r = appendToFile({ file: args.file, text, force: args.force, check: args.check, root: process.cwd() });
   for (const w of r.warnings) process.stdout.write(`[WARN] ${w}\n`);
   if (!r.ok) {
     process.stderr.write(`[FAIL] ${r.error}\n`);

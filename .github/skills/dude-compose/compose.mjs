@@ -6,7 +6,7 @@
  *
  * This is core engine plumbing (the "lego baseplate"): it copies a pack's
  * `dude-pack-<name>-*` artifacts into `.github/`, records the install in
- * `.github/dudestuff/profile.md`, and removes exactly what it installed. The
+ * `.dude/metadata/profile.md`, and removes exactly what it installed. The
  * `dude-pack-*` namespace is preserved across `@dude upgrade`, so installed
  * packs survive core refreshes.
  *
@@ -24,9 +24,9 @@
  * Flags:
  *   --root <dir>      bundle root (default: cwd). `.github` lives at <root>/.github
  *   --library <dir>   pack catalog dir (default: <root>/library/packs)
- *   --source <repo>   upstream source for the add/list fetch fallback (default:
- *                     the bundle manifest's source_repo)
- *   --ref <ref>       upstream ref for the fetch fallback (default: manifest / main)
+ *   --source <repo>   upstream source for add/list (default: the
+ *                     bundle manifest's source_repo)
+ *   --ref <ref>       upstream ref for source resolution (default: manifest / main)
  *   --no-fetch        never fetch; require the pack in the local catalog
  *   --json            machine-readable output
  *   --force           overwrite existing destination files on add
@@ -41,14 +41,29 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { belongsToPack } from '../dude-engine/lib/ownership.mjs';
+import { normalizeAgentFrontmatter } from '../dude-engine/lib/agent-frontmatter.mjs';
+import {
+  PACK_NAME_RE,
+  PROFILE_INVENTORY_VERSION,
+  inventoryDigest,
+  parseProfileDocument,
+  resolveProfileArtifact,
+  validateProfile,
+} from '../dude-engine/lib/profile.mjs';
 import { normalizePath } from '../dude-engine/lib/text.mjs';
 import { resolveReleaseRef } from '../dude-engine/lib/release-channel.mjs';
+import {
+  WORKSPACE_PATHS,
+  resolveMutationPath,
+} from '../dude-engine/lib/workspace-paths.mjs';
 
-const PACK_NAME_RE = /^[a-z][a-z0-9-]*[a-z0-9]$/;
 const COPY_DIRS = ['agents', 'skills', 'instructions', 'prompts'];
 const CACHE_ROOT = path.join(os.tmpdir(), 'dude-compose-cache');
 
-/** @typedef {{ enabled_packs: string[], installed: Record<string, { files: string[], installed_at: string }> }} Profile */
+/** @typedef {{ path: string, kind: string, source: string, source_sha256: string, installed_sha256: string }} ProfileArtifact */
+/** @typedef {{ version: number, pack: string, source: { type: string, location: string, ref: string }, manifest_sha256: string, artifacts: ProfileArtifact[], digest: string }} PackInventory */
+/** @typedef {{ files: string[], installed_at: string, inventory?: PackInventory }} ProfileEntry */
+/** @typedef {{ enabled_packs: string[], installed: Record<string, ProfileEntry> }} Profile */
 
 /* ------------------------------------------------------------------ utils */
 
@@ -87,14 +102,20 @@ function ensureDir(dir) {
  * @param {string} dest
  */
 function copyRecursive(src, dest) {
-  if (isDir(src)) {
+  const stat = fs.lstatSync(src);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`refusing to copy symbolic link: ${src}`);
+  }
+  if (stat.isDirectory()) {
     ensureDir(dest);
     for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
       copyRecursive(path.join(src, entry.name), path.join(dest, entry.name));
     }
-  } else {
+  } else if (stat.isFile()) {
     ensureDir(path.dirname(dest));
     fs.copyFileSync(src, dest);
+  } else {
+    throw new Error(`refusing to copy unsupported filesystem entry: ${src}`);
   }
 }
 
@@ -127,11 +148,12 @@ function frontmatterName(text) {
  * @returns {string}
  */
 function profilePath(root) {
-  return path.join(root, '.github', 'dudestuff', 'profile.md');
+  return path.join(root, ...WORKSPACE_PATHS.PROFILE.split('/'));
 }
 
 /**
- * Read and parse the install profile. Missing/unparseable -> empty profile.
+ * Read and strictly validate the install profile. A missing profile represents
+ * a bundle with no installed packs; malformed content never does.
  * @param {string} root
  * @returns {Profile}
  */
@@ -140,35 +162,42 @@ function readProfile(root) {
   /** @type {Profile} */
   const empty = { enabled_packs: [], installed: {} };
   if (!exists(p)) return empty;
-  const text = fs.readFileSync(p, 'utf8');
-  const block = /```json\s*\r?\n([\s\S]*?)\r?\n```/.exec(text);
-  if (!block) return empty;
+  if (fs.lstatSync(p).isSymbolicLink()) throw new Error(`${WORKSPACE_PATHS.PROFILE} must not be a symbolic link`);
+  return parseProfileDocument(fs.readFileSync(p), { root });
+}
+
+/** @param {string} root @returns {{ profile: Profile } | { error: string }} */
+function loadProfile(root) {
   try {
-    const parsed = JSON.parse(block[1]);
-    return {
-      enabled_packs: Array.isArray(parsed.enabled_packs) ? parsed.enabled_packs : [],
-      installed: parsed.installed && typeof parsed.installed === 'object' ? parsed.installed : {},
-    };
-  } catch {
-    return empty;
+    return { profile: readProfile(root) };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
   }
 }
 
-/**
- * Serialize and write the profile as a stable, human-readable markdown file.
- * @param {string} root
- * @param {Profile} profile
- */
-function writeProfile(root, profile) {
-  const enabled = [...new Set(profile.enabled_packs)].sort();
-  /** @type {Record<string, { files: string[], installed_at: string }>} */
+/** @param {string} root @param {Profile} profile @returns {string} */
+function serializeProfile(root, profile) {
+  const validated = validateProfile(profile, { root });
+  const enabled = [...new Set(validated.enabled_packs)].sort();
+  /** @type {Record<string, ProfileEntry>} */
   const installed = {};
-  for (const name of Object.keys(profile.installed).sort()) {
-    const e = profile.installed[name];
-    installed[name] = { files: [...e.files].sort(), installed_at: e.installed_at };
+  for (const name of Object.keys(validated.installed).sort()) {
+    const entry = validated.installed[name];
+    installed[name] = {
+      files: [...entry.files].sort(),
+      installed_at: entry.installed_at,
+      ...(entry.inventory
+        ? {
+            inventory: {
+              ...entry.inventory,
+              artifacts: [...entry.inventory.artifacts].sort((first, second) => first.path.localeCompare(second.path)),
+            },
+          }
+        : {}),
+    };
   }
   const json = JSON.stringify({ enabled_packs: enabled, installed }, null, 2);
-  const body = `# Install Profile
+  return `# Install Profile
 
 This file records which optional **packs** from \`library/packs/\` are installed
 into this bundle's \`.github/\`. It is maintained by \`dude-compose\`
@@ -184,11 +213,49 @@ ${json}
 - \`enabled_packs\` — names of installed packs (sorted).
 - \`installed.<name>.files\` — the exact top-level destination paths written for
   that pack; \`remove\` deletes precisely these.
+- \`installed.<name>.inventory\` — the versioned source identity, manifest hash,
+  and per-artifact source/install hashes used to validate removal without a
+  local catalog. Ambiguous legacy entries fail closed.
 - Installed pack artifacts use the \`dude-pack-<name>-*\` namespace, which
   \`@dude upgrade\` preserves across core refreshes.
 `;
-  ensureDir(path.dirname(profilePath(root)));
-  fs.writeFileSync(profilePath(root), body);
+}
+
+/** @param {string} root @param {string} relPath @param {string} body */
+function writeProfileDocumentAt(root, relPath, body) {
+  const target = resolveMutationPath(root, relPath);
+  ensureDir(path.dirname(target));
+  const nonce = `${process.pid}-${crypto.randomUUID()}`;
+  const temporary = `${target}.tmp-${nonce}`;
+  const backup = `${target}.backup-${nonce}`;
+  const hadProfile = exists(target);
+  try {
+    fs.writeFileSync(temporary, body);
+    if (hadProfile) fs.renameSync(target, backup);
+    try {
+      fs.renameSync(temporary, target);
+    } catch (error) {
+      if (hadProfile) fs.renameSync(backup, target);
+      throw error;
+    }
+    if (hadProfile) removePath(backup);
+  } finally {
+    removePath(temporary);
+  }
+}
+
+/** @param {string} root @param {string} body */
+function writeProfileDocument(root, body) {
+  writeProfileDocumentAt(root, WORKSPACE_PATHS.PROFILE, body);
+}
+
+/**
+ * Serialize and atomically write the profile.
+ * @param {string} root
+ * @param {Profile} profile
+ */
+function writeProfile(root, profile) {
+  writeProfileDocument(root, serializeProfile(root, profile));
 }
 
 /* ------------------------------------------------------------------ catalog */
@@ -218,13 +285,17 @@ function packArtifacts(packDir) {
   const out = [];
   for (const sub of COPY_DIRS) {
     const subAbs = path.join(packDir, sub);
-    if (!isDir(subAbs)) continue;
+    if (!exists(subAbs)) continue;
+    const subStat = fs.lstatSync(subAbs);
+    if (subStat.isSymbolicLink() || !subStat.isDirectory()) {
+      throw new Error(`pack artifact category must be a regular directory: ${subAbs}`);
+    }
     for (const entry of fs.readdirSync(subAbs, { withFileTypes: true })) {
       // skills/ entries are directories; everything else is a flat file.
       if (sub === 'skills') {
-        if (!entry.isDirectory()) continue;
+        if (!entry.isDirectory()) throw new Error(`pack skill must be a regular directory: ${path.join(subAbs, entry.name)}`);
       } else if (!entry.isFile()) {
-        continue;
+        throw new Error(`pack ${sub} artifact must be a regular file: ${path.join(subAbs, entry.name)}`);
       }
       out.push({
         kind: sub,
@@ -234,7 +305,127 @@ function packArtifacts(packDir) {
       });
     }
   }
-  return out;
+  return out.sort((first, second) => first.destRel.localeCompare(second.destRel));
+}
+
+/**
+ * Hash one regular file or directory tree without following symbolic links.
+ * @param {string} absolutePath
+ * @returns {string}
+ */
+function hashArtifact(absolutePath) {
+  const hash = crypto.createHash('sha256');
+  /** @param {string} current @param {string} relative */
+  function visit(current, relative) {
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink()) throw new Error(`pack artifact contains symbolic link: ${current}`);
+    if (stat.isDirectory()) {
+      hash.update(`directory\0${relative}\0`);
+      for (const name of fs.readdirSync(current).sort()) {
+        visit(path.join(current, name), relative ? `${relative}/${name}` : name);
+      }
+      return;
+    }
+    if (!stat.isFile()) throw new Error(`pack artifact is not a regular file or directory: ${current}`);
+    const bytes = fs.readFileSync(current);
+    const framed = current.endsWith('.agent.md') ? normalizeAgentFrontmatter(bytes) : bytes;
+    hash.update(`file\0${relative}\0`);
+    hash.update(framed);
+    hash.update('\0');
+  }
+  visit(absolutePath, '');
+  return hash.digest('hex');
+}
+
+/**
+ * Build the exact source/install inventory persisted for one pack.
+ * @param {string} packDir
+ * @param {string} packName
+ * @param {{ type: string, location: string, ref: string }} source
+ * @param {{ artifact: { kind: string, srcAbs: string, destRel: string, name: string }, stagedAbs: string }[]} staged
+ * @returns {PackInventory}
+ */
+function buildPackInventory(packDir, packName, source, staged) {
+  const manifestSha = crypto
+    .createHash('sha256')
+    .update(fs.readFileSync(path.join(packDir, 'pack.md')))
+    .digest('hex');
+  const inventory = {
+    version: PROFILE_INVENTORY_VERSION,
+    pack: packName,
+    source: { type: source.type, location: source.location, ref: source.ref },
+    manifest_sha256: manifestSha,
+    artifacts: staged.map(({ artifact, stagedAbs }) => ({
+      path: artifact.destRel,
+      kind: artifact.kind,
+      source: `${artifact.kind}/${artifact.name}`,
+      source_sha256: hashArtifact(artifact.srcAbs),
+      installed_sha256: hashArtifact(stagedAbs),
+    })),
+    digest: '',
+  };
+  inventory.digest = inventoryDigest(inventory);
+  return inventory;
+}
+
+/**
+ * Reconcile a persisted inventory with its exact source when that source still
+ * exists. A release without a local catalog relies on the persisted hashes.
+ * @param {PackInventory} inventory
+ * @param {string} packName
+ */
+function verifyAvailableInventorySource(inventory, packName) {
+  const hasLegacyLooseArtifacts = inventory.artifacts.some(
+    (artifact) => (artifact.kind === 'instructions' || artifact.kind === 'prompts')
+      && !belongsToPack(artifact.path, packName),
+  );
+  let packDir = '';
+  if (inventory.source.type === 'library' && isDir(inventory.source.location)) {
+    packDir = path.join(inventory.source.location, packName);
+  } else if (inventory.source.type === 'source') {
+    if (isDir(inventory.source.location)) {
+      packDir = path.join(inventory.source.location, 'library', 'packs', packName);
+    } else if (hasLegacyLooseArtifacts) {
+      const resolved = resolveSourceTree(inventory.source.location, inventory.source.ref, true);
+      if ('error' in resolved) {
+        throw new Error(`historical loose artifacts for pack "${packName}" require their exact inventory source: ${resolved.error}`);
+      }
+      packDir = path.join(resolved.tree, 'library', 'packs', packName);
+    }
+  }
+  if (!packDir && hasLegacyLooseArtifacts) {
+    throw new Error(`historical loose artifacts are not owned by the dude-pack-${packName}-* namespace and require their exact inventory source for removal`);
+  }
+  if (!packDir) {
+    return;
+  }
+  if (!isDir(packDir) || !exists(path.join(packDir, 'pack.md'))) {
+    if (hasLegacyLooseArtifacts) {
+      throw new Error(`historical loose artifacts for pack "${packName}" require the exact inventory source at ${packDir}`);
+    }
+    throw new Error(`persisted inventory source no longer contains pack "${packName}" at ${packDir}`);
+  }
+  const manifestSha = crypto
+    .createHash('sha256')
+    .update(fs.readFileSync(path.join(packDir, 'pack.md')))
+    .digest('hex');
+  if (manifestSha !== inventory.manifest_sha256) {
+    throw new Error(`persisted inventory manifest for pack "${packName}" no longer matches its exact source`);
+  }
+  const currentArtifacts = packArtifacts(packDir);
+  const inventoryByPath = new Map(inventory.artifacts.map((artifact) => [artifact.path, artifact]));
+  if (currentArtifacts.length !== inventory.artifacts.length) {
+    throw new Error(`persisted inventory for pack "${packName}" no longer matches its exact source artifact set`);
+  }
+  for (const artifact of currentArtifacts) {
+    const record = inventoryByPath.get(artifact.destRel);
+    if (!record
+      || record.kind !== artifact.kind
+      || record.source !== `${artifact.kind}/${artifact.name}`
+      || record.source_sha256 !== hashArtifact(artifact.srcAbs)) {
+      throw new Error(`persisted inventory for pack "${packName}" does not match source artifact '${artifact.destRel}'`);
+    }
+  }
 }
 
 /* ------------------------------------------------------------ source fetch */
@@ -245,7 +436,7 @@ function packArtifacts(packDir) {
  * @returns {{ source_repo: string, source_ref: string } | null}
  */
 function readManifestSource(root) {
-  const p = path.join(root, '.github', 'dudestuff', 'bundle-manifest.md');
+  const p = path.join(root, ...WORKSPACE_PATHS.BUNDLE_MANIFEST.split('/'));
   if (!exists(p)) return null;
   const m = /```json\s*\r?\n([\s\S]*?)\r?\n```/.exec(fs.readFileSync(p, 'utf8'));
   if (!m) return null;
@@ -276,9 +467,10 @@ function hasGit() {
  * reused across calls.
  * @param {string} source repo URL or local path
  * @param {string} ref
+ * @param {boolean} [refresh]
  * @returns {{ tree: string } | { error: string }}
  */
-function resolveSourceTree(source, ref) {
+function resolveSourceTree(source, ref, refresh = false) {
   if (isDir(source)) return { tree: source };
   if (!hasGit()) return { error: 'git is required to fetch a pack from a remote source' };
   // Resolve the `latest` release channel to a concrete tag (shared with upgrade)
@@ -292,7 +484,7 @@ function resolveSourceTree(source, ref) {
   fs.mkdirSync(CACHE_ROOT, { recursive: true });
   const key = crypto.createHash('sha256').update(`${source}|${fetchRef}`).digest('hex').slice(0, 12);
   const dest = path.join(CACHE_ROOT, `src-${key}`);
-  if (isDir(path.join(dest, '.git'))) return { tree: dest };
+  if (!refresh && isDir(path.join(dest, '.git'))) return { tree: dest };
   removePath(dest);
   if (git(['clone', '--quiet', '--depth=1', '--branch', fetchRef, source, dest]) === 0) {
     return { tree: dest };
@@ -308,13 +500,17 @@ function resolveSourceTree(source, ref) {
  * Resolve a pack's source directory. Prefers the local catalog, then falls back
  * to the bundle's configured upstream source (or an explicit override), so a
  * pack can be installed even when `library/packs/` is not vendored locally.
- * @param {{ root: string, library: string, name: string, fetch: boolean, source?: string, ref?: string }} a
- * @returns {{ packDir: string, origin: string } | { error: string }}
+ * @param {{ root: string, library: string, name: string, fetch: boolean, source?: string, ref?: string, refreshSource?: boolean }} a
+ * @returns {{ packDir: string, origin: string, sourceIdentity: { type: string, location: string, ref: string } } | { error: string }}
  */
-function resolvePackDir({ root, library, name, fetch, source, ref }) {
+function resolvePackDir({ root, library, name, fetch, source, ref, refreshSource = false }) {
   const localDir = path.join(library, name);
   if (isDir(localDir) && exists(path.join(localDir, 'pack.md'))) {
-    return { packDir: localDir, origin: 'local' };
+    return {
+      packDir: localDir,
+      origin: 'local',
+      sourceIdentity: { type: 'library', location: fs.realpathSync(library), ref: '' },
+    };
   }
   if (fetch === false) {
     return { error: `pack not found in catalog: ${rel(localDir)}` };
@@ -330,15 +526,23 @@ function resolvePackDir({ root, library, name, fetch, source, ref }) {
   }
   if (!src) {
     return {
-      error: `pack "${name}" is not in the local catalog and no upstream source is configured (seed .github/dudestuff/bundle-manifest.md or pass --source)`,
+      error: `pack "${name}" is not in the local catalog and no upstream source is configured (seed ${WORKSPACE_PATHS.BUNDLE_MANIFEST} or pass --source)`,
     };
   }
   if (!sref) sref = 'main';
-  const tree = resolveSourceTree(src, sref);
+  const tree = resolveSourceTree(src, sref, refreshSource);
   if ('error' in tree) return { error: tree.error };
   const fetchedDir = path.join(tree.tree, 'library', 'packs', name);
   if (isDir(fetchedDir) && exists(path.join(fetchedDir, 'pack.md'))) {
-    return { packDir: fetchedDir, origin: isDir(src) ? `source ${src}` : `${src} @ ${sref}` };
+    return {
+      packDir: fetchedDir,
+      origin: isDir(src) ? `source ${src}` : `${src} @ ${sref}`,
+      sourceIdentity: {
+        type: 'source',
+        location: isDir(src) ? fs.realpathSync(src) : src,
+        ref: sref,
+      },
+    };
   }
   return { error: `pack "${name}" not found in source ${src}${isDir(src) ? '' : ` @ ${sref}`}` };
 }
@@ -375,20 +579,30 @@ function resolveCatalogDir({ root, library, fetch, source, ref }) {
   return { dir: library, origin: 'local', error: `no pack catalog found in ${src}${isDir(src) ? '' : ` @ ${sref}`}` };
 }
 
+/** @param {string} root */
+function profileVerificationDiagnostic(root) {
+  const p = profilePath(root);
+  if (!exists(p)) return { status: 'absent' };
+  try {
+    readProfile(root);
+    return { status: 'valid', path: WORKSPACE_PATHS.PROFILE };
+  } catch (error) {
+    return { status: 'invalid', path: WORKSPACE_PATHS.PROFILE, conflicts: [error instanceof Error ? error.message : String(error)] };
+  }
+}
+
 /* ----------------------------------------------------------------- commands */
 
 /**
- * @param {string} relPath
+ * @param {{ kind: string, destRel: string, name: string }} artifact
  * @param {string} packName
  * @returns {boolean} true when a copied artifact carries the pack namespace.
  */
-function artifactInNamespace(relPath, packName) {
-  // agents + skills must classify to this pack; instructions/prompts are
-  // namespace-loose (pack-scoped applyTo) and validated only by source dir.
-  if (/^\.github\/(agents|skills)\//.test(relPath)) {
-    return belongsToPack(relPath, packName);
-  }
-  return true;
+function artifactInNamespace(artifact, packName) {
+  if (artifact.kind === 'agents' && !artifact.name.endsWith('.agent.md')) return false;
+  if (artifact.kind === 'instructions' && !artifact.name.endsWith('.instructions.md')) return false;
+  if (artifact.kind === 'prompts' && !artifact.name.endsWith('.prompt.md')) return false;
+  return belongsToPack(artifact.destRel, packName);
 }
 
 /**
@@ -396,11 +610,18 @@ function artifactInNamespace(relPath, packName) {
  * @returns {{ ok: boolean, code: number, result?: any, error?: string }}
  */
 function cmdAdd({ root, library, name, force, fetch = true, source, ref }) {
+  try {
+    resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
+  } catch (error) {
+    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+  }
   if (!PACK_NAME_RE.test(name)) {
     return { ok: false, code: 1, error: `invalid pack name: ${name}` };
   }
 
-  const profile = readProfile(root);
+  const loadedProfile = loadProfile(root);
+  if ('error' in loadedProfile) return { ok: false, code: 2, error: loadedProfile.error };
+  const { profile } = loadedProfile;
   if (profile.enabled_packs.includes(name)) {
     return { ok: true, code: 0, result: { added: name, files: [], alreadyInstalled: true } };
   }
@@ -409,7 +630,7 @@ function cmdAdd({ root, library, name, force, fetch = true, source, ref }) {
   if ('error' in resolved) {
     return { ok: false, code: 2, error: resolved.error };
   }
-  const { packDir, origin } = resolved;
+  const { packDir, origin, sourceIdentity } = resolved;
   const manifestName = frontmatterName(fs.readFileSync(path.join(packDir, 'pack.md'), 'utf8'));
   if (manifestName && manifestName !== name) {
     return { ok: false, code: 2, error: `pack.md name "${manifestName}" does not match directory "${name}"` };
@@ -428,38 +649,162 @@ function cmdAdd({ root, library, name, force, fetch = true, source, ref }) {
     return { ok: false, code: 2, error: `pack "${name}" ships no installable artifacts` };
   }
 
-  /** @type {string[]} */
-  const conflicts = [];
-  for (const a of artifacts) {
-    if (!artifactInNamespace(a.destRel, name)) {
-      return { ok: false, code: 2, error: `artifact "${a.destRel}" is outside the dude-pack-${name}-* namespace` };
+  for (const artifact of artifacts) {
+    if (!artifactInNamespace(artifact, name)) {
+      return { ok: false, code: 2, error: `artifact "${artifact.destRel}" is outside the approved namespace and ownership rules for pack "${name}"` };
     }
-    if (!force && exists(path.join(root, a.destRel))) conflicts.push(a.destRel);
-  }
-  if (conflicts.length > 0) {
-    return { ok: false, code: 2, error: `destination already exists (use --force):\n  ${conflicts.join('\n  ')}` };
   }
 
-  /** @type {string[]} */
-  const written = [];
-  for (const a of artifacts) {
-    copyRecursive(a.srcAbs, path.join(root, a.destRel));
-    written.push(a.destRel);
+  const claimedBy = new Map();
+  for (const [packName, entry] of Object.entries(profile.installed)) {
+    for (const relPath of entry.files) claimedBy.set(relPath, packName);
   }
 
-  // Packs fetched from an upstream source may carry CRLF / trailing whitespace;
-  // normalize the INSTALLED copy so the bundle stays lint-clean. Never touch the
-  // source tree or the local catalog (origin === 'local' installs are left as-is
-  // because they are the editable copy the author maintains).
-  if (origin !== 'local') {
-    for (const destRel of written) normalizePath(path.join(root, destRel));
+  const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), `dude-compose-add-${name}-`));
+  const backupRoot = path.join(stageRoot, 'backup');
+  /** @type {{ artifact: { kind: string, srcAbs: string, destRel: string, name: string }, stagedAbs: string }[]} */
+  const staged = [];
+  /** @type {{ relPath: string, destination: string, backup: string | null }[]} */
+  const applied = [];
+  try {
+    for (const artifact of artifacts) {
+      const stagedAbs = path.join(stageRoot, 'install', ...artifact.destRel.split('/'));
+      copyRecursive(artifact.srcAbs, stagedAbs);
+      if (origin !== 'local') normalizePath(stagedAbs);
+      staged.push({ artifact, stagedAbs });
+    }
+
+    const inventory = buildPackInventory(packDir, name, sourceIdentity, staged);
+    const inventoryByPath = new Map(inventory.artifacts.map((artifact) => [artifact.path, artifact]));
+    /** @type {string[]} */
+    const conflicts = [];
+    /** @type {{ relPath: string, destination: string, stagedAbs: string }[]} */
+    const targets = [];
+    for (const item of staged) {
+      const { artifact, stagedAbs } = item;
+      const owner = claimedBy.get(artifact.destRel);
+      if (owner && owner !== name) {
+        conflicts.push(`${artifact.destRel} (claimed by pack "${owner}")`);
+        continue;
+      }
+      const destination = resolveProfileArtifact(root, artifact.destRel, name, inventoryByPath.get(artifact.destRel));
+      if (exists(destination)
+        && (!force || artifact.kind === 'instructions' || artifact.kind === 'prompts')) {
+        conflicts.push(`${artifact.destRel} (already exists as a core, project, or foreign artifact)`);
+      }
+      targets.push({ relPath: artifact.destRel, destination, stagedAbs });
+    }
+    if (conflicts.length > 0) {
+      return { ok: false, code: 2, error: `destination ownership conflict:\n  ${conflicts.join('\n  ')}` };
+    }
+
+    const files = artifacts.map((artifact) => artifact.destRel);
+    const nextProfile = structuredClone(profile);
+    nextProfile.enabled_packs.push(name);
+    nextProfile.installed[name] = {
+      files,
+      installed_at: new Date().toISOString(),
+      inventory,
+    };
+    const nextProfileBody = serializeProfile(root, nextProfile);
+    const previousProfile = exists(profilePath(root)) ? fs.readFileSync(profilePath(root)) : null;
+
+    try {
+      for (const target of targets) {
+        let backup = null;
+        if (exists(target.destination)) {
+          backup = path.join(backupRoot, ...target.relPath.split('/'));
+          copyRecursive(target.destination, backup);
+          removePath(target.destination);
+        }
+        applied.push({ relPath: target.relPath, destination: target.destination, backup });
+        copyRecursive(target.stagedAbs, target.destination);
+      }
+      writeProfileDocument(root, nextProfileBody);
+    } catch (error) {
+      /** @type {string[]} */
+      const rollbackErrors = [];
+      for (const target of [...applied].reverse()) {
+        try {
+          removePath(target.destination);
+          if (target.backup) copyRecursive(target.backup, target.destination);
+        } catch (rollbackError) {
+          rollbackErrors.push(`${target.relPath}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+        }
+      }
+      try {
+        if (previousProfile) fs.writeFileSync(profilePath(root), previousProfile);
+        else removePath(profilePath(root));
+      } catch (rollbackError) {
+        rollbackErrors.push(`${WORKSPACE_PATHS.PROFILE}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+      }
+      if (rollbackErrors.length > 0) {
+        return {
+          ok: false,
+          code: 2,
+          error: `pack add failed (${error instanceof Error ? error.message : String(error)}); rollback failed: ${rollbackErrors.join('; ')}`,
+        };
+      }
+      return { ok: false, code: 2, error: `pack add failed and was rolled back: ${error instanceof Error ? error.message : String(error)}` };
+    }
+
+    return { ok: true, code: 0, result: { added: name, files: files.sort(), origin } };
+  } catch (error) {
+    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    removePath(stageRoot);
   }
+}
 
-  profile.enabled_packs.push(name);
-  profile.installed[name] = { files: written, installed_at: new Date().toISOString() };
-  writeProfile(root, profile);
+/**
+ * Whole-profile currency gate for removal. Removal reserializes the entire
+ * profile, so every retained entry must already be a complete current
+ * inventory and `enabled_packs` must carry no un-installed ghost; otherwise
+ * serialization would silently normalize or drop unrelated legacy or partial
+ * evidence. The parser preserves that evidence for `cmdStatus`, so this reads
+ * the already-parsed profile without reparsing.
+ * @param {Profile} profile
+ * @returns {string | null} description of the first non-current evidence, or null
+ */
+function firstNonCurrentProfileEvidence(profile) {
+  for (const packName of profile.enabled_packs) {
+    if (!Object.hasOwn(profile.installed, packName)) {
+      return `enabled pack "${packName}" is not installed`;
+    }
+  }
+  for (const [packName, entry] of Object.entries(profile.installed)) {
+    if (!entry.inventory) {
+      return `pack "${packName}" lacks a complete current inventory`;
+    }
+  }
+  return null;
+}
 
-  return { ok: true, code: 0, result: { added: name, files: written.sort(), origin } };
+/**
+ * Best-effort sweep of leftover profile-transaction siblings so the metadata
+ * directory matches its prior state after a rollback. The atomic writer
+ * normally removes these, but a cleanup failure can strand a `.backup-*` (or
+ * `.tmp-*`). Bounded to the profile's own directory; never throws.
+ * @param {string} profileAbsolutePath
+ */
+function sweepProfileTransactionResidue(profileAbsolutePath) {
+  const dir = path.dirname(profileAbsolutePath);
+  const base = path.basename(profileAbsolutePath);
+  let entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.startsWith(`${base}.backup-`) || entry.startsWith(`${base}.tmp-`)) {
+      try {
+        removePath(path.join(dir, entry));
+      } catch {
+        // best effort: the metadata tree already reflects the restored profile
+      }
+    }
+  }
 }
 
 /**
@@ -467,48 +812,139 @@ function cmdAdd({ root, library, name, force, fetch = true, source, ref }) {
  * @returns {{ ok: boolean, code: number, result?: any, error?: string }}
  */
 function cmdRemove({ root, name }) {
+  const currentProfilePath = profilePath(root);
+  try {
+    resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
+  } catch (error) {
+    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+  }
   if (!PACK_NAME_RE.test(name)) {
     return { ok: false, code: 1, error: `invalid pack name: ${name}` };
   }
-  const profile = readProfile(root);
+  /** @type {Buffer | null} */
+  let authorizedProfileBytes = null;
+  /** @type {Profile} */
+  let profile = { enabled_packs: [], installed: {} };
+  try {
+    if (exists(currentProfilePath)) {
+      authorizedProfileBytes = fs.readFileSync(currentProfilePath);
+      profile = parseProfileDocument(authorizedProfileBytes, { root });
+    }
+  } catch (error) {
+    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+  }
+
   const entry = profile.installed[name];
-
-  /** @type {string[]} */
-  let targets = [];
-  if (entry && Array.isArray(entry.files) && entry.files.length > 0) {
-    targets = entry.files.slice();
-  } else {
-    // Fallback: enumerate on-disk dude-pack-<name>-* agents and skills.
-    const githubDir = path.join(root, '.github');
-    for (const sub of ['agents', 'skills']) {
-      const subAbs = path.join(githubDir, sub);
-      if (!isDir(subAbs)) continue;
-      for (const e of fs.readdirSync(subAbs)) {
-        const r = rel(path.join('.github', sub, e));
-        if (belongsToPack(r, name)) targets.push(r);
-      }
-    }
+  const inventory = entry?.inventory;
+  if (!entry || !inventory || !authorizedProfileBytes) {
+    return { ok: false, code: 2, error: `pack "${name}" removal requires a complete current inventory` };
   }
 
-  if (targets.length === 0 && !profile.enabled_packs.includes(name)) {
-    return { ok: false, code: 2, error: `pack "${name}" is not installed` };
+  const nonCurrentEvidence = firstNonCurrentProfileEvidence(profile);
+  if (nonCurrentEvidence) {
+    return {
+      ok: false,
+      code: 2,
+      error: `refusing to remove pack "${name}": the install profile is not fully current (${nonCurrentEvidence}); resolve it before removal so unrelated evidence is not rewritten`,
+    };
   }
 
-  /** @type {string[]} */
-  const removed = [];
+  const targets = entry.files.slice();
+  const inventoryByPath = new Map(inventory.artifacts.map((artifact) => [artifact.path, artifact]));
+  if (targets.length !== inventory.artifacts.length
+    || targets.some((target) => !inventoryByPath.has(target))
+    || inventory.artifacts.some((artifact) => !targets.includes(artifact.path))) {
+    return { ok: false, code: 2, error: `pack "${name}" removal requires exact files and complete current inventory evidence` };
+  }
+  try {
+    verifyAvailableInventorySource(inventory, name);
+  } catch (error) {
+    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+  }
+
+  /** @type {{ relPath: string, absolutePath: string }[]} */
+  const resolvedTargets = [];
   for (const t of targets) {
-    const abs = path.join(root, t);
-    if (exists(abs)) {
-      removePath(abs);
-      removed.push(t);
+    try {
+      const abs = resolveProfileArtifact(root, t, name, inventoryByPath.get(t));
+      const record = inventoryByPath.get(t);
+      if (!exists(abs) || !record || hashArtifact(abs) !== record.installed_sha256) {
+        return { ok: false, code: 2, error: `installed artifact '${t}' no longer matches pack "${name}" inventory; refusing deletion` };
+      }
+      resolvedTargets.push({ relPath: t, absolutePath: abs });
+    } catch (error) {
+      return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
-  profile.enabled_packs = profile.enabled_packs.filter((p) => p !== name);
-  delete profile.installed[name];
-  writeProfile(root, profile);
+  const nextProfile = structuredClone(profile);
+  nextProfile.enabled_packs = nextProfile.enabled_packs.filter((packName) => packName !== name);
+  delete nextProfile.installed[name];
+  let nextProfileBody;
+  try {
+    nextProfileBody = serializeProfile(root, nextProfile);
+  } catch (error) {
+    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+  }
 
-  return { ok: true, code: 0, result: { removed: name, files: removed.sort() } };
+  try {
+    resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
+    const currentProfileBytes = exists(currentProfilePath) ? fs.readFileSync(currentProfilePath) : null;
+    if (!currentProfileBytes || !authorizedProfileBytes.equals(currentProfileBytes)) {
+      return { ok: false, code: 2, error: `profile changed after authorizing removal of pack "${name}"; refusing deletion` };
+    }
+  } catch (error) {
+    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+  }
+
+  const transactionRoot = fs.mkdtempSync(path.join(os.tmpdir(), `dude-compose-remove-${name}-`));
+  /** @type {{ relPath: string, absolutePath: string, backup: string }[]} */
+  const removed = [];
+  try {
+    try {
+      // Phase 1: back up every present artifact before deleting any of them, so
+      // a mid-transaction failure never strands a deletion with no backup.
+      for (const target of resolvedTargets) {
+        if (!exists(target.absolutePath)) continue;
+        const backup = path.join(transactionRoot, ...target.relPath.split('/'));
+        copyRecursive(target.absolutePath, backup);
+        removed.push({ ...target, backup });
+      }
+      // Phase 2: delete the fully backed-up artifacts, then replace the profile.
+      for (const target of removed) {
+        removePath(target.absolutePath);
+      }
+      writeProfileDocument(root, nextProfileBody);
+    } catch (error) {
+      /** @type {string[]} */
+      const rollbackErrors = [];
+      for (const target of [...removed].reverse()) {
+        try {
+          removePath(target.absolutePath);
+          copyRecursive(target.backup, target.absolutePath);
+        } catch (rollbackError) {
+          rollbackErrors.push(`${target.relPath}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+        }
+      }
+      try {
+        fs.writeFileSync(currentProfilePath, authorizedProfileBytes);
+        sweepProfileTransactionResidue(currentProfilePath);
+      } catch (rollbackError) {
+        rollbackErrors.push(`${WORKSPACE_PATHS.PROFILE}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+      }
+      return {
+        ok: false,
+        code: 2,
+        error: rollbackErrors.length > 0
+          ? `pack removal failed (${error instanceof Error ? error.message : String(error)}); rollback failed: ${rollbackErrors.join('; ')}`
+          : `pack removal failed and was rolled back: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    return { ok: true, code: 0, result: { removed: name, files: removed.map((target) => target.relPath).sort() } };
+  } finally {
+    removePath(transactionRoot);
+  }
 }
 
 /**
@@ -516,7 +952,9 @@ function cmdRemove({ root, name }) {
  * @returns {{ ok: boolean, code: number, result: any }}
  */
 function cmdList({ root, library, fetch = true, source, ref }) {
-  const profile = readProfile(root);
+  const loadedProfile = loadProfile(root);
+  if ('error' in loadedProfile) return { ok: false, code: 2, error: loadedProfile.error };
+  const { profile } = loadedProfile;
   const installedSet = new Set(profile.enabled_packs);
   const cat = resolveCatalogDir({ root, library, fetch, source, ref });
   const packs = availablePacks(cat.dir).map((name) => {
@@ -547,11 +985,16 @@ function cmdList({ root, library, fetch = true, source, ref }) {
  * @returns {{ ok: boolean, code: number, result: any }}
  */
 function cmdStatus({ root }) {
-  const profile = readProfile(root);
+  const loadedProfile = loadProfile(root);
+  if ('error' in loadedProfile) return { ok: false, code: 2, error: loadedProfile.error };
+  const { profile } = loadedProfile;
   return {
     ok: true,
     code: 0,
-    result: { enabled_packs: [...profile.enabled_packs].sort(), installed: profile.installed },
+    result: {
+      enabled_packs: [...profile.enabled_packs].sort(),
+      installed: profile.installed,
+    },
   };
 }
 
@@ -566,7 +1009,8 @@ function cmdStatus({ root }) {
  */
 function cmdVerify({ root, library }) {
   const lintPath = fileURLToPath(new URL('../dude-lint/lint.mjs', import.meta.url));
-  const coreDirs = ['agents', 'skills', 'instructions', 'prompts', 'dudestuff'];
+  const profile = profileVerificationDiagnostic(root);
+  const coreDirs = ['agents', 'skills', 'instructions', 'prompts'];
   const names = availablePacks(library);
   /** @type {{ name: string, warnings: number, failures: number, leftovers: number, error?: string }[]} */
   const verified = [];
@@ -577,6 +1021,10 @@ function cmdVerify({ root, library }) {
       for (const d of coreDirs) {
         const srcAbs = path.join(root, '.github', d);
         if (isDir(srcAbs)) copyRecursive(srcAbs, path.join(tmp, '.github', d));
+      }
+      const metadataSource = path.join(root, ...WORKSPACE_PATHS.METADATA_DIR.split('/'));
+      if (isDir(metadataSource)) {
+        copyRecursive(metadataSource, path.join(tmp, ...WORKSPACE_PATHS.METADATA_DIR.split('/')));
       }
       const libSrc = path.join(root, 'library');
       if (isDir(libSrc)) copyRecursive(libSrc, path.join(tmp, 'library'));
@@ -592,23 +1040,30 @@ function cmdVerify({ root, library }) {
       const warnings = m ? Number(m[1]) : 0;
       const failures = m ? Number(m[2]) : lint.status ? 1 : 0;
 
-      cmdRemove({ root: tmp, name });
+      const removal = cmdRemove({ root: tmp, name });
       let leftovers = 0;
-      for (const sub of ['agents', 'skills']) {
+      for (const sub of coreDirs) {
         const subAbs = path.join(tmp, '.github', sub);
         if (!isDir(subAbs)) continue;
         for (const e of fs.readdirSync(subAbs)) {
           if (belongsToPack(rel(path.join('.github', sub, e)), name)) leftovers += 1;
         }
       }
-      verified.push({ name, warnings, failures, leftovers });
+      verified.push({
+        name,
+        warnings,
+        failures,
+        leftovers,
+        ...(!removal.ok ? { error: removal.error } : {}),
+      });
     } finally {
       removePath(tmp);
     }
   }
 
-  const anyFail = verified.some((v) => v.failures > 0 || v.leftovers > 0 || v.error);
-  return { ok: !anyFail, code: anyFail ? 2 : 0, result: { verified } };
+  const profileFailed = profile.status === 'invalid';
+  const anyFail = profileFailed || verified.some((v) => v.failures > 0 || v.leftovers > 0 || v.error);
+  return { ok: !anyFail, code: anyFail ? 2 : 0, result: { verified, profile } };
 }
 
 /* --------------------------------------------------------------------- cli */
@@ -625,8 +1080,8 @@ Usage:
 Flags:
   --root <dir>      bundle root (default: cwd)
   --library <dir>   pack catalog (default: <root>/library/packs)
-  --source <repo>   upstream source for the add/list fetch fallback (default: manifest)
-  --ref <ref>       upstream ref for the fetch fallback (default: manifest / main)
+  --source <repo>   upstream source for add/list (default: manifest)
+  --ref <ref>       upstream ref for source resolution (default: manifest / main)
   --no-fetch        never fetch; require the pack in the local catalog
   --json            machine-readable output
   --force           overwrite existing files on add
@@ -662,14 +1117,20 @@ function parseArgs(argv) {
 /** @param {any} r @param {boolean} json */
 function report(r, json) {
   if (json) {
-    process.stdout.write(JSON.stringify(r.ok ? { ok: true, ...r.result } : { ok: false, error: r.error }, null, 2) + '\n');
-    return;
-  }
-  if (!r.ok) {
-    process.stderr.write(`[FAIL] ${r.error}\n`);
+    process.stdout.write(JSON.stringify(
+      r.ok
+        ? { ok: true, ...r.result }
+        : { ok: false, error: r.error, ...r.result, ...(r.plan ? { plan: r.plan } : {}) },
+      null,
+      2,
+    ) + '\n');
     return;
   }
   const res = r.result || {};
+  if (!r.ok && !res.verified) {
+    process.stderr.write(`[FAIL] ${r.error}\n`);
+    return;
+  }
   if (res.packs) {
     if (res.origin && res.origin !== 'local') {
       process.stdout.write(`# catalog: ${res.origin}\n`);
@@ -693,6 +1154,9 @@ function report(r, json) {
   } else if (res.enabled_packs) {
     process.stdout.write(res.enabled_packs.length ? `Installed: ${res.enabled_packs.join(', ')}\n` : 'No packs installed.\n');
   } else if (res.verified) {
+    if (res.profile.status === 'invalid') {
+      process.stdout.write(`[FAIL] invalid profile: ${(res.profile.conflicts ?? []).join('; ')}\n`);
+    }
     for (const v of res.verified) {
       const bad = v.failures > 0 || v.leftovers > 0 || v.error;
       const detail = v.error
@@ -781,5 +1245,6 @@ export {
   resolvePackDir,
   resolveCatalogDir,
   readManifestSource,
+  normalizeAgentFrontmatter,
   isMainModule,
 };

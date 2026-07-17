@@ -37,9 +37,50 @@ export const GLYPH_STATE = { ' ': 'todo', '~': 'in-progress', '!': 'blocked', x:
 /** @type {Record<string, string>} state name -> glyph */
 export const STATE_GLYPH = { todo: ' ', 'in-progress': '~', blocked: '!', done: 'x' };
 
+/** Durable task-key grammar `T<num>@<sha8>` (single source of truth). */
+export const TASK_KEY_RE = /^T\d{3,}@[a-z0-9]{8}$/;
+
 const HEADER_RE = /^- \[( |~|!|x)\] (T\d{3,}@[a-z0-9]{8})( \[P\])?( \[[^\]]+\])? (.+)$/;
 const LOOSE_HEADER_RE = /^- \[[^\]]*\]/;
 const HEADING_RE = /^#{2,3}\s+(.+?)\s*$/;
+const HISTORY_HEADING_RE = /^##[ \t]+Lightweight[ \t]+Execution[ \t]+History([ \t]|$)/;
+
+/**
+ * Split source into logical lines while retaining every raw separator boundary.
+ * @param {string} source
+ * @returns {{ lines: string[], lineMeta: {startOffset:number,contentEndOffset:number,endOffset:number,separator:string}[], preferredSeparator: string }}
+ */
+function tokenizeLogicalLines(source) {
+  /** @type {string[]} */
+  const lines = [];
+  /** @type {{startOffset:number,contentEndOffset:number,endOffset:number,separator:string}[]} */
+  const lineMeta = [];
+  let startOffset = 0;
+  let preferredSeparator = '\n';
+  let hasSeparator = false;
+
+  for (const match of source.matchAll(/\r\n|\n|\r/g)) {
+    const contentEndOffset = match.index;
+    const separator = match[0];
+    const endOffset = contentEndOffset + separator.length;
+    if (!hasSeparator) {
+      preferredSeparator = separator;
+      hasSeparator = true;
+    }
+    lines.push(source.slice(startOffset, contentEndOffset));
+    lineMeta.push({ startOffset, contentEndOffset, endOffset, separator });
+    startOffset = endOffset;
+  }
+
+  lines.push(source.slice(startOffset));
+  lineMeta.push({
+    startOffset,
+    contentEndOffset: source.length,
+    endOffset: source.length,
+    separator: '',
+  });
+  return { lines, lineMeta, preferredSeparator };
+}
 
 /**
  * Map a heading to a stable ordering key. Lower sorts earlier.
@@ -76,24 +117,74 @@ function phaseOrder(heading) {
  * Parse `tasks.md` content into canonical task units + board metadata.
  * @param {string} content
  * @param {{ path?: string }} [opts]
- * @returns {{ path: string|null, lines: string[], board: {startLine:number,endLine:number}|null, tasks: Task[], byId: Map<string,Task>, warnings: string[] }}
+ * @returns {{ path: string|null, source: string, lines: string[], lineMeta: {startOffset:number,contentEndOffset:number,endOffset:number,separator:string}[], preferredSeparator: string, history: {startLine:number,startOffset:number,suffix:string}|null, board: {startLine:number,endLine:number}|null, boardIssue: string|null, diagnosticTaskLines: {line:number,text:string}[], tasks: Task[], byId: Map<string,Task>, warnings: string[] }}
  */
 export function parseTasks(content, opts = {}) {
-  const lines = String(content).split('\n');
+  const source = String(content);
+  const { lines, lineMeta, preferredSeparator } = tokenizeLogicalLines(source);
   /** @type {string[]} */
   const warnings = [];
 
-  // Locate the board fence (first start..end pair).
-  let startLine = -1;
-  let endLine = -1;
+  // Discover the one active board and terminal history in a single scan. A
+  // history-shaped heading inside a complete board is derived content, while a
+  // fence after real external history belongs to the immutable archive.
+  let historyLine = -1;
+  let openBoardStart = -1;
+  let boardStartLine = -1;
+  let boardEndLine = -1;
+  /** @type {string|null} */
+  let boardIssue = null;
   for (let i = 0; i < lines.length; i++) {
-    if (startLine === -1 && lines[i].trim() === BOARD_START) startLine = i;
-    else if (startLine !== -1 && lines[i].trim() === BOARD_END) {
-      endLine = i;
+    const line = lines[i];
+    const isBoardStart = line.trim() === BOARD_START;
+    const isBoardEnd = line.trim() === BOARD_END;
+
+    if (openBoardStart !== -1) {
+      if (isBoardStart) {
+        boardIssue = `malformed active board structure: nested ${BOARD_START} at line ${i + 1}`;
+        break;
+      }
+      if (isBoardEnd) {
+        if (boardStartLine !== -1) {
+          boardIssue = `malformed active board structure: second active board pair at lines ${openBoardStart + 1}-${i + 1}`;
+          break;
+        }
+        boardStartLine = openBoardStart;
+        boardEndLine = i;
+        openBoardStart = -1;
+      }
+      continue;
+    }
+
+    if (isBoardStart) {
+      openBoardStart = i;
+      continue;
+    }
+    if (isBoardEnd) {
+      boardIssue = `malformed active board structure: unmatched ${BOARD_END} at line ${i + 1}`;
+      break;
+    }
+    if (HISTORY_HEADING_RE.test(line)) {
+      historyLine = i;
       break;
     }
   }
-  const board = startLine !== -1 && endLine !== -1 ? { startLine, endLine } : null;
+  if (!boardIssue && openBoardStart !== -1) {
+    boardIssue = `malformed active board structure: unclosed ${BOARD_START} at line ${openBoardStart + 1}`;
+  }
+  if (boardIssue) warnings.push(boardIssue);
+
+  const historyOffset = historyLine === -1 ? -1 : lineMeta[historyLine].startOffset;
+  const history = historyLine === -1 || boardIssue
+    ? null
+    : { startLine: historyLine, startOffset: historyOffset, suffix: source.slice(historyOffset) };
+  const board = boardStartLine !== -1 && !boardIssue
+    ? { startLine: boardStartLine, endLine: boardEndLine }
+    : null;
+  const diagnosticTaskLines = boardIssue
+    ? lines.flatMap((text, index) => LOOSE_HEADER_RE.test(text) ? [{ line: index + 1, text }] : [])
+    : [];
+  const activeLineCount = boardIssue ? 0 : history?.startLine ?? lines.length;
   const inBoard = (i) => board !== null && i >= board.startLine && i <= board.endLine;
 
   /** @type {Task[]} */
@@ -104,7 +195,7 @@ export function parseTasks(content, opts = {}) {
   /** @type {Task | null} */
   let current = null;
 
-  for (let i = 0; i < lines.length; i++) {
+  for (let i = 0; i < activeLineCount; i++) {
     if (inBoard(i)) {
       current = null;
       continue;
@@ -172,7 +263,20 @@ export function parseTasks(content, opts = {}) {
     }
   }
 
-  return { path: opts.path || null, lines, board, tasks, byId, warnings };
+  return {
+    path: opts.path || null,
+    source,
+    lines,
+    lineMeta,
+    preferredSeparator,
+    history,
+    board,
+    boardIssue,
+    diagnosticTaskLines,
+    tasks,
+    byId,
+    warnings,
+  };
 }
 
 /**
@@ -192,6 +296,7 @@ function depsSatisfied(parsed, t) {
  * @returns {Task[]}
  */
 export function readyTasks(parsed) {
+  assertValidBoardStructure(parsed);
   return parsed.tasks
     .filter((t) => t.state === 'todo' && depsSatisfied(parsed, t))
     .sort((a, b) => a.order - b.order || a.num - b.num);
@@ -219,6 +324,7 @@ export function nextTask(parsed) {
  * @returns {{ from: string, to: string }[]}
  */
 export function deriveDependencies(parsed) {
+  assertValidBoardStructure(parsed);
   const tasks = parsed.tasks;
   const phases = [...new Set(tasks.map((t) => t.order))].sort((a, b) => a - b);
   /** @type {Map<number, Task[]>} */
@@ -305,13 +411,49 @@ function freshAnchor(lines) {
 }
 
 /**
+ * Return only mutable active lines. History stays in its original string form
+ * so writers never reconstruct or normalize archive bytes.
+ * @param {ReturnType<typeof parseTasks>} parsed
+ * @returns {string[]}
+ */
+function activeLinesOf(parsed) {
+  return parsed.history
+    ? parsed.lines.slice(0, parsed.history.startLine)
+    : parsed.lines.slice();
+}
+
+/**
+ * Serialize active lines using the established final-LF shape when no history
+ * exists, or join them to the exact immutable history suffix when it does.
+ * @param {ReturnType<typeof parseTasks>} parsed
+ * @param {string[]} activeLines
+ * @returns {string}
+ */
+function serializeActive(parsed, activeLines) {
+  const separator = parsed.preferredSeparator;
+  if (parsed.history) {
+    const active = activeLines.length ? `${activeLines.join(separator)}${separator}` : '';
+    return `${active}${parsed.history.suffix}`;
+  }
+  const normalized = activeLines.slice();
+  while (normalized.length && normalized[normalized.length - 1] === '') normalized.pop();
+  return `${normalized.join(separator)}${separator}`;
+}
+
+/** @param {ReturnType<typeof parseTasks>} parsed */
+function assertValidBoardStructure(parsed) {
+  if (parsed.boardIssue) throw new Error(parsed.boardIssue);
+}
+
+/**
  * Regenerate the board region as a complete replacement. Pure: returns the new
  * full file content, never writes.
  * @param {ReturnType<typeof parseTasks>} parsed
  * @returns {string}
  */
 export function renderBoard(parsed) {
-  const lines = parsed.lines.slice();
+  assertValidBoardStructure(parsed);
+  const lines = activeLinesOf(parsed);
   const block = buildBoardBlock(parsed);
 
   let pre;
@@ -339,7 +481,7 @@ export function renderBoard(parsed) {
   if (pre.length) out.push(...pre, '');
   out.push(...block);
   if (post.length) out.push('', ...post);
-  return `${out.join('\n').replace(/\n+$/, '')}\n`;
+  return serializeActive(parsed, out);
 }
 
 /**
@@ -347,8 +489,8 @@ export function renderBoard(parsed) {
  * @returns {boolean} true when the on-disk board differs from a fresh render.
  */
 export function boardIsStale(parsed) {
-  const rendered = renderBoard(parsed);
-  return rendered !== `${parsed.lines.join('\n').replace(/\n+$/, '')}\n`;
+  if (parsed.boardIssue) return true;
+  return renderBoard(parsed) !== parsed.source;
 }
 
 /**
@@ -372,10 +514,11 @@ export function toGlyph(state) {
  * @returns {{ content: string, task: Task }}
  */
 export function setTaskState(parsed, id, state, opts = {}) {
+  assertValidBoardStructure(parsed);
   const task = parsed.byId.get(id);
   if (!task) throw new Error(`unknown task id: ${id}`);
   const glyph = toGlyph(state);
-  const lines = parsed.lines.slice();
+  const lines = activeLinesOf(parsed);
   const header = lines[task.headerLine];
   lines[task.headerLine] = header.replace(/^- \[[^\]]*\]/, `- [${glyph}]`);
 
@@ -393,7 +536,7 @@ export function setTaskState(parsed, id, state, opts = {}) {
     if (!updated) lines.splice(task.headerLine + 1, 0, `${indent}blocked-by: ${opts.blockedBy}`);
   }
 
-  return { content: `${lines.join('\n').replace(/\n+$/, '')}\n`, task };
+  return { content: serializeActive(parsed, lines), task };
 }
 
 /**
@@ -405,7 +548,8 @@ export function setTaskState(parsed, id, state, opts = {}) {
  * @returns {{ content: string, applied: string[], unknown: string[] }}
  */
 export function applyStates(parsed, statesMap) {
-  const lines = parsed.lines.slice();
+  assertValidBoardStructure(parsed);
+  const lines = activeLinesOf(parsed);
   /** @type {string[]} */
   const applied = [];
   for (const t of parsed.tasks) {
@@ -416,7 +560,7 @@ export function applyStates(parsed, statesMap) {
     }
   }
   const unknown = Object.keys(statesMap).filter((id) => !parsed.byId.has(id));
-  return { content: `${lines.join('\n').replace(/\n+$/, '')}\n`, applied, unknown };
+  return { content: serializeActive(parsed, lines), applied, unknown };
 }
 
 /* --------------------------------------------------------------- snapshot */
@@ -425,6 +569,7 @@ export function applyStates(parsed, statesMap) {
  * @returns {Record<string, string>} id -> glyph for every task.
  */
 export function glyphsOf(parsed) {
+  assertValidBoardStructure(parsed);
   /** @type {Record<string, string>} */
   const out = {};
   for (const t of parsed.tasks) out[t.id] = t.glyph;
@@ -440,6 +585,7 @@ export function glyphsOf(parsed) {
  * @returns {{ baseline: boolean, unexpectedDone: string[] }}
  */
 export function diffAgainstSnapshot(parsed, snapshotGlyphs) {
+  assertValidBoardStructure(parsed);
   if (!snapshotGlyphs) return { baseline: false, unexpectedDone: [] };
   const unexpectedDone = [];
   for (const t of parsed.tasks) {

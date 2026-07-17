@@ -1,6 +1,6 @@
 ---
 name: "dude-memory-ledger"
-description: "Use when the user wants Dude to remember a decision, guardrail, preference, project fact, or durable lesson, or when Dude should store important knowledge in `.github/dudestuff/` files."
+description: "Use when the user wants Dude to remember a decision, guardrail, preference, project fact, or durable lesson in `.dude/memory/`."
 ---
 
 ## Purpose
@@ -11,15 +11,15 @@ Store durable team knowledge in a small set of predictable memory files.
 
 Use:
 
-- `.github/dudestuff/decisions.md` for durable technical, product, or workflow decisions
-- `.github/dudestuff/guardrails.md` for enduring constraints, rules, and preferences
-- `.github/dudestuff/context.md` for domain knowledge, project facts, and business rules
-- `.github/dudestuff/lessons.md` for solved challenges and candidate reusable patterns
+- `.dude/memory/decisions.md` for durable technical, product, or workflow decisions
+- `.dude/memory/guardrails.md` for enduring constraints, rules, and preferences
+- `.dude/memory/context.md` for domain knowledge, project facts, and business rules
+- `.dude/memory/lessons.md` for solved challenges and candidate reusable patterns
 
-Two additional files in the same directory are owned by the `dude-bundle-upgrade` skill and should not be hand-edited as memory entries:
+Two metadata files are owned by the `dude-bundle-upgrade` skill and should not be hand-edited as memory entries:
 
-- `.github/dudestuff/bundle-manifest.md` — install-time pin of the upstream source and the installed commit sha.
-- `.github/dudestuff/upgrade-log.md` — append-only history of `@dude upgrade` events and rollbacks.
+- `.dude/metadata/bundle-manifest.md` — install-time pin of the upstream source and the installed ref.
+- `.dude/metadata/upgrade-log.md` — append-only history of `@dude upgrade` events and rollbacks.
 
 ## Writing Rules
 
@@ -80,8 +80,8 @@ existing entries, and refuses a near-duplicate (unless `--force`) instead of
 piling on a contradiction:
 
 ```bash
-node .github/skills/dude-memory-ledger/memory.mjs append .github/dudestuff/decisions.md --text "the decision"
-node .github/skills/dude-memory-ledger/memory.mjs append .github/dudestuff/lessons.md   --text "the lesson" --check
+node .github/skills/dude-memory-ledger/memory.mjs append .dude/memory/decisions.md --text "the decision"
+node .github/skills/dude-memory-ledger/memory.mjs append .dude/memory/lessons.md   --text "the lesson" --check
 ```
 
 It also warns when the file crosses the consolidation threshold. The judgment —
@@ -90,4 +90,4 @@ with you.
 
 ## Verification
 
-After writing to any `.github/dudestuff/*.md` file, run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`). The linter warns when a memory file exceeds the consolidation threshold and confirms no orphan `@<role>` references slipped in. Treat any `[WARN]` on the file you just edited as a prompt to consolidate now rather than later.
+After writing to any `.dude/memory/*.md` file, run the `dude-lint` skill (`node .github/skills/dude-lint/lint.mjs`). The linter warns when a memory file exceeds the consolidation threshold and confirms no orphan `@<role>` references slipped in. Treat any `[WARN]` on the file you just edited as a prompt to consolidate now rather than later.

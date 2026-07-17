@@ -3,7 +3,7 @@ agent: agent
 description: Customize Docsy colors, fonts, logo, and dark mode the supported way.
 ---
 
-Help the user restyle a Docsy site. Reference [skill §9](../skills/dude-pack-docsy-theme/SKILL.md#9-look--feel--scss) and the [SCSS rules](../instructions/docsy-scss.instructions.md).
+Help the user restyle a Docsy site. Reference [skill §9](../skills/dude-pack-docsy-theme/SKILL.md#9-look--feel--scss) and the [SCSS rules](../instructions/dude-pack-docsy-docsy-scss.instructions.md).
 
 ## Golden rule
 Edit **only** these three files — everything else in `assets/scss/` (especially `assets/scss/td/`) is internal and not covered by SemVer:

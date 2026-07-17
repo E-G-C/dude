@@ -5,125 +5,39 @@ description: "Use when matching a user request, subtask, or task to the right sp
 
 # Generic Routing
 
-## Purpose
-
-Route requests to the smallest appropriate specialist set, regardless of domain.
+Route work to the smallest credible specialist set. Routing is based on the current roster, never on assumed pack identities.
 
 ## Routing Algorithm
 
-1. **Discover the roster**: list all `.agent.md` files under `.github/agents/` (excluding `dude.agent.md`).
-2. **Read each agent's scope**: compare the agent's `description` and `## Scope` section against the task.
-3. **Match by keyword overlap**: the agent whose scope keywords best match the task gets the work.
-4. **Prefer narrow over broad**: if two agents could handle it, pick the one with the more specific scope.
-5. **No match**: if no specialist fits, ask the user whether to handle it directly or hire a new agent.
+1. **Discover the closed roster**: list the direct `.github/agents/*.agent.md` entries at routing time, excluding `dude.agent.md`. Those direct `.github/agents/*.agent.md` entries are the closed candidate set for specialist dispatch.
+2. **Parse each candidate**: record its canonical file stem, frontmatter `name` and `description`, and `## Scope` section.
+3. **Prefer exact artifact ownership for requested artifacts**: a unique literal artifact type or file suffix match in `description` or `## Scope` outranks semantic overlap only when that artifact is the requested output or an explicit create, author, refine, or review target. Incidental mentions, including test subjects, examples, inputs, or references, do not trigger artifact-owner precedence; route those by the primary requested outcome and scope.
+4. **Match by scope specificity**: otherwise compare the task with each candidate's `description` and `## Scope`; prefer the narrowest credible owner.
+5. **Resolve the identity**: before dispatch, the emitted identity must resolve uniquely to one discovered entry and be copied from its canonical file stem or declared frontmatter `name`; never synthesize an identity.
+6. **Fail closed**: zero matches or ambiguous top matches must be reported, escalated, or clarified. Do not dispatch or invent a specialist identity.
 
 ## Tie Breakers
 
-- Prefer one specialist if one can credibly own the task.
-- Split only when the domains are meaningfully different.
-- Do not route review or acceptance to the implementation author.
-- If a newly hired specialist matches the task more closely than an older one, prefer the new specialist.
-- When uncertain, check bundle memory for past routing decisions.
+- Prefer one credible owner; split only genuinely different domains.
+- Keep implementation and independent acceptance with different agents.
+- Prefer a narrower current scope over a broader or older role.
+- If evidence cannot break a tie, ask the user instead of guessing.
 
 ## Authority Ownership
 
-Maintain explicit owners for:
+Assign planning authority to the roster specialist whose scope owns structure and design tradeoffs, and quality authority to an independent specialist whose scope owns acceptance. Feature definition defaults to the Spec Lead; implementation planning uses a matching planning specialist when one exists, otherwise the coordinator. Reassign explicitly when the roster changes.
 
-- **Planning authority** — assign to the specialist whose scope best covers planning, structure, and design tradeoffs.
-- **Quality authority** — assign to the specialist whose scope best covers independent review and acceptance.
-
-Mode-specific defaults:
-
-- During feature definition under `specs/<feature>/`, default planning authority to `@dude-spec-lead`.
-- During implementation, default planning authority to a planning specialist if one is on the roster (else the coordinator) for implementation structure and execution tradeoffs.
-- When a dedicated independent reviewer exists, default quality authority to that reviewer.
-
-If the current owner is removed, replaced, or no longer the best fit, update the coordinator's routing guidance explicitly. If no clear owner exists, escalate to the user instead of inventing one.
-
-## Conflict Resolution
-
-When specialists disagree:
-
-- the current planning authority has final say on structure and design questions
-- the current quality authority has final say on acceptance and readiness
-- if the disagreement spans both domains, escalate to the user
-
-## Dynamic Roster Rule
-
-The roster is whatever currently exists under `.github/agents/`. There are no permanent defaults. When agents are added or removed, the routing adapts automatically based on their scope descriptions.
+When authorities disagree, planning controls structure, quality controls acceptance, and cross-authority or unowned conflicts escalate to the user.
 
 ## Task Matching
 
-Use these heuristics when interpreting task text and labels during dispatch. The keyword catalog supplements the generic routing algorithm above.
+Use these signals only after applying the algorithm:
 
-### Route To Spec Lead
+- **Definition**: brainstorm, idea intake, requirements, spec, plan, tasks, definition consistency.
+- **Planning**: architecture, setup, boundaries, configuration, design tradeoffs.
+- **Implementation**: build, implement, integrate, refactor, fix.
+- **Verification**: test, regression, edge case, validation, coverage, QA.
+- **Review**: independent review, approve, reject, readiness, acceptance.
+- **Coordinator skill**: importing one agent or skill uses `dude-bundle-import` directly rather than a specialist dispatch.
 
-Keywords and signals:
-
-- brief, draft, define
-- define feature, write spec, specify
-- feature brief, draft feature
-- clarify requirements, resolve ambiguity
-- create plan, implementation plan
-- derive tasks, break down feature
-- analyze consistency, spec quality
-- `specs/<feature>/` artifacts
-
-### Route To A Planning / Architecture Specialist
-
-Route to whichever roster agent owns architecture and structure (for example a hired architect, or a coding pack's architecture specialist). If none is on the roster, report a roster gap rather than inventing one.
-
-Keywords and signals:
-
-- architecture, scaffolding, project setup
-- design decision, trade-off
-- module boundaries, configuration
-- Phase 1 (Setup) or Phase 2 (Foundational) labels
-
-### Route To A Verification / Test Specialist
-
-Route to whichever roster agent owns testing and verification (for example a hired tester, or a coding pack's test specialist). If none is on the roster, report a roster gap rather than inventing one.
-
-Keywords and signals:
-
-- test, regression, edge case
-- validation, acceptance, coverage
-- contract verification, QA, E2E
-
-### Route To Reviewer
-
-Keywords and signals:
-
-- review, approve, reject
-- readiness, final acceptance
-- definition package readiness, import readiness
-- spec compliance, quality gate
-
-### Route To Bundle Import
-
-Keywords and signals:
-
-- import this agent, import this skill, fetch agent, fetch skill
-- copy agent, copy skill, bring in agent, bring in skill
-- install agent from `<url>`, install skill from `<url>`
-- a single-file URL ending in `.agent.md` or `SKILL.md`
-
-This is a coordinator-level skill route, not a specialist agent route. The coordinator runs the `dude-bundle-import` skill directly rather than dispatching to a roster member.
-
-### Task Tie-Breaking Rules
-
-- If the request is about defining, specifying, planning, or deriving tasks for a feature, prefer spec-lead.
-- If the task is mostly implementation, prefer an implementation specialist over a verification specialist.
-- If the task is explicitly about validation, prefer a verification specialist.
-- If the task is about independent judgment after implementation, prefer reviewer.
-- If the task mixes separable concerns, split it into independent tasks when the pieces can be executed independently.
-- If the task is about project structure or tooling, prefer a planning / architecture specialist.
-
-### Coordinator Summary Pattern
-
-When routing, state:
-
-- task ID (when present)
-- short task name
-- assigned specialist
-- one-line reason for the assignment
+For mixed requests, route by the primary outcome or split independent concerns. Report the task, selected discovered identity, and one-line scope reason.

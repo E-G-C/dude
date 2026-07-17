@@ -13,21 +13,95 @@ Bring in third-party or cross-repo Dude artifacts (or Claude/Anthropic-flavored 
 
 ## Mechanical prep (`import.mjs`)
 
-The deterministic parts — URL rewrite (github `blob` -> `raw`), frontmatter
-parsing, the strip plan (`compatibility`, `model`, Claude-style `tools`),
-destination filename normalization to `dude-local-*`, line-ending counting, and
-token-overlap against existing local artifacts — are computed by a script so the
-report is reliable:
+The deterministic parts — strict remote-file authorization and canonical GitHub
+`blob` -> `raw` resolution, frontmatter parsing, the strip plan (`compatibility`,
+`model`, Claude-style `tools`), destination filename normalization to
+`dude-local-*`, line-ending counting, and token-overlap against existing local
+artifacts — are computed by a script so the report is reliable. Remote fetches
+refuse redirects and enforce a streamed 1 MiB (1048576-byte) limit:
 
 ```bash
 node .github/skills/dude-bundle-import/import.mjs analyze <url|path> --json   # adaptation report
 node .github/skills/dude-bundle-import/import.mjs apply   <url|path> --plan plan.json
 ```
 
-`analyze` never writes. `apply` executes a confirmed plan and refuses unless the
-plan records a `license_disposition` when the source carries license metadata.
-The judgment calls below (license path, persona drift, opt-in tool remap) stay
-with the coordinator; the script only prepares and executes the mechanical edits.
+`analyze` never writes. It records whether the primary destination is absent or
+the exact identity, hard-link count, and SHA-256 of the existing regular file.
+For licensed skills it also records the candidate `LICENSE` and `NOTICE`
+destination states. `apply` executes a confirmed plan only when
+`destinationDecision` is the exact `create` or `replace` decision for the
+analyzed state. The plan JSON is the reviewed authorization artifact; it is not
+a cryptographic attestation. `apply` refuses destination appearance,
+disappearance, type, identity, hard-link-count, or content drift. The judgment
+calls below (license path, persona drift, opt-in tool remap) stay with the
+coordinator; the script only prepares and executes the reviewed mechanical
+edits.
+
+The reviewed fields added to the JSON report use these exact shapes:
+
+```json
+{
+	"destinationDecision": {
+		"action": "create",
+		"state": { "type": "missing" }
+	},
+	"license_disposition": {
+		"license": "MIT",
+		"materialization": "agent-source-license-section"
+	}
+}
+```
+
+For a skill, `license_disposition` instead selects and authorizes one analyzed
+license sibling:
+
+```json
+{
+	"license_disposition": {
+		"license": "MIT",
+		"materialization": "skill-license-sibling",
+		"sibling": {
+			"filename": "LICENSE",
+			"decision": {
+				"action": "create",
+				"state": { "type": "missing" }
+			}
+		}
+	}
+}
+```
+
+For `replace`, the decision's `state` must exactly repeat the analyzed regular
+file state, including `identity.device`, `identity.inode`, `nlink`, and
+`sha256`. Replacement is allowed only when the selected existing file has
+`nlink: "1"`; a selected target with any additional hard-link alias is rejected.
+Selected primary and license-sibling targets that resolve to the same file
+identity are also rejected. A free-form `license_disposition` is invalid. Its
+`license` must exactly equal the observed frontmatter value.
+
+The only supported license metadata form is exactly one literal top-level line
+beginning at column zero, `license: VALUE`, for example `license: MIT`. `VALUE` must match
+`[A-Za-z0-9][A-Za-z0-9.+-]*(?: [A-Za-z0-9][A-Za-z0-9.+-]*)*`: one or more
+non-empty ASCII alphanumeric tokens that may also contain `.`, `+`, or `-`,
+separated only by single spaces. The observed value is preserved exactly.
+
+The importer validates the entire frontmatter with a strict, import-private
+parser rather than a general YAML parser. Frontmatter is either absent or bounded
+by exact column-zero `---` delimiters with LF or CRLF endings; bare carriage
+returns, delimiter-shaped openers or closers (for example `--- # metadata` or
+` ---`), tabs, and indented data outside a `tools` sequence are rejected. Every
+data-bearing top-level entry must start at column zero with an unquoted ASCII key
+immediately followed by `:`, so anchors, aliases, tags, merge or explicit keys,
+directives, quoted or duplicate keys, block scalars, flow mappings, and nested
+mappings fail closed. License metadata is at most one canonical `license: VALUE`,
+and absence is proven only after the whole frontmatter validates; noncanonical or
+semantic candidates — an indented `license: MIT`, `license : MIT`, `"license":
+MIT`, `'license': MIT`, a semantic duplicate, and anchor, tag, quoted, comment,
+colon, hash, `|`/`>` block, empty, flow, or sequence values — are rejected. Any
+rejection fails both `analyze` and `apply` closed with a clear diagnostic and no
+writes. The importer does not perform SPDX validation, rewrite frontmatter
+automatically, accept arbitrary nested metadata, run transactionally, or
+guarantee race-free safety on a hostile filesystem.
 
 ## When To Run
 
@@ -37,22 +111,22 @@ with the coordinator; the script only prepares and executes the mechanical edits
 
 ## Inputs
 
-Accepted source forms (resolved to either a raw file fetch or a directory listing):
+Accepted source forms:
 
-- `https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>` — used as-is
-- `https://github.com/<owner>/<repo>/blob/<ref>/<path>` — rewrite to `raw.githubusercontent.com`
-- `https://github.com/<owner>/<repo>/tree/<ref>/<path>` — treat as a directory source; list the directory first, then classify it as a skill directory, an agent directory, or unsupported
-- `<owner>/<repo>:<path>` (shorthand) — assume `main` ref unless the user supplies one; resolve as a file when the path has a known artifact filename, otherwise resolve as a directory source
+- a local path to one agent or `SKILL.md` file
+- `https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path...>`
+- `https://github.com/<owner>/<repo>/blob/<ref>/<path...>` — canonicalized to the raw form
 
-Reject anything else with a clear reason and stop.
+Remote sources accept exactly those two HTTPS GitHub file forms. They do not
+follow redirects or accept URL aliases, repository trees, APIs, or shorthand.
+The first segment after the repository is the ref; slash-bearing refs are not
+supported. Reject anything else with a clear reason and stop.
 
 ## Detection Rules
 
 - Path ends in `.agent.md` → kind is **agent**; default destination is `.github/agents/dude-local-<source-name>.agent.md`, where `<source-name>` is the filename with `.agent.md` removed, unless the source name already starts with `dude-local-`.
 - Path ends in `.md` under a directory named `agents/` (or otherwise framed as an agent file) and the body is agent-shaped (frontmatter `name`, second-person/third-person directive prose) → kind is **agent**; **normalize the destination filename** to `dude-local-<basename>.agent.md` and surface the rename in the adaptation report.
-- Path ends in `SKILL.md` → kind is **skill**; default destination is `.github/skills/dude-local-<parent-dirname>/SKILL.md` unless the parent directory already starts with `dude-local-`.
-- Path is a directory source containing a `SKILL.md` child → kind is **skill**; default destination is `.github/skills/dude-local-<dirname>/SKILL.md` unless the directory already starts with `dude-local-`; primary source file is `<dir>/SKILL.md`.
-- Path is a directory source whose children are mostly `*.md` agent files (no `SKILL.md`) → kind is **agent directory**; do **not** auto-fan-out. List the candidate files in the report and require the user to pick which to import; each pick becomes a separate `dude-bundle-import` invocation.
+- Path ends in `SKILL.md` → kind is **skill**. Its actual parsed `name` is required and must contain one canonical lowercase stem matching `[a-z][a-z0-9-]*[a-z0-9]`. The importer strips at most one exact case-sensitive `dude-local-` or `dude-pack-` prefix and writes `.github/skills/dude-local-<stem>/SKILL.md`.
 - Anything else → refuse with `does not parse as a Dude agent or skill`.
 
 If the destination already exists, do **not** proceed past Step 3 without an explicit `replace` confirmation.
@@ -61,32 +135,30 @@ The `dude-local-` destination prefix is reserved for project-owned imports. Only
 
 ## Workflow
 
-### Step 1 — Resolve source, then fetch or list
+### Step 1 — Resolve source, then read or fetch
 
-For file sources, use the host's fetch tool against the resolved raw URL. Verify the response parses as Dude-shaped markdown:
+Read a local source directly. For a remote source, authorize and canonicalize it
+through `import.mjs`; fetch with redirects disabled and one 30-second abort
+budget. Reject a valid decimal `Content-Length` above 1 MiB early, and always
+count the streamed bytes so a missing or false-small header cannot bypass the
+1048576-byte limit. Verify the response parses as Dude-shaped markdown:
 
 - frontmatter delimited by `---`
 - contains `name:` (and `description:` for skills)
 - body has at least one `## ` heading
 
-For directory sources, list the directory before attempting a primary fetch. Use the host's repository listing capability when available, or the GitHub contents API equivalent for the resolved owner/repo/ref/path. Do not assume `<dir>/SKILL.md` exists until the listing proves it.
-
-- If the listing contains `SKILL.md`, classify as **skill**, fetch `<dir>/SKILL.md` as the primary file, and validate it with the file-source rules above.
-- If the listing has no `SKILL.md` and mostly contains `*.md` files that look agent-shaped, classify as **agent directory**. Fetch only enough candidate markdown files to validate and report their names, normalized destination filenames, and overlap warnings. Stop at the Step 2 report and require the user to pick one or more candidates; each picked candidate becomes a separate `dude-bundle-import` invocation.
-- If the directory cannot be listed, has neither `SKILL.md` nor agent-shaped markdown files, or mixes unrelated content too heavily to classify safely, stop and report `does not parse as a Dude agent or skill`.
-
-If parsing or listing fails, stop and report.
+If fetching or parsing fails, stop and report.
 
 ### Step 2 — Adaptation report (preview, no writes)
 
 Produce a single structured report with these sections. Surface every item; do not auto-fix.
 
-1. **Detected kind and destination** — `agent`, `skill`, or `agent directory`; absolute destination path; whether destination exists; any filename normalization being applied (e.g., `<name>.md` → `<name>.agent.md`).
+1. **Detected kind and destination** — `agent` or `skill`; absolute destination path; the analyzed missing or exact regular-file state; any filename normalization being applied (e.g., `<name>.md` → `<name>.agent.md`). A non-file destination type is not importable.
 2. **Frontmatter changes** — fields to strip (`compatibility:`, `model:`, Claude-specific `tools:`), fields to keep, fields to remap, and any `license:` value that needs preservation. A `license:` field must not be silently discarded: report whether an existing `LICENSE`/`NOTICE` sibling is available, whether a license sibling should be created from the frontmatter value for a skill import, or whether an agent import should retain a short non-frontmatter `## Source License` section. If no preservation path is confirmed, cancel instead of importing with license metadata lost.
 3. **Anthropic / Claude tool references in body** — list every line containing `Bash`, `Read`, `Write`, `Edit`, `Task`, `present_files`, `claude -p`, `claude --print`, or similar tool-name tokens, with line numbers.
 4. **MCP server assumptions** — list any named MCP server the body relies on.
 5. **Heavy-import flags** — list every line that triggers any of the heavy-import detectors below. Each category is presented as its own opt-in.
-6. **Sibling files (skills only)** — list every `<sibling>` referenced relative to the SKILL.md (e.g., `scripts/foo.py`, `assets/template.html`, `theme-showcase.pdf`) plus any license-preservation sibling from item 2. Each sibling is its own opt-in. Classify each as **text-adaptable** (`*.md`, `*.txt`, `*.json`, `*.html`, `*.ps1`, `*.sh`), **binary** (`*.pdf`, `*.png`, `*.jpg`, `*.ico`, `*.woff*`, `*.ttf`, `*.zip`), or **directory** (e.g., `themes/`, `agents/`, `references/`). Binary siblings are copied byte-for-byte without adaptation. Directory siblings require explicit per-directory recursion confirmation, but confirming a directory does not confirm executable children inside it: list directory children before writing, classify each child, and require per-file confirmation for executable files. The skill never recursively pulls a directory by default.
+6. **Sibling references (skills only)** — list files referenced relative to `SKILL.md` as unresolved follow-up work. The importer does not fetch or copy arbitrary siblings. The only sibling it may materialize is the exact reviewed `LICENSE` or `NOTICE` destination selected to preserve observed license metadata.
 7. **Referenced skills (agents only)** — list every `.github/skills/<name>/` path **and** every bare `skills/<name>` path mentioned in the body, and whether `<name>` already exists locally. Bare-path references that point at the source repo's structure (not the destination's `.github/skills/`) should be flagged for adaptation: either rewrite to `.github/skills/<name>/` if the dependency is being imported, or strip the reference entirely if it is not.
 8. **Referenced handles (agents only)** — list every `@<role>` referenced and whether the role already exists in the local roster.
 9. **Overlap warnings** — list any local agent/skill whose `description:` shares ≥30% token overlap with the imported artifact, or whose scope/purpose section overlaps semantically.
@@ -98,11 +170,17 @@ Produce a single structured report with these sections. Surface every item; do n
 Present the report. Wait for one of:
 
 - `confirm import` — proceed with all flagged adaptations applied.
-- `confirm import without <category>` (repeatable) — proceed but skip the named categories (e.g., `without sibling scripts/`, `without persona-drift edits`).
-- `replace` — when destination exists, authorize overwrite.
+- `confirm import without <category>` (repeatable) — proceed but skip the named categories (e.g., `without persona-drift edits`).
+- `replace` — when the analyzed destination is an existing regular file, authorize overwrite of exactly that file identity and content.
 - `cancel` — stop, write nothing.
 
 Never write files before this gate clears.
+
+Confirmation produces an exact `destinationDecision`: `create` is valid only
+for an analyzed missing destination, and `replace` is valid only for the exact
+existing-file state shown in the report. A licensed import also requires the
+structured `license_disposition` shown above. Re-run `analyze` instead of
+reusing a plan after any destination changes.
 
 ### Step 4 — Adapt
 
@@ -116,20 +194,23 @@ Apply only the confirmed adaptations to the in-memory copy:
 - normalize line endings to the destination repo's convention
 - leave persona drift untouched unless the user explicitly confirmed that category
 
-### Step 5 — Write primary file
+### Step 5 — Preflight the complete write set, then write the primary file
 
-Use the host's write tool to create or replace the destination file. Report the path written.
+Before the first filesystem mutation, preflight the primary destination and
+every selected license-sibling destination. Resolve every path through
+`resolveMutationPath` again and reject any appearance, disappearance, type,
+identity, hard-link-count, or content drift from its analyzed state. Reject
+replacement if any selected existing target has more than one hard link, and
+reject selected targets that alias each other. If any target fails, write
+nothing. After the complete preflight passes, create or replace the primary file
+using its exact reviewed action. Report every path written, including license
+siblings.
 
-### Step 6 — Sibling files (skills only)
+### Step 6 — Sibling references (skills only)
 
-For each sibling the user confirmed in Step 2 item 6:
-
-- fetch from the parallel path in the source repo
-- adapt text-adaptable siblings with the same confirmed text rules as the primary file
-- copy binary siblings byte-for-byte without frontmatter, prose, or line-ending adaptation
-- write under `.github/skills/<name>/<sibling>`
-- for confirmed directory siblings, list children first and apply this same classification recursively; a directory confirmation only permits traversal, not automatic writing of every child
-- if the sibling or any discovered directory child is `*.py`, `*.js`, `*.sh`, or another executable type and was *not* explicitly confirmed by the user as that specific file, refuse and note it in the final summary
+Report referenced sibling files as unresolved. Do not fetch, copy, traverse, or
+write them as part of this import. A separately reviewed license-preservation
+destination selected in Steps 2–5 is the sole supported sibling write.
 
 ### Step 7 — Run `dude-lint`
 
@@ -201,12 +282,17 @@ Examples worth catching: a Claude `skill-creator` overlaps with the local `dude-
 ## Boundaries
 
 - never auto-fetch transitive dependencies — each one requires a fresh `dude-bundle-import` invocation
-- never write executable code files (`*.py`, `*.js`, `*.sh` other than the bundle's own lint scripts) without explicit per-file confirmation
-- never overwrite an existing destination without `replace` confirmation
+- never list or import repository directories, trees, or arbitrary sibling files
+- never follow a remote redirect or accept more than 1048576 streamed source bytes
+- never write referenced executable sibling files; report them as unresolved
+- never create without an exact reviewed `create` decision bound to analyzed absence
+- never overwrite an existing destination without an exact reviewed `replace` decision bound to its analyzed identity, hard-link count of one, and content
+- never write any primary or sibling target until the complete selected write set passes preflight
+- never treat these checks as race-free protection against a hostile filesystem; imports operate only in a locally controlled workspace, and an external process can still change paths after preflight
 - never publish, push, or modify remote state — this skill only reads remote and writes local
 - never install runtimes (Python, Node, etc.); refuse the import if the source is unusable without one and the user has not explicitly accepted that
 - the skill itself stays a single SKILL.md with no siblings, by design
 
 ## Dry-Run Mode
 
-If the user prefixes the request with `dry-run`, stop after Step 2 and present the adaptation report only. No fetches beyond the primary file; no writes.
+If the user prefixes the request with `dry-run`, stop after Step 2 and present the adaptation report only. Read or fetch only the primary file; no writes.

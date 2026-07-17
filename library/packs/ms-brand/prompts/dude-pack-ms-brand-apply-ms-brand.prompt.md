@@ -70,7 +70,7 @@ Microsoft Brand Central instead. This prompt is for internal artifacts.
      [../skills/dude-pack-ms-brand-visual/reference/logo.md](../skills/dude-pack-ms-brand-visual/reference/logo.md).
 
 7. **Audit** — run the checks from
-   [audit-ms-brand.prompt.md](audit-ms-brand.prompt.md) before declaring done.
+   [dude-pack-ms-brand-audit-ms-brand.prompt.md](dude-pack-ms-brand-audit-ms-brand.prompt.md) before declaring done.
 
 ## Output
 

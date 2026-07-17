@@ -32,6 +32,32 @@ test('parseArgs reads slug + flags', () => {
   assert.equal(a.force, true);
 });
 
+test('scaffolds beside retired-root content without changing it', () => {
+  const root = tmpRoot();
+  try {
+    const retiredFiles = [
+      ['brief/notes.md', '# Notes\n'],
+      ['.dude/brief/archive.md', '# Archive\n'],
+      ['specs/example/spec.md', '# Example\n'],
+      ['.github/dudestuff/context.md', '# Context\n'],
+    ];
+    for (const [relative, content] of retiredFiles) {
+      const retiredPath = path.join(root, relative);
+      fs.mkdirSync(path.dirname(retiredPath), { recursive: true });
+      fs.writeFileSync(retiredPath, content);
+    }
+
+    const result = scaffoldAgent({ slug: 'current-write', root });
+
+    assert.equal(fs.existsSync(result.path), true);
+    for (const [relative, content] of retiredFiles) {
+      assert.equal(fs.readFileSync(path.join(root, relative), 'utf8'), content);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('local agent has the coordinator block, tools frontmatter, and LF endings', () => {
   const root = tmpRoot();
   try {
@@ -69,6 +95,23 @@ test('refuses an existing destination without --force, and a missing pack', () =
     scaffoldAgent({ slug: 'chef', root });
     assert.throws(() => scaffoldAgent({ slug: 'chef', root }), /destination exists/);
     assert.throws(() => scaffoldAgent({ slug: 'inspector', pack: 'ghost', root }), /pack not found/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('scaffolds the intended agent with canonical ideas present', () => {
+  const root = tmpRoot();
+  try {
+    const ideaPath = path.join(root, '.dude/ideas/team-expansion.md');
+    fs.mkdirSync(path.dirname(ideaPath), { recursive: true });
+    fs.writeFileSync(ideaPath, '# Canonical idea\n');
+
+    const result = scaffoldAgent({ slug: 'canonical-idea', root });
+
+    assert.equal(result.path, path.join(root, '.github/agents/dude-local-canonical-idea.agent.md'));
+    assert.equal(fs.existsSync(result.path), true);
+    assert.equal(fs.readFileSync(ideaPath, 'utf8'), '# Canonical idea\n');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

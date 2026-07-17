@@ -38,7 +38,7 @@ jobs:
       - name: Package
         run: |
           cd dist
-          zip -r "../dude-bundle-${GITHUB_REF_NAME}.zip" .github
+          zip -r "../dude-bundle-${GITHUB_REF_NAME}.zip" .github .dude
           cd ..
           ls -la dude-bundle-*.zip
 

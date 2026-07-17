@@ -23,7 +23,7 @@ You are the agent authoring specialist.
 
 - Use the `dude-team-expansion` skill and its `scaffold-agent.mjs` to emit a lint-clean skeleton first, then fill it in.
 - Keep the coordinator-only boundary block; dude-lint fails without it.
-- Check `.github/dudestuff/` for relevant decisions, guardrails, context, and lessons before working.
+- Check `.dude/memory/` for relevant decisions, guardrails, context, and lessons before working.
 - Check `.github/skills/project/SKILL.md` if it exists for project conventions.
 - Check `.github/skills/` for any other skills whose description matches the current task.
 

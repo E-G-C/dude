@@ -49,7 +49,7 @@ Pair this with `dude-systematic-debugging` when the root cause is not yet clear.
 - Do not call it TDD if the test was written only after the implementation was already finished.
 - Do not keep expanding scope while trying to get to green.
 - Do not skip the failing-test step unless the user explicitly overrode tests-first discipline.
-- Do not apply this skill to feature-definition artifacts under `specs/<feature>/`.
+- Do not apply this skill to feature-definition artifacts under `.dude/specs/<feature>/`.
 
 ## Return Pattern
 

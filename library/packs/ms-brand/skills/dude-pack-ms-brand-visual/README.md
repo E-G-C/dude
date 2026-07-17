@@ -21,9 +21,9 @@ You drop this folder into a workspace. Copilot then knows:
 You can:
 
 1. **Style a new page** → run
-   [../../prompts/apply-ms-brand.prompt.md](../../prompts/apply-ms-brand.prompt.md)
+   [../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md)
 2. **Check an existing page** → run
-   [../../prompts/audit-ms-brand.prompt.md](../../prompts/audit-ms-brand.prompt.md)
+   [../../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md)
 3. **Import the design tokens** → drop in
    [tokens/ms-brand.css](tokens/ms-brand.css) or
    [tokens/tailwind.preset.js](tokens/tailwind.preset.js)
@@ -71,9 +71,9 @@ module.exports = { presets: [msBrand], content: ['./**/*.{html,jsx,tsx}'] };
 > Apply the Microsoft visual brand bundle to `index.html`.
 
 Copilot will follow
-[../../instructions/ms-visual-brand.instructions.md](../../instructions/ms-visual-brand.instructions.md)
+[../../instructions/dude-pack-ms-brand-ms-visual-brand.instructions.md](../../instructions/dude-pack-ms-brand-ms-visual-brand.instructions.md)
 and the prompt in
-[../../prompts/apply-ms-brand.prompt.md](../../prompts/apply-ms-brand.prompt.md).
+[../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md).
 
 ## Core visual vocabulary at a glance
 

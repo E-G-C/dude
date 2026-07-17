@@ -11,6 +11,7 @@ or advanced behavior.
 Read only what you need:
 
 - [Setup and first feature](setup.md) — copy the bundle, start your first feature, and handle guardrails.
+- [Bundle upgrading](upgrading.md) — understand ownership, preservation, preview/apply, and rollback.
 - [Workflow modes and lifecycle](workflow.md) — understand the choices after `@dude define`: stop, or implement from `tasks.md` (and optionally add a tracked board with the beads pack).
 - [Commands and prompt shapes](commands.md) — look up exact commands and example prompts.
 
@@ -20,4 +21,3 @@ Read only what you need:
 - [Starting from a PRD draft](prd-drafts.md) — turn a longer markdown PRD into Dude files.
 - [Detailed walkthrough](walkthrough.md) — end-to-end example using the built-in authentication sample.
 - [Definition and execution reference](reference.md) — deeper ownership, task, and quality rules.
-- [Upgrading the Dude bundle](upgrading.md) — update Dude itself while preserving project memory and active work.

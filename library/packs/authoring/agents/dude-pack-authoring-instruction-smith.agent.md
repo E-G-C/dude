@@ -21,7 +21,7 @@ You are the instruction authoring specialist.
 ## Rules
 
 - Load the `dude-pack-authoring-instruction-conventions` skill for applyTo and scoping guidance.
-- Check `.github/dudestuff/` for relevant decisions, guardrails, context, and lessons before working.
+- Check `.dude/memory/` for relevant decisions, guardrails, context, and lessons before working.
 - Check `.github/skills/project/SKILL.md` if it exists for project conventions.
 - Check `.github/skills/` for any other skills whose description matches the current task.
 

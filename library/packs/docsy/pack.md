@@ -7,22 +7,22 @@ provides:
   skills:
     - dude-pack-docsy-theme
   instructions:
-    - docsy-config.instructions.md
-    - docsy-content.instructions.md
-    - docsy-scss.instructions.md
+    - dude-pack-docsy-docsy-config.instructions.md
+    - dude-pack-docsy-docsy-content.instructions.md
+    - dude-pack-docsy-docsy-scss.instructions.md
   prompts:
-    - install-site.prompt.md
-    - customize-theme.prompt.md
-    - update-docsy.prompt.md
-    - add-shortcode.prompt.md
-    - new-blog-post.prompt.md
-    - new-docs-page.prompt.md
-    - setup-i18n.prompt.md
-    - setup-search.prompt.md
-    - setup-versioning.prompt.md
-    - setup-deployment.prompt.md
-    - enable-agent-support.prompt.md
-    - troubleshoot-build.prompt.md
+    - dude-pack-docsy-install-site.prompt.md
+    - dude-pack-docsy-customize-theme.prompt.md
+    - dude-pack-docsy-update-docsy.prompt.md
+    - dude-pack-docsy-add-shortcode.prompt.md
+    - dude-pack-docsy-new-blog-post.prompt.md
+    - dude-pack-docsy-new-docs-page.prompt.md
+    - dude-pack-docsy-setup-i18n.prompt.md
+    - dude-pack-docsy-setup-search.prompt.md
+    - dude-pack-docsy-setup-versioning.prompt.md
+    - dude-pack-docsy-setup-deployment.prompt.md
+    - dude-pack-docsy-enable-agent-support.prompt.md
+    - dude-pack-docsy-troubleshoot-build.prompt.md
 requires:
   tools: [hugo]
 ---
@@ -49,24 +49,24 @@ for the underlying engine behavior.
 
 ### Instructions
 
-- `docsy-config.instructions.md` — Docsy `hugo.toml` patterns and ordering rules.
-- `docsy-content.instructions.md` — Docsy content conventions (front matter,
+- `dude-pack-docsy-docsy-config.instructions.md` — Docsy `hugo.toml` patterns and ordering rules.
+- `dude-pack-docsy-docsy-content.instructions.md` — Docsy content conventions (front matter,
   sections, blog/news, shortcodes).
-- `docsy-scss.instructions.md` — the three customizable SCSS files and what's
+- `dude-pack-docsy-docsy-scss.instructions.md` — the three customizable SCSS files and what's
   off-limits in `assets/scss/td/`.
 
 ### Prompts
 
-- `install-site.prompt.md` — scaffold a new Docsy site with the right install
+- `dude-pack-docsy-install-site.prompt.md` — scaffold a new Docsy site with the right install
   method (Hugo module / submodule / npm).
-- `customize-theme.prompt.md` — colors, fonts, logo, dark mode.
-- `update-docsy.prompt.md` — upgrade/migrate across install methods.
-- `add-shortcode.prompt.md` — pick and insert the right Docsy shortcode.
-- `new-blog-post.prompt.md`, `new-docs-page.prompt.md` — scaffold content.
-- `setup-i18n.prompt.md`, `setup-search.prompt.md`, `setup-versioning.prompt.md`
-- `setup-deployment.prompt.md` — GitHub Pages / Netlify / S3+CloudFront.
-- `enable-agent-support.prompt.md` — Markdown output + `llms.txt`.
-- `troubleshoot-build.prompt.md` — Docsy-specific build/PostCSS/extended-Hugo
+- `dude-pack-docsy-customize-theme.prompt.md` — colors, fonts, logo, dark mode.
+- `dude-pack-docsy-update-docsy.prompt.md` — upgrade/migrate across install methods.
+- `dude-pack-docsy-add-shortcode.prompt.md` — pick and insert the right Docsy shortcode.
+- `dude-pack-docsy-new-blog-post.prompt.md`, `dude-pack-docsy-new-docs-page.prompt.md` — scaffold content.
+- `dude-pack-docsy-setup-i18n.prompt.md`, `dude-pack-docsy-setup-search.prompt.md`, `dude-pack-docsy-setup-versioning.prompt.md`
+- `dude-pack-docsy-setup-deployment.prompt.md` — GitHub Pages / Netlify / S3+CloudFront.
+- `dude-pack-docsy-enable-agent-support.prompt.md` — Markdown output + `llms.txt`.
+- `dude-pack-docsy-troubleshoot-build.prompt.md` — Docsy-specific build/PostCSS/extended-Hugo
   diagnosis.
 
 ## Requires

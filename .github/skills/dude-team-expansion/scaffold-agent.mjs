@@ -22,6 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeString } from '../dude-engine/lib/text.mjs';
 import { addProvide } from '../dude-engine/lib/pack-manifest.mjs';
+import { resolveMutationPath } from '../dude-engine/lib/workspace-paths.mjs';
 
 const SLUG_RE = /^[a-z][a-z0-9-]*[a-z0-9]$/;
 
@@ -66,7 +67,7 @@ ${COORD_BLOCK}
 
 ## Rules
 
-- Check \`.github/dudestuff/\` for relevant decisions, guardrails, context, and lessons before working.
+- Check \`.dude/memory/\` for relevant decisions, guardrails, context, and lessons before working.
 - Check \`.github/skills/project/SKILL.md\` if it exists for project conventions.
 - Check \`.github/skills/\` for any other skills whose description matches the current task.
 
@@ -105,6 +106,11 @@ export function scaffoldAgent(opts) {
 
   if (fs.existsSync(destAbs) && !opts.force) {
     throw new Error(`destination exists (use --force): ${path.relative(root, destAbs)}`);
+  }
+
+  destAbs = resolveMutationPath(root, path.relative(path.resolve(root), destAbs).split(path.sep).join('/'));
+  if (packMd) {
+    packMd = resolveMutationPath(root, path.relative(path.resolve(root), packMd).split(path.sep).join('/'));
   }
 
   fs.mkdirSync(path.dirname(destAbs), { recursive: true });

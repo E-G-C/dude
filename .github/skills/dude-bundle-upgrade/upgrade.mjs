@@ -27,6 +27,10 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { enumerateCorePaths, classifyPath, TIER } from '../dude-engine/lib/ownership.mjs';
 import { resolveReleaseRef, pickLatestReleaseTag } from '../dude-engine/lib/release-channel.mjs';
+import {
+  WORKSPACE_PATHS,
+  resolveMutationPath,
+} from '../dude-engine/lib/workspace-paths.mjs';
 
 // Re-exported so existing importers (upgrade.test.mjs) keep a stable entry point.
 export { pickLatestReleaseTag };
@@ -34,10 +38,14 @@ export { pickLatestReleaseTag };
 const ROOT = process.cwd();
 const CACHE_ROOT = path.join(process.env.TMPDIR || '/tmp', 'dude-upgrade-cache');
 const PLANS_DIR = path.join(CACHE_ROOT, 'plans');
-const LOCAL_MANIFEST_PATH = path.join(ROOT, '.github/dudestuff/bundle-manifest.md');
+const LOCAL_MANIFEST_PATH = path.join(ROOT, ...WORKSPACE_PATHS.BUNDLE_MANIFEST.split('/'));
 const LINT_PATH = path.join(ROOT, '.github/skills/dude-lint/lint.mjs');
 const DEFAULT_SOURCE = 'https://github.com/E-G-C/dude';
 const DEFAULT_REF = 'main';
+const PLAN_KIND = 'dude-upgrade-plan';
+const PLAN_SCHEMA_VERSION = 1;
+const PLAN_IDENTITY_SCOPE = 'same-host-filesystem';
+const COMMIT_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 
 // ----- logging (stderr) ------------------------------------------------------
 const color = Boolean(process.stderr.isTTY);
@@ -94,9 +102,9 @@ const sanitizeRef = (r) => String(r).replace(/[^A-Za-z0-9._-]/g, '_') || 'none';
 
 /** @returns {string} ISO-8601 UTC with no milliseconds. */
 const isoNow = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-/** @param {number} secs @returns {string} */
-const isoPlusSeconds = (secs) =>
-  new Date(Date.now() + secs * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+/** @param {string} iso @param {number} secs @returns {string} */
+const isoAddSeconds = (iso, secs) =>
+  new Date(Date.parse(iso) + secs * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
 /** @returns {string} compact UTC stamp YYYYMMDD-HHMMSS */
 function stampNow() {
   const d = new Date();
@@ -109,7 +117,246 @@ function stampNow() {
 /** @param {string} iso @returns {number | null} epoch seconds or null */
 function isoToEpoch(iso) {
   const t = Date.parse(iso);
-  return Number.isNaN(t) ? null : Math.floor(t / 1000);
+  if (Number.isNaN(t)) return null;
+  const canonical = new Date(t).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  return canonical === iso ? Math.floor(t / 1000) : null;
+}
+/** @param {string} a @param {string} b @returns {number} */
+const codeUnitCompare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+/** @param {string | Buffer} bytes @returns {string} */
+const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+/** @param {string} absolutePath @param {boolean} [bigint] */
+function lstatOrNull(absolutePath, bigint = false) {
+  try {
+    return bigint
+      ? fs.lstatSync(absolutePath, { bigint: true })
+      : fs.lstatSync(absolutePath);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+/** @param {string} absolutePath */
+function directoryIdentity(absolutePath) {
+  const stat = lstatOrNull(absolutePath, true);
+  if (!stat || !stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`expected a real directory: ${absolutePath}`);
+  }
+  return {
+    device: String(stat.dev),
+    inode: String(stat.ino),
+  };
+}
+/** @param {string} root @param {string} relativePath */
+function snapshotExpectedState(root, relativePath) {
+  const absolutePath = resolveMutationPath(root, relativePath);
+  const stat = lstatOrNull(absolutePath, true);
+  if (!stat) return { type: 'missing' };
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`expected regular file at ${relativePath}`);
+  }
+  return {
+    type: 'file',
+    sha256: sha256(fs.readFileSync(absolutePath)),
+  };
+}
+
+/**
+ * Enumerate core files while refusing namespace candidates hidden from the
+ * regular-file enumerator by a symlink or incompatible file type.
+ * @param {string} root
+ * @param {string} label
+ * @returns {string[]}
+ */
+function scanCoreInventoryPaths(root, label) {
+  /** @type {string[]} */
+  const results = [];
+  /** @param {string} relativePath */
+  const safeLstat = (relativePath) => {
+    const stat = lstatOrNull(path.join(root, ...relativePath.split('/')));
+    if (stat?.isSymbolicLink()) throw new Error(`${label} contains symbolic link: ${relativePath}`);
+    return stat;
+  };
+  /** @param {string} relativePath */
+  const requireDirectory = (relativePath) => {
+    const stat = safeLstat(relativePath);
+    if (!stat) return false;
+    if (!stat.isDirectory()) throw new Error(`${label} type changed: ${relativePath}`);
+    return true;
+  };
+  /** @param {string} relativeDirectory */
+  const walkSkill = (relativeDirectory) => {
+    const absoluteDirectory = path.join(root, ...relativeDirectory.split('/'));
+    for (const name of fs.readdirSync(absoluteDirectory).sort(codeUnitCompare)) {
+      const relativePath = `${relativeDirectory}/${name}`;
+      const stat = safeLstat(relativePath);
+      if (!stat) continue;
+      if (stat.isDirectory()) walkSkill(relativePath);
+      else if (stat.isFile()) results.push(relativePath);
+      else throw new Error(`${label} type changed: ${relativePath}`);
+    }
+  };
+
+  if (requireDirectory('.github/agents')) {
+    for (const name of fs.readdirSync(path.join(root, '.github/agents')).sort(codeUnitCompare)) {
+      const relativePath = `.github/agents/${name}`;
+      if (!name.endsWith('.agent.md') || classifyPath(relativePath) !== TIER.CORE) continue;
+      const stat = safeLstat(relativePath);
+      if (!stat?.isFile()) throw new Error(`${label} type changed: ${relativePath}`);
+      results.push(relativePath);
+    }
+  }
+
+  const instructionsPath = '.github/instructions/dude.instructions.md';
+  const instructionsStat = safeLstat(instructionsPath);
+  if (instructionsStat) {
+    if (!instructionsStat.isFile()) throw new Error(`${label} type changed: ${instructionsPath}`);
+    results.push(instructionsPath);
+  }
+
+  if (requireDirectory('.github/skills')) {
+    for (const name of fs.readdirSync(path.join(root, '.github/skills')).sort(codeUnitCompare)) {
+      const relativeDirectory = `.github/skills/${name}`;
+      if (classifyPath(`${relativeDirectory}/`) !== TIER.CORE) continue;
+      const stat = safeLstat(relativeDirectory);
+      if (!stat?.isDirectory()) throw new Error(`${label} type changed: ${relativeDirectory}`);
+      walkSkill(relativeDirectory);
+    }
+  }
+
+  return results.sort(codeUnitCompare);
+}
+
+/** @param {string} root @param {string} label */
+function snapshotCoreInventory(root, label) {
+  return scanCoreInventoryPaths(root, label).map((relativePath) => {
+    const state = snapshotExpectedState(root, relativePath);
+    if (state.type !== 'file') throw new Error(`${label} path disappeared: ${relativePath}`);
+    return { path: relativePath, type: 'file', sha256: state.sha256 };
+  });
+}
+
+/** @param {unknown} value @returns {value is Record<string, any>} */
+const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+/** @param {unknown} state */
+function projectExpectedState(state) {
+  if (!isRecord(state)) return state;
+  if (state.type === 'missing') return { type: state.type };
+  return {
+    type: state.type,
+    sha256: state.sha256,
+  };
+}
+
+/** @param {unknown} value @param {(entry: Record<string, any>) => object} mapEntry */
+function projectArray(value, mapEntry) {
+  return Array.isArray(value)
+    ? value.map((entry) => (isRecord(entry) ? mapEntry(entry) : entry))
+    : value;
+}
+
+/**
+ * Reconstruct the exact schema-v1 digest projection in canonical key order.
+ * Unknown fields are excluded here and rejected by strict apply validation.
+ * @param {Record<string, any>} plan
+ */
+export function canonicalPlanProjection(plan) {
+  return {
+    kind: plan.kind,
+    schema_version: plan.schema_version,
+    plan_id: plan.plan_id,
+    created_at: plan.created_at,
+    ttl_warn_at: plan.ttl_warn_at,
+    ttl_expire_at: plan.ttl_expire_at,
+    scope: isRecord(plan.scope) ? {
+      identity_scope: plan.scope.identity_scope,
+      workspace_path: plan.scope.workspace_path,
+      workspace_realpath: plan.scope.workspace_realpath,
+      workspace_identity: isRecord(plan.scope.workspace_identity) ? {
+        device: plan.scope.workspace_identity.device,
+        inode: plan.scope.workspace_identity.inode,
+      } : plan.scope.workspace_identity,
+    } : plan.scope,
+    source: isRecord(plan.source) ? {
+      type: plan.source.type,
+      location: plan.source.location,
+      identity: plan.source.identity,
+      requested_ref: plan.source.requested_ref,
+      resolved_ref: plan.source.resolved_ref,
+      resolved_commit: plan.source.resolved_commit,
+    } : plan.source,
+    from_ref: plan.from_ref,
+    to_ref: plan.to_ref,
+    cache: isRecord(plan.cache) ? {
+      root_path: plan.cache.root_path,
+      root_realpath: plan.cache.root_realpath,
+      root_identity: isRecord(plan.cache.root_identity) ? {
+        device: plan.cache.root_identity.device,
+        inode: plan.cache.root_identity.inode,
+      } : plan.cache.root_identity,
+      manifest: isRecord(plan.cache.manifest) ? {
+        path: plan.cache.manifest.path,
+        type: plan.cache.manifest.type,
+        sha256: plan.cache.manifest.sha256,
+      } : plan.cache.manifest,
+      inventory: projectArray(plan.cache.inventory, (entry) => ({
+        path: entry.path,
+        type: entry.type,
+        sha256: entry.sha256,
+      })),
+    } : plan.cache,
+    local: isRecord(plan.local) ? {
+      manifest: isRecord(plan.local.manifest) ? {
+        path: plan.local.manifest.path,
+        state: projectExpectedState(plan.local.manifest.state),
+        data: isRecord(plan.local.manifest.data) ? {
+          source_repo: plan.local.manifest.data.source_repo,
+          source_ref: plan.local.manifest.data.source_ref,
+          installed_ref: plan.local.manifest.data.installed_ref,
+        } : plan.local.manifest.data,
+      } : plan.local.manifest,
+      upgrade_log: isRecord(plan.local.upgrade_log) ? {
+        path: plan.local.upgrade_log.path,
+        state: projectExpectedState(plan.local.upgrade_log.state),
+      } : plan.local.upgrade_log,
+      core_inventory: projectArray(plan.local.core_inventory, (entry) => ({
+        path: entry.path,
+        state: projectExpectedState(entry.state),
+      })),
+    } : plan.local,
+    summary: isRecord(plan.summary) ? {
+      replace: plan.summary.replace,
+      add: plan.summary.add,
+      remove: plan.summary.remove,
+      advisory: plan.summary.advisory,
+      up_to_date: plan.summary.up_to_date,
+    } : plan.summary,
+    buckets: isRecord(plan.buckets) ? {
+      replace: projectArray(plan.buckets.replace, (entry) => ({
+        path: entry.path,
+        added_lines: entry.added_lines,
+        removed_lines: entry.removed_lines,
+      })),
+      add: projectArray(plan.buckets.add, (entry) => ({ path: entry.path })),
+      remove: projectArray(plan.buckets.remove, (entry) => ({ path: entry.path })),
+      advisory: projectArray(plan.buckets.advisory, (entry) => ({
+        path: entry.path,
+        kind: entry.kind,
+      })),
+      up_to_date: projectArray(plan.buckets.up_to_date, (entry) => ({ path: entry.path })),
+    } : plan.buckets,
+  };
+}
+
+/** @param {Record<string, any>} plan @returns {string} */
+export function planDigest(plan) {
+  return sha256(JSON.stringify(canonicalPlanProjection(plan)));
+}
+
+/** @param {Record<string, any>} plan @returns {string} */
+function serializeUpgradePlan(plan) {
+  return `${JSON.stringify({ ...canonicalPlanProjection(plan), digest: plan.digest }, null, 2)}\n`;
 }
 
 /**
@@ -124,6 +371,31 @@ function git(args, cwd = ROOT) {
 }
 /** @returns {boolean} */
 const hasGit = () => spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0;
+
+/** @param {string} hooksPath @param {string[]} args @param {string} [cwd] */
+function gitWithoutHooks(hooksPath, args, cwd = ROOT) {
+  return git(['-c', `core.hooksPath=${hooksPath}`, ...args], cwd);
+}
+
+/**
+ * Find the required canonical manifest in an upstream tree.
+ * @param {string} root
+ * @returns {string | null}
+ */
+export function findUpstreamManifestPath(root) {
+  const canonical = path.join(root, ...WORKSPACE_PATHS.BUNDLE_MANIFEST.split('/'));
+  try {
+    if (fs.lstatSync(canonical).isFile()) return canonical;
+  } catch {
+    // missing or not readable
+  }
+  return null;
+}
+
+/** @returns {string} */
+function localManifestError() {
+  return `canonical bundle manifest missing or malformed at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}; install or copy a current bundle engine and metadata, or reinstall the current bundle while preserving project data`;
+}
 
 // ----- manifest parsing ------------------------------------------------------
 /** @param {string} content @returns {string | null} the fenced ```json block body */
@@ -208,8 +480,8 @@ function githubOwnerRepo(url) {
 }
 
 /**
- * Fetch only the upstream bundle-manifest.md. Returns its local path or null.
- * @returns {Promise<string | null>}
+ * Fetch only the canonical upstream bundle-manifest.md.
+ * @returns {Promise<{ path: string | null, error: string }>}
  */
 async function fetchUpstreamManifestOnly() {
   fs.mkdirSync(CACHE_ROOT, { recursive: true });
@@ -217,43 +489,65 @@ async function fetchUpstreamManifestOnly() {
   const outFile = path.join(outDir, 'bundle-manifest.md');
 
   if (isDir(upstream.source)) {
-    const lm = path.join(upstream.source, '.github/dudestuff/bundle-manifest.md');
-    if (isFile(lm)) {
+    const lm = findUpstreamManifestPath(upstream.source);
+    if (lm && isFile(lm)) {
       fs.copyFileSync(lm, outFile);
-      return outFile;
+      return { path: outFile, error: '' };
     }
     fs.rmSync(outDir, { recursive: true, force: true });
-    return null;
+    return {
+      path: null,
+      error: `local upstream source is missing required canonical metadata at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}; old-path manifests are not accepted`,
+    };
   }
 
   const ownerRepo = githubOwnerRepo(upstream.source);
+  let rawMissing = false;
   if (ownerRepo) {
-    const rawUrl = `https://raw.githubusercontent.com/${ownerRepo}/${upstream.resolvedRef}/.github/dudestuff/bundle-manifest.md`;
+    const rawUrl = `https://raw.githubusercontent.com/${ownerRepo}/${upstream.resolvedRef}/${WORKSPACE_PATHS.BUNDLE_MANIFEST}`;
     logDebug(`fetching upstream manifest via raw url: ${rawUrl}`);
     try {
       const res = await fetch(rawUrl, { signal: AbortSignal.timeout(30000) });
       if (res.ok) {
         fs.writeFileSync(outFile, await res.text());
-        return outFile;
+        return { path: outFile, error: '' };
       }
+      rawMissing = res.status === 404;
     } catch {
-      /* fall through to clone */
+      /* fall back to clone */
     }
   }
 
   if (hasGit()) {
     const cloneDir = path.join(outDir, 'clone');
     logDebug(`shallow-cloning upstream for manifest only: ${upstream.source} @ ${upstream.resolvedRef}`);
-    const r = git(['clone', '--quiet', '--depth=1', '--branch', upstream.resolvedRef, upstream.source, cloneDir]);
-    const lm = path.join(cloneDir, '.github/dudestuff/bundle-manifest.md');
-    if (r.status === 0 && isFile(lm)) {
+    let r = git(['clone', '--quiet', '--depth=1', '--branch', upstream.resolvedRef, upstream.source, cloneDir]);
+    if (r.status !== 0) {
+      fs.rmSync(cloneDir, { recursive: true, force: true });
+      r = git(['clone', '--quiet', upstream.source, cloneDir]);
+      if (r.status === 0) r = git(['checkout', '--quiet', upstream.resolvedRef], cloneDir);
+    }
+    const lm = findUpstreamManifestPath(cloneDir);
+    if (r.status === 0 && lm && isFile(lm)) {
       fs.copyFileSync(lm, outFile);
-      return outFile;
+      return { path: outFile, error: '' };
+    }
+    if (r.status === 0) {
+      fs.rmSync(outDir, { recursive: true, force: true });
+      return {
+        path: null,
+        error: `fetched upstream tree is missing required canonical metadata at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}; old-path manifests are not accepted`,
+      };
     }
   }
 
   fs.rmSync(outDir, { recursive: true, force: true });
-  return null;
+  return {
+    path: null,
+    error: rawMissing
+      ? `upstream ref is missing required canonical metadata at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}`
+      : '',
+  };
 }
 
 /**
@@ -264,8 +558,8 @@ function fetchUpstreamTree() {
   fs.mkdirSync(CACHE_ROOT, { recursive: true });
 
   if (isDir(upstream.source)) {
-    if (!isFile(path.join(upstream.source, '.github/dudestuff/bundle-manifest.md'))) {
-      logError('local upstream source is missing .github/dudestuff/bundle-manifest.md');
+    if (!findUpstreamManifestPath(upstream.source)) {
+      logError(`local upstream source is missing required canonical metadata at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}; old-path manifests are not accepted`);
       return null;
     }
     return upstream.source;
@@ -283,17 +577,27 @@ function fetchUpstreamTree() {
     .slice(0, 12);
   const dest = path.join(CACHE_ROOT, `upstream-${key}`);
 
-  if (isDir(path.join(dest, '.git')) && isFile(path.join(dest, '.github/dudestuff/bundle-manifest.md'))) {
-    return dest;
+  if (isDir(path.join(dest, '.git'))) {
+    if (findUpstreamManifestPath(dest)) return dest;
+    fs.rmSync(dest, { recursive: true, force: true });
   }
 
   fs.rmSync(dest, { recursive: true, force: true });
   logInfo(`fetching upstream tree: ${upstream.source} @ ${refDisplay()}`);
   if (git(['clone', '--quiet', '--depth=1', '--branch', upstream.resolvedRef, upstream.source, dest]).status === 0) {
-    return dest;
+    if (findUpstreamManifestPath(dest)) return dest;
+    fs.rmSync(dest, { recursive: true, force: true });
+    logError(`fetched upstream tree is missing required canonical metadata at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}`);
+    return null;
   }
+  fs.rmSync(dest, { recursive: true, force: true });
   if (git(['clone', '--quiet', upstream.source, dest]).status === 0) {
-    if (git(['checkout', '--quiet', upstream.resolvedRef], dest).status === 0) return dest;
+    if (git(['checkout', '--quiet', upstream.resolvedRef], dest).status === 0) {
+      if (findUpstreamManifestPath(dest)) return dest;
+      fs.rmSync(dest, { recursive: true, force: true });
+      logError(`fetched upstream tree is missing required canonical metadata at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}`);
+      return null;
+    }
   }
   fs.rmSync(dest, { recursive: true, force: true });
   logError(`failed to fetch upstream from ${upstream.source} @ ${refDisplay()}`);
@@ -328,8 +632,12 @@ function lcsLen(a, b) {
  */
 function diffPlusMinus(localFile, upstreamFile) {
   if (!isFile(localFile) || !isFile(upstreamFile)) return { added: 0, removed: 0 };
-  const a = read(localFile).split('\n');
-  const b = read(upstreamFile).split('\n');
+  return diffPlusMinusBytes(fs.readFileSync(localFile), fs.readFileSync(upstreamFile));
+}
+/** @param {Buffer} localBytes @param {Buffer} upstreamBytes */
+function diffPlusMinusBytes(localBytes, upstreamBytes) {
+  const a = localBytes.toString('utf8').split('\n');
+  const b = upstreamBytes.toString('utf8').split('\n');
   const l = lcsLen(a, b);
   return { added: b.length - l, removed: a.length - l };
 }
@@ -349,6 +657,7 @@ function filesEqual(a, b) {
  * @property {{path: string}[]} remove
  * @property {{path: string, kind: string}[]} advisory
  * @property {number} upToDate
+ * @property {{path: string}[]} upToDatePaths
  */
 
 /**
@@ -358,13 +667,17 @@ function filesEqual(a, b) {
  * @returns {Plan}
  */
 export function classifyPlan(utree, root = ROOT) {
+  // Observable seam (debug-gated, non-behavioral): apply consumes the persisted
+  // buckets directly and must never re-derive a plan here. The apply-time
+  // regression asserts this marker is absent when UPGRADE_DEBUG is set.
+  logDebug('classifyPlan: classifying upstream core tree against local workspace');
   const localPaths = enumerateCorePaths(root);
   const localSet = new Set(localPaths);
   const upstreamPaths = enumerateCorePaths(utree);
   const upstreamSet = new Set(upstreamPaths);
 
   /** @type {Plan} */
-  const plan = { replace: [], add: [], remove: [], advisory: [], upToDate: 0 };
+  const plan = { replace: [], add: [], remove: [], advisory: [], upToDate: 0, upToDatePaths: [] };
 
   for (const p of upstreamPaths) {
     const localDisk = path.join(root, p);
@@ -379,6 +692,7 @@ export function classifyPlan(utree, root = ROOT) {
     }
     if (filesEqual(localDisk, upstreamFile)) {
       plan.upToDate += 1;
+      plan.upToDatePaths.push({ path: p });
     } else {
       const { added, removed } = diffPlusMinus(localDisk, upstreamFile);
       plan.replace.push({ path: p, added_lines: added, removed_lines: removed });
@@ -392,7 +706,7 @@ export function classifyPlan(utree, root = ROOT) {
   // Advisories: project-tier agents/skills outside core/pack/local namespaces.
   const agentsDir = path.join(root, '.github/agents');
   if (isDir(agentsDir)) {
-    for (const e of fs.readdirSync(agentsDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const e of fs.readdirSync(agentsDir, { withFileTypes: true }).sort((a, b) => codeUnitCompare(a.name, b.name))) {
       if (!e.isFile() || !e.name.endsWith('.agent.md')) continue;
       if (e.name === 'dude.agent.md') continue;
       const rel = `.github/agents/${e.name}`;
@@ -403,13 +717,17 @@ export function classifyPlan(utree, root = ROOT) {
   }
   const skillsDir = path.join(root, '.github/skills');
   if (isDir(skillsDir)) {
-    for (const e of fs.readdirSync(skillsDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const e of fs.readdirSync(skillsDir, { withFileTypes: true }).sort((a, b) => codeUnitCompare(a.name, b.name))) {
       if (!e.isDirectory() || e.name === 'project') continue;
       if (classifyPath(`.github/skills/${e.name}/`) !== TIER.PROJECT) continue;
       const skillMd = path.join(skillsDir, e.name, 'SKILL.md');
       if (!isFile(skillMd)) continue;
       plan.advisory.push({ path: `.github/skills/${e.name}/SKILL.md`, kind: 'unreserved_local_skill' });
     }
+  }
+
+  for (const bucket of [plan.replace, plan.add, plan.remove, plan.advisory, plan.upToDatePaths]) {
+    bucket.sort((a, b) => codeUnitCompare(a.path, b.path));
   }
 
   return plan;
@@ -455,9 +773,9 @@ function emitStatusJson(kind, upstreamRef, detail) {
 
 /**
  * @param {Plan} plan @param {string} planId @param {string} fromRef
- * @param {string} toRef @param {string} cacheDir
+ * @param {string} toRef @param {string} cacheDir @param {boolean} metadataChange
  */
-function emitPlanText(plan, planId, fromRef, toRef, cacheDir) {
+function emitPlanText(plan, planId, fromRef, toRef, cacheDir, metadataChange) {
   out(`Upgrade report: ${fromRef || '(none)'} -> ${toRef}\n`);
   out(`Source: ${upstream.source} @ ${refDisplay()}\n`);
   out(`Plan ID: ${planId}\n`);
@@ -481,7 +799,7 @@ function emitPlanText(plan, planId, fromRef, toRef, cacheDir) {
   out(`Up to date: ${plan.upToDate}\n`);
 
   const total = plan.replace.length + plan.add.length + plan.remove.length;
-  if (total === 0) {
+  if (total === 0 && !metadataChange) {
     out(`\n${GRN}Already up to date.${RST} Nothing to apply.\n`);
   } else {
     out(`\n${GRN}Ready to apply.${RST} Reply "confirm upgrade" to proceed.\n`);
@@ -493,51 +811,760 @@ function emitPlanText(plan, planId, fromRef, toRef, cacheDir) {
   }
 }
 
+/** @param {string} cacheRoot */
+function snapshotSource(cacheRoot) {
+  const head = git(['rev-parse', 'HEAD^{commit}'], cacheRoot);
+  const resolved = git(['rev-parse', `${upstream.resolvedRef}^{commit}`], cacheRoot);
+  const resolvedCommit = head.stdout.trim().toLowerCase();
+  if (head.status !== 0 || !COMMIT_PATTERN.test(resolvedCommit)) {
+    throw new Error('upstream cache does not have a concrete git commit');
+  }
+  if (resolved.status !== 0 || resolved.stdout.trim().toLowerCase() !== resolvedCommit) {
+    throw new Error(`upstream cache HEAD does not match resolved ref ${upstream.resolvedRef}`);
+  }
+  if (git(['status', '--porcelain=v1', '--untracked-files=all'], cacheRoot).stdout.trim()) {
+    throw new Error('upstream source working tree must be clean before planning');
+  }
+  if (isDir(upstream.source)) {
+    return {
+      type: 'local-path',
+      location: upstream.source,
+      identity: fs.realpathSync(upstream.source),
+      requested_ref: upstream.ref,
+      resolved_ref: upstream.resolvedRef,
+      resolved_commit: resolvedCommit,
+    };
+  }
+  const origin = git(['config', '--get', 'remote.origin.url'], cacheRoot);
+  if (origin.status !== 0 || !origin.stdout.trim()) {
+    throw new Error('upstream cache is missing its source identity');
+  }
+  return {
+    type: 'git-remote',
+    location: upstream.source,
+    identity: origin.stdout.trim(),
+    requested_ref: upstream.ref,
+    resolved_ref: upstream.resolvedRef,
+    resolved_commit: resolvedCommit,
+  };
+}
+
 /**
- * @param {Plan} plan
+ * @param {Plan} classified
  * @param {{plan_id: string, from_ref: string, to_ref: string, cache_dir: string, created_at: string, ttl_warn: string, ttl_expire: string}} meta
- * @returns {string}
  */
-function buildPlanJson(plan, meta) {
-  return `${JSON.stringify(
-    {
-      plan_id: meta.plan_id,
-      created_at: meta.created_at,
-      ttl_warn_at: meta.ttl_warn,
-      ttl_expire_at: meta.ttl_expire,
-      source: upstream.source,
-      ref: upstream.ref,
-      from_ref: meta.from_ref,
-      to_ref: meta.to_ref,
-      cache_dir: meta.cache_dir,
-      summary: {
-        replace: plan.replace.length,
-        add: plan.add.length,
-        remove: plan.remove.length,
-        advisory: plan.advisory.length,
-        up_to_date: plan.upToDate,
-      },
-      buckets: {
-        replace: plan.replace,
-        add: plan.add,
-        remove: plan.remove,
-        advisory: plan.advisory,
-      },
+function buildUpgradePlan(classified, meta) {
+  const workspacePath = path.resolve(ROOT);
+  const cacheRoot = path.resolve(meta.cache_dir);
+  const cacheInventory = snapshotCoreInventory(cacheRoot, 'upstream cache');
+  const cacheManifestPath = resolveMutationPath(cacheRoot, WORKSPACE_PATHS.BUNDLE_MANIFEST);
+  const cacheManifestStat = lstatOrNull(cacheManifestPath);
+  if (!cacheManifestStat?.isFile() || cacheManifestStat.isSymbolicLink()) {
+    throw new Error(`upstream cache manifest is not a regular file at ${WORKSPACE_PATHS.BUNDLE_MANIFEST}`);
+  }
+  const cacheManifestBytes = fs.readFileSync(cacheManifestPath);
+  const localManifestState = snapshotExpectedState(ROOT, WORKSPACE_PATHS.BUNDLE_MANIFEST);
+  const upgradeLogState = snapshotExpectedState(ROOT, WORKSPACE_PATHS.UPGRADE_LOG);
+  const localPaths = [
+    ...classified.replace.map((entry) => entry.path),
+    ...classified.add.map((entry) => entry.path),
+    ...classified.remove.map((entry) => entry.path),
+    ...classified.upToDatePaths.map((entry) => entry.path),
+  ].sort(codeUnitCompare);
+  const addPaths = new Set(classified.add.map((entry) => entry.path));
+  const localCoreInventory = localPaths.map((relativePath) => ({
+    path: relativePath,
+    state: addPaths.has(relativePath)
+      ? { type: 'missing' }
+      : snapshotExpectedState(ROOT, relativePath),
+  }));
+  const plan = {
+    kind: PLAN_KIND,
+    schema_version: PLAN_SCHEMA_VERSION,
+    plan_id: meta.plan_id,
+    created_at: meta.created_at,
+    ttl_warn_at: meta.ttl_warn,
+    ttl_expire_at: meta.ttl_expire,
+    scope: {
+      identity_scope: PLAN_IDENTITY_SCOPE,
+      workspace_path: workspacePath,
+      workspace_realpath: fs.realpathSync(workspacePath),
+      workspace_identity: directoryIdentity(workspacePath),
     },
-    null,
-    2,
-  )}\n`;
+    source: snapshotSource(cacheRoot),
+    from_ref: meta.from_ref,
+    to_ref: meta.to_ref,
+    cache: {
+      root_path: cacheRoot,
+      root_realpath: fs.realpathSync(cacheRoot),
+      root_identity: directoryIdentity(cacheRoot),
+      manifest: {
+        path: WORKSPACE_PATHS.BUNDLE_MANIFEST,
+        type: 'file',
+        sha256: sha256(cacheManifestBytes),
+      },
+      inventory: cacheInventory,
+    },
+    local: {
+      manifest: {
+        path: WORKSPACE_PATHS.BUNDLE_MANIFEST,
+        state: localManifestState,
+        data: {
+          source_repo: local.source_repo,
+          source_ref: local.source_ref,
+          installed_ref: local.installed_ref,
+        },
+      },
+      upgrade_log: {
+        path: WORKSPACE_PATHS.UPGRADE_LOG,
+        state: upgradeLogState,
+      },
+      core_inventory: localCoreInventory,
+    },
+    summary: {
+      replace: classified.replace.length,
+      add: classified.add.length,
+      remove: classified.remove.length,
+      advisory: classified.advisory.length,
+      up_to_date: classified.upToDatePaths.length,
+    },
+    buckets: {
+      replace: classified.replace,
+      add: classified.add,
+      remove: classified.remove,
+      advisory: classified.advisory,
+      up_to_date: classified.upToDatePaths,
+    },
+    digest: '',
+  };
+  plan.digest = planDigest(plan);
+  return plan;
+}
+
+/** @param {Record<string, any>} plan @returns {string} */
+function buildPlanJson(plan) {
+  return serializeUpgradePlan(plan);
+}
+
+/**
+ * Persist a plan under a collision-resistant ID without ever replacing bytes.
+ * @param {{
+ *   plansDir: string,
+ *   baseId: string,
+ *   suffixFactory?: () => string,
+ *   maxAttempts?: number,
+ *   buildBytes: (planId: string) => string | Buffer,
+ * }} options
+ */
+export function persistUniquePlan(options) {
+  const {
+    plansDir,
+    baseId,
+    suffixFactory = () => crypto.randomBytes(12).toString('hex'),
+    maxAttempts = 8,
+    buildBytes,
+  } = options;
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
+    throw new Error('plan persistence requires at least one allocation attempt');
+  }
+  fs.mkdirSync(plansDir, { recursive: true });
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const suffix = suffixFactory();
+    if (!/^[A-Za-z0-9._-]+$/.test(suffix)) throw new Error('plan ID suffix is invalid');
+    const planId = `${baseId}-${suffix}`;
+    const planPath = path.join(plansDir, `${planId}.json`);
+    const bytes = buildBytes(planId);
+    let descriptor;
+    try {
+      descriptor = fs.openSync(planPath, 'wx', 0o600);
+      fs.writeFileSync(descriptor, bytes);
+      fs.closeSync(descriptor);
+      descriptor = undefined;
+      return { planId, planPath };
+    } catch (writeError) {
+      if (descriptor !== undefined) {
+        try {
+          fs.closeSync(descriptor);
+        } catch {
+          // Preserve the original persistence error.
+        }
+        fs.rmSync(planPath, { force: true });
+      }
+      if (writeError && typeof writeError === 'object' && 'code' in writeError && writeError.code === 'EEXIST') {
+        continue;
+      }
+      throw writeError;
+    }
+  }
+  throw new Error(`could not allocate a unique upgrade plan after ${maxAttempts} attempts`);
+}
+
+/** @param {boolean} condition @param {string} detail */
+function requirePlanSchema(condition, detail) {
+  if (!condition) throw new Error(`plan schema is invalid: ${detail}; re-run 'plan'`);
+}
+
+/** @param {Record<string, any>} value @param {string[]} keys @param {string} label */
+function requireExactKeys(value, keys, label) {
+  requirePlanSchema(isRecord(value), `${label} must be an object`);
+  const actual = Object.keys(value).sort(codeUnitCompare);
+  const expected = [...keys].sort(codeUnitCompare);
+  requirePlanSchema(
+    actual.length === expected.length && actual.every((key, index) => key === expected[index]),
+    `${label} fields must be exactly ${keys.join(', ')}`,
+  );
+}
+
+/** @param {unknown} value @param {string} label @param {boolean} [allowEmpty] */
+function requireString(value, label, allowEmpty = false) {
+  requirePlanSchema(typeof value === 'string' && (allowEmpty || value.length > 0), `${label} must be a string`);
+}
+
+/** @param {unknown} value @param {string} label */
+function requireCount(value, label) {
+  requirePlanSchema(Number.isSafeInteger(value) && value >= 0, `${label} must be a non-negative integer`);
+}
+
+/** @param {Record<string, any>} identity @param {string} label @param {boolean} [file] */
+function validateIdentityShape(identity, label) {
+  requireExactKeys(identity, ['device', 'inode'], label);
+  for (const key of ['device', 'inode']) {
+    requirePlanSchema(typeof identity[key] === 'string' && /^\d+$/.test(identity[key]), `${label}.${key} must be decimal`);
+  }
+}
+
+/** @param {Record<string, any>} state @param {string} label @param {boolean} [allowMissing] */
+function validateExpectedStateShape(state, label, allowMissing = true) {
+  requirePlanSchema(isRecord(state), `${label} must be an object`);
+  if (state.type === 'missing') {
+    requirePlanSchema(allowMissing, `${label} must describe a regular file`);
+    requireExactKeys(state, ['type'], label);
+    return;
+  }
+  requireExactKeys(state, ['type', 'sha256'], label);
+  requirePlanSchema(state.type === 'file', `${label}.type must be file or missing`);
+  requirePlanSchema(typeof state.sha256 === 'string' && /^[a-f0-9]{64}$/.test(state.sha256), `${label}.sha256 must be lowercase SHA-256`);
+}
+
+/** @param {unknown} value @param {string} label */
+function requireAbsolutePath(value, label) {
+  requireString(value, label);
+  requirePlanSchema(path.isAbsolute(value) && path.resolve(value) === value, `${label} must be an absolute canonical path`);
+}
+
+/** @param {string} relativePath @param {string} label @param {boolean} [core] */
+function validatePlanPath(relativePath, label, core = true) {
+  requireString(relativePath, label);
+  const normalized = relativePath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+  const unsafe = normalized !== relativePath
+    || path.posix.isAbsolute(relativePath)
+    || path.win32.isAbsolute(relativePath)
+    || relativePath.split('/').some((part) => !part || part === '.' || part === '..');
+  requirePlanSchema(!unsafe, `plan contains unsafe path: ${relativePath}`);
+  requirePlanSchema(
+    classifyPath(relativePath) === (core ? TIER.CORE : TIER.PROJECT),
+    `${label} has invalid ownership: ${relativePath}`,
+  );
+}
+
+/** @param {Record<string, any>} plan */
+function validatePlanShape(plan) {
+  requireExactKeys(plan, [
+    'kind', 'schema_version', 'plan_id', 'created_at', 'ttl_warn_at', 'ttl_expire_at',
+    'scope', 'source', 'from_ref', 'to_ref', 'cache', 'local', 'summary', 'buckets', 'digest',
+  ], 'plan');
+  requirePlanSchema(plan.kind === PLAN_KIND && plan.schema_version === PLAN_SCHEMA_VERSION, 'unsupported upgrade plan schema');
+  for (const key of ['plan_id', 'created_at', 'ttl_warn_at', 'ttl_expire_at', 'to_ref']) {
+    requireString(plan[key], `plan.${key}`);
+  }
+  requireString(plan.from_ref, 'plan.from_ref', true);
+  requirePlanSchema(typeof plan.digest === 'string' && /^[a-f0-9]{64}$/.test(plan.digest), 'plan.digest must be lowercase SHA-256');
+
+  requireExactKeys(plan.scope, ['identity_scope', 'workspace_path', 'workspace_realpath', 'workspace_identity'], 'plan.scope');
+  requireString(plan.scope.identity_scope, 'plan.scope.identity_scope');
+  requireAbsolutePath(plan.scope.workspace_path, 'plan.scope.workspace_path');
+  requireAbsolutePath(plan.scope.workspace_realpath, 'plan.scope.workspace_realpath');
+  validateIdentityShape(plan.scope.workspace_identity, 'plan.scope.workspace_identity');
+
+  requireExactKeys(plan.source, ['type', 'location', 'identity', 'requested_ref', 'resolved_ref', 'resolved_commit'], 'plan.source');
+  for (const key of ['type', 'location', 'identity', 'requested_ref', 'resolved_ref', 'resolved_commit']) {
+    requireString(plan.source[key], `plan.source.${key}`);
+  }
+
+  requireExactKeys(plan.cache, ['root_path', 'root_realpath', 'root_identity', 'manifest', 'inventory'], 'plan.cache');
+  requireAbsolutePath(plan.cache.root_path, 'plan.cache.root_path');
+  requireAbsolutePath(plan.cache.root_realpath, 'plan.cache.root_realpath');
+  validateIdentityShape(plan.cache.root_identity, 'plan.cache.root_identity');
+  requireExactKeys(plan.cache.manifest, ['path', 'type', 'sha256'], 'plan.cache.manifest');
+  requireString(plan.cache.manifest.path, 'plan.cache.manifest.path');
+  requireString(plan.cache.manifest.type, 'plan.cache.manifest.type');
+  requirePlanSchema(typeof plan.cache.manifest.sha256 === 'string' && /^[a-f0-9]{64}$/.test(plan.cache.manifest.sha256), 'plan.cache.manifest.sha256 must be lowercase SHA-256');
+  requirePlanSchema(Array.isArray(plan.cache.inventory), 'plan.cache.inventory must be an array');
+  for (const [index, entry] of plan.cache.inventory.entries()) {
+    requireExactKeys(entry, ['path', 'type', 'sha256'], `plan.cache.inventory[${index}]`);
+    requireString(entry.path, `plan.cache.inventory[${index}].path`);
+    requireString(entry.type, `plan.cache.inventory[${index}].type`);
+    requirePlanSchema(typeof entry.sha256 === 'string' && /^[a-f0-9]{64}$/.test(entry.sha256), `plan.cache.inventory[${index}].sha256 must be lowercase SHA-256`);
+  }
+
+  requireExactKeys(plan.local, ['manifest', 'upgrade_log', 'core_inventory'], 'plan.local');
+  requireExactKeys(plan.local.manifest, ['path', 'state', 'data'], 'plan.local.manifest');
+  requireString(plan.local.manifest.path, 'plan.local.manifest.path');
+  validateExpectedStateShape(plan.local.manifest.state, 'plan.local.manifest.state', false);
+  requireExactKeys(plan.local.manifest.data, ['source_repo', 'source_ref', 'installed_ref'], 'plan.local.manifest.data');
+  requireString(plan.local.manifest.data.source_repo, 'plan.local.manifest.data.source_repo');
+  requireString(plan.local.manifest.data.source_ref, 'plan.local.manifest.data.source_ref');
+  requireString(plan.local.manifest.data.installed_ref, 'plan.local.manifest.data.installed_ref', true);
+  requireExactKeys(plan.local.upgrade_log, ['path', 'state'], 'plan.local.upgrade_log');
+  requireString(plan.local.upgrade_log.path, 'plan.local.upgrade_log.path');
+  validateExpectedStateShape(plan.local.upgrade_log.state, 'plan.local.upgrade_log.state');
+  requirePlanSchema(Array.isArray(plan.local.core_inventory), 'plan.local.core_inventory must be an array');
+  for (const [index, entry] of plan.local.core_inventory.entries()) {
+    requireExactKeys(entry, ['path', 'state'], `plan.local.core_inventory[${index}]`);
+    requireString(entry.path, `plan.local.core_inventory[${index}].path`);
+    validateExpectedStateShape(entry.state, `plan.local.core_inventory[${index}].state`);
+  }
+
+  requireExactKeys(plan.summary, ['replace', 'add', 'remove', 'advisory', 'up_to_date'], 'plan.summary');
+  for (const key of ['replace', 'add', 'remove', 'advisory', 'up_to_date']) requireCount(plan.summary[key], `plan.summary.${key}`);
+  requireExactKeys(plan.buckets, ['replace', 'add', 'remove', 'advisory', 'up_to_date'], 'plan.buckets');
+  for (const key of ['replace', 'add', 'remove', 'advisory', 'up_to_date']) {
+    requirePlanSchema(Array.isArray(plan.buckets[key]), `plan.buckets.${key} must be an array`);
+  }
+  for (const [index, entry] of plan.buckets.replace.entries()) {
+    requireExactKeys(entry, ['path', 'added_lines', 'removed_lines'], `plan.buckets.replace[${index}]`);
+    requireString(entry.path, `plan.buckets.replace[${index}].path`);
+    requireCount(entry.added_lines, `plan.buckets.replace[${index}].added_lines`);
+    requireCount(entry.removed_lines, `plan.buckets.replace[${index}].removed_lines`);
+  }
+  for (const key of ['add', 'remove', 'up_to_date']) {
+    for (const [index, entry] of plan.buckets[key].entries()) {
+      requireExactKeys(entry, ['path'], `plan.buckets.${key}[${index}]`);
+      requireString(entry.path, `plan.buckets.${key}[${index}].path`);
+    }
+  }
+  for (const [index, entry] of plan.buckets.advisory.entries()) {
+    requireExactKeys(entry, ['path', 'kind'], `plan.buckets.advisory[${index}]`);
+    requireString(entry.path, `plan.buckets.advisory[${index}].path`);
+    requireString(entry.kind, `plan.buckets.advisory[${index}].kind`);
+  }
+}
+
+/** @param {{path: string}[]} entries @param {string} label */
+function validateSortedUniquePaths(entries, label) {
+  const paths = entries.map((entry) => entry.path);
+  const sorted = [...paths].sort(codeUnitCompare);
+  requirePlanSchema(paths.every((entry, index) => entry === sorted[index]), `${label} must use canonical code-unit ordering`);
+  requirePlanSchema(new Set(paths).size === paths.length, `${label} contains duplicate paths`);
+  return paths;
+}
+
+/** @param {Record<string, any>} plan */
+function metadataTransitionNeeded(plan) {
+  return plan.local.manifest.data.source_repo !== plan.source.location
+    || plan.local.manifest.data.source_ref !== plan.source.requested_ref
+    || plan.local.manifest.data.installed_ref !== plan.to_ref;
+}
+
+/** @param {Record<string, any>} plan */
+function validatePlanInvariants(plan) {
+  requirePlanSchema(plan.scope.identity_scope === PLAN_IDENTITY_SCOPE, `unsupported identity scope: ${plan.scope.identity_scope}`);
+  requirePlanSchema(['local-path', 'git-remote'].includes(plan.source.type), 'plan.source.type must be local-path or git-remote');
+  requirePlanSchema(COMMIT_PATTERN.test(plan.source.resolved_commit), 'plan.source.resolved_commit must be a lowercase concrete commit');
+  requirePlanSchema(
+    plan.source.type !== 'local-path' || plan.source.requested_ref !== 'latest',
+    'local-path source does not support ref latest; re-run plan with an explicit local branch or tag',
+  );
+  if (plan.source.requested_ref === 'latest') {
+    const release = resolveReleaseRef(plan.source.location, plan.source.requested_ref);
+    requirePlanSchema(
+      release.channel && /^v\d+\.\d+\.\d+$/.test(release.resolvedRef),
+      'plan latest ref must resolve to a stable release tag',
+    );
+    requirePlanSchema(
+      release.resolvedRef === plan.source.resolved_ref,
+      'plan latest resolved ref must equal the highest stable release tag',
+    );
+  } else {
+    requirePlanSchema(
+      plan.source.requested_ref === plan.source.resolved_ref,
+      'plan literal requested ref must equal its resolved ref',
+    );
+  }
+  requirePlanSchema(plan.to_ref === plan.source.resolved_ref, 'plan.to_ref must equal plan.source.resolved_ref');
+  requirePlanSchema(plan.from_ref === plan.local.manifest.data.installed_ref, 'plan.from_ref must equal the reviewed installed_ref');
+  requirePlanSchema(plan.cache.manifest.path === WORKSPACE_PATHS.BUNDLE_MANIFEST && plan.cache.manifest.type === 'file', 'plan.cache.manifest must identify the canonical manifest');
+  requirePlanSchema(plan.local.manifest.path === WORKSPACE_PATHS.BUNDLE_MANIFEST, 'plan.local.manifest must identify the canonical manifest');
+  requirePlanSchema(plan.local.upgrade_log.path === WORKSPACE_PATHS.UPGRADE_LOG, 'plan.local.upgrade_log must identify the canonical upgrade log');
+
+  const timestamps = [plan.created_at, plan.ttl_warn_at, plan.ttl_expire_at];
+  const epochs = timestamps.map((value) => isoToEpoch(value));
+  requirePlanSchema(
+    timestamps.every((value, index) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value) && epochs[index] !== null),
+    'plan timestamps must be canonical UTC ISO-8601 values',
+  );
+  requirePlanSchema(epochs[1] - epochs[0] === 3600 && epochs[2] - epochs[0] === 86400, 'plan TTL metadata is inconsistent');
+
+  /** @type {Map<string, string>} */
+  const bucketByPath = new Map();
+  for (const key of ['replace', 'add', 'remove', 'up_to_date']) {
+    validateSortedUniquePaths(plan.buckets[key], `plan.buckets.${key}`);
+    for (const entry of plan.buckets[key]) {
+      validatePlanPath(entry.path, `plan.buckets.${key}`);
+      requirePlanSchema(!bucketByPath.has(entry.path), `plan buckets are invalid: duplicate path ${entry.path}`);
+      bucketByPath.set(entry.path, key);
+    }
+    requirePlanSchema(plan.summary[key] === plan.buckets[key].length, `plan.summary.${key} does not match its bucket`);
+  }
+  validateSortedUniquePaths(plan.buckets.advisory, 'plan.buckets.advisory');
+  requirePlanSchema(plan.summary.advisory === plan.buckets.advisory.length, 'plan.summary.advisory does not match its bucket');
+  for (const entry of plan.buckets.advisory) {
+    validatePlanPath(entry.path, 'plan.buckets.advisory', false);
+    requirePlanSchema(
+      ['unreserved_local_agent', 'unreserved_local_skill'].includes(entry.kind),
+      `plan advisory kind is invalid: ${entry.kind}`,
+    );
+  }
+
+  validateSortedUniquePaths(plan.cache.inventory, 'plan.cache.inventory');
+  const expectedCachePaths = [...bucketByPath.entries()]
+    .filter(([, bucket]) => bucket !== 'remove')
+    .map(([relativePath]) => relativePath)
+    .sort(codeUnitCompare);
+  const cachePaths = plan.cache.inventory.map((entry) => entry.path);
+  requirePlanSchema(JSON.stringify(cachePaths) === JSON.stringify(expectedCachePaths), 'plan cache inventory does not match reviewed buckets');
+  for (const entry of plan.cache.inventory) {
+    validatePlanPath(entry.path, 'plan.cache.inventory');
+    requirePlanSchema(entry.type === 'file', `plan cache inventory type is invalid: ${entry.path}`);
+  }
+
+  validateSortedUniquePaths(plan.local.core_inventory, 'plan.local.core_inventory');
+  const expectedLocalPaths = [...bucketByPath.keys()].sort(codeUnitCompare);
+  const localPaths = plan.local.core_inventory.map((entry) => entry.path);
+  requirePlanSchema(JSON.stringify(localPaths) === JSON.stringify(expectedLocalPaths), 'plan local inventory does not match reviewed buckets');
+  const cacheByPath = new Map(plan.cache.inventory.map((entry) => [entry.path, entry]));
+  const localByPath = new Map(plan.local.core_inventory.map((entry) => [entry.path, entry]));
+  for (const [relativePath, bucket] of bucketByPath) {
+    validatePlanPath(relativePath, 'plan.local.core_inventory');
+    const cacheEntry = cacheByPath.get(relativePath);
+    const localEntry = localByPath.get(relativePath);
+    requirePlanSchema(Boolean(localEntry), `plan local inventory is missing ${relativePath}`);
+    if (bucket === 'add') {
+      requirePlanSchema(localEntry.state.type === 'missing' && Boolean(cacheEntry), `plan Add evidence is invalid: ${relativePath}`);
+    } else if (bucket === 'remove') {
+      requirePlanSchema(localEntry.state.type === 'file' && !cacheEntry, `plan Remove evidence is invalid: ${relativePath}`);
+    } else if (bucket === 'replace') {
+      requirePlanSchema(
+        localEntry.state.type === 'file' && Boolean(cacheEntry) && localEntry.state.sha256 !== cacheEntry.sha256,
+        `plan Replace evidence is invalid: ${relativePath}`,
+      );
+    } else {
+      requirePlanSchema(
+        localEntry.state.type === 'file' && Boolean(cacheEntry) && localEntry.state.sha256 === cacheEntry.sha256,
+        `plan up-to-date evidence is invalid: ${relativePath}`,
+      );
+    }
+  }
+
+}
+
+/** @param {string} planPath */
+function parseUpgradePlan(planPath) {
+  const stat = lstatOrNull(planPath);
+  if (!stat || !stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`plan file malformed: ${planPath} is not a regular file`);
+  }
+  const bytes = fs.readFileSync(planPath);
+  let parsed;
+  try {
+    parsed = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    throw new Error(`plan file malformed: ${planPath}`);
+  }
+  if (!isRecord(parsed) || parsed.kind !== PLAN_KIND || parsed.schema_version !== PLAN_SCHEMA_VERSION) {
+    throw new Error("unsupported upgrade plan schema; re-run 'plan' with the current engine");
+  }
+  validatePlanShape(parsed);
+  if (bytes.toString('utf8') !== serializeUpgradePlan(parsed)) {
+    throw new Error("plan is not canonical; re-run 'plan'");
+  }
+  if (planDigest(parsed) !== parsed.digest) {
+    throw new Error("plan digest mismatch; the digest is a consistency check, not authentication; re-run 'plan'");
+  }
+  validatePlanInvariants(parsed);
+  return parsed;
+}
+
+/** @param {unknown} actual @param {unknown} expected */
+function evidenceEqual(actual, expected) {
+  return JSON.stringify(actual) === JSON.stringify(expected);
+}
+
+/** @param {string} root @param {string} relativePath @param {Record<string, any>} expected @param {string} label */
+function verifyExpectedState(root, relativePath, expected, label) {
+  let actual;
+  try {
+    actual = snapshotExpectedState(root, relativePath);
+  } catch {
+    throw new Error(`${label}: ${relativePath}`);
+  }
+  if (!evidenceEqual(actual, expected)) throw new Error(`${label}: ${relativePath}`);
+  return resolveMutationPath(root, relativePath);
+}
+
+/** @param {Record<string, any>} plan @param {boolean} skipRemovals */
+function plannedWritePaths(plan, skipRemovals) {
+  const operationPaths = [
+    ...plan.buckets.add.map((entry) => entry.path),
+    ...plan.buckets.replace.map((entry) => entry.path),
+    ...(skipRemovals ? [] : plan.buckets.remove.map((entry) => entry.path)),
+  ];
+  const hasReviewedTransition = plan.summary.add + plan.summary.replace + plan.summary.remove > 0
+    || metadataTransitionNeeded(plan);
+  if (hasReviewedTransition) {
+    operationPaths.push(WORKSPACE_PATHS.BUNDLE_MANIFEST, WORKSPACE_PATHS.UPGRADE_LOG);
+  }
+  return [...new Set(operationPaths)].sort(codeUnitCompare);
+}
+
+/** @param {Record<string, any>} plan */
+function verifyWorkspaceEvidence(plan) {
+  const workspacePath = path.resolve(ROOT);
+  if (plan.scope.workspace_path !== workspacePath) {
+    throw new Error('reviewed workspace path changed; re-run plan in this workspace');
+  }
+  let workspaceRealpath;
+  let workspaceIdentity;
+  try {
+    workspaceRealpath = fs.realpathSync(workspacePath);
+    workspaceIdentity = directoryIdentity(workspacePath);
+  } catch {
+    throw new Error('reviewed workspace identity changed; re-run plan in this workspace');
+  }
+  if (plan.scope.workspace_realpath !== workspaceRealpath
+      || !evidenceEqual(plan.scope.workspace_identity, workspaceIdentity)) {
+    throw new Error('reviewed workspace identity changed; re-run plan in this workspace');
+  }
+}
+
+/** @param {Record<string, any>} plan */
+function verifySourceEvidence(plan) {
+  const cacheRoot = plan.cache.root_path;
+  const head = git(['rev-parse', 'HEAD^{commit}'], cacheRoot);
+  if (head.status !== 0 || head.stdout.trim().toLowerCase() !== plan.source.resolved_commit) {
+    throw new Error('reviewed resolved commit changed; re-run plan');
+  }
+  const resolved = git(['rev-parse', `${plan.source.resolved_ref}^{commit}`], cacheRoot);
+  if (resolved.status !== 0 || resolved.stdout.trim().toLowerCase() !== plan.source.resolved_commit) {
+    throw new Error('reviewed resolved ref changed; re-run plan');
+  }
+  if (plan.source.type === 'local-path') {
+    let sourceRealpath;
+    try {
+      sourceRealpath = fs.realpathSync(plan.source.location);
+    } catch {
+      throw new Error('reviewed local source identity changed; re-run plan');
+    }
+    if (sourceRealpath !== plan.source.identity || sourceRealpath !== plan.cache.root_realpath) {
+      throw new Error('reviewed local source identity changed; re-run plan');
+    }
+  } else {
+    const origin = git(['config', '--get', 'remote.origin.url'], cacheRoot);
+    if (origin.status !== 0
+        || origin.stdout.trim() !== plan.source.identity
+        || origin.stdout.trim() !== plan.source.location) {
+      throw new Error('reviewed source identity changed; re-run plan');
+    }
+  }
+}
+
+/** @param {Record<string, any>} plan */
+function verifyCacheEvidence(plan) {
+  const cacheRoot = plan.cache.root_path;
+  const rootStat = lstatOrNull(cacheRoot);
+  if (!rootStat) throw new Error('reviewed cache root is missing; re-run plan');
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error('reviewed cache root type changed; re-run plan');
+  }
+  let realRoot;
+  let rootIdentity;
+  try {
+    realRoot = fs.realpathSync(cacheRoot);
+    rootIdentity = directoryIdentity(cacheRoot);
+  } catch {
+    throw new Error('reviewed cache root identity changed; re-run plan');
+  }
+  if (realRoot !== plan.cache.root_realpath || !evidenceEqual(rootIdentity, plan.cache.root_identity)) {
+    throw new Error('reviewed cache root identity changed; re-run plan');
+  }
+
+  verifySourceEvidence(plan);
+
+  /** @type {Map<string, Buffer>} */
+  const cacheBytes = new Map();
+  for (const entry of plan.cache.inventory) {
+    let absolutePath;
+    let stat;
+    try {
+      absolutePath = resolveMutationPath(cacheRoot, entry.path);
+      stat = lstatOrNull(absolutePath);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (/symbolic link/i.test(detail)) throw new Error(`reviewed cache contains symbolic link: ${entry.path}`);
+      throw new Error(`reviewed cache type changed: ${entry.path}`);
+    }
+    if (!stat?.isFile() || stat.isSymbolicLink()) {
+      if (!stat) throw new Error(`reviewed cache inventory changed: missing ${entry.path}`);
+      throw new Error(`reviewed cache type changed: ${entry.path}`);
+    }
+    const bytes = fs.readFileSync(absolutePath);
+    if (sha256(bytes) !== entry.sha256) throw new Error(`reviewed cache bytes changed: ${entry.path}`);
+    cacheBytes.set(entry.path, bytes);
+  }
+
+  for (const entry of plan.buckets.remove) {
+    let absolutePath;
+    try {
+      absolutePath = resolveMutationPath(cacheRoot, entry.path);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (/symbolic link/i.test(detail)) throw new Error(`reviewed cache contains symbolic link: ${entry.path}`);
+      throw new Error(`reviewed cache type changed: ${entry.path}`);
+    }
+    if (lstatOrNull(absolutePath)) throw new Error(`reviewed cache inventory changed: unexpected ${entry.path}`);
+  }
+
+  let actualInventory;
+  try {
+    actualInventory = snapshotCoreInventory(cacheRoot, 'reviewed cache');
+  } catch (error) {
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+  if (!evidenceEqual(actualInventory, plan.cache.inventory)) {
+    throw new Error('reviewed cache inventory changed; re-run plan');
+  }
+
+  const manifestPath = resolveMutationPath(cacheRoot, WORKSPACE_PATHS.BUNDLE_MANIFEST);
+  const manifestStat = lstatOrNull(manifestPath);
+  if (!manifestStat?.isFile() || manifestStat.isSymbolicLink()) {
+    throw new Error('reviewed upstream manifest type changed; re-run plan');
+  }
+  const manifestBytes = fs.readFileSync(manifestPath);
+  if (sha256(manifestBytes) !== plan.cache.manifest.sha256) {
+    throw new Error('reviewed upstream manifest changed; re-run plan');
+  }
+  const manifestBody = extractManifestJson(manifestBytes.toString('utf8'));
+  const manifestObject = manifestBody ? parseManifest(manifestBody) : null;
+  const manifestErrors = validateMetadataManifest(manifestObject, 'upstream manifest');
+  if (manifestErrors.length) throw new Error(`reviewed upstream manifest is invalid: ${manifestErrors[0]}`);
+
+  const sourceStatus = git(['status', '--porcelain=v1', '--untracked-files=all'], cacheRoot);
+  if (sourceStatus.status !== 0) throw new Error('could not inspect the reviewed source working tree; re-run plan');
+  if (sourceStatus.stdout.trim()) {
+    throw new Error('reviewed source working tree changed; re-run plan');
+  }
+  return cacheBytes;
+}
+
+/** @param {Record<string, any>} plan */
+function verifyLocalEvidence(plan) {
+  const manifestPath = resolveMutationPath(ROOT, WORKSPACE_PATHS.BUNDLE_MANIFEST);
+  const upgradeLogPath = resolveMutationPath(ROOT, WORKSPACE_PATHS.UPGRADE_LOG);
+  const actualManifestData = {
+    source_repo: local.source_repo,
+    source_ref: local.source_ref,
+    installed_ref: local.installed_ref,
+  };
+  if (!evidenceEqual(actualManifestData, plan.local.manifest.data)) {
+    throw new Error('reviewed bundle manifest values changed; re-run plan');
+  }
+  const actualManifestState = snapshotExpectedState(ROOT, WORKSPACE_PATHS.BUNDLE_MANIFEST);
+  if (!evidenceEqual(actualManifestState, plan.local.manifest.state)) {
+    throw new Error('reviewed bundle manifest bytes changed; re-run plan');
+  }
+  let actualLogState;
+  try {
+    actualLogState = snapshotExpectedState(ROOT, WORKSPACE_PATHS.UPGRADE_LOG);
+  } catch {
+    throw new Error('reviewed upgrade log state changed; re-run plan');
+  }
+  if (!evidenceEqual(actualLogState, plan.local.upgrade_log.state)) {
+    throw new Error('reviewed upgrade log state changed; re-run plan');
+  }
+
+  const bucketByPath = new Map();
+  for (const key of ['replace', 'add', 'remove', 'up_to_date']) {
+    for (const entry of plan.buckets[key]) bucketByPath.set(entry.path, key);
+  }
+  /** @type {Map<string, string>} */
+  const mutationTargets = new Map();
+  for (const entry of plan.local.core_inventory) {
+    const bucket = bucketByPath.get(entry.path);
+    const label = `reviewed local state changed: ${bucket}`;
+    const absolutePath = verifyExpectedState(ROOT, entry.path, entry.state, label);
+    if (bucket !== 'up_to_date') mutationTargets.set(entry.path, absolutePath);
+  }
+
+  const mutatesBundle = plan.summary.replace + plan.summary.add + plan.summary.remove > 0
+    || metadataTransitionNeeded(plan);
+  if (mutatesBundle) {
+    mutationTargets.set(WORKSPACE_PATHS.BUNDLE_MANIFEST, manifestPath);
+    if (plan.local.upgrade_log.state.type === 'file') {
+      mutationTargets.set(WORKSPACE_PATHS.UPGRADE_LOG, upgradeLogPath);
+    }
+  }
+  let actualCorePaths;
+  try {
+    actualCorePaths = scanCoreInventoryPaths(ROOT, 'reviewed local workspace');
+  } catch (error) {
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+  const expectedExistingPaths = plan.local.core_inventory
+    .filter((entry) => entry.state.type === 'file')
+    .map((entry) => entry.path);
+  if (!evidenceEqual(actualCorePaths, expectedExistingPaths)) {
+    throw new Error('reviewed local core inventory changed; re-run plan');
+  }
+
+  const manifestBytes = fs.readFileSync(manifestPath);
+  mutationTargets.delete(WORKSPACE_PATHS.BUNDLE_MANIFEST);
+  mutationTargets.delete(WORKSPACE_PATHS.UPGRADE_LOG);
+  return { manifestPath, upgradeLogPath, manifestBytes, mutationTargets };
+}
+
+/** @param {Record<string, any>} plan */
+function preflightApply(plan) {
+  const expiry = isoToEpoch(plan.ttl_expire_at);
+  if (expiry === null || Math.floor(Date.now() / 1000) > expiry) {
+    throw new Error(`plan expired (created ${plan.created_at}, expired ${plan.ttl_expire_at}); re-run 'plan'`);
+  }
+  verifyWorkspaceEvidence(plan);
+  const localStatus = git(['status', '--porcelain']);
+  if (localStatus.status !== 0) throw new Error('failed to inspect the local Git working tree');
+  if (localStatus.stdout.trim()) throw new Error('working tree is dirty; commit or stash changes before applying');
+  const localEvidence = verifyLocalEvidence(plan);
+  const cacheBytes = verifyCacheEvidence(plan);
+  for (const entry of plan.buckets.replace) {
+    const target = localEvidence.mutationTargets.get(entry.path);
+    const upstreamBytes = cacheBytes.get(entry.path);
+    if (!target || !upstreamBytes) throw new Error(`reviewed Replace evidence is incomplete: ${entry.path}`);
+    const lineCounts = diffPlusMinusBytes(fs.readFileSync(target), upstreamBytes);
+    if (lineCounts.added !== entry.added_lines || lineCounts.removed !== entry.removed_lines) {
+      throw new Error(`reviewed Replace line metadata changed: ${entry.path}; re-run plan`);
+    }
+  }
+  return { ...localEvidence, cacheBytes };
 }
 
 // ----- manifest write --------------------------------------------------------
 /**
  * Rewrite only the fenced ```json block in the local manifest, preserving the
  * surrounding markdown wrapper.
- * @param {string} sourceRepo @param {string} sourceRef
+ * @param {Buffer} originalBytes @param {string} sourceRepo @param {string} sourceRef
  * @param {string} installedRef
  */
-function writeManifest(sourceRepo, sourceRef, installedRef) {
-  const lines = read(LOCAL_MANIFEST_PATH).split('\n');
+function renderManifest(originalBytes, sourceRepo, sourceRef, installedRef) {
+  const lines = originalBytes.toString('utf8').split('\n');
   /** @type {string[]} */
   const pre = [];
   let i = 0;
@@ -568,7 +1595,7 @@ function writeManifest(sourceRepo, sourceRef, installedRef) {
     null,
     2,
   );
-  fs.writeFileSync(LOCAL_MANIFEST_PATH, [...pre, jsonText, ...post].join('\n'));
+  return Buffer.from([...pre, jsonText, ...post].join('\n'));
 }
 
 // ----- lint ------------------------------------------------------------------
@@ -634,11 +1661,19 @@ async function cmdStatus(argv) {
   if (!loadLocalManifest()) {
     upstream.source = flags.source || 'unknown';
     upstream.ref = flags.ref || 'unknown';
-    if (format === 'json') emitStatusJson('error', '', 'local manifest missing or malformed');
-    else logError(`local bundle manifest missing or malformed: ${LOCAL_MANIFEST_PATH}`);
+    const detail = localManifestError();
+    if (format === 'json') emitStatusJson('error', '', detail);
+    else logError(detail);
     return 40;
   }
   resolveUpstream(flags.source || '', flags.ref || '');
+
+  if (isDir(upstream.source) && upstream.ref === 'latest') {
+    const detail = 'local-path source does not support ref latest; pass an explicit local branch or tag with --ref';
+    if (format === 'json') emitStatusJson('error', '', detail);
+    else logError(detail);
+    return 40;
+  }
 
   if (upstream.channel && !upstream.resolvedRef) {
     const detail = 'no releases published yet';
@@ -647,14 +1682,19 @@ async function cmdStatus(argv) {
     return 0;
   }
 
-  const manifestPath = await fetchUpstreamManifestOnly();
-  if (!manifestPath) {
+  const fetchedManifest = await fetchUpstreamManifestOnly();
+  if (!fetchedManifest.path) {
+    if (fetchedManifest.error) {
+      if (format === 'json') emitStatusJson('error', '', fetchedManifest.error);
+      else logError(fetchedManifest.error);
+      return 40;
+    }
     if (format === 'json') emitStatusJson('offline', '', 'could not reach upstream');
     else emitStatusText('offline', '', 'could not reach upstream');
     return 0;
   }
 
-  const body = extractManifestJson(read(manifestPath));
+  const body = extractManifestJson(read(fetchedManifest.path));
   const obj = body ? parseManifest(body) : null;
   const errs = validateMetadataManifest(obj, 'upstream manifest');
   if (errs.length) {
@@ -690,10 +1730,15 @@ function cmdPlan(argv) {
     return 40;
   }
   if (!loadLocalManifest()) {
-    logError(`local bundle manifest missing or malformed: ${LOCAL_MANIFEST_PATH}`);
+    logError(localManifestError());
     return 40;
   }
   resolveUpstream(flags.source || '', flags.ref || '');
+
+  if (isDir(upstream.source) && upstream.ref === 'latest') {
+    logError('local-path source does not support ref latest; pass an explicit local branch or tag with --ref');
+    return 40;
+  }
 
   if (upstream.channel && !upstream.resolvedRef) {
     logError('no releases published yet on the release channel; nothing to upgrade to');
@@ -703,9 +1748,9 @@ function cmdPlan(argv) {
   const utree = fetchUpstreamTree();
   if (!utree) return 40;
 
-  const upstreamManifest = path.join(utree, '.github/dudestuff/bundle-manifest.md');
-  if (!isFile(upstreamManifest)) {
-    logError('upstream tree is missing .github/dudestuff/bundle-manifest.md');
+  const upstreamManifest = findUpstreamManifestPath(utree);
+  if (!upstreamManifest) {
+    logError(`upstream tree is missing ${WORKSPACE_PATHS.BUNDLE_MANIFEST}`);
     return 40;
   }
   const obj = parseManifest(extractManifestJson(read(upstreamManifest)) || '');
@@ -720,7 +1765,6 @@ function cmdPlan(argv) {
     '.github/agents',
     '.github/skills/dude-lint',
     '.github/instructions/dude.instructions.md',
-    '.github/dudestuff/bundle-manifest.md',
   ]) {
     if (!exists(path.join(utree, need))) {
       logError(`upstream tree is missing required path: ${need}`);
@@ -733,29 +1777,55 @@ function cmdPlan(argv) {
   const toRef = upstream.resolvedRef;
   const fromRef = local.installed_ref;
   const createdAt = isoNow();
-  const planId = `${stampNow()}-${sanitizeRef(fromRef)}-${sanitizeRef(toRef)}`;
-
-  fs.mkdirSync(PLANS_DIR, { recursive: true });
-  const planPath = path.join(PLANS_DIR, `${planId}.json`);
-  const planJson = buildPlanJson(plan, {
-    plan_id: planId,
-    from_ref: fromRef,
-    to_ref: toRef,
-    cache_dir: utree,
-    created_at: createdAt,
-    ttl_warn: isoPlusSeconds(3600),
-    ttl_expire: isoPlusSeconds(86400),
-  });
-  fs.writeFileSync(planPath, planJson);
-  if (flags.out) fs.copyFileSync(planPath, flags.out);
+  const planIdBase = `${stampNow()}-${sanitizeRef(fromRef)}-${sanitizeRef(toRef)}`;
+  let persistedPlan;
+  let planJson = '';
+  let persisted;
+  try {
+    persisted = persistUniquePlan({
+      plansDir: PLANS_DIR,
+      baseId: planIdBase,
+      buildBytes: (candidatePlanId) => {
+        persistedPlan = buildUpgradePlan(plan, {
+          plan_id: candidatePlanId,
+          from_ref: fromRef,
+          to_ref: toRef,
+          cache_dir: utree,
+          created_at: createdAt,
+          ttl_warn: isoAddSeconds(createdAt, 3600),
+          ttl_expire: isoAddSeconds(createdAt, 86400),
+        });
+        planJson = buildPlanJson(persistedPlan);
+        return planJson;
+      },
+    });
+  } catch (planError) {
+    logError(planError instanceof Error ? planError.message : String(planError));
+    return 40;
+  }
+  const { planId, planPath } = persisted;
+  if (flags.out) {
+    try {
+      fs.copyFileSync(planPath, flags.out, fs.constants.COPYFILE_EXCL);
+    } catch (copyError) {
+      fs.rmSync(planPath, { force: true });
+      const existsError = copyError && typeof copyError === 'object' && 'code' in copyError
+        && copyError.code === 'EEXIST';
+      logError(existsError
+        ? `--out already exists; refusing to overwrite: ${flags.out}`
+        : `failed to write --out plan: ${copyError instanceof Error ? copyError.message : String(copyError)}`);
+      return 40;
+    }
+  }
 
   if (format === 'json') out(planJson);
   else {
-    emitPlanText(plan, planId, fromRef, toRef, utree);
+    emitPlanText(plan, planId, fromRef, toRef, utree, metadataTransitionNeeded(persistedPlan));
     out(`\nPlan saved: ${planPath}\n`);
   }
 
-  return plan.replace.length + plan.add.length + plan.remove.length === 0 ? 0 : 10;
+  return plan.replace.length + plan.add.length + plan.remove.length === 0
+    && !metadataTransitionNeeded(persistedPlan) ? 0 : 10;
 }
 
 /** @param {string[]} argv @returns {number} */
@@ -763,11 +1833,17 @@ function cmdApply(argv) {
   const { flags, error } = parseFlags(
     argv,
     new Set(['plan', 'confirm', 'format']),
-    new Set(['skip-removals', 'allow-dirty']),
+    new Set(['skip-removals']),
   );
   const format = flags.format || 'text';
   if (error || (format !== 'text' && format !== 'json')) {
     logError(error || `invalid --format: ${format} (expected text|json)`);
+    return 40;
+  }
+  try {
+    resolveMutationPath(ROOT, WORKSPACE_PATHS.BUNDLE_MANIFEST);
+  } catch (pathError) {
+    logError(pathError instanceof Error ? pathError.message : String(pathError));
     return 40;
   }
   if (!hasGit() || git(['rev-parse', '--is-inside-work-tree']).status !== 0) {
@@ -787,7 +1863,7 @@ function cmdApply(argv) {
     return 40;
   }
   if (!loadLocalManifest()) {
-    logError(`local bundle manifest missing or malformed: ${LOCAL_MANIFEST_PATH}`);
+    logError(localManifestError());
     return 40;
   }
 
@@ -797,74 +1873,90 @@ function cmdApply(argv) {
     logError(`plan not found: ${flags.plan}`);
     return 40;
   }
-  const planObj = parseManifest(read(planPath));
-  if (!planObj || !planObj.to_ref || !planObj.cache_dir) {
-    logError(`plan file malformed: ${planPath}`);
+  let planObj;
+  try {
+    planObj = parseUpgradePlan(planPath);
+  } catch (planError) {
+    logError(planError instanceof Error ? planError.message : String(planError));
     return 40;
   }
-  const fromRef = String(planObj.from_ref || '');
-  const toRef = String(planObj.to_ref || '');
-  const cacheDir = String(planObj.cache_dir || '');
-  const planSource = String(planObj.source || '');
-  const planRef = String(planObj.ref || '');
-  const planId = String(planObj.plan_id || '');
+  const fromRef = planObj.from_ref;
+  const toRef = planObj.to_ref;
+  const planSource = planObj.source.location;
+  const planRef = planObj.source.requested_ref;
+  const planId = planObj.plan_id;
+  const plan = planObj.buckets;
+  const skipRemovals = Boolean(flags['skip-removals']);
+  const writePaths = plannedWritePaths(planObj, skipRemovals);
 
-  if (fromRef !== local.installed_ref) {
-    logError(`plan from_ref (${fromRef}) does not match local installed_ref (${local.installed_ref})`);
-    logError("re-run 'plan' to generate a fresh plan");
-    return 40;
-  }
-  if (!isDir(cacheDir)) {
-    logError(`plan cache_dir missing: ${cacheDir}`);
-    logError("the upstream tree may have been cleaned; re-run 'plan'");
-    return 40;
-  }
-  const ttlExpire = String(planObj.ttl_expire_at || '');
-  if (ttlExpire) {
-    const expEpoch = isoToEpoch(ttlExpire);
-    if (expEpoch !== null && Math.floor(Date.now() / 1000) > expEpoch) {
-      logError(`plan expired (created ${planObj.created_at}, expired ${ttlExpire})`);
-      logError("re-run 'plan' to generate a fresh plan");
-      return 40;
-    }
-  }
-  if (!flags['allow-dirty'] && git(['status', '--porcelain']).stdout.trim()) {
-    logError('working tree is dirty; commit/stash first, or pass --allow-dirty');
-    return 40;
-  }
-
-  upstream.source = planSource;
-  upstream.ref = planRef;
-  const plan = classifyPlan(cacheDir);
-
-  if (!isFile(path.join(cacheDir, '.github/dudestuff/bundle-manifest.md'))) {
-    logError(`plan cache missing upstream manifest at ${cacheDir}/.github/dudestuff/bundle-manifest.md`);
+  let preflight;
+  try {
+    preflight = preflightApply(planObj);
+  } catch (preflightError) {
+    logError(preflightError instanceof Error ? preflightError.message : String(preflightError));
     return 40;
   }
 
   const total = plan.replace.length + plan.add.length + plan.remove.length;
-  if (total === 0) {
+  if (total === 0 && !metadataTransitionNeeded(planObj)) {
     logInfo('nothing to apply (no changes)');
     return 0;
   }
 
   // ---- Safety net ----
-  const safetyTag = `dude-pre-upgrade-${stampNow()}`;
+  const safetyTagBase = `dude-pre-upgrade-${stampNow()}`;
+  let safetyTag = safetyTagBase;
+  let tagProbe = git(['show-ref', '--verify', '--quiet', `refs/tags/${safetyTag}`]);
+  if (tagProbe.status !== 0 && tagProbe.status !== 1) {
+    logError('failed to inspect existing safety tags');
+    return 40;
+  }
+  for (let suffix = 2; tagProbe.status === 0; suffix += 1) {
+    safetyTag = `${safetyTagBase}-${suffix}`;
+    tagProbe = git(['show-ref', '--verify', '--quiet', `refs/tags/${safetyTag}`]);
+    if (tagProbe.status !== 0 && tagProbe.status !== 1) {
+      logError('failed to inspect existing safety tags');
+      return 40;
+    }
+  }
   let upgradeBranch = `chore/dude-upgrade-${sanitizeRef(toRef)}`;
+  let branchProbe = git(['show-ref', '--verify', '--quiet', `refs/heads/${upgradeBranch}`]);
+  if (branchProbe.status !== 0 && branchProbe.status !== 1) {
+    logError('failed to inspect existing upgrade branches');
+    return 40;
+  }
+  if (branchProbe.status === 0) {
+    const branchBase = `${upgradeBranch}-${stampNow()}`;
+    upgradeBranch = branchBase;
+    branchProbe = git(['show-ref', '--verify', '--quiet', `refs/heads/${upgradeBranch}`]);
+    if (branchProbe.status !== 0 && branchProbe.status !== 1) {
+      logError('failed to inspect existing upgrade branches');
+      return 40;
+    }
+    for (let suffix = 2; branchProbe.status === 0; suffix += 1) {
+      upgradeBranch = `${branchBase}-${suffix}`;
+      branchProbe = git(['show-ref', '--verify', '--quiet', `refs/heads/${upgradeBranch}`]);
+      if (branchProbe.status !== 0 && branchProbe.status !== 1) {
+        logError('failed to inspect existing upgrade branches');
+        return 40;
+      }
+    }
+  }
+  fs.mkdirSync(CACHE_ROOT, { recursive: true });
+  const disabledHooksPath = fs.mkdtempSync(path.join(CACHE_ROOT, 'disabled-hooks-'));
   logInfo(`creating safety tag: ${safetyTag}`);
   if (git(['tag', safetyTag]).status !== 0) {
+    fs.rmSync(disabledHooksPath, { recursive: true, force: true });
     logError(`failed to create safety tag: ${safetyTag}`);
     return 40;
   }
-  if (git(['show-ref', '--verify', '--quiet', `refs/heads/${upgradeBranch}`]).status === 0) {
-    upgradeBranch = `${upgradeBranch}-${stampNow()}`;
-  }
   logInfo(`creating upgrade branch: ${upgradeBranch}`);
-  if (git(['checkout', '-b', upgradeBranch]).status !== 0) {
+  if (gitWithoutHooks(disabledHooksPath, ['checkout', '--quiet', '-b', upgradeBranch]).status !== 0) {
+    fs.rmSync(disabledHooksPath, { recursive: true, force: true });
     logError(`failed to create upgrade branch: ${upgradeBranch}`);
-    git(['tag', '-d', safetyTag]);
     return 40;
   }
+  const manifestOutput = renderManifest(preflight.manifestBytes, planSource, planRef, toRef);
 
   // ---- File operations ----
   /** @type {string[]} */
@@ -872,29 +1964,37 @@ function cmdApply(argv) {
   /** @type {string[]} */
   const skippedRemoves = [];
   for (const { path: p } of plan.add) {
-    fs.mkdirSync(path.dirname(path.join(ROOT, p)), { recursive: true });
-    fs.copyFileSync(path.join(cacheDir, p), path.join(ROOT, p));
+    const target = preflight.mutationTargets.get(p);
+    const bytes = preflight.cacheBytes.get(p);
+    if (!target || !bytes) throw new Error(`validated Add evidence missing for ${p}`);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, bytes);
     appliedPaths.push(p);
   }
   for (const { path: p } of plan.replace) {
-    fs.mkdirSync(path.dirname(path.join(ROOT, p)), { recursive: true });
-    fs.copyFileSync(path.join(cacheDir, p), path.join(ROOT, p));
+    const target = preflight.mutationTargets.get(p);
+    const bytes = preflight.cacheBytes.get(p);
+    if (!target || !bytes) throw new Error(`validated Replace evidence missing for ${p}`);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, bytes);
     appliedPaths.push(p);
   }
-  if (flags['skip-removals']) {
+  if (skipRemovals) {
     for (const { path: p } of plan.remove) skippedRemoves.push(p);
   } else {
     for (const { path: p } of plan.remove) {
-      fs.rmSync(path.join(ROOT, p), { force: true });
+      const target = preflight.mutationTargets.get(p);
+      if (!target) throw new Error(`validated Remove evidence missing for ${p}`);
+      fs.rmSync(target, { force: true });
       appliedPaths.push(p);
     }
   }
 
   // ---- Rewrite manifest ----
-  writeManifest(planSource, planRef, toRef);
+  fs.writeFileSync(preflight.manifestPath, manifestOutput);
 
   // ---- Append upgrade-log entry (placeholder patched after lint) ----
-  const logPath = path.join(ROOT, '.github/dudestuff/upgrade-log.md');
+  const logPath = preflight.upgradeLogPath;
   const actualRemoved = plan.remove.length - skippedRemoves.length;
   const ts = isoNow().replace('T', ' ').replace('Z', '');
   const entry =
@@ -917,12 +2017,20 @@ function cmdApply(argv) {
   fs.writeFileSync(logPath, read(logPath).replace('__LINT_RESULT__', `[${lintResult}]`));
 
   // ---- Stage + commit ----
-  git(['add', '-A', '.github/dudestuff/bundle-manifest.md', '.github/dudestuff/upgrade-log.md']);
-  for (const p of appliedPaths) git(['add', '-A', p]);
-  if (git(['commit', '-q', '-m', `chore: upgrade Dude bundle to ${toRef}`]).status !== 0) {
-    logWarn('git commit produced no changes or failed (manifest/log written; review with \'git status\')');
+  const addResult = git(['add', '-A', '--', ...writePaths]);
+  if (addResult.status !== 0) {
+    fs.rmSync(disabledHooksPath, { recursive: true, force: true });
+    logError(`git add failed while staging reviewed upgrade paths: ${addResult.stderr.trim() || 'unknown error'}`);
+    return 40;
   }
-
+  const commitResult = gitWithoutHooks(disabledHooksPath, [
+    'commit', '-q', '-m', `chore: upgrade Dude bundle to ${toRef}`,
+  ]);
+  fs.rmSync(disabledHooksPath, { recursive: true, force: true });
+  if (commitResult.status !== 0) {
+    logError(`git commit failed for reviewed upgrade paths: ${commitResult.stderr.trim() || 'unknown error'}`);
+    return 40;
+  }
   // ---- Report ----
   if (format === 'json') {
     out(
@@ -967,18 +2075,24 @@ function cmdApply(argv) {
 
 /** @param {string[]} argv @returns {number} */
 function cmdRollback(argv) {
-  const { flags, error } = parseFlags(argv, new Set(['tag', 'format']), new Set(['allow-dirty']));
+  const { flags, error } = parseFlags(argv, new Set(['tag', 'format']), new Set());
   const format = flags.format || 'text';
   if (error || (format !== 'text' && format !== 'json')) {
     logError(error || `invalid --format: ${format} (expected text|json)`);
+    return 40;
+  }
+  try {
+    resolveMutationPath(ROOT, WORKSPACE_PATHS.BUNDLE_MANIFEST);
+  } catch (pathError) {
+    logError(pathError instanceof Error ? pathError.message : String(pathError));
     return 40;
   }
   if (!hasGit() || git(['rev-parse', '--is-inside-work-tree']).status !== 0) {
     logError('not a git working tree or git missing');
     return 40;
   }
-  if (!flags['allow-dirty'] && git(['status', '--porcelain']).stdout.trim()) {
-    logError('working tree is dirty; commit/stash first, or pass --allow-dirty');
+  if (git(['status', '--porcelain']).stdout.trim()) {
+    logError('working tree is dirty; commit or stash changes before rollback');
     return 40;
   }
 
@@ -1004,7 +2118,7 @@ function cmdRollback(argv) {
     return 40;
   }
 
-  const logPath = path.join(ROOT, '.github/dudestuff/upgrade-log.md');
+  const logPath = resolveMutationPath(ROOT, WORKSPACE_PATHS.UPGRADE_LOG);
   if (isFile(logPath)) {
     const ts = isoNow().replace('T', ' ').replace('Z', '');
     fs.appendFileSync(
@@ -1053,18 +2167,16 @@ FLAGS (status, plan)
   --ref <r>            override manifest source_ref (branch, tag, or sha)
 
 FLAGS (plan)
-  --out <path>         write plan.json here in addition to the cache
+  --out <path>         write plan.json here too; refuse if the path exists
 
 FLAGS (apply)
   --plan <id|path>     required: persisted plan from a previous \`plan\` run
   --confirm <token>    required: must be the literal string 'confirm-upgrade'
   --skip-removals      keep Remove-bucket files instead of deleting them
-  --allow-dirty        permit apply on a dirty working tree (default: refuse)
   --format text|json   output format (default: text)
 
 FLAGS (rollback)
   --tag <name>         specific safety tag to restore (default: most recent)
-  --allow-dirty        permit rollback on a dirty working tree (default: refuse)
   --format text|json   output format (default: text)
 
 EXIT CODES

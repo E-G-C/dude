@@ -17,23 +17,23 @@ provides:
     - dude-pack-hugo-migration
     - dude-pack-hugo-troubleshooting
   instructions:
-    - hugo-project.instructions.md
-    - hugo-content.instructions.md
-    - hugo-templates.instructions.md
-    - hugo-assets-modules.instructions.md
-    - hugo-dude-routing.instructions.md
+    - dude-pack-hugo-hugo-project.instructions.md
+    - dude-pack-hugo-hugo-content.instructions.md
+    - dude-pack-hugo-hugo-templates.instructions.md
+    - dude-pack-hugo-hugo-assets-modules.instructions.md
+    - dude-pack-hugo-hugo-dude-routing.instructions.md
   prompts:
-    - answer-hugo-question.prompt.md
-    - create-hugo-site.prompt.md
-    - debug-hugo-site.prompt.md
-    - design-hugo-content-model.prompt.md
-    - lookup-hugo-function.prompt.md
-    - migrate-to-hugo.prompt.md
-    - optimize-hugo-performance.prompt.md
-    - prepare-hugo-deployment.prompt.md
-    - process-hugo-assets.prompt.md
-    - upgrade-hugo-templates.prompt.md
-    - write-hugo-template.prompt.md
+    - dude-pack-hugo-answer-hugo-question.prompt.md
+    - dude-pack-hugo-create-hugo-site.prompt.md
+    - dude-pack-hugo-debug-hugo-site.prompt.md
+    - dude-pack-hugo-design-hugo-content-model.prompt.md
+    - dude-pack-hugo-lookup-hugo-function.prompt.md
+    - dude-pack-hugo-migrate-to-hugo.prompt.md
+    - dude-pack-hugo-optimize-hugo-performance.prompt.md
+    - dude-pack-hugo-prepare-hugo-deployment.prompt.md
+    - dude-pack-hugo-process-hugo-assets.prompt.md
+    - dude-pack-hugo-upgrade-hugo-templates.prompt.md
+    - dude-pack-hugo-write-hugo-template.prompt.md
 requires:
   tools: [hugo]
 ---

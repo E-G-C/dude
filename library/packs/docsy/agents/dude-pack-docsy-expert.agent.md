@@ -28,18 +28,18 @@ You are an expert on the [Docsy Hugo theme](https://github.com/google/docsy). Yo
 
 | User intent | Start with |
 |---|---|
-| "Install Docsy in a new project" | [.github/prompts/install-site.prompt.md](../prompts/install-site.prompt.md) (Module vs Example-site vs Submodule vs NPM) + Skill §1. |
-| "Add a new docs page / blog post" | [.github/prompts/new-docs-page.prompt.md](../prompts/new-docs-page.prompt.md), [.github/prompts/new-blog-post.prompt.md](../prompts/new-blog-post.prompt.md) |
-| "Insert a shortcode" | [.github/prompts/add-shortcode.prompt.md](../prompts/add-shortcode.prompt.md) |
-| "Set up search" | [.github/prompts/setup-search.prompt.md](../prompts/setup-search.prompt.md) — pick exactly one engine. |
-| "Change colors / fonts / dark mode" | [.github/prompts/customize-theme.prompt.md](../prompts/customize-theme.prompt.md) — limit edits to the three project SCSS files. |
-| "Set up versioned docs" | [.github/prompts/setup-versioning.prompt.md](../prompts/setup-versioning.prompt.md) (Skill §11) |
-| "Add a new language" | [.github/prompts/setup-i18n.prompt.md](../prompts/setup-i18n.prompt.md) (Skill §12) |
-| "Expose Markdown / llms.txt for AI agents" | [.github/prompts/enable-agent-support.prompt.md](../prompts/enable-agent-support.prompt.md) (Skill §18) |
-| "Deploy this site" | [.github/prompts/setup-deployment.prompt.md](../prompts/setup-deployment.prompt.md) |
+| "Install Docsy in a new project" | [.github/prompts/dude-pack-docsy-install-site.prompt.md](../prompts/dude-pack-docsy-install-site.prompt.md) (Module vs Example-site vs Submodule vs NPM) + Skill §1. |
+| "Add a new docs page / blog post" | [.github/prompts/dude-pack-docsy-new-docs-page.prompt.md](../prompts/dude-pack-docsy-new-docs-page.prompt.md), [.github/prompts/dude-pack-docsy-new-blog-post.prompt.md](../prompts/dude-pack-docsy-new-blog-post.prompt.md) |
+| "Insert a shortcode" | [.github/prompts/dude-pack-docsy-add-shortcode.prompt.md](../prompts/dude-pack-docsy-add-shortcode.prompt.md) |
+| "Set up search" | [.github/prompts/dude-pack-docsy-setup-search.prompt.md](../prompts/dude-pack-docsy-setup-search.prompt.md) — pick exactly one engine. |
+| "Change colors / fonts / dark mode" | [.github/prompts/dude-pack-docsy-customize-theme.prompt.md](../prompts/dude-pack-docsy-customize-theme.prompt.md) — limit edits to the three project SCSS files. |
+| "Set up versioned docs" | [.github/prompts/dude-pack-docsy-setup-versioning.prompt.md](../prompts/dude-pack-docsy-setup-versioning.prompt.md) (Skill §11) |
+| "Add a new language" | [.github/prompts/dude-pack-docsy-setup-i18n.prompt.md](../prompts/dude-pack-docsy-setup-i18n.prompt.md) (Skill §12) |
+| "Expose Markdown / llms.txt for AI agents" | [.github/prompts/dude-pack-docsy-enable-agent-support.prompt.md](../prompts/dude-pack-docsy-enable-agent-support.prompt.md) (Skill §18) |
+| "Deploy this site" | [.github/prompts/dude-pack-docsy-setup-deployment.prompt.md](../prompts/dude-pack-docsy-setup-deployment.prompt.md) |
 | "Update / upgrade Docsy" | Use the update guidance in [.github/skills/dude-pack-docsy-theme/SKILL.md](../skills/dude-pack-docsy-theme/SKILL.md). |
 | "Switch from submodule to module" | Use the conversion steps in [.github/skills/dude-pack-docsy-theme/SKILL.md](../skills/dude-pack-docsy-theme/SKILL.md). |
-| "It's broken / not building" | [.github/prompts/troubleshoot-build.prompt.md](../prompts/troubleshoot-build.prompt.md) |
+| "It's broken / not building" | [.github/prompts/dude-pack-docsy-troubleshoot-build.prompt.md](../prompts/dude-pack-docsy-troubleshoot-build.prompt.md) |
 
 ## When you don't know
 

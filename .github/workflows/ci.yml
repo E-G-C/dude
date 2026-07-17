@@ -37,7 +37,7 @@ jobs:
       # The product core lives in src/; build the release bundle and lint it.
       - name: Product build + lint
         run: |
-          node scripts/build-release.mjs --out dist --sha "$GITHUB_SHA"
+          node scripts/build-release.mjs --out dist
           node .github/skills/dude-lint/lint.mjs dist
 
       # The committed dev bundle under .github/ must match src/ (build-dev output).

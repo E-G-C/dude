@@ -3,15 +3,17 @@
 Dude is a markdown bundle for working with GitHub Copilot on one feature
 at a time.
 
-The simple idea:
+Start with `@dude brainstorm <idea>`. The lifecycle is
+`brainstorm -> idea -> define -> spec -> work`:
 
-1. You describe the feature.
-2. Dude writes a brief file you can edit.
-3. Dude turns that brief into a spec, plan, and task list.
+1. You describe the feature informally.
+2. Brainstorm writes one flat `.dude/ideas/<slug>.md` collaboration file and
+  does not create a spec package.
+3. Define turns that idea into a spec, plan, and task list.
 4. You either stop there or implement from the task list.
 
 You do not need extra setup or a big process to start. The lean core handles
-the whole flow — define a feature, then implement straight from `tasks.md`.
+the whole flow — brainstorm an idea, define it, then implement straight from `tasks.md`.
 When you want more — a tracked issue board, release tooling, web specialists, or
 tests-first discipline — you add an optional **pack**. Nothing domain-specific
 is loaded until you ask for it.
@@ -20,10 +22,10 @@ is loaded until you ask for it.
 
 ```mermaid
 flowchart LR
-  IDEA["Your idea"] --> DRAFT["@dude draft"]
-  DRAFT --> BRAIN["brief/<feature>.md"]
-  BRAIN --> DEFINE["@dude define"]
-  DEFINE --> PACKAGE["specs/<feature>/\nspec.md + plan.md + tasks.md"]
+  INPUT["Your idea"] --> BRAINSTORM["@dude brainstorm"]
+  BRAINSTORM --> IDEA[".dude/ideas/<slug>.md"]
+  IDEA --> DEFINE["@dude define <slug>"]
+  DEFINE --> PACKAGE[".dude/specs/<feature>/\nspec.md + plan.md + tasks.md"]
   PACKAGE --> STOP["Stop here\nDefinition Only"]
   PACKAGE --> TASKS["Implement from tasks.md\n(Lightweight, core default)"]
   TASKS --> DONE["Feature done"]
@@ -42,9 +44,9 @@ portable mirror, but that mirror does not decide what is ready or done.
 
 | If you are here | The live place is | What you do |
 |---|---|---|
-| Shaping the idea | `brief/<feature>.md` | Review the draft, edit it if needed, and answer questions |
-| Defined, not implementing | `specs/<feature>/` | Read the spec and plan |
-| Implementing (core default) | `specs/<feature>/tasks.md` | Ask Dude for the next task |
+| Shaping the idea | `.dude/ideas/<slug>.md` | Review `## Idea`, edit it if needed, and answer questions |
+| Defined, not implementing | `.dude/specs/<feature>/` | Read the spec and plan |
+| Implementing (core default) | `.dude/specs/<feature>/tasks.md` | Ask Dude for the next task |
 | Implementing on a tracked board (beads pack) | the tracked board | Track the same work as issues until done; `tasks.md` may mirror it for fallback |
 
 ## Quick Start
@@ -53,27 +55,33 @@ Use this path for your first feature.
 
 1. Tell Dude whether this is one feature and whether you want to implement now.
 2. Write your idea in chat or in a markdown file.
-3. Draft the feature from that idea.
-4. Open `brief/<feature>.md`, read the `## User Draft`, then either improve the draft or answer the `## Open Questions` prompts below it.
-5. Define the feature. A defined feature is the "formalized" version of your idea and creates `spec.md`, `plan.md`, and `tasks.md` in a new folder under `specs/`.
+3. Run `@dude brainstorm <idea>` to capture it without creating a spec package.
+4. Open `.dude/ideas/<slug>.md`, read the user-controlled `## Idea`, then either
+  revise it or answer the active `## Open Questions` immediately below it.
+5. Define the feature. A defined feature is the "formalized" version of your idea and creates `spec.md`, `plan.md`, and `tasks.md` in a new folder under `.dude/specs/`.
 6. If you want implementation, ask for the next task.
 
 Writing your idea in a file is often the best way to start. Sit with it, add
-rough notes, examples, questions, and constraints, then ask Dude to draft from
-that file. Dude will turn it into `brief/<feature>.md`.
+rough notes, examples, questions, and constraints, then ask Dude to brainstorm
+from that file. Dude will turn it into one flat `.dude/ideas/<slug>.md` file.
+Informal, typo-heavy, or speech-to-text input is welcome: on initial capture,
+Dude may conservatively clean spelling, grammar, punctuation, transcription
+errors, filler, or repetition without changing meaning, tone, uncertainty,
+incomplete thought, or creative intent.
 
-The brief review is important too. Read your original draft first, then
-either change it directly or answer Dude's questions in the visible
+The idea review is important too. Read `## Idea` first, then either change it
+directly or answer Dude's questions in the visible
 `**Your answer:**` slots. Use the same pass to correct bad assumptions and
-describe the feature in more detail. The better the brief, the better the
+describe the feature in more detail. Rerunning brainstorm preserves `## Idea`
+and other user edits unless you supply or request a revision. The better the idea, the better the
 formal spec, plan, and tasks will be.
 
 Minimal example:
 
 ```text
-# Write your rough idea in ideas/expense-entry.md first.
-@dude draft ideas/expense-entry.md
-# Open brief/expense-entry.md, then read the draft and answer the prompts.
+# Write your rough input in notes/expense-entry.md first.
+@dude brainstorm notes/expense-entry.md
+# Open .dude/ideas/expense-entry.md, then read the idea and answer the prompts.
 @dude define expense-entry
 @dude status
 @dude work expense-entry --max 3
@@ -83,16 +91,16 @@ If you only want a plan, use this instead:
 
 ```text
 @dude I have one feature: expense entry. Just define it for now.
-# You can draft from a feature name or from a markdown file you wrote first.
-@dude draft ideas/expense-entry.md
-# Review brief/expense-entry.md before formalizing the feature.
+# You can brainstorm from a feature name or from a markdown file you wrote first.
+@dude brainstorm notes/expense-entry.md
+# Review .dude/ideas/expense-entry.md before formalizing the feature.
 @dude define expense-entry
 ```
 
 Inline prompts still work:
 
 ```text
-@dude draft expense-entry
+@dude brainstorm expense-entry
 ```
 
 But a file can be better when you want room to think.
@@ -102,8 +110,8 @@ But a file can be better when you want room to think.
 For a feature named `expense-entry`, Dude creates files like this:
 
 ```text
-brief/expense-entry.md
-specs/001-expense-entry/
+.dude/ideas/expense-entry.md
+.dude/specs/001-expense-entry/
   spec.md
   plan.md
   tasks.md
@@ -111,22 +119,26 @@ specs/001-expense-entry/
 
 In plain English:
 
-- `brief/...` is the living document, a working note between you and Dude.
+- `.dude/ideas/...` is the pre-spec collaboration file between you and Dude.
 - `spec.md` says what the feature must do.
 - `plan.md` says how the project should build it.
 - `tasks.md` is the work list for Lightweight Execution (the core default), and
   a non-authoritative mirror when a tracked board (beads pack) is active.
 
-Let Dude maintain workflow bookkeeping like `status:`, `spec_path:`, generated
-board sections, and task checkboxes. You edit the idea and answers; Dude keeps
-the workflow state tidy.
+You control `## Idea`, open-question answers, assumptions, and deferred
+questions. Dude maintains `## Normalized Intent`, `status: draft|defined`, the
+exact `spec_path:` to `spec.md`, generated board sections, task checkboxes, and
+the append-only `## Coordinator Log`. Define consumes the idea by slug, updates
+that same file to `status: defined` with the exact path, and writes the package.
+When intent changes, edit `## Idea` and rerun define instead of editing generated
+spec artifacts as the source of intent.
 
 ## Commands You Will Actually Use
 
 | Command | Use it when |
 |---|---|
-| `@dude draft <feature-or-file.md>` | Start or refresh the brief from a feature name, description, or markdown file |
-| `@dude define <feature>` | Turn the brief into spec, plan, and tasks |
+| `@dude brainstorm <idea-or-file.md>` | Create or refresh one flat idea file without creating a spec package |
+| `@dude define <slug>` | Turn the matching idea into spec, plan, and tasks |
 | `@dude status` | See where you are and what is live |
 | `@dude work [<feature>] [--max N]` | Keep going: run the next few ready tasks in whichever lane is already live |
 | `@dude list packs` | See available and installed optional packs |
@@ -142,13 +154,18 @@ commands. They are safe to run when you are unsure.
 
 ```text
 .
-├── .github/   # portable lean-core Dude bundle
+├── .github/   # VS Code/Copilot-discovered Dude engine and configuration
+├── .dude/     # project work, memory, state, and bundle metadata
 ├── library/   # optional pack catalog (install with @dude add pack)
 ├── docs/      # detailed guides and reference material
 └── README.md  # short entrypoint and default quick start
 ```
 
-- `.github/` is the portable lean-core bundle you copy into another repository.
+The sole bundle manifest is `.dude/metadata/bundle-manifest.md`. Current source
+dogfood and release bundles do not generate a manifest under `.github/`.
+
+- `.github/` contains only engine/configuration artifacts that VS Code or Copilot discovers: agents, skills, instructions, and workflows where applicable.
+- `.dude/` is the canonical project workspace: `ideas/`, `specs/`, `memory/`, `state/`, and `metadata/`.
 - `library/packs/` is the catalog of optional packs you install on demand.
 - `docs/` is the repo-local documentation set for deeper workflow details.
 
@@ -169,7 +186,7 @@ manifest metadata and the namespace convention for base ownership live in
 
 ## Packs (Optional Expansions)
 
-The bundle under `.github/` ships only the lean core — the feature workflow that
+The engine under `.github/` ships only the lean core — the feature workflow that
 every project needs. Everything domain- or workflow-specific lives in the
 catalog at [library/packs/](library/packs/README.md) and installs only when you
 ask. Think of it as a small baseplate with bricks you snap on as needed.

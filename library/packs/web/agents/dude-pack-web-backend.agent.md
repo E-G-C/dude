@@ -30,7 +30,7 @@ You are the backend specialist.
 
 ## Rules
 
-- Check `.github/dudestuff/` for relevant decisions, guardrails, context, and lessons before working.
+- Check `.dude/memory/` for relevant decisions, guardrails, context, and lessons before working.
 - Check `.github/skills/project/SKILL.md` if it exists for project conventions.
 - Check `.github/skills/` for any other skills whose description matches the current task.
 - Stay within the assigned slice.

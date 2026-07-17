@@ -20,6 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizeString } from '../dude-engine/lib/text.mjs';
 import { addProvide } from '../dude-engine/lib/pack-manifest.mjs';
+import { resolveMutationPath } from '../dude-engine/lib/workspace-paths.mjs';
 
 const SLUG_RE = /^[a-z][a-z0-9-]*[a-z0-9]$/;
 
@@ -72,7 +73,11 @@ export function scaffoldSkill(opts) {
     skillDirAbs = path.join(root, '.github', 'skills', dirName);
   }
 
-  const destAbs = path.join(skillDirAbs, 'SKILL.md');
+  const destRel = path.relative(path.resolve(root), path.join(skillDirAbs, 'SKILL.md')).split(path.sep).join('/');
+  const destAbs = resolveMutationPath(root, destRel);
+  if (packMd) {
+    packMd = resolveMutationPath(root, path.relative(path.resolve(root), packMd).split(path.sep).join('/'));
+  }
   if (fs.existsSync(destAbs) && !opts.force) {
     throw new Error(`destination exists (use --force): ${path.relative(root, destAbs)}`);
   }

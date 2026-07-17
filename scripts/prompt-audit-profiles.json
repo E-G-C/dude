@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "metric": "bundle-controlled-static-prompt-context-source-footprint-proxy",
+  "profile_order": [
+    "core-coordinator",
+    "definition-common",
+    "lightweight-common",
+    "tracked-common",
+    "bundle-maintenance",
+    "review-common"
+  ],
+  "profiles": {
+    "core-coordinator": {
+      "kind": "release-source",
+      "activation_assumption": "A Dude coordinator turn uses the coordinator and shared bundle rules.",
+      "members": [
+        "src/agents/dude.agent.md",
+        "src/instructions/dude.instructions.md"
+      ]
+    },
+    "definition-common": {
+      "kind": "release-source",
+      "activation_assumption": "Brainstorm/define work loads Spec Lead plus intake, definition, and routing guidance.",
+      "members": [
+        "src/agents/dude.agent.md",
+        "src/instructions/dude.instructions.md",
+        "src/agents/dude-spec-lead.agent.md",
+        "src/skills/dude-work-intake/SKILL.md",
+        "src/skills/dude-feature-definition/SKILL.md",
+        "src/skills/dude-generic-routing/SKILL.md"
+      ]
+    },
+    "lightweight-common": {
+      "kind": "release-source",
+      "activation_assumption": "Direct markdown execution uses lightweight/work/parallel/verification guidance.",
+      "members": [
+        "src/agents/dude.agent.md",
+        "src/instructions/dude.instructions.md",
+        "src/skills/dude-lightweight-execution/SKILL.md",
+        "src/skills/dude-work/SKILL.md",
+        "src/skills/dude-parallel-dispatch/SKILL.md",
+        "src/skills/dude-verification-before-completion/SKILL.md"
+      ]
+    },
+    "tracked-common": {
+      "kind": "release-source",
+      "activation_assumption": "Beads execution is enabled and uses import/workflow plus parallel/verification guidance.",
+      "members": [
+        "src/agents/dude.agent.md",
+        "src/instructions/dude.instructions.md",
+        "library/packs/beads/skills/dude-pack-beads-spec-import/SKILL.md",
+        "library/packs/beads/skills/dude-pack-beads-workflow/SKILL.md",
+        "src/skills/dude-parallel-dispatch/SKILL.md",
+        "src/skills/dude-verification-before-completion/SKILL.md"
+      ]
+    },
+    "bundle-maintenance": {
+      "kind": "release-source",
+      "activation_assumption": "A bundle/pack maintenance request uses compose, upgrade, import, or portability guidance.",
+      "members": [
+        "src/agents/dude.agent.md",
+        "src/instructions/dude.instructions.md",
+        "src/skills/dude-compose/SKILL.md",
+        "src/skills/dude-bundle-upgrade/SKILL.md",
+        "src/skills/dude-bundle-import/SKILL.md",
+        "src/skills/dude-portability/SKILL.md"
+      ]
+    },
+    "review-common": {
+      "kind": "release-source",
+      "activation_assumption": "Review or rejection handling loads reviewer and verification boundaries.",
+      "members": [
+        "src/agents/dude.agent.md",
+        "src/instructions/dude.instructions.md",
+        "src/agents/dude-reviewer.agent.md",
+        "src/skills/dude-reviewer-protocol/SKILL.md",
+        "src/skills/dude-receiving-code-review/SKILL.md",
+        "src/skills/dude-verification-before-completion/SKILL.md"
+      ]
+    }
+  },
+  "dogfood_guidance": {
+    "kind": "dogfood-guidance",
+    "activation_assumption": "Dogfood work reads project-owned standing guidance separately from distributable bundle sources.",
+    "members": [
+      ".github/skills/project/SKILL.md",
+      ".dude/memory/guardrails.md",
+      ".dude/memory/context.md",
+      ".dude/memory/decisions.md",
+      ".dude/memory/lessons.md"
+    ]
+  },
+  "parity": {
+    "core_source_root": "src",
+    "core_generated_root": ".github",
+    "pack_catalog_root": "library/packs",
+    "install_profile": ".dude/metadata/profile.md"
+  }
+}

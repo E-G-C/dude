@@ -30,4 +30,4 @@ resources:
 
 Use `{{% imgproc <glob> Fit "800x" %}}caption{{% /imgproc %}}` to render images from the bundle.
 
-Follow the [content authoring rules](../instructions/docsy-content.instructions.md).
+Follow the [content authoring rules](../instructions/dude-pack-docsy-docsy-content.instructions.md).

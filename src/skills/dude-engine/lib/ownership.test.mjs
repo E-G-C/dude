@@ -27,11 +27,15 @@ test('classifyPath: pack tier', () => {
   assert.equal(classifyPath('.github/agents/dude-pack-beads-workflow.agent.md'), TIER.PACK);
   assert.equal(classifyPath('.github/skills/dude-pack-beads-workflow/SKILL.md'), TIER.PACK);
   assert.equal(classifyPath('.github/skills/dude-pack-hugo-docsy-docsy-expert/SKILL.md'), TIER.PACK);
+  assert.equal(classifyPath('.github/instructions/dude-pack-hugo-project.instructions.md'), TIER.PACK);
+  assert.equal(classifyPath('.github/prompts/dude-pack-hugo-create-site.prompt.md'), TIER.PACK);
 });
 
 test('classifyPath: local tier', () => {
   assert.equal(classifyPath('.github/agents/dude-local-x.agent.md'), TIER.LOCAL);
   assert.equal(classifyPath('.github/skills/dude-local-foo/SKILL.md'), TIER.LOCAL);
+  assert.equal(classifyPath('.github/instructions/dude-local-foo.instructions.md'), TIER.LOCAL);
+  assert.equal(classifyPath('.github/prompts/dude-local-foo.prompt.md'), TIER.LOCAL);
 });
 
 test('classifyPath: project-owned and non-bundle', () => {
@@ -64,6 +68,9 @@ test('belongsToPack matches the literal pack prefix', () => {
   assert.equal(belongsToPack('.github/agents/dude-pack-beads-workflow.agent.md', 'beads'), true);
   assert.equal(belongsToPack('.github/skills/dude-pack-beads-spec-import/SKILL.md', 'beads'), true);
   assert.equal(belongsToPack('.github/skills/dude-pack-hugo-docsy-docsy-expert/SKILL.md', 'hugo-docsy'), true);
+  assert.equal(belongsToPack('.github/instructions/dude-pack-hugo-project.instructions.md', 'hugo'), true);
+  assert.equal(belongsToPack('.github/prompts/dude-pack-hugo-create-site.prompt.md', 'hugo'), true);
+  assert.equal(belongsToPack('.github/prompts/create-site.prompt.md', 'hugo'), false);
   assert.equal(belongsToPack('.github/agents/dude-pack-beads-workflow.agent.md', 'release'), false);
   assert.equal(belongsToPack('.github/skills/dude-lint/SKILL.md', 'beads'), false);
 });

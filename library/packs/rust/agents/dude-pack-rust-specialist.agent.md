@@ -28,7 +28,7 @@ You are the Rust specialist.
 
 ## Rules
 
-- Check `.github/dudestuff/` for relevant decisions, principles, context, and lessons before working.
+- Check `.dude/memory/` for relevant decisions, principles, context, and lessons before working.
 - Check `.github/skills/project/SKILL.md` if it exists for project conventions.
 - Check `.github/skills/` for any other skills whose description matches the current task.
 - For Tauri work, load `.github/skills/dude-pack-rust-tauri/SKILL.md` before making changes.

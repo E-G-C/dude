@@ -28,7 +28,7 @@ You are the Fluent UI specialist.
 
 ## Rules
 
-- Check `.github/dudestuff/` for relevant decisions, principles, context, and lessons before working.
+- Check `.dude/memory/` for relevant decisions, principles, context, and lessons before working.
 - Check `.github/skills/project/SKILL.md` if it exists for project conventions.
 - Check `.github/skills/` for any other skills whose description matches the current task.
 - Always use Fluent UI v9 (`@fluentui/react-components`), not legacy v8 (`@fluentui/react`), unless the project explicitly requires v8.

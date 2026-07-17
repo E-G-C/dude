@@ -18,6 +18,8 @@
  *   pack    installed capability packs; owned per-pack, preserved by core upgrade
  *           .github/agents/dude-pack-<pack>-<slug>.agent.md
  *           .github/skills/dude-pack-<pack>-<slug>/**
+ *           .github/instructions/dude-pack-<pack>-<slug>.instructions.md
+ *           .github/prompts/dude-pack-<pack>-<slug>.prompt.md
  *
  *   local   project-owned customizations; never touched by upgrade
  *           .github/agents/dude-local-<slug>.agent.md
@@ -65,6 +67,12 @@ export function classifyPath(relPath) {
 
   // The always-on bundle instructions file is the only core instruction file.
   if (p === '.github/instructions/dude.instructions.md') return TIER.CORE;
+
+  const instruction = /^\.github\/instructions\/([^/]+)\.instructions\.md$/.exec(p);
+  if (instruction) return classifyName(instruction[1]);
+
+  const prompt = /^\.github\/prompts\/([^/]+)\.prompt\.md$/.exec(p);
+  if (prompt) return classifyName(prompt[1]);
 
   // Agents are flat `*.agent.md` files directly under .github/agents/.
   const agent = /^\.github\/agents\/([^/]+)\.agent\.md$/.exec(p);
@@ -138,6 +146,10 @@ export function belongsToPack(relPath, packName) {
   if (agent) return agent[1].startsWith(prefix);
   const skill = /^\.github\/skills\/([^/]+)(?:\/.*)?$/.exec(p);
   if (skill) return skill[1].startsWith(prefix);
+  const instruction = /^\.github\/instructions\/([^/]+)\.instructions\.md$/.exec(p);
+  if (instruction) return instruction[1].startsWith(prefix);
+  const prompt = /^\.github\/prompts\/([^/]+)\.prompt\.md$/.exec(p);
+  if (prompt) return prompt[1].startsWith(prefix);
   return false;
 }
 

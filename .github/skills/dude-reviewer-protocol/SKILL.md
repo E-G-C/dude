@@ -1,43 +1,18 @@
 ---
 name: "dude-reviewer-protocol"
-description: "Use when a reviewer approves or rejects work, when revision ownership must change after rejection, or when enforcing independent review cycles."
+description: "Use for independent verdicts, rejection routing, revision ownership, and repeated-failure escalation."
 ---
 
 # Reviewer Protocol
 
-> Companion skill: `dude-receiving-code-review` covers the author-side workflow for handling rejection findings. Load it together with this skill when coordinating a rejection-and-revision cycle.
+The reviewer stays independent from implementation, revision, testing, and close. A verdict is `APPROVE`, `REJECT`, or `ESCALATE`; rejection includes concrete findings and approval means materially ready.
 
-## Purpose
+## Rejection Procedure
 
-Keep review independent and prevent self-revision loops after rejection.
+1. The reviewer records and returns its verdict, concrete findings, and optional reviser recommendation; it does not load the receiving-review skill, assign, or revise.
+2. The coordinator records the findings, loads `dude-receiving-code-review`, and assigns a different reviser if available and credible; otherwise it may assign the original author.
+3. The selected reviser validates each finding, addresses accepted findings, and reruns focused verification without self-approving or selecting a reviewer.
+4. The coordinator sends the revision to an independent reviewer for re-review.
+5. A second failure on the same finding escalates to the user; do not repeat the loop or fake certainty.
 
-## Rules
-
-- Reviewers may approve, reject, or escalate.
-- If work is rejected, the original author should not perform the next revision cycle when another specialist is available.
-- Rejection must include concrete reasons.
-- Approval should mean materially ready, not merely promising.
-
-## Revision Rule
-
-When work is rejected:
-
-1. record the rejection reason with concrete findings
-2. if multiple specialists cover the domain, assign the revision to a different
-   one than the original author
-3. if only one specialist covers the domain (the common case), that specialist
-   revises — but must receive the rejection feedback explicitly so they address
-   the specific findings rather than repeating the same approach
-4. the reviewer remains independent from the reviser in all cases
-
-## Escalate Instead Of Faking Certainty
-
-Escalate when:
-
-- the rejection reason is really an unresolved product decision
-- the same specialist has failed revision twice on the same findings
-- the artifact boundary is too unclear for a fair review
-
-## Learning Trigger
-
-If the reviewer finds the same kind of issue across multiple reviews, flag it to the coordinator for potential auto-learn skill creation.
+Also escalate unresolved product authority, insufficient evidence, or an artifact boundary too unclear for fair judgment.

@@ -1,7 +1,7 @@
 # Dude Pack Catalog
 
 `library/packs/` is the central catalog of **optional expansions** for the lean
-Dude core. The bundle under `.github/` ships only what every project needs;
+Dude core. The engine under `.github/` ships only what every project needs;
 everything domain- or workflow-specific lives here as an installable **pack**.
 
 ## What is a pack?
@@ -44,12 +44,12 @@ library/packs/<name>/
   pack.md              # manifest (schema below)
   agents/              # dude-pack-<name>-*.agent.md   (optional)
   skills/              # dude-pack-<name>-*/SKILL.md   (optional)
-  instructions/        # *.instructions.md, NARROW applyTo only (optional)
-  prompts/             # *.prompt.md                   (optional)
+  instructions/        # dude-pack-<name>-*.instructions.md (optional)
+  prompts/             # dude-pack-<name>-*.prompt.md       (optional)
 ```
 
 **Naming:** pack source files already carry their **install** names
-(`dude-pack-<name>-<slug>`). Installing a pack is a direct copy into `.github/`
+(`dude-pack-<name>-<slug>`), including instruction and prompt basenames. Installing a pack is a direct copy into `.github/`
 with no rename step; authors edit the verbose installed names in place. Pack
 names must not be hyphen-prefixes of one another (e.g. `hugo` and `hugo-docsy`)
 because removal matches on the `dude-pack-<name>-` prefix.
@@ -79,7 +79,7 @@ hooks:                            # optional: core extension points it fills
 ## Installing / removing
 
 - `@dude add pack <name>` — installs the pack's `dude-pack-<name>-*` artifacts
-  into `.github/`, records the exact file list in `.github/dudestuff/profile.md`,
+  into `.github/`, records the exact file list in `.dude/metadata/profile.md`,
   and runs lint. The source is the local `library/packs/<name>/` when present,
   otherwise it is fetched from the bundle's configured upstream (`source_repo` /
   `source_ref` in the bundle manifest); `--no-fetch` disables the fallback.
@@ -88,8 +88,9 @@ hooks:                            # optional: core extension points it fills
 
 ## Verifying a pack
 
-The core linter scans only `.github/`, so pack sources under `library/packs/`
-are validated by temp-installing and linting. `dude-compose` does this for every
+The core linter scans installed `.github/` artifacts and `.dude/` state, not
+catalog source directories under `library/packs/`. Pack sources are therefore
+validated by temp-installing and linting; `dude-compose` does this for every
 catalog pack in one command:
 
 ```bash

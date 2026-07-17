@@ -13,6 +13,6 @@ How to author a `.instructions.md` file: pick the narrowest `applyTo` glob that 
 ## Procedure
 
 1. Decide the file scope and express it as an `applyTo` glob (for example `**/*.ts` or `src/**`). Prefer narrow globs; split unrelated rules into separate instruction files.
-2. Write the frontmatter: `applyTo` plus a short `description` of what the rules cover.
+2. For a pack artifact, name the file `dude-pack-<pack>-<slug>.instructions.md`; loose instruction names are project-owned and compose refuses to install or remove them. Project-local instructions use `dude-local-<slug>.instructions.md`. Then write the frontmatter: `applyTo` plus a short `description` of what the rules cover.
 3. Write the rules as concise, imperative bullets scoped to those files; do not duplicate global conventions that live elsewhere.
 4. Verify the glob matches the intended files and nothing broader, then run dude-lint on the bundle.

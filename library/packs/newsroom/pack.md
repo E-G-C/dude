@@ -9,6 +9,8 @@ provides:
     - dude-pack-newsroom-article
     - dude-pack-newsroom-event-from-calendar
     - dude-pack-newsroom-static-safe-time
+  prompts:
+    - dude-pack-newsroom-news-article.prompt.md
 requires:
   tools: [hugo]
 ---
@@ -45,7 +47,7 @@ front-mattered Hugo Markdown that the site's own templates render.
 
 ### Prompt
 
-- `news-article.prompt.md` — drives the writer agent end to end.
+- `dude-pack-newsroom-news-article.prompt.md` — drives the writer agent end to end.
 
 ## Requires
 

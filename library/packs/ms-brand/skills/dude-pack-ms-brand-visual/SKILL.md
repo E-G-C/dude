@@ -61,15 +61,15 @@ Do **not** use it for:
    `pwsh .github/skills/dude-pack-ms-brand-visual/scripts/brand-check.ps1` or
    `bash .github/skills/dude-pack-ms-brand-visual/scripts/brand-check.sh`.
 6. **Run the audit** in
-   [../../prompts/audit-ms-brand.prompt.md](../../prompts/audit-ms-brand.prompt.md)
+   [../../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md)
    before declaring done.
 
 ## Quick decision table
 
 | User intent                     | Go to                                                                            |
 | ------------------------------- | -------------------------------------------------------------------------------- |
-| Theme a new page/component      | [../../prompts/apply-ms-brand.prompt.md](../../prompts/apply-ms-brand.prompt.md) |
-| Check an existing page          | [../../prompts/audit-ms-brand.prompt.md](../../prompts/audit-ms-brand.prompt.md) |
+| Theme a new page/component      | [../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md) |
+| Check an existing page          | [../../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md) |
 | Pick the right color            | [reference/colors.md](reference/colors.md)                                       |
 | Pick the right font weight/size | [reference/typography.md](reference/typography.md)                               |
 | Place the logo                  | [reference/logo.md](reference/logo.md)                                           |

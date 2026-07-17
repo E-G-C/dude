@@ -70,3 +70,46 @@ test('refuses existing without --force and a missing pack', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('scaffolds beside retired-root content without changing it', () => {
+  const root = tmpRoot();
+  try {
+    const retiredFiles = [
+      ['brief/notes.md', '# Notes\n'],
+      ['.dude/brief/archive.md', '# Archive\n'],
+      ['specs/example/spec.md', '# Example\n'],
+      ['.github/dudestuff/context.md', '# Context\n'],
+    ];
+    for (const [relative, content] of retiredFiles) {
+      const retiredPath = path.join(root, relative);
+      fs.mkdirSync(path.dirname(retiredPath), { recursive: true });
+      fs.writeFileSync(retiredPath, content);
+    }
+
+    const result = scaffoldSkill({ slug: 'current-write', root });
+
+    assert.equal(fs.existsSync(result.path), true);
+    for (const [relative, content] of retiredFiles) {
+      assert.equal(fs.readFileSync(path.join(root, relative), 'utf8'), content);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('scaffolds the intended skill with canonical ideas present', () => {
+  const root = tmpRoot();
+  try {
+    const ideaPath = path.join(root, '.dude/ideas/skill-authoring.md');
+    fs.mkdirSync(path.dirname(ideaPath), { recursive: true });
+    fs.writeFileSync(ideaPath, '# Canonical idea\n');
+
+    const result = scaffoldSkill({ slug: 'canonical-idea', root });
+
+    assert.equal(result.path, path.join(root, '.github/skills/dude-local-canonical-idea/SKILL.md'));
+    assert.equal(fs.existsSync(result.path), true);
+    assert.equal(fs.readFileSync(ideaPath, 'utf8'), '# Canonical idea\n');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
