@@ -533,14 +533,14 @@ test('remove fails closed on malformed profile JSON without deleting installed f
 test('remove rejects traversal in a profile path without deleting outside the workspace', () => {
   const root = scaffold();
   const outsideName = `dude-compose-outside-${path.basename(root)}.txt`;
-  const outside = path.resolve(root, '..', '..', outsideName);
+  const outside = path.resolve(root, '..', outsideName);
   try {
     fs.writeFileSync(outside, 'keep me\n');
     const profile = {
       enabled_packs: ['demo'],
       installed: {
         demo: {
-          files: [`../../${outsideName}`],
+          files: [`../${outsideName}`],
           installed_at: '2026-07-09T00:00:00.000Z',
         },
       },
