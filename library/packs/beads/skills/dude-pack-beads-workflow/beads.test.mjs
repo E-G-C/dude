@@ -11,13 +11,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { canonicalJson, sha256 } from '../../../../../src/skills/dude-work/recovery.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../../../../..');
 const engineSrc = path.join(repo, '.github', 'skills', 'dude-engine');
+const recoverySrc = path.join(repo, 'src', 'skills', 'dude-work', 'recovery.mjs');
 const beadsSrc = path.join(here, 'beads.mjs');
 const SPEC_PATH = '.dude/specs/x/spec.md';
+const RECOVERY_SPEC_PATH = '.dude/specs/004-pre-work-log-learning/spec.md';
 const IDEA_PATH = '.dude/ideas/x.md';
 const POSIX_SKIP = process.platform === 'win32'
   ? 'requires POSIX symbolic-link and FIFO semantics'
@@ -65,6 +69,8 @@ function stage() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-beads-'));
   const skills = path.join(root, '.github', 'skills');
   copyDir(engineSrc, path.join(skills, 'dude-engine'));
+  fs.mkdirSync(path.join(skills, 'dude-work'), { recursive: true });
+  fs.copyFileSync(recoverySrc, path.join(skills, 'dude-work', 'recovery.mjs'));
   fs.mkdirSync(path.join(skills, 'dude-pack-beads-workflow'), { recursive: true });
   fs.copyFileSync(beadsSrc, path.join(skills, 'dude-pack-beads-workflow', 'beads.mjs'));
   const file = path.join(root, '.dude', 'specs', 'x', 'tasks.md');
@@ -83,6 +89,548 @@ function runNode(script, args) {
   const r = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
   return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
 }
+
+/** @param {ReturnType<typeof stage>} fixture */
+async function importStagedBeads(fixture) {
+  return import(pathToFileURL(fixture.script).href);
+}
+
+function recoveryIssue(id, taskKey, overrides = {}) {
+  return {
+    id,
+    title: taskKey ? `${taskKey} ${id}` : `Discovered ${id}`,
+    description: `spec: ${RECOVERY_SPEC_PATH}\n${taskKey ? `Task: ${taskKey}` : 'Discovered work'}`,
+    status: 'open', priority: 2, issue_type: 'task',
+    ...overrides,
+  };
+}
+
+function recoveryDetail(issue, overrides = {}) {
+  return JSON.stringify([{
+    ...issue,
+    design: 'Observed design', acceptance_criteria: 'Observed acceptance',
+    notes: 'Observed note', owner: 'tester',
+    created_at: '2026-07-19T00:00:00Z', created_by: 'fixture',
+    updated_at: '2026-07-19T00:02:00Z',
+    metadata: { team: 'recovery' }, labels: ['recovery'],
+    ...overrides,
+  }]);
+}
+
+function recoveryHistoryEvents(issue) {
+  const current = JSON.parse(recoveryDetail(issue))[0];
+  return [
+    { CommitHash: `${issue.id}-new`, Committer: 'tester', CommitDate: '2026-07-19T00:02:00Z', Issue: current },
+    { CommitHash: `${issue.id}-old`, Committer: 'tester', CommitDate: '2026-07-19T00:00:00Z',
+      Issue: { ...current, status: 'open', updated_at: '2026-07-19T00:00:00Z' } },
+  ];
+}
+
+const recoveryHistory = (issue) => JSON.stringify(recoveryHistoryEvents(issue));
+
+/** @param {Buffer | string} value */
+function byteEnvelope(value) {
+  return { base64: Buffer.from(value).toString('base64') };
+}
+
+/** @param {Record<string, unknown>} target */
+function recoveryCommandCapture(target) {
+  const substantive = {
+    phase: 'tracked-command',
+    result: { id: 'run-1', summary: 'Captured tracked recovery evidence.' },
+  };
+  const normalizedTarget = {
+    specPath: target.specPath,
+    lane: target.lane,
+    issueId: target.issueId,
+  };
+  const normalized = canonicalJson({
+    target: normalizedTarget,
+    state: 'failed',
+    records: [substantive],
+  });
+  const body = canonicalJson({
+    target,
+    state: 'failed',
+    records: [{
+      substantive,
+      presentation: {
+        eventId: 'event-1',
+        timestamp: '2026-07-20T00:00:00Z',
+        summary: 'Presentation-only summary.',
+        rationale: 'Presentation-only rationale.',
+      },
+    }],
+  });
+  return {
+    target,
+    state: 'failed',
+    outcomeHash: sha256(normalized),
+    bytes: byteEnvelope(body),
+  };
+}
+
+function recoveryInput(issue, overrides = {}) {
+  return {
+    listBytes: JSON.stringify([issue]), detailBytesById: [{ id: issue.id, bytes: recoveryDetail(issue) }],
+    historyBytesById: [{ id: issue.id, bytes: recoveryHistory(issue) }],
+    target: { specPath: RECOVERY_SPEC_PATH, lane: 'tracked', issueId: issue.id },
+    ...overrides,
+  };
+}
+
+test('normalizeRecoveryEvidence projects actual captures deterministically and preserves history order', async () => {
+  const fixture = stage();
+  try {
+    const { normalizeRecoveryEvidence } = await importStagedBeads(fixture);
+    const keyed = recoveryIssue('dude-b', 'T003@6c1f8b42', {
+      description: `spec: ${RECOVERY_SPEC_PATH}\nTask: T003@6c1f8b42\nspec: inert/later`,
+      authority: 'source-only',
+      required: true,
+    });
+    const discovered = recoveryIssue('dude-a', null, {
+      status: 'blocked', blocker: 'source-only', blockers: ['source-only'],
+    });
+    const unrelated = recoveryIssue('dude-other', 'T999@aaaaaaaa', {
+      description: 'spec: .dude/specs/999-other/spec.md\nTask: T999@aaaaaaaa',
+    });
+    const epic = recoveryIssue('dude-epic', null, { issue_type: 'epic', status: 'deferred' });
+    const list = [unrelated, keyed, epic, discovered];
+    const details = [keyed, discovered].map((issue) => ({ id: issue.id, bytes: recoveryDetail(issue) }));
+    const histories = [discovered, keyed].map((issue) => ({ id: issue.id, bytes: recoveryHistory(issue) }));
+    const target = { specPath: RECOVERY_SPEC_PATH, lane: 'tracked' };
+    const normalized = normalizeRecoveryEvidence({ listBytes: JSON.stringify(list), detailBytesById: details, historyBytesById: histories, target });
+    const reordered = normalizeRecoveryEvidence({ listBytes: JSON.stringify([...list].reverse()), detailBytesById: [...details].reverse(), historyBytesById: [...histories].reverse(), target });
+    assert.deepEqual(normalized, reordered);
+    assert.deepEqual(Object.keys(normalized), ['target', 'records']);
+    assert.deepEqual(normalized.records.map((record) => record.issueId), ['dude-a', 'dude-b']);
+    assert.equal(normalized.records[0].taskKey, undefined);
+    assert.equal(normalized.records[1].taskKey, 'T003@6c1f8b42');
+    assert.deepEqual(Object.keys(normalized.records[1].history[0]), ['commitDate', 'issue']);
+    assert.equal(JSON.stringify(normalized).includes('CommitHash'), false);
+    for (const field of ['authority', 'required', 'blocker', 'blockers']) {
+      assert.equal(JSON.stringify(normalized).includes(`"${field}"`), false);
+    }
+    assert.match(normalized.records[1].description, /spec: inert\/later/);
+
+    const issueOnly = normalizeRecoveryEvidence(recoveryInput(keyed)); const verified = normalizeRecoveryEvidence(recoveryInput(keyed, {
+      target: { ...recoveryInput(keyed).target, taskKey: 'T003@6c1f8b42' },
+    }));
+    assert.deepEqual(issueOnly, verified);
+    const reversedHistory = normalizeRecoveryEvidence(recoveryInput(keyed, {
+      historyBytesById: [{ id: keyed.id, bytes: JSON.stringify(recoveryHistoryEvents(keyed).reverse()) }],
+    }));
+    assert.notDeepEqual(issueOnly, reversedHistory);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('normalizeRecoveryEvidence accepts the schema tracked-capture envelope', async () => {
+  const fixture = stage();
+  try {
+    const { normalizeRecoveryEvidence } = await importStagedBeads(fixture);
+    const selected = recoveryIssue('dude-selected', 'T003@6c1f8b42');
+    const internal = recoveryInput(selected);
+    const schema = {
+      kind: 'tracked',
+      listBytes: Buffer.from(internal.listBytes),
+      issues: [{
+        detailBytes: Buffer.from(internal.detailBytesById[0].bytes),
+        historyBytes: Buffer.from(internal.historyBytesById[0].bytes),
+      }],
+      target: internal.target,
+    };
+    assert.deepEqual(normalizeRecoveryEvidence(schema), normalizeRecoveryEvidence(internal));
+
+    assert.throws(
+      () => normalizeRecoveryEvidence({
+        ...schema,
+        issues: [],
+      }),
+      /missing|detail|history|capture/i,
+    );
+    const mismappedHistory = recoveryHistoryEvents(selected);
+    mismappedHistory[0].Issue = { ...mismappedHistory[0].Issue, id: 'dude-other' };
+    assert.throws(
+      () => normalizeRecoveryEvidence({
+        ...schema,
+        issues: [{
+          detailBytes: schema.issues[0].detailBytes,
+          historyBytes: Buffer.from(JSON.stringify(mismappedHistory)),
+        }],
+      }),
+      /wrong Issue id|capture/i,
+    );
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('installed recovery wrappers bind Beads normalization and preserve UTF-8 issue order', async () => {
+  const fixture = stage();
+  try {
+    const {
+      authorizeRecoveryAttempt,
+      collectRecoveryEvidence,
+      inspectRecovery,
+      normalizeRecoveryEvidence,
+    } = await importStagedBeads(fixture);
+    assert.deepEqual(
+      [collectRecoveryEvidence.length, inspectRecovery.length, authorizeRecoveryAttempt.length],
+      [2, 1, 5],
+    );
+
+    const utf8First = recoveryIssue('dude-\uE000', null);
+    const utf8Second = recoveryIssue('dude-\u{10000}', null);
+    assert.ok(utf8Second.id < utf8First.id);
+    assert.ok(Buffer.compare(Buffer.from(utf8First.id), Buffer.from(utf8Second.id)) < 0);
+    const target = { specPath: RECOVERY_SPEC_PATH, lane: 'tracked' };
+    const lane = {
+      kind: 'tracked',
+      listBytes: Buffer.from(canonicalJson([utf8Second, utf8First])),
+      issues: [utf8Second, utf8First].map((issue) => ({
+        detailBytes: Buffer.from(canonicalJson(JSON.parse(recoveryDetail(issue)))),
+        historyBytes: Buffer.from(canonicalJson(JSON.parse(recoveryHistory(issue)))),
+      })),
+    };
+    const expectedIds = [utf8First.id, utf8Second.id];
+    assert.deepEqual(
+      normalizeRecoveryEvidence({ ...lane, target }).records.map((record) => record.issueId),
+      expectedIds,
+    );
+
+    const tasksPath = RECOVERY_SPEC_PATH.replace(/spec\.md$/, 'tasks.md');
+    const ideaPath = '.dude/ideas/recovery.md';
+    const rawInputs = {
+      directIdeas: [{ path: ideaPath, bytes: Buffer.from(ideaLedger(RECOVERY_SPEC_PATH)) }],
+      tasks: { path: tasksPath, bytes: Buffer.from('# Tasks\n') },
+      lane,
+      currentRun: [],
+      review: [],
+      verification: [],
+      lint: [],
+    };
+    const collected = collectRecoveryEvidence(target, rawInputs);
+    assert.deepEqual(
+      JSON.parse(collected.find((item) => item.source === 'lane-history').text).records
+        .map((record) => record.issueId),
+      expectedIds,
+    );
+
+    fs.rmSync(fixture.idea);
+    writeFixture(fixture.root, RECOVERY_SPEC_PATH, '# Recovery spec\n');
+    writeFixture(fixture.root, tasksPath, '# Tasks\n');
+    writeFixture(fixture.root, ideaPath, ideaLedger(RECOVERY_SPEC_PATH));
+    const inspection = inspectRecovery({
+      root: fixture.root,
+      specPath: RECOVERY_SPEC_PATH,
+      target,
+      lane,
+      currentRun: [],
+      review: [],
+      verification: [],
+      lint: [],
+    });
+    assert.equal(inspection.blockers.length, 0);
+    assert.deepEqual(
+      JSON.parse(inspection.items.find((item) => item.source === 'lane-history').text).records
+        .map((record) => record.issueId),
+      expectedIds,
+    );
+
+    const state = {
+      policy: { overall: 3, recovery: 1, recover: true, untilBlocked: false, parallel: 1, mode: 'guarded' },
+      overallUsed: 0,
+      recoveryUsed: [],
+      pending: [],
+      completed: [],
+    };
+    const assessment = {
+      evidenceHash: inspection.evidenceHash,
+      intent: 'unchanged',
+      action: 'retry-task',
+      materialInputs: {
+        targets: ['tracked-feature'],
+        operations: ['retry-task'],
+        checks: ['verification'],
+      },
+      equivalence: 'distinct',
+      retention: 'transient',
+      summary: 'Retry from exact tracked evidence.',
+    };
+    const authorization = authorizeRecoveryAttempt(
+      state,
+      target,
+      rawInputs,
+      assessment,
+      'recovery',
+    );
+    assert.deepEqual(authorization, { authorized: false, reason: 'feature-only', state });
+    assert.strictEqual(authorization.state, state);
+    assert.equal(authorization.state.overallUsed, 0);
+    assert.deepEqual(authorization.state.recoveryUsed, []);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('A: runRecoveryCommand seals the Beads normalizer for tracked command requests', async () => {
+  const fixture = stage();
+  try {
+    const installed = await importStagedBeads(fixture);
+    assert.equal(typeof installed.runRecoveryCommand, 'function');
+    assert.equal(installed.runRecoveryCommand.length, 2);
+
+    const selected = recoveryIssue('dude-selected', 'T003@6c1f8b42');
+    const internal = recoveryInput(selected);
+    const lane = {
+      kind: 'tracked',
+      listBytes: byteEnvelope(canonicalJson(JSON.parse(internal.listBytes))),
+      issues: [{
+        detailBytes: byteEnvelope(canonicalJson(JSON.parse(internal.detailBytesById[0].bytes))),
+        historyBytes: byteEnvelope(canonicalJson(JSON.parse(internal.historyBytesById[0].bytes))),
+      }],
+    };
+    const tasksPath = RECOVERY_SPEC_PATH.replace(/spec\.md$/, 'tasks.md');
+    const ideaPath = '.dude/ideas/recovery.md';
+    fs.rmSync(fixture.idea);
+    writeFixture(fixture.root, RECOVERY_SPEC_PATH, '# Recovery spec\n');
+    writeFixture(fixture.root, tasksPath, '# Tasks\n');
+    writeFixture(fixture.root, ideaPath, ideaLedger(RECOVERY_SPEC_PATH));
+    const request = {
+      trigger: 'explicit-inspection',
+      input: {
+        root: fixture.root,
+        specPath: RECOVERY_SPEC_PATH,
+        target: internal.target,
+        lane,
+        currentRun: [recoveryCommandCapture(internal.target)],
+        review: [],
+        verification: [],
+        lint: [],
+      },
+    };
+
+    const response = installed.runRecoveryCommand('inspect', request);
+    assert.deepEqual(Object.keys(response), ['inspection']);
+    assert.equal(response.inspection.blockers.length, 0);
+    assert.deepEqual(
+      JSON.parse(response.inspection.items.find((item) => item.source === 'lane-history').text)
+        .records.map((record) => record.issueId),
+      [selected.id],
+    );
+    const currentRun = response.inspection.items.find((item) => item.source === 'current-run');
+    assert.equal(currentRun.status, 'present');
+    assert.match(currentRun.text, /tracked-command/);
+
+    for (const field of ['dependencies', 'normalizeTrackedEvidence', 'authority']) {
+      assert.throws(
+        () => installed.runRecoveryCommand('inspect', { ...request, [field]: true }),
+        /unknown field/i,
+        field,
+      );
+    }
+
+    for (const malformedLane of [
+      { ...lane, listBytes: { base64: lane.listBytes.base64, extra: true } },
+      { ...lane, listBytes: { base64: `${lane.listBytes.base64}\n` } },
+      { ...lane, listBytes: { base64: '____' } },
+      { ...lane, issues: [{ ...lane.issues[0], detailBytes: { base64: 'W10' } }] },
+      { ...lane, issues: [{ ...lane.issues[0], historyBytes: { base64: '***=' } }] },
+    ]) {
+      assert.throws(
+        () => installed.runRecoveryCommand('inspect', {
+          ...request,
+          input: { ...request.input, lane: malformedLane },
+        }),
+        /base64|byte envelope|canonical|unknown field/i,
+      );
+    }
+
+    const internalLane = {
+      kind: 'tracked',
+      listBytes: Buffer.from(canonicalJson(JSON.parse(internal.listBytes))),
+      issues: [{
+        detailBytes: Buffer.from(canonicalJson(JSON.parse(internal.detailBytesById[0].bytes))),
+        historyBytes: Buffer.from(canonicalJson(JSON.parse(internal.historyBytesById[0].bytes))),
+      }],
+    };
+    const internalEvidence = installed.collectRecoveryEvidence(internal.target, {
+      directIdeas: [{ path: ideaPath, bytes: Buffer.from(ideaLedger(RECOVERY_SPEC_PATH)) }],
+      tasks: { path: tasksPath, bytes: Buffer.from('# Tasks\n') },
+      lane: internalLane,
+      currentRun: [],
+      review: [],
+      verification: [],
+      lint: [],
+    });
+    assert.equal(internalEvidence.find((item) => item.source === 'lane-history').status, 'present');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('normalizeRecoveryEvidence does not map discovered or malformed task-key supersets', async () => {
+  const fixture = stage();
+  try {
+    const { normalizeRecoveryEvidence } = await importStagedBeads(fixture);
+    const tokens = [null, 'XT003@6c1f8b42', 'T003@6c1f8b42x', 'T003@6c1f8b420'];
+    const issues = tokens.map((token, index) => recoveryIssue(`dude-${index}`, null, token ? {
+      description: `spec: ${RECOVERY_SPEC_PATH}\nTask: ${token}`,
+    } : {}));
+    const normalized = normalizeRecoveryEvidence({
+      listBytes: JSON.stringify(issues),
+      detailBytesById: issues.map((issue) => ({ id: issue.id, bytes: recoveryDetail(issue) })),
+      historyBytesById: issues.map((issue) => ({ id: issue.id, bytes: recoveryHistory(issue) })),
+      target: { specPath: RECOVERY_SPEC_PATH, lane: 'tracked' },
+    });
+    assert.equal(normalized.records.every((record) => record.taskKey === undefined), true);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('normalizeRecoveryEvidence rejects duplicate target task-key owners from the complete list', async () => {
+  const fixture = stage();
+  try {
+    const { normalizeRecoveryEvidence } = await importStagedBeads(fixture);
+    const taskKey = 'T003@6c1f8b42';
+    const issues = [recoveryIssue('dude-z', taskKey), recoveryIssue('dude-a', taskKey)];
+    for (const issueId of issues.map((issue) => issue.id)) {
+      assert.throws(() => normalizeRecoveryEvidence({
+        listBytes: JSON.stringify(issues), detailBytesById: [], historyBytesById: [],
+        target: { specPath: RECOVERY_SPEC_PATH, lane: 'tracked', issueId, taskKey },
+      }), /duplicate\/ambiguous mapping across issues: dude-a, dude-z/);
+    }
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('normalizeRecoveryEvidence validates target issue ID Unicode and UTF-8 byte boundaries', async () => {
+  const fixture = stage();
+  try {
+    const { normalizeRecoveryEvidence } = await importStagedBeads(fixture);
+    const input = (issueId) => ({
+      listBytes: '[]', detailBytesById: [], historyBytesById: [],
+      target: { specPath: RECOVERY_SPEC_PATH, lane: 'tracked', issueId },
+    });
+    for (const issueId of ['a', 'a'.repeat(256), 'ok-😀']) {
+      assert.throws(() => normalizeRecoveryEvidence(input(issueId)), /not in the exact-feature issue set/);
+    }
+    for (const issueId of ['', 'a'.repeat(257), `${'é'.repeat(128)}a`, '\u0000', '\u001f', '\u007f', '\u0080', '\u009f', '\ud800', '\udc00']) {
+      assert.throws(() => normalizeRecoveryEvidence(input(issueId)), /target\.issueId/);
+    }
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('normalizeRecoveryEvidence requires exact capture sets and rejects overlapping show drift', async () => {
+  const fixture = stage();
+  try {
+    const { normalizeRecoveryEvidence } = await importStagedBeads(fixture);
+    const selected = recoveryIssue('dude-selected', 'T003@6c1f8b42');
+    const base = recoveryInput(selected);
+    const detail = base.detailBytesById[0];
+    const history = base.historyBytesById[0];
+    const scenarios = [
+      ['missing detail', { ...base, detailBytesById: [] }, /missing detail/],
+      ['missing history', { ...base, historyBytesById: [] }, /missing history/],
+      ['duplicate detail', { ...base, detailBytesById: [detail, detail] }, /duplicate issue ID/],
+      ['duplicate history', { ...base, historyBytesById: [history, history] }, /duplicate issue ID/],
+      ['extra detail', { ...base, detailBytesById: [detail, { id: 'extra', bytes: '[]' }] }, /extra issue ID 'extra'/],
+      ['extra history', { ...base, historyBytesById: [history, { id: 'extra', bytes: '[]' }] }, /extra issue ID 'extra'/],
+      ['priority drift', { ...base, detailBytesById: [{ id: selected.id, bytes: recoveryDetail(selected, { priority: 1 }) }] }, /conflicting priority/],
+      ['title drift', { ...base, detailBytesById: [{ id: selected.id, bytes: recoveryDetail(selected, { title: 'changed' }) }] }, /conflicting title/],
+      ['status drift', { ...base, detailBytesById: [{ id: selected.id, bytes: recoveryDetail(selected, { status: 'blocked' }) }] }, /conflicting status/],
+    ];
+
+    for (const [name, input, expected] of scenarios) {
+      assert.throws(() => normalizeRecoveryEvidence(input), expected, name);
+    }
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('normalizeRecoveryEvidence enforces first-line identity, status, task target, and epic rules', async () => {
+  const fixture = stage();
+  try {
+    const { normalizeRecoveryEvidence } = await importStagedBeads(fixture);
+    const statuses = new Map([
+      ['open', 'open'], ['in_progress', 'in_progress'], ['in-progress', 'in_progress'],
+      ['inprogress', 'in_progress'], ['blocked', 'blocked'], ['closed', 'closed'], ['done', 'closed'],
+    ]);
+    for (const [status, expected] of statuses) {
+      const issue = recoveryIssue(`dude-${status}`, null, { status });
+      assert.equal(normalizeRecoveryEvidence(recoveryInput(issue)).records[0].status, expected);
+    }
+    const selected = recoveryIssue('dude-selected', 'T003@6c1f8b42');
+    const wrongFirst = recoveryIssue('dude-wrong', null,
+      { description: `spec: .dude/specs/999-other/spec.md\nspec: ${RECOVERY_SPEC_PATH}` });
+    assert.throws(() => normalizeRecoveryEvidence(recoveryInput(wrongFirst)), /not in the exact-feature/);
+    assert.throws(() => normalizeRecoveryEvidence(recoveryInput({ ...selected, status: 'deferred' })), /unsupported executable/);
+    assert.throws(() => normalizeRecoveryEvidence(recoveryInput(selected, {
+      target: { ...recoveryInput(selected).target, taskKey: 'T004@a7e25d19' },
+    })), /no durable issue mapping/);
+    const discovered = recoveryIssue('dude-discovered', null);
+    assert.throws(() => normalizeRecoveryEvidence(recoveryInput(discovered, {
+      target: { ...recoveryInput(discovered).target, taskKey: 'T003@6c1f8b42' },
+    })), /no durable issue mapping/);
+
+    const epic = recoveryIssue('dude-epic', null, { issue_type: 'epic', status: 'deferred' });
+    const feature = normalizeRecoveryEvidence(recoveryInput(selected, {
+      listBytes: JSON.stringify([epic, selected]),
+      target: { specPath: RECOVERY_SPEC_PATH, lane: 'tracked' },
+    }));
+    assert.deepEqual(feature.records.map((record) => record.issueId), [selected.id]);
+    assert.throws(() => normalizeRecoveryEvidence(recoveryInput(epic)), /non-executable grouping epic/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('normalizeRecoveryEvidence rejects malformed actual captures and has no I/O or mutation path', async () => {
+  const fixture = stage();
+  try {
+    const { normalizeRecoveryEvidence } = await importStagedBeads(fixture);
+    const selected = recoveryIssue('dude-selected', 'T003@6c1f8b42');
+    const base = recoveryInput(selected);
+    const wrongId = recoveryHistoryEvents(selected);
+    wrongId[0].Issue = { ...wrongId[0].Issue, id: 'other' };
+    const wrongSpec = recoveryHistoryEvents(selected);
+    wrongSpec[0].Issue = { ...wrongSpec[0].Issue, description: 'spec: .dude/specs/999-other/spec.md' };
+    const sparse = Array(1);
+    const scenarios = [
+      ['malformed list array', { ...base, listBytes: '[null]' }, /malformed issue/],
+      ['malformed show array', { ...base, detailBytesById: [{ id: selected.id, bytes: '[null]' }] }, /malformed issue/],
+      ['multiple show issues', { ...base, detailBytesById: [{ id: selected.id, bytes: JSON.stringify([selected, selected]) }] }, /exactly one issue/],
+      ['history envelope', { ...base, historyBytesById: [{ id: selected.id, bytes: '{"events":[]}' }] }, /must be an array/],
+      ['malformed history event', { ...base, historyBytesById: [{ id: selected.id, bytes: '[null]' }] }, /malformed event/],
+      ['wrong history Issue id', { ...base, historyBytesById: [{ id: selected.id, bytes: JSON.stringify(wrongId) }] }, /wrong Issue id/],
+      ['wrong history Issue spec', { ...base, historyBytesById: [{ id: selected.id, bytes: JSON.stringify(wrongSpec) }] }, /wrong target spec/],
+      ['Map captures', { ...base, detailBytesById: new Map() }, /dense array/],
+      ['sparse captures', { ...base, detailBytesById: sparse }, /dense array/],
+      ['inexact capture entry', { ...base, detailBytesById: [{ ...base.detailBytesById[0], extra: true }] }, /exact \{id,bytes\}/],
+    ];
+    for (const [name, input, expected] of scenarios) {
+      assert.throws(() => normalizeRecoveryEvidence(input), expected, name);
+    }
+
+    const source = fs.readFileSync(beadsSrc, 'utf8');
+    const pureStart = source.indexOf('function isPlainObject');
+    const pureEnd = source.indexOf('/** @param {any} issue', pureStart);
+    const pureSource = source.slice(pureStart, pureEnd);
+    assert.doesNotMatch(pureSource, /\bfs\.|\bspawnSync\b|\bprocess\.|\bfetch\s*\(|\bmodel\b/);
+    const before = structuredClone(base);
+    normalizeRecoveryEvidence(base);
+    assert.deepEqual(base, before);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
 
 /**
  * @param {{ inventory: string, tasks?: string, write?: boolean, spec?: string | null }} options

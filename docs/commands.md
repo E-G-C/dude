@@ -20,7 +20,7 @@ it with `@dude add pack beads`.
 | `@dude brainstorm <idea>` | Create or refresh one flat `.dude/ideas/<slug>.md` collaboration file without creating a spec package. |
 | `@dude define <slug>` | Turn the matching idea into a reusable package under `.dude/specs/<feature>/`. |
 | `@dude status` | Read-only report of the current lane, live artifact, next step, and blockers. |
-| `@dude work [<feature>] [--max N] [--until blocked] [--parallel N]` | Run the next few ready tasks back-to-back inside whichever execution lane is already live. Not a new lane. |
+| `@dude work [<feature>] [--max <N\|unlimited>] [--until blocked] [--parallel <N>] [--recover-on-block] [--recovery-cycles <N\|unlimited>] [--policy guarded\|autonomous]` | Run the next few ready tasks back-to-back inside whichever execution lane is already live, with optional guarded recovery and an optional autonomous policy. Not a new lane. |
 | `@dude list packs` | Read-only list of available and installed optional packs. |
 | `@dude add pack <name>` / `@dude remove pack <name>` | Install or uninstall an optional capability pack (e.g. `beads`, `release`, `web`, `practices`). |
 | `@dude track` | Import or resume tracked execution on a tracked board. Requires the `beads` pack. |
@@ -186,7 +186,7 @@ natural boundary.
 Preferred form:
 
 ```text
-@dude work [<feature>] [--max N] [--until blocked] [--parallel N]
+@dude work [<feature>] [--max <N|unlimited>] [--until blocked] [--parallel <N>] [--recover-on-block] [--recovery-cycles <N|unlimited>] [--policy guarded|autonomous]
 ```
 
 Meaning: keep running the next ready task back-to-back in the active execution
@@ -194,10 +194,47 @@ lane until a stop condition fires.
 
 Flags:
 
-- `<feature>` — optional Lightweight-Execution feature slug. Ignored when Beads is the active lane (Beads has its own ready set).
-- `--max N` — maximum number of iterations. Default `3`. Hard floor `1`, soft ceiling `25`.
-- `--until blocked` — alias for "run until the first natural stop", capped at the soft ceiling. Implies `--max 25` unless you pass a different `--max`.
-- `--parallel N` — fan-out width. Default `1`. Soft ceiling `2` (Dude warns and requires explicit confirmation above `2`).
+- `<feature>` — optional Lightweight-Execution feature selector. It must appear
+  before every flag, disambiguates Lightweight work only, and is ignored when
+  Tracked Execution is active.
+- `--max <N|unlimited>` — overall authorization budget. The default is `3`.
+  A finite value must be a positive integer; `unlimited` removes only this
+  numeric cap.
+- `--until blocked` — keep going until the first natural stop. It implies an
+  overall max of `25` only when `--max` is omitted.
+- `--parallel <N>` — compatibility-only input. It accepts a positive ASCII safe
+  integer, but every accepted value is discarded after validation and
+  normalizes the effective recovery capacity and `policy.parallel` to `1`; it
+  grants no concurrency or fan-out authority.
+- `--recover-on-block` — explicitly permit guarded recovery after the required
+  post-block or post-failure inspection. Without it, inspection never
+  authorizes a retry.
+- `--recovery-cycles <N|unlimited>` — per-exact-target recovery budget. A
+  finite value must be a positive integer. With explicit recovery, it defaults to `1`;
+  without `--recover-on-block`, this flag is invalid.
+- `--policy guarded|autonomous` — execution policy mode. The default is
+  `guarded`; `autonomous` is an explicit opt-in. Unknown, duplicate, or
+  otherwise invalid values are rejected before any mutation. Autonomy relaxes
+  no hard stop, budget, verification, review, owner, evidence, lane, or close
+  rule. It is orthogonal to the numeric budgets and to the compatibility-only
+  `--parallel` input.
+
+The complete invocation is validated before any claim or mutation. A second
+selector, a selector after flags, invalid values, recovery cycles without
+recovery opt-in, and recovery combined with `--until blocked` are rejected.
+For `--parallel`, zero, signed, unsafe, non-ASCII, `unlimited`, symbolic,
+missing, malformed, or duplicate values are invalid and rejected before
+mutation.
+
+The fully uncapped numeric form is experimental:
+
+```text
+@dude work --max unlimited --recover-on-block --recovery-cycles unlimited
+```
+
+`unlimited` affects only numeric budgets. It does not relax inspection,
+dispatchability, no-progress detection, verification, review, or any authority
+or safety stop.
 
 Lane detection runs **once** at the start. When the **beads pack** is installed
 and `bd list --all --limit 0 --json` returns one or more issues, the active lane is Tracked
@@ -213,14 +250,81 @@ execution lane is live, the verb refuses with a one-line message pointing to
 Each iteration still runs the active lane's close protocol (Lightweight Close
 Protocol or Beads Close Protocol). `dude-verification-before-completion`,
 coordinator-only mutation of task glyphs, and `dude-lint` after every write
-all still apply per iteration. `@dude work` never imports features, never
-auto-commits, never edits user-authored `spec.md` / `plan.md` / idea
-content (`## Idea`, open-question answers, `## Assumptions`), and never
-creates a new state file. Workflow metadata (`## Coordinator Log`, `status:`,
-`spec_path:`) is Dude-managed, not user-managed: during explicit
+all still apply per iteration. The coordinator remains the only owner of lane
+state and close events. Workflow metadata (`## Coordinator Log`, `status:`,
+`spec_path:`) is Dude-managed, not user-managed. During explicit
 `brainstorm`/`define` the Spec Lead maintains definition metadata and
-definition-log events, while the coordinator exclusively owns execution-state
-and close events. `@dude work` itself only appends coordinator execution events.
+definition-log events; the coordinator exclusively owns execution-state and
+close events. `@dude work` itself only appends coordinator execution events. It
+never imports features, auto-commits, or creates a new lane, board, or persisted
+recovery state.
+
+Before every task start or resume, and again after every block or failure, Work
+inspects all available current-format history exactly bound to that task and
+feature. Under `autonomous`, that Inspection additionally acquires exactly one
+`definition-plan` evidence item — the sibling `plan.md` — ordered between
+`task-history` and `lane-history`; `guarded` opens no plan path and reads no
+plan. An explicit feature-only inspection is read-only: it cannot authorize
+work, consume a budget, or mutate workflow state. Optional session history is
+used only when it can be exactly bound; its unavailability alone is not a
+blocker. Inspection admits one bounded complete evidence packet and one
+Assessment bound to that Inspection's `evidenceHash`. Before authorization,
+Work freshly rebuilds the Inspection; substantive drift returns
+`evidence-drift` without changing state, counters, pending authorization, or
+completed attempts. If the available evidence cannot fit, Work reports
+descriptors only, makes no recovery assessment, and refuses recovery rather
+than truncating or splitting the history. At the CLI byte boundary, captures use
+canonical base64 with padded RFC 4648 encoding; fixed source-specific envelopes keep
+presentation changes separate from substantive evidence without changing the
+user-facing report format.
+
+Inspection enforces fixed, non-configurable resource ceilings before it buffers
+or processes evidence, so a malformed or oversized request is refused instead of
+exhausting memory. Each exact ceiling is accepted; the first byte or entry past
+it is refused before further work:
+
+- `6,291,456` bytes for the complete encoded CLI request
+- `1,048,576` bytes for each workspace file or decoded capture body
+- `4,194,304` aggregate decoded evidence bytes per inspection
+- `64` total source entries per inspection
+- `64` total retained evidence descriptors per inspection
+- `8,192` UTF-8 bytes for a deterministic error response
+
+These are separate from the model-facing packet's own limit of `16` items and
+`65,536` canonical bytes.
+
+Ordinary Work always performs that post-block inspection, reports the finding,
+and stops. Only `--recover-on-block` can authorize another attempt. Its overall
+budget and each exact target's recovery-cycle budget are independent, and an
+authorized recovery consumes both. No-progress detection still stops repeated
+substantive attempts. Exact identity or required-evidence failures, changed or
+ambiguous intent, required approval, unavailable dependencies, reconciliation
+ambiguity, and authority or safety failures remain hard stops even when both
+numeric budgets are unlimited. Fresh verification or lint failure and review
+rejection stop completion and become evidence for a later inspection.
+
+Ordinary Work does not revise definition artifacts. Explicit recovery may
+repair an unchanged-intent derived definition defect only in an existing
+Lightweight package and across exactly four paths: the exact owner idea ledger
+plus its sibling `spec.md`, `plan.md`, and `tasks.md`. Recovery byte-preserves
+the complete `## Idea`, `## Open Questions`, and `## Assumptions` sections.
+`contracts/schemas.md` is outside runtime recovery and may change only through
+explicit `@dude define`. The Spec Lead stages definition changes; the
+coordinator owns reconciliation and execution-state changes; the guarded file
+batch applies atomically; and fresh verification, lint, and independent review
+still follow. Changed or ambiguous user intent returns to the user-controlled
+idea and explicit definition. Tracked definition recovery is inspection-first:
+only after a fresh Inspection and Assessment validation does it refuse as
+unsupported, before any helper or write. These exceptions do not transfer
+lane-state or close authority away from the coordinator.
+
+Inspection findings remain transient by default. Project-reusable knowledge is
+proposed through the existing memory workflow; broader recurring knowledge is
+routed through the existing learning-promotion and skill-authoring workflows.
+Durable retention requires the memory or skill owner to freshly inspect current
+artifacts, duplicates, overlaps, and destinations. Caller or model claims of
+absence, collision freedom, owner state, or write authority cannot establish
+them. Work does not automatically make either form durable.
 
 Illustrative result — Lightweight Execution:
 
@@ -246,10 +350,11 @@ Action: work
 Updated:
 - Iteration 1/5: dude-abc closed, mirrored to T012@a1b2c3d4
 - Iteration 2/5: dude-def claimed and implemented; verification failed
+- Post-failure inspection reviewed exact issue and feature history; ordinary Work authorized no retry
 Blockers:
 - Stopped after iteration 2: verification failed on dude-def
 Next:
-- Run @dude flag test-failure: <details> to route the failure, or fix the test and re-run @dude work
+- Run @dude flag test-failure: <details> to route the failure, or explicitly choose guarded recovery on a later Work run
 ```
 
 Illustrative result — refusal when no execution lane is live:
@@ -262,11 +367,12 @@ Next: No active execution lane. Run @dude define <slug> to define one, or @dude 
 Stop conditions (uniform across both lanes):
 
 - no ready task remains
-- task blocks (specialist reports a blocker)
+- task blocks after the required inspection (ordinary Work stops)
 - verification fails (`dude-verification-before-completion`)
 - reviewer rejects (`@dude-reviewer` when present)
 - clarification required from the user
-- two consecutive failed attempts on the same task
+- no substantive progress on a recovery target
+- recovery budget exhausted
 - ambiguous state (lane drift, fence imbalance, identity mismatch)
 - tool error during an iteration
 - `--max` reached

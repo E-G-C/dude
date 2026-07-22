@@ -1,0 +1,588 @@
+{
+  "ok": true,
+  "command": "audit",
+  "report": {
+    "schema_version": 2,
+    "metric": "bundle-controlled-static-prompt-context-source-footprint-proxy",
+    "claim_limits": {
+      "describes": "deterministic bundle-controlled static prompt/context source footprint proxy",
+      "does_not_measure": [
+        "actual host prompt membership",
+        "active runtime context",
+        "runtime token use"
+      ]
+    },
+    "profile_manifest": {
+      "path": "scripts/prompt-audit-profiles.json",
+      "sha256": "e7394679edb2729f49e9b302620149d9a01ddaff57d06933b8f6cff5ec4437e3",
+      "core_source_root": "src",
+      "core_generated_root": ".github",
+      "pack_catalog_root": "library/packs",
+      "install_profile": ".dude/metadata/profile.md"
+    },
+    "profile_order": [
+      "core-coordinator",
+      "definition-common",
+      "lightweight-common",
+      "tracked-common",
+      "bundle-maintenance",
+      "review-common"
+    ],
+    "prerequisites": {
+      "status": "pass",
+      "core_source_generated": {
+        "status": "pass",
+        "checks": [
+          {
+            "source": "src/agents/dude-reviewer.agent.md",
+            "generated": ".github/agents/dude-reviewer.agent.md",
+            "sha256": "ecbc96e4b75eee5225ef43a41483c0935d69c8871c25f3ab214b3d7e419ddd3f"
+          },
+          {
+            "source": "src/agents/dude-spec-lead.agent.md",
+            "generated": ".github/agents/dude-spec-lead.agent.md",
+            "sha256": "a3aa38026ebf989c358b853e36c0f5296269cf79156da904ed1fc9f9d8b1bea9"
+          },
+          {
+            "source": "src/agents/dude.agent.md",
+            "generated": ".github/agents/dude.agent.md",
+            "sha256": "435810625ce51ff8e18dc525a2a7ccf0d8a8adc5f1237d474544b226882b07e5"
+          },
+          {
+            "source": "src/instructions/dude.instructions.md",
+            "generated": ".github/instructions/dude.instructions.md",
+            "sha256": "af788008881272a4daecb7d26368fd32a2714cf1372a1d700012a7302ba2a508"
+          },
+          {
+            "source": "src/skills/dude-bundle-import/SKILL.md",
+            "generated": ".github/skills/dude-bundle-import/SKILL.md",
+            "sha256": "f357ff606ae008aaa56c546d00ec0d988177ed9265a2271227350c55074903d4"
+          },
+          {
+            "source": "src/skills/dude-bundle-upgrade/SKILL.md",
+            "generated": ".github/skills/dude-bundle-upgrade/SKILL.md",
+            "sha256": "65eda2885cf0b1918b0c4334725ec8a47b3f33e1129af812f46ee9f3923dedc3"
+          },
+          {
+            "source": "src/skills/dude-compose/SKILL.md",
+            "generated": ".github/skills/dude-compose/SKILL.md",
+            "sha256": "d6c8c71f07a48b6d626810a12c32ba25d20863a2d121f7a89fde089b089de11c"
+          },
+          {
+            "source": "src/skills/dude-feature-definition/SKILL.md",
+            "generated": ".github/skills/dude-feature-definition/SKILL.md",
+            "sha256": "d7b345806cacde9bb955930983bc055cd03d8399f23623dcafe54b33a0ecad67"
+          },
+          {
+            "source": "src/skills/dude-generic-routing/SKILL.md",
+            "generated": ".github/skills/dude-generic-routing/SKILL.md",
+            "sha256": "0cd757ea275e61c2a9bcdb469a2009f09ee83a8f9494aa470f5e75d6932686f2"
+          },
+          {
+            "source": "src/skills/dude-lightweight-execution/SKILL.md",
+            "generated": ".github/skills/dude-lightweight-execution/SKILL.md",
+            "sha256": "9e339d84467fc3a891af5c0ca193956cf536596914a3f8d8dd21f5fa74c44a47"
+          },
+          {
+            "source": "src/skills/dude-parallel-dispatch/SKILL.md",
+            "generated": ".github/skills/dude-parallel-dispatch/SKILL.md",
+            "sha256": "519d11010b52e35eacbb057489cb1df84f46b3f90c2f8a1cb9ca3bdd7c61ff2b"
+          },
+          {
+            "source": "src/skills/dude-portability/SKILL.md",
+            "generated": ".github/skills/dude-portability/SKILL.md",
+            "sha256": "6a69ccf81365e387dcb1be42ae1ebf42a167db5eede055b4f055243ea319524d"
+          },
+          {
+            "source": "src/skills/dude-receiving-code-review/SKILL.md",
+            "generated": ".github/skills/dude-receiving-code-review/SKILL.md",
+            "sha256": "b823ea3f349b5a472abd55de04ed361e2b45cee6b9ffeb63f21bba51c1e7488b"
+          },
+          {
+            "source": "src/skills/dude-reviewer-protocol/SKILL.md",
+            "generated": ".github/skills/dude-reviewer-protocol/SKILL.md",
+            "sha256": "dcc9d01879ea2ffc4f9b1479e90e3694ad51fe930210d67992d1f923f7dd34d0"
+          },
+          {
+            "source": "src/skills/dude-verification-before-completion/SKILL.md",
+            "generated": ".github/skills/dude-verification-before-completion/SKILL.md",
+            "sha256": "7802742019d6b99ea2504a71c180a22cf2c886b0133bdf9aa964a1048ae67163"
+          },
+          {
+            "source": "src/skills/dude-work-intake/SKILL.md",
+            "generated": ".github/skills/dude-work-intake/SKILL.md",
+            "sha256": "0ec99840302b405faa4654b541ecf9abc82241f56b8629b16681f82fdf8d02fd"
+          },
+          {
+            "source": "src/skills/dude-work/SKILL.md",
+            "generated": ".github/skills/dude-work/SKILL.md",
+            "sha256": "09c02e66bc6b019b43857d36a9314cd55a0a8bb00ad7203a6a7dc1340bd9a0a6"
+          }
+        ]
+      },
+      "enabled_pack_source_installed": {
+        "status": "pass",
+        "profile_path": ".dude/metadata/profile.md",
+        "profile_sha256": "b3d4e5d4ff319dbb2dab6c6f587e0db06abde1d62b0f92bf47312e681223b1f7",
+        "enabled_packs": [
+          "authoring",
+          "coding"
+        ],
+        "packs": [
+          {
+            "name": "authoring",
+            "source_identity": {
+              "type": "library",
+              "location": "/Users/eg/work/AI/dude/library/packs",
+              "ref": ""
+            },
+            "inventory_digest": "f117da0bbfe3b12bd45d9deb79e6d1ddf68bd5b3ba8b41e55acdbda2d02215ea",
+            "manifest_sha256": "39c4e00cc501fcd2a15c565891382bd1343697dd6b0a0b2078e1b7ee70e129bc",
+            "artifact_count": 9,
+            "source_status": "pass",
+            "installed_status": "pass"
+          },
+          {
+            "name": "coding",
+            "source_identity": {
+              "type": "library",
+              "location": "/Users/eg/work/AI/dude/library/packs",
+              "ref": ""
+            },
+            "inventory_digest": "d6ba5d31ad161091bd8dc5d49a677c43f98ef20e84645565168a5dcf3cc62b9b",
+            "manifest_sha256": "b189e86cb0c9d537c6da28b38fae9c2db95a6af0ad932b501ae4f5007ee64247",
+            "artifact_count": 5,
+            "source_status": "pass",
+            "installed_status": "pass"
+          }
+        ]
+      },
+      "profile_source_packs": [
+        {
+          "name": "beads",
+          "source_status": "pass",
+          "manifest_sha256": "1fe4cb7ced7dfab334ec93e64fba702588ca04e0765c5f0207e8ec6bee1bc08c",
+          "artifact_count": 2,
+          "installed_parity": "not-applicable"
+        }
+      ]
+    },
+    "tokenizer": {
+      "status": "unavailable",
+      "reason": "no tokenizer results supplied"
+    },
+    "profiles": [
+      {
+        "name": "core-coordinator",
+        "kind": "release-source",
+        "activation_assumption": "A Dude coordinator turn uses the coordinator and shared bundle rules.",
+        "definition_sha256": "192c6857402befdc3a4df371222d2abceddbfcfa9e0b7b79008ad37aee4fc868",
+        "accepted": true,
+        "prerequisites": {
+          "enabled_pack_source_installed": "pass",
+          "core_source_generated": "pass",
+          "source_packs": []
+        },
+        "inputs": [
+          {
+            "path": "src/agents/dude.agent.md",
+            "sha256": "435810625ce51ff8e18dc525a2a7ccf0d8a8adc5f1237d474544b226882b07e5",
+            "code_points": 49032,
+            "utf8_bytes": 49170,
+            "tokens": null
+          },
+          {
+            "path": "src/instructions/dude.instructions.md",
+            "sha256": "af788008881272a4daecb7d26368fd32a2714cf1372a1d700012a7302ba2a508",
+            "code_points": 10259,
+            "utf8_bytes": 10273,
+            "tokens": null
+          }
+        ],
+        "totals": {
+          "input_count": 2,
+          "code_points": 59291,
+          "utf8_bytes": 59443,
+          "tokens": null
+        }
+      },
+      {
+        "name": "definition-common",
+        "kind": "release-source",
+        "activation_assumption": "Brainstorm/define work loads Spec Lead plus intake, definition, and routing guidance.",
+        "definition_sha256": "1cc7c574c31c6eef48047789cb615d242444236a09e2385ef5a6d4d366158e0d",
+        "accepted": true,
+        "prerequisites": {
+          "enabled_pack_source_installed": "pass",
+          "core_source_generated": "pass",
+          "source_packs": []
+        },
+        "inputs": [
+          {
+            "path": "src/agents/dude.agent.md",
+            "sha256": "435810625ce51ff8e18dc525a2a7ccf0d8a8adc5f1237d474544b226882b07e5",
+            "code_points": 49032,
+            "utf8_bytes": 49170,
+            "tokens": null
+          },
+          {
+            "path": "src/instructions/dude.instructions.md",
+            "sha256": "af788008881272a4daecb7d26368fd32a2714cf1372a1d700012a7302ba2a508",
+            "code_points": 10259,
+            "utf8_bytes": 10273,
+            "tokens": null
+          },
+          {
+            "path": "src/agents/dude-spec-lead.agent.md",
+            "sha256": "a3aa38026ebf989c358b853e36c0f5296269cf79156da904ed1fc9f9d8b1bea9",
+            "code_points": 6083,
+            "utf8_bytes": 6087,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-work-intake/SKILL.md",
+            "sha256": "0ec99840302b405faa4654b541ecf9abc82241f56b8629b16681f82fdf8d02fd",
+            "code_points": 5561,
+            "utf8_bytes": 5561,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-feature-definition/SKILL.md",
+            "sha256": "d7b345806cacde9bb955930983bc055cd03d8399f23623dcafe54b33a0ecad67",
+            "code_points": 34896,
+            "utf8_bytes": 35022,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-generic-routing/SKILL.md",
+            "sha256": "0cd757ea275e61c2a9bcdb469a2009f09ee83a8f9494aa470f5e75d6932686f2",
+            "code_points": 6240,
+            "utf8_bytes": 6244,
+            "tokens": null
+          }
+        ],
+        "totals": {
+          "input_count": 6,
+          "code_points": 112071,
+          "utf8_bytes": 112357,
+          "tokens": null
+        }
+      },
+      {
+        "name": "lightweight-common",
+        "kind": "release-source",
+        "activation_assumption": "Direct markdown execution uses lightweight/work/parallel/verification guidance.",
+        "definition_sha256": "f693f3756b7966048e09dc163b89260daafdd2ffb190b9cf5abb49d14cf8ece7",
+        "accepted": true,
+        "prerequisites": {
+          "enabled_pack_source_installed": "pass",
+          "core_source_generated": "pass",
+          "source_packs": []
+        },
+        "inputs": [
+          {
+            "path": "src/agents/dude.agent.md",
+            "sha256": "435810625ce51ff8e18dc525a2a7ccf0d8a8adc5f1237d474544b226882b07e5",
+            "code_points": 49032,
+            "utf8_bytes": 49170,
+            "tokens": null
+          },
+          {
+            "path": "src/instructions/dude.instructions.md",
+            "sha256": "af788008881272a4daecb7d26368fd32a2714cf1372a1d700012a7302ba2a508",
+            "code_points": 10259,
+            "utf8_bytes": 10273,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-lightweight-execution/SKILL.md",
+            "sha256": "9e339d84467fc3a891af5c0ca193956cf536596914a3f8d8dd21f5fa74c44a47",
+            "code_points": 17069,
+            "utf8_bytes": 17079,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-work/SKILL.md",
+            "sha256": "09c02e66bc6b019b43857d36a9314cd55a0a8bb00ad7203a6a7dc1340bd9a0a6",
+            "code_points": 15801,
+            "utf8_bytes": 15839,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-parallel-dispatch/SKILL.md",
+            "sha256": "519d11010b52e35eacbb057489cb1df84f46b3f90c2f8a1cb9ca3bdd7c61ff2b",
+            "code_points": 4291,
+            "utf8_bytes": 4291,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-verification-before-completion/SKILL.md",
+            "sha256": "7802742019d6b99ea2504a71c180a22cf2c886b0133bdf9aa964a1048ae67163",
+            "code_points": 1329,
+            "utf8_bytes": 1329,
+            "tokens": null
+          }
+        ],
+        "totals": {
+          "input_count": 6,
+          "code_points": 97781,
+          "utf8_bytes": 97981,
+          "tokens": null
+        }
+      },
+      {
+        "name": "tracked-common",
+        "kind": "release-source",
+        "activation_assumption": "Beads execution is enabled and uses import/workflow plus parallel/verification guidance.",
+        "definition_sha256": "f421ed346ccb56a417686d5535b896ccca32800d70737742c2a0b1296e146fc8",
+        "accepted": true,
+        "prerequisites": {
+          "enabled_pack_source_installed": "pass",
+          "core_source_generated": "pass",
+          "source_packs": [
+            {
+              "name": "beads",
+              "source": "pass",
+              "installed": "not-applicable"
+            }
+          ]
+        },
+        "inputs": [
+          {
+            "path": "src/agents/dude.agent.md",
+            "sha256": "435810625ce51ff8e18dc525a2a7ccf0d8a8adc5f1237d474544b226882b07e5",
+            "code_points": 49032,
+            "utf8_bytes": 49170,
+            "tokens": null
+          },
+          {
+            "path": "src/instructions/dude.instructions.md",
+            "sha256": "af788008881272a4daecb7d26368fd32a2714cf1372a1d700012a7302ba2a508",
+            "code_points": 10259,
+            "utf8_bytes": 10273,
+            "tokens": null
+          },
+          {
+            "path": "library/packs/beads/skills/dude-pack-beads-spec-import/SKILL.md",
+            "sha256": "55632bc37cc95e67b8086446b79787de2c8489d0c929bcaeb7700f779f837f34",
+            "code_points": 18151,
+            "utf8_bytes": 18239,
+            "tokens": null
+          },
+          {
+            "path": "library/packs/beads/skills/dude-pack-beads-workflow/SKILL.md",
+            "sha256": "4497a48da7e1673423880f53106d08b4515a186d1fa00a5b97c5960e5394460e",
+            "code_points": 27328,
+            "utf8_bytes": 27400,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-parallel-dispatch/SKILL.md",
+            "sha256": "519d11010b52e35eacbb057489cb1df84f46b3f90c2f8a1cb9ca3bdd7c61ff2b",
+            "code_points": 4291,
+            "utf8_bytes": 4291,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-verification-before-completion/SKILL.md",
+            "sha256": "7802742019d6b99ea2504a71c180a22cf2c886b0133bdf9aa964a1048ae67163",
+            "code_points": 1329,
+            "utf8_bytes": 1329,
+            "tokens": null
+          }
+        ],
+        "totals": {
+          "input_count": 6,
+          "code_points": 110390,
+          "utf8_bytes": 110702,
+          "tokens": null
+        }
+      },
+      {
+        "name": "bundle-maintenance",
+        "kind": "release-source",
+        "activation_assumption": "A bundle/pack maintenance request uses compose, upgrade, import, or portability guidance.",
+        "definition_sha256": "be11e1a258aff085047447b7a7e4fb781f5c6234d88a385285410e6cfa829f1c",
+        "accepted": true,
+        "prerequisites": {
+          "enabled_pack_source_installed": "pass",
+          "core_source_generated": "pass",
+          "source_packs": []
+        },
+        "inputs": [
+          {
+            "path": "src/agents/dude.agent.md",
+            "sha256": "435810625ce51ff8e18dc525a2a7ccf0d8a8adc5f1237d474544b226882b07e5",
+            "code_points": 49032,
+            "utf8_bytes": 49170,
+            "tokens": null
+          },
+          {
+            "path": "src/instructions/dude.instructions.md",
+            "sha256": "af788008881272a4daecb7d26368fd32a2714cf1372a1d700012a7302ba2a508",
+            "code_points": 10259,
+            "utf8_bytes": 10273,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-compose/SKILL.md",
+            "sha256": "d6c8c71f07a48b6d626810a12c32ba25d20863a2d121f7a89fde089b089de11c",
+            "code_points": 6973,
+            "utf8_bytes": 6989,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-bundle-upgrade/SKILL.md",
+            "sha256": "65eda2885cf0b1918b0c4334725ec8a47b3f33e1129af812f46ee9f3923dedc3",
+            "code_points": 17414,
+            "utf8_bytes": 17450,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-bundle-import/SKILL.md",
+            "sha256": "f357ff606ae008aaa56c546d00ec0d988177ed9265a2271227350c55074903d4",
+            "code_points": 21831,
+            "utf8_bytes": 21919,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-portability/SKILL.md",
+            "sha256": "6a69ccf81365e387dcb1be42ae1ebf42a167db5eede055b4f055243ea319524d",
+            "code_points": 3604,
+            "utf8_bytes": 3604,
+            "tokens": null
+          }
+        ],
+        "totals": {
+          "input_count": 6,
+          "code_points": 109113,
+          "utf8_bytes": 109405,
+          "tokens": null
+        }
+      },
+      {
+        "name": "review-common",
+        "kind": "release-source",
+        "activation_assumption": "Review or rejection handling loads reviewer and verification boundaries.",
+        "definition_sha256": "4c7759ce301728f5f08fe4b854e82610e9f3f7b9d8967c7517fbea6c8d8eb3a0",
+        "accepted": true,
+        "prerequisites": {
+          "enabled_pack_source_installed": "pass",
+          "core_source_generated": "pass",
+          "source_packs": []
+        },
+        "inputs": [
+          {
+            "path": "src/agents/dude.agent.md",
+            "sha256": "435810625ce51ff8e18dc525a2a7ccf0d8a8adc5f1237d474544b226882b07e5",
+            "code_points": 49032,
+            "utf8_bytes": 49170,
+            "tokens": null
+          },
+          {
+            "path": "src/instructions/dude.instructions.md",
+            "sha256": "af788008881272a4daecb7d26368fd32a2714cf1372a1d700012a7302ba2a508",
+            "code_points": 10259,
+            "utf8_bytes": 10273,
+            "tokens": null
+          },
+          {
+            "path": "src/agents/dude-reviewer.agent.md",
+            "sha256": "ecbc96e4b75eee5225ef43a41483c0935d69c8871c25f3ab214b3d7e419ddd3f",
+            "code_points": 4066,
+            "utf8_bytes": 4070,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-reviewer-protocol/SKILL.md",
+            "sha256": "dcc9d01879ea2ffc4f9b1479e90e3694ad51fe930210d67992d1f923f7dd34d0",
+            "code_points": 1696,
+            "utf8_bytes": 1698,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-receiving-code-review/SKILL.md",
+            "sha256": "b823ea3f349b5a472abd55de04ed361e2b45cee6b9ffeb63f21bba51c1e7488b",
+            "code_points": 1616,
+            "utf8_bytes": 1618,
+            "tokens": null
+          },
+          {
+            "path": "src/skills/dude-verification-before-completion/SKILL.md",
+            "sha256": "7802742019d6b99ea2504a71c180a22cf2c886b0133bdf9aa964a1048ae67163",
+            "code_points": 1329,
+            "utf8_bytes": 1329,
+            "tokens": null
+          }
+        ],
+        "totals": {
+          "input_count": 6,
+          "code_points": 67998,
+          "utf8_bytes": 68158,
+          "tokens": null
+        }
+      }
+    ],
+    "aggregate": {
+      "input_count": 32,
+      "code_points": 556644,
+      "utf8_bytes": 558046,
+      "tokens": null
+    },
+    "dogfood_guidance": {
+      "name": "dogfood-guidance",
+      "kind": "dogfood-guidance",
+      "activation_assumption": "Dogfood work reads project-owned standing guidance separately from distributable bundle sources.",
+      "definition_sha256": "0fb0187d59bfdd749ee9988182543c62f9a99f719eac9162295ff35ea3e0f29b",
+      "accepted": true,
+      "prerequisites": {
+        "enabled_pack_source_installed": "pass",
+        "core_source_generated": "not-applicable",
+        "source_packs": []
+      },
+      "inputs": [
+        {
+          "path": ".github/skills/project/SKILL.md",
+          "sha256": "6bbeaa8b0e881d5e7fa34f1f3571b94718992da1a0e2a9d3e949106dad15f10b",
+          "code_points": 5846,
+          "utf8_bytes": 5848,
+          "tokens": null
+        },
+        {
+          "path": ".dude/memory/guardrails.md",
+          "sha256": "9af19a41b3d7a188be921c5eb80adbd7dc900696cd5cbc4e0b42a06fc07a0840",
+          "code_points": 1296,
+          "utf8_bytes": 1300,
+          "tokens": null
+        },
+        {
+          "path": ".dude/memory/context.md",
+          "sha256": "1698d035797a58bc6b21660035fea8e0315d534b9be9c2de81e09f2b6f962b81",
+          "code_points": 1225,
+          "utf8_bytes": 1227,
+          "tokens": null
+        },
+        {
+          "path": ".dude/memory/decisions.md",
+          "sha256": "7e33a274f82c31f5b5c3591ec8f3bb69486da215d0027f122e36eb21c9585bd9",
+          "code_points": 8392,
+          "utf8_bytes": 8404,
+          "tokens": null
+        },
+        {
+          "path": ".dude/memory/lessons.md",
+          "sha256": "432405a39d7b78bd3ced97543b70a6536aef7b5c6801a59ceba0ab625ba4b99f",
+          "code_points": 1816,
+          "utf8_bytes": 1818,
+          "tokens": null
+        }
+      ],
+      "totals": {
+        "input_count": 5,
+        "code_points": 18575,
+        "utf8_bytes": 18597,
+        "tokens": null
+      }
+    }
+  }
+}

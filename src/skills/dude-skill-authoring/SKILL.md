@@ -7,6 +7,8 @@ description: "Use when the user wants Dude to create a reusable skill, codify a 
 
 Create focused reusable skills that improve how Dude works across repeated tasks.
 
+For broad recurring recovery learning routed by `dude-work` (`## Inspection And Recovery`), this skill owns overlap checks, scaffolding, reusable content, and lint. Recovery advice alone never authorizes a skill write.
+
 ## Workflow
 
 When the user supplies a URL or names an external repository as the source of the skill (e.g. "import this skill from `<url>`", "bring in the `<name>` skill from `<repo>`"), do not author from scratch here. Route to the `dude-bundle-import` skill instead, which fetches, adapts, and writes the SKILL.md (and confirmed sibling files) with explicit per-category confirmation. This skill stays focused on authoring new skills from scratch in the local bundle.

@@ -155,6 +155,36 @@ test('checked-in dev core is a byte-identical non-mutating projection of authori
   assert.deepEqual(generatedPaths, expectedPaths, 'generated base-owned inventory differs from source');
 });
 
+test('recovery runtime is an explicit byte-identical dev projection while its test stays source-only', () => {
+  const sourceRel = 'src/skills/dude-work/recovery.mjs';
+  const generatedRel = '.github/skills/dude-work/recovery.mjs';
+  const sourceTestRel = 'src/skills/dude-work/recovery.test.mjs';
+  const generatedTestRel = '.github/skills/dude-work/recovery.test.mjs';
+  const sourceFiles = listCoreSourceFiles(repoRoot);
+
+  assert.equal(fs.statSync(path.join(repoRoot, sourceRel)).isFile(), true, sourceRel);
+  assert.equal(fs.statSync(path.join(repoRoot, sourceTestRel)).isFile(), true, sourceTestRel);
+  assert.equal(
+    sourceFiles.some(({ abs, deployRel }) => (
+      abs === path.join(repoRoot, sourceRel) && deployRel === generatedRel
+    )),
+    true,
+    'recovery runtime has the canonical development destination',
+  );
+  assert.equal(
+    sourceFiles.some(({ abs }) => abs === path.join(repoRoot, sourceTestRel)),
+    false,
+    'recovery.test.mjs is excluded from development source projection',
+  );
+  assert.equal(fs.existsSync(path.join(repoRoot, generatedRel)), true, generatedRel);
+  assert.deepEqual(
+    fs.readFileSync(path.join(repoRoot, generatedRel)),
+    fs.readFileSync(path.join(repoRoot, sourceRel)),
+    `${generatedRel} must be byte-identical to ${sourceRel}`,
+  );
+  assert.equal(fs.existsSync(path.join(repoRoot, generatedTestRel)), false, generatedTestRel);
+});
+
 test('final feature hygiene files have terminal newlines and normalized source pairs stay identical', () => {
   const sourceGeneratedPairs = [
     [
@@ -164,6 +194,10 @@ test('final feature hygiene files have terminal newlines and normalized source p
     [
       'src/skills/dude-engine/lib/feature-identity.mjs',
       '.github/skills/dude-engine/lib/feature-identity.mjs',
+    ],
+    [
+      'src/skills/dude-work/recovery.mjs',
+      '.github/skills/dude-work/recovery.mjs',
     ],
   ];
   const finalFeatureHygieneFiles = [
@@ -176,6 +210,7 @@ test('final feature hygiene files have terminal newlines and normalized source p
     'src/skills/dude-engine/lib/feature-identity.test.mjs',
     'src/skills/dude-engine/lib/workspace-paths.test.mjs',
     'src/skills/dude-lint/lint.test.mjs',
+    'src/skills/dude-work/recovery.test.mjs',
   ];
   const normalizeTerminalNewline = (content) => {
     let bodyEnd = content.length;
@@ -189,6 +224,8 @@ test('final feature hygiene files have terminal newlines and normalized source p
   };
 
   for (const [sourceRel, generatedRel] of sourceGeneratedPairs) {
+    assert.equal(fs.existsSync(path.join(repoRoot, sourceRel)), true, `missing source file: ${sourceRel}`);
+    assert.equal(fs.existsSync(path.join(repoRoot, generatedRel)), true, `missing generated file: ${generatedRel}`);
     assert.deepEqual(
       normalizeTerminalNewline(fs.readFileSync(path.join(repoRoot, sourceRel))),
       normalizeTerminalNewline(fs.readFileSync(path.join(repoRoot, generatedRel))),

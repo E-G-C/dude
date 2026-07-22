@@ -9,7 +9,8 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
 {
   "enabled_packs": [
     "authoring",
-    "coding"
+    "coding",
+    "writing"
   ],
   "installed": {
     "authoring": {
@@ -158,6 +159,40 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
           }
         ],
         "digest": "380f344df3a675fe322a005235cb66410ea89a58f6adef17d9be83a984704d1e"
+      }
+    },
+    "writing": {
+      "files": [
+        ".github/skills/dude-pack-writing-avoid-ai-tropes",
+        ".github/skills/dude-pack-writing-style"
+      ],
+      "installed_at": "2026-07-22T14:32:00.170Z",
+      "inventory": {
+        "version": 1,
+        "pack": "writing",
+        "source": {
+          "type": "library",
+          "location": "/Users/eg/work/AI/dude/library/packs",
+          "ref": ""
+        },
+        "manifest_sha256": "9b9cfe280678446d1bd760cef287aaee51ef6e649802457701596582ae6cf5ce",
+        "artifacts": [
+          {
+            "path": ".github/skills/dude-pack-writing-avoid-ai-tropes",
+            "kind": "skills",
+            "source": "skills/dude-pack-writing-avoid-ai-tropes",
+            "source_sha256": "72db11b54fe21bb5baffd0b15fa6a450a92dcb7dd53e3ae07dc102e870c9c26c",
+            "installed_sha256": "72db11b54fe21bb5baffd0b15fa6a450a92dcb7dd53e3ae07dc102e870c9c26c"
+          },
+          {
+            "path": ".github/skills/dude-pack-writing-style",
+            "kind": "skills",
+            "source": "skills/dude-pack-writing-style",
+            "source_sha256": "f5a7b532c6c3474db2f145d29df209d382be78cd50926de32b445cb7a9171b42",
+            "installed_sha256": "f5a7b532c6c3474db2f145d29df209d382be78cd50926de32b445cb7a9171b42"
+          }
+        ],
+        "digest": "11ef112bedfc1ca5cc8ee70afd6a0b76200be72d5abf3ec36e12d1133f38c0f7"
       }
     }
   }

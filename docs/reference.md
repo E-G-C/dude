@@ -204,6 +204,40 @@ becomes the only live execution board and source of truth, and in normal use
 `@dude track` performs the handoff automatically for defined features. `tasks.md`
 may still be maintained as a one-way Beads-derived mirror for portability.
 
+`@dude work` is an accelerator inside the active Lightweight or Tracked lane,
+not another lane or authority. It inspects exact target history before a start
+or resume and after a block or failure. Ordinary Work reports the post-block
+inspection and stops; only explicit bounded recovery can authorize a retry.
+Feature-only inspection remains read-only, unavailable optional session history
+alone is nonblocking, and evidence overflow permits only a descriptor report,
+not recovery.
+
+Overall `--max` and exact-target recovery `--recovery-cycles` budgets are
+independent; each may be finite or `unlimited`, and `unlimited` never bypasses
+no-progress or hard intent, approval, authority, or safety stops. Positive ASCII
+safe integer `--parallel` values are accepted only for compatibility; every
+accepted value is discarded, normalizes the effective policy to `1`, and grants
+no concurrency or fan-out.
+
+One evidence-bound Assessment carries its Inspection's `evidenceHash`. Work
+freshly re-inspects before authorization, and drift refuses without changing
+counters or workflow state.
+
+Recovery never bypasses no-progress, intent, approval, dependency, identity,
+reconciliation, authority, safety, verification, review, lane-state, or close
+boundaries. The only definition exception is an atomic unchanged-intent repair
+in an existing Lightweight package across exactly four paths: the exact owner idea
+ledger plus sibling `spec.md`, `plan.md`, and `tasks.md`, with complete
+user-owned Idea, Open Questions, and Assumptions content preserved. Supporting
+contracts remain an explicit-definition concern. Tracked definition recovery is
+inspection-first: only after a fresh Inspection and Assessment validation does
+it refuse as unsupported, before any write. Findings are transient unless the
+current memory or skill owner freshly inspects its artifacts, duplicates,
+overlaps, and destination before durable retention; caller claims are not
+authority. See the [Work command reference](commands.md#dude-work) for usage
+and the [Work skill](../.github/skills/dude-work/SKILL.md) for the owning
+protocol.
+
 ```mermaid
 flowchart TD
     START["@dude track"] --> RESUME["Resume in-progress work first"]
@@ -259,6 +293,55 @@ flowchart TD
   to fan out.
 - Do not use `tasks.md` as the live board after import; it is only a
   non-authoritative Beads mirror when updated in this lane.
+
+### Autonomous Objective Evaluation
+
+`autonomous` Work can carry an optional Progress Objective, but it changes no
+authority: objective records are evidence only and never establish ownership,
+authorize effects, mutate task state, or satisfy a lane close.
+
+The objective registry is definition-compiled and plan-owned. It is embedded in
+the feature's `plan.md`, keyed by durable task keys, and consumed by runtime
+only through the `definition-plan` evidence item, never inferred from prose. Its
+markers are documented with placeholders only; the assembled active start/end
+pair is described in the schema and is never written on a standalone line in
+these docs. Feature 005's own plan carries no active marker pair, so it compiles
+no objective.
+
+```text
+<OBJECTIVE_REGISTRY_START>
+<CANONICAL_OBJECTIVE_REGISTRY_JSON>
+<OBJECTIVE_REGISTRY_END>
+```
+
+When an objective is present, each attempt produces a candidate that a
+checkpoint captures, and exactly five authoritative retention gates run in fixed
+order: `authorization`, `checkpoint`, `hard-constraints`, `comparison`, and
+`independent-review`. There is no sixth, optional, alias, or caller-selected
+gate. A mandatory `candidate-bound-completion` verification is always part of
+`hard-constraints`, even when the registry declares zero objective checks.
+
+Comparators are kind-specific: a numeric threshold, ordinal levels, or a
+unanimous rubric. Equivalent defaults to non-keep and qualifies only under a
+predeclared independent-review tie rule whose distinct tie record prefers the
+candidate. Any binding drift makes the comparison incomparable, restores the
+exact prestate, and stops; a legal rebaseline after explicit re-definition also
+stops the old sequence and restores its proven incumbent first. Keep requires a
+qualifying relation and all five gates passing, and every non-keep outcome
+restores first.
+
+Objective comparison, learning-review, and sequence-closed events project into
+both existing surfaces — the current-run capture and lane history — before any
+bounded objective state is released. The Lightweight lane line is exactly the
+`- dude-run-event: ` prefix followed by the canonical event JSON, and no second
+ledger is created.
+
+The optional run audit is a concise `AuditSummary` renderer over freshly
+acquired current-run and lane history; it writes no file. Each closed
+`objectiveSequences` row carries exactly one outcome — `kept`, `discarded`,
+`blocked`, or `unsettled`. A task with no objective contributes no
+`objectiveSequences` row, and a whole run with no objective yields an empty
+`objectiveSequences` array.
 
 ## Responsibility Map
 

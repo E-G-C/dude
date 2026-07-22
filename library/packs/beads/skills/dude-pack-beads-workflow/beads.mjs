@@ -28,6 +28,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import {
   parseTasks,
@@ -38,6 +39,12 @@ import {
 } from '../dude-engine/lib/tasks.mjs';
 import { resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
 import { resolveMutationPath } from '../dude-engine/lib/workspace-paths.mjs';
+import {
+  authorizeAttempt as authorizeCoreRecoveryAttempt,
+  collectEvidence as collectCoreRecoveryEvidence,
+  inspect as inspectCoreRecovery,
+  runCommand as runCoreRecoveryCommand,
+} from '../dude-work/recovery.mjs';
 
 /** bd issue status -> canonical task glyph. */
 const BD_STATE_GLYPH = {
@@ -50,10 +57,22 @@ const BD_STATE_GLYPH = {
   done: 'x',
 };
 
-const TASK_KEY_RE = /T\d{3,}@[a-z0-9]{8}/;
+const TASK_KEY_RE = /\bT\d{3,}@[a-z0-9]{8}\b/;
 const SPEC_PATH_RE = /^\.dude\/specs\/([^/\\]+)\/spec\.md$/;
 const TASKS_PATH_RE = /^\.dude\/specs\/([^/\\]+)\/tasks\.md$/;
 const COMPLETE_BD_LIST_ARGS = Object.freeze(['list', '--all', '--limit', '0', '--json']);
+const RECOVERY_SPEC_PATH_RE = /^\.dude\/specs\/\d{3,}-[a-z0-9]+(?:-[a-z0-9]+)*\/spec\.md$/;
+const RECOVERY_DETAIL_FIELDS = ['design', 'acceptance_criteria', 'notes', 'priority', 'owner',
+  'created_at', 'created_by', 'updated_at', 'metadata', 'labels'];
+const SUPPORTED_RECOVERY_STATUSES = {
+  open: 'open', in_progress: 'in_progress', 'in-progress': 'in_progress', inprogress: 'in_progress',
+  blocked: 'blocked', closed: 'closed', done: 'closed',
+};
+
+/** @param {string} left @param {string} right */
+function compareUtf8(left, right) {
+  return Buffer.compare(Buffer.from(left), Buffer.from(right));
+}
 
 /** @param {string} absolutePath @returns {fs.Stats | null} */
 function lstatOrNull(absolutePath) {
@@ -183,6 +202,272 @@ export function parseBdIssues(content, label = 'bd list --all --limit 0 --json')
     }
   }
   return issues;
+}
+
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isPlainObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/** @param {unknown} value @param {string} label */
+function recoveryCaptures(value, label) {
+  if (!Array.isArray(value) || Object.keys(value).length !== value.length) {
+    throw new Error(`${label} must be a dense array`);
+  }
+  const captures = new Map();
+  for (const entry of value) {
+    if (!isPlainObject(entry) || Object.keys(entry).length !== 2
+      || !Object.hasOwn(entry, 'id') || !Object.hasOwn(entry, 'bytes')) {
+      throw new Error(`${label} entries must be exact {id,bytes} objects`);
+    }
+    if (typeof entry.id !== 'string' || !entry.id
+      || (typeof entry.bytes !== 'string' && !Buffer.isBuffer(entry.bytes))) {
+      throw new Error(`${label} contains an invalid capture`);
+    }
+    if (captures.has(entry.id)) throw new Error(`${label} contains duplicate issue ID '${entry.id}'`);
+    captures.set(entry.id, entry.bytes);
+  }
+  return captures;
+}
+
+/** @param {unknown} value */
+function isValidRecoveryIssueId(value) {
+  if (typeof value !== 'string' || Buffer.byteLength(value) < 1 || Buffer.byteLength(value) > 256
+    || /[\u0000-\u001f\u007f-\u009f]/u.test(value)) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      if (++index >= value.length || value.charCodeAt(index) < 0xdc00 || value.charCodeAt(index) > 0xdfff) return false;
+    } else if (code >= 0xdc00 && code <= 0xdfff) return false;
+  }
+  return true;
+}
+
+/** @param {unknown} value @returns {{specPath:string,lane:'tracked',issueId?:string,taskKey?:string}} */
+function recoveryTarget(value) {
+  if (!isPlainObject(value)
+    || Object.keys(value).some((key) => !['specPath', 'lane', 'issueId', 'taskKey'].includes(key))) {
+    throw new Error('target must contain only specPath, lane, issueId, and optional taskKey');
+  }
+  if (typeof value.specPath !== 'string' || !RECOVERY_SPEC_PATH_RE.test(value.specPath)) {
+    throw new Error('target.specPath must be an exact canonical specification path');
+  }
+  if (value.lane !== 'tracked') throw new Error("target.lane must equal 'tracked'");
+  if (Object.hasOwn(value, 'issueId') && !isValidRecoveryIssueId(value.issueId)) {
+    throw new Error('target.issueId must be a valid 1-256 byte control-free Unicode string');
+  }
+  if (Object.hasOwn(value, 'taskKey')
+    && (typeof value.taskKey !== 'string' || !new RegExp(`^${TASK_KEY_RE.source}$`).test(value.taskKey))) {
+    throw new Error('target.taskKey must be a durable task key');
+  }
+  if (Object.hasOwn(value, 'taskKey') && !Object.hasOwn(value, 'issueId')) {
+    throw new Error('target.taskKey requires target.issueId');
+  }
+  return /** @type {{specPath:string,lane:'tracked',issueId?:string,taskKey?:string}} */ (value);
+}
+
+/** @param {Record<string, unknown>} issue @param {string} label @param {string} specPath */
+function recoveryIssueProjection(issue, label, specPath) {
+  for (const field of ['id', 'title', 'description', 'status', 'issue_type']) {
+    if (typeof issue[field] !== 'string' || !issue[field]) throw new Error(`${label} is missing string ${field}`);
+  }
+  if (!hasExactSpecIdentity(issue, specPath)) throw new Error(`${label} has the wrong target spec identity`);
+  const id = issueId(issue);
+  const rawStatus = issueStatus(issue);
+  const status = Object.hasOwn(SUPPORTED_RECOVERY_STATUSES, rawStatus) ? SUPPORTED_RECOVERY_STATUSES[rawStatus] : null;
+  if (!status) throw new Error(`unsupported executable Beads issue '${id}' status=${rawStatus}`);
+  const projection = {
+    issueId: id,
+    status,
+    type: issue.issue_type.toLowerCase(),
+    title: issue.title,
+    description: issue.description,
+  };
+  const taskKey = issueTaskKey(issue);
+  if (taskKey) Object.assign(projection, { taskKey });
+  const detail = Object.fromEntries(RECOVERY_DETAIL_FIELDS
+    .filter((field) => Object.hasOwn(issue, field)).map((field) => [field, issue[field]]));
+  return { ...projection, detail };
+}
+
+/** @param {string | Buffer} content @param {string} id @param {string} specPath */
+function recoveryHistory(content, id, specPath) {
+  const label = `history capture '${id}'`;
+  let events;
+  try {
+    events = JSON.parse(String(content));
+  } catch (error) {
+    throw new Error(`${label} returned malformed JSON (${error instanceof Error ? error.message : String(error)})`);
+  }
+  if (!Array.isArray(events)) throw new Error(`${label} must be an array`);
+  return events.map((event, index) => {
+    const keys = isPlainObject(event) ? Object.keys(event).sort().join(',') : '';
+    if (keys !== 'CommitDate,CommitHash,Committer,Issue'
+      || typeof event.CommitHash !== 'string' || typeof event.Committer !== 'string'
+      || typeof event.CommitDate !== 'string' || !isPlainObject(event.Issue)) {
+      throw new Error(`${label} has a malformed event at index ${index}`);
+    }
+    const issue = recoveryIssueProjection(event.Issue, `${label} event ${index} Issue`, specPath);
+    if (issue.issueId !== id) throw new Error(`${label} event ${index} has the wrong Issue id`);
+    return { commitDate: event.CommitDate, issue };
+  });
+}
+
+/** @param {unknown} value */
+function recoveryEnvelopeCaptures(value) {
+  if (!Array.isArray(value) || Object.keys(value).length !== value.length) {
+    throw new Error('issues must be a dense array');
+  }
+  return value.map((entry, index) => {
+    if (!isPlainObject(entry) || Object.keys(entry).length !== 2
+      || !Object.hasOwn(entry, 'detailBytes') || !Object.hasOwn(entry, 'historyBytes')) {
+      throw new Error('issues entries must be exact {detailBytes,historyBytes} objects');
+    }
+    const shown = parseBdIssues(entry.detailBytes, `issues[${index}].detailBytes`);
+    if (shown.length !== 1) throw new Error(`issues[${index}].detailBytes must contain exactly one issue`);
+    const id = shown[0].id;
+    if (!isValidRecoveryIssueId(id)) throw new Error(`issues[${index}].detailBytes has an invalid issue ID`);
+    return {
+      id,
+      detailBytes: entry.detailBytes,
+      historyBytes: entry.historyBytes,
+    };
+  });
+}
+
+/** Normalize complete captured Beads list/show/history evidence without I/O. @param {unknown} input */
+export function normalizeRecoveryEvidence(input) {
+  if (!isPlainObject(input)) {
+    throw new Error('normalizeRecoveryEvidence requires a captured evidence object');
+  }
+  const internalFields = ['listBytes', 'detailBytesById', 'historyBytesById', 'target'];
+  const envelopeFields = ['kind', 'listBytes', 'issues', 'target'];
+  const internal = Object.keys(input).length === internalFields.length
+    && internalFields.every((key) => Object.hasOwn(input, key));
+  const envelope = Object.keys(input).length === envelopeFields.length
+    && envelopeFields.every((key) => Object.hasOwn(input, key));
+  if (!internal && !envelope) {
+    throw new Error('normalizeRecoveryEvidence requires internal captures or a tracked capture envelope');
+  }
+  if (typeof input.listBytes !== 'string' && !Buffer.isBuffer(input.listBytes)) {
+    throw new Error('listBytes must be captured bytes or a string');
+  }
+  const target = recoveryTarget(input.target);
+  if (envelope && input.kind !== 'tracked') throw new Error("kind must equal 'tracked'");
+  const envelopeCaptures = envelope ? recoveryEnvelopeCaptures(input.issues) : null;
+  const listed = parseBdIssues(input.listBytes, 'bd --readonly list --all --limit 0 --json');
+  const details = recoveryCaptures(
+    envelopeCaptures
+      ? envelopeCaptures.map(({ id, detailBytes: bytes }) => ({ id, bytes }))
+      : input.detailBytesById,
+    'detailBytesById',
+  );
+  const histories = recoveryCaptures(
+    envelopeCaptures
+      ? envelopeCaptures.map(({ id, historyBytes: bytes }) => ({ id, bytes }))
+      : input.historyBytesById,
+    'historyBytesById',
+  );
+  const seen = new Set();
+  const exactFeature = listed.filter((issue) => {
+    if (typeof issue.id !== 'string' || !issue.id) throw new Error('list issue is missing string id');
+    const id = issueId(issue);
+    if (seen.has(id)) throw new Error(`list contains duplicate issue ID '${id}'`);
+    seen.add(id);
+    return hasExactSpecIdentity(issue, target.specPath);
+  });
+
+  if (target.taskKey) {
+    const owners = exactFeature.filter((issue) => !isEpicIssue(issue) && issueTaskKey(issue) === target.taskKey)
+      .map(issueId).sort(compareUtf8);
+    if (owners.length === 0) throw new Error(`target taskKey '${target.taskKey}' has no durable issue mapping`);
+    if (owners.length > 1) {
+      throw new Error(`target taskKey '${target.taskKey}' has duplicate/ambiguous mapping across issues: ${owners.join(', ')}`);
+    }
+    if (owners[0] !== target.issueId) throw new Error(`target taskKey '${target.taskKey}' does not map to issue '${target.issueId}'`);
+  }
+
+  let selected;
+  if (target.issueId) {
+    const issue = exactFeature.find((candidate) => issueId(candidate) === target.issueId);
+    if (!issue) throw new Error(`target issue '${target.issueId}' is not in the exact-feature issue set`);
+    if (isEpicIssue(issue)) throw new Error(`target issue '${target.issueId}' is a non-executable grouping epic`);
+    selected = [issue];
+  } else {
+    selected = exactFeature.filter((issue) => !isEpicIssue(issue));
+  }
+  selected.sort((left, right) => compareUtf8(issueId(left), issueId(right)));
+  const selectedIds = new Set(selected.map(issueId));
+  for (const [label, captures] of [['detail', details], ['history', histories]]) {
+    for (const id of captures.keys()) {
+      if (!selectedIds.has(id)) throw new Error(`${label} capture has extra issue ID '${id}'`);
+    }
+    for (const id of selectedIds) {
+      if (!captures.has(id)) throw new Error(`missing ${label} capture for issue '${id}'`);
+    }
+  }
+
+  const records = selected.map((listIssue) => {
+    const id = issueId(listIssue);
+    const listedIssue = recoveryIssueProjection(listIssue, `list issue '${id}'`, target.specPath);
+    const shown = parseBdIssues(/** @type {string | Buffer} */ (details.get(id)), `detail capture '${id}'`);
+    if (shown.length !== 1) throw new Error(`detail capture '${id}' must contain exactly one issue`);
+    const shownIssue = recoveryIssueProjection(shown[0], `detail capture '${id}' issue`, target.specPath);
+    for (const field of ['issueId', 'status', 'type', 'title', 'description', 'taskKey']) {
+      if (listedIssue[field] !== shownIssue[field]) throw new Error(`detail capture '${id}' has conflicting ${field}`);
+    }
+    for (const field of RECOVERY_DETAIL_FIELDS) {
+      if (Object.hasOwn(listIssue, field) && Object.hasOwn(shown[0], field)
+        && !isDeepStrictEqual(listIssue[field], shown[0][field])) {
+        throw new Error(`detail capture '${id}' has conflicting ${field}`);
+      }
+    }
+    const { detail: _listDetail, ...record } = listedIssue;
+    return {
+      ...record,
+      detail: shownIssue.detail,
+      history: recoveryHistory(/** @type {string | Buffer} */ (histories.get(id)), id, target.specPath),
+    };
+  });
+  const canonicalTarget = { specPath: target.specPath, lane: /** @type {'tracked'} */ ('tracked') };
+  if (target.issueId) Object.assign(canonicalTarget, { issueId: target.issueId });
+  return { target: canonicalTarget, records };
+}
+
+/** @param {unknown} target @param {unknown} rawInputs */
+export function collectRecoveryEvidence(target, rawInputs) {
+  return collectCoreRecoveryEvidence(target, rawInputs, {
+    normalizeTrackedEvidence: normalizeRecoveryEvidence,
+  });
+}
+
+/** @param {unknown} value */
+export function inspectRecovery(value) {
+  return inspectCoreRecovery(value, {
+    normalizeTrackedEvidence: normalizeRecoveryEvidence,
+  });
+}
+
+/**
+ * @param {unknown} state
+ * @param {unknown} target
+ * @param {unknown} rawInputs
+ * @param {unknown} assessment
+ * @param {unknown} mode
+ */
+export function authorizeRecoveryAttempt(state, target, rawInputs, assessment, mode) {
+  return authorizeCoreRecoveryAttempt(state, target, rawInputs, assessment, mode, {
+    normalizeTrackedEvidence: normalizeRecoveryEvidence,
+  });
+}
+
+/** @param {unknown} command @param {unknown} request */
+export function runRecoveryCommand(command, request) {
+  return runCoreRecoveryCommand(command, request, {
+    normalizeTrackedEvidence: normalizeRecoveryEvidence,
+  });
 }
 
 /** @param {any} issue @returns {string} */

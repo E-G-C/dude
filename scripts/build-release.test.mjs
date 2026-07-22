@@ -24,6 +24,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
 const MANIFEST_DOCUMENT = '# Bundle Manifest\n\n```json\n{\n  "source_repo": "owner/repo",\n  "source_ref": "main",\n  "installed_ref": "main"\n}\n```\n';
 const TEXT_EXTENSIONS = new Set(['.md', '.mjs', '.js', '.json', '.yml', '.yaml']);
+const RECOVERY_SOURCE_REL = 'src/skills/dude-work/recovery.mjs';
+const RECOVERY_TEST_SOURCE_REL = 'src/skills/dude-work/recovery.test.mjs';
+const RECOVERY_DEPLOY_REL = '.github/skills/dude-work/recovery.mjs';
+const RECOVERY_TEST_DEPLOY_REL = '.github/skills/dude-work/recovery.test.mjs';
 
 /** @param {string} root @returns {string[]} */
 function listRelativeFiles(root) {
@@ -55,10 +59,12 @@ test('isReleaseFile keeps core files and drops tests / packs / local / project-o
   assert.equal(isReleaseFile('.github/agents/dude-lead.agent.md'), true);
   assert.equal(isReleaseFile('.github/skills/dude-lint/lint.mjs'), true);
   assert.equal(isReleaseFile('.github/skills/dude-engine/lib/ownership.mjs'), true);
+  assert.equal(isReleaseFile(RECOVERY_DEPLOY_REL), true);
   assert.equal(isReleaseFile('.github/instructions/dude.instructions.md'), true);
   // test files excluded
   assert.equal(isReleaseFile('.github/skills/dude-lint/lint.test.mjs'), false);
   assert.equal(isReleaseFile('.github/skills/dude-engine/lib/tasks.test.mjs'), false);
+  assert.equal(isReleaseFile(RECOVERY_TEST_DEPLOY_REL), false);
   // packs / local / project-owned / workflows excluded
   assert.equal(isReleaseFile('.github/agents/dude-pack-beads-workflow.agent.md'), false);
   assert.equal(isReleaseFile('.github/skills/dude-local-foo/SKILL.md'), false);
@@ -107,6 +113,25 @@ test('parseArgs flags unknown args and parses options', () => {
   assert.equal(a.repo, 'r');
 });
 
+test('buildRelease stages the recovery runtime byte-identically without its test', () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-rel-recovery-'));
+  try {
+    const result = buildRelease({ repoRoot, outDir, ref: 'v0.0.0' });
+    assert.ok(result.files.includes(RECOVERY_DEPLOY_REL), 'recovery.mjs is a release file');
+    assert.equal(result.files.includes(RECOVERY_TEST_DEPLOY_REL), false, 'recovery.test.mjs is excluded');
+    assert.equal(fs.statSync(path.join(repoRoot, RECOVERY_TEST_SOURCE_REL)).isFile(), true);
+
+    const source = fs.readFileSync(path.join(repoRoot, RECOVERY_SOURCE_REL));
+    const staged = fs.readFileSync(path.join(outDir, RECOVERY_DEPLOY_REL));
+    assert.deepEqual(staged, source, 'staged recovery runtime must be byte-identical to source');
+    assert.ok(source.length > 0 && source.at(-1) === 0x0a, `${RECOVERY_SOURCE_REL} must end in LF`);
+    assert.ok(staged.length > 0 && staged.at(-1) === 0x0a, `${RECOVERY_DEPLOY_REL} must end in LF`);
+    assert.equal(fs.existsSync(path.join(outDir, RECOVERY_TEST_DEPLOY_REL)), false);
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
 test('buildRelease stages a lint-clean core bundle with no test files', () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-rel-'));
   try {
@@ -128,6 +153,14 @@ test('buildRelease stages a lint-clean core bundle with no test files', () => {
     assert.ok(has('.github/skills/dude-engine/lib/feature-identity.mjs'));
     assert.ok(has('.github/skills/dude-engine/lib/feature.mjs'));
     assert.ok(has('.github/skills/dude-engine/feature.mjs'));
+    assert.ok(has(RECOVERY_DEPLOY_REL));
+    assert.equal(fs.statSync(path.join(repoRoot, RECOVERY_TEST_SOURCE_REL)).isFile(), true);
+    assert.equal(stagedFiles.includes(RECOVERY_TEST_DEPLOY_REL), false, 'recovery.test.mjs must not ship');
+    assert.deepEqual(
+      fs.readFileSync(path.join(outDir, RECOVERY_DEPLOY_REL)),
+      fs.readFileSync(path.join(repoRoot, RECOVERY_SOURCE_REL)),
+      'staged recovery runtime must be byte-identical to source',
+    );
 
     const canonicalArtifacts = {
       coordinator: '.github/agents/dude.agent.md',
@@ -200,6 +233,7 @@ test('buildRelease stages a lint-clean core bundle with no test files', () => {
     }
 
     const stagedTextFiles = stagedFiles.filter((rel) => TEXT_EXTENSIONS.has(path.extname(rel).toLowerCase()));
+    assert.ok(stagedTextFiles.includes(RECOVERY_DEPLOY_REL), 'recovery runtime participates in staged newline hygiene');
     const stagedText = stagedTextFiles
       .map((rel) => fs.readFileSync(path.join(outDir, rel), 'utf8'))
       .join('\n');
@@ -226,6 +260,13 @@ test('buildRelease stages a lint-clean core bundle with no test files', () => {
       [],
       `staged text files missing terminal newline:\n${missingTerminalNewline.join('\n')}`,
     );
+    for (const [label, absolutePath] of [
+      [RECOVERY_SOURCE_REL, path.join(repoRoot, RECOVERY_SOURCE_REL)],
+      [RECOVERY_DEPLOY_REL, path.join(outDir, RECOVERY_DEPLOY_REL)],
+    ]) {
+      const content = fs.readFileSync(absolutePath);
+      assert.ok(content.length > 0 && content.at(-1) === 0x0a, `${label} must end in LF`);
+    }
   } finally {
     fs.rmSync(outDir, { recursive: true, force: true });
   }

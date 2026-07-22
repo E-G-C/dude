@@ -7,6 +7,8 @@ description: "Use when the user wants Dude to remember a decision, guardrail, pr
 
 Store durable team knowledge in a small set of predictable memory files.
 
+`dude-work` (`## Inspection And Recovery`) decides when a recovery finding is worth proposing as project-reusable. This skill owns deduplication, the selected `.dude/memory/` write, and its lint gate; it never turns recovery advice into an automatic durable write.
+
 ## File Selection
 
 Use:

@@ -75,6 +75,48 @@ const T008_PROMPT_SOURCES = [
   'src/skills/dude-receiving-code-review/SKILL.md',
 ];
 
+const RECOVERY_POLICY_OWNER = 'src/skills/dude-work/SKILL.md';
+
+const RECOVERY_POLICY_CONSUMERS = [
+  'library/packs/beads/skills/dude-pack-beads-workflow/SKILL.md',
+  'src/agents/dude-spec-lead.agent.md',
+  'src/agents/dude.agent.md',
+  'src/instructions/dude.instructions.md',
+  'src/skills/dude-feature-definition/SKILL.md',
+  'src/skills/dude-learning-promotion/SKILL.md',
+  'src/skills/dude-lightweight-execution/SKILL.md',
+  'src/skills/dude-memory-ledger/SKILL.md',
+  'src/skills/dude-skill-authoring/SKILL.md',
+];
+
+const RECOVERY_PROMPT_PROXY_SELECTORS = [
+  {
+    source: 'src/agents/dude.agent.md',
+    line: /^The sole definition-write exception is Work-authorized unchanged-intent derived-artifact repair/,
+  },
+  {
+    source: 'src/agents/dude-spec-lead.agent.md',
+    line: /^- The sole exception is Work-authorized unchanged-intent derived-definition repair/,
+  },
+  {
+    source: 'src/instructions/dude.instructions.md',
+    line: /^Load detailed procedures only when their mode applies:/,
+  },
+];
+
+const RECOVERY_DOC_SECTIONS = [
+  ['docs/commands.md', '### `@dude work`'],
+  ['docs/reference.md', '## Execution Workflow'],
+  ['docs/workflow.md', '### Optional Continuous Work'],
+];
+
+const STALE_RECOVERY_PHRASES = [
+  ['bounded target-unique fan-out', /\bbounded target-unique fan-out\b/i],
+  ['simultaneous independently dispatchable targets', /\bsimultaneous independently dispatchable targets\b/i],
+  ['recovery parallel capacity above one', /\brecovery[^\n]{0,48}(?:parallel[^\n]{0,24})?capacity[^\n]{0,24}(?:>|above|greater than|[2-9])/i],
+  ['model-declared write-set dispatchability', /\bmodel[- ]declared[^\n]{0,32}write[- ]set[^\n]{0,32}dispatch/i],
+];
+
 const RETIRED_ACTIVE_GUIDANCE_PATTERNS = [
   /@dude draft\b/,
   /@dude migrate layout\b/,
@@ -202,6 +244,26 @@ function assertSectionIncludesAll(relative, heading, needles) {
   for (const needle of needles) {
     assert.ok(content.includes(needle), `${relative} ${heading}: ${JSON.stringify(needle)}`);
   }
+}
+
+/** @param {string} section @param {Array<[string, RegExp[] | RegExp[][]]>} requirements */
+function missingParagraphRequirements(section, requirements) {
+  const paragraphs = section.split(/\n\s*\n/);
+  return requirements
+    .filter(([, signalsOrClauses]) => {
+      const clauses = signalsOrClauses[0] instanceof RegExp ? [signalsOrClauses] : signalsOrClauses;
+      return !clauses.every((signals) => paragraphs.some((paragraph) => (
+        signals.every((pattern) => pattern.test(paragraph))
+      )));
+    })
+    .map(([label]) => label);
+}
+
+/** @param {string} section */
+function staleRecoveryPhrases(section) {
+  return STALE_RECOVERY_PHRASES
+    .filter(([, pattern]) => pattern.test(section))
+    .map(([label]) => `stale recovery phrase: ${label}`);
 }
 
 /** @param {string} relative @param {string} heading @param {string} ruleLine */
@@ -570,7 +632,7 @@ test('T008 definition authority, rerun safety, guardrails, gates, and reconcilia
         'During explicit `brainstorm` or `define`, the Spec Lead is the delegated definition writer',
         'Specialists otherwise do not mutate workflow state.',
       ],
-      ruleLine: '1. The coordinator exclusively owns execution-lane and tracked state, task glyphs and metadata, generated boards and mirrors, archive/discovered/execution-history state, execution, execution-reconciliation, and close log events, and close. During explicit `brainstorm` or `define`, the Spec Lead is the delegated definition writer for idea/package artifacts, `status:`, exact `spec_path:`, managed definition regions, and definition `## Coordinator Log` events, following `dude-feature-definition`; on re-definition it stages reconciliation and proposed canonical task units but never applies coordinator-owned state. Specialists otherwise do not mutate workflow state.',
+      ruleLine: '1. The coordinator exclusively owns execution-lane and tracked state, task glyphs and metadata, generated boards and mirrors, archive/discovered/execution-history state, execution, execution-reconciliation, and close log events, and close. Ordinary definition authority has only the guarded Work exception below. During explicit `brainstorm` or `define`, the Spec Lead is the delegated definition writer for idea/package artifacts, `status:`, exact `spec_path:`, managed definition regions, and definition `## Coordinator Log` events under `dude-feature-definition`; on re-definition it stages reconciliation and proposed canonical task units but never applies coordinator-owned state. Specialists otherwise do not mutate workflow state.',
     },
     {
       relative: 'src/agents/dude.agent.md',
@@ -590,7 +652,7 @@ test('T008 definition authority, rerun safety, guardrails, gates, and reconcilia
         'the coordinator re-verifies the exact owner and complete stage before any write',
         '`spec.md` must pass its quality gate before `plan.md` and tasks',
       ],
-      ruleLine: '- Only explicit `define <slug>` may create or refresh a package. First definition atomically commits the prospective owner, exact path, package, and definition event or restores the pre-write state. For re-definition, the Spec Lead returns staged definition artifacts, `kept`/`changed`/`dropped`/`new` reconciliation, proposed canonical task units, and archive/discovered/history preservation; the coordinator re-verifies the exact owner and complete stage before any write. `spec.md` must pass its quality gate before `plan.md` and tasks.',
+      ruleLine: '- That explicit `define <slug>` route creates or refreshes the package. First definition atomically commits the prospective owner, exact path, package, and definition event or restores the pre-write state. For re-definition, the Spec Lead returns staged definition artifacts, `kept`/`changed`/`dropped`/`new` reconciliation, proposed canonical task units, and archive/discovered/history preservation; the coordinator re-verifies the exact owner and complete stage before any write. `spec.md` must pass its quality gate before `plan.md` and tasks.',
     },
     {
       relative: 'src/agents/dude.agent.md',
@@ -629,12 +691,12 @@ test('T008 definition authority, rerun safety, guardrails, gates, and reconcilia
       relative: 'src/agents/dude-spec-lead.agent.md',
       heading: '## Required Workflow',
       needles: [
-        'Only during explicit `brainstorm` or `define`, the coordinator delegates definition writes to the Spec Lead',
+        'Outside the sole Work exception below, only during explicit `brainstorm` or `define` does the coordinator delegate definition writes to the Spec Lead',
         'compute and return staged `kept`/`changed`/`dropped`/`new` reconciliation',
         'do not apply task glyphs, task metadata, boards, mirrors, execution-history state, execution-reconciliation events, or close logs',
         'A rerun of a defined ledger preserves `status: defined` and its exact `spec_path:`',
       ],
-      ruleLine: '- Only during explicit `brainstorm` or `define`, the coordinator delegates definition writes to the Spec Lead: idea/package artifacts, `status:`, exact `spec_path:`, managed definition regions, and definition `## Coordinator Log` events. On re-definition, compute and return staged `kept`/`changed`/`dropped`/`new` reconciliation, proposed canonical task units, and archive/discovered/history preservation; do not apply task glyphs, task metadata, boards, mirrors, execution-history state, execution-reconciliation events, or close logs.',
+      ruleLine: '- Outside the sole Work exception below, only during explicit `brainstorm` or `define` does the coordinator delegate definition writes to the Spec Lead: idea/package artifacts, `status:`, exact `spec_path:`, managed definition regions, and definition `## Coordinator Log` events. On re-definition, compute and return staged `kept`/`changed`/`dropped`/`new` reconciliation, proposed canonical task units, and archive/discovered/history preservation; do not apply task glyphs, task metadata, boards, mirrors, execution-history state, execution-reconciliation events, or close logs.',
     },
     {
       relative: 'src/agents/dude-spec-lead.agent.md',
@@ -731,7 +793,7 @@ test('T008 definition authority, rerun safety, guardrails, gates, and reconcilia
         'must not apply task glyphs, task metadata, generated boards, archive/discovered/execution-history state, or execution-reconciliation log events',
         'Preserve state only for a true one-to-one surviving task',
       ],
-      ruleLine: 'The Spec Lead computes and stages `kept`, `changed`, `dropped`, and `new` rows by durable task key, proposed canonical task units, and exact preservation of archives, `## Discovered During Execution`, and `## Lightweight Execution History`. It may write definition artifacts, metadata, and definition log events only through the explicit `define` delegation; it must not apply task glyphs, task metadata, generated boards, archive/discovered/execution-history state, or execution-reconciliation log events. Preserve state only for a true one-to-one surviving task. Splits, merges, scope changes, missing keys, or different keys remain open unless the mapping is explicit.',
+      ruleLine: 'The Spec Lead computes and stages `kept`, `changed`, `dropped`, and `new` rows by durable task key, proposed canonical task units, and exact preservation of archives, `## Discovered During Execution`, and `## Lightweight Execution History`. It may write definition artifacts, metadata, and definition log events only through the explicit `define` delegation, except for the sole Work-authorized unchanged-intent derived-artifact repair in an existing Lightweight package above; it must not apply task glyphs, task metadata, generated boards, archive/discovered/execution-history state, or execution-reconciliation log events. Preserve state only for a true one-to-one surviving task. Splits, merges, scope changes, missing keys, or different keys remain open unless the mapping is explicit.',
     },
     {
       relative: 'src/skills/dude-feature-definition/SKILL.md',
@@ -1170,7 +1232,6 @@ test('T008 lint and public references resolve exact current heading names', () =
 test('T008 Work retains limits, all natural stops, and non-negotiable boundaries', () => {
   const work = read('src/skills/dude-work/SKILL.md');
   assert.match(work, /Default `3`[^\n]*Hard floor `1`[^\n]*soft ceiling `25`/i);
-  assert.match(work, /Soft ceiling `2`/i);
   for (const stop of [
     'no ready task',
     'no ready Beads work',
@@ -1191,10 +1252,6 @@ test('T008 Work retains limits, all natural stops, and non-negotiable boundaries
     /never imports? (?:a )?feature/i,
     /(?:never|do not)[^\n]*(?:edit|change)[^\n]*(?:intent|definition artifacts)/i,
     /(?:never|do not)[^\n]*create[^\n]*new state/i,
-    /`\[P\]` is only a candidate signal/i,
-    /same-companion[^\n]*same-package[^\n]*may fan out[^\n]*dependency[^\n]*blocker[^\n]*known and disjoint/i,
-    /unknown write sets[^\n]*shared files or state[^\n]*dependencies[^\n]*blockers[^\n]*sequential/i,
-    /coordinator[^\n]*synthesis[^\n]*close[^\n]*serializ/i,
   ]) assert.match(work, boundary, `Work boundary: ${boundary}`);
 
   assertMatchesAll('src/skills/dude-parallel-dispatch/SKILL.md', [
@@ -1207,11 +1264,6 @@ test('T008 Work retains limits, all natural stops, and non-negotiable boundaries
     /serial/i,
   ]);
 
-  assertSectionRuleRejectsMutations(
-    'src/skills/dude-work/SKILL.md',
-    '## Iterate',
-    'When `--parallel > 1`, load `dude-parallel-dispatch`; `[P]` is only a candidate signal. Prefer different companion ideas or spec packages, but same-companion and same-package `[P]` tasks may fan out when neither has a dependency or blocker relation and their declared implementation write/file sets are known and disjoint. Unknown write sets, shared files or state, dependencies, or blockers stay sequential. Each sub-iteration counts toward max; coordinator synthesis, state mutation, and close remain serialized.',
-  );
   assertSectionRuleRejectsMutations(
     'src/skills/dude-parallel-dispatch/SKILL.md',
     '## Rules',
@@ -1540,3 +1592,384 @@ test('release assertions do not positively require or forbid the transitional mi
   assert.match(releaseTest, /assert\.doesNotMatch\(text, \/\\\.dude\\\/brief/);
   assert.match(releaseTest, /assert\.doesNotMatch\(text, \/\(\?:\^\|\\n\)## Draft/);
 });
+
+test('atomic definition recovery exports a filesystem-free tracked refusal guard', () => {
+  const source = read('src/skills/dude-feature-definition/atomic-file-batch.mjs');
+  const guardStart = source.indexOf('export function assertDefinitionRecoveryWritable');
+  const batchStart = source.indexOf('export function applyAtomicFileBatch');
+  assert.ok(guardStart >= 0, 'tracked definition recovery guard is exported');
+  assert.ok(batchStart > guardStart, 'tracked refusal is declared before the file batch helper');
+
+  const guard = source.slice(guardStart, batchStart);
+  assert.match(guard, /options\.lane === 'tracked'/);
+  assert.match(guard, /tracked definition recovery is unsupported before filesystem mutation/);
+  assert.match(guard, /code: 'tracked-definition-recovery-unsupported'/);
+  assert.doesNotMatch(guard, /\bfs\./);
+});
+
+test('T006 authority keeps one guarded Lightweight derived-artifact repair exception', () => {
+  const authorityFiles = [
+    'src/agents/dude.agent.md',
+    'src/agents/dude-spec-lead.agent.md',
+    'src/instructions/dude.instructions.md',
+    'src/skills/dude-feature-definition/SKILL.md',
+  ];
+  const absoluteClaims = [
+    /Only explicit `define <slug>` may create or refresh a package/i,
+    /Only during explicit `brainstorm` or `define`,[^\n]*definition writes/i,
+    /maintains definition metadata and history only during the explicit definition workflow/i,
+    /definition artifacts, metadata, and definition log events only through the explicit `define` delegation/i,
+    /During explicit `brainstorm` or `define`,[^\n]*Specialists otherwise do not mutate workflow state/i,
+  ];
+  const contradictory = authorityFiles.flatMap((relative) => visibleMarkdown(read(relative)).split('\n'))
+    .filter((line) => absoluteClaims.some((pattern) => pattern.test(line)))
+    .filter((line) => !/(?:Work-authorized|unchanged-intent|exception|except|ordinary package)/i.test(line));
+  assert.deepEqual(contradictory, [], 'absolute definition-write claims must state the guarded Work exception');
+
+  assertSectionMatchesAll('src/agents/dude.agent.md', '## Lifecycle', [
+    /^(?=[^\n]*(?:sole|only))(?=[^\n]*explicit `brainstorm(?: <idea>)?`)(?=[^\n]*(?:user[- ]intent|intent change)).+$/im,
+    /^(?=[^\n]*(?:sole|only))(?=[^\n]*explicit `define(?: <slug>)?`)(?=[^\n]*(?:package|create|refresh)).+$/im,
+  ]);
+  assertSectionMatchesAll('src/agents/dude.agent.md', '## Work', [
+    /^(?=[^\n]*Work-authorized)(?=[^\n]*unchanged-intent)(?=[^\n]*derived[- ](?:artifact|definition))(?=[^\n]*existing Lightweight package).+$/im,
+    /^(?=[^\n]*tracked(?: definition)? recovery)(?=[^\n]*refus)(?=[^\n]*before writes).+$/im,
+  ]);
+  assertSectionMatchesAll('src/agents/dude.agent.md', '## Flag', [
+    /flag never delegates definition writes[^\n]*(?:must not|never)[^\n]*(?:mutate|write)[^\n]*definition artifacts/i,
+  ]);
+  assertSectionMatchesAll('src/agents/dude-spec-lead.agent.md', '## Required Workflow', [
+    /^(?=[^\n]*Work-authorized)(?=[^\n]*unchanged-intent)(?=[^\n]*existing Lightweight package)(?=[^\n]*stag).+$/im,
+    /flag[^\n]*delegates no definition writes/i,
+    /^(?=[^\n]*tracked definition recovery)(?=[^\n]*refus)(?=[^\n]*before writes).+$/im,
+  ]);
+  assertSectionMatchesAll('src/instructions/dude.instructions.md', '# Dude Shared Rules', [
+    /^(?=[^\n]*(?:sole|only) exception)(?=[^\n]*Work-authorized)(?=[^\n]*unchanged-intent)(?=[^\n]*existing Lightweight package).+$/im,
+    /^(?=[^\n]*tracked(?: definition)? recovery)(?=[^\n]*refus)(?=[^\n]*before writes).+$/im,
+  ]);
+  assertSectionMatchesAll('src/skills/dude-feature-definition/SKILL.md', '## Re-definition', [
+    /Work-authorized[\s\S]*unchanged-intent[\s\S]*existing Lightweight package/i,
+    /exact[- ]owner[\s\S]*Spec Lead[\s\S]*stag/i,
+    /coordinator[\s\S]*reconciliation[\s\S]*(?:execution[- ]state|state ownership)/i,
+    /(?:atomic|all-or-restored)[\s\S]*verification[\s\S]*review/i,
+    /tracked[\s\S]*refus[\s\S]*before writes/i,
+  ]);
+});
+
+test('T006 Beads host supplies complete captured evidence to core recovery policy', () => {
+  const section = markdownSection(
+    read('library/packs/beads/skills/dude-pack-beads-workflow/SKILL.md'),
+    '### Continuous Work',
+  );
+  assert.match(section, /^(?=[^\n]*capture)(?=[^\n]*complete[^\n]*list)(?=[^\n]*detail)(?=[^\n]*history).+$/im);
+  assert.match(section, /^(?=[^\n]*(?:supply|pass|inject))(?=[^\n]*trusted)(?=[^\n]*`normalizeRecoveryEvidence`)(?=[^\n]*`normalizeTrackedEvidence`)(?=[^\n]*recovery).+$/im);
+  assert.match(section, /`dude-work`[^\n]*owns[^\n]*(?:inspection and recovery|detailed)[^\n]*policy/i);
+  assert.equal(section.split(/\n\s*\n/).length, 1, 'Beads recovery integration stays one terse pointer');
+});
+
+test('T007 Work is the sole detailed normative inspection and recovery owner', () => {
+  assert.equal(new Set(RECOVERY_POLICY_CONSUMERS).size, RECOVERY_POLICY_CONSUMERS.length);
+  for (const relative of [RECOVERY_POLICY_OWNER, ...RECOVERY_POLICY_CONSUMERS]) {
+    assert.equal(fs.statSync(path.join(ROOT, relative)).isFile(), true, relative);
+  }
+
+  const owner = markdownSection(read(RECOVERY_POLICY_OWNER), '## Inspection And Recovery');
+  assert.match(owner, /one complete model packet/i);
+  assert.match(owner, /Only `--recover-on-block` permits recovery/i);
+  assert.match(owner, /`authorizeAttempt`[^\n]*`completeAttempt`/i);
+  assert.match(owner, /unchanged-intent[^\n]*definition recovery/i);
+
+  const headingOwners = [RECOVERY_POLICY_OWNER, ...RECOVERY_POLICY_CONSUMERS]
+    .filter((relative) => visibleMarkdown(read(relative)).split('\n')
+      .some((line) => line.trim() === '## Inspection And Recovery'));
+  assert.deepEqual(headingOwners, [RECOVERY_POLICY_OWNER]);
+
+  const forbiddenDetails = [
+    ['command grammar', /(?:@dude work[^\n]*(?:--max|--until blocked|--parallel)|--(?:recover-on-block|recovery-cycles)\b)/i],
+    ['numeric packet bounds', /(?:\b16\b[^\n]{0,48}\b(?:available )?(?:evidence )?items?\b|\b65[,_]?536\b[^\n]{0,48}\b(?:UTF-8 )?bytes?\b)/i],
+    ['runtime transition fields', /\b(?:authorizeAttempt|completeAttempt|RunState|evidenceHash|approachHash|resultHash|recoveryUsed)\b/],
+    ['CLI or source wire schema', /\bcanonical base64\b|\{`?substantive`?,`?presentation\?`?\}/i],
+  ];
+  for (const relative of RECOVERY_POLICY_CONSUMERS) {
+    const content = visibleMarkdown(read(relative));
+    for (const [label, pattern] of forbiddenDetails) {
+      assert.doesNotMatch(content, pattern, `${relative} duplicates recovery ${label}`);
+    }
+    const detailedTransitionParagraphs = content.split(/\n\s*\n/)
+      .filter((paragraph) => [
+        /\b(?:authorize|authorization|attempt)\b/i,
+        /\b(?:charge|increment|counter|pending|budget)\b/i,
+        /\b(?:complete|completion|interrupt|clear|refund)\b/i,
+      ].every((pattern) => pattern.test(paragraph)));
+    assert.deepEqual(
+      detailedTransitionParagraphs,
+      [],
+      `${relative} duplicates a detailed recovery transition paragraph`,
+    );
+  }
+});
+
+test('T008 Work detailed owner defines the sequential-v1 recovery trust boundary', () => {
+  const source = read(RECOVERY_POLICY_OWNER);
+  const grammar = markdownSection(source, '## Grammar And Limits');
+  const recovery = markdownSection(source, '## Inspection And Recovery');
+  const failures = [
+    ...missingParagraphRequirements(grammar, [
+      ['every positive --parallel value is compatibility-only', [
+        [/--parallel/i, /positive/i, /compatib/i],
+        [/(?:effective|normaliz)[^\n]{0,32}(?:capacity|policy\.parallel|parallel)[^\n]{0,16}(?:`1`|1|one)/i],
+      ]],
+      ['invalid --parallel values reject before mutation', [/--parallel/i, /(?:zero|`0`)/i, /signed/i, /unsafe/i, /non-ASCII/i, /unlimited/i, /symbolic/i, /missing/i, /malformed/i, /duplicate/i, /reject|refus/i]],
+    ]),
+    ...missingParagraphRequirements(recovery, [
+      ['one Assessment is bound to its Inspection evidenceHash', [
+        [/one[^\n]{0,24}(?:model )?Assessment/i, /`?evidenceHash`?/i],
+        [/(?:Assessment[^\n]{0,80}(?:bound|carr)[^\n]{0,48}Inspection|Inspection[^\n]{0,80}(?:bound|carr)[^\n]{0,48}Assessment)/i, /`?evidenceHash`?/i],
+      ]],
+      ['authorization freshly refuses evidence drift without state changes', [/authoriz/i, /fresh(?:ly)?[^\n]{0,32}(?:recompute|rebuild|Inspection)/i, /evidence-drift/i, /unchanged[^\n]{0,32}(?:state|counter|pending|completed)/i]],
+      ['CLI byte fields use canonical base64', [/CLI/i, /byte/i, /canonical[^\n]{0,16}base64/i, /(?:RFC ?4648|padding|re-encod)/i]],
+      ['captured source records use exact shallow source-specific envelopes', [
+        [/\{`?substantive`?,`?presentation\?`?\}/i, /exact|closed/i],
+        [/presentation/i, /(?:shallow|top-level|non-recursive)/i, /source-specific/i],
+        [/substantive/i, /(?:nested|every)/i, /(?:`?id`?|`?summary`?)/i, /hash/i],
+      ]],
+      ['actions retain their hardcoded check sets', [
+        [/hardcoded|exact/i, /check/i],
+        [/execute-task/i, /retry-task/i, /verification/i],
+        [/address-test/i, /lint/i, /verification/i],
+        [/address-review/i, /review/i, /verification/i],
+        [/reconcile-derived-definition/i, /lint/i, /review/i, /verification/i],
+        [/retain-learning/i, /lint/i],
+        [/action[^\n]{0,12}(?:`none`|none)/i, /(?:no checks|empty)/i],
+      ]],
+      ['recovery permits only one pending authorization and no concurrency', [
+        [/at most one|zero or one|single/i, /pending[^\n]{0,24}authorization/i],
+        [/(?:no|never)[^\n]{0,32}concurrent[^\n]{0,24}pending/i],
+        [/(?:no|never)[^\n]{0,32}fan-out[^\n]{0,24}authority/i],
+      ]],
+      ['tracked definition refusal occurs after inspection and Assessment validation', [
+        [/tracked[^\n]{0,32}definition recovery/i, /(?:only )?after[^\n]{0,48}(?:fresh )?Inspection/i, /Assessment[^\n]{0,24}validat/i, /before[^\n]{0,32}(?:helper|write)/i, /refus|unsupported/i],
+      ]],
+      ['Lightweight definition recovery has the exact four-path scope', [/exact[^\n]{0,24}(?:four|4)[- ]path|exact owner/i, /owner[^\n]{0,16}(?:ledger|idea)/i, /`spec\.md`/i, /`plan\.md`/i, /`tasks\.md`/i, /`contracts\/schemas\.md`[^\n]{0,24}(?:exclude|refus|explicit definition)/i]],
+      ['definition recovery byte-preserves all user-owned sections', [/byte/i, /`?## Idea`?/i, /`?## Open Questions`?/i, /`?## Assumptions`?/i, /preserv|compar/i]],
+      ['durable retention depends on owner-inspected current state', [/retention|durable/i, /owner/i, /inspect/i, /current/i, /duplicates/i, /overlaps/i, /destinations?/i, /caller|model/i, /(?:cannot|must not|never)/i]],
+    ]),
+    ...staleRecoveryPhrases(visibleMarkdown(source)),
+  ];
+  assert.deepEqual(failures, [], `${RECOVERY_POLICY_OWNER}: sequential-v1 recovery contract`);
+});
+
+test('T007 recovery-specific always-loaded prompt proxy is deterministic and bounded', () => {
+  assert.deepEqual(
+    [...new Set(RECOVERY_PROMPT_PROXY_SELECTORS.map(({ source }) => source))].sort(),
+    [
+      'src/agents/dude-spec-lead.agent.md',
+      'src/agents/dude.agent.md',
+      'src/instructions/dude.instructions.md',
+    ],
+  );
+
+  const selectedLines = RECOVERY_PROMPT_PROXY_SELECTORS.map(({ source, line }) => {
+    const matchingLines = read(source).split('\n').filter((candidate) => line.test(candidate));
+    assert.equal(matchingLines.length, 1, `${source}: recovery proxy line selector must match once`);
+    return matchingLines[0];
+  });
+  const promptProxy = selectedLines.join('');
+  const promptBytes = Buffer.byteLength(promptProxy, 'utf8');
+  assert.equal(promptBytes, 1112, 'current recovery-specific always-loaded prompt proxy');
+  assert.ok(promptBytes <= 1200, `recovery prompt proxy is ${promptBytes} bytes (limit 1200)`);
+});
+
+test('T007 feature-005 policy selection and autonomous definition-plan evidence are documented in commands', () => {
+  const raw = read('docs/commands.md');
+  const section = markdownSection(raw, '### `@dude work`');
+
+  // `--policy guarded|autonomous` selector with a guarded default and explicit autonomous opt-in.
+  assert.match(section, /`--policy guarded\|autonomous`/);
+  assert.match(section, /The default is\s+`guarded`/);
+  assert.match(section, /`autonomous` is an explicit opt-in/);
+  assert.match(
+    section,
+    /relaxes\s+no hard stop, budget, verification, review, owner, evidence, lane, or close/i,
+  );
+  assert.match(
+    section,
+    /orthogonal to the numeric budgets and to the compatibility-only\s+`--parallel`/i,
+  );
+  assert.match(raw, /@dude work[^\n]*\[--policy guarded\|autonomous\]/);
+
+  // Autonomous-only `definition-plan` evidence ordered between task-history and lane-history;
+  // guarded performs no plan read.
+  assert.match(section, /Under `autonomous`[\s\S]*?`definition-plan` evidence item[\s\S]*?`plan\.md`/);
+  assert.match(section, /ordered between\s+`task-history`\s+and\s+`lane-history`/);
+  assert.match(section, /`guarded` opens no plan path and reads no\s+plan/);
+});
+
+test('T007 feature-005 objective evaluation is documented in reference without an active registry marker', () => {
+  const raw = read('docs/reference.md');
+  const section = markdownSection(raw, '## Execution Workflow');
+
+  // Objective registry: definition-compiled, plan-owned, durable task keys, placeholder-only markers.
+  assert.match(section, /objective registry is definition-compiled and plan-owned/i);
+  assert.match(section, /keyed by durable task keys/i);
+  assert.match(
+    section,
+    /consumed by runtime\s+only through the `definition-plan` evidence item, never inferred/i,
+  );
+  assert.match(section, /markers are documented with placeholders only/i);
+  assert.match(section, /Feature 005's own plan carries no active marker pair/i);
+  assert.match(raw, /<OBJECTIVE_REGISTRY_START>/);
+  assert.match(raw, /<OBJECTIVE_REGISTRY_END>/);
+
+  // Exactly five retention gates in fixed order with no sixth/optional/caller-selected gate, plus
+  // the always-present candidate-bound-completion verification.
+  assert.match(
+    section,
+    /`authorization`,\s*`checkpoint`,\s*`hard-constraints`,\s*`comparison`,\s*and\s*`independent-review`/,
+  );
+  assert.match(section, /no sixth, optional, alias, or caller-selected\s+gate/i);
+  assert.match(section, /`candidate-bound-completion`[\s\S]*?always[\s\S]*?zero objective checks/i);
+
+  // Comparators, equivalent-tie handling, keep-or-restore, and drift/rebaseline.
+  assert.match(section, /numeric threshold, ordinal levels, or a\s+unanimous rubric/i);
+  assert.match(section, /Equivalent defaults to non-keep/i);
+  assert.match(section, /binding drift makes the comparison incomparable, restores[\s\S]*?stops/i);
+  assert.match(
+    section,
+    /rebaseline after explicit re-definition also\s+stops the old sequence and restores/i,
+  );
+  assert.match(section, /every non-keep outcome\s+restores first/i);
+
+  // Events, dual projection into current-run and lane-history, the lane line, and no second ledger.
+  assert.match(
+    section,
+    /comparison, learning-review, and sequence-closed events project into\s+both existing surfaces/i,
+  );
+  assert.match(section, /current-run capture and lane history/i);
+  assert.match(section, /`- dude-run-event: `/);
+  assert.match(section, /no second\s+ledger is created/i);
+
+  // AuditSummary with exactly the four outcomes; no-objective yields no row / an empty array;
+  // the audit renderer writes no file and the `no-objective` token is never listed as an outcome.
+  assert.match(section, /`AuditSummary` renderer[\s\S]*?writes no file/i);
+  assert.match(section, /`kept`,\s*`discarded`,\s*`blocked`,\s*or\s*`unsettled`/);
+  assert.match(section, /task with no objective contributes no\s+`objectiveSequences` row/i);
+  assert.match(section, /whole run with no objective yields an empty\s+`objectiveSequences` array/i);
+  assert.doesNotMatch(section, /no-objective/);
+
+  // No assembled active start/end marker occupies a standalone line in any of the three docs.
+  const activeStart = '<' + '!-- dude:objective-registry:start --' + '>';
+  const activeEnd = '<' + '!-- dude:objective-registry:end --' + '>';
+  for (const [relative] of RECOVERY_DOC_SECTIONS) {
+    const lines = read(relative).split('\n');
+    assert.equal(
+      lines.some((line) => line.trim() === activeStart || line.trim() === activeEnd),
+      false,
+      `${relative}: no active objective-registry marker on a standalone line`,
+    );
+  }
+});
+
+test('T007 feature-005 autonomous modes and objective lifecycle are documented in workflow', () => {
+  const section = markdownSection(read('docs/workflow.md'), '### Optional Continuous Work');
+
+  // Autonomous work modes: guarded default vs autonomous auto-authorizing; sequential; no fan-out.
+  assert.match(
+    section,
+    /Autonomous work modes: `guarded` is the default; `autonomous` is an explicit\s+opt-in/i,
+  );
+  assert.match(
+    section,
+    /auto-authorizes the next guarded attempt at recoverable post-block,\s+post-failure, and post-review checkpoints/i,
+  );
+  assert.match(
+    section,
+    /Every settled hard stop, both numeric\s+budgets, fresh verification, and independent review still apply/i,
+  );
+  assert.match(section, /scheduling\s+stays sequential, with no concurrency or fan-out/i);
+
+  // Objective lifecycle at a glance: definition-compiled, never inferred, consumed via definition-plan;
+  // candidate -> checkpoint -> five gates -> keep-or-restore; non-keep restores; drift/rebaseline stops.
+  assert.match(section, /Progress Objective is compiled only during\s+definition and never inferred at runtime/i);
+  assert.match(section, /consumed only through the\s+`definition-plan` evidence item/i);
+  assert.match(
+    section,
+    /candidate that a\s+checkpoint captures, then five retention gates decide keep-or-restore/i,
+  );
+  assert.match(section, /non-keep outcome restores the exact prestate first/i);
+  assert.match(section, /drift or an\s+explicit rebaseline stops the sequence and restores/i);
+
+  // Projection and audit line.
+  assert.match(
+    section,
+    /comparison, learning-review, and sequence-closed events project into\s+the existing current-run and lane-history surfaces/i,
+  );
+  assert.match(section, /run audit is a concise renderer[\s\S]*?writes no file and creates no second ledger/i);
+
+  // No-objective behavior: present definition-plan, registryHash null, no sequence, ordinary path.
+  assert.match(
+    section,
+    /With no compiled objective, `autonomous` still yields a present\s+`definition-plan` evidence item with `registryHash: null`/i,
+  );
+  assert.match(section, /creates no evaluation\s+sequence, and follows the ordinary autonomous path/i);
+});
+
+for (const [relative, heading] of RECOVERY_DOC_SECTIONS) {
+  test(`T008 ${relative} documents sequential-v1 Work recovery in its owning section`, () => {
+    const section = markdownSection(read(relative), heading);
+    const requirements = {
+      'docs/commands.md': [
+        ['optional pre-flag feature selector', [/(?:optional|zero or one)/i, /(?:`?<feature>`?|feature selector)/i, /(?:before|ahead of|precedes?)[^\n]{0,48}(?:all|any)?\s*flags?/i]],
+        ['finite or unlimited overall maximum', [/(?:--max|overall[^\n]{0,32}(?:max|budget))/i, /(?:finite|positive|<N)/i, /unlimited/i]],
+        ['positive --parallel input is compatibility-only and effectively sequential', [
+          [/--parallel/i, /positive/i, /(?:ASCII|safe integer)/i, /compatib/i],
+          [/--parallel|accepted value/i, /(?:effective|normaliz)[^\n]{0,32}(?:capacity|policy|parallel)[^\n]{0,16}(?:`1`|1|one)/i, /no[^\n]{0,32}(?:concurr|fan-out)/i],
+        ]],
+        ['invalid --parallel values are fully defined', [/--parallel/i, /(?:zero|`0`)/i, /signed/i, /unsafe/i, /non-ASCII/i, /unlimited/i, /symbolic/i, /missing/i, /malformed/i, /duplicate/i, /reject|invalid/i]],
+        ['explicit --recover-on-block flag', [/--recover-on-block/]],
+        ['finite or unlimited --recovery-cycles with default 1', [/--recovery-cycles/i, /(?:finite|positive|<N)/i, /unlimited/i, /default(?:s)?(?: to)?[^\n]{0,16}(?:`1`|1|one)/i]],
+        ['ordinary post-block inspection and stop', [/(?:ordinary|without[^\n]*--recover-on-block)/i, /(?:post-block|after[^\n]*block)/i, /inspect/i, /stop/i]],
+        ['independent budgets and unlimited no-progress hard stops', [/independent|separate/i, /overall|--max/i, /recovery|--recovery-cycles/i, /unlimited/i, /no-progress/i, /(?:hard|must|still)[^\n]{0,48}stop|never[^\n]{0,48}bypass|remain[^\n]{0,48}in force/i]],
+        ['Assessment advice is bound to fresh Inspection evidence', [/(?:Assessment[^\n]{0,80}(?:bound|carr)[^\n]{0,48}(?:Inspection|evidenceHash)|(?:Inspection|evidenceHash)[^\n]{0,80}bound[^\n]{0,48}Assessment)/i]],
+        ['CLI byte transport is canonical base64', [/CLI|implementation boundary/i, /byte/i, /canonical[^\n]{0,16}base64/i]],
+        ['runtime definition recovery has exactly four paths', [/unchanged(?:[- ]intent|[^.\n]{0,40}user intent)/i, /existing\s+Lightweight/i, /exact owner/i, /owner[^\n]{0,16}(?:ledger|idea)/i, /`spec\.md`/i, /`plan\.md`/i, /`tasks\.md`/i, /exactly|only/i]],
+        ['tracked definition repair inspects first and refuses before writes', [/tracked/i, /definition/i, /recovery|repair/i, /(?:inspection[- ]first|only after[^\n]{0,32}(?:fresh )?inspect)/i, /Assessment/i, /refus|unsupported/i, /before[^\n]*write/i]],
+        ['durable retention requires owner inspection', [/retain|durable/i, /owner/i, /inspect/i, /current/i, /duplicates|overlaps|destination/i]],
+      ],
+      'docs/workflow.md': [
+        ['Lightweight-only optional selector ignored in Tracked Execution', [[/optional/i, /feature selector/i, /Lightweight/i, /ignored[^\n]*Tracked/i]]],
+        ['positive --parallel input has effective sequential behavior', [[/--parallel/i, /positive|accepted/i, /compatib/i, /(?:effective|normaliz)[^\n]{0,32}(?:`1`|1|one)/i, /no[^\n]{0,32}(?:concurr|simultaneous|fan-out)/i]]],
+        ['explicit --recover-on-block flag', [[/--recover-on-block/]]],
+        ['independent finite-or-unlimited overall and exact-target budgets with recovery default 1', [
+          [/overall|--max/i, /recovery|exact target|--recovery-cycles/i, /finite|positive/i, /unlimited/i, /default(?:s)?(?: to)?[^\n]{0,24}(?:`1`|1|one)/i],
+          [/independent|separate/i, /overall|--max/i, /recovery|exact-target|--recovery-cycles/i],
+        ]],
+        ['ordinary post-block inspection and stop', [[/(?:ordinary|without[^\n]*--recover-on-block)/i, /(?:post-block|after[^\n]*block)/i, /inspect/i, /stop/i]]],
+        ['unlimited leaves hard and no-progress stops in force', [[/unlimited/i, /no-progress/i, /(?:intent|approval|authority|safety|hard)/i, /(?:stops?[\s\S]{0,48}remain[\s\S]{0,48}in force|never[\s\S]{0,48}bypass|must[\s\S]{0,48}stop)/i]]],
+        ['Assessment advice is bound to fresh Inspection evidence', [[/(?:evidence[- ]bound[^\n]{0,32}(?:Assessment|advice)|(?:Assessment|advice)[^\n]{0,80}bound[^\n]{0,32}(?:Inspection|evidence)|evidenceHash)/i]]],
+        ['runtime definition recovery has exactly four paths', [[/unchanged[- ]intent/i, /existing\s+Lightweight/i, /exact owner/i, /owner[^\n]{0,16}(?:ledger|idea)/i, /`spec\.md`/i, /`plan\.md`/i, /`tasks\.md`/i, /exactly|only/i]]],
+        ['tracked definition repair inspects first and refuses before writes', [[/tracked/i, /definition/i, /recovery|repair/i, /(?:inspection[- ]first|only after[^\n]{0,32}(?:fresh )?inspect)/i, /Assessment/i, /refus|unsupported/i, /before[^\n]*write/i]]],
+        ['durable retention requires owner inspection', [[/retain|durable/i, /owner/i, /inspect/i, /current/i, /duplicates|overlaps|destination/i]]],
+        ['links to commands and the Work skill', [[/\]\(commands\.md#dude-work\)/i], [/\]\(\.\.\/\.github\/skills\/dude-work\/SKILL\.md\)/i]]],
+      ],
+      'docs/reference.md': [
+        ['ordinary post-block inspection and stop versus explicit recovery', [[/ordinary/i, /post-block|after[^\n]*block/i, /inspect/i, /stop/i, /explicit[^\n]*recovery/i]]],
+        ['positive --parallel input has effective sequential behavior', [[/--parallel/i, /positive|accepted/i, /compatib/i, /(?:effective|normaliz)[^\n]{0,32}(?:`1`|1|one)/i, /no[^\n]{0,32}(?:concurr|simultaneous|fan-out)/i]]],
+        ['independent budgets and unlimited no-progress hard stops', [
+          [/independent|separate/i, /overall/i, /(?:exact[- ]target|per[- ]target)[^\n]*recovery|recovery[^\n]*(?:exact[- ]target|per[- ]target)/i],
+          [/unlimited/i, /no-progress/i, /(?:intent|approval|authority|safety|hard)/i, /(?:(?:does not|cannot|never)[^\n]*bypass|stop[^\n]*remain[^\n]*in force|must[^\n]*stop)/i],
+        ]],
+        ['Assessment advice is bound to fresh Inspection evidence', [[/(?:evidence[- ]bound[^\n]{0,32}(?:Assessment|advice)|(?:Assessment|advice)[^\n]{0,80}bound[^\n]{0,32}(?:Inspection|evidence)|evidenceHash)/i]]],
+        ['runtime definition recovery has exactly four paths', [[/unchanged[- ]intent/i, /existing\s+Lightweight/i, /exact owner/i, /owner[^\n]{0,16}(?:ledger|idea)/i, /`spec\.md`/i, /`plan\.md`/i, /`tasks\.md`/i, /exactly|only/i]]],
+        ['tracked definition repair inspects first and refuses before writes', [[/tracked/i, /definition/i, /recovery|repair/i, /(?:inspection[- ]first|only after[^\n]{0,32}(?:fresh )?inspect)/i, /Assessment/i, /refus|unsupported/i, /before[^\n]*write/i]]],
+        ['durable retention requires owner inspection', [[/retain|durable/i, /owner/i, /inspect/i, /current/i, /duplicates|overlaps|destination/i]]],
+        ['links to commands and the Work skill', [[/\]\(commands\.md#dude-work\)/i], [/\]\(\.\.\/\.github\/skills\/dude-work\/SKILL\.md\)/i]]],
+      ],
+    }[relative];
+    assert.ok(requirements, `${relative}: recovery documentation contract`);
+    const failures = [
+      ...missingParagraphRequirements(section, requirements),
+      ...staleRecoveryPhrases(section),
+    ];
+    assert.deepEqual(failures, [], `${relative} ${heading}: recovery documentation contract`);
+  });
+}

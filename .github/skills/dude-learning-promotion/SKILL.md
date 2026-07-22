@@ -7,6 +7,8 @@ description: "Use when Dude overcomes a non-trivial challenge, discovers a reusa
 
 Turn solved challenges into reusable workflow knowledge.
 
+`dude-work` (`## Inspection And Recovery`) owns recovery retention routing. This skill owns deduplicating broadly recurring findings and deciding whether to extend or create a skill through `dude-skill-authoring`; it does not persist recovery advice automatically.
+
 ## Detection Triggers
 
 Consider promotion when:

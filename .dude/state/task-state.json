@@ -1,0 +1,102 @@
+{
+  ".dude/specs/001-brainstorm-ideas-intake/tasks.md": {
+    "glyphs": {
+      "T001@7c9e1a2b": "x",
+      "T002@4f8d3c10": "x",
+      "T003@a61b2e7d": "x",
+      "T004@3d90f6ab": "x",
+      "T005@8b2c4e71": "x",
+      "T006@5ea13d9c": "x",
+      "T007@c47f20b8": "x",
+      "T008@d4a7c930": "x",
+      "T009@1d6a9e35": "x",
+      "T010@e82c7a14": "x",
+      "T011@6f31bd90": "x",
+      "T012@b59e02c6": "x",
+      "T013@2a7d84f1": "x"
+    },
+    "updated_at": "2026-07-11T02:21:02.993Z"
+  },
+  ".dude/specs/002-remove-legacy-compatibility/tasks.md": {
+    "glyphs": {
+      "T016@7c31e8a4": "x",
+      "T019@4f9c2e71": "x",
+      "T018@1ae764cb": "x",
+      "T013@c7e18b4a": "x",
+      "T014@39d5f2c8": "x",
+      "T015@a84e71d6": "x",
+      "T023@5e7a91c4": "x",
+      "T024@b6d2048f": "x",
+      "T025@71ac3e95": "x",
+      "T021@3c7f90b5": "x",
+      "T022@6a2d1e84": "x",
+      "T003@c18e5a72": "x",
+      "T011@f3c84d90": "x",
+      "T005@e3a91c58": "x",
+      "T002@90bd37e4": "x",
+      "T026@2b8f4a17": "x",
+      "T027@6f8c2a91": "x",
+      "T028@c84f1a6e": "x",
+      "T006@7d64b2af": "x",
+      "T007@a5c83e10": "x",
+      "T008@2f9d6b47": "x",
+      "T009@8ac154de": "x",
+      "T010@d37f609b": "x",
+      "T029@4a7c91e2": "x",
+      "T030@9d2f6b83": "x",
+      "T032@6f3b2d90": "x",
+      "T033@b8a41c6e": "x",
+      "T034@2e7d95f4": "x",
+      "T035@d4c86a19": "x",
+      "T036@7a5e3c2b": "x",
+      "T037@f2b914d8": "x",
+      "T038@31c7e6a5": "x",
+      "T039@8b4d20f1": "x",
+      "T040@5e92ac73": "x",
+      "T041@a6f318dc": "x",
+      "T042@c93d57b4": "x"
+    },
+    "updated_at": "2026-07-17T12:23:13.729Z"
+  },
+  ".dude/specs/003-guarded-directory-artifact-import/tasks.md": {
+    "glyphs": {
+      "T001@6f2a9c31": "x",
+      "T002@8b4d1e75": "x",
+      "T003@3c7f5a92": "x",
+      "T004@9e1b6d43": " ",
+      "T005@7a91d4c2": " ",
+      "T006@b83e5f10": " ",
+      "T010@1d7a4c82": " ",
+      "T011@e6b3f905": " ",
+      "T007@4d2c9a76": " ",
+      "T009@c4a2f865": " "
+    },
+    "updated_at": "2026-07-21T02:54:45.609Z"
+  },
+  ".dude/specs/004-pre-work-log-learning/tasks.md": {
+    "glyphs": {
+      "T001@8f31c2a7": "x",
+      "T002@d4a90e6b": "x",
+      "T003@6c1f8b42": "x",
+      "T004@a7e25d19": "x",
+      "T005@3b94f0c6": "x",
+      "T006@e2d7185a": "x",
+      "T007@5f0a3c8d": "x",
+      "T008@c9b461e7": "x"
+    },
+    "updated_at": "2026-07-21T01:35:54.104Z"
+  },
+  ".dude/specs/005-autonomous-work-modes/tasks.md": {
+    "glyphs": {
+      "T001@a3f1c9d2": "x",
+      "T002@b7e4082a": "x",
+      "T003@c1d5e6f3": "x",
+      "T004@d9a20b74": "x",
+      "T005@e4c8f1a6": "x",
+      "T006@f2b3d7e1": "x",
+      "T007@0a9c4b58": "x",
+      "T008@1d6e2f93": "x"
+    },
+    "updated_at": "2026-07-22T04:35:43.946Z"
+  }
+}

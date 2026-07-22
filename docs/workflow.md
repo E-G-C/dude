@@ -283,6 +283,19 @@ Use it when you want Dude to keep going without re-issuing one verb per task:
 @dude work --until blocked
 ```
 
+The optional feature selector must precede all flags. It disambiguates
+Lightweight work only and is ignored in Tracked Execution. Overall work defaults
+to three authorizations; `--until blocked` implies 25 only when no explicit
+`--max` is present. With `--recover-on-block`, recovery defaults to `1` cycle per
+exact target. The overall and exact-target
+recovery budgets are independent; finite values must be positive, while
+`unlimited` removes only the corresponding numeric cap. Positive ASCII safe
+integer `--parallel` values are accepted only for compatibility: every accepted
+value is discarded, normalizes the effective policy to `1`, and grants no concurrency or fan-out.
+Recovery cycles without recovery opt-in, and recovery
+combined with `--until blocked`, are rejected before mutation. See the
+[complete grammar and flag rules](commands.md#dude-work).
+
 Lane detection runs once at the start:
 
 - When tracked execution is available and initialized, first query the complete
@@ -302,21 +315,63 @@ Lane detection runs once at the start:
 Each iteration still runs the active lane's close protocol (Lightweight Close
 Protocol or Beads Close Protocol). `dude-verification-before-completion`,
 coordinator-only mutation of task glyphs, and `dude-lint` after every write
-all still apply per iteration. The default cap is `--max 3`; the soft ceiling
-is `--max 25`.
+all still apply per iteration. Lane state and close decisions remain
+coordinator-owned.
 
-`@dude work` stops on the first of: no ready task, a real blocker, failed
-verification, reviewer rejection, required clarification, two consecutive
-failed attempts on the same task, ambiguous state, tool error, or `--max`
-reached. It never imports features, never auto-commits, never edits `spec.md`,
-`plan.md`, or idea content, and never creates a new state file. Use
-[`@dude flag ...`](commands.md#dude-flag) for definition gaps, and `@dude track`
-to enable Beads.
+Before each task start or resume, and after each block or failure, Work inspects
+all available current-format history exactly bound to that target. A requested
+feature-only inspection is read-only, and unavailable optional session history
+alone does not block it. One bounded complete evidence packet receives one
+evidence-bound Assessment carrying its Inspection's `evidenceHash`; Work
+freshly re-inspects before authorization, and drift refuses without changing
+counters. Overflow is reported by descriptor only, without recovery.
 
-The full grammar, stop conditions, and reporting shape are documented in
-[Commands and prompt shapes](commands.md#dude-work). The skill that defines
-the iteration protocol lives at
-[`.github/skills/dude-work/SKILL.md`](../.github/skills/dude-work/SKILL.md).
+Ordinary Work performs the post-block inspection and stops. Only explicit
+recovery can authorize another attempt. Overall and exact-target recovery
+budgets remain independent; no-progress, intent, approval, dependency,
+identity, reconciliation, authority, safety, verification, and review stops
+remain in force even with unlimited numeric budgets.
+
+Ordinary Work does not revise definitions. Explicit recovery may repair an
+unchanged-intent derived definition defect only inside an existing Lightweight
+package across exactly four paths: the exact owner idea ledger plus sibling
+`spec.md`, `plan.md`, and `tasks.md`. It preserves the complete user-owned Idea,
+Open Questions, and Assumptions sections; supporting contracts remain an
+explicit-definition concern. Tracked definition recovery is inspection-first:
+only after a fresh Inspection and Assessment validation does it refuse as
+unsupported, before any write. Findings stay transient unless the current
+memory or skill owner freshly inspects its artifacts, duplicates, overlaps, and
+destination and accepts them for durable retention; caller claims are not
+authority.
+
+Autonomous work modes: `guarded` is the default; `autonomous` is an explicit
+opt-in that auto-authorizes the next guarded attempt at recoverable post-block,
+post-failure, and post-review checkpoints. Every settled hard stop, both numeric
+budgets, fresh verification, and independent review still apply; scheduling
+stays sequential, with no concurrency or fan-out.
+
+Objective evaluation at a glance: a Progress Objective is compiled only during
+definition and never inferred at runtime, and it is consumed only through the
+`definition-plan` evidence item. Each attempt forms a candidate that a
+checkpoint captures, then five retention gates decide keep-or-restore. Any
+non-keep outcome restores the exact prestate first, and objective drift or an
+explicit rebaseline stops the sequence and restores its proven incumbent before
+continuing.
+
+Objective comparison, learning-review, and sequence-closed events project into
+the existing current-run and lane-history surfaces before any bounded objective
+state is released. The optional run audit is a concise renderer over that
+history; it writes no file and creates no second ledger.
+
+With no compiled objective, `autonomous` still yields a present
+`definition-plan` evidence item with `registryHash: null`, creates no evaluation
+sequence, and follows the ordinary autonomous path.
+
+Work never imports features, auto-commits, creates a lane or board, or bypasses
+the active lane's close protocol. Use [`@dude flag ...`](commands.md#dude-flag)
+for definition gaps and `@dude track` to enable Beads. The
+[command reference](commands.md#dude-work) owns public usage details; the
+[Work skill](../.github/skills/dude-work/SKILL.md) owns the protocol.
 
 ### Tracked Execution
 

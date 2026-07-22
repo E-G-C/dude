@@ -343,4 +343,4 @@ When a specialist returns from tracked work:
 
 ### Continuous Work
 
-When the user invokes `@dude work` while Tracked Execution is the active lane, load `dude-work` and let it drive the ready loop above. The claim discipline (`bd update <id> --claim --json`), the coordinator-only close decision (`bd close`), the Beads Close Protocol, the markdown mirror, and `dude-lint` after each write all still apply per iteration. The default cap is `--max 3`. See `dude-work` for the full grammar and stop conditions.
+In Tracked Execution, the local `@dude work` host captures the complete Beads list plus detail and history for every selected issue, then must internally supply existing `normalizeRecoveryEvidence` as trusted `normalizeTrackedEvidence` to core recovery through the sealed `collectRecoveryEvidence`, `inspectRecovery`, and `authorizeRecoveryAttempt` wrappers. `dude-work` owns detailed inspection and recovery policy; Beads retains tracked claim, block, coordinator-only close, mirror, history, and lint duties for each authorized action.

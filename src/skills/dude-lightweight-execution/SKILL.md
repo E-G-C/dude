@@ -44,6 +44,8 @@ The coordinator-state snapshot at `.dude/state/task-state.json` is optional: its
 
 After ownership passes, read applicable spec, plan, and supporting artifacts. Stop if tasks are absent, malformed, or empty. Resume a clear `[~]` task first; otherwise select an eligible `[ ]` task, preferring a consistent generated Ready view, then respecting `[!]`, durable `deps:`, phase order, and `[P]` candidate work. `[P]` alone never authorizes fan-out; use `dude-parallel-dispatch` for that proof. Route through `dude-generic-routing`. Use `dude-work` only for continuous iteration.
 
+During continuous work, `dude-work` (`## Inspection And Recovery`) owns inspection and recovery policy. This skill retains Lightweight selection, claim and block mutation, close gates, history, rendering, and lint for each authorized action.
+
 On claim, only the coordinator sets `[~]`. On a routed blocker, only the coordinator sets `[!]` and maintains `blocked-by:`. Resolved blockers return to `[ ]` or `[~]`. Scope changes return to the owning idea and explicit `define`; never invent task lines or a second ledger.
 
 ## Manual `[x]` Drift

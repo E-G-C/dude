@@ -44,7 +44,11 @@ Initial definition has a prospective owner because no defined owner exists yet:
 
 Resolve the exact current defined owner before any write. Refresh from user-controlled intent, not from generated spec or plan prose. Preserve `status: defined`, exact `spec_path:`, append-only history, still-applicable supporting artifacts, and preserved task-history sections.
 
-The Spec Lead computes and stages `kept`, `changed`, `dropped`, and `new` rows by durable task key, proposed canonical task units, and exact preservation of archives, `## Discovered During Execution`, and `## Lightweight Execution History`. It may write definition artifacts, metadata, and definition log events only through the explicit `define` delegation; it must not apply task glyphs, task metadata, generated boards, archive/discovered/execution-history state, or execution-reconciliation log events. Preserve state only for a true one-to-one surviving task. Splits, merges, scope changes, missing keys, or different keys remain open unless the mapping is explicit.
+Explicit `brainstorm` is the sole route for user-intent changes, and explicit `define` the sole route for package creation or lifecycle changes; `flag` delegates no definition writes and is no-write for definition artifacts.
+
+Work-authorized unchanged-intent derived-artifact repair in an existing Lightweight package is the sole exception to explicit-define-only definition writes. It follows `dude-work` (`## Inspection And Recovery`): after the exact-owner gate, the Spec Lead stages the definition-artifact, metadata, and definition-log half; the coordinator owns the reconciliation and execution-state half; and `atomic-file-batch.mjs` applies the complete batch atomically/all-or-restored before fresh verification, lint, and independent review. Tracked definition recovery refuses before writes.
+
+The Spec Lead computes and stages `kept`, `changed`, `dropped`, and `new` rows by durable task key, proposed canonical task units, and exact preservation of archives, `## Discovered During Execution`, and `## Lightweight Execution History`. It may write definition artifacts, metadata, and definition log events only through the explicit `define` delegation, except for the sole Work-authorized unchanged-intent derived-artifact repair in an existing Lightweight package above; it must not apply task glyphs, task metadata, generated boards, archive/discovered/execution-history state, or execution-reconciliation log events. Preserve state only for a true one-to-one surviving task. Splits, merges, scope changes, missing keys, or different keys remain open unless the mapping is explicit.
 
 Dropping any non-open task is a hard pause for user confirmation. The user may confirm, reject, force keep/drop, or archive dropped rows. Archived rows go in terminal `## Lightweight Execution History`, remain read-only evidence, and are never parsed or regenerated. Preserve any `## Discovered During Execution` section verbatim immediately before history; its synced `T9001`-`T9999` rows are outside spec-derived reconciliation.
 
@@ -63,6 +67,22 @@ Canonical task units live below any generated board and use:
 States are `[ ]`, `[~]`, `[!]`, and `[x]`. Durable keys survive only while task meaning survives. `[P]` is only a parallel candidate signal; actual fan-out still requires no dependency or blocker relation and known disjoint implementation write sets. `deps:` adds real durable-key blockers; `blocked-by:` explains `[!]`. Spec-derived IDs stay below `T9000`.
 
 `tasks.md` carries the exact owner breadcrumb. An optional balanced Dude board fence is a complete regenerated view of canonical units, never canonical state. Supporting checklists are advisory, not another board. Phases normally progress Setup, Foundational, prioritized User Stories, then Polish; every task traces to the plan and every plan decision to the spec.
+
+## Objective Registry
+
+`brainstorm` and `define` are the sole compiler of measurable objectives, and they compile into exactly one plan-owned `ObjectiveRegistry` region in the feature's `plan.md`, keyed by durable task keys. Runtime only reads this region; it never authors, infers, or repairs an objective.
+
+Build the active start marker by concatenating `<`, `!-- dude:objective-registry:start --`, and `>`; the end marker replaces `start` with `end`. A marker is active only as a complete logical line with no surrounding bytes, outside inline code spans and fenced code blocks. The only valid region is exactly one start line, one canonical-JSON `ObjectiveRegistry` line, then one end line. Zero markers is `none` (no objectives); a lone, duplicate, reversed, or misordered marker, a missing or extra body line, or a noncanonical or invalid body is `malformed`; a valid registry that disagrees with the exact owner, sibling plan path, selected task, or freshly verified tracked mapping is `conflict`.
+
+Illustrate the closed root with placeholders only, never a literal active marker:
+
+```text
+<OBJECTIVE_REGISTRY_START>
+{"version":1,"owner":{"ideaPath":"…","specPath":"…"},"entries":[{"taskKey":"…","provenance":{…},"contract":{…}}]}
+<OBJECTIVE_REGISTRY_END>
+```
+
+Each entry binds one durable `taskKey` to definition-compiled `provenance` and a frozen `EvaluationContract`. Feature 005's own `plan.md` keeps zero active registry regions.
 
 ## Validation And Handoff
 

@@ -1,17 +1,18 @@
 ---
 name: writing
-description: "Avoid AI writing tropes: the canonical source of truth for AI writing tells (em-dash overuse, robotic/salesy phrasing, generic structure) when producing human-facing prose."
+description: "Write clear, professional, actionable prose and remove common AI writing tells from human-facing content."
 provides:
   agents: []
   skills:
     - dude-pack-writing-avoid-ai-tropes
+    - dude-pack-writing-style
 ---
 
 # Writing Pack
 
-A prose-quality skill for any human-facing text the bundle produces — READMEs,
-docs, news/blog posts, release notes, PR/commit descriptions, agent/skill
-descriptions, UI copy, email.
+Complementary prose-quality skills for any human-facing text the bundle produces:
+READMEs, docs, news and blog posts, release notes, PR and commit descriptions,
+agent and skill descriptions, UI copy, and email.
 
 ## Provides
 
@@ -19,13 +20,17 @@ descriptions, UI copy, email.
   tells and how to remove them. Triggers on requests like "make this sound less
   like AI", "remove the AI tropes", "de-slop this", "too many em dashes", or
   "why does this read like ChatGPT".
+- `dude-pack-writing-style` — positive guidance for professional voice,
+  document structure, readable explanations, and action-oriented task output.
+  Triggers on requests like "improve the writing style", "make this more
+  professional", "tighten this document", or "make this easier to follow".
 
 ## When installed
 
-Other skills and agents can defer to it as the bundle-wide authority on writing
-voice. It is self-contained and has no dependencies, so it pairs with any other
-pack (it complements `newsroom` article drafting and `docsy` content work in
-particular).
+Other skills and agents can defer to this pack for writing voice and readability.
+The two skills are self-contained and have no dependencies, so the pack pairs
+with any other pack. It complements `newsroom` article drafting and `docsy`
+content work in particular.
 
 ## Install / remove
 
