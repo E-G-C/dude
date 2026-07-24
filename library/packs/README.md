@@ -32,6 +32,7 @@ namespace, which the engine treats as a distinct ownership tier:
 | `newsroom` | newsroom writer + event deep-fetcher agents + article / calendar-event / static-safe-time skills | you publish news & events to a Hugo/Docsy site's News section |
 | `writing` | avoid-AI-writing-tropes prose-quality skill | you want a canonical guard against AI writing tells |
 | `design` | design-proposal lane skill (propose → mockup → preview → approve → apply) | you want a visual design workflow overlaid on the task lifecycle |
+| `technical-docs` | 5 technical-document agents + 7 skills (evidence-ledger pipeline) + 2 prompts | you generate or update technical docs from a repo, transcripts, notes, drafts, or existing docs |
 
 Packs are added to this table as they are migrated out of core.
 

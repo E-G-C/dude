@@ -22,19 +22,18 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
         ".github/agents/dude-pack-authoring-skill-smith.agent.md",
         ".github/skills/dude-pack-authoring-instruction-conventions",
         ".github/skills/dude-pack-authoring-pack-conventions",
-        ".github/skills/dude-pack-authoring-prompt-audit",
         ".github/skills/dude-pack-authoring-prompt-conventions"
       ],
-      "installed_at": "2026-07-17T02:22:14.865Z",
+      "installed_at": "2026-07-22T17:51:55.183Z",
       "inventory": {
         "version": 1,
         "pack": "authoring",
         "source": {
-          "type": "source",
-          "location": "https://github.com/E-G-C/dude",
-          "ref": "main"
+          "type": "library",
+          "location": "/Users/eg/work/AI/dude/library/packs",
+          "ref": ""
         },
-        "manifest_sha256": "39c4e00cc501fcd2a15c565891382bd1343697dd6b0a0b2078e1b7ee70e129bc",
+        "manifest_sha256": "e5147220696d37022e4308ffb7b0b8bc3c14a23e37166f1c51cac23b000faea0",
         "artifacts": [
           {
             "path": ".github/agents/dude-pack-authoring-agent-smith.agent.md",
@@ -86,13 +85,6 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
             "installed_sha256": "7cfe594780ba84e307ce85d47453d6a521bdcc90dfdee3f49745c059acf5984f"
           },
           {
-            "path": ".github/skills/dude-pack-authoring-prompt-audit",
-            "kind": "skills",
-            "source": "skills/dude-pack-authoring-prompt-audit",
-            "source_sha256": "129dfbde62cd9f44ccb09097a80e1575dea94953e58616fcfab52ed19081d9c4",
-            "installed_sha256": "129dfbde62cd9f44ccb09097a80e1575dea94953e58616fcfab52ed19081d9c4"
-          },
-          {
             "path": ".github/skills/dude-pack-authoring-prompt-conventions",
             "kind": "skills",
             "source": "skills/dude-pack-authoring-prompt-conventions",
@@ -100,7 +92,7 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
             "installed_sha256": "79ff7fce82edabee90df9b0d9cd56a7da4ee9a12f3633388b5b8bc720584e816"
           }
         ],
-        "digest": "cd91003b39ed2d5962afb7aa61a00a68434174b9bea3a1eeb20e771f64a399f4"
+        "digest": "15e9b9bdff78f8d7b36a5429e8ed3af378943c840651c4e1c323bf4c91745990"
       }
     },
     "coding": {

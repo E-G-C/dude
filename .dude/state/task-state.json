@@ -98,5 +98,48 @@
       "T008@1d6e2f93": "x"
     },
     "updated_at": "2026-07-22T04:35:43.946Z"
+  },
+  ".dude/specs/006-simplify-context-footprint-audit/tasks.md": {
+    "glyphs": {
+      "T005@4f8a2c71": "x",
+      "T006@b3d9e560": "x"
+    },
+    "updated_at": "2026-07-22T19:06:25.738Z"
+  },
+  ".dude/specs/007-technical-docs-pack-remediation/tasks.md": {
+    "glyphs": {
+      "T001@00709e37": "!",
+      "T002@00713c6e": " ",
+      "T003@0071daa5": " ",
+      "T004@007278dc": " ",
+      "T005@00731713": " ",
+      "T006@0073b54a": " ",
+      "T007@00745381": " ",
+      "T008@0074f1b8": " ",
+      "T009@00758fef": " "
+    },
+    "updated_at": "2026-07-23T00:55:22.866Z"
+  },
+  ".dude/specs/008-automatic-core-dogfood-promotion/tasks.md": {
+    "glyphs": {
+      "T001@8f2c1a47": "x",
+      "T002@5b7d930e": "~",
+      "T003@c4e6812d": " "
+    },
+    "updated_at": "2026-07-24T11:04:12.624Z"
+  },
+  ".dude/specs/009-autonomous-learning-governance/tasks.md": {
+    "glyphs": {
+      "T001@7365616c": "!",
+      "T002@6964656e": " ",
+      "T003@7075626c": " ",
+      "T004@68616c74": " ",
+      "T005@7065726d": " ",
+      "T006@6c616e65": " ",
+      "T007@646f6373": " ",
+      "T008@70726f6f": " ",
+      "T009@696e6369": " "
+    },
+    "updated_at": "2026-07-23T11:17:22.145Z"
   }
 }
