@@ -113,4 +113,4 @@ The safety branch and tag remain until you delete them, so you can always roll f
 
 ## When to skip the upgrader
 
-The upgrader is the right tool for engine refreshes. For first-time installs into a fresh repo or for cross-machine bundle transfers, see [dude-portability](../.github/skills/dude-portability/SKILL.md). For pulling in a single specialist or skill from a third-party source, see [dude-bundle-import](../.github/skills/dude-bundle-import/SKILL.md).
+The upgrader is the right tool for engine refreshes. For first-time installs into a fresh repo or for cross-machine bundle transfers, see [dude-portability](../.github/skills/dude-portability/SKILL.md). For importing one focused specialist or skill, or one bounded clean artifact directory from a third-party source, see [dude-bundle-import](../.github/skills/dude-bundle-import/SKILL.md). Directory import is not an upgrade or bundle-deployment path.

@@ -170,9 +170,10 @@ Dude includes explicit operational skills for common failure modes:
   verification step after writing idea, definition, agent, skill, memory, or
   task files. See [Validating bundle hygiene](commands.md#validating-bundle-hygiene)
   for direct invocation.
-- `dude-bundle-import` — import a single agent or skill from an external
-  repository with an explicit adaptation report and per-category confirmation
-  before any write. See [Importing agents and skills](commands.md#importing-agents-and-skills).
+- `dude-bundle-import` — import one focused agent or skill with reviewed
+  adaptation, or one bounded clean local/public-GitHub directory through
+  read-only analysis and planning before exact-plan apply. See
+  [Importing agents and skills](commands.md#importing-agents-and-skills).
 - `dude-bundle-upgrade` — refresh the installed Dude bundle from upstream using a
   seeded manifest, dry-run report, explicit `confirm upgrade` gate, safety tag,
   and rollback path. See [Upgrading the bundle](commands.md#upgrading-the-bundle).

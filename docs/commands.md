@@ -622,13 +622,11 @@ complementary.
 
 ### Importing agents and skills
 
-Use the `dude-bundle-import` skill to bring a single agent (`*.agent.md`) or skill
-(`<name>/SKILL.md`) into the bundle from an external repository. The skill
-fetches the source, produces a structured **adaptation report** listing every
-adaptation it would apply (frontmatter strips, Anthropic/Claude tool-name
-references, MCP assumptions, sibling files, referenced skills, overlap with
-local artifacts, missing coordinator-only block, persona drift), and waits
-for explicit per-category confirmation before any write.
+Use the `dude-bundle-import` skill for either one focused agent or skill, or one
+bounded clean directory of Dude artifacts. Focused import produces an adaptation
+report and waits for per-category confirmation. Directory import preserves the
+complete selected subtree, uses deterministic analysis plus a reviewed plan,
+and rejects sources that need focused adaptation.
 
 No runtime is installed and no remote state is modified. Python or Bash
 siblings are refused by default; the user must confirm them per file.
@@ -644,10 +642,49 @@ token-overlap scoring against existing local artifacts — is computed by
 ```bash
 node .github/skills/dude-bundle-import/import.mjs analyze <url|path> --json   # adaptation report
 node .github/skills/dude-bundle-import/import.mjs apply   <url|path> --plan plan.json
+
+node .github/skills/dude-bundle-import/import.mjs analyze-directory <source> > analysis.json
+node .github/skills/dude-bundle-import/import.mjs plan-directory --analysis analysis.json [--review review.json] > plan.json
+node .github/skills/dude-bundle-import/import.mjs apply-directory <source> --plan plan.json --confirm <literal>
 ```
 
 `analyze` never writes; `apply` executes a confirmed plan and refuses unless a
 `license_disposition` is recorded when the source carries license metadata.
+Those focused commands and their accepted file sources are unchanged.
+
+Directory analysis and planning are read-only and emit the only two persisted
+artifacts: canonical `analysis.json` and `plan.json`. Sources are one no-follow
+local directory or canonical public GitHub `tree/<ref>/<subtree>` URL. V1 caps
+depth at 12, entries at 256, regular files at 128, each file at 1048576 bytes,
+and all file bytes at 4194304. Review batches hold at most 16 complete files and
+262144 decoded bytes. A complete optional review is capped at 1048576 UTF-8
+bytes, including the raw pre-parse boundary; a complete reviewed plan is capped
+at 16777216 UTF-8 bytes, including the raw apply boundary. The aggregate review
+and plan limits add no per-finding limits.
+
+Directory import is for clean, already-portable artifacts. Adaptation-sensitive
+entrypoint metadata, ambiguous ownership, broken mapped references, unsafe
+destinations, and source/output/transaction overlap Block. Broad static
+indicators Warn without context reduction; only tightly bound dangerous
+constructs Block. A review ID truthfully covers one exact complete generated
+batch, cannot authorize or downgrade findings, and does not prove safety.
+
+Agents must already contain exactly one standalone canonical paragraph;
+directory import never inserts or rewrites it:
+
+```text
+**Coordinator-only artifacts:** do not edit `## Coordinator Log`, task-state glyphs in `tasks.md`, fenced regions (`<!-- dude:managed:* -->`, `<!-- dude:board:* -->`), or `status:` / `spec_path:` frontmatter. Report changes back to `@dude` instead.
+```
+
+Clean plans require `confirm-import`; Warned plans require
+`confirm-warned-import:<plan_sha256>`; Blocked analyses produce no plan. The
+literal covers every sorted `replace_paths` entry, with no selective import,
+force, merge, or implicit overwrite. Apply stages outputs and backups, then
+reports verified installation, verified rollback, or retained recovery material
+with uncertain paths. These checks do not prove safety against hostile races,
+and imported content is never executed. On Windows, transaction material uses
+the selected parent's inherited ACLs; the importer does not manage ACLs or claim
+current-user-only access, so secure that parent externally for stronger privacy.
 
 Use the import verb when the user supplies a URL or names an external repo:
 
@@ -657,8 +694,8 @@ Use the import verb when the user supplies a URL or names an external repo:
 @dude dry-run import https://raw.githubusercontent.com/<owner>/<repo>/<ref>/SKILL.md
 ```
 
-Whole-bundle save and deploy stays in the `dude-portability` skill; this
-skill is single-artifact only.
+Whole-bundle save and deploy stays in the `dude-portability` skill. Directory
+import handles one bounded selected subtree, not a bundle deployment.
 
 ### Engine scripts (deterministic helpers)
 
@@ -675,7 +712,7 @@ The coordinator invokes them; they are not a background service.
 | `dude-lightweight-execution/board.mjs` | `parse` / `ready` / `next` / `render` / `set` / `apply-states` / `diff` on `tasks.md` |
 | `dude-team-expansion/scaffold-agent.mjs` | emit a lint-clean `.agent.md` skeleton (`--pack` updates `pack.md`) |
 | `dude-skill-authoring/scaffold-skill.mjs` | emit a lint-clean `SKILL.md` skeleton (`--pack` updates `pack.md`) |
-| `dude-bundle-import/import.mjs` | `analyze` / `apply` the mechanical import prep |
+| `dude-bundle-import/import.mjs` | focused `analyze` / `apply`, plus guarded directory analysis, planning, and apply |
 | `dude-memory-ledger/memory.mjs` | `append` a memory entry, refusing near-duplicates |
 | `dude-engine/lib/*.mjs` | shared engine libraries (ownership, tasks, text, text-analysis, pack-manifest) |
 

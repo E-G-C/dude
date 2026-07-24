@@ -72,11 +72,13 @@ Schema version 1 fixes these source and transport limits; they are renderer and 
   "max_raw_response_bytes": 1048576,
   "max_metadata_total_bytes": 4194304,
   "max_raw_total_bytes": 4194304,
+  "max_optional_review_json_bytes": 1048576,
+  "max_reviewed_plan_json_bytes": 16777216,
   "request_timeout_ms": 30000
 }
 ```
 
-Review batches are likewise fixed at no more than 16 complete strict-UTF-8 files and 262,144 decoded bytes. Version 1 accepts no caller override. The renderer always states that static and language-model review do not prove safety and that import does not execute content; these fixed claim limits are not serialized. A later constant change requires a schema revision or a deliberately compatible contract change with tests.
+Review batches are likewise fixed at no more than 16 complete strict-UTF-8 files and 262,144 decoded bytes. The optional-review and reviewed-plan JSON ceilings are aggregate-only: version 1 defines no per-finding count limit and no evidence, explanation, path, or generic scalar limits. Every constant above is a fixed versioned renderer/validator fact, accepts no caller override, and is not serialized. The renderer always states that static and language-model review do not prove safety and that import does not execute content; these fixed claims are not serialized. A later constant change requires a schema revision or a deliberately compatible contract change with tests.
 
 ## Canonical Entries
 
@@ -218,6 +220,8 @@ The optional review input has exactly:
 }
 ```
 
+The complete optional review JSON has a maximum of 1,048,576 UTF-8 bytes. Raw review bytes over that ceiling are rejected before JSON parsing, and a structured review whose canonical JSON exceeds the ceiling is rejected before semantic acceptance. Raw and canonical review JSON at exactly 1,048,576 bytes may proceed when every other requirement passes; 1,048,577 bytes is rejected at the applicable raw or canonical boundary.
+
 `reviewed_batch_ids` is lexically sorted and unique and may cover any subset of generated batches. A listed ID claims review of that exact full generated batch, so no file/hash list or status row repeats it. Each finding references one listed batch ID and a path in that batch, uses a valid category and `info` or `warn`, and has non-empty evidence and explanation. Finding tuples are unique and sort by `batch_id`, `path`, severity precedence (`warn`, `info`), category, evidence, then explanation.
 
 Unknown fields, stale analysis hashes, unsorted, duplicate, or unknown batch IDs, findings for an uncovered batch or invalid path, invalid categories or severities, duplicate findings, and empty evidence or explanations reject the complete review input. They are not normalized into coverage. Missing batch IDs, over-budget text, and opaque files force at least Warned. Review findings cannot Block, authorize, normalize a plan, erase static evidence, or reduce static severity.
@@ -269,6 +273,8 @@ Unknown fields, stale analysis hashes, unsorted, duplicate, or unknown batch IDs
 }
 ```
 
+The complete canonical reviewed plan, including `plan_sha256`, has a maximum of 16,777,216 UTF-8 bytes. A complete canonical plan over that ceiling is rejected before emission or structured acceptance, and apply rejects raw plan bytes over the same ceiling before JSON parsing or acceptance. Complete canonical plans, structured plan values, and raw apply plans at exactly 16,777,216 bytes may proceed when every other requirement passes; 16,777,217 bytes is rejected at the applicable canonical, structured, or raw boundary.
+
 `source`, `manifest_sha256`, minimal `groups`, exact `outputs`, and `static_findings` are copied only where apply requires a self-contained expected value for deterministic recomputation; they must equal the recomputed analysis facts used during planning. `reviewed_batch_ids` and `advisory_findings` are the validated review values without repeated file lists or failure rows; each advisory finding retains the exact optional-review finding shape defined above. `decision` is the deterministic aggregate of static facts, advisory findings, complete-batch coverage, over-budget text, and opaque files during planning. A review record cannot alter a static record.
 
 `replace_paths` is the exact sorted set of outputs whose `destination_state` is `regular-file`; no duplicate analysis-level array is persisted. The applicable apply literal authorizes this complete set. The plan does not persist fixed limits, entries already bound by `manifest_sha256`, blocking diagnostics that must be empty for any plan, review batch contents already bound by `analysis_sha256`, uncovered paths derivable during planning, a transaction parent, or a required confirmation.
@@ -299,6 +305,8 @@ Apply emits ordinary command output in this shape; it is not a persisted workflo
   "message": ""
 }
 ```
+
+`recovery_directory` identifies privacy-sensitive transaction material, not a separate authority or privacy guarantee. Apply exclusively creates each transaction tree under a never-reused identity within the workspace, keeps it disjoint from the source, every output, every other transaction, and between its staging and backup areas, rejects links and unexpected path types, and revalidates the exact transaction identity before use. On POSIX, transaction directories and regular files are owned by the current UID, with directories mode `0700` and regular files mode `0600`. On Windows, regular transaction directories and files use the selected transaction parent's inherited ACLs; apply neither manages ACLs nor claims current-user-only access, and stronger privacy requires the user to secure that parent externally before apply.
 
 `status` is one of:
 
