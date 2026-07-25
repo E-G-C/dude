@@ -350,6 +350,16 @@ post-failure, and post-review checkpoints. Every settled hard stop, both numeric
 budgets, fresh verification, and independent review still apply; scheduling
 stays sequential, with no concurrency or fan-out.
 
+Repeated failure under `autonomous` requires learning before anything else
+happens to that task. A proven repeat, meaning the same normalized result twice
+or the same approach twice, seals retry, escalation, block, close, and
+no-progress on that task until Work has recorded a learning result in the
+existing run and lane history and has either selected a materially different
+alternative or proved that none exists. A task-scoped stop can leave that task
+unresolved while Work continues with one proven-independent task; a run-wide
+stop ends the run. Nothing in this path is concurrent, and `guarded` runs never
+enter it.
+
 Objective evaluation at a glance: a Progress Objective is compiled only during
 definition and never inferred at runtime, and it is consumed only through the
 `definition-plan` evidence item. Each attempt forms a candidate that a

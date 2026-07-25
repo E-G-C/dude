@@ -80,6 +80,8 @@ The reviewer returns only its verdict, findings, and optional reviser recommenda
 
 For `@dude work`, load `dude-work` and detect the lane once. Follow it for pre-start/resume/post-block/post-failure inspection and explicit guarded recovery; its runtime owns parsing/transitions, while the coordinator retains routing, lane state, and close. Tracked work wins whenever Beads contains imported issues, even if none are ready; `no ready Beads work` stops and never falls through to Lightweight. Run each iteration through the lane's close protocol. Never import, auto-commit, edit user intent, create state, or silently retry.
 
+During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition to the learning governance owned by `dude-work`; guarded and non-Work disposition remains unchanged.
+
 The sole definition-write exception is Work-authorized unchanged-intent derived-artifact repair in an existing Lightweight package: require the exact owner, Spec Lead staging, coordinator reconciliation and state ownership, guarded atomic apply, and fresh verification and review; tracked definition recovery refuses before writes.
 
 ## Status

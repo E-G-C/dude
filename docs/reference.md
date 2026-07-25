@@ -238,6 +238,16 @@ authority. See the [Work command reference](commands.md#dude-work) for usage
 and the [Work skill](../.github/skills/dude-work/SKILL.md) for the owning
 protocol.
 
+Under `autonomous`, a deterministically repeated result or approach on one task
+requires learning before that task may be retried, escalated, blocked, closed,
+or called no progress. The requirement binds that task alone: existing hard
+stops and budgets keep immediate precedence at their own scope, a task-scoped
+stop may leave the task unresolved while one proven-independent task continues,
+and a run-wide stop ends the invocation. Learning evidence, its retention, and
+the run audit reuse the existing current-run and lane-history surfaces, so no
+second ledger, lane, or command appears. Work stays sequential, and guarded and
+non-Work behavior is unchanged.
+
 ```mermaid
 flowchart TD
     START["@dude track"] --> RESUME["Resume in-progress work first"]

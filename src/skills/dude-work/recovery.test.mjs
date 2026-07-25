@@ -640,7 +640,7 @@ function noRegistryPlanBytes(specPath) {
     `Technical design for ${specPath}.`,
     '',
     'This plan keeps no active objective registry region.',
-    '',
+      t002ApproachEvent({ attemptOrdinal: 17, basisLabel: 'finalize-capacity' }),
   ].join('\n'));
 }
 
@@ -6137,6 +6137,8 @@ const AUTHORIZATION_ONLY_REASONS = Object.freeze([
   'invalid-mode',
   'no-action',
   'recovery-disabled',
+  'learning-required',
+  'learning-governance-capacity',
   'no-progress',
   'prior-no-progress',
   'not-dispatchable',
@@ -6158,6 +6160,8 @@ const EXPECTED_OUTCOME_CATEGORIES = Object.freeze({
   'review-rejected': 'recoverable-checkpoint',
   'overall-exhausted': 'budget-stop',
   'recovery-exhausted': 'budget-stop',
+  'learning-required': 'learning-stop',
+  'learning-governance-capacity': 'learning-stop',
   'no-progress': 'learning-stop',
   'prior-no-progress': 'learning-stop',
   'evidence-drift': 'guard-stop',
@@ -6334,7 +6338,7 @@ test('T002 D: autonomous never crosses budget, learning, or guard stops', () => 
     summary: 'A materially different target set.',
   }), 'recovery');
   const priorRepeated = completeAttempt(priorSecond.state, completionInput(priorSecond.state.pending[0], { changedTargets: ['src/result.mjs'] }));
-  assert.equal(priorRepeated.reason, 'no-progress');
+  assert.equal(priorRepeated.reason, 'learning-required');
   const priorNoProgress = authorizeAttempt(priorRepeated.state, TARGET, priorRaw, transitionAssessment('retry-task', { targets: ['src/later.mjs'], checks: ['verification'] }), 'recovery');
 
   const disabledState = emptyState({ mode: 'autonomous', overall: 'unlimited', recovery: 'unlimited' });
@@ -6359,8 +6363,8 @@ test('T002 D: autonomous never crosses budget, learning, or guard stops', () => 
   const stops = [
     ['overall-exhausted', 'budget-stop', overallExhausted],
     ['recovery-exhausted', 'budget-stop', recoveryExhausted],
-    ['no-progress', 'learning-stop', noProgress],
-    ['prior-no-progress', 'learning-stop', priorNoProgress],
+    ['learning-required', 'learning-stop', noProgress],
+    ['learning-required', 'learning-stop', priorNoProgress],
     ['recovery-disabled', 'guard-stop', recoveryDisabled],
     ['evidence-drift', 'guard-stop', evidenceDrift],
     ['not-dispatchable', 'guard-stop', notDispatchable],
@@ -6515,12 +6519,12 @@ test('T003 F: revisiting the stopped task needs new evidence or a different appr
   const revisitFirst = authorizeAttempt(autonomousState(), TARGET, revisitRaw, transitionAssessment('retry-task', { targets: ['src/revisit.mjs'] }), 'recovery');
   const revisitState = completeAttempt(revisitFirst.state, completionInput(revisitFirst.state.pending[0])).state;
 
-  // (i) same evidence and same approach ⇒ no-progress
+  // (i) same evidence and same approach => learning-required
   const sameEvidenceApproach = authorizeAttempt(revisitState, TARGET, revisitRaw, transitionAssessment('retry-task', { targets: ['src/revisit.mjs'] }), 'recovery');
   assert.equal(sameEvidenceApproach.authorized, false);
-  assert.equal(sameEvidenceApproach.reason, 'no-progress');
+  assert.equal(sameEvidenceApproach.reason, 'learning-required');
 
-  // (i) a repeated completed result under the same evidence ⇒ prior-no-progress
+  // (i) a repeated completed result under the same evidence => learning-required
   const priorRaw = transitionRaw(TARGET);
   const priorFirst = authorizeAttempt(autonomousState(), TARGET, priorRaw, transitionAssessment('retry-task', { targets: ['src/prior.mjs'], checks: ['verification'] }), 'recovery');
   const priorState = completeAttempt(priorFirst.state, completionInput(priorFirst.state.pending[0])).state;
@@ -6530,10 +6534,10 @@ test('T003 F: revisiting the stopped task needs new evidence or a different appr
     summary: 'A materially different target set.',
   }), 'recovery');
   const priorRepeated = completeAttempt(priorSecond.state, completionInput(priorSecond.state.pending[0], { changedTargets: ['src/prior.mjs'] }));
-  assert.equal(priorRepeated.reason, 'no-progress');
+  assert.equal(priorRepeated.reason, 'learning-required');
   const priorNoProgress = authorizeAttempt(priorRepeated.state, TARGET, priorRaw, transitionAssessment('retry-task', { targets: ['src/prior-later.mjs'], checks: ['verification'] }), 'recovery');
   assert.equal(priorNoProgress.authorized, false);
-  assert.equal(priorNoProgress.reason, 'prior-no-progress');
+  assert.equal(priorNoProgress.reason, 'learning-required');
 
   // (ii) stale evidence ⇒ evidence-drift
   const driftInspection = buildInspection(TARGET, collectEvidence(TARGET, transitionRaw(TARGET)));
@@ -8703,4 +8707,9109 @@ test('T006i: authorize carries objective arrays forward unchanged and leaves gua
   assert.ok(!Object.hasOwn(bare.state, 'learningReviewRefs'));
 });
 
+// --- Feature 009 T001: fail-closed autonomous repeat seal -------------------
 
+function exactApproachSealFixture() {
+  const raw = transitionRaw(TARGET);
+  const candidate = transitionAssessment('retry-task', { targets: ['src/exact-repeat.mjs'] });
+  const authorized = authorizeAttempt(autonomousState(), TARGET, raw, candidate, 'recovery');
+  const completed = completeAttempt(authorized.state, completionInput(authorized.state.pending[0]));
+  const sealed = authorizeAttempt(completed.state, TARGET, raw, candidate, 'recovery');
+  return { raw, candidate, authorized, completed, sealed };
+}
+
+test('T001 Phase 1: public CLI orders first completion, repeated completion seal, and refused continuation', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const input = cliInput(autonomousInspectInput(root));
+    /** @param {string} command @param {unknown} request */
+    const invoke = (command, request) => {
+      const processResult = runRecoveryCli(command, request);
+      assert.equal(processResult.status, 0, `${command}: ${processResult.stderr}`);
+      assert.equal(processResult.stderr, '', command);
+      return JSON.parse(processResult.stdout);
+    };
+    const inspected = invoke('inspect', { trigger: 'explicit-inspection', input }).inspection;
+    const firstAssessment = transitionAssessment('retry-task', {
+      evidenceHash: inspected.evidenceHash,
+      targets: ['src/result.mjs'],
+    });
+
+    // Act
+    const firstAuthorization = invoke('authorize', {
+      trigger: 'post-failure',
+      state: autonomousState(),
+      input,
+      assessment: firstAssessment,
+      mode: 'recovery',
+    }).authorization;
+    const firstPending = firstAuthorization.state.pending[0];
+    const firstCompletion = invoke('complete', {
+      state: firstAuthorization.state,
+      input: completionInput(firstPending),
+    }).completion;
+    const secondAuthorization = invoke('authorize', {
+      trigger: 'post-failure',
+      state: firstCompletion.state,
+      input,
+      assessment: transitionAssessment('retry-task', {
+        evidenceHash: inspected.evidenceHash,
+        targets: ['src/result-support.mjs', 'src/result.mjs'],
+      }),
+      mode: 'recovery',
+    }).authorization;
+    const secondPending = secondAuthorization.state.pending[0];
+    const repeatedCompletion = invoke('complete', {
+      state: secondAuthorization.state,
+      input: completionInput(secondPending, { changedTargets: ['src/result.mjs'] }),
+    }).completion;
+    const refusedAlternative = invoke('authorize', {
+      trigger: 'post-failure',
+      state: repeatedCompletion.state,
+      input,
+      assessment: transitionAssessment('retry-task', {
+        evidenceHash: inspected.evidenceHash,
+        targets: ['src/selected-alternative.mjs'],
+      }),
+      mode: 'recovery',
+    }).authorization;
+    const refusedDisposition = invoke('complete', {
+      state: repeatedCompletion.state,
+      input: completionInput(secondPending, { outcome: 'blocked' }),
+    }).completion;
+    const unavailableTransition = runRecoveryCli('transition', {
+      state: repeatedCompletion.state,
+      operation: 'selected-alternative',
+    });
+
+    // Assert
+    assert.equal(firstAuthorization.authorized, true);
+    assert.equal(firstCompletion.completed, true);
+    assert.equal(firstCompletion.reason, 'completed');
+    assert.equal(firstCompletion.state.completed.length, 1);
+    assert.ok(!Object.hasOwn(firstCompletion.state, 'learningGovernance'));
+    assert.equal(secondAuthorization.authorized, true);
+    assert.equal(repeatedCompletion.completed, false);
+    assert.equal(repeatedCompletion.reason, 'learning-required');
+    assert.ok(!['no-progress', 'prior-no-progress', 'blocked', 'completed', 'controlled-end', 'escalation']
+      .includes(repeatedCompletion.reason));
+    assert.equal(repeatedCompletion.state.completed.length, 1);
+    assert.equal(repeatedCompletion.state.pending.length, 0);
+    assert.deepEqual(repeatedCompletion.state.pendingCompletion.target, canonicalTarget(TARGET));
+    assert.deepEqual(repeatedCompletion.state.learningGovernance.target, canonicalTarget(TARGET));
+    assert.equal(repeatedCompletion.state.learningGovernance.phase, 'required');
+    assert.equal(refusedAlternative.authorized, false);
+    assert.equal(refusedAlternative.reason, 'learning-required');
+    assert.deepEqual(refusedAlternative.state, repeatedCompletion.state);
+    assert.equal(refusedDisposition.completed, false);
+    assert.equal(refusedDisposition.reason, 'pending-not-found');
+    assert.deepEqual(refusedDisposition.state, repeatedCompletion.state);
+    assertCliRefusal(unavailableTransition, 'selected-alternative transition is not enabled in Phase 1');
+  });
+});
+
+test('T001 Phase 1: exact-approach repetition seals only its target and free-form equivalence cannot create repetition', () => {
+  // Arrange
+  const fixture = exactApproachSealFixture();
+  const initial = autonomousState();
+  const freeFormRaw = transitionRaw(TARGET);
+
+  // Act
+  const selectedAlternative = authorizeAttempt(
+    fixture.sealed.state,
+    TARGET,
+    fixture.raw,
+    transitionAssessment('retry-task', { targets: ['src/materially-different.mjs'] }),
+    'recovery',
+  );
+  const freeFormResults = ['same', 'equivalent'].map((equivalence) => authorizeAttempt(
+    initial,
+    TARGET,
+    freeFormRaw,
+    transitionAssessment('retry-task', {
+      equivalence,
+      summary: 'Caller prose claims this approach is equivalent.',
+      targets: ['src/free-form.mjs'],
+    }),
+    'recovery',
+  ));
+
+  // Assert
+  assert.equal(fixture.authorized.authorized, true);
+  assert.equal(fixture.completed.completed, true);
+  assert.equal(fixture.sealed.authorized, false);
+  assert.equal(fixture.sealed.reason, 'learning-required');
+  assert.deepEqual(fixture.sealed.state.learningGovernance.target, canonicalTarget(TARGET));
+  assert.equal(fixture.sealed.state.learningGovernance.phase, 'required');
+  assert.ok(!Object.hasOwn(fixture.sealed.state, 'pendingCompletion'));
+  assert.equal(mayContinueAutonomously(fixture.sealed), false);
+  assert.equal(selectedAlternative.authorized, false);
+  assert.equal(selectedAlternative.reason, 'learning-required');
+  assert.strictEqual(selectedAlternative.state, fixture.sealed.state);
+  for (const result of freeFormResults) {
+    assert.equal(result.authorized, false);
+    assert.equal(result.reason, 'evidence-incomplete');
+    assert.equal(result.blocker.code, 'evidence-incomplete');
+    assert.equal(result.blocker.subject, 'autonomous-repeat-equivalence');
+    assert.strictEqual(result.state, initial);
+    assert.ok(!Object.hasOwn(result.state, 'learningGovernance'));
+  }
+});
+
+test('T001 Phase 1: required learning seals no-progress, block, close, resolving status, controlled end, and another attempt', () => {
+  // Arrange
+  const fixture = exactApproachSealFixture();
+  const objective = objectiveSequenceFixture();
+  const owner = projectionOwnerFake();
+  const state = { ...fixture.sealed.state, evaluationSequences: [objective.sequence] };
+  validateRunState(state);
+  const priorPending = fixture.authorized.state.pending[0];
+
+  // Act and Assert
+  const anotherAttempt = authorizeAttempt(
+    state,
+    TARGET,
+    fixture.raw,
+    transitionAssessment('retry-task', { targets: ['src/another-attempt.mjs'] }),
+    'recovery',
+  );
+  assert.equal(anotherAttempt.authorized, false);
+  assert.equal(anotherAttempt.reason, 'learning-required');
+  assert.strictEqual(anotherAttempt.state, state);
+
+  for (const outcome of ['succeeded', 'blocked', 'no-change', 'interrupted']) {
+    const disposition = completeAttempt(state, completionInput(priorPending, { outcome }));
+    assert.equal(disposition.completed, false, outcome);
+    assert.equal(disposition.reason, 'pending-not-found', outcome);
+    assert.strictEqual(disposition.state, state, outcome);
+  }
+  for (const reason of ['no-progress', 'task-completed', 'task-blocked', 'controlled-end']) {
+    assert.throws(() => closeEvaluationSequence(
+      state,
+      /** @type {string} */ (objective.sequence.sequenceIdentity),
+      { owner, reason, comparisonEventHashes: [], learningReviewEventHashes: [] },
+    ), /sealed: learning-required/, reason);
+  }
+  for (const reason of ['task-completed', 'task-blocked']) {
+    assert.throws(() => settleTaskBoundary(state, {
+      host: objective.host,
+      owner,
+      target: TARGET,
+      taskKey: TASK_KEY,
+      reason,
+      comparisonEventHashes: [],
+      learningReviewEventHashes: [],
+    }), /sealed: learning-required/, reason);
+  }
+  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
+  assert.deepEqual(owner.acquireLaneEventLines(), []);
+  assert.deepEqual(state, { ...fixture.sealed.state, evaluationSequences: [objective.sequence] });
+});
+
+test('T001 Phase 1: a second governance case refuses at capacity without consuming or overwriting state', () => {
+  // Arrange
+  const fixture = exactApproachSealFixture();
+  const disjointRaw = transitionRaw(SECOND_TARGET);
+  const disjointAuthorization = authorizeAttempt(
+    fixture.sealed.state,
+    SECOND_TARGET,
+    disjointRaw,
+    transitionAssessment('retry-task', { targets: ['src/capacity.mjs'] }),
+    'recovery',
+  );
+  const pending = disjointAuthorization.state.pending[0];
+  const normalizedResultHash = resultHash({
+    outcome: 'succeeded',
+    changedTargets: ['src/capacity.mjs'],
+    blockers: [],
+  });
+  const occupiedState = {
+    ...clone(disjointAuthorization.state),
+    overallUsed: disjointAuthorization.state.overallUsed + 1,
+    completed: [
+      ...disjointAuthorization.state.completed.map((entry) => ({ ...entry })),
+      {
+        evidenceHash: pending.evidenceHash,
+        approachHash: sha256('prior-capacity-approach'),
+        resultHash: normalizedResultHash,
+      },
+    ],
+  };
+  validateRunState(occupiedState);
+  const before = clone(occupiedState);
+  const canonicalBefore = canonicalJson(occupiedState);
+  const retentionFixture = t002PendingFixture({
+    attemptOrdinal: occupiedState.completed.length + 1,
+    evidenceHash: pending.evidenceHash,
+    priorCompleted: occupiedState.completed,
+    verdict: 'accepted',
+    checkOutcome: 'passed',
+    materialInputs: clone(pending.materialInputs),
+  });
+  const retentionCapture = t002CapturePendingFixture(retentionFixture);
+  const retentionBefore = canonicalJson(retentionCapture.state);
+
+  // Act
+  const refused = completeAttempt(occupiedState, completionInput(pending));
+  const retentionRefused = completeAttempt(
+    retentionCapture.state,
+    completionInput(retentionFixture.pending),
+  );
+
+  // Assert
+  assert.equal(disjointAuthorization.authorized, true);
+  assert.equal(refused.completed, false);
+  assert.equal(refused.reason, 'learning-governance-conflict');
+  assert.strictEqual(refused.state, occupiedState);
+  assert.equal(canonicalJson(refused.state), canonicalBefore);
+  assert.deepEqual(refused.state, before);
+  assert.equal(refused.state.pending.length, 1);
+  assert.deepEqual(refused.state.learningGovernance, fixture.sealed.state.learningGovernance);
+  assert.ok(!Object.hasOwn(refused.state, 'pendingCompletion'));
+  assert.equal(retentionRefused.completed, false);
+  assert.equal(retentionRefused.reason, 'occurrence-retention-conflict');
+  assert.strictEqual(retentionRefused.state, retentionCapture.state);
+  assert.equal(canonicalJson(retentionRefused.state), retentionBefore);
+  assert.deepEqual(retentionRefused.state.pendingCompletion, retentionCapture.state.pendingCompletion);
+  assert.ok(!Object.hasOwn(retentionRefused.state, 'learningGovernance'));
+});
+
+test('T001 Phase 1: immediate hard stops and both budget scopes retain precedence over the learning seal', () => {
+  // Arrange
+  const fixture = exactApproachSealFixture();
+  const overallExhaustedState = {
+    ...clone(fixture.sealed.state),
+    policy: { ...fixture.sealed.state.policy, overall: fixture.sealed.state.overallUsed },
+  };
+  const recoveryExhaustedState = {
+    ...clone(fixture.sealed.state),
+    policy: { ...fixture.sealed.state.policy, recovery: 1 },
+  };
+  validateRunState(overallExhaustedState);
+  validateRunState(recoveryExhaustedState);
+  const hardStopRaw = transitionRaw(TARGET, {
+    currentRun: [capture(TARGET, 'approval-required', [{ reason: 'human authority is required' }])],
+  });
+
+  // Act
+  const hardStop = authorizeAttempt(
+    overallExhaustedState,
+    TARGET,
+    hardStopRaw,
+    transitionAssessment('retry-task', { targets: ['src/hard-stop.mjs'] }),
+    'recovery',
+  );
+  const overallStop = authorizeAttempt(
+    overallExhaustedState,
+    TARGET,
+    fixture.raw,
+    transitionAssessment('retry-task', { targets: ['src/overall-budget.mjs'] }),
+    'recovery',
+  );
+  const recoveryStop = authorizeAttempt(
+    recoveryExhaustedState,
+    TARGET,
+    fixture.raw,
+    transitionAssessment('retry-task', { targets: ['src/recovery-budget.mjs'] }),
+    'recovery',
+  );
+
+  // Assert
+  assert.equal(hardStop.reason, 'approval-required');
+  assert.equal(classifyOutcomeReason(hardStop.reason), 'hard-stop');
+  assert.strictEqual(hardStop.state, overallExhaustedState);
+  assert.equal(overallStop.reason, 'overall-exhausted');
+  assert.equal(classifyOutcomeReason(overallStop.reason), 'budget-stop');
+  assert.strictEqual(overallStop.state, overallExhaustedState);
+  assert.equal(recoveryStop.reason, 'recovery-exhausted');
+  assert.equal(classifyOutcomeReason(recoveryStop.reason), 'budget-stop');
+  assert.strictEqual(recoveryStop.state, recoveryExhaustedState);
+  for (const result of [hardStop, overallStop, recoveryStop]) {
+    assert.equal(result.authorized, false);
+    assert.notEqual(result.reason, 'learning-required');
+    assert.deepEqual(result.state.learningGovernance, fixture.sealed.state.learningGovernance);
+  }
+});
+
+test('T001 Phase 1: guarded generic bytes and non-Work authority remain compatible', () => {
+  // Arrange
+  const initial = guardedContinuationState();
+  const raw = transitionRaw(TARGET);
+  const candidate = transitionAssessment('retry-task', { targets: ['src/guarded-repeat.mjs'] });
+  const authorized = authorizeAttempt(initial, TARGET, raw, candidate, 'recovery');
+  const completed = completeAttempt(authorized.state, completionInput(authorized.state.pending[0]));
+
+  // Act
+  const repeatedApproach = authorizeAttempt(completed.state, TARGET, raw, candidate, 'recovery');
+  const freeForm = authorizeAttempt(
+    initial,
+    TARGET,
+    raw,
+    transitionAssessment('retry-task', {
+      equivalence: 'equivalent',
+      targets: ['src/generic-equivalence.mjs'],
+    }),
+    'recovery',
+  );
+  const workAuthority = fs.readFileSync(new URL('./SKILL.md', import.meta.url), 'utf8');
+  const nonWorkAuthorities = [
+    new URL('../../agents/dude.agent.md', import.meta.url),
+    new URL('../../instructions/dude.instructions.md', import.meta.url),
+    new URL('../dude-reviewer-protocol/SKILL.md', import.meta.url),
+    new URL('../dude-receiving-code-review/SKILL.md', import.meta.url),
+  ].map((sourcePath) => fs.readFileSync(sourcePath, 'utf8'));
+
+  // Assert
+  assert.equal(
+    canonicalJson(repeatedApproach),
+    canonicalJson({ authorized: false, reason: 'no-progress', state: completed.state }),
+  );
+  assert.equal(
+    canonicalJson(freeForm),
+    canonicalJson({ authorized: false, reason: 'no-progress', state: initial }),
+  );
+  assert.ok(!Object.hasOwn(repeatedApproach.state, 'learningGovernance'));
+  assert.ok(!Object.hasOwn(freeForm.state, 'learningGovernance'));
+  assert.match(workAuthority, /refuse generic escalation, no-progress, ordinary block, close, resolving status/);
+  assert.match(workAuthority, /initial seal authorizes no selected alternative, learning resolution, target mutation, or controlled end/);
+  for (const source of nonWorkAuthorities) {
+    assert.match(source, /guarded and non-Work[^\n]*remains unchanged/i);
+  }
+});
+
+test('T001 cycle 1 regression: authorization-time retained-result repeat on B preserves A singleton governance', () => {
+  // Arrange
+  const governed = exactApproachSealFixture().sealed.state;
+  const raw = transitionRaw(SECOND_TARGET);
+  const candidate = transitionAssessment('retry-task', { targets: ['src/capacity-retained-result.mjs'] });
+  const probe = authorizeAttempt(autonomousState(), SECOND_TARGET, raw, candidate, 'recovery');
+  assert.equal(probe.authorized, true);
+  const pending = probe.state.pending[0];
+  const repeatedResultHash = sha256('capacity-retained-result');
+  const occupiedState = clone(governed);
+  occupiedState.completed.push(
+    {
+      evidenceHash: pending.evidenceHash,
+      approachHash: sha256('capacity-retained-result-first-approach'),
+      resultHash: repeatedResultHash,
+    },
+    {
+      evidenceHash: pending.evidenceHash,
+      approachHash: sha256('capacity-retained-result-second-approach'),
+      resultHash: repeatedResultHash,
+    },
+  );
+  occupiedState.overallUsed += 2;
+  occupiedState.recoveryUsed.push({
+    targetKey: targetKey(SECOND_TARGET),
+    targetHash: targetHash(SECOND_TARGET),
+    count: 2,
+  });
+  occupiedState.recoveryUsed.sort((left, right) => Buffer.compare(
+    Buffer.from(left.targetKey),
+    Buffer.from(right.targetKey),
+  ));
+  validateRunState(occupiedState);
+  const before = clone(occupiedState);
+  const canonicalBefore = canonicalJson(occupiedState);
+  const governanceBefore = canonicalJson(occupiedState.learningGovernance);
+  const retentionFixture = t002PendingFixture({
+    attemptOrdinal: occupiedState.completed.length + 1,
+    priorCompleted: occupiedState.completed,
+    verdict: 'accepted',
+    checkOutcome: 'passed',
+  });
+  const retentionCapture = t002CapturePendingFixture(retentionFixture);
+  const retentionState = retentionCapture.state;
+  const retentionBefore = canonicalJson(retentionState);
+
+  // Act
+  const refused = authorizeAttempt(occupiedState, SECOND_TARGET, raw, candidate, 'recovery');
+  const retentionRefused = authorizeAttempt(retentionState, SECOND_TARGET, raw, candidate, 'recovery');
+
+  // Assert
+  assert.equal(refused.authorized, false);
+  assert.equal(refused.reason, 'learning-governance-conflict');
+  assert.strictEqual(refused.state, occupiedState);
+  assert.equal(canonicalJson(refused.state), canonicalBefore);
+  assert.deepEqual(refused.state, before);
+  assert.equal(canonicalJson(refused.state.learningGovernance), governanceBefore);
+  assert.deepEqual(refused.state.learningGovernance.target, canonicalTarget(TARGET));
+  assert.equal(refused.state.learningGovernance.phase, 'required');
+  assert.ok(!Object.hasOwn(refused.state, 'pendingCompletion'));
+  assert.equal(retentionRefused.authorized, false);
+  assert.equal(retentionRefused.reason, 'occurrence-retention-conflict');
+  assert.strictEqual(retentionRefused.state, retentionState);
+  assert.equal(canonicalJson(retentionRefused.state), retentionBefore);
+  assert.deepEqual(retentionRefused.state.pendingCompletion, retentionCapture.state.pendingCompletion);
+  assert.ok(!Object.hasOwn(retentionRefused.state, 'learningGovernance'));
+});
+
+test('T001 cycle 1 regression: authorization-time exact-approach repeat on B preserves A singleton governance', () => {
+  // Arrange
+  const governed = exactApproachSealFixture().sealed.state;
+  const raw = transitionRaw(SECOND_TARGET);
+  const candidate = transitionAssessment('retry-task', { targets: ['src/capacity-exact-approach.mjs'] });
+  const probe = authorizeAttempt(autonomousState(), SECOND_TARGET, raw, candidate, 'recovery');
+  assert.equal(probe.authorized, true);
+  const pending = probe.state.pending[0];
+  const occupiedState = clone(governed);
+  occupiedState.completed.push({
+    evidenceHash: pending.evidenceHash,
+    approachHash: pending.approachHash,
+    resultHash: sha256('capacity-exact-approach-result'),
+  });
+  occupiedState.overallUsed += 1;
+  occupiedState.recoveryUsed.push({
+    targetKey: targetKey(SECOND_TARGET),
+    targetHash: targetHash(SECOND_TARGET),
+    count: 1,
+  });
+  occupiedState.recoveryUsed.sort((left, right) => Buffer.compare(
+    Buffer.from(left.targetKey),
+    Buffer.from(right.targetKey),
+  ));
+  validateRunState(occupiedState);
+  const before = clone(occupiedState);
+  const canonicalBefore = canonicalJson(occupiedState);
+  const governanceBefore = canonicalJson(occupiedState.learningGovernance);
+  const retentionFixture = t002PendingFixture({
+    attemptOrdinal: occupiedState.completed.length + 1,
+    priorCompleted: occupiedState.completed,
+    verdict: 'accepted',
+    checkOutcome: 'passed',
+  });
+  const retentionCapture = t002CapturePendingFixture(retentionFixture);
+  const retentionState = retentionCapture.state;
+  const retentionBefore = canonicalJson(retentionState);
+
+  // Act
+  const refused = authorizeAttempt(occupiedState, SECOND_TARGET, raw, candidate, 'recovery');
+  const retentionRefused = authorizeAttempt(retentionState, SECOND_TARGET, raw, candidate, 'recovery');
+
+  // Assert
+  assert.equal(refused.authorized, false);
+  assert.equal(refused.reason, 'learning-governance-conflict');
+  assert.strictEqual(refused.state, occupiedState);
+  assert.equal(canonicalJson(refused.state), canonicalBefore);
+  assert.deepEqual(refused.state, before);
+  assert.equal(canonicalJson(refused.state.learningGovernance), governanceBefore);
+  assert.deepEqual(refused.state.learningGovernance.target, canonicalTarget(TARGET));
+  assert.equal(refused.state.learningGovernance.phase, 'required');
+  assert.ok(!Object.hasOwn(refused.state, 'pendingCompletion'));
+  assert.equal(retentionRefused.authorized, false);
+  assert.equal(retentionRefused.reason, 'occurrence-retention-conflict');
+  assert.strictEqual(retentionRefused.state, retentionState);
+  assert.equal(canonicalJson(retentionRefused.state), retentionBefore);
+  assert.deepEqual(retentionRefused.state.pendingCompletion, retentionCapture.state.pendingCompletion);
+  assert.ok(!Object.hasOwn(retentionRefused.state, 'learningGovernance'));
+});
+
+test('T001 cycle 1 regression: governed resolveComparison restores before release and accepts nothing', () => {
+  // Arrange
+  const objective = objectiveSequenceFixture();
+  const governed = exactApproachSealFixture().sealed.state;
+  const state = { ...governed, evaluationSequences: [objective.sequence] };
+  validateRunState(state);
+  const owner = projectionOwnerFake();
+  const decision = fixtureDecision(objective, ['8', '8', '8', '8', '8']);
+  const calls = [];
+  const restore = objective.host.restore.bind(objective.host);
+  const release = objective.host.release.bind(objective.host);
+  objective.host.restore = (checkpointIdentity) => {
+    calls.push('restore');
+    return restore(checkpointIdentity);
+  };
+  objective.host.release = (checkpointIdentity) => {
+    const file = objective.host._files.get('src/a.mjs');
+    calls.push(file?.state === 'file' ? `release:${file.bytes.toString()}` : 'release:missing');
+    return release(checkpointIdentity);
+  };
+  const before = clone(state);
+  const canonicalBefore = canonicalJson(state);
+  const incumbentBefore = state.evaluationSequences[0].incumbentCandidateIdentity;
+  assert.equal(objective.host._files.get('src/a.mjs')?.bytes.toString(), 'poststate');
+  assert.equal(decision.relation, 'better');
+
+  // Act
+  const resolve = () => resolveComparison(state, objective.sequence, {
+    host: objective.host,
+    owner,
+    decision,
+    gateSet: fixtureGateSet(objective),
+    candidateIdentity: objective.candidate.candidateIdentity,
+    candidateWriteSet: objective.writeSet,
+  });
+
+  // Assert
+  assert.throws(resolve, /sealed: learning-required/);
+  assert.deepEqual(calls, ['restore', 'release:prestate']);
+  assert.equal(objective.host._files.get('src/a.mjs')?.bytes.toString(), 'prestate');
+  assert.equal(objective.host._map.size, 0);
+  assert.equal(objective.host.get(objective.candidate.checkpointIdentity), undefined);
+  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
+  assert.deepEqual(owner.acquireLaneEventLines(), []);
+  assert.equal(canonicalJson(state), canonicalBefore);
+  assert.deepEqual(state, before);
+  assert.equal(state.evaluationSequences[0].incumbentCandidateIdentity, incumbentBefore);
+  assert.deepEqual(state.learningGovernance.target, canonicalTarget(TARGET));
+});
+
+test('T001 owner-returned fault outcome: governed restoration fault returns paired unsettled retention', () => {
+  // Arrange
+  const objective = objectiveSequenceFixture({ faults: { failRestore: true } });
+  const governed = exactApproachSealFixture().sealed.state;
+  const state = { ...governed, evaluationSequences: [objective.sequence] };
+  validateRunState(state);
+  const owner = projectionOwnerFake();
+  const decision = fixtureDecision(objective, ['8', '8', '8', '8', '8']);
+  const release = objective.host.release.bind(objective.host);
+  let releaseCalls = 0;
+  objective.host.release = (checkpointIdentity) => {
+    releaseCalls += 1;
+    return release(checkpointIdentity);
+  };
+  const before = clone(state);
+  const canonicalBefore = canonicalJson(state);
+  const incumbentBefore = state.evaluationSequences[0].incumbentCandidateIdentity;
+
+  // Act
+  const result = resolveComparison(state, objective.sequence, {
+    host: objective.host,
+    owner,
+    decision,
+    gateSet: fixtureGateSet(objective),
+    candidateIdentity: objective.candidate.candidateIdentity,
+    candidateWriteSet: objective.writeSet,
+  });
+
+  // Assert
+  const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === objective.sequence.sequenceIdentity);
+  assert.equal(result.outcome, 'stop-unsettled');
+  assert.equal(result.stopped, true);
+  assert.ok(nextRow);
+  assert.equal(nextRow.state, 'unsettled');
+  assert.equal(nextRow.activeCheckpointIdentity, objective.candidate.checkpointIdentity);
+  assert.equal(nextRow.activeCandidateIdentity, objective.candidate.candidateIdentity);
+  assert.equal(nextRow.incumbentCandidateIdentity, incumbentBefore);
+  assert.equal(Object.hasOwn(result, 'event'), false);
+  assert.equal(Object.hasOwn(result, 'projection'), false);
+  assert.equal(releaseCalls, 0);
+  assert.equal(objective.host._files.get('src/a.mjs')?.bytes.toString(), 'poststate');
+  assert.equal(objective.host._map.size, 1);
+  assert.equal(objective.host.get(objective.candidate.checkpointIdentity).phase, 'unsettled');
+  assert.equal(objective.host.get(objective.candidate.checkpointIdentity).candidateIdentity, objective.candidate.candidateIdentity);
+  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
+  assert.deepEqual(owner.acquireLaneEventLines(), []);
+  assert.equal(canonicalJson(state), canonicalBefore);
+  assert.deepEqual(state, before);
+  assert.equal(state.evaluationSequences[0].incumbentCandidateIdentity, incumbentBefore);
+  assert.deepEqual(state.learningGovernance.target, canonicalTarget(TARGET));
+  assert.throws(() => closeEvaluationSequence(result.state, objective.sequence.sequenceIdentity, {
+    owner,
+    reason: 'hard-stop',
+    comparisonEventHashes: [],
+    learningReviewEventHashes: [],
+  }), TypeError);
+  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
+  assert.deepEqual(owner.acquireLaneEventLines(), []);
+});
+
+/** Build two independently bound live candidates over one host for identity-substitution checks. @param {Record<string, unknown>} [options] */
+function cycle2BoundContexts(options = {}) {
+  const writeSetA = options.writeSetA || candidateWriteSet();
+  const writeSetB = { candidatePaths: ['src/b.mjs'], protectedPaths: ['src/b.test.mjs'] };
+  const contractA = numericContract();
+  const contractB = numericContract({ id: 'obj-cycle-2-b', subject: 'Second bound objective' });
+  const initialFilesA = options.initialFilesA || { 'src/a.mjs': 'a-prestate', 'src/a.test.mjs': 'guard' };
+  const candidatePathA = options.candidatePathA || writeSetA.candidatePaths[0];
+  const candidateContentA = options.candidateContentA || 'a-candidate';
+  const initialA = fileDescriptors(initialFilesA);
+  const initialB = fileDescriptors({ 'src/b.mjs': 'b-prestate', 'src/b.test.mjs': 'b-guard' });
+  const sequenceA = createEvaluationSequence(TARGET, objectivePlanBody(contractA), contractA, writeSetA, initialA);
+  const sequenceB = createEvaluationSequence(SECOND_TARGET, objectivePlanBody(contractB, SECOND_TASK_KEY), contractB, writeSetB, initialB);
+  const host = checkpointHostFake({
+    ...initialFilesA,
+    'src/b.mjs': 'b-prestate',
+    'src/b.test.mjs': 'b-guard',
+  });
+  const capturedA = acquireCheckpoint(host, {
+    target: TARGET,
+    sequenceIdentity: sequenceA.sequenceIdentity,
+    contractHash: sequenceA.contractHash,
+    candidateWriteSet: writeSetA,
+  });
+  host._setFile(candidatePathA, candidateContentA);
+  const candidateA = captureCandidate(host, capturedA, writeSetA);
+  const capturedB = acquireCheckpoint(host, {
+    target: SECOND_TARGET,
+    sequenceIdentity: sequenceB.sequenceIdentity,
+    contractHash: sequenceB.contractHash,
+    candidateWriteSet: writeSetB,
+  });
+  host._setFile('src/b.mjs', 'b-candidate');
+  const candidateB = captureCandidate(host, capturedB, writeSetB);
+  const governed = exactApproachSealFixture().sealed.state;
+  const state = {
+    ...governed,
+    evaluationSequences: [sequenceA, sequenceB].sort((left, right) => Buffer.compare(
+      Buffer.from(left.sequenceIdentity),
+      Buffer.from(right.sequenceIdentity),
+    )),
+  };
+  validateRunState(state);
+  return {
+    host,
+    state,
+    a: {
+      target: TARGET,
+      writeSet: writeSetA,
+      contract: contractA,
+      sequence: sequenceA,
+      candidate: candidateA,
+      candidatePath: candidatePathA,
+    },
+    b: { target: SECOND_TARGET, writeSet: writeSetB, contract: contractB, sequence: sequenceB, candidate: candidateB },
+  };
+}
+
+/** @param {ReturnType<typeof cycle2BoundContexts>['a']} context @param {Record<string, unknown>} [overrides] */
+function cycle2Decision(context, overrides = {}) {
+  const target = overrides.target || context.target;
+  const contract = overrides.contract || context.contract;
+  const contractHash = sha256(canonicalJson(contract));
+  const observation = (role, samples) => numericObservation(role, samples, { target, contractHash });
+  return deriveComparisonDecision({
+    observations: [
+      observation('baseline', ['10', '10', '10', '10', '10']),
+      observation('incumbent', ['10', '10', '10', '10', '10']),
+      observation('candidate', ['8', '8', '8', '8', '8']),
+    ],
+    contract,
+    sequenceIdentity: overrides.sequenceIdentity || context.sequence.sequenceIdentity,
+    checkpointIdentity: overrides.checkpointIdentity || context.candidate.checkpointIdentity,
+    activeBindingIdentity: '7'.repeat(64),
+    freshBindingIdentity: '7'.repeat(64),
+  });
+}
+
+/** @param {ReturnType<typeof cycle2BoundContexts>['a']} context @param {Record<string, unknown>} [overrides] */
+function cycle2GateSet(context, overrides = {}) {
+  return buildGateSet({
+    target: overrides.target || context.target,
+    checkpointIdentity: overrides.checkpointIdentity || context.candidate.checkpointIdentity,
+    candidateIdentity: overrides.candidateIdentity || context.candidate.candidateIdentity,
+    contractHash: overrides.contractHash || context.sequence.contractHash,
+    gates: passingGateRows(),
+  });
+}
+
+/** Capture every file and live checkpoint byte represented by the in-memory host. */
+function cycle2HostSnapshot(host) {
+  const files = [...host._files.entries()].map(([filePath, entry]) => ({
+    path: filePath,
+    state: entry.state,
+    ...(entry.state === 'file' ? { bytes: entry.bytes.toString('base64') } : {}),
+  }));
+  const contexts = [...host._map.entries()].map(([checkpointIdentity, context]) => ({
+    checkpointIdentity,
+    phase: context.phase,
+    writeSet: context.writeSet,
+    prestate: context.prestate.descriptors,
+    prestateBytes: [...context.prestate.bytesByPath.entries()].map(([filePath, bytes]) => ({
+      path: filePath,
+      bytes: bytes.toString('base64'),
+    })),
+    ...(Object.hasOwn(context, 'poststateIdentity') ? { poststateIdentity: context.poststateIdentity } : {}),
+    ...(Object.hasOwn(context, 'candidateIdentity') ? { candidateIdentity: context.candidateIdentity } : {}),
+  }));
+  return canonicalJson({ files, contexts });
+}
+
+/** Snapshot one stored checkpoint context, optionally normalizing its expected phase. */
+function cycle2ContextSnapshot(host, checkpointIdentity, phase) {
+  const context = host._map.get(checkpointIdentity);
+  assert.ok(context, `missing checkpoint context ${checkpointIdentity}`);
+  return canonicalJson({
+    phase: phase || context.phase,
+    writeSet: context.writeSet,
+    prestate: context.prestate.descriptors,
+    prestateBytes: [...context.prestate.bytesByPath.entries()].map(([filePath, bytes]) => ({
+      path: filePath,
+      bytes: bytes.toString('base64'),
+    })),
+    poststateIdentity: context.poststateIdentity,
+    candidateIdentity: context.candidateIdentity,
+  });
+}
+
+/** Snapshot one host file without invoking a checkpoint owner method. */
+function cycle2FileSnapshot(host, filePath) {
+  const entry = host._files.get(filePath);
+  if (!entry) return canonicalJson({ state: 'absent' });
+  return canonicalJson({
+    state: entry.state,
+    ...(entry.state === 'file' ? { bytes: entry.bytes.toString('base64') } : {}),
+  });
+}
+
+/** @param {ReturnType<typeof checkpointHostFake>} host */
+function cycle2CheckpointEffects(host) {
+  const calls = [];
+  for (const method of ['preflight', 'open', 'probe', 'get', 'setPhase', 'markPoststate', 'restore', 'release']) {
+    const original = host[method].bind(host);
+    host[method] = (...args) => {
+      calls.push(method);
+      return original(...args);
+    };
+  }
+  return calls;
+}
+
+/** Wrap a checkpoint-owner value and count any JavaScript Proxy trap. */
+function checkpointProxy(value) {
+  let trapCalls = 0;
+  const trap = () => {
+    trapCalls += 1;
+    throw new Error('checkpoint Proxy trap must not execute');
+  };
+  return {
+    value: new Proxy(value, {
+      defineProperty: trap,
+      deleteProperty: trap,
+      get: trap,
+      getOwnPropertyDescriptor: trap,
+      getPrototypeOf: trap,
+      has: trap,
+      isExtensible: trap,
+      ownKeys: trap,
+      preventExtensions: trap,
+      set: trap,
+      setPrototypeOf: trap,
+    }),
+    trapCalls: () => trapCalls,
+  };
+}
+
+/** Proxy the outer checkpoint view, its prestate array, or its first descriptor row. */
+function checkpointViewProxy(context, location) {
+  if (location === 'outer') return checkpointProxy(context);
+  if (location === 'array') {
+    const observed = checkpointProxy(context.prestate);
+    return { value: { ...context, prestate: observed.value }, trapCalls: observed.trapCalls };
+  }
+  const observed = checkpointProxy(context.prestate[0]);
+  return {
+    value: { ...context, prestate: [observed.value, ...context.prestate.slice(1)] },
+    trapCalls: observed.trapCalls,
+  };
+}
+
+/** Assert the common fail-closed successor contract for one first-read owner outcome. */
+function assertCycle2Unresolved({
+  fixture,
+  owner,
+  result,
+  outcome,
+  activeCheckpointIdentity,
+  activeCandidateIdentity,
+  stateBefore,
+  hostBefore,
+  otherContextBefore,
+  otherFileBefore,
+  expectedSelectedContext,
+  effects,
+  label,
+}) {
+  const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity);
+  const unrelatedRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.b.sequence.sequenceIdentity);
+  assert.equal(result.outcome, outcome, label);
+  assert.equal(result.stopped, true, label);
+  assert.ok(nextRow, label);
+  assert.equal(nextRow.state, outcome === 'stop-unsettled' ? 'unsettled' : 'open', label);
+  assert.equal(nextRow.activeCheckpointIdentity, activeCheckpointIdentity, label);
+  assert.equal(nextRow.activeCandidateIdentity, activeCandidateIdentity, label);
+  assert.equal(nextRow.incumbentCandidateIdentity, fixture.a.sequence.incumbentCandidateIdentity, label);
+  assert.deepEqual(unrelatedRow, fixture.b.sequence, label);
+  assert.equal(Object.hasOwn(result, 'event'), false, label);
+  assert.equal(Object.hasOwn(result, 'projection'), false, label);
+  assert.equal(effects.includes('restore'), false, label);
+  assert.equal(effects.includes('probe'), false, label);
+  assert.equal(effects.includes('release'), false, label);
+  assert.equal(canonicalJson(fixture.state), stateBefore, label);
+  assert.equal(cycle2ContextSnapshot(fixture.host, fixture.b.candidate.checkpointIdentity), otherContextBefore, label);
+  assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'), otherFileBefore, label);
+  assert.deepEqual(owner._currentRun, [], label);
+  assert.deepEqual(owner._lane, [], label);
+  if (outcome === 'contract-mismatch') {
+    assert.equal(cycle2HostSnapshot(fixture.host), hostBefore, label);
+  } else {
+    assert.equal(
+      cycle2ContextSnapshot(fixture.host, activeCheckpointIdentity),
+      expectedSelectedContext,
+      label,
+    );
+  }
+  validateRunState(result.state);
+  const successorBeforeClose = canonicalJson(result.state);
+  assert.throws(() => closeEvaluationSequence(result.state, fixture.a.sequence.sequenceIdentity, {
+    owner,
+    reason: 'hard-stop',
+    comparisonEventHashes: [],
+    learningReviewEventHashes: [],
+  }), TypeError, label);
+  assert.equal(canonicalJson(result.state), successorBeforeClose, label);
+  assert.deepEqual(owner._currentRun, [], label);
+  assert.deepEqual(owner._lane, [], label);
+}
+
+test('T001 pre-read owner envelope: static mismatches throw before host reads or effects', () => {
+  // Arrange
+  const fixture = cycle2BoundContexts();
+  const owner = projectionOwnerFake();
+  const decisionA = cycle2Decision(fixture.a);
+  const decisionB = cycle2Decision(fixture.b);
+  const gateSetA = cycle2GateSet(fixture.a);
+  const gateSetB = cycle2GateSet(fixture.b);
+  const decisionFor = (overrides) => cycle2Decision(fixture.a, overrides);
+  const gateSetFor = (overrides) => cycle2GateSet(fixture.a, overrides);
+  const cases = [
+    ['target', {
+      decision: decisionFor({ target: fixture.b.target }),
+      gateSet: gateSetFor({ target: fixture.b.target }),
+    }],
+    ['sequence identity', { decision: decisionFor({ sequenceIdentity: fixture.b.sequence.sequenceIdentity }) }],
+    ['contract hash', {
+      decision: decisionFor({ contract: fixture.b.contract }),
+      gateSet: gateSetFor({ contractHash: fixture.b.sequence.contractHash }),
+    }],
+    ['decision identity', { decision: { ...decisionA, comparisonIdentity: decisionB.comparisonIdentity } }],
+    ['GateSet identity', { gateSet: { ...gateSetA, gateSetIdentity: gateSetB.gateSetIdentity } }],
+    ['GateSet order', {
+      gateSet: { ...gateSetA, gates: [gateSetA.gates[1], gateSetA.gates[0], ...gateSetA.gates.slice(2)] },
+    }],
+    ['checkpoint request', {
+      decision: decisionFor({ checkpointIdentity: fixture.b.candidate.checkpointIdentity }),
+    }],
+    ['candidate request', {
+      candidateIdentity: fixture.b.candidate.candidateIdentity,
+    }],
+    ['stale selected sequence row', {
+      sequence: { ...fixture.a.sequence, incumbentCandidateIdentity: fixture.b.sequence.incumbentCandidateIdentity },
+    }],
+    ['mismatched selected RunState row', {
+      state: {
+        ...fixture.state,
+        evaluationSequences: fixture.state.evaluationSequences.map((row) => (
+          row.sequenceIdentity === fixture.a.sequence.sequenceIdentity
+            ? { ...row, incumbentCandidateIdentity: fixture.b.sequence.incumbentCandidateIdentity }
+            : row
+        )),
+      },
+    }],
+  ];
+  const effects = cycle2CheckpointEffects(fixture.host);
+  const stateBefore = canonicalJson(fixture.state);
+  const hostBefore = cycle2HostSnapshot(fixture.host);
+
+  for (const [label, substitutions] of cases) {
+    // Arrange
+    effects.length = 0;
+    const selectedState = substitutions.state || fixture.state;
+    const selectedStateBefore = canonicalJson(selectedState);
+
+    // Act
+    const resolve = () => resolveComparison(selectedState, substitutions.sequence || fixture.a.sequence, {
+      host: fixture.host,
+      owner,
+      decision: substitutions.decision || decisionA,
+      gateSet: substitutions.gateSet || gateSetA,
+      candidateIdentity: substitutions.candidateIdentity || fixture.a.candidate.candidateIdentity,
+      candidateWriteSet: substitutions.candidateWriteSet || fixture.a.writeSet,
+    });
+
+    // Assert
+    assert.throws(resolve, TypeError, label);
+    assert.deepEqual(effects, [], label);
+    assert.equal(cycle2HostSnapshot(fixture.host), hostBefore, label);
+    assert.equal(canonicalJson(selectedState), selectedStateBefore, label);
+    assert.equal(canonicalJson(fixture.state), stateBefore, label);
+    assert.deepEqual(owner._currentRun, [], label);
+    assert.deepEqual(owner._lane, [], label);
+  }
+});
+
+test('T001 pre-read owner envelope: first-read faults return quarantine or proven paired unsettled', () => {
+  /** Replace the selected checkpoint view without changing the stored context. */
+  const overrideSelectedGet = (transform) => (fixture) => {
+    const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+    const get = fixture.host.get.bind(fixture.host);
+    fixture.host.get = (id) => {
+      const context = get(id);
+      if (id !== checkpointIdentity || !context) return context;
+      return transform(/** @type {Record<string, any>} */ (context), fixture, get);
+    };
+  };
+  const withoutField = (field) => overrideSelectedGet((context) => {
+    const next = { ...context };
+    delete next[field];
+    return next;
+  });
+  const withField = (field, value) => overrideSelectedGet((context) => ({ ...context, [field]: value }));
+  const withFirstDescriptor = (transform) => overrideSelectedGet((context) => ({
+    ...context,
+    prestate: [transform({ ...context.prestate[0] }), ...context.prestate.slice(1)],
+  }));
+  const cases = [
+    {
+      label: 'missing context',
+      arrange: (fixture) => fixture.host._map.delete(fixture.a.candidate.checkpointIdentity),
+    },
+    {
+      label: 'get throw',
+      arrange: (fixture) => {
+        const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+        const get = fixture.host.get.bind(fixture.host);
+        fixture.host.get = (id) => {
+          if (id === checkpointIdentity) throw new Error('first context acquisition failed');
+          return get(id);
+        };
+      },
+    },
+    {
+      label: 'phase accessor throw',
+      arrange: overrideSelectedGet((context) => ({
+        ...context,
+        get phase() { throw new Error('first phase acquisition failed'); },
+      })),
+    },
+    { label: 'missing prestate descriptors', arrange: withoutField('prestate') },
+    { label: 'malformed prestate descriptors', arrange: withField('prestate', { path: 'src/a.mjs' }) },
+    {
+      label: 'missing descriptor identity',
+      arrange: withFirstDescriptor((descriptor) => {
+        delete descriptor.sha256;
+        return descriptor;
+      }),
+    },
+    {
+      label: 'malformed descriptor identity',
+      arrange: withFirstDescriptor((descriptor) => ({ ...descriptor, sha256: 'not-a-hash' })),
+    },
+    {
+      label: 'oversized descriptor',
+      arrange: withFirstDescriptor((descriptor) => ({ ...descriptor, byteLength: 1_048_577 })),
+    },
+    { label: 'missing poststate identity', arrange: withoutField('poststateIdentity') },
+    { label: 'malformed poststate identity', arrange: withField('poststateIdentity', 'not-a-hash') },
+    { label: 'oversized poststate identity', arrange: withField('poststateIdentity', 'f'.repeat(65)) },
+    { label: 'missing candidate identity', arrange: withoutField('candidateIdentity') },
+    { label: 'malformed candidate identity', arrange: withField('candidateIdentity', 'not-a-hash') },
+    { label: 'oversized candidate identity', arrange: withField('candidateIdentity', 'f'.repeat(65)) },
+    {
+      label: 'valid foreign prestate descriptors',
+      arrange: overrideSelectedGet((context, fixture, get) => ({
+        ...context,
+        prestate: get(fixture.b.candidate.checkpointIdentity).prestate,
+      })),
+    },
+    {
+      label: 'valid misbound prestate identity',
+      arrange: withField('prestate', fileDescriptors({
+        'src/a.mjs': 'foreign-prestate',
+        'src/a.test.mjs': 'guard',
+      })),
+    },
+    {
+      label: 'valid misbound poststate identity',
+      arrange: overrideSelectedGet((context, fixture, get) => {
+        const foreignPoststateIdentity = get(fixture.b.candidate.checkpointIdentity).poststateIdentity;
+        return {
+          ...context,
+          poststateIdentity: foreignPoststateIdentity,
+          candidateIdentity: deriveCandidateIdentity(fixture.a.candidate.checkpointIdentity, foreignPoststateIdentity),
+        };
+      }),
+    },
+    {
+      label: 'valid foreign candidate identity',
+      arrange: overrideSelectedGet((context, fixture, get) => ({
+        ...context,
+        candidateIdentity: get(fixture.b.candidate.checkpointIdentity).candidateIdentity,
+      })),
+    },
+    {
+      label: 'checkpoint substitution',
+      request: (fixture) => ({
+        decision: cycle2Decision(fixture.a, { checkpointIdentity: fixture.b.candidate.checkpointIdentity }),
+        gateSet: cycle2GateSet(fixture.a, { checkpointIdentity: fixture.b.candidate.checkpointIdentity }),
+      }),
+    },
+    { label: 'write-set substitution', request: (fixture) => ({ candidateWriteSet: fixture.b.writeSet }) },
+    {
+      label: 'candidate substitution',
+      request: (fixture) => ({
+        gateSet: cycle2GateSet(fixture.a, { candidateIdentity: fixture.b.candidate.candidateIdentity }),
+        candidateIdentity: fixture.b.candidate.candidateIdentity,
+      }),
+    },
+    {
+      label: 'foreign context substitution',
+      arrange: (fixture) => {
+        const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+        const get = fixture.host.get.bind(fixture.host);
+        fixture.host.get = (id) => get(id === checkpointIdentity ? fixture.b.candidate.checkpointIdentity : id);
+      },
+    },
+    {
+      label: 'retained restoring context',
+      outcome: 'stop-unsettled',
+      effects: ['get', 'get', 'setPhase', 'get'],
+      arrange: (fixture) => {
+        fixture.host._map.get(fixture.a.candidate.checkpointIdentity).phase = 'restoring';
+      },
+    },
+    {
+      label: 'unsettled retention proof get throw',
+      effects: ['get', 'get', 'setPhase', 'get'],
+      arrange: (fixture) => {
+        const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+        fixture.host._map.get(checkpointIdentity).phase = 'unsettled';
+        const get = fixture.host.get.bind(fixture.host);
+        let selectedGets = 0;
+        fixture.host.get = (id) => {
+          if (id === checkpointIdentity && ++selectedGets === 3) {
+            throw new Error('retention proof acquisition failed');
+          }
+          return get(id);
+        };
+      },
+    },
+    {
+      label: 'retained unsettled context',
+      outcome: 'stop-unsettled',
+      effects: ['get', 'get', 'setPhase', 'get'],
+      arrange: (fixture) => {
+        fixture.host._map.get(fixture.a.candidate.checkpointIdentity).phase = 'unsettled';
+      },
+    },
+  ];
+
+  for (const row of cases) {
+    // Arrange
+    const fixture = cycle2BoundContexts();
+    const owner = projectionOwnerFake();
+    if (row.arrange) row.arrange(fixture);
+    const request = {
+      decision: cycle2Decision(fixture.a),
+      gateSet: cycle2GateSet(fixture.a),
+      candidateIdentity: fixture.a.candidate.candidateIdentity,
+      candidateWriteSet: fixture.a.writeSet,
+      ...(row.request ? row.request(fixture) : {}),
+    };
+    const outcome = row.outcome || 'contract-mismatch';
+    const expectedEffects = row.effects || ['get'];
+    const activeCheckpointIdentity = request.gateSet.checkpointIdentity;
+    const activeCandidateIdentity = request.candidateIdentity;
+    const stateBefore = canonicalJson(fixture.state);
+    const hostBefore = cycle2HostSnapshot(fixture.host);
+    const otherContextBefore = cycle2ContextSnapshot(fixture.host, fixture.b.candidate.checkpointIdentity);
+    const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
+    const expectedSelectedContext = outcome === 'stop-unsettled'
+      ? cycle2ContextSnapshot(fixture.host, activeCheckpointIdentity, 'unsettled')
+      : undefined;
+    const effects = cycle2CheckpointEffects(fixture.host);
+
+    // Act
+    const result = resolveComparison(fixture.state, fixture.a.sequence, {
+      host: fixture.host,
+      owner,
+      ...request,
+    });
+
+    // Assert
+    assert.deepEqual(effects, expectedEffects, row.label);
+    assertCycle2Unresolved({
+      fixture,
+      owner,
+      result,
+      outcome,
+      activeCheckpointIdentity,
+      activeCandidateIdentity,
+      stateBefore,
+      hostBefore,
+      otherContextBefore,
+      otherFileBefore,
+      expectedSelectedContext,
+      effects,
+      label: row.label,
+    });
+  }
+});
+
+test('T001 pragmatic proxy snapshot and active seal: resolve reads reject native proxies before traps or effects', () => {
+  const cases = [
+    { label: 'live candidate outer', attackRead: 1, phase: 'candidate', location: 'outer', effects: ['get'] },
+    { label: 'live candidate nested row', attackRead: 1, phase: 'candidate', location: 'row', effects: ['get'] },
+    { label: 'retention precheck outer', attackRead: 2, phase: 'unsettled', location: 'outer', effects: ['get', 'get'] },
+    { label: 'retention precheck nested array', attackRead: 2, phase: 'unsettled', location: 'array', effects: ['get', 'get'] },
+    { label: 'retention proof outer', attackRead: 3, phase: 'unsettled', location: 'outer', effects: ['get', 'get', 'setPhase', 'get'] },
+    { label: 'retention proof nested row', attackRead: 3, phase: 'unsettled', location: 'row', effects: ['get', 'get', 'setPhase', 'get'] },
+  ];
+
+  for (const row of cases) {
+    // Arrange
+    const fixture = cycle2BoundContexts();
+    const owner = projectionOwnerFake();
+    const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+    fixture.host._map.get(checkpointIdentity).phase = row.phase;
+    const stateBefore = canonicalJson(fixture.state);
+    const hostBefore = cycle2HostSnapshot(fixture.host);
+    const get = fixture.host.get.bind(fixture.host);
+    let selectedReads = 0;
+    let observedProxy;
+    fixture.host.get = (id) => {
+      const context = get(id);
+      if (id !== checkpointIdentity || !context || ++selectedReads !== row.attackRead) return context;
+      observedProxy = checkpointViewProxy(context, row.location);
+      return observedProxy.value;
+    };
+    const effects = cycle2CheckpointEffects(fixture.host);
+
+    // Act
+    const result = resolveComparison(fixture.state, fixture.a.sequence, {
+      host: fixture.host,
+      owner,
+      decision: cycle2Decision(fixture.a),
+      gateSet: cycle2GateSet(fixture.a),
+      candidateIdentity: fixture.a.candidate.candidateIdentity,
+      candidateWriteSet: fixture.a.writeSet,
+    });
+
+    // Assert
+    assert.ok(observedProxy, row.label);
+    assert.equal(observedProxy.trapCalls(), 0, row.label);
+    assert.equal(result.outcome, 'contract-mismatch', row.label);
+    assert.equal(result.stopped, true, row.label);
+    assert.deepEqual(effects, row.effects, row.label);
+    assert.equal(cycle2HostSnapshot(fixture.host), hostBefore, row.label);
+    assert.equal(canonicalJson(fixture.state), stateBefore, row.label);
+    assert.deepEqual(owner._currentRun, [], row.label);
+    assert.deepEqual(owner._lane, [], row.label);
+    assert.equal(effects.includes('probe'), false, row.label);
+    assert.equal(effects.includes('restore'), false, row.label);
+    assert.equal(effects.includes('release'), false, row.label);
+  }
+});
+
+test('T001 pragmatic proxy snapshot and active seal: direct checkpoint reads reject native proxies before effects', () => {
+  const cases = [
+    { boundary: 'captureCandidate', location: 'outer' },
+    { boundary: 'captureCandidate', location: 'array' },
+    { boundary: 'releaseCheckpoint', location: 'outer' },
+    { boundary: 'releaseCheckpoint', location: 'row' },
+    { boundary: 'normalizeCheckpointGate', location: 'outer' },
+    { boundary: 'normalizeCheckpointGate', location: 'array' },
+  ];
+
+  for (const row of cases) {
+    // Arrange
+    const writeSet = candidateWriteSet();
+    const host = checkpointHostFake({ 'src/a.mjs': 'prestate', 'src/a.test.mjs': 'guard' });
+    const captured = acquireCheckpoint(host, {
+      target: TARGET,
+      sequenceIdentity: '1'.repeat(64),
+      contractHash: '2'.repeat(64),
+      candidateWriteSet: writeSet,
+    });
+    host._setFile('src/a.mjs', 'poststate');
+    let recordUnderTest = captured;
+    if (row.boundary !== 'captureCandidate') {
+      const candidate = captureCandidate(host, captured, writeSet);
+      recordUnderTest = row.boundary === 'releaseCheckpoint'
+        ? keepCheckpoint(host, candidate, writeSet)
+        : candidate;
+    }
+    const hostBefore = cycle2HostSnapshot(host);
+    const get = host.get.bind(host);
+    const observedProxies = [];
+    host.get = (id) => {
+      const context = get(id);
+      if (id !== captured.checkpointIdentity || !context) return context;
+      const observed = checkpointViewProxy(context, row.location);
+      observedProxies.push(observed);
+      return observed.value;
+    };
+    const effects = cycle2CheckpointEffects(host);
+    const label = `${row.boundary}: ${row.location}`;
+
+    // Act
+    const invoke = () => {
+      if (row.boundary === 'captureCandidate') return captureCandidate(host, recordUnderTest, writeSet);
+      if (row.boundary === 'releaseCheckpoint') return releaseCheckpoint(host, recordUnderTest, writeSet);
+      return normalizeCheckpointGate({
+        record: checkpointGateRecord(recordUnderTest),
+        host,
+        candidateWriteSet: writeSet,
+      });
+    };
+
+    // Assert
+    assert.throws(invoke, TypeError, label);
+    assert.ok(observedProxies.length > 0, label);
+    for (const observed of observedProxies) assert.equal(observed.trapCalls(), 0, label);
+    assert.equal(cycle2HostSnapshot(host), hostBefore, label);
+    assert.equal(effects.includes('probe'), false, label);
+    assert.equal(effects.includes('markPoststate'), false, label);
+    assert.equal(effects.includes('setPhase'), false, label);
+    assert.equal(effects.includes('restore'), false, label);
+    assert.equal(effects.includes('release'), false, label);
+    assert.deepEqual(
+      effects,
+      row.boundary === 'releaseCheckpoint' ? ['get', 'get'] : ['get'],
+      label,
+    );
+  }
+});
+
+test('T001 pragmatic proxy snapshot and active seal: release phase accessor is inert and reports retained fault', () => {
+  // Arrange
+  const { host, candidate, writeSet } = acquiredCandidate();
+  const kept = keepCheckpoint(host, candidate, writeSet);
+  const checkpointIdentity = kept.checkpointIdentity;
+  const get = host.get.bind(host);
+  const destructiveRelease = host.release.bind(host);
+  let selectedReads = 0;
+  let accessorCalls = 0;
+  host.get = (id) => {
+    const context = get(id);
+    if (id !== checkpointIdentity || !context || ++selectedReads !== 1) return context;
+    const returned = { ...context };
+    Object.defineProperty(returned, 'phase', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        accessorCalls += 1;
+        destructiveRelease(checkpointIdentity);
+        return 'kept';
+      },
+    });
+    return returned;
+  };
+  const effects = cycle2CheckpointEffects(host);
+
+  // Act and Assert
+  assert.throws(
+    () => releaseCheckpoint(host, kept, writeSet),
+    /release phase acquisition failed and was retained as unsettled/,
+  );
+  assert.equal(accessorCalls, 0);
+  assert.deepEqual(effects, ['get', 'get', 'setPhase', 'get']);
+  assert.equal(effects.includes('release'), false);
+  assert.equal(host._map.has(checkpointIdentity), true);
+  assert.equal(get(checkpointIdentity).phase, 'unsettled');
+});
+
+test('T001 pragmatic proxy snapshot and active seal: admitted prestate rows are deeply detached', () => {
+  const expectedFixture = acquiredCandidate();
+  const expectedGate = normalizeCheckpointGate({
+    record: checkpointGateRecord(expectedFixture.candidate),
+    host: expectedFixture.host,
+    candidateWriteSet: expectedFixture.writeSet,
+  });
+  const cases = ['array', 'row'];
+
+  for (const mutation of cases) {
+    // Arrange
+    const { host, candidate, writeSet } = acquiredCandidate();
+    const checkpointIdentity = candidate.checkpointIdentity;
+    const get = host.get.bind(host);
+    const returnedContext = get(checkpointIdentity);
+    const originalPrestate = returnedContext.prestate;
+    const originalRowIndex = originalPrestate.findIndex((entry) => entry.path === 'src/a.test.mjs');
+    assert.notEqual(originalRowIndex, -1, mutation);
+    const originalRow = originalPrestate[originalRowIndex];
+    const probe = host.probe.bind(host);
+    let mutationHooks = 0;
+    let observedProxy;
+    host.get = (id) => (id === checkpointIdentity ? returnedContext : get(id));
+    host.probe = (id) => {
+      if (id === checkpointIdentity) {
+        mutationHooks += 1;
+        if (mutation === 'array') {
+          observedProxy = checkpointProxy({ ...originalRow, path: 'src/proxy-poison.mjs' });
+          originalPrestate[originalRowIndex] = observedProxy.value;
+        } else {
+          originalRow.path = 'src/row-alias-poison.mjs';
+        }
+      }
+      return probe(id);
+    };
+
+    // Act
+    const gate = normalizeCheckpointGate({
+      record: checkpointGateRecord(candidate),
+      host,
+      candidateWriteSet: writeSet,
+    });
+
+    // Assert
+    assert.equal(mutationHooks, 1, mutation);
+    assert.deepEqual(gate, expectedGate, mutation);
+    assert.equal(gate.result, 'pass', mutation);
+    if (mutation === 'array') {
+      assert.equal(originalPrestate[originalRowIndex], observedProxy.value, mutation);
+      assert.equal(observedProxy.trapCalls(), 0, mutation);
+    } else {
+      assert.equal(originalRow.path, 'src/row-alias-poison.mjs', mutation);
+    }
+  }
+});
+
+test('T001 pragmatic proxy snapshot and active seal: active or unsettled rows block authorization before mutation', () => {
+  // Arrange
+  const fixture = objectiveSequenceFixture();
+  const raw = transitionRaw(TARGET);
+  const candidate = transitionAssessment('execute-task', { targets: ['src/authorized-task.mjs'] });
+  const activeIdentities = {
+    activeCheckpointIdentity: fixture.candidate.checkpointIdentity,
+    activeCandidateIdentity: fixture.candidate.candidateIdentity,
+  };
+  const states = [
+    {
+      label: 'open active row',
+      state: { ...emptyState(), evaluationSequences: [{ ...fixture.sequence, ...activeIdentities }] },
+    },
+    {
+      label: 'unsettled row',
+      state: {
+        ...emptyState(),
+        evaluationSequences: [{ ...fixture.sequence, state: 'unsettled', ...activeIdentities }],
+      },
+    },
+  ];
+
+  for (const row of states) {
+    validateRunState(row.state);
+    assert.equal(Object.hasOwn(row.state, 'learningGovernance'), false, row.label);
+    const before = canonicalJson(row.state);
+
+    // Act
+    const result = authorizeAttempt(row.state, TARGET, raw, candidate, 'ordinary');
+
+    // Assert
+    assert.equal(result.authorized, false, row.label);
+    assert.equal(result.reason, 'not-dispatchable', row.label);
+    assert.strictEqual(result.state, row.state, row.label);
+    assert.equal(canonicalJson(row.state), before, row.label);
+    assert.equal(row.state.overallUsed, 0, row.label);
+    assert.deepEqual(row.state.recoveryUsed, [], row.label);
+    assert.deepEqual(row.state.pending, [], row.label);
+  }
+
+  const openState = { ...emptyState(), evaluationSequences: [fixture.sequence] };
+  validateRunState(openState);
+
+  // Act
+  const authorized = authorizeAttempt(openState, TARGET, raw, candidate, 'ordinary');
+
+  // Assert
+  assert.equal(authorized.authorized, true);
+  assert.equal(authorized.reason, 'authorized');
+  assert.equal(openState.overallUsed, 0);
+  assert.deepEqual(openState.pending, []);
+  assert.equal(authorized.state.overallUsed, 1);
+  assert.equal(authorized.state.pending.length, 1);
+});
+
+test('T001 closed descriptor snapshot: context accessors never execute at classification or retention reads', () => {
+  const fields = ['phase', 'prestate', 'poststateIdentity', 'candidateIdentity'];
+  const stages = [
+    { label: 'initial classification', attackRead: 1, phase: 'candidate', expectedEffects: ['get'] },
+    { label: 'retention precheck', attackRead: 2, phase: 'unsettled', expectedEffects: ['get', 'get'] },
+    { label: 'retention proof', attackRead: 3, phase: 'unsettled', expectedEffects: ['get', 'get', 'setPhase', 'get'] },
+  ];
+
+  for (const stage of stages) {
+    for (const field of fields) {
+      // Arrange
+      const label = `${stage.label}: ${field}`;
+      const fixture = cycle2BoundContexts();
+      const owner = projectionOwnerFake();
+      const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+      const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
+      fixture.host._map.get(checkpointIdentity).phase = stage.phase;
+      const stateBefore = canonicalJson(fixture.state);
+      const hostBefore = cycle2HostSnapshot(fixture.host);
+      const selectedContextBefore = cycle2ContextSnapshot(fixture.host, checkpointIdentity);
+      const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
+      const selectedFileBefore = cycle2FileSnapshot(fixture.host, fixture.a.candidatePath);
+      const otherFileBefore = cycle2FileSnapshot(fixture.host, 'src/b.mjs');
+      const get = fixture.host.get.bind(fixture.host);
+      let selectedReads = 0;
+      let getterCalls = 0;
+      fixture.host.get = (id) => {
+        const context = get(id);
+        if (id !== checkpointIdentity || !context || ++selectedReads !== stage.attackRead) return context;
+        const returned = { ...context };
+        Object.defineProperty(returned, field, {
+          configurable: true,
+          enumerable: true,
+          get() {
+            getterCalls += 1;
+            const selected = fixture.host._map.get(checkpointIdentity);
+            const unrelated = fixture.host._map.get(otherCheckpointIdentity);
+            if (selected) {
+              delete selected.poststateIdentity;
+              selected.phase = 'restored';
+            }
+            if (unrelated) unrelated.phase = 'restored';
+            fixture.host._setFile(fixture.a.candidatePath, 'selected-accessor-mutation');
+            fixture.host._setFile('src/b.mjs', 'unrelated-accessor-mutation');
+            throw new Error(`forbidden ${field} accessor execution`);
+          },
+        });
+        return returned;
+      };
+      const effects = cycle2CheckpointEffects(fixture.host);
+
+      // Act
+      const result = resolveComparison(fixture.state, fixture.a.sequence, {
+        host: fixture.host,
+        owner,
+        decision: cycle2Decision(fixture.a),
+        gateSet: cycle2GateSet(fixture.a),
+        candidateIdentity: fixture.a.candidate.candidateIdentity,
+        candidateWriteSet: fixture.a.writeSet,
+      });
+
+      // Assert
+      assert.equal(getterCalls, 0, label);
+      assert.deepEqual(effects, stage.expectedEffects, label);
+      assert.equal(cycle2ContextSnapshot(fixture.host, checkpointIdentity), selectedContextBefore, label);
+      assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore, label);
+      assert.equal(cycle2FileSnapshot(fixture.host, fixture.a.candidatePath), selectedFileBefore, label);
+      assert.equal(cycle2FileSnapshot(fixture.host, 'src/b.mjs'), otherFileBefore, label);
+      assert.equal(effects.includes('probe'), false, label);
+      assert.equal(effects.includes('restore'), false, label);
+      assert.equal(effects.includes('release'), false, label);
+      assertCycle2Unresolved({
+        fixture,
+        owner,
+        result,
+        outcome: 'contract-mismatch',
+        activeCheckpointIdentity: checkpointIdentity,
+        activeCandidateIdentity: fixture.a.candidate.candidateIdentity,
+        stateBefore,
+        hostBefore,
+        otherContextBefore,
+        otherFileBefore: fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'),
+        expectedSelectedContext: undefined,
+        effects,
+        label,
+      });
+    }
+  }
+});
+
+test('T001 closed descriptor snapshot: only exact own enumerable data records are admitted', () => {
+  const stages = [
+    { label: 'initial classification', attackRead: 1, phase: 'candidate', expectedEffects: ['get'] },
+    { label: 'retention precheck', attackRead: 2, phase: 'unsettled', expectedEffects: ['get', 'get'] },
+    { label: 'retention proof', attackRead: 3, phase: 'unsettled', expectedEffects: ['get', 'get', 'setPhase', 'get'] },
+  ];
+  const rules = [
+    ['symbol field', (context) => {
+      const next = { ...context };
+      next[Symbol('unexpected')] = true;
+      return next;
+    }],
+    ['unknown field', (context) => ({ ...context, unexpected: true })],
+    ['missing field', (context) => {
+      const next = { ...context };
+      delete next.candidateIdentity;
+      return next;
+    }],
+    ['non-enumerable field', (context) => {
+      const next = { ...context };
+      Object.defineProperty(next, 'phase', {
+        configurable: true,
+        enumerable: false,
+        value: context.phase,
+        writable: true,
+      });
+      return next;
+    }],
+    ['inherited prototype field', (context) => Object.assign(
+      Object.create({ phase: context.phase, polluted: true }),
+      {
+        prestate: context.prestate,
+        poststateIdentity: context.poststateIdentity,
+        candidateIdentity: context.candidateIdentity,
+      },
+    )],
+    ['accessor field', (context, accessorInvoked) => {
+      const next = { ...context };
+      Object.defineProperty(next, 'phase', {
+        configurable: true,
+        enumerable: true,
+        get() {
+          accessorInvoked();
+          throw new Error('forbidden exact-record accessor execution');
+        },
+      });
+      return next;
+    }],
+    ['non-data descriptor', (context) => {
+      const next = { ...context };
+      delete next.phase;
+      Object.defineProperty(next, 'phase', {
+        configurable: true,
+        enumerable: true,
+        get: undefined,
+        set: undefined,
+      });
+      return next;
+    }],
+  ];
+
+  for (const stage of stages) {
+    for (const [ruleLabel, makeInvalid] of rules) {
+      // Arrange
+      const label = `${stage.label}: ${ruleLabel}`;
+      const fixture = cycle2BoundContexts();
+      const owner = projectionOwnerFake();
+      const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+      const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
+      fixture.host._map.get(checkpointIdentity).phase = stage.phase;
+      const stateBefore = canonicalJson(fixture.state);
+      const hostBefore = cycle2HostSnapshot(fixture.host);
+      const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
+      const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
+      const get = fixture.host.get.bind(fixture.host);
+      let selectedReads = 0;
+      let accessorCalls = 0;
+      fixture.host.get = (id) => {
+        const context = get(id);
+        if (id !== checkpointIdentity || !context || ++selectedReads !== stage.attackRead) return context;
+        return makeInvalid(context, () => { accessorCalls += 1; });
+      };
+      const effects = cycle2CheckpointEffects(fixture.host);
+
+      // Act
+      const result = resolveComparison(fixture.state, fixture.a.sequence, {
+        host: fixture.host,
+        owner,
+        decision: cycle2Decision(fixture.a),
+        gateSet: cycle2GateSet(fixture.a),
+        candidateIdentity: fixture.a.candidate.candidateIdentity,
+        candidateWriteSet: fixture.a.writeSet,
+      });
+
+      // Assert
+      assert.equal(accessorCalls, 0, label);
+      assert.deepEqual(effects, stage.expectedEffects, label);
+      assertCycle2Unresolved({
+        fixture,
+        owner,
+        result,
+        outcome: 'contract-mismatch',
+        activeCheckpointIdentity: checkpointIdentity,
+        activeCandidateIdentity: fixture.a.candidate.candidateIdentity,
+        stateBefore,
+        hostBefore,
+        otherContextBefore,
+        otherFileBefore,
+        expectedSelectedContext: undefined,
+        effects,
+        label,
+      });
+    }
+  }
+});
+
+test('T001 closed descriptor snapshot: admitted values detach from later outer-record descriptor mutation', () => {
+  // Arrange
+  const fixture = cycle2BoundContexts();
+  const owner = projectionOwnerFake();
+  const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+  const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
+  const get = fixture.host.get.bind(fixture.host);
+  const foreignContext = get(otherCheckpointIdentity);
+  const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
+  const otherFileBefore = cycle2FileSnapshot(fixture.host, 'src/b.mjs');
+  const stateBefore = canonicalJson(fixture.state);
+  let admittedOuter;
+  fixture.host.get = (id) => {
+    const context = get(id);
+    if (id === checkpointIdentity && context && !admittedOuter) {
+      admittedOuter = context;
+      return admittedOuter;
+    }
+    return context;
+  };
+  const setPhase = fixture.host.setPhase.bind(fixture.host);
+  let mutationHooks = 0;
+  fixture.host.setPhase = (id, phase) => {
+    if (id === checkpointIdentity && phase === 'restoring') {
+      mutationHooks += 1;
+      Object.defineProperties(admittedOuter, {
+        phase: { configurable: true, enumerable: true, value: 'unsettled', writable: true },
+        prestate: { configurable: true, enumerable: true, value: foreignContext.prestate, writable: true },
+        poststateIdentity: {
+          configurable: true,
+          enumerable: true,
+          value: foreignContext.poststateIdentity,
+          writable: true,
+        },
+        candidateIdentity: {
+          configurable: true,
+          enumerable: true,
+          value: foreignContext.candidateIdentity,
+          writable: true,
+        },
+      });
+    }
+    return setPhase(id, phase);
+  };
+
+  // Act
+  const resolve = () => resolveComparison(fixture.state, fixture.a.sequence, {
+    host: fixture.host,
+    owner,
+    decision: cycle2Decision(fixture.a),
+    gateSet: cycle2GateSet(fixture.a),
+    candidateIdentity: fixture.a.candidate.candidateIdentity,
+    candidateWriteSet: fixture.a.writeSet,
+  });
+
+  // Assert
+  assert.throws(resolve, /sealed: learning-required/);
+  assert.equal(mutationHooks, 1);
+  assert.equal(admittedOuter.phase, 'unsettled');
+  assert.equal(admittedOuter.candidateIdentity, fixture.b.candidate.candidateIdentity);
+  assert.equal(fixture.host._map.has(checkpointIdentity), false);
+  assert.equal(cycle2FileSnapshot(fixture.host, fixture.a.candidatePath), cycle2FileSnapshot(
+    checkpointHostFake({ [fixture.a.candidatePath]: 'a-prestate' }),
+    fixture.a.candidatePath,
+  ));
+  assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore);
+  assert.equal(cycle2FileSnapshot(fixture.host, 'src/b.mjs'), otherFileBefore);
+  assert.equal(canonicalJson(fixture.state), stateBefore);
+  assert.deepEqual(owner._currentRun, []);
+  assert.deepEqual(owner._lane, []);
+});
+
+test('T001 closed descriptor snapshot: valid candidate and candidate-derived lineages retain prior outcomes', () => {
+  // Arrange
+  const governedCandidate = cycle2BoundContexts();
+  const governedOwner = projectionOwnerFake();
+
+  // Act
+  const resolveGovernedCandidate = () => resolveComparison(
+    governedCandidate.state,
+    governedCandidate.a.sequence,
+    {
+      host: governedCandidate.host,
+      owner: governedOwner,
+      decision: cycle2Decision(governedCandidate.a),
+      gateSet: cycle2GateSet(governedCandidate.a),
+      candidateIdentity: governedCandidate.a.candidate.candidateIdentity,
+      candidateWriteSet: governedCandidate.a.writeSet,
+    },
+  );
+
+  // Assert
+  assert.throws(resolveGovernedCandidate, /sealed: learning-required/);
+  assert.equal(governedCandidate.host._map.has(governedCandidate.a.candidate.checkpointIdentity), false);
+  assert.equal(cycle2FileSnapshot(governedCandidate.host, governedCandidate.a.candidatePath), cycle2FileSnapshot(
+    checkpointHostFake({ [governedCandidate.a.candidatePath]: 'a-prestate' }),
+    governedCandidate.a.candidatePath,
+  ));
+  assert.deepEqual(governedOwner._currentRun, []);
+  assert.deepEqual(governedOwner._lane, []);
+
+  for (const phase of ['restoring', 'unsettled']) {
+    // Arrange
+    const fixture = cycle2BoundContexts();
+    const owner = projectionOwnerFake();
+    const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+    const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
+    fixture.host._map.get(checkpointIdentity).phase = phase;
+    const stateBefore = canonicalJson(fixture.state);
+    const hostBefore = cycle2HostSnapshot(fixture.host);
+    const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
+    const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
+    const expectedSelectedContext = cycle2ContextSnapshot(fixture.host, checkpointIdentity, 'unsettled');
+    const effects = cycle2CheckpointEffects(fixture.host);
+
+    // Act
+    const result = resolveComparison(fixture.state, fixture.a.sequence, {
+      host: fixture.host,
+      owner,
+      decision: cycle2Decision(fixture.a),
+      gateSet: cycle2GateSet(fixture.a),
+      candidateIdentity: fixture.a.candidate.candidateIdentity,
+      candidateWriteSet: fixture.a.writeSet,
+    });
+
+    // Assert
+    assert.deepEqual(effects, ['get', 'get', 'setPhase', 'get'], phase);
+    assertCycle2Unresolved({
+      fixture,
+      owner,
+      result,
+      outcome: 'stop-unsettled',
+      activeCheckpointIdentity: checkpointIdentity,
+      activeCandidateIdentity: fixture.a.candidate.candidateIdentity,
+      stateBefore,
+      hostBefore,
+      otherContextBefore,
+      otherFileBefore,
+      expectedSelectedContext,
+      effects,
+      label: phase,
+    });
+  }
+
+  // Arrange
+  const ungoverned = objectiveSequenceFixture();
+  const ungovernedOwner = projectionOwnerFake();
+
+  // Act
+  const kept = resolveComparison(ungoverned.state, ungoverned.sequence, {
+    host: ungoverned.host,
+    owner: ungovernedOwner,
+    decision: fixtureDecision(ungoverned, ['8', '8', '8', '8', '8']),
+    gateSet: fixtureGateSet(ungoverned),
+    candidateIdentity: ungoverned.candidate.candidateIdentity,
+    candidateWriteSet: ungoverned.writeSet,
+  });
+
+  // Assert
+  assert.equal(kept.outcome, 'keep');
+  assert.equal(kept.stopped, false);
+  assert.equal(ungoverned.host._map.size, 0);
+  assert.equal(ungoverned.host._files.get('src/a.mjs')?.bytes?.toString(), 'poststate');
+  assert.equal(ungovernedOwner._currentRun.length, 1);
+  assert.equal(ungovernedOwner._lane.length, 1);
+});
+
+test('T001 pre-read owner envelope: correctly bound governed candidate settles normally before refusal', () => {
+  // Arrange
+  const fixture = cycle2BoundContexts();
+  const owner = projectionOwnerFake();
+  const decision = cycle2Decision(fixture.a);
+  const gateSet = cycle2GateSet(fixture.a);
+  const calls = [];
+  const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+  const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
+  const otherContextBefore = canonicalJson(fixture.host.get(otherCheckpointIdentity));
+  const stateBefore = canonicalJson(fixture.state);
+  const incumbentBefore = fixture.a.sequence.incumbentCandidateIdentity;
+  const get = fixture.host.get.bind(fixture.host);
+  const setPhase = fixture.host.setPhase.bind(fixture.host);
+  const restore = fixture.host.restore.bind(fixture.host);
+  const probe = fixture.host.probe.bind(fixture.host);
+  const release = fixture.host.release.bind(fixture.host);
+  fixture.host.get = (id) => {
+    const context = get(id);
+    calls.push(`get:${id}:${context?.phase}`);
+    return context;
+  };
+  fixture.host.setPhase = (id, phase) => {
+    calls.push(`setPhase:${id}:${phase}`);
+    return setPhase(id, phase);
+  };
+  fixture.host.restore = (id) => {
+    const result = restore(id);
+    calls.push(`restore:${id}:${fixture.host._files.get('src/a.mjs')?.bytes?.toString()}`);
+    return result;
+  };
+  fixture.host.probe = (id) => {
+    const result = probe(id);
+    calls.push(`probe:${id}:${fixture.host._map.get(id)?.phase}:${fixture.host._files.get('src/a.mjs')?.bytes?.toString()}`);
+    return result;
+  };
+  fixture.host.release = (id) => {
+    calls.push(`release:${id}:${fixture.host._map.get(id)?.phase}:${fixture.host._files.get('src/a.mjs')?.bytes?.toString()}`);
+    return release(id);
+  };
+
+  // Act
+  const resolve = () => resolveComparison(fixture.state, fixture.a.sequence, {
+    host: fixture.host,
+    owner,
+    decision,
+    gateSet,
+    candidateIdentity: fixture.a.candidate.candidateIdentity,
+    candidateWriteSet: fixture.a.writeSet,
+  });
+
+  // Assert
+  assert.throws(resolve, /learning-required/);
+  assert.deepEqual(calls, [
+    `get:${checkpointIdentity}:candidate`,
+    `setPhase:${checkpointIdentity}:restoring`,
+    `restore:${checkpointIdentity}:a-prestate`,
+    `probe:${checkpointIdentity}:restoring:a-prestate`,
+    `setPhase:${checkpointIdentity}:restored`,
+    `get:${checkpointIdentity}:restored`,
+    `probe:${checkpointIdentity}:restored:a-prestate`,
+    `release:${checkpointIdentity}:restored:a-prestate`,
+  ]);
+  assert.equal(fixture.host._map.has(checkpointIdentity), false);
+  assert.equal(canonicalJson(get(otherCheckpointIdentity)), otherContextBefore);
+  assert.equal(fixture.host._map.get(otherCheckpointIdentity)?.phase, 'candidate');
+  assert.equal(fixture.host._files.get('src/a.mjs')?.bytes?.toString(), 'a-prestate');
+  assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString(), 'b-candidate');
+  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
+  assert.deepEqual(owner.acquireLaneEventLines(), []);
+  assert.equal(canonicalJson(fixture.state), stateBefore);
+  assert.equal(
+    fixture.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity)?.incumbentCandidateIdentity,
+    incumbentBefore,
+  );
+});
+
+test('T001 owner-returned fault outcome: every restoration proof fault returns exact A unsettled', () => {
+  // Arrange
+  const aggregateWriteSet = {
+    candidatePaths: ['src/f0.mjs', 'src/f1.mjs', 'src/f2.mjs', 'src/f3.mjs', 'src/f4.mjs'],
+    protectedPaths: [],
+  };
+  const aggregateInitialFiles = Object.fromEntries(aggregateWriteSet.candidatePaths.map((filePath) => [filePath, 'prestate']));
+  const defaultFixture = () => cycle2BoundContexts();
+  const cases = [
+    ['restore throw', defaultFixture, (fixture) => {
+      fixture.host.faults.failRestore = true;
+    }],
+    ['probe throw', defaultFixture, (fixture) => {
+      const probe = fixture.host.probe.bind(fixture.host);
+      fixture.host.probe = (checkpointIdentity) => {
+        if (checkpointIdentity === fixture.a.candidate.checkpointIdentity) throw new Error('probe failed');
+        return probe(checkpointIdentity);
+      };
+    }],
+    ['descriptor accessor throw', defaultFixture, (fixture) => {
+      const probe = fixture.host.probe.bind(fixture.host);
+      fixture.host.probe = (checkpointIdentity) => {
+        const descriptors = probe(checkpointIdentity);
+        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity) return descriptors;
+        const first = { ...descriptors[0] };
+        Object.defineProperty(first, 'state', {
+          enumerable: true,
+          get() { throw new Error('descriptor state accessor failed'); },
+        });
+        return [first, ...descriptors.slice(1)];
+      };
+    }],
+    ['missing descriptor field', defaultFixture, (fixture) => {
+      const probe = fixture.host.probe.bind(fixture.host);
+      fixture.host.probe = (checkpointIdentity) => {
+        const descriptors = probe(checkpointIdentity);
+        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity) return descriptors;
+        const first = { ...descriptors[0] };
+        delete first.sha256;
+        return [first, ...descriptors.slice(1)];
+      };
+    }],
+    ['malformed descriptor field', defaultFixture, (fixture) => {
+      const probe = fixture.host.probe.bind(fixture.host);
+      fixture.host.probe = (checkpointIdentity) => {
+        const descriptors = probe(checkpointIdentity);
+        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity) return descriptors;
+        return [{ ...descriptors[0], sha256: 'not-a-hash' }, ...descriptors.slice(1)];
+      };
+    }],
+    ['oversized descriptor', defaultFixture, (fixture) => {
+      const probe = fixture.host.probe.bind(fixture.host);
+      fixture.host.probe = (checkpointIdentity) => {
+        const descriptors = probe(checkpointIdentity);
+        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity) return descriptors;
+        return [{ ...descriptors[0], byteLength: 1_048_577 }, ...descriptors.slice(1)];
+      };
+    }],
+    ['oversized captured body', defaultFixture, (fixture) => {
+      const restore = fixture.host.restore.bind(fixture.host);
+      fixture.host.restore = (checkpointIdentity) => {
+        restore(checkpointIdentity);
+        if (checkpointIdentity === fixture.a.candidate.checkpointIdentity) {
+          fixture.host._setFile(fixture.a.candidatePath, Buffer.alloc(1_048_577));
+        }
+      };
+    }],
+    ['oversized aggregate body', () => cycle2BoundContexts({
+      writeSetA: aggregateWriteSet,
+      initialFilesA: aggregateInitialFiles,
+      candidatePathA: 'src/f0.mjs',
+    }), (fixture) => {
+      const restore = fixture.host.restore.bind(fixture.host);
+      fixture.host.restore = (checkpointIdentity) => {
+        restore(checkpointIdentity);
+        if (checkpointIdentity === fixture.a.candidate.checkpointIdentity) {
+          for (const filePath of aggregateWriteSet.candidatePaths) {
+            fixture.host._setFile(filePath, Buffer.alloc(1_048_576));
+          }
+        }
+      };
+    }],
+    ['prestate identity mismatch', defaultFixture, (fixture) => {
+      const restore = fixture.host.restore.bind(fixture.host);
+      fixture.host.restore = (checkpointIdentity) => {
+        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity) restore(checkpointIdentity);
+      };
+    }],
+  ];
+
+  for (const [label, createFixture, injectFault] of cases) {
+    // Arrange
+    const fixture = createFixture();
+    const owner = projectionOwnerFake();
+    injectFault(fixture);
+    const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+    const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
+    const expectedUnsettledContext = cycle2ContextSnapshot(fixture.host, checkpointIdentity, 'unsettled');
+    const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
+    const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
+    const stateBefore = canonicalJson(fixture.state);
+    const incumbentBefore = fixture.a.sequence.incumbentCandidateIdentity;
+    const release = fixture.host.release.bind(fixture.host);
+    let releaseCalls = 0;
+    fixture.host.release = (id) => {
+      releaseCalls += 1;
+      return release(id);
+    };
+
+    // Act
+    const result = resolveComparison(fixture.state, fixture.a.sequence, {
+      host: fixture.host,
+      owner,
+      decision: cycle2Decision(fixture.a),
+      gateSet: cycle2GateSet(fixture.a),
+      candidateIdentity: fixture.a.candidate.candidateIdentity,
+      candidateWriteSet: fixture.a.writeSet,
+    });
+
+    // Assert
+    const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity);
+    const unrelatedRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.b.sequence.sequenceIdentity);
+    assert.equal(result.outcome, 'stop-unsettled', label);
+    assert.equal(result.stopped, true, label);
+    assert.ok(nextRow, label);
+    assert.equal(nextRow.state, 'unsettled', label);
+    assert.equal(nextRow.activeCheckpointIdentity, checkpointIdentity, label);
+    assert.equal(nextRow.activeCandidateIdentity, fixture.a.candidate.candidateIdentity, label);
+    assert.equal(nextRow.incumbentCandidateIdentity, incumbentBefore, label);
+    assert.deepEqual(unrelatedRow, fixture.b.sequence, label);
+    assert.equal(Object.hasOwn(result, 'event'), false, label);
+    assert.equal(Object.hasOwn(result, 'projection'), false, label);
+    assert.equal(cycle2ContextSnapshot(fixture.host, checkpointIdentity), expectedUnsettledContext, label);
+    assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore, label);
+    assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'), otherFileBefore, label);
+    assert.equal(releaseCalls, 0, label);
+    assert.deepEqual(owner.acquireCurrentRunRecords(), [], label);
+    assert.deepEqual(owner.acquireLaneEventLines(), [], label);
+    assert.equal(canonicalJson(fixture.state), stateBefore, label);
+    assert.equal(
+      fixture.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity)?.incumbentCandidateIdentity,
+      incumbentBefore,
+      label,
+    );
+    assert.throws(() => closeEvaluationSequence(result.state, fixture.a.sequence.sequenceIdentity, {
+      owner,
+      reason: 'hard-stop',
+      comparisonEventHashes: [],
+      learningReviewEventHashes: [],
+    }), TypeError, label);
+    assert.deepEqual(owner.acquireCurrentRunRecords(), [], label);
+    assert.deepEqual(owner.acquireLaneEventLines(), [], label);
+  }
+});
+
+test('T001 owner-returned fault outcome: every governed release proof fault returns exact A unsettled', () => {
+  // Arrange
+  const cases = [
+    ['context get throws', (fixture) => {
+      const get = fixture.host.get.bind(fixture.host);
+      let selectedGets = 0;
+      fixture.host.get = (checkpointIdentity) => {
+        if (checkpointIdentity === fixture.a.candidate.checkpointIdentity && ++selectedGets === 2) {
+          throw new Error('release context acquisition failed');
+        }
+        return get(checkpointIdentity);
+      };
+    }],
+    ['phase accessor throws', (fixture) => {
+      const get = fixture.host.get.bind(fixture.host);
+      let selectedGets = 0;
+      fixture.host.get = (checkpointIdentity) => {
+        const context = get(checkpointIdentity);
+        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity || ++selectedGets !== 2) return context;
+        return {
+          get phase() { throw new Error('release phase acquisition failed'); },
+          prestate: context.prestate,
+          poststateIdentity: context.poststateIdentity,
+          candidateIdentity: context.candidateIdentity,
+        };
+      };
+    }],
+    ['probe throws', (fixture) => {
+      const probe = fixture.host.probe.bind(fixture.host);
+      let selectedProbes = 0;
+      fixture.host.probe = (checkpointIdentity) => {
+        if (checkpointIdentity === fixture.a.candidate.checkpointIdentity && ++selectedProbes === 2) {
+          throw new Error('release probe failed');
+        }
+        return probe(checkpointIdentity);
+      };
+    }],
+    ['malformed descriptor', (fixture) => {
+      const probe = fixture.host.probe.bind(fixture.host);
+      let selectedProbes = 0;
+      fixture.host.probe = (checkpointIdentity) => {
+        const descriptors = probe(checkpointIdentity);
+        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity || ++selectedProbes !== 2) return descriptors;
+        return [{ ...descriptors[0], sha256: 'not-a-hash' }, ...descriptors.slice(1)];
+      };
+    }],
+    ['oversized descriptor', (fixture) => {
+      const probe = fixture.host.probe.bind(fixture.host);
+      let selectedProbes = 0;
+      fixture.host.probe = (checkpointIdentity) => {
+        const descriptors = probe(checkpointIdentity);
+        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity || ++selectedProbes !== 2) return descriptors;
+        return [{ ...descriptors[0], byteLength: 1_048_577 }, ...descriptors.slice(1)];
+      };
+    }],
+    ['restored state mismatch', (fixture) => {
+      const setPhase = fixture.host.setPhase.bind(fixture.host);
+      fixture.host.setPhase = (checkpointIdentity, phase) => {
+        const result = setPhase(checkpointIdentity, phase);
+        if (checkpointIdentity === fixture.a.candidate.checkpointIdentity && phase === 'restored') {
+          fixture.host._setFile(fixture.a.candidatePath, 'release-proof-drift');
+        }
+        return result;
+      };
+    }],
+    ['release throws', (fixture) => {
+      fixture.host.faults.failRelease = true;
+    }],
+  ];
+
+  for (const [label, injectFault] of cases) {
+    // Arrange
+    const fixture = cycle2BoundContexts();
+    const owner = projectionOwnerFake();
+    injectFault(fixture);
+    const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+    const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
+    const expectedUnsettledContext = cycle2ContextSnapshot(fixture.host, checkpointIdentity, 'unsettled');
+    const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
+    const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
+    const stateBefore = canonicalJson(fixture.state);
+    const incumbentBefore = fixture.a.sequence.incumbentCandidateIdentity;
+    const release = fixture.host.release.bind(fixture.host);
+    let successfulReleases = 0;
+    fixture.host.release = (id) => {
+      const result = release(id);
+      successfulReleases += 1;
+      return result;
+    };
+
+    // Act
+    const result = resolveComparison(fixture.state, fixture.a.sequence, {
+      host: fixture.host,
+      owner,
+      decision: cycle2Decision(fixture.a),
+      gateSet: cycle2GateSet(fixture.a),
+      candidateIdentity: fixture.a.candidate.candidateIdentity,
+      candidateWriteSet: fixture.a.writeSet,
+    });
+
+    // Assert
+    const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity);
+    const unrelatedRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.b.sequence.sequenceIdentity);
+    assert.equal(result.outcome, 'stop-unsettled', label);
+    assert.equal(result.stopped, true, label);
+    assert.ok(nextRow, label);
+    assert.equal(nextRow.state, 'unsettled', label);
+    assert.equal(nextRow.activeCheckpointIdentity, checkpointIdentity, label);
+    assert.equal(nextRow.activeCandidateIdentity, fixture.a.candidate.candidateIdentity, label);
+    assert.equal(nextRow.incumbentCandidateIdentity, incumbentBefore, label);
+    assert.deepEqual(unrelatedRow, fixture.b.sequence, label);
+    assert.equal(Object.hasOwn(result, 'event'), false, label);
+    assert.equal(Object.hasOwn(result, 'projection'), false, label);
+    assert.equal(cycle2ContextSnapshot(fixture.host, checkpointIdentity), expectedUnsettledContext, label);
+    assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore, label);
+    assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'), otherFileBefore, label);
+    assert.equal(successfulReleases, 0, label);
+    assert.deepEqual(owner.acquireCurrentRunRecords(), [], label);
+    assert.deepEqual(owner.acquireLaneEventLines(), [], label);
+    assert.equal(canonicalJson(fixture.state), stateBefore, label);
+    assert.equal(
+      fixture.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity)?.incumbentCandidateIdentity,
+      incumbentBefore,
+      label,
+    );
+    assert.throws(() => closeEvaluationSequence(result.state, fixture.a.sequence.sequenceIdentity, {
+      owner,
+      reason: 'hard-stop',
+      comparisonEventHashes: [],
+      learningReviewEventHashes: [],
+    }), TypeError, label);
+    assert.deepEqual(owner.acquireCurrentRunRecords(), [], label);
+    assert.deepEqual(owner.acquireLaneEventLines(), [], label);
+  }
+});
+
+test('T001 owner-returned fault outcome: genuine second-read context loss returns open active quarantine', () => {
+  // Arrange
+  const fixture = cycle2BoundContexts();
+  const owner = projectionOwnerFake();
+  const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+  const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
+  const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
+  const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
+  const stateBefore = canonicalJson(fixture.state);
+  const incumbentBefore = fixture.a.sequence.incumbentCandidateIdentity;
+  const get = fixture.host.get.bind(fixture.host);
+  let selectedGets = 0;
+  fixture.host.get = (id) => {
+    if (id === checkpointIdentity && ++selectedGets === 2) {
+      fixture.host._map.delete(id);
+      return undefined;
+    }
+    return get(id);
+  };
+  const release = fixture.host.release.bind(fixture.host);
+  let releaseCalls = 0;
+  fixture.host.release = (id) => {
+    releaseCalls += 1;
+    return release(id);
+  };
+
+  // Act
+  const result = resolveComparison(fixture.state, fixture.a.sequence, {
+    host: fixture.host,
+    owner,
+    decision: cycle2Decision(fixture.a),
+    gateSet: cycle2GateSet(fixture.a),
+    candidateIdentity: fixture.a.candidate.candidateIdentity,
+    candidateWriteSet: fixture.a.writeSet,
+  });
+
+  // Assert
+  const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity);
+  const unrelatedRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.b.sequence.sequenceIdentity);
+  assert.equal(result.outcome, 'contract-mismatch');
+  assert.equal(result.stopped, true);
+  assert.ok(nextRow);
+  assert.equal(nextRow.state, 'open');
+  assert.equal(nextRow.activeCheckpointIdentity, checkpointIdentity);
+  assert.equal(nextRow.activeCandidateIdentity, fixture.a.candidate.candidateIdentity);
+  assert.equal(nextRow.incumbentCandidateIdentity, incumbentBefore);
+  assert.deepEqual(unrelatedRow, fixture.b.sequence);
+  assert.equal(Object.hasOwn(result, 'event'), false);
+  assert.equal(Object.hasOwn(result, 'projection'), false);
+  assert.equal(fixture.host._map.has(checkpointIdentity), false);
+  assert.equal(fixture.host._files.get('src/a.mjs')?.bytes?.toString(), 'a-prestate');
+  assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore);
+  assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'), otherFileBefore);
+  assert.equal(releaseCalls, 0);
+  assert.equal(canonicalJson(fixture.state), stateBefore);
+  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
+  assert.deepEqual(owner.acquireLaneEventLines(), []);
+  const successorBeforeClose = canonicalJson(result.state);
+  assert.throws(() => closeEvaluationSequence(result.state, fixture.a.sequence.sequenceIdentity, {
+    owner,
+    reason: 'hard-stop',
+    comparisonEventHashes: [],
+    learningReviewEventHashes: [],
+  }), TypeError);
+  assert.equal(canonicalJson(result.state), successorBeforeClose);
+  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
+  assert.deepEqual(owner.acquireLaneEventLines(), []);
+});
+
+test('T001 owner-returned fault outcome: concrete second-read phase drift returns paired unsettled retention', () => {
+  const phases = ['candidate', 'restoring', 'unsettled'];
+
+  for (const phase of phases) {
+    // Arrange
+    const fixture = cycle2BoundContexts();
+    const owner = projectionOwnerFake();
+    const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+    const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
+    const expectedUnsettledContext = cycle2ContextSnapshot(fixture.host, checkpointIdentity, 'unsettled');
+    const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
+    const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
+    const stateBefore = canonicalJson(fixture.state);
+    const incumbentBefore = fixture.a.sequence.incumbentCandidateIdentity;
+    const get = fixture.host.get.bind(fixture.host);
+    let selectedGets = 0;
+    fixture.host.get = (id) => {
+      if (id === checkpointIdentity && ++selectedGets === 2) {
+        fixture.host._map.get(id).phase = phase;
+      }
+      return get(id);
+    };
+    const release = fixture.host.release.bind(fixture.host);
+    let releaseCalls = 0;
+    fixture.host.release = (id) => {
+      releaseCalls += 1;
+      return release(id);
+    };
+
+    // Act
+    const result = resolveComparison(fixture.state, fixture.a.sequence, {
+      host: fixture.host,
+      owner,
+      decision: cycle2Decision(fixture.a),
+      gateSet: cycle2GateSet(fixture.a),
+      candidateIdentity: fixture.a.candidate.candidateIdentity,
+      candidateWriteSet: fixture.a.writeSet,
+    });
+
+    // Assert
+    const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity);
+    const unrelatedRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.b.sequence.sequenceIdentity);
+    assert.equal(result.outcome, 'stop-unsettled', phase);
+    assert.equal(result.stopped, true, phase);
+    assert.ok(nextRow, phase);
+    assert.equal(nextRow.state, 'unsettled', phase);
+    assert.equal(nextRow.activeCheckpointIdentity, checkpointIdentity, phase);
+    assert.equal(nextRow.activeCandidateIdentity, fixture.a.candidate.candidateIdentity, phase);
+    assert.equal(nextRow.incumbentCandidateIdentity, incumbentBefore, phase);
+    assert.deepEqual(unrelatedRow, fixture.b.sequence, phase);
+    assert.equal(Object.hasOwn(result, 'event'), false, phase);
+    assert.equal(Object.hasOwn(result, 'projection'), false, phase);
+    assert.equal(cycle2ContextSnapshot(fixture.host, checkpointIdentity), expectedUnsettledContext, phase);
+    assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore, phase);
+    assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'), otherFileBefore, phase);
+    assert.equal(releaseCalls, 0, phase);
+    assert.equal(canonicalJson(fixture.state), stateBefore, phase);
+    assert.deepEqual(owner.acquireCurrentRunRecords(), [], phase);
+    assert.deepEqual(owner.acquireLaneEventLines(), [], phase);
+    const successorBeforeClose = canonicalJson(result.state);
+    assert.throws(() => closeEvaluationSequence(result.state, fixture.a.sequence.sequenceIdentity, {
+      owner,
+      reason: 'hard-stop',
+      comparisonEventHashes: [],
+      learningReviewEventHashes: [],
+    }), TypeError, phase);
+    assert.equal(canonicalJson(result.state), successorBeforeClose, phase);
+    assert.deepEqual(owner.acquireCurrentRunRecords(), [], phase);
+    assert.deepEqual(owner.acquireLaneEventLines(), [], phase);
+  }
+});
+
+test('T001 owner-returned fault outcome: retention setPhase failure cannot report stop-unsettled', () => {
+  // Arrange
+  const fixture = cycle2BoundContexts();
+  const owner = projectionOwnerFake();
+  const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
+  const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
+  const expectedQuarantinedContext = cycle2ContextSnapshot(fixture.host, checkpointIdentity, 'restoring');
+  const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
+  const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
+  const stateBefore = canonicalJson(fixture.state);
+  const incumbentBefore = fixture.a.sequence.incumbentCandidateIdentity;
+  fixture.host.faults.failRestore = true;
+  const setPhase = fixture.host.setPhase.bind(fixture.host);
+  let retentionFailures = 0;
+  fixture.host.setPhase = (id, phase) => {
+    if (id === checkpointIdentity && phase === 'unsettled') {
+      retentionFailures += 1;
+      throw new Error('unsettled retention failed');
+    }
+    return setPhase(id, phase);
+  };
+  const release = fixture.host.release.bind(fixture.host);
+  let releaseCalls = 0;
+  fixture.host.release = (id) => {
+    releaseCalls += 1;
+    return release(id);
+  };
+
+  // Act
+  const result = resolveComparison(fixture.state, fixture.a.sequence, {
+    host: fixture.host,
+    owner,
+    decision: cycle2Decision(fixture.a),
+    gateSet: cycle2GateSet(fixture.a),
+    candidateIdentity: fixture.a.candidate.candidateIdentity,
+    candidateWriteSet: fixture.a.writeSet,
+  });
+
+  // Assert
+  const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity);
+  const unrelatedRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.b.sequence.sequenceIdentity);
+  assert.equal(result.outcome, 'contract-mismatch');
+  assert.notEqual(result.outcome, 'stop-unsettled');
+  assert.equal(result.stopped, true);
+  assert.ok(nextRow);
+  assert.equal(nextRow.state, 'open');
+  assert.equal(nextRow.activeCheckpointIdentity, checkpointIdentity);
+  assert.equal(nextRow.activeCandidateIdentity, fixture.a.candidate.candidateIdentity);
+  assert.equal(nextRow.incumbentCandidateIdentity, incumbentBefore);
+  assert.deepEqual(unrelatedRow, fixture.b.sequence);
+  assert.equal(Object.hasOwn(result, 'event'), false);
+  assert.equal(Object.hasOwn(result, 'projection'), false);
+  assert.ok(retentionFailures > 0);
+  assert.equal(cycle2ContextSnapshot(fixture.host, checkpointIdentity), expectedQuarantinedContext);
+  assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore);
+  assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'), otherFileBefore);
+  assert.equal(releaseCalls, 0);
+  assert.equal(canonicalJson(fixture.state), stateBefore);
+  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
+  assert.deepEqual(owner.acquireLaneEventLines(), []);
+  const successorBeforeClose = canonicalJson(result.state);
+  assert.throws(() => closeEvaluationSequence(result.state, fixture.a.sequence.sequenceIdentity, {
+    owner,
+    reason: 'hard-stop',
+    comparisonEventHashes: [],
+    learningReviewEventHashes: [],
+  }), TypeError);
+  assert.equal(canonicalJson(result.state), successorBeforeClose);
+  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
+  assert.deepEqual(owner.acquireLaneEventLines(), []);
+});
+
+test('T001 cycle 2 regression: kept-state release mismatch retains the exact context unsettled without a release claim', () => {
+  // Arrange
+  const fixture = objectiveSequenceFixture();
+  const owner = projectionOwnerFake();
+  const stateBefore = canonicalJson(fixture.state);
+  const checkpointIdentity = fixture.candidate.checkpointIdentity;
+  const expectedUnsettledContext = cycle2ContextSnapshot(fixture.host, checkpointIdentity, 'unsettled');
+  const kept = keepCheckpoint(fixture.host, fixture.candidate, fixture.writeSet);
+  fixture.host._setFile('src/a.mjs', 'kept-release-proof-drift');
+  const release = fixture.host.release.bind(fixture.host);
+  let successfulReleases = 0;
+  fixture.host.release = (id) => {
+    const result = release(id);
+    successfulReleases += 1;
+    return result;
+  };
+
+  // Act
+  const releaseKept = () => releaseCheckpoint(fixture.host, kept, fixture.writeSet);
+
+  // Assert
+  assert.throws(releaseKept, TypeError);
+  assert.equal(cycle2ContextSnapshot(fixture.host, checkpointIdentity), expectedUnsettledContext);
+  assert.equal(successfulReleases, 0);
+  assert.equal(canonicalJson(fixture.state), stateBefore);
+  assert.equal(fixture.state.evaluationSequences[0].incumbentCandidateIdentity, fixture.sequence.incumbentCandidateIdentity);
+  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
+  assert.deepEqual(owner.acquireLaneEventLines(), []);
+});
+
+test('T001 pre-read owner envelope: ungoverned valid comparison still keeps and projects unchanged', () => {
+  // Arrange
+  const fixture = objectiveSequenceFixture();
+  const owner = projectionOwnerFake();
+  const decision = fixtureDecision(fixture, ['8', '8', '8', '8', '8']);
+
+  // Act
+  const result = resolveComparison(fixture.state, fixture.sequence, {
+    host: fixture.host,
+    owner,
+    decision,
+    gateSet: fixtureGateSet(fixture),
+    candidateIdentity: fixture.candidate.candidateIdentity,
+    candidateWriteSet: fixture.writeSet,
+  });
+
+  // Assert
+  assert.equal(result.outcome, 'keep');
+  assert.equal(result.stopped, false);
+  assert.equal(result.state.evaluationSequences[0].incumbentCandidateIdentity, fixture.candidate.candidateIdentity);
+  assert.equal(fixture.host._map.size, 0);
+  assert.equal(fixture.host._files.get('src/a.mjs')?.bytes?.toString(), 'poststate');
+  assert.equal(owner.acquireCurrentRunRecords().length, 1);
+  assert.equal(owner.acquireLaneEventLines().length, 1);
+});
+
+test('T001 cycle 1 regression: review-bearing repeat transport seals exact approach; T002 owns semantic grounded-finding equivalence', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const rejectedReview = capture(TARGET, 'rejected', [{ finding: 'The attempted repair still violates the reviewed contract.' }]);
+    const input = cliInput(autonomousInspectInput(root, { review: [rejectedReview] }));
+    /** @param {string} command @param {unknown} request */
+    const invoke = (command, request) => {
+      const processResult = runRecoveryCli(command, request);
+      assert.equal(processResult.status, 0, `${command}: ${processResult.stderr}`);
+      assert.equal(processResult.stderr, '', command);
+      return JSON.parse(processResult.stdout);
+    };
+    const inspected = invoke('inspect', { trigger: 'explicit-inspection', input }).inspection;
+    const reviewItem = inspected.items.find((item) => item.source === 'review');
+    const exactApproach = transitionAssessment('retry-task', {
+      evidenceHash: inspected.evidenceHash,
+      targets: ['src/review-bearing-repeat.mjs'],
+    });
+    assert.equal(exactApproach.equivalence, 'distinct');
+
+    // Act
+    const firstAuthorization = invoke('authorize', {
+      trigger: 'post-failure',
+      state: autonomousState(),
+      input,
+      assessment: exactApproach,
+      mode: 'recovery',
+    }).authorization;
+    const firstCompletion = invoke('complete', {
+      state: firstAuthorization.state,
+      input: completionInput(firstAuthorization.state.pending[0]),
+    }).completion;
+    const repeatedExactApproach = invoke('authorize', {
+      trigger: 'post-failure',
+      state: firstCompletion.state,
+      input,
+      assessment: exactApproach,
+      mode: 'recovery',
+    }).authorization;
+    const subsequentAttempt = invoke('authorize', {
+      trigger: 'post-failure',
+      state: repeatedExactApproach.state,
+      input,
+      assessment: transitionAssessment('retry-task', {
+        evidenceHash: inspected.evidenceHash,
+        targets: ['src/review-bearing-subsequent.mjs'],
+      }),
+      mode: 'recovery',
+    }).authorization;
+
+    // Assert
+    assert.ok(reviewItem);
+    assert.equal(reviewItem.status, 'present');
+    assert.match(reviewItem.text, /"state":"rejected"/);
+    assert.equal(firstAuthorization.authorized, true);
+    assert.equal(firstCompletion.completed, true);
+    assert.equal(firstCompletion.reason, 'completed');
+    assert.equal(firstCompletion.state.completed.length, 1);
+    assert.ok(!Object.hasOwn(firstCompletion.state, 'learningGovernance'));
+    assert.equal(repeatedExactApproach.authorized, false);
+    assert.equal(repeatedExactApproach.reason, 'learning-required');
+    assert.deepEqual(repeatedExactApproach.state.learningGovernance.target, canonicalTarget(TARGET));
+    assert.equal(repeatedExactApproach.state.learningGovernance.phase, 'required');
+    assert.ok(!Object.hasOwn(repeatedExactApproach.state, 'pendingCompletion'));
+    assert.equal(subsequentAttempt.authorized, false);
+    assert.equal(subsequentAttempt.reason, 'learning-required');
+    assert.deepEqual(subsequentAttempt.state, repeatedExactApproach.state);
+  });
+});
+
+// --- Feature 009 T002: trusted occurrence contracts ------------------------
+
+/** @param {string} label */
+function t002Hash(label) {
+  return sha256(`T002:${label}`);
+}
+
+/** @param {Record<string, unknown>} body */
+function t002WithIdentity(body) {
+  return { ...body, envelopeIdentity: sha256(canonicalJson(body)) };
+}
+
+/** @param {Record<string, unknown>} body @param {string} kind @param {string} authorityIdentity @param {string} invocationIdentity */
+function t002TrustedCapture(body, kind, authorityIdentity, invocationIdentity) {
+  const bytes = Buffer.from(canonicalJson(body));
+  return {
+    target: clone(body.target),
+    state: 'complete',
+    outcomeHash: sha256(bytes),
+    authority: { kind, authorityIdentity, invocationIdentity },
+    bytes: recoveryRuntime.capturedBytesV1(bytes),
+  };
+}
+
+/** @param {Record<string, unknown>} [overrides] */
+function t002EnvelopeFixture(overrides = {}) {
+  const attemptIdentity = overrides.attemptIdentity || t002Hash('attempt-1');
+  const sourceRevisionIdentity = overrides.sourceRevisionIdentity || t002Hash('source-revision');
+  const inspectedEvidenceHash = overrides.inspectedEvidenceHash || t002Hash('inspection');
+  const resultIdentity = overrides.resultIdentity || t002Hash('result-1');
+  const definitionIdentity = overrides.definitionIdentity || t002Hash('check-definition');
+  const checkBody = {
+    definitionIdentity,
+    outcome: overrides.checkOutcome || 'failed',
+    evidenceIdentity: overrides.checkEvidenceIdentity || t002Hash('check-evidence'),
+  };
+  const check = { checkIdentity: sha256(canonicalJson(checkBody)), ...checkBody };
+  const verificationBody = {
+    type: 'verification-envelope',
+    version: 2,
+    target: clone(overrides.target || TARGET),
+    attemptIdentity,
+    sourceRevisionIdentity,
+    inspectedEvidenceHash,
+    resultIdentity,
+    checks: [check],
+  };
+  const verification = t002WithIdentity(verificationBody);
+  const basis = {
+    version: 1,
+    target: clone(overrides.target || TARGET),
+    expectation: { kind: 'governing-rule', identity: t002Hash('expectation') },
+    subjects: [TASK_KEY],
+    failureClass: 'verification-failure',
+    checkDefinitionIdentity: definitionIdentity,
+  };
+  const basisIdentity = sha256(canonicalJson(basis));
+  const observation = {
+    kind: overrides.observationKind || 'check-result',
+    identity: overrides.observationIdentity || check.checkIdentity,
+  };
+  const findingBody = { version: 2, basisIdentity, observation };
+  const finding = {
+    version: 2,
+    findingIdentity: sha256(canonicalJson(findingBody)),
+    basis,
+    basisIdentity,
+    observation,
+  };
+  const reviewerAuthorityIdentity = overrides.reviewerAuthorityIdentity || t002Hash('reviewer');
+  const reviewInvocationIdentity = overrides.reviewInvocationIdentity || t002Hash('review-invocation-1');
+  const verdict = overrides.verdict || 'rejected';
+  const reviewBody = {
+    type: 'independent-review-envelope',
+    version: 2,
+    target: clone(overrides.target || TARGET),
+    attemptIdentity,
+    attemptOrdinal: overrides.attemptOrdinal || 1,
+    reviewOrdinal: overrides.reviewOrdinal || 1,
+    reviewerAuthorityIdentity,
+    reviewInvocationIdentity,
+    sourceRevisionIdentity,
+    inspectedEvidenceHash,
+    resultIdentity,
+    verificationEnvelopeIdentity: verification.envelopeIdentity,
+    verdict,
+    findings: verdict === 'accepted' ? [] : [finding],
+  };
+  const review = t002WithIdentity(reviewBody);
+  return {
+    verification,
+    review,
+    finding,
+    verificationCapture: t002TrustedCapture(
+      verification,
+      'verification',
+      t002Hash('verification-authority'),
+      t002Hash('verification-invocation-1'),
+    ),
+    reviewCapture: t002TrustedCapture(
+      review,
+      'independent-review',
+      reviewerAuthorityIdentity,
+      reviewInvocationIdentity,
+    ),
+  };
+}
+
+/** @param {Record<string, unknown>} [overrides] */
+function t002PendingFixture(overrides = {}) {
+  const target = clone(overrides.target || TARGET);
+  const attemptOrdinal = overrides.attemptOrdinal || 1;
+  const materialInputs = clone(overrides.materialInputs || {
+    targets: ['src/t002-result.mjs'],
+    operations: ['retry-task'],
+    checks: ['verification'],
+  });
+  const pending = {
+    target,
+    evidenceHash: overrides.evidenceHash || t002Hash(`authorization-${attemptOrdinal}`),
+    approachHash: approachHash({ action: 'retry-task', materialInputs }),
+    action: 'retry-task',
+    materialInputs,
+    mode: 'recovery',
+  };
+  const approachBasis = {
+    version: 1,
+    target,
+    action: pending.action,
+    materialInputs: clone(materialInputs),
+    mechanismIdentities: [],
+    assumptionIdentities: [],
+    evidenceAcquisitionIdentities: [],
+    validationPlanIdentities: [],
+  };
+  const attemptIdentity = sha256(canonicalJson({
+    version: 2,
+    target,
+    attemptOrdinal,
+    authorizationEvidenceHash: pending.evidenceHash,
+    approachBasisIdentity: sha256(canonicalJson(approachBasis)),
+  }));
+  const priorCompleted = clone(overrides.priorCompleted || Array.from({ length: attemptOrdinal - 1 }, (_, index) => ({
+    evidenceHash: t002Hash(`prior-evidence-${index + 1}`),
+    approachHash: t002Hash(`prior-approach-${index + 1}`),
+    resultHash: t002Hash(`prior-result-${index + 1}`),
+  })));
+  const state = {
+    ...autonomousState(),
+    overallUsed: attemptOrdinal,
+    recoveryUsed: [{
+      targetKey: targetKey(target),
+      targetHash: targetHash(target),
+      count: attemptOrdinal,
+    }],
+    pending: [pending],
+    completed: priorCompleted,
+  };
+  validateRunState(state);
+  const envelopes = t002EnvelopeFixture({
+    ...overrides,
+    target,
+    attemptIdentity,
+    attemptOrdinal,
+    inspectedEvidenceHash: pending.evidenceHash,
+  });
+  const completion = {
+    version: 2,
+    target,
+    attemptIdentity,
+    route: `${target.lane}-task`,
+    outcome: envelopes.verification.checks.some((check) => check.outcome === 'failed')
+      ? 'failed'
+      : envelopes.review.verdict === 'rejected' ? 'blocked' : 'succeeded',
+    operations: [...materialInputs.operations],
+    changedTargets: envelopes.review.verdict === 'accepted'
+      && envelopes.verification.checks.every((check) => check.outcome === 'passed')
+      ? [...materialInputs.targets]
+      : [],
+    resultIdentity: envelopes.verification.resultIdentity,
+    verificationEnvelopeIdentity: envelopes.verification.envelopeIdentity,
+    reviewEnvelopeIdentity: envelopes.review.envelopeIdentity,
+    findingIdentities: envelopes.review.findings.map((finding) => finding.findingIdentity),
+  };
+  return { target, attemptOrdinal, materialInputs, pending, state, approachBasis, attemptIdentity, completion, ...envelopes };
+}
+
+/** @param {ReturnType<typeof t002PendingFixture>} fixture */
+function t002CapturePendingFixture(fixture) {
+  let captured;
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    captured = recoveryRuntime.captureCompletionV2(
+      fixture.state,
+      autonomousInspectInput(root, t002TrustedStreams([fixture])),
+      fixture.completion,
+    );
+  });
+  assert.ok(captured);
+  return captured;
+}
+
+/** @param {ReturnType<typeof t002PendingFixture>[]} fixtures */
+function t002TrustedStreams(fixtures) {
+  return {
+    verification: fixtures.map((fixture) => capture(
+      fixture.target,
+      fixture.verification.checks.some((check) => check.outcome === 'failed') ? 'failed' : 'passed',
+      [fixture.verificationCapture],
+    )),
+    review: fixtures.map((fixture) => capture(
+      fixture.target,
+      fixture.review.verdict,
+      [fixture.reviewCapture],
+    )),
+  };
+}
+
+/** @param {ReturnType<typeof t002PendingFixture>[]} fixtures */
+function t002GroupedTrustedStreams(fixtures) {
+  assert.ok(fixtures.length > 0);
+  const target = fixtures[0].target;
+  assert.ok(fixtures.every((fixture) => targetKey(fixture.target) === targetKey(target)));
+  const verificationState = fixtures[0].verification.checks.some((check) => check.outcome === 'failed')
+    ? 'failed'
+    : 'passed';
+  const reviewState = fixtures[0].review.verdict;
+  assert.ok(fixtures.every((fixture) => (
+    (fixture.verification.checks.some((check) => check.outcome === 'failed') ? 'failed' : 'passed')
+      === verificationState
+    && fixture.review.verdict === reviewState
+  )));
+  return {
+    verification: [capture(target, verificationState, fixtures.map((fixture) => fixture.verificationCapture))],
+    review: [capture(target, reviewState, fixtures.map((fixture) => fixture.reviewCapture))],
+  };
+}
+
+/** @param {Record<string, unknown>} event */
+function t002V2EventLine(event) {
+  return `- dude-run-event: ${canonicalJson(event)}`;
+}
+
+/** @param {string[]} records Complete event-line records including their chosen terminators. */
+function t002HistoryTasksRecordBytes(records) {
+  const prefix = [
+    transitionTasksBytes([{ id: TASK_KEY, glyph: '~' }]).toString('utf8').trimEnd(),
+    '',
+    '## Lightweight Execution History',
+    '',
+  ].join('\n');
+  return Buffer.concat([Buffer.from(prefix), ...records.map((record) => Buffer.from(record))]);
+}
+
+/** @param {Record<string, unknown>[]} events */
+function t002HistoryTasksBytes(events) {
+  return t002HistoryTasksRecordBytes(events.map((event) => `${t002V2EventLine(event)}\n`));
+}
+
+/** @param {string} root @param {Record<string, unknown>[]} currentEvents @param {Buffer} taskHistoryBytes @param {ReturnType<typeof t002PendingFixture>[]} trustedFixtures */
+function t002RetentionInputWithTaskHistory(root, currentEvents, taskHistoryBytes, trustedFixtures) {
+  fs.writeFileSync(path.join(root, TASKS_PATH), taskHistoryBytes);
+  return autonomousInspectInput(root, {
+    currentRun: currentEvents.length === 0
+      ? []
+      : [capture(TARGET, 'failed', currentEvents.map((event) => ({ event })))],
+    ...t002TrustedStreams(trustedFixtures),
+  });
+}
+
+/** @param {string} root @param {Record<string, unknown>[]} currentEvents @param {Record<string, unknown>[]} laneEvents @param {ReturnType<typeof t002PendingFixture>[]} trustedFixtures */
+function t002RetentionInput(root, currentEvents, laneEvents, trustedFixtures) {
+  return t002RetentionInputWithTaskHistory(
+    root,
+    currentEvents,
+    t002HistoryTasksBytes(laneEvents),
+    trustedFixtures,
+  );
+}
+
+/** @param {Record<string, unknown>} envelope */
+function t002ReidentifyEnvelope(envelope) {
+  const body = clone(envelope);
+  delete body.envelopeIdentity;
+  return t002WithIdentity(body);
+}
+
+/** @param {Record<string, unknown>} [overrides] */
+function t002ApproachEvent(overrides = {}) {
+  const target = clone(overrides.target || TARGET);
+  const basisLabel = overrides.basisLabel || 'shared';
+  const attemptOrdinal = overrides.attemptOrdinal || 1;
+  const basis = {
+    version: 1,
+    target,
+    action: 'retry-task',
+    materialInputs: {
+      targets: [`src/${basisLabel}.mjs`],
+      operations: ['retry-task'],
+      checks: ['verification'],
+    },
+    mechanismIdentities: [t002Hash(`mechanism-${basisLabel}`)],
+    assumptionIdentities: [],
+    evidenceAcquisitionIdentities: [],
+    validationPlanIdentities: [],
+  };
+  return recoveryRuntime.buildApproachOccurrenceEventV1({
+    target,
+    basis,
+    attemptIdentity: overrides.attemptIdentity || t002Hash(`approach-attempt-${attemptOrdinal}`),
+    authorizationEvidenceHash: overrides.authorizationEvidenceHash || t002Hash(`authorization-${attemptOrdinal}`),
+    resultIdentity: overrides.resultIdentity || t002Hash(`approach-result-${attemptOrdinal}`),
+    disposition: overrides.disposition || 'review-rejected',
+    attemptOrdinal,
+    verificationEnvelopeIdentity: overrides.verificationEnvelopeIdentity || t002Hash(`verification-${attemptOrdinal}`),
+    reviewEnvelopeIdentity: overrides.reviewEnvelopeIdentity || t002Hash(`review-${attemptOrdinal}`),
+  });
+}
+
+/** @param {Record<string, unknown>} [overrides] */
+function t002FindingEvent(overrides = {}) {
+  const target = clone(overrides.target || TARGET);
+  const basisLabel = overrides.basisLabel || 'shared';
+  const attemptOrdinal = overrides.attemptOrdinal || 1;
+  const reviewOrdinal = overrides.reviewOrdinal || 1;
+  const basis = {
+    version: 1,
+    target,
+    expectation: { kind: 'governing-rule', identity: t002Hash(`expectation-${basisLabel}`) },
+    subjects: [target.taskKey || target.issueId],
+    failureClass: `failure-${basisLabel}`,
+    checkDefinitionIdentity: t002Hash(`definition-${basisLabel}`),
+  };
+  const observation = {
+    kind: 'observed-evidence',
+    identity: overrides.observationIdentity || t002Hash(`observation-${attemptOrdinal}-${reviewOrdinal}`),
+  };
+  const findingIdentity = sha256(canonicalJson({
+    version: 2,
+    basisIdentity: sha256(canonicalJson(basis)),
+    observation,
+  }));
+  return recoveryRuntime.buildFindingOccurrenceEventV1({
+    target,
+    basis,
+    attemptIdentity: overrides.attemptIdentity || t002Hash(`finding-attempt-${attemptOrdinal}`),
+    attemptApproachBasisIdentity: overrides.attemptApproachBasisIdentity || t002Hash(`failed-approach-${attemptOrdinal}`),
+    reviewEnvelopeIdentity: overrides.reviewEnvelopeIdentity || t002Hash(`finding-review-${attemptOrdinal}-${reviewOrdinal}`),
+    findingIdentity,
+    observation,
+    attemptOrdinal,
+    reviewOrdinal,
+    sourceCaptureIdentity: overrides.sourceCaptureIdentity || t002Hash(`review-capture-${attemptOrdinal}-${reviewOrdinal}`),
+  });
+}
+
+/** @param {Record<string, unknown>} event @param {Record<string, unknown>} [overrides] */
+function t002RebuildApproachEvent(event, overrides = {}) {
+  const occurrence = /** @type {Record<string, unknown>} */ (event.occurrence);
+  const chronology = /** @type {Record<string, unknown>} */ (occurrence.chronology);
+  const target = clone(overrides.target || event.target);
+  const basis = clone(overrides.basis || event.basis);
+  if (Object.hasOwn(overrides, 'target') && !Object.hasOwn(overrides, 'basis')) {
+    basis.target = clone(target);
+  }
+  return recoveryRuntime.buildApproachOccurrenceEventV1({
+    target,
+    basis,
+    attemptIdentity: overrides.attemptIdentity || occurrence.attemptIdentity,
+    authorizationEvidenceHash: overrides.authorizationEvidenceHash || occurrence.authorizationEvidenceHash,
+    resultIdentity: overrides.resultIdentity || occurrence.resultIdentity,
+    disposition: overrides.disposition || occurrence.disposition,
+    attemptOrdinal: overrides.attemptOrdinal || chronology.attemptOrdinal,
+    verificationEnvelopeIdentity: overrides.verificationEnvelopeIdentity || event.verificationEnvelopeIdentity,
+    reviewEnvelopeIdentity: overrides.reviewEnvelopeIdentity || event.reviewEnvelopeIdentity,
+  });
+}
+
+/** @param {Record<string, unknown>} event @param {Record<string, unknown>} [overrides] */
+function t002RebuildFindingEvent(event, overrides = {}) {
+  const occurrence = /** @type {Record<string, unknown>} */ (event.occurrence);
+  const chronology = /** @type {Record<string, unknown>} */ (occurrence.chronology);
+  return recoveryRuntime.buildFindingOccurrenceEventV1({
+    target: clone(overrides.target || event.target),
+    basis: clone(overrides.basis || event.basis),
+    attemptIdentity: overrides.attemptIdentity || occurrence.attemptIdentity,
+    attemptApproachBasisIdentity: overrides.attemptApproachBasisIdentity
+      || occurrence.attemptApproachBasisIdentity,
+    reviewEnvelopeIdentity: overrides.reviewEnvelopeIdentity || occurrence.reviewEnvelopeIdentity,
+    findingIdentity: overrides.findingIdentity || occurrence.findingIdentity,
+    observation: clone(overrides.observation || occurrence.observation),
+    attemptOrdinal: overrides.attemptOrdinal || chronology.attemptOrdinal,
+    reviewOrdinal: overrides.reviewOrdinal || chronology.reviewOrdinal,
+    sourceCaptureIdentity: overrides.sourceCaptureIdentity || event.sourceCaptureIdentity,
+  });
+}
+
+/** @param {Record<string, unknown>[]} events */
+function t002RequiredGovernance(events) {
+  const repeat = recoveryRuntime.deriveEarliestRepeatRelationshipV1(events);
+  assert.ok(repeat, 'T002 governance fixture requires a repeat');
+  const failedApproachSet = recoveryRuntime.deriveFailedApproachSetV1(repeat, events);
+  const target = clone(events[0].target);
+  const governance = {
+    version: 1,
+    governanceIdentity: sha256(canonicalJson({
+      version: 1,
+      target,
+      repeatIdentity: sha256(canonicalJson(repeat)),
+    })),
+    target,
+    trigger: repeat,
+    failedApproachSet,
+    phase: 'required',
+    revision: 1,
+    triggerEvidenceHash: sha256(canonicalJson({
+      trigger: repeat,
+      failedApproachSetIdentity: failedApproachSet.setIdentity,
+    })),
+  };
+  recoveryRuntime.validateLearningGovernanceV1(governance);
+  return governance;
+}
+
+/** @param {string} root @param {'finding'|'approach'} channel */
+function t002FinalizeRepeatChannel(root, channel) {
+  const findingChannel = channel === 'finding';
+  const first = t002PendingFixture({
+    attemptOrdinal: 1,
+    checkOutcome: findingChannel ? 'passed' : 'failed',
+    verdict: findingChannel ? 'rejected' : 'accepted',
+    materialInputs: {
+      targets: [findingChannel ? 'src/finding-first.mjs' : 'src/repeated-approach.mjs'],
+      operations: ['retry-task'],
+      checks: ['verification'],
+    },
+  });
+  const firstCapture = recoveryRuntime.captureCompletionV2(
+    first.state,
+    autonomousInspectInput(root, t002TrustedStreams([first])),
+    first.completion,
+  );
+  const firstFinalize = recoveryRuntime.finalizeCompletionV2(
+    firstCapture.state,
+    t002RetentionInput(root, firstCapture.occurrenceEvents, firstCapture.occurrenceEvents, [first]),
+    firstCapture.occurrenceEvents,
+  );
+  const second = t002PendingFixture({
+    attemptOrdinal: 2,
+    priorCompleted: firstFinalize.state.completed,
+    checkOutcome: findingChannel ? 'passed' : 'failed',
+    verdict: findingChannel ? 'rejected' : 'accepted',
+    materialInputs: {
+      targets: [findingChannel ? 'src/finding-second.mjs' : 'src/repeated-approach.mjs'],
+      operations: ['retry-task'],
+      checks: ['verification'],
+    },
+  });
+  const firstEvents = firstCapture.occurrenceEvents;
+  const secondCapture = recoveryRuntime.captureCompletionV2(
+    second.state,
+    t002RetentionInput(root, firstEvents, firstEvents, [first, second]),
+    second.completion,
+  );
+  const allEvents = [...firstEvents, ...secondCapture.occurrenceEvents];
+  const secondFinalize = recoveryRuntime.finalizeCompletionV2(
+    secondCapture.state,
+    t002RetentionInput(root, allEvents, allEvents, [first, second]),
+    secondCapture.occurrenceEvents,
+  );
+  return { first, firstCapture, firstFinalize, second, secondCapture, secondFinalize, allEvents };
+}
+
+/** @param {string} root @param {number} uniqueBasisCount @param {string} scope */
+function t002ApproachCapacityFixture(root, uniqueBasisCount, scope) {
+  const occurrenceCount = uniqueBasisCount + 1;
+  const fixtures = Array.from({ length: occurrenceCount }, (_, index) => {
+    const attemptOrdinal = index + 1;
+    const basisLabel = index === 0 || index === occurrenceCount - 1
+      ? `${scope}-repeat`
+      : `${scope}-basis-${attemptOrdinal}`;
+    return t002PendingFixture({
+      attemptOrdinal,
+      checkOutcome: 'failed',
+      verdict: 'accepted',
+      materialInputs: {
+        targets: [`src/${basisLabel}.mjs`],
+        operations: ['retry-task'],
+        checks: ['verification'],
+      },
+    });
+  });
+  const captures = fixtures.map((fixture) => recoveryRuntime.captureCompletionV2(
+    fixture.state,
+    autonomousInspectInput(root, t002TrustedStreams([fixture])),
+    fixture.completion,
+  ));
+  return {
+    fixtures,
+    captures,
+    finalFixture: fixtures.at(-1),
+    finalCapture: captures.at(-1),
+    events: captures.flatMap((captured) => captured.occurrenceEvents),
+  };
+}
+
+test('T002 trusted occurrence contracts normalize only trusted envelope captures and keep event bodies out of RunState', () => {
+  // Arrange
+  const fixture = t002EnvelopeFixture();
+
+  // Act
+  const verification = recoveryRuntime.normalizeVerificationEnvelopeV2(fixture.verificationCapture);
+  const review = recoveryRuntime.normalizeIndependentReviewEnvelopeV2(fixture.reviewCapture, verification);
+
+  // Assert
+  assert.deepEqual(verification, fixture.verification);
+  assert.deepEqual(review, fixture.review);
+  assert.equal(review.findings[0].findingIdentity, fixture.finding.findingIdentity);
+  assert.throws(
+    () => validateRunState({ ...emptyState({ mode: 'autonomous' }), occurrenceEvents: [] }),
+    /unknown field/,
+  );
+});
+
+test('T002 trusted occurrence contracts capture exact occurrence bodies and commitment without counting completion', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ checkOutcome: 'passed' });
+    const input = autonomousInspectInput(root, t002TrustedStreams([fixture]));
+    const before = canonicalJson(fixture.state);
+
+    // Act
+    const captured = recoveryRuntime.captureCompletionV2(fixture.state, input, fixture.completion);
+
+    // Assert
+    assert.equal(captured.captured, true);
+    assert.equal(captured.finalized, false);
+    assert.equal(captured.reason, 'occurrence-retention-required');
+    assert.equal(captured.occurrenceEvents.length, 2);
+    assert.deepEqual(captured.occurrenceEvents.map((event) => event.type), [
+      'approach-occurrence',
+      'finding-occurrence',
+    ]);
+    assert.equal(captured.state.completed.length, fixture.state.completed.length);
+    assert.deepEqual(captured.state.pending, fixture.state.pending);
+    assert.equal(captured.state.pendingCompletion.retention.purpose, 'occurrence-retention');
+    assert.deepEqual(
+      captured.state.pendingCompletion.retention.eventCommitments,
+      captured.occurrenceEvents.map((event) => ({ kind: event.type, eventHash: event.eventHash })),
+    );
+    assert.equal(Object.hasOwn(captured.state.pendingCompletion, 'events'), false);
+    assert.equal(Object.hasOwn(captured.state.pendingCompletion, 'occurrenceEvents'), false);
+    assert.equal(canonicalJson(fixture.state), before);
+    validateRunState(captured.state);
+  });
+});
+
+test('T002 trusted occurrence contracts reject untrusted captures and caller-authored semantic bodies', () => {
+  // Arrange
+  const fixture = t002PendingFixture({ checkOutcome: 'passed' });
+  const wrongTargetCapture = {
+    ...clone(fixture.verificationCapture),
+    target: clone(SECOND_TARGET),
+  };
+  const wrongReviewAuthority = {
+    ...clone(fixture.reviewCapture),
+    authority: { ...fixture.reviewCapture.authority, authorityIdentity: t002Hash('wrong-reviewer') },
+  };
+  const wrongReviewInvocation = {
+    ...clone(fixture.reviewCapture),
+    authority: { ...fixture.reviewCapture.authority, invocationIdentity: t002Hash('wrong-review-invocation') },
+  };
+  const directCases = [
+    ['partial source state', () => recoveryRuntime.normalizeVerificationEnvelopeV2({
+      ...fixture.verificationCapture,
+      state: 'partial',
+    })],
+    ['wrong authority kind', () => recoveryRuntime.normalizeVerificationEnvelopeV2({
+      ...fixture.verificationCapture,
+      authority: { ...fixture.verificationCapture.authority, kind: 'independent-review' },
+    })],
+    ['wrong capture target', () => recoveryRuntime.normalizeVerificationEnvelopeV2(wrongTargetCapture)],
+    ['wrong reviewer authority', () => recoveryRuntime.normalizeIndependentReviewEnvelopeV2(
+      wrongReviewAuthority,
+      fixture.verification,
+    )],
+    ['wrong review invocation', () => recoveryRuntime.normalizeIndependentReviewEnvelopeV2(
+      wrongReviewInvocation,
+      fixture.verification,
+    )],
+  ];
+
+  // Act and Assert
+  for (const [label, invoke] of directCases) assert.throws(invoke, TypeError, label);
+  assert.throws(
+    () => recoveryRuntime.validateFindingBasisV1({ ...fixture.finding.basis, summary: 'caller wording' }),
+    /unknown field/,
+  );
+
+  const mismatchedFinding = clone(fixture.finding);
+  mismatchedFinding.basis.checkDefinitionIdentity = t002Hash('other-check-definition');
+  mismatchedFinding.basisIdentity = sha256(canonicalJson(mismatchedFinding.basis));
+  mismatchedFinding.findingIdentity = sha256(canonicalJson({
+    version: 2,
+    basisIdentity: mismatchedFinding.basisIdentity,
+    observation: mismatchedFinding.observation,
+  }));
+  const mismatchedReview = t002ReidentifyEnvelope({ ...fixture.review, findings: [mismatchedFinding] });
+  const mismatchedCapture = t002TrustedCapture(
+    mismatchedReview,
+    'independent-review',
+    fixture.review.reviewerAuthorityIdentity,
+    fixture.review.reviewInvocationIdentity,
+  );
+  assert.throws(
+    () => recoveryRuntime.normalizeIndependentReviewEnvelopeV2(mismatchedCapture, fixture.verification),
+    /same definition identity/,
+  );
+
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const validStreams = t002TrustedStreams([fixture]);
+    const validInput = autonomousInspectInput(root, validStreams);
+    const verificationOuter = validStreams.verification[0];
+    const reviewOuter = validStreams.review[0];
+    for (const field of [
+      'verificationEnvelope',
+      'reviewEnvelope',
+      'checks',
+      'checkStates',
+      'findings',
+      'verdict',
+      'chronology',
+    ]) {
+      assert.throws(
+        () => recoveryRuntime.captureCompletionV2(fixture.state, validInput, {
+          ...fixture.completion,
+          [field]: field === 'findings' ? [fixture.finding] : {},
+        }),
+        /unknown field/,
+        field,
+      );
+    }
+    const duplicateEnvelopeCapture = {
+      ...clone(fixture.verificationCapture),
+      authority: {
+        ...fixture.verificationCapture.authority,
+        invocationIdentity: t002Hash('duplicate-envelope-other-invocation'),
+      },
+    };
+    const inspectionCases = [
+      ['stale verification', {
+        verification: [capture(SECOND_TARGET, 'passed', [fixture.verificationCapture])],
+        review: [reviewOuter],
+      }],
+      ['conflicting verification source', {
+        verification: [{ ...verificationOuter, outcomeHash: '0'.repeat(64) }],
+        review: [reviewOuter],
+      }],
+      ['duplicate verification envelope identity', {
+        verification: [
+          verificationOuter,
+          capture(TARGET, 'passed', [duplicateEnvelopeCapture]),
+        ],
+        review: [reviewOuter],
+      }],
+      ['wrong verification outcome', {
+        verification: [capture(TARGET, 'failed', [fixture.verificationCapture])],
+        review: [reviewOuter],
+      }],
+      ['wrong review outcome', {
+        verification: [verificationOuter],
+        review: [capture(TARGET, 'accepted', [fixture.reviewCapture])],
+      }],
+    ];
+    for (const [label, streams] of inspectionCases) {
+      assert.throws(
+        () => recoveryRuntime.captureCompletionV2(
+          fixture.state,
+          autonomousInspectInput(root, streams),
+          fixture.completion,
+        ),
+        TypeError,
+        label,
+      );
+    }
+    assert.throws(
+      () => recoveryRuntime.captureCompletionV2(
+        fixture.state,
+        validInput,
+        { ...fixture.completion, findingIdentities: [] },
+      ),
+      /complete trusted review finding set/,
+    );
+  });
+});
+
+test('T002 trusted occurrence contracts reject duplicate trusted captures before normalization', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ checkOutcome: 'passed' });
+    const streams = t002TrustedStreams([fixture]);
+    const input = autonomousInspectInput(root, {
+      verification: [streams.verification[0], clone(streams.verification[0])],
+      review: streams.review,
+    });
+
+    // Act
+    const captureDuplicate = () => recoveryRuntime.captureCompletionV2(
+      fixture.state,
+      input,
+      fixture.completion,
+    );
+
+    // Assert
+    assert.throws(captureDuplicate, /duplicate trusted/i);
+  });
+});
+
+test('T002 trusted occurrence contracts classify stable bases, chronology, replay, attempts, and targets', () => {
+  // Arrange
+  const first = t002FindingEvent({ attemptOrdinal: 1, basisLabel: 'equal' });
+  const distinct = t002FindingEvent({ attemptOrdinal: 2, basisLabel: 'distinct' });
+  const equalLater = t002FindingEvent({
+    attemptOrdinal: 3,
+    reviewOrdinal: 2,
+    basisLabel: 'equal',
+    observationIdentity: t002Hash('different-evidence-and-wording-source'),
+  });
+  const sameAttempt = t002FindingEvent({
+    attemptOrdinal: 4,
+    reviewOrdinal: 2,
+    basisLabel: 'same-attempt',
+    attemptIdentity: t002Hash('one-attempt'),
+  });
+  const sameAttemptReview = t002FindingEvent({
+    attemptOrdinal: 5,
+    reviewOrdinal: 3,
+    basisLabel: 'same-attempt',
+    attemptIdentity: t002Hash('one-attempt'),
+  });
+  const chronologyA = t002ApproachEvent({ attemptOrdinal: 7, basisLabel: 'chronology-a' });
+  const chronologyB = t002ApproachEvent({ attemptOrdinal: 7, basisLabel: 'chronology-b' });
+  const crossTargetA = t002ApproachEvent({ attemptOrdinal: 8, basisLabel: 'cross-target' });
+  const crossTargetB = t002ApproachEvent({
+    target: SECOND_TARGET,
+    attemptOrdinal: 9,
+    basisLabel: 'cross-target',
+  });
+
+  // Act
+  const firstResult = recoveryRuntime.deriveEarliestRepeatRelationshipV1([first]);
+  const distinctResult = recoveryRuntime.deriveEarliestRepeatRelationshipV1([first, distinct]);
+  const equalResult = recoveryRuntime.deriveEarliestRepeatRelationshipV1([equalLater, distinct, first]);
+  const replayResult = recoveryRuntime.deriveEarliestRepeatRelationshipV1([first, clone(first)]);
+  const sameAttemptResult = recoveryRuntime.deriveEarliestRepeatRelationshipV1([sameAttemptReview, sameAttempt]);
+  const crossTargetResult = recoveryRuntime.deriveEarliestRepeatRelationshipV1([crossTargetB, crossTargetA]);
+
+  // Assert
+  assert.equal(firstResult, null);
+  assert.equal(distinctResult, null);
+  assert.deepEqual(equalResult, {
+    version: 1,
+    channel: 'finding',
+    basisIdentity: first.occurrence.basisIdentity,
+    occurrenceIdentities: [first.occurrenceIdentity, equalLater.occurrenceIdentity],
+  });
+  assert.equal(replayResult, null);
+  assert.equal(sameAttemptResult, null);
+  assert.equal(crossTargetResult, null);
+  assert.throws(
+    () => recoveryRuntime.deriveEarliestRepeatRelationshipV1([chronologyA, chronologyB]),
+    /chronology position/,
+  );
+  assert.throws(
+    () => recoveryRuntime.validateFindingOccurrenceEventV1({
+      ...first,
+      occurrence: without(first.occurrence, 'attemptApproachBasisIdentity'),
+    }),
+    /missing field/,
+  );
+  assert.throws(
+    () => recoveryRuntime.deriveEarliestRepeatRelationshipV1([{ ...first, summary: 'same issue, new wording' }, equalLater]),
+    /unknown field/,
+  );
+});
+
+test('T002 trusted occurrence contracts finalize exact dual retention once and only then count completion', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ verdict: 'accepted', checkOutcome: 'passed' });
+    const captured = recoveryRuntime.captureCompletionV2(
+      fixture.state,
+      autonomousInspectInput(root, t002TrustedStreams([fixture])),
+      fixture.completion,
+    );
+    const retainedInput = t002RetentionInput(
+      root,
+      captured.occurrenceEvents,
+      captured.occurrenceEvents,
+      [fixture],
+    );
+    const capturedBytes = canonicalJson(captured.state);
+
+    // Act
+    const finalized = recoveryRuntime.finalizeCompletionV2(
+      captured.state,
+      retainedInput,
+      captured.occurrenceEvents,
+    );
+
+    // Assert
+    assert.equal(finalized.captured, true);
+    assert.equal(finalized.finalized, true);
+    assert.equal(finalized.completed, true);
+    assert.equal(finalized.reason, 'completed');
+    assert.equal(finalized.state.completed.length, fixture.state.completed.length + 1);
+    assert.deepEqual(finalized.state.pending, []);
+    assert.equal(Object.hasOwn(finalized.state, 'pendingCompletion'), false);
+    assert.equal(Object.hasOwn(finalized.state, 'learningGovernance'), false);
+    assert.equal(canonicalJson(captured.state), capturedBytes);
+    validateRunState(finalized.state);
+    assert.throws(
+      () => recoveryRuntime.finalizeCompletionV2(
+        finalized.state,
+        retainedInput,
+        captured.occurrenceEvents,
+      ),
+      /requires one pending completion/,
+    );
+  });
+});
+
+test('T002 trusted occurrence contracts refuse partial duplicate conflicting stale and mismatched retention', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ checkOutcome: 'passed' });
+    const captured = recoveryRuntime.captureCompletionV2(
+      fixture.state,
+      autonomousInspectInput(root, t002TrustedStreams([fixture])),
+      fixture.completion,
+    );
+    const events = captured.occurrenceEvents;
+    const chronologyConflict = t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 'conflict' });
+    const wrongTarget = t002ApproachEvent({ target: SECOND_TARGET, attemptOrdinal: 4, basisLabel: 'wrong-target' });
+    const refusalCases = [
+      ['current-run only', events, [], [fixture], 'occurrence-retention-incomplete'],
+      ['lane only', [], events, [fixture], 'occurrence-retention-incomplete'],
+      ['duplicate current-run', [...events, events[0]], events, [fixture], 'occurrence-retention-conflict'],
+      ['duplicate lane', events, [...events, events[0]], [fixture], 'occurrence-retention-conflict'],
+      ['chronology conflict', [...events, chronologyConflict], [...events, chronologyConflict], [fixture], 'occurrence-retention-conflict'],
+      ['wrong target', [...events, wrongTarget], [...events, wrongTarget], [fixture], 'occurrence-retention-conflict'],
+      ['stale trusted envelopes', events, events, [], 'occurrence-retention-conflict'],
+      ['conflicting surfaces', events, [events[0]], [fixture], 'occurrence-retention-incomplete'],
+    ];
+    const stateBytes = canonicalJson(captured.state);
+
+    // Act and Assert
+    for (const [label, currentEvents, laneEvents, trustedFixtures, reason] of refusalCases) {
+      const result = recoveryRuntime.finalizeCompletionV2(
+        captured.state,
+        t002RetentionInput(root, currentEvents, laneEvents, trustedFixtures),
+        events,
+      );
+      assert.equal(result.finalized, false, label);
+      assert.equal(result.completed, false, label);
+      assert.equal(result.reason, reason, label);
+      assert.equal(canonicalJson(result.state), stateBytes, label);
+    }
+
+    const other = t002ApproachEvent({ attemptOrdinal: 2, basisLabel: 'extra' });
+    const malformedBatches = [
+      ['missing event', events.slice(0, -1)],
+      ['extra event', [...events, other]],
+      ['wrong order', [...events].reverse()],
+      ['hash mismatch', [{ ...events[0], eventHash: '0'.repeat(64) }, ...events.slice(1)]],
+      ['body mismatch', [{
+        ...events[0],
+        occurrence: { ...events[0].occurrence, resultIdentity: t002Hash('changed-result') },
+      }, ...events.slice(1)]],
+      ['wrong-target body', [wrongTarget, ...events.slice(1)]],
+    ];
+    const exactInput = t002RetentionInput(root, events, events, [fixture]);
+    for (const [label, batch] of malformedBatches) {
+      assert.throws(
+        () => recoveryRuntime.finalizeCompletionV2(captured.state, exactInput, batch),
+        TypeError,
+        label,
+      );
+      assert.equal(canonicalJson(captured.state), stateBytes, label);
+    }
+  });
+});
+
+test('T002 trusted occurrence contracts finalize finding-only and approach-only earliest repeats with complete failed sets', () => {
+  for (const channel of ['finding', 'approach']) {
+    withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+      // Arrange
+      const fixture = t002FinalizeRepeatChannel(root, channel);
+
+      // Act
+      const result = fixture.secondFinalize;
+
+      // Assert
+      assert.equal(fixture.firstFinalize.finalized, true, channel);
+      assert.equal(Object.hasOwn(fixture.firstFinalize.state, 'learningGovernance'), false, channel);
+      assert.equal(result.finalized, true, channel);
+      assert.equal(result.completed, false, channel);
+      assert.equal(result.reason, 'learning-required', channel);
+      assert.equal(result.repeat.channel, channel, channel);
+      assert.equal(result.state.learningGovernance.phase, 'required', channel);
+      assert.deepEqual(result.state.learningGovernance.trigger, result.repeat, channel);
+      assert.equal(Object.hasOwn(result.state, 'pendingCompletion'), false, channel);
+      assert.equal(result.state.pending.length, 0, channel);
+      const failedSet = result.state.learningGovernance.failedApproachSet;
+      const expectedBases = channel === 'finding'
+        ? fixture.allEvents
+          .filter((event) => event.type === 'finding-occurrence')
+          .map((event) => event.occurrence.attemptApproachBasisIdentity)
+        : fixture.allEvents
+          .filter((event) => event.type === 'approach-occurrence')
+          .map((event) => event.occurrence.basisIdentity);
+      assert.deepEqual(
+        failedSet.approachBasisIdentities,
+        [...new Set(expectedBases)].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+        channel,
+      );
+      assert.equal(result.governanceEvent.type, 'learning-governance', channel);
+      validateRunState(result.state);
+    });
+  }
+});
+
+test('T002 trusted occurrence contracts select earliest pairs beyond two occurrences and exclude accepted approaches', () => {
+  // Arrange
+  const findingFirst = t002FindingEvent({ attemptOrdinal: 1, basisLabel: 'many' });
+  const findingSecond = t002FindingEvent({ attemptOrdinal: 3, basisLabel: 'many' });
+  const findingThird = t002FindingEvent({ attemptOrdinal: 5, basisLabel: 'many' });
+  const acceptedFirst = t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 'accepted', disposition: 'accepted' });
+  const acceptedSecond = t002ApproachEvent({ attemptOrdinal: 2, basisLabel: 'accepted', disposition: 'accepted' });
+  const failedFirst = t002ApproachEvent({ attemptOrdinal: 3, basisLabel: 'accepted' });
+  const failedSecond = t002ApproachEvent({ attemptOrdinal: 4, basisLabel: 'accepted' });
+
+  // Act
+  const findingRepeat = recoveryRuntime.deriveEarliestRepeatRelationshipV1([
+    findingThird,
+    findingSecond,
+    findingFirst,
+  ]);
+  const acceptedOnly = recoveryRuntime.deriveEarliestRepeatRelationshipV1([acceptedSecond, acceptedFirst]);
+  const failedRepeat = recoveryRuntime.deriveEarliestRepeatRelationshipV1([
+    failedSecond,
+    acceptedSecond,
+    failedFirst,
+    acceptedFirst,
+  ]);
+
+  // Assert
+  assert.deepEqual(findingRepeat.occurrenceIdentities, [
+    findingFirst.occurrenceIdentity,
+    findingSecond.occurrenceIdentity,
+  ]);
+  assert.equal(acceptedOnly, null);
+  assert.deepEqual(failedRepeat.occurrenceIdentities, [
+    failedFirst.occurrenceIdentity,
+    failedSecond.occurrenceIdentity,
+  ]);
+});
+
+test('T002 trusted occurrence contracts derive a complete bounded failed-approach set', () => {
+  // Arrange
+  const events = [
+    t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 'repeat' }),
+    t002ApproachEvent({ attemptOrdinal: 2, basisLabel: 'other-a' }),
+    t002ApproachEvent({ attemptOrdinal: 3, basisLabel: 'other-b' }),
+    t002ApproachEvent({ attemptOrdinal: 4, basisLabel: 'repeat' }),
+  ];
+  const repeat = recoveryRuntime.deriveEarliestRepeatRelationshipV1(events);
+
+  // Act
+  const failedSet = recoveryRuntime.deriveFailedApproachSetV1(repeat, events);
+
+  // Assert
+  assert.equal(failedSet.chronologyCutoff, 4);
+  assert.deepEqual(
+    failedSet.approachBasisIdentities,
+    [...new Set(events.map((event) => event.occurrence.basisIdentity))]
+      .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+  );
+  assert.deepEqual(
+    failedSet.evidenceEventHashes,
+    events.map((event) => event.eventHash)
+      .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+  );
+});
+
+test('T002 trusted occurrence contracts admit sixteen failed bases across the required seventeenth occurrence', () => {
+  // Arrange
+  const events = [
+    t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 'capacity-repeat' }),
+    ...Array.from({ length: 15 }, (_, index) => t002ApproachEvent({
+      attemptOrdinal: index + 2,
+      basisLabel: `capacity-${index + 2}`,
+    })),
+    t002ApproachEvent({ attemptOrdinal: 17, basisLabel: 'capacity-repeat' }),
+  ];
+  const repeat = recoveryRuntime.deriveEarliestRepeatRelationshipV1(events);
+
+  // Act
+  const failedSet = recoveryRuntime.deriveFailedApproachSetV1(repeat, events);
+
+  // Assert
+  assert.equal(failedSet.approachBasisIdentities.length, 16);
+  assert.ok(failedSet.evidenceEventHashes.length <= 16);
+  for (const basisIdentity of failedSet.approachBasisIdentities) {
+    assert.ok(events.some((event) => (
+      event.occurrence.basisIdentity === basisIdentity
+      && failedSet.evidenceEventHashes.includes(event.eventHash)
+    )), basisIdentity);
+  }
+});
+
+test('T002 completion Inspection overflow precedence: authoritative seventeenth basis retains finalize capacity mapping', () => {
+  // Arrange
+  const events = [
+    t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 'overflow-repeat' }),
+    ...Array.from({ length: 16 }, (_, index) => t002ApproachEvent({
+      attemptOrdinal: index + 2,
+      basisLabel: `overflow-${index + 2}`,
+    })),
+    t002ApproachEvent({ attemptOrdinal: 18, basisLabel: 'overflow-repeat' }),
+  ];
+  const repeat = recoveryRuntime.deriveEarliestRepeatRelationshipV1(events);
+
+  // Act and Assert
+  assert.throws(
+    () => recoveryRuntime.deriveFailedApproachSetV1(repeat, events),
+    (error) => error instanceof TypeError
+      && error.message === 'FailedApproachSetV1 exceeds the complete failed-approach capacity',
+  );
+  assert.match(
+    String(recoveryRuntime.finalizeCompletionV2),
+    /deriveFailedApproachSetV1\(repeat, retained\.retained\)[\s\S]+error\.message === 'FailedApproachSetV1 exceeds the complete failed-approach capacity'[\s\S]+reason: 'learning-governance-capacity'/,
+  );
+});
+
+test('T002 trusted occurrence contracts enforce singleton commitment state and required-only governance', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ checkOutcome: 'passed' });
+    const input = autonomousInspectInput(root, t002TrustedStreams([fixture]));
+    const captured = recoveryRuntime.captureCompletionV2(fixture.state, input, fixture.completion);
+    const governanceEvents = [
+      t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 'governance-repeat' }),
+      t002ApproachEvent({ attemptOrdinal: 2, basisLabel: 'governance-repeat' }),
+    ];
+    const governance = t002RequiredGovernance(governanceEvents);
+    const duplicatePending = {
+      ...fixture.state,
+      overallUsed: 2,
+      pending: [fixture.pending, { ...clone(fixture.pending), target: clone(SECOND_TARGET) }],
+    };
+
+    // Act and Assert
+    assert.throws(() => validateRunState(duplicatePending), /no more than one pending/);
+    assert.throws(
+      () => validateRunState({ ...captured.state, learningGovernance: governance }),
+      /cannot coexist/,
+    );
+    assert.throws(
+      () => validateRunState({ ...captured.state, occurrenceEvents: captured.occurrenceEvents }),
+      /unknown field/,
+    );
+    assert.throws(
+      () => validateRunState({
+        ...captured.state,
+        pendingCompletion: {
+          ...captured.state.pendingCompletion,
+          retention: {
+            ...captured.state.pendingCompletion.retention,
+            batchIdentity: '0'.repeat(64),
+          },
+        },
+      }),
+      /batchIdentity/,
+    );
+    assert.doesNotMatch(canonicalJson(captured.state), /"type":"(?:approach|finding)-occurrence"/);
+    assert.doesNotMatch(canonicalJson(captured.state), /"occurrence":/);
+    assert.doesNotMatch(canonicalJson(governance), /"type":"(?:approach|finding)-occurrence"/);
+    assert.doesNotMatch(canonicalJson(governance), /"occurrence":/);
+    assert.throws(
+      () => recoveryRuntime.validateLearningGovernanceV1({ ...governance, phase: 'reviewed' }),
+      /unavailable/,
+    );
+    assert.throws(
+      () => recoveryRuntime.validateLearningGovernanceV1({
+        ...governance,
+        reviewIdentity: t002Hash('premature-review'),
+      }),
+      /required phase forbids/,
+    );
+    const recaptured = recoveryRuntime.captureCompletionV2(captured.state, input, fixture.completion);
+    assert.equal(canonicalJson(recaptured.state), canonicalJson(captured.state));
+    assert.deepEqual(recaptured.occurrenceEvents, captured.occurrenceEvents);
+  });
+});
+
+test('T002 trusted occurrence contracts refuse capture on an occupied governance or disjoint retention singleton', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ checkOutcome: 'passed' });
+    const input = autonomousInspectInput(root, t002TrustedStreams([fixture]));
+    const governedState = {
+      ...clone(fixture.state),
+      learningGovernance: t002RequiredGovernance([
+        t002ApproachEvent({ target: SECOND_TARGET, attemptOrdinal: 1, basisLabel: 'disjoint-governance-repeat' }),
+        t002ApproachEvent({ target: SECOND_TARGET, attemptOrdinal: 2, basisLabel: 'disjoint-governance-repeat' }),
+      ]),
+    };
+    validateRunState(governedState);
+    const governedBytes = canonicalJson(governedState);
+    const captured = recoveryRuntime.captureCompletionV2(fixture.state, input, fixture.completion);
+    const retainedBytes = canonicalJson(captured.state);
+    const disjointAttempt = t002PendingFixture({
+      checkOutcome: 'passed',
+      evidenceHash: t002Hash('disjoint-retention-attempt-evidence'),
+      materialInputs: {
+        targets: ['src/t002-disjoint-retention.mjs'],
+        operations: ['retry-task'],
+        checks: ['verification'],
+      },
+    });
+    const disjointInput = autonomousInspectInput(root, t002TrustedStreams([fixture, disjointAttempt]));
+
+    assert.deepEqual(disjointAttempt.target, fixture.target);
+    assert.notEqual(disjointAttempt.attemptIdentity, fixture.attemptIdentity);
+    assert.notEqual(
+      canonicalJson(disjointAttempt.completion),
+      canonicalJson(fixture.completion),
+    );
+    assert.deepEqual(
+      canonicalTarget(governedState.learningGovernance.target),
+      canonicalTarget(SECOND_TARGET),
+    );
+
+    // Act
+    const governanceRefused = recoveryRuntime.captureCompletionV2(
+      governedState,
+      input,
+      fixture.completion,
+    );
+    const retentionRefused = recoveryRuntime.captureCompletionV2(
+      captured.state,
+      disjointInput,
+      disjointAttempt.completion,
+    );
+
+    // Assert
+    const cases = [
+      ['occupied governance', governanceRefused, governedState, governedBytes, 'learning-governance-conflict'],
+      ['disjoint retention', retentionRefused, captured.state, retainedBytes, 'occurrence-retention-conflict'],
+    ];
+    for (const [label, result, expectedState, expectedBytes, expectedReason] of cases) {
+      assert.equal(result.captured, false, label);
+      assert.equal(result.finalized, false, label);
+      assert.equal(result.reason, expectedReason, label);
+      assert.notEqual(result.reason, 'learning-governance-capacity', label);
+      assert.deepEqual(Object.keys(result).sort(), ['captured', 'finalized', 'reason', 'state'], label);
+      assert.strictEqual(result.state, expectedState, label);
+      assert.equal(canonicalJson(result.state), expectedBytes, label);
+      validateRunState(result.state);
+    }
+    assert.equal(Object.hasOwn(governanceRefused.state, 'pendingCompletion'), false);
+    assert.deepEqual(
+      governanceRefused.state.learningGovernance,
+      governedState.learningGovernance,
+    );
+    assert.deepEqual(retentionRefused.state.pendingCompletion, captured.state.pendingCompletion);
+    assert.equal(
+      retentionRefused.state.pendingCompletion.attemptIdentity,
+      fixture.attemptIdentity,
+    );
+    assert.equal(Object.hasOwn(retentionRefused.state, 'learningGovernance'), false);
+  });
+});
+
+test('T002 adjudicated binding and retention fixes: same-target pending substitution cannot hybridize a captured completion', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const attemptA = t002PendingFixture({ verdict: 'accepted', checkOutcome: 'passed' });
+    const capturedA = recoveryRuntime.captureCompletionV2(
+      attemptA.state,
+      autonomousInspectInput(root, t002TrustedStreams([attemptA])),
+      attemptA.completion,
+    );
+    const attemptB = t002PendingFixture({
+      verdict: 'accepted',
+      checkOutcome: 'passed',
+      evidenceHash: t002Hash('same-target-attempt-b-evidence'),
+      materialInputs: {
+        targets: ['src/t002-attempt-b.mjs'],
+        operations: ['retry-task'],
+        checks: ['verification'],
+      },
+    });
+    const substituted = {
+      ...clone(capturedA.state),
+      pending: [clone(attemptB.pending)],
+    };
+    const substitutedBytes = canonicalJson(substituted);
+    const retainedInput = t002RetentionInput(
+      root,
+      capturedA.occurrenceEvents,
+      capturedA.occurrenceEvents,
+      [attemptA],
+    );
+
+    assert.deepEqual(attemptB.target, attemptA.target);
+    assert.notEqual(attemptB.pending.evidenceHash, attemptA.pending.evidenceHash);
+    assert.notEqual(attemptB.pending.approachHash, attemptA.pending.approachHash);
+    assert.notEqual(attemptB.attemptIdentity, attemptA.attemptIdentity);
+    validateRunState(attemptB.state);
+
+    // Act
+    const opened = recordOpenSync(() => {
+      assert.throws(
+        () => validateRunState(substituted),
+        /must bind the exact still-pending authorization and approach/,
+      );
+      assert.throws(
+        () => recoveryRuntime.finalizeCompletionV2(
+          substituted,
+          retainedInput,
+          capturedA.occurrenceEvents,
+        ),
+        /must bind the exact still-pending authorization and approach/,
+      );
+    });
+    const finalizedA = recoveryRuntime.finalizeCompletionV2(
+      capturedA.state,
+      retainedInput,
+      capturedA.occurrenceEvents,
+    );
+
+    // Assert
+    assert.deepEqual(opened, []);
+    assert.equal(canonicalJson(substituted), substitutedBytes);
+    assert.deepEqual(substituted.pending, [attemptB.pending]);
+    assert.equal(substituted.completed.length, attemptB.state.completed.length);
+    assert.equal(Object.hasOwn(substituted, 'learningGovernance'), false);
+    assert.deepEqual(substituted.pendingCompletion, capturedA.state.pendingCompletion);
+    assert.equal(finalizedA.finalized, true);
+    assert.equal(finalizedA.completed, true);
+    assert.equal(finalizedA.reason, 'completed');
+    assert.deepEqual(finalizedA.state.pending, []);
+    assert.equal(Object.hasOwn(finalizedA.state, 'pendingCompletion'), false);
+    assert.equal(Object.hasOwn(finalizedA.state, 'learningGovernance'), false);
+    validateRunState(finalizedA.state);
+  });
+});
+
+test('T002 adjudicated binding and retention fixes: findings govern only through one exact fresh attempt approach join', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002FinalizeRepeatChannel(root, 'finding');
+    const exactEvents = fixture.allEvents;
+    const firstApproach = exactEvents.find((event) => (
+      event.type === 'approach-occurrence' && event.occurrence.chronology.attemptOrdinal === 1
+    ));
+    const secondApproach = exactEvents.find((event) => (
+      event.type === 'approach-occurrence' && event.occurrence.chronology.attemptOrdinal === 2
+    ));
+    const secondFinding = exactEvents.find((event) => (
+      event.type === 'finding-occurrence' && event.occurrence.chronology.attemptOrdinal === 2
+    ));
+    assert.ok(firstApproach);
+    assert.ok(secondApproach);
+    assert.ok(secondFinding);
+    const replace = (original, replacement) => exactEvents.map((event) => (
+      event.eventHash === original.eventHash ? replacement : event
+    ));
+    const refusalCases = [
+      {
+        label: 'missing fresh authority',
+        events: exactEvents,
+        trusted: [fixture.first],
+        reason: 'occurrence-retention-incomplete',
+      },
+      {
+        label: 'wrong target',
+        events: replace(secondApproach, t002RebuildApproachEvent(secondApproach, { target: SECOND_TARGET })),
+        trusted: [fixture.first, fixture.second],
+        reason: 'occurrence-retention-conflict',
+      },
+      {
+        label: 'wrong attempt',
+        events: replace(secondApproach, t002RebuildApproachEvent(secondApproach, {
+          attemptIdentity: firstApproach.occurrence.attemptIdentity,
+        })),
+        trusted: [fixture.first, fixture.second],
+        reason: 'occurrence-retention-conflict',
+      },
+      {
+        label: 'wrong ordinal',
+        events: replace(secondApproach, t002RebuildApproachEvent(secondApproach, { attemptOrdinal: 3 })),
+        trusted: [fixture.first, fixture.second],
+        reason: 'occurrence-retention-conflict',
+      },
+      {
+        label: 'wrong review',
+        events: replace(secondApproach, t002RebuildApproachEvent(secondApproach, {
+          reviewEnvelopeIdentity: firstApproach.reviewEnvelopeIdentity,
+        })),
+        trusted: [fixture.first, fixture.second],
+        reason: 'occurrence-retention-conflict',
+      },
+      {
+        label: 'wrong result',
+        events: replace(secondApproach, t002RebuildApproachEvent(secondApproach, {
+          resultIdentity: t002Hash('wrong-joined-result'),
+        })),
+        trusted: [fixture.first, fixture.second],
+        reason: 'occurrence-retention-conflict',
+      },
+      {
+        label: 'arbitrary failed-approach basis',
+        events: replace(secondFinding, t002RebuildFindingEvent(secondFinding, {
+          attemptApproachBasisIdentity: t002Hash('arbitrary-failed-approach-basis'),
+        })),
+        trusted: [fixture.first, fixture.second],
+        reason: 'occurrence-retention-conflict',
+      },
+      {
+        label: 'another attempts failed-approach basis',
+        events: replace(secondFinding, t002RebuildFindingEvent(secondFinding, {
+          attemptApproachBasisIdentity: firstApproach.occurrence.basisIdentity,
+        })),
+        trusted: [fixture.first, fixture.second],
+        reason: 'occurrence-retention-conflict',
+      },
+      {
+        label: 'missing same-attempt approach',
+        events: exactEvents.filter((event) => event.eventHash !== secondApproach.eventHash),
+        trusted: [fixture.first, fixture.second],
+        reason: 'occurrence-retention-conflict',
+      },
+      {
+        label: 'ambiguous duplicate same-attempt approaches',
+        events: [...exactEvents, clone(secondApproach)],
+        trusted: [fixture.first, fixture.second],
+        reason: 'occurrence-retention-conflict',
+      },
+    ];
+    const capturedState = fixture.secondCapture.state;
+    const capturedBytes = canonicalJson(capturedState);
+
+    // Act and Assert
+    for (const row of refusalCases) {
+      const result = recoveryRuntime.finalizeCompletionV2(
+        capturedState,
+        t002RetentionInput(root, row.events, row.events, row.trusted),
+        fixture.secondCapture.occurrenceEvents,
+      );
+      assert.equal(result.finalized, false, row.label);
+      assert.equal(result.completed, false, row.label);
+      assert.equal(result.reason, row.reason, row.label);
+      assert.strictEqual(result.state, capturedState, row.label);
+      assert.equal(canonicalJson(result.state), capturedBytes, row.label);
+      assert.deepEqual(result.state.pending, [fixture.second.pending], row.label);
+      assert.deepEqual(result.state.pendingCompletion, capturedState.pendingCompletion, row.label);
+      assert.equal(Object.hasOwn(result.state, 'learningGovernance'), false, row.label);
+    }
+
+    const exact = fixture.secondFinalize;
+    assert.equal(exact.finalized, true);
+    assert.equal(exact.completed, false);
+    assert.equal(exact.reason, 'learning-required');
+    assert.equal(exact.repeat.channel, 'finding');
+    assert.deepEqual(exact.state.learningGovernance.trigger, exact.repeat);
+    assert.deepEqual(
+      exact.state.learningGovernance.failedApproachSet.approachBasisIdentities,
+      [firstApproach.occurrence.basisIdentity, secondApproach.occurrence.basisIdentity]
+        .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+    );
+    assert.deepEqual(exact.state.pending, []);
+    assert.equal(Object.hasOwn(exact.state, 'pendingCompletion'), false);
+    validateRunState(exact.state);
+  });
+});
+
+test('T002 retained approach authority rebind rejects rehashed historical basis and authorization tamper before repeat governance', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const first = t002PendingFixture({
+      attemptOrdinal: 1,
+      checkOutcome: 'failed',
+      verdict: 'accepted',
+      materialInputs: {
+        targets: ['src/retained-authority-repeat.mjs'],
+        operations: ['retry-task'],
+        checks: ['verification'],
+      },
+    });
+    const firstCapture = recoveryRuntime.captureCompletionV2(
+      first.state,
+      autonomousInspectInput(root, t002TrustedStreams([first])),
+      first.completion,
+    );
+    const firstFinalize = recoveryRuntime.finalizeCompletionV2(
+      firstCapture.state,
+      t002RetentionInput(root, firstCapture.occurrenceEvents, firstCapture.occurrenceEvents, [first]),
+      firstCapture.occurrenceEvents,
+    );
+    const second = t002PendingFixture({
+      attemptOrdinal: 2,
+      priorCompleted: firstFinalize.state.completed,
+      checkOutcome: 'failed',
+      verdict: 'accepted',
+      materialInputs: clone(first.materialInputs),
+    });
+    const secondCapture = recoveryRuntime.captureCompletionV2(
+      second.state,
+      t002RetentionInput(
+        root,
+        firstCapture.occurrenceEvents,
+        firstCapture.occurrenceEvents,
+        [first, second],
+      ),
+      second.completion,
+    );
+    const exactEvents = [...firstCapture.occurrenceEvents, ...secondCapture.occurrenceEvents];
+    const priorApproach = exactEvents.find((event) => (
+      event.type === 'approach-occurrence' && event.occurrence.chronology.attemptOrdinal === 1
+    ));
+    assert.ok(priorApproach);
+    const tamperedBasis = clone(priorApproach.basis);
+    tamperedBasis.materialInputs.targets = ['src/retained-authority-tampered.mjs'];
+    const tamperedEvents = [
+      t002RebuildApproachEvent(priorApproach, { basis: tamperedBasis }),
+      t002RebuildApproachEvent(priorApproach, {
+        authorizationEvidenceHash: t002Hash('retained-authority-tampered-authorization'),
+      }),
+    ];
+    const candidate = transitionAssessment('retry-task', {
+      targets: [...second.materialInputs.targets],
+    });
+    const exactInput = t002RetentionInput(root, exactEvents, exactEvents, [first, second]);
+    const rawForEvents = (events, trustedFixtures) => transitionRaw(TARGET, {
+      tasks: { path: TASKS_PATH, bytes: t002HistoryTasksBytes(events) },
+      currentRun: [capture(TARGET, 'failed', events.map((event) => ({ event })))],
+      ...t002TrustedStreams(trustedFixtures),
+    });
+    const finalizeState = secondCapture.state;
+    const authorizeState = firstFinalize.state;
+    const finalizeBytes = canonicalJson(finalizeState);
+    const authorizeBytes = canonicalJson(authorizeState);
+
+    // Act and Assert
+    const validHistorical = recoveryRuntime.finalizeCompletionV2(
+      finalizeState,
+      exactInput,
+      secondCapture.occurrenceEvents,
+    );
+    assert.equal(validHistorical.finalized, true);
+    assert.equal(validHistorical.completed, false);
+    assert.equal(validHistorical.reason, 'learning-required');
+    assert.equal(validHistorical.repeat.channel, 'approach');
+    assert.equal(canonicalJson(finalizeState), finalizeBytes);
+    const validAuthorization = authorizeAttempt(
+      authorizeState,
+      TARGET,
+      rawForEvents(firstCapture.occurrenceEvents, [first]),
+      candidate,
+      'recovery',
+    );
+    assert.equal(validAuthorization.authorized, true);
+    assert.equal(validAuthorization.reason, 'authorized');
+    assert.equal(canonicalJson(authorizeState), authorizeBytes);
+
+    for (const tamperedApproach of tamperedEvents) {
+      const events = exactEvents.map((event) => (
+        event.eventHash === priorApproach.eventHash ? tamperedApproach : event
+      ));
+      const input = t002RetentionInput(root, events, events, [first, second]);
+      const finalized = recoveryRuntime.finalizeCompletionV2(
+        finalizeState,
+        input,
+        secondCapture.occurrenceEvents,
+      );
+      const authorized = authorizeAttempt(
+        authorizeState,
+        TARGET,
+        rawForEvents([tamperedApproach], [first]),
+        candidate,
+        'recovery',
+      );
+
+      assert.equal(finalized.finalized, false);
+      assert.equal(finalized.completed, false);
+      assert.equal(finalized.reason, 'occurrence-retention-conflict');
+      assert.strictEqual(finalized.state, finalizeState);
+      assert.equal(canonicalJson(finalized.state), finalizeBytes);
+      assert.equal(Object.hasOwn(finalized, 'repeat'), false);
+      assert.equal(Object.hasOwn(finalized.state, 'learningGovernance'), false);
+      assert.equal(authorized.authorized, false);
+      assert.equal(authorized.reason, 'evidence-incomplete');
+      assert.strictEqual(authorized.state, authorizeState);
+      assert.equal(canonicalJson(authorized.state), authorizeBytes);
+      assert.equal(Object.hasOwn(authorized.state, 'learningGovernance'), false);
+    }
+  });
+});
+
+test('T002 retained approach authority rebind rejects a flipped historical disposition in both directions', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const directions = [
+      {
+        label: 'suppressed repeat',
+        slug: 'disposition-suppressed',
+        firstCheckOutcome: 'failed',
+        firstVerdict: 'accepted',
+        trueDisposition: 'verification-failed',
+        flippedDisposition: 'accepted',
+        expectRepeat: true,
+      },
+      {
+        label: 'fabricated repeat',
+        slug: 'disposition-fabricated',
+        firstCheckOutcome: 'passed',
+        firstVerdict: 'accepted',
+        trueDisposition: 'accepted',
+        flippedDisposition: 'review-rejected',
+        expectRepeat: false,
+      },
+    ];
+
+    for (const direction of directions) {
+      // Arrange
+      const first = t002PendingFixture({
+        attemptOrdinal: 1,
+        checkOutcome: direction.firstCheckOutcome,
+        verdict: direction.firstVerdict,
+        materialInputs: {
+          targets: [`src/${direction.slug}.mjs`],
+          operations: ['retry-task'],
+          checks: ['verification'],
+        },
+      });
+      const firstCapture = recoveryRuntime.captureCompletionV2(
+        first.state,
+        autonomousInspectInput(root, t002TrustedStreams([first])),
+        first.completion,
+      );
+      const firstFinalize = recoveryRuntime.finalizeCompletionV2(
+        firstCapture.state,
+        t002RetentionInput(root, firstCapture.occurrenceEvents, firstCapture.occurrenceEvents, [first]),
+        firstCapture.occurrenceEvents,
+      );
+      const second = t002PendingFixture({
+        attemptOrdinal: 2,
+        priorCompleted: firstFinalize.state.completed,
+        checkOutcome: 'failed',
+        verdict: 'accepted',
+        materialInputs: clone(first.materialInputs),
+      });
+      const secondCapture = recoveryRuntime.captureCompletionV2(
+        second.state,
+        t002RetentionInput(
+          root,
+          firstCapture.occurrenceEvents,
+          firstCapture.occurrenceEvents,
+          [first, second],
+        ),
+        second.completion,
+      );
+      const exactEvents = [...firstCapture.occurrenceEvents, ...secondCapture.occurrenceEvents];
+      const priorApproach = exactEvents.find((event) => (
+        event.type === 'approach-occurrence' && event.occurrence.chronology.attemptOrdinal === 1
+      ));
+      assert.ok(priorApproach, direction.label);
+      assert.equal(priorApproach.occurrence.disposition, direction.trueDisposition, direction.label);
+      const flippedApproach = t002RebuildApproachEvent(priorApproach, {
+        disposition: direction.flippedDisposition,
+      });
+      assert.equal(flippedApproach.occurrence.disposition, direction.flippedDisposition, direction.label);
+      assert.notEqual(flippedApproach.eventHash, priorApproach.eventHash, direction.label);
+      assert.equal(
+        canonicalJson(flippedApproach.basis),
+        canonicalJson(priorApproach.basis),
+        direction.label,
+      );
+      assert.equal(
+        flippedApproach.occurrence.attemptIdentity,
+        priorApproach.occurrence.attemptIdentity,
+        direction.label,
+      );
+      const flippedEvents = exactEvents.map((event) => (
+        event.eventHash === priorApproach.eventHash ? flippedApproach : event
+      ));
+      const finalizeState = secondCapture.state;
+      const finalizeBytes = canonicalJson(finalizeState);
+
+      // Act
+      const valid = recoveryRuntime.finalizeCompletionV2(
+        finalizeState,
+        t002RetentionInput(root, exactEvents, exactEvents, [first, second]),
+        secondCapture.occurrenceEvents,
+      );
+      const refused = recoveryRuntime.finalizeCompletionV2(
+        finalizeState,
+        t002RetentionInput(root, flippedEvents, flippedEvents, [first, second]),
+        secondCapture.occurrenceEvents,
+      );
+
+      // Assert
+      assert.equal(valid.finalized, true, direction.label);
+      assert.equal(Object.hasOwn(valid, 'repeat'), direction.expectRepeat, direction.label);
+      assert.equal(
+        Object.hasOwn(valid.state, 'learningGovernance'),
+        direction.expectRepeat,
+        direction.label,
+      );
+      assert.equal(canonicalJson(finalizeState), finalizeBytes, direction.label);
+      assert.equal(refused.finalized, false, direction.label);
+      assert.equal(refused.completed, false, direction.label);
+      assert.equal(refused.reason, 'occurrence-retention-conflict', direction.label);
+      assert.notEqual(refused.reason, 'learning-governance-capacity', direction.label);
+      assert.strictEqual(refused.state, finalizeState, direction.label);
+      assert.equal(canonicalJson(refused.state), finalizeBytes, direction.label);
+      assert.equal(Object.hasOwn(refused, 'repeat'), false, direction.label);
+      assert.equal(Object.hasOwn(refused.state, 'learningGovernance'), false, direction.label);
+      assert.deepEqual(refused.state.pending, [second.pending], direction.label);
+      assert.deepEqual(
+        refused.state.pendingCompletion,
+        secondCapture.state.pendingCompletion,
+        direction.label,
+      );
+    }
+  });
+});
+
+test('T002 adjudicated binding and retention fixes: only exact LF v2 records authorize Lightweight and nested tracked retention', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ verdict: 'accepted', checkOutcome: 'passed' });
+    const captured = recoveryRuntime.captureCompletionV2(
+      fixture.state,
+      autonomousInspectInput(root, t002TrustedStreams([fixture])),
+      fixture.completion,
+    );
+    const event = captured.occurrenceEvents[0];
+    const line = t002V2EventLine(event);
+    const wrappedV1Line = `- dude-run-event: ${canonicalJson({ event })}`;
+    const malformedRecords = [
+      ['CRLF', `${line}\r\n`],
+      ['bare CR', `${line}\r`],
+      ['unterminated', line],
+    ];
+    const stateBytes = canonicalJson(captured.state);
+
+    // Act and Assert
+    for (const [label, record] of malformedRecords) {
+      const result = recoveryRuntime.finalizeCompletionV2(
+        captured.state,
+        t002RetentionInputWithTaskHistory(
+          root,
+          captured.occurrenceEvents,
+          t002HistoryTasksRecordBytes([record]),
+          [fixture],
+        ),
+        captured.occurrenceEvents,
+      );
+      assert.equal(result.finalized, false, label);
+      assert.equal(result.completed, false, label);
+      assert.equal(result.reason, 'occurrence-retention-conflict', label);
+      assert.strictEqual(result.state, captured.state, label);
+      assert.equal(canonicalJson(result.state), stateBytes, label);
+      assert.deepEqual(result.state.pending, [fixture.pending], label);
+      assert.deepEqual(result.state.pendingCompletion, captured.state.pendingCompletion, label);
+      assert.equal(Object.hasOwn(result.state, 'learningGovernance'), false, label);
+    }
+
+    const wrappedOnly = recoveryRuntime.finalizeCompletionV2(
+      captured.state,
+      t002RetentionInputWithTaskHistory(
+        root,
+        captured.occurrenceEvents,
+        t002HistoryTasksRecordBytes([`${wrappedV1Line}\n`]),
+        [fixture],
+      ),
+      captured.occurrenceEvents,
+    );
+    assert.equal(wrappedOnly.finalized, false);
+    assert.equal(wrappedOnly.reason, 'occurrence-retention-incomplete');
+    assert.strictEqual(wrappedOnly.state, captured.state);
+    assert.equal(canonicalJson(wrappedOnly.state), stateBytes);
+
+    const lightweight = recoveryRuntime.finalizeCompletionV2(
+      captured.state,
+      t002RetentionInputWithTaskHistory(
+        root,
+        captured.occurrenceEvents,
+        t002HistoryTasksRecordBytes([`${wrappedV1Line}\n`, `${line}\n`]),
+        [fixture],
+      ),
+      captured.occurrenceEvents,
+    );
+    assert.equal(lightweight.finalized, true);
+    assert.equal(lightweight.completed, true);
+    assert.equal(lightweight.reason, 'completed');
+    assert.equal(canonicalJson(captured.state), stateBytes);
+
+    const trackedFixture = t002PendingFixture({
+      target: TRACKED,
+      verdict: 'accepted',
+      checkOutcome: 'passed',
+    });
+    const trackedLaneCapture = trackedCapture(TRACKED.issueId, TASK_KEY);
+    const trackedRaw = trackedRawInputs([trackedLaneCapture]);
+    const trackedStreams = t002TrustedStreams([trackedFixture]);
+    const trackedInput = (currentRun = []) => ({
+      root,
+      specPath: SPEC_PATH,
+      target: TRACKED,
+      lane: trackedRaw.lane,
+      currentRun,
+      ...trackedStreams,
+      lint: [],
+      policyMode: 'autonomous',
+    });
+    const trackedCaptured = recoveryRuntime.captureCompletionV2(
+      trackedFixture.state,
+      trackedInput(),
+      trackedFixture.completion,
+      { normalizeTrackedEvidence: () => trackedProjection(TRACKED, [trackedLaneCapture]) },
+    );
+    const trackedProjectionValue = clone(trackedProjection(TRACKED, [trackedLaneCapture]));
+    trackedProjectionValue.records[0].detail.notes = {
+      nested: [{
+        eventRecords: trackedCaptured.occurrenceEvents.map((row) => `${t002V2EventLine(row)}\n`),
+      }],
+    };
+    const trackedBytes = canonicalJson(trackedCaptured.state);
+    const tracked = recoveryRuntime.finalizeCompletionV2(
+      trackedCaptured.state,
+      trackedInput([
+        capture(TRACKED, 'failed', trackedCaptured.occurrenceEvents.map((row) => ({ event: row }))),
+      ]),
+      trackedCaptured.occurrenceEvents,
+      { normalizeTrackedEvidence: () => trackedProjectionValue },
+    );
+    assert.equal(tracked.finalized, true);
+    assert.equal(tracked.completed, true);
+    assert.equal(tracked.reason, 'completed');
+    assert.deepEqual(tracked.state.pending, []);
+    assert.equal(Object.hasOwn(tracked.state, 'pendingCompletion'), false);
+    assert.equal(Object.hasOwn(tracked.state, 'learningGovernance'), false);
+    assert.equal(canonicalJson(trackedCaptured.state), trackedBytes);
+    validateRunState(tracked.state);
+  });
+});
+
+/** @param {Record<string, unknown>} result */
+function assertT002CompletionInspectionOverflow(result) {
+  assert.deepEqual(Object.keys(result), ['inspection']);
+  const inspection = /** @type {Record<string, unknown>} */ (result.inspection);
+  assert.equal(inspection.overflow, true);
+  assert.ok(/** @type {Record<string, unknown>[]} */ (inspection.blockers).some((blocker) => (
+    blocker.code === 'evidence-incomplete'
+      && blocker.subject === 'model-packet'
+      && blocker.evidenceHash === inspection.evidenceHash
+  )));
+  assert.ok(/** @type {Record<string, unknown>[]} */ (inspection.items)
+    .every((item) => !Object.hasOwn(item, 'text')));
+  assert.equal(modelPacket(inspection), null);
+  return inspection;
+}
+
+test('T002 completion Inspection overflow precedence: capture returns only descriptor evidence before malformed completion semantics', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({
+      attemptOrdinal: 2,
+      verdict: 'accepted',
+      checkOutcome: 'passed',
+    });
+    const stateBefore = clone(fixture.state);
+    const stateBytes = canonicalJson(fixture.state);
+    const workspacePaths = [SPEC_PATH, IDEA_PATH, PLAN_PATH, TASKS_PATH];
+    const entriesBefore = fs.readdirSync(root, { recursive: true }).sort();
+    const workspaceBefore = workspacePaths.map((relativePath) => fs.readFileSync(path.join(root, relativePath)));
+    const input = autonomousInspectInput(root, {
+      currentRun: Array.from({ length: 17 }, (_, index) => (
+        capture(TARGET, 'failed', [{ index }])
+      )),
+      ...t002TrustedStreams([fixture]),
+    });
+
+    // Act
+    const result = recoveryRuntime.captureCompletionV2(fixture.state, input, { version: 2 });
+
+    // Assert
+    assertT002CompletionInspectionOverflow(result);
+    assert.equal(canonicalJson(fixture.state), stateBytes);
+    assert.deepEqual(fixture.state, stateBefore);
+    assert.deepEqual(fixture.state.pending, [fixture.pending]);
+    assert.deepEqual(fixture.state.completed, stateBefore.completed);
+    assert.equal(Object.hasOwn(fixture.state, 'pendingCompletion'), false);
+    for (const field of ['state', 'batch', 'events', 'occurrenceEvents', 'pendingCompletion', 'authority']) {
+      assert.equal(Object.hasOwn(result, field), false, field);
+    }
+    assert.deepEqual(fs.readdirSync(root, { recursive: true }).sort(), entriesBefore);
+    assert.deepEqual(
+      workspacePaths.map((relativePath) => fs.readFileSync(path.join(root, relativePath))),
+      workspaceBefore,
+    );
+  });
+});
+
+test('T002 completion Inspection overflow precedence: finalize preserves the captured case before a mismatched occurrence batch', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ attemptOrdinal: 2, verdict: 'accepted', checkOutcome: 'passed' });
+    const captured = recoveryRuntime.captureCompletionV2(
+      fixture.state,
+      autonomousInspectInput(root, t002TrustedStreams([fixture])),
+      fixture.completion,
+    );
+    const input = t002RetentionInput(
+      root,
+      captured.occurrenceEvents,
+      captured.occurrenceEvents,
+      [fixture],
+    );
+    input.currentRun.push(...Array.from({ length: 17 }, (_, index) => (
+      capture(TARGET, 'failed', [{ overflow: index }])
+    )));
+    const stateReference = captured.state;
+    const stateBefore = clone(captured.state);
+    const stateBytes = canonicalJson(captured.state);
+    const currentRunBefore = input.currentRun.map((entry) => Buffer.from(entry.bytes));
+    const laneBefore = fs.readFileSync(path.join(root, TASKS_PATH));
+    const mismatchedBatch = [{
+      ...clone(captured.occurrenceEvents[0]),
+      eventHash: t002Hash('mismatched-finalize-batch'),
+    }];
+
+    // Act
+    const result = recoveryRuntime.finalizeCompletionV2(captured.state, input, mismatchedBatch);
+
+    // Assert
+    assertT002CompletionInspectionOverflow(result);
+    assert.strictEqual(captured.state, stateReference);
+    assert.equal(canonicalJson(captured.state), stateBytes);
+    assert.deepEqual(captured.state, stateBefore);
+    assert.deepEqual(captured.state.pending, [fixture.pending]);
+    assert.deepEqual(captured.state.pendingCompletion, stateBefore.pendingCompletion);
+    assert.deepEqual(captured.state.completed, stateBefore.completed);
+    assert.equal(Object.hasOwn(captured.state, 'learningGovernance'), false);
+    for (const field of ['captured', 'finalized', 'completed', 'reason', 'resultIdentity', 'repeat', 'state', 'governanceEvent']) {
+      assert.equal(Object.hasOwn(result, field), false, field);
+    }
+    assert.deepEqual(input.currentRun.map((entry) => entry.bytes), currentRunBefore);
+    assert.deepEqual(fs.readFileSync(path.join(root, TASKS_PATH)), laneBefore);
+  });
+});
+
+test('T002 completion Inspection overflow precedence: measured 16-basis and 17-basis fixtures stop before capacity', () => {
+  for (const [uniqueBasisCount, attemptCount, scope] of [
+    [16, 17, 'boundary'],
+    [17, 18, 'overflow'],
+  ]) {
+    withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+      // Arrange
+      const fixture = t002ApproachCapacityFixture(root, uniqueBasisCount, scope);
+      assert.ok(fixture.finalFixture);
+      assert.ok(fixture.finalCapture);
+      assert.equal(fixture.fixtures.length, attemptCount);
+      assert.equal(fixture.events.length, attemptCount);
+      assert.equal(new Set(fixture.events.map((event) => event.occurrence.basisIdentity)).size, uniqueBasisCount);
+      const repeat = recoveryRuntime.deriveEarliestRepeatRelationshipV1(fixture.events);
+      assert.ok(repeat);
+      assert.equal(repeat.channel, 'approach');
+      if (uniqueBasisCount === 16) {
+        assert.equal(
+          recoveryRuntime.deriveFailedApproachSetV1(repeat, fixture.events).approachBasisIdentities.length,
+          16,
+        );
+      } else {
+        assert.throws(
+          () => recoveryRuntime.deriveFailedApproachSetV1(repeat, fixture.events),
+          /capacity|1 through 16/,
+        );
+      }
+      fs.writeFileSync(path.join(root, TASKS_PATH), t002HistoryTasksBytes(fixture.events));
+      const input = autonomousInspectInput(root, {
+        currentRun: [capture(TARGET, 'failed', fixture.events.map((event) => ({ event })))],
+        ...t002GroupedTrustedStreams(fixture.fixtures),
+      });
+      const stateBefore = clone(fixture.finalCapture.state);
+      const stateBytes = canonicalJson(fixture.finalCapture.state);
+      const currentRunBefore = input.currentRun.map((entry) => Buffer.from(entry.bytes));
+      const laneBefore = fs.readFileSync(path.join(root, TASKS_PATH));
+
+      // Act
+      const result = recoveryRuntime.finalizeCompletionV2(
+        fixture.finalCapture.state,
+        input,
+        fixture.finalCapture.occurrenceEvents,
+      );
+
+      // Assert
+      assertT002CompletionInspectionOverflow(result);
+      assert.equal(canonicalJson(fixture.finalCapture.state), stateBytes);
+      assert.deepEqual(fixture.finalCapture.state, stateBefore);
+      assert.deepEqual(fixture.finalCapture.state.pending, [fixture.finalFixture.pending]);
+      assert.deepEqual(fixture.finalCapture.state.pendingCompletion, stateBefore.pendingCompletion);
+      assert.deepEqual(fixture.finalCapture.state.completed, stateBefore.completed);
+      assert.equal(Object.hasOwn(fixture.finalCapture.state, 'learningGovernance'), false);
+      assert.equal(Object.hasOwn(result, 'reason'), false);
+      assert.deepEqual(input.currentRun.map((entry) => entry.bytes), currentRunBefore);
+      assert.deepEqual(fs.readFileSync(path.join(root, TASKS_PATH)), laneBefore);
+    });
+  }
+});
+
+test('T002 trusted occurrence contracts preserve guarded and non-Work compatibility and expose no v2 public routing', () => {
+  // Arrange
+  const initial = guardedContinuationState();
+  const raw = transitionRaw(TARGET);
+  const assessmentValue = transitionAssessment('retry-task', { targets: ['src/guarded-t002.mjs'] });
+  const authorized = authorizeAttempt(initial, TARGET, raw, assessmentValue, 'recovery');
+  const completed = completeAttempt(authorized.state, completionInput(authorized.state.pending[0]));
+  const expectedCompletedBytes = canonicalJson(completed);
+  const nonWorkAuthorities = [
+    new URL('../../agents/dude.agent.md', import.meta.url),
+    new URL('../../instructions/dude.instructions.md', import.meta.url),
+    new URL('../dude-reviewer-protocol/SKILL.md', import.meta.url),
+    new URL('../dude-receiving-code-review/SKILL.md', import.meta.url),
+  ].map((sourcePath) => fs.readFileSync(sourcePath, 'utf8'));
+
+  // Act
+  const repeated = authorizeAttempt(completed.state, TARGET, raw, assessmentValue, 'recovery');
+  const publicCompleted = runtimeFunction('runCommand')('complete', {
+    state: authorized.state,
+    input: completionInput(authorized.state.pending[0]),
+  });
+
+  // Assert
+  assert.equal(canonicalJson(publicCompleted.completion), expectedCompletedBytes);
+  assert.equal(canonicalJson(repeated), canonicalJson({
+    authorized: false,
+    reason: 'no-progress',
+    state: completed.state,
+  }));
+  for (const source of nonWorkAuthorities) {
+    assert.match(source, /guarded and non-Work[^\n]*remains unchanged/i);
+  }
+  assert.throws(
+    () => recoveryRuntime.captureCompletionV2(initial, {}, {}),
+    /requires autonomous policy/,
+  );
+  for (const command of ['complete.capture', 'complete.finalize', 'capture', 'finalize']) {
+    assert.throws(() => runtimeFunction('runCommand')(command, {}), /unknown command/, command);
+  }
+  assert.throws(
+    () => runtimeFunction('runCommand')('complete', {
+      state: authorized.state,
+      input: completionInput(authorized.state.pending[0]),
+      occurrenceEvents: [],
+    }),
+    /unknown field/,
+  );
+});
+
+// --- Feature 009 T003: public learning and exact projection batches --------
+
+/** @param {string} label */
+function t003Hash(label) {
+  return sha256(`T003:${label}`);
+}
+
+/** @param {string} command @param {unknown} request */
+function t003Invoke(command, request) {
+  const processResult = runRecoveryCli(command, request);
+  assert.equal(processResult.status, 0, `${command}: ${processResult.stderr}`);
+  assert.equal(processResult.stderr, '', command);
+  return JSON.parse(processResult.stdout);
+}
+
+/** @param {Record<string, unknown>} target @param {string} label */
+function t003ApproachBasis(target, label) {
+  return {
+    version: 1,
+    target: canonicalTarget(target),
+    action: 'retry-task',
+    materialInputs: {
+      targets: [`src/${label}.mjs`],
+      operations: ['retry-task'],
+      checks: ['verification'],
+    },
+    mechanismIdentities: [t003Hash(`mechanism-${label}`)],
+    assumptionIdentities: [],
+    evidenceAcquisitionIdentities: [],
+    validationPlanIdentities: [],
+  };
+}
+
+/** @param {Record<string, unknown>} target @param {string[]} bases @param {string} setIdentity @param {string} label @param {Record<string, unknown>} [explicitBasis] */
+function t003CredibleAlternative(target, bases, setIdentity, label, explicitBasis) {
+  const approachBasis = explicitBasis ? clone(explicitBasis) : t003ApproachBasis(target, label);
+  const approachBasisIdentity = sha256(canonicalJson(approachBasis));
+  const materialDifferences = bases.map((basis) => ({
+    failedApproachBasisIdentity: basis,
+    changedDimensions: ['material-input', 'mechanism'],
+    evidenceIdentities: [t003Hash(`difference-${label}-${basis}`)],
+  }));
+  const checkBody = {
+    definitionIdentity: t003Hash(`check-definition-${label}`),
+    evidenceIdentities: [t003Hash(`check-evidence-${label}`)],
+  };
+  const discriminatingCheck = { identity: sha256(canonicalJson(checkBody)), ...checkBody };
+  const semanticAssessmentIdentity = t003Hash(`assessment-${label}`);
+  const identityBody = {
+    version: 2,
+    disposition: 'credible-material',
+    approachBasisIdentity,
+    failedApproachSetIdentity: setIdentity,
+    materialDifferences,
+    discriminatingCheck,
+    semanticAssessmentIdentity,
+  };
+  return {
+    version: 2,
+    alternativeIdentity: sha256(canonicalJson(identityBody)),
+    disposition: 'credible-material',
+    approachBasis,
+    approachBasisIdentity,
+    failedApproachSetIdentity: setIdentity,
+    materialDifferences,
+    discriminatingCheck,
+    semanticAssessmentIdentity,
+  };
+}
+
+/** @param {Record<string, unknown>} target @param {string[]} bases @param {string} setIdentity @param {string} label */
+function t003RejectedAlternative(target, bases, setIdentity, label) {
+  const approachBasis = t003ApproachBasis(target, label);
+  const approachBasisIdentity = sha256(canonicalJson(approachBasis));
+  const comparisons = bases.map((basis, index) => (index === 0
+    ? {
+      failedApproachBasisIdentity: basis,
+      outcome: 'same',
+      evidenceIdentities: [t003Hash(`comparison-${label}-${basis}`)],
+    }
+    : {
+      failedApproachBasisIdentity: basis,
+      outcome: 'different',
+      changedDimensions: ['mechanism'],
+      evidenceIdentities: [t003Hash(`comparison-${label}-${basis}`)],
+    }));
+  const semanticAssessmentIdentity = t003Hash(`assessment-${label}`);
+  const reason = 'disguised-repetition';
+  const identityBody = {
+    version: 2,
+    disposition: 'not-materially-different',
+    approachBasisIdentity,
+    failedApproachSetIdentity: setIdentity,
+    comparisons,
+    semanticAssessmentIdentity,
+    reason,
+  };
+  return {
+    version: 2,
+    alternativeIdentity: sha256(canonicalJson(identityBody)),
+    disposition: 'not-materially-different',
+    approachBasis,
+    approachBasisIdentity,
+    failedApproachSetIdentity: setIdentity,
+    comparisons,
+    semanticAssessmentIdentity,
+    reason,
+  };
+}
+
+/** @param {string} label */
+function t003LearningFinding(label) {
+  const body = {
+    version: 1,
+    statement: `The repeated behavior persists because ${label} was never varied.`,
+    evidenceIdentities: [t003Hash(`learning-evidence-${label}`)],
+    assumptionIdentities: [],
+  };
+  return { ...body, findingIdentity: sha256(canonicalJson(body)) };
+}
+
+/** @param {Record<string, unknown>[]} rows */
+function t003SortAlternatives(rows) {
+  return [...rows].sort((left, right) => Buffer.compare(
+    Buffer.from(/** @type {string} */ (left.alternativeIdentity)),
+    Buffer.from(/** @type {string} */ (right.alternativeIdentity)),
+  ));
+}
+
+/**
+ * Drive one complete serialized public-process flow: capture, exact occurrence
+ * projection, finalize, required-governance projection, learn, learning-result
+ * projection, and the branch transition.
+ * @param {string} root @param {'finding'|'approach'} channel @param {'selected-alternative'|'no-progress'} branch
+ */
+function t003PublicFlow(root, channel, branch) {
+  const findingChannel = channel === 'finding';
+  /** @param {number} attemptOrdinal @param {Record<string, unknown>[]|null} priorCompleted @param {string} label */
+  const fixtureFor = (attemptOrdinal, priorCompleted, label) => t002PendingFixture({
+    attemptOrdinal,
+    ...(priorCompleted ? { priorCompleted } : {}),
+    checkOutcome: findingChannel ? 'passed' : 'failed',
+    verdict: findingChannel ? 'rejected' : 'accepted',
+    materialInputs: {
+      targets: [`src/${label}.mjs`],
+      operations: ['retry-task'],
+      checks: ['verification'],
+    },
+  });
+  const first = fixtureFor(1, null, findingChannel ? 't003-finding-first' : 't003-repeated-approach');
+  const firstCapture = t003Invoke('complete', {
+    mode: 'capture',
+    state: first.state,
+    input: cliInput(autonomousInspectInput(root, t002TrustedStreams([first]))),
+    completion: first.completion,
+  });
+  const firstEvents = firstCapture.completion.projectionBatch.events;
+  const firstFinalize = t003Invoke('complete', {
+    mode: 'finalize',
+    state: firstCapture.completion.state,
+    input: cliInput(t002RetentionInput(root, firstEvents, firstEvents, [first])),
+    projectionBatch: firstCapture.completion.projectionBatch,
+  });
+  const second = fixtureFor(
+    2,
+    firstFinalize.completion.state.completed,
+    findingChannel ? 't003-finding-second' : 't003-repeated-approach',
+  );
+  const secondCapture = t003Invoke('complete', {
+    mode: 'capture',
+    state: second.state,
+    input: cliInput(t002RetentionInput(root, firstEvents, firstEvents, [first, second])),
+    completion: second.completion,
+  });
+  const occurrenceEvents = [...firstEvents, ...secondCapture.completion.projectionBatch.events];
+  const occurrencePrepared = t003Invoke('transition', {
+    mode: 'prepare-projection',
+    state: secondCapture.completion.state,
+    input: cliInput(t002RetentionInput(root, firstEvents, firstEvents, [first, second])),
+    projectionBatch: secondCapture.completion.projectionBatch,
+  });
+  const retainedInput = () => cliInput(t002RetentionInput(root, occurrenceEvents, occurrenceEvents, [first, second]));
+  const occurrenceVerified = t003Invoke('transition', {
+    mode: 'verify-projection',
+    state: secondCapture.completion.state,
+    input: retainedInput(),
+    projectionBatch: secondCapture.completion.projectionBatch,
+  });
+  const secondFinalize = t003Invoke('complete', {
+    mode: 'finalize',
+    state: secondCapture.completion.state,
+    input: retainedInput(),
+    projectionBatch: secondCapture.completion.projectionBatch,
+  });
+  const governanceBatch = secondFinalize.completion.projectionBatch;
+  const governancePrepared = t003Invoke('transition', {
+    mode: 'prepare-projection',
+    state: secondFinalize.completion.state,
+    input: retainedInput(),
+    projectionBatch: governanceBatch,
+  });
+  const governedEvents = [...occurrenceEvents, ...governanceBatch.events];
+  const governedInput = () => cliInput(t002RetentionInput(root, governedEvents, governedEvents, [first, second]));
+  const governanceVerified = t003Invoke('transition', {
+    mode: 'verify-projection',
+    state: secondFinalize.completion.state,
+    input: governedInput(),
+    projectionBatch: governanceBatch,
+  });
+  const failedSet = governanceVerified.transition.state.learningGovernance.failedApproachSet;
+  const bases = failedSet.approachBasisIdentities;
+  const credible = t003CredibleAlternative(TARGET, bases, failedSet.setIdentity, 't003-alternative');
+  const rejected = t003RejectedAlternative(TARGET, bases, failedSet.setIdentity, 't003-disguised');
+  const alternatives = branch === 'selected-alternative'
+    ? t003SortAlternatives([credible, rejected])
+    : t003SortAlternatives([rejected]);
+  const learned = t003Invoke('learn', {
+    state: governanceVerified.transition.state,
+    input: governedInput(),
+    review: {
+      version: 2,
+      target: TARGET,
+      assumptionIdentities: [t003Hash('assumption')],
+      findings: [t003LearningFinding(channel)],
+      alternatives,
+      outcome: branch,
+      ...(branch === 'selected-alternative'
+        ? { selectedAlternativeIdentity: credible.alternativeIdentity }
+        : {}),
+    },
+  });
+  const learningBatch = learned.learning.projectionBatch;
+  const learnedEvents = [...governedEvents, ...learningBatch.events];
+  const learnedInput = () => cliInput(t002RetentionInput(root, learnedEvents, learnedEvents, [first, second]));
+  const learningPrepared = t003Invoke('transition', {
+    mode: 'prepare-projection',
+    state: learned.learning.state,
+    input: governedInput(),
+    projectionBatch: learningBatch,
+  });
+  const learningVerified = t003Invoke('transition', {
+    mode: 'verify-projection',
+    state: learned.learning.state,
+    input: learnedInput(),
+    projectionBatch: learningBatch,
+  });
+  const branchTransition = t003Invoke('transition', {
+    mode: branch === 'selected-alternative' ? 'bind-post-learning-inspection' : 'verify-no-progress',
+    state: learningVerified.transition.state,
+    input: learnedInput(),
+  });
+  return {
+    first,
+    second,
+    firstCapture,
+    firstFinalize,
+    secondCapture,
+    occurrencePrepared,
+    occurrenceVerified,
+    secondFinalize,
+    governancePrepared,
+    governanceVerified,
+    learned,
+    learningPrepared,
+    learningVerified,
+    branchTransition,
+    credible,
+    rejected,
+    failedSet,
+    occurrenceEvents,
+    governedEvents,
+    learnedEvents,
+    fixtures: [first, second],
+  };
+}
+
+test('T003 public learning and exact projection batches: capture carries the exact batch with a hash-only commitment', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ checkOutcome: 'passed' });
+
+    // Act
+    const captured = t003Invoke('complete', {
+      mode: 'capture',
+      state: fixture.state,
+      input: cliInput(autonomousInspectInput(root, t002TrustedStreams([fixture]))),
+      completion: fixture.completion,
+    });
+    const inProcess = recoveryRuntime.captureCompletionV2(
+      fixture.state,
+      autonomousInspectInput(root, t002TrustedStreams([fixture])),
+      fixture.completion,
+    );
+
+    // Assert
+    assert.deepEqual(Object.keys(captured).sort(), ['completion', 'inspection']);
+    const batch = captured.completion.projectionBatch;
+    // The declared public Success shape carries the exact batch and no second
+    // unvalidated event carrier; the in-process helper form keeps bare bodies.
+    assert.deepEqual(
+      Object.keys(captured.completion).sort(),
+      ['captured', 'finalized', 'projectionBatch', 'reason', 'state'],
+    );
+    assert.equal(Object.hasOwn(captured.completion, 'occurrenceEvents'), false);
+    assert.deepEqual(inProcess.occurrenceEvents, batch.events);
+    assert.equal(canonicalJson(inProcess.projectionBatch), canonicalJson(batch));
+    assert.equal(captured.completion.reason, 'occurrence-retention-required');
+    assert.equal(batch.purpose, 'occurrence-retention');
+    assert.equal(batch.version, 1);
+    assert.deepEqual(batch.target, canonicalTarget(TARGET));
+    assert.deepEqual(batch.events.map((event) => event.type), ['approach-occurrence', 'finding-occurrence']);
+    assert.deepEqual(
+      batch.eventCommitments,
+      batch.events.map((event) => ({ kind: event.type, eventHash: event.eventHash })),
+    );
+    assert.equal(batch.batchIdentity, sha256(canonicalJson({
+      version: 1,
+      purpose: 'occurrence-retention',
+      target: canonicalTarget(TARGET),
+      eventCommitments: batch.eventCommitments,
+    })));
+    recoveryRuntime.validateProjectionBatchV1(batch);
+    assert.deepEqual(captured.completion.state.pendingCompletion.retention, {
+      purpose: batch.purpose,
+      batchIdentity: batch.batchIdentity,
+      eventCommitments: batch.eventCommitments,
+    });
+    assert.doesNotMatch(canonicalJson(captured.completion.state), /"occurrence":/);
+    validateRunState(captured.completion.state);
+  });
+});
+
+test('T003 public learning and exact projection batches: serialized public flow reaches a bound selected alternative', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange and Act
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+
+    // Assert
+    assert.equal(flow.firstFinalize.completion.finalized, true);
+    assert.equal(Object.hasOwn(flow.firstFinalize.completion, 'projectionBatch'), false);
+    assert.equal(flow.occurrencePrepared.transition.reason, 'projection-prepared');
+    assert.equal(flow.occurrencePrepared.transition.plan.items.length, 2);
+    assert.equal(
+      canonicalJson(flow.occurrencePrepared.transition.state),
+      canonicalJson(flow.secondCapture.completion.state),
+    );
+    assert.equal(flow.occurrenceVerified.transition.reason, 'projection-verified');
+    assert.equal(
+      canonicalJson(flow.occurrenceVerified.transition.state),
+      canonicalJson(flow.secondCapture.completion.state),
+    );
+    assert.equal(flow.secondFinalize.completion.reason, 'learning-required');
+    assert.equal(flow.secondFinalize.completion.repeat.channel, 'finding');
+    assert.equal(flow.secondFinalize.completion.projectionBatch.purpose, 'governance-required');
+    assert.equal(flow.secondFinalize.completion.state.learningGovernance.phase, 'required');
+    assert.deepEqual(
+      flow.secondFinalize.completion.state.learningGovernance.projectionCommitment,
+      {
+        purpose: 'governance-required',
+        batchIdentity: flow.secondFinalize.completion.projectionBatch.batchIdentity,
+        eventCommitments: flow.secondFinalize.completion.projectionBatch.eventCommitments,
+      },
+    );
+    assert.equal(flow.governancePrepared.transition.plan.items[0].laneEventLineTerminator, 'LF');
+    assert.equal(
+      flow.governancePrepared.transition.plan.items[0].laneEventLine,
+      `- dude-run-event: ${canonicalJson(flow.secondFinalize.completion.projectionBatch.events[0])}`,
+    );
+    assert.equal(
+      Object.hasOwn(flow.governanceVerified.transition.state.learningGovernance, 'projectionCommitment'),
+      false,
+    );
+    assert.equal(flow.learned.learning.reason, 'learning-reviewed');
+    assert.equal(flow.learned.learning.reviewEvent.type, 'learning-review');
+    assert.equal(flow.learned.learning.reviewEvent.version, 2);
+    assert.equal(flow.learned.learning.reviewEvent.outcome, 'selected-alternative');
+    assert.equal(
+      flow.learned.learning.reviewEvent.selectedAlternativeIdentity,
+      flow.credible.alternativeIdentity,
+    );
+    assert.deepEqual(
+      flow.learned.learning.projectionBatch.events.map((event) => event.type),
+      ['learning-review', 'learning-governance'],
+    );
+    assert.equal(flow.learned.learning.projectionBatch.purpose, 'learning-result');
+    assert.equal(flow.learned.learning.state.learningGovernance.phase, 'reviewed');
+    assert.doesNotMatch(canonicalJson(flow.learned.learning.state), /"alternativeIdentity"/);
+    assert.equal(flow.learningPrepared.transition.plan.items.length, 2);
+    assert.equal(flow.learningVerified.transition.state.learningGovernance.phase, 'projected');
+    assert.equal(flow.branchTransition.transition.reason, 'post-learning-inspection-bound');
+    const binding = flow.branchTransition.transition.binding;
+    recoveryRuntime.validatePostLearningInspectionBindingV1(binding);
+    assert.equal(binding.branchIdentity, sha256(canonicalJson({
+      selectedAlternativeIdentity: flow.credible.alternativeIdentity,
+      discriminatingCheckIdentity: flow.credible.discriminatingCheck.identity,
+      failedApproachSetIdentity: flow.failedSet.setIdentity,
+    })));
+    const bound = flow.branchTransition.transition.state.learningGovernance;
+    assert.equal(bound.phase, 'alternative-inspected');
+    assert.equal(bound.selectedAlternativeIdentity, flow.credible.alternativeIdentity);
+    assert.equal(bound.discriminatingCheckIdentity, flow.credible.discriminatingCheck.identity);
+    assert.equal(bound.postLearningInspectionIdentity, binding.postLearningInspectionIdentity);
+    validateRunState(flow.branchTransition.transition.state);
+    const sealed = authorizeAttempt(
+      flow.branchTransition.transition.state,
+      TARGET,
+      transitionRaw(TARGET),
+      transitionAssessment('retry-task', { targets: ['src/t003-sealed.mjs'] }),
+      'recovery',
+    );
+    assert.equal(sealed.authorized, false);
+    assert.equal(sealed.reason, 'learning-required');
+    // The no-progress branch cannot consume a selected-alternative result.
+    const crossBranch = recoveryRuntime.verifyNoProgressV2(
+      flow.learningVerified.transition.state,
+      t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures),
+    );
+    assert.equal(crossBranch.transition.verified, false);
+    assert.equal(crossBranch.transition.reason, 'inspection-branch-mismatch');
+    assert.equal(
+      canonicalJson(crossBranch.transition.state),
+      canonicalJson(flow.learningVerified.transition.state),
+    );
+  });
+});
+
+test('T003 public learning and exact projection batches: serialized approach-only flow reaches verified no-progress', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange and Act
+    const flow = t003PublicFlow(root, 'approach', 'no-progress');
+
+    // Assert
+    assert.equal(flow.secondFinalize.completion.repeat.channel, 'approach');
+    assert.equal(flow.secondFinalize.completion.reason, 'learning-required');
+    assert.equal(flow.secondFinalize.completion.completed, false);
+    assert.equal(flow.learned.learning.reviewEvent.outcome, 'no-progress');
+    assert.equal(Object.hasOwn(flow.learned.learning.reviewEvent, 'selectedAlternativeIdentity'), false);
+    const proof = flow.learned.learning.reviewEvent.noProgressProof;
+    recoveryRuntime.validateNoProgressProofV2(proof);
+    assert.deepEqual(proof.credibleMaterialAlternativeIdentities, []);
+    assert.equal(proof.failedApproachSetIdentity, flow.failedSet.setIdentity);
+    assert.equal(flow.branchTransition.transition.reason, 'no-progress-verified');
+    const verification = flow.branchTransition.transition.verification;
+    recoveryRuntime.validateNoProgressVerificationV2(verification);
+    assert.equal(verification.noProgressProofIdentity, proof.proofIdentity);
+    assert.deepEqual(verification.distinguishingEvidenceIdentities, []);
+    assert.equal(verification.postLearningEvidenceHash, flow.branchTransition.inspection.evidenceHash);
+    const verified = flow.branchTransition.transition.state.learningGovernance;
+    assert.equal(verified.phase, 'no-progress-verified');
+    assert.equal(Object.hasOwn(verified, 'selectedAlternativeIdentity'), false);
+    assert.equal(verified.postLearningInspectionIdentity, verification.verificationIdentity);
+    validateRunState(flow.branchTransition.transition.state);
+    // The selected-alternative branch cannot consume a no-progress result.
+    const crossBranch = recoveryRuntime.bindPostLearningInspectionV2(
+      flow.learningVerified.transition.state,
+      t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures),
+    );
+    assert.equal(crossBranch.transition.bound, false);
+    assert.equal(crossBranch.transition.reason, 'inspection-branch-mismatch');
+    assert.equal(
+      canonicalJson(crossBranch.transition.state),
+      canonicalJson(flow.learningVerified.transition.state),
+    );
+  });
+});
+
+test('T003 public learning and exact projection batches: projection preparation and verification require the exact batch', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ checkOutcome: 'passed' });
+    const captured = recoveryRuntime.captureCompletionV2(
+      fixture.state,
+      autonomousInspectInput(root, t002TrustedStreams([fixture])),
+      fixture.completion,
+    );
+    const batch = captured.projectionBatch;
+    const events = batch.events;
+    const retained = () => t002RetentionInput(root, events, events, [fixture]);
+    const oneSided = () => t002RetentionInput(root, events, [], [fixture]);
+    const laneOnly = () => t002RetentionInput(root, [], events, [fixture]);
+    const tamperedBody = clone(batch);
+    tamperedBody.events[1].occurrence.observation.identity = t003Hash('tampered-observation');
+    const tamperedCommitment = clone(batch);
+    tamperedCommitment.eventCommitments[0].eventHash = t003Hash('tampered-commitment');
+    const foreignBatch = clone(batch);
+    foreignBatch.batchIdentity = t003Hash('foreign-batch');
+    const otherFixture = t002PendingFixture({
+      checkOutcome: 'passed',
+      evidenceHash: t003Hash('foreign-attempt'),
+      materialInputs: {
+        targets: ['src/t003-foreign-attempt.mjs'],
+        operations: ['retry-task'],
+        checks: ['verification'],
+      },
+    });
+    const otherCapture = recoveryRuntime.captureCompletionV2(
+      otherFixture.state,
+      autonomousInspectInput(root, t002TrustedStreams([otherFixture])),
+      otherFixture.completion,
+    );
+    // Self-consistent, but committed to another attempt's retention.
+    recoveryRuntime.validateProjectionBatchV1(otherCapture.projectionBatch);
+
+    // Act
+    const verified = recoveryRuntime.verifyProjectionV2(captured.state, retained(), batch);
+    const missingLane = recoveryRuntime.verifyProjectionV2(captured.state, oneSided(), batch);
+    const missingCurrentRun = recoveryRuntime.verifyProjectionV2(captured.state, laneOnly(), batch);
+    const noCommitment = recoveryRuntime.prepareProjectionV2(
+      fixture.state,
+      autonomousInspectInput(root, t002TrustedStreams([fixture])),
+      batch,
+    );
+
+    // Assert
+    assert.equal(verified.transition.reason, 'projection-verified');
+    recoveryRuntime.validateProjectionRefV1(verified.transition.projectionRef);
+    assert.deepEqual(
+      verified.transition.projectionRef.eventHashes,
+      events.map((event) => event.eventHash),
+    );
+    assert.equal(missingLane.transition.verified, false);
+    assert.equal(missingLane.transition.reason, 'projection-missing-lane-history');
+    // One-sided projection refuses in both directions.
+    assert.equal(missingCurrentRun.transition.verified, false);
+    assert.equal(missingCurrentRun.transition.reason, 'projection-missing-current-run');
+    assert.equal(
+      canonicalJson(missingCurrentRun.transition.state),
+      canonicalJson(captured.state),
+    );
+    assert.equal(noCommitment.transition.reason, 'projection-batch-mismatch');
+    for (const [label, candidate] of [
+      ['tampered event body', tamperedBody],
+      ['tampered commitment hash', tamperedCommitment],
+      ['foreign batch identity', foreignBatch],
+      ['self-consistent foreign batch', otherCapture.projectionBatch],
+    ]) {
+      assert.throws(
+        () => recoveryRuntime.prepareProjectionV2(captured.state, retained(), candidate),
+        TypeError,
+        /** @type {string} */ (label),
+      );
+      assert.throws(
+        () => recoveryRuntime.verifyProjectionV2(captured.state, retained(), candidate),
+        TypeError,
+        /** @type {string} */ (label),
+      );
+    }
+    assert.doesNotMatch(canonicalJson(captured.state), /"basis":/);
+  });
+});
+
+test('T003 public learning and exact projection batches: credible alternatives must differ from every failed approach with one discriminating check', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'no-progress');
+    const bases = flow.failedSet.approachBasisIdentities;
+    const setIdentity = flow.failedSet.setIdentity;
+    const governedState = flow.governanceVerified.transition.state;
+    const learningInput = () => t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures);
+    const credible = t003CredibleAlternative(TARGET, bases, setIdentity, 't003-candidate');
+    // Self-consistent, but compares against only one of the two failed bases.
+    const partial = t003CredibleAlternative(TARGET, [bases[0]], setIdentity, 't003-partial');
+    const emptyDifferences = clone(credible);
+    emptyDifferences.materialDifferences = [];
+    const disguised = t003CredibleAlternative(
+      TARGET,
+      bases,
+      setIdentity,
+      't003-disguised-candidate',
+      flow.secondCapture.completion.projectionBatch.events[0].basis,
+    );
+    const staleSet = t003CredibleAlternative(TARGET, bases, t003Hash('stale-set'), 't003-stale');
+    const uncheckedEvidence = clone(credible);
+    uncheckedEvidence.discriminatingCheck = { ...credible.discriminatingCheck, evidenceIdentities: [] };
+
+    // Act and Assert
+    assert.equal(bases.length, 2);
+    recoveryRuntime.validateAlternativeV2(credible);
+    assert.equal(bases.includes(disguised.approachBasisIdentity), true);
+    for (const [label, candidate] of [
+      ['incomplete comparison coverage', partial],
+      ['empty comparison coverage', emptyDifferences],
+      ['disguised repetition', disguised],
+      ['stale failed set', staleSet],
+      ['missing discriminating evidence', uncheckedEvidence],
+    ]) {
+      assert.throws(
+        () => recoveryRuntime.learnGovernanceV2(governedState, learningInput(), {
+          version: 2,
+          target: TARGET,
+          assumptionIdentities: [],
+          findings: [t003LearningFinding('coverage')],
+          alternatives: [candidate],
+          outcome: 'selected-alternative',
+          selectedAlternativeIdentity: candidate.alternativeIdentity,
+        }),
+        TypeError,
+        /** @type {string} */ (label),
+      );
+    }
+  });
+});
+
+test('T003 public learning and exact projection batches: learning operates with no objective and never invents one', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const governedState = flow.governanceVerified.transition.state;
+    const request = {
+      version: 2,
+      target: TARGET,
+      assumptionIdentities: [t003Hash('assumption')],
+      findings: [t003LearningFinding('objective')],
+      alternatives: [flow.credible],
+      outcome: 'selected-alternative',
+      selectedAlternativeIdentity: flow.credible.alternativeIdentity,
+    };
+
+    // An already-valid uniquely matched objective may carry evidence.
+    const contract = numericContract();
+    const sequence = createEvaluationSequence(
+      TARGET,
+      objectivePlanBody(contract),
+      contract,
+      candidateWriteSet(),
+      fileDescriptors({ 'src/a.mjs': 'v1', 'src/a.test.mjs': 't' }),
+    );
+    const objectiveState = { ...clone(governedState), evaluationSequences: [sequence] };
+    validateRunState(objectiveState);
+
+    // Act
+    const matched = recoveryRuntime.learnGovernanceV2(
+      objectiveState,
+      t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures),
+      { ...request, sequenceIdentity: sequence.sequenceIdentity },
+    );
+
+    // Assert
+    assert.equal(Object.hasOwn(governedState, 'evaluationSequences'), false);
+    assert.equal(Object.hasOwn(flow.learned.learning.reviewEvent, 'sequenceIdentity'), false);
+    assert.doesNotMatch(canonicalJson(flow.learned.learning.state), /sequenceIdentity/);
+    assert.equal(matched.learning.reviewed, true);
+    assert.equal(matched.learning.reviewEvent.sequenceIdentity, sequence.sequenceIdentity);
+    assert.deepEqual(matched.learning.state.evaluationSequences, [sequence]);
+    assert.throws(
+      () => recoveryRuntime.learnGovernanceV2(
+        governedState,
+        t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures),
+        { ...request, sequenceIdentity: t003Hash('invented-objective') },
+      ),
+      /uniquely matched objective/,
+    );
+  });
+});
+
+test('T003 public learning and exact projection batches: learning waits for verified governance projection and rebinds its trigger and failed set', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'approach', 'no-progress');
+    const governedState = flow.governanceVerified.transition.state;
+    const unretained = [
+      t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 't003-unretained' }),
+      t002ApproachEvent({ attemptOrdinal: 2, basisLabel: 't003-unretained' }),
+    ];
+    const forgedTrigger = {
+      ...clone(governedState),
+      learningGovernance: t002RequiredGovernance(unretained),
+    };
+    validateRunState(forgedTrigger);
+    const forgedTriggerBytes = canonicalJson(forgedTrigger);
+    const unretainedSet = recoveryRuntime.deriveFailedApproachSetV1(
+      recoveryRuntime.deriveEarliestRepeatRelationshipV1(unretained),
+      unretained,
+    );
+    const realGovernance = clone(governedState.learningGovernance);
+    const forgedSet = {
+      ...clone(governedState),
+      learningGovernance: {
+        ...realGovernance,
+        failedApproachSet: unretainedSet,
+        triggerEvidenceHash: sha256(canonicalJson({
+          trigger: realGovernance.trigger,
+          failedApproachSetIdentity: unretainedSet.setIdentity,
+        })),
+      },
+    };
+    validateRunState(forgedSet);
+    const forgedSetBytes = canonicalJson(forgedSet);
+    const learningInput = () => t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures);
+    const request = {
+      version: 2,
+      target: TARGET,
+      assumptionIdentities: [],
+      findings: [t003LearningFinding('rebind')],
+      alternatives: [],
+      outcome: 'no-progress',
+    };
+
+    // Act
+    const unprojected = recoveryRuntime.learnGovernanceV2(
+      flow.secondFinalize.completion.state,
+      learningInput(),
+      request,
+    );
+    const triggerRefused = recoveryRuntime.learnGovernanceV2(forgedTrigger, learningInput(), request);
+    const setRefused = recoveryRuntime.learnGovernanceV2(forgedSet, learningInput(), request);
+
+    // Assert
+    assert.equal(unprojected.learning.reviewed, false);
+    assert.equal(unprojected.learning.reason, 'governance-unresolved');
+    assert.equal(
+      canonicalJson(unprojected.learning.state),
+      canonicalJson(flow.secondFinalize.completion.state),
+    );
+    assert.notDeepEqual(forgedTrigger.learningGovernance.trigger, realGovernance.trigger);
+    assert.notEqual(unretainedSet.setIdentity, realGovernance.failedApproachSet.setIdentity);
+    assert.equal(triggerRefused.learning.reviewed, false);
+    assert.equal(triggerRefused.learning.reason, 'repeat-not-established');
+    assert.equal(canonicalJson(triggerRefused.learning.state), forgedTriggerBytes);
+    assert.equal(setRefused.learning.reviewed, false);
+    assert.equal(setRefused.learning.reason, 'failed-approach-set-mismatch');
+    assert.equal(canonicalJson(setRefused.learning.state), forgedSetBytes);
+  });
+});
+
+test('T003 public learning and exact projection batches: overflow, phase, and singleton refusals stay fail-closed', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ checkOutcome: 'passed' });
+    const captured = recoveryRuntime.captureCompletionV2(
+      fixture.state,
+      autonomousInspectInput(root, t002TrustedStreams([fixture])),
+      fixture.completion,
+    );
+    const events = captured.projectionBatch.events;
+    const overflowInput = t002RetentionInput(root, events, events, [fixture]);
+    overflowInput.currentRun.push(...Array.from({ length: 17 }, (_, index) => (
+      capture(TARGET, 'failed', [{ overflow: index }])
+    )));
+    const governedState = {
+      ...clone(fixture.state),
+      learningGovernance: t002RequiredGovernance([
+        t002ApproachEvent({ target: SECOND_TARGET, attemptOrdinal: 1, basisLabel: 't003-occupied' }),
+        t002ApproachEvent({ target: SECOND_TARGET, attemptOrdinal: 2, basisLabel: 't003-occupied' }),
+      ]),
+    };
+    validateRunState(governedState);
+    const governedBytes = canonicalJson(governedState);
+    const requiredState = {
+      ...autonomousState(),
+      learningGovernance: t002RequiredGovernance([
+        t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 't003-required' }),
+        t002ApproachEvent({ attemptOrdinal: 2, basisLabel: 't003-required' }),
+      ]),
+    };
+    validateRunState(requiredState);
+    const requiredBytes = canonicalJson(requiredState);
+
+    // Act
+    const overflowFinalize = recoveryRuntime.finalizeCompletionV2(
+      captured.state,
+      overflowInput,
+      captured.projectionBatch,
+    );
+    const occupied = recoveryRuntime.captureCompletionV2(
+      governedState,
+      autonomousInspectInput(root, t002TrustedStreams([fixture])),
+      fixture.completion,
+    );
+    const prematureLearn = recoveryRuntime.learnGovernanceV2(
+      requiredState,
+      autonomousInspectInput(root, t002TrustedStreams([fixture])),
+      {
+        version: 2,
+        target: TARGET,
+        assumptionIdentities: [],
+        findings: [t003LearningFinding('premature')],
+        alternatives: [],
+        outcome: 'no-progress',
+      },
+    );
+
+    // Assert
+    assertT002CompletionInspectionOverflow(overflowFinalize);
+    for (const field of ['state', 'reason', 'batch', 'projectionBatch', 'occurrenceEvents', 'completion']) {
+      assert.equal(Object.hasOwn(overflowFinalize, field), false, field);
+    }
+    assert.equal(occupied.reason, 'learning-governance-conflict');
+    assert.notEqual(occupied.reason, 'learning-governance-capacity');
+    assert.equal(canonicalJson(occupied.state), governedBytes);
+    assert.equal(prematureLearn.learning.reviewed, false);
+    assert.notEqual(prematureLearn.learning.reason, 'no-progress-verified');
+    assert.notEqual(prematureLearn.learning.reason, 'learning-reviewed');
+    assert.equal(canonicalJson(prematureLearn.learning.state), requiredBytes);
+    // Singleton occupancy is a conflict; capacity stays reserved for derivable
+    // failed-approach-set excess alone.
+    const finalizeSource = String(recoveryRuntime.finalizeCompletionV2);
+    const occupancyBlock = finalizeSource.slice(
+      finalizeSource.indexOf("Object.hasOwn(state, 'learningGovernance')"),
+      finalizeSource.indexOf('deriveFailedApproachSetV1(repeat'),
+    );
+    assert.match(occupancyBlock, /reason: 'learning-governance-conflict'/);
+    assert.doesNotMatch(occupancyBlock, /reason: 'learning-governance-capacity'/);
+    // That finalize branch is only defence in depth: RunState refuses a v2
+    // retention beside any governance, so capture is the reachable refusal.
+    assert.throws(
+      () => validateRunState({
+        ...clone(captured.state),
+        learningGovernance: clone(governedState.learningGovernance),
+      }),
+      /cannot coexist with active learning governance/,
+    );
+    for (const phase of ['alternative-permitted', 'alternative-authorized', 'alternative-verified']) {
+      assert.throws(
+        () => recoveryRuntime.validateLearningGovernanceV1({
+          ...requiredState.learningGovernance,
+          phase,
+        }),
+        /unavailable/,
+        phase,
+      );
+    }
+  });
+});
+
+test('T003 public learning and exact projection batches: finalize and learn carry the exact projected event bodies', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const repeat = flow.secondFinalize.completion.repeat;
+    const governanceEvent = flow.secondFinalize.completion.projectionBatch.events[0];
+    const reviewEvent = flow.learned.learning.reviewEvent;
+    const learningGovernanceEvent = flow.learned.learning.projectionBatch.events[1];
+    /** @param {Record<string, unknown>} event */
+    const bodyHash = (event) => {
+      const { eventHash, ...withoutHash } = event;
+      return sha256(canonicalJson(withoutHash));
+    };
+
+    // Act and Assert: the governance-required body finalize returns
+    assert.deepEqual(Object.keys(governanceEvent).sort(), [
+      'eventHash', 'failedApproachSetIdentity', 'governanceIdentity', 'phase',
+      'revision', 'target', 'trigger', 'type', 'version',
+    ]);
+    assert.equal(governanceEvent.type, 'learning-governance');
+    assert.equal(governanceEvent.version, 1);
+    assert.equal(governanceEvent.revision, 1);
+    assert.equal(governanceEvent.phase, 'required');
+    assert.deepEqual(governanceEvent.target, canonicalTarget(TARGET));
+    assert.deepEqual(governanceEvent.trigger, repeat);
+    assert.equal(governanceEvent.failedApproachSetIdentity, flow.failedSet.setIdentity);
+    assert.equal(governanceEvent.governanceIdentity, sha256(canonicalJson({
+      version: 1,
+      target: canonicalTarget(TARGET),
+      repeatIdentity: sha256(canonicalJson(repeat)),
+    })));
+    assert.equal(governanceEvent.eventHash, bodyHash(governanceEvent));
+    assert.equal(
+      canonicalJson(flow.secondFinalize.completion.governanceEvent),
+      canonicalJson(governanceEvent),
+    );
+
+    // The learning-review body learn returns
+    assert.equal(reviewEvent.preLearningEvidenceHash, flow.learned.inspection.evidenceHash);
+    assert.equal(reviewEvent.governanceIdentity, governanceEvent.governanceIdentity);
+    assert.deepEqual(reviewEvent.trigger, repeat);
+    assert.equal(reviewEvent.failedApproachSetIdentity, flow.failedSet.setIdentity);
+    assert.equal(reviewEvent.assumptionSetHash, sha256(canonicalJson([t003Hash('assumption')])));
+    assert.deepEqual(reviewEvent.findings, [t003LearningFinding('finding')]);
+    assert.deepEqual(reviewEvent.alternatives, t003SortAlternatives([flow.credible, flow.rejected]));
+    assert.equal(reviewEvent.reviewIdentity, sha256(canonicalJson({
+      governanceIdentity: reviewEvent.governanceIdentity,
+      target: reviewEvent.target,
+      trigger: reviewEvent.trigger,
+      failedApproachSetIdentity: reviewEvent.failedApproachSetIdentity,
+      preLearningEvidenceHash: reviewEvent.preLearningEvidenceHash,
+      assumptionSetHash: reviewEvent.assumptionSetHash,
+      findings: reviewEvent.findings,
+      alternatives: reviewEvent.alternatives,
+      outcome: reviewEvent.outcome,
+      selectedAlternativeIdentity: reviewEvent.selectedAlternativeIdentity,
+    })));
+    assert.equal(reviewEvent.eventHash, bodyHash(reviewEvent));
+    assert.equal(
+      canonicalJson(flow.learned.learning.projectionBatch.events[0]),
+      canonicalJson(reviewEvent),
+    );
+
+    // The reviewed governance body learn projects with it
+    assert.equal(learningGovernanceEvent.phase, 'reviewed');
+    assert.equal(learningGovernanceEvent.reviewIdentity, reviewEvent.reviewIdentity);
+    assert.equal(learningGovernanceEvent.revision, 1);
+    assert.equal(learningGovernanceEvent.governanceIdentity, governanceEvent.governanceIdentity);
+    assert.deepEqual(learningGovernanceEvent.trigger, repeat);
+    assert.equal(learningGovernanceEvent.failedApproachSetIdentity, flow.failedSet.setIdentity);
+    assert.equal(learningGovernanceEvent.eventHash, bodyHash(learningGovernanceEvent));
+    assert.equal(
+      canonicalJson(flow.learned.learning.governanceEvent),
+      canonicalJson(learningGovernanceEvent),
+    );
+  });
+});
+
+test('T003 public learning and exact projection batches: no-progress requires the projected result and fresh no-distinguishing-evidence proof', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'approach', 'no-progress');
+    const reviewedState = flow.learned.learning.state;
+    const reviewedBytes = canonicalJson(reviewedState);
+    const projectedState = flow.learningVerified.transition.state;
+    const projectedBytes = canonicalJson(projectedState);
+    // A later distinguishing attempt keeps the trigger and the complete failed
+    // set intact but changes the complete retained evidence the proof covers.
+    const third = t002PendingFixture({
+      attemptOrdinal: 3,
+      priorCompleted: flow.secondFinalize.completion.state.completed,
+      checkOutcome: 'failed',
+      verdict: 'accepted',
+      materialInputs: {
+        targets: ['src/t003-distinguishing.mjs'],
+        operations: ['retry-task'],
+        checks: ['verification'],
+      },
+    });
+    const thirdCapture = recoveryRuntime.captureCompletionV2(
+      third.state,
+      autonomousInspectInput(root, t002TrustedStreams([third])),
+      third.completion,
+    );
+    const distinguishedEvents = [...flow.learnedEvents, ...thirdCapture.occurrenceEvents];
+    const distinguishedFixtures = [...flow.fixtures, third];
+
+    // Act
+    const premature = t003Invoke('transition', {
+      mode: 'verify-no-progress',
+      state: reviewedState,
+      input: cliInput(t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures)),
+    });
+    const distinguished = t003Invoke('transition', {
+      mode: 'verify-no-progress',
+      state: projectedState,
+      input: cliInput(t002RetentionInput(
+        root,
+        distinguishedEvents,
+        distinguishedEvents,
+        distinguishedFixtures,
+      )),
+    });
+
+    // Assert
+    assert.equal(reviewedState.learningGovernance.phase, 'reviewed');
+    assert.equal(premature.transition.verified, false);
+    assert.equal(premature.transition.reason, 'learning-phase-mismatch');
+    assert.equal(canonicalJson(premature.transition.state), reviewedBytes);
+    assert.equal(distinguished.transition.verified, false);
+    assert.equal(distinguished.transition.reason, 'new-distinguishing-evidence');
+    assert.equal(Object.hasOwn(distinguished.transition, 'verification'), false);
+    assert.equal(canonicalJson(distinguished.transition.state), projectedBytes);
+  });
+});
+
+test('T003 public learning and exact projection batches: the public learning routes stay autonomous-only and refuse tampered batches in process', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ checkOutcome: 'passed' });
+    const captured = t003Invoke('complete', {
+      mode: 'capture',
+      state: fixture.state,
+      input: cliInput(autonomousInspectInput(root, t002TrustedStreams([fixture]))),
+      completion: fixture.completion,
+    });
+    const batch = captured.completion.projectionBatch;
+    const events = batch.events;
+    const missingBodies = clone(batch);
+    missingBodies.events = [];
+    const hashMismatch = clone(batch);
+    hashMismatch.eventCommitments[0].eventHash = t003Hash('serialized-commitment-mismatch');
+    const guardedInput = () => cliInput(publicInspectionInput(root));
+    const guardedReview = {
+      version: 2,
+      target: TARGET,
+      assumptionIdentities: [],
+      findings: [t003LearningFinding('guarded')],
+      alternatives: [],
+      outcome: 'no-progress',
+    };
+    const expectedError = { error: { code: 'recovery-invalid-request', message: 'Recovery request is invalid.' } };
+
+    // Act and Assert
+    for (const [label, command, request] of [
+      ['guarded learn', 'learn', { state: emptyState(), input: guardedInput(), review: guardedReview }],
+      ['guarded prepare-projection', 'transition', {
+        mode: 'prepare-projection', state: emptyState(), input: guardedInput(), projectionBatch: batch,
+      }],
+      ['guarded verify-no-progress', 'transition', {
+        mode: 'verify-no-progress', state: emptyState(), input: guardedInput(),
+      }],
+      ['guarded bind-post-learning-inspection', 'transition', {
+        mode: 'bind-post-learning-inspection', state: emptyState(), input: guardedInput(),
+      }],
+      ['finalize missing bodies', 'complete', {
+        mode: 'finalize',
+        state: captured.completion.state,
+        input: cliInput(t002RetentionInput(root, events, events, [fixture])),
+        projectionBatch: missingBodies,
+      }],
+      ['finalize commitment hash mismatch', 'complete', {
+        mode: 'finalize',
+        state: captured.completion.state,
+        input: cliInput(t002RetentionInput(root, events, events, [fixture])),
+        projectionBatch: hashMismatch,
+      }],
+      // The public route declares `projectionBatch: ProjectionBatchV1`; a bare
+      // ordered body array is an in-process helper form only.
+      ['finalize bare event array', 'complete', {
+        mode: 'finalize',
+        state: captured.completion.state,
+        input: cliInput(t002RetentionInput(root, events, events, [fixture])),
+        projectionBatch: events,
+      }],
+    ]) {
+      const refused = runRecoveryCli(/** @type {string} */ (command), request);
+      assert.equal(refused.status, 1, /** @type {string} */ (label));
+      assert.equal(refused.stdout, '', /** @type {string} */ (label));
+      assert.deepEqual(JSON.parse(refused.stderr), expectedError, /** @type {string} */ (label));
+    }
+    // The same bare ordered bodies still finalize through the in-process helper.
+    const inProcessFinalized = recoveryRuntime.finalizeCompletionV2(
+      captured.completion.state,
+      t002RetentionInput(root, events, events, [fixture]),
+      events,
+    );
+    assert.equal(inProcessFinalized.finalized, true);
+    assert.equal(Object.hasOwn(inProcessFinalized.state, 'pendingCompletion'), false);
+  });
+});
+
+test('T003 public learning and exact projection batches: one-sided projection refuses at the public process boundary', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ checkOutcome: 'passed' });
+    const captured = t003Invoke('complete', {
+      mode: 'capture',
+      state: fixture.state,
+      input: cliInput(autonomousInspectInput(root, t002TrustedStreams([fixture]))),
+      completion: fixture.completion,
+    });
+    const batch = captured.completion.projectionBatch;
+    const events = batch.events;
+    const capturedBytes = canonicalJson(captured.completion.state);
+
+    // Act
+    const missingLane = t003Invoke('transition', {
+      mode: 'verify-projection',
+      state: captured.completion.state,
+      input: cliInput(t002RetentionInput(root, events, [], [fixture])),
+      projectionBatch: batch,
+    });
+    const missingCurrentRun = t003Invoke('transition', {
+      mode: 'verify-projection',
+      state: captured.completion.state,
+      input: cliInput(t002RetentionInput(root, [], events, [fixture])),
+      projectionBatch: batch,
+    });
+
+    // Assert
+    assert.equal(missingLane.transition.verified, false);
+    assert.equal(missingLane.transition.reason, 'projection-missing-lane-history');
+    assert.equal(canonicalJson(missingLane.transition.state), capturedBytes);
+    assert.equal(missingCurrentRun.transition.verified, false);
+    assert.equal(missingCurrentRun.transition.reason, 'projection-missing-current-run');
+    assert.equal(canonicalJson(missingCurrentRun.transition.state), capturedBytes);
+  });
+});
+
+test('T003 public learning and exact projection batches: incomplete failed-approach comparisons refuse at the public process boundary', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'no-progress');
+    const bases = flow.failedSet.approachBasisIdentities;
+    // Self-consistent, but compares against only one of the two failed bases.
+    const partial = t003CredibleAlternative(
+      TARGET,
+      [bases[0]],
+      flow.failedSet.setIdentity,
+      't003-process-partial',
+    );
+
+    // Act
+    const refused = runRecoveryCli('learn', {
+      state: flow.governanceVerified.transition.state,
+      input: cliInput(t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures)),
+      review: {
+        version: 2,
+        target: TARGET,
+        assumptionIdentities: [],
+        findings: [t003LearningFinding('process-coverage')],
+        alternatives: [partial],
+        outcome: 'selected-alternative',
+        selectedAlternativeIdentity: partial.alternativeIdentity,
+      },
+    });
+
+    // Assert
+    assert.equal(bases.length, 2);
+    assert.equal(refused.status, 1);
+    assert.equal(refused.stdout, '');
+    assert.deepEqual(JSON.parse(refused.stderr), {
+      error: { code: 'recovery-invalid-request', message: 'Recovery request is invalid.' },
+    });
+  });
+});
+
+test('T003 public learning and exact projection batches: invented objectives refuse at the public process boundary', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const governedState = flow.governanceVerified.transition.state;
+
+    // Act
+    const refused = runRecoveryCli('learn', {
+      state: governedState,
+      input: cliInput(t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures)),
+      review: {
+        version: 2,
+        target: TARGET,
+        assumptionIdentities: [t003Hash('assumption')],
+        findings: [t003LearningFinding('process-objective')],
+        alternatives: [flow.credible],
+        outcome: 'selected-alternative',
+        selectedAlternativeIdentity: flow.credible.alternativeIdentity,
+        sequenceIdentity: t003Hash('process-invented-objective'),
+      },
+    });
+
+    // Assert
+    assert.equal(Object.hasOwn(governedState, 'evaluationSequences'), false);
+    assert.equal(refused.status, 1);
+    assert.equal(refused.stdout, '');
+    assert.deepEqual(JSON.parse(refused.stderr), {
+      error: { code: 'recovery-invalid-request', message: 'Recovery request is invalid.' },
+    });
+  });
+});
+
+// --- Feature 009 T004: scoped halts, re-derivation, scheduling, and audit ---
+
+/** @param {string} label */
+function t004Hash(label) {
+  return sha256(`T004:${label}`);
+}
+
+/** Caller-observed target-scoped halt facts. @param {Record<string, unknown>} [overrides] */
+function t004TargetHalt(overrides = {}) {
+  return {
+    scope: 'target',
+    kind: 'unavailable-dependency',
+    reason: 'target-dependency-unavailable',
+    evidenceIdentity: t004Hash('target-halt-evidence'),
+    target: canonicalTarget(TARGET),
+    ...overrides,
+  };
+}
+
+/** Caller-observed run-wide halt facts. @param {Record<string, unknown>} [overrides] */
+function t004RunHalt(overrides = {}) {
+  return {
+    scope: 'run',
+    kind: 'security',
+    reason: 'run-wide-security-stop',
+    evidenceIdentity: t004Hash('run-halt-evidence'),
+    ...overrides,
+  };
+}
+
+/** One eligible disjoint Feature 005 scheduling request. @param {Record<string, unknown>} [overrides] */
+function t004Scheduling(overrides = {}) {
+  return {
+    stopped: { reason: 'external-dependency', changeSet: ['src/t004-affected.mjs'] },
+    candidate: { target: canonicalTarget(SECOND_TARGET), changeSet: ['src/t004-disjoint.mjs'], deps: [] },
+    ...overrides,
+  };
+}
+
+/** @param {string} root @param {ReturnType<typeof t003PublicFlow>} flow @param {Record<string, unknown>[]} events */
+function t004Input(root, flow, events) {
+  return cliInput(t002RetentionInput(root, events, events, flow.fixtures));
+}
+
+/** @param {string} root @param {ReturnType<typeof t003PublicFlow>} flow @param {Record<string, unknown>[]} current @param {Record<string, unknown>[]} lane */
+function t004SplitInput(root, flow, current, lane) {
+  return cliInput(t002RetentionInput(root, current, lane, flow.fixtures));
+}
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: a target-scoped stop preserves eligible sequential disjoint scheduling', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const projectedState = flow.learningVerified.transition.state;
+    const projectedBytes = canonicalJson(projectedState);
+
+    // Act
+    const halted = t003Invoke('transition', {
+      mode: 'halt',
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      halt: t004TargetHalt(),
+    });
+    const suspended = t003Invoke('transition', {
+      mode: 'suspend-target',
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      scheduling: t004Scheduling(),
+      halt: t004TargetHalt(),
+    });
+    const budgetSuspended = t003Invoke('transition', {
+      mode: 'suspend-target',
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      scheduling: t004Scheduling({
+        stopped: { reason: 'evidence-incomplete', changeSet: ['src/t004-affected.mjs'] },
+      }),
+      halt: t004TargetHalt({ kind: 'per-target-budget', reason: 'per-target-recovery-exhausted' }),
+    });
+
+    // Assert
+    assert.equal(halted.transition.reason, 'target-halted');
+    assert.equal(halted.transition.scope, 'target');
+    assert.equal(halted.transition.schedulingPreserved, true);
+    recoveryRuntime.validateImmediateHaltOutcomeV1(halted.transition.outcome);
+    assert.equal(halted.transition.outcome.targetDisposition, 'unchanged');
+    // The halt creates no controlled-end permit, mutation, record, or receipt.
+    assert.equal(canonicalJson(halted.transition.state), projectedBytes);
+
+    assert.equal(suspended.transition.reason, 'target-suspended');
+    recoveryRuntime.validateSuspensionV1(suspended.transition.suspension);
+    assert.equal(suspended.transition.suspension.reason, 'target-hard-stop');
+    assert.deepEqual(suspended.transition.suspension.affectedTarget, canonicalTarget(TARGET));
+    assert.deepEqual(suspended.transition.suspension.selectedTarget, canonicalTarget(SECOND_TARGET));
+    const suspendedGovernance = suspended.transition.state.learningGovernance;
+    // The governed target stays unresolved, unchanged, and unauthorized.
+    assert.equal(suspendedGovernance.phase, 'projected');
+    assert.deepEqual(suspendedGovernance.target, canonicalTarget(TARGET));
+    assert.deepEqual(suspended.transition.state.pending, []);
+    assert.equal(Object.hasOwn(suspendedGovernance, 'controlledEnd'), false);
+    validateRunState(suspended.transition.state);
+    const withoutSuspension = clone(suspended.transition.state);
+    delete withoutSuspension.learningGovernance.suspension;
+    assert.equal(canonicalJson(withoutSuspension), projectedBytes);
+    assert.equal(budgetSuspended.transition.suspension.reason, 'per-target-budget');
+    // Feature 005's own decision is reused unchanged: a budget stop still
+    // licenses nothing, and no scheduler or concurrent start is added here.
+    assert.equal(mayScheduleAfterStop(
+      { outcome: { reason: 'recovery-exhausted', state: projectedState }, target: TARGET, changeSet: ['src/t004-affected.mjs'] },
+      { target: SECOND_TARGET, changeSet: ['src/t004-disjoint.mjs'], deps: [] },
+    ), false);
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: a run-wide stop ends the invocation and starts no other target', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const projectedState = flow.learningVerified.transition.state;
+    const projectedBytes = canonicalJson(projectedState);
+
+    // Act
+    const halted = t003Invoke('transition', {
+      mode: 'halt',
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      halt: t004RunHalt(),
+    });
+    const refusedSuspension = t003Invoke('transition', {
+      mode: 'suspend-target',
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      scheduling: t004Scheduling(),
+      halt: t004RunHalt({ kind: 'ownership-ambiguity', reason: 'ambiguous-owner-authority' }),
+    });
+
+    // Assert
+    assert.equal(halted.transition.reason, 'run-halted');
+    assert.equal(halted.transition.scope, 'run');
+    assert.equal(halted.transition.schedulingPreserved, false);
+    assert.equal(halted.transition.outcome.halt.scope, 'run');
+    assert.equal(Object.hasOwn(halted.transition.outcome.halt, 'target'), false);
+    assert.equal(halted.transition.outcome.invocationOutcome, 'immediate-halt-end');
+    assert.equal(canonicalJson(halted.transition.state), projectedBytes);
+    assert.equal(refusedSuspension.transition.suspended, false);
+    assert.equal(refusedSuspension.transition.reason, 'run-halted');
+    assert.equal(canonicalJson(refusedSuspension.transition.state), projectedBytes);
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: missing or conflicting halt scope is run-wide ambiguity', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const projectedState = flow.learningVerified.transition.state;
+    const missingScope = t004TargetHalt();
+    delete missingScope.scope;
+    const missingTarget = t004TargetHalt();
+    delete missingTarget.target;
+    const runKindWithTarget = { ...t004RunHalt(), target: canonicalTarget(TARGET) };
+
+    // Act and Assert
+    for (const [label, halt] of [
+      ['missing scope', missingScope],
+      ['missing target', missingTarget],
+      ['target kind declared run-wide', t004TargetHalt({ scope: 'run' })],
+      ['run kind bound to a target', runKindWithTarget],
+      ['target kind bound to another target', t004TargetHalt({ target: canonicalTarget(SECOND_TARGET) })],
+    ]) {
+      const ambiguous = t003Invoke('transition', {
+        mode: 'halt',
+        state: projectedState,
+        input: t004Input(root, flow, flow.learnedEvents),
+        halt,
+      });
+      assert.equal(ambiguous.transition.reason, 'halt-scope-ambiguous', /** @type {string} */ (label));
+      assert.equal(ambiguous.transition.scope, 'run', /** @type {string} */ (label));
+      assert.equal(ambiguous.transition.schedulingPreserved, false, /** @type {string} */ (label));
+      // Ambiguity claims no resolved disposition at all.
+      assert.equal(Object.hasOwn(ambiguous.transition, 'outcome'), false, /** @type {string} */ (label));
+    }
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: every closed halt kind keeps its authoritative scope', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const projectedState = flow.learningVerified.transition.state;
+
+    // Act and Assert
+    for (const kind of [
+      'security', 'safety', 'authority', 'credential', 'destructive-confirmation',
+      'spending', 'external-authorization', 'lane-ambiguity', 'ownership-ambiguity',
+      'overall-budget', 'unrecoverable-governance-evidence',
+    ]) {
+      const halted = t003Invoke('transition', {
+        mode: 'halt',
+        state: projectedState,
+        input: t004Input(root, flow, flow.learnedEvents),
+        halt: t004RunHalt({ kind, reason: `run-${kind}` }),
+      });
+      // Every run-wide kind stops the invocation and starts no other target.
+      assert.equal(halted.transition.reason, 'run-halted', kind);
+      assert.equal(halted.transition.scope, 'run', kind);
+      assert.equal(halted.transition.schedulingPreserved, false, kind);
+      assert.equal(halted.transition.outcome.halt.scope, 'run', kind);
+      assert.equal(Object.hasOwn(halted.transition.outcome.halt, 'target'), false, kind);
+    }
+    for (const kind of [
+      'unavailable-dependency', 'unavailable-input', 'per-target-budget',
+      'target-hard-stop', 'learning-evidence-incomplete',
+    ]) {
+      const halted = t003Invoke('transition', {
+        mode: 'halt',
+        state: projectedState,
+        input: t004Input(root, flow, flow.learnedEvents),
+        halt: t004TargetHalt({ kind, reason: `target-${kind}` }),
+      });
+      // Every target-scoped kind restricts only its target.
+      assert.equal(halted.transition.reason, 'target-halted', kind);
+      assert.equal(halted.transition.scope, 'target', kind);
+      assert.equal(halted.transition.schedulingPreserved, true, kind);
+      assert.deepEqual(halted.transition.outcome.halt.target, canonicalTarget(TARGET), kind);
+    }
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: Immediate Halt End binds three-way evidence with exact disposition equality', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const projectedState = flow.learningVerified.transition.state;
+    const preProjectionState = flow.secondFinalize.completion.state;
+
+    // Act
+    const afterProjection = t003Invoke('transition', {
+      mode: 'halt',
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      halt: t004TargetHalt(),
+    });
+    const beforeProjection = t003Invoke('transition', {
+      mode: 'halt',
+      state: preProjectionState,
+      input: t004Input(root, flow, flow.occurrenceEvents),
+      halt: t004TargetHalt(),
+    });
+    const unavailable = t003Invoke('transition', {
+      mode: 'halt',
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      halt: t004RunHalt({
+        kind: 'unrecoverable-governance-evidence',
+        reason: 'governance-evidence-unrecoverable',
+      }),
+    });
+
+    // Assert
+    for (const [label, halted, disposition] of [
+      ['after verified projection', afterProjection, 'verified'],
+      ['before projection', beforeProjection, 'rederive-required'],
+      ['unrecoverable evidence', unavailable, 'unavailable'],
+    ]) {
+      const outcome = halted.transition.outcome;
+      recoveryRuntime.validateImmediateHaltOutcomeV1(outcome);
+      assert.equal(outcome.projectionDisposition, disposition, /** @type {string} */ (label));
+      assert.equal(outcome.halt.projectionDisposition, disposition, /** @type {string} */ (label));
+      assert.equal(outcome.projectionEvidence.disposition, disposition, /** @type {string} */ (label));
+      assert.equal(outcome.targetDisposition, 'unchanged', /** @type {string} */ (label));
+      assert.equal(outcome.ok, false, /** @type {string} */ (label));
+    }
+    const verified = afterProjection.transition.outcome.projectionEvidence;
+    recoveryRuntime.validateProjectionRefV1(verified.projectionRef);
+    assert.equal(verified.governanceRevision, 1);
+    assert.ok(verified.projectionRef.eventHashes.includes(verified.governanceEventHash));
+    const proof = beforeProjection.transition.outcome.projectionEvidence.rederivationProof;
+    recoveryRuntime.validateGovernanceRederivationProofV1(proof);
+    assert.deepEqual(
+      proof.retainedOccurrences.map((row) => row.occurrenceIdentity),
+      flow.secondFinalize.completion.repeat.occurrenceIdentities,
+    );
+    assert.deepEqual(proof.repeat, flow.secondFinalize.completion.repeat);
+    assert.equal(
+      unavailable.transition.outcome.projectionEvidence.unrecoverableEvidenceIdentity,
+      unavailable.transition.outcome.halt.evidenceIdentity,
+    );
+    assert.equal(unavailable.transition.outcome.halt.scope, 'run');
+    // A mismatched or cross-branch disposition can never be assembled.
+    const mismatched = clone(afterProjection.transition.outcome);
+    mismatched.projectionDisposition = 'rederive-required';
+    assert.throws(() => recoveryRuntime.validateImmediateHaltOutcomeV1(mismatched), TypeError);
+    const crossBranch = clone(unavailable.transition.outcome);
+    crossBranch.halt.kind = 'safety';
+    assert.throws(() => recoveryRuntime.validateImmediateHaltOutcomeV1(crossBranch), TypeError);
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: Controlled Unresolved End is branch-gated and never disposes the target', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const projectedState = flow.learningVerified.transition.state;
+    const inspectedState = flow.branchTransition.transition.state;
+    const inspectedBytes = canonicalJson(inspectedState);
+
+    // Act
+    const ended = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: inspectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+    });
+    const fromProjected = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+    });
+    const repeated = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: ended.transition.state,
+      input: t004Input(root, flow, flow.learnedEvents),
+    });
+
+    // Assert
+    assert.equal(ended.transition.reason, 'controlled-unresolved-end');
+    const controlledEnd = ended.transition.controlledEnd;
+    recoveryRuntime.validateControlledUnresolvedEndV1(controlledEnd);
+    assert.equal(controlledEnd.governanceBranchStatus, 'resolved');
+    assert.equal(controlledEnd.laneDisposition, 'pending');
+    assert.equal(controlledEnd.targetDisposition, 'unchanged');
+    assert.equal(controlledEnd.branchEvidence.kind, 'selected-alternative');
+    assert.equal(controlledEnd.branchEvidence.sourcePhase, 'alternative-inspected');
+    assert.equal(
+      controlledEnd.branchEvidence.selectedAlternativeIdentity,
+      flow.credible.alternativeIdentity,
+    );
+    const endedGovernance = ended.transition.state.learningGovernance;
+    // Neither blocked, completed, nor no-progress: the phase and target hold.
+    assert.equal(endedGovernance.phase, 'alternative-inspected');
+    assert.deepEqual(endedGovernance.target, canonicalTarget(TARGET));
+    assert.equal(Object.hasOwn(endedGovernance, 'authorizedAttemptIdentity'), false);
+    assert.equal(Object.hasOwn(endedGovernance, 'issuedAttemptPermitHash'), false);
+    assert.equal(Object.hasOwn(endedGovernance, 'laneClaimReceiptIdentity'), false);
+    assert.deepEqual(ended.transition.state.pending, []);
+    validateRunState(ended.transition.state);
+    const withoutEnd = clone(ended.transition.state);
+    delete withoutEnd.learningGovernance.controlledEnd;
+    assert.equal(canonicalJson(withoutEnd), inspectedBytes);
+    // Phase `projected` is ineligible, and one case ends exactly once.
+    assert.equal(fromProjected.transition.ended, false);
+    assert.equal(fromProjected.transition.reason, 'controlled-end-unavailable');
+    assert.equal(canonicalJson(fromProjected.transition.state), canonicalJson(projectedState));
+    assert.equal(repeated.transition.ended, false);
+    assert.equal(repeated.transition.reason, 'controlled-end-unavailable');
+    // The affected target stays sealed after the controlled end.
+    const sealed = authorizeAttempt(
+      ended.transition.state,
+      TARGET,
+      transitionRaw(TARGET),
+      transitionAssessment('retry-task', { targets: ['src/t004-sealed.mjs'] }),
+      'recovery',
+    );
+    assert.equal(sealed.authorized, false);
+    assert.equal(sealed.reason, 'learning-required');
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: the no-progress branch ends through a verification identity, not an Inspection binding', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'approach', 'no-progress');
+    const verifiedState = flow.branchTransition.transition.state;
+
+    // Act
+    const ended = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: verifiedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+    });
+    const audited = t003Invoke('audit', {
+      state: verifiedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+    });
+
+    // Assert
+    const branch = ended.transition.controlledEnd.branchEvidence;
+    assert.equal(branch.kind, 'no-progress');
+    assert.equal(branch.sourcePhase, 'no-progress-verified');
+    assert.equal(
+      branch.noProgressVerificationIdentity,
+      flow.branchTransition.transition.verification.verificationIdentity,
+    );
+    assert.equal(
+      branch.noProgressProofIdentity,
+      flow.learned.learning.reviewEvent.noProgressProof.proofIdentity,
+    );
+    // The stored identity is a verification, never a Post-Learning Inspection.
+    assert.equal(Object.hasOwn(branch, 'postLearningInspectionIdentity'), false);
+    const auditBranch = audited.audit.summary.branchEvidence;
+    assert.equal(auditBranch.kind, 'no-progress');
+    assert.equal(
+      auditBranch.noProgressVerificationIdentity,
+      flow.branchTransition.transition.verification.verificationIdentity,
+    );
+    assert.equal(Object.hasOwn(auditBranch, 'postLearningInspectionIdentity'), false);
+    // No applied no-progress lane disposition and no target completion.
+    assert.equal(ended.transition.state.learningGovernance.phase, 'no-progress-verified');
+    assert.equal(audited.audit.summary.targetDisposition, 'unchanged');
+    assert.equal(flow.secondFinalize.completion.completed, false);
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: resume re-derives governance from the dual-retained occurrence events', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const governedState = flow.governanceVerified.transition.state;
+    const forgotten = clone(governedState);
+    delete forgotten.learningGovernance;
+    validateRunState(forgotten);
+    // A stored failed-approach set is never trusted as governance authority.
+    const tampered = clone(governedState);
+    const storedSet = tampered.learningGovernance.failedApproachSet;
+    delete storedSet.setIdentity;
+    storedSet.chronologyCutoff += 1;
+    storedSet.setIdentity = sha256(canonicalJson(storedSet));
+    tampered.learningGovernance.triggerEvidenceHash = sha256(canonicalJson({
+      trigger: tampered.learningGovernance.trigger,
+      failedApproachSetIdentity: storedSet.setIdentity,
+    }));
+    validateRunState(tampered);
+
+    // Act
+    const rederived = t003Invoke('transition', {
+      mode: 'resume-governance',
+      state: forgotten,
+      input: t004Input(root, flow, flow.governedEvents),
+    });
+    const restored = t003Invoke('transition', {
+      mode: 'resume-governance',
+      state: governedState,
+      input: t004Input(root, flow, flow.governedEvents),
+    });
+    const withoutOccurrences = t003Invoke('transition', {
+      mode: 'resume-governance',
+      state: governedState,
+      input: t004Input(root, flow, flow.firstCapture.completion.projectionBatch.events),
+    });
+    const rebound = t003Invoke('transition', {
+      mode: 'resume-governance',
+      state: tampered,
+      input: t004Input(root, flow, flow.governedEvents),
+    });
+    // The reviewed governance record cannot advance on its own self-consistency.
+    const unbackedProjection = t003Invoke('transition', {
+      mode: 'verify-projection',
+      state: flow.learned.learning.state,
+      input: t004Input(root, flow, [
+        ...flow.secondFinalize.completion.projectionBatch.events,
+        ...flow.learned.learning.projectionBatch.events,
+      ]),
+      projectionBatch: flow.learned.learning.projectionBatch,
+    });
+
+    // Assert
+    assert.equal(rederived.transition.reason, 'governance-resumed');
+    assert.equal(rederived.transition.resumedFrom, 'retained-occurrences');
+    assert.equal(rederived.transition.phase, 'required');
+    assert.deepEqual(rederived.transition.trigger, governedState.learningGovernance.trigger);
+    assert.deepEqual(
+      rederived.transition.failedApproachSet,
+      governedState.learningGovernance.failedApproachSet,
+    );
+    assert.equal(
+      canonicalJson(rederived.transition.state.learningGovernance),
+      canonicalJson(governedState.learningGovernance),
+    );
+    validateRunState(rederived.transition.state);
+    assert.equal(restored.transition.resumedFrom, 'projected-revision');
+    assert.equal(restored.transition.revision, 1);
+    assert.equal(canonicalJson(restored.transition.state), canonicalJson(governedState));
+    assert.equal(withoutOccurrences.transition.resumed, false);
+    assert.equal(withoutOccurrences.transition.reason, 'repeat-not-established');
+    assert.equal(rebound.transition.resumed, false);
+    assert.equal(rebound.transition.reason, 'repeat-not-established');
+    assert.equal(canonicalJson(rebound.transition.state), canonicalJson(tampered));
+    // `learning-governance-capacity` stays reserved for derivable failed-set excess.
+    assert.match(
+      String(recoveryRuntime.resumeGovernanceV2),
+      /deriveFailedApproachSetV1\(repeat, retained\.retained\)[\s\S]+error\.message === 'FailedApproachSetV1 exceeds the complete failed-approach capacity'[\s\S]+reason: 'learning-governance-capacity'/,
+    );
+    assert.equal(unbackedProjection.transition.verified, false);
+    assert.equal(unbackedProjection.transition.reason, 'repeat-not-established');
+    assert.equal(
+      canonicalJson(unbackedProjection.transition.state),
+      canonicalJson(flow.learned.learning.state),
+    );
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: AuditSummary v2 reads the byte-equivalent intersection, never the union', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const projectedState = flow.learningVerified.transition.state;
+    const oneSidedEvent = flow.learned.learning.projectionBatch.events[1];
+    const laneEvents = flow.learnedEvents.filter((event) => event.eventHash !== oneSidedEvent.eventHash);
+
+    // Act
+    const complete = t003Invoke('audit', {
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+    });
+    const oneSided = t003Invoke('audit', {
+      state: projectedState,
+      input: t004SplitInput(root, flow, flow.learnedEvents, laneEvents),
+    });
+    const halted = t003Invoke('audit', {
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      halt: t004TargetHalt(),
+    });
+    const runHalted = t003Invoke('audit', {
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      halt: t004RunHalt(),
+    });
+    const replayed = t003Invoke('audit', {
+      state: projectedState,
+      input: t004SplitInput(root, flow, [...flow.learnedEvents, oneSidedEvent], flow.learnedEvents),
+    });
+
+    // Assert
+    recoveryRuntime.validateAuditSummaryV2(complete.audit.summary);
+    assert.equal(complete.audit.reason, 'audit-derived');
+    assert.deepEqual(
+      complete.audit.summary.evidenceEventHashes,
+      [...new Set(flow.learnedEvents.map((event) => event.eventHash))].sort(),
+    );
+    assert.equal(complete.audit.summary.channel, 'finding');
+    assert.deepEqual(complete.audit.summary.trigger, projectedState.learningGovernance.trigger);
+    assert.equal(complete.audit.summary.learningRequirement, 'unresolved');
+    assert.equal(complete.audit.summary.governanceStatus, 'projected');
+    assert.equal(complete.audit.summary.targetDisposition, 'unchanged');
+    assert.equal(complete.audit.summary.invocationOutcome, 'in-progress');
+    assert.equal(complete.audit.summary.projectionDisposition, 'verified');
+    assert.equal(complete.audit.summary.schedulingOutcome, 'none');
+    // A one-sided event contributes no row and downgrades the projection status.
+    assert.equal(complete.audit.summary.evidenceEventHashes.includes(oneSidedEvent.eventHash), true);
+    assert.equal(oneSided.audit.summary.evidenceEventHashes.includes(oneSidedEvent.eventHash), false);
+    assert.equal(oneSided.audit.summary.projectionDisposition, 'rederive-required');
+    assert.equal(oneSided.audit.summary.targetDisposition, 'unchanged');
+    assert.equal(halted.audit.summary.invocationOutcome, 'immediate-halt-end');
+    assert.equal(halted.audit.summary.scope, 'target');
+    assert.equal(halted.audit.summary.unresolvedReason, 'unavailable-dependency');
+    recoveryRuntime.validateImmediateHaltOutcomeV1(halted.audit.summary.immediateHaltEnd);
+    // A run-wide halt row stops the invocation instead of scheduling.
+    assert.equal(runHalted.audit.summary.scope, 'run');
+    assert.equal(runHalted.audit.summary.schedulingOutcome, 'invocation-stopped');
+    assert.equal(runHalted.audit.summary.unresolvedReason, 'security');
+    assert.equal(runHalted.audit.summary.targetDisposition, 'unchanged');
+    // A replayed event is no byte-equivalent single-instance intersection row.
+    assert.equal(replayed.audit.summary.evidenceEventHashes.includes(oneSidedEvent.eventHash), false);
+    assert.equal(replayed.audit.summary.projectionDisposition, 'rederive-required');
+    assert.equal(replayed.audit.summary.learningRequirement, 'unresolved');
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: suspension and controlled-end audits report unresolved outcomes without a target disposition', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const suspended = t003Invoke('transition', {
+      mode: 'suspend-target',
+      state: flow.learningVerified.transition.state,
+      input: t004Input(root, flow, flow.learnedEvents),
+      scheduling: t004Scheduling(),
+      halt: t004TargetHalt(),
+    });
+    const ended = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: flow.branchTransition.transition.state,
+      input: t004Input(root, flow, flow.learnedEvents),
+    });
+
+    // Act
+    const suspensionAudit = t003Invoke('audit', {
+      state: suspended.transition.state,
+      input: t004Input(root, flow, flow.learnedEvents),
+    });
+    const controlledEndAudit = t003Invoke('audit', {
+      state: ended.transition.state,
+      input: t004Input(root, flow, flow.learnedEvents),
+    });
+
+    // Assert
+    recoveryRuntime.validateAuditSummaryV2(suspensionAudit.audit.summary);
+    assert.equal(suspensionAudit.audit.summary.schedulingOutcome, 'sequential-disjoint-continuation');
+    assert.equal(suspensionAudit.audit.summary.unresolvedReason, 'target-hard-stop');
+    assert.equal(suspensionAudit.audit.summary.learningRequirement, 'unresolved');
+    assert.deepEqual(
+      suspensionAudit.audit.summary.suspension,
+      suspended.transition.suspension,
+    );
+    assert.equal(suspensionAudit.audit.summary.targetDisposition, 'unchanged');
+    recoveryRuntime.validateAuditSummaryV2(controlledEndAudit.audit.summary);
+    assert.equal(controlledEndAudit.audit.summary.invocationOutcome, 'controlled-unresolved-end');
+    assert.equal(controlledEndAudit.audit.summary.learningRequirement, 'resolved');
+    assert.equal(controlledEndAudit.audit.summary.targetDisposition, 'unchanged');
+    assert.deepEqual(
+      controlledEndAudit.audit.summary.controlledEnd,
+      ended.transition.controlledEnd,
+    );
+    // The resolved governance branch never becomes a target disposition row.
+    assert.equal(Object.hasOwn(controlledEndAudit.audit.summary, 'branchEvidence'), false);
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: scheduling stays sequential, transfers no authority, and refuses concurrency', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const projectedState = flow.learningVerified.transition.state;
+    const projectedBytes = canonicalJson(projectedState);
+    const dispatched = authorizeAttempt(
+      projectedState,
+      SECOND_TARGET,
+      transitionRaw(SECOND_TARGET),
+      transitionAssessment('retry-task', { targets: ['src/t004-disjoint.mjs'] }),
+      'recovery',
+    );
+
+    // Act
+    const concurrent = t003Invoke('transition', {
+      mode: 'suspend-target',
+      state: dispatched.state,
+      input: t004Input(root, flow, flow.learnedEvents),
+      scheduling: t004Scheduling(),
+      halt: t004TargetHalt(),
+    });
+    const overlapping = t003Invoke('transition', {
+      mode: 'suspend-target',
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      scheduling: t004Scheduling({
+        candidate: {
+          target: canonicalTarget(SECOND_TARGET),
+          changeSet: ['src/t004-affected.mjs'],
+          deps: [],
+        },
+      }),
+      halt: t004TargetHalt(),
+    });
+    const dependent = t003Invoke('transition', {
+      mode: 'suspend-target',
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      scheduling: t004Scheduling({
+        candidate: {
+          target: canonicalTarget(SECOND_TARGET),
+          changeSet: ['src/t004-disjoint.mjs'],
+          deps: [TASK_KEY],
+        },
+      }),
+      halt: t004TargetHalt(),
+    });
+    const sameTarget = t003Invoke('transition', {
+      mode: 'suspend-target',
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      scheduling: t004Scheduling({
+        candidate: {
+          target: canonicalTarget(TARGET),
+          changeSet: ['src/t004-disjoint.mjs'],
+          deps: [],
+        },
+      }),
+      halt: t004TargetHalt(),
+    });
+    const unprojected = t003Invoke('transition', {
+      mode: 'suspend-target',
+      state: flow.secondFinalize.completion.state,
+      input: t004Input(root, flow, flow.occurrenceEvents),
+      scheduling: t004Scheduling(),
+    });
+    const haltedUnprojected = t003Invoke('transition', {
+      mode: 'suspend-target',
+      state: flow.secondFinalize.completion.state,
+      input: t004Input(root, flow, flow.occurrenceEvents),
+      scheduling: t004Scheduling(),
+      halt: t004TargetHalt(),
+    });
+    const softStopped = t003Invoke('transition', {
+      mode: 'suspend-target',
+      state: projectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      scheduling: t004Scheduling({
+        stopped: { reason: 'recovery-exhausted', changeSet: ['src/t004-affected.mjs'] },
+      }),
+      halt: t004TargetHalt(),
+    });
+
+    // Assert
+    assert.equal(dispatched.authorized, true);
+    assert.equal(concurrent.transition.suspended, false);
+    assert.equal(concurrent.transition.reason, 'concurrency-forbidden');
+    assert.equal(canonicalJson(concurrent.transition.state), canonicalJson(dispatched.state));
+    for (const [label, refused] of [
+      ['overlapping change set', overlapping],
+      ['direct dependency on the stopped target', dependent],
+      ['the governed target itself', sameTarget],
+    ]) {
+      assert.equal(refused.transition.suspended, false, /** @type {string} */ (label));
+      assert.equal(refused.transition.reason, 'scheduling-ineligible', /** @type {string} */ (label));
+      assert.equal(canonicalJson(refused.transition.state), projectedBytes, /** @type {string} */ (label));
+    }
+    // Without an immediate-halt exception, suspension waits for the projection.
+    assert.equal(unprojected.transition.suspended, false);
+    assert.equal(unprojected.transition.reason, 'governance-unresolved');
+    assert.equal(
+      canonicalJson(unprojected.transition.state),
+      canonicalJson(flow.secondFinalize.completion.state),
+    );
+    // The immediate-halt exception is the only route to unchanged suspension
+    // before the bounded unresolved event is projected and retained.
+    assert.equal(haltedUnprojected.transition.suspended, true);
+    assert.equal(haltedUnprojected.transition.projectionDisposition, 'rederive-required');
+    assert.equal(haltedUnprojected.transition.suspension.reason, 'target-hard-stop');
+    recoveryRuntime.validateGovernanceRederivationProofV1(
+      haltedUnprojected.transition.projectionEvidence.rederivationProof,
+    );
+    assert.equal(haltedUnprojected.transition.state.learningGovernance.phase, 'required');
+    // Feature 005 alone decides eligibility, including the stopped reason class.
+    assert.notEqual(classifyOutcomeReason('recovery-exhausted'), 'hard-stop');
+    assert.equal(softStopped.transition.suspended, false);
+    assert.equal(softStopped.transition.reason, 'scheduling-ineligible');
+    assert.equal(canonicalJson(softStopped.transition.state), projectedBytes);
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: every scoped route requires the exact affected-target mapping', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const projectedState = flow.learningVerified.transition.state;
+    // Both tasks resolve freshly, so only the governed-target mapping differs.
+    const dualTaskHistory = Buffer.concat([
+      Buffer.from([
+        transitionTasksBytes([
+          { id: TASK_KEY, glyph: '~' },
+          { id: SECOND_TASK_KEY, glyph: '~' },
+        ]).toString('utf8').trimEnd(),
+        '',
+        '## Lightweight Execution History',
+        '',
+      ].join('\n')),
+      ...flow.learnedEvents.map((event) => Buffer.from(`- dude-run-event: ${canonicalJson(event)}\n`)),
+    ]);
+    /** @param {Record<string, unknown>} target */
+    const dualInput = (target) => cliInput({
+      ...t002RetentionInputWithTaskHistory(root, flow.learnedEvents, dualTaskHistory, flow.fixtures),
+      target,
+    });
+
+    // Act
+    const governed = t003Invoke('transition', {
+      mode: 'halt',
+      state: projectedState,
+      input: dualInput(TARGET),
+      halt: t004TargetHalt(),
+    });
+    const foreignControlledEnd = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: flow.branchTransition.transition.state,
+      input: dualInput(SECOND_TARGET),
+    });
+    const foreignResume = t003Invoke('transition', {
+      mode: 'resume-governance',
+      state: projectedState,
+      input: dualInput(SECOND_TARGET),
+    });
+
+    // Assert
+    // The control proves the two-task workspace itself resolves cleanly.
+    assert.equal(governed.transition.reason, 'target-halted');
+    assert.equal(governed.transition.outcome.projectionDisposition, 'verified');
+    for (const [label, command, request] of [
+      ['halt', 'transition', {
+        mode: 'halt',
+        state: projectedState,
+        input: dualInput(SECOND_TARGET),
+        halt: t004TargetHalt(),
+      }],
+      ['suspend-target', 'transition', {
+        mode: 'suspend-target',
+        state: projectedState,
+        input: dualInput(SECOND_TARGET),
+        scheduling: t004Scheduling(),
+        halt: t004TargetHalt(),
+      }],
+      ['audit', 'audit', { state: projectedState, input: dualInput(SECOND_TARGET) }],
+    ]) {
+      const refused = runRecoveryCli(/** @type {string} */ (command), request);
+      assert.equal(refused.status, 1, /** @type {string} */ (label));
+      assert.equal(refused.stdout, '', /** @type {string} */ (label));
+      assert.deepEqual(
+        JSON.parse(refused.stderr),
+        { error: { code: 'recovery-invalid-request', message: 'Recovery request is invalid.' } },
+        /** @type {string} */ (label),
+      );
+    }
+    // Controlled end and resume seal the same mismatch as a stale Inspection.
+    assert.equal(foreignControlledEnd.transition.ended, false);
+    assert.equal(foreignControlledEnd.transition.reason, 'inspection-stale');
+    assert.equal(foreignResume.transition.resumed, false);
+    assert.equal(foreignResume.transition.reason, 'inspection-stale');
+    assert.equal(canonicalJson(foreignResume.transition.state), canonicalJson(projectedState));
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: the scoped routes stay autonomous-only and closed at the public boundary', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const projectedState = flow.learningVerified.transition.state;
+    const guardedInput = () => cliInput(publicInspectionInput(root));
+    const expectedError = { error: { code: 'recovery-invalid-request', message: 'Recovery request is invalid.' } };
+    const unknownFieldError = {
+      error: { code: 'recovery-invalid-request', message: 'Recovery request contains an unknown field.' },
+    };
+
+    // Act and Assert
+    for (const [label, command, request, expected] of [
+      ['guarded halt', 'transition', {
+        mode: 'halt', state: emptyState(), input: guardedInput(), halt: t004TargetHalt(),
+      }, expectedError],
+      ['guarded suspend-target', 'transition', {
+        mode: 'suspend-target', state: emptyState(), input: guardedInput(), scheduling: t004Scheduling(),
+      }, expectedError],
+      ['guarded controlled-end', 'transition', {
+        mode: 'controlled-end', state: emptyState(), input: guardedInput(),
+      }, expectedError],
+      ['guarded resume-governance', 'transition', {
+        mode: 'resume-governance', state: emptyState(), input: guardedInput(),
+      }, expectedError],
+      ['guarded audit', 'audit', { state: emptyState(), input: guardedInput() }, expectedError],
+      ['halt without facts', 'transition', {
+        mode: 'halt', state: projectedState, input: t004Input(root, flow, flow.learnedEvents),
+      }, expectedError],
+      ['halt with an unknown kind', 'transition', {
+        mode: 'halt',
+        state: projectedState,
+        input: t004Input(root, flow, flow.learnedEvents),
+        halt: t004TargetHalt({ kind: 'budget' }),
+      }, expectedError],
+      ['suspend-target with an unknown field', 'transition', {
+        mode: 'suspend-target',
+        state: projectedState,
+        input: t004Input(root, flow, flow.learnedEvents),
+        scheduling: t004Scheduling(),
+        suspension: { reason: 'unresolved-learning' },
+      }, unknownFieldError],
+      ['audit with a submitted outcome', 'audit', {
+        state: projectedState,
+        input: t004Input(root, flow, flow.learnedEvents),
+        immediateHaltEnd: { ok: false, invocationOutcome: 'immediate-halt-end' },
+      }, unknownFieldError],
+    ]) {
+      const refused = runRecoveryCli(/** @type {string} */ (command), request);
+      assert.equal(refused.status, 1, /** @type {string} */ (label));
+      assert.equal(refused.stdout, '', /** @type {string} */ (label));
+      assert.deepEqual(JSON.parse(refused.stderr), expected, /** @type {string} */ (label));
+    }
+    for (const route of ['haltGovernanceV2', 'suspendTargetV2', 'controlledEndV2', 'resumeGovernanceV2', 'auditGovernanceV2']) {
+      assert.throws(
+        () => recoveryRuntime[route](emptyState(), {}, {}, undefined, false),
+        /requires autonomous policy/,
+        route,
+      );
+    }
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: resume refuses an occupied foreign-target governance singleton', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const governedState = flow.governanceVerified.transition.state;
+    const forgotten = clone(governedState);
+    delete forgotten.learningGovernance;
+    validateRunState(forgotten);
+    // A T001 approach-repeat seal for another target is derived from
+    // `state.completed` alone and carries no `governanceIdentity`, so it stays
+    // invisible to `activeGovernanceCaseV2`.
+    const foreignSealed = clone(forgotten);
+    const repeated = forgotten.completed[0];
+    foreignSealed.learningGovernance = {
+      version: 1,
+      target: canonicalTarget(SECOND_TARGET),
+      phase: 'required',
+      revision: 1,
+      triggerEvidenceHash: sha256(canonicalJson({
+        version: 1,
+        kind: 'approach-repeat',
+        target: canonicalTarget(SECOND_TARGET),
+        evidenceHash: repeated.evidenceHash,
+        approachHash: repeated.approachHash,
+        resultHash: repeated.resultHash,
+      })),
+    };
+    validateRunState(foreignSealed);
+    const foreignSealedBytes = canonicalJson(foreignSealed);
+
+    // Act
+    const refused = t003Invoke('transition', {
+      mode: 'resume-governance',
+      state: foreignSealed,
+      input: t004Input(root, flow, flow.governedEvents),
+    });
+    const unoccupied = t003Invoke('transition', {
+      mode: 'resume-governance',
+      state: forgotten,
+      input: t004Input(root, flow, flow.governedEvents),
+    });
+
+    // Assert
+    // Singleton occupancy is a conflict, never derivable failed-set excess.
+    assert.equal(refused.transition.resumed, false);
+    assert.equal(refused.transition.reason, 'learning-governance-conflict');
+    assert.notEqual(refused.transition.reason, 'learning-governance-capacity');
+    // The foreign seal survives byte-identically: no authority transfers.
+    assert.equal(canonicalJson(refused.transition.state), foreignSealedBytes);
+    assert.deepEqual(
+      refused.transition.state.learningGovernance,
+      foreignSealed.learningGovernance,
+    );
+    const stillSealed = authorizeAttempt(
+      refused.transition.state,
+      SECOND_TARGET,
+      transitionRaw(SECOND_TARGET),
+      transitionAssessment('retry-task', { targets: ['src/t004-foreign-seal.mjs'] }),
+      'recovery',
+    );
+    assert.equal(stillSealed.authorized, false);
+    assert.equal(stillSealed.reason, 'learning-required');
+    // The unoccupied control proves the refusal is the occupancy, not the evidence.
+    assert.equal(unoccupied.transition.resumed, true);
+    assert.equal(unoccupied.transition.resumedFrom, 'retained-occurrences');
+    assert.equal(
+      canonicalJson(unoccupied.transition.state.learningGovernance),
+      canonicalJson(governedState.learningGovernance),
+    );
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: unchanged suspension stays available and closed at both unresolved branch phases', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const alternativeFlow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const inspectedState = alternativeFlow.branchTransition.transition.state;
+    const noProgressFlow = t003PublicFlow(root, 'approach', 'no-progress');
+    const verifiedState = noProgressFlow.branchTransition.transition.state;
+
+    // Act
+    const inspectedSuspended = t003Invoke('transition', {
+      mode: 'suspend-target',
+      state: inspectedState,
+      input: t004Input(root, alternativeFlow, alternativeFlow.learnedEvents),
+      scheduling: t004Scheduling(),
+      halt: t004TargetHalt({ kind: 'per-target-budget', reason: 'per-target-recovery-exhausted' }),
+    });
+    const verifiedSuspended = t003Invoke('transition', {
+      mode: 'suspend-target',
+      state: verifiedState,
+      input: t004Input(root, noProgressFlow, noProgressFlow.learnedEvents),
+      scheduling: t004Scheduling(),
+      halt: t004TargetHalt(),
+    });
+    const endedAfterSuspension = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: inspectedSuspended.transition.state,
+      input: t004Input(root, alternativeFlow, alternativeFlow.learnedEvents),
+    });
+
+    // Assert
+    // FR-024 keeps per-target budget exhaustion and a target-scoped stop from
+    // consuming the authority to suspend the target unchanged after an
+    // alternative is selected or no-progress is verified.
+    for (const [label, suspended, phase, reason] of [
+      ['alternative-inspected', inspectedSuspended, 'alternative-inspected', 'per-target-budget'],
+      ['no-progress-verified', verifiedSuspended, 'no-progress-verified', 'target-hard-stop'],
+    ]) {
+      assert.equal(suspended.transition.suspended, true, /** @type {string} */ (label));
+      assert.equal(suspended.transition.reason, 'target-suspended', /** @type {string} */ (label));
+      assert.equal(suspended.transition.suspension.reason, reason, /** @type {string} */ (label));
+      const governance = suspended.transition.state.learningGovernance;
+      // FR-013 retains the suspension while the requirement stays unresolved.
+      assert.deepEqual(governance.suspension, suspended.transition.suspension);
+      assert.equal(governance.phase, phase, /** @type {string} */ (label));
+      assert.deepEqual(governance.target, canonicalTarget(TARGET), /** @type {string} */ (label));
+      assert.equal(Object.hasOwn(governance, 'controlledEnd'), false, /** @type {string} */ (label));
+      validateRunState(suspended.transition.state);
+    }
+    // Retaining the suspension never blocks the ordinary Controlled Unresolved End.
+    assert.equal(endedAfterSuspension.transition.ended, true);
+    assert.deepEqual(
+      endedAfterSuspension.transition.state.learningGovernance.suspension,
+      inspectedSuspended.transition.suspension,
+    );
+    assert.equal(endedAfterSuspension.transition.state.learningGovernance.phase, 'alternative-inspected');
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: Controlled Unresolved End rebinds the post-learning identity and refuses drift', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const alternativeFlow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const inspectedState = alternativeFlow.branchTransition.transition.state;
+    const driftedInspection = clone(inspectedState);
+    driftedInspection.learningGovernance.postLearningInspectionIdentity = t004Hash('drifted-inspection');
+    validateRunState(driftedInspection);
+    const noProgressFlow = t003PublicFlow(root, 'approach', 'no-progress');
+    const verifiedState = noProgressFlow.branchTransition.transition.state;
+    const driftedVerification = clone(verifiedState);
+    driftedVerification.learningGovernance.postLearningInspectionIdentity = t004Hash('drifted-verification');
+    validateRunState(driftedVerification);
+
+    // Act
+    const ended = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: inspectedState,
+      input: t004Input(root, alternativeFlow, alternativeFlow.learnedEvents),
+    });
+    const staleInspection = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: driftedInspection,
+      input: t004Input(root, alternativeFlow, alternativeFlow.learnedEvents),
+    });
+    const staleVerification = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: driftedVerification,
+      input: t004Input(root, noProgressFlow, noProgressFlow.learnedEvents),
+    });
+
+    // Assert
+    // The happy path still reports the freshly recomputed binding identity.
+    assert.equal(ended.transition.ended, true);
+    assert.equal(
+      ended.transition.controlledEnd.branchEvidence.postLearningInspectionIdentity,
+      alternativeFlow.branchTransition.transition.binding.postLearningInspectionIdentity,
+    );
+    // A stored post-learning identity that no longer recomputes is drift.
+    for (const [label, refused, state] of [
+      ['post-learning Inspection binding', staleInspection, driftedInspection],
+      ['no-progress verification', staleVerification, driftedVerification],
+    ]) {
+      assert.equal(refused.transition.ended, false, /** @type {string} */ (label));
+      assert.equal(refused.transition.reason, 'inspection-stale', /** @type {string} */ (label));
+      assert.equal(
+        canonicalJson(refused.transition.state),
+        canonicalJson(state),
+        /** @type {string} */ (label),
+      );
+      assert.equal(Object.hasOwn(refused.transition, 'controlledEnd'), false, /** @type {string} */ (label));
+    }
+  });
+});
+
+test('T004 scoped halts, re-derivation, scheduling, and audit: every audit branch and controlled-end row requires intersection backing', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const inspectedState = flow.branchTransition.transition.state;
+    const reviewEvent = flow.learned.learning.projectionBatch.events[0];
+    const laneWithoutReview = flow.learnedEvents
+      .filter((event) => event.eventHash !== reviewEvent.eventHash);
+    const ended = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: inspectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+    });
+    const driftedInspection = clone(inspectedState);
+    driftedInspection.learningGovernance.postLearningInspectionIdentity = t004Hash('drifted-audit-inspection');
+    validateRunState(driftedInspection);
+
+    // Act
+    const backedBranch = t003Invoke('audit', {
+      state: inspectedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+    });
+    const unbackedBranch = t003Invoke('audit', {
+      state: inspectedState,
+      input: t004SplitInput(root, flow, flow.learnedEvents, laneWithoutReview),
+    });
+    const unbackedControlledEnd = t003Invoke('audit', {
+      state: ended.transition.state,
+      input: t004SplitInput(root, flow, flow.learnedEvents, laneWithoutReview),
+    });
+    const driftedBranch = t003Invoke('audit', {
+      state: driftedInspection,
+      input: t004Input(root, flow, flow.learnedEvents),
+    });
+
+    // Assert
+    // A backed row still reports the retained selected alternative and check.
+    recoveryRuntime.validateAuditSummaryV2(backedBranch.audit.summary);
+    assert.equal(backedBranch.audit.reason, 'audit-derived');
+    assert.equal(backedBranch.audit.summary.branchEvidence.kind, 'selected-alternative');
+    assert.equal(
+      backedBranch.audit.summary.branchEvidence.selectedAlternativeIdentity,
+      flow.credible.alternativeIdentity,
+    );
+    assert.equal(
+      backedBranch.audit.summary.branchEvidence.postLearningInspectionIdentity,
+      flow.branchTransition.transition.binding.postLearningInspectionIdentity,
+    );
+    assert.equal(
+      backedBranch.audit.summary.evidenceEventHashes.includes(reviewEvent.eventHash),
+      true,
+    );
+    // A `learning-review` event outside the byte-equivalent intersection backs
+    // neither a branch row nor a resolved controlled-end row.
+    for (const [label, refused] of [
+      ['branch row', unbackedBranch],
+      ['controlled-end row', unbackedControlledEnd],
+    ]) {
+      assert.equal(refused.audit.derived, false, /** @type {string} */ (label));
+      assert.equal(refused.audit.reason, 'projection-missing-lane-history', /** @type {string} */ (label));
+      assert.equal(Object.hasOwn(refused.audit, 'summary'), false, /** @type {string} */ (label));
+    }
+    // The controlled-end row never claims `resolved` without that backing.
+    assert.notEqual(unbackedControlledEnd.audit.reason, 'audit-derived');
+    // Post-learning drift is as invisible to the audit as to the controlled end.
+    assert.equal(driftedBranch.audit.derived, false);
+    assert.equal(driftedBranch.audit.reason, 'inspection-stale');
+  });
+});
+
+
+
+// --- Feature 009 T005: acyclic permits, receipts, and incident contracts ----
+
+const F7_TARGET = Object.freeze({
+  specPath: '.dude/specs/007-technical-docs-pack-remediation/spec.md',
+  lane: 'lightweight',
+  taskKey: 'T001@00709e37',
+});
+const F7_IDEA_PATH = '.dude/ideas/technical-docs-pack-remediation.md';
+const F7_TASKS_PATH = '.dude/specs/007-technical-docs-pack-remediation/tasks.md';
+const F7_PLAN_PATH = '.dude/specs/007-technical-docs-pack-remediation/plan.md';
+const F7_BLOCKER = 'unauthorized autonomous block';
+const INCOMPLETE_INCIDENT_BLOCKER =
+  'contract-mismatch: evidence-incomplete autonomous review occurrence evidence unavailable';
+const T005_TIME = '2026-01-01T00:00:00Z';
+const T005_TASK_STATE = Buffer.from('{"tasks":{},"version":1}');
+
+/** @param {string} label */
+function t005Hash(label) {
+  return sha256(`T005:${label}`);
+}
+
+/** @param {Buffer} bytes */
+function t005Descriptor(bytes) {
+  return { sha256: sha256(bytes), byteLength: bytes.byteLength };
+}
+
+/**
+ * Build the exact fresh Lightweight mapping and prestate from workspace bytes.
+ * @param {string} root @param {Record<string, unknown>} target @param {string} ideaPath @param {string} glyph @param {string|null} blockedBy
+ */
+function t005LightweightBinding(root, target, ideaPath, glyph, blockedBy) {
+  const tasksPath = `${/** @type {string} */ (target.specPath).slice(0, -'spec.md'.length)}tasks.md`;
+  const ideaFile = fs.readFileSync(path.join(root, ideaPath));
+  const tasksFile = fs.readFileSync(path.join(root, tasksPath));
+  const targetMapping = {
+    version: 1,
+    lane: 'lightweight',
+    target: canonicalTarget(target),
+    ownerBindingHash: sha256(canonicalJson({
+      ideaPath,
+      specPath: target.specPath,
+      ownerCapture: t005Descriptor(ideaFile),
+    })),
+    tasksPath,
+    tasksDescriptor: t005Descriptor(tasksFile),
+    taskStatePath: '.dude/state/task-state.json',
+    taskStateDescriptor: t005Descriptor(T005_TASK_STATE),
+    taskKey: target.taskKey,
+  };
+  const lanePrestate = {
+    version: 1,
+    lane: 'lightweight',
+    target: canonicalTarget(target),
+    glyph,
+    blockedBy,
+    tasksDescriptor: clone(targetMapping.tasksDescriptor),
+    taskStateDescriptor: clone(targetMapping.taskStateDescriptor),
+    ownerDescriptor: t005Descriptor(ideaFile),
+  };
+  return {
+    targetMapping,
+    lanePrestate,
+    ideaFile,
+    tasksFile,
+    targetMappingHash: sha256(canonicalJson(targetMapping)),
+    lanePrestateHash: sha256(canonicalJson(lanePrestate)),
+  };
+}
+
+/** @param {Record<string, unknown>} body */
+function t005Permit(body) {
+  return { ...body, permitHash: sha256(canonicalJson(body)) };
+}
+
+/** @param {Record<string, unknown>} body */
+function t005Receipt(body) {
+  return { ...body, receiptHash: sha256(canonicalJson(body)) };
+}
+
+/** @param {Record<string, unknown>} permit @param {Record<string, unknown>} binding @param {boolean} targetStateChanged */
+function t005AtomicReceipt(permit, binding, targetStateChanged) {
+  return t005Receipt({
+    version: 1,
+    lane: 'lightweight',
+    permitHash: permit.permitHash,
+    mutationIdentity: permit.mutationIdentity,
+    target: clone(permit.target),
+    targetMappingHash: binding.targetMappingHash,
+    lanePrestateHash: binding.lanePrestateHash,
+    tasksPoststateHash: t005Hash('tasks-poststate'),
+    taskStatePoststateHash: t005Hash('task-state-poststate'),
+    ownerPoststateHash: t005Hash('owner-poststate'),
+    targetStateChanged,
+  });
+}
+
+/** @param {Record<string, unknown>[]} events @param {string} glyph @param {string|null} blockedBy */
+function t005IncidentTasksBytes(events, glyph, blockedBy) {
+  const header = transitionTasksBytes([{
+    id: F7_TARGET.taskKey,
+    glyph,
+    ...(blockedBy ? { blockedBy } : {}),
+  }]).toString('utf8').trimEnd();
+  const prefix = [header, '', '## Lightweight Execution History', ''].join('\n');
+  return Buffer.concat([
+    Buffer.from(prefix),
+    ...events.map((event) => Buffer.from(`${t002V2EventLine(event)}\n`)),
+  ]);
+}
+
+/** @param {string} root @param {Record<string, unknown>[]} events @param {ReturnType<typeof t002PendingFixture>[]} fixtures @param {string} [glyph] @param {string|null} [blockedBy] */
+function t005IncidentInput(root, events, fixtures, glyph = '!', blockedBy = F7_BLOCKER) {
+  fs.writeFileSync(path.join(root, F7_TASKS_PATH), t005IncidentTasksBytes(events, glyph, blockedBy));
+  return {
+    root,
+    specPath: F7_TARGET.specPath,
+    target: F7_TARGET,
+    lane: { kind: 'lightweight' },
+    currentRun: events.length === 0
+      ? []
+      : [capture(F7_TARGET, 'failed', events.map((event) => ({ event })))],
+    review: [],
+    verification: [],
+    lint: [],
+    policyMode: 'autonomous',
+    ...t002TrustedStreams(fixtures),
+  };
+}
+
+/** @param {(root:string) => void} run */
+function withIncidentWorkspace(run) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-recovery-incident-'));
+  try {
+    fs.mkdirSync(path.join(root, '.dude/ideas'), { recursive: true });
+    fs.mkdirSync(path.join(root, path.dirname(F7_TARGET.specPath)), { recursive: true });
+    fs.writeFileSync(path.join(root, F7_TARGET.specPath), '# Spec\n');
+    fs.writeFileSync(path.join(root, F7_PLAN_PATH), noRegistryPlanBytes(F7_TARGET.specPath));
+    fs.writeFileSync(path.join(root, F7_IDEA_PATH), ideaBytes(F7_TARGET.specPath));
+    fs.writeFileSync(path.join(root, F7_TASKS_PATH), t005IncidentTasksBytes([], '!', F7_BLOCKER));
+    run(root);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/** Retain two dual-projected finding occurrences on the Feature 007 target. @param {string} root */
+function t005IncidentEvidence(root) {
+  /** @param {number} attemptOrdinal @param {Record<string, unknown>[]|null} priorCompleted @param {string} label */
+  const fixtureFor = (attemptOrdinal, priorCompleted, label) => t002PendingFixture({
+    target: F7_TARGET,
+    attemptOrdinal,
+    ...(priorCompleted ? { priorCompleted } : {}),
+    checkOutcome: 'passed',
+    verdict: 'rejected',
+    materialInputs: {
+      targets: [`src/${label}.mjs`],
+      operations: ['retry-task'],
+      checks: ['verification'],
+    },
+  });
+  const first = fixtureFor(1, null, 't005-incident-first');
+  const firstCapture = t003Invoke('complete', {
+    mode: 'capture',
+    state: first.state,
+    input: cliInput(t005IncidentInput(root, [], [first])),
+    completion: first.completion,
+  });
+  const firstEvents = firstCapture.completion.projectionBatch.events;
+  const firstFinalize = t003Invoke('complete', {
+    mode: 'finalize',
+    state: firstCapture.completion.state,
+    input: cliInput(t005IncidentInput(root, firstEvents, [first])),
+    projectionBatch: firstCapture.completion.projectionBatch,
+  });
+  const second = fixtureFor(2, firstFinalize.completion.state.completed, 't005-incident-second');
+  const secondCapture = t003Invoke('complete', {
+    mode: 'capture',
+    state: second.state,
+    input: cliInput(t005IncidentInput(root, firstEvents, [first, second])),
+    completion: second.completion,
+  });
+  return {
+    events: [...firstEvents, ...secondCapture.completion.projectionBatch.events],
+    fixtures: [first, second],
+  };
+}
+
+/**
+ * Drive the public order past attempt authorization and retained completion to
+ * the verified terminal phase, and return the exact surfaces it was reached
+ * through.
+ * @param {string} root
+ */
+function t005VerifiedTerminal(root) {
+  const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+  const inspected = flow.branchTransition.transition.state;
+  const learnedInput = () => cliInput(t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures));
+  const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+  const issued = t003Invoke('transition', {
+    mode: 'issue-attempt-permit',
+    state: inspected,
+    input: learnedInput(),
+    lanePrestate: binding.lanePrestate,
+    targetMapping: binding.targetMapping,
+  });
+  const authorized = t003Invoke('authorize', {
+    trigger: 'post-failure',
+    state: inspected,
+    input: learnedInput(),
+    assessment: {
+      ...transitionAssessment('retry-task', { targets: ['src/t005-alternative.mjs'] }),
+      evidenceHash: issued.inspection.evidenceHash,
+    },
+    mode: 'recovery',
+    attemptPermit: issued.transition.permit,
+  });
+  const authorizedState = authorized.authorization.state;
+  const envelopes = t002EnvelopeFixture({
+    target: TARGET,
+    attemptIdentity: authorized.authorization.attemptIdentity,
+    attemptOrdinal: authorizedState.overallUsed,
+    inspectedEvidenceHash: issued.inspection.evidenceHash,
+    checkOutcome: 'passed',
+    verdict: 'accepted',
+  });
+  const fixtures = [...flow.fixtures, { target: TARGET, ...envelopes }];
+  /** @param {Record<string, unknown>[]} events */
+  const retained = (events) => cliInput(t002RetentionInput(root, events, events, fixtures));
+  const captured = t003Invoke('complete', {
+    mode: 'capture',
+    state: authorizedState,
+    input: retained(flow.learnedEvents),
+    completion: {
+      version: 2,
+      target: TARGET,
+      attemptIdentity: authorized.authorization.attemptIdentity,
+      route: 'lightweight-task',
+      outcome: 'succeeded',
+      operations: ['retry-task'],
+      changedTargets: ['src/t005-alternative.mjs'],
+      resultIdentity: envelopes.verification.resultIdentity,
+      verificationEnvelopeIdentity: envelopes.verification.envelopeIdentity,
+      reviewEnvelopeIdentity: envelopes.review.envelopeIdentity,
+      findingIdentities: [],
+    },
+  });
+  const attemptEvents = [...flow.learnedEvents, ...captured.completion.projectionBatch.events];
+  const finalized = t003Invoke('complete', {
+    mode: 'finalize',
+    state: captured.completion.state,
+    input: retained(attemptEvents),
+    projectionBatch: captured.completion.projectionBatch,
+  });
+  return {
+    flow,
+    binding,
+    retained,
+    attemptEvents,
+    attemptIdentity: authorized.authorization.attemptIdentity,
+    authorizedState,
+    verifiedState: finalized.completion.state,
+    terminalMutation: {
+      version: 1,
+      lane: 'lightweight',
+      kind: 'task-completed',
+      reason: 'task-completed',
+      target: canonicalTarget(TARGET),
+      fromGlyph: '~',
+      toGlyph: 'x',
+      blocker: { kind: 'unchanged', before: null, after: null },
+      eventLines: { kind: 'none' },
+      ownerLog: { kind: 'none' },
+      snapshotUpdatedAt: T005_TIME,
+    },
+  };
+}
+
+/** @param {string} root */
+function t005AcceptedEvidence(root) {
+  const core = {
+    version: 1,
+    mode: 'core-close',
+    featureSpecPath: '.dude/specs/009-autonomous-learning-governance/spec.md',
+    definitionContractIdentity: t005Hash('definition-contract'),
+    terminalTaskKey: 'T009@696e6369',
+    baselineEvidenceLineHash: t005Hash('baseline-line'),
+    acceptedEvidenceLineHash: t005Hash('accepted-line'),
+    head: 'a'.repeat(40),
+    declared: t005Hash('declared'),
+    source: t005Hash('source'),
+    changed: t005Hash('changed'),
+    verificationSetIdentity: t005Hash('verification-set'),
+    finalReviewEnvelopeIdentity: t005Hash('final-review'),
+    review: t005Hash('review'),
+  };
+  const acceptedFeatureEvidence = {
+    ...core,
+    acceptedFeatureEvidenceIdentity: sha256(canonicalJson(core)),
+  };
+  return {
+    acceptedFeatureEvidence,
+    incidentIdentity: t005Hash('incident'),
+    priorDispositionIdentity: t005Hash('prior-disposition'),
+    operationTime: T005_TIME,
+    captures: {
+      idea: recoveryRuntime.capturedBytesV1(fs.readFileSync(path.join(root, F7_IDEA_PATH))),
+      tasks: recoveryRuntime.capturedBytesV1(fs.readFileSync(path.join(root, F7_TASKS_PATH))),
+      taskState: recoveryRuntime.capturedBytesV1(T005_TASK_STATE),
+    },
+  };
+}
+
+test('T005 acyclic permits: attempt-permit issuance is pure and authorize consumes it before RunState changes', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const inspected = flow.branchTransition.transition.state;
+    const input = () => cliInput(t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures));
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const inspectedBytes = canonicalJson(inspected);
+
+    // Act
+    const issued = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: inspected,
+      input: input(),
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+    const permit = issued.transition.permit;
+    const assessment = {
+      ...transitionAssessment('retry-task', { targets: ['src/t005-alternative.mjs'] }),
+      evidenceHash: issued.inspection.evidenceHash,
+    };
+    const sealed = t003Invoke('authorize', {
+      trigger: 'post-failure',
+      state: inspected,
+      input: input(),
+      assessment,
+      mode: 'recovery',
+    });
+    const authorized = t003Invoke('authorize', {
+      trigger: 'post-failure',
+      state: inspected,
+      input: input(),
+      assessment,
+      mode: 'recovery',
+      attemptPermit: permit,
+    });
+
+    // Assert
+    assert.equal(issued.transition.reason, 'attempt-permit-issued');
+    // Pure issuance leaves the exact post-learning Inspection state unchanged.
+    assert.equal(canonicalJson(issued.transition.state), inspectedBytes);
+    recoveryRuntime.validateAttemptAuthorizationPermitV1(permit);
+    assert.equal(permit.subjectRunStateHash, sha256(inspectedBytes));
+    assert.equal(permit.governancePhase, 'alternative-inspected');
+    assert.equal(permit.governanceIdentity, inspected.learningGovernance.governanceIdentity);
+    assert.equal(permit.selectedAlternativeIdentity, flow.credible.alternativeIdentity);
+    assert.equal(
+      permit.postLearningInspectionIdentity,
+      flow.branchTransition.transition.binding.postLearningInspectionIdentity,
+    );
+    assert.equal(permit.targetMappingHash, binding.targetMappingHash);
+    assert.equal(permit.lanePrestateHash, binding.lanePrestateHash);
+    assert.equal(permit.inspectionEvidenceHash, issued.inspection.evidenceHash);
+    // Without the permit the alternative-inspected seal still refuses.
+    assert.equal(sealed.authorization.authorized, false);
+    assert.equal(sealed.authorization.reason, 'learning-required');
+    assert.equal(canonicalJson(sealed.authorization.state), inspectedBytes);
+    // The permit is consumed exactly once and produces the successor state.
+    assert.equal(authorized.authorization.authorized, true);
+    assert.equal(authorized.authorization.claimRequired, false);
+    assert.equal(authorized.authorization.state.learningGovernance.phase, 'alternative-authorized');
+    assert.equal(
+      authorized.authorization.state.learningGovernance.consumedAttemptPermitHash,
+      permit.permitHash,
+    );
+    assert.equal(
+      authorized.authorization.state.learningGovernance.authorizedAttemptIdentity,
+      authorized.authorization.attemptIdentity,
+    );
+    validateRunState(authorized.authorization.state);
+  });
+});
+
+test('T005 acyclic permits: one exact fresh transition is accepted and every stale, forged, transferred, or wrong-phase permit rejects', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const inspected = flow.branchTransition.transition.state;
+    const input = () => cliInput(t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures));
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const issued = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: inspected,
+      input: input(),
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+    const permit = issued.transition.permit;
+    const assessment = {
+      ...transitionAssessment('retry-task', { targets: ['src/t005-alternative.mjs'] }),
+      evidenceHash: issued.inspection.evidenceHash,
+    };
+    const authorized = t003Invoke('authorize', {
+      trigger: 'post-failure',
+      state: inspected,
+      input: input(),
+      assessment,
+      mode: 'recovery',
+      attemptPermit: permit,
+    });
+    const forged = { ...permit, selectedAlternativeIdentity: t005Hash('forged-alternative') };
+    const driftedBody = { ...permit, selectedAlternativeIdentity: t005Hash('other-alternative') };
+    delete driftedBody.permitHash;
+    const drifted = t005Permit(driftedBody);
+    const transferredBody = {
+      ...permit,
+      target: { ...canonicalTarget(TARGET), taskKey: SECOND_TASK_KEY },
+    };
+    delete transferredBody.permitHash;
+    const transferred = t005Permit(transferredBody);
+
+    // Act
+    const replayed = t003Invoke('authorize', {
+      trigger: 'post-failure',
+      state: authorized.authorization.state,
+      input: input(),
+      assessment,
+      mode: 'recovery',
+      attemptPermit: permit,
+    });
+    const forgedResult = t003Invoke('authorize', {
+      trigger: 'post-failure',
+      state: inspected,
+      input: input(),
+      assessment,
+      mode: 'recovery',
+      attemptPermit: forged,
+    });
+    const transferredResult = t003Invoke('authorize', {
+      trigger: 'post-failure',
+      state: inspected,
+      input: input(),
+      assessment,
+      mode: 'recovery',
+      attemptPermit: transferred,
+    });
+    const driftedResult = t003Invoke('authorize', {
+      trigger: 'post-failure',
+      state: inspected,
+      input: input(),
+      assessment,
+      mode: 'recovery',
+      attemptPermit: drifted,
+    });
+    const wrongPhase = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: flow.learningVerified.transition.state,
+      input: input(),
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+    const changedPrestate = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: inspected,
+      input: input(),
+      lanePrestate: { ...clone(binding.lanePrestate), glyph: '!', blockedBy: 'drifted blocker' },
+      targetMapping: binding.targetMapping,
+    });
+    const ended = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: inspected,
+      input: input(),
+    });
+    const afterControlledEnd = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: ended.transition.state,
+      input: input(),
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+    // Same RunState, drifted Inspection: only `inspectionEvidenceHash` moves.
+    const driftedEvidenceInput = t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures);
+    driftedEvidenceInput.lint = [capture(TARGET, 'passed', [])];
+    const driftedEvidence = t003Invoke('authorize', {
+      trigger: 'post-failure',
+      state: inspected,
+      input: cliInput(driftedEvidenceInput),
+      assessment,
+      mode: 'recovery',
+      attemptPermit: permit,
+    });
+
+    // Assert
+    // The permit never survives the state mutation it authorized.
+    assert.equal(replayed.authorization.authorized, false);
+    assert.equal(replayed.authorization.reason, 'permit-stale');
+    assert.equal(
+      canonicalJson(replayed.authorization.state),
+      canonicalJson(authorized.authorization.state),
+    );
+    assert.equal(forgedResult.authorization.reason, 'permit-hash-mismatch');
+    assert.equal(transferredResult.authorization.reason, 'permit-target-mismatch');
+    // The permit binds the exact Inspection evidence as well as the exact state.
+    assert.notEqual(driftedEvidence.inspection.evidenceHash, permit.inspectionEvidenceHash);
+    assert.equal(driftedEvidence.authorization.authorized, false);
+    assert.equal(driftedEvidence.authorization.reason, 'permit-stale');
+    assert.equal(canonicalJson(driftedEvidence.authorization.state), canonicalJson(inspected));
+    // A self-consistent permit still rejects when it disagrees with the branch
+    // evidence rebound from the fresh surfaces.
+    assert.equal(driftedResult.authorization.reason, 'permit-transition-mismatch');
+    assert.equal(wrongPhase.transition.issued, false);
+    assert.equal(wrongPhase.transition.reason, 'learning-phase-mismatch');
+    assert.equal(changedPrestate.transition.issued, false);
+    assert.equal(changedPrestate.transition.reason, 'lane-prestate-mismatch');
+    // Controlled Unresolved End itself authorizes no attempt.
+    assert.equal(afterControlledEnd.transition.issued, false);
+    assert.equal(afterControlledEnd.transition.reason, 'learning-phase-mismatch');
+    for (const refused of [
+      forgedResult.authorization,
+      transferredResult.authorization,
+      driftedResult.authorization,
+    ]) {
+      assert.equal(canonicalJson(refused.state), canonicalJson(inspected));
+    }
+  });
+});
+
+test('T005 acyclic permits: a bound projection plan carries its exact mutation, mutation identity, and projection permit', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const learningBatch = flow.learned.learning.projectionBatch;
+    const governedInput = () => cliInput(t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures));
+
+    // Act
+    const unbound = t003Invoke('transition', {
+      mode: 'prepare-projection',
+      state: flow.learned.learning.state,
+      input: governedInput(),
+      projectionBatch: learningBatch,
+    });
+    const bound = t003Invoke('transition', {
+      mode: 'prepare-projection',
+      state: flow.learned.learning.state,
+      input: governedInput(),
+      projectionBatch: learningBatch,
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+      operationTime: T005_TIME,
+    });
+    const partial = runRecoveryCli('transition', {
+      mode: 'prepare-projection',
+      state: flow.learned.learning.state,
+      input: governedInput(),
+      projectionBatch: learningBatch,
+      lanePrestate: binding.lanePrestate,
+    });
+
+    // Assert
+    assert.equal(bound.transition.reason, 'projection-prepared');
+    assert.notEqual(bound.transition.plan.planIdentity, unbound.transition.plan.planIdentity);
+    for (const item of bound.transition.plan.items) {
+      assert.deepEqual(
+        Object.keys(item).sort(),
+        [
+          'currentRunRecord', 'currentRunRecordHash', 'eventHash', 'laneEventLine',
+          'laneEventLineHash', 'laneEventLineTerminator', 'laneEventRecordHash',
+          'mutation', 'mutationIdentity', 'projectionPermit',
+        ],
+      );
+      recoveryRuntime.validateProjectionPermitV1(item.projectionPermit);
+      // The identity binds the whole closed mutation object, not an abstract kind.
+      assert.equal(item.mutationIdentity, sha256(canonicalJson(item.mutation)));
+      assert.equal(item.projectionPermit.mutationIdentity, item.mutationIdentity);
+      assert.equal(item.projectionPermit.eventHash, item.eventHash);
+      assert.equal(item.projectionPermit.batchIdentity, learningBatch.batchIdentity);
+      assert.equal(item.mutation.kind, 'append-event');
+      assert.equal(item.mutation.fromGlyph, item.mutation.toGlyph);
+      assert.equal(item.mutation.eventLines.lines[0].exactLine, item.laneEventLine);
+    }
+    assert.equal(bound.transition.plan.planIdentity, sha256(canonicalJson({
+      version: 1,
+      target: canonicalTarget(TARGET),
+      batchIdentity: learningBatch.batchIdentity,
+      items: bound.transition.plan.items,
+    })));
+    // The lane binding is all-or-none.
+    assert.notEqual(partial.status, 0);
+    assert.equal(JSON.parse(partial.stderr).error.code, 'recovery-invalid-request');
+  });
+});
+
+test('T005 acyclic permits: the full order reaches a terminal receipt and a failed commit never clears governance', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const inspected = flow.branchTransition.transition.state;
+    const input = () => cliInput(t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures));
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const issued = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: inspected,
+      input: input(),
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+    const assessment = {
+      ...transitionAssessment('retry-task', { targets: ['src/t005-alternative.mjs'] }),
+      evidenceHash: issued.inspection.evidenceHash,
+    };
+    const authorized = t003Invoke('authorize', {
+      trigger: 'post-failure',
+      state: inspected,
+      input: input(),
+      assessment,
+      mode: 'recovery',
+      attemptPermit: issued.transition.permit,
+    });
+    const authorizedState = authorized.authorization.state;
+    const attempt = {
+      target: TARGET,
+      attemptIdentity: authorized.authorization.attemptIdentity,
+      attemptOrdinal: authorizedState.overallUsed,
+      inspectedEvidenceHash: issued.inspection.evidenceHash,
+      checkOutcome: 'passed',
+      verdict: 'accepted',
+    };
+    const envelopes = t002EnvelopeFixture(attempt);
+    const third = { target: TARGET, ...envelopes };
+    const completion = {
+      version: 2,
+      target: TARGET,
+      attemptIdentity: attempt.attemptIdentity,
+      route: 'lightweight-task',
+      outcome: 'succeeded',
+      operations: ['retry-task'],
+      changedTargets: ['src/t005-alternative.mjs'],
+      resultIdentity: envelopes.verification.resultIdentity,
+      verificationEnvelopeIdentity: envelopes.verification.envelopeIdentity,
+      reviewEnvelopeIdentity: envelopes.review.envelopeIdentity,
+      findingIdentities: [],
+    };
+    const fixtures = [...flow.fixtures, third];
+    const retained = (events) => cliInput(t002RetentionInput(root, events, events, fixtures));
+
+    // Act
+    const captured = t003Invoke('complete', {
+      mode: 'capture',
+      state: authorizedState,
+      input: retained(flow.learnedEvents),
+      completion,
+    });
+    const attemptEvents = [...flow.learnedEvents, ...captured.completion.projectionBatch.events];
+    const verified = t003Invoke('transition', {
+      mode: 'verify-projection',
+      state: captured.completion.state,
+      input: retained(attemptEvents),
+      projectionBatch: captured.completion.projectionBatch,
+    });
+    const finalized = t003Invoke('complete', {
+      mode: 'finalize',
+      state: captured.completion.state,
+      input: retained(attemptEvents),
+      projectionBatch: captured.completion.projectionBatch,
+    });
+    const verifiedState = finalized.completion.state;
+    const terminalBinding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const terminalMutation = {
+      version: 1,
+      lane: 'lightweight',
+      kind: 'task-completed',
+      reason: 'task-completed',
+      target: canonicalTarget(TARGET),
+      fromGlyph: '~',
+      toGlyph: 'x',
+      blocker: { kind: 'unchanged', before: null, after: null },
+      eventLines: { kind: 'none' },
+      ownerLog: { kind: 'none' },
+      snapshotUpdatedAt: T005_TIME,
+    };
+    const early = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state: authorizedState,
+      input: retained(flow.learnedEvents),
+      mutation: terminalMutation,
+      lanePrestate: terminalBinding.lanePrestate,
+      targetMapping: terminalBinding.targetMapping,
+    });
+    const lanePermit = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state: verifiedState,
+      input: retained(attemptEvents),
+      mutation: terminalMutation,
+      lanePrestate: terminalBinding.lanePrestate,
+      targetMapping: terminalBinding.targetMapping,
+    });
+    const permit = lanePermit.transition.permit;
+    const forgedGovernanceBody = { ...permit, governanceIdentity: t005Hash('other-governance') };
+    delete forgedGovernanceBody.permitHash;
+    const forgedGovernance = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: verifiedState,
+      input: retained(attemptEvents),
+      permit: t005Permit(forgedGovernanceBody),
+      receipt: t005AtomicReceipt(t005Permit(forgedGovernanceBody), terminalBinding, true),
+    });
+    const mismatched = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: verifiedState,
+      input: retained(attemptEvents),
+      permit,
+      receipt: t005AtomicReceipt(
+        { ...permit, mutationIdentity: t005Hash('other-mutation') },
+        terminalBinding,
+        true,
+      ),
+    });
+    const committed = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: verifiedState,
+      input: retained(attemptEvents),
+      permit,
+      receipt: t005AtomicReceipt(permit, terminalBinding, true),
+    });
+
+    // Assert
+    assert.equal(verified.transition.verified, true);
+    // Retained completion is what verifies the bound alternative.
+    assert.equal(finalized.completion.finalized, true);
+    assert.equal(finalized.completion.completed, true);
+    assert.equal(verifiedState.learningGovernance.phase, 'alternative-verified');
+    // The terminal permit is unavailable before the retained completion verifies.
+    assert.equal(early.transition.issued, false);
+    assert.equal(early.transition.reason, 'learning-phase-mismatch');
+    recoveryRuntime.validateLaneMutationPermitV1(permit);
+    assert.equal(permit.operation, 'work-set');
+    assert.equal(permit.governancePhase, 'alternative-verified');
+    assert.equal(permit.attemptIdentity, authorized.authorization.attemptIdentity);
+    assert.equal(permit.subjectRunStateHash, sha256(canonicalJson(verifiedState)));
+    assert.equal(permit.mutationIdentity, sha256(canonicalJson(terminalMutation)));
+    // A failed receipt commit changes nothing and never clears governance.
+    assert.equal(mismatched.transition.committed, false);
+    assert.equal(mismatched.transition.reason, 'lane-receipt-mismatch');
+    assert.equal(canonicalJson(mismatched.transition.state), canonicalJson(verifiedState));
+    assert.equal(Object.hasOwn(mismatched.transition.state, 'learningGovernance'), true);
+    // A self-consistent permit naming governance the state does not hold is not
+    // authority, even with a matching receipt.
+    assert.equal(forgedGovernance.transition.committed, false);
+    assert.equal(forgedGovernance.transition.reason, 'governance-unresolved');
+    assert.equal(canonicalJson(forgedGovernance.transition.state), canonicalJson(verifiedState));
+    // Only the exact terminal receipt releases the governed obligation.
+    assert.equal(committed.transition.committed, true);
+    assert.equal(committed.transition.reason, 'lane-receipt-committed');
+    assert.equal(Object.hasOwn(committed.transition.state, 'learningGovernance'), false);
+    validateRunState(committed.transition.state);
+  });
+});
+
+test('T005 acyclic permits: a claim receipt advances only once and replay refuses', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const inspected = flow.branchTransition.transition.state;
+    const input = () => cliInput(t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures));
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const issued = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: inspected,
+      input: input(),
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+    const assessment = {
+      ...transitionAssessment('retry-task', { targets: ['src/t005-alternative.mjs'] }),
+      evidenceHash: issued.inspection.evidenceHash,
+    };
+    const authorized = t003Invoke('authorize', {
+      trigger: 'post-failure',
+      state: inspected,
+      input: input(),
+      assessment,
+      mode: 'recovery',
+      attemptPermit: issued.transition.permit,
+    });
+    // The claim-required successor phase for a lane whose target is not yet claimed.
+    const pendingLane = clone(authorized.authorization.state);
+    pendingLane.learningGovernance.phase = 'alternative-authorized-pending-lane';
+    validateRunState(pendingLane);
+    const claimMutation = {
+      version: 1,
+      lane: 'lightweight',
+      kind: 'claim',
+      reason: 'post-learning-claim',
+      target: canonicalTarget(TARGET),
+      fromGlyph: ' ',
+      toGlyph: '~',
+      blocker: { kind: 'unchanged', before: null, after: null },
+      eventLines: { kind: 'none' },
+      ownerLog: { kind: 'none' },
+      snapshotUpdatedAt: T005_TIME,
+    };
+    const claimPermit = t005Permit({
+      version: 1,
+      kind: 'lane-mutation',
+      origin: 'dude-work',
+      lane: 'lightweight',
+      operation: 'work-set',
+      target: canonicalTarget(TARGET),
+      subjectRunStateHash: sha256(canonicalJson(pendingLane)),
+      governanceIdentity: pendingLane.learningGovernance.governanceIdentity,
+      governancePhase: 'alternative-authorized-pending-lane',
+      attemptIdentity: authorized.authorization.attemptIdentity,
+      targetMappingHash: binding.targetMappingHash,
+      lanePrestateHash: binding.lanePrestateHash,
+      mutationIdentity: sha256(canonicalJson(claimMutation)),
+    });
+    const receipt = t005AtomicReceipt(claimPermit, binding, true);
+
+    // Act
+    const claimed = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: pendingLane,
+      input: input(),
+      permit: claimPermit,
+      receipt,
+    });
+    const replayed = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: claimed.transition.state,
+      input: input(),
+      permit: claimPermit,
+      receipt,
+    });
+
+    // Assert
+    assert.equal(claimed.transition.committed, true);
+    assert.equal(claimed.transition.state.learningGovernance.phase, 'alternative-authorized');
+    assert.equal(
+      claimed.transition.state.learningGovernance.laneClaimReceiptIdentity,
+      receipt.receiptHash,
+    );
+    validateRunState(claimed.transition.state);
+    // The consumed claim permit binds the prestate it was issued against.
+    assert.equal(replayed.transition.committed, false);
+    assert.equal(replayed.transition.reason, 'permit-stale');
+    assert.equal(
+      canonicalJson(replayed.transition.state),
+      canonicalJson(claimed.transition.state),
+    );
+  });
+});
+
+test('T005 acyclic permits: a pending-lane record with an unbacked alternative commits no claim receipt', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    // An unclaimed fresh task unit: a post-learning claim is the ' ' to '~'
+    // transition, so the fresh lane evidence must show the open glyph.
+    const unclaimedTasks = Buffer.concat([
+      Buffer.from([
+        transitionTasksBytes([{ id: TASK_KEY, glyph: ' ' }]).toString('utf8').trimEnd(),
+        '',
+        '## Lightweight Execution History',
+        '',
+      ].join('\n')),
+      ...flow.learnedEvents.map((event) => Buffer.from(`${t002V2EventLine(event)}\n`)),
+    ]);
+    const input = () => cliInput(t002RetentionInputWithTaskHistory(
+      root,
+      flow.learnedEvents,
+      unclaimedTasks,
+      flow.fixtures,
+    ));
+    input();
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, ' ', null);
+    // The post-learning binding is rebound against the unclaimed lane evidence.
+    const inspected = t003Invoke('transition', {
+      mode: 'bind-post-learning-inspection',
+      state: flow.learningVerified.transition.state,
+      input: input(),
+    }).transition.state;
+    const issued = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: inspected,
+      input: input(),
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+    const assessment = {
+      ...transitionAssessment('retry-task', { targets: ['src/t005-alternative.mjs'] }),
+      evidenceHash: issued.inspection.evidenceHash,
+    };
+    const authorized = t003Invoke('authorize', {
+      trigger: 'post-failure',
+      state: inspected,
+      input: input(),
+      assessment,
+      mode: 'recovery',
+      attemptPermit: issued.transition.permit,
+    });
+    // An unclaimed lane target reaches the claim-required successor phase.
+    const pendingLane = authorized.authorization.state;
+    // A self-consistent RunState: nothing in the record itself objects.
+    const drifted = clone(pendingLane);
+    drifted.learningGovernance.selectedAlternativeIdentity = t005Hash('claim-unbacked-alternative');
+    validateRunState(drifted);
+    const claimMutation = {
+      version: 1,
+      lane: 'lightweight',
+      kind: 'claim',
+      reason: 'post-learning-claim',
+      target: canonicalTarget(TARGET),
+      fromGlyph: ' ',
+      toGlyph: '~',
+      blocker: { kind: 'unchanged', before: null, after: null },
+      eventLines: { kind: 'none' },
+      ownerLog: { kind: 'none' },
+      snapshotUpdatedAt: T005_TIME,
+    };
+    /** @param {Record<string, unknown>} state */
+    const commit = (state) => {
+      const permit = t005Permit({
+        version: 1,
+        kind: 'lane-mutation',
+        origin: 'dude-work',
+        lane: 'lightweight',
+        operation: 'work-set',
+        target: canonicalTarget(TARGET),
+        subjectRunStateHash: sha256(canonicalJson(state)),
+        governanceIdentity: state.learningGovernance.governanceIdentity,
+        governancePhase: state.learningGovernance.phase,
+        attemptIdentity: state.learningGovernance.authorizedAttemptIdentity,
+        targetMappingHash: binding.targetMappingHash,
+        lanePrestateHash: binding.lanePrestateHash,
+        mutationIdentity: sha256(canonicalJson(claimMutation)),
+      });
+      return t003Invoke('transition', {
+        mode: 'commit-lane-receipt',
+        state,
+        input: input(),
+        permit,
+        receipt: t005AtomicReceipt(permit, binding, true),
+      });
+    };
+    /** @param {Record<string, unknown>} state */
+    const issue = (state) => t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state,
+      input: input(),
+      mutation: claimMutation,
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+
+    // Act
+    const backedIssue = issue(pendingLane);
+    const backedCommit = commit(pendingLane);
+    const driftedIssue = issue(drifted);
+    const driftedCommit = commit(drifted);
+
+    // Assert
+    // The evidence-backed claim still issues and still advances the phase once.
+    assert.equal(pendingLane.learningGovernance.phase, 'alternative-authorized-pending-lane');
+    assert.equal(backedIssue.transition.issued, true);
+    assert.equal(backedIssue.transition.permit.governancePhase, 'alternative-authorized-pending-lane');
+    assert.equal(backedCommit.transition.committed, true);
+    assert.equal(backedCommit.transition.reason, 'lane-receipt-committed');
+    assert.equal(backedCommit.transition.state.learningGovernance.phase, 'alternative-authorized');
+    // The claim gate is a branch decision, so a hand-built permit re-applies the
+    // exact issuance authority instead of advancing on a stored identity.
+    assert.deepEqual(driftedCommit.inspection.blockers, []);
+    assert.equal(driftedIssue.transition.issued, false);
+    assert.equal(driftedIssue.transition.reason, 'alternative-selection-mismatch');
+    assert.equal(driftedCommit.transition.committed, false);
+    assert.equal(driftedCommit.transition.reason, driftedIssue.transition.reason);
+    assert.equal(Object.hasOwn(driftedCommit.transition, 'receipt'), false);
+    assert.equal(Object.hasOwn(driftedCommit.transition, 'terminalEvidenceIdentity'), false);
+    // A refused claim changes nothing: the phase and the whole record survive.
+    assert.equal(canonicalJson(driftedCommit.transition.state), canonicalJson(drifted));
+    assert.equal(
+      driftedCommit.transition.state.learningGovernance.phase,
+      'alternative-authorized-pending-lane',
+    );
+    assert.equal(
+      Object.hasOwn(driftedCommit.transition.state.learningGovernance, 'laneClaimReceiptIdentity'),
+      false,
+    );
+  });
+});
+
+test('T005 incident contracts: the exact-evidence branch derives intent, events, batches, preview, and mutation acyclically', () => {
+  withIncidentWorkspace((root) => {
+    // Arrange
+    const evidence = t005IncidentEvidence(root);
+    const request = t005AcceptedEvidence(root);
+
+    // Act
+    const corrected = t003Invoke('transition', {
+      mode: 'incident-correction',
+      state: autonomousState(),
+      input: cliInput(t005IncidentInput(root, evidence.events, evidence.fixtures)),
+      incident: {
+        ...request,
+        captures: {
+          ...request.captures,
+          tasks: recoveryRuntime.capturedBytesV1(fs.readFileSync(path.join(root, F7_TASKS_PATH))),
+        },
+      },
+    });
+    const transition = corrected.transition;
+
+    // Assert
+    assert.equal(transition.prepared, true);
+    assert.equal(transition.branch, 'exact-evidence');
+    recoveryRuntime.validateIncidentCorrectionIntentV1(transition.intent);
+    recoveryRuntime.validateIncidentSupersessionEventV1(transition.supersessionEvent);
+    recoveryRuntime.validateIncidentCorrectionPreviewV1(transition.preview);
+    // Identity graph: intent -> events -> batches -> preview -> mutation.
+    assert.equal(transition.supersessionEvent.intentIdentity, transition.intent.intentIdentity);
+    assert.equal(Object.hasOwn(transition.supersessionEvent, 'previewIdentity'), false);
+    assert.equal(Object.hasOwn(transition.supersessionEvent, 'repeat'), false);
+    assert.equal(transition.mutation.previewIdentity, transition.preview.previewIdentity);
+    assert.equal(transition.mutation.intentIdentity, transition.intent.intentIdentity);
+    assert.equal(transition.mutationIdentity, sha256(canonicalJson(transition.mutation)));
+    // The dedicated incident-evidence batch is finding-only and chronological.
+    assert.equal(transition.incidentEvidenceBatch.purpose, 'incident-evidence');
+    assert.deepEqual(
+      transition.incidentEvidenceBatch.events.map((event) => event.type),
+      ['finding-occurrence', 'finding-occurrence'],
+    );
+    assert.deepEqual(
+      transition.incidentEvidenceBatch.events.map((event) => event.occurrenceIdentity),
+      transition.intent.repeat.occurrenceIdentities,
+    );
+    assert.equal(transition.governanceBatch.events[0].phase, 'required');
+    assert.equal(transition.intent.repeat.channel, 'finding');
+    // `incident-evidence` is finding-only and chronological; normal completion
+    // retention still requires its approach event first.
+    const findings = transition.incidentEvidenceBatch.events;
+    /** @param {Record<string, unknown>[]} events */
+    const rebatch = (events) => {
+      const eventCommitments = events.map((event) => ({ kind: event.type, eventHash: event.eventHash }));
+      return {
+        version: 1,
+        purpose: 'incident-evidence',
+        target: canonicalTarget(F7_TARGET),
+        events,
+        eventCommitments,
+        batchIdentity: sha256(canonicalJson({
+          version: 1,
+          purpose: 'incident-evidence',
+          target: canonicalTarget(F7_TARGET),
+          eventCommitments,
+        })),
+      };
+    };
+    for (const [label, events] of [
+      ['approach row', [transition.governanceBatch.events[0], findings[1]]],
+      ['reversed chronology', [findings[1], findings[0]]],
+      ['single row', [findings[0]]],
+    ]) {
+      assert.throws(
+        () => recoveryRuntime.validateProjectionBatchV1(rebatch(/** @type {Record<string, unknown>[]} */ (events))),
+        /must contain exactly two finding occurrence events|must be in strict chronology order/,
+        /** @type {string} */ (label),
+      );
+    }
+    assert.throws(
+      () => recoveryRuntime.validateProjectionBatchV1({
+        ...transition.incidentEvidenceBatch,
+        purpose: 'occurrence-retention',
+      }),
+      /one approach followed only by findings|recomputed ordered event commitments/,
+    );
+    // Exact-branch lane line order: two findings, governance, supersession.
+    assert.deepEqual(
+      transition.mutation.eventLines.lines.map((line) => line.eventHash),
+      [
+        ...transition.incidentEvidenceBatch.events.map((event) => event.eventHash),
+        transition.governanceBatch.events[0].eventHash,
+        transition.supersessionEvent.eventHash,
+      ],
+    );
+    // Only the obsolete blocker is removed and the task returns to in progress.
+    assert.equal(transition.mutation.fromGlyph, '!');
+    assert.equal(transition.mutation.toGlyph, '~');
+    assert.deepEqual(transition.mutation.blocker, { kind: 'remove', before: F7_BLOCKER, after: null });
+    assert.equal(transition.intent.resultingTargetState, 'in-progress-learning-required');
+    assert.equal(
+      transition.mutation.ownerLog.exactLines[0],
+      `- ${T005_TIME} - incident-supersession v1 intent=${transition.intent.intentIdentity} branch=exact-evidence target=${F7_TARGET.taskKey}`,
+    );
+    // Deriving the correction grants no lane authority and mutates no RunState.
+    assert.deepEqual(transition.state, autonomousState());
+  });
+});
+
+test('T005 incident contracts: the evidence-incomplete branch fabricates no repeat or Governance Event', () => {
+  withIncidentWorkspace((root) => {
+    // Arrange
+    const request = t005AcceptedEvidence(root);
+    const incompleteInput = cliInput(t005IncidentInput(root, [], []));
+    const captures = {
+      ...request.captures,
+      tasks: recoveryRuntime.capturedBytesV1(fs.readFileSync(path.join(root, F7_TASKS_PATH))),
+    };
+
+    // Act
+    const corrected = t003Invoke('transition', {
+      mode: 'incident-correction',
+      state: autonomousState(),
+      input: incompleteInput,
+      incident: { ...request, captures },
+    });
+    const unauthorized = t003Invoke('transition', {
+      mode: 'incident-correction',
+      state: autonomousState(),
+      input: cliInput(t005IncidentInput(root, [], [])),
+      incident: {
+        ...request,
+        acceptedFeatureEvidence: (() => {
+          const core = clone(request.acceptedFeatureEvidence);
+          delete core.acceptedFeatureEvidenceIdentity;
+          delete core.terminalTaskKey;
+          delete core.baselineEvidenceLineHash;
+          delete core.acceptedEvidenceLineHash;
+          delete core.head;
+          delete core.declared;
+          delete core.source;
+          delete core.changed;
+          delete core.finalReviewEnvelopeIdentity;
+          delete core.review;
+          core.mode = 'standard';
+          core.sourceRevisionIdentity = t005Hash('source-revision');
+          core.independentReviewEnvelopeIdentity = t005Hash('independent-review');
+          return { ...core, acceptedFeatureEvidenceIdentity: sha256(canonicalJson(core)) };
+        })(),
+        captures,
+      },
+    });
+    const transition = corrected.transition;
+
+    // Assert
+    assert.equal(transition.prepared, true);
+    assert.equal(transition.branch, 'evidence-incomplete');
+    assert.equal(transition.reason, 'incident-evidence-incomplete');
+    recoveryRuntime.validateIncidentCorrectionPreviewV1(transition.preview);
+    assert.equal(transition.intent.incompleteReason, 'occurrence-retention-incomplete');
+    assert.equal(Object.hasOwn(transition.intent, 'repeat'), false);
+    assert.equal(Object.hasOwn(transition.intent, 'findingOccurrenceIdentities'), false);
+    assert.equal(Object.hasOwn(transition, 'incidentEvidenceBatch'), false);
+    assert.equal(Object.hasOwn(transition, 'governanceBatch'), false);
+    assert.equal(transition.mutation.eventLines.lines.length, 1);
+    assert.equal(
+      transition.mutation.eventLines.lines[0].eventHash,
+      transition.supersessionEvent.eventHash,
+    );
+    // T001 stays blocked and only the invalid blocker text is replaced.
+    assert.equal(transition.mutation.toGlyph, '!');
+    assert.deepEqual(transition.mutation.blocker, {
+      kind: 'replace',
+      before: F7_BLOCKER,
+      after: INCOMPLETE_INCIDENT_BLOCKER,
+    });
+    assert.equal(transition.supersessionEvent.conclusion, 'unauthorized-block-superseded');
+    assert.equal(transition.supersessionEvent.resultingTargetState, 'blocked-evidence-incomplete');
+    // Correction requires the Feature 009 core-close acceptance.
+    assert.equal(unauthorized.transition.prepared, false);
+    assert.equal(unauthorized.transition.reason, 'core-close-evidence-stale');
+  });
+});
+
+test('T005 acyclic permits: a sealed, mismapped, or evidence-free binding issues no attempt permit', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const inspected = flow.branchTransition.transition.state;
+    const secondTarget = { ...clone(TARGET), taskKey: SECOND_TASK_KEY };
+    // A clean Inspection of a second task in the same package: no blocker
+    // short-circuits, so only the target seal itself can refuse.
+    const foreignTasks = Buffer.from([
+      transitionTasksBytes([{ id: TASK_KEY, glyph: '~' }, { id: SECOND_TASK_KEY, glyph: '~' }])
+        .toString('utf8').trimEnd(),
+      '',
+      '## Lightweight Execution History',
+      '',
+    ].join('\n'));
+    const foreignInput = () => {
+      const raw = t002RetentionInputWithTaskHistory(root, [], foreignTasks, []);
+      raw.target = clone(secondTarget);
+      return cliInput(raw);
+    };
+    const secondBinding = t005LightweightBinding(root, secondTarget, IDEA_PATH, '~', null);
+    const firstBinding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const terminalMutation = {
+      version: 1,
+      lane: 'lightweight',
+      kind: 'task-completed',
+      reason: 'task-completed',
+      target: canonicalTarget(TARGET),
+      fromGlyph: '~',
+      toGlyph: 'x',
+      blocker: { kind: 'unchanged', before: null, after: null },
+      eventLines: { kind: 'none' },
+      ownerLog: { kind: 'none' },
+      snapshotUpdatedAt: T005_TIME,
+    };
+
+    // Act
+    const sealedAttempt = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: inspected,
+      input: foreignInput(),
+      lanePrestate: secondBinding.lanePrestate,
+      targetMapping: secondBinding.targetMapping,
+    });
+    const sealedLane = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state: inspected,
+      input: foreignInput(),
+      mutation: terminalMutation,
+      lanePrestate: firstBinding.lanePrestate,
+      targetMapping: firstBinding.targetMapping,
+    });
+    const mismappedAttempt = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: inspected,
+      input: cliInput(t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures)),
+      lanePrestate: secondBinding.lanePrestate,
+      targetMapping: secondBinding.targetMapping,
+    });
+    // The stored `alternative-inspected` record is self-consistent, but the
+    // authoritative surfaces no longer carry the evidence it was derived from.
+    const evidenceFree = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: inspected,
+      input: cliInput(t002RetentionInput(root, [], [], flow.fixtures)),
+      lanePrestate: firstBinding.lanePrestate,
+      targetMapping: firstBinding.targetMapping,
+    });
+
+    // Assert
+    // The governed target is read from RunState, never from the Inspection.
+    assert.deepEqual(sealedAttempt.inspection.blockers, []);
+    assert.equal(sealedAttempt.transition.issued, false);
+    assert.equal(sealedAttempt.transition.reason, 'target-mismatch');
+    // The lane route seals the caller-supplied mutation target the same way.
+    assert.deepEqual(sealedLane.inspection.blockers, []);
+    assert.equal(sealedLane.transition.issued, false);
+    assert.equal(sealedLane.transition.reason, 'target-mismatch');
+    // A mapping bound to a different task never binds a permit.
+    assert.equal(mismappedAttempt.transition.issued, false);
+    assert.equal(mismappedAttempt.transition.reason, 'target-mapping-missing');
+    // The stored governance record alone carries no issuance authority.
+    assert.deepEqual(evidenceFree.inspection.blockers, []);
+    assert.equal(evidenceFree.transition.issued, false);
+    assert.equal(evidenceFree.transition.reason, 'repeat-not-established');
+    for (const refused of [sealedAttempt, sealedLane, mismappedAttempt, evidenceFree]) {
+      assert.equal(Object.hasOwn(refused.transition, 'permit'), false);
+      assert.equal(canonicalJson(refused.transition.state), canonicalJson(inspected));
+    }
+  });
+});
+
+test('T005 acyclic permits: a permit is never transferable across routes, phases, or receipts', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const inspected = flow.branchTransition.transition.state;
+    const input = () => cliInput(t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures));
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const issued = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: inspected,
+      input: input(),
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+    const attemptPermit = issued.transition.permit;
+    const terminalMutation = {
+      version: 1,
+      lane: 'lightweight',
+      kind: 'task-completed',
+      reason: 'task-completed',
+      target: canonicalTarget(TARGET),
+      fromGlyph: '~',
+      toGlyph: 'x',
+      blocker: { kind: 'unchanged', before: null, after: null },
+      eventLines: { kind: 'none' },
+      ownerLog: { kind: 'none' },
+      snapshotUpdatedAt: T005_TIME,
+    };
+    const governedInput = () => cliInput(t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures));
+    const projectionPermit = t003Invoke('transition', {
+      mode: 'prepare-projection',
+      state: flow.learned.learning.state,
+      input: governedInput(),
+      projectionBatch: flow.learned.learning.projectionBatch,
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+      operationTime: T005_TIME,
+    }).transition.plan.items[0].projectionPermit;
+    const foreignInput = cliInput(t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures));
+    foreignInput.target = { ...clone(TARGET), taskKey: SECOND_TASK_KEY };
+
+    // Act
+    // An attempt permit is not a lane permit, on any route.
+    const asLaneReceipt = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: inspected,
+      input: input(),
+      permit: attemptPermit,
+      receipt: t005AtomicReceipt(
+        { ...attemptPermit, mutationIdentity: sha256(canonicalJson(terminalMutation)) },
+        binding,
+        true,
+      ),
+    });
+    // The terminal lane permit is unavailable in the pre-authorization phase.
+    const earlyTerminal = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state: inspected,
+      input: input(),
+      mutation: terminalMutation,
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+    // A receipt that claims a binding the permit never carried is not a receipt.
+    const mismappedReceipt = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: flow.learned.learning.state,
+      input: governedInput(),
+      permit: projectionPermit,
+      receipt: t005AtomicReceipt(
+        projectionPermit,
+        { targetMappingHash: t005Hash('foreign-mapping'), lanePrestateHash: binding.lanePrestateHash },
+        false,
+      ),
+    });
+    // A receipt cannot be committed against a foreign fresh Inspection.
+    const transferredCommit = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: flow.learned.learning.state,
+      input: foreignInput,
+      permit: projectionPermit,
+      receipt: t005AtomicReceipt(projectionPermit, binding, false),
+    });
+
+    // Assert    assert.equal(asLaneReceipt.transition.committed, false);
+    assert.equal(asLaneReceipt.transition.reason, 'permit-hash-mismatch');
+    assert.equal(earlyTerminal.transition.issued, false);
+    assert.equal(earlyTerminal.transition.reason, 'learning-phase-mismatch');
+    assert.equal(mismappedReceipt.transition.committed, false);
+    assert.equal(mismappedReceipt.transition.reason, 'lane-receipt-mismatch');
+    assert.equal(transferredCommit.transition.committed, false);
+    assert.equal(transferredCommit.transition.reason, 'permit-target-mismatch');
+    // No refusal discharges the governed obligation.
+    for (const [refused, before] of [
+      [asLaneReceipt, inspected],
+      [earlyTerminal, inspected],
+      [mismappedReceipt, flow.learned.learning.state],
+      [transferredCommit, flow.learned.learning.state],
+    ]) {
+      assert.equal(canonicalJson(refused.transition.state), canonicalJson(before));
+      assert.equal(Object.hasOwn(refused.transition.state, 'learningGovernance'), true);
+      assert.equal(Object.hasOwn(refused.transition, 'receipt'), false);
+    }
+  });
+});
+
+test('T005 incident contracts: the branch and the blocked prestate are derived, never supplied', () => {
+  withIncidentWorkspace((root) => {
+    // Arrange
+    const evidence = t005IncidentEvidence(root);
+    const request = t005AcceptedEvidence(root);
+    const captures = () => ({
+      ...request.captures,
+      tasks: recoveryRuntime.capturedBytesV1(fs.readFileSync(path.join(root, F7_TASKS_PATH))),
+    });
+
+    // Act
+    const chosenBranch = runRecoveryCli('transition', {
+      mode: 'incident-correction',
+      state: autonomousState(),
+      input: cliInput(t005IncidentInput(root, evidence.events, evidence.fixtures)),
+      incident: { ...request, captures: captures(), branch: 'evidence-incomplete' },
+    });
+    const suppliedRepeat = runRecoveryCli('transition', {
+      mode: 'incident-correction',
+      state: autonomousState(),
+      input: cliInput(t005IncidentInput(root, evidence.events, evidence.fixtures)),
+      incident: { ...request, captures: captures(), repeat: { version: 1, channel: 'finding' } },
+    });
+    // The exact same complete evidence, against a target that is not blocked.
+    const unblockedInput = cliInput(t005IncidentInput(root, evidence.events, evidence.fixtures, '~', null));
+    const unblocked = t003Invoke('transition', {
+      mode: 'incident-correction',
+      state: autonomousState(),
+      input: unblockedInput,
+      incident: { ...request, captures: captures() },
+    });
+
+    // Assert
+    // A caller supplies evidence bytes, never the branch or the relation.
+    assert.notEqual(chosenBranch.status, 0);
+    assert.equal(JSON.parse(chosenBranch.stderr).error.code, 'recovery-invalid-request');
+    assert.notEqual(suppliedRepeat.status, 0);
+    assert.equal(JSON.parse(suppliedRepeat.stderr).error.code, 'recovery-invalid-request');
+    // Correction supersedes an unauthorized block; it never invents one.
+    assert.equal(unblocked.transition.prepared, false);
+    assert.equal(unblocked.transition.reason, 'incident-correction-not-authorized');
+    assert.equal(Object.hasOwn(unblocked.transition, 'intent'), false);
+    assert.equal(Object.hasOwn(unblocked.transition, 'supersessionEvent'), false);
+    assert.deepEqual(unblocked.transition.state, autonomousState());
+  });
+});
+
+test('T005 acyclic permits: evidence-free surfaces issue no terminal lane permit', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange: drive the public order to the verified terminal phase.
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const inspected = flow.branchTransition.transition.state;
+    const input = () => cliInput(t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures));
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const issued = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: inspected,
+      input: input(),
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+    const assessment = {
+      ...transitionAssessment('retry-task', { targets: ['src/t005-alternative.mjs'] }),
+      evidenceHash: issued.inspection.evidenceHash,
+    };
+    const authorized = t003Invoke('authorize', {
+      trigger: 'post-failure',
+      state: inspected,
+      input: input(),
+      assessment,
+      mode: 'recovery',
+      attemptPermit: issued.transition.permit,
+    });
+    const authorizedState = authorized.authorization.state;
+    const attempt = {
+      target: TARGET,
+      attemptIdentity: authorized.authorization.attemptIdentity,
+      attemptOrdinal: authorizedState.overallUsed,
+      inspectedEvidenceHash: issued.inspection.evidenceHash,
+      checkOutcome: 'passed',
+      verdict: 'accepted',
+    };
+    const envelopes = t002EnvelopeFixture(attempt);
+    const fixtures = [...flow.fixtures, { target: TARGET, ...envelopes }];
+    const retained = (events) => cliInput(t002RetentionInput(root, events, events, fixtures));
+    const captured = t003Invoke('complete', {
+      mode: 'capture',
+      state: authorizedState,
+      input: retained(flow.learnedEvents),
+      completion: {
+        version: 2,
+        target: TARGET,
+        attemptIdentity: attempt.attemptIdentity,
+        route: 'lightweight-task',
+        outcome: 'succeeded',
+        operations: ['retry-task'],
+        changedTargets: ['src/t005-alternative.mjs'],
+        resultIdentity: envelopes.verification.resultIdentity,
+        verificationEnvelopeIdentity: envelopes.verification.envelopeIdentity,
+        reviewEnvelopeIdentity: envelopes.review.envelopeIdentity,
+        findingIdentities: [],
+      },
+    });
+    const attemptEvents = [...flow.learnedEvents, ...captured.completion.projectionBatch.events];
+    const finalized = t003Invoke('complete', {
+      mode: 'finalize',
+      state: captured.completion.state,
+      input: retained(attemptEvents),
+      projectionBatch: captured.completion.projectionBatch,
+    });
+    const verifiedState = finalized.completion.state;
+    const terminalBinding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const terminalMutation = {
+      version: 1,
+      lane: 'lightweight',
+      kind: 'task-completed',
+      reason: 'task-completed',
+      target: canonicalTarget(TARGET),
+      fromGlyph: '~',
+      toGlyph: 'x',
+      blocker: { kind: 'unchanged', before: null, after: null },
+      eventLines: { kind: 'none' },
+      ownerLog: { kind: 'none' },
+      snapshotUpdatedAt: T005_TIME,
+    };
+
+    // Act
+    const backed = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state: verifiedState,
+      input: retained(attemptEvents),
+      mutation: terminalMutation,
+      lanePrestate: terminalBinding.lanePrestate,
+      targetMapping: terminalBinding.targetMapping,
+    });
+    // The exact same self-consistent `alternative-verified` record, against
+    // authoritative surfaces that retain no occurrence, governance, or
+    // learning-result evidence at all.
+    const evidenceFreeLane = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state: verifiedState,
+      input: retained([]),
+      mutation: terminalMutation,
+      lanePrestate: terminalBinding.lanePrestate,
+      targetMapping: terminalBinding.targetMapping,
+    });
+    const evidenceFreeAttempt = t003Invoke('transition', {
+      mode: 'issue-attempt-permit',
+      state: inspected,
+      input: retained([]),
+      lanePrestate: terminalBinding.lanePrestate,
+      targetMapping: terminalBinding.targetMapping,
+    });
+
+    // Assert
+    assert.equal(verifiedState.learningGovernance.phase, 'alternative-verified');
+    // With the evidence retained, the same request issues the terminal permit.
+    assert.equal(backed.transition.issued, true);
+    assert.equal(backed.transition.permit.governancePhase, 'alternative-verified');
+    // The stored governance record alone carries no lane authority either: the
+    // lane route rebinds exactly as the attempt route does.
+    assert.deepEqual(evidenceFreeLane.inspection.blockers, []);
+    assert.equal(evidenceFreeLane.transition.issued, false);
+    assert.equal(evidenceFreeLane.transition.reason, 'repeat-not-established');
+    assert.equal(evidenceFreeAttempt.transition.reason, evidenceFreeLane.transition.reason);
+    // No permit exists, so no terminal commit can clear the governed obligation.
+    assert.equal(Object.hasOwn(evidenceFreeLane.transition, 'permit'), false);
+    assert.equal(canonicalJson(evidenceFreeLane.transition.state), canonicalJson(verifiedState));
+    assert.equal(Object.hasOwn(evidenceFreeLane.transition.state, 'learningGovernance'), true);
+  });
+});
+
+test('T005 acyclic permits: a projection or controlled-end receipt cannot assert a changed target state', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const learnedState = flow.learned.learning.state;
+    const governedInput = () => cliInput(t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures));
+    const projectionPermit = t003Invoke('transition', {
+      mode: 'prepare-projection',
+      state: learnedState,
+      input: governedInput(),
+      projectionBatch: flow.learned.learning.projectionBatch,
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+      operationTime: T005_TIME,
+    }).transition.plan.items[0].projectionPermit;
+    const endedState = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: flow.branchTransition.transition.state,
+      input: t004Input(root, flow, flow.learnedEvents),
+    }).transition.state;
+    const endBinding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const endMutation = {
+      version: 1,
+      lane: 'lightweight',
+      kind: 'controlled-end',
+      reason: 'controlled-unresolved-end',
+      target: canonicalTarget(TARGET),
+      fromGlyph: '~',
+      toGlyph: '~',
+      blocker: { kind: 'unchanged', before: null, after: null },
+      eventLines: { kind: 'none' },
+      ownerLog: { kind: 'none' },
+      snapshotUpdatedAt: T005_TIME,
+    };
+    const endPermit = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state: endedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      mutation: endMutation,
+      lanePrestate: endBinding.lanePrestate,
+      targetMapping: endBinding.targetMapping,
+    }).transition.permit;
+
+    // Act
+    const projectionChanged = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: learnedState,
+      input: governedInput(),
+      permit: projectionPermit,
+      receipt: t005AtomicReceipt(projectionPermit, binding, true),
+    });
+    const projectionUnchanged = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: learnedState,
+      input: governedInput(),
+      permit: projectionPermit,
+      receipt: t005AtomicReceipt(projectionPermit, binding, false),
+    });
+    const endChanged = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: endedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      permit: endPermit,
+      receipt: t005AtomicReceipt(endPermit, endBinding, true),
+    });
+    const endUnchanged = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: endedState,
+      input: t004Input(root, flow, flow.learnedEvents),
+      permit: endPermit,
+      receipt: t005AtomicReceipt(endPermit, endBinding, false),
+    });
+
+    // Assert
+    assert.equal(endPermit.governancePhase, 'alternative-inspected');
+    // Neither projection nor Controlled Unresolved End changes target state.
+    assert.equal(projectionChanged.transition.committed, false);
+    assert.equal(projectionChanged.transition.reason, 'lane-receipt-mismatch');
+    assert.equal(Object.hasOwn(projectionChanged.transition, 'receipt'), false);
+    assert.equal(canonicalJson(projectionChanged.transition.state), canonicalJson(learnedState));
+    assert.equal(endChanged.transition.committed, false);
+    assert.equal(endChanged.transition.reason, 'lane-receipt-mismatch');
+    assert.equal(Object.hasOwn(endChanged.transition, 'receipt'), false);
+    assert.equal(canonicalJson(endChanged.transition.state), canonicalJson(endedState));
+    // A refused commit never discharges the governed obligation.
+    assert.equal(Object.hasOwn(endChanged.transition.state, 'learningGovernance'), true);
+    // The exact same receipts commit once they assert the unchanged target.
+    assert.equal(projectionUnchanged.transition.committed, true);
+    assert.equal(projectionUnchanged.transition.reason, 'lane-receipt-committed');
+    assert.equal(endUnchanged.transition.committed, true);
+    assert.equal(endUnchanged.transition.reason, 'lane-receipt-committed');
+    // Neither commit is a lifecycle exit, so neither releases the obligation.
+    assert.equal(Object.hasOwn(endUnchanged.transition.state, 'learningGovernance'), true);
+  });
+});
+
+test('T005 incident contracts: correction never manufactures a second governance singleton', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange: one real `alternative-inspected` case on a different target.
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const governedState = flow.branchTransition.transition.state;
+    withIncidentWorkspace((incidentRoot) => {
+      const evidence = t005IncidentEvidence(incidentRoot);
+      const request = t005AcceptedEvidence(incidentRoot);
+      const incident = () => ({
+        ...request,
+        captures: {
+          ...request.captures,
+          tasks: recoveryRuntime.capturedBytesV1(fs.readFileSync(path.join(incidentRoot, F7_TASKS_PATH))),
+        },
+      });
+
+      // Act
+      const conflicted = t003Invoke('transition', {
+        mode: 'incident-correction',
+        state: governedState,
+        input: cliInput(t005IncidentInput(incidentRoot, evidence.events, evidence.fixtures)),
+        incident: incident(),
+      });
+      const ungoverned = t003Invoke('transition', {
+        mode: 'incident-correction',
+        state: autonomousState(),
+        input: cliInput(t005IncidentInput(incidentRoot, evidence.events, evidence.fixtures)),
+        incident: incident(),
+      });
+
+      // Assert
+      assert.equal(governedState.learningGovernance.phase, 'alternative-inspected');
+      assert.notEqual(governedState.learningGovernance.target.taskKey, F7_TARGET.taskKey);
+      // The exact branch derives a required Governance Event; the occupied
+      // singleton refuses before any intent, batch, preview, or mutation.
+      assert.equal(conflicted.transition.prepared, false);
+      assert.equal(conflicted.transition.reason, 'learning-governance-conflict');
+      for (const field of ['intent', 'supersessionEvent', 'governanceBatch', 'preview', 'mutation']) {
+        assert.equal(Object.hasOwn(conflicted.transition, field), false, field);
+      }
+      assert.equal(canonicalJson(conflicted.transition.state), canonicalJson(governedState));
+      // The exact same evidence prepares against an unoccupied singleton.
+      assert.equal(ungoverned.transition.prepared, true);
+      assert.equal(ungoverned.transition.branch, 'exact-evidence');
+    });
+  });
+});
+
+test('T005 incident contracts: an unusable fresh blocker refuses in the closed set', () => {
+  withIncidentWorkspace((root) => {
+    // Arrange: a blocker the Inspection layer accepts but `ShortText` cannot carry.
+    const request = t005AcceptedEvidence(root);
+    const oversized = `${F7_BLOCKER} ${'b'.repeat(1024)}`;
+    const input = () => cliInput(t005IncidentInput(root, [], [], '!', oversized));
+
+    // Act
+    const inspected = runRecoveryCli('inspect', { trigger: 'explicit-inspection', input: input() });
+    const corrected = runRecoveryCli('transition', {
+      mode: 'incident-correction',
+      state: autonomousState(),
+      input: input(),
+      incident: {
+        ...request,
+        captures: {
+          ...request.captures,
+          tasks: recoveryRuntime.capturedBytesV1(fs.readFileSync(path.join(root, F7_TASKS_PATH))),
+        },
+      },
+    });
+
+    // Assert
+    assert.equal(inspected.status, 0, inspected.stderr);
+    const inspection = JSON.parse(inspected.stdout).inspection;
+    assert.deepEqual(inspection.blockers, []);
+    // Workspace-derived text a contract cannot carry is a closed refusal, not a throw.
+    assert.equal(corrected.status, 0, corrected.stderr);
+    const transition = JSON.parse(corrected.stdout).transition;
+    assert.equal(transition.prepared, false);
+    assert.equal(transition.reason, 'incident-correction-not-authorized');
+    assert.equal(Object.hasOwn(transition, 'preview'), false);
+    assert.deepEqual(transition.state, autonomousState());
+  });
+});
+
+test('T005 incident contracts: an evidence-incomplete preview refuses a spliced occurrence line', () => {
+  withIncidentWorkspace((root) => {
+    // Arrange
+    const evidence = t005IncidentEvidence(root);
+    const request = t005AcceptedEvidence(root);
+    const incomplete = t003Invoke('transition', {
+      mode: 'incident-correction',
+      state: autonomousState(),
+      input: cliInput(t005IncidentInput(root, [], [])),
+      incident: {
+        ...request,
+        captures: {
+          ...request.captures,
+          tasks: recoveryRuntime.capturedBytesV1(fs.readFileSync(path.join(root, F7_TASKS_PATH))),
+        },
+      },
+    });
+    const finding = evidence.events.find((event) => event.type === 'finding-occurrence');
+
+    // Act: splice one real, projectable occurrence line into the incomplete
+    // branch and recompute the complete preview identity.
+    const body = clone(incomplete.transition.preview);
+    delete body.previewIdentity;
+    body.mutationCore.eventLines.lines.push({
+      eventHash: finding.eventHash,
+      exactLine: t002V2EventLine(finding),
+      terminator: 'LF',
+    });
+    const spliced = { ...body, previewIdentity: sha256(canonicalJson(body)) };
+
+    // Assert
+    assert.equal(incomplete.transition.branch, 'evidence-incomplete');
+    recoveryRuntime.validateIncidentCorrectionPreviewV1(incomplete.transition.preview);
+    // Self-consistency is not authority: the incomplete branch carries only the
+    // exact intent-bound Incident Supersession Event line.
+    assert.equal(spliced.previewIdentity, sha256(canonicalJson(body)));
+    assert.equal(spliced.mutationCore.eventLines.lines.length, 2);
+    assert.throws(
+      () => recoveryRuntime.validateIncidentCorrectionPreviewV1(spliced),
+      /evidence-incomplete forbids a Repeat Relationship, occurrence, or Governance Event/,
+    );
+  });
+});
+
+test('T005 acyclic permits: a hand-built terminal permit commits nothing against evidence-free surfaces', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const terminal = t005VerifiedTerminal(root);
+    const verifiedState = terminal.verifiedState;
+    // A permit hash is a plain digest, not an authenticator: a caller can build
+    // one without ever asking `issue-lane-permit` for it.
+    const handBuilt = t005Permit({
+      version: 1,
+      kind: 'lane-mutation',
+      origin: 'dude-work',
+      lane: 'lightweight',
+      operation: 'work-set',
+      target: canonicalTarget(TARGET),
+      subjectRunStateHash: sha256(canonicalJson(verifiedState)),
+      governanceIdentity: verifiedState.learningGovernance.governanceIdentity,
+      governancePhase: 'alternative-verified',
+      attemptIdentity: terminal.attemptIdentity,
+      targetMappingHash: terminal.binding.targetMappingHash,
+      lanePrestateHash: terminal.binding.lanePrestateHash,
+      mutationIdentity: sha256(canonicalJson(terminal.terminalMutation)),
+    });
+    const receipt = t005AtomicReceipt(handBuilt, terminal.binding, true);
+
+    // Act
+    const evidenceFree = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: verifiedState,
+      input: terminal.retained([]),
+      permit: handBuilt,
+      receipt,
+    });
+    const backed = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: verifiedState,
+      input: terminal.retained(terminal.attemptEvents),
+      permit: handBuilt,
+      receipt,
+    });
+
+    // Assert
+    recoveryRuntime.validateLaneMutationPermitV1(handBuilt);
+    assert.deepEqual(evidenceFree.inspection.blockers, []);
+    // The commit route rebinds exactly what issuance would have required, so a
+    // permit that skips issuance clears no governed obligation.
+    assert.equal(evidenceFree.transition.committed, false);
+    assert.equal(evidenceFree.transition.reason, 'repeat-not-established');
+    assert.equal(Object.hasOwn(evidenceFree.transition, 'receipt'), false);
+    assert.equal(canonicalJson(evidenceFree.transition.state), canonicalJson(verifiedState));
+    assert.equal(Object.hasOwn(evidenceFree.transition.state, 'learningGovernance'), true);
+    // The exact same permit and receipt commit once the evidence is retained.
+    assert.equal(backed.transition.committed, true);
+    assert.equal(backed.transition.reason, 'lane-receipt-committed');
+    assert.equal(Object.hasOwn(backed.transition.state, 'learningGovernance'), false);
+  });
+});
+
+test('T005 acyclic permits: a Controlled Unresolved End receipt discharges no learning obligation', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const input = () => t004Input(root, flow, flow.learnedEvents);
+    const endedState = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: flow.branchTransition.transition.state,
+      input: input(),
+    }).transition.state;
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const endMutation = {
+      version: 1,
+      lane: 'lightweight',
+      kind: 'controlled-end',
+      reason: 'controlled-unresolved-end',
+      target: canonicalTarget(TARGET),
+      fromGlyph: '~',
+      toGlyph: '~',
+      blocker: { kind: 'unchanged', before: null, after: null },
+      eventLines: { kind: 'none' },
+      ownerLog: { kind: 'none' },
+      snapshotUpdatedAt: T005_TIME,
+    };
+    const endPermit = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state: endedState,
+      input: input(),
+      mutation: endMutation,
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    }).transition.permit;
+
+    // Act
+    const committed = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: endedState,
+      input: input(),
+      permit: endPermit,
+      receipt: t005AtomicReceipt(endPermit, binding, false),
+    });
+
+    // Assert
+    assert.equal(endPermit.governancePhase, 'alternative-inspected');
+    assert.equal(committed.transition.committed, true);
+    assert.equal(committed.transition.reason, 'lane-receipt-committed');
+    // The controlled end has no lifecycle exit: its lane disposition is pending
+    // and its target disposition unchanged, so the record survives byte-identically.
+    assert.equal(Object.hasOwn(committed.transition.state, 'learningGovernance'), true);
+    assert.equal(canonicalJson(committed.transition.state), canonicalJson(endedState));
+    assert.equal(
+      Object.hasOwn(committed.transition.state.learningGovernance, 'controlledEnd'),
+      true,
+    );
+    assert.equal(Object.hasOwn(committed.transition, 'terminalEvidenceIdentity'), false);
+    // The unresolved case is still exactly what the audit route re-derives.
+    const audited = t003Invoke('audit', { state: committed.transition.state, input: input() });
+    assert.equal(audited.audit.derived, true);
+    assert.equal(
+      audited.audit.summary.governanceIdentity,
+      endedState.learningGovernance.governanceIdentity,
+    );
+    assert.equal(audited.audit.summary.unresolvedReason, 'controlled-unresolved-end');
+    assert.equal(audited.audit.summary.controlledEnd.laneDisposition, 'pending');
+    assert.equal(audited.audit.summary.targetDisposition, 'unchanged');
+  });
+});
+
+test('T005 acyclic permits: an ungoverned lane permit reaches its terminal receipt', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ checkOutcome: 'passed' });
+    const input = () => cliInput(t002RetentionInput(root, [], [], [fixture]));
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const state = autonomousState();
+    const blockMutation = {
+      version: 1,
+      lane: 'lightweight',
+      kind: 'task-blocked',
+      reason: 'task-blocked',
+      target: canonicalTarget(TARGET),
+      fromGlyph: '~',
+      toGlyph: '!',
+      blocker: { kind: 'add', before: null, after: 'external dependency is unavailable' },
+      eventLines: { kind: 'none' },
+      ownerLog: { kind: 'none' },
+      snapshotUpdatedAt: T005_TIME,
+    };
+
+    // Act
+    const issued = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state,
+      input: input(),
+      mutation: blockMutation,
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+    const permit = issued.transition.permit;
+    const committed = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state,
+      input: input(),
+      permit,
+      receipt: t005AtomicReceipt(permit, binding, true),
+    });
+
+    // Assert
+    assert.equal(issued.transition.issued, true);
+    assert.equal(permit.governanceIdentity, null);
+    assert.equal(permit.governancePhase, null);
+    assert.equal(permit.attemptIdentity, null);
+    // Nothing is unresolved for an ungoverned permit, so its receipt commits.
+    assert.equal(committed.transition.committed, true);
+    assert.equal(committed.transition.reason, 'lane-receipt-committed');
+    assert.equal(canonicalJson(committed.transition.state), canonicalJson(state));
+    assert.equal(Object.hasOwn(committed.transition.state, 'learningGovernance'), false);
+    assert.equal(Object.hasOwn(committed.transition, 'terminalEvidenceIdentity'), false);
+  });
+});
+
+test('T005 acyclic permits: a verified no-progress exit issues and commits its exact lane mutation', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'approach', 'no-progress');
+    const verifiedState = flow.branchTransition.transition.state;
+    const input = () => t004Input(root, flow, flow.learnedEvents);
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const noProgressMutation = {
+      version: 1,
+      lane: 'lightweight',
+      kind: 'task-blocked',
+      reason: 'no-progress',
+      target: canonicalTarget(TARGET),
+      fromGlyph: '~',
+      toGlyph: '!',
+      blocker: { kind: 'add', before: null, after: 'no-progress: every credible alternative repeats a failed approach' },
+      eventLines: { kind: 'none' },
+      ownerLog: { kind: 'none' },
+      snapshotUpdatedAt: T005_TIME,
+    };
+    const endedState = t003Invoke('transition', {
+      mode: 'controlled-end',
+      state: verifiedState,
+      input: input(),
+    }).transition.state;
+
+    // Act
+    const issued = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state: verifiedState,
+      input: input(),
+      mutation: noProgressMutation,
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+    const permit = issued.transition.permit;
+    const committed = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: verifiedState,
+      input: input(),
+      permit,
+      receipt: t005AtomicReceipt(permit, binding, true),
+    });
+    const afterControlledEnd = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state: endedState,
+      input: input(),
+      mutation: noProgressMutation,
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+
+    // Assert
+    assert.equal(verifiedState.learningGovernance.phase, 'no-progress-verified');
+    assert.equal(issued.transition.issued, true);
+    assert.equal(permit.governancePhase, 'no-progress-verified');
+    assert.equal(permit.attemptIdentity, null);
+    // The no-progress exit blocks the exact task, so unlike a controlled end its
+    // receipt asserts the changed target state and still commits.
+    assert.equal(committed.transition.committed, true);
+    assert.equal(committed.transition.reason, 'lane-receipt-committed');
+    assert.equal(committed.transition.receipt.targetStateChanged, true);
+    assert.equal(Object.hasOwn(committed.transition.state, 'learningGovernance'), false);
+    validateRunState(committed.transition.state);
+    // A controlled end owns the same phase and authorizes no fresh block.
+    assert.equal(afterControlledEnd.transition.issued, false);
+    assert.equal(afterControlledEnd.transition.reason, 'learning-phase-mismatch');
+  });
+});
+
+test('T005 acyclic permits: an alternative-verified record with unbacked identities issues no terminal permit', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const terminal = t005VerifiedTerminal(root);
+    /** @param {string} field @param {string} value */
+    const drift = (field, value) => {
+      const state = clone(terminal.verifiedState);
+      state.learningGovernance[field] = value;
+      // A self-consistent RunState: nothing in the record itself objects.
+      validateRunState(state);
+      return state;
+    };
+    const unbackedAlternative = drift('selectedAlternativeIdentity', t005Hash('unbacked-alternative'));
+    const unbackedCheck = drift('discriminatingCheckIdentity', t005Hash('unbacked-check'));
+    const unbackedAttempt = drift('authorizedAttemptIdentity', t005Hash('unbacked-attempt'));
+    /** @param {Record<string, unknown>} state */
+    const issue = (state) => t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state,
+      input: terminal.retained(terminal.attemptEvents),
+      mutation: terminal.terminalMutation,
+      lanePrestate: terminal.binding.lanePrestate,
+      targetMapping: terminal.binding.targetMapping,
+    });
+
+    // Act
+    const backed = issue(terminal.verifiedState);
+    const alternative = issue(unbackedAlternative);
+    const check = issue(unbackedCheck);
+    const attempt = issue(unbackedAttempt);
+
+    // Assert
+    assert.equal(backed.transition.issued, true);
+    assert.equal(backed.transition.permit.governancePhase, 'alternative-verified');
+    // The retained learning review names the alternative and its discriminating
+    // check; the stored record never asserts either on its own.
+    assert.equal(alternative.transition.reason, 'alternative-selection-mismatch');
+    assert.equal(check.transition.reason, 'alternative-selection-mismatch');
+    // Completion authority is an executed attempt retained as an accepted occurrence.
+    assert.equal(attempt.transition.reason, 'occurrence-retention-incomplete');
+    for (const [refused, before] of [
+      [alternative, unbackedAlternative],
+      [check, unbackedCheck],
+      [attempt, unbackedAttempt],
+    ]) {
+      assert.deepEqual(refused.inspection.blockers, []);
+      assert.equal(refused.transition.issued, false);
+      assert.equal(Object.hasOwn(refused.transition, 'permit'), false);
+      assert.equal(canonicalJson(refused.transition.state), canonicalJson(before));
+    }
+  });
+});
+
+test('T005 acyclic permits: a hand-built terminal permit releases nothing from a non-exit governance phase', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const terminal = t005VerifiedTerminal(root);
+    const flow = terminal.flow;
+    // Every governed phase the acyclic order passes through before the two
+    // verified exits. A caller holds each state, so it copies the governance
+    // identity and phase straight out of the state it already has.
+    const nonExit = [
+      ['reviewed', flow.learned.learning.state],
+      ['projected', flow.learningVerified.transition.state],
+      ['alternative-inspected', flow.branchTransition.transition.state],
+      ['alternative-authorized', terminal.authorizedState],
+    ];
+    /** @param {Record<string, unknown>} state */
+    const handBuilt = (state) => t005Permit({
+      version: 1,
+      kind: 'lane-mutation',
+      origin: 'dude-work',
+      lane: 'lightweight',
+      operation: 'work-set',
+      target: canonicalTarget(TARGET),
+      subjectRunStateHash: sha256(canonicalJson(state)),
+      governanceIdentity: state.learningGovernance.governanceIdentity,
+      governancePhase: state.learningGovernance.phase,
+      attemptIdentity: terminal.attemptIdentity,
+      targetMappingHash: terminal.binding.targetMappingHash,
+      lanePrestateHash: terminal.binding.lanePrestateHash,
+      mutationIdentity: sha256(canonicalJson(terminal.terminalMutation)),
+    });
+
+    // Act
+    const refused = nonExit.map(([phase, state]) => {
+      const permit = handBuilt(state);
+      return { phase, state, permit, result: t003Invoke('transition', {
+        mode: 'commit-lane-receipt',
+        state,
+        input: terminal.retained(terminal.attemptEvents),
+        permit,
+        receipt: t005AtomicReceipt(permit, terminal.binding, true),
+      }) };
+    });
+
+    // Assert
+    for (const row of refused) {
+      assert.equal(row.state.learningGovernance.phase, row.phase, row.phase);
+      recoveryRuntime.validateLaneMutationPermitV1(row.permit);
+      assert.deepEqual(row.result.inspection.blockers, [], row.phase);
+      // The lifecycle exits only from `alternative-verified` and
+      // `no-progress-verified`, so no mid-cycle phase releases the obligation.
+      assert.equal(row.result.transition.committed, false, row.phase);
+      assert.equal(row.result.transition.reason, 'learning-phase-mismatch', row.phase);
+      assert.equal(Object.hasOwn(row.result.transition, 'receipt'), false, row.phase);
+      assert.equal(Object.hasOwn(row.result.transition, 'terminalEvidenceIdentity'), false, row.phase);
+      assert.equal(canonicalJson(row.result.transition.state), canonicalJson(row.state), row.phase);
+      assert.equal(Object.hasOwn(row.result.transition.state, 'learningGovernance'), true, row.phase);
+    }
+    // The exact same hand-built shape still commits from the verified exit.
+    const exitPermit = handBuilt(terminal.verifiedState);
+    const exit = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: terminal.verifiedState,
+      input: terminal.retained(terminal.attemptEvents),
+      permit: exitPermit,
+      receipt: t005AtomicReceipt(exitPermit, terminal.binding, true),
+    });
+    assert.equal(terminal.verifiedState.learningGovernance.phase, 'alternative-verified');
+    assert.equal(exit.transition.committed, true);
+    assert.equal(exit.transition.reason, 'lane-receipt-committed');
+    assert.equal(Object.hasOwn(exit.transition.state, 'learningGovernance'), false);
+  });
+});
+
+test('T005 acyclic permits: an alternative-verified record with unbacked identities commits no terminal receipt', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const terminal = t005VerifiedTerminal(root);
+    /** @param {string} field @param {string} value */
+    const drift = (field, value) => {
+      const state = clone(terminal.verifiedState);
+      state.learningGovernance[field] = value;
+      // A self-consistent RunState: nothing in the record itself objects.
+      validateRunState(state);
+      return state;
+    };
+    const unbackedAlternative = drift('selectedAlternativeIdentity', t005Hash('commit-unbacked-alternative'));
+    const unbackedCheck = drift('discriminatingCheckIdentity', t005Hash('commit-unbacked-check'));
+    const unbackedAttempt = drift('authorizedAttemptIdentity', t005Hash('commit-unbacked-attempt'));
+    /** @param {Record<string, unknown>} state */
+    const commit = (state) => {
+      const permit = t005Permit({
+        version: 1,
+        kind: 'lane-mutation',
+        origin: 'dude-work',
+        lane: 'lightweight',
+        operation: 'work-set',
+        target: canonicalTarget(TARGET),
+        subjectRunStateHash: sha256(canonicalJson(state)),
+        governanceIdentity: state.learningGovernance.governanceIdentity,
+        governancePhase: state.learningGovernance.phase,
+        attemptIdentity: state.learningGovernance.authorizedAttemptIdentity,
+        targetMappingHash: terminal.binding.targetMappingHash,
+        lanePrestateHash: terminal.binding.lanePrestateHash,
+        mutationIdentity: sha256(canonicalJson(terminal.terminalMutation)),
+      });
+      return t003Invoke('transition', {
+        mode: 'commit-lane-receipt',
+        state,
+        input: terminal.retained(terminal.attemptEvents),
+        permit,
+        receipt: t005AtomicReceipt(permit, terminal.binding, true),
+      });
+    };
+    /** @param {Record<string, unknown>} state */
+    const issue = (state) => t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state,
+      input: terminal.retained(terminal.attemptEvents),
+      mutation: terminal.terminalMutation,
+      lanePrestate: terminal.binding.lanePrestate,
+      targetMapping: terminal.binding.targetMapping,
+    });
+
+    // Act
+    const backed = commit(terminal.verifiedState);
+    const alternative = commit(unbackedAlternative);
+    const check = commit(unbackedCheck);
+    const attempt = commit(unbackedAttempt);
+
+    // Assert
+    // The exact same permit shape commits against the backed record.
+    assert.equal(backed.transition.committed, true);
+    assert.equal(backed.transition.reason, 'lane-receipt-committed');
+    assert.equal(Object.hasOwn(backed.transition.state, 'learningGovernance'), false);
+    // A permit is a plain digest, so the commit rebinds the retained review and
+    // the retained accepted occurrence exactly as issuance does.
+    assert.equal(alternative.transition.reason, 'alternative-selection-mismatch');
+    assert.equal(check.transition.reason, 'alternative-selection-mismatch');
+    assert.equal(attempt.transition.reason, 'occurrence-retention-incomplete');
+    for (const [refused, before] of [
+      [alternative, unbackedAlternative],
+      [check, unbackedCheck],
+      [attempt, unbackedAttempt],
+    ]) {
+      assert.deepEqual(refused.inspection.blockers, []);
+      assert.equal(refused.transition.committed, false);
+      assert.equal(Object.hasOwn(refused.transition, 'receipt'), false);
+      assert.equal(Object.hasOwn(refused.transition, 'terminalEvidenceIdentity'), false);
+      assert.equal(canonicalJson(refused.transition.state), canonicalJson(before));
+      assert.equal(Object.hasOwn(refused.transition.state, 'learningGovernance'), true);
+    }
+    // Issuance and the releasing commit refuse the same drift for the same reason.
+    for (const [refused, state] of [
+      [alternative, unbackedAlternative],
+      [check, unbackedCheck],
+      [attempt, unbackedAttempt],
+    ]) {
+      assert.equal(issue(state).transition.reason, refused.transition.reason);
+    }
+  });
+});
+
+test('T005 incident contracts: a Feature 007 owner idea under another path refuses in the closed set', () => {
+  withIncidentWorkspace((root) => {
+    // Arrange: the exact same defined owner package, resolved by `spec_path:`
+    // from a differently named idea file.
+    const request = t005AcceptedEvidence(root);
+    const renamedIdeaPath = '.dude/ideas/renamed-technical-docs-pack-remediation.md';
+    fs.renameSync(path.join(root, F7_IDEA_PATH), path.join(root, renamedIdeaPath));
+    const input = () => cliInput(t005IncidentInput(root, [], []));
+
+    // Act
+    const inspected = t003Invoke('inspect', { trigger: 'explicit-inspection', input: input() });
+    const corrected = t003Invoke('transition', {
+      mode: 'incident-correction',
+      state: autonomousState(),
+      input: input(),
+      incident: {
+        ...request,
+        captures: {
+          ...request.captures,
+          tasks: recoveryRuntime.capturedBytesV1(fs.readFileSync(path.join(root, F7_TASKS_PATH))),
+        },
+      },
+    });
+
+    // Assert
+    const owner = inspected.inspection.items.find((item) => item.source === 'owner-log');
+    assert.equal(owner.status, 'present');
+    assert.equal(JSON.parse(owner.text).ideaPath, renamedIdeaPath);
+    assert.deepEqual(inspected.inspection.blockers, []);
+    // A freshly resolved owner the incident contracts cannot name is a closed
+    // refusal, not a throw.
+    assert.equal(corrected.transition.prepared, false);
+    assert.equal(corrected.transition.reason, 'incident-correction-not-authorized');
+    assert.equal(Object.hasOwn(corrected.transition, 'preview'), false);
+    assert.deepEqual(corrected.transition.state, autonomousState());
+  });
+});
+
+test('T005 incident contracts: an exact-evidence preview binds its lines, owner line, snapshot, and rollback', () => {
+  withIncidentWorkspace((root) => {
+    // Arrange
+    const evidence = t005IncidentEvidence(root);
+    const request = t005AcceptedEvidence(root);
+    const preview = t003Invoke('transition', {
+      mode: 'incident-correction',
+      state: autonomousState(),
+      input: cliInput(t005IncidentInput(root, evidence.events, evidence.fixtures)),
+      incident: {
+        ...request,
+        captures: {
+          ...request.captures,
+          tasks: recoveryRuntime.capturedBytesV1(fs.readFileSync(path.join(root, F7_TASKS_PATH))),
+        },
+      },
+    }).transition.preview;
+    /** @param {(body: Record<string, unknown>) => void} mutate */
+    const reidentify = (mutate) => {
+      const body = clone(preview);
+      delete body.previewIdentity;
+      mutate(body);
+      return { ...body, previewIdentity: sha256(canonicalJson(body)) };
+    };
+
+    // Act: every mutation stays self-consistent, so only the derived bindings
+    // can refuse it.
+    const droppedGovernanceLine = reidentify((body) => {
+      body.mutationCore.eventLines.lines.splice(2, 1);
+    });
+    const reorderedFindingLines = reidentify((body) => {
+      const lines = body.mutationCore.eventLines.lines;
+      [lines[0], lines[1]] = [lines[1], lines[0]];
+    });
+    const foreignReviewEnvelopes = reidentify((body) => {
+      body.evidence.reviewEnvelopeIdentities = [t005Hash('foreign-review-a'), t005Hash('foreign-review-b')];
+    });
+    const driftedOwnerLine = reidentify((body) => {
+      body.mutationCore.ownerLog.exactLines = ['- an unrelated coordinator note'];
+    });
+    const driftedOwnerRevision = reidentify((body) => {
+      body.mutationCore.ownerLog.expectedOwnerHash = t005Hash('other-owner-revision');
+    });
+    const driftedSnapshot = reidentify((body) => {
+      body.mutationCore.snapshotUpdatedAt = '2026-02-02T00:00:00Z';
+    });
+    const foreignRollbackBytes = reidentify((body) => {
+      const captures = body.rollback.captures;
+      captures[1] = {
+        path: captures[1].path,
+        bytes: recoveryRuntime.capturedBytesV1(Buffer.from('a different tasks revision\n')),
+      };
+      const rollbackBody = { version: body.rollback.version, captures };
+      body.rollback = { ...rollbackBody, rollbackIdentity: sha256(canonicalJson(rollbackBody)) };
+    });
+
+    // Assert
+    recoveryRuntime.validateIncidentCorrectionPreviewV1(preview);
+    assert.equal(preview.mutationCore.eventLines.lines.length, 4);
+    for (const [mutated, pattern] of [
+      [droppedGovernanceLine, /must append the exact ordered finding pair, Governance Event, and Incident Supersession Event/],
+      [reorderedFindingLines, /must append the exact ordered finding pair, Governance Event, and Incident Supersession Event/],
+      [foreignReviewEnvelopes, /must be the exact retained review envelopes of those occurrences/],
+      [driftedOwnerLine, /must be the exact intent-bound owner line/],
+      [driftedOwnerRevision, /must be the exact prestate owner revision/],
+      [driftedSnapshot, /must equal the intent operation time/],
+      [foreignRollbackBytes, /must capture the exact prestate revision it restores/],
+    ]) {
+      assert.equal(
+        /** @type {Record<string, unknown>} */ (mutated).previewIdentity,
+        sha256(canonicalJson(Object.fromEntries(
+          Object.entries(/** @type {Record<string, unknown>} */ (mutated)).filter(([key]) => key !== 'previewIdentity'),
+        ))),
+      );
+      assert.throws(
+        () => recoveryRuntime.validateIncidentCorrectionPreviewV1(mutated),
+        /** @type {RegExp} */ (pattern),
+      );
+    }
+  });
+});

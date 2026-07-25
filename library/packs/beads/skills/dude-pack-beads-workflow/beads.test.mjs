@@ -1980,3 +1980,1427 @@ test('beads.mjs mirror --write rejects symlinked canonical targets before invent
     }
   }
 });
+
+// --- T006 tracked lane trust boundary ----------------------------------------
+//
+// The closed `work-project`, `work-transition`, `work-prove-poststate`, and
+// `work-reconcile-owner` integration matrix. Every refusal case asserts an
+// undispatched, byte-unchanged authority AND that the returned evidence hash
+// equals an independently recomputed fresh observation.
+
+const TRACKED_SPEC = '.dude/specs/009-tracked/spec.md';
+const TRACKED_IDEA = '.dude/ideas/tracked.md';
+const TRACKED_ISSUE_ID = 'bd-101';
+const TRACKED_TASK_KEY = 'T001@74726b64';
+const TRACKED_TARGET = { specPath: TRACKED_SPEC, lane: 'tracked', issueId: TRACKED_ISSUE_ID };
+const TRACKED_RUN_STATE = {
+  policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, parallel: 1, mode: 'autonomous' },
+  overallUsed: 0,
+  recoveryUsed: [],
+  pending: [],
+  completed: [],
+};
+
+/** @param {Buffer|string} value */
+function trackedCapture(value) {
+  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
+  return { base64: bytes.toString('base64'), sha256: sha256(bytes), byteLength: bytes.byteLength };
+}
+
+/** @param {Buffer|string} value */
+function trackedDescriptor(value) {
+  const captured = trackedCapture(value);
+  return { sha256: captured.sha256, byteLength: captured.byteLength };
+}
+
+function trackedIssueFixture(overrides = {}) {
+  return {
+    id: TRACKED_ISSUE_ID,
+    title: `${TRACKED_TASK_KEY} Tracked unit`,
+    description: `spec: ${TRACKED_SPEC}\nTask: ${TRACKED_TASK_KEY} Tracked unit`,
+    status: 'open',
+    priority: 2,
+    issue_type: 'task',
+    notes: '',
+    updated_at: '2026-07-25T00:00:00Z',
+    ...overrides,
+  };
+}
+
+function trackedOtherIssue() {
+  return {
+    id: 'bd-102',
+    title: 'T002@6f746865 Other unit',
+    description: `spec: ${TRACKED_SPEC}\nTask: T002@6f746865 Other unit`,
+    status: 'open',
+    priority: 2,
+    issue_type: 'task',
+    notes: '',
+    updated_at: '2026-07-25T00:00:00Z',
+  };
+}
+
+/** @param {string} hash @param {Record<string, unknown>} issue */
+function trackedHistoryEvent(hash, issue) {
+  return { CommitHash: hash, Committer: 'fixture', CommitDate: '2026-07-25T00:00:00Z', Issue: { ...issue } };
+}
+
+/** Mirror the projector's authorized description effect from outside. */
+function trackedDescriptionWith(description, blocker) {
+  if (blocker.kind === 'unchanged') return description;
+  const lines = description.split('\n');
+  const index = lines.findIndex((line) => /^Blocked-by: /.test(line));
+  if (blocker.kind === 'add') return `${description}\nBlocked-by: ${blocker.after}`;
+  if (blocker.kind === 'remove') return lines.filter((_, position) => position !== index).join('\n');
+  lines[index] = `Blocked-by: ${blocker.after}`;
+  return lines.join('\n');
+}
+
+/** Mirror the projector's authorized notes effect from outside. */
+function trackedNotesWith(notes, eventLines) {
+  if (eventLines.kind !== 'append-exact') return notes;
+  const current = typeof notes === 'string' ? notes : '';
+  let next = current === '' || current.endsWith('\n') ? current : `${current}\n`;
+  for (const line of eventLines.lines) {
+    if (!current.split('\n').includes(line.exactLine)) next += `${line.exactLine}\n`;
+  }
+  return next;
+}
+
+/** An in-memory Beads authority the wrapper drives through its injected port. */
+function trackedStore(options = {}) {
+  const store = {
+    issue: trackedIssueFixture(options.issue),
+    others: [trackedOtherIssue()],
+    history: /** @type {any[]} */ ([]),
+    dispatches: 0,
+    driftAfterDispatch: options.driftAfterDispatch ?? null,
+    externalDrift: options.externalDrift ?? null,
+  };
+  store.history = [trackedHistoryEvent('c0', store.issue)];
+  store.capture = (kind) => {
+    if (kind === 'list') return JSON.stringify([...store.others, store.issue]);
+    if (kind === 'detail') return JSON.stringify([store.issue]);
+    return JSON.stringify(store.history);
+  };
+  store.dispatch = (target, mutation) => {
+    store.dispatches += 1;
+    const next = {
+      ...store.issue,
+      status: mutation.toStatus,
+      description: trackedDescriptionWith(store.issue.description, mutation.blocker),
+      notes: trackedNotesWith(store.issue.notes, mutation.eventLines),
+      updated_at: '2026-07-25T06:00:00Z',
+    };
+    const result = JSON.stringify([next]);
+    store.issue = store.driftAfterDispatch ? { ...next, ...store.driftAfterDispatch } : next;
+    store.history = [trackedHistoryEvent('c1', store.issue), ...store.history];
+    return result;
+  };
+  store.ports = { capture: (kind) => store.capture(kind), dispatch: (t, m) => store.dispatch(t, m) };
+  return store;
+}
+
+/** @param {string} root @param {any} store */
+function trackedObservation(root, store) {
+  const ownerAbsolute = path.join(root, ...TRACKED_IDEA.split('/'));
+  return sha256(canonicalJson({
+    detail: trackedDescriptor(store.capture('detail')),
+    history: trackedDescriptor(store.capture('history')),
+    list: trackedDescriptor(store.capture('list')),
+    owner: fs.existsSync(ownerAbsolute) ? trackedDescriptor(fs.readFileSync(ownerAbsolute)) : null,
+  }));
+}
+
+/** @param {string} seed */
+function trackedEvent(seed) {
+  const body = { type: 'tracked-boundary-probe', version: 1, seed };
+  return { ...body, eventHash: sha256(canonicalJson(body)) };
+}
+
+/** @param {Record<string, unknown>} event */
+function trackedEventLine(event) {
+  return { eventHash: event.eventHash, exactLine: `- dude-run-event: ${canonicalJson(event)}`, terminator: 'LF' };
+}
+
+/** @param {Record<string, unknown>[]} events */
+function trackedEventEffect(events) {
+  return { kind: 'append-exact', lines: events.map(trackedEventLine), appendIfAbsent: true };
+}
+
+/** @param {string} root @param {string[]} lines */
+function trackedOwnerAppend(root, lines) {
+  return {
+    kind: 'append-exact',
+    ownerPath: TRACKED_IDEA,
+    expectedOwnerHash: sha256(fs.readFileSync(path.join(root, ...TRACKED_IDEA.split('/')))),
+    exactLines: lines,
+    terminator: 'LF',
+    appendIfAbsent: true,
+  };
+}
+
+/** @param {Record<string, unknown>} overrides */
+function trackedMutation(overrides = {}) {
+  return {
+    version: 1,
+    lane: 'tracked',
+    kind: 'claim',
+    reason: 'initial-claim',
+    target: TRACKED_TARGET,
+    fromStatus: 'open',
+    toStatus: 'in_progress',
+    blocker: { kind: 'unchanged', before: null, after: null },
+    eventLines: trackedEventEffect([trackedEvent('claim')]),
+    ownerLog: { kind: 'none' },
+    ...overrides,
+  };
+}
+
+/** @param {Record<string, unknown>} overrides */
+function trackedProjectionMutation(overrides = {}) {
+  return trackedMutation({
+    kind: 'append-event',
+    reason: 'event-projection',
+    fromStatus: 'open',
+    toStatus: 'open',
+    eventLines: trackedEventEffect([trackedEvent('tracked-projection')]),
+    ...overrides,
+  });
+}
+
+/**
+ * Build one complete valid tracked request from the CURRENT authority state.
+ * @param {string} root @param {any} store
+ * @param {{operation?:string,mutation?:any,state?:any,originalCaptures?:any,lanePrestateHash?:string,ownerBytes?:Buffer,extra?:Record<string,unknown>}} [options]
+ */
+function trackedRequest(root, store, options = {}) {
+  const operation = options.operation ?? 'work-transition';
+  const mutation = options.mutation ?? trackedMutation();
+  const state = options.state ?? TRACKED_RUN_STATE;
+  const ownerBytes = options.ownerBytes ?? fs.readFileSync(path.join(root, ...TRACKED_IDEA.split('/')));
+  const ownerCapture = trackedCapture(ownerBytes);
+  const ownerBindingHash = sha256(canonicalJson({
+    ideaPath: TRACKED_IDEA,
+    specPath: TRACKED_SPEC,
+    ownerCapture: { sha256: ownerCapture.sha256, byteLength: ownerCapture.byteLength },
+  }));
+  const live = {
+    list: store.capture('list'),
+    detail: store.capture('detail'),
+    history: store.capture('history'),
+  };
+  const descriptors = options.originalCaptures ?? {
+    list: trackedDescriptor(live.list),
+    detail: trackedDescriptor(live.detail),
+    history: trackedDescriptor(live.history),
+  };
+  const mapping = {
+    version: 1,
+    lane: 'tracked',
+    target: TRACKED_TARGET,
+    ownerBindingHash,
+    taskKey: TRACKED_TASK_KEY,
+    listDescriptor: descriptors.list,
+    detailDescriptor: descriptors.detail,
+    historyDescriptor: descriptors.history,
+  };
+  const prestate = {
+    version: 1,
+    lane: 'tracked',
+    target: TRACKED_TARGET,
+    taskKey: TRACKED_TASK_KEY,
+    status: JSON.parse(live.detail)[0].status,
+    blocker: (/^Blocked-by: (.*)$/m.exec(JSON.parse(live.detail)[0].description) || [null, null])[1],
+    listDescriptor: descriptors.list,
+    detailDescriptor: descriptors.detail,
+    historyDescriptor: descriptors.history,
+    ownerDescriptor: { sha256: ownerCapture.sha256, byteLength: ownerCapture.byteLength },
+  };
+  const bound = {
+    target: TRACKED_TARGET,
+    subjectRunStateHash: sha256(canonicalJson(state)),
+    targetMappingHash: sha256(canonicalJson(mapping)),
+    lanePrestateHash: options.lanePrestateHash ?? sha256(canonicalJson(prestate)),
+    mutationIdentity: sha256(canonicalJson(mutation)),
+  };
+  const permitBody = operation === 'work-project'
+    ? {
+      version: 1,
+      kind: 'lane-projection',
+      origin: 'dude-work',
+      lane: 'tracked',
+      ...bound,
+      batchIdentity: sha256('tracked-batch'),
+      eventHash: mutation.eventLines.lines[0].eventHash,
+    }
+    : {
+      version: 1,
+      kind: 'lane-mutation',
+      origin: 'dude-work',
+      lane: 'tracked',
+      operation: 'work-transition',
+      ...bound,
+      governanceIdentity: null,
+      governancePhase: null,
+      attemptIdentity: null,
+    };
+  const request = {
+    version: 1,
+    operation,
+    root,
+    owner: { ideaPath: TRACKED_IDEA, specPath: TRACKED_SPEC, ownerCapture, ownerBindingHash },
+    target: TRACKED_TARGET,
+    state,
+    permit: { ...permitBody, permitHash: sha256(canonicalJson(permitBody)) },
+    mapping,
+  };
+  if (operation === 'work-project' || operation === 'work-transition') {
+    Object.assign(request, {
+      expected: {
+        list: trackedCapture(live.list),
+        detail: trackedCapture(live.detail),
+        history: trackedCapture(live.history),
+      },
+      mutation,
+    });
+  }
+  return { ...request, ...(options.extra ?? {}) };
+}
+
+/** Stage the installed layout plus a tracked feature owner under a canonical root. */
+function stageTracked(ideaOverrides = {}) {
+  const fixture = stage();
+  writeFixture(fixture.root, TRACKED_SPEC, '# Spec Tracked\n');
+  writeFixture(
+    fixture.root,
+    TRACKED_IDEA,
+    `---\nstatus: defined\nspec_path: ${ideaOverrides.specPath ?? TRACKED_SPEC}\n---\n\n## Idea\n\nTracked lane.\n\n## Coordinator Log\n\n- Existing entry.\n`,
+  );
+  return { ...fixture, root: fs.realpathSync(fixture.root) };
+}
+
+/** The sentinel the boundary reports when no capture was acquired. */
+const TRACKED_UNOBSERVED_HASH = sha256(canonicalJson({ detail: null, history: null, list: null, owner: null }));
+
+/**
+ * @param {any} beads @param {string} root @param {any} store @param {unknown} request
+ * @param {string} reason @param {string} label @param {{observable?:boolean}} [options]
+ */
+function assertTrackedRefusal(beads, root, store, request, reason, label, options = {}) {
+  const before = { list: store.capture('list'), detail: store.capture('detail'), history: store.capture('history') };
+  const dispatchesBefore = store.dispatches;
+  const ownerBefore = fs.readFileSync(path.join(root, ...TRACKED_IDEA.split('/')));
+  const result = beads.applyTrackedWorkRequest(request, store.ports);
+  assert.equal(result.ok, false, `${label}: must refuse`);
+  assert.equal(result.phase, 'refused', `${label}: phase`);
+  assert.equal(result.reason, reason, `${label}: reason`);
+  assert.deepEqual(
+    Object.keys(result).sort(),
+    ['ok', 'phase', 'reason', 'unchangedPrestateHash'],
+    `${label}: closed shape`,
+  );
+  assert.match(result.unchangedPrestateHash, /^[0-9a-f]{64}$/, `${label}: evidence hash shape`);
+  assert.equal(
+    result.unchangedPrestateHash,
+    options.observable === false ? TRACKED_UNOBSERVED_HASH : trackedObservation(root, store),
+    `${label}: fresh unchanged evidence`,
+  );
+  assert.equal(store.dispatches, dispatchesBefore, `${label}: must not dispatch`);
+  for (const kind of ['list', 'detail', 'history']) {
+    assert.equal(store.capture(kind), before[kind], `${label}: tracked ${kind} authority unchanged`);
+  }
+  assert.ok(
+    fs.readFileSync(path.join(root, ...TRACKED_IDEA.split('/'))).equals(ownerBefore),
+    `${label}: owner bytes unchanged`,
+  );
+  return result;
+}
+
+test('T006 tracked work-transition commits a lane-plus-owner composite receipt after fresh poststate proof', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore();
+    const mutation = trackedMutation({
+      ownerLog: trackedOwnerAppend(fixture.root, ['- 2026-07-25T12:00:00Z - tracked claim']),
+    });
+    const request = trackedRequest(fixture.root, store, { mutation });
+    const result = beads.applyTrackedWorkRequest(request, store.ports);
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.phase, 'committed');
+    assert.equal(store.dispatches, 1, 'exactly one dispatch');
+    assert.deepEqual(Object.keys(result.receipt).sort(), [
+      'lane', 'laneReceiptHash', 'mutationIdentity', 'ownerLogReceiptHash', 'receiptHash', 'version',
+    ], 'only a composite receipt is success');
+    const { receiptHash, ...body } = result.receipt;
+    assert.equal(receiptHash, sha256(canonicalJson(body)), 'composite receipt hash binds its body');
+    assert.equal(result.receipt.mutationIdentity, request.permit.mutationIdentity);
+    assert.equal(JSON.parse(store.capture('detail'))[0].status, 'in_progress', 'authorized status applied');
+    assert.ok(
+      JSON.parse(store.capture('detail'))[0].notes.includes(mutation.eventLines.lines[0].exactLine),
+      'exact LF event record on the tracked lane surface',
+    );
+    const ownerText = fs.readFileSync(path.join(fixture.root, ...TRACKED_IDEA.split('/')), 'utf8');
+    assert.ok(ownerText.endsWith('- 2026-07-25T12:00:00Z - tracked claim\n'), 'owner line appended');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('T006 tracked work-project appends exactly one permitted event and refuses its replay', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore();
+    const mutation = trackedProjectionMutation();
+    const result = beads.applyTrackedWorkRequest(
+      trackedRequest(fixture.root, store, { operation: 'work-project', mutation }),
+      store.ports,
+    );
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(JSON.parse(store.capture('detail'))[0].status, 'open', 'projection never changes status');
+    assert.equal(
+      JSON.parse(store.capture('detail'))[0].notes,
+      `${mutation.eventLines.lines[0].exactLine}\n`,
+      'exactly one appended LF record',
+    );
+
+    const replay = trackedRequest(fixture.root, store, { operation: 'work-project', mutation });
+    assertTrackedRefusal(beads, fixture.root, store, replay, 'permit-replayed', 'replayed tracked projection');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('T006 tracked boundary rejects unknown, omitted, and caller-authored fields before dispatch', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore();
+    const base = () => trackedRequest(fixture.root, store);
+    assertTrackedRefusal(beads, fixture.root, store, { ...base(), command: 'bd update bd-101 --status closed' },
+      'unknown-field', 'caller command string', { observable: false });
+    assertTrackedRefusal(beads, fixture.root, store, { ...base(), autoResolve: true },
+      'unknown-field', 'free-form governance flag', { observable: false });
+    const missing = base();
+    delete missing.expected;
+    assertTrackedRefusal(beads, fixture.root, store, missing, 'invalid-request-shape', 'omitted expected captures', { observable: false });
+    assertTrackedRefusal(beads, fixture.root, store, { ...base(), version: 2 }, 'invalid-request-shape', 'wrong version', { observable: false });
+    const extraMutationField = base();
+    extraMutationField.mutation = { ...extraMutationField.mutation, snapshotUpdatedAt: '2026-07-25T12:00:00Z' };
+    assertTrackedRefusal(beads, fixture.root, store, extraMutationField, 'unknown-field', 'Lightweight-only mutation field');
+    for (const garbage of [null, 'work-transition', 42, [], { operation: 'work-transition' }]) {
+      const result = beads.applyTrackedWorkRequest(garbage, store.ports);
+      assert.equal(result.ok, false);
+      assert.equal(result.phase, 'refused');
+      assert.match(result.unchangedPrestateHash, /^[0-9a-f]{64}$/, 'closed fail response for garbage input');
+    }
+    assert.equal(store.dispatches, 0, 'no dispatch from any malformed envelope');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('T006 tracked boundary rejects stale captures, forged descriptors, and mismapped issues', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore();
+
+    const stale = trackedRequest(fixture.root, store);
+    stale.expected = { ...stale.expected, detail: trackedCapture('[]') };
+    assertTrackedRefusal(beads, fixture.root, store, stale, 'expected-capture-mismatch', 'stale expected detail');
+
+    const forgedMapping = trackedRequest(fixture.root, store);
+    forgedMapping.mapping = { ...forgedMapping.mapping, historyDescriptor: trackedDescriptor('[]') };
+    assertTrackedRefusal(beads, fixture.root, store, forgedMapping, 'mapping-mismatch',
+      'mapping descriptor detached from the real capture');
+
+    // D-4: a mapping whose permit was rebuilt over the forged descriptors is
+    // internally consistent, so only comparison against the freshly reacquired
+    // captures can reject it.
+    assertTrackedRefusal(beads, fixture.root, store, trackedRequest(fixture.root, store, {
+      originalCaptures: {
+        list: trackedDescriptor('[]'),
+        detail: trackedDescriptor('[]'),
+        history: trackedDescriptor('[]'),
+      },
+    }), 'mapping-mismatch', 'self-consistent mapping and permit over a caller-chosen targetMappingHash');
+
+    const forgedTaskKey = trackedRequest(fixture.root, store);
+    forgedTaskKey.mapping = { ...forgedTaskKey.mapping, taskKey: 'T999@6f746865' };
+    assertTrackedRefusal(beads, fixture.root, store, forgedTaskKey, 'mapping-mismatch', 'durable key that is not the issue mapping');
+
+    // D-4: rebuilding the permit over the forged durable key makes the whole
+    // envelope self-consistent, so only the key re-derived from the fresh
+    // exact-feature inventory can reject it.
+    const selfConsistentKey = trackedRequest(fixture.root, store);
+    selfConsistentKey.mapping = { ...selfConsistentKey.mapping, taskKey: 'T999@6f746865' };
+    const keyPermitBody = { ...selfConsistentKey.permit };
+    delete keyPermitBody.permitHash;
+    keyPermitBody.targetMappingHash = sha256(canonicalJson(selfConsistentKey.mapping));
+    selfConsistentKey.permit = { ...keyPermitBody, permitHash: sha256(canonicalJson(keyPermitBody)) };
+    assertTrackedRefusal(beads, fixture.root, store, selfConsistentKey, 'mapping-mismatch',
+      'self-consistent mapping and permit over a caller-chosen durable task key');
+
+    const forgedOwner = trackedRequest(fixture.root, store);
+    forgedOwner.owner = { ...forgedOwner.owner, ownerBindingHash: sha256('forged binding') };
+    assertTrackedRefusal(beads, fixture.root, store, forgedOwner, 'owner-resolution-failed', 'forged owner binding hash', { observable: false });
+
+    const ambiguous = trackedStore();
+    ambiguous.others = [{ ...trackedOtherIssue(), id: 'bd-103', title: `${TRACKED_TASK_KEY} duplicate`, description: `spec: ${TRACKED_SPEC}\nTask: ${TRACKED_TASK_KEY} duplicate` }];
+    assertTrackedRefusal(beads, fixture.root, ambiguous, trackedRequest(fixture.root, ambiguous),
+      'mapping-ambiguous', 'two issues claiming one durable task key');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('T006 tracked boundary rejects hand-built, transferred, and mismatched permits before dispatch', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore();
+
+    const forgedPrestate = trackedRequest(fixture.root, store, { lanePrestateHash: sha256('chosen prestate') });
+    assertTrackedRefusal(beads, fixture.root, store, forgedPrestate, 'lane-prestate-mismatch',
+      'hand-built permit over a caller-chosen prestate');
+
+    const tampered = trackedRequest(fixture.root, store);
+    tampered.permit = { ...tampered.permit, permitHash: sha256('nope') };
+    assertTrackedRefusal(beads, fixture.root, store, tampered, 'permit-hash-mismatch', 'permit hash that does not bind its body');
+
+    const transferred = trackedRequest(fixture.root, store);
+    const transferredBody = { ...transferred.permit };
+    delete transferredBody.permitHash;
+    transferredBody.target = { specPath: TRACKED_SPEC, lane: 'tracked', issueId: 'bd-102' };
+    transferred.permit = { ...transferredBody, permitHash: sha256(canonicalJson(transferredBody)) };
+    assertTrackedRefusal(beads, fixture.root, store, transferred, 'target-mismatch', 'permit transferred from another issue');
+
+    const wrongLane = trackedRequest(fixture.root, store);
+    const wrongLaneBody = { ...wrongLane.permit };
+    delete wrongLaneBody.permitHash;
+    wrongLaneBody.kind = 'lane-projection';
+    wrongLane.permit = { ...wrongLaneBody, permitHash: sha256(canonicalJson(wrongLaneBody)) };
+    assertTrackedRefusal(beads, fixture.root, store, wrongLane, 'permit-hash-mismatch',
+      'work-transition carrying a projection permit');
+
+    // A complete, well-formed permit for the OTHER lane is still transferred:
+    // the lane binding is checked before target, state, or mapping.
+    const crossLane = trackedRequest(fixture.root, store);
+    const crossLaneBody = { ...crossLane.permit };
+    delete crossLaneBody.permitHash;
+    crossLaneBody.lane = 'lightweight';
+    crossLaneBody.operation = 'work-set';
+    crossLaneBody.target = { specPath: TRACKED_SPEC, lane: 'lightweight', taskKey: TRACKED_TASK_KEY };
+    crossLane.permit = { ...crossLaneBody, permitHash: sha256(canonicalJson(crossLaneBody)) };
+    assertTrackedRefusal(beads, fixture.root, store, crossLane, 'permit-operation-mismatch',
+      'permit transferred from the Lightweight lane');
+
+    const projectionWithMutationPermit = trackedRequest(fixture.root, store, {
+      operation: 'work-project',
+      mutation: trackedProjectionMutation(),
+    });
+    projectionWithMutationPermit.permit = trackedRequest(fixture.root, store).permit;
+    assertTrackedRefusal(beads, fixture.root, store, projectionWithMutationPermit, 'permit-operation-mismatch',
+      'work-project carrying a lane-mutation permit');
+
+    const staleRunState = trackedRequest(fixture.root, store);
+    staleRunState.state = { ...TRACKED_RUN_STATE, policy: { ...TRACKED_RUN_STATE.policy, overall: 4 } };
+    assertTrackedRefusal(beads, fixture.root, store, staleRunState, 'run-state-mismatch',
+      'run state that is not the permit subject');
+
+    const wrongIdentity = trackedRequest(fixture.root, store);
+    wrongIdentity.mutation = { ...wrongIdentity.mutation, reason: 'resume-claim' };
+    assertTrackedRefusal(beads, fixture.root, store, wrongIdentity, 'mutation-identity-mismatch',
+      'mutation that is not the permitted object');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('T006 tracked boundary rejects disallowed transitions, prestate drift, and unhashed event lines', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore();
+
+    assertTrackedRefusal(beads, fixture.root, store,
+      trackedRequest(fixture.root, store, { mutation: trackedMutation({ toStatus: 'closed' }) }),
+      'transition-not-allowed', 'claim straight to closed');
+
+    assertTrackedRefusal(beads, fixture.root, store,
+      trackedRequest(fixture.root, store, { mutation: trackedMutation({ reason: 'task-completed' }) }),
+      'mutation-schema-mismatch', 'reason that does not match its kind');
+
+    assertTrackedRefusal(beads, fixture.root, store,
+      trackedRequest(fixture.root, store, {
+        mutation: trackedMutation({
+          fromStatus: 'blocked',
+          blocker: { kind: 'remove', before: 'waiting', after: null },
+        }),
+      }),
+      'lane-prestate-mismatch', 'fromStatus that contradicts the fresh authority');
+
+    const event = trackedEvent('claim');
+    assertTrackedRefusal(beads, fixture.root, store,
+      trackedRequest(fixture.root, store, {
+        mutation: trackedMutation({
+          eventLines: {
+            kind: 'append-exact',
+            lines: [{ eventHash: event.eventHash, exactLine: `- dude-run-event: ${canonicalJson({ event })}`, terminator: 'LF' }],
+            appendIfAbsent: true,
+          },
+        }),
+      }),
+      'event-line-mismatch', 'legacy CJ({event}) wrapper');
+
+    assertTrackedRefusal(beads, fixture.root, store,
+      trackedRequest(fixture.root, store, {
+        mutation: trackedMutation({
+          eventLines: {
+            kind: 'append-exact',
+            lines: [{ eventHash: event.eventHash, exactLine: `- dude-run-event: ${canonicalJson(event)}`, terminator: 'CRLF' }],
+            appendIfAbsent: true,
+          },
+        }),
+      }),
+      'event-line-mismatch', 'non-LF terminator');
+
+    assertTrackedRefusal(beads, fixture.root, store,
+      trackedRequest(fixture.root, store, {
+        mutation: trackedMutation({ ownerLog: { ...trackedOwnerAppend(fixture.root, ['- stale']), expectedOwnerHash: sha256('stale') } }),
+      }),
+      'owner-prestate-mismatch', 'stale expected owner hash');
+
+    // Transferred effects: the permit is rebuilt over each mutation, so only
+    // the boundary's own target and owner comparisons can reject them.
+    assertTrackedRefusal(beads, fixture.root, store,
+      trackedRequest(fixture.root, store, {
+        mutation: trackedMutation({ target: { specPath: TRACKED_SPEC, lane: 'tracked', issueId: 'bd-102' } }),
+      }),
+      'target-mismatch', 'mutation carrying another issue target');
+
+    assertTrackedRefusal(beads, fixture.root, store,
+      trackedRequest(fixture.root, store, {
+        mutation: trackedMutation({
+          ownerLog: {
+            ...trackedOwnerAppend(fixture.root, ['- 2026-07-25T12:00:00Z - tracked claim']),
+            ownerPath: '.dude/ideas/other.md',
+          },
+        }),
+      }),
+      'owner-log-conflict', 'owner log naming another owner');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('T006 tracked dispatch reports a pending poststate proof on unrelated drift without redispatch', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore({ driftAfterDispatch: { priority: 9 } });
+    const mutation = trackedMutation({
+      ownerLog: trackedOwnerAppend(fixture.root, ['- 2026-07-25T12:00:00Z - tracked claim']),
+    });
+    const ownerBefore = fs.readFileSync(path.join(fixture.root, ...TRACKED_IDEA.split('/')));
+    const result = beads.applyTrackedWorkRequest(trackedRequest(fixture.root, store, { mutation }), store.ports);
+
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(result.phase, 'tracked-operation-dispatched');
+    assert.equal(result.reason, 'tracked-poststate-proof-pending');
+    assert.equal(store.dispatches, 1, 'exactly one dispatch and no redispatch');
+    assert.equal(result.receipt, undefined, 'a dispatched result carries no lane receipt');
+    assert.match(result.recoveryIdentity, /^[0-9a-f]{64}$/);
+    assert.equal(result.recoveryIdentity, sha256(canonicalJson({
+      version: 1,
+      stage: 'tracked-operation-dispatched',
+      operationEvidenceIdentity: result.operationEvidence.operationEvidenceIdentity,
+      payloadIdentity: result.recoveryPayload.payloadIdentity,
+      mutationIdentity: result.operationEvidence.mutationIdentity,
+      target: TRACKED_TARGET,
+      expectedNextOperation: 'work-prove-poststate',
+    })), 'stage-bound recovery identity');
+    assert.ok(
+      fs.readFileSync(path.join(fixture.root, ...TRACKED_IDEA.split('/'))).equals(ownerBefore),
+      'owner is untouched while the lane proof is pending',
+    );
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('T006 tracked dispatch withholds the composite receipt when the owner stage fails', async (context) => {
+  if (process.platform === 'win32') return context.skip('POSIX permission semantics differ on Windows');
+  if (process.getuid?.() === 0) return context.skip('root ignores write permissions');
+  const fixture = stageTracked();
+  const ownerAbsolute = path.join(fixture.root, ...TRACKED_IDEA.split('/'));
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore();
+    const mutation = trackedMutation({
+      ownerLog: trackedOwnerAppend(fixture.root, ['- 2026-07-25T12:00:00Z - tracked claim']),
+    });
+    const request = trackedRequest(fixture.root, store, { mutation });
+    const ownerBefore = fs.readFileSync(ownerAbsolute);
+
+    fs.chmodSync(ownerAbsolute, 0o444);
+    const result = beads.applyTrackedWorkRequest(request, store.ports);
+    fs.chmodSync(ownerAbsolute, 0o644);
+
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(result.phase, 'tracked-lane-committed');
+    assert.equal(result.reason, 'owner-log-receipt-pending');
+    assert.equal(result.receipt, undefined, 'no composite receipt without an owner-log receipt');
+    assert.equal(store.dispatches, 1, 'exactly one dispatch and no redispatch');
+    assert.ok(fs.readFileSync(ownerAbsolute).equals(ownerBefore), 'owner bytes unchanged');
+    assert.equal(result.recoveryIdentity, sha256(canonicalJson({
+      version: 1,
+      stage: 'tracked-lane-committed',
+      laneReceiptHash: result.laneReceipt.receiptHash,
+      operationEvidenceIdentity: result.operationEvidence.operationEvidenceIdentity,
+      payloadIdentity: result.recoveryPayload.payloadIdentity,
+      mutationIdentity: result.operationEvidence.mutationIdentity,
+      target: TRACKED_TARGET,
+      expectedNextOperation: 'work-reconcile-owner',
+    })), 'stage-bound owner recovery identity');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('T006 tracked recovery proves the poststate and idempotently reconciles the owner without redispatch', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore({ driftAfterDispatch: { priority: 9 } });
+    const mutation = trackedMutation({
+      ownerLog: trackedOwnerAppend(fixture.root, ['- 2026-07-25T12:00:00Z - tracked claim']),
+    });
+    const ownerPreimage = fs.readFileSync(path.join(fixture.root, ...TRACKED_IDEA.split('/')));
+    const dispatched = beads.applyTrackedWorkRequest(trackedRequest(fixture.root, store, { mutation }), store.ports);
+    assert.equal(dispatched.phase, 'tracked-operation-dispatched');
+
+    // The unrelated drift is corrected outside Work; the proof must now succeed.
+    store.issue = { ...store.issue, priority: 2 };
+    store.history = [trackedHistoryEvent('c1', store.issue), store.history[store.history.length - 1]];
+    const originalCaptures = dispatched.operationEvidence.originalCaptures;
+    const live = {
+      list: store.capture('list'),
+      detail: store.capture('detail'),
+      history: store.capture('history'),
+    };
+    const proofRequest = trackedRequest(fixture.root, store, {
+      operation: 'work-prove-poststate',
+      mutation,
+      originalCaptures,
+      lanePrestateHash: dispatched.operationEvidence.lanePrestateHash,
+      extra: {
+        operationEvidence: dispatched.operationEvidence,
+        recoveryPayload: dispatched.recoveryPayload,
+        recoveryIdentity: dispatched.recoveryIdentity,
+        observed: {
+          list: trackedCapture(live.list),
+          detail: trackedCapture(live.detail),
+          history: trackedCapture(live.history),
+        },
+      },
+    });
+    const proven = beads.applyTrackedWorkRequest(proofRequest, store.ports);
+    assert.equal(proven.phase, 'tracked-lane-committed', JSON.stringify(proven));
+    assert.equal(proven.reason, 'owner-log-receipt-pending');
+    assert.equal(store.dispatches, 1, 'poststate proof never redispatches');
+    assert.equal(proven.laneReceipt.lanePoststateHash, sha256(canonicalJson(proven.laneReceipt.poststateCaptures)));
+    assert.deepEqual(
+      proven.laneReceipt.eventLineRecordHashes,
+      [sha256(`${mutation.eventLines.lines[0].exactLine}\n`)],
+      'exact LF record hashes',
+    );
+
+    const ownerRequest = () => trackedRequest(fixture.root, store, {
+      operation: 'work-reconcile-owner',
+      mutation,
+      originalCaptures,
+      ownerBytes: ownerPreimage,
+      lanePrestateHash: dispatched.operationEvidence.lanePrestateHash,
+      extra: {
+        operationEvidence: proven.operationEvidence,
+        recoveryPayload: proven.recoveryPayload,
+        laneReceipt: proven.laneReceipt,
+        recoveryIdentity: proven.recoveryIdentity,
+        observed: {
+          list: trackedCapture(store.capture('list')),
+          detail: trackedCapture(store.capture('detail')),
+          history: trackedCapture(store.capture('history')),
+          owner: trackedCapture(fs.readFileSync(path.join(fixture.root, ...TRACKED_IDEA.split('/')))),
+        },
+      },
+    });
+    const reconciled = beads.applyTrackedWorkRequest(ownerRequest(), store.ports);
+    assert.equal(reconciled.ok, true, JSON.stringify(reconciled));
+    assert.equal(reconciled.phase, 'committed');
+    assert.equal(reconciled.ownerReceipt.effect, 'append-exact');
+    assert.equal(reconciled.receipt.laneReceiptHash, proven.laneReceipt.receiptHash);
+    const ownerAfterFirst = fs.readFileSync(path.join(fixture.root, ...TRACKED_IDEA.split('/')));
+    assert.ok(ownerAfterFirst.toString('utf8').endsWith('- 2026-07-25T12:00:00Z - tracked claim\n'));
+
+    const again = beads.applyTrackedWorkRequest(ownerRequest(), store.ports);
+    assert.equal(again.ok, true, JSON.stringify(again));
+    assert.deepEqual(
+      fs.readFileSync(path.join(fixture.root, ...TRACKED_IDEA.split('/'))),
+      ownerAfterFirst,
+      'owner reconciliation is exactly idempotent',
+    );
+    assert.equal(store.dispatches, 1, 'owner reconciliation never dispatches');
+
+    // The lane must still prove at reconciliation time. A tracked authority
+    // that drifted after the lane receipt yields no composite receipt.
+    const provenIssue = store.issue;
+    store.issue = { ...store.issue, status: 'closed' };
+    const driftedLane = beads.applyTrackedWorkRequest(ownerRequest(), store.ports);
+    assert.equal(driftedLane.ok, false, JSON.stringify(driftedLane));
+    assert.equal(driftedLane.phase, 'indeterminate');
+    assert.equal(driftedLane.reason, 'owner-log-outcome-ambiguous');
+    assert.equal(driftedLane.receipt, undefined, 'a drifted lane yields no composite receipt');
+    assert.deepEqual(
+      fs.readFileSync(path.join(fixture.root, ...TRACKED_IDEA.split('/'))),
+      ownerAfterFirst,
+      'a drifted lane leaves the owner byte-unchanged',
+    );
+    store.issue = provenIssue;
+
+    // An owner that is neither the exact preimage nor the deterministic
+    // single-append postimage is unrecoverably ambiguous, never reconciled.
+    fs.appendFileSync(path.join(fixture.root, ...TRACKED_IDEA.split('/')), '- unrelated external edit\n');
+    const diverged = fs.readFileSync(path.join(fixture.root, ...TRACKED_IDEA.split('/')));
+    const ambiguous = beads.applyTrackedWorkRequest(ownerRequest(), store.ports);
+    assert.equal(ambiguous.ok, false, JSON.stringify(ambiguous));
+    assert.equal(ambiguous.phase, 'indeterminate');
+    assert.equal(ambiguous.reason, 'owner-log-outcome-ambiguous');
+    assert.deepEqual(
+      fs.readFileSync(path.join(fixture.root, ...TRACKED_IDEA.split('/'))),
+      diverged,
+      'an ambiguous owner is left byte-unchanged',
+    );
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('T006 tracked recovery operations never return refused', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore();
+    for (const [operation, reason] of [
+      ['work-prove-poststate', 'tracked-lane-outcome-ambiguous'],
+      ['work-reconcile-owner', 'owner-log-outcome-ambiguous'],
+    ]) {
+      for (const request of [
+        { version: 1, operation },
+        { version: 1, operation, root: fixture.root, bogus: true },
+        { ...trackedRequest(fixture.root, store), operation },
+      ]) {
+        const result = beads.applyTrackedWorkRequest(request, store.ports);
+        assert.equal(result.ok, false, operation);
+        assert.equal(result.phase, 'indeterminate', `${operation}: no refusal is permitted after possible mutation`);
+        assert.equal(result.reason, reason, operation);
+        assert.match(result.observedEvidenceHash, /^[0-9a-f]{64}$/, operation);
+      }
+    }
+    assert.equal(store.dispatches, 0, 'recovery operations never dispatch');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+// Every boundary read must happen inside the boundary's own `try`. A request
+// object with a throwing accessor is the cheapest proof: before the fix the
+// `operation` read escaped as a raw Error instead of a closed refusal.
+test('T006 tracked boundary returns a closed refusal for a throwing request accessor', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore();
+    const probes = [
+      ['throwing own accessor', Object.defineProperty({ version: 1 }, 'operation', {
+        get() { throw new Error('operation accessor'); },
+        enumerable: true,
+        configurable: true,
+      })],
+      ['throwing proxy get trap', new Proxy({ version: 1, operation: 'work-transition' }, {
+        get() { throw new Error('proxy get'); },
+      })],
+      ['throwing proxy prototype trap', new Proxy({ version: 1 }, {
+        getPrototypeOf() { throw new Error('proxy getPrototypeOf'); },
+      })],
+    ];
+    for (const [label, probe] of probes) {
+      /** @type {any} */
+      let result;
+      assert.doesNotThrow(
+        () => { result = beads.applyTrackedWorkRequest(probe, store.ports); },
+        `${label}: no open throw may escape the boundary`,
+      );
+      assert.equal(result.ok, false, label);
+      assert.equal(result.phase, 'refused', `${label}: a throwing envelope is refused, never indeterminate`);
+      assert.equal(result.reason, 'invalid-request-shape', label);
+      assert.deepEqual(
+        Object.keys(result).sort(),
+        ['ok', 'phase', 'reason', 'unchangedPrestateHash'],
+        `${label}: closed shape`,
+      );
+      assert.match(result.unchangedPrestateHash, /^[0-9a-f]{64}$/, `${label}: evidence hash shape`);
+    }
+    assert.equal(store.dispatches, 0, 'a throwing envelope never dispatches');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+// `controlled-end` is a contract-named kind: the tracked status is deliberately
+// unchanged, so only the event surface (and any owner log) may move.
+test('T006 tracked controlled-end records the end without changing the tracked status', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore();
+    const mutation = trackedMutation({
+      kind: 'controlled-end',
+      reason: 'controlled-unresolved-end',
+      fromStatus: 'open',
+      toStatus: 'open',
+      eventLines: trackedEventEffect([trackedEvent('tracked-controlled-end')]),
+      ownerLog: trackedOwnerAppend(fixture.root, ['- 2026-07-25T12:00:00Z - controlled unresolved end']),
+    });
+    const result = beads.applyTrackedWorkRequest(trackedRequest(fixture.root, store, { mutation }), store.ports);
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.phase, 'committed');
+    assert.equal(store.dispatches, 1, 'exactly one dispatch');
+    assert.equal(JSON.parse(store.capture('detail'))[0].status, 'open', 'a controlled end never changes status');
+    assert.ok(
+      JSON.parse(store.capture('detail'))[0].notes.includes(mutation.eventLines.lines[0].exactLine),
+      'the controlled end is recorded on the tracked lane surface',
+    );
+    assert.ok(
+      fs.readFileSync(path.join(fixture.root, ...TRACKED_IDEA.split('/')), 'utf8')
+        .endsWith('- 2026-07-25T12:00:00Z - controlled unresolved end\n'),
+      'the owner log still records the end',
+    );
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('T006 tracked controlled-end refuses a closed issue and any status change', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore();
+    const controlledEnd = (overrides) => trackedMutation({
+      kind: 'controlled-end',
+      reason: 'controlled-unresolved-end',
+      fromStatus: 'open',
+      toStatus: 'open',
+      eventLines: trackedEventEffect([trackedEvent('tracked-controlled-end')]),
+      ...overrides,
+    });
+    assertTrackedRefusal(
+      beads,
+      fixture.root,
+      store,
+      trackedRequest(fixture.root, store, { mutation: controlledEnd({ fromStatus: 'closed', toStatus: 'closed' }) }),
+      'transition-not-allowed',
+      'controlled end over a closed issue',
+    );
+    assertTrackedRefusal(
+      beads,
+      fixture.root,
+      store,
+      trackedRequest(fixture.root, store, { mutation: controlledEnd({ toStatus: 'in_progress' }) }),
+      'transition-not-allowed',
+      'controlled end that moves the status',
+    );
+    assertTrackedRefusal(
+      beads,
+      fixture.root,
+      store,
+      trackedRequest(fixture.root, store, { mutation: controlledEnd({ reason: 'task-blocked' }) }),
+      'mutation-schema-mismatch',
+      'controlled end with a reason from another kind',
+    );
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+// The injected authority port is the only tracked I/O path, so every way it can
+// fail has to land on one closed reason. A failure BEFORE `ports.dispatch` is
+// invoked refuses; a failure once it has been invoked can no longer claim an
+// unchanged authority, so it is indeterminate.
+test('T006 tracked boundary refuses every authority port failure', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore();
+    const request = () => trackedRequest(fixture.root, store);
+    const healthy = (kind) => store.capture(kind);
+    /** @type {[string, any, string][]} */
+    const ports = [
+      ['no capture port', {}, 'refused'],
+      ['capture throws', { capture: () => { throw new Error('bd unavailable'); } }, 'refused'],
+      ['capture returns a non-buffer', { capture: () => 42 }, 'refused'],
+      ['capture returns unparseable JSON', { capture: () => 'not json' }, 'refused'],
+      ['detail capture is not exactly one issue', {
+        capture: (kind) => (kind === 'detail' ? JSON.stringify([]) : healthy(kind)),
+      }, 'refused'],
+      ['history capture is not an array', {
+        capture: (kind) => (kind === 'history' ? JSON.stringify({}) : healthy(kind)),
+      }, 'refused'],
+      ['history event carries an unexpected shape', {
+        capture: (kind) => (kind === 'history' ? JSON.stringify([{ CommitHash: 'c0' }]) : healthy(kind)),
+      }, 'refused'],
+      ['history event names another issue', {
+        capture: (kind) => (kind === 'history'
+          ? JSON.stringify([trackedHistoryEvent('c0', trackedOtherIssue())])
+          : healthy(kind)),
+      }, 'refused'],
+      ['no dispatch port', { capture: healthy }, 'refused'],
+      ['dispatch throws', { capture: healthy, dispatch: () => { throw new Error('bd write failed'); } }, 'indeterminate'],
+      ['dispatch returns a non-buffer', { capture: healthy, dispatch: () => 42 }, 'indeterminate'],
+    ];
+    for (const [label, port, phase] of ports) {
+      const before = { list: healthy('list'), detail: healthy('detail'), history: healthy('history') };
+      const result = beads.applyTrackedWorkRequest(request(), port);
+      assert.equal(result.ok, false, label);
+      assert.equal(result.phase, phase, label);
+      if (phase === 'refused') {
+        assert.equal(result.reason, 'tracked-operation-failed', label);
+        assert.deepEqual(
+          Object.keys(result).sort(),
+          ['ok', 'phase', 'reason', 'unchangedPrestateHash'],
+          `${label}: closed shape`,
+        );
+      } else {
+        assert.equal(result.reason, 'tracked-lane-outcome-ambiguous', label);
+        assert.deepEqual(
+          Object.keys(result).sort(),
+          ['observedEvidenceHash', 'ok', 'phase', 'reason'],
+          `${label}: closed shape`,
+        );
+      }
+      assert.equal(store.dispatches, 0, `${label}: no authorized dispatch`);
+      for (const kind of ['list', 'detail', 'history']) {
+        assert.equal(healthy(kind), before[kind], `${label}: tracked ${kind} authority unchanged`);
+      }
+    }
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+// A stub port that replaces `store.dispatch` cannot prove this: it never
+// mutates, so every surface is trivially unchanged. The window in which a
+// refusal becomes a lie opens when `ports.dispatch` is INVOKED, not when it
+// returns. These ports genuinely apply the authoritative write and then fail,
+// so a `refused` here would hand the host the prestate hash as proof that
+// nothing happened and invite a redispatch over an already-applied write.
+test('T006 tracked dispatch that applied the write and then failed is indeterminate, never refused', async () => {
+  /** @type {[string, (store: any) => any][]} */
+  const variants = [
+    ['applied then threw', (store) => ({
+      capture: (kind) => store.capture(kind),
+      dispatch: (target, mutation) => {
+        store.dispatch(target, mutation);
+        throw new Error('bd applied the write and then failed');
+      },
+    })],
+    ['applied then returned a non-buffer', (store) => ({
+      capture: (kind) => store.capture(kind),
+      dispatch: (target, mutation) => {
+        store.dispatch(target, mutation);
+        return 42;
+      },
+    })],
+  ];
+  for (const [label, buildPort] of variants) {
+    const fixture = stageTracked();
+    try {
+      const beads = await importStagedBeads(fixture);
+      const store = trackedStore();
+      const request = trackedRequest(fixture.root, store);
+      const before = JSON.parse(store.capture('detail'))[0];
+      const result = beads.applyTrackedWorkRequest(request, buildPort(store));
+
+      assert.equal(result.ok, false, label);
+      assert.equal(result.phase, 'indeterminate', `${label}: a dispatched write may never be reported refused`);
+      assert.equal(result.reason, 'tracked-lane-outcome-ambiguous', label);
+      assert.equal(result.unchangedPrestateHash, undefined, `${label}: no unchanged-prestate claim`);
+      assert.deepEqual(
+        Object.keys(result).sort(),
+        ['observedEvidenceHash', 'ok', 'phase', 'reason'],
+        `${label}: closed shape`,
+      );
+      assert.match(result.observedEvidenceHash, /^[0-9a-f]{64}$/, label);
+
+      // The authority really moved, so the refusal would have been a lie.
+      assert.equal(store.dispatches, 1, `${label}: the authority port applied exactly one write`);
+      assert.equal(before.status, 'open', `${label}: prestate`);
+      const after = JSON.parse(store.capture('detail'))[0];
+      assert.equal(after.status, 'in_progress', `${label}: tracked detail reflects the applied mutation`);
+      assert.ok(
+        after.notes.includes(request.mutation.eventLines.lines[0].exactLine),
+        `${label}: tracked notes reflect the applied event line`,
+      );
+      assert.equal(
+        JSON.parse(store.capture('history')).length,
+        2,
+        `${label}: tracked history recorded the applied write`,
+      );
+      assert.ok(
+        JSON.parse(store.capture('list')).some((issue) => issue.id === TRACKED_TARGET.issueId && issue.status === 'in_progress'),
+        `${label}: tracked list reflects the applied mutation`,
+      );
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('T006 tracked boundary refuses unsafe roots, absent mappings, and noncanonical values', async () => {
+  const fixture = stageTracked();
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore();
+    assertTrackedRefusal(beads, fixture.root, store, { ...trackedRequest(fixture.root, store), root: path.join(fixture.root, 'missing') },
+      'unsafe-root-or-path', 'missing root', { observable: false });
+    assertTrackedRefusal(beads, fixture.root, store, { ...trackedRequest(fixture.root, store), root: `${fixture.root}/` },
+      'unsafe-root-or-path', 'noncanonical root', { observable: false });
+
+    const badOwnerPath = trackedRequest(fixture.root, store);
+    badOwnerPath.owner = { ...badOwnerPath.owner, ideaPath: 'ideas/tracked.md' };
+    assertTrackedRefusal(beads, fixture.root, store, badOwnerPath, 'invalid-canonical-value',
+      'owner path outside .dude/ideas', { observable: false });
+
+    const badTaskKey = trackedRequest(fixture.root, store);
+    badTaskKey.mapping = { ...badTaskKey.mapping, taskKey: 'T001' };
+    assertTrackedRefusal(beads, fixture.root, store, badTaskKey, 'invalid-canonical-value',
+      'mapping task key that is not a durable key');
+
+    const event = trackedEvent('duplicate');
+    assertTrackedRefusal(
+      beads,
+      fixture.root,
+      store,
+      trackedRequest(fixture.root, store, { mutation: trackedMutation({ eventLines: trackedEventEffect([event, event]) }) }),
+      'event-conflict',
+      'same event hash twice in one effect',
+    );
+
+    // The target issue is absent from the complete exact-feature inventory.
+    const absent = trackedStore();
+    absent.capture = (kind) => {
+      if (kind === 'list') return JSON.stringify(absent.others);
+      if (kind === 'detail') return JSON.stringify([absent.issue]);
+      return JSON.stringify(absent.history);
+    };
+    assertTrackedRefusal(beads, fixture.root, absent, trackedRequest(fixture.root, absent), 'mapping-missing',
+      'target issue absent from the feature inventory');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+// Regression: both post-dispatch surface calls (`acquireTrackedSurfaces` and
+// the normalization inside `trackedPoststateProven`) can refuse. After the
+// authority write, a refusal would claim an unchanged prestate that no longer
+// holds AND would strip the recovery payload, leaving the Work host with no
+// `work-prove-poststate` path. Only the pending phase is correct.
+test('T006 tracked dispatch reports a pending poststate proof when post-dispatch capture or mapping fails', async () => {
+  const fixture = stageTracked();
+  const ownerAbsolute = path.join(fixture.root, ...TRACKED_IDEA.split('/'));
+  try {
+    const beads = await importStagedBeads(fixture);
+    /** @type {[string, (store:any)=>any][]} */
+    const scenarios = [
+      ['post-dispatch capture throws', (store) => ({
+        capture: (kind) => {
+          if (store.dispatches >= 1) throw new Error('bd unavailable after the write');
+          return store.capture(kind);
+        },
+        dispatch: (target, mutation) => store.dispatch(target, mutation),
+      })],
+      ['post-dispatch inventory no longer resolves the issue', (store) => ({
+        capture: (kind) => (store.dispatches >= 1 && kind === 'list'
+          ? JSON.stringify(store.others)
+          : store.capture(kind)),
+        dispatch: (target, mutation) => store.dispatch(target, mutation),
+      })],
+    ];
+    for (const [label, portsFor] of scenarios) {
+      const store = trackedStore();
+      const mutation = trackedMutation({
+        ownerLog: trackedOwnerAppend(fixture.root, ['- 2026-07-25T12:00:00Z - tracked claim']),
+      });
+      const request = trackedRequest(fixture.root, store, { mutation });
+      const ownerBefore = fs.readFileSync(ownerAbsolute);
+      const result = beads.applyTrackedWorkRequest(request, portsFor(store));
+
+      assert.equal(result.ok, false, `${label}: ${JSON.stringify(result)}`);
+      assert.notEqual(result.phase, 'refused', `${label}: no refusal may follow an authoritative dispatch`);
+      assert.equal(result.phase, 'tracked-operation-dispatched', label);
+      assert.equal(result.reason, 'tracked-poststate-proof-pending', label);
+      assert.equal(result.unchangedPrestateHash, undefined, `${label}: no unchanged-prestate claim`);
+      assert.equal(store.dispatches, 1, `${label}: exactly one dispatch and no redispatch`);
+      assert.equal(result.receipt, undefined, `${label}: a dispatched result carries no receipt`);
+      assert.match(result.operationEvidence.operationEvidenceIdentity, /^[0-9a-f]{64}$/, label);
+      assert.match(result.recoveryPayload.payloadIdentity, /^[0-9a-f]{64}$/, label);
+      assert.equal(result.recoveryIdentity, sha256(canonicalJson({
+        version: 1,
+        stage: 'tracked-operation-dispatched',
+        operationEvidenceIdentity: result.operationEvidence.operationEvidenceIdentity,
+        payloadIdentity: result.recoveryPayload.payloadIdentity,
+        mutationIdentity: result.operationEvidence.mutationIdentity,
+        target: TRACKED_TARGET,
+        expectedNextOperation: 'work-prove-poststate',
+      })), `${label}: stage-bound recovery identity survives the post-dispatch failure`);
+      assert.ok(
+        fs.readFileSync(ownerAbsolute).equals(ownerBefore),
+        `${label}: owner untouched while the lane proof is pending`,
+      );
+    }
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+// Regression: `work-reconcile-owner` is the final trust gate and its
+// `laneReceipt` is a caller-supplied record. A self-consistent hash proves only
+// that the caller hashed its own claim, so every field is re-derived from the
+// values already bound at this boundary before it is embedded in the only
+// success artifact the feature produces.
+test('T006 tracked owner reconciliation re-derives every field of the caller-supplied lane receipt', async () => {
+  const fixture = stageTracked();
+  const ownerAbsolute = path.join(fixture.root, ...TRACKED_IDEA.split('/'));
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore({ driftAfterDispatch: { priority: 9 } });
+    const mutation = trackedMutation({
+      ownerLog: trackedOwnerAppend(fixture.root, ['- 2026-07-25T12:00:00Z - tracked claim']),
+    });
+    const ownerPreimage = fs.readFileSync(ownerAbsolute);
+    const dispatched = beads.applyTrackedWorkRequest(trackedRequest(fixture.root, store, { mutation }), store.ports);
+    assert.equal(dispatched.phase, 'tracked-operation-dispatched', JSON.stringify(dispatched));
+
+    store.issue = { ...store.issue, priority: 2 };
+    store.history = [trackedHistoryEvent('c1', store.issue), store.history[store.history.length - 1]];
+    const originalCaptures = dispatched.operationEvidence.originalCaptures;
+    const lanePrestateHash = dispatched.operationEvidence.lanePrestateHash;
+    const observedNow = (withOwner) => {
+      const captures = {
+        list: trackedCapture(store.capture('list')),
+        detail: trackedCapture(store.capture('detail')),
+        history: trackedCapture(store.capture('history')),
+      };
+      return withOwner ? { ...captures, owner: trackedCapture(fs.readFileSync(ownerAbsolute)) } : captures;
+    };
+    const proven = beads.applyTrackedWorkRequest(trackedRequest(fixture.root, store, {
+      operation: 'work-prove-poststate',
+      mutation,
+      originalCaptures,
+      lanePrestateHash,
+      extra: {
+        operationEvidence: dispatched.operationEvidence,
+        recoveryPayload: dispatched.recoveryPayload,
+        recoveryIdentity: dispatched.recoveryIdentity,
+        observed: observedNow(false),
+      },
+    }), store.ports);
+    assert.equal(proven.phase, 'tracked-lane-committed', JSON.stringify(proven));
+
+    /** Forge lane receipt fields, rehash the receipt, and rebind its stage identity. */
+    const forged = (overrides) => {
+      const body = { ...proven.laneReceipt, ...overrides };
+      delete body.receiptHash;
+      const laneReceipt = { ...body, receiptHash: sha256(canonicalJson(body)) };
+      return trackedRequest(fixture.root, store, {
+        operation: 'work-reconcile-owner',
+        mutation,
+        originalCaptures,
+        ownerBytes: ownerPreimage,
+        lanePrestateHash,
+        extra: {
+          operationEvidence: proven.operationEvidence,
+          recoveryPayload: proven.recoveryPayload,
+          laneReceipt,
+          recoveryIdentity: sha256(canonicalJson({
+            version: 1,
+            stage: 'tracked-lane-committed',
+            laneReceiptHash: laneReceipt.receiptHash,
+            operationEvidenceIdentity: proven.operationEvidence.operationEvidenceIdentity,
+            payloadIdentity: proven.recoveryPayload.payloadIdentity,
+            mutationIdentity: proven.operationEvidence.mutationIdentity,
+            target: TRACKED_TARGET,
+            expectedNextOperation: 'work-reconcile-owner',
+          })),
+          observed: observedNow(true),
+        },
+      });
+    };
+
+    const brokenCaptures = {
+      list: trackedDescriptor('forged list'),
+      detail: trackedDescriptor('forged detail'),
+      history: { sha256: 'not-a-hash', byteLength: 3 },
+    };
+    /** @type {[string, Record<string, unknown>][]} */
+    const cases = [
+      ['forged version', { version: 2 }],
+      ['forged lane', { lane: 'lightweight' }],
+      ['forged permitHash', { permitHash: sha256('another permit') }],
+      ['forged target', { target: { ...TRACKED_TARGET, issueId: 'bd-999' } }],
+      ['forged targetMappingHash', { targetMappingHash: sha256('another mapping') }],
+      ['forged lanePrestateHash', { lanePrestateHash: sha256('another prestate') }],
+      ['lanePoststateHash inconsistent with its own captures', { lanePoststateHash: sha256('another poststate') }],
+      ['poststateCaptures that are not descriptors', {
+        poststateCaptures: brokenCaptures,
+        lanePoststateHash: sha256(canonicalJson(brokenCaptures)),
+      }],
+      ['fabricated eventLineRecordHashes', { eventLineRecordHashes: [sha256('- dude-run-event: fabricated\n')] }],
+    ];
+    for (const [label, overrides] of cases) {
+      const ownerBefore = fs.readFileSync(ownerAbsolute);
+      const result = beads.applyTrackedWorkRequest(forged(overrides), store.ports);
+      assert.equal(result.ok, false, `${label}: a forged lane receipt must not commit (${JSON.stringify(result)})`);
+      assert.equal(result.phase, 'indeterminate', label);
+      assert.equal(result.reason, 'owner-log-outcome-ambiguous', label);
+      assert.equal(result.receipt, undefined, `${label}: no composite receipt launders a forged lane receipt`);
+      assert.equal(store.dispatches, 1, `${label}: no redispatch`);
+      assert.ok(fs.readFileSync(ownerAbsolute).equals(ownerBefore), `${label}: owner bytes unchanged`);
+    }
+
+    // The unforged receipt still commits, so the matrix above is not vacuous.
+    const honest = beads.applyTrackedWorkRequest(forged({}), store.ports);
+    assert.equal(honest.ok, true, JSON.stringify(honest));
+    assert.equal(honest.receipt.laneReceiptHash, proven.laneReceipt.receiptHash);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+// Regression: `ownerLog.kind:"append-exact"` requires a matching owner path AND
+// a matching expected owner hash. The reconciliation path reached the owner
+// append with only the path bound, so an internally inconsistent envelope could
+// produce an owner receipt whose `ownerPrestateHash` contradicted its own
+// mutation. The dispatching path keeps its pre-dispatch refusal.
+test('T006 tracked owner reconciliation refuses an owner-log envelope that names other owner bytes', async () => {
+  const fixture = stageTracked();
+  const ownerAbsolute = path.join(fixture.root, ...TRACKED_IDEA.split('/'));
+  try {
+    const beads = await importStagedBeads(fixture);
+    const store = trackedStore({ driftAfterDispatch: { priority: 9 } });
+    const mutation = trackedMutation({
+      ownerLog: trackedOwnerAppend(fixture.root, ['- 2026-07-25T12:00:00Z - tracked claim']),
+    });
+    const ownerPreimage = fs.readFileSync(ownerAbsolute);
+    const dispatched = beads.applyTrackedWorkRequest(trackedRequest(fixture.root, store, { mutation }), store.ports);
+    assert.equal(dispatched.phase, 'tracked-operation-dispatched', JSON.stringify(dispatched));
+
+    store.issue = { ...store.issue, priority: 2 };
+    store.history = [trackedHistoryEvent('c1', store.issue), store.history[store.history.length - 1]];
+    const originalCaptures = dispatched.operationEvidence.originalCaptures;
+    const lanePrestateHash = dispatched.operationEvidence.lanePrestateHash;
+    const proven = beads.applyTrackedWorkRequest(trackedRequest(fixture.root, store, {
+      operation: 'work-prove-poststate',
+      mutation,
+      originalCaptures,
+      lanePrestateHash,
+      extra: {
+        operationEvidence: dispatched.operationEvidence,
+        recoveryPayload: dispatched.recoveryPayload,
+        recoveryIdentity: dispatched.recoveryIdentity,
+        observed: {
+          list: trackedCapture(store.capture('list')),
+          detail: trackedCapture(store.capture('detail')),
+          history: trackedCapture(store.capture('history')),
+        },
+      },
+    }), store.ports);
+    assert.equal(proven.phase, 'tracked-lane-committed', JSON.stringify(proven));
+
+    // The same mutation with an owner-log envelope naming bytes that are not the
+    // declared preimage. Every downstream identity is rebuilt so this envelope
+    // is the ONLY inconsistency left in the request.
+    const skewed = {
+      ...mutation,
+      ownerLog: { ...mutation.ownerLog, expectedOwnerHash: sha256('bytes that are not this owner') },
+    };
+    const request = trackedRequest(fixture.root, store, {
+      operation: 'work-reconcile-owner',
+      mutation: skewed,
+      originalCaptures,
+      ownerBytes: ownerPreimage,
+      lanePrestateHash,
+    });
+    const evidenceBody = { ...proven.operationEvidence };
+    delete evidenceBody.operationEvidenceIdentity;
+    evidenceBody.permitHash = request.permit.permitHash;
+    evidenceBody.mutationIdentity = sha256(canonicalJson(skewed));
+    const evidence = {
+      ...evidenceBody,
+      operationEvidenceIdentity: sha256(canonicalJson(evidenceBody)),
+    };
+    const payloadBody = {
+      version: 1,
+      operationEvidenceIdentity: evidence.operationEvidenceIdentity,
+      original: proven.recoveryPayload.original,
+      dispatchResult: proven.recoveryPayload.dispatchResult,
+      mutation: skewed,
+    };
+    const recoveryPayload = { ...payloadBody, payloadIdentity: sha256(canonicalJson(payloadBody)) };
+    const receiptBody = { ...proven.laneReceipt };
+    delete receiptBody.receiptHash;
+    receiptBody.operationEvidenceIdentity = evidence.operationEvidenceIdentity;
+    receiptBody.permitHash = request.permit.permitHash;
+    receiptBody.mutationIdentity = evidence.mutationIdentity;
+    const laneReceipt = { ...receiptBody, receiptHash: sha256(canonicalJson(receiptBody)) };
+    Object.assign(request, {
+      operationEvidence: evidence,
+      recoveryPayload,
+      laneReceipt,
+      recoveryIdentity: sha256(canonicalJson({
+        version: 1,
+        stage: 'tracked-lane-committed',
+        laneReceiptHash: laneReceipt.receiptHash,
+        operationEvidenceIdentity: evidence.operationEvidenceIdentity,
+        payloadIdentity: recoveryPayload.payloadIdentity,
+        mutationIdentity: evidence.mutationIdentity,
+        target: TRACKED_TARGET,
+        expectedNextOperation: 'work-reconcile-owner',
+      })),
+      observed: {
+        list: trackedCapture(store.capture('list')),
+        detail: trackedCapture(store.capture('detail')),
+        history: trackedCapture(store.capture('history')),
+        owner: trackedCapture(fs.readFileSync(ownerAbsolute)),
+      },
+    });
+
+    const ownerBefore = fs.readFileSync(ownerAbsolute);
+    const result = beads.applyTrackedWorkRequest(request, store.ports);
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(result.phase, 'indeterminate');
+    assert.equal(result.reason, 'owner-log-outcome-ambiguous');
+    assert.equal(result.receipt, undefined, 'a skewed owner envelope yields no composite receipt');
+    assert.equal(result.ownerReceipt, undefined, 'and no owner-log receipt');
+    assert.equal(store.dispatches, 1, 'owner reconciliation never dispatches');
+    assert.ok(fs.readFileSync(ownerAbsolute).equals(ownerBefore), 'owner bytes unchanged');
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});

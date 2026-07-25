@@ -1973,3 +1973,490 @@ for (const [relative, heading] of RECOVERY_DOC_SECTIONS) {
     assert.deepEqual(failures, [], `${relative} ${heading}: recovery documentation contract`);
   });
 }
+
+// --- T007: one detailed autonomous learning-governance owner ------------------
+
+const GOVERNANCE_POLICY_OWNER = 'src/skills/dude-work/SKILL.md';
+const GOVERNANCE_POLICY_SECTION = '## Autonomous Learning Governance';
+
+const GOVERNANCE_POINTER_SURFACES = [
+  'src/agents/dude.agent.md',
+  'src/instructions/dude.instructions.md',
+  'src/skills/dude-lightweight-execution/SKILL.md',
+  'src/skills/dude-receiving-code-review/SKILL.md',
+  'src/skills/dude-reviewer-protocol/SKILL.md',
+];
+
+const GOVERNANCE_DOC_SECTIONS = [
+  ['docs/commands.md', '### `@dude work`'],
+  ['docs/reference.md', '## Execution Workflow'],
+  ['docs/workflow.md', '### Optional Continuous Work'],
+];
+
+// Detailed policy that only the owner may state. Each marker is separately
+// proven to match the owner section, so none of them can pass vacuously.
+const GOVERNANCE_DETAIL_MARKERS = [
+  ['governance state fields', /\b(?:pendingCompletion|learningGovernance|learning-governance-capacity|learning-governance-conflict|occurrence-retention-conflict|learning-required)\b/],
+  ['governance phase names', /\b(?:alternative-inspected|no-progress-verified)\b/],
+  ['runtime transition routes', /`transition (?:prepare-projection|verify-projection|bind-post-learning-inspection|verify-no-progress|issue-attempt-permit|issue-lane-permit|commit-lane-receipt|controlled-end|resume-governance)`/],
+  ['projection batch bounds', /\b17 events\b|\bexactly one approach event\b/],
+  ['equivalence and comparison bases', /\bnormalized basis\b|\bfailed-approach set\b/],
+  ['end-form authority', /\bcontrolled-end authority\b|\bimmediate halt end\b/i],
+];
+
+// One acyclic permit order. Nodes are the literal backticked route tokens the
+// owner section must present, so a documented reordering breaks the contract.
+const GOVERNANCE_PERMIT_EDGES = [
+  ['`learn`', '`transition prepare-projection`'],
+  ['`transition prepare-projection`', '`transition verify-projection`'],
+  ['`transition verify-projection`', '`transition bind-post-learning-inspection`'],
+  ['`transition verify-projection`', '`transition verify-no-progress`'],
+  ['`transition bind-post-learning-inspection`', '`transition issue-attempt-permit`'],
+  ['`transition bind-post-learning-inspection`', '`transition controlled-end`'],
+  ['`transition verify-no-progress`', '`transition controlled-end`'],
+  ['`transition issue-attempt-permit`', '`transition issue-lane-permit`'],
+  ['`transition issue-lane-permit`', '`transition commit-lane-receipt`'],
+];
+
+const GOVERNANCE_PUBLIC_COMMANDS = ['inspect', 'authorize', 'complete', 'learn', 'transition', 'audit'];
+
+// Runtime routes are reachable, but none of them is a user-facing verb.
+const FORBIDDEN_USER_COMMANDS = [
+  ...GOVERNANCE_PUBLIC_COMMANDS,
+  'govern', 'learning', 'project', 'projection', 'resume', 'suspend', 'halt', 'permit',
+].map((verb) => `@dude ${verb}`);
+
+const WORK_GRAMMAR_LINE = '@dude work [<feature>] [--max <N|unlimited>] [--until blocked] [--parallel <N>] [--recover-on-block] [--recovery-cycles <N|unlimited>] [--policy guarded|autonomous]';
+
+// The eight generated core paths T009 alone may materialize.
+const GENERATED_CORE_PAIRS = [
+  ['src/agents/dude.agent.md', '.github/agents/dude.agent.md'],
+  ['src/instructions/dude.instructions.md', '.github/instructions/dude.instructions.md'],
+  ['src/skills/dude-lightweight-execution/SKILL.md', '.github/skills/dude-lightweight-execution/SKILL.md'],
+  ['src/skills/dude-lightweight-execution/board.mjs', '.github/skills/dude-lightweight-execution/board.mjs'],
+  ['src/skills/dude-receiving-code-review/SKILL.md', '.github/skills/dude-receiving-code-review/SKILL.md'],
+  ['src/skills/dude-reviewer-protocol/SKILL.md', '.github/skills/dude-reviewer-protocol/SKILL.md'],
+  ['src/skills/dude-work/SKILL.md', '.github/skills/dude-work/SKILL.md'],
+  ['src/skills/dude-work/recovery.mjs', '.github/skills/dude-work/recovery.mjs'],
+];
+
+const CONCURRENCY_TOKEN = /\b(?:concurrent|concurrently|concurrency|fan-out|fanned-out|simultaneous|simultaneously|in parallel|at the same time)\b/i;
+const CONCURRENCY_DENIAL = /\b(?:no|not|never|none|nothing|zero|without|refuse[sd]?|reject[sd]?|forbid[s]?|prohibit[s]?|fails?|discard(?:s|ed)?|normalize[sd]?|sequential(?:ly)?|one at a time|compatibility-only)\b/i;
+
+// The lookahead admits digits so a numbered list item starts a new sentence;
+// otherwise a whole list collapses into one "sentence" and a denial word in an
+// unrelated item exonerates a concurrency token elsewhere in it.
+/** @param {string} text */
+function sentences(text) {
+  return text
+    .split(/(?<=[.!?])\s+(?=[0-9A-Z`"'(\[])/)
+    .map((sentence) => sentence.replace(/\s+/g, ' ').trim())
+    .filter((sentence) => sentence.length > 0);
+}
+
+/** Sentences that grant concurrency without any denial or scoping token. @param {string} text */
+function concurrencyGrants(text) {
+  return sentences(text).filter((sentence) => (
+    CONCURRENCY_TOKEN.test(sentence) && !CONCURRENCY_DENIAL.test(sentence)
+  ));
+}
+
+/**
+ * Report generated-core files that carry governance content while the declared
+ * pairs are not at exact parity, which is what a hand copy of part of the
+ * source produces. Exact parity is accepted because it is also what the
+ * sanctioned T009 `build-dev` materialization produces: the two are
+ * byte-identical, so no static predicate can separate them. Premature
+ * materialization is detected out of band by `git status --porcelain -- .github`,
+ * which Phase 9 already records.
+ * @param {{label: string, source: string, generated: string}[]} pairs
+ */
+function governanceInGeneratedCoreIssues(pairs) {
+  if (pairs.every((pair) => pair.source === pair.generated)) return [];
+  /** @type {string[]} */
+  const issues = [];
+  for (const pair of pairs) {
+    if (pair.generated.includes(GOVERNANCE_POLICY_SECTION)) issues.push(`${pair.label}: governance section`);
+    for (const [marker, pattern] of GOVERNANCE_DETAIL_MARKERS) {
+      if (pattern.test(pair.generated)) issues.push(`${pair.label}: ${marker}`);
+    }
+  }
+  return issues;
+}
+
+/** @param {[string, string][]} edges */
+function assertAcyclicEdges(edges) {  /** @type {Map<string, string[]>} */
+  const graph = new Map();
+  for (const [from, to] of edges) {
+    if (!graph.has(from)) graph.set(from, []);
+    if (!graph.has(to)) graph.set(to, []);
+    /** @type {string[]} */ (graph.get(from)).push(to);
+  }
+  /** @type {Map<string, number>} */
+  const mark = new Map();
+  const visit = (/** @type {string} */ node) => {
+    const state = mark.get(node) ?? 0;
+    if (state === 1) assert.fail(`permit order cycle reaches ${node}`);
+    if (state === 2) return;
+    mark.set(node, 1);
+    for (const next of /** @type {string[]} */ (graph.get(node))) visit(next);
+    mark.set(node, 2);
+  };
+  for (const node of graph.keys()) visit(node);
+  return graph.size;
+}
+
+/** @param {string} source @param {string} label */
+function runtimeStringList(source, label) {
+  const patterns = {
+    'public commands': /!\[((?:'[a-z-]+',\s*)*'[a-z-]+')\]\.includes\(command\)/,
+    'transition modes': /assertEnum\(\s*\n?\s*mode,\s*\n?\s*\[([\s\S]*?)\],\s*\n?\s*'transition request\.mode'/,
+  };
+  const match = patterns[label].exec(source);
+  assert.ok(match, `recovery.mjs declares its ${label}`);
+  return [...match[1].matchAll(/'([a-z-]+)'/g)].map((entry) => entry[1]);
+}
+
+test('T007 detailed autonomous learning governance lives only in the Work owner', () => {
+  for (const relative of [GOVERNANCE_POLICY_OWNER, ...GOVERNANCE_POINTER_SURFACES]) {
+    assert.equal(fs.statSync(path.join(ROOT, relative)).isFile(), true, relative);
+  }
+  assert.deepEqual(GOVERNANCE_POINTER_SURFACES, [...GOVERNANCE_POINTER_SURFACES].sort());
+  assert.equal(GOVERNANCE_POINTER_SURFACES.includes(GOVERNANCE_POLICY_OWNER), false);
+
+  const ownerSource = read(GOVERNANCE_POLICY_OWNER);
+  const owner = markdownSection(ownerSource, GOVERNANCE_POLICY_SECTION);
+
+  const headingOwners = [GOVERNANCE_POLICY_OWNER, ...GOVERNANCE_POINTER_SURFACES]
+    .filter((relative) => visibleMarkdown(read(relative)).split('\n')
+      .some((line) => line.trim() === GOVERNANCE_POLICY_SECTION));
+  assert.deepEqual(headingOwners, [GOVERNANCE_POLICY_OWNER]);
+
+  // Each duplication marker must be real policy the owner actually states.
+  for (const [label, pattern] of GOVERNANCE_DETAIL_MARKERS) {
+    assert.match(owner, pattern, `owner must state ${label}`);
+  }
+
+  const scanned = [
+    ...GOVERNANCE_POINTER_SURFACES.map((relative) => [relative, visibleMarkdown(read(relative))]),
+    ...GOVERNANCE_DOC_SECTIONS.map(([relative, heading]) => (
+      [`${relative} ${heading}`, markdownSection(read(relative), heading)]
+    )),
+  ];
+  for (const [label, content] of scanned) {
+    for (const [marker, pattern] of GOVERNANCE_DETAIL_MARKERS) {
+      assert.doesNotMatch(content, pattern, `${label} duplicates ${marker}`);
+    }
+  }
+
+  // A pointer is one sentence. Growing or repeating it is duplication.
+  for (const relative of GOVERNANCE_POINTER_SURFACES) {
+    const pointers = sentences(visibleMarkdown(read(relative)))
+      .filter((sentence) => /learning governance/i.test(sentence));
+    assert.equal(pointers.length, 1, `${relative}: exactly one learning-governance pointer`);
+    assert.ok(
+      Buffer.byteLength(pointers[0], 'utf8') <= 260,
+      `${relative}: pointer is ${Buffer.byteLength(pointers[0], 'utf8')} bytes (limit 260)`,
+    );
+  }
+});
+
+test('T007 autonomous disposition defers away from the generic reviewer with guarded parity intact', () => {
+  const deferrals = [
+    {
+      relative: 'src/skills/dude-reviewer-protocol/SKILL.md',
+      heading: '# Reviewer Protocol',
+      ruleLine: 'For explicit autonomous Work, supply the grounded finding and occurrence evidence and defer every repeat-triggered disposition to `dude-work` learning governance. Guarded and non-Work disposition remains unchanged.',
+    },
+    {
+      relative: 'src/skills/dude-receiving-code-review/SKILL.md',
+      heading: '## Revision Procedure',
+      ruleLine: 'For explicit autonomous Work, preserve the exact finding and attempt evidence and defer every repeat-triggered disposition to `dude-work` learning governance; guarded and non-Work revision behavior remains unchanged.',
+    },
+    {
+      relative: 'src/agents/dude.agent.md',
+      heading: '## Work',
+      ruleLine: 'During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition to the learning governance owned by `dude-work`; guarded and non-Work disposition remains unchanged.',
+    },
+    {
+      relative: 'src/instructions/dude.instructions.md',
+      heading: '# Dude Shared Rules',
+      ruleLine: '13. During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition to `dude-work` learning governance; guarded and non-Work behavior remains unchanged.',
+    },
+    {
+      relative: 'src/skills/dude-lightweight-execution/SKILL.md',
+      heading: '## Autonomous Work Lane Wrapper',
+      ruleLine: 'The boundary freshly rereads `tasks.md`, `.dude/state/task-state.json`, and the unique owner idea, recomputes every binding and identity it was handed, and applies all three as one all-or-restored transaction. Every failure returns one closed result: a refusal that leaves all three surfaces byte-for-byte unchanged, or an indeterminate rollback that is a run-wide hard stop. `dude-work` owns the autonomous learning governance that decides when such a request may be made.',
+    },
+  ];
+
+  for (const deferral of deferrals) {
+    assertSectionRuleRejectsMutations(deferral.relative, deferral.heading, deferral.ruleLine);
+    const section = markdownSection(read(deferral.relative), deferral.heading);
+    assert.match(section, /`dude-work`[^\n]{0,96}learning governance|learning governance[^\n]{0,96}`dude-work`/i, deferral.relative);
+  }
+
+  // Guarded and non-Work parity is stated wherever governance is mentioned.
+  for (const relative of GOVERNANCE_POINTER_SURFACES) {
+    assert.match(
+      visibleMarkdown(read(relative)),
+      /guarded[^\n]{0,96}non-Work[^\n]{0,96}(?:unchanged|retain)/i,
+      `${relative}: guarded and non-Work parity`,
+    );
+  }
+  assert.match(
+    markdownSection(read(GOVERNANCE_POLICY_OWNER), GOVERNANCE_POLICY_SECTION),
+    /guarded[^\n]{0,96}non-Work[^\n]{0,96}(?:unchanged|retain)/i,
+    `${GOVERNANCE_POLICY_OWNER}: guarded and non-Work parity`,
+  );
+
+  // The reviewer never regains autonomous repeat disposition.
+  for (const relative of ['src/skills/dude-reviewer-protocol/SKILL.md', 'src/agents/dude-reviewer.agent.md']) {
+    assert.doesNotMatch(
+      visibleMarkdown(read(relative)),
+      /reviewer[^\n]{0,96}(?:decides|applies|owns|retains)[^\n]{0,96}autonomous[^\n]{0,64}disposition/i,
+      relative,
+    );
+  }
+});
+
+test('T007 the Work owner states every governed ordering, scope, and evidence rule', () => {
+  const owner = markdownSection(read(GOVERNANCE_POLICY_OWNER), GOVERNANCE_POLICY_SECTION);
+  const failures = [
+    ...missingParagraphRequirements(owner, [
+      ['sole detailed owner and pointer-only peers', [
+        [/sole detailed owner/i, /repeat-triggered learning governance/i],
+        [/authority/i, /deferral/i, /evidence/i, /wrapper-use/i, /pointer/i],
+      ]],
+      ['no new lane, store, ledger, or command', [
+        [/(?:no lane|no[^\n]{0,32}lane)/i, /no[^\n]{0,32}(?:persistent )?store/i, /no second ledger/i, /no user-facing command/i],
+      ]],
+      ['all six public routes stay runtime-only', [
+        [/`inspect`/, /`authorize`/, /`complete`/, /`learn`/, /`transition`/, /`audit`/, /runtime/i, /only/i],
+      ]],
+      ['retention-first completion', [
+        [/retention/i, /first/i],
+        [/`pendingCompletion`/, /hash-only/i, /`learningGovernance`/, /`required`/],
+        [/before[^\n]{0,80}(?:admitted|finalized)/i],
+        [
+          /never overwrite/i,
+          /occupied[^\n]{0,64}`learning-governance-conflict`/i,
+          /conflicting[^\n]{0,64}`occurrence-retention-conflict`/i,
+          /`learning-governance-capacity`[^\n]{0,64}reserved[^\n]{0,64}failed-approach/i,
+        ],
+      ]],
+      ['trusted source evidence only', [
+        [/trusted source evidence/i, /Inspection source mechanism/i, /caller cannot submit/i],
+        [/stale/i, /partial/i, /duplicate/i, /conflicting/i, /wrong-target/i, /wrong-authority/i, /reject/i],
+        [/normalized basis/i, /failure class/i, /check definition/i],
+        [/distinct valid occurrences/i, /equal full occurrence identities do not/i],
+      ]],
+      ['unresolved seal blocks affected-target disposition', [
+        [/refuse another attempt/i, /escalation/i, /no-progress/i, /block/i, /close/i, /resolving status/i],
+        [/authorizes no[^\n]{0,80}(?:alternative|controlled end)/i],
+      ]],
+      ['bounded projection batches verified on both surfaces', [
+        [/one bounded batch/i, /17 events/, /exactly one approach event/i, /sixteen finding events/i],
+        [/current-run evidence/i, /authoritative lane history/i, /(?:reacquire|verify)/i],
+        [/missing/i, /one-sided/i, /stale/i, /conflicting/i, /unresolved/i, /blocks/i],
+      ]],
+      ['complete failed-approach comparison', [
+        [/complete failed-approach set/i, /rather than the most recent attempt/i],
+        [/deterministic identity/i, /material difference/i, /discriminating check/i],
+        [/disguised repetition/i, /never materially different/i],
+        [/no credible alternative/i, /`no-progress-verified`/],
+      ]],
+      ['fixed acyclic permit order', [
+        [/permit order/i, /acyclic/i, /no route returns to an earlier phase/i],
+        [/`projected`/, /no permit/i, /no controlled end/i],
+      ]],
+      ['lane mutation only through the lane Work boundary', [
+        [/lane mutation/i, /Work boundary/i, /permit/i, /receipt/i],
+        [/never mutates a lane/i, /ordinary CLI/i, /direct edit/i],
+        [/Lightweight and tracked/i, /ambiguous tracked mapping/i, /fails closed/i],
+      ]],
+      ['scoped halts and budgets', [
+        [/target-scoped hard stop/i, /per-target recovery budget/i, /that target alone/i, /no unrelated scheduling authority/i],
+        [/run-wide/i, /overall budget/i, /stops the invocation/i],
+        [/no halt/i, /clears/i, /controlled-end authority/i],
+      ]],
+      ['sequential disjoint scheduling without concurrency', [
+        [/scheduling stays sequential/i],
+        [/suspended unchanged/i, /dependency and change-set rules/i, /disjoint and independent/i],
+        [/scheduler action/i, /not a target disposition/i],
+        [/no concurrent/i, /one at a time/i],
+        [/never revisited/i, /new distinguishing evidence/i, /materially different alternative/i],
+      ]],
+      ['controlled unresolved end eligibility', [
+        [/`transition controlled-end`/, /`alternative-inspected`/, /before attempt-permit issuance/i],
+        [/`no-progress-verified`/, /before the lane no-progress disposition/i],
+        [/branch for audit/i, /pending and unchanged/i, /authorizes no attempt/i],
+        [/immediate halt end/i, /no controlled-end permit, mutation, record, or receipt/i],
+      ]],
+      ['resume restores or re-derives before any transition', [
+        [/`transition resume-governance`/, /(?:restores|re-derives)/i, /before any normal transition/i],
+        [/exact captured basis/i, /chronology/i, /existing history/i],
+        [/neither safely retained nor deterministically re-derivable/i, /stop/i],
+      ]],
+      ['conditional audit over existing history', [
+        [/`audit`/, /current-run/i, /lane history/i, /never a second store/i],
+        [/always reports/i, /affected target/i, /governance status/i, /invocation outcome/i],
+        [/conditional/i, /resolved alternative/i, /resolved no-progress/i, /immediate halt end/i, /controlled end/i],
+        [/no audit claims/i, /target completion/i],
+      ]],
+      ['objective independence', [
+        [/objective/i, /no objective/i, /never invents an objective/i],
+      ]],
+    ]),
+    ...staleRecoveryPhrases(owner),
+  ];
+  assert.deepEqual(failures, [], `${GOVERNANCE_POLICY_OWNER} ${GOVERNANCE_POLICY_SECTION}`);
+});
+
+test('T007 the documented permit order is acyclic and matches the runtime routes', () => {
+  assert.equal(assertAcyclicEdges(GOVERNANCE_PERMIT_EDGES), 9);
+  assert.throws(
+    () => assertAcyclicEdges([...GOVERNANCE_PERMIT_EDGES, ['`transition commit-lane-receipt`', '`learn`']]),
+    /permit order cycle/,
+    'the acyclicity check must reject a back edge',
+  );
+
+  const owner = markdownSection(read(GOVERNANCE_POLICY_OWNER), GOVERNANCE_POLICY_SECTION);
+  const firstIndex = (/** @type {string} */ token) => {
+    const index = owner.indexOf(token);
+    assert.notEqual(index, -1, `owner documents ${token}`);
+    return index;
+  };
+  for (const [earlier, later] of GOVERNANCE_PERMIT_EDGES) {
+    assert.ok(
+      firstIndex(earlier) < firstIndex(later),
+      `owner documents ${earlier} before ${later}`,
+    );
+  }
+
+  const runtime = read('src/skills/dude-work/recovery.mjs');
+  assert.deepEqual(runtimeStringList(runtime, 'public commands'), GOVERNANCE_PUBLIC_COMMANDS);
+  const modes = runtimeStringList(runtime, 'transition modes');
+  const documentedModes = [...new Set(GOVERNANCE_PERMIT_EDGES.flat())]
+    .filter((token) => token.startsWith('`transition '))
+    .map((token) => token.slice('`transition '.length, -1))
+    .sort();
+  assert.deepEqual(
+    documentedModes.filter((mode) => modes.includes(mode)),
+    documentedModes,
+    'every documented transition route is a real runtime mode',
+  );
+  for (const command of GOVERNANCE_PUBLIC_COMMANDS) {
+    assert.ok(owner.includes(`\`${command}\``), `owner names the public \`${command}\` route`);
+  }
+});
+
+test('T007 governance introduces no user-facing command and no new grammar', () => {
+  const surfaces = [
+    GOVERNANCE_POLICY_OWNER,
+    ...GOVERNANCE_POINTER_SURFACES,
+    ...PUBLIC_DOC_FILES,
+  ];
+  for (const relative of surfaces) {
+    const content = read(relative);
+    for (const forbidden of FORBIDDEN_USER_COMMANDS) {
+      assert.equal(content.includes(forbidden), false, `${relative} presents ${forbidden}`);
+    }
+  }
+
+  for (const relative of [GOVERNANCE_POLICY_OWNER, 'docs/commands.md']) {
+    assert.deepEqual(
+      read(relative).split('\n').filter((line) => line.startsWith('@dude work [')),
+      [WORK_GRAMMAR_LINE],
+      `${relative} keeps the exact unchanged Work grammar`,
+    );
+  }
+
+  const grammarFlags = [...new Set(
+    [...WORK_GRAMMAR_LINE.matchAll(/--[a-z][a-z-]*/g)].map((entry) => entry[0]),
+  )].sort();
+  assert.deepEqual(
+    grammarFlags,
+    ['--max', '--parallel', '--policy', '--recover-on-block', '--recovery-cycles', '--until'],
+  );
+  const proseFlags = [
+    ...markdownSection(read(GOVERNANCE_POLICY_OWNER), '## Grammar And Limits').matchAll(/--[a-z][a-z-]*/g),
+    ...markdownSection(read('docs/commands.md'), '### `@dude work`').matchAll(/^- `(--[a-z][a-z-]*)/gm),
+  ].map((entry) => entry[1] ?? entry[0]);
+  assert.ok(proseFlags.length >= grammarFlags.length, 'both surfaces document the Work flags');
+  for (const flag of proseFlags) {
+    assert.ok(grammarFlags.includes(flag), `undeclared Work flag ${flag}`);
+  }
+  for (const flag of grammarFlags) {
+    assert.ok(proseFlags.includes(flag), `undocumented Work flag ${flag}`);
+  }
+});
+
+test('T007 governed scheduling never broadens to concurrency', () => {
+  assert.deepEqual(
+    concurrencyGrants('Work may run two proven disjoint targets concurrently.'),
+    ['Work may run two proven disjoint targets concurrently.'],
+    'the concurrency scan must catch a permissive sentence',
+  );
+  assert.deepEqual(
+    concurrencyGrants('Nothing is fanned out.\n2. two disjoint targets may run concurrently.'),
+    ['2. two disjoint targets may run concurrently.'],
+    'a digit-led list item starts its own sentence, so no neighbouring denial exonerates it',
+  );
+
+  const scanned = [
+    [GOVERNANCE_POLICY_OWNER, markdownSection(read(GOVERNANCE_POLICY_OWNER), GOVERNANCE_POLICY_SECTION)],
+    ...GOVERNANCE_POINTER_SURFACES.map((relative) => [relative, visibleMarkdown(read(relative))]),
+    ...GOVERNANCE_DOC_SECTIONS.map(([relative, heading]) => {
+      const governance = markdownSection(read(relative), heading)
+        .split(/\n\s*\n/)
+        .filter((paragraph) => /requires learning/i.test(paragraph));
+      assert.equal(governance.length, 1, `${relative} ${heading}: one governance paragraph`);
+      return [`${relative} ${heading}`, governance[0]];
+    }),
+  ];
+  for (const [label, content] of scanned) {
+    assert.deepEqual(concurrencyGrants(content), [], `${label} grants concurrency`);
+  }
+});
+
+test('T007 generated core carries no governance content outside a complete materialization', () => {
+  // Self-proof: governance content in a non-parity generated file is reported,
+  // and exact parity reports nothing. Parity cannot distinguish the sanctioned
+  // T009 materialization from an early one, so this scan does not claim to.
+  const probe = [
+    { label: 'probe-untouched', source: 'source-a', generated: 'stale-a' },
+    {
+      label: 'probe-handcopied',
+      source: 'source-b',
+      generated: `${GOVERNANCE_POLICY_SECTION}\n\nbind one exact affected target in \`learningGovernance\` at \`required\`.`,
+    },
+  ];
+  assert.deepEqual(governanceInGeneratedCoreIssues(probe), [
+    'probe-handcopied: governance section',
+    'probe-handcopied: governance state fields',
+  ]);
+  assert.deepEqual(
+    governanceInGeneratedCoreIssues(probe.map((pair) => ({ ...pair, generated: pair.source }))),
+    [],
+  );
+
+  assert.equal(new Set(GENERATED_CORE_PAIRS.map(([, generated]) => generated)).size, GENERATED_CORE_PAIRS.length);
+  for (const [source, generated] of GENERATED_CORE_PAIRS) {
+    assert.equal(fs.statSync(path.join(ROOT, source)).isFile(), true, source);
+    assert.equal(fs.statSync(path.join(ROOT, generated)).isFile(), true, generated);
+  }
+  assert.deepEqual(
+    governanceInGeneratedCoreIssues(GENERATED_CORE_PAIRS.map(([source, generated]) => ({
+      label: generated,
+      source: read(source),
+      generated: read(generated),
+    }))),
+    [],
+  );
+
+  // Every governance assertion above reads source, never generated core.
+  for (const relative of [GOVERNANCE_POLICY_OWNER, ...GOVERNANCE_POINTER_SURFACES]) {
+    assert.equal(relative.startsWith('src/'), true, relative);
+  }
+});

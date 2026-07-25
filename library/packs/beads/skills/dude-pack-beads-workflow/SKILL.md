@@ -141,6 +141,21 @@ When more than one condition would apply for a single feature, report the most a
 
 Non-executable grouping issues, including deferred epics, do not participate in mirror verification. The check is informational but must be accurate: do not report `verified current` from file modification times alone.
 
+## Autonomous Work Lane Wrapper
+
+Autonomous `dude-work` never drives Beads through the commands in this skill. It calls the separate `applyTrackedWorkRequest` boundary in `beads.mjs` with one closed `work-project`, `work-transition`, `work-prove-poststate`, or `work-reconcile-owner` request. Manual, guarded, non-Work, mirror, and coordinator-maintenance authority is unchanged.
+
+The boundary accepts identity references plus expected or observed bytes, never caller decisions: no command string, executable, shell fragment, or free-form governance flag. The Work host injects the acquisition and dispatch ports, which receive only the closed capture kind, the canonical target, and the validated mutation object. Before any dispatch the wrapper reacquires the complete list, detail, and history captures and the owner idea, then recomputes the owner binding, the unique issue-to-task mapping, the lane prestate, every event parsed from `mutation.eventLines`, and `mutationIdentity`, and checks the closed transition matrix. Caller-supplied descriptors are compared to those real captures, so no mapping or prestate hash can be chosen.
+
+Tracked lane state and the owner log cannot share one transaction, so the stages are explicit:
+
+- dispatch produces operation evidence and a stage-bound recovery identity, never a receipt;
+- an exact fresh poststate — inline or through `work-prove-poststate` — produces the lane receipt without another dispatch;
+- an exact owner append or unchanged-owner proof — inline or through `work-reconcile-owner` — produces the owner receipt;
+- only the composite receipt is success.
+
+Owner reconciliation accepts only the original preimage or its deterministic single-append postimage, so replaying it never double-appends. Because prior authoritative mutation is possible, neither recovery operation can refuse: it returns its committed, still-pending, or indeterminate outcome, and an indeterminate outcome is a run-wide hard stop.
+
 ## Before Starting Work
 
 ```bash

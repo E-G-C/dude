@@ -8,7 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { run, parseArgs } from './board.mjs';
+import { run, parseArgs, applyLightweightWorkRequest } from './board.mjs';
+import { canonicalJson } from '../dude-work/recovery.mjs';
 
 /** Absolute path to the board CLI, spawned as a child process end-to-end. */
 const BOARD_CLI = fileURLToPath(new URL('./board.mjs', import.meta.url));
@@ -507,5 +508,1046 @@ test('board preserves an unrelated feature entry across a successful --write', (
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  }
+});
+
+// --- T006 Lightweight lane trust boundary ------------------------------------
+//
+// The closed `work-project` / `work-set` integration matrix. Every refusal case
+// asserts byte-for-byte unchanged authoritative surfaces AND that the returned
+// `unchangedPrestateHash` equals an independently recomputed fresh observation.
+
+const LANE_SPEC = '.dude/specs/009-lane/spec.md';
+const LANE_TASKS = '.dude/specs/009-lane/tasks.md';
+const LANE_IDEA = '.dude/ideas/lane.md';
+const LANE_SNAPSHOT = '.dude/state/task-state.json';
+const LANE_TASK_KEY = 'T001@6c616e65';
+const LANE_OTHER_KEY = 'T002@6f746865';
+const LANE_STAMP = '2026-07-25T12:00:00Z';
+const LANE_TARGET = { specPath: LANE_SPEC, lane: 'lightweight', taskKey: LANE_TASK_KEY };
+const LANE_RUN_STATE = {
+  policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, parallel: 1, mode: 'autonomous' },
+  overallUsed: 0,
+  recoveryUsed: [],
+  pending: [],
+  completed: [],
+};
+const LANE_TASKS_FIXTURE = `# Tasks: Lane
+
+## Phase 1
+
+- [ ] ${LANE_TASK_KEY} [US3] Implement the lane boundary
+- [ ] ${LANE_OTHER_KEY} [US3] Another canonical unit
+
+## Lightweight Execution History
+
+- 2026-07-24T00:00:00Z - baseline
+`;
+
+function laneIdeaLedger(specPath = LANE_SPEC) {
+  return `---\nstatus: defined\nspec_path: ${specPath}\n---\n\n## Idea\n\nLane boundary.\n\n## Coordinator Log\n\n- Existing entry.\n`;
+}
+
+/** @param {string} root @param {string} rel @param {string} content */
+function writeLaneFile(root, rel, content) {
+  const absolute = path.join(root, ...rel.split('/'));
+  fs.mkdirSync(path.dirname(absolute), { recursive: true });
+  fs.writeFileSync(absolute, content);
+  return absolute;
+}
+
+/** @param {string} root @param {string} rel */
+function laneBytes(root, rel) {
+  return fs.readFileSync(path.join(root, ...rel.split('/')));
+}
+
+/** @param {Buffer|string} value */
+function laneCapture(value) {
+  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+  return { base64: bytes.toString('base64'), sha256: sha256(bytes), byteLength: bytes.byteLength };
+}
+
+/** @param {Buffer|string} value */
+function laneDescriptor(value) {
+  const capture = laneCapture(value);
+  return { sha256: capture.sha256, byteLength: capture.byteLength };
+}
+
+function scaffoldLane() {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dude-lane-')));
+  writeLaneFile(root, LANE_SPEC, '# Spec Lane\n');
+  writeLaneFile(root, LANE_TASKS, LANE_TASKS_FIXTURE);
+  writeLaneFile(root, LANE_IDEA, laneIdeaLedger());
+  writeLaneFile(root, LANE_SNAPSHOT, `${JSON.stringify({
+    [LANE_TASKS]: { glyphs: { [LANE_TASK_KEY]: ' ', [LANE_OTHER_KEY]: ' ' }, updated_at: '2026-07-24T00:00:00.000Z' },
+  }, null, 2)}\n`);
+  return root;
+}
+
+/** @param {string} root */
+function laneSurfaces(root) {
+  return {
+    tasks: laneBytes(root, LANE_TASKS),
+    taskState: laneBytes(root, LANE_SNAPSHOT),
+    owner: laneBytes(root, LANE_IDEA),
+  };
+}
+
+/** Recompute the boundary's fresh-observation hash independently. @param {string} root @param {string} [ideaPath] */
+function laneObservationHash(root, ideaPath = LANE_IDEA) {
+  /** @param {string} rel */
+  const seen = (rel) => {
+    const absolute = path.join(root, ...rel.split('/'));
+    return fs.existsSync(absolute) ? laneDescriptor(fs.readFileSync(absolute)) : null;
+  };
+  return sha256(canonicalJson({
+    owner: seen(ideaPath),
+    taskState: seen(LANE_SNAPSHOT),
+    tasks: seen(LANE_TASKS),
+  }));
+}
+
+/** The sentinel the boundary reports when no surface path is resolvable. */
+const LANE_UNOBSERVED_HASH = sha256(canonicalJson({ owner: null, taskState: null, tasks: null }));
+
+/** @param {string} seed */
+function laneEvent(seed) {
+  const body = { type: 'lane-boundary-probe', version: 1, seed };
+  return { ...body, eventHash: sha256(canonicalJson(body)) };
+}
+
+/** @param {Record<string, unknown>} event */
+function laneEventLine(event) {
+  return { eventHash: event.eventHash, exactLine: `- dude-run-event: ${canonicalJson(event)}`, terminator: 'LF' };
+}
+
+/** @param {Record<string, unknown>[]} events */
+function laneEventEffect(events) {
+  return { kind: 'append-exact', lines: events.map(laneEventLine), appendIfAbsent: true };
+}
+
+/** @param {string} root @param {string[]} lines */
+function laneOwnerAppend(root, lines) {
+  return {
+    kind: 'append-exact',
+    ownerPath: LANE_IDEA,
+    expectedOwnerHash: sha256(laneBytes(root, LANE_IDEA)),
+    exactLines: lines,
+    terminator: 'LF',
+    appendIfAbsent: true,
+  };
+}
+
+/** @param {Record<string, unknown>} overrides */
+function laneMutation(overrides = {}) {
+  return {
+    version: 1,
+    lane: 'lightweight',
+    kind: 'claim',
+    reason: 'initial-claim',
+    target: LANE_TARGET,
+    fromGlyph: ' ',
+    toGlyph: '~',
+    blocker: { kind: 'unchanged', before: null, after: null },
+    eventLines: laneEventEffect([laneEvent('claim')]),
+    ownerLog: { kind: 'none' },
+    snapshotUpdatedAt: LANE_STAMP,
+    ...overrides,
+  };
+}
+
+/** @param {Record<string, unknown>} overrides */
+function laneProjectionMutation(overrides = {}) {
+  return laneMutation({
+    kind: 'append-event',
+    reason: 'event-projection',
+    fromGlyph: ' ',
+    toGlyph: ' ',
+    eventLines: laneEventEffect([laneEvent('projection')]),
+    ...overrides,
+  });
+}
+
+/**
+ * Build one complete valid wrapper request against the CURRENT fresh bytes.
+ * @param {string} root
+ * @param {{operation?:'work-project'|'work-set',mutation?:any,state?:any,glyph?:string,blockedBy?:string|null,taskKey?:string,mappingOverrides?:Record<string,unknown>}} [options]
+ */
+function laneRequest(root, options = {}) {
+  const operation = options.operation ?? 'work-set';
+  const mutation = options.mutation ?? laneMutation();
+  const state = options.state ?? LANE_RUN_STATE;
+  const taskKey = options.taskKey ?? LANE_TASK_KEY;
+  const target = { specPath: LANE_SPEC, lane: 'lightweight', taskKey };
+  const surfaces = laneSurfaces(root);
+  const ownerCapture = laneCapture(surfaces.owner);
+  const ownerBindingHash = sha256(canonicalJson({
+    ideaPath: LANE_IDEA,
+    specPath: LANE_SPEC,
+    ownerCapture: { sha256: ownerCapture.sha256, byteLength: ownerCapture.byteLength },
+  }));
+  const mapping = {
+    version: 1,
+    lane: 'lightweight',
+    target,
+    ownerBindingHash,
+    tasksPath: LANE_TASKS,
+    tasksDescriptor: laneDescriptor(surfaces.tasks),
+    taskStatePath: LANE_SNAPSHOT,
+    taskStateDescriptor: laneDescriptor(surfaces.taskState),
+    taskKey,
+    ...(options.mappingOverrides ?? {}),
+  };
+  const prestate = {
+    version: 1,
+    lane: 'lightweight',
+    target,
+    glyph: options.glyph ?? ' ',
+    blockedBy: options.blockedBy ?? null,
+    tasksDescriptor: laneDescriptor(surfaces.tasks),
+    taskStateDescriptor: laneDescriptor(surfaces.taskState),
+    ownerDescriptor: laneDescriptor(surfaces.owner),
+  };
+  const bound = {
+    target,
+    subjectRunStateHash: sha256(canonicalJson(state)),
+    targetMappingHash: sha256(canonicalJson(mapping)),
+    lanePrestateHash: sha256(canonicalJson(prestate)),
+    mutationIdentity: sha256(canonicalJson(mutation)),
+  };
+  const permitBody = operation === 'work-project'
+    ? {
+      version: 1,
+      kind: 'lane-projection',
+      origin: 'dude-work',
+      lane: 'lightweight',
+      ...bound,
+      batchIdentity: sha256('lane-batch'),
+      eventHash: mutation.eventLines.lines[0].eventHash,
+    }
+    : {
+      version: 1,
+      kind: 'lane-mutation',
+      origin: 'dude-work',
+      lane: 'lightweight',
+      operation: 'work-set',
+      ...bound,
+      governanceIdentity: null,
+      governancePhase: null,
+      attemptIdentity: null,
+    };
+  return {
+    version: 1,
+    operation,
+    root,
+    owner: { ideaPath: LANE_IDEA, specPath: LANE_SPEC, ownerCapture, ownerBindingHash },
+    target,
+    state,
+    permit: { ...permitBody, permitHash: sha256(canonicalJson(permitBody)) },
+    mapping,
+    expected: {
+      tasksPath: LANE_TASKS,
+      tasks: laneCapture(surfaces.tasks),
+      taskStatePath: LANE_SNAPSHOT,
+      taskState: laneCapture(surfaces.taskState),
+    },
+    mutation,
+  };
+}
+
+/**
+ * Assert a closed refusal that mutated nothing.
+ * @param {string} root @param {unknown} request @param {string} reason @param {string} label
+ * @param {{observable?:boolean,ideaPath?:string}} [options]
+ */
+function assertLaneRefusal(root, request, reason, label, options = {}) {
+  const before = laneSurfaces(root);
+  const result = applyLightweightWorkRequest(request);
+  const after = laneSurfaces(root);
+  assert.equal(result.ok, false, `${label}: must refuse`);
+  assert.equal(result.phase, 'refused', `${label}: phase`);
+  assert.equal(result.reason, reason, `${label}: reason`);
+  assert.match(result.unchangedPrestateHash, /^[0-9a-f]{64}$/, `${label}: prestate hash shape`);
+  assert.equal(
+    result.unchangedPrestateHash,
+    options.observable === false ? LANE_UNOBSERVED_HASH : laneObservationHash(root, options.ideaPath),
+    `${label}: fresh unchanged evidence`,
+  );
+  assert.deepEqual(Object.keys(result).sort(), ['ok', 'phase', 'reason', 'unchangedPrestateHash'], `${label}: closed shape`);
+  for (const surface of /** @type {const} */ (['tasks', 'taskState', 'owner'])) {
+    assert.ok(before[surface].equals(after[surface]), `${label}: ${surface} must stay byte-identical`);
+  }
+  return result;
+}
+
+test('T006 lightweight work-set commits an exact claim only after fresh poststate capture', () => {
+  const root = scaffoldLane();
+  try {
+    const mutation = laneMutation({ ownerLog: laneOwnerAppend(root, ['- 2026-07-25T12:00:00Z - lane claim']) });
+    const request = laneRequest(root, { mutation });
+    const result = applyLightweightWorkRequest(request);
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.phase, 'committed');
+    const receipt = result.receipt;
+    const after = laneSurfaces(root);
+    assert.equal(receipt.tasksPoststateHash, sha256(after.tasks), 'tasks poststate is the real byte hash');
+    assert.equal(receipt.taskStatePoststateHash, sha256(after.taskState), 'snapshot poststate is the real byte hash');
+    assert.equal(receipt.ownerPoststateHash, sha256(after.owner), 'owner poststate is the real byte hash');
+    assert.equal(receipt.permitHash, request.permit.permitHash);
+    assert.equal(receipt.mutationIdentity, request.permit.mutationIdentity);
+    assert.equal(receipt.targetStateChanged, true);
+    const { receiptHash, ...body } = receipt;
+    assert.equal(receiptHash, sha256(canonicalJson(body)), 'receipt hash binds its complete body');
+
+    const tasksText = after.tasks.toString('utf8');
+    assert.match(tasksText, new RegExp(`- \\[~\\] ${LANE_TASK_KEY}`), 'glyph applied');
+    assert.ok(tasksText.includes(`${request.mutation.eventLines.lines[0].exactLine}\n`), 'exact LF event record appended');
+    assert.ok(after.owner.toString('utf8').endsWith('- 2026-07-25T12:00:00Z - lane claim\n'), 'owner line appended');
+    const snapshot = JSON.parse(after.taskState.toString('utf8'));
+    assert.equal(snapshot[LANE_TASKS].glyphs[LANE_TASK_KEY], '~');
+    assert.equal(snapshot[LANE_TASKS].glyphs[LANE_OTHER_KEY], ' ', 'unrelated task glyph preserved');
+    assert.equal(snapshot[LANE_TASKS].updated_at, '2026-07-25T12:00:00.000Z', 'snapshot stamp derives from the mutation');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T006 lightweight work-project appends the exact event and reports an unchanged target state', () => {
+  const root = scaffoldLane();
+  try {
+    const mutation = laneProjectionMutation();
+    const request = laneRequest(root, { operation: 'work-project', mutation });
+    const before = laneSurfaces(root);
+    const result = applyLightweightWorkRequest(request);
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.receipt.targetStateChanged, false, 'projection never changes target state');
+    const after = laneSurfaces(root);
+    assert.equal(
+      after.tasks.toString('utf8'),
+      `${before.tasks.toString('utf8')}${mutation.eventLines.lines[0].exactLine}\n`,
+      'tasks.md changes by exactly one appended LF record',
+    );
+    assert.ok(before.owner.equals(after.owner), 'owner bytes unchanged under ownerLog none');
+    assert.equal(result.receipt.ownerPoststateHash, sha256(after.owner));
+
+    // Replaying the identical projection changes nothing and must not succeed.
+    const replay = laneRequest(root, { operation: 'work-project', mutation });
+    assertLaneRefusal(root, replay, 'permit-replayed', 'replayed projection');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T006 lightweight boundary rejects every omitted, unexpected, or caller-authored field', () => {
+  const root = scaffoldLane();
+  try {
+    const base = () => laneRequest(root);
+    assertLaneRefusal(root, { ...base(), command: 'bd update --status closed' }, 'unknown-field', 'caller command string');
+    assertLaneRefusal(root, { ...base(), force: true }, 'unknown-field', 'free-form governance flag');
+    const missing = base();
+    delete missing.mapping;
+    assertLaneRefusal(root, missing, 'invalid-request-shape', 'omitted mapping');
+    assertLaneRefusal(root, { ...base(), version: 2 }, 'invalid-request-shape', 'wrong version');
+    assertLaneRefusal(root, { ...base(), operation: 'work-transition' }, 'invalid-request-shape', 'wrong lane operation');
+    const extraMutationField = base();
+    extraMutationField.mutation = { ...extraMutationField.mutation, note: 'why' };
+    assertLaneRefusal(root, extraMutationField, 'unknown-field', 'unknown mutation field');
+    for (const garbage of [null, 'work-set', 42, [], { operation: 'work-set' }]) {
+      const result = applyLightweightWorkRequest(garbage);
+      assert.equal(result.ok, false);
+      assert.equal(result.phase, 'refused');
+      assert.match(result.unchangedPrestateHash, /^[0-9a-f]{64}$/, 'closed fail response for garbage input');
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T006 lightweight boundary rejects stale expected captures and forged descriptors', () => {
+  const root = scaffoldLane();
+  try {
+    const stale = laneRequest(root);
+    stale.expected = { ...stale.expected, tasks: laneCapture('# stale tasks\n') };
+    assertLaneRefusal(root, stale, 'expected-capture-mismatch', 'stale expected tasks');
+
+    const staleState = laneRequest(root);
+    staleState.expected = { ...staleState.expected, taskState: laneCapture('{}\n') };
+    assertLaneRefusal(root, staleState, 'expected-capture-mismatch', 'stale expected snapshot');
+
+    const staleOwner = laneRequest(root);
+    const forgedOwnerCapture = laneCapture('---\nstatus: defined\n---\n');
+    staleOwner.owner = {
+      ...staleOwner.owner,
+      ownerCapture: forgedOwnerCapture,
+      ownerBindingHash: sha256(canonicalJson({
+        ideaPath: LANE_IDEA,
+        specPath: LANE_SPEC,
+        ownerCapture: { sha256: forgedOwnerCapture.sha256, byteLength: forgedOwnerCapture.byteLength },
+      })),
+    };
+    assertLaneRefusal(root, staleOwner, 'owner-prestate-mismatch', 'owner capture that is not the real bytes');
+
+    // D-4: a self-consistent mapping descriptor that does not describe the real
+    // workspace bytes can no longer choose `targetMappingHash`.
+    const forgedMapping = laneRequest(root);
+    forgedMapping.mapping = { ...forgedMapping.mapping, tasksDescriptor: laneDescriptor('# other tasks\n') };
+    assertLaneRefusal(root, forgedMapping, 'mapping-mismatch', 'mapping descriptor detached from real bytes');
+
+    const forgedSnapshotDescriptor = laneRequest(root);
+    forgedSnapshotDescriptor.mapping = {
+      ...forgedSnapshotDescriptor.mapping,
+      taskStateDescriptor: laneDescriptor('{}\n'),
+    };
+    assertLaneRefusal(root, forgedSnapshotDescriptor, 'mapping-mismatch', 'snapshot descriptor detached from real bytes');
+
+    // The whole point of D-4: a mapping whose permit was rebuilt over the
+    // forged descriptor is internally consistent, so only the comparison
+    // against real workspace bytes can reject it.
+    assertLaneRefusal(
+      root,
+      laneRequest(root, { mappingOverrides: { tasksDescriptor: laneDescriptor('# other tasks\n') } }),
+      'mapping-mismatch',
+      'self-consistent mapping and permit over a caller-chosen targetMappingHash',
+    );
+    assertLaneRefusal(
+      root,
+      laneRequest(root, { mappingOverrides: { taskStateDescriptor: laneDescriptor('{}\n') } }),
+      'mapping-mismatch',
+      'self-consistent snapshot descriptor over a caller-chosen targetMappingHash',
+    );
+    assertLaneRefusal(
+      root,
+      laneRequest(root, { mappingOverrides: { taskKey: LANE_OTHER_KEY } }),
+      'mapping-mismatch',
+      'self-consistent mapping and permit over a caller-chosen durable task key',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T006 lightweight boundary rejects hand-built, transferred, and mismapped permits', () => {
+  const root = scaffoldLane();
+  try {
+    const forgedPrestate = laneRequest(root, { glyph: '~' });
+    assertLaneRefusal(root, forgedPrestate, 'lane-prestate-mismatch', 'caller-chosen prestate glyph');
+
+    const forgedOwnerDescriptor = laneRequest(root);
+    const body = { ...forgedOwnerDescriptor.permit };
+    delete body.permitHash;
+    body.lanePrestateHash = sha256('not the derived prestate');
+    forgedOwnerDescriptor.permit = { ...body, permitHash: sha256(canonicalJson(body)) };
+    assertLaneRefusal(root, forgedOwnerDescriptor, 'lane-prestate-mismatch', 'hand-built permit over a chosen prestate');
+
+    const tampered = laneRequest(root);
+    tampered.permit = { ...tampered.permit, permitHash: sha256('nope') };
+    assertLaneRefusal(root, tampered, 'permit-hash-mismatch', 'permit hash that does not bind its body');
+
+    const transferred = laneRequest(root);
+    const transferredBody = { ...transferred.permit };
+    delete transferredBody.permitHash;
+    transferredBody.target = { specPath: LANE_SPEC, lane: 'lightweight', taskKey: LANE_OTHER_KEY };
+    transferred.permit = { ...transferredBody, permitHash: sha256(canonicalJson(transferredBody)) };
+    assertLaneRefusal(root, transferred, 'target-mismatch', 'permit transferred from another target');
+
+    // A complete, well-formed permit for the OTHER lane is still transferred:
+    // the lane binding is checked before the target is even shaped.
+    const crossLane = laneRequest(root, { operation: 'work-project', mutation: laneProjectionMutation() });
+    const crossLaneBody = { ...crossLane.permit };
+    delete crossLaneBody.permitHash;
+    crossLaneBody.lane = 'tracked';
+    crossLaneBody.target = { specPath: LANE_SPEC, lane: 'tracked', issueId: 'bd-101' };
+    crossLane.permit = { ...crossLaneBody, permitHash: sha256(canonicalJson(crossLaneBody)) };
+    assertLaneRefusal(root, crossLane, 'permit-operation-mismatch', 'permit transferred from the tracked lane');
+
+    const wrongOperation = laneRequest(root, { operation: 'work-project', mutation: laneProjectionMutation() });
+    const setRequest = laneRequest(root);
+    wrongOperation.permit = setRequest.permit;
+    assertLaneRefusal(root, wrongOperation, 'permit-hash-mismatch', 'work-project carrying a lane-mutation permit');
+
+    const staleRunState = laneRequest(root);
+    staleRunState.state = { ...LANE_RUN_STATE, policy: { ...LANE_RUN_STATE.policy, overall: 4 } };
+    assertLaneRefusal(root, staleRunState, 'run-state-mismatch', 'run state that is not the permit subject');
+
+    const wrongIdentity = laneRequest(root);
+    wrongIdentity.mutation = { ...wrongIdentity.mutation, snapshotUpdatedAt: '2026-07-25T13:00:00Z' };
+    assertLaneRefusal(root, wrongIdentity, 'mutation-identity-mismatch', 'mutation that is not the permitted object');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T006 lightweight boundary rejects disallowed transitions and prestate drift', () => {
+  const root = scaffoldLane();
+  try {
+    const illegal = laneRequest(root, { mutation: laneMutation({ toGlyph: 'x' }) });
+    assertLaneRefusal(root, illegal, 'transition-not-allowed', 'claim to done');
+
+    const badBlocker = laneRequest(root, {
+      mutation: laneMutation({ kind: 'task-blocked', reason: 'task-blocked', toGlyph: '!', blocker: { kind: 'unchanged', before: null, after: null } }),
+    });
+    assertLaneRefusal(root, badBlocker, 'transition-not-allowed', 'block without an add blocker effect');
+
+    const mismatchedReason = laneRequest(root, { mutation: laneMutation({ reason: 'task-completed' }) });
+    assertLaneRefusal(root, mismatchedReason, 'mutation-schema-mismatch', 'reason that does not match its kind');
+
+    const wrongFrom = laneRequest(root, { mutation: laneMutation({ fromGlyph: '!', toGlyph: '~', blocker: { kind: 'remove', before: 'waiting', after: null } }) });
+    assertLaneRefusal(root, wrongFrom, 'lane-prestate-mismatch', 'fromGlyph that contradicts the fresh board');
+
+    const unknownTask = laneRequest(root, { taskKey: 'T404@6d697373' });
+    assertLaneRefusal(root, unknownTask, 'mapping-missing', 'task key with no canonical unit');
+
+    // Transferred effects: the permit is rebuilt over each mutation, so only
+    // the boundary's own target and owner comparisons can reject them.
+    const transferredMutationTarget = laneRequest(root, {
+      mutation: laneMutation({ target: { specPath: LANE_SPEC, lane: 'lightweight', taskKey: LANE_OTHER_KEY } }),
+    });
+    assertLaneRefusal(root, transferredMutationTarget, 'target-mismatch', 'mutation carrying another task target');
+
+    const transferredOwnerLog = laneRequest(root, {
+      mutation: laneMutation({
+        ownerLog: {
+          ...laneOwnerAppend(root, ['- 2026-07-25T12:00:00Z - lane claim']),
+          ownerPath: '.dude/ideas/other.md',
+        },
+      }),
+    });
+    assertLaneRefusal(root, transferredOwnerLog, 'owner-log-conflict', 'owner log naming another owner');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T006 lightweight boundary rejects malformed, conflicting, and unhashed event lines', () => {
+  const root = scaffoldLane();
+  try {
+    const event = laneEvent('claim');
+    const crLine = laneRequest(root, {
+      mutation: laneMutation({
+        eventLines: {
+          kind: 'append-exact',
+          lines: [{ eventHash: event.eventHash, exactLine: `- dude-run-event: ${canonicalJson(event)}`, terminator: 'CRLF' }],
+          appendIfAbsent: true,
+        },
+      }),
+    });
+    assertLaneRefusal(root, crLine, 'event-line-mismatch', 'non-LF terminator');
+
+    const wrapped = laneRequest(root, {
+      mutation: laneMutation({
+        eventLines: {
+          kind: 'append-exact',
+          lines: [{ eventHash: event.eventHash, exactLine: `- dude-run-event: ${canonicalJson({ event })}`, terminator: 'LF' }],
+          appendIfAbsent: true,
+        },
+      }),
+    });
+    assertLaneRefusal(root, wrapped, 'event-line-mismatch', 'legacy CJ({event}) wrapper');
+
+    const forgedHash = { ...event, eventHash: sha256('forged') };
+    const unbound = laneRequest(root, { mutation: laneMutation({ eventLines: laneEventEffect([forgedHash]) }) });
+    assertLaneRefusal(root, unbound, 'event-line-mismatch', 'event body that does not recompute its hash');
+
+    // A different body already carrying the same hash on the lane conflicts.
+    const conflictEvent = laneEvent('claim');
+    const conflictLine = `- dude-run-event: ${canonicalJson({ ...conflictEvent, seed: 'other' })}`;
+    fs.appendFileSync(path.join(root, ...LANE_TASKS.split('/')), `${conflictLine}\n`);
+    const conflict = laneRequest(root, { mutation: laneMutation({ eventLines: laneEventEffect([conflictEvent]) }) });
+    assertLaneRefusal(root, conflict, 'event-conflict', 'same-hash conflicting lane body');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T006 lightweight boundary rejects owner, snapshot, and root failures before any write', () => {
+  const root = scaffoldLane();
+  try {
+    const staleOwnerHash = laneRequest(root, {
+      mutation: laneMutation({
+        ownerLog: {
+          kind: 'append-exact',
+          ownerPath: LANE_IDEA,
+          expectedOwnerHash: sha256('stale owner bytes'),
+          exactLines: ['- 2026-07-25T12:00:00Z - lane claim'],
+          terminator: 'LF',
+          appendIfAbsent: true,
+        },
+      }),
+    });
+    assertLaneRefusal(root, staleOwnerHash, 'owner-prestate-mismatch', 'stale expected owner hash');
+
+    const otherOwner = laneRequest(root);
+    otherOwner.owner = { ...otherOwner.owner, ideaPath: '.dude/ideas/absent.md' };
+    assertLaneRefusal(root, otherOwner, 'owner-resolution-failed', 'owner binding hash over another idea path', { ideaPath: '.dude/ideas/absent.md' });
+
+    assertLaneRefusal(root, { ...laneRequest(root), root: path.join(root, 'missing') }, 'unsafe-root-or-path', 'missing root', { observable: false });
+    assertLaneRefusal(root, { ...laneRequest(root), root: `${root}/` }, 'unsafe-root-or-path', 'noncanonical root', { observable: false });
+
+    const snapshotFile = path.join(root, ...LANE_SNAPSHOT.split('/'));
+    const goodSnapshot = fs.readFileSync(snapshotFile);
+    fs.writeFileSync(snapshotFile, '{ not json\n');
+    const corrupt = laneRequest(root);
+    assertLaneRefusal(root, corrupt, 'snapshot-corrupt', 'corrupt coordinator snapshot');
+    fs.writeFileSync(snapshotFile, goodSnapshot);
+
+    // A second defined owner for the same spec is ambiguous ownership.
+    writeLaneFile(root, '.dude/ideas/lane-duplicate.md', laneIdeaLedger());
+    assertLaneRefusal(root, laneRequest(root), 'owner-resolution-failed', 'ambiguous defined owners');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T006 lightweight boundary rejects an ambiguous canonical task mapping', () => {
+  const root = scaffoldLane();
+  try {
+    const tasksFile = path.join(root, ...LANE_TASKS.split('/'));
+    fs.writeFileSync(tasksFile, LANE_TASKS_FIXTURE.replace(
+      `- [ ] ${LANE_OTHER_KEY} [US3] Another canonical unit`,
+      `- [ ] ${LANE_TASK_KEY} [US3] Duplicate canonical unit`,
+    ));
+    assertLaneRefusal(root, laneRequest(root), 'mapping-ambiguous', 'duplicate canonical task units');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Atomicity is safety-critical: a partially applied board would corrupt live
+// workflow state. The three surfaces are written in order (tasks, snapshot,
+// owner), so blocking each one in turn exercises a failure BEFORE the first
+// write, AFTER one write, and AFTER two writes. Every case must roll the
+// already-written surfaces back and leave all three byte-identical.
+test('T006 lightweight application is atomic when any surface stage fails mid-sequence', (context) => {
+  if (process.platform === 'win32') return context.skip('POSIX permission semantics differ on Windows');
+  if (process.getuid?.() === 0) return context.skip('root ignores write permissions');
+  for (const blocked of [LANE_TASKS, LANE_SNAPSHOT, LANE_IDEA]) {
+    const root = scaffoldLane();
+    const absolute = path.join(root, ...blocked.split('/'));
+    try {
+      // An owner-log append makes all three surfaces genuinely change, so each
+      // stage has real bytes to roll back.
+      const mutation = laneMutation({ ownerLog: laneOwnerAppend(root, ['- 2026-07-25T12:00:00Z - lane claim']) });
+      const request = laneRequest(root, { mutation });
+      const before = laneSurfaces(root);
+
+      fs.chmodSync(absolute, 0o444);
+      const result = applyLightweightWorkRequest(request);
+      fs.chmodSync(absolute, 0o644);
+      const after = laneSurfaces(root);
+
+      assert.equal(result.ok, false, `${blocked}: must not report success`);
+      assert.equal(result.phase, 'refused', `${blocked}: phase`);
+      assert.equal(result.reason, 'atomic-apply-failed', `${blocked}: reason`);
+      assert.equal(result.receipt, undefined, `${blocked}: a failed application carries no receipt`);
+      for (const surface of /** @type {const} */ (['tasks', 'taskState', 'owner'])) {
+        assert.ok(before[surface].equals(after[surface]), `${blocked}: ${surface} must stay byte-identical`);
+      }
+      assert.equal(result.unchangedPrestateHash, laneObservationHash(root), `${blocked}: fresh unchanged evidence`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+// A read-only surface fails at OPEN, so it is never truncated. The dangerous
+// case is the opposite one: `O_TRUNC` succeeds and the data never lands
+// (ENOSPC, EIO, EDQUOT). That is not portably reproducible, so it is injected
+// through the writer the boundary actually calls -- the file is genuinely
+// truncated on disk before the failure, exactly as the kernel would leave it.
+test('T006 lightweight rollback restores a surface truncated by a mid-write failure', () => {
+  const root = scaffoldLane();
+  const realWriteFileSync = fs.writeFileSync;
+  const snapshotAbsolute = path.join(root, ...LANE_SNAPSHOT.split('/'));
+  try {
+    const mutation = laneMutation({ ownerLog: laneOwnerAppend(root, ['- 2026-07-25T12:00:00Z - lane claim']) });
+    const request = laneRequest(root, { mutation });
+    const before = laneSurfaces(root);
+
+    // The snapshot is the SECOND surface written, so tasks.md is already
+    // committed when the injected failure truncates this one.
+    let injected = 0;
+    // @ts-ignore -- the deliberate failing-writer injection
+    fs.writeFileSync = (file, data, ...rest) => {
+      if (injected === 0 && file === snapshotAbsolute) {
+        injected += 1;
+        realWriteFileSync(file, '');
+        const error = new Error('ENOSPC: no space left on device, write');
+        // @ts-ignore -- errno codes are not on the Error type
+        error.code = 'ENOSPC';
+        throw error;
+      }
+      return realWriteFileSync(file, data, ...rest);
+    };
+    const result = applyLightweightWorkRequest(request);
+    fs.writeFileSync = realWriteFileSync;
+    const after = laneSurfaces(root);
+
+    assert.equal(injected, 1, 'the mid-write failure actually fired');
+    assert.equal(result.ok, false, 'must not report success');
+    assert.equal(result.phase, 'refused');
+    assert.equal(result.reason, 'atomic-apply-failed');
+    assert.equal(result.receipt, undefined, 'a failed application carries no receipt');
+    assert.ok(after.taskState.byteLength > 0, 'the truncated surface must not be left empty');
+    for (const surface of /** @type {const} */ (['tasks', 'taskState', 'owner'])) {
+      assert.ok(before[surface].equals(after[surface]), `${surface} must stay byte-identical`);
+    }
+    assert.equal(result.unchangedPrestateHash, laneObservationHash(root), 'fresh unchanged evidence');
+  } finally {
+    fs.writeFileSync = realWriteFileSync;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// `controlled-end` is a contract-named kind: the target state is deliberately
+// unchanged, so only history (and any owner log) may move and the receipt must
+// report `targetStateChanged: false`.
+test('T006 lightweight controlled-end records the end without changing target state', () => {
+  const root = scaffoldLane();
+  try {
+    const mutation = laneMutation({
+      kind: 'controlled-end',
+      reason: 'controlled-unresolved-end',
+      fromGlyph: ' ',
+      toGlyph: ' ',
+      eventLines: laneEventEffect([laneEvent('controlled-end')]),
+      ownerLog: laneOwnerAppend(root, ['- 2026-07-25T12:00:00Z - controlled unresolved end']),
+    });
+    const before = laneSurfaces(root);
+    const result = applyLightweightWorkRequest(laneRequest(root, { mutation }));
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.receipt.targetStateChanged, false, 'a controlled end never changes target state');
+    const after = laneSurfaces(root);
+    assert.equal(
+      after.tasks.toString('utf8'),
+      `${before.tasks.toString('utf8')}${mutation.eventLines.lines[0].exactLine}\n`,
+      'tasks.md changes by exactly one appended LF record',
+    );
+    assert.match(after.tasks.toString('utf8'), new RegExp(`- \\[ \\] ${LANE_TASK_KEY}`), 'glyph unchanged');
+    assert.ok(
+      after.owner.toString('utf8').endsWith('- 2026-07-25T12:00:00Z - controlled unresolved end\n'),
+      'the owner log still records the end',
+    );
+    assert.equal(result.receipt.ownerPoststateHash, sha256(after.owner));
+    assert.equal(JSON.parse(after.taskState.toString('utf8'))[LANE_TASKS].glyphs[LANE_TASK_KEY], ' ');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T006 lightweight controlled-end refuses a completed target and a state change', () => {
+  const root = scaffoldLane();
+  try {
+    const controlledEnd = (overrides) => laneMutation({
+      kind: 'controlled-end',
+      reason: 'controlled-unresolved-end',
+      fromGlyph: ' ',
+      toGlyph: ' ',
+      eventLines: laneEventEffect([laneEvent('controlled-end')]),
+      ...overrides,
+    });
+    assertLaneRefusal(
+      root,
+      laneRequest(root, { mutation: controlledEnd({ fromGlyph: 'x', toGlyph: 'x' }) }),
+      'transition-not-allowed',
+      'controlled end over a completed unit',
+    );
+    assertLaneRefusal(
+      root,
+      laneRequest(root, { mutation: controlledEnd({ toGlyph: '~' }) }),
+      'transition-not-allowed',
+      'controlled end that moves the glyph',
+    );
+    assertLaneRefusal(
+      root,
+      laneRequest(root, { mutation: controlledEnd({ reason: 'task-blocked' }) }),
+      'mutation-schema-mismatch',
+      'controlled end with a reason from another kind',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Incident supersession is the one Lightweight kind bound to a fixed Feature
+// 007 target and the only one carrying `intentIdentity` / `previewIdentity`, so
+// it needs its own fixture at that exact spec path and task key.
+const INCIDENT_SPEC = '.dude/specs/007-technical-docs-pack-remediation/spec.md';
+const INCIDENT_TASKS = '.dude/specs/007-technical-docs-pack-remediation/tasks.md';
+const INCIDENT_IDEA = '.dude/ideas/incident.md';
+const INCIDENT_TASK_KEY = 'T001@00709e37';
+const INCIDENT_TARGET = { specPath: INCIDENT_SPEC, lane: 'lightweight', taskKey: INCIDENT_TASK_KEY };
+const INCIDENT_BLOCKER = 'superseded by the corrected intent';
+const INCIDENT_TASKS_FIXTURE = `# Tasks: Incident
+
+## Phase 1
+
+- [!] ${INCIDENT_TASK_KEY} [US1] Remediation unit
+   blocked-by: ${INCIDENT_BLOCKER}
+
+## Lightweight Execution History
+
+- 2026-07-24T00:00:00Z - baseline
+`;
+
+function scaffoldIncident() {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dude-incident-')));
+  writeLaneFile(root, INCIDENT_SPEC, '# Spec 007\n');
+  writeLaneFile(root, INCIDENT_TASKS, INCIDENT_TASKS_FIXTURE);
+  writeLaneFile(
+    root,
+    INCIDENT_IDEA,
+    `---\nstatus: defined\nspec_path: ${INCIDENT_SPEC}\n---\n\n## Idea\n\nIncident.\n\n## Coordinator Log\n\n- Existing entry.\n`,
+  );
+  writeLaneFile(root, LANE_SNAPSHOT, `${JSON.stringify({
+    [INCIDENT_TASKS]: { glyphs: { [INCIDENT_TASK_KEY]: '!' }, updated_at: '2026-07-24T00:00:00.000Z' },
+  }, null, 2)}\n`);
+  return root;
+}
+
+/** @param {string} root */
+function incidentSurfaces(root) {
+  return {
+    tasks: laneBytes(root, INCIDENT_TASKS),
+    taskState: laneBytes(root, LANE_SNAPSHOT),
+    owner: laneBytes(root, INCIDENT_IDEA),
+  };
+}
+
+/** @param {Record<string, unknown>} overrides */
+function incidentMutation(overrides = {}) {
+  return {
+    version: 1,
+    lane: 'lightweight',
+    kind: 'incident-supersession',
+    reason: 'incident-supersession',
+    intentIdentity: sha256('corrected intent'),
+    previewIdentity: sha256('applied preview'),
+    target: INCIDENT_TARGET,
+    fromGlyph: '!',
+    toGlyph: '~',
+    blocker: { kind: 'remove', before: INCIDENT_BLOCKER, after: null },
+    eventLines: laneEventEffect([laneEvent('incident')]),
+    ownerLog: { kind: 'none' },
+    snapshotUpdatedAt: LANE_STAMP,
+    ...overrides,
+  };
+}
+
+/** Build one complete valid incident request against the CURRENT fresh bytes. */
+function incidentRequest(root, mutation) {
+  const surfaces = incidentSurfaces(root);
+  const ownerCapture = laneCapture(surfaces.owner);
+  const ownerBindingHash = sha256(canonicalJson({
+    ideaPath: INCIDENT_IDEA,
+    specPath: INCIDENT_SPEC,
+    ownerCapture: { sha256: ownerCapture.sha256, byteLength: ownerCapture.byteLength },
+  }));
+  const mapping = {
+    version: 1,
+    lane: 'lightweight',
+    target: INCIDENT_TARGET,
+    ownerBindingHash,
+    tasksPath: INCIDENT_TASKS,
+    tasksDescriptor: laneDescriptor(surfaces.tasks),
+    taskStatePath: LANE_SNAPSHOT,
+    taskStateDescriptor: laneDescriptor(surfaces.taskState),
+    taskKey: INCIDENT_TASK_KEY,
+  };
+  const prestate = {
+    version: 1,
+    lane: 'lightweight',
+    target: INCIDENT_TARGET,
+    glyph: '!',
+    blockedBy: INCIDENT_BLOCKER,
+    tasksDescriptor: laneDescriptor(surfaces.tasks),
+    taskStateDescriptor: laneDescriptor(surfaces.taskState),
+    ownerDescriptor: laneDescriptor(surfaces.owner),
+  };
+  const permitBody = {
+    version: 1,
+    kind: 'lane-mutation',
+    origin: 'dude-work',
+    lane: 'lightweight',
+    operation: 'work-set',
+    target: INCIDENT_TARGET,
+    subjectRunStateHash: sha256(canonicalJson(LANE_RUN_STATE)),
+    governanceIdentity: null,
+    governancePhase: null,
+    attemptIdentity: null,
+    targetMappingHash: sha256(canonicalJson(mapping)),
+    lanePrestateHash: sha256(canonicalJson(prestate)),
+    mutationIdentity: sha256(canonicalJson(mutation)),
+  };
+  return {
+    version: 1,
+    operation: 'work-set',
+    root,
+    owner: { ideaPath: INCIDENT_IDEA, specPath: INCIDENT_SPEC, ownerCapture, ownerBindingHash },
+    target: INCIDENT_TARGET,
+    state: LANE_RUN_STATE,
+    permit: { ...permitBody, permitHash: sha256(canonicalJson(permitBody)) },
+    mapping,
+    expected: {
+      tasksPath: INCIDENT_TASKS,
+      tasks: laneCapture(surfaces.tasks),
+      taskStatePath: LANE_SNAPSHOT,
+      taskState: laneCapture(surfaces.taskState),
+    },
+    mutation,
+  };
+}
+
+test('T006 lightweight incident supersession commits both permitted blocked transitions', () => {
+  for (const scenario of [
+    {
+      label: '! to ~',
+      mutation: incidentMutation(),
+      glyph: '~',
+      blockedBy: null,
+    },
+    {
+      label: '! to !',
+      mutation: incidentMutation({
+        toGlyph: '!',
+        blocker: { kind: 'replace', before: INCIDENT_BLOCKER, after: 'corrected supersession blocker' },
+      }),
+      glyph: '!',
+      blockedBy: 'corrected supersession blocker',
+    },
+  ]) {
+    const root = scaffoldIncident();
+    try {
+      const result = applyLightweightWorkRequest(incidentRequest(root, scenario.mutation));
+
+      assert.equal(result.ok, true, `${scenario.label}: ${JSON.stringify(result)}`);
+      assert.equal(result.receipt.targetStateChanged, true, `${scenario.label}: supersession changes target state`);
+      assert.equal(
+        result.receipt.mutationIdentity,
+        sha256(canonicalJson(scenario.mutation)),
+        `${scenario.label}: identity binds intentIdentity and previewIdentity`,
+      );
+      const after = incidentSurfaces(root);
+      const tasksText = after.tasks.toString('utf8');
+      assert.match(tasksText, new RegExp(`- \\[${scenario.glyph}\\] ${INCIDENT_TASK_KEY}`), `${scenario.label}: glyph`);
+      assert.equal(
+        (/^\s*blocked-by:\s*(.+)$/m.exec(tasksText) || [null, null])[1],
+        scenario.blockedBy,
+        `${scenario.label}: blocked-by metadata`,
+      );
+      assert.ok(tasksText.includes(`${scenario.mutation.eventLines.lines[0].exactLine}\n`), `${scenario.label}: exact event record`);
+      assert.equal(result.receipt.tasksPoststateHash, sha256(after.tasks), `${scenario.label}: real poststate hash`);
+      assert.equal(
+        JSON.parse(after.taskState.toString('utf8'))[INCIDENT_TASKS].glyphs[INCIDENT_TASK_KEY],
+        scenario.glyph,
+        `${scenario.label}: snapshot glyph`,
+      );
+      assert.ok(after.owner.equals(incidentSurfaces(root).owner), `${scenario.label}: owner stable`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('T006 lightweight incident supersession is bound to the exact Feature 007 target and its identities', () => {
+  const root = scaffoldIncident();
+  try {
+    const assertIncidentRefusal = (mutation, reason, label) => {
+      const before = incidentSurfaces(root);
+      const result = applyLightweightWorkRequest(incidentRequest(root, mutation));
+      const after = incidentSurfaces(root);
+      assert.equal(result.ok, false, `${label}: must refuse`);
+      assert.equal(result.phase, 'refused', `${label}: phase`);
+      assert.equal(result.reason, reason, `${label}: reason`);
+      for (const surface of /** @type {const} */ (['tasks', 'taskState', 'owner'])) {
+        assert.ok(before[surface].equals(after[surface]), `${label}: ${surface} must stay byte-identical`);
+      }
+    };
+
+    const noIntent = incidentMutation();
+    delete noIntent.intentIdentity;
+    assertIncidentRefusal(noIntent, 'invalid-request-shape', 'supersession without an intent identity');
+    const noPreview = incidentMutation();
+    delete noPreview.previewIdentity;
+    assertIncidentRefusal(noPreview, 'invalid-request-shape', 'supersession without a preview identity');
+    assertIncidentRefusal(
+      incidentMutation({ intentIdentity: 'corrected-intent' }),
+      'invalid-canonical-value',
+      'intent identity that is not a hash',
+    );
+    assertIncidentRefusal(
+      incidentMutation({ previewIdentity: sha256('preview').slice(0, 63) }),
+      'invalid-canonical-value',
+      'preview identity of the wrong length',
+    );
+    assertIncidentRefusal(
+      incidentMutation({ kind: 'claim', reason: 'initial-claim', toGlyph: '~' }),
+      'unknown-field',
+      'incident identities on an ordinary claim',
+    );
+    assertIncidentRefusal(
+      incidentMutation({ toGlyph: 'x', blocker: { kind: 'remove', before: INCIDENT_BLOCKER, after: null } }),
+      'transition-not-allowed',
+      'supersession to a completed glyph',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T006 lightweight incident supersession refuses any target other than the Feature 007 unit', () => {
+  const root = scaffoldLane();
+  try {
+    // The mutation target matches the request target, so only the fixed
+    // Feature 007 binding can reject it.
+    const transplanted = laneRequest(root, {
+      glyph: ' ',
+      mutation: laneMutation({
+        kind: 'incident-supersession',
+        reason: 'incident-supersession',
+        intentIdentity: sha256('corrected intent'),
+        previewIdentity: sha256('applied preview'),
+        fromGlyph: '!',
+        toGlyph: '~',
+        blocker: { kind: 'remove', before: 'some blocker', after: null },
+      }),
+    });
+    assertLaneRefusal(root, transplanted, 'target-mismatch', 'supersession transplanted onto another feature');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T006 lightweight boundary refuses a repeated event hash inside one mutation', () => {
+  const root = scaffoldLane();
+  try {
+    const event = laneEvent('duplicate');
+    assertLaneRefusal(
+      root,
+      laneRequest(root, { mutation: laneMutation({ eventLines: laneEventEffect([event, event]) }) }),
+      'event-conflict',
+      'same event hash twice in one effect',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T006 lightweight boundary refuses noncanonical values before any write', () => {
+  const root = scaffoldLane();
+  try {
+    assertLaneRefusal(
+      root,
+      laneRequest(root, { mutation: laneMutation({ snapshotUpdatedAt: '2026-07-25T12:00:00.000Z' }) }),
+      'invalid-canonical-value',
+      'snapshot stamp that is not canonical UTC',
+    );
+    const badOwnerPath = laneRequest(root);
+    badOwnerPath.owner = { ...badOwnerPath.owner, ideaPath: 'ideas/lane.md' };
+    assertLaneRefusal(root, badOwnerPath, 'invalid-canonical-value', 'owner path outside .dude/ideas', { observable: false });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
