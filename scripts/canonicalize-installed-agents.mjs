@@ -6,10 +6,10 @@
  *
  * VS Code writes a per-agent `model:` line into an installed agent file when it
  * dispatches that agent as a subagent. That editor-owned key is not part of the
- * bundle-controlled source, so it makes the strict prompt audit (and compose
- * parity) see installed agents that no longer match source. This helper applies
- * the shared `normalizeAgentFrontmatter` transform so measurement sees the
- * canonical model-less bytes again.
+ * bundle-controlled source, so compose parity sees installed agents that no
+ * longer match source. This helper applies the shared
+ * `normalizeAgentFrontmatter` transform so parity sees canonical model-less
+ * bytes again.
  *
  * It only strips the injected `model:` line: genuine non-`model:` drift is left
  * intact so parity still catches it. It never reads or writes `profile.md`,

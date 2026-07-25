@@ -1,0 +1,26 @@
+# Security Checklist
+
+- [ ] Canonicalize and validate the workspace root, Source paths, work directory, and output before any dependent read or write.
+- [ ] Require registered Sources to be regular files or directories of the declared type and reject unsupported filesystem entries.
+- [ ] Reject symlink Sources, symlink roots, and symlink components at authorization boundaries.
+- [ ] Never follow repository symlinks; account for safe skipped symlinks and reject escaping or entry-point symlinks.
+- [ ] Combine lexical containment, `lstat`, `realpath`, and file identity where available so canonical-path, symlink, and hard-link aliases fail closed.
+- [ ] Permit input/output aliasing only for the one document Source declared as the update target.
+- [ ] Register work and output paths before traversal so generated or prior output cannot be self-ingested.
+- [ ] Treat missing or initially unreadable input as an error rather than an omission.
+- [ ] Compare size, identity, and digest across bounded reads so changed-during-read input fails without committing output.
+- [ ] Rehash every file Source and admitted repository member immediately before final publication.
+- [ ] Enforce source, byte, line, record, traversal, depth, file, child, and unit bounds without silent clipping.
+- [ ] Validate all numeric limits and thresholds as finite canonical values before dependent work.
+- [ ] Persist incomplete bounded traversal only as non-authorizing `complete: false` evidence.
+- [ ] Create output parents one contained path segment at a time and reject symlink or non-directory substitutions.
+- [ ] Use exclusive adjacent temporary files, flush and close them, then rename atomically; clean temporary artifacts on every failure.
+- [ ] Stage directory output beside an absent destination and reuse an existing directory only when every expected digest matches.
+- [ ] Preserve prior valid output when schema, path, readability, bound, gate, or write validation fails.
+- [ ] Read final output authorization only from the validated Source Registry; do not accept a finalizer path override.
+- [ ] In update mode, authorize only the exact registered update-target and verify its original digest immediately before replacement.
+- [ ] Require strict object-only evidence and consumed JSONL so malformed, scalar, duplicate, unknown, or empty data cannot authorize output.
+- [ ] Bind every gate to exact artifact hashes and reject pre-review evidence in a final-report position.
+- [ ] Require semantic-review identity and hashes to bridge the pre-review draft to the exact final-gated revision.
+- [ ] Reject any stale Source, unit, ledger, Outline, consumed, review, coverage, or lint evidence and every downstream artifact that depends on it.
+- [ ] Publish no Final Document when any required gate is missing, stale, false, incomplete, or syntactically valid but empty.

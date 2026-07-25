@@ -18,10 +18,45 @@ jobs:
     name: validate (node ${{ matrix.node-version }})
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+
+      # The committed dev bundle under .github/ must match src/ (build-dev output).
+      - name: Dev-bundle drift check
+        run: |
+          visible_status="$(git status --porcelain --untracked-files=all)"
+          if [ -n "$visible_status" ]; then
+            echo "::error::Checkout has tracked or untracked changes before build-dev"
+            printf '%s\n' "$visible_status"
+            exit 1
+          fi
+
+          ignored_status="$(git status --porcelain --ignored --untracked-files=all -- src .github .dude)"
+          if [[ "$ignored_status" == *$'!! '* ]]; then
+            echo "::error::Checkout has ignored entries under src, .github, or .dude before build-dev"
+            printf '%s\n' "$ignored_status"
+            exit 1
+          fi
+
+          node scripts/build-dev.mjs
+
+          visible_status="$(git status --porcelain --untracked-files=all)"
+          if [ -n "$visible_status" ]; then
+            echo "::error::build-dev changed tracked or untracked files; regenerate and commit the dev bundle"
+            printf '%s\n' "$visible_status"
+            exit 1
+          fi
+
+          ignored_status="$(git status --porcelain --ignored --untracked-files=all -- src .github .dude)"
+          if [[ "$ignored_status" == *$'!! '* ]]; then
+            echo "::error::build-dev left ignored entries under src, .github, or .dude"
+            printf '%s\n' "$ignored_status"
+            exit 1
+          fi
 
       # Dependency-free ESM: no install step. Pass test files explicitly because
       # bare `node --test` discovery does not recurse this tree reliably.
@@ -39,13 +74,3 @@ jobs:
         run: |
           node scripts/build-release.mjs --out dist
           node .github/skills/dude-lint/lint.mjs dist
-
-      # The committed dev bundle under .github/ must match src/ (build-dev output).
-      - name: Dev-bundle drift check
-        run: |
-          node scripts/build-dev.mjs
-          if [ -n "$(git status --porcelain -- .github)" ]; then
-            echo "::error::.github dev bundle is out of sync with src/ — run: node scripts/build-dev.mjs"
-            git status --porcelain -- .github
-            exit 1
-          fi

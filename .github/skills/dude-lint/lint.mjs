@@ -172,26 +172,25 @@ function read(abs) {
   return fs.readFileSync(abs, 'utf8');
 }
 
-/** @param {string} content @returns {boolean} */
-function hasFrontmatter(content) {
-  const lines = content.split('\n');
-  if (lines[0] !== '---') return false;
-  for (let i = 1; i < lines.length; i += 1) {
-    if (lines[i] === '---') return true;
+/** @param {string} content @returns {string[] | null} */
+function readArtifactFrontmatter(content) {
+  if (/\r(?!\n)/.test(content)) return null;
+  const lines = content.split(/\r\n|\n/);
+  if (lines[0] !== '---') return null;
+  for (let index = 1; index < lines.length; index += 1) {
+    if (lines[index] === '---') return lines.slice(1, index);
+    if (lines[index].trim() === '---' || lines[index].startsWith('---')) return null;
   }
-  return false;
+  return null;
 }
 
 /**
- * @param {string} content
+ * @param {string[]} lines
  * @param {string} key
  * @returns {string}
  */
-function readFrontmatter(content, key) {
-  const lines = content.split('\n');
-  if (lines[0] !== '---') return '';
-  for (let i = 1; i < lines.length; i += 1) {
-    if (lines[i] === '---') break;
+function readFrontmatter(lines, key) {
+  for (let i = 0; i < lines.length; i += 1) {
     const m = /^([A-Za-z_][A-Za-z0-9_-]*)[ \t]*:[ \t]*(.*)$/.exec(lines[i]);
     if (m && m[1] === key) return m[2].replace(/[ \t]+$/, '');
   }
@@ -717,13 +716,25 @@ for (const dir of listDirs(path.join(ROOT, '.github/skills'))) {
   }
   const rel = relpath(skillFile);
   const content = read(skillFile);
-  if (!hasFrontmatter(content)) {
+  const frontmatter = readArtifactFrontmatter(content);
+  if (!frontmatter) {
     fail(`${rel}  missing or malformed YAML frontmatter`);
     continue;
   }
-  const name = unquoteScalar(readFrontmatter(content, 'name'));
+  const name = unquoteScalar(readFrontmatter(frontmatter, 'name'));
   if (!name) fail(`${rel}  frontmatter is missing 'name:'`);
   else if (name !== base) fail(`${rel}  frontmatter name '${name}' must match directory '${base}'`);
+}
+
+for (const file of listFiles(path.join(ROOT, '.github/agents'), '.agent.md')) {
+  const rel = relpath(file);
+  const frontmatter = readArtifactFrontmatter(read(file));
+  if (!frontmatter) {
+    fail(`${rel}  missing or malformed YAML frontmatter`);
+    continue;
+  }
+  const name = unquoteScalar(readFrontmatter(frontmatter, 'name'));
+  if (!name) fail(`${rel}  frontmatter is missing 'name:'`);
 }
 
 // --- Check 3b: bundle manifest ----------------------------------------------

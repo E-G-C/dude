@@ -11,12 +11,16 @@
  *
  *   analyze <url|path> [--root <dir>] [--json]      -> adaptation report
  *   apply   <url|path> --plan <plan.json> [--root <dir>]
+ *   analyze-directory <source>                       -> canonical analysis JSON
+ *   plan-directory --analysis <file> [--review <file>] -> canonical plan JSON
+ *   apply-directory <source> --plan <file> --confirm <literal>
  *
  * `apply` refuses unless the plan records exact destination and structured
  * `license_disposition` decisions bound to the state observed by `analyze`.
  */
 
 import fs from 'node:fs';
+import { isUtf8 } from 'node:buffer';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +28,18 @@ import { isDeepStrictEqual } from 'node:util';
 import { normalizeString } from '../dude-engine/lib/text.mjs';
 import { rankOverlap } from '../dude-engine/lib/text-analysis.mjs';
 import { resolveMutationPath } from '../dude-engine/lib/workspace-paths.mjs';
+import {
+  analyzeDirectoryArtifacts,
+  applyDirectoryPreflight,
+  planDirectoryArtifacts,
+  preflightDirectoryApply,
+  renderDirectoryPlanConfirmation,
+  validateDirectoryAnalysisStructure,
+  validateDirectoryImportResult,
+  validateDirectoryPlanStructure,
+  validateDirectoryReview,
+} from './lib/directory-import.mjs';
+import { analyzeDirectorySource } from './lib/directory-source.mjs';
 import { parseImportFrontmatter, stripImportFrontmatter } from './lib/import-frontmatter.mjs';
 
 /** Fields always stripped from imported frontmatter (Copilot ignores them). */
@@ -31,6 +47,25 @@ export const ALWAYS_STRIP = ['compatibility', 'model'];
 
 /** Maximum accepted size of a remote import source. */
 export const MAX_REMOTE_SOURCE_BYTES = 1_048_576;
+
+const MAX_DIRECTORY_REVIEW_JSON_BYTES = 1_048_576;
+const MAX_DIRECTORY_PLAN_JSON_BYTES = 16_777_216;
+const USAGE = [
+  'Usage:',
+  '  node import.mjs analyze <url|path> [--root <dir>] [--json]',
+  '  node import.mjs apply <url|path> --plan <plan.json> [--root <dir>]',
+  '  node import.mjs analyze-directory <source>',
+  '  node import.mjs plan-directory --analysis <file> [--review <file>]',
+  '  node import.mjs apply-directory <source> --plan <file> --confirm <literal>',
+  '',
+].join('\n');
+
+class ImportUsageError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ImportUsageError';
+  }
+}
 
 /** @param {string} reason @returns {Error} */
 function invalidRemoteUrl(reason) {
@@ -841,22 +876,106 @@ export async function applyPlan({ source, root = process.cwd(), plan }) {
   };
 }
 
+const COMMAND_OPTIONS = Object.freeze({
+  analyze: Object.freeze({ '--root': 'root', '--json': 'json' }),
+  apply: Object.freeze({ '--root': 'root', '--plan': 'planPath' }),
+  'analyze-directory': Object.freeze({}),
+  'plan-directory': Object.freeze({ '--analysis': 'analysisPath', '--review': 'reviewPath' }),
+  'apply-directory': Object.freeze({ '--plan': 'planPath', '--confirm': 'confirmation' }),
+});
+
 /** @param {string[]} argv */
 export function parseArgs(argv) {
-  /** @type {any} */
-  const out = { root: process.cwd(), json: false };
-  const pos = [];
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--json') out.json = true;
-    else if (a === '--root') out.root = argv[++i];
-    else if (a === '--plan') out.planPath = argv[++i];
-    else if (a.startsWith('--')) out.help = true;
-    else pos.push(a);
+  const cmd = argv[0];
+  if (!cmd || !Object.hasOwn(COMMAND_OPTIONS, cmd)) {
+    throw new ImportUsageError(cmd ? `unknown command: ${cmd}` : 'missing command');
   }
-  out.cmd = pos[0];
-  out.source = pos[1];
+  const options = COMMAND_OPTIONS[cmd];
+  /** @type {any} */
+  const out = { cmd, root: process.cwd(), json: false };
+  const positionals = [];
+  const seenOptions = new Set();
+  for (let index = 1; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (!argument.startsWith('--')) {
+      positionals.push(argument);
+      continue;
+    }
+    if (!Object.hasOwn(options, argument)) {
+      throw new ImportUsageError(`${cmd} does not accept ${argument}`);
+    }
+    if (seenOptions.has(argument)) {
+      throw new ImportUsageError(`${cmd} does not accept duplicate ${argument}`);
+    }
+    seenOptions.add(argument);
+    const property = options[argument];
+    if (property === 'json') {
+      out.json = true;
+      continue;
+    }
+    const value = argv[index + 1];
+    if (value === undefined || value.length === 0 || value.startsWith('--')) {
+      throw new ImportUsageError(`${argument} requires a value`);
+    }
+    out[property] = value;
+    index += 1;
+  }
+
+  if (cmd === 'plan-directory') {
+    if (positionals.length !== 0) {
+      throw new ImportUsageError('plan-directory does not accept positional arguments');
+    }
+    if (!out.analysisPath) {
+      throw new ImportUsageError('plan-directory requires --analysis <file>');
+    }
+  } else {
+    if (positionals.length === 0 || positionals[0].length === 0) {
+      throw new ImportUsageError(`${cmd} requires a source`);
+    }
+    if (positionals.length > 1) {
+      throw new ImportUsageError(`${cmd} accepts exactly one source`);
+    }
+    out.source = positionals[0];
+  }
+  if ((cmd === 'apply' || cmd === 'apply-directory') && !out.planPath) {
+    throw new ImportUsageError(`${cmd} requires --plan <file>`);
+  }
+  if (cmd === 'apply-directory' && !out.confirmation) {
+    throw new ImportUsageError('apply-directory requires --confirm <literal>');
+  }
   return out;
+}
+
+/**
+ * @param {string} file
+ * @param {number} maxBytes
+ * @param {string} label
+ */
+function readBoundedJson(file, maxBytes, label) {
+  const bytes = fs.readFileSync(file);
+  if (bytes.length > maxBytes) {
+    throw new Error(`${label} exceeds the ${maxBytes}-byte limit`);
+  }
+  if (!isUtf8(bytes)) throw new Error(`${label} must be valid UTF-8 JSON`);
+  return JSON.parse(bytes.toString('utf8'));
+}
+
+/** @param {string} file @param {string} label */
+function readJson(file, label) {
+  const bytes = fs.readFileSync(file);
+  if (!isUtf8(bytes)) throw new Error(`${label} must be valid UTF-8 JSON`);
+  return JSON.parse(bytes.toString('utf8'));
+}
+
+/** @param {unknown} value */
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`
+    )).join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 /** @param {string} metaUrl @param {string|undefined} argv1 @returns {boolean} */
@@ -870,22 +989,62 @@ export function isMainModule(metaUrl, argv1) {
 }
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  if (args.help || !args.cmd || !args.source) {
-    process.stdout.write('usage: node import.mjs analyze <url|path> [--json] | apply <url|path> --plan <plan.json>\n');
-    process.exit(args.help ? 0 : 1);
+  const argv = process.argv.slice(2);
+  if (argv.length === 1 && argv[0] === '--help') {
+    process.stdout.write(USAGE);
+    return;
   }
   try {
+    const args = parseArgs(argv);
     if (args.cmd === 'analyze') {
       const report = await analyze({ source: args.source, root: args.root });
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     } else if (args.cmd === 'apply') {
-      if (!args.planPath) throw new Error('apply requires --plan <plan.json>');
       const plan = JSON.parse(fs.readFileSync(args.planPath, 'utf8'));
       const r = await applyPlan({ source: args.source, root: args.root, plan });
       for (const writtenPath of [r.written, ...r.writtenSiblings]) {
         process.stdout.write(`[OK] wrote ${writtenPath}\n`);
       }
+    } else if (args.cmd === 'analyze-directory') {
+      const sourceAnalysis = await analyzeDirectorySource(args.source);
+      const analysis = await analyzeDirectoryArtifacts(sourceAnalysis, process.cwd());
+      process.stdout.write(canonicalJson(analysis));
+    } else if (args.cmd === 'plan-directory') {
+      const analysis = readJson(args.analysisPath, 'directory analysis');
+      validateDirectoryAnalysisStructure(analysis);
+      const review = args.reviewPath
+        ? readBoundedJson(
+          args.reviewPath,
+          MAX_DIRECTORY_REVIEW_JSON_BYTES,
+          'directory review',
+        )
+        : null;
+      if (review !== null) validateDirectoryReview(review, analysis);
+      const sourceAnalysis = await analyzeDirectorySource(analysis?.source?.input);
+      const plan = await planDirectoryArtifacts(analysis, review, sourceAnalysis, process.cwd());
+      process.stdout.write(canonicalJson(plan));
+    } else if (args.cmd === 'apply-directory') {
+      const plan = readBoundedJson(
+        args.planPath,
+        MAX_DIRECTORY_PLAN_JSON_BYTES,
+        'directory plan',
+      );
+      validateDirectoryPlanStructure(plan);
+      const expectedConfirmation = renderDirectoryPlanConfirmation(plan);
+      if (args.confirmation !== expectedConfirmation) {
+        throw new Error('directory apply confirmation does not match the reviewed plan');
+      }
+      const sourceAnalysis = await analyzeDirectorySource(args.source);
+      const preflight = await preflightDirectoryApply(
+        plan,
+        expectedConfirmation,
+        sourceAnalysis,
+        process.cwd(),
+      );
+      const result = await applyDirectoryPreflight(preflight);
+      validateDirectoryImportResult(result);
+      process.stdout.write(`${canonicalJson(result)}\n`);
+      if (result.status !== 'installed') process.exitCode = 2;
     } else {
       throw new Error(`unknown command: ${args.cmd}`);
     }
@@ -898,7 +1057,8 @@ async function main() {
     const message = err instanceof Error ? err.message : String(err);
     const reason = err instanceof Error && typeof err.cause === 'string' ? `: ${err.cause}` : '';
     process.stderr.write(`[FAIL] ${message}${reason}\n`);
-    process.exitCode = 2;
+    if (err instanceof ImportUsageError) process.stderr.write(USAGE);
+    process.exitCode = err instanceof ImportUsageError ? 1 : 2;
   }
 }
 

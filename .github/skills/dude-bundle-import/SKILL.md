@@ -1,15 +1,18 @@
 ---
 name: "dude-bundle-import"
-description: "Use when importing an agent or skill from an external repository, fetching a Dude artifact from a URL, or copying a specialist or skill from another bundle. Triggers: import this agent, import this skill, fetch agent from <url>, copy skill from <repo>, install agent from <url>, bring in <name> agent, bring in <name> skill."
+description: "Use when importing an agent, skill, or bounded clean artifact directory from an external repository or local source. Triggers: import this agent, import this skill, import this directory, analyze directory, fetch agent from <url>, copy skill from <repo>, install agent from <url>, bring in <name> agent, bring in <name> skill."
 ---
 
 # Bundle Import
 
-Fetch a single agent (`*.agent.md`) or skill (`<name>/SKILL.md`) from an external source, adapt it to bundle conventions, and write it locally — never silently. Adaptation is preview-then-confirm per category. No runtime, no Python, no transitive auto-fetch.
+Import either one focused agent or skill with reviewed adaptation, or one bounded clean directory with deterministic analysis and an exact reviewed plan. Neither workflow executes imported content, installs a runtime, or fetches transitive dependencies.
 
 ## Purpose
 
-Bring in third-party or cross-repo Dude artifacts (or Claude/Anthropic-flavored skills, with caveats) without polluting the bundle. The skill produces a structured **adaptation report** before any file is written; the user confirms per category, then writes happen.
+Bring in third-party or cross-repo Dude artifacts without polluting the bundle.
+Focused import produces a structured adaptation report and requires per-category
+confirmation. Guarded directory import produces deterministic analysis and a
+reviewed plan before its exact confirmation gate.
 
 ## Mechanical prep (`import.mjs`)
 
@@ -37,7 +40,95 @@ calls below (license path, persona drift, opt-in tool remap) stay with the
 coordinator; the script only prepares and executes the reviewed mechanical
 edits.
 
-The reviewed fields added to the JSON report use these exact shapes:
+## Guarded directory import
+
+Directory import is a separate clean-source workflow. It does not route the
+existing focused `analyze` or `apply` commands through directory handling, so
+their accepted local-file and GitHub-file forms, adaptation report, naming,
+license decisions, destination checks, and result behavior remain unchanged.
+
+Run the three directory commands from the destination workspace:
+
+```bash
+node .github/skills/dude-bundle-import/import.mjs analyze-directory <source> > analysis.json
+node .github/skills/dude-bundle-import/import.mjs plan-directory --analysis analysis.json [--review review.json] > plan.json
+node .github/skills/dude-bundle-import/import.mjs apply-directory <source> --plan plan.json --confirm <literal>
+```
+
+`analyze-directory` and `plan-directory` emit canonical JSON and never mutate
+an import destination. Planning accepts no confirmation. The only persisted
+workflow artifacts are the directory analysis and reviewed directory plan; the
+optional review and apply confirmation are inputs, and apply emits an ordinary
+result rather than a third artifact.
+
+The source is either one no-follow local directory or a canonical public
+`https://github.com/<owner>/<repo>/tree/<ref>/<subtree...>` URL. Directory v1
+limits are depth 12, 256 entries, 128 regular files, 1048576 bytes per file,
+and 4194304 aggregate file bytes. GitHub acquisition allows at most 16 metadata
+and 128 raw requests, 1048576 bytes per response, 4194304 aggregate bytes for
+each response class, and 30 seconds per request. Review batches contain at most
+16 complete strict-UTF-8 files and 262144 decoded bytes. The complete optional
+review is limited to 1048576 UTF-8 bytes; its raw file is rejected before JSON
+parsing and its canonical structured value is checked before acceptance. The
+complete canonical reviewed plan, including `plan_sha256`, is limited to
+16777216 UTF-8 bytes; apply rejects a larger raw plan before parsing. These are
+fixed aggregate limits with no caller overrides or added per-finding limits.
+
+Every regular file belongs to its unique nearest agent or skill root. Only a
+selected-root `LICENSE`, `LICENSE.*`, `NOTICE`, or `NOTICE.*` may be shared.
+Outputs preserve exact bytes and line endings. The sole transform replaces a
+skill entrypoint's parsed `name` scalar with its final `dude-local-*` directory
+name while retaining its quote style; directory import never normalizes or
+repairs other content. Fixed mapping that breaks a recognized literal relative
+reference Blocks.
+
+Every agent entrypoint must already contain exactly one standalone, unfenced,
+unprefixed paragraph, bounded by blank lines or a body edge:
+
+```text
+**Coordinator-only artifacts:** do not edit `## Coordinator Log`, task-state glyphs in `tasks.md`, fenced regions (`<!-- dude:managed:* -->`, `<!-- dude:board:* -->`), or `status:` / `spec_path:` frontmatter. Report changes back to `@dude` instead.
+```
+
+Directory import never inserts, moves, normalizes, or rewrites this paragraph.
+A missing, altered, split, repeated, fenced, prefixed, or prose-wrapped instance
+Blocks with guidance to use focused import/adaptation or prepare a clean source.
+Entrypoint metadata that focused import would strip, remap, preserve, or ask the
+user to judge, including `compatibility`, `model`, `tools`, and `license`, also
+Blocks the directory path. Use focused import for those files.
+
+Static scanning is conservative. Broad indicators Warn even in documentation,
+examples, or comments because v1 does no context parsing or context-based
+severity reduction. Only tightly bound high-confidence dangerous constructs
+whose operands are joined in one expression or command Block. Optional review
+does not prove safety: each `reviewed_batch_id` claims review of that exact
+complete generated batch, and omitted batches, over-budget text, or opaque files
+force at least Warned. Review cannot Block, authorize, normalize, erase, or
+downgrade deterministic evidence.
+
+Apply accepts only the literal bound to the complete plan:
+
+- Clean: `confirm-import`
+- Warned: `confirm-warned-import:<plan_sha256>`
+- Blocked: no plan or confirmation
+
+`replace_paths` is the complete sorted set of existing regular-file outputs;
+the literal authorizes all of them. There is no selection, merge, force,
+implicit overwrite, or rename-on-collision. Planning and apply reject source,
+output, destination, and transaction overlap or aliases. Apply stages exact
+outputs and backups before mutation, verifies installation, and either reports
+`installed`, verifies rollback and reports `rolled-back`, or retains recovery
+material and reports `recovery-failed` with uncertain paths. It never executes
+the imported files.
+
+The checks detect observed drift but do not prove safety against a hostile
+concurrent filesystem actor; use a locally controlled workspace. POSIX
+transaction material requires current-UID ownership with `0700` directories and
+`0600` files. On Windows, it uses the selected transaction parent's inherited
+ACLs, does not manage ACLs, and makes no current-user-only access claim. Secure
+that parent externally before apply when stronger privacy is required.
+
+For focused import, the reviewed fields added to the JSON report use these exact
+shapes:
 
 ```json
 {
@@ -85,7 +176,7 @@ beginning at column zero, `license: VALUE`, for example `license: MIT`. `VALUE` 
 non-empty ASCII alphanumeric tokens that may also contain `.`, `+`, or `-`,
 separated only by single spaces. The observed value is preserved exactly.
 
-The importer validates the entire frontmatter with a strict, import-private
+Focused import validates the entire frontmatter with a strict, import-private
 parser rather than a general YAML parser. Frontmatter is either absent or bounded
 by exact column-zero `---` delimiters with LF or CRLF endings; bare carriage
 returns, delimiter-shaped openers or closers (for example `--- # metadata` or
@@ -106,21 +197,24 @@ guarantee race-free safety on a hostile filesystem.
 ## When To Run
 
 - User supplies a URL to a `*.agent.md` or `SKILL.md` and asks to import, fetch, copy, or install it.
+- User asks to analyze and import one complete local artifact directory or canonical public GitHub tree.
 - `dude-team-expansion` or `dude-skill-authoring` detects a remote source and routes here instead of authoring from scratch.
 - Coordinator parses an "import this agent/skill" intent.
 
 ## Inputs
 
-Accepted source forms:
+Focused single-file source forms:
 
 - a local path to one agent or `SKILL.md` file
 - `https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path...>`
 - `https://github.com/<owner>/<repo>/blob/<ref>/<path...>` — canonicalized to the raw form
 
-Remote sources accept exactly those two HTTPS GitHub file forms. They do not
-follow redirects or accept URL aliases, repository trees, APIs, or shorthand.
+Focused remote sources accept exactly those two HTTPS GitHub file forms. They do
+not follow redirects or accept URL aliases, repository trees, APIs, or shorthand.
 The first segment after the repository is the ref; slash-bearing refs are not
 supported. Reject anything else with a clear reason and stop.
+
+Directory source forms and limits are defined in Guarded directory import above.
 
 ## Detection Rules
 
@@ -134,6 +228,9 @@ If the destination already exists, do **not** proceed past Step 3 without an exp
 The `dude-local-` destination prefix is reserved for project-owned imports. Only omit it when the user explicitly says they are importing a new upstream/base Dude artifact that will be shipped in the bundle manifest.
 
 ## Workflow
+
+This workflow applies to focused single-file import. Guarded directory import
+uses the separate read-only analysis and planning flow above.
 
 ### Step 1 — Resolve source, then read or fetch
 
@@ -282,17 +379,15 @@ Examples worth catching: a Claude `skill-creator` overlaps with the local `dude-
 ## Boundaries
 
 - never auto-fetch transitive dependencies — each one requires a fresh `dude-bundle-import` invocation
-- never list or import repository directories, trees, or arbitrary sibling files
-- never follow a remote redirect or accept more than 1048576 streamed source bytes
-- never write referenced executable sibling files; report them as unresolved
-- never create without an exact reviewed `create` decision bound to analyzed absence
-- never overwrite an existing destination without an exact reviewed `replace` decision bound to its analyzed identity, hard-link count of one, and content
-- never write any primary or sibling target until the complete selected write set passes preflight
+- focused import never lists or imports repository directories, trees, or arbitrary sibling files; guarded directory import handles only its selected bounded subtree
+- focused import never follows a remote redirect or accepts more than 1048576 streamed source bytes
+- focused import never writes referenced executable siblings; it reports them as unresolved
+- focused import never creates or replaces without its exact reviewed destination decision, and it preflights the complete selected write set first
 - never treat these checks as race-free protection against a hostile filesystem; imports operate only in a locally controlled workspace, and an external process can still change paths after preflight
 - never publish, push, or modify remote state — this skill only reads remote and writes local
 - never install runtimes (Python, Node, etc.); refuse the import if the source is unusable without one and the user has not explicitly accepted that
-- the skill itself stays a single SKILL.md with no siblings, by design
+- the skill guidance itself stays a single SKILL.md, while the shipped deterministic directory modules remain implementation details
 
 ## Dry-Run Mode
 
-If the user prefixes the request with `dry-run`, stop after Step 2 and present the adaptation report only. Read or fetch only the primary file; no writes.
+For focused single-file import, if the user prefixes the request with `dry-run`, stop after Step 2 and present the adaptation report only. Read or fetch only the primary file; no writes. Directory analysis and planning are already read-only.

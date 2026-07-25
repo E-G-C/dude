@@ -15,12 +15,30 @@ import {
   detectKind,
   normalizeAgentDest,
   normalizeSkillDir,
+  parseArgs,
   analyze,
   applyPlan,
 } from './import.mjs';
 import { ImportFrontmatterError } from './lib/import-frontmatter.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./import.mjs', import.meta.url));
+const LINT_SCRIPT = fileURLToPath(new URL('../dude-lint/lint.mjs', import.meta.url));
+const DIRECTORY_COORDINATOR_PARAGRAPH =
+  '**Coordinator-only artifacts:** do not edit `## Coordinator Log`, task-state ' +
+  'glyphs in `tasks.md`, fenced regions (`<!-- dude:managed:* -->`, ' +
+  '`<!-- dude:board:* -->`), or `status:` / `spec_path:` frontmatter. Report ' +
+  'changes back to `@dude` instead.';
+
+/** @param {unknown} value */
+function canonicalJsonFixture(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJsonFixture).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalJsonFixture(value[key])}`
+    )).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
 
 test('resolveRawUrl authorizes only canonical GitHub remote-file URLs', async (t) => {
   await t.test('accepts blob, raw, and explicit default-port URLs', () => {
@@ -137,11 +155,362 @@ test('normalizeSkillDir accepts one lowercase skill segment and rejects invalid 
   });
 });
 
+test('CLI argument parsing keeps directory commands strict and focused imports compatible', async (t) => {
+  await t.test('accepts only the documented command shapes', () => {
+    assert.deepEqual(parseArgs(['analyze-directory', 'incoming']), {
+      cmd: 'analyze-directory',
+      root: process.cwd(),
+      json: false,
+      source: 'incoming',
+    });
+    assert.deepEqual(parseArgs([
+      'plan-directory', '--analysis', 'analysis.json', '--review', 'review.json',
+    ]), {
+      cmd: 'plan-directory',
+      root: process.cwd(),
+      json: false,
+      analysisPath: 'analysis.json',
+      reviewPath: 'review.json',
+    });
+    assert.deepEqual(parseArgs([
+      'apply-directory', 'incoming', '--plan', 'plan.json', '--confirm', 'install exact plan',
+    ]), {
+      cmd: 'apply-directory',
+      root: process.cwd(),
+      json: false,
+      source: 'incoming',
+      planPath: 'plan.json',
+      confirmation: 'install exact plan',
+    });
+    assert.deepEqual(parseArgs(['analyze', 'agent.md', '--root', '/tmp/project', '--json']), {
+      cmd: 'analyze',
+      root: '/tmp/project',
+      json: true,
+      source: 'agent.md',
+    });
+    assert.deepEqual(parseArgs(['apply', 'agent.md', '--plan', 'plan.json', '--root', '/tmp/project']), {
+      cmd: 'apply',
+      root: '/tmp/project',
+      json: false,
+      source: 'agent.md',
+      planPath: 'plan.json',
+    });
+  });
+
+  await t.test('rejects unknown commands and malformed directory arguments', () => {
+    const rejected = [
+      [[], /missing command/i],
+      [['import-directory', 'incoming'], /unknown command: import-directory/i],
+      [['analyze-directory'], /requires a source/i],
+      [['analyze-directory', 'incoming', 'extra'], /accepts exactly one source/i],
+      [['analyze-directory', 'incoming', '--root', '/tmp/project'], /does not accept --root/i],
+      [['plan-directory'], /requires --analysis/i],
+      [['plan-directory', '--analysis'], /--analysis requires a value/i],
+      [['plan-directory', '--analysis', 'analysis.json', 'extra'], /does not accept positional arguments/i],
+      [['plan-directory', '--analysis', 'one.json', '--analysis', 'two.json'], /duplicate --analysis/i],
+      [['plan-directory', '--analysis', 'analysis.json', '--review', 'one.json', '--review', 'two.json'], /duplicate --review/i],
+      [['plan-directory', '--analysis', 'analysis.json', '--confirm', 'yes'], /does not accept --confirm/i],
+      [['apply-directory', '--plan', 'plan.json', '--confirm', 'yes'], /requires a source/i],
+      [['apply-directory', 'incoming'], /requires --plan/i],
+      [['apply-directory', 'incoming', '--plan'], /--plan requires a value/i],
+      [['apply-directory', 'incoming', '--plan', 'plan.json'], /requires --confirm/i],
+      [['apply-directory', 'incoming', '--plan', 'plan.json', '--confirm'], /--confirm requires a value/i],
+      [['apply-directory', 'incoming', 'extra', '--plan', 'plan.json', '--confirm', 'yes'], /accepts exactly one source/i],
+      [['apply-directory', 'incoming', '--plan', 'one.json', '--plan', 'two.json', '--confirm', 'yes'], /duplicate --plan/i],
+      [['apply-directory', 'incoming', '--plan', 'plan.json', '--confirm', 'one', '--confirm', 'two'], /duplicate --confirm/i],
+      [['apply-directory', 'incoming', '--plan', 'plan.json', '--confirm', 'yes', '--review', 'review.json'], /does not accept --review/i],
+      [['apply-directory', 'incoming', '--plan', 'plan.json', '--confirm', 'yes', '--bogus', 'value'], /does not accept --bogus/i],
+    ];
+
+    for (const [argv, expected] of rejected) {
+      assert.throws(() => parseArgs(/** @type {string[]} */ (argv)), /** @type {RegExp} */ (expected), argv.join(' '));
+    }
+  });
+
+  await t.test('refuses directory-only flags on focused commands', () => {
+    for (const command of ['analyze', 'apply']) {
+      for (const flag of ['--analysis', '--review', '--confirm']) {
+        const argv = command === 'apply'
+          ? [command, 'agent.md', '--plan', 'plan.json', flag, 'value']
+          : [command, 'agent.md', flag, 'value'];
+        assert.throws(() => parseArgs(argv), new RegExp(`does not accept ${flag}`), `${command} ${flag}`);
+      }
+    }
+  });
+});
+
+test('directory artifact CLI emits exact canonical JSON bytes for raw ceiling round trips', () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(
+    fs.realpathSync(os.tmpdir()),
+    'dude-directory-cli-canonical-bytes-',
+  ));
+  const workspaceRoot = path.join(fixtureRoot, 'workspace');
+  const sourceRoot = path.join(fixtureRoot, 'source');
+  const analysisPath = path.join(fixtureRoot, 'analysis.json');
+  const reviewPath = path.join(fixtureRoot, 'review.json');
+  try {
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+    fs.mkdirSync(path.join(sourceRoot, 'agents'), { recursive: true });
+    fs.writeFileSync(
+      path.join(sourceRoot, 'agents', 'review.agent.md'),
+      `---\nname: "Directory Reviewer"\ndescription: "Reviews directory fixtures"\n---\n${DIRECTORY_COORDINATOR_PARAGRAPH}\n`,
+    );
+
+    const analyzed = spawnSync(process.execPath, [SCRIPT, 'analyze-directory', sourceRoot], {
+      cwd: workspaceRoot,
+    });
+    assert.equal(analyzed.status, 0, analyzed.stderr.toString());
+    assert.equal(analyzed.stderr.length, 0);
+    const analysis = JSON.parse(analyzed.stdout.toString('utf8'));
+    const canonicalAnalysis = Buffer.from(canonicalJsonFixture(analysis), 'utf8');
+    assert.deepEqual(analyzed.stdout, canonicalAnalysis);
+    assert.equal(analyzed.stdout.length, canonicalAnalysis.length);
+    assert.equal(/\s$/u.test(analyzed.stdout.toString('utf8')), false);
+    fs.writeFileSync(analysisPath, analyzed.stdout);
+
+    fs.writeFileSync(reviewPath, canonicalJsonFixture({
+      schema_version: 1,
+      kind: 'dude-directory-review',
+      analysis_sha256: analysis.analysis_sha256,
+      reviewed_batch_ids: analysis.review_batches.map(({ batch_id: batchId }) => batchId),
+      findings: [],
+    }));
+    const planned = spawnSync(process.execPath, [
+      SCRIPT, 'plan-directory', '--analysis', analysisPath, '--review', reviewPath,
+    ], { cwd: workspaceRoot });
+    assert.equal(planned.status, 0, planned.stderr.toString());
+    assert.equal(planned.stderr.length, 0);
+    const plan = JSON.parse(planned.stdout.toString('utf8'));
+    const canonicalPlan = Buffer.from(canonicalJsonFixture(plan), 'utf8');
+    assert.deepEqual(planned.stdout, canonicalPlan);
+    assert.equal(planned.stdout.length, canonicalPlan.length);
+    assert.equal(/\s$/u.test(planned.stdout.toString('utf8')), false);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('directory CLI enforces raw JSON byte limits before parsing', () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(
+    fs.realpathSync(os.tmpdir()),
+    'dude-directory-cli-limits-',
+  ));
+  const workspaceRoot = path.join(fixtureRoot, 'workspace');
+  const sourceRoot = path.join(fixtureRoot, 'source');
+  const analysisPath = path.join(fixtureRoot, 'analysis.json');
+  const reviewPath = path.join(fixtureRoot, 'review.json');
+  const planPath = path.join(fixtureRoot, 'plan.json');
+  try {
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+    fs.mkdirSync(path.join(sourceRoot, 'fixture'), { recursive: true });
+    fs.writeFileSync(
+      path.join(sourceRoot, 'fixture', 'SKILL.md'),
+      '---\nname: fixture\ndescription: "Fixture skill"\n---\nFixture body.\n',
+    );
+    const analyzed = spawnSync(process.execPath, [SCRIPT, 'analyze-directory', sourceRoot], {
+      cwd: workspaceRoot,
+      encoding: 'utf8',
+    });
+    assert.equal(analyzed.status, 0, analyzed.stderr);
+    assert.equal(analyzed.stderr, '');
+    fs.writeFileSync(analysisPath, analyzed.stdout);
+
+    fs.writeFileSync(reviewPath, Buffer.alloc(1_048_576, 0x78));
+    const exactReview = spawnSync(process.execPath, [
+      SCRIPT, 'plan-directory', '--analysis', analysisPath, '--review', reviewPath,
+    ], { cwd: workspaceRoot, encoding: 'utf8' });
+    assert.equal(exactReview.status, 2, exactReview.stderr);
+    assert.match(exactReview.stderr, /\[FAIL\].*(?:JSON|Unexpected token)/i);
+    assert.doesNotMatch(exactReview.stderr, /exceeds the .*byte limit/i);
+
+    fs.writeFileSync(reviewPath, Buffer.alloc(1_048_577, 0x78));
+    const oversizedReview = spawnSync(process.execPath, [
+      SCRIPT, 'plan-directory', '--analysis', analysisPath, '--review', reviewPath,
+    ], { cwd: workspaceRoot, encoding: 'utf8' });
+    assert.equal(oversizedReview.status, 2, oversizedReview.stderr);
+    assert.match(oversizedReview.stderr, /directory review exceeds the 1048576-byte limit/i);
+
+    fs.writeFileSync(planPath, Buffer.alloc(16_777_216, 0x78));
+    const exactPlan = spawnSync(process.execPath, [
+      SCRIPT, 'apply-directory', sourceRoot, '--plan', planPath, '--confirm', 'unused',
+    ], { cwd: workspaceRoot, encoding: 'utf8' });
+    assert.equal(exactPlan.status, 2, exactPlan.stderr);
+    assert.match(exactPlan.stderr, /\[FAIL\].*(?:JSON|Unexpected token)/i);
+    assert.doesNotMatch(exactPlan.stderr, /exceeds the .*byte limit/i);
+
+    fs.writeFileSync(planPath, Buffer.alloc(16_777_217, 0x78));
+    const oversizedPlan = spawnSync(process.execPath, [
+      SCRIPT, 'apply-directory', sourceRoot, '--plan', planPath, '--confirm', 'unused',
+    ], { cwd: workspaceRoot, encoding: 'utf8' });
+    assert.equal(oversizedPlan.status, 2, oversizedPlan.stderr);
+    assert.match(oversizedPlan.stderr, /directory plan exceeds the 16777216-byte limit/i);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('directory CLI installs unchanged canonical agents that lint under LF and CRLF', async (t) => {
+  for (const [label, separator] of [['LF', '\n'], ['CRLF', '\r\n']]) {
+    await t.test(label, () => {
+      const fixtureRoot = fs.mkdtempSync(path.join(
+        fs.realpathSync(os.tmpdir()),
+        'dude-directory-cli-agent-',
+      ));
+      const workspaceRoot = path.join(fixtureRoot, 'workspace');
+      const sourceRoot = path.join(fixtureRoot, 'source');
+      const analysisPath = path.join(fixtureRoot, 'analysis.json');
+      const reviewPath = path.join(fixtureRoot, 'review.json');
+      const planPath = path.join(fixtureRoot, 'plan.json');
+      const destination = path.join(
+        workspaceRoot,
+        '.github',
+        'agents',
+        'dude-local-review.agent.md',
+      );
+      try {
+        seedDirectoryLintWorkspace(workspaceRoot);
+        fs.mkdirSync(path.join(sourceRoot, 'agents'), { recursive: true });
+        const source = [
+          '---',
+          'name: "Directory Reviewer"',
+          'description: "Reviews directory fixtures"',
+          '---',
+          DIRECTORY_COORDINATOR_PARAGRAPH,
+          '',
+        ].join(separator);
+        fs.writeFileSync(path.join(sourceRoot, 'agents', 'review.agent.md'), source);
+
+        const analyzed = spawnSync(process.execPath, [SCRIPT, 'analyze-directory', sourceRoot], {
+          cwd: workspaceRoot,
+          encoding: 'utf8',
+        });
+        assert.equal(analyzed.status, 0, analyzed.stderr);
+        assert.equal(analyzed.stderr, '');
+        const analysis = JSON.parse(analyzed.stdout);
+        assert.deepEqual(analysis.blocking_diagnostics, []);
+        assert.deepEqual(
+          analysis.outputs.find(({ source_path: sourcePath }) => sourcePath === 'agents/review.agent.md')?.transform_ids,
+          [],
+        );
+        fs.writeFileSync(analysisPath, analyzed.stdout);
+        fs.writeFileSync(reviewPath, `${JSON.stringify({
+          schema_version: 1,
+          kind: 'dude-directory-review',
+          analysis_sha256: analysis.analysis_sha256,
+          reviewed_batch_ids: analysis.review_batches.map(({ batch_id: batchId }) => batchId),
+          findings: [],
+        })}\n`);
+
+        const planned = spawnSync(process.execPath, [
+          SCRIPT, 'plan-directory', '--analysis', analysisPath, '--review', reviewPath,
+        ], { cwd: workspaceRoot, encoding: 'utf8' });
+        assert.equal(planned.status, 0, planned.stderr);
+        assert.equal(planned.stderr, '');
+        const plan = JSON.parse(planned.stdout);
+        assert.equal(plan.decision, 'clean');
+        fs.writeFileSync(planPath, planned.stdout);
+
+        const applied = spawnSync(process.execPath, [
+          SCRIPT, 'apply-directory', sourceRoot, '--plan', planPath, '--confirm', 'confirm-import',
+        ], { cwd: workspaceRoot, encoding: 'utf8' });
+        assert.equal(applied.status, 0, applied.stderr);
+        assert.equal(applied.stderr, '');
+        const result = JSON.parse(applied.stdout);
+        assert.equal(result.status, 'installed');
+        assert.deepEqual(result.written_paths, ['.github/agents/dude-local-review.agent.md']);
+        assert.deepEqual(fs.readFileSync(destination), Buffer.from(source));
+
+        const linted = spawnSync(process.execPath, [LINT_SCRIPT, workspaceRoot], { encoding: 'utf8' });
+        assert.equal(linted.status, 0, `${linted.stdout}${linted.stderr}`);
+        assert.match(linted.stdout, /0 warning\(s\), 0 failure\(s\)/);
+      } finally {
+        fs.rmSync(fixtureRoot, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('directory CLI blocks missing and malformed agent boundaries without installing', async (t) => {
+  const cases = [
+    ['missing', 'Ordinary agent body.', 'agent-boundary-missing'],
+    [
+      'malformed',
+      '**Coordinator-only artifacts:** do not edit coordinator state.\nThe required sentence is incomplete.',
+      'agent-boundary-malformed',
+    ],
+  ];
+  for (const [label, body, expectedCode] of cases) {
+    await t.test(label, () => {
+      const fixtureRoot = fs.mkdtempSync(path.join(
+        fs.realpathSync(os.tmpdir()),
+        'dude-directory-cli-blocked-',
+      ));
+      const workspaceRoot = path.join(fixtureRoot, 'workspace');
+      const sourceRoot = path.join(fixtureRoot, 'source');
+      const analysisPath = path.join(fixtureRoot, 'analysis.json');
+      const destination = path.join(
+        workspaceRoot,
+        '.github',
+        'agents',
+        'dude-local-review.agent.md',
+      );
+      try {
+        seedDirectoryLintWorkspace(workspaceRoot);
+        fs.mkdirSync(path.join(sourceRoot, 'agents'), { recursive: true });
+        fs.writeFileSync(
+          path.join(sourceRoot, 'agents', 'review.agent.md'),
+          `---\nname: "Directory Reviewer"\ndescription: "Reviews directory fixtures"\n---\n${body}\n`,
+        );
+
+        const analyzed = spawnSync(process.execPath, [SCRIPT, 'analyze-directory', sourceRoot], {
+          cwd: workspaceRoot,
+          encoding: 'utf8',
+        });
+        assert.equal(analyzed.status, 0, analyzed.stderr);
+        const analysis = JSON.parse(analyzed.stdout);
+        assert.ok(analysis.blocking_diagnostics.some(({ code }) => code === expectedCode));
+        assert.equal(
+          analysis.outputs.some(({ source_path: sourcePath }) => sourcePath === 'agents/review.agent.md'),
+          false,
+        );
+        fs.writeFileSync(analysisPath, analyzed.stdout);
+
+        const planned = spawnSync(process.execPath, [
+          SCRIPT, 'plan-directory', '--analysis', analysisPath,
+        ], { cwd: workspaceRoot, encoding: 'utf8' });
+        assert.equal(planned.status, 2, planned.stderr);
+        assert.match(planned.stderr, /Directory planning refused: analysis-blocked/);
+        assert.equal(fs.existsSync(destination), false);
+
+        const linted = spawnSync(process.execPath, [LINT_SCRIPT, workspaceRoot], { encoding: 'utf8' });
+        assert.equal(linted.status, 0, `${linted.stdout}${linted.stderr}`);
+        assert.match(linted.stdout, /0 warning\(s\), 0 failure\(s\)/);
+      } finally {
+        fs.rmSync(fixtureRoot, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 function tmpRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-import-'));
   fs.mkdirSync(path.join(root, '.github', 'agents'), { recursive: true });
   fs.mkdirSync(path.join(root, '.github', 'skills'), { recursive: true });
   return root;
+}
+
+/** @param {string} root */
+function seedDirectoryLintWorkspace(root) {
+  fs.mkdirSync(path.join(root, '.dude', 'ideas'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.dude', 'metadata'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.dude', 'metadata', 'bundle-manifest.md'),
+    '# Bundle Manifest\n\n```json\n{"source_repo":"x","source_ref":"main","installed_ref":"main"}\n```\n',
+  );
+  fs.writeFileSync(
+    path.join(root, '.dude', 'metadata', 'profile.md'),
+    '# Install Profile\n\n```json\n{"enabled_packs":[],"installed":{}}\n```\n',
+  );
 }
 
 const SOURCE_AGENT =

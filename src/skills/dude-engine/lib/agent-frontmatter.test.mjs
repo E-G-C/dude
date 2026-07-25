@@ -1,7 +1,7 @@
 // @ts-check
 /**
  * Tests for src/skills/dude-engine/lib/agent-frontmatter.mjs — the host-editor
- * `model:` frontmatter normalizer used by compose parity and the prompt audit.
+ * `model:` frontmatter normalizer used by compose parity.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

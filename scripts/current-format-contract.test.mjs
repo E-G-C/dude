@@ -1,7 +1,9 @@
 // @ts-check
+import { execFileSync, spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -47,6 +49,28 @@ const RETIRED_EXACT_TOKENS = [
 ];
 
 const PROJECT_SKILL = '.github/skills/project/SKILL.md';
+const CI_WORKFLOW = '.github/workflows/ci.yml';
+
+const CORE_DOGFOOD_BASELINE_LINE =
+  '- <UTC> - core-dogfood-baseline v1 terminal=<taskKey> head=<gitOid> src_tree=<gitTreeOid>';
+const CORE_DOGFOOD_ACCEPTED_LINE =
+  '- <UTC> - core-dogfood-accepted v1 terminal=<taskKey> head=<gitOid> declared=<sha256> source=<sha256> changed=<sha256> review=<sha256>';
+const CORE_DOGFOOD_OWNED_ROOTS = ['src', '.github', '.dude'];
+const GIT_VISIBLE_STATUS_ARGS = ['status', '--porcelain', '--untracked-files=all'];
+const GIT_OWNED_IGNORED_STATUS_ARGS = [
+  'status',
+  '--porcelain',
+  '--ignored',
+  '--untracked-files=all',
+  '--',
+  ...CORE_DOGFOOD_OWNED_ROOTS,
+];
+const GIT_VISIBLE_STATUS_COMMAND = `git ${GIT_VISIBLE_STATUS_ARGS.join(' ')}`;
+const GIT_OWNED_IGNORED_STATUS_COMMAND = `git ${GIT_OWNED_IGNORED_STATUS_ARGS.join(' ')}`;
+const GIT_VISIBLE_STATUS_COMMAND_PATTERN =
+  /\bgit status --porcelain --untracked-files=all(?=[ \t]*(?:$|[|;&"')\]}]))/m;
+const GIT_OWNED_IGNORED_STATUS_COMMAND_PATTERN =
+  /\bgit status --porcelain --ignored --untracked-files=all -- src \.github \.dude(?=[ \t]*(?:$|[|;&"')\]}]))/m;
 
 const PRIVATE_PROJECT_MEMORY = [
   '.dude/memory/guardrails.md',
@@ -54,8 +78,6 @@ const PRIVATE_PROJECT_MEMORY = [
   '.dude/memory/decisions.md',
   '.dude/memory/lessons.md',
 ];
-
-const PROJECT_STANDING_GUIDANCE = [PROJECT_SKILL, ...PRIVATE_PROJECT_MEMORY];
 
 const CURRENT_ONLY_DECISIONS_HEADING = '### Current-Only Supersessions';
 
@@ -228,6 +250,164 @@ function markdownSection(source, heading) {
     }
   }
   return lines.slice(start + 1, end).join('\n').trim();
+}
+
+/** @param {string} source @param {string} heading */
+function rawMarkdownSection(source, heading) {
+  const rawLines = source.split('\n');
+  const visibleLines = visibleMarkdown(source).split('\n');
+  const target = /^(#{1,6})[ \t]+(.+?)[ \t]*$/.exec(heading);
+  assert.ok(target, `invalid Markdown heading ${JSON.stringify(heading)}`);
+  const targetLevel = target[1].length;
+  const starts = visibleLines
+    .map((line, index) => (line.trim() === heading ? index : -1))
+    .filter((index) => index !== -1);
+  assert.equal(starts.length, 1, `${heading}: expected one visible exact heading`);
+
+  const start = starts[0];
+  let end = visibleLines.length;
+  for (let index = start + 1; index < visibleLines.length; index += 1) {
+    const next = /^ {0,3}(#{1,6})[ \t]+/.exec(visibleLines[index]);
+    if (next && next[1].length <= targetLevel) {
+      end = index;
+      break;
+    }
+  }
+  return rawLines.slice(start + 1, end).join('\n').trim();
+}
+
+/** @param {string} source @param {string} key */
+function yamlTopLevelBlock(source, key) {
+  const lines = source.split('\n');
+  const starts = lines
+    .map((line, index) => (line === `${key}:` ? index : -1))
+    .filter((index) => index !== -1);
+  assert.equal(starts.length, 1, `${key}: expected one top-level YAML key`);
+
+  const start = starts[0];
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^[^ \t#]/.test(lines[index])) {
+      end = index;
+      break;
+    }
+  }
+  return lines.slice(start, end).join('\n').trimEnd();
+}
+
+/** @param {string} source @param {string} jobName */
+function workflowJobSteps(source, jobName) {
+  const lines = source.split('\n');
+  const jobStarts = lines
+    .map((line, index) => (line === `  ${jobName}:` ? index : -1))
+    .filter((index) => index !== -1);
+  assert.equal(jobStarts.length, 1, `${jobName}: expected one workflow job`);
+
+  const jobStart = jobStarts[0];
+  let jobEnd = lines.length;
+  for (let index = jobStart + 1; index < lines.length; index += 1) {
+    if (/^  [A-Za-z0-9_-]+:\s*$/.test(lines[index])) {
+      jobEnd = index;
+      break;
+    }
+  }
+  const stepsStarts = lines
+    .map((line, index) => (index > jobStart && index < jobEnd && line === '    steps:' ? index : -1))
+    .filter((index) => index !== -1);
+  assert.equal(stepsStarts.length, 1, `${jobName}: expected one steps block`);
+
+  /** @type {string[][]} */
+  const blocks = [];
+  for (let index = stepsStarts[0] + 1; index < jobEnd; index += 1) {
+    if (/^      - /.test(lines[index])) blocks.push([]);
+    if (blocks.length > 0) blocks.at(-1)?.push(lines[index]);
+  }
+  return blocks.map((block) => block.join('\n').trimEnd());
+}
+
+/** @param {string} step */
+function workflowStepUses(step) {
+  return /^      - uses:\s*([^\s#]+)\s*$/m.exec(step)?.[1] ?? null;
+}
+
+/** @param {string} step */
+function workflowStepName(step) {
+  return /^      - name:\s*(.+?)\s*$/m.exec(step)?.[1] ?? null;
+}
+
+/** @param {string} step */
+function workflowStepRun(step) {
+  const lines = step.split('\n');
+  const runIndex = lines.findIndex((line) => /^        run:\s*/.test(line));
+  if (runIndex === -1) return '';
+  const scalar = lines[runIndex].replace(/^        run:\s*/, '');
+  if (!/^\|[+-]?$/.test(scalar)) return scalar;
+
+  const body = [];
+  for (let index = runIndex + 1; index < lines.length; index += 1) {
+    if (lines[index].trim() === '') {
+      body.push('');
+      continue;
+    }
+    const indentation = /^ */.exec(lines[index])?.[0].length ?? 0;
+    if (indentation <= 8) break;
+    body.push(lines[index].slice(Math.min(indentation, 10)));
+  }
+  return body.join('\n').trimEnd();
+}
+
+/** @param {string} root @param {string[]} args */
+function git(root, args) {
+  return execFileSync('git', args, {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+/** @param {string} root @param {string} relative @param {string} content */
+function writeFixture(root, relative, content) {
+  const absolute = path.join(root, ...relative.split('/'));
+  fs.mkdirSync(path.dirname(absolute), { recursive: true });
+  fs.writeFileSync(absolute, content);
+}
+
+function temporaryCoreDogfoodRepository() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-core-dogfood-'));
+  git(root, ['init', '--quiet']);
+  git(root, ['config', 'user.name', 'Dude Test']);
+  git(root, ['config', 'user.email', 'dude-test@example.invalid']);
+  writeFixture(root, '.gitignore', [
+    '/src/ignored.txt',
+    '/.github/ignored.txt',
+    '/.dude/ignored.txt',
+    '/dist/ignored.txt',
+    '',
+  ].join('\n'));
+  for (const relative of [
+    'src/tracked.txt',
+    '.github/tracked.txt',
+    '.dude/tracked.txt',
+    'dist/tracked.txt',
+  ]) {
+    writeFixture(root, relative, 'baseline\n');
+  }
+  git(root, ['add', '--all']);
+  git(root, ['commit', '--quiet', '-m', 'baseline']);
+  return root;
+}
+
+/** @param {string} root */
+function coreDogfoodGitPredicates(root) {
+  const visible = git(root, GIT_VISIBLE_STATUS_ARGS).split('\n').filter(Boolean);
+  const ownedIgnored = git(root, GIT_OWNED_IGNORED_STATUS_ARGS)
+    .split('\n')
+    .filter((line) => line.startsWith('!! '));
+  return {
+    accepted: visible.length === 0 && ownedIgnored.length === 0,
+    ownedIgnored,
+    visible,
+  };
 }
 
 /** @param {string} relative @param {string} heading @param {RegExp[]} patterns */
@@ -1369,22 +1549,6 @@ test('project-owned standing guidance is current-only while decision history sta
   assert.match(currentDecisions, /external\/manual recovery/);
 });
 
-test('project-owned dogfood footprint is separate and excludes feature history', () => {
-  const manifest = JSON.parse(read('scripts/prompt-audit-profiles.json'));
-  assert.deepEqual(manifest.dogfood_guidance.members, PROJECT_STANDING_GUIDANCE);
-
-  const releaseMembers = Object.values(manifest.profiles)
-    .flatMap((profile) => profile.members);
-  for (const member of PROJECT_STANDING_GUIDANCE) {
-    assert.equal(releaseMembers.includes(member), false, `${member} stays outside release/source totals`);
-  }
-  assert.equal(
-    manifest.dogfood_guidance.members.some((member) => /^\.dude\/(?:ideas|specs)\//.test(member)),
-    false,
-    'idea and specification history is not standing dogfood guidance',
-  );
-});
-
 // Deterministic maintenance consumers that were decoupled from schema-v0
 // reconciliation and legacy-workspace gating. Kept as its own additive
 // inventory so later slices can extend the active lists above without conflict.
@@ -1519,12 +1683,6 @@ test('T005 contract inventories optional-pack sources, public docs, and release 
   assert.equal(OPTIONAL_PACK_TEST_FILES.length, 2);
   assert.equal(PUBLIC_DOC_FILES.length, 9);
   assert.equal(RELEASE_BUILD_FILES.length, 2);
-  for (const excluded of [
-    'docs/context-footprint.md',
-    'docs/context-footprint-snapshots/baseline.json',
-  ]) {
-    assert.equal(T005_ACTIVE_CONSUMERS.includes(excluded), false, excluded);
-  }
   assert.equal(
     T005_ACTIVE_CONSUMERS.some((relative) => /^\.dude\/(?:ideas|specs)\//.test(relative)),
     false,
@@ -1973,6 +2131,608 @@ for (const [relative, heading] of RECOVERY_DOC_SECTIONS) {
     assert.deepEqual(failures, [], `${relative} ${heading}: recovery documentation contract`);
   });
 }
+
+test('T001 Core Dogfood Close source contract proves policy coverage only, not future Spec Lead, Reviewer, or close behavior', () => {
+  // Arrange
+  const heading = '## Core Dogfood Close';
+  const projectSkill = read(PROJECT_SKILL);
+  const visibleHeadingCount = visibleMarkdown(projectSkill)
+    .split('\n')
+    .filter((line) => line.trim() === heading)
+    .length;
+
+  // Act
+  assert.equal(
+    visibleHeadingCount,
+    1,
+    `${PROJECT_SKILL}: expected exactly one visible ${heading} section`,
+  );
+  const section = markdownSection(projectSkill, heading);
+  const rawSection = rawMarkdownSection(projectSkill, heading);
+  const failures = missingParagraphRequirements(section, [
+    ['repository-local scope is exactly authoritative core under src/** and its base-owned generated projection', [
+      /repository-local/i,
+      /authoritative core/i,
+      /`src\/\*\*`/i,
+      /base-owned/i,
+      /generated/i,
+    ]],
+    ['static tests expressly prove policy coverage only', [
+      /static tests?/i,
+      /(?:policy coverage only|(?:prove|verify|check) only that (?:this|required )?policy (?:exists|is present))/i,
+    ]],
+    ['static tests disclaim future Spec Lead, Reviewer, and close behavior proof', [
+      /static tests?/i,
+      /(?:do not|never)/i,
+      /prove/i,
+      /future/i,
+      /Spec Lead/i,
+      /Reviewer/i,
+      /close behavior/i,
+    ]],
+    ['planned exact src/** file writes require exactly one open non-parallel Shared terminal', [
+      /planned/i,
+      /exact/i,
+      /`src\/\*\*`/i,
+      /files?/i,
+      /exactly one/i,
+      /open/i,
+      /terminal task/i,
+      /\[Shared\]/i,
+      /(?:non-`?\[P\]`?|without `?\[P\]`?|must not add `?\[P\]`?)/i,
+    ]],
+    ['declared-src is complete, unique, UTF-8-bytewise sorted, exact, and backticked', [
+      /`declared-src:`/i,
+      /one (?:complete )?(?:clause|declaration)|one `declared-src:` clause/i,
+      /complete/i,
+      /unique/i,
+      /sorted/i,
+      /UTF-8 bytewise lexical order/i,
+      /exact/i,
+      /backticked/i,
+      /file paths?/i,
+    ]],
+    ['declared-src rejects directories and globs', [
+      /`declared-src:`/i,
+      /director/i,
+      /glob/i,
+      /invalid|reject/i,
+    ]],
+    ['the terminal depends by durable key on every source contributor', [
+      /terminal/i,
+      /depend/i,
+      /durable/i,
+      /every/i,
+      /(?:source-contributing|contribute an accepted source change)/i,
+    ]],
+    ['independent definition readiness review returns REJECT', [
+      /independent/i,
+      /definition readiness review/i,
+      /`REJECT`/i,
+    ]],
+    ['readiness rejects a missing terminal', [/(?:missing|no) (?:core )?terminal/i, /reject/i]],
+    ['readiness rejects more than one terminal', [/(?:more than one|multiple) terminal/i, /reject/i]],
+    ['readiness rejects a terminal that is not open', [/terminal/i, /not open|closed/i, /reject/i]],
+    ['readiness rejects P or missing Shared', [/\[P\]/i, /(?:lacks|missing)[^\n]*\[Shared\]/i, /reject/i]],
+    ['readiness rejects missing, duplicate, unsorted, incomplete, directory, or glob declarations', [
+      /declaration|`declared-src:`/i,
+      /missing/i,
+      /duplicate/i,
+      /unsorted/i,
+      /incomplete/i,
+      /director/i,
+      /glob/i,
+      /reject/i,
+    ]],
+    ['readiness rejects a missing contributing dependency', [
+      /missing/i,
+      /contribut/i,
+      /depend/i,
+      /reject/i,
+    ]],
+    ['normal definitions with no planned source write derive no terminal', [
+      /no planned source write|normal no-source definition/i,
+      /no (?:normal )?(?:core )?terminal/i,
+    ]],
+    ['feature 008 declared-src none is only a bootstrap empty-set exception', [
+      /(?:this package|Feature 008)/i,
+      /`declared-src: none`/i,
+      /bootstrap/i,
+      /exception/i,
+      /empty/i,
+    ]],
+    ['Lightweight declaration authority is the canonical open task header', [
+      /Lightweight/i,
+      /canonical/i,
+      /open task header/i,
+      /declaration authority/i,
+    ]],
+    ['tracked declaration authority is corresponding Beads issue text, never tasks mirror', [
+      /Tracked/i,
+      /corresponding Beads issue text/i,
+      /declaration authority/i,
+      /`tasks\.md`/i,
+      /(?:not consulted|non-authoritative mirror|not live authority)/i,
+    ]],
+    ['the unique owner Coordinator Log is the common evidence carrier in both lanes', [
+      /unique owner/i,
+      /`## Coordinator Log`/i,
+      /evidence carrier/i,
+      /both lanes|either lane/i,
+    ]],
+    ['evidence lines are bounded, append-only identifiers and digests without file bytes', [
+      /less than 512 UTF-8 bytes/i,
+      /append-only/i,
+      /identifiers?/i,
+      /digests?/i,
+      /no/i,
+      /(?:source|generated)/i,
+      /file bytes/i,
+    ]],
+    ['all evidence hashes are lowercase SHA-256 over UTF-8 canonical JSON without insignificant whitespace', [
+      /lowercase/i,
+      /SHA-256/i,
+      /UTF-8/i,
+      /canonical JSON/i,
+      /no insignificant whitespace/i,
+    ]],
+    ['canonical paths are workspace-relative POSIX paths and malformed inventories block', [
+      /workspace-relative POSIX paths/i,
+      /duplicate paths/i,
+      /unsupported path types/i,
+      /invalid UTF-8 path representations/i,
+      /noncanonical ordering/i,
+      /block/i,
+    ]],
+    ['declared hashes the complete sorted exact terminal path array', [
+      /`declared`/i,
+      /hash/i,
+      /complete/i,
+      /sorted/i,
+      /exact/i,
+      /terminal paths?/i,
+      /JSON array/i,
+    ]],
+    ['source hashes complete sorted current src path, type, and content rows', [
+      /`source`/i,
+      /hash/i,
+      /complete/i,
+      /sorted/i,
+      /current/i,
+      /`src\/\*\*`/i,
+      /path/i,
+      /type/i,
+      /content/i,
+      /base64/i,
+      /100644/i,
+      /100755/i,
+      /120000/i,
+    ]],
+    ['source rows use the exact ordered path, type, and base64-content object shape', [
+      [/source/i, /rows?/i, /keys in this exact order/i],
+      [/\{"path":"src\/example\.mjs","type":"100644","content":"<base64-exact-bytes>"\}/],
+    ]],
+    ['symlink content is the base64 encoding of its exact target bytes', [
+      /symlink/i,
+      /base64/i,
+      /exact target bytes/i,
+    ]],
+    ['changed hashes complete sorted baseline-diff rows with absent deletions', [
+      /`changed`/i,
+      /hash/i,
+      /complete/i,
+      /sorted/i,
+      /baseline/i,
+      /diff/i,
+      /deletion/i,
+      /`type:"absent"`/i,
+    ]],
+    ['changed rows reuse the current source shape and use the exact absent deletion shape', [
+      [/added/i, /modified/i, /type-changed/i, /current source-row shape/i],
+      [/\{"path":"src\/removed\.mjs","type":"absent"\}/],
+      [/renames?/i, /absent row/i, /current row/i],
+      [/array/i, /complete/i, /sorted by path/i],
+    ]],
+    ['review hashes a transient substantive independent approval binding all identities and verification', [
+      /`review`/i,
+      /hash/i,
+      /transient/i,
+      /substantive/i,
+      /independent Reviewer/i,
+      /terminal/i,
+      /`HEAD`/i,
+      /`declared`/i,
+      /`source`/i,
+      /`changed`/i,
+      /generated parity/i,
+      /verification/i,
+      /`APPROVE`/i,
+    ]],
+    ['review uses the exact fixed-order envelope with the complete Reviewer response as record', [
+      [/fixed-order canonical envelope/i, /exact transient Reviewer record/i],
+      [/\{"version":1,"terminal":"T004@1234abcd","head":"<gitOid>","declared":"<sha256>","source":"<sha256>","changed":"<sha256>","verdict":"APPROVE","record":"<exact substantive Reviewer response>"\}/],
+      [/complete|exact/i, /Reviewer response/i, /`record`|record/i],
+    ]],
+    ['baseline preflight binds immutable HEAD and HEAD:src after clean visible, ignored, and parity checks', [
+      /baseline preflight/i,
+      /immutable `HEAD`/i,
+      /`HEAD:src`/i,
+      /tracked/i,
+      /untracked/i,
+      /ignored/i,
+      /`src\/\*\*`/i,
+      /base-owned generated core/i,
+      /parity/i,
+    ]],
+    ['baseline append is followed by a fresh recheck before the first source mutation', [
+      /baseline line/i,
+      /append/i,
+      /fresh recheck|repeat/i,
+      /immediately before/i,
+      /first source mutation/i,
+    ]],
+    ['dirty preflight waits or uses a worktree only after user approval', [
+      /preflight/i,
+      /fail/i,
+      /wait/i,
+      /worktree/i,
+      /user/i,
+      /approv|opt-in/i,
+    ]],
+    ['the core interval is serialized from baseline through materialization', [
+      /serializ/i,
+      /baseline/i,
+      /through materialization/i,
+      /one core/i,
+    ]],
+    ['every changed source path is declared and active declaration must match acceptance', [
+      /every changed source path/i,
+      /declared/i,
+      /active/i,
+      /declaration/i,
+      /match/i,
+      /acceptance/i,
+    ]],
+    ['observed or suspected concurrency blocks without claiming actor attribution', [
+      /observed or suspected concurrency/i,
+      /block/i,
+      /actor attribution/i,
+      /locally controlled/i,
+    ]],
+    ['materialization requires reviewed identities to still match and runs build-dev only for nonempty changed', [
+      /immediately before materialization/i,
+      /identit/i,
+      /match/i,
+      /`node scripts\/build-dev\.mjs`/i,
+      /`changed`/i,
+      /nonempty/i,
+    ]],
+    ['source tests trigger the lifecycle even with no generated destination', [
+      /`src\/\*\*\/\*\.test\.mjs`|source tests?/i,
+      /trigger/i,
+      /lifecycle/i,
+      /no generated destination|generated delta is empty/i,
+    ]],
+    ['no accepted source change is a read-only parity no-op without build-dev', [
+      /no accepted source change|`changed` is empty/i,
+      /(?:do not|must not|without)/i,
+      /`node scripts\/build-dev\.mjs`/i,
+      /read-only parity|parity is proved read-only/i,
+    ]],
+    ['materialization protects packs, project guidance, workflows, and Dude state', [
+      /installed `dude-pack-\*` artifacts/i,
+      /`\.github\/skills\/project\/\*\*`/i,
+      /`\.github\/workflows\/\*\*`/i,
+      /`\.dude\/\*\*`/i,
+      /preserv/i,
+    ]],
+    ['final acceptance appends only after independent approval and immediately recomputes identities', [
+      /accepted line/i,
+      /append/i,
+      /fresh independent/i,
+      /`APPROVE`/i,
+      /immediately recompute/i,
+      /identit/i,
+    ]],
+    ['close uses only the latest matching accepted line and drift requires later review evidence', [
+      /close/i,
+      /latest/i,
+      /matching accepted line/i,
+      /drift/i,
+      /re-review|fresh independent review/i,
+      /later accepted line/i,
+    ]],
+    ['all seven invalid close packets block without mutation or delivery claim', [
+      /missing baseline/i,
+      /undeclared/i,
+      /declaration mismatch/i,
+      /post-review source drift/i,
+      /generated drift/i,
+      /failed verification/i,
+      /rejected review|Reviewer verdict `REJECT`/i,
+      /block/i,
+      /without mutation/i,
+      /delivery claim|close/i,
+    ]],
+    ['the policy introduces no compiler, runtime, helper, state, ledger, report, or Beads-note duplication', [
+      /(?:no new|must not add|do not add)/i,
+      /compiler/i,
+      /runtime/i,
+      /helper/i,
+      /state/i,
+      /ledger/i,
+      /persistent scenario report/i,
+      /Beads notes/i,
+      /duplicat/i,
+    ]],
+  ]);
+
+  for (const [label, shape] of [
+    ['baseline', CORE_DOGFOOD_BASELINE_LINE],
+    ['accepted', CORE_DOGFOOD_ACCEPTED_LINE],
+  ]) {
+    const count = rawSection
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .split('\n')
+      .filter((line) => line.trim() === shape)
+      .length;
+    if (count !== 1) failures.push(`exact ${label} Coordinator Log line shape`);
+  }
+
+  // Assert
+  assert.deepEqual(
+    failures,
+    [],
+    `${PROJECT_SKILL} ${heading}: policy-only Core Dogfood Close contract`,
+  );
+});
+
+test('T001 CI source contract proves bounded policy/Git predicate coverage only, not future Spec Lead, Reviewer, or close behavior', () => {
+  // Arrange
+  const workflow = read(CI_WORKFLOW);
+  /** @type {string[]} */
+  const failures = [];
+  const permissionKeys = workflow
+    .split('\n')
+    .filter((line) => /^\s*permissions:\s*$/.test(line));
+  if (permissionKeys.length !== 1 || permissionKeys[0] !== 'permissions:') {
+    failures.push('permissions must be one top-level block');
+  }
+  try {
+    const permissions = yamlTopLevelBlock(workflow, 'permissions')
+      .split('\n')
+      .filter((line) => line.trim() !== '' && !/^\s*#/.test(line));
+    if (JSON.stringify(permissions) !== JSON.stringify(['permissions:', '  contents: read'])) {
+      failures.push('top-level permissions must contain only contents: read');
+    }
+  } catch {
+    failures.push('top-level permissions must contain only contents: read');
+  }
+
+  /** @type {string[]} */
+  let steps = [];
+  try {
+    steps = workflowJobSteps(workflow, 'validate');
+  } catch {
+    failures.push('validate job must have one parseable steps block');
+  }
+  const checkoutIndexes = steps
+    .map((step, index) => workflowStepUses(step)?.startsWith('actions/checkout@') ? index : -1)
+    .filter((index) => index !== -1);
+  if (checkoutIndexes.length !== 1) {
+    failures.push('validate must have exactly one actions/checkout step');
+  } else if (!/^          persist-credentials:\s*false\s*$/m.test(steps[checkoutIndexes[0]])) {
+    failures.push('checkout must set persist-credentials: false in its with block');
+  }
+
+  const setupIndexes = steps
+    .map((step, index) => workflowStepUses(step)?.startsWith('actions/setup-node@') ? index : -1)
+    .filter((index) => index !== -1);
+  const driftIndexes = steps
+    .map((step, index) => workflowStepName(step) === 'Dev-bundle drift check' ? index : -1)
+    .filter((index) => index !== -1);
+  if (setupIndexes.length !== 1) failures.push('validate must have exactly one actions/setup-node step');
+  if (driftIndexes.length !== 1) failures.push('validate must have exactly one Dev-bundle drift check step');
+  if (
+    setupIndexes.length === 1
+    && driftIndexes.length === 1
+    && driftIndexes[0] !== setupIndexes[0] + 1
+  ) {
+    failures.push('Dev-bundle drift check must directly follow actions/setup-node');
+  }
+
+  // Act
+  if (driftIndexes.length === 1) {
+    const run = workflowStepRun(steps[driftIndexes[0]]);
+    const runLines = run.split('\n');
+    const buildIndexes = runLines
+      .map((line, index) => (line.trim() === 'node scripts/build-dev.mjs' ? index : -1))
+      .filter((index) => index !== -1);
+    if (buildIndexes.length !== 1) {
+      failures.push('drift step must run node scripts/build-dev.mjs exactly once');
+    } else {
+      const preBuild = runLines.slice(0, buildIndexes[0]).join('\n');
+      const postBuild = runLines.slice(buildIndexes[0] + 1).join('\n');
+      for (const [phase, source] of [['pre-build', preBuild], ['post-build', postBuild]]) {
+        if (!GIT_VISIBLE_STATUS_COMMAND_PATTERN.test(source)) {
+          failures.push(`${phase} must run exact ${GIT_VISIBLE_STATUS_COMMAND}`);
+        }
+        if (!GIT_OWNED_IGNORED_STATUS_COMMAND_PATTERN.test(source)) {
+          failures.push(`${phase} must check ignored entries under exactly src .github .dude`);
+        }
+        if (!source.includes('!!')) failures.push(`${phase} must reject ignored !! entries`);
+        if (!/\bexit 1\b/.test(source)) failures.push(`${phase} predicates must fail the step`);
+      }
+      if (run.includes('git status --porcelain -- .github')) {
+        failures.push('legacy .github-only visible status is too narrow');
+      }
+      const ignoredCommandLines = runLines.filter((line) => (
+        line.includes('git status') && line.includes('--ignored')
+      ));
+      if (ignoredCommandLines.some((line) => /(?:^|[ /])dist(?:[ /"')]|$)/.test(line))) {
+        failures.push('ignored dist must remain outside the named-root predicate');
+      }
+    }
+  }
+
+  const forbiddenAction = steps
+    .map(workflowStepUses)
+    .filter((uses) => uses !== null)
+    .find((uses) => /(?:release|publish|deploy|pages)/i.test(uses));
+  if (forbiddenAction) failures.push(`remote or release action is forbidden: ${forbiddenAction}`);
+  const runSource = steps.map(workflowStepRun).filter(Boolean).join('\n');
+  const forbiddenCommands = [
+    ['Git repository mutation', /\bgit(?:\s+-c\s+\S+)*\s+(?:add|commit|push|tag|remote)\b/i],
+    ['GitHub release', /\bgh\s+release\b/i],
+    ['package publish', /\b(?:npm|pnpm|yarn|cargo)\s+publish\b/i],
+    ['release or publish command', /(?:^|\n)\s*(?:release|publish)\b/i],
+    ['HTTP remote mutation', /\bcurl\b[^\n]*(?:-X|--request)\s*(?:POST|PUT|PATCH|DELETE)\b/i],
+  ];
+  for (const [label, pattern] of forbiddenCommands) {
+    if (pattern.test(runSource)) failures.push(`${label} operation is forbidden`);
+  }
+  if (/\b(?:secrets\.|github\.token|GITHUB_TOKEN|GH_TOKEN)\b/i.test(workflow)) {
+    failures.push('credential-bearing workflow input is forbidden');
+  }
+
+  // Assert
+  assert.deepEqual(
+    failures,
+    [],
+    `${CI_WORKFLOW}: bounded policy/Git-predicate source contract`,
+  );
+});
+
+test('T001 actual Bash ignored guards prove fail-closed shell behavior only, not future Spec Lead, Reviewer, or close behavior', () => {
+  // Arrange
+  const workflow = read(CI_WORKFLOW);
+  const driftStep = workflowJobSteps(workflow, 'validate')
+    .find((step) => workflowStepName(step) === 'Dev-bundle drift check');
+  assert.ok(driftStep, `${CI_WORKFLOW}: Dev-bundle drift check step`);
+  const runLines = workflowStepRun(driftStep).split('\n');
+  const ignoredAssignment = `ignored_status="$(${GIT_OWNED_IGNORED_STATUS_COMMAND})"`;
+  const guardStarts = runLines
+    .map((line, index) => (line.trim() === ignoredAssignment ? index : -1))
+    .filter((index) => index !== -1);
+  assert.equal(guardStarts.length, 2, `${CI_WORKFLOW}: exact pre-build and post-build ignored guards`);
+  const guards = guardStarts.map((start) => {
+    const endOffset = runLines.slice(start).findIndex((line) => line.trim() === 'fi');
+    assert.notEqual(endOffset, -1, `${CI_WORKFLOW}: ignored guard closes with fi`);
+    return runLines.slice(start, start + endOffset + 1).join('\n');
+  });
+  const root = temporaryCoreDogfoodRepository();
+  const runGuard = (guard) => spawnSync('bash', ['-o', 'pipefail', '-c', guard], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: 'ignore',
+  });
+
+  try {
+    // Act and assert: no ignored entry is clean.
+    for (const [index, guard] of guards.entries()) {
+      const clean = runGuard(guard);
+      assert.equal(clean.error, undefined, `clean guard ${index + 1}: Bash invocation`);
+      assert.equal(clean.status, 0, `clean guard ${index + 1}: no ignored entry exits zero`);
+    }
+
+    const ignoredPrefix = 'ignored-stress-';
+    fs.appendFileSync(
+      path.join(root, '.git', 'info', 'exclude'),
+      `\n/src/${ignoredPrefix}*\n`,
+    );
+    const longSuffix = 'x'.repeat(200);
+    for (let index = 0; index < 12_000; index += 1) {
+      const filename = `${ignoredPrefix}${String(index).padStart(5, '0')}-${longSuffix}.txt`;
+      fs.writeFileSync(path.join(root, 'src', filename), 'ignored\n');
+    }
+    const ignoredStatus = execFileSync('git', GIT_OWNED_IGNORED_STATUS_ARGS, {
+      cwd: root,
+      encoding: 'utf8',
+      maxBuffer: 8 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.ok(
+      Buffer.byteLength(ignoredStatus, 'utf8') > 2 * 1024 * 1024,
+      'stress fixture must produce more than 2 MiB of owned-root ignored status',
+    );
+    assert.equal(
+      ignoredStatus.split('\n').filter((line) => line.startsWith('!! ')).length,
+      12_000,
+      'stress fixture must expose every ignored owned-root path',
+    );
+
+    // Act and assert: each exact CI guard must reject ignored entries under pipefail.
+    for (const [index, guard] of guards.entries()) {
+      const ignored = runGuard(guard);
+      assert.equal(ignored.error, undefined, `ignored guard ${index + 1}: Bash invocation`);
+      assert.equal(ignored.status, 1, `ignored guard ${index + 1}: ignored entries fail closed`);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T001 temporary Git repositories prove policy/Git predicate coverage only, not future Spec Lead, Reviewer, or close behavior', () => {
+  // Arrange
+  assert.deepEqual(CORE_DOGFOOD_OWNED_ROOTS, ['src', '.github', '.dude']);
+  /** @type {Array<{
+   *   name: string,
+   *   arrange: (root: string) => void,
+   *   expected: {accepted: boolean, visible: string[], ownedIgnored: string[]},
+   * }>} */
+  const cases = [
+    {
+      name: 'clean pass',
+      arrange() {},
+      expected: { accepted: true, visible: [], ownedIgnored: [] },
+    },
+    {
+      name: 'tracked modification rejects',
+      arrange(root) { writeFixture(root, 'src/tracked.txt', 'modified\n'); },
+      expected: { accepted: false, visible: [' M src/tracked.txt'], ownedIgnored: [] },
+    },
+    {
+      name: 'untracked file rejects',
+      arrange(root) { writeFixture(root, 'untracked.txt', 'untracked\n'); },
+      expected: { accepted: false, visible: ['?? untracked.txt'], ownedIgnored: [] },
+    },
+    {
+      name: 'ignored src entry rejects',
+      arrange(root) { writeFixture(root, 'src/ignored.txt', 'ignored\n'); },
+      expected: { accepted: false, visible: [], ownedIgnored: ['!! src/ignored.txt'] },
+    },
+    {
+      name: 'ignored .github entry rejects',
+      arrange(root) { writeFixture(root, '.github/ignored.txt', 'ignored\n'); },
+      expected: { accepted: false, visible: [], ownedIgnored: ['!! .github/ignored.txt'] },
+    },
+    {
+      name: 'ignored .dude entry rejects',
+      arrange(root) { writeFixture(root, '.dude/ignored.txt', 'ignored\n'); },
+      expected: { accepted: false, visible: [], ownedIgnored: ['!! .dude/ignored.txt'] },
+    },
+    {
+      name: 'ignored dist only stays outside named-root result',
+      arrange(root) { writeFixture(root, 'dist/ignored.txt', 'ignored\n'); },
+      expected: { accepted: true, visible: [], ownedIgnored: [] },
+    },
+  ];
+
+  for (const fixture of cases) {
+    const root = temporaryCoreDogfoodRepository();
+    try {
+      fixture.arrange(root);
+
+      // Act
+      const actual = coreDogfoodGitPredicates(root);
+
+      // Assert
+      assert.deepEqual(actual, fixture.expected, fixture.name);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
 
 // --- T007: one detailed autonomous learning-governance owner ------------------
 

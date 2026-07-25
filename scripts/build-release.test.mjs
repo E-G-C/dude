@@ -28,6 +28,14 @@ const RECOVERY_SOURCE_REL = 'src/skills/dude-work/recovery.mjs';
 const RECOVERY_TEST_SOURCE_REL = 'src/skills/dude-work/recovery.test.mjs';
 const RECOVERY_DEPLOY_REL = '.github/skills/dude-work/recovery.mjs';
 const RECOVERY_TEST_DEPLOY_REL = '.github/skills/dude-work/recovery.test.mjs';
+const T007_PROJECTION_PAIRS = [
+  ['src/skills/dude-bundle-import/SKILL.md', '.github/skills/dude-bundle-import/SKILL.md'],
+  ['src/skills/dude-bundle-import/import.mjs', '.github/skills/dude-bundle-import/import.mjs'],
+  ['src/skills/dude-bundle-import/lib/directory-import.mjs', '.github/skills/dude-bundle-import/lib/directory-import.mjs'],
+  ['src/skills/dude-bundle-import/lib/directory-risk.mjs', '.github/skills/dude-bundle-import/lib/directory-risk.mjs'],
+  ['src/skills/dude-bundle-import/lib/directory-source.mjs', '.github/skills/dude-bundle-import/lib/directory-source.mjs'],
+  ['src/skills/dude-lint/lint.mjs', '.github/skills/dude-lint/lint.mjs'],
+];
 
 /** @param {string} root @returns {string[]} */
 function listRelativeFiles(root) {
@@ -127,6 +135,23 @@ test('buildRelease stages the recovery runtime byte-identically without its test
     assert.ok(source.length > 0 && source.at(-1) === 0x0a, `${RECOVERY_SOURCE_REL} must end in LF`);
     assert.ok(staged.length > 0 && staged.at(-1) === 0x0a, `${RECOVERY_DEPLOY_REL} must end in LF`);
     assert.equal(fs.existsSync(path.join(outDir, RECOVERY_TEST_DEPLOY_REL)), false);
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test('buildRelease stages the complete T007 directory import runtime byte-identically', () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-rel-directory-import-'));
+  try {
+    const result = buildRelease({ repoRoot, outDir, ref: 'v0.0.0' });
+    for (const [sourceRel, deployRel] of T007_PROJECTION_PAIRS) {
+      assert.equal(result.files.includes(deployRel), true, `${deployRel} is in the release inventory`);
+      assert.deepEqual(
+        fs.readFileSync(path.join(outDir, deployRel)),
+        fs.readFileSync(path.join(repoRoot, sourceRel)),
+        `${deployRel} must be byte-identical to ${sourceRel}`,
+      );
+    }
   } finally {
     fs.rmSync(outDir, { recursive: true, force: true });
   }

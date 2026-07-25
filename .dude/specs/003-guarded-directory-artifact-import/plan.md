@@ -18,17 +18,17 @@ It generates exactly two persisted artifacts: one directory analysis and one fin
 
 **Language/Version**: Node.js >= 20 ESM with `// @ts-check`; strict JSON exchange records and Markdown guidance  
 **Dependencies**: Node standard library and built-in `fetch`; no new package, Git executable, GitHub application, parser framework, or runtime installer  
-**Storage**: Runtime under `src/skills/dude-bundle-import/`; generated dogfood under `.github/skills/dude-bundle-import/`; user-saved analysis, optional review, and plan JSON; apply-only private staging and backups  
+**Storage**: Runtime under `src/skills/dude-bundle-import/`; generated dogfood under `.github/skills/dude-bundle-import/`; user-saved analysis, optional review, and plan JSON; apply-only exclusively created, never-reused, workspace-contained transaction material using current-UID `0700` directories and `0600` regular files on POSIX and selected-parent inherited ACLs without ACL management or a current-user-only claim on Windows
 **Testing**: `node:test`, temporary local fixtures, mocked GitHub API/raw responses, failure injection, existing single-file regressions, canonical agent-boundary and focused Dude lint agent/skill frontmatter regressions, projection tests, full repository gates, and independent review  
 **Target Platform**: Cross-platform local workspaces supported by Node >= 20 and unauthenticated public GitHub over HTTPS  
 **Project Type**: Dependency-free CLI/library within the reusable Dude bundle  
 **Performance Goals**: Linear bounded acquisition, hashing, ownership, scanning, and planning plus stable lexical sorting  
 **Source Limits**: depth 12, 256 entries, 128 regular files, 1,048,576 bytes per file, and 4,194,304 aggregate regular-file bytes  
-**Review Limits**: 16 complete strict-UTF-8 text files and 262,144 decoded bytes per batch; files are never split  
+**Review Limits**: 16 complete strict-UTF-8 text files and 262,144 decoded bytes per batch; files are never split; optional review JSON maximum 1,048,576 UTF-8 bytes; reviewed plan JSON maximum 16,777,216 UTF-8 bytes
 **Network Limits**: at most 16 GitHub metadata requests and 128 raw requests; 1 MiB per metadata/raw response, 4 MiB aggregate metadata bytes, 4 MiB aggregate raw bytes, and 30 seconds per request  
 **Constraints**: Project-local `dude-local-*` outputs only; no imported execution, dependency install, hook activation, transitive fetch, source-overlapping transaction material, plugins, authentication, or arbitrary hosts
 
-The v1 source limits have no caller overrides. Network bounds apply while streaming, regardless of `Content-Length`.
+The v1 source and review limits have no caller overrides. The optional-review and reviewed-plan JSON ceilings are fixed versioned renderer/validator facts and are not serialized. Network bounds apply while streaming, regardless of `Content-Length`.
 
 ## Spec Quality Validation
 
@@ -211,6 +211,8 @@ The analysis renderer may preview replacement paths by deriving them from output
 
 The optional review input has exactly `schema_version`, `kind`, `analysis_sha256`, sorted unique `reviewed_batch_ids`, and `findings`. Listing one batch ID means the language model reviewed that exact complete generated batch tied by the analysis hash; there are no repeated path/hash lists, per-batch status rows, or failure records.
 
+The 1,048,576-byte UTF-8 ceiling applies to the complete optional review JSON. Reject raw bytes over it before JSON parsing; when a caller supplies a structured review value, encode its canonical JSON and reject it over the same ceiling before semantic acceptance. This and the reviewed-plan ceiling are aggregate-only v1 bounds: do not add a per-finding count limit or evidence, explanation, path, or generic scalar limits.
+
 Each advisory finding has `batch_id`, a valid path within that reviewed batch, category, severity (`info` or `warn`), evidence, and explanation. Reject unknown fields, stale analysis hashes, unsorted or duplicate reviewed IDs, unknown IDs, findings for uncovered batches or paths, invalid categories or severities, empty evidence or explanations, and duplicate canonical finding tuples. Do not normalize malformed input into coverage.
 
 The review may cover any subset of generated batches. Generated IDs absent from `reviewed_batch_ids` remain derivably uncovered, their paths appear in the preview, and they force Warned. Over-budget text, opaque files, deterministic warnings, or advisory warnings also force Warned. Language-model review cannot Block, authorize, normalize a plan, erase evidence, or lower deterministic severity. Clean requires no warning and coverage of every generated batch.
@@ -222,6 +224,8 @@ The review may cover any subset of generated batches. Generated IDs absent from 
 Aggregate the final decision, then serialize only source provenance, `analysis_sha256`, `manifest_sha256`, minimal groups, exact outputs, static and advisory findings in separate arrays, sorted `reviewed_batch_ids`, decision, complete `replace_paths`, and `plan_sha256`. Do not serialize fixed limits, claim text, repeated entries, review file lists, review failures, a transaction parent, or a required confirmation.
 
 Compute `plan_sha256` over canonical plan JSON with only its own field omitted. After hashing, the renderer derives the required apply literal without inserting it into the hashed payload:
+
+The complete canonical reviewed plan, including `plan_sha256`, has a 16,777,216-byte UTF-8 ceiling. Reject a complete canonical plan over that ceiling before emission or structured acceptance; apply rejects raw plan bytes over the same ceiling before JSON parsing or acceptance.
 
 - Clean: `confirm-import`
 - Warned: literal `confirm-warned-import:` plus `plan_sha256`
@@ -247,7 +251,9 @@ Apply preflight rejects before mutation:
 
 ### 11. Staged mutation and rollback
 
-After preflight, create one private nonce directory beneath the apply-derived parent. It remains outside the source, disjoint from outputs, and on the destination filesystem when feasible. Refuse before mutation if safe staging cannot be established.
+After preflight, exclusively create one never-reused transaction directory beneath the apply-derived parent and keep all transaction material within the workspace. Keep the transaction tree disjoint from the source, every output, every other transaction tree, and between its staging and backup subtrees; require every component to have the expected directory or regular-file type with no links, and retain and revalidate the exact transaction identity before use. Treat any failure to establish or preserve these invariants as a privacy failure before destination mutation.
+
+On POSIX, require every transaction directory and regular file to be owned by the current UID, with directories mode `0700` and regular files mode `0600`. On Windows, use regular transaction directories and files with the selected transaction parent's inherited ACLs, add no ACL-management tooling, and make no current-user-only access claim; users requiring stronger privacy must secure the selected parent externally before apply.
 
 Stage all output and back up all replacements before the first destination mutation. Verify hashes and rerun cheap source/destination/overlap preflight. Write in sorted order with create-only or reviewed-replacement semantics, then verify outputs.
 
@@ -267,7 +273,7 @@ Add focused regressions in `src/skills/dude-lint/{lint.mjs,lint.test.mjs}` for v
 
 Add end-to-end directory/lint regressions proving that an unchanged agent with the exact canonical block is accepted and passes current Dude lint under LF and CRLF, while agents with a missing or malformed block produce the file-specific blocking diagnostic and never reach installation. Keep duplicated and structurally noncanonical block classification in the focused ownership/output tests so integration coverage does not create another workflow stage.
 
-Scanner tests are table-driven for every tightly bound hard construct, broad indicator, same-file false-positive counterexample, opaque-byte evidence, and precedence rule, with no context reduction. Analysis tests cover the compact entries/groups/outputs shape, canonical hashes, every non-content diagnostic family, exact fields and order, preview reconstruction, batch content/packing, and Blocked plan/apply refusal. Review/plan tests cover sorted complete-batch IDs, malformed/unknown/duplicate IDs and findings, omitted/stale review, advisory precedence, all decisions and plan-bound literals, non-circular hashing, complete replacements, simple states, overlap, and zero planning writes.
+Scanner tests are table-driven for every tightly bound hard construct, broad indicator, same-file false-positive counterexample, opaque-byte evidence, and precedence rule, with no context reduction. Analysis tests cover the compact entries/groups/outputs shape, canonical hashes, every non-content diagnostic family, exact fields and order, preview reconstruction, batch content/packing, and Blocked plan/apply refusal. Review/plan tests cover sorted complete-batch IDs, malformed/unknown/duplicate IDs and findings, omitted/stale review, advisory precedence, all decisions and plan-bound literals, non-circular hashing, complete replacements, simple states, overlap, and zero planning writes, plus exact-ceiling and one-byte-over probes for raw optional-review JSON before parsing and structured canonical review JSON before semantic acceptance at 1,048,576/1,048,577 UTF-8 bytes, complete canonical reviewed plans including `plan_sha256` before emission or structured acceptance at 16,777,216/16,777,217 UTF-8 bytes, and raw apply plans before parsing or acceptance at 16,777,216/16,777,217 UTF-8 bytes.
 
 Apply tests separate nonmutating preflight from mutation. Drift and alias fixtures assert zero transaction/destination writes. Transaction fixtures inject failures at staging, backup, final preflight, each write, verification, rollback, and cleanup.
 
@@ -284,7 +290,7 @@ Justified complexity:
 - Git blob SHA plus SHA-256 to bind raw bytes to tree metadata and the analysis;
 - one analysis and one plan to bind optional review without a report layer;
 - one finite static rule table with tightly bound Block constructs; and
-- private rollback material for portable multi-file recovery.
+- transaction-scoped rollback material with an explicit POSIX-mode and inherited-Windows-ACL privacy policy for portable multi-file recovery.
 
 Rejected complexity: plugins, arbitrary hosts, authentication, slash-ref guessing, API blob content, Markdown/JavaScript context parsers, universal ASTs, dynamic analysis, sandboxing, package management, dependency resolution, interactive adaptation, selective UI, inferred ownership, broad rewriting, automatic repair, directory identity graphs, extra reports, repeated review/failure records, and hidden stores.
 

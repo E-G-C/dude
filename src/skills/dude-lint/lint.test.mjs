@@ -107,6 +107,11 @@ const TASK_BOARD_NOTICE =
 const TASK_BOARD_END = '<!-- dude:board:end -->';
 const TASK_CANONICAL_NOTICE =
   '<!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->';
+const COORDINATOR_PARAGRAPH =
+  '**Coordinator-only artifacts:** do not edit `## Coordinator Log`, task-state ' +
+  'glyphs in `tasks.md`, fenced regions (`<!-- dude:managed:* -->`, ' +
+  '`<!-- dude:board:* -->`), or `status:` / `spec_path:` frontmatter. Report ' +
+  'changes back to `@dude` instead.';
 
 /** @param {string} idea @returns {string} */
 function ideaAudit(idea) {
@@ -152,6 +157,141 @@ test('lint accepts canonical draft and defined ideas and reports idea counts', (
     assert.equal(result.code, 0, result.output);
     assert.match(result.output, /Scanned: 2 idea\(s\)/);
     assert.match(result.output, /0 warning\(s\), 0 failure\(s\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint accepts exact agent and skill frontmatter under LF and CRLF', () => {
+  const root = rootWithManifest();
+  try {
+    // Arrange
+    write(
+      root,
+      '.github/agents/dude-local-lf.agent.md',
+      `---\nname: LF Agent\ndescription: "LF fixture"\n---\n${COORDINATOR_PARAGRAPH}\n`,
+    );
+    write(
+      root,
+      '.github/agents/dude-local-crlf.agent.md',
+      ['---', 'name: CRLF Agent', 'description: "CRLF fixture"', '---', COORDINATOR_PARAGRAPH, ''].join('\r\n'),
+    );
+    write(
+      root,
+      '.github/skills/dude-local-lf-skill/SKILL.md',
+      '---\nname: dude-local-lf-skill\ndescription: "LF skill"\n---\nLF body.\n',
+    );
+    write(
+      root,
+      '.github/skills/dude-local-release-notes/SKILL.md',
+      [
+        '---',
+        '# preserved source metadata comment',
+        'name: dude-local-release-notes',
+        'description: "Rewritten CRLF skill"',
+        '---',
+        'CRLF body remains unchanged.',
+        '',
+      ].join('\r\n'),
+    );
+
+    // Act
+    const result = lint(root);
+
+    // Assert
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /0 warning\(s\), 0 failure\(s\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint rejects malformed delimiters and bare CR for agents and skills', () => {
+  const cases = [
+    {
+      name: 'agent malformed opener',
+      relPath: '.github/agents/dude-local-bad.agent.md',
+      content: `--- # metadata\nname: Bad Agent\ndescription: "Bad opener"\n---\n${COORDINATOR_PARAGRAPH}\n`,
+    },
+    {
+      name: 'agent malformed closer',
+      relPath: '.github/agents/dude-local-bad.agent.md',
+      content: `---\nname: Bad Agent\ndescription: "Bad closer"\n ---\n${COORDINATOR_PARAGRAPH}\n`,
+    },
+    {
+      name: 'agent malformed closer before later exact closer',
+      relPath: '.github/agents/dude-local-bad.agent.md',
+      content: `---\nname: Bad Agent\ndescription: "Bad closer"\n--- # metadata\nignored: metadata\n---\n${COORDINATOR_PARAGRAPH}\n`,
+    },
+    {
+      name: 'agent bare CR',
+      relPath: '.github/agents/dude-local-bad.agent.md',
+      content: `---\rname: Bad Agent\rdescription: "Bare CR"\r---\r${COORDINATOR_PARAGRAPH}\r`,
+    },
+    {
+      name: 'skill malformed opener',
+      relPath: '.github/skills/dude-local-bad/SKILL.md',
+      content: '--- # metadata\nname: dude-local-bad\ndescription: "Bad opener"\n---\nBody.\n',
+    },
+    {
+      name: 'skill malformed closer',
+      relPath: '.github/skills/dude-local-bad/SKILL.md',
+      content: '---\nname: dude-local-bad\ndescription: "Bad closer"\n ---\nBody.\n',
+    },
+    {
+      name: 'skill malformed closer before later exact closer',
+      relPath: '.github/skills/dude-local-bad/SKILL.md',
+      content: '---\nname: dude-local-bad\ndescription: "Bad closer"\n----\nignored: metadata\n---\nBody.\n',
+    },
+    {
+      name: 'skill bare CR',
+      relPath: '.github/skills/dude-local-bad/SKILL.md',
+      content: '---\rname: dude-local-bad\rdescription: "Bare CR"\r---\rBody.\r',
+    },
+  ];
+
+  for (const fixture of cases) {
+    const root = rootWithManifest();
+    try {
+      // Arrange
+      write(root, fixture.relPath, fixture.content);
+
+      // Act
+      const result = lint(root);
+
+      // Assert
+      assert.equal(result.code, 1, `${fixture.name}\n${result.output}`);
+      assert.match(
+        result.output,
+        new RegExp(fixture.relPath.replaceAll('.', '\\.')),
+        fixture.name,
+      );
+      assert.match(result.output, /missing or malformed YAML frontmatter/, fixture.name);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('lint preserves namespaced skill name equality after frontmatter parsing', () => {
+  const root = rootWithManifest();
+  try {
+    // Arrange
+    write(
+      root,
+      '.github/skills/dude-local-release-notes/SKILL.md',
+      '---\r\nname: dude-pack-release-notes\r\ndescription: "Mismatched namespace"\r\n---\r\nBody.\r\n',
+    );
+
+    // Act
+    const result = lint(root);
+
+    // Assert
+    assert.equal(result.code, 1, result.output);
+    assert.match(
+      result.output,
+      /frontmatter name 'dude-pack-release-notes' must match directory 'dude-local-release-notes'/,
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

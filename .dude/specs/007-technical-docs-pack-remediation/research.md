@@ -1,0 +1,21 @@
+# Research: Technical Docs Pack Remediation
+
+## Decisions
+
+| Area | Chosen decision | Rationale | Rejected alternatives |
+|---|---|---|---|
+| Source registry | Use one authoritative `sources.json` per run. Register every source, work directory, output, mode, and effective limit before intake. Sort by fixed source-kind rank, role, and UTF-8 bytewise normalized path, then assign `S001` onward. | Gives every downstream artifact one stable source identity and prevents scripts from interpreting paths or aliases differently. | Per-script source discovery; multi-source preprocessing; concatenating prose into one anonymous input; inferring provenance after extraction. |
+| Repository accounting and `R*` units | Record every encountered repository path as `admitted`, `skipped`, or `rejected`. Hash every admitted ordinary source file and partition admitted content into deterministic, bounded, non-overlapping `R*` member slices in normalized path and line order. | Proves traversal and extraction completeness while keeping repository work bounded and reproducible. | Category summaries; language-only sampling; best-effort traversal; silent omissions; one arbitrary unit per file; following symlinks. |
+| Shared safety primitives | Put option validation, bounded readers, strict schemas, canonical path checks, alias detection, hashing, changed-during-read checks, safe parent creation, atomic writes, Unicode iteration, and CommonMark fence state in one internal runtime module. | The same trust-boundary behavior must apply to all scripts. One internal module is the smallest design that prevents drift. | Duplicated checks in each CLI; a new public skill; third-party runtime dependencies; prose-only safety instructions. |
+| Strict interchange | Use closed schema-version-2 JSON contracts and object-only JSONL. Extractors write semantic per-unit results to exact conventional paths. Existing `merge-ledger.mjs --mode index` mechanically validates complete manifests, results, and result-declared fragments and authors authoritative `results.json`; `--mode merge` consumes only that index. | Prevents malformed, unreadable, empty, aliased, self-referential, missing, or nondeterministically discovered data from disappearing or producing a false pass. | Permissive JSONL; bare evidence IDs; model-authored indexes; directory-wide fragment discovery; silently skipped inputs; inferred no-evidence results. |
+| Digest freshness and finalizer | Bind every gate to exact input hashes and stage. Bind semantic review to its input draft, resulting document, consumed ledger, and pre-review reports. Let `finalize.mjs` revalidate the complete chain, current sources, output authorization, containment, and atomic publication. | A passing report must describe the bytes actually reviewed and finalized. | Timestamp or mtime freshness; prose assertions; accepting pre-review reports as final evidence; allowing an output override at finalization. |
+| Optional writing fallback | Keep complete local baseline guidance in technical-docs. When the writing pack is installed, its current style and trope guidance may refine presentation only. | Standalone capability remains complete and the functional intake, provenance, and gate contracts do not vary with composition. | Requiring the writing pack; adding a sibling-pack dependency schema; disabling drafting or review when writing is absent. |
+| Legacy handling | Reject unversioned or pre-version-2 prototype work artifacts and regenerate them from registered sources. Provide no migration flag, compatibility reader, or silent normalization. | The pack is unreleased and has no demonstrated compatibility consumer. Regeneration is safer and smaller than ambiguous conversion. | Schema adapters; in-place prototype normalization; scanning for retired formats; preserving malformed legacy ledgers. |
+
+## Consequences
+
+- All semantic work remains agent-owned, but every handoff is mechanically validated.
+- Density checks remain recall diagnostics, not substitutes for complete unit accounting.
+- Any source or artifact mutation invalidates that artifact and every dependent downstream report.
+- Tests remain under the pack's authoring-only `tests/` directory and are excluded from installation.
+- No unresolved research choice remains for implementation.
