@@ -96,4 +96,6 @@ Because the pack has not been released, do not require legacy compatibility or m
 - 2026-07-22 UTC - T001@00709e37 recovery attempt verified 39/39 focused tests but independent re-review repeated the immediate pre-publication finding and found two staged-directory defects
 - 2026-07-22 UTC - T001@00709e37 blocked after post-block Inspection bbb42d01f0b9b0eac9597674dcd5a15ddf9e833e643e598de6bb772e9a4417ae; repeated-review protocol requires user decision before any third revision
 - 2026-07-22 UTC - Lightweight board rendered after T001@00709e37 block
+- 2026-07-27 UTC - initialized the canonical Lightweight Execution History append surface required by the existing atomic incident-supersession wrapper; no task glyph, blocker, dependency, definition, or technical-docs implementation changed
 <!-- dude:managed:end -->
+- 2026-07-27T18:58:37Z - incident-supersession v1 intent=704d3efce1a5a51f9ca9b66f9a006def73a2227a3581190268498c9b2d18f72a branch=evidence-incomplete target=T001@00709e37

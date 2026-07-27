@@ -36,7 +36,7 @@ Nine all-open canonical units implement approved plan phases T001 through T009. 
 **Independent Test**: Valid options, paths, bounded reads, schemas, atomic writes, Unicode iteration, and matching fences produce deterministic results; malformed, escaping, aliased, over-bound, changed-during-read, and failure-injected cases leave prior valid outputs unchanged.
 
 - [!] T001@00709e37 [Shared] Implement shared validators, bounds, canonical containment and alias checks, safe-parent creation, hashing, deterministic ordering, atomic persistence, Unicode budgeting, diagnostics, and CommonMark fence primitives in `library/packs/technical-docs/skills/dude-pack-technical-docs-runtime/scripts/lib/runtime.mjs`; add the CLI harness and focused foundation tests in `library/packs/technical-docs/tests/helpers/harness.mjs`, `library/packs/technical-docs/tests/runtime-bounds.test.mjs`, and `library/packs/technical-docs/tests/runtime-text.test.mjs`; verify with `node --test library/packs/technical-docs/tests/runtime-bounds.test.mjs library/packs/technical-docs/tests/runtime-text.test.mjs`.
-   blocked-by: external-dependency: user decision required after repeated independent review rejection
+   blocked-by: contract-mismatch: evidence-incomplete autonomous review occurrence evidence unavailable
 
 ## Phase 2: Authoritative Source Registry
 
@@ -192,3 +192,6 @@ git diff --check
 | FR-031 through FR-034 | SC-008, SC-013 | T007@00745381, T008@0074f1b8 |
 | FR-035 through FR-037 | SC-002, SC-006, SC-008, SC-010 | T008@0074f1b8, T009@00758fef |
 | FR-038 through FR-040 | SC-009, SC-011, SC-012 | T008@0074f1b8, T009@00758fef |
+
+## Lightweight Execution History
+- dude-run-event: {"acceptedFeatureEvidenceIdentity":"385ce4b51f5f64e61d2bfa03eb61fbc5dbf2a63683990185dcec06697b677a91","branch":"evidence-incomplete","conclusion":"unauthorized-block-superseded","eventHash":"b2ae4707d645d55063bb53a69bac66aa602c7b4dc12ff5a6b60bd40ce8d24ce5","evidenceInventoryHash":"da928b221e06fa3a2dd0ebd7c241dcf0bb10df4d881a96ec8b342f75913bde0b","incidentIdentity":"b0734b9b35dd733b181e1bc11ba401f828478634668446304868c7e93dfdb282","intentIdentity":"704d3efce1a5a51f9ca9b66f9a006def73a2227a3581190268498c9b2d18f72a","priorDispositionIdentity":"87dc995e4a16b6ba7c441591cd7b27719f86e0b166ea6d21ff282ff959223d41","resultingTargetState":"blocked-evidence-incomplete","target":{"lane":"lightweight","specPath":".dude/specs/007-technical-docs-pack-remediation/spec.md","taskKey":"T001@00709e37"},"type":"incident-supersession","version":1}

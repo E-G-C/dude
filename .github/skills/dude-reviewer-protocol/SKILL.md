@@ -7,6 +7,8 @@ description: "Use for independent verdicts, rejection routing, revision ownershi
 
 The reviewer stays independent from implementation, revision, testing, and close. A verdict is `APPROVE`, `REJECT`, or `ESCALATE`; rejection includes concrete findings and approval means materially ready.
 
+For explicit autonomous Work, supply the grounded finding and occurrence evidence and defer every repeat-triggered disposition to `dude-work` learning governance. Guarded and non-Work disposition remains unchanged.
+
 ## Rejection Procedure
 
 1. The reviewer records and returns its verdict, concrete findings, and optional reviser recommendation; it does not load the receiving-review skill, assign, or revise.

@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { types as utilTypes } from 'node:util';
 
 import {
   parseFrontmatterScalars,
@@ -111,6 +112,7 @@ const MAX_ERROR_JSON_BYTES = 8_192;
 const MAX_PACKET_ITEMS = 16;
 const MAX_PACKET_BYTES = 65_536;
 const MAX_REGISTRY_ENTRIES = 64;
+const MAX_LEARNING_GOVERNANCE_BYTES = 32_768;
 // Assembled by concatenation so no literal active registry marker line ever appears in source.
 const OBJECTIVE_REGISTRY_START = '<' + '!-- dude:objective-registry:start --' + '>';
 const OBJECTIVE_REGISTRY_END = '<' + '!-- dude:objective-registry:end --' + '>';
@@ -1497,6 +1499,7 @@ function normalizeCaptureStream(value, target, field, source, states) {
   if (entries.length === 0) return [acquiredEvidence(source, true, 'present', '[]')];
   /** @type {Record<string, unknown>[]} */
   const items = [];
+  const trustedCaptureIdentities = new Set();
   let sawWrongTarget = false;
   for (let index = 0; index < entries.length; index += 1) {
     const label = `rawInputs.${field}[${index}]`;
@@ -1543,6 +1546,23 @@ function normalizeCaptureStream(value, target, field, source, states) {
     if (normalized.state !== entry.state
       || sha256(text) !== entry.outcomeHash) {
       return [acquiredEvidence(source, true, 'conflict', text)];
+    }
+    if (source === 'verification' || source === 'review') {
+      const records = /** @type {Record<string, unknown>[]} */ (normalized.records);
+      for (let recordIndex = 0; recordIndex < records.length; recordIndex += 1) {
+        const record = records[recordIndex];
+        if (!Object.hasOwn(record, 'authority') && !Object.hasOwn(record, 'bytes')) continue;
+        try {
+          validateTrustedSourceCaptureV2(record, `${source} trusted source capture[${recordIndex}]`);
+        } catch {
+          continue;
+        }
+        const identity = sha256(canonicalJson(record));
+        if (trustedCaptureIdentities.has(identity)) {
+          invalid(label, 'contains a duplicate trusted capture');
+        }
+        trustedCaptureIdentities.add(identity);
+      }
     }
     items.push(acquiredEvidence(source, true, 'present', text));
   }
@@ -2715,12 +2735,103 @@ function validateBudget(value, label) {
   assertSafeInteger(value, label, true);
 }
 
+/** @param {Record<string, unknown>} completion */
+function pendingCompletionSealHash(completion) {
+  return sha256(canonicalJson({
+    version: completion.version,
+    target: canonicalTarget(/** @type {Record<string, unknown>} */ (completion.target)),
+    evidenceHash: completion.evidenceHash,
+    approachHash: completion.approachHash,
+    resultHash: completion.resultHash,
+    priorApproachHash: completion.priorApproachHash,
+  }));
+}
+
+/** @param {Record<string, unknown>} target @param {Record<string, unknown>} entry */
+function repeatedApproachSealHash(target, entry) {
+  return sha256(canonicalJson({
+    version: 1,
+    kind: 'approach-repeat',
+    target: canonicalTarget(target),
+    evidenceHash: entry.evidenceHash,
+    approachHash: entry.approachHash,
+    resultHash: entry.resultHash,
+  }));
+}
+
+/** @param {Record<string, unknown>} target @param {Record<string, unknown>} prior @param {Record<string, unknown>} repeated */
+function retainedResultSealHash(target, prior, repeated) {
+  return sha256(canonicalJson({
+    version: 1,
+    kind: 'retained-result-repeat',
+    target: canonicalTarget(target),
+    evidenceHash: repeated.evidenceHash,
+    resultHash: repeated.resultHash,
+    priorApproachHash: prior.approachHash,
+    repeatedApproachHash: repeated.approachHash,
+  }));
+}
+
+/** @param {unknown} value @param {string} label */
+function validatePendingCompletionSeal(value, label) {
+  const candidate = assertRecord(value, label);
+  if (candidate.version === 2) return validatePendingCompletionRetentionV2(candidate, label);
+  const completion = assertExactRecord(
+    value,
+    ['version', 'target', 'evidenceHash', 'approachHash', 'resultHash', 'priorApproachHash'],
+    [],
+    label,
+  );
+  if (completion.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  validateTarget(completion.target);
+  if (isFeatureTarget(/** @type {Record<string, unknown>} */ (completion.target))) {
+    invalid(`${label}.target`, 'must identify a task target');
+  }
+  assertHash(completion.evidenceHash, `${label}.evidenceHash`);
+  assertHash(completion.approachHash, `${label}.approachHash`);
+  assertHash(completion.resultHash, `${label}.resultHash`);
+  assertHash(completion.priorApproachHash, `${label}.priorApproachHash`);
+  return completion;
+}
+
+/** @param {unknown} value @param {string} label */
+function validateLearningGovernanceSeal(value, label) {
+  const candidate = assertRecord(value, label);
+  if (Object.hasOwn(candidate, 'governanceIdentity')) return validateLearningGovernanceV1(candidate, label);
+  const governance = assertExactRecord(
+    value,
+    ['version', 'target', 'phase', 'revision', 'triggerEvidenceHash'],
+    [],
+    label,
+  );
+  if (governance.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  validateTarget(governance.target);
+  if (isFeatureTarget(/** @type {Record<string, unknown>} */ (governance.target))) {
+    invalid(`${label}.target`, 'must identify a task target');
+  }
+  if (governance.phase !== 'required') invalid(`${label}.phase`, 'must be required');
+  if (governance.revision !== 1) invalid(`${label}.revision`, 'must be the literal safe integer 1');
+  assertHash(governance.triggerEvidenceHash, `${label}.triggerEvidenceHash`);
+  if (Buffer.byteLength(canonicalJson(governance)) > MAX_LEARNING_GOVERNANCE_BYTES) {
+    invalid(label, `exceeds ${MAX_LEARNING_GOVERNANCE_BYTES} canonical UTF-8 bytes`);
+  }
+  return governance;
+}
+
+/** @param {Record<string, unknown>} state @param {Record<string, unknown>} target */
+function hasUnresolvedLearningGovernance(state, target) {
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous'
+    || !Object.hasOwn(state, 'learningGovernance')) return false;
+  const governance = /** @type {Record<string, unknown>} */ (state.learningGovernance);
+  return targetKey(governance.target) === targetKey(target);
+}
+
 /** @param {unknown} value */
 export function validateRunState(value) {
   const state = assertExactRecord(
     value,
     ['policy', 'overallUsed', 'recoveryUsed', 'pending', 'completed'],
-    ['evaluationSequences', 'learningReviewRefs'],
+    ['evaluationSequences', 'learningReviewRefs', 'pendingCompletion', 'learningGovernance'],
     'RunState',
   );
   const policy = assertExactRecord(
@@ -2828,11 +2939,117 @@ export function validateRunState(value) {
     assertHash(record.approachHash, `RunState.completed[${index}].approachHash`);
     assertHash(record.resultHash, `RunState.completed[${index}].resultHash`);
   });
+  const hasPendingCompletion = Object.hasOwn(state, 'pendingCompletion');
+  const hasLearningGovernance = Object.hasOwn(state, 'learningGovernance');
+  /** @type {Record<string, unknown> | null} */
+  let pendingCompletion = null;
+  if (hasPendingCompletion) {
+    pendingCompletion = validatePendingCompletionSeal(
+      state.pendingCompletion,
+      'RunState.pendingCompletion',
+    );
+    if (pendingCompletion.version === 1 && !hasLearningGovernance) {
+      invalid('RunState.pendingCompletion', 'legacy seal requires learningGovernance');
+    }
+    if (pendingCompletion.version === 2) {
+      if (policy.mode !== 'autonomous') {
+        invalid('RunState.pendingCompletion', 'v2 retention requires autonomous policy');
+      }
+      // Only the exact governed authorized attempt may retain a completion
+      // while a governance case is open.
+      if (hasLearningGovernance
+        && !V2_AUTHORIZED_PHASES.includes(
+          /** @type {string} */ (/** @type {Record<string, unknown>} */ (state.learningGovernance).phase),
+        )) {
+        invalid('RunState.pendingCompletion', 'v2 retention cannot coexist with active learning governance');
+      }
+      if (pending.length !== 1
+        || targetKey(pending[0].target) !== targetKey(pendingCompletion.target)) {
+        invalid('RunState.pendingCompletion', 'must bind the sole still-pending attempt target');
+      }
+      const pendingContext = completionApproachContextV2(state, pending[0]);
+      if (pendingCompletion.attemptIdentity !== pendingContext.attemptIdentity) {
+        invalid('RunState.pendingCompletion.attemptIdentity', 'must bind the exact still-pending authorization and approach');
+      }
+    }
+  }
+  if (hasLearningGovernance) {
+    if (policy.mode !== 'autonomous') {
+      invalid('RunState.learningGovernance', 'is permitted only under autonomous policy');
+    }
+    const governance = validateLearningGovernanceSeal(
+      state.learningGovernance,
+      'RunState.learningGovernance',
+    );
+    const exactV2 = Object.hasOwn(governance, 'governanceIdentity');
+    if (exactV2 && governance.phase === 'reviewed'
+      && !Object.hasOwn(governance, 'projectionCommitment')) {
+      invalid(
+        'RunState.learningGovernance.projectionCommitment',
+        'must retain the exact learning-result commitment while reviewed',
+      );
+    }
+    let triggerValid = exactV2;
+    if (pendingCompletion?.version === 1) {
+      if (targetKey(pendingCompletion.target) !== targetKey(governance.target)) {
+        invalid('RunState.learningGovernance.target', 'must match pendingCompletion.target');
+      }
+      triggerValid = governance.triggerEvidenceHash === pendingCompletionSealHash(pendingCompletion)
+        && completed.some((entry) => (
+          entry.evidenceHash === pendingCompletion.evidenceHash
+          && entry.resultHash === pendingCompletion.resultHash
+          && entry.approachHash === pendingCompletion.priorApproachHash
+        ));
+    } else if (!exactV2) {
+      triggerValid = completed.some((entry) => (
+        repeatedApproachSealHash(
+          /** @type {Record<string, unknown>} */ (governance.target),
+          entry,
+        ) === governance.triggerEvidenceHash
+      ));
+      for (let repeatedIndex = 1; !triggerValid && repeatedIndex < completed.length; repeatedIndex += 1) {
+        const repeated = completed[repeatedIndex];
+        for (let priorIndex = 0; priorIndex < repeatedIndex; priorIndex += 1) {
+          const prior = completed[priorIndex];
+          if (prior.evidenceHash === repeated.evidenceHash
+            && prior.resultHash === repeated.resultHash
+            && retainedResultSealHash(
+              /** @type {Record<string, unknown>} */ (governance.target),
+              prior,
+              repeated,
+            ) === governance.triggerEvidenceHash) {
+            triggerValid = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!triggerValid) {
+      invalid('RunState.learningGovernance.triggerEvidenceHash', 'must bind deterministic retained repeat evidence');
+    }
+    const governedPending = pending.filter((entry) => targetKey(entry.target) === targetKey(governance.target));
+    if (governedPending.length > 0) {
+      // A governed target holds a pending attempt only in an authorized phase,
+      // and only the exact attempt that consumed its attempt permit.
+      if (!V2_AUTHORIZED_PHASES.includes(/** @type {string} */ (governance.phase))
+        || governedPending.length !== 1
+        || completionApproachContextV2(state, governedPending[0]).attemptIdentity
+          !== governance.authorizedAttemptIdentity) {
+        invalid('RunState.pending', 'must not authorize the learning-governed target');
+      }
+    }
+  }
   if (policy.overall !== 'unlimited' && state.overallUsed > policy.overall) {
     invalid('RunState.overallUsed', 'exceeds the overall budget');
   }
-  if (state.overallUsed !== pending.length + completed.length) {
-    invalid('RunState.overallUsed', 'must equal pending plus completed attempts');
+  const pendingCompletionCount = pendingCompletion?.version === 1 ? 1 : 0;
+  if (state.overallUsed !== pending.length + completed.length + pendingCompletionCount) {
+    invalid(
+      'RunState.overallUsed',
+      pendingCompletionCount > 0
+        ? 'must equal pending plus completed attempts and the pending completion'
+        : 'must equal pending plus completed attempts',
+    );
   }
   let recoveryTotal = 0;
   for (const row of recoveryUsed) {
@@ -2948,6 +3165,2054 @@ function copyPendingEntry(entry) {
   };
 }
 
+/** @param {Record<string, unknown>} target @param {string} action @param {Record<string, unknown>} materialInputs */
+function autonomousApproachBasis(target, action, materialInputs) {
+  return {
+    version: 1,
+    target: canonicalTarget(target),
+    action,
+    materialInputs: {
+      targets: [.../** @type {string[]} */ (materialInputs.targets)],
+      operations: [.../** @type {string[]} */ (materialInputs.operations)],
+      checks: [.../** @type {string[]} */ (materialInputs.checks)],
+    },
+    mechanismIdentities: [],
+    assumptionIdentities: [],
+    evidenceAcquisitionIdentities: [],
+    validationPlanIdentities: [],
+  };
+}
+
+/** @param {Record<string, unknown>} target @param {number} attemptOrdinal @param {string} authorizationEvidenceHash @param {string} approachBasisIdentity */
+function autonomousAttemptIdentity(target, attemptOrdinal, authorizationEvidenceHash, approachBasisIdentity) {
+  return sha256(canonicalJson({
+    version: 2,
+    target: canonicalTarget(target),
+    attemptOrdinal,
+    authorizationEvidenceHash,
+    approachBasisIdentity,
+  }));
+}
+
+const V2_IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9._:/@-]{0,127}$/;
+const V2_EVENT_TYPES = Object.freeze([
+  'approach-occurrence',
+  'finding-occurrence',
+  'learning-review',
+  'learning-governance',
+]);
+const V2_GOVERNANCE_PHASES = Object.freeze([
+  'required',
+  'reviewed',
+  'projected',
+  'alternative-inspected',
+  'alternative-permitted',
+  'alternative-authorized-pending-lane',
+  'alternative-authorized',
+  'alternative-verified',
+  'no-progress-verified',
+]);
+const V2_GOVERNANCE_BRANCH_FIELDS = Object.freeze([
+  'reviewIdentity', 'selectedAlternativeIdentity', 'discriminatingCheckIdentity',
+  'postLearningInspectionIdentity', 'issuedAttemptPermitHash', 'consumedAttemptPermitHash',
+  'authorizedAttemptIdentity', 'laneClaimReceiptIdentity', 'terminalEvidenceIdentity',
+  'suspension', 'halt', 'controlledEnd',
+]);
+// Closed per-phase rules for every reachable phase. `optional` names the branch
+// fields one phase may additionally carry: unchanged suspension while learning
+// is unresolved, and Controlled Unresolved End only from `alternative-inspected`
+// or `no-progress-verified`. `alternative-permitted` stays unavailable because
+// attempt-permit issuance is pure and returns the byte-identical state, so no
+// route ever stores that phase. Immediate Halt End likewise stays ephemeral:
+// `haltGovernanceV2` returns its outcome without writing state, so no phase
+// opens a stored `halt` and `issuedAttemptPermitHash` has no writer either.
+const V2_GOVERNANCE_PHASE_RULES = Object.freeze({
+  required: {
+    required: Object.freeze([]),
+    optional: Object.freeze(['suspension']),
+    commitment: 'governance-required',
+    commitmentKinds: Object.freeze(['learning-governance']),
+  },
+  reviewed: {
+    required: Object.freeze(['reviewIdentity']),
+    optional: Object.freeze([]),
+    commitment: 'learning-result',
+    commitmentKinds: Object.freeze(['learning-review', 'learning-governance']),
+  },
+  projected: {
+    required: Object.freeze(['reviewIdentity']),
+    optional: Object.freeze(['suspension']),
+    commitment: null,
+    commitmentKinds: null,
+  },
+  'alternative-inspected': {
+    required: Object.freeze([
+      'reviewIdentity', 'selectedAlternativeIdentity',
+      'discriminatingCheckIdentity', 'postLearningInspectionIdentity',
+    ]),
+    optional: Object.freeze(['suspension', 'controlledEnd']),
+    commitment: null,
+    commitmentKinds: null,
+  },
+  'alternative-authorized-pending-lane': {
+    required: Object.freeze([
+      'reviewIdentity', 'selectedAlternativeIdentity', 'discriminatingCheckIdentity',
+      'postLearningInspectionIdentity', 'consumedAttemptPermitHash', 'authorizedAttemptIdentity',
+    ]),
+    optional: Object.freeze([]),
+    commitment: null,
+    commitmentKinds: null,
+  },
+  'alternative-authorized': {
+    required: Object.freeze([
+      'reviewIdentity', 'selectedAlternativeIdentity', 'discriminatingCheckIdentity',
+      'postLearningInspectionIdentity', 'consumedAttemptPermitHash', 'authorizedAttemptIdentity',
+    ]),
+    optional: Object.freeze(['laneClaimReceiptIdentity']),
+    commitment: null,
+    commitmentKinds: null,
+  },
+  'alternative-verified': {
+    required: Object.freeze([
+      'reviewIdentity', 'selectedAlternativeIdentity', 'discriminatingCheckIdentity',
+      'postLearningInspectionIdentity', 'consumedAttemptPermitHash', 'authorizedAttemptIdentity',
+    ]),
+    optional: Object.freeze(['laneClaimReceiptIdentity']),
+    commitment: null,
+    commitmentKinds: null,
+  },
+  'no-progress-verified': {
+    required: Object.freeze(['reviewIdentity', 'postLearningInspectionIdentity']),
+    optional: Object.freeze(['suspension', 'controlledEnd']),
+    commitment: null,
+    commitmentKinds: null,
+  },
+});
+
+/** @param {unknown} phase @param {string} label */
+function v2GovernancePhaseRule(phase, label) {
+  const rule = Object.hasOwn(V2_GOVERNANCE_PHASE_RULES, /** @type {string} */ (phase))
+    ? V2_GOVERNANCE_PHASE_RULES[/** @type {string} */ (phase)]
+    : null;
+  if (!rule) invalid(label, 'is unavailable before its owning permit, halt, or terminal task');
+  return /** @type {{required:string[],optional:string[],commitment:string|null,commitmentKinds:string[]|null}} */ (rule);
+}
+
+/**
+ * Validate the optional unresolved-governance branch fields and bind them to the
+ * exact governed target, phase, and stored branch identities.
+ * @param {Record<string, unknown>} record @param {{required:string[],optional:string[]}} phaseRule @param {Record<string, unknown>} target @param {string} label
+ */
+function validateV2GovernanceBranchFields(record, phaseRule, target, label) {
+  if (V2_GOVERNANCE_BRANCH_FIELDS.some((field) => (
+    !phaseRule.required.includes(field)
+      && !phaseRule.optional.includes(field)
+      && Object.hasOwn(record, field)
+  ))) invalid(label, `${record.phase} phase forbids branch, permit, receipt, halt, suspension, and terminal fields`);
+  if (Object.hasOwn(record, 'suspension')) {
+    const suspension = /** @type {Record<string, unknown>} */ (
+      validateSuspensionV1(record.suspension, `${label}.suspension`)
+    );
+    if (canonicalJson(suspension.affectedTarget) !== canonicalJson(target)) {
+      invalid(`${label}.suspension.affectedTarget`, 'must be the governed affected target');
+    }
+  }
+  if (Object.hasOwn(record, 'controlledEnd')) {
+    const controlledEnd = /** @type {Record<string, unknown>} */ (
+      validateControlledUnresolvedEndV1(record.controlledEnd, `${label}.controlledEnd`)
+    );
+    const branch = /** @type {Record<string, unknown>} */ (controlledEnd.branchEvidence);
+    if (branch.sourcePhase !== record.phase) {
+      invalid(`${label}.controlledEnd.branchEvidence.sourcePhase`, 'must equal the exact eligible governance phase');
+    }
+    if (controlledEnd.reviewIdentity !== record.reviewIdentity) {
+      invalid(`${label}.controlledEnd.reviewIdentity`, 'must bind the governed learning review');
+    }
+    // The no-progress branch resolves `postLearningInspectionIdentity` as a
+    // NoProgressVerificationV2 identity, never as an Inspection binding.
+    const boundIdentity = branch.kind === 'selected-alternative'
+      ? branch.postLearningInspectionIdentity
+      : branch.noProgressVerificationIdentity;
+    if (boundIdentity !== record.postLearningInspectionIdentity
+      || (branch.kind === 'selected-alternative'
+        && (branch.selectedAlternativeIdentity !== record.selectedAlternativeIdentity
+          || branch.discriminatingCheckIdentity !== record.discriminatingCheckIdentity))) {
+      invalid(`${label}.controlledEnd.branchEvidence`, 'must bind the exact stored branch identities');
+    }
+  }
+}
+
+/** @param {unknown} value @param {string} label */
+function assertV2Identifier(value, label) {
+  if (typeof value !== 'string' || !V2_IDENTIFIER_PATTERN.test(value)) {
+    invalid(label, 'must be a canonical identifier of at most 128 ASCII bytes');
+  }
+}
+
+/** @param {unknown} value @param {string} label */
+function assertV2SubjectIdentity(value, label) {
+  assertUnicodeScalarString(value, label);
+  if (typeof value !== 'string') invalid(label, 'must be a string');
+  const bytes = Buffer.byteLength(value);
+  if (bytes < 1 || bytes > 512 || /[\u0000-\u001f\u007f-\u009f]/.test(value) || value.includes('\\')) {
+    invalid(label, 'must contain 1 through 512 UTF-8 bytes, no controls, and use forward slashes');
+  }
+}
+
+/** @param {unknown} value @param {(value:unknown,label:string)=>void} validate @param {number} min @param {number} max @param {string} label */
+function validateV2SortedSet(value, validate, min, max, label) {
+  const rows = assertDenseDataArray(value, label);
+  if (rows.length < min || rows.length > max) {
+    invalid(label, `must contain ${min} through ${max} rows`);
+  }
+  rows.forEach((row, index) => {
+    validate(row, `${label}[${index}]`);
+    if (index > 0 && compareUtf8(/** @type {string} */ (rows[index - 1]), /** @type {string} */ (row)) >= 0) {
+      invalid(label, 'must be UTF-8 sorted and duplicate-free');
+    }
+  });
+  return /** @type {string[]} */ (rows);
+}
+
+/** @param {unknown} value @param {string} label */
+function validateV2HashSet(value, label, min = 0, max = 16) {
+  return validateV2SortedSet(value, assertHash, min, max, label);
+}
+
+/** @param {unknown} value @param {string} label */
+function validateAffectedTargetV2(value, label) {
+  const target = /** @type {Record<string, unknown>} */ (assertRecord(value, label));
+  validateTarget(target);
+  if (isFeatureTarget(target)) invalid(label, 'must identify a task target');
+  if (canonicalJson(target) !== canonicalJson(canonicalTarget(target))) {
+    invalid(label, 'must use the canonical affected-target shape');
+  }
+  return target;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateMaterialInputsV1(value, label = 'MaterialInputsV1') {
+  const record = assertExactRecord(value, ['targets', 'operations', 'checks'], [], label);
+  validateV2SortedSet(record.targets, assertV2SubjectIdentity, 1, 16, `${label}.targets`);
+  validateV2SortedSet(record.operations, assertV2Identifier, 1, 16, `${label}.operations`);
+  validateV2SortedSet(record.checks, assertV2Identifier, 1, 16, `${label}.checks`);
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateApproachBasisV1(value, label = 'ApproachBasisV1') {
+  const basis = assertExactRecord(
+    value,
+    ['version', 'target', 'action', 'materialInputs', 'mechanismIdentities', 'assumptionIdentities', 'evidenceAcquisitionIdentities', 'validationPlanIdentities'],
+    [],
+    label,
+  );
+  if (basis.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  validateAffectedTargetV2(basis.target, `${label}.target`);
+  assertV2Identifier(basis.action, `${label}.action`);
+  validateMaterialInputsV1(basis.materialInputs, `${label}.materialInputs`);
+  validateV2HashSet(basis.mechanismIdentities, `${label}.mechanismIdentities`);
+  validateV2HashSet(basis.assumptionIdentities, `${label}.assumptionIdentities`);
+  validateV2HashSet(basis.evidenceAcquisitionIdentities, `${label}.evidenceAcquisitionIdentities`);
+  validateV2HashSet(basis.validationPlanIdentities, `${label}.validationPlanIdentities`);
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateFindingBasisV1(value, label = 'FindingBasisV1') {
+  const basis = assertExactRecord(
+    value,
+    ['version', 'target', 'expectation', 'subjects', 'failureClass', 'checkDefinitionIdentity'],
+    [],
+    label,
+  );
+  if (basis.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  validateAffectedTargetV2(basis.target, `${label}.target`);
+  const expectation = assertExactRecord(basis.expectation, ['kind', 'identity'], [], `${label}.expectation`);
+  assertEnum(expectation.kind, ['governing-rule', 'expected-condition'], `${label}.expectation.kind`);
+  assertHash(expectation.identity, `${label}.expectation.identity`);
+  validateV2SortedSet(basis.subjects, assertV2SubjectIdentity, 1, 16, `${label}.subjects`);
+  assertV2Identifier(basis.failureClass, `${label}.failureClass`);
+  assertHash(basis.checkDefinitionIdentity, `${label}.checkDefinitionIdentity`);
+  return value;
+}
+
+/** @param {unknown} value @param {string} label */
+function validateCapturedBytesV1(value, label) {
+  const envelope = assertExactRecord(value, ['base64', 'sha256', 'byteLength'], [], label);
+  assertUnicodeScalarString(envelope.base64, `${label}.base64`);
+  const encoded = /** @type {string} */ (envelope.base64);
+  if (!BASE64_PATTERN.test(encoded)) invalid(`${label}.base64`, 'must be canonical padded RFC4648 base64');
+  const decoded = Buffer.from(encoded, 'base64');
+  if (decoded.toString('base64') !== encoded) invalid(`${label}.base64`, 'must round-trip canonically');
+  if (decoded.byteLength > MAX_SOURCE_BODY_BYTES) {
+    invalid(label, `exceeds the individual source body resource limit of ${MAX_SOURCE_BODY_BYTES} bytes`);
+  }
+  assertHash(envelope.sha256, `${label}.sha256`);
+  assertSafeInteger(envelope.byteLength, `${label}.byteLength`, false);
+  if (decoded.byteLength !== envelope.byteLength || sha256(decoded) !== envelope.sha256) {
+    invalid(label, 'descriptor must bind the complete decoded bytes');
+  }
+  return { envelope, decoded };
+}
+
+/** Create one exact CapturedBytesV1 value. @param {string|ArrayBuffer|ArrayBufferView} value */
+export function capturedBytesV1(value) {
+  const bytes = typeof value === 'string'
+    ? Buffer.from(value)
+    : value instanceof ArrayBuffer
+      ? Buffer.from(value)
+      : ArrayBuffer.isView(value)
+        ? Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+        : invalid('CapturedBytesV1 input', 'must be text or bytes');
+  return { base64: bytes.toString('base64'), sha256: sha256(bytes), byteLength: bytes.byteLength };
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateTrustedSourceCaptureV2(value, label = 'TrustedSourceCaptureV2') {
+  const capture = assertExactRecord(value, ['target', 'state', 'outcomeHash', 'authority', 'bytes'], [], label);
+  validateAffectedTargetV2(capture.target, `${label}.target`);
+  if (capture.state !== 'complete') invalid(`${label}.state`, 'must be complete');
+  assertHash(capture.outcomeHash, `${label}.outcomeHash`);
+  const authority = assertExactRecord(
+    capture.authority,
+    ['kind', 'authorityIdentity', 'invocationIdentity'],
+    [],
+    `${label}.authority`,
+  );
+  assertEnum(authority.kind, ['verification', 'independent-review'], `${label}.authority.kind`);
+  assertHash(authority.authorityIdentity, `${label}.authority.authorityIdentity`);
+  assertHash(authority.invocationIdentity, `${label}.authority.invocationIdentity`);
+  validateCapturedBytesV1(capture.bytes, `${label}.bytes`);
+  return value;
+}
+
+/** @param {unknown} captureValue */
+export function trustedSourceCaptureIdentityV2(captureValue) {
+  validateTrustedSourceCaptureV2(captureValue);
+  return sha256(canonicalJson(captureValue));
+}
+
+/** @param {unknown} value @param {string} label */
+function validateCheckEvidenceV2(value, label) {
+  const check = assertExactRecord(value, ['checkIdentity', 'definitionIdentity', 'outcome', 'evidenceIdentity'], [], label);
+  assertHash(check.checkIdentity, `${label}.checkIdentity`);
+  assertHash(check.definitionIdentity, `${label}.definitionIdentity`);
+  assertEnum(check.outcome, ['passed', 'failed'], `${label}.outcome`);
+  assertHash(check.evidenceIdentity, `${label}.evidenceIdentity`);
+  const expected = sha256(canonicalJson({
+    definitionIdentity: check.definitionIdentity,
+    outcome: check.outcome,
+    evidenceIdentity: check.evidenceIdentity,
+  }));
+  if (check.checkIdentity !== expected) invalid(`${label}.checkIdentity`, 'must equal the recomputed identity');
+  return check;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateVerificationEnvelopeV2(value, label = 'VerificationEnvelopeV2') {
+  const envelope = assertExactRecord(
+    value,
+    ['type', 'version', 'envelopeIdentity', 'target', 'attemptIdentity', 'sourceRevisionIdentity', 'inspectedEvidenceHash', 'resultIdentity', 'checks'],
+    [],
+    label,
+  );
+  if (envelope.type !== 'verification-envelope') invalid(`${label}.type`, 'must be verification-envelope');
+  if (envelope.version !== 2) invalid(`${label}.version`, 'must be the literal safe integer 2');
+  assertHash(envelope.envelopeIdentity, `${label}.envelopeIdentity`);
+  validateAffectedTargetV2(envelope.target, `${label}.target`);
+  assertHash(envelope.attemptIdentity, `${label}.attemptIdentity`);
+  assertHash(envelope.sourceRevisionIdentity, `${label}.sourceRevisionIdentity`);
+  assertHash(envelope.inspectedEvidenceHash, `${label}.inspectedEvidenceHash`);
+  assertHash(envelope.resultIdentity, `${label}.resultIdentity`);
+  const checks = assertDenseDataArray(envelope.checks, `${label}.checks`);
+  if (checks.length < 1 || checks.length > 16) invalid(`${label}.checks`, 'must contain 1 through 16 rows');
+  checks.forEach((check, index) => {
+    const row = validateCheckEvidenceV2(check, `${label}.checks[${index}]`);
+    if (index > 0 && compareUtf8(
+      /** @type {string} */ (/** @type {Record<string, unknown>} */ (checks[index - 1]).checkIdentity),
+      /** @type {string} */ (row.checkIdentity),
+    ) >= 0) invalid(`${label}.checks`, 'must be sorted by checkIdentity and duplicate-free');
+  });
+  const { envelopeIdentity, ...withoutIdentity } = envelope;
+  if (sha256(canonicalJson(withoutIdentity)) !== envelopeIdentity) {
+    invalid(`${label}.envelopeIdentity`, 'must equal the recomputed envelope identity');
+  }
+  return value;
+}
+
+/** @param {unknown} value @param {Record<string, unknown>} verification @param {string} label */
+function validateIndependentReviewFindingV2(value, verification, label) {
+  const finding = assertExactRecord(
+    value,
+    ['version', 'findingIdentity', 'basis', 'basisIdentity', 'observation'],
+    [],
+    label,
+  );
+  if (finding.version !== 2) invalid(`${label}.version`, 'must be the literal safe integer 2');
+  assertHash(finding.findingIdentity, `${label}.findingIdentity`);
+  validateFindingBasisV1(finding.basis, `${label}.basis`);
+  assertHash(finding.basisIdentity, `${label}.basisIdentity`);
+  const basisIdentity = sha256(canonicalJson(finding.basis));
+  if (finding.basisIdentity !== basisIdentity) invalid(`${label}.basisIdentity`, 'must equal the complete basis identity');
+  const observation = assertExactRecord(finding.observation, ['kind', 'identity'], [], `${label}.observation`);
+  assertEnum(observation.kind, ['observed-evidence', 'check-result'], `${label}.observation.kind`);
+  assertHash(observation.identity, `${label}.observation.identity`);
+  if (observation.kind === 'check-result') {
+    const check = /** @type {Record<string, unknown>[]} */ (verification.checks)
+      .find((row) => row.checkIdentity === observation.identity);
+    if (!check || check.definitionIdentity !== /** @type {Record<string, unknown>} */ (finding.basis).checkDefinitionIdentity) {
+      invalid(`${label}.observation`, 'must identify a bound verification check with the same definition identity');
+    }
+  }
+  const expected = sha256(canonicalJson({ version: 2, basisIdentity, observation }));
+  if (finding.findingIdentity !== expected) invalid(`${label}.findingIdentity`, 'must equal the recomputed finding identity');
+  return finding;
+}
+
+/** @param {unknown} value @param {unknown} verificationValue @param {string} [label] */
+export function validateIndependentReviewEnvelopeV2(value, verificationValue, label = 'IndependentReviewEnvelopeV2') {
+  const verification = /** @type {Record<string, unknown>} */ (
+    validateVerificationEnvelopeV2(verificationValue, `${label}.verification`)
+  );
+  const envelope = assertExactRecord(
+    value,
+    ['type', 'version', 'envelopeIdentity', 'target', 'attemptIdentity', 'attemptOrdinal', 'reviewOrdinal', 'reviewerAuthorityIdentity', 'reviewInvocationIdentity', 'sourceRevisionIdentity', 'inspectedEvidenceHash', 'resultIdentity', 'verificationEnvelopeIdentity', 'verdict', 'findings'],
+    [],
+    label,
+  );
+  if (envelope.type !== 'independent-review-envelope') invalid(`${label}.type`, 'must be independent-review-envelope');
+  if (envelope.version !== 2) invalid(`${label}.version`, 'must be the literal safe integer 2');
+  assertHash(envelope.envelopeIdentity, `${label}.envelopeIdentity`);
+  validateAffectedTargetV2(envelope.target, `${label}.target`);
+  assertHash(envelope.attemptIdentity, `${label}.attemptIdentity`);
+  assertSafeInteger(envelope.attemptOrdinal, `${label}.attemptOrdinal`, true);
+  assertSafeInteger(envelope.reviewOrdinal, `${label}.reviewOrdinal`, true);
+  assertHash(envelope.reviewerAuthorityIdentity, `${label}.reviewerAuthorityIdentity`);
+  assertHash(envelope.reviewInvocationIdentity, `${label}.reviewInvocationIdentity`);
+  assertHash(envelope.sourceRevisionIdentity, `${label}.sourceRevisionIdentity`);
+  assertHash(envelope.inspectedEvidenceHash, `${label}.inspectedEvidenceHash`);
+  assertHash(envelope.resultIdentity, `${label}.resultIdentity`);
+  assertHash(envelope.verificationEnvelopeIdentity, `${label}.verificationEnvelopeIdentity`);
+  assertEnum(envelope.verdict, ['accepted', 'rejected'], `${label}.verdict`);
+  const findings = assertDenseDataArray(envelope.findings, `${label}.findings`);
+  if (findings.length > 16) invalid(`${label}.findings`, 'must contain at most 16 rows');
+  if ((envelope.verdict === 'accepted' && findings.length !== 0)
+    || (envelope.verdict === 'rejected' && findings.length === 0)) {
+    invalid(`${label}.findings`, 'must be empty for accepted review and nonempty for rejected review');
+  }
+  findings.forEach((finding, index) => {
+    const row = validateIndependentReviewFindingV2(finding, verification, `${label}.findings[${index}]`);
+    if (index > 0 && compareUtf8(
+      /** @type {string} */ (/** @type {Record<string, unknown>} */ (findings[index - 1]).findingIdentity),
+      /** @type {string} */ (row.findingIdentity),
+    ) >= 0) invalid(`${label}.findings`, 'must be sorted by findingIdentity and duplicate-free');
+  });
+  for (const field of ['target', 'attemptIdentity', 'sourceRevisionIdentity', 'inspectedEvidenceHash', 'resultIdentity']) {
+    if (canonicalJson(envelope[field]) !== canonicalJson(verification[field])) {
+      invalid(`${label}.${field}`, 'must match the bound verification envelope');
+    }
+  }
+  if (envelope.verificationEnvelopeIdentity !== verification.envelopeIdentity) {
+    invalid(`${label}.verificationEnvelopeIdentity`, 'must bind the verification envelope');
+  }
+  const { envelopeIdentity, ...withoutIdentity } = envelope;
+  if (sha256(canonicalJson(withoutIdentity)) !== envelopeIdentity) {
+    invalid(`${label}.envelopeIdentity`, 'must equal the recomputed envelope identity');
+  }
+  return value;
+}
+
+/** @param {Record<string, unknown>} eventWithoutHash @param {string} label */
+function finalizeV2Event(eventWithoutHash, label) {
+  const event = { ...eventWithoutHash, eventHash: sha256(canonicalJson(eventWithoutHash)) };
+  if (Buffer.byteLength(canonicalJson(event)) > MAX_EVENT_BYTES) {
+    invalid(label, `must serialize to at most ${MAX_EVENT_BYTES} UTF-8 bytes`);
+  }
+  return event;
+}
+
+/** @param {unknown} input */
+export function buildFindingOccurrenceEventV1(input) {
+  const args = assertExactRecord(
+    input,
+    ['target', 'basis', 'attemptIdentity', 'attemptApproachBasisIdentity', 'reviewEnvelopeIdentity', 'findingIdentity', 'observation', 'attemptOrdinal', 'reviewOrdinal', 'sourceCaptureIdentity'],
+    [],
+    'buildFindingOccurrenceEventV1',
+  );
+  const target = canonicalTarget(validateAffectedTargetV2(args.target, 'buildFindingOccurrenceEventV1.target'));
+  validateFindingBasisV1(args.basis, 'buildFindingOccurrenceEventV1.basis');
+  if (canonicalJson(/** @type {Record<string, unknown>} */ (args.basis).target) !== canonicalJson(target)) {
+    invalid('buildFindingOccurrenceEventV1.basis.target', 'must match the event target');
+  }
+  for (const field of ['attemptIdentity', 'attemptApproachBasisIdentity', 'reviewEnvelopeIdentity', 'findingIdentity', 'sourceCaptureIdentity']) {
+    assertHash(args[field], `buildFindingOccurrenceEventV1.${field}`);
+  }
+  const observation = assertExactRecord(args.observation, ['kind', 'identity'], [], 'buildFindingOccurrenceEventV1.observation');
+  assertEnum(observation.kind, ['observed-evidence', 'check-result'], 'buildFindingOccurrenceEventV1.observation.kind');
+  assertHash(observation.identity, 'buildFindingOccurrenceEventV1.observation.identity');
+  assertSafeInteger(args.attemptOrdinal, 'buildFindingOccurrenceEventV1.attemptOrdinal', true);
+  assertSafeInteger(args.reviewOrdinal, 'buildFindingOccurrenceEventV1.reviewOrdinal', true);
+  const basisIdentity = sha256(canonicalJson(args.basis));
+  const expectedFindingIdentity = sha256(canonicalJson({
+    version: 2,
+    basisIdentity,
+    observation: { kind: observation.kind, identity: observation.identity },
+  }));
+  if (args.findingIdentity !== expectedFindingIdentity) {
+    invalid('buildFindingOccurrenceEventV1.findingIdentity', 'must equal the recomputed trusted finding identity');
+  }
+  const occurrence = {
+    version: 1,
+    basisIdentity,
+    attemptIdentity: args.attemptIdentity,
+    attemptApproachBasisIdentity: args.attemptApproachBasisIdentity,
+    reviewEnvelopeIdentity: args.reviewEnvelopeIdentity,
+    findingIdentity: args.findingIdentity,
+    observation: { kind: observation.kind, identity: observation.identity },
+    chronology: { attemptOrdinal: args.attemptOrdinal, reviewOrdinal: args.reviewOrdinal },
+  };
+  const eventWithoutHash = {
+    type: 'finding-occurrence',
+    version: 1,
+    occurrenceIdentity: sha256(canonicalJson(occurrence)),
+    target,
+    basis: args.basis,
+    occurrence,
+    sourceCaptureIdentity: args.sourceCaptureIdentity,
+  };
+  const event = finalizeV2Event(eventWithoutHash, 'FindingOccurrenceEventV1');
+  validateFindingOccurrenceEventV1(event);
+  return event;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateFindingOccurrenceEventV1(value, label = 'FindingOccurrenceEventV1') {
+  const event = assertExactRecord(
+    value,
+    ['type', 'version', 'eventHash', 'occurrenceIdentity', 'target', 'basis', 'occurrence', 'sourceCaptureIdentity'],
+    [],
+    label,
+  );
+  if (event.type !== 'finding-occurrence') invalid(`${label}.type`, 'must be finding-occurrence');
+  if (event.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  assertHash(event.eventHash, `${label}.eventHash`);
+  assertHash(event.occurrenceIdentity, `${label}.occurrenceIdentity`);
+  const target = validateAffectedTargetV2(event.target, `${label}.target`);
+  validateFindingBasisV1(event.basis, `${label}.basis`);
+  if (canonicalJson(/** @type {Record<string, unknown>} */ (event.basis).target) !== canonicalJson(target)) {
+    invalid(`${label}.basis.target`, 'must match the event target');
+  }
+  const occurrence = assertExactRecord(
+    event.occurrence,
+    ['version', 'basisIdentity', 'attemptIdentity', 'attemptApproachBasisIdentity', 'reviewEnvelopeIdentity', 'findingIdentity', 'observation', 'chronology'],
+    [],
+    `${label}.occurrence`,
+  );
+  if (occurrence.version !== 1) invalid(`${label}.occurrence.version`, 'must be the literal safe integer 1');
+  for (const field of ['basisIdentity', 'attemptIdentity', 'attemptApproachBasisIdentity', 'reviewEnvelopeIdentity', 'findingIdentity']) {
+    assertHash(occurrence[field], `${label}.occurrence.${field}`);
+  }
+  if (occurrence.basisIdentity !== sha256(canonicalJson(event.basis))) {
+    invalid(`${label}.occurrence.basisIdentity`, 'must equal the complete basis identity');
+  }
+  const observation = assertExactRecord(occurrence.observation, ['kind', 'identity'], [], `${label}.occurrence.observation`);
+  assertEnum(observation.kind, ['observed-evidence', 'check-result'], `${label}.occurrence.observation.kind`);
+  assertHash(observation.identity, `${label}.occurrence.observation.identity`);
+  const expectedFindingIdentity = sha256(canonicalJson({
+    version: 2,
+    basisIdentity: occurrence.basisIdentity,
+    observation,
+  }));
+  if (occurrence.findingIdentity !== expectedFindingIdentity) {
+    invalid(`${label}.occurrence.findingIdentity`, 'must equal the recomputed trusted finding identity');
+  }
+  const chronology = assertExactRecord(occurrence.chronology, ['attemptOrdinal', 'reviewOrdinal'], [], `${label}.occurrence.chronology`);
+  assertSafeInteger(chronology.attemptOrdinal, `${label}.occurrence.chronology.attemptOrdinal`, true);
+  assertSafeInteger(chronology.reviewOrdinal, `${label}.occurrence.chronology.reviewOrdinal`, true);
+  if (event.occurrenceIdentity !== sha256(canonicalJson(occurrence))) {
+    invalid(`${label}.occurrenceIdentity`, 'must equal the complete occurrence identity');
+  }
+  assertHash(event.sourceCaptureIdentity, `${label}.sourceCaptureIdentity`);
+  const { eventHash, ...withoutHash } = event;
+  if (eventHash !== sha256(canonicalJson(withoutHash))) invalid(`${label}.eventHash`, 'must equal the recomputed event hash');
+  if (Buffer.byteLength(canonicalJson(event)) > MAX_EVENT_BYTES) invalid(label, `must serialize to at most ${MAX_EVENT_BYTES} UTF-8 bytes`);
+  return value;
+}
+
+/** @param {unknown} input */
+export function buildApproachOccurrenceEventV1(input) {
+  const args = assertExactRecord(
+    input,
+    ['target', 'basis', 'attemptIdentity', 'authorizationEvidenceHash', 'resultIdentity', 'disposition', 'attemptOrdinal', 'verificationEnvelopeIdentity', 'reviewEnvelopeIdentity'],
+    [],
+    'buildApproachOccurrenceEventV1',
+  );
+  const target = canonicalTarget(validateAffectedTargetV2(args.target, 'buildApproachOccurrenceEventV1.target'));
+  validateApproachBasisV1(args.basis, 'buildApproachOccurrenceEventV1.basis');
+  if (canonicalJson(/** @type {Record<string, unknown>} */ (args.basis).target) !== canonicalJson(target)) {
+    invalid('buildApproachOccurrenceEventV1.basis.target', 'must match the event target');
+  }
+  for (const field of ['attemptIdentity', 'authorizationEvidenceHash', 'resultIdentity', 'verificationEnvelopeIdentity', 'reviewEnvelopeIdentity']) {
+    assertHash(args[field], `buildApproachOccurrenceEventV1.${field}`);
+  }
+  assertEnum(args.disposition, ['accepted', 'verification-failed', 'review-rejected', 'no-change', 'interrupted'], 'buildApproachOccurrenceEventV1.disposition');
+  assertSafeInteger(args.attemptOrdinal, 'buildApproachOccurrenceEventV1.attemptOrdinal', true);
+  const basisIdentity = sha256(canonicalJson(args.basis));
+  const occurrence = {
+    version: 1,
+    basisIdentity,
+    attemptIdentity: args.attemptIdentity,
+    authorizationEvidenceHash: args.authorizationEvidenceHash,
+    resultIdentity: args.resultIdentity,
+    disposition: args.disposition,
+    chronology: { attemptOrdinal: args.attemptOrdinal },
+  };
+  const eventWithoutHash = {
+    type: 'approach-occurrence',
+    version: 1,
+    occurrenceIdentity: sha256(canonicalJson(occurrence)),
+    target,
+    basis: args.basis,
+    occurrence,
+    verificationEnvelopeIdentity: args.verificationEnvelopeIdentity,
+    reviewEnvelopeIdentity: args.reviewEnvelopeIdentity,
+  };
+  const event = finalizeV2Event(eventWithoutHash, 'ApproachOccurrenceEventV1');
+  validateApproachOccurrenceEventV1(event);
+  return event;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateApproachOccurrenceEventV1(value, label = 'ApproachOccurrenceEventV1') {
+  const event = assertExactRecord(
+    value,
+    ['type', 'version', 'eventHash', 'occurrenceIdentity', 'target', 'basis', 'occurrence', 'verificationEnvelopeIdentity', 'reviewEnvelopeIdentity'],
+    [],
+    label,
+  );
+  if (event.type !== 'approach-occurrence') invalid(`${label}.type`, 'must be approach-occurrence');
+  if (event.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  assertHash(event.eventHash, `${label}.eventHash`);
+  assertHash(event.occurrenceIdentity, `${label}.occurrenceIdentity`);
+  const target = validateAffectedTargetV2(event.target, `${label}.target`);
+  validateApproachBasisV1(event.basis, `${label}.basis`);
+  if (canonicalJson(/** @type {Record<string, unknown>} */ (event.basis).target) !== canonicalJson(target)) {
+    invalid(`${label}.basis.target`, 'must match the event target');
+  }
+  const occurrence = assertExactRecord(
+    event.occurrence,
+    ['version', 'basisIdentity', 'attemptIdentity', 'authorizationEvidenceHash', 'resultIdentity', 'disposition', 'chronology'],
+    [],
+    `${label}.occurrence`,
+  );
+  if (occurrence.version !== 1) invalid(`${label}.occurrence.version`, 'must be the literal safe integer 1');
+  for (const field of ['basisIdentity', 'attemptIdentity', 'authorizationEvidenceHash', 'resultIdentity']) {
+    assertHash(occurrence[field], `${label}.occurrence.${field}`);
+  }
+  if (occurrence.basisIdentity !== sha256(canonicalJson(event.basis))) {
+    invalid(`${label}.occurrence.basisIdentity`, 'must equal the complete basis identity');
+  }
+  assertEnum(occurrence.disposition, ['accepted', 'verification-failed', 'review-rejected', 'no-change', 'interrupted'], `${label}.occurrence.disposition`);
+  const chronology = assertExactRecord(occurrence.chronology, ['attemptOrdinal'], [], `${label}.occurrence.chronology`);
+  assertSafeInteger(chronology.attemptOrdinal, `${label}.occurrence.chronology.attemptOrdinal`, true);
+  if (event.occurrenceIdentity !== sha256(canonicalJson(occurrence))) {
+    invalid(`${label}.occurrenceIdentity`, 'must equal the complete occurrence identity');
+  }
+  assertHash(event.verificationEnvelopeIdentity, `${label}.verificationEnvelopeIdentity`);
+  assertHash(event.reviewEnvelopeIdentity, `${label}.reviewEnvelopeIdentity`);
+  const { eventHash, ...withoutHash } = event;
+  if (eventHash !== sha256(canonicalJson(withoutHash))) invalid(`${label}.eventHash`, 'must equal the recomputed event hash');
+  if (Buffer.byteLength(canonicalJson(event)) > MAX_EVENT_BYTES) invalid(label, `must serialize to at most ${MAX_EVENT_BYTES} UTF-8 bytes`);
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateEventCommitmentV1(value, label = 'EventCommitmentV1') {
+  const commitment = assertExactRecord(value, ['kind', 'eventHash'], [], label);
+  assertEnum(
+    commitment.kind,
+    ['approach-occurrence', 'finding-occurrence', 'learning-review', 'learning-governance', 'incident-supersession'],
+    `${label}.kind`,
+  );
+  assertHash(commitment.eventHash, `${label}.eventHash`);
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateProjectionCommitmentV1(value, label = 'ProjectionCommitmentV1') {
+  const commitment = assertExactRecord(value, ['purpose', 'batchIdentity', 'eventCommitments'], [], label);
+  assertEnum(
+    commitment.purpose,
+    ['occurrence-retention', 'incident-evidence', 'governance-required', 'learning-result', 'governance-snapshot', 'incident-supersession'],
+    `${label}.purpose`,
+  );
+  assertHash(commitment.batchIdentity, `${label}.batchIdentity`);
+  const rows = assertDenseDataArray(commitment.eventCommitments, `${label}.eventCommitments`);
+  if (rows.length < 1 || rows.length > 17) invalid(`${label}.eventCommitments`, 'must contain 1 through 17 rows');
+  rows.forEach((row, index) => validateEventCommitmentV1(row, `${label}.eventCommitments[${index}]`));
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validatePendingCompletionRetentionV2(value, label = 'PendingCompletionRetentionV2') {
+  const pending = assertExactRecord(
+    value,
+    ['version', 'target', 'attemptIdentity', 'resultIdentity', 'verificationEnvelopeIdentity', 'reviewEnvelopeIdentity', 'findingIdentities', 'retention', 'capturedInspectionIdentity'],
+    [],
+    label,
+  );
+  if (pending.version !== 2) invalid(`${label}.version`, 'must be the literal safe integer 2');
+  validateAffectedTargetV2(pending.target, `${label}.target`);
+  for (const field of ['attemptIdentity', 'resultIdentity', 'verificationEnvelopeIdentity', 'reviewEnvelopeIdentity', 'capturedInspectionIdentity']) {
+    assertHash(pending[field], `${label}.${field}`);
+  }
+  validateV2HashSet(pending.findingIdentities, `${label}.findingIdentities`, 0, 16);
+  const retention = /** @type {Record<string, unknown>} */ (
+    validateProjectionCommitmentV1(pending.retention, `${label}.retention`)
+  );
+  if (retention.purpose !== 'occurrence-retention') {
+    invalid(`${label}.retention.purpose`, 'must be occurrence-retention');
+  }
+  const commitments = /** @type {Record<string, unknown>[]} */ (retention.eventCommitments);
+  if (commitments.length !== /** @type {unknown[]} */ (pending.findingIdentities).length + 1
+    || commitments[0]?.kind !== 'approach-occurrence'
+    || commitments.slice(1).some((row) => row.kind !== 'finding-occurrence')) {
+    invalid(`${label}.retention.eventCommitments`, 'must contain one approach followed by the complete finding set');
+  }
+  if (new Set(commitments.map((row) => row.eventHash)).size !== commitments.length) {
+    invalid(`${label}.retention.eventCommitments`, 'must be event-hash unique');
+  }
+  const expectedBatchIdentity = sha256(canonicalJson({
+    version: 1,
+    purpose: 'occurrence-retention',
+    target: canonicalTarget(pending.target),
+    eventCommitments: commitments,
+  }));
+  if (retention.batchIdentity !== expectedBatchIdentity) {
+    invalid(`${label}.retention.batchIdentity`, 'must bind the exact target and ordered event commitments');
+  }
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateRepeatRelationshipV1(value, label = 'RepeatRelationshipV1') {
+  const repeat = assertExactRecord(value, ['version', 'channel', 'basisIdentity', 'occurrenceIdentities'], [], label);
+  if (repeat.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  assertEnum(repeat.channel, ['finding', 'approach'], `${label}.channel`);
+  assertHash(repeat.basisIdentity, `${label}.basisIdentity`);
+  const occurrences = assertDenseDataArray(repeat.occurrenceIdentities, `${label}.occurrenceIdentities`);
+  if (occurrences.length !== 2) invalid(`${label}.occurrenceIdentities`, 'must contain exactly two rows');
+  occurrences.forEach((identity, index) => assertHash(identity, `${label}.occurrenceIdentities[${index}]`));
+  if (occurrences[0] === occurrences[1]) invalid(`${label}.occurrenceIdentities`, 'must identify two distinct occurrences');
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateFailedApproachSetV1(value, label = 'FailedApproachSetV1') {
+  const set = assertExactRecord(
+    value,
+    ['version', 'target', 'chronologyCutoff', 'approachBasisIdentities', 'evidenceEventHashes', 'setIdentity'],
+    [],
+    label,
+  );
+  if (set.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  validateAffectedTargetV2(set.target, `${label}.target`);
+  assertSafeInteger(set.chronologyCutoff, `${label}.chronologyCutoff`, true);
+  validateV2HashSet(set.approachBasisIdentities, `${label}.approachBasisIdentities`, 1, 16);
+  validateV2HashSet(set.evidenceEventHashes, `${label}.evidenceEventHashes`, 1, 16);
+  assertHash(set.setIdentity, `${label}.setIdentity`);
+  const { setIdentity, ...withoutIdentity } = set;
+  if (sha256(canonicalJson(withoutIdentity)) !== setIdentity) {
+    invalid(`${label}.setIdentity`, 'must equal the recomputed complete set identity');
+  }
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateLearningGovernanceV1(value, label = 'LearningGovernanceV1') {
+  const governance = assertExactRecord(
+    value,
+    ['version', 'governanceIdentity', 'target', 'trigger', 'failedApproachSet', 'phase', 'revision', 'triggerEvidenceHash'],
+    ['projectionCommitment', 'reviewIdentity', 'selectedAlternativeIdentity', 'discriminatingCheckIdentity', 'postLearningInspectionIdentity', 'issuedAttemptPermitHash', 'consumedAttemptPermitHash', 'authorizedAttemptIdentity', 'laneClaimReceiptIdentity', 'terminalEvidenceIdentity', 'suspension', 'halt', 'controlledEnd'],
+    label,
+  );
+  if (governance.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  assertHash(governance.governanceIdentity, `${label}.governanceIdentity`);
+  const target = validateAffectedTargetV2(governance.target, `${label}.target`);
+  validateRepeatRelationshipV1(governance.trigger, `${label}.trigger`);
+  const failedSet = /** @type {Record<string, unknown>} */ (
+    validateFailedApproachSetV1(governance.failedApproachSet, `${label}.failedApproachSet`)
+  );
+  if (canonicalJson(failedSet.target) !== canonicalJson(target)) {
+    invalid(`${label}.failedApproachSet.target`, 'must match the governed target');
+  }
+  assertEnum(governance.phase, V2_GOVERNANCE_PHASES, `${label}.phase`);
+  const phaseRule = v2GovernancePhaseRule(governance.phase, `${label}.phase`);
+  assertSafeInteger(governance.revision, `${label}.revision`, true);
+  assertHash(governance.triggerEvidenceHash, `${label}.triggerEvidenceHash`);
+  const repeatIdentity = sha256(canonicalJson(governance.trigger));
+  const expectedIdentity = sha256(canonicalJson({ version: 1, target, repeatIdentity }));
+  if (governance.governanceIdentity !== expectedIdentity) {
+    invalid(`${label}.governanceIdentity`, 'must bind the exact target and Repeat Relationship');
+  }
+  const expectedTriggerEvidenceHash = sha256(canonicalJson({
+    trigger: governance.trigger,
+    failedApproachSetIdentity: failedSet.setIdentity,
+  }));
+  if (governance.triggerEvidenceHash !== expectedTriggerEvidenceHash) {
+    invalid(`${label}.triggerEvidenceHash`, 'must bind the exact trigger and failed-approach set');
+  }
+  if (Object.hasOwn(governance, 'projectionCommitment')) {
+    const commitment = /** @type {Record<string, unknown>} */ (
+      validateProjectionCommitmentV1(governance.projectionCommitment, `${label}.projectionCommitment`)
+    );
+    const expectedBatchIdentity = sha256(canonicalJson({
+      version: 1,
+      purpose: commitment.purpose,
+      target,
+      eventCommitments: commitment.eventCommitments,
+    }));
+    if (commitment.batchIdentity !== expectedBatchIdentity) {
+      invalid(`${label}.projectionCommitment.batchIdentity`, 'must bind the governed target and ordered event commitments');
+    }
+  }
+  for (const field of ['reviewIdentity', 'selectedAlternativeIdentity', 'discriminatingCheckIdentity', 'postLearningInspectionIdentity', 'issuedAttemptPermitHash', 'consumedAttemptPermitHash', 'authorizedAttemptIdentity', 'laneClaimReceiptIdentity', 'terminalEvidenceIdentity']) {
+    if (Object.hasOwn(governance, field)) assertHash(governance[field], `${label}.${field}`);
+  }
+  for (const field of phaseRule.required) {
+    if (!Object.hasOwn(governance, field)) {
+      invalid(`${label}.phase`, `${governance.phase} is unavailable without its exact ${field}`);
+    }
+  }
+  validateV2GovernanceBranchFields(governance, phaseRule, target, label);
+  if (Object.hasOwn(governance, 'projectionCommitment')) {
+    const commitment = /** @type {Record<string, unknown>} */ (governance.projectionCommitment);
+    if (phaseRule.commitment === null) {
+      invalid(`${label}.projectionCommitment`, `is forbidden in ${governance.phase} phase`);
+    }
+    if (commitment.purpose !== phaseRule.commitment) {
+      invalid(`${label}.projectionCommitment.purpose`, `must be ${phaseRule.commitment} in ${governance.phase} phase`);
+    }
+    const commitments = /** @type {Record<string, unknown>[]} */ (commitment.eventCommitments);
+    if (canonicalJson(commitments.map((row) => row.kind)) !== canonicalJson(phaseRule.commitmentKinds)) {
+      invalid(`${label}.projectionCommitment.eventCommitments`, `must contain exactly ${canonicalJson(phaseRule.commitmentKinds)}`);
+    }
+  }
+  if (Buffer.byteLength(canonicalJson(governance)) > MAX_LEARNING_GOVERNANCE_BYTES) {
+    invalid(label, `exceeds ${MAX_LEARNING_GOVERNANCE_BYTES} canonical UTF-8 bytes`);
+  }
+  return value;
+}
+
+/** @param {unknown} input */
+export function buildGovernanceEventV1(input) {
+  const governance = /** @type {Record<string, unknown>} */ (validateLearningGovernanceV1(input));
+  const eventWithoutHash = {
+    type: 'learning-governance',
+    version: 1,
+    governanceIdentity: governance.governanceIdentity,
+    revision: governance.revision,
+    target: governance.target,
+    trigger: governance.trigger,
+    failedApproachSetIdentity: /** @type {Record<string, unknown>} */ (governance.failedApproachSet).setIdentity,
+    phase: governance.phase,
+    ...Object.fromEntries([
+      'reviewIdentity', 'selectedAlternativeIdentity', 'discriminatingCheckIdentity',
+      'postLearningInspectionIdentity', 'consumedAttemptPermitHash', 'authorizedAttemptIdentity',
+      'laneClaimReceiptIdentity', 'terminalEvidenceIdentity', 'suspension', 'halt', 'controlledEnd',
+    ].filter((field) => Object.hasOwn(governance, field)).map((field) => [field, governance[field]])),
+  };
+  const event = finalizeV2Event(eventWithoutHash, 'GovernanceEventV1');
+  validateGovernanceEventV1(event);
+  return event;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateGovernanceEventV1(value, label = 'GovernanceEventV1') {
+  const event = assertExactRecord(
+    value,
+    ['type', 'version', 'eventHash', 'governanceIdentity', 'revision', 'target', 'trigger', 'failedApproachSetIdentity', 'phase'],
+    ['reviewIdentity', 'selectedAlternativeIdentity', 'discriminatingCheckIdentity', 'postLearningInspectionIdentity', 'consumedAttemptPermitHash', 'authorizedAttemptIdentity', 'laneClaimReceiptIdentity', 'terminalEvidenceIdentity', 'suspension', 'halt', 'controlledEnd'],
+    label,
+  );
+  if (event.type !== 'learning-governance') invalid(`${label}.type`, 'must be learning-governance');
+  if (event.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  assertHash(event.eventHash, `${label}.eventHash`);
+  assertHash(event.governanceIdentity, `${label}.governanceIdentity`);
+  const target = validateAffectedTargetV2(event.target, `${label}.target`);
+  validateRepeatRelationshipV1(event.trigger, `${label}.trigger`);
+  const expectedIdentity = sha256(canonicalJson({
+    version: 1,
+    target,
+    repeatIdentity: sha256(canonicalJson(event.trigger)),
+  }));
+  if (event.governanceIdentity !== expectedIdentity) {
+    invalid(`${label}.governanceIdentity`, 'must bind the exact target and Repeat Relationship');
+  }
+  assertSafeInteger(event.revision, `${label}.revision`, true);
+  assertHash(event.failedApproachSetIdentity, `${label}.failedApproachSetIdentity`);
+  assertEnum(event.phase, V2_GOVERNANCE_PHASES, `${label}.phase`);
+  const phaseRule = v2GovernancePhaseRule(event.phase, `${label}.phase`);
+  for (const field of ['reviewIdentity', 'selectedAlternativeIdentity', 'discriminatingCheckIdentity', 'postLearningInspectionIdentity', 'consumedAttemptPermitHash', 'authorizedAttemptIdentity', 'laneClaimReceiptIdentity', 'terminalEvidenceIdentity']) {
+    if (Object.hasOwn(event, field)) assertHash(event[field], `${label}.${field}`);
+  }
+  for (const field of phaseRule.required) {
+    if (!Object.hasOwn(event, field)) {
+      invalid(`${label}.phase`, `${event.phase} is unavailable without its exact ${field}`);
+    }
+  }
+  validateV2GovernanceBranchFields(event, phaseRule, target, label);
+  const { eventHash, ...withoutHash } = event;
+  if (eventHash !== sha256(canonicalJson(withoutHash))) invalid(`${label}.eventHash`, 'must equal the recomputed event hash');
+  if (Buffer.byteLength(canonicalJson(event)) > MAX_EVENT_BYTES) invalid(label, `must serialize to at most ${MAX_EVENT_BYTES} UTF-8 bytes`);
+  return value;
+}
+
+/** @param {unknown} captureValue @param {string} expectedKind @param {string} label */
+function trustedEnvelopeBodyV2(captureValue, expectedKind, label) {
+  const capture = /** @type {Record<string, unknown>} */ (
+    validateTrustedSourceCaptureV2(captureValue, label)
+  );
+  const authority = /** @type {Record<string, unknown>} */ (capture.authority);
+  if (authority.kind !== expectedKind) invalid(`${label}.authority.kind`, `must be ${expectedKind}`);
+  const bytes = validateCapturedBytesV1(capture.bytes, `${label}.bytes`).decoded;
+  const envelope = /** @type {Record<string, unknown>} */ (parseCanonicalJsonBytes(bytes, `${label}.bytes`));
+  return { capture, authority, envelope };
+}
+
+/** Normalize a verification envelope only from one trusted authoritative capture. @param {unknown} captureValue */
+export function normalizeVerificationEnvelopeV2(captureValue) {
+  const normalized = trustedEnvelopeBodyV2(captureValue, 'verification', 'verification trusted capture');
+  validateVerificationEnvelopeV2(normalized.envelope);
+  if (canonicalJson(normalized.capture.target) !== canonicalJson(normalized.envelope.target)) {
+    invalid('verification trusted capture.target', 'must match the normalized envelope target');
+  }
+  return JSON.parse(canonicalJson(normalized.envelope));
+}
+
+/** Normalize an independent-review envelope only from one trusted authoritative capture. @param {unknown} captureValue @param {unknown} verificationValue */
+export function normalizeIndependentReviewEnvelopeV2(captureValue, verificationValue) {
+  const verification = /** @type {Record<string, unknown>} */ (
+    validateVerificationEnvelopeV2(verificationValue)
+  );
+  const normalized = trustedEnvelopeBodyV2(captureValue, 'independent-review', 'independent-review trusted capture');
+  validateIndependentReviewEnvelopeV2(normalized.envelope, verification);
+  if (canonicalJson(normalized.capture.target) !== canonicalJson(normalized.envelope.target)) {
+    invalid('independent-review trusted capture.target', 'must match the normalized envelope target');
+  }
+  if (normalized.envelope.reviewerAuthorityIdentity !== normalized.authority.authorityIdentity
+    || normalized.envelope.reviewInvocationIdentity !== normalized.authority.invocationIdentity) {
+    invalid('independent-review trusted capture.authority', 'must bind the reviewer authority and invocation');
+  }
+  return JSON.parse(canonicalJson(normalized.envelope));
+}
+
+/** @param {Record<string, unknown>} inspection */
+function trustedCaptureRowsFromInspectionV2(inspection) {
+  /** @type {{capture:Record<string, unknown>,captureIdentity:string,kind:string,sourceState:string}[]} */
+  const rows = [];
+  const items = /** @type {Record<string, unknown>[]} */ (inspection.items);
+  for (const item of items) {
+    if (!['verification', 'review'].includes(/** @type {string} */ (item.source))
+      || item.status !== 'present' || typeof item.text !== 'string') continue;
+    const sourceBody = assertExactRecord(
+      JSON.parse(item.text),
+      ['target', 'state', 'records'],
+      [],
+      `${item.source} Inspection source body`,
+    );
+    const records = assertDenseDataArray(sourceBody.records, `${item.source} Inspection source body.records`);
+    for (let index = 0; index < records.length; index += 1) {
+      const candidate = records[index];
+      const record = assertRecord(candidate, `${item.source} Inspection source body.records[${index}]`);
+      const resemblesTrustedCapture = Object.hasOwn(record, 'authority') || Object.hasOwn(record, 'bytes');
+      if (!resemblesTrustedCapture) continue;
+      validateTrustedSourceCaptureV2(record, `${item.source} trusted source capture[${index}]`);
+      const authority = /** @type {Record<string, unknown>} */ (record.authority);
+      const expectedKind = item.source === 'verification' ? 'verification' : 'independent-review';
+      if (authority.kind !== expectedKind) {
+        invalid(`${item.source} trusted source capture[${index}].authority.kind`, `must be ${expectedKind}`);
+      }
+      if (targetKey(record.target) !== targetKey(inspection.target)) {
+        invalid(`${item.source} trusted source capture[${index}].target`, 'must match the fresh Inspection target');
+      }
+      rows.push({
+        capture: record,
+        captureIdentity: trustedSourceCaptureIdentityV2(record),
+        kind: /** @type {string} */ (authority.kind),
+        sourceState: /** @type {string} */ (sourceBody.state),
+      });
+    }
+  }
+  const captureIdentities = rows.map((row) => row.captureIdentity);
+  if (new Set(captureIdentities).size !== captureIdentities.length) {
+    invalid('trusted Inspection captures', 'must be duplicate-free');
+  }
+  return rows;
+}
+
+/** @param {Record<string, unknown>} inspection */
+function trustedEnvelopeIndexFromInspectionV2(inspection) {
+  const captures = trustedCaptureRowsFromInspectionV2(inspection);
+  const verificationRows = captures
+    .filter((row) => row.kind === 'verification')
+    .map((row) => ({ ...row, envelope: /** @type {Record<string, unknown>} */ (normalizeVerificationEnvelopeV2(row.capture)) }));
+  /** @type {Map<string, typeof verificationRows[number]>} */
+  const verifications = new Map();
+  for (const row of verificationRows) {
+    const identity = /** @type {string} */ (row.envelope.envelopeIdentity);
+    if (verifications.has(identity)) invalid('trusted Inspection verification captures', 'contain a duplicate envelope identity');
+    const expectedState = /** @type {Record<string, unknown>[]} */ (row.envelope.checks)
+      .some((check) => check.outcome === 'failed') ? 'failed' : 'passed';
+    if (row.sourceState !== expectedState) {
+      invalid('trusted Inspection verification capture', 'must match its authoritative source outcome');
+    }
+    verifications.set(identity, row);
+  }
+  const reviewCaptures = captures.filter((row) => row.kind === 'independent-review');
+  /** @type {Map<string, Record<string, unknown>>} */
+  const reviews = new Map();
+  for (const row of reviewCaptures) {
+    const body = trustedEnvelopeBodyV2(row.capture, 'independent-review', 'independent-review trusted capture').envelope;
+    const verificationIdentity = body.verificationEnvelopeIdentity;
+    assertHash(verificationIdentity, 'independent-review envelope.verificationEnvelopeIdentity');
+    const verificationRow = verifications.get(/** @type {string} */ (verificationIdentity));
+    if (!verificationRow) {
+      invalid('independent-review envelope.verificationEnvelopeIdentity', 'must resolve to one trusted verification capture');
+    }
+    const envelope = /** @type {Record<string, unknown>} */ (
+      normalizeIndependentReviewEnvelopeV2(row.capture, verificationRow.envelope)
+    );
+    if (row.sourceState !== envelope.verdict) {
+      invalid('trusted Inspection review capture', 'must match its authoritative source verdict');
+    }
+    const identity = /** @type {string} */ (envelope.envelopeIdentity);
+    if (reviews.has(identity)) invalid('trusted Inspection review captures', 'contain a duplicate envelope identity');
+    reviews.set(identity, { ...row, envelope, verification: verificationRow.envelope });
+  }
+  return { captures, verifications, reviews };
+}
+
+/** @param {unknown} value @param {string} label */
+function validateT002AuthoritativeEvent(value, label) {
+  const record = assertRecord(value, label);
+  const type = record.type;
+  if (type === 'approach-occurrence') return validateApproachOccurrenceEventV1(value, label);
+  if (type === 'finding-occurrence') return validateFindingOccurrenceEventV1(value, label);
+  if (type === 'learning-review' && record.version === 2) return validateLearningReviewEventV2(value, label);
+  if (type === 'learning-governance') return validateGovernanceEventV1(value, label);
+  return invalid(`${label}.type`, 'is not an authoritative autonomous v2 event');
+}
+
+/** @param {string} purpose @param {Record<string, unknown>} target @param {Record<string, unknown>[]} events @param {string} label */
+function projectionCommitmentForEventsV1(purpose, target, events, label) {
+  assertEnum(
+    purpose,
+    ['occurrence-retention', 'governance-required', 'learning-result', 'incident-evidence', 'incident-supersession'],
+    `${label}.purpose`,
+  );
+  const canonical = canonicalTarget(validateAffectedTargetV2(target, `${label}.target`));
+  if (events.length < 1 || events.length > 17) invalid(`${label}.events`, 'must contain 1 through 17 exact event bodies');
+  const eventCommitments = events.map((event, index) => {
+    validateV2ProjectableEvent(event, `${label}.events[${index}]`);
+    if (targetKey(event.target) !== targetKey(canonical)) invalid(`${label}.events[${index}].target`, 'must match the commitment target');
+    return { kind: event.type, eventHash: event.eventHash };
+  });
+  if (purpose === 'incident-evidence') {
+    // The dedicated incident-evidence batch is finding-only, exactly two rows,
+    // and stays in strict chronology order. Normal completion retention still
+    // requires its approach event first.
+    if (events.length !== 2 || events.some((event) => event.type !== 'finding-occurrence')) {
+      invalid(`${label}.events`, 'must contain exactly two finding occurrence events');
+    }
+    if (compareOccurrenceChronologyV2(events[0], events[1]) >= 0) {
+      invalid(`${label}.events`, 'must be in strict chronology order');
+    }
+  } else if (purpose === 'incident-supersession') {
+    if (events.length !== 1 || events[0].type !== 'incident-supersession') {
+      invalid(`${label}.events`, 'must contain exactly one IncidentSupersessionEventV1');
+    }
+  } else if (purpose === 'occurrence-retention') {
+    if (events[0]?.type !== 'approach-occurrence'
+      || events.slice(1).some((event) => event.type !== 'finding-occurrence')) {
+      invalid(`${label}.events`, 'must contain one approach followed only by findings');
+    }
+    for (let index = 2; index < events.length; index += 1) {
+      if (compareUtf8(
+        /** @type {string} */ (events[index - 1].occurrenceIdentity),
+        /** @type {string} */ (events[index].occurrenceIdentity),
+      ) >= 0) invalid(`${label}.events`, 'finding occurrences must be sorted and duplicate-free');
+    }
+  } else if (purpose === 'learning-result') {
+    if (events.length !== 2
+      || events[0].type !== 'learning-review'
+      || events[1].type !== 'learning-governance') {
+      invalid(`${label}.events`, 'must contain one LearningReviewEventV2 followed by one GovernanceEventV1');
+    }
+  } else if (events.length !== 1 || events[0].type !== 'learning-governance') {
+    invalid(`${label}.events`, 'must contain exactly one GovernanceEventV1');
+  }
+  const commitment = {
+    purpose,
+    batchIdentity: sha256(canonicalJson({ version: 1, purpose, target: canonical, eventCommitments })),
+    eventCommitments,
+  };
+  validateProjectionCommitmentV1(commitment, `${label}.commitment`);
+  return commitment;
+}
+
+/** @param {Record<string, unknown>[]} events @param {Record<string, unknown>} target @param {Record<string, unknown>} commitment @param {string} label */
+function validateCommittedEventBodiesV1(events, target, commitment, label) {
+  const recomputed = projectionCommitmentForEventsV1(
+    /** @type {string} */ (commitment.purpose),
+    target,
+    events,
+    label,
+  );
+  if (canonicalJson(recomputed) !== canonicalJson(commitment)) {
+    invalid(label, 'must exactly match the stored ordered event commitment');
+  }
+  return events;
+}
+
+/** @param {Record<string, unknown>} pending @param {Record<string, unknown>} completion @param {string} label */
+function validateCompletionV2Binding(pending, completion, label) {
+  const target = canonicalTarget(validateAffectedTargetV2(completion.target, `${label}.target`));
+  if (targetKey(target) !== targetKey(pending.target)) invalid(`${label}.target`, 'must match the pending attempt target');
+  if (completion.version !== 2) invalid(`${label}.version`, 'must be the literal safe integer 2');
+  for (const field of ['attemptIdentity', 'resultIdentity', 'verificationEnvelopeIdentity', 'reviewEnvelopeIdentity']) {
+    assertHash(completion[field], `${label}.${field}`);
+  }
+  assertUnicodeScalarString(completion.route, `${label}.route`);
+  assertEnum(completion.outcome, OUTCOMES, `${label}.outcome`);
+  const operations = validateV2SortedSet(completion.operations, assertV2Identifier, 1, 16, `${label}.operations`);
+  const changedTargets = validateV2SortedSet(completion.changedTargets, assertV2SubjectIdentity, 0, 16, `${label}.changedTargets`);
+  const findingIdentities = validateV2HashSet(completion.findingIdentities, `${label}.findingIdentities`, 0, 16);
+  const materialInputs = /** @type {Record<string, unknown>} */ (pending.materialInputs);
+  if (completion.route !== expectedResultRoute(/** @type {string} */ (pending.action), /** @type {Record<string, unknown>} */ (pending.target))
+    || canonicalJson(operations) !== canonicalJson(materialInputs.operations)
+    || changedTargets.some((changedTarget) => !/** @type {string[]} */ (materialInputs.targets).includes(changedTarget))
+    || (completion.outcome === 'interrupted' && changedTargets.length > 0)
+    || (completion.outcome === 'no-change' && changedTargets.length > 0)) {
+    invalid(label, 'does not match the exact pending action and result route');
+  }
+  return { target, operations, changedTargets, findingIdentities };
+}
+
+/** @param {Record<string, unknown>} state @param {Record<string, unknown>} pending */
+function completionApproachContextV2(state, pending) {
+  const target = /** @type {Record<string, unknown>} */ (pending.target);
+  const materialInputs = /** @type {Record<string, unknown>} */ (pending.materialInputs);
+  const basis = autonomousApproachBasis(target, /** @type {string} */ (pending.action), materialInputs);
+  validateApproachBasisV1(basis);
+  const approachBasisIdentity = sha256(canonicalJson(basis));
+  const attemptOrdinal = /** @type {number} */ (state.overallUsed);
+  assertSafeInteger(attemptOrdinal, 'autonomous attempt ordinal', true);
+  return {
+    basis,
+    approachBasisIdentity,
+    attemptOrdinal,
+    attemptIdentity: autonomousAttemptIdentity(
+      target,
+      attemptOrdinal,
+      /** @type {string} */ (pending.evidenceHash),
+      approachBasisIdentity,
+    ),
+  };
+}
+
+/** @param {Record<string, unknown>} verification @param {Record<string, unknown>} review */
+function trustedCompletionDispositionV2(verification, review) {
+  const checks = /** @type {Record<string, unknown>[]} */ (verification.checks);
+  const verificationFailed = checks.some((check) => check.outcome === 'failed');
+  const reviewRejected = review.verdict === 'rejected';
+  if (verificationFailed) return 'verification-failed';
+  if (reviewRejected) return 'review-rejected';
+  return 'accepted';
+}
+
+/** @param {Record<string, unknown>} completion @param {Record<string, unknown>} verification @param {Record<string, unknown>} review */
+function completionDispositionV2(completion, verification, review) {
+  const trustedDisposition = trustedCompletionDispositionV2(verification, review);
+  if (trustedDisposition === 'verification-failed') {
+    if (completion.outcome !== 'failed') invalid('completion v2 outcome', 'must be failed for failed verification');
+    return 'verification-failed';
+  }
+  if (trustedDisposition === 'review-rejected') {
+    if (completion.outcome !== 'blocked') invalid('completion v2 outcome', 'must be blocked for rejected review');
+    return 'review-rejected';
+  }
+  if (completion.outcome !== 'succeeded') {
+    invalid('completion v2 outcome', 'must be succeeded for accepted trusted evidence');
+  }
+  return 'accepted';
+}
+
+/**
+ * Capture one autonomous completion from trusted rows inside a fresh Inspection.
+ * The semantic completion value contains identities only.
+ * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} completionValue
+ * @param {unknown} [dependencies] @param {boolean} [publicRoute] Transport-decoded `complete.capture` route.
+ */
+export function captureCompletionV2(stateValue, inputValue, completionValue, dependencies, publicRoute = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('captureCompletionV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, publicRoute, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} completionResult */
+  const respond = (completionResult) => (publicRoute
+    ? { inspection, completion: completionResult }
+    : completionResult);
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0) {
+    invalid('captureCompletionV2 inspection', 'must be complete and unblocked');
+  }
+  const completion = assertExactRecord(
+    completionValue,
+    ['version', 'target', 'attemptIdentity', 'route', 'outcome', 'operations', 'changedTargets', 'resultIdentity', 'verificationEnvelopeIdentity', 'reviewEnvelopeIdentity', 'findingIdentities'],
+    [],
+    'completion v2',
+  );
+  const completionTarget = canonicalTarget(validateAffectedTargetV2(completion.target, 'completion v2.target'));
+  const pendingRows = /** @type {Record<string, unknown>[]} */ (state.pending);
+  if (pendingRows.length !== 1) invalid('captureCompletionV2', 'requires exactly one pending attempt');
+  const pending = pendingRows[0];
+  if (targetKey(completionTarget) !== targetKey(pending.target)) {
+    invalid('completion v2.target', 'must match the pending attempt target');
+  }
+  if (targetKey(inspection.target) !== targetKey(completionTarget)) {
+    invalid('captureCompletionV2 inspection.target', 'must match the completion target');
+  }
+  if (Object.hasOwn(state, 'learningGovernance')) {
+    // Only the exact governed authorized attempt may retain a completion; every
+    // other occupied singleton stays a conflict.
+    const governance = activeGovernanceCaseV2(state);
+    if (!governance
+      || !V2_AUTHORIZED_PHASES.includes(/** @type {string} */ (governance.phase))
+      || targetKey(governance.target) !== targetKey(completionTarget)
+      || governance.authorizedAttemptIdentity !== completion.attemptIdentity) {
+      return respond({ captured: false, finalized: false, reason: 'learning-governance-conflict', state });
+    }
+  }
+  let existingPendingCompletion = null;
+  if (Object.hasOwn(state, 'pendingCompletion')) {
+    existingPendingCompletion = /** @type {Record<string, unknown>} */ (state.pendingCompletion);
+    if (targetKey(/** @type {Record<string, unknown>} */ (existingPendingCompletion.target)) !== targetKey(completionTarget)) {
+      return respond({ captured: false, finalized: false, reason: 'occurrence-retention-conflict', state });
+    }
+  }
+  let binding;
+  try {
+    binding = validateCompletionV2Binding(pending, completion, 'completion v2');
+  } catch (error) {
+    if (existingPendingCompletion) {
+      return respond({ captured: false, finalized: false, reason: 'occurrence-retention-conflict', state });
+    }
+    throw error;
+  }
+  if (existingPendingCompletion) {
+    const potentiallyIdempotent = existingPendingCompletion.version === 2
+      && existingPendingCompletion.attemptIdentity === completion.attemptIdentity
+      && existingPendingCompletion.resultIdentity === completion.resultIdentity
+      && existingPendingCompletion.verificationEnvelopeIdentity === completion.verificationEnvelopeIdentity
+      && existingPendingCompletion.reviewEnvelopeIdentity === completion.reviewEnvelopeIdentity
+      && canonicalJson(existingPendingCompletion.findingIdentities) === canonicalJson(binding.findingIdentities);
+    if (!potentiallyIdempotent) {
+      return respond({ captured: false, finalized: false, reason: 'occurrence-retention-conflict', state });
+    }
+  }
+  const context = completionApproachContextV2(state, pending);
+  if (completion.attemptIdentity !== context.attemptIdentity) {
+    invalid('completion v2.attemptIdentity', 'must reference the derived pending attempt identity');
+  }
+  const trusted = trustedEnvelopeIndexFromInspectionV2(inspection);
+  const verificationRow = trusted.verifications.get(/** @type {string} */ (completion.verificationEnvelopeIdentity));
+  if (!verificationRow) invalid('completion v2.verificationEnvelopeIdentity', 'must select exactly one trusted verification capture');
+  const verification = verificationRow.envelope;
+  const reviewRow = trusted.reviews.get(/** @type {string} */ (completion.reviewEnvelopeIdentity));
+  if (!reviewRow) invalid('completion v2.reviewEnvelopeIdentity', 'must select exactly one trusted independent-review capture');
+  const review = /** @type {Record<string, unknown>} */ (reviewRow.envelope);
+  validateIndependentReviewEnvelopeV2(review, verification);
+  if (review.attemptOrdinal !== context.attemptOrdinal) {
+    invalid('completion v2 attempt chronology', 'must match the authorized attempt ordinal');
+  }
+  for (const envelope of [verification, review]) {
+    if (envelope.attemptIdentity !== completion.attemptIdentity
+      || envelope.resultIdentity !== completion.resultIdentity
+      || envelope.inspectedEvidenceHash !== pending.evidenceHash
+      || canonicalJson(envelope.target) !== canonicalJson(binding.target)) {
+      invalid('completion v2', 'must match trusted target, attempt, result, and pending authorization Inspection evidence');
+    }
+  }
+  const reviewFindings = /** @type {Record<string, unknown>[]} */ (review.findings);
+  const normalizedFindingIdentities = reviewFindings.map((finding) => finding.findingIdentity);
+  if (canonicalJson(binding.findingIdentities) !== canonicalJson(normalizedFindingIdentities)) {
+    invalid('completion v2.findingIdentities', 'must equal the complete trusted review finding set');
+  }
+  const disposition = completionDispositionV2(completion, verification, review);
+  const approachEvent = buildApproachOccurrenceEventV1({
+    target: binding.target,
+    basis: context.basis,
+    attemptIdentity: completion.attemptIdentity,
+    authorizationEvidenceHash: pending.evidenceHash,
+    resultIdentity: completion.resultIdentity,
+    disposition,
+    attemptOrdinal: context.attemptOrdinal,
+    verificationEnvelopeIdentity: verification.envelopeIdentity,
+    reviewEnvelopeIdentity: review.envelopeIdentity,
+  });
+  const findingEvents = reviewFindings.map((finding) => buildFindingOccurrenceEventV1({
+    target: binding.target,
+    basis: finding.basis,
+    attemptIdentity: completion.attemptIdentity,
+    attemptApproachBasisIdentity: context.approachBasisIdentity,
+    reviewEnvelopeIdentity: review.envelopeIdentity,
+    findingIdentity: finding.findingIdentity,
+    observation: finding.observation,
+    attemptOrdinal: review.attemptOrdinal,
+    reviewOrdinal: review.reviewOrdinal,
+    sourceCaptureIdentity: reviewRow.captureIdentity,
+  })).sort((left, right) => compareUtf8(left.occurrenceIdentity, right.occurrenceIdentity));
+  const occurrenceEvents = [approachEvent, ...findingEvents];
+  const projectionBatch = buildProjectionBatchV1(
+    'occurrence-retention',
+    binding.target,
+    occurrenceEvents,
+    'captureCompletionV2 occurrence retention',
+  );
+  const retention = projectionCommitmentOfBatchV1(projectionBatch);
+  // The declared public Success shape carries the exact batch alone; bare bodies stay in process.
+  const retentionCarrier = publicRoute ? { projectionBatch } : { occurrenceEvents, projectionBatch };
+  const pendingCompletion = {
+    version: 2,
+    target: binding.target,
+    attemptIdentity: completion.attemptIdentity,
+    resultIdentity: completion.resultIdentity,
+    verificationEnvelopeIdentity: verification.envelopeIdentity,
+    reviewEnvelopeIdentity: review.envelopeIdentity,
+    findingIdentities: [...binding.findingIdentities],
+    retention,
+    capturedInspectionIdentity: sha256(canonicalJson(inspection)),
+  };
+  validatePendingCompletionRetentionV2(pendingCompletion);
+  if (Object.hasOwn(state, 'pendingCompletion')) {
+    const existing = /** @type {Record<string, unknown>} */ (state.pendingCompletion);
+    if (existing.version !== 2
+      || canonicalJson(existing) !== canonicalJson(pendingCompletion)) {
+      return respond({ captured: false, finalized: false, reason: 'occurrence-retention-conflict', state });
+    }
+    return respond({ captured: true, finalized: false, reason: 'occurrence-retention-required', state, ...retentionCarrier });
+  }
+  const nextState = carryOptionalRunState(state, {
+    policy: { .../** @type {Record<string, unknown>} */ (state.policy) },
+    overallUsed: state.overallUsed,
+    recoveryUsed: /** @type {Record<string, unknown>[]} */ (state.recoveryUsed).map((row) => ({ ...row })),
+    pending: pendingRows.map(copyPendingEntry),
+    completed: /** @type {Record<string, unknown>[]} */ (state.completed).map((entry) => ({ ...entry })),
+  });
+  nextState.pendingCompletion = pendingCompletion;
+  validateRunState(nextState);
+  return respond({ captured: true, finalized: false, reason: 'occurrence-retention-required', state: nextState, ...retentionCarrier });
+}
+
+/** @param {Record<string, unknown>} inspection @param {string} source */
+function inspectionSourceBodyV2(inspection, source) {
+  const matches = /** @type {Record<string, unknown>[]} */ (inspection.items)
+    .filter((item) => item.source === source && item.status === 'present' && typeof item.text === 'string');
+  if (matches.length !== 1) invalid(`T002 ${source}`, 'must have exactly one complete fresh Inspection source');
+  return JSON.parse(/** @type {string} */ (matches[0].text));
+}
+
+/**
+ * Existing Feature 005 v1 `learning-review` history shares the type token but
+ * remains legacy-audit-only, so v2 candidacy also requires the v2 version.
+ * @param {unknown} value
+ */
+function isV2AuthoritativeEventRecord(value) {
+  if (!isPlainRecord(value)) return false;
+  const record = /** @type {Record<string, unknown>} */ (value);
+  if (!V2_EVENT_TYPES.includes(/** @type {string} */ (record.type))) return false;
+  return record.type !== 'learning-review' || record.version === 2;
+}
+
+/** @param {unknown} value */
+function t002EventCandidate(value) {
+  if (!isPlainRecord(value)) return null;
+  const envelope = /** @type {Record<string, unknown>} */ (value);
+  if (Object.hasOwn(envelope, 'event')) {
+    return isV2AuthoritativeEventRecord(envelope.event)
+      ? /** @type {Record<string, unknown>} */ (envelope.event)
+      : null;
+  }
+  return isV2AuthoritativeEventRecord(envelope) ? envelope : null;
+}
+
+/** @param {string} text @param {string} label */
+function parseV2EventLines(text, label) {
+  assertUnicodeScalarString(text, label);
+  /** @type {Record<string, unknown>[]} */
+  const events = [];
+  for (const line of logicalLines(text)) {
+    if (!line.text.startsWith(LANE_EVENT_PREFIX)) continue;
+    const suffix = line.text.slice(LANE_EVENT_PREFIX.length);
+    let parsed;
+    try {
+      parsed = JSON.parse(suffix);
+    } catch {
+      invalid(label, 'contains a malformed v2 event line');
+    }
+    if (canonicalJson(parsed) !== suffix) invalid(label, 'contains a noncanonical v2 event line');
+    if (isPlainRecord(parsed)
+      && Object.hasOwn(/** @type {Record<string, unknown>} */ (parsed), 'event')) {
+      // Existing wrapped v1 `CJ({event})` lines remain audit-only.
+      continue;
+    }
+    const candidate = t002EventCandidate(parsed);
+    if (!candidate) invalid(label, 'contains an unknown prefixed event record');
+    const terminator = text.slice(line.start + line.text.length, line.end);
+    if (terminator !== '\n') {
+      invalid(label, 'contains a v2 event record not terminated by exactly one LF');
+    }
+    validateT002AuthoritativeEvent(candidate, `${label} event`);
+    events.push(/** @type {Record<string, unknown>} */ (candidate));
+  }
+  return events;
+}
+
+/** @param {unknown} value @param {Record<string, unknown>[]} output @param {Set<object>} seen */
+function collectV2EventLinesFromValue(value, output, seen) {
+  if (typeof value === 'string') {
+    output.push(...parseV2EventLines(value, 'lane-history'));
+    return;
+  }
+  if (value === null || typeof value !== 'object' || seen.has(value)) return;
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      for (const entry of assertDenseDataArray(value, 'lane-history value')) {
+        collectV2EventLinesFromValue(entry, output, seen);
+      }
+      return;
+    }
+    const record = assertRecord(value, 'lane-history value');
+    for (const field of Object.keys(record)) {
+      collectV2EventLinesFromValue(record[field], output, seen);
+    }
+  } finally {
+    seen.delete(value);
+  }
+}
+
+/** @param {Record<string, unknown>} inspection */
+function currentRunEventsV2(inspection) {
+  const output = [];
+  const items = /** @type {Record<string, unknown>[]} */ (inspection.items)
+    .filter((item) => item.source === 'current-run' && item.status === 'present' && typeof item.text === 'string');
+  if (items.length === 0) invalid('T002 current-run', 'must have complete fresh Inspection evidence');
+  for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+    const parsed = JSON.parse(/** @type {string} */ (items[itemIndex].text));
+    if (Array.isArray(parsed)) {
+      if (assertDenseDataArray(parsed, `current-run Inspection body[${itemIndex}]`).length !== 0) {
+        invalid(`current-run Inspection body[${itemIndex}]`, 'array form must be the canonical empty capture');
+      }
+      continue;
+    }
+    const body = assertExactRecord(
+      parsed,
+      ['target', 'state', 'records'],
+      [],
+      `current-run Inspection body[${itemIndex}]`,
+    );
+    if (targetKey(body.target) !== targetKey(inspection.target)) {
+      invalid(`current-run Inspection body[${itemIndex}].target`, 'must match the Inspection target');
+    }
+    for (const [recordIndex, recordValue] of assertDenseDataArray(
+      body.records,
+      `current-run Inspection body[${itemIndex}].records`,
+    ).entries()) {
+      if (!isPlainRecord(recordValue)
+        || !Object.hasOwn(/** @type {Record<string, unknown>} */ (recordValue), 'event')) continue;
+      const record = assertExactRecord(
+        recordValue,
+        ['event'],
+        [],
+        `current-run Inspection body[${itemIndex}].records[${recordIndex}]`,
+      );
+      const candidate = t002EventCandidate(record);
+      if (!candidate) continue;
+      validateT002AuthoritativeEvent(candidate, 'current-run v2 event');
+      output.push(/** @type {Record<string, unknown>} */ (candidate));
+    }
+  }
+  return output;
+}
+
+/** @param {Record<string, unknown>} inspection */
+function laneHistoryEventsV2(inspection) {
+  const lane = assertRecord(inspectionSourceBodyV2(inspection, 'lane-history'), 'lane-history Inspection body');
+  /** @type {Record<string, unknown>[]} */
+  const output = [];
+  if (lane.kind === 'lightweight') {
+    const taskHistory = assertExactRecord(
+      inspectionSourceBodyV2(inspection, 'task-history'),
+      ['path', 'canonicalTasks', 'dependencies', 'discovered', 'history'],
+      [],
+      'task-history Inspection body',
+    );
+    parseV2EventLines(/** @type {string} */ (taskHistory.history), 'Lightweight execution history')
+      .forEach((event) => output.push(event));
+    return output;
+  }
+  if (lane.kind !== 'tracked') invalid('lane-history Inspection body.kind', 'must match the target lane');
+  const records = assertDenseDataArray(lane.records, 'lane-history Inspection body.records');
+  for (const value of records) {
+    const record = assertRecord(value, 'tracked lane-history record');
+    const detail = assertRecord(record.detail, 'tracked lane-history record.detail');
+    if (Object.hasOwn(detail, 'notes')) collectV2EventLinesFromValue(detail.notes, output, new Set());
+  }
+  return output;
+}
+
+/** @param {Record<string, unknown>} event */
+function eventChronologyV2(event) {
+  const occurrence = /** @type {Record<string, unknown>} */ (event.occurrence);
+  const chronology = /** @type {Record<string, unknown>} */ (occurrence.chronology);
+  return {
+    attemptOrdinal: /** @type {number} */ (chronology.attemptOrdinal),
+    reviewOrdinal: event.type === 'finding-occurrence' ? /** @type {number} */ (chronology.reviewOrdinal) : 0,
+  };
+}
+
+/** @param {Record<string, unknown>} left @param {Record<string, unknown>} right */
+function compareOccurrenceChronologyV2(left, right) {
+  const leftChronology = eventChronologyV2(left);
+  const rightChronology = eventChronologyV2(right);
+  return leftChronology.attemptOrdinal - rightChronology.attemptOrdinal
+    || leftChronology.reviewOrdinal - rightChronology.reviewOrdinal
+    || compareUtf8(/** @type {string} */ (left.occurrenceIdentity), /** @type {string} */ (right.occurrenceIdentity));
+}
+
+/** @param {Record<string, unknown>[]} events @param {string} surface */
+function validateOccurrenceSurfaceV2(events, surface) {
+  /** @type {Map<string, Record<string, unknown>>} */
+  const byHash = new Map();
+  /** @type {Map<string, number>} */
+  const counts = new Map();
+  /** @type {Map<string, string>} */
+  const byOccurrence = new Map();
+  /** @type {Map<string, string>} */
+  const chronology = new Map();
+  for (const event of events) {
+    if (!['approach-occurrence', 'finding-occurrence'].includes(/** @type {string} */ (event.type))) continue;
+    const eventHash = /** @type {string} */ (event.eventHash);
+    const eventJson = canonicalJson(event);
+    if (byHash.has(eventHash)) {
+      if (canonicalJson(byHash.get(eventHash)) !== eventJson) {
+        invalid(surface, 'contains conflicting bytes for one event hash');
+      }
+      counts.set(eventHash, (counts.get(eventHash) || 0) + 1);
+      continue;
+    }
+    byHash.set(eventHash, event);
+    counts.set(eventHash, 1);
+    const occurrenceIdentity = /** @type {string} */ (event.occurrenceIdentity);
+    const priorOccurrence = byOccurrence.get(occurrenceIdentity);
+    if (priorOccurrence && priorOccurrence !== eventHash) invalid(surface, 'contains conflicting bytes for one occurrence identity');
+    byOccurrence.set(occurrenceIdentity, eventHash);
+    const position = event.type === 'finding-occurrence'
+      ? `finding:${eventChronologyV2(event).attemptOrdinal}:${eventChronologyV2(event).reviewOrdinal}:${/** @type {Record<string, unknown>} */ (event.occurrence).findingIdentity}`
+      : `approach:${eventChronologyV2(event).attemptOrdinal}`;
+    const priorPosition = chronology.get(position);
+    if (priorPosition && priorPosition !== eventJson) invalid(surface, 'contains conflicting bytes at one chronology position');
+    chronology.set(position, eventJson);
+  }
+  return { byHash, counts };
+}
+
+/** @param {Record<string, unknown>} inspection */
+function dualRetainedOccurrenceEventsV2(inspection) {
+  const currentRun = currentRunEventsV2(inspection);
+  const lane = laneHistoryEventsV2(inspection);
+  const currentSurface = validateOccurrenceSurfaceV2(currentRun, 'current-run');
+  const laneSurface = validateOccurrenceSurfaceV2(lane, 'lane-history');
+  const currentByHash = currentSurface.byHash;
+  const laneByHash = laneSurface.byHash;
+  /** @type {Record<string, unknown>[]} */
+  const retained = [];
+  for (const [eventHash, currentEvent] of currentByHash) {
+    const laneEvent = laneByHash.get(eventHash);
+    if (!laneEvent) invalid('occurrence retention', 'is incomplete on lane-history');
+    if (canonicalJson(currentEvent) !== canonicalJson(laneEvent)) {
+      invalid('occurrence retention', 'contains conflicting current-run and lane event bytes');
+    }
+    if (targetKey(currentEvent.target) !== targetKey(inspection.target)) {
+      invalid('occurrence retention', 'contains a wrong-target event');
+    }
+    retained.push(currentEvent);
+  }
+  for (const eventHash of laneByHash.keys()) {
+    if (!currentByHash.has(eventHash)) invalid('occurrence retention', 'is incomplete on current-run');
+  }
+  return {
+    currentByHash,
+    laneByHash,
+    currentCounts: currentSurface.counts,
+    laneCounts: laneSurface.counts,
+    retained,
+  };
+}
+
+/** @param {Record<string, unknown>[]} events @param {ReturnType<typeof trustedEnvelopeIndexFromInspectionV2>} trusted */
+function validateRetainedOccurrenceAuthorityV2(events, trusted) {
+  const approaches = events.filter((event) => event.type === 'approach-occurrence');
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+    const occurrence = /** @type {Record<string, unknown>} */ (event.occurrence);
+    if (event.type === 'approach-occurrence') {
+      const verification = trusted.verifications.get(/** @type {string} */ (event.verificationEnvelopeIdentity));
+      const review = trusted.reviews.get(/** @type {string} */ (event.reviewEnvelopeIdentity));
+      if (!verification || !review) {
+        invalid(`retained occurrence events[${index}]`, 'must retain fresh trusted verification and review captures');
+      }
+      const verificationEnvelope = verification.envelope;
+      const reviewEnvelope = /** @type {Record<string, unknown>} */ (review.envelope);
+      const expectedDisposition = trustedCompletionDispositionV2(verificationEnvelope, reviewEnvelope);
+      const chronology = /** @type {Record<string, unknown>} */ (occurrence.chronology);
+      const retainedBasis = /** @type {Record<string, unknown>} */ (event.basis);
+      const derivedBasis = autonomousApproachBasis(
+        /** @type {Record<string, unknown>} */ (event.target),
+        /** @type {string} */ (retainedBasis.action),
+        /** @type {Record<string, unknown>} */ (retainedBasis.materialInputs),
+      );
+      validateApproachBasisV1(derivedBasis, `retained occurrence events[${index}].basis`);
+      const basisIdentity = sha256(canonicalJson(derivedBasis));
+      if (verificationEnvelope.attemptIdentity !== occurrence.attemptIdentity
+        || verificationEnvelope.resultIdentity !== occurrence.resultIdentity
+        || reviewEnvelope.attemptIdentity !== occurrence.attemptIdentity
+        || reviewEnvelope.resultIdentity !== occurrence.resultIdentity
+        || reviewEnvelope.verificationEnvelopeIdentity !== verificationEnvelope.envelopeIdentity
+        || reviewEnvelope.attemptOrdinal !== chronology.attemptOrdinal
+        || verificationEnvelope.inspectedEvidenceHash !== occurrence.authorizationEvidenceHash
+        || reviewEnvelope.inspectedEvidenceHash !== occurrence.authorizationEvidenceHash
+        || occurrence.disposition !== expectedDisposition
+        || occurrence.basisIdentity !== basisIdentity
+        || canonicalJson(event.basis) !== canonicalJson(derivedBasis)
+        || autonomousAttemptIdentity(
+          /** @type {Record<string, unknown>} */ (event.target),
+          /** @type {number} */ (chronology.attemptOrdinal),
+          /** @type {string} */ (occurrence.authorizationEvidenceHash),
+          basisIdentity,
+        ) !== occurrence.attemptIdentity) {
+        invalid(`retained occurrence events[${index}]`, 'conflicts with its fresh trusted completion envelopes');
+      }
+      continue;
+    }
+    if (event.type !== 'finding-occurrence') continue;
+    const review = trusted.reviews.get(/** @type {string} */ (occurrence.reviewEnvelopeIdentity));
+    if (!review || review.captureIdentity !== event.sourceCaptureIdentity) {
+      invalid(`retained occurrence events[${index}]`, 'must retain its exact trusted independent-review capture');
+    }
+    const reviewEnvelope = /** @type {Record<string, unknown>} */ (review.envelope);
+    const finding = /** @type {Record<string, unknown>[]} */ (reviewEnvelope.findings)
+      .find((row) => row.findingIdentity === occurrence.findingIdentity);
+    const chronology = /** @type {Record<string, unknown>} */ (occurrence.chronology);
+    const matchingApproaches = approaches.filter((approach) => {
+      const approachOccurrence = /** @type {Record<string, unknown>} */ (approach.occurrence);
+      const approachChronology = /** @type {Record<string, unknown>} */ (approachOccurrence.chronology);
+      return targetKey(approach.target) === targetKey(event.target)
+        && approachOccurrence.attemptIdentity === occurrence.attemptIdentity
+        && approachChronology.attemptOrdinal === chronology.attemptOrdinal
+        && approach.reviewEnvelopeIdentity === occurrence.reviewEnvelopeIdentity;
+    });
+    if (!finding
+      || reviewEnvelope.attemptIdentity !== occurrence.attemptIdentity
+      || reviewEnvelope.attemptOrdinal !== chronology.attemptOrdinal
+      || reviewEnvelope.reviewOrdinal !== chronology.reviewOrdinal
+      || canonicalJson(finding.observation) !== canonicalJson(occurrence.observation)
+      || finding.basisIdentity !== occurrence.basisIdentity) {
+      invalid(`retained occurrence events[${index}]`, 'conflicts with its fresh trusted review envelope');
+    }
+    if (matchingApproaches.length !== 1) {
+      invalid(`retained occurrence events[${index}]`, 'must bind exactly one retained approach occurrence for the same attempt');
+    }
+    const matchingApproach = matchingApproaches[0];
+    const matchingOccurrence = /** @type {Record<string, unknown>} */ (matchingApproach.occurrence);
+    if (occurrence.attemptApproachBasisIdentity !== matchingOccurrence.basisIdentity
+      || matchingOccurrence.resultIdentity !== reviewEnvelope.resultIdentity) {
+      invalid(`retained occurrence events[${index}]`, 'conflicts with its retained attempt approach occurrence');
+    }
+  }
+}
+
+/** @param {Record<string, unknown>[]} events */
+export function deriveEarliestRepeatRelationshipV1(events) {
+  const validatedRows = assertDenseDataArray(events, 'retained occurrence events')
+    .map((event, index) => {
+      const record = /** @type {Record<string, unknown>} */ (event);
+      if (record.type === 'finding-occurrence') validateFindingOccurrenceEventV1(record, `retained occurrence events[${index}]`);
+      else if (record.type === 'approach-occurrence') validateApproachOccurrenceEventV1(record, `retained occurrence events[${index}]`);
+      else invalid(`retained occurrence events[${index}].type`, 'must be an occurrence event');
+      return record;
+    });
+  const surface = validateOccurrenceSurfaceV2(validatedRows, 'retained occurrence events');
+  const rows = [...surface.byHash.values()].sort(compareOccurrenceChronologyV2);
+  /** @type {{repeat:Record<string, unknown>,second:Record<string, unknown>,first:Record<string, unknown>}[]} */
+  const candidates = [];
+  for (const channel of ['finding', 'approach']) {
+    const type = `${channel}-occurrence`;
+    const channelRows = rows.filter((event) => event.type === type);
+    for (let secondIndex = 1; secondIndex < channelRows.length; secondIndex += 1) {
+      const second = channelRows[secondIndex];
+      const secondOccurrence = /** @type {Record<string, unknown>} */ (second.occurrence);
+      if (channel === 'approach' && secondOccurrence.disposition === 'accepted') continue;
+      for (let firstIndex = 0; firstIndex < secondIndex; firstIndex += 1) {
+        const first = channelRows[firstIndex];
+        const firstOccurrence = /** @type {Record<string, unknown>} */ (first.occurrence);
+        if (channel === 'approach' && firstOccurrence.disposition === 'accepted') continue;
+        if (firstOccurrence.basisIdentity !== secondOccurrence.basisIdentity
+          || firstOccurrence.attemptIdentity === secondOccurrence.attemptIdentity
+          || first.occurrenceIdentity === second.occurrenceIdentity
+          || targetKey(first.target) !== targetKey(second.target)
+          || eventChronologyV2(first).attemptOrdinal >= eventChronologyV2(second).attemptOrdinal
+          || compareOccurrenceChronologyV2(first, second) >= 0) continue;
+        candidates.push({
+          first,
+          second,
+          repeat: {
+            version: 1,
+            channel,
+            basisIdentity: secondOccurrence.basisIdentity,
+            occurrenceIdentities: [first.occurrenceIdentity, second.occurrenceIdentity],
+          },
+        });
+        break;
+      }
+    }
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((left, right) => compareOccurrenceChronologyV2(left.second, right.second)
+    || compareOccurrenceChronologyV2(left.first, right.first)
+    || compareUtf8(/** @type {string} */ (left.repeat.channel), /** @type {string} */ (right.repeat.channel)));
+  validateRepeatRelationshipV1(candidates[0].repeat);
+  return candidates[0].repeat;
+}
+
+/** @param {Record<string, unknown>} repeat @param {Record<string, unknown>[]} retained */
+export function deriveFailedApproachSetV1(repeat, retained) {
+  validateRepeatRelationshipV1(repeat);
+  const events = assertDenseDataArray(retained, 'retained occurrence events')
+    .map((event, index) => {
+      const record = /** @type {Record<string, unknown>} */ (event);
+      if (record.type === 'finding-occurrence') validateFindingOccurrenceEventV1(record, `retained occurrence events[${index}]`);
+      else if (record.type === 'approach-occurrence') validateApproachOccurrenceEventV1(record, `retained occurrence events[${index}]`);
+      else invalid(`retained occurrence events[${index}].type`, 'must be an occurrence event');
+      return record;
+    });
+  const byOccurrence = new Map(events.map((event) => [event.occurrenceIdentity, event]));
+  const triggerEvents = /** @type {string[]} */ (repeat.occurrenceIdentities)
+    .map((identity) => byOccurrence.get(identity));
+  if (triggerEvents.some((event) => !event)) invalid('RepeatRelationshipV1', 'must reference retained occurrence events');
+  const typedTriggerEvents = /** @type {Record<string, unknown>[]} */ (triggerEvents);
+  if (typedTriggerEvents.some((event) => event.type !== `${repeat.channel}-occurrence`)) {
+    invalid('RepeatRelationshipV1.channel', 'must match its occurrence event types');
+  }
+  const target = /** @type {Record<string, unknown>} */ (typedTriggerEvents[0].target);
+  if (typedTriggerEvents.some((event) => targetKey(event.target) !== targetKey(target))) {
+    invalid('RepeatRelationshipV1', 'must bind one target');
+  }
+  const cutoff = Math.max(...typedTriggerEvents.map((event) => eventChronologyV2(event).attemptOrdinal));
+  const qualifying = events.filter((event) => event.type === `${repeat.channel}-occurrence`
+    && targetKey(event.target) === targetKey(target)
+    && (repeat.channel === 'approach'
+      || /** @type {Record<string, unknown>} */ (event.occurrence).basisIdentity === repeat.basisIdentity)
+    && (repeat.channel !== 'approach'
+      || /** @type {Record<string, unknown>} */ (event.occurrence).disposition !== 'accepted')
+    && eventChronologyV2(event).attemptOrdinal <= cutoff);
+  const basisIdentities = qualifying.map((event) => repeat.channel === 'finding'
+    ? /** @type {Record<string, unknown>} */ (event.occurrence).attemptApproachBasisIdentity
+    : /** @type {Record<string, unknown>} */ (event.occurrence).basisIdentity);
+  const approachBasisIdentities = [...new Set(/** @type {string[]} */ (basisIdentities))].sort(compareUtf8);
+  if (approachBasisIdentities.length < 1) {
+    invalid('FailedApproachSetV1', 'must contain at least one failed-approach basis');
+  }
+  if (approachBasisIdentities.length > 16) {
+    invalid('FailedApproachSetV1', 'exceeds the complete failed-approach capacity');
+  }
+  /** @type {Map<string, string>} */
+  const supportingEvidence = new Map();
+  for (let index = 0; index < qualifying.length; index += 1) {
+    const basisIdentity = /** @type {string} */ (basisIdentities[index]);
+    const eventHash = /** @type {string} */ (qualifying[index].eventHash);
+    const existing = supportingEvidence.get(basisIdentity);
+    if (existing === undefined || compareUtf8(eventHash, existing) < 0) {
+      supportingEvidence.set(basisIdentity, eventHash);
+    }
+  }
+  const completeEvidenceEventHashes = [...new Set(
+    qualifying.map((event) => /** @type {string} */ (event.eventHash)),
+  )].sort(compareUtf8);
+  const evidenceEventHashes = completeEvidenceEventHashes.length <= 16
+    ? completeEvidenceEventHashes
+    : [...supportingEvidence.values()].sort(compareUtf8);
+  const withoutIdentity = {
+    version: 1,
+    target: canonicalTarget(target),
+    chronologyCutoff: cutoff,
+    approachBasisIdentities,
+    evidenceEventHashes,
+  };
+  const set = { ...withoutIdentity, setIdentity: sha256(canonicalJson(withoutIdentity)) };
+  validateFailedApproachSetV1(set);
+  return set;
+}
+
+/** @param {Record<string, unknown>} state @param {Record<string, unknown>} pendingCompletion @param {unknown} eventBodiesValue */
+function validateFinalizeEventBindingV2(state, pendingCompletion, eventBodiesValue) {
+  const events = assertDenseDataArray(eventBodiesValue, 'finalizeCompletionV2 occurrenceEvents')
+    .map((event) => /** @type {Record<string, unknown>} */ (event));
+  validateCommittedEventBodiesV1(
+    events,
+    /** @type {Record<string, unknown>} */ (pendingCompletion.target),
+    /** @type {Record<string, unknown>} */ (pendingCompletion.retention),
+    'finalizeCompletionV2 occurrenceEvents',
+  );
+  const approach = events[0];
+  const findings = events.slice(1);
+  if (/** @type {Record<string, unknown>} */ (approach.occurrence).attemptIdentity !== pendingCompletion.attemptIdentity
+    || approach.verificationEnvelopeIdentity !== pendingCompletion.verificationEnvelopeIdentity
+    || approach.reviewEnvelopeIdentity !== pendingCompletion.reviewEnvelopeIdentity
+    || /** @type {Record<string, unknown>} */ (approach.occurrence).resultIdentity !== pendingCompletion.resultIdentity
+    || canonicalJson(findings.map((event) => /** @type {Record<string, unknown>} */ (event.occurrence).findingIdentity).sort(compareUtf8))
+      !== canonicalJson(pendingCompletion.findingIdentities)) {
+    invalid('finalizeCompletionV2 occurrenceEvents', 'do not match pending completion identities');
+  }
+  const pendingRows = /** @type {Record<string, unknown>[]} */ (state.pending);
+  if (pendingRows.length !== 1 || targetKey(pendingRows[0].target) !== targetKey(pendingCompletion.target)) {
+    invalid('finalizeCompletionV2 state', 'must retain the exact pending attempt until finalization');
+  }
+  const pendingContext = completionApproachContextV2(state, pendingRows[0]);
+  const approachOccurrence = /** @type {Record<string, unknown>} */ (approach.occurrence);
+  if (pendingCompletion.attemptIdentity !== pendingContext.attemptIdentity
+    || approachOccurrence.attemptIdentity !== pendingContext.attemptIdentity
+    || approachOccurrence.authorizationEvidenceHash !== pendingRows[0].evidenceHash
+    || approachOccurrence.basisIdentity !== pendingContext.approachBasisIdentity
+    || canonicalJson(approach.basis) !== canonicalJson(pendingContext.basis)) {
+    invalid('finalizeCompletionV2 state', 'must retain the exact pending authorization, attempt, and approach until finalization');
+  }
+  return { events, pending: pendingRows[0] };
+}
+
+/**
+ * Finalize one captured completion only after fresh exact dual retention. It
+ * returns a governance-required body only for the earliest retained repeat.
+ * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} occurrenceEventsValue
+ * @param {unknown} [dependencies] @param {boolean} [publicRoute] Transport-decoded `complete.finalize` route.
+ */
+export function finalizeCompletionV2(stateValue, inputValue, occurrenceEventsValue, dependencies, publicRoute = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('finalizeCompletionV2', 'requires autonomous policy');
+  }
+  if (!Object.hasOwn(state, 'pendingCompletion')) {
+    invalid('finalizeCompletionV2', 'requires one pending completion retention case');
+  }
+  const pendingCompletion = /** @type {Record<string, unknown>} */ (
+    validatePendingCompletionRetentionV2(state.pendingCompletion)
+  );
+  const acquired = acquireInspection(inputValue, dependencies, publicRoute, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} completionResult */
+  const respond = (completionResult) => (publicRoute
+    ? { inspection, completion: completionResult }
+    : completionResult);
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0
+    || targetKey(inspection.target) !== targetKey(pendingCompletion.target)) {
+    return respond({ captured: true, finalized: false, completed: false, reason: 'occurrence-retention-incomplete', state });
+  }
+  const binding = validateFinalizeEventBindingV2(
+    state,
+    pendingCompletion,
+    finalizeOccurrenceEventBodiesV2(occurrenceEventsValue, pendingCompletion, publicRoute),
+  );
+  let retained;
+  let trusted;
+  try {
+    retained = dualRetainedOccurrenceEventsV2(inspection);
+    trusted = trustedEnvelopeIndexFromInspectionV2(inspection);
+    validateRetainedOccurrenceAuthorityV2(retained.retained, trusted);
+  } catch (error) {
+    const reason = error instanceof Error && /incomplete|must retain fresh|must retain its exact/.test(error.message)
+      ? 'occurrence-retention-incomplete'
+      : 'occurrence-retention-conflict';
+    return respond({ captured: true, finalized: false, completed: false, reason, state });
+  }
+  for (const event of binding.events) {
+    const hash = /** @type {string} */ (event.eventHash);
+    const current = retained.currentByHash.get(hash);
+    const lane = retained.laneByHash.get(hash);
+    if (!current || !lane) {
+      return respond({ captured: true, finalized: false, completed: false, reason: 'occurrence-retention-incomplete', state });
+    }
+    if (retained.currentCounts.get(hash) !== 1 || retained.laneCounts.get(hash) !== 1) {
+      return respond({ captured: true, finalized: false, completed: false, reason: 'occurrence-retention-conflict', state });
+    }
+    if (canonicalJson(current) !== canonicalJson(event) || canonicalJson(lane) !== canonicalJson(event)) {
+      return respond({ captured: true, finalized: false, completed: false, reason: 'occurrence-retention-conflict', state });
+    }
+  }
+  const completed = /** @type {Record<string, unknown>[]} */ (state.completed);
+  const nextState = carryOptionalRunState(state, {
+    policy: { .../** @type {Record<string, unknown>} */ (state.policy) },
+    overallUsed: state.overallUsed,
+    recoveryUsed: /** @type {Record<string, unknown>[]} */ (state.recoveryUsed).map((row) => ({ ...row })),
+    pending: [],
+    completed: [
+      ...completed.map((entry) => ({ ...entry })),
+      {
+        evidenceHash: binding.pending.evidenceHash,
+        approachHash: binding.pending.approachHash,
+        resultHash: pendingCompletion.resultIdentity,
+      },
+    ],
+  });
+  delete nextState.pendingCompletion;
+  const authorizedCase = activeGovernanceCaseV2(state);
+  if (authorizedCase
+    && V2_AUTHORIZED_PHASES.includes(/** @type {string} */ (authorizedCase.phase))
+    && authorizedCase.authorizedAttemptIdentity === pendingCompletion.attemptIdentity) {
+    // The bound post-learning attempt is retained first and only then verified.
+    // A non-accepted disposition advances nothing and keeps the seal closed.
+    const disposition = /** @type {Record<string, unknown>} */ (
+      /** @type {Record<string, unknown>} */ (binding.events[0]).occurrence
+    ).disposition;
+    if (disposition === 'accepted' && authorizedCase.phase === 'alternative-authorized') {
+      nextState.learningGovernance = JSON.parse(canonicalJson({
+        ...authorizedCase,
+        phase: 'alternative-verified',
+      }));
+      validateLearningGovernanceV1(nextState.learningGovernance);
+    }
+    validateRunState(nextState);
+    return respond({
+      captured: true,
+      finalized: true,
+      completed: disposition === 'accepted',
+      reason: disposition === 'accepted' ? 'completed' : /** @type {string} */ (disposition),
+      resultIdentity: pendingCompletion.resultIdentity,
+      state: nextState,
+    });
+  }
+  const repeat = deriveEarliestRepeatRelationshipV1(retained.retained);
+  if (!repeat) {
+    validateRunState(nextState);
+    return respond({
+      captured: true,
+      finalized: true,
+      completed: /** @type {Record<string, unknown>} */ (binding.events[0]).occurrence.disposition === 'accepted',
+      reason: /** @type {Record<string, unknown>} */ (binding.events[0]).occurrence.disposition === 'accepted'
+        ? 'completed'
+        : /** @type {Record<string, unknown>} */ (binding.events[0]).occurrence.disposition,
+      resultIdentity: pendingCompletion.resultIdentity,
+      state: nextState,
+    });
+  }
+  if (Object.hasOwn(state, 'learningGovernance')) {
+    // An occupied singleton is a conflict; `learning-governance-capacity` is
+    // reserved for derivable failed-approach-set excess alone.
+    return respond({ captured: true, finalized: false, completed: false, reason: 'learning-governance-conflict', state });
+  }
+  let failedApproachSet;
+  try {
+    failedApproachSet = deriveFailedApproachSetV1(repeat, retained.retained);
+  } catch (error) {
+    if (error instanceof TypeError
+      && error.message === 'FailedApproachSetV1 exceeds the complete failed-approach capacity') {
+      return respond({ captured: true, finalized: false, completed: false, reason: 'learning-governance-capacity', state });
+    }
+    throw error;
+  }
+  const governanceIdentity = sha256(canonicalJson({
+    version: 1,
+    target: pendingCompletion.target,
+    repeatIdentity: sha256(canonicalJson(repeat)),
+  }));
+  const governanceCore = {
+    version: 1,
+    governanceIdentity,
+    target: pendingCompletion.target,
+    trigger: repeat,
+    failedApproachSet,
+    phase: 'required',
+    revision: 1,
+    triggerEvidenceHash: sha256(canonicalJson({
+      trigger: repeat,
+      failedApproachSetIdentity: failedApproachSet.setIdentity,
+    })),
+  };
+  const governanceEvent = buildGovernanceEventV1(governanceCore);
+  const projectionBatch = buildProjectionBatchV1(
+    'governance-required',
+    /** @type {Record<string, unknown>} */ (pendingCompletion.target),
+    [governanceEvent],
+    'finalizeCompletionV2 governance required',
+  );
+  const governance = {
+    ...governanceCore,
+    projectionCommitment: projectionCommitmentOfBatchV1(projectionBatch),
+  };
+  validateLearningGovernanceV1(governance);
+  nextState.learningGovernance = governance;
+  validateRunState(nextState);
+  return respond({
+    captured: true,
+    finalized: true,
+    completed: false,
+    reason: 'learning-required',
+    resultIdentity: pendingCompletion.resultIdentity,
+    repeat,
+    state: nextState,
+    governanceEvent,
+    projectionBatch,
+  });
+}
+
+/** @param {Record<string, unknown>} source @param {Record<string, unknown>} target */
+function carryOptionalRunState(source, target) {
+  if (Object.hasOwn(source, 'evaluationSequences')) target.evaluationSequences = source.evaluationSequences;
+  if (Object.hasOwn(source, 'learningReviewRefs')) target.learningReviewRefs = source.learningReviewRefs;
+  if (Object.hasOwn(source, 'pendingCompletion')) {
+    target.pendingCompletion = JSON.parse(canonicalJson(source.pendingCompletion));
+  }
+  if (Object.hasOwn(source, 'learningGovernance')) {
+    target.learningGovernance = JSON.parse(canonicalJson(source.learningGovernance));
+  }
+  return target;
+}
+
+/** @param {Record<string, unknown>} state @param {Record<string, unknown>} target @param {string} triggerEvidenceHash */
+function establishRequiredLearningGovernance(state, target, triggerEvidenceHash) {
+  const nextState = carryOptionalRunState(state, {
+    policy: { .../** @type {Record<string, unknown>} */ (state.policy) },
+    overallUsed: state.overallUsed,
+    recoveryUsed: /** @type {Record<string, unknown>[]} */ (state.recoveryUsed).map((row) => ({ ...row })),
+    pending: /** @type {Record<string, unknown>[]} */ (state.pending).map(copyPendingEntry),
+    completed: /** @type {Record<string, unknown>[]} */ (state.completed).map((entry) => ({ ...entry })),
+  });
+  nextState.learningGovernance = {
+    version: 1,
+    target: { ...target },
+    phase: 'required',
+    revision: 1,
+    triggerEvidenceHash,
+  };
+  validateRunState(nextState);
+  return nextState;
+}
+
 /** @param {Record<string, unknown>} left @param {Record<string, unknown>} right */
 function comparePending(left, right) {
   return compareUtf8(targetKey(left.target), targetKey(right.target))
@@ -2964,7 +5229,12 @@ function comparePending(left, right) {
  * @param {unknown} mode
  * @param {unknown} [dependencies]
  */
-function authorizeInspectedAttempt(state, target, inspection, assessmentValue, mode) {
+function authorizeInspectedAttempt(state, target, inspection, assessmentValue, mode, attemptPermitValue) {
+  let consumed = null;
+  if (attemptPermitValue !== undefined) {
+    consumed = consumeAttemptPermitV2(state, target, inspection, attemptPermitValue);
+    if (consumed.reason) return authorizationRefusal(state, consumed.reason);
+  }
   let assessment;
   try {
     assessment = /** @type {Record<string, unknown>} */ (validateAssessment(assessmentValue));
@@ -3021,20 +5291,115 @@ function authorizeInspectedAttempt(state, target, inspection, assessmentValue, m
   }
   const policy = /** @type {Record<string, unknown>} */ (state.policy);
   if (mode === 'recovery' && !policy.recover) return authorizationRefusal(state, 'recovery-disabled');
-  if (assessment.equivalence === 'same' || assessment.equivalence === 'equivalent') {
+  if (evaluationSequenceRows(state).some((row) => (
+    row.state === 'unsettled'
+      || Object.hasOwn(row, 'activeCheckpointIdentity')
+      || Object.hasOwn(row, 'activeCandidateIdentity')
+  ))) {
+    return authorizationRefusal(state, 'not-dispatchable');
+  }
+  if (policy.mode === 'autonomous') {
+    if (state.overallUsed === Number.MAX_SAFE_INTEGER
+      || (policy.overall !== 'unlimited' && state.overallUsed >= policy.overall)) {
+      return authorizationRefusal(state, 'overall-exhausted');
+    }
+    if (mode === 'recovery') {
+      const autonomousTargetKey = targetKey(target);
+      const autonomousRecoveryRow = /** @type {Record<string, unknown>[]} */ (state.recoveryUsed)
+        .find((row) => row.targetKey === autonomousTargetKey);
+      if (autonomousRecoveryRow?.count === Number.MAX_SAFE_INTEGER
+        || (policy.recovery !== 'unlimited' && (autonomousRecoveryRow?.count || 0) >= policy.recovery)) {
+        return authorizationRefusal(state, 'recovery-exhausted');
+      }
+    }
+  }
+  if (hasUnresolvedLearningGovernance(state, target) && !consumed?.governance) {
+    return authorizationRefusal(state, 'learning-required');
+  }
+  const claimedEquivalent = assessment.equivalence === 'same' || assessment.equivalence === 'equivalent';
+  if (claimedEquivalent && policy.mode !== 'autonomous') {
     return authorizationRefusal(state, 'no-progress');
   }
   const completed = /** @type {Record<string, unknown>[]} */ (state.completed);
-  const resultPairs = new Set();
-  for (const entry of completed) {
+  /** @type {Record<string, unknown>[]} */
+  let retainedV2Approaches = [];
+  if (policy.mode === 'autonomous') {
+    try {
+      const retained = dualRetainedOccurrenceEventsV2(inspection).retained;
+      if (retained.length > 0) {
+        const trusted = trustedEnvelopeIndexFromInspectionV2(inspection);
+        validateRetainedOccurrenceAuthorityV2(retained, trusted);
+      }
+      retainedV2Approaches = retained
+        .filter((event) => event.type === 'approach-occurrence');
+    } catch {
+      const blocker = {
+        code: 'evidence-incomplete',
+        subject: 'occurrence-retention',
+        evidenceHash: inspection.evidenceHash,
+      };
+      return authorizationRefusal(state, 'evidence-incomplete', blocker);
+    }
+  }
+  const legacyCompleted = completed.filter((entry) => !retainedV2Approaches.some((event) => {
+    const occurrence = /** @type {Record<string, unknown>} */ (event.occurrence);
+    const basis = /** @type {Record<string, unknown>} */ (event.basis);
+    return occurrence.authorizationEvidenceHash === entry.evidenceHash
+      && occurrence.resultIdentity === entry.resultHash
+      && approachHash({ action: basis.action, materialInputs: basis.materialInputs }) === entry.approachHash;
+  }));
+  const resultPairs = new Map();
+  for (const entry of legacyCompleted) {
     if (entry.evidenceHash !== inspection.evidenceHash) continue;
     const pair = `${entry.evidenceHash}:${entry.resultHash}`;
-    if (resultPairs.has(pair)) return authorizationRefusal(state, 'prior-no-progress');
-    resultPairs.add(pair);
+    const prior = resultPairs.get(pair);
+    if (prior) {
+      if (policy.mode === 'autonomous') {
+        if (Object.hasOwn(state, 'pendingCompletion')) {
+          return authorizationRefusal(state, 'occurrence-retention-conflict');
+        }
+        if (Object.hasOwn(state, 'learningGovernance')) {
+          return authorizationRefusal(state, 'learning-governance-conflict');
+        }
+        const governedState = establishRequiredLearningGovernance(
+          state,
+          target,
+          retainedResultSealHash(target, prior, entry),
+        );
+        return authorizationRefusal(governedState, 'learning-required');
+      }
+      return authorizationRefusal(state, 'prior-no-progress');
+    }
+    resultPairs.set(pair, entry);
   }
-  if (completed.some((entry) => (
+  const repeatedApproach = legacyCompleted.find((entry) => (
     entry.evidenceHash === inspection.evidenceHash && entry.approachHash === candidateApproachHash
-  ))) return authorizationRefusal(state, 'no-progress');
+  ));
+  if (repeatedApproach) {
+    if (policy.mode === 'autonomous') {
+      if (Object.hasOwn(state, 'pendingCompletion')) {
+        return authorizationRefusal(state, 'occurrence-retention-conflict');
+      }
+      if (Object.hasOwn(state, 'learningGovernance')) {
+        return authorizationRefusal(state, 'learning-governance-conflict');
+      }
+      const governedState = establishRequiredLearningGovernance(
+        state,
+        target,
+        repeatedApproachSealHash(target, repeatedApproach),
+      );
+      return authorizationRefusal(governedState, 'learning-required');
+    }
+    return authorizationRefusal(state, 'no-progress');
+  }
+  if (claimedEquivalent) {
+    const blocker = {
+      code: 'evidence-incomplete',
+      subject: 'autonomous-repeat-equivalence',
+      evidenceHash: inspection.evidenceHash,
+    };
+    return authorizationRefusal(state, 'evidence-incomplete', blocker);
+  }
 
   const pending = /** @type {Record<string, unknown>[]} */ (state.pending);
   const key = targetKey(target);
@@ -3071,19 +5436,56 @@ function authorizeInspectedAttempt(state, target, inspection, assessmentValue, m
     mode,
   });
   nextPending.sort(comparePending);
-  const nextState = {
+  const nextState = carryOptionalRunState(state, {
     policy: { ...policy },
     overallUsed: /** @type {number} */ (state.overallUsed) + 1,
     recoveryUsed: nextRecoveryUsed,
     pending: nextPending,
     completed: completed.map((entry) => ({ ...entry })),
-  };
-  // Carry forward the optional objective arrays unchanged and only when present,
-  // so guarded and feature-004 output stays byte-identical (both absent).
-  if (Object.hasOwn(state, 'evaluationSequences')) nextState.evaluationSequences = state.evaluationSequences;
-  if (Object.hasOwn(state, 'learningReviewRefs')) nextState.learningReviewRefs = state.learningReviewRefs;
+  });
+  if (consumed?.governance) {
+    // The permit is consumed exactly here, before RunState changes settle, and
+    // is never reusable for the lane claim that may follow.
+    const authorizedAttemptIdentity = completionApproachContextV2(
+      nextState,
+      nextPending.find((entry) => targetKey(entry.target) === targetKey(target)),
+    ).attemptIdentity;
+    const claimRequired = lightweightClaimRequiredV2(inspection, target);
+    nextState.learningGovernance = JSON.parse(canonicalJson({
+      ...consumed.governance,
+      phase: claimRequired ? 'alternative-authorized-pending-lane' : 'alternative-authorized',
+      consumedAttemptPermitHash: /** @type {Record<string, unknown>} */ (consumed.permit).permitHash,
+      authorizedAttemptIdentity,
+    }));
+    validateLearningGovernanceV1(nextState.learningGovernance);
+    validateRunState(nextState);
+    return {
+      authorized: true,
+      reason: 'authorized',
+      state: nextState,
+      attemptIdentity: authorizedAttemptIdentity,
+      claimRequired,
+    };
+  }
   validateRunState(nextState);
-  return { authorized: true, reason: 'authorized', state: nextState };
+  return consumed
+    ? {
+      authorized: true,
+      reason: 'authorized',
+      state: nextState,
+      attemptIdentity: completionApproachContextV2(
+        nextState,
+        nextPending.find((entry) => targetKey(entry.target) === targetKey(target)),
+      ).attemptIdentity,
+      claimRequired: lightweightClaimRequiredV2(inspection, target),
+    }
+    : { authorized: true, reason: 'authorized', state: nextState };
+}
+
+/** Derive claim need from fresh Inspection task facts, never from a caller claim. @param {Record<string, unknown>} inspection @param {Record<string, unknown>} target */
+function lightweightClaimRequiredV2(inspection, target) {
+  if (target.lane !== 'lightweight') return true;
+  return freshLightweightTaskFactsV2(inspection, target).glyph !== '~';
 }
 
 export function authorizeAttempt(stateValue, targetValue, rawInputs, assessmentValue, mode, dependencies) {
@@ -3229,10 +5631,50 @@ export function completeAttempt(stateValue, inputValue) {
 
   const normalizedHash = resultHash(normalized);
   const completed = /** @type {Record<string, unknown>[]} */ (state.completed);
-  const repeatedResult = completed.some((entry) => (
+  const repeatedEntry = completed.find((entry) => (
     entry.evidenceHash === input.evidenceHash && entry.resultHash === normalizedHash
   ));
-  const nextState = {
+  if (repeatedEntry
+    && /** @type {Record<string, unknown>} */ (state.policy).mode === 'autonomous') {
+    if (Object.hasOwn(state, 'pendingCompletion')) {
+      return completionRefusal(state, 'occurrence-retention-conflict');
+    }
+    if (Object.hasOwn(state, 'learningGovernance')) {
+      return completionRefusal(state, 'learning-governance-conflict');
+    }
+    const pendingCompletion = {
+      version: 1,
+      target: { .../** @type {Record<string, unknown>} */ (input.target) },
+      evidenceHash: input.evidenceHash,
+      approachHash: input.approachHash,
+      resultHash: normalizedHash,
+      priorApproachHash: repeatedEntry.approachHash,
+    };
+    const learningGovernance = {
+      version: 1,
+      target: { .../** @type {Record<string, unknown>} */ (input.target) },
+      phase: 'required',
+      revision: 1,
+      triggerEvidenceHash: pendingCompletionSealHash(pendingCompletion),
+    };
+    const sealedState = carryOptionalRunState(state, {
+      policy: { .../** @type {Record<string, unknown>} */ (state.policy) },
+      overallUsed: state.overallUsed,
+      recoveryUsed: /** @type {Record<string, unknown>[]} */ (state.recoveryUsed).map((row) => ({ ...row })),
+      pending: pending.filter((_, index) => index !== selectedIndex).map(copyPendingEntry),
+      completed: completed.map((entry) => ({ ...entry })),
+    });
+    sealedState.pendingCompletion = pendingCompletion;
+    sealedState.learningGovernance = learningGovernance;
+    validateRunState(sealedState);
+    return {
+      completed: false,
+      reason: 'learning-required',
+      result: normalized,
+      state: sealedState,
+    };
+  }
+  const nextState = carryOptionalRunState(state, {
     policy: { .../** @type {Record<string, unknown>} */ (state.policy) },
     overallUsed: state.overallUsed,
     recoveryUsed: /** @type {Record<string, unknown>[]} */ (state.recoveryUsed).map((row) => ({ ...row })),
@@ -3245,10 +5687,10 @@ export function completeAttempt(stateValue, inputValue) {
         resultHash: normalizedHash,
       },
     ],
-  };
+  });
   validateRunState(nextState);
   let reason = normalized.outcome;
-  if (repeatedResult) reason = 'no-progress';
+  if (repeatedEntry) reason = 'no-progress';
   else if (normalized.blockers.some((blocker) => blocker.code === 'verification-failed')) {
     reason = 'verification-failed';
   } else if (normalized.blockers.some((blocker) => blocker.code === 'review-rejected')) {
@@ -3317,6 +5759,8 @@ export const OUTCOME_REASON_CLASSES = Object.freeze({
   'review-rejected': 'recoverable-checkpoint',
   'overall-exhausted': 'budget-stop',
   'recovery-exhausted': 'budget-stop',
+  'learning-required': 'learning-stop',
+  'learning-governance-capacity': 'learning-stop',
   'no-progress': 'learning-stop',
   'prior-no-progress': 'learning-stop',
   'evidence-drift': 'guard-stop',
@@ -3698,6 +6142,4119 @@ function materializeTransportInput(input, label, budget) {
   return decoded;
 }
 
+// === Feature 009 (T003): public learning and exact projection batches =======
+// Command-reachable two-stage completion, `learn`, and the projection
+// transitions. RunState keeps hash-only ProjectionCommitmentV1 values; exact
+// ProjectionBatchV1 bodies travel only in responses and subsequent requests.
+// Every fresh Inspection stays the earlier call-local fail-closed gate, and
+// every trigger, failed set, alternative, and branch value is recomputed from
+// the fresh trusted envelopes and authoritative surfaces instead of being
+// trusted from RunState, history, or the caller.
+
+const V2_CHANGED_DIMENSIONS = Object.freeze([
+  'material-input', 'mechanism', 'assumption', 'evidence-acquisition', 'validation-plan',
+]);
+const V2_LEARNING_OUTCOMES = Object.freeze(['selected-alternative', 'no-progress']);
+const V2_ALTERNATIVE_DISPOSITIONS = Object.freeze([
+  'credible-material', 'not-credible', 'not-materially-different',
+]);
+const MAX_EVENT_LINE_TEXT_BYTES = 16_402;
+const MAX_EVENT_LINE_RECORD_BYTES = 16_403;
+
+/** Exact `ProjectionBatchV1` bodies for one closed purpose. @param {string} purpose @param {Record<string, unknown>} target @param {Record<string, unknown>[]} events @param {string} label */
+function buildProjectionBatchV1(purpose, target, events, label) {
+  const commitment = projectionCommitmentForEventsV1(purpose, target, events, label);
+  const batch = {
+    version: 1,
+    purpose,
+    target: canonicalTarget(target),
+    events: JSON.parse(canonicalJson(events)),
+    eventCommitments: commitment.eventCommitments,
+    batchIdentity: commitment.batchIdentity,
+  };
+  validateProjectionBatchV1(batch, label);
+  return batch;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateProjectionBatchV1(value, label = 'ProjectionBatchV1') {
+  const batch = assertExactRecord(
+    value,
+    ['version', 'purpose', 'target', 'events', 'eventCommitments', 'batchIdentity'],
+    [],
+    label,
+  );
+  if (batch.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  const events = /** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(batch.events, `${label}.events`)
+  );
+  const recomputed = projectionCommitmentForEventsV1(
+    /** @type {string} */ (batch.purpose),
+    /** @type {Record<string, unknown>} */ (batch.target),
+    events,
+    label,
+  );
+  validateProjectionCommitmentV1(
+    { purpose: batch.purpose, batchIdentity: batch.batchIdentity, eventCommitments: batch.eventCommitments },
+    `${label} commitment`,
+  );
+  if (canonicalJson(recomputed.eventCommitments) !== canonicalJson(batch.eventCommitments)
+    || recomputed.batchIdentity !== batch.batchIdentity) {
+    invalid(label, 'must carry the recomputed ordered event commitments and batch identity');
+  }
+  return value;
+}
+
+/** @param {Record<string, unknown>} batch */
+function projectionCommitmentOfBatchV1(batch) {
+  return {
+    purpose: batch.purpose,
+    batchIdentity: batch.batchIdentity,
+    eventCommitments: JSON.parse(canonicalJson(batch.eventCommitments)),
+  };
+}
+
+/** Require one caller-supplied batch to equal the stored hash-only commitment. @param {unknown} value @param {Record<string, unknown>} target @param {Record<string, unknown>} commitment @param {string} label */
+function requireExactProjectionBatchV1(value, target, commitment, label) {
+  const batch = /** @type {Record<string, unknown>} */ (validateProjectionBatchV1(value, label));
+  if (targetKey(batch.target) !== targetKey(target)) {
+    invalid(`${label}.target`, 'must be the exact committed affected target');
+  }
+  if (batch.purpose !== commitment.purpose
+    || batch.batchIdentity !== commitment.batchIdentity
+    || canonicalJson(batch.eventCommitments) !== canonicalJson(commitment.eventCommitments)) {
+    invalid(label, 'must exactly match the stored ordered batch commitment');
+  }
+  return batch;
+}
+
+/** Accept the exact response-carried finalize batch; only the in-process helper route also accepts its bare ordered bodies. @param {unknown} value @param {Record<string, unknown>} pendingCompletion @param {boolean} publicRoute */
+function finalizeOccurrenceEventBodiesV2(value, pendingCompletion, publicRoute) {
+  if (!publicRoute && Array.isArray(value)) return value;
+  return /** @type {Record<string, unknown>} */ (requireExactProjectionBatchV1(
+    value,
+    /** @type {Record<string, unknown>} */ (pendingCompletion.target),
+    /** @type {Record<string, unknown>} */ (pendingCompletion.retention),
+    'finalizeCompletionV2 projectionBatch',
+  )).events;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateLearningFindingV1(value, label = 'LearningFindingV1') {
+  const finding = assertExactRecord(
+    value,
+    ['version', 'findingIdentity', 'statement', 'evidenceIdentities', 'assumptionIdentities'],
+    [],
+    label,
+  );
+  if (finding.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  assertHash(finding.findingIdentity, `${label}.findingIdentity`);
+  assertFindingText(finding.statement, `${label}.statement`);
+  validateV2HashSet(finding.evidenceIdentities, `${label}.evidenceIdentities`, 1, 16);
+  validateV2HashSet(finding.assumptionIdentities, `${label}.assumptionIdentities`, 0, 16);
+  const expected = sha256(canonicalJson({
+    version: 1,
+    statement: finding.statement,
+    evidenceIdentities: finding.evidenceIdentities,
+    assumptionIdentities: finding.assumptionIdentities,
+  }));
+  if (finding.findingIdentity !== expected) {
+    invalid(`${label}.findingIdentity`, 'must equal the recomputed complete finding identity');
+  }
+  return value;
+}
+
+/** @param {unknown} value @param {string} label */
+function validateChangedDimensionsV1(value, label) {
+  const rows = assertDenseDataArray(value, label);
+  if (rows.length < 1 || rows.length > 5) invalid(label, 'must contain 1 through 5 changed dimensions');
+  rows.forEach((row, index) => assertEnum(row, V2_CHANGED_DIMENSIONS, `${label}[${index}]`));
+  for (let index = 1; index < rows.length; index += 1) {
+    if (V2_CHANGED_DIMENSIONS.indexOf(/** @type {string} */ (rows[index - 1]))
+      >= V2_CHANGED_DIMENSIONS.indexOf(/** @type {string} */ (rows[index]))) {
+      invalid(label, 'must use the closed dimension order without duplicates');
+    }
+  }
+  return rows;
+}
+
+/** @param {unknown} value @param {string} label */
+function validateComparisonRowsV1(value, label) {
+  const rows = assertDenseDataArray(value, label);
+  if (rows.length < 1 || rows.length > 16) invalid(label, 'must contain 1 through 16 rows');
+  let sameCount = 0;
+  rows.forEach((row, index) => {
+    const rowLabel = `${label}[${index}]`;
+    const outcome = assertRecord(row, rowLabel).outcome;
+    assertEnum(outcome, ['same', 'different'], `${rowLabel}.outcome`);
+    const comparison = outcome === 'same'
+      ? assertExactRecord(row, ['failedApproachBasisIdentity', 'outcome', 'evidenceIdentities'], [], rowLabel)
+      : assertExactRecord(row, ['failedApproachBasisIdentity', 'outcome', 'changedDimensions', 'evidenceIdentities'], [], rowLabel);
+    assertHash(comparison.failedApproachBasisIdentity, `${rowLabel}.failedApproachBasisIdentity`);
+    if (outcome === 'different') validateChangedDimensionsV1(comparison.changedDimensions, `${rowLabel}.changedDimensions`);
+    else sameCount += 1;
+    validateV2HashSet(comparison.evidenceIdentities, `${rowLabel}.evidenceIdentities`, 1, 16);
+    if (index > 0 && compareUtf8(
+      /** @type {string} */ (/** @type {Record<string, unknown>} */ (rows[index - 1]).failedApproachBasisIdentity),
+      /** @type {string} */ (comparison.failedApproachBasisIdentity),
+    ) >= 0) invalid(label, 'must be sorted by failedApproachBasisIdentity and duplicate-free');
+  });
+  return { rows, sameCount };
+}
+
+/** @param {unknown} value @param {string} label */
+function validateMaterialDifferenceRowsV1(value, label) {
+  const rows = assertDenseDataArray(value, label);
+  if (rows.length < 1 || rows.length > 16) invalid(label, 'must contain 1 through 16 rows');
+  rows.forEach((row, index) => {
+    const rowLabel = `${label}[${index}]`;
+    const difference = assertExactRecord(
+      row,
+      ['failedApproachBasisIdentity', 'changedDimensions', 'evidenceIdentities'],
+      [],
+      rowLabel,
+    );
+    assertHash(difference.failedApproachBasisIdentity, `${rowLabel}.failedApproachBasisIdentity`);
+    validateChangedDimensionsV1(difference.changedDimensions, `${rowLabel}.changedDimensions`);
+    validateV2HashSet(difference.evidenceIdentities, `${rowLabel}.evidenceIdentities`, 1, 16);
+    if (index > 0 && compareUtf8(
+      /** @type {string} */ (/** @type {Record<string, unknown>} */ (rows[index - 1]).failedApproachBasisIdentity),
+      /** @type {string} */ (difference.failedApproachBasisIdentity),
+    ) >= 0) invalid(label, 'must be sorted by failedApproachBasisIdentity and duplicate-free');
+  });
+  return rows;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateAlternativeV2(value, label = 'AlternativeV2') {
+  const disposition = assertRecord(value, label).disposition;
+  assertEnum(disposition, V2_ALTERNATIVE_DISPOSITIONS, `${label}.disposition`);
+  const credible = disposition === 'credible-material';
+  const alternative = credible
+    ? assertExactRecord(value, ['version', 'alternativeIdentity', 'disposition', 'approachBasis', 'approachBasisIdentity', 'failedApproachSetIdentity', 'materialDifferences', 'discriminatingCheck', 'semanticAssessmentIdentity'], [], label)
+    : assertExactRecord(value, ['version', 'alternativeIdentity', 'disposition', 'approachBasis', 'approachBasisIdentity', 'failedApproachSetIdentity', 'comparisons', 'semanticAssessmentIdentity', 'reason'], [], label);
+  if (alternative.version !== 2) invalid(`${label}.version`, 'must be the literal safe integer 2');
+  assertHash(alternative.alternativeIdentity, `${label}.alternativeIdentity`);
+  validateApproachBasisV1(alternative.approachBasis, `${label}.approachBasis`);
+  assertHash(alternative.approachBasisIdentity, `${label}.approachBasisIdentity`);
+  if (alternative.approachBasisIdentity !== sha256(canonicalJson(alternative.approachBasis))) {
+    invalid(`${label}.approachBasisIdentity`, 'must equal the recomputed complete approach basis identity');
+  }
+  assertHash(alternative.failedApproachSetIdentity, `${label}.failedApproachSetIdentity`);
+  assertHash(alternative.semanticAssessmentIdentity, `${label}.semanticAssessmentIdentity`);
+  /** @type {Record<string, unknown>} */
+  let identityBody;
+  if (credible) {
+    const materialDifferences = validateMaterialDifferenceRowsV1(
+      alternative.materialDifferences,
+      `${label}.materialDifferences`,
+    );
+    const check = assertExactRecord(
+      alternative.discriminatingCheck,
+      ['identity', 'definitionIdentity', 'evidenceIdentities'],
+      [],
+      `${label}.discriminatingCheck`,
+    );
+    assertHash(check.identity, `${label}.discriminatingCheck.identity`);
+    assertHash(check.definitionIdentity, `${label}.discriminatingCheck.definitionIdentity`);
+    validateV2HashSet(check.evidenceIdentities, `${label}.discriminatingCheck.evidenceIdentities`, 1, 16);
+    if (check.identity !== sha256(canonicalJson({
+      definitionIdentity: check.definitionIdentity,
+      evidenceIdentities: check.evidenceIdentities,
+    }))) invalid(`${label}.discriminatingCheck.identity`, 'must equal the recomputed discriminating check identity');
+    identityBody = {
+      version: 2,
+      disposition,
+      approachBasisIdentity: alternative.approachBasisIdentity,
+      failedApproachSetIdentity: alternative.failedApproachSetIdentity,
+      materialDifferences,
+      discriminatingCheck: check,
+      semanticAssessmentIdentity: alternative.semanticAssessmentIdentity,
+    };
+  } else {
+    const comparisons = validateComparisonRowsV1(alternative.comparisons, `${label}.comparisons`);
+    if (disposition === 'not-materially-different' && comparisons.sameCount < 1) {
+      invalid(`${label}.comparisons`, 'not-materially-different requires at least one same comparison');
+    }
+    assertV2Identifier(alternative.reason, `${label}.reason`);
+    identityBody = {
+      version: 2,
+      disposition,
+      approachBasisIdentity: alternative.approachBasisIdentity,
+      failedApproachSetIdentity: alternative.failedApproachSetIdentity,
+      comparisons: comparisons.rows,
+      semanticAssessmentIdentity: alternative.semanticAssessmentIdentity,
+      reason: alternative.reason,
+    };
+  }
+  if (alternative.alternativeIdentity !== sha256(canonicalJson(identityBody))) {
+    invalid(`${label}.alternativeIdentity`, 'must equal the recomputed complete alternative identity');
+  }
+  return value;
+}
+
+/**
+ * Bind one bounded alternative set to the exact current complete failed-approach
+ * set: every row compares against every failed basis, and every credible row
+ * differs materially from every one of them.
+ * @param {unknown} value @param {Record<string, unknown>} failedApproachSet @param {string} label
+ */
+function requireCompleteFailedSetComparisonV2(value, failedApproachSet, label) {
+  const set = /** @type {Record<string, unknown>} */ (
+    validateFailedApproachSetV1(failedApproachSet, `${label} failedApproachSet`)
+  );
+  const bases = /** @type {string[]} */ (set.approachBasisIdentities);
+  const rows = /** @type {Record<string, unknown>[]} */ (assertDenseDataArray(value, label));
+  if (rows.length > 8) invalid(label, 'must contain at most 8 alternatives');
+  rows.forEach((row, index) => {
+    const rowLabel = `${label}[${index}]`;
+    validateAlternativeV2(row, rowLabel);
+    if (row.failedApproachSetIdentity !== set.setIdentity) {
+      invalid(`${rowLabel}.failedApproachSetIdentity`, 'must bind the current complete failed-approach set');
+    }
+    if (canonicalJson(/** @type {Record<string, unknown>} */ (row.approachBasis).target)
+      !== canonicalJson(set.target)) {
+      invalid(`${rowLabel}.approachBasis.target`, 'must match the governed target');
+    }
+    const compared = /** @type {Record<string, unknown>[]} */ (
+      row.disposition === 'credible-material' ? row.materialDifferences : row.comparisons
+    ).map((entry) => entry.failedApproachBasisIdentity);
+    if (canonicalJson(compared) !== canonicalJson(bases)) {
+      invalid(rowLabel, 'must carry exactly one comparison for every current failed-approach basis');
+    }
+    if (row.disposition === 'credible-material'
+      && bases.includes(/** @type {string} */ (row.approachBasisIdentity))) {
+      invalid(`${rowLabel}.approachBasisIdentity`, 'must differ materially from every current failed approach');
+    }
+    if (index > 0 && compareUtf8(
+      /** @type {string} */ (rows[index - 1].alternativeIdentity),
+      /** @type {string} */ (row.alternativeIdentity),
+    ) >= 0) invalid(label, 'must be sorted by alternativeIdentity and duplicate-free');
+  });
+  const credible = rows.filter((row) => row.disposition === 'credible-material');
+  if (new Set(credible.map((row) => row.approachBasisIdentity)).size !== credible.length) {
+    invalid(label, 'credible-material alternatives must all differ');
+  }
+  return { rows, credible, bases, set };
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateNoProgressProofV2(value, label = 'NoProgressProofV2') {
+  const proof = assertExactRecord(
+    value,
+    ['version', 'failedApproachSetIdentity', 'completeEvidenceHash', 'alternativeSetHash', 'credibleMaterialAlternativeIdentities', 'noNewDistinguishingEvidenceHash', 'assumptionSetHash', 'proofIdentity'],
+    [],
+    label,
+  );
+  if (proof.version !== 2) invalid(`${label}.version`, 'must be the literal safe integer 2');
+  for (const field of ['failedApproachSetIdentity', 'completeEvidenceHash', 'alternativeSetHash', 'noNewDistinguishingEvidenceHash', 'assumptionSetHash', 'proofIdentity']) {
+    assertHash(proof[field], `${label}.${field}`);
+  }
+  if (assertDenseDataArray(proof.credibleMaterialAlternativeIdentities, `${label}.credibleMaterialAlternativeIdentities`).length !== 0) {
+    invalid(`${label}.credibleMaterialAlternativeIdentities`, 'must be exactly the empty set');
+  }
+  if (proof.noNewDistinguishingEvidenceHash !== sha256(canonicalJson({
+    failedApproachSetIdentity: proof.failedApproachSetIdentity,
+    completeEvidenceHash: proof.completeEvidenceHash,
+    distinguishingEvidenceIdentities: [],
+  }))) invalid(`${label}.noNewDistinguishingEvidenceHash`, 'must equal the recomputed no-new-evidence hash');
+  const { proofIdentity, ...withoutIdentity } = proof;
+  if (proofIdentity !== sha256(canonicalJson(withoutIdentity))) {
+    invalid(`${label}.proofIdentity`, 'must equal the recomputed complete proof identity');
+  }
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateNoProgressVerificationV2(value, label = 'NoProgressVerificationV2') {
+  const verification = assertExactRecord(
+    value,
+    ['version', 'noProgressProofIdentity', 'failedApproachSetIdentity', 'preLearningEvidenceHash', 'postLearningEvidenceHash', 'expectedProjectionEventHashes', 'distinguishingEvidenceIdentities', 'noNewDistinguishingEvidenceHash', 'verificationIdentity'],
+    [],
+    label,
+  );
+  if (verification.version !== 2) invalid(`${label}.version`, 'must be the literal safe integer 2');
+  for (const field of ['noProgressProofIdentity', 'failedApproachSetIdentity', 'preLearningEvidenceHash', 'postLearningEvidenceHash', 'noNewDistinguishingEvidenceHash', 'verificationIdentity']) {
+    assertHash(verification[field], `${label}.${field}`);
+  }
+  const expected = assertDenseDataArray(verification.expectedProjectionEventHashes, `${label}.expectedProjectionEventHashes`);
+  if (expected.length < 1 || expected.length > 17) invalid(`${label}.expectedProjectionEventHashes`, 'must contain 1 through 17 rows');
+  expected.forEach((row, index) => assertHash(row, `${label}.expectedProjectionEventHashes[${index}]`));
+  if (assertDenseDataArray(verification.distinguishingEvidenceIdentities, `${label}.distinguishingEvidenceIdentities`).length !== 0) {
+    invalid(`${label}.distinguishingEvidenceIdentities`, 'must be exactly the empty set');
+  }
+  if (verification.noNewDistinguishingEvidenceHash !== sha256(canonicalJson({
+    noProgressProofIdentity: verification.noProgressProofIdentity,
+    failedApproachSetIdentity: verification.failedApproachSetIdentity,
+    preLearningEvidenceHash: verification.preLearningEvidenceHash,
+    postLearningEvidenceHash: verification.postLearningEvidenceHash,
+    expectedProjectionEventHashes: expected,
+    distinguishingEvidenceIdentities: [],
+  }))) invalid(`${label}.noNewDistinguishingEvidenceHash`, 'must equal the recomputed no-new-evidence hash');
+  const { verificationIdentity, ...withoutIdentity } = verification;
+  if (verificationIdentity !== sha256(canonicalJson(withoutIdentity))) {
+    invalid(`${label}.verificationIdentity`, 'must equal the recomputed complete verification identity');
+  }
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validatePostLearningInspectionBindingV1(value, label = 'PostLearningInspectionBindingV1') {
+  const binding = assertExactRecord(
+    value,
+    ['version', 'target', 'governanceIdentity', 'repeatIdentity', 'reviewIdentity', 'failedApproachSetIdentity', 'projectionRef', 'evidenceHash', 'branchIdentity', 'expectedProjectionEventHashes', 'postLearningInspectionIdentity'],
+    [],
+    label,
+  );
+  if (binding.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  validateAffectedTargetV2(binding.target, `${label}.target`);
+  for (const field of ['governanceIdentity', 'repeatIdentity', 'reviewIdentity', 'failedApproachSetIdentity', 'evidenceHash', 'branchIdentity', 'postLearningInspectionIdentity']) {
+    assertHash(binding[field], `${label}.${field}`);
+  }
+  validateProjectionRefV1(binding.projectionRef, `${label}.projectionRef`);
+  const expected = assertDenseDataArray(binding.expectedProjectionEventHashes, `${label}.expectedProjectionEventHashes`);
+  if (expected.length < 1 || expected.length > 17) invalid(`${label}.expectedProjectionEventHashes`, 'must contain 1 through 17 rows');
+  expected.forEach((row, index) => assertHash(row, `${label}.expectedProjectionEventHashes[${index}]`));
+  const { postLearningInspectionIdentity, ...withoutIdentity } = binding;
+  if (postLearningInspectionIdentity !== sha256(canonicalJson(withoutIdentity))) {
+    invalid(`${label}.postLearningInspectionIdentity`, 'must equal the recomputed complete binding identity');
+  }
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateProjectionRefV1(value, label = 'ProjectionRefV1') {
+  const ref = assertExactRecord(
+    value,
+    ['version', 'target', 'batchIdentity', 'eventHashes', 'currentRunProjectionIdentity', 'laneProjectionIdentity'],
+    [],
+    label,
+  );
+  if (ref.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  validateAffectedTargetV2(ref.target, `${label}.target`);
+  for (const field of ['batchIdentity', 'currentRunProjectionIdentity', 'laneProjectionIdentity']) {
+    assertHash(ref[field], `${label}.${field}`);
+  }
+  const hashes = assertDenseDataArray(ref.eventHashes, `${label}.eventHashes`);
+  if (hashes.length < 1 || hashes.length > 17) invalid(`${label}.eventHashes`, 'must contain 1 through 17 rows');
+  hashes.forEach((row, index) => assertHash(row, `${label}.eventHashes[${index}]`));
+  return value;
+}
+
+/** @param {unknown} input */
+export function buildLearningReviewEventV2(input) {
+  const args = assertExactRecord(
+    input,
+    ['governanceIdentity', 'target', 'trigger', 'failedApproachSetIdentity', 'preLearningEvidenceHash', 'assumptionSetHash', 'findings', 'alternatives', 'outcome'],
+    ['sequenceIdentity', 'selectedAlternativeIdentity', 'noProgressProof'],
+    'buildLearningReviewEventV2',
+  );
+  const body = {
+    governanceIdentity: args.governanceIdentity,
+    target: canonicalTarget(validateAffectedTargetV2(args.target, 'buildLearningReviewEventV2.target')),
+    ...(Object.hasOwn(args, 'sequenceIdentity') ? { sequenceIdentity: args.sequenceIdentity } : {}),
+    trigger: args.trigger,
+    failedApproachSetIdentity: args.failedApproachSetIdentity,
+    preLearningEvidenceHash: args.preLearningEvidenceHash,
+    assumptionSetHash: args.assumptionSetHash,
+    findings: args.findings,
+    alternatives: args.alternatives,
+    outcome: args.outcome,
+    ...(Object.hasOwn(args, 'selectedAlternativeIdentity')
+      ? { selectedAlternativeIdentity: args.selectedAlternativeIdentity }
+      : {}),
+    ...(Object.hasOwn(args, 'noProgressProof') ? { noProgressProof: args.noProgressProof } : {}),
+  };
+  const eventWithoutHash = {
+    type: 'learning-review',
+    version: 2,
+    reviewIdentity: sha256(canonicalJson(body)),
+    ...body,
+  };
+  const event = finalizeV2Event(eventWithoutHash, 'LearningReviewEventV2');
+  validateLearningReviewEventV2(event);
+  return event;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateLearningReviewEventV2(value, label = 'LearningReviewEventV2') {
+  const event = assertExactRecord(
+    value,
+    ['type', 'version', 'eventHash', 'reviewIdentity', 'governanceIdentity', 'target', 'trigger', 'failedApproachSetIdentity', 'preLearningEvidenceHash', 'assumptionSetHash', 'findings', 'alternatives', 'outcome'],
+    ['sequenceIdentity', 'selectedAlternativeIdentity', 'noProgressProof'],
+    label,
+  );
+  if (event.type !== 'learning-review') invalid(`${label}.type`, 'must be learning-review');
+  if (event.version !== 2) invalid(`${label}.version`, 'must be the literal safe integer 2');
+  const target = validateAffectedTargetV2(event.target, `${label}.target`);
+  validateRepeatRelationshipV1(event.trigger, `${label}.trigger`);
+  for (const field of ['eventHash', 'reviewIdentity', 'governanceIdentity', 'failedApproachSetIdentity', 'preLearningEvidenceHash', 'assumptionSetHash']) {
+    assertHash(event[field], `${label}.${field}`);
+  }
+  if (event.governanceIdentity !== sha256(canonicalJson({
+    version: 1,
+    target,
+    repeatIdentity: sha256(canonicalJson(event.trigger)),
+  }))) invalid(`${label}.governanceIdentity`, 'must bind the exact target and Repeat Relationship');
+  if (Object.hasOwn(event, 'sequenceIdentity')) assertHash(event.sequenceIdentity, `${label}.sequenceIdentity`);
+  const findings = /** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(event.findings, `${label}.findings`)
+  );
+  if (findings.length < 1 || findings.length > 16) invalid(`${label}.findings`, 'must contain 1 through 16 findings');
+  findings.forEach((finding, index) => {
+    validateLearningFindingV1(finding, `${label}.findings[${index}]`);
+    if (index > 0 && compareUtf8(
+      /** @type {string} */ (findings[index - 1].findingIdentity),
+      /** @type {string} */ (finding.findingIdentity),
+    ) >= 0) invalid(`${label}.findings`, 'must be sorted by findingIdentity and duplicate-free');
+  });
+  const alternatives = /** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(event.alternatives, `${label}.alternatives`)
+  );
+  if (alternatives.length > 8) invalid(`${label}.alternatives`, 'must contain at most 8 alternatives');
+  alternatives.forEach((alternative, index) => {
+    validateAlternativeV2(alternative, `${label}.alternatives[${index}]`);
+    if (alternative.failedApproachSetIdentity !== event.failedApproachSetIdentity) {
+      invalid(`${label}.alternatives[${index}].failedApproachSetIdentity`, 'must bind the reviewed failed-approach set');
+    }
+    if (index > 0 && compareUtf8(
+      /** @type {string} */ (alternatives[index - 1].alternativeIdentity),
+      /** @type {string} */ (alternative.alternativeIdentity),
+    ) >= 0) invalid(`${label}.alternatives`, 'must be sorted by alternativeIdentity and duplicate-free');
+  });
+  assertEnum(event.outcome, V2_LEARNING_OUTCOMES, `${label}.outcome`);
+  const credible = alternatives.filter((alternative) => alternative.disposition === 'credible-material');
+  if (event.outcome === 'selected-alternative') {
+    if (Object.hasOwn(event, 'noProgressProof')) invalid(label, 'selected-alternative forbids a no-progress proof');
+    assertHash(event.selectedAlternativeIdentity, `${label}.selectedAlternativeIdentity`);
+    if (credible.filter((alternative) => alternative.alternativeIdentity === event.selectedAlternativeIdentity).length !== 1) {
+      invalid(`${label}.selectedAlternativeIdentity`, 'must select exactly one credible-material alternative');
+    }
+  } else {
+    if (Object.hasOwn(event, 'selectedAlternativeIdentity')) invalid(label, 'no-progress forbids a selected alternative');
+    if (credible.length !== 0) invalid(`${label}.alternatives`, 'no-progress forbids credible-material alternatives');
+    const proof = /** @type {Record<string, unknown>} */ (
+      validateNoProgressProofV2(event.noProgressProof, `${label}.noProgressProof`)
+    );
+    if (proof.failedApproachSetIdentity !== event.failedApproachSetIdentity
+      || proof.assumptionSetHash !== event.assumptionSetHash
+      || proof.alternativeSetHash !== sha256(canonicalJson({
+        failedApproachSetIdentity: event.failedApproachSetIdentity,
+        alternatives,
+      }))) invalid(`${label}.noProgressProof`, 'must bind the complete reviewed failed set, alternatives, and assumptions');
+  }
+  const { eventHash, reviewIdentity, type, version, ...body } = event;
+  if (reviewIdentity !== sha256(canonicalJson(body))) {
+    invalid(`${label}.reviewIdentity`, 'must equal the recomputed complete review identity');
+  }
+  const { eventHash: hash, ...withoutHash } = event;
+  if (hash !== sha256(canonicalJson(withoutHash))) invalid(`${label}.eventHash`, 'must equal the recomputed event hash');
+  if (Buffer.byteLength(canonicalJson(event)) > MAX_EVENT_BYTES) invalid(label, `must serialize to at most ${MAX_EVENT_BYTES} UTF-8 bytes`);
+  return value;
+}
+
+// --- Canonical autonomous v2 event lines and dual-surface projection ---------
+
+/** @param {Record<string, unknown>} event */
+function v2EventLineText(event) {
+  return `${LANE_EVENT_PREFIX}${canonicalJson(event)}`;
+}
+
+/** @param {Record<string, unknown>} event @param {string} label */
+function v2ProjectionPlanItem(event, label) {
+  const laneEventLine = v2EventLineText(event);
+  const lineBytes = Buffer.from(laneEventLine, 'utf8');
+  if (lineBytes.byteLength > MAX_EVENT_LINE_TEXT_BYTES) {
+    invalid(label, `event line must serialize to at most ${MAX_EVENT_LINE_TEXT_BYTES} UTF-8 bytes`);
+  }
+  const recordBytes = Buffer.concat([lineBytes, Buffer.from([0x0a])]);
+  if (recordBytes.byteLength > MAX_EVENT_LINE_RECORD_BYTES) {
+    invalid(label, `event line record must serialize to at most ${MAX_EVENT_LINE_RECORD_BYTES} bytes`);
+  }
+  return {
+    eventHash: event.eventHash,
+    currentRunRecord: buildProjectionRecord(event),
+    currentRunRecordHash: sha256(canonicalJson({ event })),
+    laneEventLine,
+    laneEventLineTerminator: 'LF',
+    laneEventLineHash: sha256(lineBytes),
+    laneEventRecordHash: sha256(recordBytes),
+  };
+}
+
+/** Index every fresh dual-surface v2 event by hash, failing closed on conflict. @param {Record<string, unknown>} inspection */
+function dualSurfaceEventIndexV2(inspection) {
+  /** @type {{byHash:Map<string,Record<string, unknown>>,counts:Map<string,number>}[]} */
+  const surfaces = [];
+  for (const [events, surface] of [
+    [currentRunEventsV2(inspection), 'current-run'],
+    [laneHistoryEventsV2(inspection), 'lane-history'],
+  ]) {
+    /** @type {Map<string,Record<string, unknown>>} */
+    const byHash = new Map();
+    /** @type {Map<string,number>} */
+    const counts = new Map();
+    for (const event of /** @type {Record<string, unknown>[]} */ (events)) {
+      const hash = /** @type {string} */ (event.eventHash);
+      const json = canonicalJson(event);
+      if (byHash.has(hash)) {
+        if (canonicalJson(byHash.get(hash)) !== json) {
+          invalid(/** @type {string} */ (surface), 'contains conflicting bytes for one event hash');
+        }
+        counts.set(hash, /** @type {number} */ (counts.get(hash)) + 1);
+        continue;
+      }
+      byHash.set(hash, event);
+      counts.set(hash, 1);
+    }
+    surfaces.push({ byHash, counts });
+  }
+  return { currentRun: surfaces[0], lane: surfaces[1] };
+}
+
+/** @param {string} surface @param {Record<string, unknown>} target @param {string} batchIdentity @param {string[]} recordHashes */
+function v2SurfaceProjectionIdentity(surface, target, batchIdentity, recordHashes) {
+  return sha256(canonicalJson({ surface, target: canonicalTarget(target), batchIdentity, recordHashes }));
+}
+
+/**
+ * Require every exact batch event exactly once and byte-equivalent on both
+ * authoritative surfaces, then derive the exact ProjectionRefV1.
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>} batch
+ */
+function verifyBatchProjectionV2(inspection, batch) {
+  const index = dualSurfaceEventIndexV2(inspection);
+  const events = /** @type {Record<string, unknown>[]} */ (batch.events);
+  /** @type {string[]} */
+  const currentRecordHashes = [];
+  /** @type {string[]} */
+  const laneRecordHashes = [];
+  for (const event of events) {
+    const hash = /** @type {string} */ (event.eventHash);
+    const current = index.currentRun.byHash.get(hash);
+    const lane = index.lane.byHash.get(hash);
+    if (!current && !lane) return { verified: false, reason: 'projection-missing-both' };
+    if (!current) return { verified: false, reason: 'projection-missing-current-run' };
+    if (!lane) return { verified: false, reason: 'projection-missing-lane-history' };
+    if (index.currentRun.counts.get(hash) !== 1 || index.lane.counts.get(hash) !== 1) {
+      return { verified: false, reason: 'projection-conflict' };
+    }
+    const expected = canonicalJson(event);
+    if (canonicalJson(current) !== expected || canonicalJson(lane) !== expected) {
+      return { verified: false, reason: 'projection-conflict' };
+    }
+    const item = v2ProjectionPlanItem(event, 'projection verification');
+    currentRecordHashes.push(/** @type {string} */ (item.currentRunRecordHash));
+    laneRecordHashes.push(/** @type {string} */ (item.laneEventRecordHash));
+  }
+  const target = /** @type {Record<string, unknown>} */ (batch.target);
+  const batchIdentity = /** @type {string} */ (batch.batchIdentity);
+  const projectionRef = {
+    version: 1,
+    target: canonicalTarget(target),
+    batchIdentity,
+    eventHashes: events.map((event) => event.eventHash),
+    currentRunProjectionIdentity: v2SurfaceProjectionIdentity('current-run', target, batchIdentity, currentRecordHashes),
+    laneProjectionIdentity: v2SurfaceProjectionIdentity('lane-history', target, batchIdentity, laneRecordHashes),
+  };
+  validateProjectionRefV1(projectionRef);
+  return { verified: true, reason: 'projection-verified', projectionRef, index };
+}
+
+// --- Fresh gates shared by the public learning and transition routes ---------
+
+/** @param {Record<string, unknown>} inspection @param {Record<string, unknown>} target @param {string} label */
+function requireResolvedOwnerMappingV2(inspection, target, label) {
+  const items = /** @type {Record<string, unknown>[]} */ (inspection.items);
+  for (const source of ['owner-log', 'lane-history']) {
+    if (items.filter((item) => item.source === source && item.status === 'present').length !== 1) {
+      invalid(label, `requires exactly one freshly resolved ${source} authority`);
+    }
+  }
+  if (targetKey(inspection.target) !== targetKey(target)) {
+    invalid(label, 'must resolve the exact affected-target mapping');
+  }
+}
+
+/** Recompute the trigger and complete failed set from fresh dual-retained evidence. @param {Record<string, unknown>} inspection @param {Record<string, unknown>} governance */
+function reboundGovernanceEvidenceV2(inspection, governance) {
+  let retained;
+  try {
+    retained = dualRetainedOccurrenceEventsV2(inspection);
+    validateRetainedOccurrenceAuthorityV2(retained.retained, trustedEnvelopeIndexFromInspectionV2(inspection));
+  } catch {
+    return { reason: 'occurrence-retention-incomplete' };
+  }
+  const repeat = deriveEarliestRepeatRelationshipV1(retained.retained);
+  if (!repeat || canonicalJson(repeat) !== canonicalJson(governance.trigger)) {
+    return { reason: 'repeat-not-established' };
+  }
+  let failedApproachSet;
+  try {
+    failedApproachSet = deriveFailedApproachSetV1(repeat, retained.retained);
+  } catch (error) {
+    if (error instanceof TypeError
+      && error.message === 'FailedApproachSetV1 exceeds the complete failed-approach capacity') {
+      return { reason: 'learning-governance-capacity' };
+    }
+    throw error;
+  }
+  if (canonicalJson(failedApproachSet) !== canonicalJson(governance.failedApproachSet)) {
+    return { reason: 'failed-approach-set-mismatch' };
+  }
+  return { repeat, failedApproachSet, retained: retained.retained };
+}
+
+/** @param {Record<string, unknown>} set @param {Record<string, unknown>[]} retained */
+function noProgressCompleteEvidenceHashV2(set, retained) {
+  return sha256(canonicalJson({
+    version: 2,
+    target: set.target,
+    failedApproachSetIdentity: set.setIdentity,
+    retainedOccurrenceEventHashes: [...new Set(retained.map((event) => /** @type {string} */ (event.eventHash)))]
+      .sort(compareUtf8),
+  }));
+}
+
+/** Resolve the exact autonomous v2 governance case, or explain why learning cannot proceed. @param {Record<string, unknown>} state */
+function activeGovernanceCaseV2(state) {
+  if (!Object.hasOwn(state, 'learningGovernance')) return null;
+  const governance = /** @type {Record<string, unknown>} */ (state.learningGovernance);
+  if (!Object.hasOwn(governance, 'governanceIdentity')) return null;
+  return /** @type {Record<string, unknown>} */ (validateLearningGovernanceV1(governance));
+}
+
+/** @param {Record<string, unknown>} state @param {Record<string, unknown>} governance @param {Record<string, unknown>} updates */
+function governanceSuccessorStateV2(state, governance, updates) {
+  const next = carryOptionalRunState(state, {
+    policy: { .../** @type {Record<string, unknown>} */ (state.policy) },
+    overallUsed: state.overallUsed,
+    recoveryUsed: /** @type {Record<string, unknown>[]} */ (state.recoveryUsed).map((row) => ({ ...row })),
+    pending: /** @type {Record<string, unknown>[]} */ (state.pending).map(copyPendingEntry),
+    completed: /** @type {Record<string, unknown>[]} */ (state.completed).map((entry) => ({ ...entry })),
+  });
+  const successor = { ...JSON.parse(canonicalJson(governance)), ...updates };
+  for (const [field, value] of Object.entries(updates)) if (value === undefined) delete successor[field];
+  validateLearningGovernanceV1(successor);
+  next.learningGovernance = successor;
+  validateRunState(next);
+  return next;
+}
+
+/**
+ * Complete one bounded learning review from fresh evidence and return the exact
+ * `learning-result` batch plus its hash-only successor commitment.
+ * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} reviewValue
+ * @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function learnGovernanceV2(stateValue, inputValue, reviewValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('learnGovernanceV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} learning */
+  const respond = (learning) => ({ inspection, learning });
+  const governance = activeGovernanceCaseV2(state);
+  if (!governance) return respond({ reviewed: false, reason: 'learning-evidence-incomplete', state });
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0
+    || targetKey(inspection.target) !== targetKey(governance.target)) {
+    return respond({ reviewed: false, reason: 'learning-evidence-incomplete', state });
+  }
+  if (governance.phase !== 'required') return respond({ reviewed: false, reason: 'learning-phase-mismatch', state });
+  if (Object.hasOwn(governance, 'projectionCommitment')) {
+    return respond({ reviewed: false, reason: 'governance-unresolved', state });
+  }
+  const rebound = reboundGovernanceEvidenceV2(inspection, governance);
+  if (rebound.reason) return respond({ reviewed: false, reason: rebound.reason, state });
+  const failedApproachSet = /** @type {Record<string, unknown>} */ (rebound.failedApproachSet);
+  const review = assertExactRecord(
+    reviewValue,
+    ['version', 'target', 'assumptionIdentities', 'findings', 'alternatives', 'outcome'],
+    ['sequenceIdentity', 'selectedAlternativeIdentity'],
+    'learning review v2',
+  );
+  if (review.version !== 2) invalid('learning review v2.version', 'must be the literal safe integer 2');
+  const target = canonicalTarget(validateAffectedTargetV2(review.target, 'learning review v2.target'));
+  if (targetKey(target) !== targetKey(governance.target)) {
+    invalid('learning review v2.target', 'must be the governed affected target');
+  }
+  const assumptionIdentities = validateV2HashSet(review.assumptionIdentities, 'learning review v2.assumptionIdentities', 0, 16);
+  assertEnum(review.outcome, V2_LEARNING_OUTCOMES, 'learning review v2.outcome');
+  const findings = /** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(review.findings, 'learning review v2.findings')
+  );
+  if (findings.length < 1 || findings.length > 16) invalid('learning review v2.findings', 'must contain 1 through 16 findings');
+  findings.forEach((finding, index) => validateLearningFindingV1(finding, `learning review v2.findings[${index}]`));
+  const alternatives = requireCompleteFailedSetComparisonV2(
+    review.alternatives,
+    failedApproachSet,
+    'learning review v2.alternatives',
+  );
+  // An optional already-valid uniquely mapped objective may carry evidence; the
+  // runtime never creates, repairs, or infers one.
+  let sequenceIdentity;
+  if (Object.hasOwn(review, 'sequenceIdentity')) {
+    assertHash(review.sequenceIdentity, 'learning review v2.sequenceIdentity');
+    const sequences = Object.hasOwn(state, 'evaluationSequences')
+      ? /** @type {Record<string, unknown>[]} */ (state.evaluationSequences)
+      : [];
+    const matches = sequences.filter((row) => row.sequenceIdentity === review.sequenceIdentity
+      && targetKey(row.target) === targetKey(target));
+    if (matches.length !== 1) {
+      invalid('learning review v2.sequenceIdentity', 'must reference one already valid uniquely matched objective');
+    }
+    sequenceIdentity = review.sequenceIdentity;
+  }
+  const assumptionSetHash = sha256(canonicalJson(assumptionIdentities));
+  /** @type {Record<string, unknown>} */
+  const branch = {};
+  if (review.outcome === 'selected-alternative') {
+    if (!Object.hasOwn(review, 'selectedAlternativeIdentity')) {
+      invalid('learning review v2.selectedAlternativeIdentity', 'is required for a selected alternative');
+    }
+    assertHash(review.selectedAlternativeIdentity, 'learning review v2.selectedAlternativeIdentity');
+    if (alternatives.credible.length === 0) return respond({ reviewed: false, reason: 'alternative-invalid', state });
+    if (alternatives.credible.filter((row) => row.alternativeIdentity === review.selectedAlternativeIdentity).length !== 1) {
+      return respond({ reviewed: false, reason: 'alternative-selection-mismatch', state });
+    }
+    branch.selectedAlternativeIdentity = review.selectedAlternativeIdentity;
+  } else {
+    if (Object.hasOwn(review, 'selectedAlternativeIdentity')) {
+      invalid('learning review v2.selectedAlternativeIdentity', 'is forbidden for no-progress');
+    }
+    if (alternatives.credible.length !== 0) return respond({ reviewed: false, reason: 'alternative-invalid', state });
+    const completeEvidenceHash = noProgressCompleteEvidenceHashV2(
+      failedApproachSet,
+      /** @type {Record<string, unknown>[]} */ (rebound.retained),
+    );
+    const proofWithoutIdentity = {
+      version: 2,
+      failedApproachSetIdentity: failedApproachSet.setIdentity,
+      completeEvidenceHash,
+      alternativeSetHash: sha256(canonicalJson({
+        failedApproachSetIdentity: failedApproachSet.setIdentity,
+        alternatives: alternatives.rows,
+      })),
+      credibleMaterialAlternativeIdentities: [],
+      noNewDistinguishingEvidenceHash: sha256(canonicalJson({
+        failedApproachSetIdentity: failedApproachSet.setIdentity,
+        completeEvidenceHash,
+        distinguishingEvidenceIdentities: [],
+      })),
+      assumptionSetHash,
+    };
+    branch.noProgressProof = {
+      ...proofWithoutIdentity,
+      proofIdentity: sha256(canonicalJson(proofWithoutIdentity)),
+    };
+    validateNoProgressProofV2(branch.noProgressProof);
+  }
+  const reviewEvent = buildLearningReviewEventV2({
+    governanceIdentity: governance.governanceIdentity,
+    target,
+    ...(sequenceIdentity ? { sequenceIdentity } : {}),
+    trigger: rebound.repeat,
+    failedApproachSetIdentity: failedApproachSet.setIdentity,
+    preLearningEvidenceHash: inspection.evidenceHash,
+    assumptionSetHash,
+    findings: JSON.parse(canonicalJson(findings)),
+    alternatives: JSON.parse(canonicalJson(alternatives.rows)),
+    outcome: review.outcome,
+    ...branch,
+  });
+  const reviewedCore = {
+    ...JSON.parse(canonicalJson(governance)),
+    phase: 'reviewed',
+    reviewIdentity: reviewEvent.reviewIdentity,
+  };
+  const governanceEvent = buildGovernanceEventV1(reviewedCore);
+  const projectionBatch = buildProjectionBatchV1(
+    'learning-result',
+    target,
+    [reviewEvent, governanceEvent],
+    'learnGovernanceV2 learning result',
+  );
+  const nextState = governanceSuccessorStateV2(state, governance, {
+    phase: 'reviewed',
+    reviewIdentity: reviewEvent.reviewIdentity,
+    projectionCommitment: projectionCommitmentOfBatchV1(projectionBatch),
+  });
+  return {
+    inspection,
+    learning: {
+      reviewed: true,
+      reason: 'learning-reviewed',
+      state: nextState,
+      reviewEvent,
+      governanceEvent,
+      projectionBatch,
+    },
+  };
+}
+/** Resolve the exact state commitment that one supplied batch purpose must match. @param {Record<string, unknown>} state @param {unknown} purpose */
+function activeProjectionCommitmentV2(state, purpose) {
+  if (purpose === 'occurrence-retention') {
+    if (!Object.hasOwn(state, 'pendingCompletion')) return null;
+    if (/** @type {Record<string, unknown>} */ (state.pendingCompletion).version !== 2) return null;
+    const pending = /** @type {Record<string, unknown>} */ (
+      validatePendingCompletionRetentionV2(state.pendingCompletion)
+    );
+    return { commitment: pending.retention, target: pending.target, governance: null };
+  }
+  const governance = activeGovernanceCaseV2(state);
+  if (!governance || !Object.hasOwn(governance, 'projectionCommitment')) return null;
+  const commitment = /** @type {Record<string, unknown>} */ (governance.projectionCommitment);
+  if (commitment.purpose !== purpose) return null;
+  return { commitment, target: governance.target, governance };
+}
+
+/**
+ * Prepare one exact projection without advancing state. When the caller also
+ * supplies the fresh lane binding, every item carries its complete lane
+ * mutation, whole-object mutation identity, and `ProjectionPermitV1`, and
+ * `planIdentity` is recomputed over those complete items.
+ * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} batchValue
+ * @param {unknown} [dependencies] @param {boolean} [transport] @param {Record<string, unknown>} [laneBinding]
+ */
+export function prepareProjectionV2(stateValue, inputValue, batchValue, dependencies, transport = false, laneBinding) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('prepareProjectionV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0) {
+    return { inspection, transition: { prepared: false, reason: 'projection-stale', state } };
+  }
+  const active = activeProjectionCommitmentV2(state, assertRecord(batchValue, 'projectionBatch').purpose);
+  if (!active) return { inspection, transition: { prepared: false, reason: 'projection-batch-mismatch', state } };
+  const batch = requireExactProjectionBatchV1(batchValue, active.target, active.commitment, 'projectionBatch');
+  requireResolvedOwnerMappingV2(inspection, active.target, 'prepareProjectionV2');
+  if (active.governance) {
+    // A stored governance record is never a derivation input on its own.
+    const rebound = reboundGovernanceEvidenceV2(inspection, active.governance);
+    if (rebound.reason) return { inspection, transition: { prepared: false, reason: rebound.reason, state } };
+  }
+  const target = canonicalTarget(active.target);
+  let bound = null;
+  if (laneBinding) {
+    try {
+      const mapping = validateTargetMappingV1(laneBinding.targetMapping, target, 'prepare-projection targetMapping');
+      const prestate = validateLanePrestateV1(laneBinding.lanePrestate, target, mapping.mapping, 'prepare-projection lanePrestate');
+      bound = {
+        ...mapping,
+        ...prestate,
+        operationTime: assertV2CanonicalUtcTimestamp(laneBinding.operationTime, 'prepare-projection operationTime'),
+      };
+    } catch {
+      return { inspection, transition: { prepared: false, reason: 'target-mapping-missing', state } };
+    }
+    if (!lanePrestateMatchesFreshEvidenceV2(inspection, target, bound.prestate)) {
+      return { inspection, transition: { prepared: false, reason: 'lane-prestate-mismatch', state } };
+    }
+  }
+  const items = /** @type {Record<string, unknown>[]} */ (batch.events)
+    .map((event, index) => {
+      const item = v2ProjectionPlanItem(event, `projectionBatch.events[${index}]`);
+      if (!bound) return item;
+      const mutation = v2ProjectionMutationV1(target, bound, item);
+      const derived = validateLaneMutationV1(mutation, target, `projectionBatch.events[${index}] mutation`);
+      const projectionPermit = v2PermitWithHash({
+        version: 1,
+        kind: 'lane-projection',
+        origin: 'dude-work',
+        lane: /** @type {string} */ (target.lane),
+        target,
+        subjectRunStateHash: v2RunStateHash(state),
+        batchIdentity: batch.batchIdentity,
+        eventHash: item.eventHash,
+        targetMappingHash: bound.targetMappingHash,
+        lanePrestateHash: bound.lanePrestateHash,
+        mutationIdentity: derived.mutationIdentity,
+      });
+      validateProjectionPermitV1(projectionPermit);
+      return { ...item, mutation, mutationIdentity: derived.mutationIdentity, projectionPermit };
+    });
+  const planWithoutIdentity = {
+    version: 1,
+    target,
+    batchIdentity: batch.batchIdentity,
+    items,
+  };
+  return {
+    inspection,
+    transition: {
+      prepared: true,
+      reason: 'projection-prepared',
+      state,
+      plan: { ...planWithoutIdentity, planIdentity: sha256(canonicalJson(planWithoutIdentity)) },
+    },
+  };
+}
+
+/** Derive one exact same-state projection mutation for a bound plan item. @param {Record<string, unknown>} target @param {Record<string, unknown>} bound @param {Record<string, unknown>} item */
+function v2ProjectionMutationV1(target, bound, item) {
+  const lightweight = target.lane === 'lightweight';
+  const prestate = /** @type {Record<string, unknown>} */ (bound.prestate);
+  const currentState = lightweight ? prestate.glyph : prestate.status;
+  const blockerText = lightweight ? prestate.blockedBy : prestate.blocker;
+  return {
+    version: 1,
+    lane: target.lane,
+    kind: 'append-event',
+    reason: 'event-projection',
+    target,
+    ...(lightweight
+      ? { fromGlyph: currentState, toGlyph: currentState }
+      : { fromStatus: currentState, toStatus: currentState }),
+    blocker: { kind: 'unchanged', before: blockerText, after: blockerText },
+    eventLines: {
+      kind: 'append-exact',
+      lines: [{ eventHash: item.eventHash, exactLine: item.laneEventLine, terminator: 'LF' }],
+      appendIfAbsent: true,
+    },
+    ownerLog: { kind: 'none' },
+    ...(lightweight ? { snapshotUpdatedAt: bound.operationTime } : {}),
+  };
+}
+
+/**
+ * Verify one exact projection freshly on both authoritative surfaces and clear
+ * only the commitment it satisfies.
+ * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} batchValue
+ * @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function verifyProjectionV2(stateValue, inputValue, batchValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('verifyProjectionV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0) {
+    return { inspection, transition: { verified: false, reason: 'projection-stale', state } };
+  }
+  const active = activeProjectionCommitmentV2(state, assertRecord(batchValue, 'projectionBatch').purpose);
+  if (!active) return { inspection, transition: { verified: false, reason: 'projection-batch-mismatch', state } };
+  const batch = requireExactProjectionBatchV1(batchValue, active.target, active.commitment, 'projectionBatch');
+  requireResolvedOwnerMappingV2(inspection, active.target, 'verifyProjectionV2');
+  if (active.governance) {
+    // A stored governance record is never a derivation input on its own.
+    const rebound = reboundGovernanceEvidenceV2(inspection, active.governance);
+    if (rebound.reason) return { inspection, transition: { verified: false, reason: rebound.reason, state } };
+  }
+  let outcome;
+  try {
+    outcome = verifyBatchProjectionV2(inspection, batch);
+  } catch {
+    return { inspection, transition: { verified: false, reason: 'projection-conflict', state } };
+  }
+  if (!outcome.verified) {
+    return { inspection, transition: { verified: false, reason: outcome.reason, state } };
+  }
+  // Occurrence admission stays owned by `complete.finalize`.
+  if (!active.governance) {
+    return { inspection, transition: { verified: true, reason: 'projection-verified', state, projectionRef: outcome.projectionRef } };
+  }
+  const governance = active.governance;
+  const nextState = governanceSuccessorStateV2(state, governance, {
+    phase: governance.phase === 'reviewed' ? 'projected' : governance.phase,
+    projectionCommitment: undefined,
+  });
+  return {
+    inspection,
+    transition: {
+      verified: true,
+      reason: 'projection-verified',
+      state: nextState,
+      projectionRef: outcome.projectionRef,
+    },
+  };
+}
+
+/**
+ * Rebind the dual-retained learning result from the fresh surfaces so no stored
+ * hash alone can carry a branch decision.
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>} governance
+ */
+function retainedLearningResultV2(inspection, governance) {
+  let outcome;
+  try {
+    const index = dualSurfaceEventIndexV2(inspection);
+    const reviewEvents = [...index.currentRun.byHash.values()].filter((event) => (
+      event.type === 'learning-review'
+        && event.reviewIdentity === governance.reviewIdentity
+        && event.governanceIdentity === governance.governanceIdentity
+    ));
+    const governanceEvents = [...index.currentRun.byHash.values()].filter((event) => (
+      event.type === 'learning-governance'
+        && event.governanceIdentity === governance.governanceIdentity
+        && event.phase === 'reviewed'
+        && event.reviewIdentity === governance.reviewIdentity
+    ));
+    if (reviewEvents.length !== 1 || governanceEvents.length !== 1) {
+      return { reason: reviewEvents.length === 0 || governanceEvents.length === 0
+        ? 'projection-missing-current-run'
+        : 'projection-conflict' };
+    }
+    const batch = buildProjectionBatchV1(
+      'learning-result',
+      /** @type {Record<string, unknown>} */ (governance.target),
+      [reviewEvents[0], governanceEvents[0]],
+      'retained learning result',
+    );
+    outcome = verifyBatchProjectionV2(inspection, batch);
+    if (!outcome.verified) return { reason: outcome.reason };
+    return { reviewEvent: reviewEvents[0], batch, projectionRef: outcome.projectionRef };
+  } catch {
+    return { reason: 'projection-conflict' };
+  }
+}
+
+/**
+ * Bind one fresh post-learning Inspection to the selected alternative and its
+ * discriminating check.
+ * @param {unknown} stateValue @param {unknown} inputValue
+ * @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function bindPostLearningInspectionV2(stateValue, inputValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('bindPostLearningInspectionV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} transition */
+  const respond = (transition) => ({ inspection, transition });
+  const governance = activeGovernanceCaseV2(state);
+  if (!governance) return respond({ bound: false, reason: 'learning-evidence-incomplete', state });
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0
+    || targetKey(inspection.target) !== targetKey(governance.target)) {
+    return respond({ bound: false, reason: 'inspection-stale', state });
+  }
+  if (governance.phase !== 'projected') return respond({ bound: false, reason: 'learning-phase-mismatch', state });
+  const rebound = reboundGovernanceEvidenceV2(inspection, governance);
+  if (rebound.reason) return respond({ bound: false, reason: rebound.reason, state });
+  const retained = retainedLearningResultV2(inspection, governance);
+  if (retained.reason) return respond({ bound: false, reason: retained.reason, state });
+  const reviewEvent = /** @type {Record<string, unknown>} */ (retained.reviewEvent);
+  if (reviewEvent.outcome !== 'selected-alternative') {
+    return respond({ bound: false, reason: 'inspection-branch-mismatch', state });
+  }
+  let alternatives;
+  try {
+    alternatives = requireCompleteFailedSetComparisonV2(
+      reviewEvent.alternatives,
+      /** @type {Record<string, unknown>} */ (rebound.failedApproachSet),
+      'retained learning review alternatives',
+    );
+  } catch {
+    return respond({ bound: false, reason: 'failed-approach-set-mismatch', state });
+  }
+  const selected = alternatives.credible
+    .filter((row) => row.alternativeIdentity === reviewEvent.selectedAlternativeIdentity);
+  if (selected.length !== 1) return respond({ bound: false, reason: 'alternative-selection-mismatch', state });
+  const failedApproachSet = /** @type {Record<string, unknown>} */ (rebound.failedApproachSet);
+  const discriminatingCheckIdentity = /** @type {Record<string, unknown>} */ (
+    selected[0].discriminatingCheck
+  ).identity;
+  const bindingWithoutIdentity = {
+    version: 1,
+    target: canonicalTarget(/** @type {Record<string, unknown>} */ (governance.target)),
+    governanceIdentity: governance.governanceIdentity,
+    repeatIdentity: sha256(canonicalJson(governance.trigger)),
+    reviewIdentity: governance.reviewIdentity,
+    failedApproachSetIdentity: failedApproachSet.setIdentity,
+    projectionRef: retained.projectionRef,
+    evidenceHash: inspection.evidenceHash,
+    branchIdentity: sha256(canonicalJson({
+      selectedAlternativeIdentity: selected[0].alternativeIdentity,
+      discriminatingCheckIdentity,
+      failedApproachSetIdentity: failedApproachSet.setIdentity,
+    })),
+    expectedProjectionEventHashes: /** @type {Record<string, unknown>} */ (retained.projectionRef).eventHashes,
+  };
+  const binding = {
+    ...bindingWithoutIdentity,
+    postLearningInspectionIdentity: sha256(canonicalJson(bindingWithoutIdentity)),
+  };
+  validatePostLearningInspectionBindingV1(binding);
+  const nextState = governanceSuccessorStateV2(state, governance, {
+    phase: 'alternative-inspected',
+    selectedAlternativeIdentity: selected[0].alternativeIdentity,
+    discriminatingCheckIdentity,
+    postLearningInspectionIdentity: binding.postLearningInspectionIdentity,
+  });
+  return respond({
+    bound: true,
+    reason: 'post-learning-inspection-bound',
+    state: nextState,
+    binding,
+  });
+}
+
+/**
+ * Prove no new distinguishing evidence against the complete projected
+ * no-alternative result before any lane no-progress disposition.
+ * @param {unknown} stateValue @param {unknown} inputValue
+ * @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function verifyNoProgressV2(stateValue, inputValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('verifyNoProgressV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} transition */
+  const respond = (transition) => ({ inspection, transition });
+  const governance = activeGovernanceCaseV2(state);
+  if (!governance) return respond({ verified: false, reason: 'learning-evidence-incomplete', state });
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0
+    || targetKey(inspection.target) !== targetKey(governance.target)) {
+    return respond({ verified: false, reason: 'inspection-stale', state });
+  }
+  if (governance.phase !== 'projected') return respond({ verified: false, reason: 'learning-phase-mismatch', state });
+  const rebound = reboundGovernanceEvidenceV2(inspection, governance);
+  if (rebound.reason) return respond({ verified: false, reason: rebound.reason, state });
+  const retained = retainedLearningResultV2(inspection, governance);
+  if (retained.reason) return respond({ verified: false, reason: retained.reason, state });
+  const reviewEvent = /** @type {Record<string, unknown>} */ (retained.reviewEvent);
+  if (reviewEvent.outcome !== 'no-progress') {
+    return respond({ verified: false, reason: 'inspection-branch-mismatch', state });
+  }
+  const failedApproachSet = /** @type {Record<string, unknown>} */ (rebound.failedApproachSet);
+  try {
+    requireCompleteFailedSetComparisonV2(
+      reviewEvent.alternatives,
+      failedApproachSet,
+      'retained learning review alternatives',
+    );
+  } catch {
+    return respond({ verified: false, reason: 'failed-approach-set-mismatch', state });
+  }
+  const proof = /** @type {Record<string, unknown>} */ (reviewEvent.noProgressProof);
+  if (proof.failedApproachSetIdentity !== failedApproachSet.setIdentity
+    || proof.completeEvidenceHash !== noProgressCompleteEvidenceHashV2(
+      failedApproachSet,
+      /** @type {Record<string, unknown>[]} */ (rebound.retained),
+    )) return respond({ verified: false, reason: 'new-distinguishing-evidence', state });
+  const verificationWithoutIdentity = {
+    version: 2,
+    noProgressProofIdentity: proof.proofIdentity,
+    failedApproachSetIdentity: failedApproachSet.setIdentity,
+    preLearningEvidenceHash: reviewEvent.preLearningEvidenceHash,
+    postLearningEvidenceHash: inspection.evidenceHash,
+    expectedProjectionEventHashes: /** @type {Record<string, unknown>} */ (retained.projectionRef).eventHashes,
+    distinguishingEvidenceIdentities: [],
+    noNewDistinguishingEvidenceHash: sha256(canonicalJson({
+      noProgressProofIdentity: proof.proofIdentity,
+      failedApproachSetIdentity: failedApproachSet.setIdentity,
+      preLearningEvidenceHash: reviewEvent.preLearningEvidenceHash,
+      postLearningEvidenceHash: inspection.evidenceHash,
+      expectedProjectionEventHashes: /** @type {Record<string, unknown>} */ (retained.projectionRef).eventHashes,
+      distinguishingEvidenceIdentities: [],
+    })),
+  };
+  const verification = {
+    ...verificationWithoutIdentity,
+    verificationIdentity: sha256(canonicalJson(verificationWithoutIdentity)),
+  };
+  validateNoProgressVerificationV2(verification);
+  const nextState = governanceSuccessorStateV2(state, governance, {
+    phase: 'no-progress-verified',
+    postLearningInspectionIdentity: verification.verificationIdentity,
+  });
+  return respond({
+    verified: true,
+    reason: 'no-progress-verified',
+    state: nextState,
+    verification,
+  });
+}
+
+// === Feature 009 (T004): scoped halts, re-derivation, scheduling, and audit ==
+// Halt scope stays authoritative and closed: a target-scoped stop restricts only
+// its target while a run-wide stop ends the invocation, and missing or
+// conflicting scope is run-wide ambiguity. Unchanged suspension reuses Feature
+// 005's exact sequential decision through `mayScheduleAfterStop`; nothing here
+// adds a scheduler, starts another target, or authorizes concurrency. Immediate
+// Halt End stays an ephemeral outcome with no controlled-end permit, mutation,
+// record, or receipt, and `AuditSummaryV2` reads only the byte-equivalent
+// dual-surface event intersection.
+
+const V2_RUN_HALT_KINDS = Object.freeze([
+  'security', 'safety', 'authority', 'credential', 'destructive-confirmation',
+  'spending', 'external-authorization', 'lane-ambiguity', 'ownership-ambiguity',
+  'overall-budget', 'unrecoverable-governance-evidence',
+]);
+const V2_TARGET_HALT_KINDS = Object.freeze([
+  'unavailable-dependency', 'unavailable-input', 'per-target-budget',
+  'target-hard-stop', 'learning-evidence-incomplete',
+]);
+const V2_HALT_KINDS = Object.freeze([...V2_RUN_HALT_KINDS, ...V2_TARGET_HALT_KINDS]);
+const V2_PROJECTION_DISPOSITIONS = Object.freeze(['verified', 'rederive-required', 'unavailable']);
+const V2_SUSPENSION_REASONS = Object.freeze(['unresolved-learning', 'target-hard-stop', 'per-target-budget']);
+const V2_INVOCATION_OUTCOMES = Object.freeze([
+  'in-progress', 'controlled-unresolved-end', 'immediate-halt-end',
+]);
+
+/** The closed authoritative scope of one halt kind. @param {unknown} kind */
+function authoritativeHaltScopeV2(kind) {
+  if (V2_RUN_HALT_KINDS.includes(/** @type {string} */ (kind))) return 'run';
+  if (V2_TARGET_HALT_KINDS.includes(/** @type {string} */ (kind))) return 'target';
+  return null;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateSuspensionV1(value, label = 'SuspensionV1') {
+  const suspension = assertExactRecord(
+    value,
+    ['version', 'reason', 'affectedTarget', 'affectedChangeSetHash', 'selectedTarget', 'selectedChangeSetHash', 'readinessEvidenceHash', 'dependencyProofHash', 'disjointnessProofHash', 'schedulingEvidenceIdentity'],
+    [],
+    label,
+  );
+  if (suspension.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  assertEnum(suspension.reason, V2_SUSPENSION_REASONS, `${label}.reason`);
+  const affected = validateAffectedTargetV2(suspension.affectedTarget, `${label}.affectedTarget`);
+  const selected = validateAffectedTargetV2(suspension.selectedTarget, `${label}.selectedTarget`);
+  if (targetKey(affected) === targetKey(selected)) {
+    invalid(`${label}.selectedTarget`, 'must be a distinct disjoint target');
+  }
+  for (const field of ['affectedChangeSetHash', 'selectedChangeSetHash', 'readinessEvidenceHash', 'dependencyProofHash', 'disjointnessProofHash', 'schedulingEvidenceIdentity']) {
+    assertHash(suspension[field], `${label}.${field}`);
+  }
+  const { schedulingEvidenceIdentity, ...withoutIdentity } = suspension;
+  if (schedulingEvidenceIdentity !== sha256(canonicalJson(withoutIdentity))) {
+    invalid(`${label}.schedulingEvidenceIdentity`, 'must equal the recomputed complete scheduling evidence identity');
+  }
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateHaltV1(value, label = 'HaltV1') {
+  const halt = assertExactRecord(
+    value,
+    ['version', 'scope', 'kind', 'reason', 'evidenceIdentity', 'projectionDisposition'],
+    ['target'],
+    label,
+  );
+  if (halt.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  assertEnum(halt.scope, ['target', 'run'], `${label}.scope`);
+  assertEnum(halt.kind, V2_HALT_KINDS, `${label}.kind`);
+  if (authoritativeHaltScopeV2(halt.kind) !== halt.scope) {
+    invalid(`${label}.scope`, 'must equal the authoritative scope of its halt kind');
+  }
+  assertV2Identifier(halt.reason, `${label}.reason`);
+  assertHash(halt.evidenceIdentity, `${label}.evidenceIdentity`);
+  assertEnum(halt.projectionDisposition, V2_PROJECTION_DISPOSITIONS, `${label}.projectionDisposition`);
+  if (halt.scope === 'target') {
+    if (!Object.hasOwn(halt, 'target')) invalid(`${label}.target`, 'is required for a target-scoped halt');
+    validateAffectedTargetV2(halt.target, `${label}.target`);
+  } else if (Object.hasOwn(halt, 'target')) {
+    invalid(`${label}.target`, 'is forbidden for a run-wide halt');
+  }
+  if (halt.projectionDisposition === 'unavailable' && halt.kind !== 'unrecoverable-governance-evidence') {
+    invalid(`${label}.projectionDisposition`, 'unavailable requires a run-wide unrecoverable-governance-evidence halt');
+  }
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateGovernanceRederivationProofV1(value, label = 'GovernanceRederivationProofV1') {
+  const proof = assertExactRecord(
+    value,
+    ['version', 'target', 'governanceIdentity', 'repeat', 'failedApproachSetIdentity', 'retainedOccurrences', 'proofIdentity'],
+    [],
+    label,
+  );
+  if (proof.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  const target = validateAffectedTargetV2(proof.target, `${label}.target`);
+  assertHash(proof.governanceIdentity, `${label}.governanceIdentity`);
+  validateRepeatRelationshipV1(proof.repeat, `${label}.repeat`);
+  assertHash(proof.failedApproachSetIdentity, `${label}.failedApproachSetIdentity`);
+  if (proof.governanceIdentity !== sha256(canonicalJson({
+    version: 1,
+    target,
+    repeatIdentity: sha256(canonicalJson(proof.repeat)),
+  }))) invalid(`${label}.governanceIdentity`, 'must bind the exact target and Repeat Relationship');
+  const rows = assertDenseDataArray(proof.retainedOccurrences, `${label}.retainedOccurrences`);
+  if (rows.length !== 2) invalid(`${label}.retainedOccurrences`, 'must contain exactly two retained occurrence references');
+  rows.forEach((row, index) => {
+    const reference = assertExactRecord(row, ['occurrenceIdentity', 'eventHash'], [], `${label}.retainedOccurrences[${index}]`);
+    assertHash(reference.occurrenceIdentity, `${label}.retainedOccurrences[${index}].occurrenceIdentity`);
+    assertHash(reference.eventHash, `${label}.retainedOccurrences[${index}].eventHash`);
+    if (reference.occurrenceIdentity !== /** @type {string[]} */ (
+      /** @type {Record<string, unknown>} */ (proof.repeat).occurrenceIdentities
+    )[index]) invalid(`${label}.retainedOccurrences[${index}]`, 'must name the exact repeat occurrence in chronology order');
+  });
+  const { proofIdentity, ...withoutIdentity } = proof;
+  if (proofIdentity !== sha256(canonicalJson(withoutIdentity))) {
+    invalid(`${label}.proofIdentity`, 'must equal the recomputed complete proof identity');
+  }
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateControlledEndBranchEvidenceV1(value, label = 'ControlledEndBranchEvidenceV1') {
+  const kind = assertRecord(value, label).kind;
+  assertEnum(kind, ['selected-alternative', 'no-progress'], `${label}.kind`);
+  if (kind === 'selected-alternative') {
+    const branch = assertExactRecord(
+      value,
+      ['kind', 'sourcePhase', 'selectedAlternativeIdentity', 'discriminatingCheckIdentity', 'postLearningInspectionIdentity'],
+      [],
+      label,
+    );
+    if (branch.sourcePhase !== 'alternative-inspected') {
+      invalid(`${label}.sourcePhase`, 'must be alternative-inspected');
+    }
+    for (const field of ['selectedAlternativeIdentity', 'discriminatingCheckIdentity', 'postLearningInspectionIdentity']) {
+      assertHash(branch[field], `${label}.${field}`);
+    }
+    return value;
+  }
+  const branch = assertExactRecord(
+    value,
+    ['kind', 'sourcePhase', 'noProgressProofIdentity', 'noProgressVerificationIdentity'],
+    [],
+    label,
+  );
+  if (branch.sourcePhase !== 'no-progress-verified') invalid(`${label}.sourcePhase`, 'must be no-progress-verified');
+  for (const field of ['noProgressProofIdentity', 'noProgressVerificationIdentity']) {
+    assertHash(branch[field], `${label}.${field}`);
+  }
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateControlledUnresolvedEndV1(value, label = 'ControlledUnresolvedEndV1') {
+  const end = assertExactRecord(
+    value,
+    ['version', 'kind', 'branchEvidence', 'governanceBranchStatus', 'laneDisposition', 'targetDisposition', 'invocationOutcome', 'reviewIdentity', 'learningReviewEventHash', 'projectionRef', 'endIdentity'],
+    [],
+    label,
+  );
+  if (end.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  if (end.kind !== 'controlled-unresolved-end') invalid(`${label}.kind`, 'must be controlled-unresolved-end');
+  validateControlledEndBranchEvidenceV1(end.branchEvidence, `${label}.branchEvidence`);
+  if (end.governanceBranchStatus !== 'resolved') invalid(`${label}.governanceBranchStatus`, 'must be resolved');
+  if (end.laneDisposition !== 'pending') invalid(`${label}.laneDisposition`, 'must be pending');
+  if (end.targetDisposition !== 'unchanged') invalid(`${label}.targetDisposition`, 'must be unchanged');
+  if (end.invocationOutcome !== 'controlled-unresolved-end') {
+    invalid(`${label}.invocationOutcome`, 'must be controlled-unresolved-end');
+  }
+  assertHash(end.reviewIdentity, `${label}.reviewIdentity`);
+  assertHash(end.learningReviewEventHash, `${label}.learningReviewEventHash`);
+  const projectionRef = /** @type {Record<string, unknown>} */ (
+    validateProjectionRefV1(end.projectionRef, `${label}.projectionRef`)
+  );
+  if (!/** @type {string[]} */ (projectionRef.eventHashes).includes(/** @type {string} */ (end.learningReviewEventHash))) {
+    invalid(`${label}.projectionRef`, 'must identify the matching learning-result batch');
+  }
+  const { endIdentity, ...withoutIdentity } = end;
+  if (endIdentity !== sha256(canonicalJson(withoutIdentity))) {
+    invalid(`${label}.endIdentity`, 'must equal the recomputed complete end identity');
+  }
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateImmediateHaltOutcomeV1(value, label = 'ImmediateHaltOutcomeV1') {
+  const outcome = assertExactRecord(
+    value,
+    ['ok', 'invocationOutcome', 'targetDisposition', 'halt', 'projectionDisposition', 'projectionEvidence'],
+    [],
+    label,
+  );
+  if (outcome.ok !== false) invalid(`${label}.ok`, 'must be the literal boolean false');
+  if (outcome.invocationOutcome !== 'immediate-halt-end') invalid(`${label}.invocationOutcome`, 'must be immediate-halt-end');
+  if (outcome.targetDisposition !== 'unchanged') invalid(`${label}.targetDisposition`, 'must be unchanged');
+  const halt = /** @type {Record<string, unknown>} */ (validateHaltV1(outcome.halt, `${label}.halt`));
+  assertEnum(outcome.projectionDisposition, V2_PROJECTION_DISPOSITIONS, `${label}.projectionDisposition`);
+  const disposition = assertRecord(outcome.projectionEvidence, `${label}.projectionEvidence`).disposition;
+  // Outcome, nested halt, and evidence dispositions are exactly equal.
+  if (outcome.projectionDisposition !== halt.projectionDisposition
+    || outcome.projectionDisposition !== disposition) {
+    invalid(`${label}.projectionDisposition`, 'must equal the nested halt and evidence dispositions');
+  }
+  if (disposition === 'verified') {
+    const evidence = assertExactRecord(
+      outcome.projectionEvidence,
+      ['disposition', 'projectionRef', 'governanceIdentity', 'governanceRevision', 'governanceEventHash'],
+      [],
+      `${label}.projectionEvidence`,
+    );
+    validateProjectionRefV1(evidence.projectionRef, `${label}.projectionEvidence.projectionRef`);
+    assertHash(evidence.governanceIdentity, `${label}.projectionEvidence.governanceIdentity`);
+    assertSafeInteger(evidence.governanceRevision, `${label}.projectionEvidence.governanceRevision`, true);
+    assertHash(evidence.governanceEventHash, `${label}.projectionEvidence.governanceEventHash`);
+    if (!/** @type {string[]} */ (
+      /** @type {Record<string, unknown>} */ (evidence.projectionRef).eventHashes
+    ).includes(/** @type {string} */ (evidence.governanceEventHash))) {
+      invalid(`${label}.projectionEvidence.projectionRef`, 'must bind the named Governance Event');
+    }
+    return value;
+  }
+  if (disposition === 'rederive-required') {
+    const evidence = assertExactRecord(
+      outcome.projectionEvidence,
+      ['disposition', 'rederivationProof'],
+      [],
+      `${label}.projectionEvidence`,
+    );
+    validateGovernanceRederivationProofV1(evidence.rederivationProof, `${label}.projectionEvidence.rederivationProof`);
+    return value;
+  }
+  const evidence = assertExactRecord(
+    outcome.projectionEvidence,
+    ['disposition', 'unrecoverableEvidenceIdentity'],
+    [],
+    `${label}.projectionEvidence`,
+  );
+  assertHash(evidence.unrecoverableEvidenceIdentity, `${label}.projectionEvidence.unrecoverableEvidenceIdentity`);
+  if (halt.scope !== 'run'
+    || halt.kind !== 'unrecoverable-governance-evidence'
+    || evidence.unrecoverableEvidenceIdentity !== halt.evidenceIdentity) {
+    invalid(`${label}.projectionEvidence`, 'unavailable must bind the run-wide unrecoverable-governance-evidence halt');
+  }
+  return value;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateAuditSummaryV2(value, label = 'AuditSummaryV2') {
+  const summary = assertExactRecord(
+    value,
+    ['version', 'target', 'governanceIdentity', 'trigger', 'channel', 'learningRequirement', 'governanceStatus', 'targetDisposition', 'invocationOutcome', 'scope', 'unresolvedReason', 'schedulingOutcome', 'projectionDisposition', 'failedApproachSetIdentity', 'evidenceEventHashes', 'summaryIdentity'],
+    ['branchEvidence', 'suspension', 'controlledEnd', 'immediateHaltEnd'],
+    label,
+  );
+  if (summary.version !== 2) invalid(`${label}.version`, 'must be the literal safe integer 2');
+  const target = validateAffectedTargetV2(summary.target, `${label}.target`);
+  assertHash(summary.governanceIdentity, `${label}.governanceIdentity`);
+  const trigger = /** @type {Record<string, unknown>} */ (
+    validateRepeatRelationshipV1(summary.trigger, `${label}.trigger`)
+  );
+  if (summary.channel !== trigger.channel) invalid(`${label}.channel`, 'must equal the triggering Repeat Relationship channel');
+  if (summary.governanceIdentity !== sha256(canonicalJson({
+    version: 1,
+    target,
+    repeatIdentity: sha256(canonicalJson(trigger)),
+  }))) invalid(`${label}.governanceIdentity`, 'must bind the exact target and Repeat Relationship');
+  assertEnum(summary.learningRequirement, ['unresolved', 'resolved'], `${label}.learningRequirement`);
+  assertEnum(summary.governanceStatus, V2_GOVERNANCE_PHASES, `${label}.governanceStatus`);
+  // No T004-reachable row may claim target completion, block, close, or an
+  // applied no-progress lane disposition.
+  if (summary.targetDisposition !== 'unchanged') invalid(`${label}.targetDisposition`, 'must be unchanged');
+  assertEnum(summary.invocationOutcome, V2_INVOCATION_OUTCOMES, `${label}.invocationOutcome`);
+  assertEnum(summary.scope, ['target', 'run'], `${label}.scope`);
+  assertV2Identifier(summary.unresolvedReason, `${label}.unresolvedReason`);
+  assertEnum(
+    summary.schedulingOutcome,
+    ['none', 'sequential-disjoint-continuation', 'invocation-stopped'],
+    `${label}.schedulingOutcome`,
+  );
+  assertEnum(summary.projectionDisposition, V2_PROJECTION_DISPOSITIONS, `${label}.projectionDisposition`);
+  assertHash(summary.failedApproachSetIdentity, `${label}.failedApproachSetIdentity`);
+  validateV2SortedSet(summary.evidenceEventHashes, assertHash, 0, 128, `${label}.evidenceEventHashes`);
+  if (Object.hasOwn(summary, 'branchEvidence')) {
+    const branchKind = assertRecord(summary.branchEvidence, `${label}.branchEvidence`).kind;
+    assertEnum(branchKind, ['selected-alternative', 'no-progress'], `${label}.branchEvidence.kind`);
+    const branch = branchKind === 'selected-alternative'
+      ? assertExactRecord(summary.branchEvidence, ['kind', 'sourcePhase', 'selectedAlternativeIdentity', 'discriminatingCheckIdentity', 'postLearningInspectionIdentity'], [], `${label}.branchEvidence`)
+      // A `no-progress-verified` row resolves its identity as a verification,
+      // never as a Post-Learning Inspection binding.
+      : assertExactRecord(summary.branchEvidence, ['kind', 'sourcePhase', 'noProgressVerificationIdentity'], [], `${label}.branchEvidence`);
+    if (branch.sourcePhase !== summary.governanceStatus) {
+      invalid(`${label}.branchEvidence.sourcePhase`, 'must equal the current governance status');
+    }
+    for (const field of Object.keys(branch)) {
+      if (field !== 'kind' && field !== 'sourcePhase') assertHash(branch[field], `${label}.branchEvidence.${field}`);
+    }
+    if (Object.hasOwn(summary, 'controlledEnd')) {
+      invalid(`${label}.branchEvidence`, 'is forbidden beside a Controlled Unresolved End record');
+    }
+  }
+  if (Object.hasOwn(summary, 'suspension')) validateSuspensionV1(summary.suspension, `${label}.suspension`);
+  if (Object.hasOwn(summary, 'controlledEnd')) {
+    validateControlledUnresolvedEndV1(summary.controlledEnd, `${label}.controlledEnd`);
+    if (summary.invocationOutcome !== 'controlled-unresolved-end') {
+      invalid(`${label}.invocationOutcome`, 'must be controlled-unresolved-end beside a controlled-end record');
+    }
+  }
+  if (Object.hasOwn(summary, 'immediateHaltEnd')) {
+    const outcome = /** @type {Record<string, unknown>} */ (
+      validateImmediateHaltOutcomeV1(summary.immediateHaltEnd, `${label}.immediateHaltEnd`)
+    );
+    if (summary.invocationOutcome !== 'immediate-halt-end'
+      || summary.projectionDisposition !== outcome.projectionDisposition
+      || summary.scope !== /** @type {Record<string, unknown>} */ (outcome.halt).scope) {
+      invalid(`${label}.immediateHaltEnd`, 'must match the reported outcome, scope, and projection disposition');
+    }
+  } else if (summary.invocationOutcome === 'immediate-halt-end') {
+    invalid(`${label}.immediateHaltEnd`, 'is required for an Immediate Halt End row');
+  }
+  const { summaryIdentity, ...withoutIdentity } = summary;
+  if (summaryIdentity !== sha256(canonicalJson(withoutIdentity))) {
+    invalid(`${label}.summaryIdentity`, 'must equal the recomputed complete summary identity');
+  }
+  return value;
+}
+
+/**
+ * Classify one caller-observed halt fact set against the closed authoritative
+ * kind-to-scope table. Missing or conflicting scope is run-wide ambiguity.
+ * @param {unknown} value @param {Record<string, unknown>} target @param {string} label
+ */
+function classifyHaltScopeV2(value, target, label) {
+  const facts = assertExactRecord(value, ['kind', 'reason', 'evidenceIdentity'], ['scope', 'target'], label);
+  assertEnum(facts.kind, V2_HALT_KINDS, `${label}.kind`);
+  assertV2Identifier(facts.reason, `${label}.reason`);
+  assertHash(facts.evidenceIdentity, `${label}.evidenceIdentity`);
+  if (Object.hasOwn(facts, 'scope')) assertEnum(facts.scope, ['target', 'run'], `${label}.scope`);
+  if (Object.hasOwn(facts, 'target')) validateAffectedTargetV2(facts.target, `${label}.target`);
+  const authoritative = authoritativeHaltScopeV2(facts.kind);
+  const declared = Object.hasOwn(facts, 'scope') ? facts.scope : null;
+  const boundTarget = Object.hasOwn(facts, 'target')
+    && targetKey(facts.target) === targetKey(target);
+  if (declared === null
+    || declared !== authoritative
+    || (authoritative === 'target' && !boundTarget)
+    || (authoritative === 'run' && Object.hasOwn(facts, 'target'))) {
+    return { ambiguous: true };
+  }
+  return { ambiguous: false, scope: authoritative, facts };
+}
+
+/**
+ * Resolve the highest dual-retained governance revision for one case and verify
+ * its exact batch freshly on both authoritative surfaces.
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>} governance
+ */
+function retainedGovernanceProjectionV2(inspection, governance) {
+  /** @type {ReturnType<typeof dualSurfaceEventIndexV2>} */
+  let index;
+  try {
+    index = dualSurfaceEventIndexV2(inspection);
+  } catch {
+    return { reason: 'projection-conflict' };
+  }
+  const revisions = [...index.currentRun.byHash.values()].filter((event) => (
+    event.type === 'learning-governance'
+      && event.governanceIdentity === governance.governanceIdentity
+      && targetKey(event.target) === targetKey(governance.target)
+  ));
+  if (revisions.length === 0) return { reason: 'projection-missing-current-run' };
+  // "Highest consistent projected revision" orders by revision and then by the
+  // closed phase progression, because one revision may be snapshotted twice.
+  const rank = (event) => (
+    /** @type {number} */ (event.revision) * V2_GOVERNANCE_PHASES.length
+      + V2_GOVERNANCE_PHASES.indexOf(/** @type {string} */ (event.phase))
+  );
+  const highest = Math.max(...revisions.map(rank));
+  const candidates = revisions.filter((event) => rank(event) === highest);
+  if (candidates.length !== 1) return { reason: 'projection-conflict' };
+  const event = candidates[0];
+  if (event.phase === 'reviewed') {
+    const retained = retainedLearningResultV2(inspection, governance);
+    if (retained.reason) return { reason: retained.reason };
+    const batch = /** @type {Record<string, unknown>} */ (retained.batch);
+    if (/** @type {Record<string, unknown>[]} */ (batch.events)[1].eventHash !== event.eventHash) {
+      return { reason: 'projection-conflict' };
+    }
+    return { event, batch, projectionRef: retained.projectionRef };
+  }
+  try {
+    const batch = buildProjectionBatchV1(
+      'governance-required',
+      /** @type {Record<string, unknown>} */ (governance.target),
+      [event],
+      'retained governance revision',
+    );
+    const outcome = verifyBatchProjectionV2(inspection, batch);
+    if (!outcome.verified) return { reason: outcome.reason };
+    return { event, batch, projectionRef: outcome.projectionRef };
+  } catch {
+    return { reason: 'projection-conflict' };
+  }
+}
+
+/**
+ * Derive the exact projection or re-derivation status of one governance case
+ * from fresh evidence alone. `unavailable` is never derived here: it belongs to
+ * the authoritative unrecoverable-governance-evidence halt.
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>} governance
+ */
+function immediateHaltProjectionEvidenceV2(inspection, governance) {
+  const projected = retainedGovernanceProjectionV2(inspection, governance);
+  if (!projected.reason) {
+    const event = /** @type {Record<string, unknown>} */ (projected.event);
+    return {
+      disposition: 'verified',
+      projectionRef: projected.projectionRef,
+      governanceIdentity: governance.governanceIdentity,
+      governanceRevision: event.revision,
+      governanceEventHash: event.eventHash,
+    };
+  }
+  const rebound = reboundGovernanceEvidenceV2(inspection, governance);
+  if (rebound.reason) return { reason: rebound.reason };
+  const repeat = /** @type {Record<string, unknown>} */ (rebound.repeat);
+  const retained = /** @type {Record<string, unknown>[]} */ (rebound.retained);
+  const retainedOccurrences = /** @type {string[]} */ (repeat.occurrenceIdentities).map((identity) => {
+    const matches = retained.filter((event) => event.occurrenceIdentity === identity);
+    return matches.length === 1 ? { occurrenceIdentity: identity, eventHash: matches[0].eventHash } : null;
+  });
+  if (retainedOccurrences.some((reference) => reference === null)) {
+    return { reason: 'occurrence-retention-incomplete' };
+  }
+  const proofWithoutIdentity = {
+    version: 1,
+    target: canonicalTarget(/** @type {Record<string, unknown>} */ (governance.target)),
+    governanceIdentity: governance.governanceIdentity,
+    repeat,
+    failedApproachSetIdentity: /** @type {Record<string, unknown>} */ (rebound.failedApproachSet).setIdentity,
+    retainedOccurrences,
+  };
+  const rederivationProof = {
+    ...proofWithoutIdentity,
+    proofIdentity: sha256(canonicalJson(proofWithoutIdentity)),
+  };
+  validateGovernanceRederivationProofV1(rederivationProof);
+  return { disposition: 'rederive-required', rederivationProof };
+}
+
+/**
+ * Derive one ephemeral Immediate Halt End outcome. It creates no controlled-end
+ * permit, mutation, record, or receipt and never resolves learning.
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>} governance
+ * @param {unknown} haltValue @param {string} label
+ */
+function deriveImmediateHaltEndV2(inspection, governance, haltValue, label) {
+  const classified = classifyHaltScopeV2(haltValue, /** @type {Record<string, unknown>} */ (governance.target), label);
+  if (classified.ambiguous) return { reason: 'halt-scope-ambiguous', scope: 'run' };
+  const facts = /** @type {Record<string, unknown>} */ (classified.facts);
+  let projectionEvidence;
+  if (facts.kind === 'unrecoverable-governance-evidence') {
+    projectionEvidence = { disposition: 'unavailable', unrecoverableEvidenceIdentity: facts.evidenceIdentity };
+  } else {
+    const derived = immediateHaltProjectionEvidenceV2(inspection, governance);
+    // Governance that is neither safely retained nor deterministically
+    // re-derivable stops the invocation without releasing required evidence.
+    if (derived.reason) return { reason: 'unrecoverable-governance-evidence', scope: 'run' };
+    projectionEvidence = derived;
+  }
+  const halt = {
+    version: 1,
+    scope: classified.scope,
+    kind: facts.kind,
+    reason: facts.reason,
+    evidenceIdentity: facts.evidenceIdentity,
+    ...(classified.scope === 'target'
+      ? { target: canonicalTarget(/** @type {Record<string, unknown>} */ (governance.target)) }
+      : {}),
+    projectionDisposition: projectionEvidence.disposition,
+  };
+  validateHaltV1(halt);
+  const outcome = {
+    ok: false,
+    invocationOutcome: 'immediate-halt-end',
+    targetDisposition: 'unchanged',
+    halt,
+    projectionDisposition: projectionEvidence.disposition,
+    projectionEvidence,
+  };
+  validateImmediateHaltOutcomeV1(outcome);
+  return { scope: classified.scope, kind: facts.kind, outcome };
+}
+
+/**
+ * Classify one authoritatively scoped halt without resolving learning. A
+ * target-scoped stop leaves eligible sequential scheduling available; a run-wide
+ * stop ends the invocation and starts no other target.
+ * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} haltValue
+ * @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function haltGovernanceV2(stateValue, inputValue, haltValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('haltGovernanceV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} transition */
+  const respond = (transition) => ({ inspection, transition });
+  const governance = activeGovernanceCaseV2(state);
+  if (!governance) return respond({ halted: false, reason: 'learning-evidence-incomplete', state });
+  requireResolvedOwnerMappingV2(inspection, /** @type {Record<string, unknown>} */ (governance.target), 'haltGovernanceV2');
+  const derived = deriveImmediateHaltEndV2(inspection, governance, haltValue, 'halt');
+  if (derived.reason) {
+    return respond({
+      halted: true,
+      reason: derived.reason,
+      scope: 'run',
+      schedulingPreserved: false,
+      state,
+    });
+  }
+  return respond({
+    halted: true,
+    reason: derived.scope === 'run' ? 'run-halted' : 'target-halted',
+    scope: derived.scope,
+    // A target-scoped stop consumes no unrelated scheduling authority; a
+    // run-wide stop consumes all of it.
+    schedulingPreserved: derived.scope === 'target',
+    // Byte-identical state: no permit, mutation, record, or receipt.
+    state,
+    outcome: derived.outcome,
+  });
+}
+
+/**
+ * Suspend the affected target unchanged and license exactly one eligible
+ * disjoint candidate through Feature 005's own sequential decision.
+ * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} suspensionValue
+ * @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function suspendTargetV2(stateValue, inputValue, suspensionValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('suspendTargetV2', 'requires autonomous policy');
+  }
+  const request = assertExactRecord(suspensionValue, ['scheduling'], ['halt'], 'suspend-target request');
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} transition */
+  const respond = (transition) => ({ inspection, transition });
+  const governance = activeGovernanceCaseV2(state);
+  if (!governance) return respond({ suspended: false, reason: 'learning-evidence-incomplete', state });
+  if (Object.hasOwn(governance, 'suspension')) {
+    return respond({ suspended: false, reason: 'learning-phase-mismatch', state });
+  }
+  const target = /** @type {Record<string, unknown>} */ (governance.target);
+  requireResolvedOwnerMappingV2(inspection, target, 'suspendTargetV2');
+  let suspensionReason = 'unresolved-learning';
+  let haltScoped = false;
+  if (Object.hasOwn(request, 'halt')) {
+    const classified = classifyHaltScopeV2(request.halt, target, 'suspend-target request.halt');
+    if (classified.ambiguous) {
+      return respond({ suspended: false, reason: 'halt-scope-ambiguous', scope: 'run', state });
+    }
+    if (classified.scope === 'run') {
+      // A run-wide stop authorizes no suspension and starts no other target.
+      return respond({ suspended: false, reason: 'run-halted', scope: 'run', state });
+    }
+    haltScoped = true;
+    suspensionReason = /** @type {Record<string, unknown>} */ (classified.facts).kind === 'per-target-budget'
+      ? 'per-target-budget'
+      : 'target-hard-stop';
+  } else if (/** @type {unknown[]} */ (inspection.blockers).length > 0) {
+    return respond({ suspended: false, reason: 'inspection-stale', state });
+  }
+  const projectionEvidence = immediateHaltProjectionEvidenceV2(inspection, governance);
+  if (projectionEvidence.reason) {
+    return respond({ suspended: false, reason: projectionEvidence.reason, state });
+  }
+  if (!haltScoped && projectionEvidence.disposition !== 'verified') {
+    // Without an immediate-halt exception, unchanged suspension waits until the
+    // bounded unresolved event is safely projected and retained.
+    return respond({ suspended: false, reason: 'governance-unresolved', state });
+  }
+  if (/** @type {unknown[]} */ (state.pending).length !== 0) {
+    return respond({ suspended: false, reason: 'concurrency-forbidden', state });
+  }
+  const scheduling = assertExactRecord(
+    request.scheduling,
+    ['stopped', 'candidate'],
+    [],
+    'suspend-target request.scheduling',
+  );
+  const stopped = assertExactRecord(
+    scheduling.stopped,
+    ['reason', 'changeSet'],
+    [],
+    'suspend-target request.scheduling.stopped',
+  );
+  const candidate = assertExactRecord(
+    scheduling.candidate,
+    ['target', 'changeSet', 'deps'],
+    [],
+    'suspend-target request.scheduling.candidate',
+  );
+  // Feature 005's exact readiness, dependency-independence, and change-set
+  // disjointness decision. It licenses one candidate and starts nothing.
+  const licensed = mayScheduleAfterStop(
+    { outcome: { reason: stopped.reason, state }, target, changeSet: stopped.changeSet },
+    candidate,
+  );
+  if (!licensed) return respond({ suspended: false, reason: 'scheduling-ineligible', state });
+  const affectedChangeSet = /** @type {string[]} */ (
+    assertSortedUniqueStrings(stopped.changeSet, assertMaterialTarget, 'suspend-target request.scheduling.stopped.changeSet')
+  );
+  const selectedChangeSet = /** @type {string[]} */ (
+    assertSortedUniqueStrings(candidate.changeSet, assertMaterialTarget, 'suspend-target request.scheduling.candidate.changeSet')
+  );
+  const declaredDependencies = /** @type {string[]} */ (
+    assertDenseDataArray(candidate.deps, 'suspend-target request.scheduling.candidate.deps')
+  );
+  const affectedTarget = /** @type {Record<string, unknown>} */ (canonicalTarget(target));
+  const suspensionWithoutIdentity = {
+    version: 1,
+    reason: suspensionReason,
+    affectedTarget,
+    affectedChangeSetHash: sha256(canonicalJson(affectedChangeSet)),
+    selectedTarget: canonicalTarget(candidate.target),
+    selectedChangeSetHash: sha256(canonicalJson(selectedChangeSet)),
+    readinessEvidenceHash: sha256(canonicalJson({
+      version: 1,
+      evidenceHash: inspection.evidenceHash,
+      pendingAuthorizations: /** @type {unknown[]} */ (state.pending).length,
+      parallel: /** @type {Record<string, unknown>} */ (state.policy).parallel,
+      stoppedReason: stopped.reason,
+    })),
+    dependencyProofHash: sha256(canonicalJson({
+      version: 1,
+      stoppedDurableId: affectedTarget.taskKey ?? affectedTarget.issueId,
+      declaredDependencies,
+    })),
+    disjointnessProofHash: sha256(canonicalJson({
+      version: 1,
+      affectedChangeSet,
+      selectedChangeSet,
+    })),
+  };
+  const suspension = {
+    ...suspensionWithoutIdentity,
+    schedulingEvidenceIdentity: sha256(canonicalJson(suspensionWithoutIdentity)),
+  };
+  validateSuspensionV1(suspension);
+  // The governed phase, trigger, failed set, and lane disposition stay unchanged.
+  const nextState = governanceSuccessorStateV2(state, governance, { suspension });
+  return respond({
+    suspended: true,
+    reason: 'target-suspended',
+    state: nextState,
+    suspension,
+    projectionDisposition: projectionEvidence.disposition,
+    projectionEvidence,
+  });
+}
+
+/**
+ * Rebind the branch evidence of one eligible unresolved phase from the fresh
+ * rebound evidence and dual-retained learning result, and recompute the stored
+ * post-learning identity exactly as its owning route derived it. A stored hash
+ * alone never carries a selected alternative, discriminating check, or
+ * un-drifted post-learning claim.
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>} governance
+ * @param {Record<string, unknown>} rebound @param {Record<string, unknown>} retained
+ */
+function reboundBranchEvidenceV2(inspection, governance, rebound, retained) {
+  const reviewEvent = /** @type {Record<string, unknown>} */ (retained.reviewEvent);
+  const failedApproachSet = /** @type {Record<string, unknown>} */ (rebound.failedApproachSet);
+  const failedApproachSetIdentity = failedApproachSet.setIdentity;
+  const projectionRef = /** @type {Record<string, unknown>} */ (retained.projectionRef);
+  let alternatives;
+  try {
+    alternatives = requireCompleteFailedSetComparisonV2(
+      reviewEvent.alternatives,
+      failedApproachSet,
+      'retained learning review alternatives',
+    );
+  } catch {
+    return { reason: 'failed-approach-set-mismatch' };
+  }
+  if (governance.phase === 'alternative-inspected') {
+    if (reviewEvent.outcome !== 'selected-alternative') return { reason: 'inspection-branch-mismatch' };
+    const selected = alternatives.credible.filter((row) => (
+      row.alternativeIdentity === reviewEvent.selectedAlternativeIdentity
+        && row.alternativeIdentity === governance.selectedAlternativeIdentity
+    ));
+    const discriminatingCheckIdentity = selected.length === 1
+      ? /** @type {Record<string, unknown>} */ (selected[0].discriminatingCheck).identity
+      : null;
+    if (selected.length !== 1 || discriminatingCheckIdentity !== governance.discriminatingCheckIdentity) {
+      return { reason: 'alternative-selection-mismatch' };
+    }
+    // Recomputed exactly as `bindPostLearningInspectionV2` derives it, so
+    // post-learning Inspection evidence drift cannot survive as a stored hash.
+    const bindingWithoutIdentity = {
+      version: 1,
+      target: canonicalTarget(/** @type {Record<string, unknown>} */ (governance.target)),
+      governanceIdentity: governance.governanceIdentity,
+      repeatIdentity: sha256(canonicalJson(rebound.repeat)),
+      reviewIdentity: governance.reviewIdentity,
+      failedApproachSetIdentity,
+      projectionRef,
+      evidenceHash: inspection.evidenceHash,
+      branchIdentity: sha256(canonicalJson({
+        selectedAlternativeIdentity: selected[0].alternativeIdentity,
+        discriminatingCheckIdentity,
+        failedApproachSetIdentity,
+      })),
+      expectedProjectionEventHashes: projectionRef.eventHashes,
+    };
+    if (sha256(canonicalJson(bindingWithoutIdentity)) !== governance.postLearningInspectionIdentity) {
+      return { reason: 'inspection-stale' };
+    }
+    return {
+      branchEvidence: {
+        kind: 'selected-alternative',
+        sourcePhase: 'alternative-inspected',
+        selectedAlternativeIdentity: selected[0].alternativeIdentity,
+        discriminatingCheckIdentity,
+        postLearningInspectionIdentity: governance.postLearningInspectionIdentity,
+      },
+    };
+  }
+  if (reviewEvent.outcome !== 'no-progress') return { reason: 'inspection-branch-mismatch' };
+  const proof = /** @type {Record<string, unknown>} */ (reviewEvent.noProgressProof);
+  if (proof.failedApproachSetIdentity !== failedApproachSetIdentity
+    || proof.completeEvidenceHash !== noProgressCompleteEvidenceHashV2(
+      failedApproachSet,
+      /** @type {Record<string, unknown>[]} */ (rebound.retained),
+    )) return { reason: 'new-distinguishing-evidence' };
+  // Recomputed exactly as `verifyNoProgressV2` derives it.
+  const noProgressCore = {
+    noProgressProofIdentity: proof.proofIdentity,
+    failedApproachSetIdentity,
+    preLearningEvidenceHash: reviewEvent.preLearningEvidenceHash,
+    postLearningEvidenceHash: inspection.evidenceHash,
+    expectedProjectionEventHashes: projectionRef.eventHashes,
+    distinguishingEvidenceIdentities: [],
+  };
+  const verificationWithoutIdentity = {
+    version: 2,
+    ...noProgressCore,
+    noNewDistinguishingEvidenceHash: sha256(canonicalJson(noProgressCore)),
+  };
+  if (sha256(canonicalJson(verificationWithoutIdentity)) !== governance.postLearningInspectionIdentity) {
+    return { reason: 'inspection-stale' };
+  }
+  return {
+    branchEvidence: {
+      kind: 'no-progress',
+      sourcePhase: 'no-progress-verified',
+      noProgressProofIdentity: proof.proofIdentity,
+      // On this branch the stored identity is a NoProgressVerificationV2
+      // identity, not a Post-Learning Inspection binding.
+      noProgressVerificationIdentity: governance.postLearningInspectionIdentity,
+    },
+  };
+}
+
+/**
+ * Take the ordinary Controlled Unresolved End from `alternative-inspected` or
+ * `no-progress-verified` only. It resolves the governance branch for audit while
+ * the target lane disposition stays pending and unchanged.
+ * @param {unknown} stateValue @param {unknown} inputValue
+ * @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function controlledEndV2(stateValue, inputValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('controlledEndV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} transition */
+  const respond = (transition) => ({ inspection, transition });
+  const governance = activeGovernanceCaseV2(state);
+  if (!governance) return respond({ ended: false, reason: 'learning-evidence-incomplete', state });
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0
+    || targetKey(inspection.target) !== targetKey(governance.target)) {
+    return respond({ ended: false, reason: 'inspection-stale', state });
+  }
+  // Phase `projected` and every other phase are explicitly ineligible.
+  if (Object.hasOwn(governance, 'controlledEnd')
+    || (governance.phase !== 'alternative-inspected' && governance.phase !== 'no-progress-verified')) {
+    return respond({ ended: false, reason: 'controlled-end-unavailable', state });
+  }
+  requireResolvedOwnerMappingV2(inspection, /** @type {Record<string, unknown>} */ (governance.target), 'controlledEndV2');
+  const rebound = reboundGovernanceEvidenceV2(inspection, governance);
+  if (rebound.reason) return respond({ ended: false, reason: rebound.reason, state });
+  const retained = retainedLearningResultV2(inspection, governance);
+  if (retained.reason) return respond({ ended: false, reason: retained.reason, state });
+  const reviewEvent = /** @type {Record<string, unknown>} */ (retained.reviewEvent);
+  const derived = reboundBranchEvidenceV2(inspection, governance, rebound, retained);
+  if (derived.reason) return respond({ ended: false, reason: derived.reason, state });
+  const endWithoutIdentity = {
+    version: 1,
+    kind: 'controlled-unresolved-end',
+    branchEvidence: derived.branchEvidence,
+    governanceBranchStatus: 'resolved',
+    laneDisposition: 'pending',
+    targetDisposition: 'unchanged',
+    invocationOutcome: 'controlled-unresolved-end',
+    reviewIdentity: governance.reviewIdentity,
+    learningReviewEventHash: reviewEvent.eventHash,
+    projectionRef: retained.projectionRef,
+  };
+  const controlledEnd = {
+    ...endWithoutIdentity,
+    endIdentity: sha256(canonicalJson(endWithoutIdentity)),
+  };
+  validateControlledUnresolvedEndV1(controlledEnd);
+  // The phase, target, and lane disposition all stay unchanged: this is neither
+  // a block, a close, a completion, nor an applied no-progress disposition.
+  const nextState = governanceSuccessorStateV2(state, governance, { controlledEnd });
+  return respond({
+    ended: true,
+    reason: 'controlled-unresolved-end',
+    state: nextState,
+    controlledEnd,
+  });
+}
+
+/**
+ * Restore required governance from the highest consistent projected revision, or
+ * deterministically re-derive it from the exact dual-retained occurrence events.
+ * @param {unknown} stateValue @param {unknown} inputValue
+ * @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function resumeGovernanceV2(stateValue, inputValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('resumeGovernanceV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} transition */
+  const respond = (transition) => ({ inspection, transition });
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0) {
+    return respond({ resumed: false, reason: 'inspection-stale', state });
+  }
+  const existing = activeGovernanceCaseV2(state);
+  const target = canonicalTarget(validateAffectedTargetV2(
+    existing ? existing.target : inspection.target,
+    'resumeGovernanceV2.target',
+  ));
+  if (!existing && Object.hasOwn(state, 'pendingCompletion')) {
+    return respond({ resumed: false, reason: 'occurrence-retention-incomplete', state });
+  }
+  if (!existing && Object.hasOwn(state, 'learningGovernance')) {
+    // A seal this route cannot read still occupies the singleton and may govern
+    // another target; overwriting it would transfer authority. An occupied
+    // singleton is a conflict, never derivable failed-approach-set excess.
+    return respond({ resumed: false, reason: 'learning-governance-conflict', state });
+  }
+  requireResolvedOwnerMappingV2(inspection, target, 'resumeGovernanceV2');
+  let retained;
+  try {
+    retained = dualRetainedOccurrenceEventsV2(inspection);
+    validateRetainedOccurrenceAuthorityV2(retained.retained, trustedEnvelopeIndexFromInspectionV2(inspection));
+  } catch {
+    return respond({ resumed: false, reason: 'occurrence-retention-incomplete', state });
+  }
+  const repeat = deriveEarliestRepeatRelationshipV1(retained.retained);
+  if (!repeat) return respond({ resumed: false, reason: 'repeat-not-established', state });
+  let failedApproachSet;
+  try {
+    failedApproachSet = deriveFailedApproachSetV1(repeat, retained.retained);
+  } catch (error) {
+    if (error instanceof TypeError
+      && error.message === 'FailedApproachSetV1 exceeds the complete failed-approach capacity') {
+      return respond({ resumed: false, reason: 'learning-governance-capacity', state });
+    }
+    throw error;
+  }
+  const governanceIdentity = sha256(canonicalJson({
+    version: 1,
+    target,
+    repeatIdentity: sha256(canonicalJson(repeat)),
+  }));
+  if (existing) {
+    if (existing.governanceIdentity !== governanceIdentity
+      || canonicalJson(existing.trigger) !== canonicalJson(repeat)
+      || canonicalJson(existing.failedApproachSet) !== canonicalJson(failedApproachSet)) {
+      return respond({ resumed: false, reason: 'repeat-not-established', state });
+    }
+    const projected = retainedGovernanceProjectionV2(inspection, existing);
+    if (projected.reason) return respond({ resumed: false, reason: 'governance-unresolved', state });
+    return respond({
+      resumed: true,
+      reason: 'governance-resumed',
+      resumedFrom: 'projected-revision',
+      state,
+      governanceIdentity,
+      revision: /** @type {Record<string, unknown>} */ (projected.event).revision,
+      phase: existing.phase,
+      trigger: repeat,
+      failedApproachSet,
+      projectionRef: projected.projectionRef,
+    });
+  }
+  if (/** @type {Record<string, unknown>[]} */ (state.pending)
+    .some((entry) => targetKey(entry.target) === targetKey(target))) {
+    return respond({ resumed: false, reason: 'concurrency-forbidden', state });
+  }
+  const governance = {
+    version: 1,
+    governanceIdentity,
+    target,
+    trigger: repeat,
+    failedApproachSet,
+    phase: 'required',
+    revision: 1,
+    triggerEvidenceHash: sha256(canonicalJson({
+      trigger: repeat,
+      failedApproachSetIdentity: failedApproachSet.setIdentity,
+    })),
+  };
+  validateLearningGovernanceV1(governance);
+  const nextState = carryOptionalRunState(state, {
+    policy: { .../** @type {Record<string, unknown>} */ (state.policy) },
+    overallUsed: state.overallUsed,
+    recoveryUsed: /** @type {Record<string, unknown>[]} */ (state.recoveryUsed).map((row) => ({ ...row })),
+    pending: /** @type {Record<string, unknown>[]} */ (state.pending).map(copyPendingEntry),
+    completed: /** @type {Record<string, unknown>[]} */ (state.completed).map((entry) => ({ ...entry })),
+  });
+  nextState.learningGovernance = governance;
+  validateRunState(nextState);
+  return respond({
+    resumed: true,
+    reason: 'governance-resumed',
+    resumedFrom: 'retained-occurrences',
+    state: nextState,
+    governanceIdentity,
+    revision: 1,
+    phase: 'required',
+    trigger: repeat,
+    failedApproachSet,
+  });
+}
+
+/**
+ * Render one conditional `AuditSummaryV2` from the byte-equivalent intersection
+ * of the freshly reacquired current-run and lane surfaces, never their union.
+ * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} haltValue
+ * @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function auditGovernanceV2(stateValue, inputValue, haltValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('auditGovernanceV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} audit */
+  const respond = (audit) => ({ inspection, audit });
+  const governance = activeGovernanceCaseV2(state);
+  if (!governance) return respond({ derived: false, reason: 'learning-evidence-incomplete', state });
+  requireResolvedOwnerMappingV2(inspection, /** @type {Record<string, unknown>} */ (governance.target), 'auditGovernanceV2');
+  const rebound = reboundGovernanceEvidenceV2(inspection, governance);
+  if (rebound.reason) return respond({ derived: false, reason: rebound.reason, state });
+  /** @type {ReturnType<typeof dualSurfaceEventIndexV2>} */
+  let index;
+  try {
+    index = dualSurfaceEventIndexV2(inspection);
+  } catch {
+    return respond({ derived: false, reason: 'projection-conflict', state });
+  }
+  // Intersection only: a one-sided or conflicting event contributes no row.
+  const evidenceEventHashes = [...index.currentRun.byHash.entries()]
+    .filter(([eventHash, event]) => {
+      const lane = index.lane.byHash.get(eventHash);
+      return Boolean(lane)
+        && index.currentRun.counts.get(eventHash) === 1
+        && index.lane.counts.get(eventHash) === 1
+        && canonicalJson(lane) === canonicalJson(event)
+        && targetKey(event.target) === targetKey(governance.target);
+    })
+    .map(([eventHash]) => eventHash)
+    .sort(compareUtf8);
+  let immediateHaltEnd;
+  let scope = 'target';
+  if (haltValue !== undefined) {
+    const derived = deriveImmediateHaltEndV2(inspection, governance, haltValue, 'audit request.halt');
+    if (derived.reason) return respond({ derived: false, reason: derived.reason, state });
+    immediateHaltEnd = /** @type {Record<string, unknown>} */ (derived.outcome);
+    scope = /** @type {string} */ (derived.scope);
+  }
+  const projectionEvidence = immediateHaltEnd
+    ? { disposition: immediateHaltEnd.projectionDisposition }
+    : immediateHaltProjectionEvidenceV2(inspection, governance);
+  if (projectionEvidence.reason) {
+    return respond({ derived: false, reason: 'unrecoverable-governance-evidence', state });
+  }
+  const controlledEnd = Object.hasOwn(governance, 'controlledEnd')
+    ? /** @type {Record<string, unknown>} */ (governance.controlledEnd)
+    : null;
+  const suspension = Object.hasOwn(governance, 'suspension')
+    ? /** @type {Record<string, unknown>} */ (governance.suspension)
+    : null;
+  const invocationOutcome = immediateHaltEnd
+    ? 'immediate-halt-end'
+    : controlledEnd ? 'controlled-unresolved-end' : 'in-progress';
+  /** @type {Record<string, unknown>|null} */
+  let branchEvidence = null;
+  if (controlledEnd
+    || governance.phase === 'alternative-inspected'
+    || governance.phase === 'no-progress-verified') {
+    // Every branch and controlled-end row is backed by the byte-equivalent
+    // intersection, never by a stored RunState hash.
+    const retained = retainedLearningResultV2(inspection, governance);
+    if (retained.reason) return respond({ derived: false, reason: retained.reason, state });
+    if (controlledEnd) {
+      if (!evidenceEventHashes.includes(/** @type {string} */ (controlledEnd.learningReviewEventHash))
+        || controlledEnd.learningReviewEventHash
+          !== /** @type {Record<string, unknown>} */ (retained.reviewEvent).eventHash
+        || canonicalJson(controlledEnd.projectionRef) !== canonicalJson(retained.projectionRef)) {
+        return respond({ derived: false, reason: 'projection-conflict', state });
+      }
+    } else {
+      const derivedBranch = reboundBranchEvidenceV2(inspection, governance, rebound, retained);
+      if (derivedBranch.reason) return respond({ derived: false, reason: derivedBranch.reason, state });
+      const branch = /** @type {Record<string, unknown>} */ (derivedBranch.branchEvidence);
+      // A `no-progress-verified` row resolves its identity as a verification
+      // alone; the proof identity belongs to the controlled-end record.
+      branchEvidence = branch.kind === 'selected-alternative' ? branch : {
+        kind: 'no-progress',
+        sourcePhase: 'no-progress-verified',
+        noProgressVerificationIdentity: branch.noProgressVerificationIdentity,
+      };
+    }
+  }
+  const summaryWithoutIdentity = {
+    version: 2,
+    target: canonicalTarget(/** @type {Record<string, unknown>} */ (governance.target)),
+    governanceIdentity: governance.governanceIdentity,
+    // Re-derived from the retained occurrence events, never read from state.
+    trigger: rebound.repeat,
+    channel: /** @type {Record<string, unknown>} */ (rebound.repeat).channel,
+    learningRequirement: controlledEnd ? 'resolved' : 'unresolved',
+    governanceStatus: governance.phase,
+    targetDisposition: 'unchanged',
+    invocationOutcome,
+    scope,
+    unresolvedReason: immediateHaltEnd
+      ? /** @type {Record<string, unknown>} */ (immediateHaltEnd.halt).kind
+      : controlledEnd ? 'controlled-unresolved-end' : suspension ? suspension.reason : 'learning-required',
+    schedulingOutcome: scope === 'run'
+      ? 'invocation-stopped'
+      : suspension ? 'sequential-disjoint-continuation' : 'none',
+    projectionDisposition: projectionEvidence.disposition,
+    failedApproachSetIdentity: /** @type {Record<string, unknown>} */ (rebound.failedApproachSet).setIdentity,
+    evidenceEventHashes,
+    ...(branchEvidence ? { branchEvidence } : {}),
+    ...(suspension ? { suspension } : {}),
+    ...(controlledEnd ? { controlledEnd } : {}),
+    ...(immediateHaltEnd ? { immediateHaltEnd } : {}),
+  };
+  const summary = {
+    ...summaryWithoutIdentity,
+    summaryIdentity: sha256(canonicalJson(summaryWithoutIdentity)),
+  };
+  validateAuditSummaryV2(summary);
+  return respond({ derived: true, reason: 'audit-derived', state, summary });
+}
+
+// === Feature 009 (T005): acyclic permits, receipts, and incident contracts ==
+// Authority flows in one direction only: post-learning Inspection, pure attempt
+// permit, `authorize`, optional lane claim, receipt commit, execution, retained
+// completion, and terminal lane mutation. Every permit binds the exact subject
+// RunState it was issued against, so no permit survives the mutation it
+// authorizes. Nothing here trusts a stored governance hash: each route rebinds
+// the trigger, failed set, learning result, and branch evidence from the fresh
+// dual-retained surfaces before a permit may act on them. Incident correction
+// derives intent, then branch-authorized events, then batches, then the preview,
+// then the whole-object mutation, and no event ever references `previewIdentity`.
+
+const V2_LANES = Object.freeze(['lightweight', 'tracked']);
+const V2_GLYPHS = Object.freeze([' ', '~', '!', 'x']);
+const V2_TRACKED_STATUSES = Object.freeze(['open', 'in_progress', 'blocked', 'closed']);
+const V2_STATE_GLYPHS = Object.freeze({ todo: ' ', 'in-progress': '~', blocked: '!', done: 'x' });
+const V2_LANE_STATE_KINDS = Object.freeze(['claim', 'task-blocked', 'task-completed', 'controlled-end']);
+const V2_LANE_REASONS = Object.freeze([
+  'initial-claim', 'resume-claim', 'post-learning-claim',
+  'task-blocked', 'no-progress', 'task-completed', 'controlled-unresolved-end',
+]);
+const V2_LANE_KIND_REASONS = Object.freeze({
+  'append-event': Object.freeze(['event-projection']),
+  claim: Object.freeze(['initial-claim', 'resume-claim', 'post-learning-claim']),
+  // A verified no-progress exit blocks the exact task, so it is a task-blocked
+  // mutation carrying its own terminal reason.
+  'task-blocked': Object.freeze(['task-blocked', 'no-progress']),
+  'task-completed': Object.freeze(['task-completed']),
+  'controlled-end': Object.freeze(['controlled-unresolved-end']),
+  'incident-supersession': Object.freeze(['incident-supersession']),
+});
+const V2_AUTHORIZED_PHASES = Object.freeze([
+  'alternative-authorized-pending-lane', 'alternative-authorized', 'alternative-verified',
+]);
+const TASK_STATE_PATH = '.dude/state/task-state.json';
+const FEATURE_007_TARGET = Object.freeze({
+  specPath: '.dude/specs/007-technical-docs-pack-remediation/spec.md',
+  lane: 'lightweight',
+  taskKey: 'T001@00709e37',
+});
+const FEATURE_007_IDEA_PATH = '.dude/ideas/technical-docs-pack-remediation.md';
+const FEATURE_007_TASKS_PATH = '.dude/specs/007-technical-docs-pack-remediation/tasks.md';
+const INCIDENT_INCOMPLETE_BLOCKER =
+  'contract-mismatch: evidence-incomplete autonomous review occurrence evidence unavailable';
+const V2_INCIDENT_INCOMPLETE_REASONS = Object.freeze([
+  'occurrence-retention-incomplete', 'repeat-not-established', 'finding-repeat-unavailable',
+]);
+const CANONICAL_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+/** @param {unknown} value @param {string} label */
+function assertV2ShortText(value, label) {
+  assertUnicodeScalarString(value, label);
+  const text = /** @type {string} */ (value);
+  const bytes = Buffer.byteLength(text);
+  if (bytes < 1 || bytes > 1024 || /[\u0000-\u001f\u007f-\u009f]/.test(text)) {
+    invalid(label, 'must be control-free ShortText of 1 through 1,024 UTF-8 bytes');
+  }
+  return text;
+}
+
+/** @param {unknown} value @param {string} label */
+function assertV2CanonicalUtcTimestamp(value, label) {
+  assertUnicodeScalarString(value, label);
+  if (!CANONICAL_UTC_PATTERN.test(/** @type {string} */ (value))) {
+    invalid(label, 'must be a canonical UTC timestamp');
+  }
+  return /** @type {string} */ (value);
+}
+
+/** @param {unknown} value @param {string} label */
+function validateByteDescriptorV1(value, label) {
+  const descriptor = assertExactRecord(value, ['sha256', 'byteLength'], [], label);
+  assertHash(descriptor.sha256, `${label}.sha256`);
+  assertSafeInteger(descriptor.byteLength, `${label}.byteLength`, false);
+  return descriptor;
+}
+
+/** The exact canonical RunState subject one permit is issued against. @param {Record<string, unknown>} state */
+function v2RunStateHash(state) {
+  return sha256(canonicalJson(state));
+}
+
+/** @param {Record<string, unknown>} target */
+function v2TasksPathForTarget(target) {
+  return `${/** @type {string} */ (target.specPath).slice(0, -'spec.md'.length)}tasks.md`;
+}
+
+/**
+ * Validate one complete lane-specific target mapping and return its identity.
+ * @param {unknown} value @param {Record<string, unknown>} target @param {string} label
+ */
+function validateTargetMappingV1(value, target, label) {
+  const record = assertRecord(value, label);
+  assertEnum(record.lane, V2_LANES, `${label}.lane`);
+  const mapping = record.lane === 'lightweight'
+    ? assertExactRecord(
+      value,
+      ['version', 'lane', 'target', 'ownerBindingHash', 'tasksPath', 'tasksDescriptor', 'taskStatePath', 'taskStateDescriptor', 'taskKey'],
+      [],
+      label,
+    )
+    : assertExactRecord(
+      value,
+      ['version', 'lane', 'target', 'ownerBindingHash', 'taskKey', 'listDescriptor', 'detailDescriptor', 'historyDescriptor'],
+      [],
+      label,
+    );
+  if (mapping.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  const mappedTarget = validateAffectedTargetV2(mapping.target, `${label}.target`);
+  if (mappedTarget.lane !== mapping.lane) invalid(`${label}.lane`, 'must match the mapped target lane');
+  if (targetKey(mappedTarget) !== targetKey(target)) invalid(`${label}.target`, 'must be the exact affected target');
+  assertHash(mapping.ownerBindingHash, `${label}.ownerBindingHash`);
+  assertTaskKeyString(mapping.taskKey, `${label}.taskKey`);
+  if (mapping.lane === 'lightweight') {
+    if (mapping.taskKey !== mappedTarget.taskKey) invalid(`${label}.taskKey`, 'must equal the Lightweight target task key');
+    if (mapping.tasksPath !== v2TasksPathForTarget(mappedTarget)) {
+      invalid(`${label}.tasksPath`, 'must be the canonical package tasks path');
+    }
+    if (mapping.taskStatePath !== TASK_STATE_PATH) invalid(`${label}.taskStatePath`, `must be ${TASK_STATE_PATH}`);
+    validateByteDescriptorV1(mapping.tasksDescriptor, `${label}.tasksDescriptor`);
+    validateByteDescriptorV1(mapping.taskStateDescriptor, `${label}.taskStateDescriptor`);
+  } else {
+    for (const field of ['listDescriptor', 'detailDescriptor', 'historyDescriptor']) {
+      validateByteDescriptorV1(mapping[field], `${label}.${field}`);
+    }
+  }
+  return { mapping, targetMappingHash: sha256(canonicalJson(mapping)) };
+}
+
+/**
+ * Validate one complete lane prestate, bind it to the same mapping descriptors,
+ * and return its identity.
+ * @param {unknown} value @param {Record<string, unknown>} target @param {Record<string, unknown>} mapping @param {string} label
+ */
+function validateLanePrestateV1(value, target, mapping, label) {
+  const record = assertRecord(value, label);
+  assertEnum(record.lane, V2_LANES, `${label}.lane`);
+  const prestate = record.lane === 'lightweight'
+    ? assertExactRecord(
+      value,
+      ['version', 'lane', 'target', 'glyph', 'blockedBy', 'tasksDescriptor', 'taskStateDescriptor', 'ownerDescriptor'],
+      [],
+      label,
+    )
+    : assertExactRecord(
+      value,
+      ['version', 'lane', 'target', 'taskKey', 'status', 'blocker', 'listDescriptor', 'detailDescriptor', 'historyDescriptor', 'ownerDescriptor'],
+      [],
+      label,
+    );
+  if (prestate.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  const prestateTarget = validateAffectedTargetV2(prestate.target, `${label}.target`);
+  if (prestate.lane !== mapping.lane) invalid(`${label}.lane`, 'must match the mapped lane');
+  if (targetKey(prestateTarget) !== targetKey(target)) invalid(`${label}.target`, 'must be the exact affected target');
+  validateByteDescriptorV1(prestate.ownerDescriptor, `${label}.ownerDescriptor`);
+  if (prestate.lane === 'lightweight') {
+    assertEnum(prestate.glyph, V2_GLYPHS, `${label}.glyph`);
+    if (prestate.blockedBy !== null) assertV2ShortText(prestate.blockedBy, `${label}.blockedBy`);
+    for (const field of ['tasksDescriptor', 'taskStateDescriptor']) {
+      validateByteDescriptorV1(prestate[field], `${label}.${field}`);
+      if (canonicalJson(prestate[field]) !== canonicalJson(mapping[field])) {
+        invalid(`${label}.${field}`, 'must equal the mapped fresh descriptor');
+      }
+    }
+  } else {
+    assertTaskKeyString(prestate.taskKey, `${label}.taskKey`);
+    if (prestate.taskKey !== mapping.taskKey) invalid(`${label}.taskKey`, 'must equal the mapped durable task key');
+    assertEnum(prestate.status, V2_TRACKED_STATUSES, `${label}.status`);
+    if (prestate.blocker !== null) assertV2ShortText(prestate.blocker, `${label}.blocker`);
+    for (const field of ['listDescriptor', 'detailDescriptor', 'historyDescriptor']) {
+      validateByteDescriptorV1(prestate[field], `${label}.${field}`);
+      if (canonicalJson(prestate[field]) !== canonicalJson(mapping[field])) {
+        invalid(`${label}.${field}`, 'must equal the mapped fresh descriptor');
+      }
+    }
+  }
+  return { prestate, lanePrestateHash: sha256(canonicalJson(prestate)) };
+}
+
+/**
+ * Recompute the fresh Lightweight task facts one prestate claims. A caller can
+ * supply captured bytes, never the task state they are supposed to prove.
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>} target
+ */
+function freshLightweightTaskFactsV2(inspection, target) {
+  const taskHistory = assertExactRecord(
+    inspectionSourceBodyV2(inspection, 'task-history'),
+    ['path', 'canonicalTasks', 'dependencies', 'discovered', 'history'],
+    [],
+    'task-history Inspection body',
+  );
+  if (taskHistory.path !== v2TasksPathForTarget(target)) {
+    invalid('task-history Inspection body.path', 'must be the canonical package tasks path');
+  }
+  const tasks = /** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(taskHistory.canonicalTasks, 'task-history Inspection body.canonicalTasks')
+  );
+  const rows = tasks.filter((task) => task.id === target.taskKey);
+  if (rows.length !== 1) invalid('task-history Inspection body.canonicalTasks', 'must resolve exactly one canonical task unit');
+  const task = rows[0];
+  const glyph = Object.hasOwn(V2_STATE_GLYPHS, /** @type {string} */ (task.state))
+    ? V2_STATE_GLYPHS[/** @type {string} */ (task.state)]
+    : invalid('task-history Inspection body.canonicalTasks[0].state', 'must be a canonical task state');
+  return {
+    task,
+    glyph,
+    blockedBy: typeof task.blockedBy === 'string' && task.blockedBy.length > 0 ? task.blockedBy : null,
+    taskUnitHash: sha256(canonicalJson(task)),
+  };
+}
+
+/** Fail closed when a supplied Lightweight prestate contradicts fresh Inspection facts. @param {Record<string, unknown>} inspection @param {Record<string, unknown>} target @param {Record<string, unknown>} prestate */
+function lanePrestateMatchesFreshEvidenceV2(inspection, target, prestate) {
+  if (prestate.lane !== 'lightweight') return true;
+  const fresh = freshLightweightTaskFactsV2(inspection, target);
+  return prestate.glyph === fresh.glyph && prestate.blockedBy === fresh.blockedBy;
+}
+
+/** @param {unknown} value @param {string} label */
+function validateBlockerEffectV1(value, label) {
+  const effect = assertExactRecord(value, ['kind', 'before', 'after'], [], label);
+  assertEnum(effect.kind, ['unchanged', 'add', 'remove', 'replace'], `${label}.kind`);
+  for (const field of ['before', 'after']) {
+    if (effect[field] !== null) assertV2ShortText(effect[field], `${label}.${field}`);
+  }
+  if (effect.kind === 'unchanged' && effect.before !== effect.after) {
+    invalid(label, 'unchanged requires byte-identical before and after');
+  }
+  if (effect.kind === 'add' && (effect.before !== null || effect.after === null)) {
+    invalid(label, 'add requires a null before and a present after');
+  }
+  if (effect.kind === 'remove' && (effect.before === null || effect.after !== null)) {
+    invalid(label, 'remove requires a present before and a null after');
+  }
+  if (effect.kind === 'replace'
+    && (effect.before === null || effect.after === null || effect.before === effect.after)) {
+    invalid(label, 'replace requires two byte-distinct present values');
+  }
+  return effect;
+}
+
+/** Parse one exact `EventLineText` and require it to carry its declared event hash. @param {unknown} value @param {string} label */
+function validateEventLineAppendV1(value, label) {
+  const line = assertExactRecord(value, ['eventHash', 'exactLine', 'terminator'], [], label);
+  assertHash(line.eventHash, `${label}.eventHash`);
+  assertUnicodeScalarString(line.exactLine, `${label}.exactLine`);
+  if (line.terminator !== 'LF') invalid(`${label}.terminator`, 'must be the literal LF');
+  const text = /** @type {string} */ (line.exactLine);
+  if (!text.startsWith(LANE_EVENT_PREFIX) || /[\r\n]/.test(text)) {
+    invalid(`${label}.exactLine`, 'must be one canonical autonomous v2 event line without CR or LF');
+  }
+  if (Buffer.byteLength(text) > MAX_EVENT_LINE_TEXT_BYTES) {
+    invalid(`${label}.exactLine`, `must serialize to at most ${MAX_EVENT_LINE_TEXT_BYTES} UTF-8 bytes`);
+  }
+  const suffix = text.slice(LANE_EVENT_PREFIX.length);
+  let parsed;
+  try {
+    parsed = JSON.parse(suffix);
+  } catch {
+    invalid(`${label}.exactLine`, 'must carry one canonical JSON event body');
+  }
+  if (canonicalJson(parsed) !== suffix) invalid(`${label}.exactLine`, 'must carry canonical JSON bytes');
+  const event = /** @type {Record<string, unknown>} */ (assertRecord(parsed, `${label}.exactLine event`));
+  validateV2ProjectableEvent(event, `${label}.exactLine event`);
+  if (event.eventHash !== line.eventHash) invalid(`${label}.eventHash`, 'must equal the parsed event hash');
+  return { line, event };
+}
+
+/** @param {unknown} value @param {string} label */
+function validateEventLineEffectV1(value, label) {
+  const record = assertRecord(value, label);
+  if (record.kind === 'none') {
+    assertExactRecord(value, ['kind'], [], label);
+    return { effect: record, events: [] };
+  }
+  const effect = assertExactRecord(value, ['kind', 'lines', 'appendIfAbsent'], [], label);
+  if (effect.kind !== 'append-exact') invalid(`${label}.kind`, 'must be none or append-exact');
+  if (effect.appendIfAbsent !== true) invalid(`${label}.appendIfAbsent`, 'must be the literal true');
+  const rows = assertDenseDataArray(effect.lines, `${label}.lines`);
+  if (rows.length < 1 || rows.length > 4) invalid(`${label}.lines`, 'must contain 1 through 4 exact lines');
+  const events = rows.map((row, index) => validateEventLineAppendV1(row, `${label}.lines[${index}]`).event);
+  if (new Set(events.map((event) => event.eventHash)).size !== events.length) {
+    invalid(`${label}.lines`, 'must be duplicate-free');
+  }
+  return { effect, events };
+}
+
+/** @param {unknown} value @param {string} label */
+function validateOwnerLogEffectV1(value, label) {
+  const record = assertRecord(value, label);
+  if (record.kind === 'none') {
+    assertExactRecord(value, ['kind'], [], label);
+    return record;
+  }
+  const effect = assertExactRecord(
+    value,
+    ['kind', 'ownerPath', 'expectedOwnerHash', 'exactLines', 'terminator', 'appendIfAbsent'],
+    [],
+    label,
+  );
+  if (effect.kind !== 'append-exact') invalid(`${label}.kind`, 'must be none or append-exact');
+  assertDirectIdeaPath(effect.ownerPath, `${label}.ownerPath`);
+  assertHash(effect.expectedOwnerHash, `${label}.expectedOwnerHash`);
+  if (effect.terminator !== 'LF') invalid(`${label}.terminator`, 'must be the literal LF');
+  if (effect.appendIfAbsent !== true) invalid(`${label}.appendIfAbsent`, 'must be the literal true');
+  const lines = assertDenseDataArray(effect.exactLines, `${label}.exactLines`);
+  if (lines.length < 1 || lines.length > 4) invalid(`${label}.exactLines`, 'must contain 1 through 4 exact lines');
+  lines.forEach((line, index) => {
+    assertV2ShortText(line, `${label}.exactLines[${index}]`);
+    if (/[\r\n]/.test(/** @type {string} */ (line))) {
+      invalid(`${label}.exactLines[${index}]`, 'must contain no CR or LF');
+    }
+  });
+  return effect;
+}
+
+/** The closed lane transition matrix. @param {Record<string, unknown>} mutation @param {string} from @param {string} to @param {string} blockerKind @param {string} label */
+function requireClosedLaneTransitionV2(mutation, from, to, blockerKind, blocker, label) {
+  const lightweight = mutation.lane === 'lightweight';
+  const claimed = lightweight ? '~' : 'in_progress';
+  const blockedState = lightweight ? '!' : 'blocked';
+  const doneState = lightweight ? 'x' : 'closed';
+  const openState = lightweight ? ' ' : 'open';
+  const nullBlocker = blockerKind === 'unchanged' && blocker.before === null && blocker.after === null;
+  const allowed = (() => {
+    switch (mutation.kind) {
+      case 'append-event':
+        return from === to && blockerKind === 'unchanged';
+      case 'claim':
+        return (from === openState && to === claimed && nullBlocker)
+          || (from === blockedState && to === claimed && blockerKind === 'remove');
+      case 'task-blocked':
+        return ((from === openState || from === claimed) && to === blockedState && blockerKind === 'add')
+          || (from === blockedState && to === blockedState && blockerKind === 'replace');
+      case 'task-completed':
+        return from === claimed && to === doneState && nullBlocker;
+      case 'controlled-end':
+        return from === to && from !== doneState && blockerKind === 'unchanged';
+      case 'incident-supersession':
+        return from === '!'
+          && ((to === '~' && blockerKind === 'remove') || (to === '!' && blockerKind === 'replace'));
+      default:
+        return false;
+    }
+  })();
+  if (!allowed) invalid(label, 'is not an allowed closed lane transition');
+}
+
+/**
+ * Validate one complete closed lane-specific mutation object and derive its
+ * whole-object identity. `mutationIdentity` is never derived from an abstract
+ * kind, reason, target, event hash, or prestate summary.
+ * @param {unknown} value @param {Record<string, unknown>} target @param {string} label
+ */
+function validateLaneMutationV1(value, target, label) {
+  const record = assertRecord(value, label);
+  assertEnum(record.lane, V2_LANES, `${label}.lane`);
+  const lightweight = record.lane === 'lightweight';
+  const incident = record.kind === 'incident-supersession';
+  if (incident && !lightweight) invalid(`${label}.kind`, 'incident supersession is Lightweight only');
+  const stateFields = lightweight ? ['fromGlyph', 'toGlyph'] : ['fromStatus', 'toStatus'];
+  const mutation = assertExactRecord(
+    value,
+    incident
+      ? ['version', 'lane', 'kind', 'reason', 'intentIdentity', 'previewIdentity', 'target', 'fromGlyph', 'toGlyph', 'blocker', 'eventLines', 'ownerLog', 'snapshotUpdatedAt']
+      : [
+        'version', 'lane', 'kind', 'reason', 'target', ...stateFields,
+        'blocker', 'eventLines', 'ownerLog', ...(lightweight ? ['snapshotUpdatedAt'] : []),
+      ],
+    [],
+    label,
+  );
+  if (mutation.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  assertEnum(
+    mutation.kind,
+    incident ? ['incident-supersession'] : ['append-event', ...V2_LANE_STATE_KINDS],
+    `${label}.kind`,
+  );
+  assertEnum(
+    mutation.reason,
+    incident ? ['incident-supersession'] : ['event-projection', ...V2_LANE_REASONS],
+    `${label}.reason`,
+  );
+  if (!V2_LANE_KIND_REASONS[/** @type {string} */ (mutation.kind)].includes(/** @type {string} */ (mutation.reason))) {
+    invalid(`${label}.reason`, 'must match its exact mutation kind');
+  }
+  const mutationTarget = validateAffectedTargetV2(mutation.target, `${label}.target`);
+  if (mutationTarget.lane !== mutation.lane) invalid(`${label}.lane`, 'must match the mutation target lane');
+  if (targetKey(mutationTarget) !== targetKey(target)) invalid(`${label}.target`, 'must be the exact affected target');
+  if (incident && canonicalJson(mutationTarget) !== canonicalJson(FEATURE_007_TARGET)) {
+    invalid(`${label}.target`, 'must be the exact Feature 007 incident target');
+  }
+  if (incident) {
+    assertHash(mutation.intentIdentity, `${label}.intentIdentity`);
+    assertHash(mutation.previewIdentity, `${label}.previewIdentity`);
+  }
+  const from = /** @type {string} */ (mutation[stateFields[0]]);
+  const to = /** @type {string} */ (mutation[stateFields[1]]);
+  assertEnum(from, lightweight ? V2_GLYPHS : V2_TRACKED_STATUSES, `${label}.${stateFields[0]}`);
+  assertEnum(to, lightweight ? V2_GLYPHS : V2_TRACKED_STATUSES, `${label}.${stateFields[1]}`);
+  const blocker = validateBlockerEffectV1(mutation.blocker, `${label}.blocker`);
+  const eventLines = validateEventLineEffectV1(mutation.eventLines, `${label}.eventLines`);
+  validateOwnerLogEffectV1(mutation.ownerLog, `${label}.ownerLog`);
+  if (lightweight) assertV2CanonicalUtcTimestamp(mutation.snapshotUpdatedAt, `${label}.snapshotUpdatedAt`);
+  if (mutation.kind === 'append-event' && eventLines.events.length !== 1) {
+    invalid(`${label}.eventLines`, 'projection requires exactly one append line matching its item event');
+  }
+  requireClosedLaneTransitionV2(mutation, from, to, /** @type {string} */ (blocker.kind), blocker, label);
+  return { mutation, mutationIdentity: sha256(canonicalJson(mutation)), events: eventLines.events };
+}
+
+/** @param {Record<string, unknown>} body */
+function v2PermitWithHash(body) {
+  return { ...body, permitHash: sha256(canonicalJson(body)) };
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateAttemptAuthorizationPermitV1(value, label = 'AttemptAuthorizationPermitV1') {
+  const permit = assertExactRecord(
+    value,
+    ['version', 'kind', 'origin', 'target', 'subjectRunStateHash', 'governanceIdentity', 'governancePhase', 'postLearningInspectionIdentity', 'selectedAlternativeIdentity', 'discriminatingCheckIdentity', 'inspectionEvidenceHash', 'targetMappingHash', 'lanePrestateHash', 'permitHash'],
+    [],
+    label,
+  );
+  if (permit.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  if (permit.kind !== 'attempt-authorization') invalid(`${label}.kind`, 'must be attempt-authorization');
+  if (permit.origin !== 'dude-work') invalid(`${label}.origin`, 'must be dude-work');
+  validateAffectedTargetV2(permit.target, `${label}.target`);
+  for (const field of ['subjectRunStateHash', 'inspectionEvidenceHash', 'targetMappingHash', 'lanePrestateHash', 'permitHash']) {
+    assertHash(permit[field], `${label}.${field}`);
+  }
+  const governanceFields = ['governanceIdentity', 'postLearningInspectionIdentity', 'selectedAlternativeIdentity', 'discriminatingCheckIdentity'];
+  for (const field of governanceFields) {
+    if (permit[field] !== null) assertHash(permit[field], `${label}.${field}`);
+  }
+  if (permit.governancePhase !== null && permit.governancePhase !== 'alternative-inspected') {
+    invalid(`${label}.governancePhase`, 'must be null or alternative-inspected');
+  }
+  const governed = permit.governancePhase === 'alternative-inspected';
+  if (governanceFields.some((field) => (permit[field] === null) === governed)) {
+    invalid(label, 'governance fields must be all null or all present with alternative-inspected');
+  }
+  const { permitHash, ...body } = permit;
+  if (permitHash !== sha256(canonicalJson(body))) invalid(`${label}.permitHash`, 'must equal the recomputed permit hash');
+  return permit;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateProjectionPermitV1(value, label = 'ProjectionPermitV1') {
+  const permit = assertExactRecord(
+    value,
+    ['version', 'kind', 'origin', 'lane', 'target', 'subjectRunStateHash', 'batchIdentity', 'eventHash', 'targetMappingHash', 'lanePrestateHash', 'mutationIdentity', 'permitHash'],
+    [],
+    label,
+  );
+  if (permit.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  if (permit.kind !== 'lane-projection') invalid(`${label}.kind`, 'must be lane-projection');
+  if (permit.origin !== 'dude-work') invalid(`${label}.origin`, 'must be dude-work');
+  assertEnum(permit.lane, V2_LANES, `${label}.lane`);
+  const target = validateAffectedTargetV2(permit.target, `${label}.target`);
+  if (target.lane !== permit.lane) invalid(`${label}.lane`, 'must match the permitted target lane');
+  for (const field of ['subjectRunStateHash', 'batchIdentity', 'eventHash', 'targetMappingHash', 'lanePrestateHash', 'mutationIdentity', 'permitHash']) {
+    assertHash(permit[field], `${label}.${field}`);
+  }
+  const { permitHash, ...body } = permit;
+  if (permitHash !== sha256(canonicalJson(body))) invalid(`${label}.permitHash`, 'must equal the recomputed permit hash');
+  return permit;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateLaneMutationPermitV1(value, label = 'LaneMutationPermitV1') {
+  const permit = assertExactRecord(
+    value,
+    ['version', 'kind', 'origin', 'lane', 'operation', 'target', 'subjectRunStateHash', 'governanceIdentity', 'governancePhase', 'attemptIdentity', 'targetMappingHash', 'lanePrestateHash', 'mutationIdentity', 'permitHash'],
+    [],
+    label,
+  );
+  if (permit.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  if (permit.kind !== 'lane-mutation') invalid(`${label}.kind`, 'must be lane-mutation');
+  if (permit.origin !== 'dude-work') invalid(`${label}.origin`, 'must be dude-work');
+  assertEnum(permit.lane, V2_LANES, `${label}.lane`);
+  assertEnum(permit.operation, ['work-set', 'work-transition'], `${label}.operation`);
+  if (permit.operation !== (permit.lane === 'lightweight' ? 'work-set' : 'work-transition')) {
+    invalid(`${label}.operation`, 'must be the exact lane boundary operation');
+  }
+  const target = validateAffectedTargetV2(permit.target, `${label}.target`);
+  if (target.lane !== permit.lane) invalid(`${label}.lane`, 'must match the permitted target lane');
+  for (const field of ['subjectRunStateHash', 'targetMappingHash', 'lanePrestateHash', 'mutationIdentity', 'permitHash']) {
+    assertHash(permit[field], `${label}.${field}`);
+  }
+  for (const field of ['governanceIdentity', 'attemptIdentity']) {
+    if (permit[field] !== null) assertHash(permit[field], `${label}.${field}`);
+  }
+  if (permit.governancePhase !== null) {
+    assertEnum(permit.governancePhase, V2_GOVERNANCE_PHASES, `${label}.governancePhase`);
+  }
+  if ((permit.governanceIdentity === null) !== (permit.governancePhase === null)) {
+    invalid(label, 'governance identity and phase must both be present or both null');
+  }
+  const { permitHash, ...body } = permit;
+  if (permitHash !== sha256(canonicalJson(body))) invalid(`${label}.permitHash`, 'must equal the recomputed permit hash');
+  return permit;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateLightweightAtomicReceiptV1(value, label = 'LightweightAtomicReceiptV1') {
+  const receipt = assertExactRecord(
+    value,
+    ['version', 'lane', 'permitHash', 'mutationIdentity', 'target', 'targetMappingHash', 'lanePrestateHash', 'tasksPoststateHash', 'taskStatePoststateHash', 'ownerPoststateHash', 'targetStateChanged', 'receiptHash'],
+    [],
+    label,
+  );
+  if (receipt.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  if (receipt.lane !== 'lightweight') invalid(`${label}.lane`, 'must be lightweight');
+  const target = validateAffectedTargetV2(receipt.target, `${label}.target`);
+  if (target.lane !== 'lightweight') invalid(`${label}.target`, 'must be a Lightweight target');
+  for (const field of ['permitHash', 'mutationIdentity', 'targetMappingHash', 'lanePrestateHash', 'tasksPoststateHash', 'taskStatePoststateHash', 'ownerPoststateHash', 'receiptHash']) {
+    assertHash(receipt[field], `${label}.${field}`);
+  }
+  if (typeof receipt.targetStateChanged !== 'boolean') invalid(`${label}.targetStateChanged`, 'must be a boolean');
+  const { receiptHash, ...body } = receipt;
+  if (receiptHash !== sha256(canonicalJson(body))) invalid(`${label}.receiptHash`, 'must equal the recomputed receipt hash');
+  return receipt;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateTrackedCompositeReceiptV1(value, label = 'TrackedCompositeReceiptV1') {
+  const receipt = assertExactRecord(
+    value,
+    ['version', 'lane', 'mutationIdentity', 'laneReceiptHash', 'ownerLogReceiptHash', 'receiptHash'],
+    [],
+    label,
+  );
+  if (receipt.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  if (receipt.lane !== 'tracked') invalid(`${label}.lane`, 'must be tracked');
+  for (const field of ['mutationIdentity', 'laneReceiptHash', 'ownerLogReceiptHash', 'receiptHash']) {
+    assertHash(receipt[field], `${label}.${field}`);
+  }
+  const { receiptHash, ...body } = receipt;
+  if (receiptHash !== sha256(canonicalJson(body))) invalid(`${label}.receiptHash`, 'must equal the recomputed receipt hash');
+  return receipt;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateAcceptedFeatureEvidenceV1(value, label = 'AcceptedFeatureEvidenceV1') {
+  const record = assertRecord(value, label);
+  assertEnum(record.mode, ['standard', 'core-close'], `${label}.mode`);
+  const evidence = record.mode === 'standard'
+    ? assertExactRecord(
+      value,
+      ['version', 'mode', 'featureSpecPath', 'definitionContractIdentity', 'sourceRevisionIdentity', 'verificationSetIdentity', 'independentReviewEnvelopeIdentity', 'acceptedFeatureEvidenceIdentity'],
+      [],
+      label,
+    )
+    : assertExactRecord(
+      value,
+      ['version', 'mode', 'featureSpecPath', 'definitionContractIdentity', 'terminalTaskKey', 'baselineEvidenceLineHash', 'acceptedEvidenceLineHash', 'head', 'declared', 'source', 'changed', 'verificationSetIdentity', 'finalReviewEnvelopeIdentity', 'review', 'acceptedFeatureEvidenceIdentity'],
+      [],
+      label,
+    );
+  if (evidence.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  assertUnicodeScalarString(evidence.featureSpecPath, `${label}.featureSpecPath`);
+  if (!/^\.dude\/specs\/[^/]+\/spec\.md$/.test(/** @type {string} */ (evidence.featureSpecPath))) {
+    invalid(`${label}.featureSpecPath`, 'must be a canonical spec path');
+  }
+  const hashFields = evidence.mode === 'standard'
+    ? ['definitionContractIdentity', 'sourceRevisionIdentity', 'verificationSetIdentity', 'independentReviewEnvelopeIdentity', 'acceptedFeatureEvidenceIdentity']
+    : ['definitionContractIdentity', 'baselineEvidenceLineHash', 'acceptedEvidenceLineHash', 'declared', 'source', 'changed', 'verificationSetIdentity', 'finalReviewEnvelopeIdentity', 'review', 'acceptedFeatureEvidenceIdentity'];
+  for (const field of hashFields) assertHash(evidence[field], `${label}.${field}`);
+  if (evidence.mode === 'core-close') {
+    assertTaskKeyString(evidence.terminalTaskKey, `${label}.terminalTaskKey`);
+    assertUnicodeScalarString(evidence.head, `${label}.head`);
+    if (!/^[0-9a-f]{40,64}$/.test(/** @type {string} */ (evidence.head))) {
+      invalid(`${label}.head`, 'must be a complete lowercase Git object identifier');
+    }
+  }
+  const { acceptedFeatureEvidenceIdentity, ...body } = evidence;
+  if (acceptedFeatureEvidenceIdentity !== sha256(canonicalJson(body))) {
+    invalid(`${label}.acceptedFeatureEvidenceIdentity`, 'must equal the recomputed complete evidence identity');
+  }
+  return evidence;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateIncidentSupersessionEventV1(value, label = 'IncidentSupersessionEventV1') {
+  const event = assertExactRecord(
+    value,
+    ['type', 'version', 'eventHash', 'incidentIdentity', 'intentIdentity', 'target', 'priorDispositionIdentity', 'acceptedFeatureEvidenceIdentity', 'branch', 'conclusion', 'resultingTargetState', 'evidenceInventoryHash'],
+    [],
+    label,
+  );
+  if (event.type !== 'incident-supersession') invalid(`${label}.type`, 'must be incident-supersession');
+  if (event.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  for (const field of ['eventHash', 'incidentIdentity', 'intentIdentity', 'priorDispositionIdentity', 'acceptedFeatureEvidenceIdentity', 'evidenceInventoryHash']) {
+    assertHash(event[field], `${label}.${field}`);
+  }
+  if (canonicalJson(validateAffectedTargetV2(event.target, `${label}.target`)) !== canonicalJson(FEATURE_007_TARGET)) {
+    invalid(`${label}.target`, 'must be the exact Feature 007 incident target');
+  }
+  assertEnum(event.branch, ['exact-evidence', 'evidence-incomplete'], `${label}.branch`);
+  if (event.conclusion !== 'unauthorized-block-superseded') {
+    invalid(`${label}.conclusion`, 'must be unauthorized-block-superseded');
+  }
+  assertEnum(
+    event.resultingTargetState,
+    ['in-progress-learning-required', 'blocked-evidence-incomplete'],
+    `${label}.resultingTargetState`,
+  );
+  if ((event.branch === 'exact-evidence') !== (event.resultingTargetState === 'in-progress-learning-required')) {
+    invalid(`${label}.resultingTargetState`, 'must match its exact branch');
+  }
+  const { eventHash, ...withoutHash } = event;
+  if (eventHash !== sha256(canonicalJson(withoutHash))) invalid(`${label}.eventHash`, 'must equal the recomputed event hash');
+  if (Buffer.byteLength(canonicalJson(event)) > MAX_EVENT_BYTES) invalid(label, `must serialize to at most ${MAX_EVENT_BYTES} UTF-8 bytes`);
+  return event;
+}
+
+/** Closed set of events one autonomous v2 lane line or batch may carry. @param {unknown} value @param {string} label */
+function validateV2ProjectableEvent(value, label) {
+  return /** @type {Record<string, unknown>} */ (assertRecord(value, label)).type === 'incident-supersession'
+    ? validateIncidentSupersessionEventV1(value, label)
+    : validateT002AuthoritativeEvent(value, label);
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateIncidentCorrectionIntentV1(value, label = 'IncidentCorrectionIntentV1') {
+  const record = assertRecord(value, label);
+  assertEnum(record.branch, ['exact-evidence', 'evidence-incomplete'], `${label}.branch`);
+  const exact = record.branch === 'exact-evidence';
+  const intent = assertExactRecord(
+    value,
+    exact
+      ? ['version', 'intentIdentity', 'branch', 'operationTime', 'incidentIdentity', 'target', 'priorDispositionIdentity', 'acceptedFeatureEvidenceIdentity', 'prestateIdentity', 'evidenceInventoryHash', 'reviewEnvelopeIdentities', 'findingOccurrenceIdentities', 'repeat', 'resultingTargetState', 'taskEffect']
+      : ['version', 'intentIdentity', 'branch', 'operationTime', 'incidentIdentity', 'target', 'priorDispositionIdentity', 'acceptedFeatureEvidenceIdentity', 'prestateIdentity', 'evidenceInventoryHash', 'incompleteReason', 'resultingTargetState', 'taskEffect'],
+    [],
+    label,
+  );
+  if (intent.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  for (const field of ['intentIdentity', 'incidentIdentity', 'priorDispositionIdentity', 'acceptedFeatureEvidenceIdentity', 'prestateIdentity', 'evidenceInventoryHash']) {
+    assertHash(intent[field], `${label}.${field}`);
+  }
+  assertV2CanonicalUtcTimestamp(intent.operationTime, `${label}.operationTime`);
+  if (canonicalJson(validateAffectedTargetV2(intent.target, `${label}.target`)) !== canonicalJson(FEATURE_007_TARGET)) {
+    invalid(`${label}.target`, 'must be the exact Feature 007 incident target');
+  }
+  const taskEffect = assertExactRecord(intent.taskEffect, ['fromGlyph', 'toGlyph', 'blocker'], [], `${label}.taskEffect`);
+  if (taskEffect.fromGlyph !== '!') invalid(`${label}.taskEffect.fromGlyph`, 'must be the blocked glyph');
+  const blocker = validateBlockerEffectV1(taskEffect.blocker, `${label}.taskEffect.blocker`);
+  if (exact) {
+    if (intent.resultingTargetState !== 'in-progress-learning-required') {
+      invalid(`${label}.resultingTargetState`, 'must be in-progress-learning-required');
+    }
+    if (taskEffect.toGlyph !== '~' || blocker.kind !== 'remove') {
+      invalid(`${label}.taskEffect`, 'must return the exact task to in progress and remove only the invalid blocker');
+    }
+    const reviewIdentities = assertDenseDataArray(intent.reviewEnvelopeIdentities, `${label}.reviewEnvelopeIdentities`);
+    const occurrenceIdentities = assertDenseDataArray(intent.findingOccurrenceIdentities, `${label}.findingOccurrenceIdentities`);
+    if (reviewIdentities.length !== 2) invalid(`${label}.reviewEnvelopeIdentities`, 'must contain exactly two rows');
+    if (occurrenceIdentities.length !== 2) invalid(`${label}.findingOccurrenceIdentities`, 'must contain exactly two rows');
+    reviewIdentities.forEach((row, index) => assertHash(row, `${label}.reviewEnvelopeIdentities[${index}]`));
+    occurrenceIdentities.forEach((row, index) => assertHash(row, `${label}.findingOccurrenceIdentities[${index}]`));
+    const repeat = /** @type {Record<string, unknown>} */ (
+      validateRepeatRelationshipV1(intent.repeat, `${label}.repeat`)
+    );
+    if (repeat.channel !== 'finding') invalid(`${label}.repeat.channel`, 'must be the finding channel');
+    if (canonicalJson(repeat.occurrenceIdentities) !== canonicalJson(occurrenceIdentities)) {
+      invalid(`${label}.findingOccurrenceIdentities`, 'must be the exact chronology-ordered repeat occurrences');
+    }
+  } else {
+    if (intent.resultingTargetState !== 'blocked-evidence-incomplete') {
+      invalid(`${label}.resultingTargetState`, 'must be blocked-evidence-incomplete');
+    }
+    assertV2Identifier(intent.incompleteReason, `${label}.incompleteReason`);
+    if (taskEffect.toGlyph !== '!' || blocker.kind !== 'replace' || blocker.after !== INCIDENT_INCOMPLETE_BLOCKER) {
+      invalid(`${label}.taskEffect`, 'must replace only the invalid blocker with the exact evidence-incomplete text');
+    }
+  }
+  const { intentIdentity, ...body } = intent;
+  if (intentIdentity !== sha256(canonicalJson(body))) {
+    invalid(`${label}.intentIdentity`, 'must equal the recomputed complete intent identity');
+  }
+  return intent;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateIncidentCorrectionPreviewV1(value, label = 'IncidentCorrectionPreviewV1') {
+  const record = assertRecord(value, label);
+  assertEnum(record.branch, ['exact-evidence', 'evidence-incomplete'], `${label}.branch`);
+  const exact = record.branch === 'exact-evidence';
+  const preview = assertExactRecord(
+    value,
+    exact
+      ? ['version', 'branch', 'intent', 'acceptedFeatureEvidence', 'prestate', 'evidence', 'incidentEvidenceBatch', 'governanceBatch', 'supersessionBatch', 'mutationCore', 'rollback', 'previewIdentity']
+      : ['version', 'branch', 'intent', 'acceptedFeatureEvidence', 'prestate', 'evidence', 'supersessionBatch', 'mutationCore', 'rollback', 'previewIdentity'],
+    [],
+    label,
+  );
+  if (preview.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  const intent = /** @type {Record<string, unknown>} */ (
+    validateIncidentCorrectionIntentV1(preview.intent, `${label}.intent`)
+  );
+  if (intent.branch !== preview.branch) invalid(`${label}.intent.branch`, 'must equal the preview branch');
+  const accepted = validateAcceptedFeatureEvidenceV1(preview.acceptedFeatureEvidence, `${label}.acceptedFeatureEvidence`);
+  if (accepted.acceptedFeatureEvidenceIdentity !== intent.acceptedFeatureEvidenceIdentity) {
+    invalid(`${label}.acceptedFeatureEvidence`, 'must bind the exact accepted evidence the intent names');
+  }
+  const prestate = /** @type {Record<string, unknown>} */ (
+    validateFeature007PrestateV1(preview.prestate, `${label}.prestate`)
+  );
+  if (sha256(canonicalJson(preview.prestate)) !== intent.prestateIdentity) {
+    invalid(`${label}.prestate`, 'must equal the exact prestate the intent names');
+  }
+  const rollback = /** @type {Record<string, unknown>} */ (
+    validateFeature007RollbackV1(preview.rollback, `${label}.rollback`)
+  );
+  const evidence = exact
+    ? assertExactRecord(preview.evidence, ['inventoryHash', 'reviewEnvelopeIdentities', 'findingOccurrenceEvents', 'repeat'], [], `${label}.evidence`)
+    : assertExactRecord(preview.evidence, ['inventoryHash', 'incompleteReason'], [], `${label}.evidence`);
+  assertHash(evidence.inventoryHash, `${label}.evidence.inventoryHash`);
+  if (evidence.inventoryHash !== intent.evidenceInventoryHash) {
+    invalid(`${label}.evidence.inventoryHash`, 'must equal the intent evidence inventory hash');
+  }
+  const supersession = /** @type {Record<string, unknown>[]} */ (
+    /** @type {Record<string, unknown>} */ (
+      validateProjectionBatchV1(preview.supersessionBatch, `${label}.supersessionBatch`)
+    ).events
+  );
+  if (supersession.length !== 1
+    || /** @type {Record<string, unknown>} */ (supersession[0]).intentIdentity !== intent.intentIdentity) {
+    invalid(`${label}.supersessionBatch`, 'must carry exactly one intent-bound supersession event');
+  }
+  if (canonicalJson(supersession[0]).includes('"previewIdentity"')) {
+    invalid(`${label}.supersessionBatch`, 'must not reference previewIdentity');
+  }
+  /** @type {string[]|null} */
+  let exactLineHashes = null;
+  if (exact) {
+    const findings = /** @type {Record<string, unknown>[]} */ (
+      assertDenseDataArray(evidence.findingOccurrenceEvents, `${label}.evidence.findingOccurrenceEvents`)
+    );
+    if (findings.length !== 2) invalid(`${label}.evidence.findingOccurrenceEvents`, 'must contain exactly two rows');
+    findings.forEach((row, index) => validateFindingOccurrenceEventV1(row, `${label}.evidence.findingOccurrenceEvents[${index}]`));
+    validateRepeatRelationshipV1(evidence.repeat, `${label}.evidence.repeat`);
+    if (canonicalJson(evidence.repeat) !== canonicalJson(intent.repeat)) {
+      invalid(`${label}.evidence.repeat`, 'must equal the exact intent Repeat Relationship');
+    }
+    // The carried rows are the exact occurrences the intent repeats, and the
+    // carried envelopes are the exact ones those occurrences were reviewed in.
+    if (canonicalJson(findings.map((event) => event.occurrenceIdentity))
+      !== canonicalJson(/** @type {Record<string, unknown>} */ (intent.repeat).occurrenceIdentities)) {
+      invalid(`${label}.evidence.findingOccurrenceEvents`, 'must be the exact chronology-ordered repeat occurrences');
+    }
+    const reviewEnvelopeIdentities = findings.map((event) => (
+      /** @type {Record<string, unknown>} */ (event.occurrence).reviewEnvelopeIdentity
+    ));
+    if (canonicalJson(reviewEnvelopeIdentities) !== canonicalJson(intent.reviewEnvelopeIdentities)
+      || canonicalJson(evidence.reviewEnvelopeIdentities) !== canonicalJson(intent.reviewEnvelopeIdentities)) {
+      invalid(`${label}.evidence.reviewEnvelopeIdentities`, 'must be the exact retained review envelopes of those occurrences');
+    }
+    // Recomputed from the preview's own rows: an inventory hash copied out of
+    // the intent proves nothing about the evidence this preview carries.
+    if (evidence.inventoryHash !== sha256(canonicalJson({
+      version: 1,
+      target: canonicalTarget(FEATURE_007_TARGET),
+      branch: 'exact-evidence',
+      reviewEnvelopeIdentities,
+      findingOccurrenceEventHashes: findings.map((event) => event.eventHash),
+    }))) {
+      invalid(`${label}.evidence.inventoryHash`, 'must equal the inventory recomputed from the carried evidence');
+    }
+    const incidentEvidence = /** @type {Record<string, unknown>} */ (
+      validateProjectionBatchV1(preview.incidentEvidenceBatch, `${label}.incidentEvidenceBatch`)
+    );
+    if (incidentEvidence.purpose !== 'incident-evidence') {
+      invalid(`${label}.incidentEvidenceBatch.purpose`, 'must be incident-evidence');
+    }
+    if (canonicalJson(incidentEvidence.target) !== canonicalJson(FEATURE_007_TARGET)) {
+      invalid(`${label}.incidentEvidenceBatch.target`, 'must be the exact Feature 007 incident target');
+    }
+    if (canonicalJson(incidentEvidence.events) !== canonicalJson(findings)) {
+      invalid(`${label}.incidentEvidenceBatch.events`, 'must be the exact chronology-ordered finding pair');
+    }
+    const governance = /** @type {Record<string, unknown>} */ (
+      validateProjectionBatchV1(preview.governanceBatch, `${label}.governanceBatch`)
+    );
+    if (governance.purpose !== 'governance-required') {
+      invalid(`${label}.governanceBatch.purpose`, 'must be governance-required');
+    }
+    if (canonicalJson(governance.target) !== canonicalJson(FEATURE_007_TARGET)) {
+      invalid(`${label}.governanceBatch.target`, 'must be the exact Feature 007 incident target');
+    }
+    const governanceEvents = /** @type {Record<string, unknown>[]} */ (governance.events);
+    if (governanceEvents.length !== 1) {
+      invalid(`${label}.governanceBatch.events`, 'must carry exactly one required Governance Event');
+    }
+    const governanceEvent = governanceEvents[0];
+    // The event is pinned to the intent Repeat Relationship, which is what its
+    // own `governanceIdentity` and failed-approach binding are derived from.
+    if (governanceEvent.phase !== 'required'
+      || governanceEvent.revision !== 1
+      || canonicalJson(governanceEvent.trigger) !== canonicalJson(intent.repeat)) {
+      invalid(`${label}.governanceBatch.events[0]`, 'must require governance on the exact intent Repeat Relationship');
+    }
+    exactLineHashes = [
+      ...findings.map((event) => /** @type {string} */ (event.eventHash)),
+      /** @type {string} */ (governanceEvent.eventHash),
+      /** @type {string} */ (/** @type {Record<string, unknown>} */ (supersession[0]).eventHash),
+    ];
+  } else {
+    assertV2Identifier(evidence.incompleteReason, `${label}.evidence.incompleteReason`);
+    if (evidence.incompleteReason !== intent.incompleteReason) {
+      invalid(`${label}.evidence.incompleteReason`, 'must equal the intent reason');
+    }
+  }
+  const core = validateIncidentLaneMutationCoreV1(preview.mutationCore, `${label}.mutationCore`);
+  if (core.intentIdentity !== intent.intentIdentity) {
+    invalid(`${label}.mutationCore.intentIdentity`, 'must equal the intent identity');
+  }
+  const lines = validateEventLineEffectV1(core.eventLines, `${label}.mutationCore.eventLines`).events;
+  if (exact) {
+    // The exact branch appends the two chronology-ordered finding lines, then
+    // the Governance Event line, then the Incident Supersession Event line.
+    if (canonicalJson(lines.map((line) => line.eventHash)) !== canonicalJson(exactLineHashes)) {
+      invalid(
+        `${label}.mutationCore.eventLines`,
+        'must append the exact ordered finding pair, Governance Event, and Incident Supersession Event',
+      );
+    }
+  } else if (lines.length !== 1
+    || lines[0].type !== 'incident-supersession'
+    || lines[0].eventHash !== /** @type {Record<string, unknown>} */ (supersession[0]).eventHash) {
+    // The incomplete branch fabricates neither repetition nor governance: its
+    // only appended line is the exact intent-bound Incident Supersession Event.
+    invalid(
+      `${label}.mutationCore.eventLines`,
+      'evidence-incomplete forbids a Repeat Relationship, occurrence, or Governance Event',
+    );
+  }
+  const ownerLog = /** @type {Record<string, unknown>} */ (core.ownerLog);
+  const expectedOwnerLine = `- ${intent.operationTime} - incident-supersession v1 `
+    + `intent=${intent.intentIdentity} branch=${intent.branch} target=${FEATURE_007_TARGET.taskKey}`;
+  if (/** @type {string[]} */ (ownerLog.exactLines)[0] !== expectedOwnerLine) {
+    invalid(`${label}.mutationCore.ownerLog.exactLines`, 'must be the exact intent-bound owner line');
+  }
+  if (ownerLog.expectedOwnerHash !== prestate.ideaHash) {
+    invalid(`${label}.mutationCore.ownerLog.expectedOwnerHash`, 'must be the exact prestate owner revision');
+  }
+  if (core.snapshotUpdatedAt !== intent.operationTime) {
+    invalid(`${label}.mutationCore.snapshotUpdatedAt`, 'must equal the intent operation time');
+  }
+  // Rollback restores the exact revision the prestate promises, never another.
+  if (canonicalJson(/** @type {Record<string, unknown>[]} */ (rollback.captures).map((capture) => (
+    /** @type {Record<string, unknown>} */ (capture.bytes).sha256
+  ))) !== canonicalJson([prestate.ideaHash, prestate.tasksHash, prestate.taskStateHash])) {
+    invalid(`${label}.rollback.captures`, 'must capture the exact prestate revision it restores');
+  }
+  const taskEffect = /** @type {Record<string, unknown>} */ (intent.taskEffect);
+  if (core.toGlyph !== taskEffect.toGlyph || canonicalJson(core.blocker) !== canonicalJson(taskEffect.blocker)) {
+    invalid(`${label}.mutationCore`, 'must apply the exact intent task effect');
+  }
+  const { previewIdentity, ...body } = preview;
+  if (previewIdentity !== sha256(canonicalJson(body))) {
+    invalid(`${label}.previewIdentity`, 'must equal the recomputed complete preview identity');
+  }
+  return preview;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateFeature007PrestateV1(value, label = 'Feature007PrestateV1') {
+  const prestate = assertExactRecord(
+    value,
+    ['version', 'target', 'ownerBindingHash', 'ideaPath', 'ideaHash', 'tasksPath', 'tasksHash', 'taskStatePath', 'taskStateHash', 'ownerLogTailHash', 'taskUnitHash', 'glyph', 'blockedBy', 'blockedByHash'],
+    [],
+    label,
+  );
+  if (prestate.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  if (canonicalJson(validateAffectedTargetV2(prestate.target, `${label}.target`)) !== canonicalJson(FEATURE_007_TARGET)) {
+    invalid(`${label}.target`, 'must be the exact Feature 007 incident target');
+  }
+  if (prestate.ideaPath !== FEATURE_007_IDEA_PATH) invalid(`${label}.ideaPath`, `must be ${FEATURE_007_IDEA_PATH}`);
+  if (prestate.tasksPath !== FEATURE_007_TASKS_PATH) invalid(`${label}.tasksPath`, `must be ${FEATURE_007_TASKS_PATH}`);
+  if (prestate.taskStatePath !== TASK_STATE_PATH) invalid(`${label}.taskStatePath`, `must be ${TASK_STATE_PATH}`);
+  for (const field of ['ownerBindingHash', 'ideaHash', 'tasksHash', 'taskStateHash', 'ownerLogTailHash', 'taskUnitHash', 'blockedByHash']) {
+    assertHash(prestate[field], `${label}.${field}`);
+  }
+  if (prestate.glyph !== '!') invalid(`${label}.glyph`, 'must be the blocked glyph');
+  const blockedBy = assertV2ShortText(prestate.blockedBy, `${label}.blockedBy`);
+  if (prestate.blockedByHash !== sha256(blockedBy)) {
+    invalid(`${label}.blockedByHash`, 'must hash the exact blocker text');
+  }
+  return prestate;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateFeature007RollbackV1(value, label = 'Feature007RollbackV1') {
+  const rollback = assertExactRecord(value, ['version', 'captures', 'rollbackIdentity'], [], label);
+  if (rollback.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  const captures = assertDenseDataArray(rollback.captures, `${label}.captures`);
+  const expected = [FEATURE_007_IDEA_PATH, FEATURE_007_TASKS_PATH, TASK_STATE_PATH];
+  if (captures.length !== 3) invalid(`${label}.captures`, 'must contain exactly three exact captures');
+  captures.forEach((row, index) => {
+    const capture = assertExactRecord(row, ['path', 'bytes'], [], `${label}.captures[${index}]`);
+    if (capture.path !== expected[index]) invalid(`${label}.captures[${index}].path`, `must be ${expected[index]}`);
+    validateCapturedBytesV1(capture.bytes, `${label}.captures[${index}].bytes`);
+  });
+  assertHash(rollback.rollbackIdentity, `${label}.rollbackIdentity`);
+  const { rollbackIdentity, ...body } = rollback;
+  if (rollbackIdentity !== sha256(canonicalJson(body))) {
+    invalid(`${label}.rollbackIdentity`, 'must equal the recomputed complete rollback identity');
+  }
+  return rollback;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateIncidentLaneMutationCoreV1(value, label = 'IncidentLaneMutationCoreV1') {
+  const core = assertExactRecord(
+    value,
+    ['intentIdentity', 'target', 'fromGlyph', 'toGlyph', 'blocker', 'eventLines', 'ownerLog', 'snapshotUpdatedAt'],
+    [],
+    label,
+  );
+  assertHash(core.intentIdentity, `${label}.intentIdentity`);
+  if (canonicalJson(validateAffectedTargetV2(core.target, `${label}.target`)) !== canonicalJson(FEATURE_007_TARGET)) {
+    invalid(`${label}.target`, 'must be the exact Feature 007 incident target');
+  }
+  if (core.fromGlyph !== '!') invalid(`${label}.fromGlyph`, 'must be the blocked glyph');
+  assertEnum(core.toGlyph, ['~', '!'], `${label}.toGlyph`);
+  validateBlockerEffectV1(core.blocker, `${label}.blocker`);
+  validateEventLineEffectV1(core.eventLines, `${label}.eventLines`);
+  const ownerLog = validateOwnerLogEffectV1(core.ownerLog, `${label}.ownerLog`);
+  if (ownerLog.kind !== 'append-exact' || ownerLog.ownerPath !== FEATURE_007_IDEA_PATH
+    || /** @type {unknown[]} */ (ownerLog.exactLines).length !== 1) {
+    invalid(`${label}.ownerLog`, 'must append exactly one Feature 007 owner line');
+  }
+  assertV2CanonicalUtcTimestamp(core.snapshotUpdatedAt, `${label}.snapshotUpdatedAt`);
+  return core;
+}
+
+// --- Acyclic permit issuance, consumption, and receipt commit ----------------
+
+/**
+ * Rebind one `alternative-inspected` case from fresh evidence so a permit is
+ * never issued against a stored self-consistent governance record.
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>} governance
+ */
+function reboundInspectedBranchV2(inspection, governance) {
+  const rebound = reboundGovernanceEvidenceV2(inspection, governance);
+  if (rebound.reason) return { reason: rebound.reason };
+  const retained = retainedLearningResultV2(inspection, governance);
+  if (retained.reason) return { reason: retained.reason };
+  const derived = reboundBranchEvidenceV2(inspection, governance, rebound, retained);
+  if (derived.reason) return { reason: derived.reason };
+  return { rebound, retained, branchEvidence: derived.branchEvidence };
+}
+
+/**
+ * Issue one pure `AttemptAuthorizationPermitV1` against the unchanged
+ * post-learning Inspection state. Nothing about RunState changes here.
+ * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} lanePrestateValue
+ * @param {unknown} targetMappingValue @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function issueAttemptPermitV2(stateValue, inputValue, lanePrestateValue, targetMappingValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('issueAttemptPermitV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} transition */
+  const respond = (transition) => ({ inspection, transition });
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0) {
+    return respond({ issued: false, reason: 'inspection-stale', state });
+  }
+  const governance = activeGovernanceCaseV2(state);
+  const target = canonicalTarget(validateAffectedTargetV2(
+    governance ? governance.target : inspection.target,
+    'issueAttemptPermitV2.target',
+  ));
+  if (targetKey(inspection.target) !== targetKey(target)) {
+    return respond({ issued: false, reason: 'target-mismatch', state });
+  }
+  requireResolvedOwnerMappingV2(inspection, target, 'issueAttemptPermitV2');
+  let bound;
+  try {
+    const mapping = validateTargetMappingV1(targetMappingValue, target, 'issue-attempt-permit targetMapping');
+    const prestate = validateLanePrestateV1(lanePrestateValue, target, mapping.mapping, 'issue-attempt-permit lanePrestate');
+    bound = { ...mapping, ...prestate };
+  } catch {
+    return respond({ issued: false, reason: 'target-mapping-missing', state });
+  }
+  if (!lanePrestateMatchesFreshEvidenceV2(inspection, target, bound.prestate)) {
+    return respond({ issued: false, reason: 'lane-prestate-mismatch', state });
+  }
+  /** @type {Record<string, unknown>} */
+  let branch = {
+    governanceIdentity: null,
+    governancePhase: null,
+    postLearningInspectionIdentity: null,
+    selectedAlternativeIdentity: null,
+    discriminatingCheckIdentity: null,
+  };
+  if (governance) {
+    if (governance.phase !== 'alternative-inspected') {
+      return respond({ issued: false, reason: 'learning-phase-mismatch', state });
+    }
+    if (Object.hasOwn(governance, 'controlledEnd')) {
+      return respond({ issued: false, reason: 'learning-phase-mismatch', state });
+    }
+    const derived = reboundInspectedBranchV2(inspection, governance);
+    if (derived.reason) return respond({ issued: false, reason: derived.reason, state });
+    const evidence = /** @type {Record<string, unknown>} */ (derived.branchEvidence);
+    branch = {
+      governanceIdentity: governance.governanceIdentity,
+      governancePhase: 'alternative-inspected',
+      // Rebound from the fresh surfaces, never copied out of RunState.
+      postLearningInspectionIdentity: evidence.postLearningInspectionIdentity,
+      selectedAlternativeIdentity: evidence.selectedAlternativeIdentity,
+      discriminatingCheckIdentity: evidence.discriminatingCheckIdentity,
+    };
+  }
+  const permit = v2PermitWithHash({
+    version: 1,
+    kind: 'attempt-authorization',
+    origin: 'dude-work',
+    target,
+    subjectRunStateHash: v2RunStateHash(state),
+    ...branch,
+    inspectionEvidenceHash: inspection.evidenceHash,
+    targetMappingHash: bound.targetMappingHash,
+    lanePrestateHash: bound.lanePrestateHash,
+  });
+  validateAttemptAuthorizationPermitV1(permit);
+  // Pure issuance: the returned state is the byte-identical request state.
+  return respond({ issued: true, reason: 'attempt-permit-issued', state, permit });
+}
+
+/**
+ * Validate and consume one attempt permit before RunState changes. A permit
+ * that is stale, replayed, transferred, or bound to different branch evidence
+ * rejects without touching state.
+ * @param {Record<string, unknown>} state @param {Record<string, unknown>} target
+ * @param {Record<string, unknown>} inspection @param {unknown} permitValue
+ */
+function consumeAttemptPermitV2(state, target, inspection, permitValue) {
+  let permit;
+  try {
+    permit = validateAttemptAuthorizationPermitV1(permitValue, 'authorize request.attemptPermit');
+  } catch {
+    return { reason: 'permit-hash-mismatch' };
+  }
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    return { reason: 'permit-transition-mismatch' };
+  }
+  if (targetKey(permit.target) !== targetKey(target)) return { reason: 'permit-target-mismatch' };
+  if (permit.subjectRunStateHash !== v2RunStateHash(state)) return { reason: 'permit-stale' };
+  if (permit.inspectionEvidenceHash !== inspection.evidenceHash) return { reason: 'permit-stale' };
+  const governance = activeGovernanceCaseV2(state);
+  if (!governance) {
+    return permit.governancePhase === null
+      ? { permit, governance: null }
+      : { reason: 'permit-transition-mismatch' };
+  }
+  if (targetKey(governance.target) !== targetKey(target)) return { reason: 'permit-target-mismatch' };
+  if (governance.phase !== 'alternative-inspected' || permit.governancePhase !== 'alternative-inspected') {
+    return { reason: 'permit-transition-mismatch' };
+  }
+  // Permit replay is sealed by `subjectRunStateHash`: consuming one permit
+  // changes the phase and the exact state the permit was issued against.
+  const derived = reboundInspectedBranchV2(inspection, governance);
+  if (derived.reason) return { reason: derived.reason };
+  const evidence = /** @type {Record<string, unknown>} */ (derived.branchEvidence);
+  if (permit.governanceIdentity !== governance.governanceIdentity
+    || permit.postLearningInspectionIdentity !== evidence.postLearningInspectionIdentity
+    || permit.selectedAlternativeIdentity !== evidence.selectedAlternativeIdentity
+    || permit.discriminatingCheckIdentity !== evidence.discriminatingCheckIdentity) {
+    return { reason: 'permit-transition-mismatch' };
+  }
+  return { permit, governance };
+}
+
+/**
+ * Issue one post-authorization or projection lane permit from the complete
+ * closed lane-specific mutation object.
+ * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} mutationValue
+ * @param {unknown} lanePrestateValue @param {unknown} targetMappingValue
+ * @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function issueLanePermitV2(stateValue, inputValue, mutationValue, lanePrestateValue, targetMappingValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('issueLanePermitV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} transition */
+  const respond = (transition) => ({ inspection, transition });
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0) {
+    return respond({ issued: false, reason: 'inspection-stale', state });
+  }
+  const mutationTarget = validateAffectedTargetV2(
+    assertRecord(mutationValue, 'issue-lane-permit mutation').target,
+    'issue-lane-permit mutation.target',
+  );
+  if (targetKey(inspection.target) !== targetKey(mutationTarget)) {
+    return respond({ issued: false, reason: 'target-mismatch', state });
+  }
+  const target = canonicalTarget(mutationTarget);
+  requireResolvedOwnerMappingV2(inspection, target, 'issueLanePermitV2');
+  let derivedMutation;
+  try {
+    derivedMutation = validateLaneMutationV1(mutationValue, target, 'issue-lane-permit mutation');
+  } catch {
+    return respond({ issued: false, reason: 'permit-transition-mismatch', state });
+  }
+  let bound;
+  try {
+    const mapping = validateTargetMappingV1(targetMappingValue, target, 'issue-lane-permit targetMapping');
+    const prestate = validateLanePrestateV1(lanePrestateValue, target, mapping.mapping, 'issue-lane-permit lanePrestate');
+    bound = { ...mapping, ...prestate };
+  } catch {
+    return respond({ issued: false, reason: 'target-mapping-missing', state });
+  }
+  const mutation = /** @type {Record<string, unknown>} */ (derivedMutation.mutation);
+  const prestateState = mutation.lane === 'lightweight'
+    ? bound.prestate.glyph
+    : bound.prestate.status;
+  if (mutation[mutation.lane === 'lightweight' ? 'fromGlyph' : 'fromStatus'] !== prestateState) {
+    return respond({ issued: false, reason: 'lane-prestate-mismatch', state });
+  }
+  if (mutation.kind !== 'incident-supersession'
+    && !lanePrestateMatchesFreshEvidenceV2(inspection, target, bound.prestate)) {
+    return respond({ issued: false, reason: 'lane-prestate-mismatch', state });
+  }
+  const governance = activeGovernanceCaseV2(state);
+  const governed = governance && targetKey(governance.target) === targetKey(target) ? governance : null;
+  if (mutation.kind === 'append-event') {
+    const active = activeProjectionCommitmentV2(state, 'occurrence-retention')
+      || activeProjectionCommitmentV2(state, 'governance-required')
+      || activeProjectionCommitmentV2(state, 'learning-result');
+    const eventHash = /** @type {Record<string, unknown>} */ (derivedMutation.events[0]).eventHash;
+    if (!active
+      || targetKey(active.target) !== targetKey(target)
+      || !/** @type {Record<string, unknown>[]} */ (
+        /** @type {Record<string, unknown>} */ (active.commitment).eventCommitments
+      ).some((row) => row.eventHash === eventHash)) {
+      return respond({ issued: false, reason: 'projection-batch-mismatch', state });
+    }
+    const permit = v2PermitWithHash({
+      version: 1,
+      kind: 'lane-projection',
+      origin: 'dude-work',
+      lane: mutation.lane,
+      target,
+      subjectRunStateHash: v2RunStateHash(state),
+      batchIdentity: /** @type {Record<string, unknown>} */ (active.commitment).batchIdentity,
+      eventHash,
+      targetMappingHash: bound.targetMappingHash,
+      lanePrestateHash: bound.lanePrestateHash,
+      mutationIdentity: derivedMutation.mutationIdentity,
+    });
+    validateProjectionPermitV1(permit);
+    return respond({ issued: true, reason: 'lane-permit-issued', state, permit });
+  }
+  const gate = requiredLanePermitPhaseV2(mutation, governed, inspection);
+  if (gate.reason) return respond({ issued: false, reason: gate.reason, state });
+  const permit = v2PermitWithHash({
+    version: 1,
+    kind: 'lane-mutation',
+    origin: 'dude-work',
+    lane: mutation.lane,
+    operation: mutation.lane === 'lightweight' ? 'work-set' : 'work-transition',
+    target,
+    subjectRunStateHash: v2RunStateHash(state),
+    governanceIdentity: gate.governanceIdentity,
+    governancePhase: gate.governancePhase,
+    attemptIdentity: gate.attemptIdentity,
+    targetMappingHash: bound.targetMappingHash,
+    lanePrestateHash: bound.lanePrestateHash,
+    mutationIdentity: derivedMutation.mutationIdentity,
+  });
+  validateLaneMutationPermitV1(permit);
+  return respond({ issued: true, reason: 'lane-permit-issued', state, permit });
+}
+
+/**
+ * Re-derive the branch authority one governed lane reason requires from the
+ * rebound evidence and the retained learning result. Issuance and the commit
+ * that releases governance both run it, so neither trusts a stored record.
+ * @param {string} reason @param {Record<string, unknown>} governance
+ * @param {Record<string, unknown>} rebound @param {Record<string, unknown>} retained
+ */
+function lanePermitBranchAuthorityV2(reason, governance, rebound, retained) {
+  const reviewEvent = /** @type {Record<string, unknown>} */ (retained.reviewEvent);
+  const outcome = reason === 'no-progress' ? 'no-progress' : 'selected-alternative';
+  if (reviewEvent.outcome !== outcome) return { reason: 'inspection-branch-mismatch' };
+  if (outcome === 'selected-alternative') {
+    // The stored branch identities are rebound to the retained review, so no
+    // RunState alone names the alternative a lane claim or completion acts on.
+    let alternatives;
+    try {
+      alternatives = requireCompleteFailedSetComparisonV2(
+        reviewEvent.alternatives,
+        /** @type {Record<string, unknown>} */ (rebound.failedApproachSet),
+        'retained learning review alternatives',
+      );
+    } catch {
+      return { reason: 'failed-approach-set-mismatch' };
+    }
+    const selected = alternatives.credible.filter((row) => (
+      row.alternativeIdentity === reviewEvent.selectedAlternativeIdentity
+        && row.alternativeIdentity === governance.selectedAlternativeIdentity
+    ));
+    if (selected.length !== 1
+      || /** @type {Record<string, unknown>} */ (selected[0].discriminatingCheck).identity
+        !== governance.discriminatingCheckIdentity) {
+      return { reason: 'alternative-selection-mismatch' };
+    }
+  }
+  const attemptIdentity = Object.hasOwn(governance, 'authorizedAttemptIdentity')
+    ? /** @type {string} */ (governance.authorizedAttemptIdentity)
+    : null;
+  // Completion is the one arm whose authority is an executed attempt: the
+  // exact authorized attempt must be retained as an accepted occurrence.
+  if (reason === 'task-completed'
+    && !(/** @type {Record<string, unknown>[]} */ (rebound.retained)).some((event) => (
+      event.type === 'approach-occurrence'
+        && /** @type {Record<string, unknown>} */ (event.occurrence).attemptIdentity === attemptIdentity
+        && /** @type {Record<string, unknown>} */ (event.occurrence).disposition === 'accepted'
+    ))) {
+    return { reason: 'occurrence-retention-incomplete' };
+  }
+  return { attemptIdentity };
+}
+
+/**
+ * Bind one lane state mutation reason to the exact governance phase that may
+ * authorize it. Everything else fails closed.
+ * @param {Record<string, unknown>} mutation @param {Record<string, unknown>|null} governance @param {Record<string, unknown>} inspection
+ */
+function requiredLanePermitPhaseV2(mutation, governance, inspection) {
+  const ungoverned = { governanceIdentity: null, governancePhase: null, attemptIdentity: null };
+  const reason = /** @type {string} */ (mutation.reason);
+  if (reason === 'incident-supersession' || reason === 'initial-claim'
+    || reason === 'resume-claim' || reason === 'task-blocked') {
+    return governance ? { reason: 'learning-phase-mismatch' } : ungoverned;
+  }
+  if (!governance) return { reason: 'governance-unresolved' };
+  const expected = {
+    'post-learning-claim': 'alternative-authorized-pending-lane',
+    'task-completed': 'alternative-verified',
+    'no-progress': 'no-progress-verified',
+  }[reason];
+  if (expected) {
+    if (governance.phase !== expected) return { reason: 'learning-phase-mismatch' };
+    // A controlled end leaves its target unchanged, so it never authorizes the
+    // no-progress mutation that blocks the exact task afresh.
+    if (reason === 'no-progress' && Object.hasOwn(governance, 'controlledEnd')) {
+      return { reason: 'learning-phase-mismatch' };
+    }
+    // Governance evidence is rebound from the fresh surfaces on every arm: a
+    // stored, self-consistent record alone never carries lane authority.
+    const rebound = reboundGovernanceEvidenceV2(inspection, governance);
+    if (rebound.reason) return { reason: rebound.reason };
+    const retained = retainedLearningResultV2(inspection, governance);
+    if (retained.reason) return { reason: retained.reason };
+    const authority = lanePermitBranchAuthorityV2(reason, governance, rebound, retained);
+    if (authority.reason) return { reason: authority.reason };
+    return {
+      governanceIdentity: /** @type {string} */ (governance.governanceIdentity),
+      governancePhase: /** @type {string} */ (governance.phase),
+      attemptIdentity: authority.attemptIdentity,
+    };
+  }
+  // Controlled Unresolved End: `projected` and every other phase are ineligible.
+  if (!Object.hasOwn(governance, 'controlledEnd')
+    || (governance.phase !== 'alternative-inspected' && governance.phase !== 'no-progress-verified')) {
+    return { reason: 'controlled-end-unavailable' };
+  }
+  const derived = reboundInspectedBranchV2(inspection, governance);
+  if (derived.reason) return { reason: derived.reason };
+  const controlledEnd = /** @type {Record<string, unknown>} */ (governance.controlledEnd);
+  if (canonicalJson(controlledEnd.branchEvidence) !== canonicalJson(derived.branchEvidence)) {
+    return { reason: 'inspection-stale' };
+  }
+  return {
+    governanceIdentity: /** @type {string} */ (governance.governanceIdentity),
+    governancePhase: /** @type {string} */ (governance.phase),
+    attemptIdentity: null,
+  };
+}
+
+/**
+ * Commit one exact terminal or claim lane receipt. A failed commit changes
+ * nothing and never clears governance.
+ * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} permitValue
+ * @param {unknown} receiptValue @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function commitLaneReceiptV2(stateValue, inputValue, permitValue, receiptValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('commitLaneReceiptV2', 'requires autonomous policy');
+  }
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} transition */
+  const respond = (transition) => ({ inspection, transition });
+  const permitRecord = assertRecord(permitValue, 'commit-lane-receipt permit');
+  let permit;
+  try {
+    permit = permitRecord.kind === 'lane-projection'
+      ? validateProjectionPermitV1(permitValue, 'commit-lane-receipt permit')
+      : validateLaneMutationPermitV1(permitValue, 'commit-lane-receipt permit');
+  } catch {
+    return respond({ committed: false, reason: 'permit-hash-mismatch', state });
+  }
+  if (permit.subjectRunStateHash !== v2RunStateHash(state)) {
+    return respond({ committed: false, reason: 'permit-stale', state });
+  }
+  if (targetKey(inspection.target) !== targetKey(permit.target)) {
+    return respond({ committed: false, reason: 'permit-target-mismatch', state });
+  }
+  let receipt;
+  try {
+    receipt = permit.lane === 'lightweight'
+      ? validateLightweightAtomicReceiptV1(receiptValue, 'commit-lane-receipt receipt')
+      : validateTrackedCompositeReceiptV1(receiptValue, 'commit-lane-receipt receipt');
+  } catch {
+    return respond({ committed: false, reason: 'lane-receipt-invalid', state });
+  }
+  if (receipt.mutationIdentity !== permit.mutationIdentity) {
+    return respond({ committed: false, reason: 'lane-receipt-mismatch', state });
+  }
+  if (permit.lane === 'lightweight'
+    && (receipt.permitHash !== permit.permitHash
+      || receipt.targetMappingHash !== permit.targetMappingHash
+      || receipt.lanePrestateHash !== permit.lanePrestateHash
+      || targetKey(receipt.target) !== targetKey(permit.target))) {
+    return respond({ committed: false, reason: 'lane-receipt-mismatch', state });
+  }
+  const governance = activeGovernanceCaseV2(state);
+  const governed = governance && targetKey(governance.target) === targetKey(permit.target)
+    ? governance
+    : null;
+  // `targetStateChanged` is false for projection and Controlled Unresolved End.
+  // The controlled end is keyed on the stored record, never on its phase: a
+  // no-progress mutation shares that phase and does block the exact task.
+  const unchangedTargetState = permit.kind === 'lane-projection'
+    || (governed !== null && Object.hasOwn(governed, 'controlledEnd'));
+  if (permit.lane === 'lightweight' && unchangedTargetState && receipt.targetStateChanged !== false) {
+    return respond({ committed: false, reason: 'lane-receipt-mismatch', state });
+  }
+  if (permit.kind === 'lane-projection') {
+    // Projection commitments are cleared only by fresh dual verification.
+    return respond({ committed: true, reason: 'lane-receipt-committed', state, receipt });
+  }
+  if (permit.governanceIdentity === null) {
+    // An ungoverned claim, block, or incident permit discharges no obligation:
+    // it commits only while no governed case owns the exact permit target.
+    return governed
+      ? respond({ committed: false, reason: 'governance-unresolved', state })
+      : respond({ committed: true, reason: 'lane-receipt-committed', state, receipt });
+  }
+  if (!governed
+    || permit.governanceIdentity !== governed.governanceIdentity
+    || permit.governancePhase !== governed.phase) {
+    return respond({ committed: false, reason: 'governance-unresolved', state });
+  }
+  // A permit is a plain digest, so every commit that advances or releases
+  // governance rebinds exactly what issuance required instead of trusting the
+  // permit body.
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0) {
+    return respond({ committed: false, reason: 'inspection-stale', state });
+  }
+  requireResolvedOwnerMappingV2(
+    inspection,
+    /** @type {Record<string, unknown>} */ (permit.target),
+    'commitLaneReceiptV2',
+  );
+  const rebound = reboundGovernanceEvidenceV2(inspection, governed);
+  if (rebound.reason) return respond({ committed: false, reason: rebound.reason, state });
+  const retained = retainedLearningResultV2(inspection, governed);
+  if (retained.reason) return respond({ committed: false, reason: retained.reason, state });
+  if (governed.phase === 'alternative-authorized-pending-lane') {
+    // The claim gate advances the phase and seals a receipt identity, so it
+    // re-applies the exact branch authority issuance required.
+    const claim = lanePermitBranchAuthorityV2('post-learning-claim', governed, rebound, retained);
+    if (claim.reason) return respond({ committed: false, reason: claim.reason, state });
+    const nextState = governanceSuccessorStateV2(state, governed, {
+      phase: 'alternative-authorized',
+      laneClaimReceiptIdentity: receipt.receiptHash,
+    });
+    return respond({ committed: true, reason: 'lane-receipt-committed', state: nextState, receipt });
+  }
+  if (Object.hasOwn(governed, 'controlledEnd')) {
+    // Controlled Unresolved End has no lifecycle exit: its receipt leaves the
+    // unresolved obligation, and the stored controlled end, byte-identical.
+    return respond({ committed: true, reason: 'lane-receipt-committed', state, receipt });
+  }
+  // The lifecycle exits only from the two verified phases, so the commit
+  // re-applies the exact issuance restriction the permit body cannot carry.
+  const terminalReason = {
+    'alternative-verified': 'task-completed',
+    'no-progress-verified': 'no-progress',
+  }[/** @type {string} */ (governed.phase)];
+  if (!terminalReason) {
+    return respond({ committed: false, reason: 'learning-phase-mismatch', state });
+  }
+  const authority = lanePermitBranchAuthorityV2(terminalReason, governed, rebound, retained);
+  if (authority.reason) return respond({ committed: false, reason: authority.reason, state });
+  // Terminal commit: the discharged governance requirement is released only
+  // after the exact final receipt exists.
+  const nextState = carryOptionalRunState(state, {
+    policy: { .../** @type {Record<string, unknown>} */ (state.policy) },
+    overallUsed: state.overallUsed,
+    recoveryUsed: /** @type {Record<string, unknown>[]} */ (state.recoveryUsed).map((row) => ({ ...row })),
+    pending: /** @type {Record<string, unknown>[]} */ (state.pending).map(copyPendingEntry),
+    completed: /** @type {Record<string, unknown>[]} */ (state.completed).map((entry) => ({ ...entry })),
+  });
+  delete nextState.learningGovernance;
+  validateRunState(nextState);
+  return respond({
+    committed: true,
+    reason: 'lane-receipt-committed',
+    state: nextState,
+    receipt,
+    terminalEvidenceIdentity: receipt.receiptHash,
+  });
+}
+
+// --- Acyclic Feature 007 incident correction --------------------------------
+
+/** @param {Record<string, unknown>} inspection */
+function feature007OwnerBodyV2(inspection) {
+  const owner = assertExactRecord(
+    inspectionSourceBodyV2(inspection, 'owner-log'),
+    ['ideaPath', 'specPath', 'coordinatorLog'],
+    [],
+    'owner-log Inspection body',
+  );
+  if (owner.ideaPath !== FEATURE_007_IDEA_PATH) {
+    invalid('owner-log Inspection body.ideaPath', `must be ${FEATURE_007_IDEA_PATH}`);
+  }
+  return owner;
+}
+
+/**
+ * Derive the exact branch evidence from the fresh dual-retained surfaces. A
+ * caller supplies no occurrence, relation, or branch decision.
+ * @param {Record<string, unknown>} inspection
+ */
+function incidentBranchEvidenceV2(inspection) {
+  let retained;
+  try {
+    retained = dualRetainedOccurrenceEventsV2(inspection);
+    validateRetainedOccurrenceAuthorityV2(retained.retained, trustedEnvelopeIndexFromInspectionV2(inspection));
+  } catch {
+    return { incompleteReason: 'occurrence-retention-incomplete' };
+  }
+  const repeat = deriveEarliestRepeatRelationshipV1(retained.retained);
+  if (!repeat) return { incompleteReason: 'repeat-not-established' };
+  if (repeat.channel !== 'finding') return { incompleteReason: 'finding-repeat-unavailable' };
+  const byOccurrence = new Map(retained.retained.map((event) => [event.occurrenceIdentity, event]));
+  const findings = /** @type {string[]} */ (repeat.occurrenceIdentities)
+    .map((identity) => byOccurrence.get(identity));
+  if (findings.some((event) => !event || event.type !== 'finding-occurrence')) {
+    return { incompleteReason: 'occurrence-retention-incomplete' };
+  }
+  const events = /** @type {Record<string, unknown>[]} */ (findings);
+  let failedApproachSet;
+  try {
+    failedApproachSet = deriveFailedApproachSetV1(repeat, retained.retained);
+  } catch {
+    return { incompleteReason: 'repeat-not-established' };
+  }
+  return {
+    repeat,
+    findingOccurrenceEvents: events,
+    failedApproachSet,
+    reviewEnvelopeIdentities: events.map((event) => (
+      /** @type {Record<string, unknown>} */ (event.occurrence).reviewEnvelopeIdentity
+    )),
+  };
+}
+
+/**
+ * Derive one complete acyclic Feature 007 incident correction. RunState is
+ * never mutated here: the lane transaction owns application.
+ * @param {unknown} stateValue @param {unknown} inputValue @param {unknown} requestValue
+ * @param {unknown} [dependencies] @param {boolean} [transport]
+ */
+export function prepareIncidentCorrectionV2(stateValue, inputValue, requestValue, dependencies, transport = false) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('prepareIncidentCorrectionV2', 'requires autonomous policy');
+  }
+  const request = assertExactRecord(
+    requestValue,
+    ['acceptedFeatureEvidence', 'incidentIdentity', 'priorDispositionIdentity', 'operationTime', 'captures'],
+    [],
+    'incident-correction request',
+  );
+  assertHash(request.incidentIdentity, 'incident-correction request.incidentIdentity');
+  assertHash(request.priorDispositionIdentity, 'incident-correction request.priorDispositionIdentity');
+  const operationTime = assertV2CanonicalUtcTimestamp(request.operationTime, 'incident-correction request.operationTime');
+  const captures = assertExactRecord(request.captures, ['idea', 'tasks', 'taskState'], [], 'incident-correction request.captures');
+  const ideaCapture = validateCapturedBytesV1(captures.idea, 'incident-correction request.captures.idea');
+  const tasksCapture = validateCapturedBytesV1(captures.tasks, 'incident-correction request.captures.tasks');
+  const taskStateCapture = validateCapturedBytesV1(captures.taskState, 'incident-correction request.captures.taskState');
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
+  if (inspection.overflow) return { inspection };
+  /** @param {Record<string, unknown>} transition */
+  const respond = (transition) => ({ inspection, transition });
+  if (/** @type {unknown[]} */ (inspection.blockers).length > 0) {
+    return respond({ prepared: false, reason: 'inspection-stale', state });
+  }
+  let accepted;
+  try {
+    accepted = validateAcceptedFeatureEvidenceV1(
+      request.acceptedFeatureEvidence,
+      'incident-correction request.acceptedFeatureEvidence',
+    );
+  } catch {
+    return respond({ prepared: false, reason: 'incident-correction-not-authorized', state });
+  }
+  if (accepted.mode !== 'core-close') {
+    return respond({ prepared: false, reason: 'core-close-evidence-stale', state });
+  }
+  if (targetKey(inspection.target) !== targetKey(FEATURE_007_TARGET)) {
+    return respond({ prepared: false, reason: 'target-mismatch', state });
+  }
+  requireResolvedOwnerMappingV2(inspection, FEATURE_007_TARGET, 'prepareIncidentCorrectionV2');
+  const fresh = freshLightweightTaskFactsV2(inspection, FEATURE_007_TARGET);
+  // The owner body and the blocker are workspace-derived, not caller-supplied:
+  // a resolved owner idea stored under another path, or blocker text the lane
+  // contracts cannot carry, refuses in the closed set instead of throwing.
+  /** @type {Record<string, unknown>|null} */
+  let owner = null;
+  /** @type {string|null} */
+  let blockedBy = null;
+  try {
+    owner = feature007OwnerBodyV2(inspection);
+    blockedBy = fresh.blockedBy === null
+      ? null
+      : assertV2ShortText(fresh.blockedBy, 'incident-correction fresh blocker');
+  } catch {
+    owner = null;
+    blockedBy = null;
+  }
+  if (owner === null || fresh.glyph !== '!' || blockedBy === null) {
+    return respond({ prepared: false, reason: 'incident-correction-not-authorized', state });
+  }
+  const ownerBindingHash = sha256(canonicalJson({
+    ideaPath: FEATURE_007_IDEA_PATH,
+    specPath: FEATURE_007_TARGET.specPath,
+    ownerCapture: { sha256: ideaCapture.envelope.sha256, byteLength: ideaCapture.envelope.byteLength },
+  }));
+  const prestate = {
+    version: 1,
+    target: canonicalTarget(FEATURE_007_TARGET),
+    ownerBindingHash,
+    ideaPath: FEATURE_007_IDEA_PATH,
+    ideaHash: ideaCapture.envelope.sha256,
+    tasksPath: FEATURE_007_TASKS_PATH,
+    tasksHash: tasksCapture.envelope.sha256,
+    taskStatePath: TASK_STATE_PATH,
+    taskStateHash: taskStateCapture.envelope.sha256,
+    ownerLogTailHash: sha256(/** @type {string} */ (owner.coordinatorLog)),
+    taskUnitHash: fresh.taskUnitHash,
+    glyph: '!',
+    blockedBy: fresh.blockedBy,
+    blockedByHash: sha256(/** @type {string} */ (fresh.blockedBy)),
+  };
+  validateFeature007PrestateV1(prestate);
+  const rollbackWithoutIdentity = {
+    version: 1,
+    captures: [
+      { path: FEATURE_007_IDEA_PATH, bytes: ideaCapture.envelope },
+      { path: FEATURE_007_TASKS_PATH, bytes: tasksCapture.envelope },
+      { path: TASK_STATE_PATH, bytes: taskStateCapture.envelope },
+    ],
+  };
+  const rollback = {
+    ...rollbackWithoutIdentity,
+    rollbackIdentity: sha256(canonicalJson(rollbackWithoutIdentity)),
+  };
+  validateFeature007RollbackV1(rollback);
+  const derived = incidentBranchEvidenceV2(inspection);
+  const exact = !derived.incompleteReason;
+  // The exact branch derives a required Governance Event: one singleton only.
+  if (exact && Object.hasOwn(state, 'learningGovernance')) {
+    return respond({ prepared: false, reason: 'learning-governance-conflict', state });
+  }
+  const evidenceInventoryHash = sha256(canonicalJson(exact
+    ? {
+      version: 1,
+      target: canonicalTarget(FEATURE_007_TARGET),
+      branch: 'exact-evidence',
+      reviewEnvelopeIdentities: derived.reviewEnvelopeIdentities,
+      findingOccurrenceEventHashes: /** @type {Record<string, unknown>[]} */ (derived.findingOccurrenceEvents)
+        .map((event) => event.eventHash),
+    }
+    : {
+      version: 1,
+      target: canonicalTarget(FEATURE_007_TARGET),
+      branch: 'evidence-incomplete',
+      incompleteReason: derived.incompleteReason,
+    }));
+  const intentCore = {
+    version: 1,
+    branch: exact ? 'exact-evidence' : 'evidence-incomplete',
+    operationTime,
+    incidentIdentity: request.incidentIdentity,
+    target: canonicalTarget(FEATURE_007_TARGET),
+    priorDispositionIdentity: request.priorDispositionIdentity,
+    acceptedFeatureEvidenceIdentity: accepted.acceptedFeatureEvidenceIdentity,
+    prestateIdentity: sha256(canonicalJson(prestate)),
+    evidenceInventoryHash,
+    ...(exact
+      ? {
+        reviewEnvelopeIdentities: derived.reviewEnvelopeIdentities,
+        findingOccurrenceIdentities: /** @type {Record<string, unknown>[]} */ (derived.findingOccurrenceEvents)
+          .map((event) => event.occurrenceIdentity),
+        repeat: derived.repeat,
+        resultingTargetState: 'in-progress-learning-required',
+        taskEffect: {
+          fromGlyph: '!',
+          toGlyph: '~',
+          blocker: { kind: 'remove', before: fresh.blockedBy, after: null },
+        },
+      }
+      : {
+        incompleteReason: derived.incompleteReason,
+        resultingTargetState: 'blocked-evidence-incomplete',
+        taskEffect: {
+          fromGlyph: '!',
+          toGlyph: '!',
+          blocker: { kind: 'replace', before: fresh.blockedBy, after: INCIDENT_INCOMPLETE_BLOCKER },
+        },
+      }),
+  };
+  if (!exact && fresh.blockedBy === INCIDENT_INCOMPLETE_BLOCKER) {
+    return respond({ prepared: false, reason: 'incident-evidence-incomplete', state });
+  }
+  const intent = { ...intentCore, intentIdentity: sha256(canonicalJson(intentCore)) };
+  validateIncidentCorrectionIntentV1(intent);
+  const supersessionCore = {
+    type: 'incident-supersession',
+    version: 1,
+    incidentIdentity: intent.incidentIdentity,
+    intentIdentity: intent.intentIdentity,
+    target: canonicalTarget(FEATURE_007_TARGET),
+    priorDispositionIdentity: intent.priorDispositionIdentity,
+    acceptedFeatureEvidenceIdentity: intent.acceptedFeatureEvidenceIdentity,
+    branch: intent.branch,
+    conclusion: 'unauthorized-block-superseded',
+    resultingTargetState: intent.resultingTargetState,
+    evidenceInventoryHash,
+  };
+  const supersessionEvent = { ...supersessionCore, eventHash: sha256(canonicalJson(supersessionCore)) };
+  validateIncidentSupersessionEventV1(supersessionEvent);
+  const supersessionBatch = buildProjectionBatchV1(
+    'incident-supersession',
+    FEATURE_007_TARGET,
+    [supersessionEvent],
+    'incident supersession',
+  );
+  /** @type {Record<string, unknown>[]} */
+  const lineEvents = [];
+  /** @type {Record<string, unknown>} */
+  const branchBatches = {};
+  if (exact) {
+    const findingEvents = /** @type {Record<string, unknown>[]} */ (derived.findingOccurrenceEvents);
+    const incidentEvidenceBatch = buildProjectionBatchV1(
+      'incident-evidence',
+      FEATURE_007_TARGET,
+      findingEvents,
+      'incident evidence',
+    );
+    const failedApproachSet = /** @type {Record<string, unknown>} */ (derived.failedApproachSet);
+    const repeat = /** @type {Record<string, unknown>} */ (derived.repeat);
+    const governanceEvent = buildGovernanceEventV1({
+      version: 1,
+      governanceIdentity: sha256(canonicalJson({
+        version: 1,
+        target: canonicalTarget(FEATURE_007_TARGET),
+        repeatIdentity: sha256(canonicalJson(repeat)),
+      })),
+      target: canonicalTarget(FEATURE_007_TARGET),
+      trigger: repeat,
+      failedApproachSet,
+      phase: 'required',
+      revision: 1,
+      triggerEvidenceHash: sha256(canonicalJson({
+        trigger: repeat,
+        failedApproachSetIdentity: failedApproachSet.setIdentity,
+      })),
+    });
+    const governanceBatch = buildProjectionBatchV1(
+      'governance-required',
+      FEATURE_007_TARGET,
+      [governanceEvent],
+      'incident governance required',
+    );
+    branchBatches.incidentEvidenceBatch = incidentEvidenceBatch;
+    branchBatches.governanceBatch = governanceBatch;
+    lineEvents.push(...findingEvents, governanceEvent);
+  }
+  lineEvents.push(supersessionEvent);
+  const taskEffect = /** @type {Record<string, unknown>} */ (intent.taskEffect);
+  const mutationCore = {
+    intentIdentity: intent.intentIdentity,
+    target: canonicalTarget(FEATURE_007_TARGET),
+    fromGlyph: '!',
+    toGlyph: taskEffect.toGlyph,
+    blocker: taskEffect.blocker,
+    eventLines: {
+      kind: 'append-exact',
+      lines: lineEvents.map((event) => ({
+        eventHash: event.eventHash,
+        exactLine: v2EventLineText(event),
+        terminator: 'LF',
+      })),
+      appendIfAbsent: true,
+    },
+    ownerLog: {
+      kind: 'append-exact',
+      ownerPath: FEATURE_007_IDEA_PATH,
+      expectedOwnerHash: ideaCapture.envelope.sha256,
+      exactLines: [
+        `- ${operationTime} - incident-supersession v1 intent=${intent.intentIdentity} branch=${intent.branch} target=${FEATURE_007_TARGET.taskKey}`,
+      ],
+      terminator: 'LF',
+      appendIfAbsent: true,
+    },
+    snapshotUpdatedAt: operationTime,
+  };
+  validateIncidentLaneMutationCoreV1(mutationCore);
+  const previewCore = {
+    version: 1,
+    branch: intent.branch,
+    intent,
+    acceptedFeatureEvidence: accepted,
+    prestate,
+    evidence: exact
+      ? {
+        inventoryHash: evidenceInventoryHash,
+        reviewEnvelopeIdentities: derived.reviewEnvelopeIdentities,
+        findingOccurrenceEvents: derived.findingOccurrenceEvents,
+        repeat: derived.repeat,
+      }
+      : { inventoryHash: evidenceInventoryHash, incompleteReason: derived.incompleteReason },
+    ...branchBatches,
+    supersessionBatch,
+    mutationCore,
+    rollback,
+  };
+  const preview = { ...previewCore, previewIdentity: sha256(canonicalJson(previewCore)) };
+  validateIncidentCorrectionPreviewV1(preview);
+  // The final mutation adds only its closed constants and `previewIdentity`.
+  const mutation = {
+    version: 1,
+    lane: 'lightweight',
+    kind: 'incident-supersession',
+    reason: 'incident-supersession',
+    intentIdentity: intent.intentIdentity,
+    previewIdentity: preview.previewIdentity,
+    target: canonicalTarget(FEATURE_007_TARGET),
+    fromGlyph: '!',
+    toGlyph: mutationCore.toGlyph,
+    blocker: mutationCore.blocker,
+    eventLines: mutationCore.eventLines,
+    ownerLog: mutationCore.ownerLog,
+    snapshotUpdatedAt: mutationCore.snapshotUpdatedAt,
+  };
+  const derivedMutation = validateLaneMutationV1(mutation, FEATURE_007_TARGET, 'incident supersession mutation');
+  return respond({
+    prepared: true,
+    reason: exact ? 'incident-correction-prepared' : 'incident-evidence-incomplete',
+    branch: intent.branch,
+    // RunState is byte-identical: derivation grants no lane authority by itself.
+    state,
+    intent,
+    supersessionEvent,
+    ...branchBatches,
+    supersessionBatch,
+    preview,
+    mutation,
+    mutationIdentity: derivedMutation.mutationIdentity,
+  });
+}
+
 /**
  * Execute one closed recovery command without scheduling or invoking owners.
  * @param {unknown} commandValue
@@ -3708,7 +10265,18 @@ export function runCommand(commandValue, requestValue, dependencies) {
   validateDependencies(dependencies);
   assertUnicodeScalarString(commandValue, 'command');
   const command = /** @type {string} */ (commandValue);
-  if (!['inspect', 'authorize', 'complete'].includes(command)) invalid('unknown command', 'is not supported');
+  if (!['inspect', 'authorize', 'complete', 'learn', 'transition', 'audit'].includes(command)) invalid('unknown command', 'is not supported');
+  if (command === 'audit') {
+    const request = assertExactRecord(requestValue, ['state', 'input'], ['halt'], 'audit request');
+    const input = decodeTransportInput(request.input, 'audit request.input', false);
+    return auditGovernanceV2(
+      request.state,
+      input,
+      Object.hasOwn(request, 'halt') ? request.halt : undefined,
+      dependencies,
+      true,
+    );
+  }
   if (command === 'inspect') {
     const request = assertExactRecord(requestValue, ['trigger', 'input'], [], 'inspect request');
     assertEnum(request.trigger, WORK_TRIGGERS, 'inspect request.trigger');
@@ -3722,7 +10290,7 @@ export function runCommand(commandValue, requestValue, dependencies) {
     const request = assertExactRecord(
       requestValue,
       ['trigger', 'state', 'input', 'assessment', 'mode'],
-      [],
+      ['attemptPermit'],
       'authorize request',
     );
     assertEnum(request.trigger, WORK_TRIGGERS, 'authorize request.trigger');
@@ -3744,8 +10312,179 @@ export function runCommand(commandValue, requestValue, dependencies) {
       inspection,
       request.assessment,
       request.mode,
+      Object.hasOwn(request, 'attemptPermit') ? request.attemptPermit : undefined,
     );
     return { inspection, authorization };
+  }
+  if (command === 'learn') {
+    const request = assertExactRecord(requestValue, ['state', 'input', 'review'], [], 'learn request');
+    const input = decodeTransportInput(request.input, 'learn request.input', false);
+    return learnGovernanceV2(request.state, input, request.review, dependencies, true);
+  }
+  if (command === 'transition') {
+    const mode = assertRecord(requestValue, 'transition request').mode;
+    assertEnum(
+      mode,
+      [
+        'prepare-projection', 'verify-projection', 'bind-post-learning-inspection', 'verify-no-progress',
+        'halt', 'suspend-target', 'controlled-end', 'resume-governance',
+        'issue-attempt-permit', 'issue-lane-permit', 'commit-lane-receipt', 'incident-correction',
+      ],
+      'transition request.mode',
+    );
+    if (mode === 'prepare-projection' || mode === 'verify-projection') {
+      const request = assertExactRecord(
+        requestValue,
+        ['mode', 'state', 'input', 'projectionBatch'],
+        mode === 'prepare-projection' ? ['lanePrestate', 'targetMapping', 'operationTime'] : [],
+        `transition.${mode} request`,
+      );
+      const input = decodeTransportInput(request.input, `transition.${mode} request.input`, false);
+      if (mode === 'verify-projection') {
+        return verifyProjectionV2(request.state, input, request.projectionBatch, dependencies, true);
+      }
+      const bindingFields = ['lanePrestate', 'targetMapping', 'operationTime'];
+      const supplied = bindingFields.filter((field) => Object.hasOwn(request, field));
+      if (supplied.length !== 0 && supplied.length !== bindingFields.length) {
+        invalid('transition.prepare-projection request', 'requires the complete lane binding or none of it');
+      }
+      return prepareProjectionV2(
+        request.state,
+        input,
+        request.projectionBatch,
+        dependencies,
+        true,
+        supplied.length === 0 ? undefined : {
+          lanePrestate: request.lanePrestate,
+          targetMapping: request.targetMapping,
+          operationTime: request.operationTime,
+        },
+      );
+    }
+    if (mode === 'issue-attempt-permit') {
+      const request = assertExactRecord(
+        requestValue,
+        ['mode', 'state', 'input', 'lanePrestate', 'targetMapping'],
+        [],
+        'transition.issue-attempt-permit request',
+      );
+      const input = decodeTransportInput(request.input, 'transition.issue-attempt-permit request.input', false);
+      return issueAttemptPermitV2(request.state, input, request.lanePrestate, request.targetMapping, dependencies, true);
+    }
+    if (mode === 'issue-lane-permit') {
+      const request = assertExactRecord(
+        requestValue,
+        ['mode', 'state', 'input', 'mutation', 'lanePrestate', 'targetMapping'],
+        [],
+        'transition.issue-lane-permit request',
+      );
+      const input = decodeTransportInput(request.input, 'transition.issue-lane-permit request.input', false);
+      return issueLanePermitV2(
+        request.state,
+        input,
+        request.mutation,
+        request.lanePrestate,
+        request.targetMapping,
+        dependencies,
+        true,
+      );
+    }
+    if (mode === 'commit-lane-receipt') {
+      const request = assertExactRecord(
+        requestValue,
+        ['mode', 'state', 'input', 'permit', 'receipt'],
+        [],
+        'transition.commit-lane-receipt request',
+      );
+      const input = decodeTransportInput(request.input, 'transition.commit-lane-receipt request.input', false);
+      return commitLaneReceiptV2(request.state, input, request.permit, request.receipt, dependencies, true);
+    }
+    if (mode === 'incident-correction') {
+      const request = assertExactRecord(
+        requestValue,
+        ['mode', 'state', 'input', 'incident'],
+        [],
+        'transition.incident-correction request',
+      );
+      const input = decodeTransportInput(request.input, 'transition.incident-correction request.input', false);
+      return prepareIncidentCorrectionV2(request.state, input, request.incident, dependencies, true);
+    }
+    if (mode === 'halt') {
+      const request = assertExactRecord(
+        requestValue,
+        ['mode', 'state', 'input', 'halt'],
+        [],
+        'transition.halt request',
+      );
+      const input = decodeTransportInput(request.input, 'transition.halt request.input', false);
+      return haltGovernanceV2(request.state, input, request.halt, dependencies, true);
+    }
+    if (mode === 'suspend-target') {
+      const request = assertExactRecord(
+        requestValue,
+        ['mode', 'state', 'input', 'scheduling'],
+        ['halt'],
+        'transition.suspend-target request',
+      );
+      const input = decodeTransportInput(request.input, 'transition.suspend-target request.input', false);
+      return suspendTargetV2(
+        request.state,
+        input,
+        {
+          scheduling: request.scheduling,
+          ...(Object.hasOwn(request, 'halt') ? { halt: request.halt } : {}),
+        },
+        dependencies,
+        true,
+      );
+    }
+    const request = assertExactRecord(
+      requestValue,
+      ['mode', 'state', 'input'],
+      [],
+      `transition.${mode} request`,
+    );
+    const input = decodeTransportInput(request.input, `transition.${mode} request.input`, false);
+    if (mode === 'bind-post-learning-inspection') {
+      return bindPostLearningInspectionV2(request.state, input, dependencies, true);
+    }
+    if (mode === 'verify-no-progress') return verifyNoProgressV2(request.state, input, dependencies, true);
+    if (mode === 'controlled-end') return controlledEndV2(request.state, input, dependencies, true);
+    return resumeGovernanceV2(request.state, input, dependencies, true);
+  }
+  if (Object.hasOwn(assertRecord(requestValue, 'complete request'), 'mode')) {
+    const mode = /** @type {Record<string, unknown>} */ (requestValue).mode;
+    assertEnum(mode, ['capture', 'finalize'], 'complete request.mode');
+    if (mode === 'capture') {
+      const captureRequest = assertExactRecord(
+        requestValue,
+        ['mode', 'state', 'input', 'completion'],
+        [],
+        'complete.capture request',
+      );
+      const captureInput = decodeTransportInput(captureRequest.input, 'complete.capture request.input', false);
+      return captureCompletionV2(
+        captureRequest.state,
+        captureInput,
+        captureRequest.completion,
+        dependencies,
+        true,
+      );
+    }
+    const finalizeRequest = assertExactRecord(
+      requestValue,
+      ['mode', 'state', 'input', 'projectionBatch'],
+      [],
+      'complete.finalize request',
+    );
+    const finalizeInput = decodeTransportInput(finalizeRequest.input, 'complete.finalize request.input', false);
+    return finalizeCompletionV2(
+      finalizeRequest.state,
+      finalizeInput,
+      finalizeRequest.projectionBatch,
+      dependencies,
+      true,
+    );
   }
   const request = assertExactRecord(requestValue, ['state', 'input'], [], 'complete request');
   return { completion: completeAttempt(request.state, request.input) };
@@ -4313,6 +11052,107 @@ function checkpointRecordWithPhase(record, phase) {
 }
 
 /**
+ * Admit the checkpoint owner's private context view without reading a property
+ * value until its complete closed descriptor set is known to be data-only.
+ * @param {unknown} value @param {unknown} candidateWriteSet @param {string} label
+ */
+function checkpointContextSnapshot(value, candidateWriteSet, label) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    invalid(label, 'must be an object');
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) invalid(label, 'must be a plain object');
+  const keys = Reflect.ownKeys(value);
+  const allowed = new Set(['phase', 'prestate', 'poststateIdentity', 'candidateIdentity']);
+  /** @type {Map<string, PropertyDescriptor>} */
+  const descriptors = new Map();
+  for (const key of keys) {
+    if (typeof key !== 'string') invalid(label, 'must not contain symbol fields');
+    if (!allowed.has(key)) invalid(label, `contains unknown field '${key}'`);
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !('value' in descriptor)) {
+      invalid(label, `field '${key}' must be an enumerable data property`);
+    }
+    descriptors.set(key, descriptor);
+  }
+  for (const key of ['phase', 'prestate']) {
+    if (!descriptors.has(key)) invalid(label, `is missing field '${key}'`);
+  }
+  const hasPoststateIdentity = descriptors.has('poststateIdentity');
+  const hasCandidateIdentity = descriptors.has('candidateIdentity');
+  if (hasPoststateIdentity !== hasCandidateIdentity) {
+    invalid(label, 'poststate and candidate identities must both be absent or both present');
+  }
+  const phase = descriptors.get('phase')?.value;
+  if (['candidate', 'restoring', 'kept', 'unsettled'].includes(/** @type {string} */ (phase))
+    && !hasPoststateIdentity) {
+    invalid(label, 'is missing poststate and candidate identities');
+  }
+  const prestateValue = descriptors.get('prestate')?.value;
+  if (utilTypes.isProxy(prestateValue)) invalid(`${label}.prestate`, 'must not be a Proxy');
+  const rows = assertDenseDataArray(prestateValue, `${label}.prestate`);
+  rows.forEach((row, index) => {
+    if (utilTypes.isProxy(row)) invalid(`${label}.prestate[${index}]`, 'must not be a Proxy');
+  });
+  validateFileStateDescriptors(prestateValue, candidateWriteSet, `${label}.prestate`);
+  const prestate = rows.map((rowValue) => {
+    const rowDescriptors = Object.getOwnPropertyDescriptors(rowValue);
+    const state = rowDescriptors.state.value;
+    return state === 'missing'
+      ? { path: rowDescriptors.path.value, state }
+      : {
+          path: rowDescriptors.path.value,
+          state,
+          sha256: rowDescriptors.sha256.value,
+          byteLength: rowDescriptors.byteLength.value,
+        };
+  });
+  return {
+    phase,
+    prestate,
+    ...(hasPoststateIdentity
+      ? {
+          poststateIdentity: descriptors.get('poststateIdentity')?.value,
+          candidateIdentity: descriptors.get('candidateIdentity')?.value,
+        }
+      : {}),
+  };
+}
+
+/**
+ * Attempt to retain and then prove the exact checkpoint context as unsettled.
+ * An observed absence is never recreated or reported as retention.
+ * @param {Record<string, Function>} hostApi @param {Record<string, unknown>} record @param {unknown} candidateWriteSet
+ */
+function retainCheckpointUnsettled(hostApi, record, candidateWriteSet) {
+  const id = /** @type {string} */ (record.checkpointIdentity);
+  try {
+    const before = hostApi.get(id);
+    if (!before) return false;
+    checkpointContextSnapshot(before, candidateWriteSet, 'checkpoint retention precheck');
+  } catch {
+    return false;
+  }
+  try {
+    hostApi.setPhase(id, 'unsettled');
+    const returnedContext = hostApi.get(id);
+    if (!returnedContext) return false;
+    const context = checkpointContextSnapshot(returnedContext, candidateWriteSet, 'unsettled checkpoint context');
+    if (!context || context.phase !== 'unsettled') return false;
+    if (stateIdentity(/** @type {string} */ (record.writeSetIdentity), context.prestate) !== record.prestateIdentity) return false;
+    assertHash(context.poststateIdentity, 'unsettled checkpoint poststateIdentity');
+    assertHash(context.candidateIdentity, 'unsettled checkpoint candidateIdentity');
+    if (deriveCandidateIdentity(id, /** @type {string} */ (context.poststateIdentity)) !== context.candidateIdentity) return false;
+    if (Object.hasOwn(record, 'poststateIdentity')
+      && (record.poststateIdentity !== context.poststateIdentity || record.candidateIdentity !== context.candidateIdentity)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Acquire a checkpoint: preflight (refusing unsupported effects before any
  * capture or mutation), capture the prestate, and derive the captured record.
  * @param {unknown} host
@@ -4355,10 +11195,12 @@ export function captureCandidate(host, recordValue, candidateWriteSet) {
   const record = /** @type {Record<string, unknown>} */ (validateCheckpointRecord(recordValue));
   if (record.phase !== 'captured') invalid('checkpoint', 'candidate capture requires a captured checkpoint');
   const id = /** @type {string} */ (record.checkpointIdentity);
-  const context = hostApi.get(id);
-  if (!context || /** @type {Record<string, unknown>} */ (context).phase !== 'captured') {
+  const returnedContext = hostApi.get(id);
+  if (!returnedContext) {
     invalid('checkpoint', 'host context must be present and captured');
   }
+  const context = checkpointContextSnapshot(returnedContext, candidateWriteSet, 'candidate capture checkpoint context');
+  if (context.phase !== 'captured') invalid('checkpoint', 'host context must be present and captured');
   const wsId = writeSetIdentity(candidateWriteSet);
   if (wsId !== record.writeSetIdentity) invalid('checkpoint', 'candidate write set must match the captured checkpoint');
   const poststate = hostApi.probe(id);
@@ -4396,23 +11238,18 @@ export function restoreCheckpoint(host, recordValue, candidateWriteSet) {
     }
     return checkpointRecordWithPhase(record, 'unsettled');
   };
-  hostApi.setPhase(id, 'restoring');
   try {
+    hostApi.setPhase(id, 'restoring');
     hostApi.restore(id);
+    const fresh = hostApi.probe(id);
+    validateFileStateDescriptors(fresh, candidateWriteSet, 'restoration');
+    if (stateIdentity(/** @type {string} */ (record.writeSetIdentity), fresh) !== record.prestateIdentity) {
+      return restoreFault();
+    }
+    hostApi.setPhase(id, 'restored');
   } catch {
     return restoreFault();
   }
-  let fresh;
-  try {
-    fresh = hostApi.probe(id);
-  } catch {
-    return restoreFault();
-  }
-  validateFileStateDescriptors(fresh, candidateWriteSet, 'restoration');
-  if (stateIdentity(/** @type {string} */ (record.writeSetIdentity), fresh) !== record.prestateIdentity) {
-    return restoreFault();
-  }
-  hostApi.setPhase(id, 'restored');
   return checkpointRecordWithPhase(record, 'restored');
 }
 
@@ -4449,7 +11286,8 @@ export function keepCheckpoint(host, recordValue, candidateWriteSet) {
  * Release a checkpoint context, gated on its host phase. Kept and restored
  * contexts prove their expected state; an unchanged captured context proves the
  * prestate. A changed captured, candidate, restoring, or unsettled context is
- * never released. A release fault retains the entry as unsettled and hard stops.
+ * never released. A release fault retains and proves the entry as unsettled
+ * when possible; unavailable or unprovable context reports contract mismatch.
  * @param {unknown} host @param {unknown} recordValue @param {unknown} candidateWriteSet
  */
 export function releaseCheckpoint(host, recordValue, candidateWriteSet) {
@@ -4458,40 +11296,60 @@ export function releaseCheckpoint(host, recordValue, candidateWriteSet) {
   const record = /** @type {Record<string, unknown>} */ (validateCheckpointRecord(recordValue));
   const id = /** @type {string} */ (record.checkpointIdentity);
   validateCandidateWriteSet(candidateWriteSet);
-  const context = hostApi.get(id);
-  if (!context) invalid('checkpoint', 'release requires a present host context');
-  const phase = /** @type {string} */ (/** @type {Record<string, unknown>} */ (context).phase);
+  /** @param {string} reason */
+  const releaseFault = (reason) => {
+    if (retainCheckpointUnsettled(hostApi, record, candidateWriteSet)) {
+      invalid('checkpoint', `${reason} and was retained as unsettled`);
+    }
+    invalid('checkpoint', `${reason}; contract-mismatch: the exact context is unavailable or could not be proven retained`);
+  };
+  let returnedContext;
+  try {
+    returnedContext = hostApi.get(id);
+  } catch {
+    return releaseFault('release proof acquisition failed');
+  }
+  if (!returnedContext) return releaseFault('release requires a present host context');
+  let context;
+  try {
+    context = checkpointContextSnapshot(returnedContext, candidateWriteSet, 'release checkpoint context');
+  } catch {
+    return releaseFault('release phase acquisition failed');
+  }
+  const phase = /** @type {string} */ (context.phase);
   if (phase === 'candidate' || phase === 'restoring' || phase === 'unsettled') {
-    invalid('checkpoint', 'pending or unsettled context is never released');
+    return releaseFault('pending or unsettled context is never released');
   }
   const wsId = /** @type {string} */ (record.writeSetIdentity);
-  const fresh = hostApi.probe(id);
-  validateFileStateDescriptors(fresh, candidateWriteSet, 'release');
-  const freshIdentity = stateIdentity(wsId, fresh);
+  let freshIdentity;
+  try {
+    const fresh = hostApi.probe(id);
+    validateFileStateDescriptors(fresh, candidateWriteSet, 'release');
+    freshIdentity = stateIdentity(wsId, fresh);
+  } catch {
+    return releaseFault('release proof failed');
+  }
   if (phase === 'kept') {
     if (freshIdentity !== record.poststateIdentity) {
-      hostApi.setPhase(id, 'unsettled');
-      invalid('checkpoint', 'a kept context must still equal the evaluated candidate before release');
+      return releaseFault('a kept context must still equal the evaluated candidate before release');
     }
   } else if (phase === 'restored') {
     if (freshIdentity !== record.prestateIdentity) {
-      hostApi.setPhase(id, 'unsettled');
-      invalid('checkpoint', 'a restored context must equal the exact prestate before release');
+      return releaseFault('a restored context must equal the exact prestate before release');
     }
   } else if (phase === 'captured') {
     if (freshIdentity !== record.prestateIdentity) {
-      invalid('checkpoint', 'a changed captured context must be restored before release');
+      return releaseFault('a changed captured context must be restored before release');
     }
   } else {
-    invalid('checkpoint', 'pending or unsettled context is never released');
+    return releaseFault('release requires a captured, kept, or restored context');
   }
   try {
     hostApi.release(id);
   } catch {
-    hostApi.setPhase(id, 'unsettled');
-    invalid('checkpoint', 'context release failed and was retained as unsettled');
+    return releaseFault('context release failed');
   }
-  return checkpointRecordWithPhase(record, phase);
+  return checkpointRecordWithPhase(record, /** @type {string} */ (phase));
 }
 
 /** Parse a CanonicalDecimal into its sign and digit parts. @param {string} text */
@@ -4819,25 +11677,25 @@ export function normalizeCheckpointGate({ record, host, candidateWriteSet }) {
   validateCandidateWriteSet(candidateWriteSet);
   const hostApi = /** @type {Record<string, Function>} */ (host);
   const id = /** @type {string} */ (fields.checkpointIdentity);
-  const context = hostApi.get(id);
+  const returnedContext = hostApi.get(id);
   let outcome = 'invalid';
-  if (context) {
-    const phase = /** @type {string} */ (/** @type {Record<string, unknown>} */ (context).phase);
+  if (returnedContext) {
+    const context = checkpointContextSnapshot(returnedContext, candidateWriteSet, 'checkpoint gate context');
+    const phase = /** @type {string} */ (context.phase);
     if (phase === 'unsettled') {
       outcome = 'unsettled';
     } else if (phase === 'candidate' || phase === 'kept') {
       const fresh = hostApi.probe(id);
       validateFileStateDescriptors(fresh, candidateWriteSet, 'checkpoint gate probe');
       const poststateIdentity = stateIdentity(/** @type {string} */ (fields.writeSetIdentity), fresh);
-      const prestate = /** @type {Record<string, unknown>} */ (context).prestate;
-      validateFileStateDescriptors(prestate, candidateWriteSet, 'checkpoint gate prestate');
+      const prestate = context.prestate;
       const protectedPaths = new Set(
         /** @type {string[]} */ (/** @type {Record<string, unknown>} */ (candidateWriteSet).protectedPaths),
       );
       const protectedUnchanged = canonicalJson(protectedSubset(fresh, protectedPaths))
         === canonicalJson(protectedSubset(prestate, protectedPaths));
       if (poststateIdentity === fields.poststateIdentity
-        && /** @type {Record<string, unknown>} */ (context).candidateIdentity === fields.candidateIdentity
+        && context.candidateIdentity === fields.candidateIdentity
         && protectedUnchanged) {
         outcome = 'ready';
       }
@@ -5642,13 +12500,13 @@ export function projectEvent(owner, event) {
 
 /** Build the RunState successor carrying updated objective arrays. @param {Record<string, unknown>} state @param {{evaluationSequences?:unknown,learningReviewRefs?:unknown}} updates */
 function withObjectiveArrays(state, updates) {
-  const next = {
+  const next = carryOptionalRunState(state, {
     policy: state.policy,
     overallUsed: state.overallUsed,
     recoveryUsed: state.recoveryUsed,
     pending: state.pending,
     completed: state.completed,
-  };
+  });
   const sequences = Object.hasOwn(updates, 'evaluationSequences')
     ? updates.evaluationSequences
     : (Object.hasOwn(state, 'evaluationSequences') ? state.evaluationSequences : undefined);
@@ -5807,29 +12665,60 @@ function validateComparisonDecisionRecord(value, label = 'ComparisonDecision') {
 }
 
 /**
- * Reconstruct the live candidate CheckpointRecord from the host context. The
- * host exposes bytes-free prestate descriptors and the poststate/candidate
- * identities; the sequence supplies the target, contract, and identity.
- * @param {unknown} host @param {Record<string, unknown>} row @param {string} checkpointIdentity @param {unknown} candidateWriteSet
+ * Classify the first live checkpoint observation without allowing a host fault
+ * to escape the owner-returned active-context envelope.
+ * @param {unknown} host @param {Record<string, unknown>} row @param {string} checkpointIdentity
+ * @param {string} candidateIdentity @param {unknown} candidateWriteSet @param {string} wsId
  */
-function liveCandidateRecord(host, row, checkpointIdentity, candidateWriteSet) {
-  const context = /** @type {Record<string, unknown>} */ (/** @type {Record<string, Function>} */ (host).get(checkpointIdentity));
-  if (!context) invalid('resolveComparison', 'requires a live candidate checkpoint context');
-  if (context.phase !== 'candidate') invalid('resolveComparison', 'requires a candidate-phase checkpoint context');
-  const wsId = writeSetIdentity(candidateWriteSet);
-  const record = {
-    checkpointIdentity,
-    target: row.target,
-    sequenceIdentity: row.sequenceIdentity,
-    contractHash: row.contractHash,
-    writeSetIdentity: wsId,
-    prestateIdentity: stateIdentity(wsId, context.prestate),
-    phase: 'candidate',
-    poststateIdentity: context.poststateIdentity,
-    candidateIdentity: context.candidateIdentity,
-  };
-  validateCheckpointRecord(record);
-  return record;
+function liveCandidateOutcome(host, row, checkpointIdentity, candidateIdentity, candidateWriteSet, wsId) {
+  const hostApi = /** @type {Record<string, Function>} */ (host);
+  try {
+    const returnedContext = hostApi.get(checkpointIdentity);
+    if (!returnedContext) return { outcome: 'contract-mismatch' };
+    const context = checkpointContextSnapshot(returnedContext, candidateWriteSet, 'resolveComparison checkpoint context');
+    if (!context || !['candidate', 'restoring', 'unsettled'].includes(/** @type {string} */ (context.phase))) {
+      return { outcome: 'contract-mismatch' };
+    }
+    const prestate = context.prestate;
+    const prestateIdentity = stateIdentity(wsId, prestate);
+    const expectedCheckpointIdentity = deriveCheckpointIdentity({
+      target: row.target,
+      sequenceIdentity: /** @type {string} */ (row.sequenceIdentity),
+      contractHash: /** @type {string} */ (row.contractHash),
+      writeSetIdentity: wsId,
+      prestateIdentity,
+    });
+    if (checkpointIdentity !== expectedCheckpointIdentity) return { outcome: 'contract-mismatch' };
+    assertHash(context.poststateIdentity, 'resolveComparison checkpoint poststateIdentity');
+    assertHash(context.candidateIdentity, 'resolveComparison checkpoint candidateIdentity');
+    const expectedCandidateIdentity = deriveCandidateIdentity(
+      expectedCheckpointIdentity,
+      /** @type {string} */ (context.poststateIdentity),
+    );
+    if (context.candidateIdentity !== expectedCandidateIdentity || candidateIdentity !== expectedCandidateIdentity) {
+      return { outcome: 'contract-mismatch' };
+    }
+    const record = {
+      checkpointIdentity: expectedCheckpointIdentity,
+      target: row.target,
+      sequenceIdentity: row.sequenceIdentity,
+      contractHash: row.contractHash,
+      writeSetIdentity: wsId,
+      prestateIdentity,
+      phase: 'candidate',
+      poststateIdentity: context.poststateIdentity,
+      candidateIdentity: expectedCandidateIdentity,
+    };
+    validateCheckpointRecord(record);
+    if (context.phase === 'candidate') return { outcome: 'candidate', record };
+    return {
+      outcome: retainCheckpointUnsettled(hostApi, record, candidateWriteSet)
+        ? 'stop-unsettled'
+        : 'contract-mismatch',
+    };
+  } catch {
+    return { outcome: 'contract-mismatch' };
+  }
 }
 
 /**
@@ -5837,7 +12726,9 @@ function liveCandidateRecord(host, row, checkpointIdentity, candidateWriteSet) {
  * advances the incumbent, releases, and clears the active identities; a non-keep
  * restores the exact prestate first; a restore or release fault records a
  * stop-unsettled event, retains the context, and hard stops without releasing.
- * Every outcome projects one comparison event and admits its reference.
+ * A learning-governed fault instead returns its identity-paired successor
+ * without projection; unavailable context uses admitted open-active quarantine.
+ * Every ordinary comparison outcome projects one event and admits its reference.
  * Objective evidence never completes a task.
  * @param {unknown} stateValue @param {unknown} sequenceValue @param {unknown} options
  */
@@ -5849,22 +12740,135 @@ export function resolveComparison(stateValue, sequenceValue, options) {
     ['tieReviewOutcome'],
     'resolveComparison options',
   );
-  validateCheckpointHost(args.host);
-  validateProjectionOwner(args.owner);
   validateCandidateWriteSet(args.candidateWriteSet);
+  const wsId = writeSetIdentity(args.candidateWriteSet);
   const decision = validateComparisonDecisionRecord(args.decision);
   const set = assertExactRecord(args.gateSet, ['target', 'checkpointIdentity', 'candidateIdentity', 'contractHash', 'gates', 'gateSetIdentity'], [], 'GateSet');
   assertHash(args.candidateIdentity, 'resolveComparison.candidateIdentity');
-  const sequenceInput = assertRecord(sequenceValue, 'resolveComparison.sequence');
+  validateEvaluationSequences([sequenceValue], 'resolveComparison.sequence context');
+  const sequenceInput = /** @type {Record<string, unknown>} */ (sequenceValue);
   assertHash(sequenceInput.sequenceIdentity, 'resolveComparison.sequence.sequenceIdentity');
   const sequences = evaluationSequenceRows(state).map((sequenceRow) => ({ ...sequenceRow }));
   const rowIndex = sequences.findIndex((sequenceRow) => sequenceRow.sequenceIdentity === sequenceInput.sequenceIdentity);
   if (rowIndex === -1) invalid('resolveComparison', 'must target a sequence present in the run state');
   const row = sequences[rowIndex];
+  if (canonicalJson(sequenceInput) !== canonicalJson(row)) {
+    invalid('resolveComparison', 'sequence context must exactly match the selected run-state row');
+  }
+  if (row.state !== 'open'
+    || Object.hasOwn(row, 'activeCheckpointIdentity')
+    || Object.hasOwn(row, 'activeCandidateIdentity')) {
+    invalid('resolveComparison', 'selected sequence state must be open without an unresolved active context');
+  }
+  const expectedSequenceIdentity = deriveSequenceIdentity({
+    target: row.target,
+    taskKey: /** @type {string} */ (row.taskKey),
+    ownerBindingHash: /** @type {string} */ (row.ownerBindingHash),
+    planDescriptor: row.planDescriptor,
+    registryHash: /** @type {string} */ (row.registryHash),
+    contractHash: /** @type {string} */ (row.contractHash),
+    bindingIdentity: /** @type {string} */ (row.bindingIdentity),
+    baselineCandidateIdentity: /** @type {string} */ (row.baselineCandidateIdentity),
+  });
+  if (expectedSequenceIdentity !== row.sequenceIdentity) {
+    invalid('resolveComparison', 'selected sequence identity must match its recomputed context');
+  }
+  const expectedTarget = canonicalJson(row.target);
+  if (canonicalJson(decision.target) !== expectedTarget) {
+    invalid('resolveComparison', 'decision target must match the selected sequence target');
+  }
+  if (decision.sequenceIdentity !== expectedSequenceIdentity) {
+    invalid('resolveComparison', 'decision sequence identity must match the selected sequence');
+  }
+  if (decision.contractHash !== row.contractHash) {
+    invalid('resolveComparison', 'decision contract hash must match the selected sequence contract');
+  }
+  const { comparisonIdentity, ...decisionWithoutIdentity } = decision;
+  if (sha256(canonicalJson(decisionWithoutIdentity)) !== comparisonIdentity) {
+    invalid('resolveComparison', 'decision identity must equal the recomputed comparison identity');
+  }
+  assertCanonicalTargetIdentity(set.target, 'GateSet.target');
+  assertHash(set.checkpointIdentity, 'GateSet.checkpointIdentity');
+  assertHash(set.candidateIdentity, 'GateSet.candidateIdentity');
+  assertHash(set.contractHash, 'GateSet.contractHash');
+  assertHash(set.gateSetIdentity, 'GateSet.gateSetIdentity');
+  const expectedGateSet = buildGateSet({
+    target: set.target,
+    checkpointIdentity: /** @type {string} */ (set.checkpointIdentity),
+    candidateIdentity: /** @type {string} */ (set.candidateIdentity),
+    contractHash: /** @type {string} */ (set.contractHash),
+    gates: set.gates,
+  });
+  if (canonicalJson(expectedGateSet) !== canonicalJson(set)) {
+    invalid('resolveComparison', 'gate set identity must equal the recomputed gate set identity');
+  }
+  if (canonicalJson(set.target) !== expectedTarget) {
+    invalid('resolveComparison', 'gate set target must match the selected sequence target');
+  }
+  if (set.contractHash !== row.contractHash) {
+    invalid('resolveComparison', 'gate set contract hash must match the selected sequence contract');
+  }
+  if (decision.checkpointIdentity !== set.checkpointIdentity) {
+    invalid('resolveComparison', 'decision and gate set must bind the same checkpoint identity');
+  }
+  if (set.candidateIdentity !== args.candidateIdentity) {
+    invalid('resolveComparison', 'gate set and request must bind the same candidate identity');
+  }
   const checkpointIdentity = /** @type {string} */ (set.checkpointIdentity);
-  const record = liveCandidateRecord(args.host, row, checkpointIdentity, args.candidateWriteSet);
-  if (record.candidateIdentity !== args.candidateIdentity) invalid('resolveComparison', 'candidate identity must match the live context');
-  if (set.candidateIdentity !== args.candidateIdentity) invalid('resolveComparison', 'the gate set candidate identity must match the live context');
+  const unresolvedState = (sequenceState) => {
+    const unresolvedRow = {
+      ...row,
+      state: sequenceState,
+      activeCheckpointIdentity: checkpointIdentity,
+      activeCandidateIdentity: args.candidateIdentity,
+    };
+    const nextSequences = sequences.map((sequenceRow, index) => (index === rowIndex ? unresolvedRow : sequenceRow));
+    const nextState = withObjectiveArrays(state, { evaluationSequences: nextSequences });
+    validateRunState(nextState);
+    return nextState;
+  };
+  const quarantineState = unresolvedState('open');
+  const unsettledState = unresolvedState('unsettled');
+  const unresolvedOutcome = (outcome) => ({
+    outcome,
+    stopped: true,
+    state: outcome === 'stop-unsettled' ? unsettledState : quarantineState,
+  });
+  validateCheckpointHost(args.host);
+  validateProjectionOwner(args.owner);
+  const live = liveCandidateOutcome(
+    args.host,
+    row,
+    checkpointIdentity,
+    /** @type {string} */ (args.candidateIdentity),
+    args.candidateWriteSet,
+    wsId,
+  );
+  if (live.outcome !== 'candidate') return unresolvedOutcome(live.outcome);
+  const record = /** @type {Record<string, unknown>} */ (live.record);
+  if (hasUnresolvedLearningGovernance(state, row.target)) {
+    const stopGovernedFault = () => {
+      const retained = retainCheckpointUnsettled(
+        /** @type {Record<string, Function>} */ (args.host),
+        record,
+        args.candidateWriteSet,
+      );
+      return unresolvedOutcome(retained ? 'stop-unsettled' : 'contract-mismatch');
+    };
+    let restored;
+    try {
+      restored = restoreCheckpoint(args.host, record, args.candidateWriteSet);
+    } catch {
+      return stopGovernedFault();
+    }
+    if (restored.phase !== 'restored') return stopGovernedFault();
+    try {
+      releaseCheckpoint(args.host, restored, args.candidateWriteSet);
+    } catch {
+      return stopGovernedFault();
+    }
+    invalid('resolveComparison', 'is sealed: learning-required');
+  }
   const observationIdentities = {
     baseline: decision.baselineObservationIdentity,
     incumbent: decision.incumbentObservationIdentity,
@@ -5954,7 +12958,7 @@ export function resolveComparison(stateValue, sequenceValue, options) {
 /**
  * Close a settled sequence: build, project, and verify one close event, then
  * remove the row only after the verified projection. An unsettled restoration
- * blocks the close and keeps the sequence.
+ * or context-unavailable active-identity quarantine blocks the close first.
  * @param {unknown} stateValue @param {string} sequenceIdentity @param {unknown} options
  */
 export function closeEvaluationSequence(stateValue, sequenceIdentity, options) {
@@ -5967,7 +12971,13 @@ export function closeEvaluationSequence(stateValue, sequenceIdentity, options) {
   const rowIndex = sequences.findIndex((sequenceRow) => sequenceRow.sequenceIdentity === sequenceIdentity);
   if (rowIndex === -1) invalid('closeEvaluationSequence', 'must target a sequence present in the run state');
   const row = sequences[rowIndex];
+  const hasActiveContext = Object.hasOwn(row, 'activeCheckpointIdentity')
+    || Object.hasOwn(row, 'activeCandidateIdentity');
   if (row.state === 'unsettled') invalid('closeEvaluationSequence', 'an unsettled restoration blocks sequence close');
+  if (hasActiveContext) invalid('closeEvaluationSequence', 'an unresolved active context blocks sequence close');
+  if (args.reason !== 'hard-stop' && hasUnresolvedLearningGovernance(state, row.target)) {
+    invalid('closeEvaluationSequence', 'is sealed: learning-required');
+  }
   const event = buildEvaluationSequenceClosedEvent({
     target: row.target,
     taskKey: row.taskKey,
@@ -6007,6 +13017,9 @@ export function settleTaskBoundary(stateValue, options) {
   const canonical = canonicalTarget(args.target);
   assertTaskKeyString(args.taskKey, 'settleTaskBoundary.taskKey');
   if (args.reason !== 'task-completed' && args.reason !== 'task-blocked') invalid('settleTaskBoundary.reason', 'must be task-completed or task-blocked');
+  if (hasUnresolvedLearningGovernance(state, canonical)) {
+    invalid('settleTaskBoundary', 'is sealed: learning-required');
+  }
   const canonicalJson_ = canonicalJson(canonical);
   const rowIndex = evaluationSequenceRows(state).findIndex((sequenceRow) => (
     canonicalJson(sequenceRow.target) === canonicalJson_ && sequenceRow.taskKey === args.taskKey
@@ -6019,7 +13032,7 @@ export function settleTaskBoundary(stateValue, options) {
   let comparison;
   if (Object.hasOwn(args, 'settle')) {
     const settleArgs = assertExactRecord(args.settle, ['decision', 'gateSet', 'candidateIdentity', 'candidateWriteSet'], ['tieReviewOutcome'], 'settleTaskBoundary.settle');
-    comparison = resolveComparison(workingState, { sequenceIdentity }, {
+    comparison = resolveComparison(workingState, evaluationSequenceRows(workingState)[rowIndex], {
       host: args.host,
       owner: args.owner,
       decision: settleArgs.decision,

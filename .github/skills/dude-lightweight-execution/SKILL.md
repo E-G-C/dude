@@ -40,6 +40,12 @@ node .github/skills/dude-lightweight-execution/board.mjs diff   .dude/specs/<fea
 
 The coordinator-state snapshot at `.dude/state/task-state.json` is optional: its absence is valid and simply means no baseline yet. Unreadable, malformed, wrong-schema, or symlinked corruption fails closed before any mutation — a corrupt snapshot blocks the write so `tasks.md` and the snapshot both stay byte-unchanged. A validated `--write` preserves every unrelated feature's entries.
 
+## Autonomous Work Lane Wrapper
+
+Autonomous `dude-work` never mutates this lane through the CLI above. It calls the separate `applyLightweightWorkRequest` boundary in the same helper with one closed `work-project` or `work-set` request carrying identity references and expected bytes, never a command string or a caller decision. Manual, guarded, non-Work, mirror, and coordinator-maintenance authority is unchanged.
+
+The boundary freshly rereads `tasks.md`, `.dude/state/task-state.json`, and the unique owner idea, recomputes every binding and identity it was handed, and applies all three as one all-or-restored transaction. Every failure returns one closed result: a refusal that leaves all three surfaces byte-for-byte unchanged, or an indeterminate rollback that is a run-wide hard stop. `dude-work` owns the autonomous learning governance that decides when such a request may be made.
+
 ## Select And Route
 
 After ownership passes, read applicable spec, plan, and supporting artifacts. Stop if tasks are absent, malformed, or empty. Resume a clear `[~]` task first; otherwise select an eligible `[ ]` task, preferring a consistent generated Ready view, then respecting `[!]`, durable `deps:`, phase order, and `[P]` candidate work. `[P]` alone never authorizes fan-out; use `dude-parallel-dispatch` for that proof. Route through `dude-generic-routing`. Use `dude-work` only for continuous iteration.

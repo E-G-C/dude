@@ -4,6 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +14,7 @@ import { listCoreSourceFiles } from './build-release.mjs';
 import {
   enumerateCorePaths,
   isCorePath,
+  isLocalPath,
   isPackPath,
 } from '../src/skills/dude-engine/lib/ownership.mjs';
 
@@ -27,7 +29,7 @@ function has(root, rel) {
   return fs.existsSync(path.join(root, rel));
 }
 
-/** @typedef {{ path: string, type: 'directory' } | { path: string, type: 'file', mode: string, content: string }} TreeRow */
+/** @typedef {{ path: string, type: 'directory' } | { path: string, type: 'symlink', target: string } | { path: string, type: 'file', mode: string, content: Buffer }} TreeRow */
 
 /** @param {fs.Stats} stat @returns {string} */
 function normalizedFileMode(stat) {
@@ -38,6 +40,65 @@ function normalizedFileMode(stat) {
 /** @param {string} root @param {string} rel @param {number} mode */
 function setFixtureMode(root, rel, mode) {
   if (process.platform !== 'win32') fs.chmodSync(path.join(root, rel), mode);
+}
+
+/** @param {string | Uint8Array} content @returns {string} */
+function sha256(content) {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+/** @param {Buffer} actual @param {Buffer} expected @param {string} label */
+function assertExactBytes(actual, expected, label) {
+  if (actual.equals(expected)) return;
+  assert.fail(
+    `${label} bytes differ (`
+    + `actual: length=${actual.length}, sha256=${sha256(actual)}; `
+    + `expected: length=${expected.length}, sha256=${sha256(expected)})`,
+  );
+}
+
+/** @param {TreeRow[]} actual @param {TreeRow[]} expected @param {string} label */
+function assertExactTree(actual, expected, label) {
+  assert.equal(
+    actual.length,
+    expected.length,
+    `${label} path count differs (actual=${actual.length}, expected=${expected.length})`,
+  );
+  for (let index = 0; index < expected.length; index += 1) {
+    const actualRow = actual[index];
+    const expectedRow = expected[index];
+    assert.equal(
+      actualRow.path,
+      expectedRow.path,
+      `${label} path differs at index ${index} (actual=${actualRow.path}, expected=${expectedRow.path})`,
+    );
+    assert.equal(
+      actualRow.type,
+      expectedRow.type,
+      `${label} path type differs: ${expectedRow.path} (actual=${actualRow.type}, expected=${expectedRow.type})`,
+    );
+    if (expectedRow.type === 'directory') continue;
+    if (expectedRow.type === 'symlink') {
+      if (actualRow.type !== 'symlink') assert.fail(`${label} is not a symlink: ${expectedRow.path}`);
+      if (actualRow.target !== expectedRow.target) {
+        const actualTarget = Buffer.from(actualRow.target);
+        const expectedTarget = Buffer.from(expectedRow.target);
+        assert.fail(
+          `${label} symlink target differs: ${expectedRow.path} (`
+          + `actual: length=${actualTarget.length}, sha256=${sha256(actualTarget)}; `
+          + `expected: length=${expectedTarget.length}, sha256=${sha256(expectedTarget)})`,
+        );
+      }
+      continue;
+    }
+    if (actualRow.type !== 'file') assert.fail(`${label} is not a regular file: ${expectedRow.path}`);
+    assert.equal(
+      actualRow.mode,
+      expectedRow.mode,
+      `${label} file mode differs: ${expectedRow.path} (actual=${actualRow.mode}, expected=${expectedRow.mode})`,
+    );
+    assertExactBytes(actualRow.content, expectedRow.content, `${label}: ${expectedRow.path}`);
+  }
 }
 
 /** @param {string} root @returns {TreeRow[]} */
@@ -52,6 +113,10 @@ function snapshotTree(root) {
       const abs = path.join(dir, entry.name);
       const rel = base ? `${base}/${entry.name}` : entry.name;
       const stat = fs.lstatSync(abs);
+      if (stat.isSymbolicLink()) {
+        rows.push({ path: rel, type: 'symlink', target: fs.readlinkSync(abs) });
+        continue;
+      }
       if (stat.isDirectory()) {
         rows.push({ path: rel, type: 'directory' });
         scan(abs, rel);
@@ -62,7 +127,7 @@ function snapshotTree(root) {
         path: rel,
         type: 'file',
         mode: normalizedFileMode(stat),
-        content: fs.readFileSync(abs).toString('base64'),
+        content: fs.readFileSync(abs),
       });
     }
   };
@@ -74,6 +139,7 @@ function snapshotTree(root) {
 function protectedSnapshot(rows) {
   return rows.filter(({ path: rel }) => (
     isPackPath(rel)
+    || isLocalPath(rel)
     || rel === '.github/skills/project'
     || rel.startsWith('.github/skills/project/')
     || rel === '.github/workflows'
@@ -101,7 +167,7 @@ function expectedCoreSnapshot(sourceFiles) {
       path: deployRel,
       type: 'file',
       mode: normalizedFileMode(stat),
-      content: fs.readFileSync(abs).toString('base64'),
+      content: fs.readFileSync(abs),
     });
   }
   return [...rows.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
@@ -179,15 +245,17 @@ test('buildDev preserves every canonical project-owned byte while syncing core o
     buildDev({ repoRoot: root });
 
     for (const [rel, expected] of before) {
-      assert.deepEqual(fs.readFileSync(path.join(root, rel)), expected, `${rel} changed`);
+      assertExactBytes(fs.readFileSync(path.join(root, rel)), expected, rel);
     }
-    assert.deepEqual(
+    assertExactBytes(
       fs.readFileSync(path.join(root, '.github/agents/dude.agent.md')),
       fs.readFileSync(path.join(root, 'src/agents/dude.agent.md')),
+      '.github/agents/dude.agent.md',
     );
-    assert.deepEqual(
+    assertExactBytes(
       fs.readFileSync(path.join(root, '.github/skills/dude-lint/lint.mjs')),
       fs.readFileSync(path.join(root, 'src/skills/dude-lint/lint.mjs')),
+      '.github/skills/dude-lint/lint.mjs',
     );
     assert.equal(has(root, '.github/skills/dude-lint/lint.test.mjs'), false);
     assert.equal(has(root, '.dude/brief'), false);
@@ -210,10 +278,10 @@ test('checked-in dev core is a byte-identical non-mutating projection of authori
   );
   for (const { abs, deployRel } of sourceFiles) {
     assert.equal(fs.existsSync(path.join(repoRoot, deployRel)), true, `missing generated core file: ${deployRel}`);
-    assert.deepEqual(
+    assertExactBytes(
       fs.readFileSync(path.join(repoRoot, deployRel)),
       fs.readFileSync(abs),
-      `generated core differs byte-for-byte: ${deployRel}`,
+      deployRel,
     );
   }
   assert.deepEqual(
@@ -246,10 +314,10 @@ test('recovery runtime is an explicit byte-identical dev projection while its te
     'recovery.test.mjs is excluded from development source projection',
   );
   assert.equal(fs.existsSync(path.join(repoRoot, generatedRel)), true, generatedRel);
-  assert.deepEqual(
+  assertExactBytes(
     fs.readFileSync(path.join(repoRoot, generatedRel)),
     fs.readFileSync(path.join(repoRoot, sourceRel)),
-    `${generatedRel} must be byte-identical to ${sourceRel}`,
+    generatedRel,
   );
   assert.equal(fs.existsSync(path.join(repoRoot, generatedTestRel)), false, generatedTestRel);
 });
@@ -295,7 +363,7 @@ test('final feature hygiene files have terminal newlines and normalized source p
   for (const [sourceRel, generatedRel] of sourceGeneratedPairs) {
     assert.equal(fs.existsSync(path.join(repoRoot, sourceRel)), true, `missing source file: ${sourceRel}`);
     assert.equal(fs.existsSync(path.join(repoRoot, generatedRel)), true, `missing generated file: ${generatedRel}`);
-    assert.deepEqual(
+    assertExactBytes(
       normalizeTerminalNewline(fs.readFileSync(path.join(repoRoot, sourceRel))),
       normalizeTerminalNewline(fs.readFileSync(path.join(repoRoot, generatedRel))),
       `${sourceRel} and ${generatedRel} differ after terminal-newline normalization`,
@@ -310,6 +378,25 @@ test('final feature hygiene files have terminal newlines and normalized source p
     missingTerminalNewline,
     [],
     `files missing terminal newline:\n${missingTerminalNewline.join('\n')}`,
+  );
+});
+
+test('exact byte parity assertions report bounded mismatch diagnostics', () => {
+  const expected = Buffer.alloc(512 * 1024, 0x41);
+  const actual = Buffer.from(expected);
+  actual[actual.length - 1] = 0x42;
+
+  assert.throws(
+    () => assertExactBytes(actual, expected, '.github/skills/dude-engine/lib/large.bin'),
+    (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      assert.match(message, /\.github\/skills\/dude-engine\/lib\/large\.bin bytes differ/);
+      assert.match(message, /actual: length=524288, sha256=[0-9a-f]{64}/);
+      assert.match(message, /expected: length=524288, sha256=[0-9a-f]{64}/);
+      assert.equal(message.length < 512, true, `diagnostic is not bounded: ${message.length} bytes`);
+      assert.equal(message.includes('AAAAAAAA'), false, 'diagnostic embeds file payload');
+      return true;
+    },
   );
 });
 
@@ -341,6 +428,8 @@ test('buildDev preserves protected trees and materializes one exact idempotent c
       ['.github/prompts/dude-pack-coding-run.prompt.md', Buffer.from('# Pack prompt\r\n', 'utf8'), 0o644],
       ['.github/skills/project/SKILL.md', Buffer.from('# Project skill\n', 'utf8'), 0o644],
       ['.github/skills/project/references/nested/context.bin', Buffer.from([0x01, 0x02, 0xfe]), 0o644],
+      ['.github/skills/dude-local-core-dogfood-promotion/SKILL.md', Buffer.from('# Local promotion skill\n', 'utf8'), 0o644],
+      ['.github/skills/dude-local-core-dogfood-promotion/references/nested/policy.bin', Buffer.from([0x00, 0x7f, 0xff]), 0o644],
       ['.github/workflows/ci.yml', Buffer.from('name: fixture\n', 'utf8'), 0o644],
       ['.github/workflows/reusable/nested/check.yml', Buffer.from('on: workflow_call\r\n', 'utf8'), 0o644],
       ['.dude/metadata/bundle-manifest.md', Buffer.from(MANIFEST, 'utf8'), 0o644],
@@ -355,9 +444,19 @@ test('buildDev preserves protected trees and materializes one exact idempotent c
       w(root, String(rel), /** @type {Uint8Array} */ (content));
       setFixtureMode(root, String(rel), Number(mode));
     }
+    const protectedSymlink = process.platform === 'win32'
+      ? null
+      : {
+          path: '.github/skills/dude-local-core-dogfood-promotion/references/current',
+          target: '../SKILL.md',
+        };
+    if (protectedSymlink) {
+      fs.symlinkSync(protectedSymlink.target, path.join(root, protectedSymlink.path));
+    }
     for (const rel of [
       '.github/skills/dude-pack-coding-fixtures/data/empty',
       '.github/skills/project/references/empty',
+      '.github/skills/dude-local-core-dogfood-promotion/references/empty',
       '.github/workflows/archive/empty',
       '.dude/state/runs/empty',
     ]) {
@@ -397,6 +496,16 @@ test('buildDev preserves protected trees and materializes one exact idempotent c
       [],
     );
     assert.equal(
+      protectedBefore.some((row) => row.path === '.github/skills/dude-local-core-dogfood-promotion/SKILL.md'),
+      true,
+      'project-local promotion skill is absent from the protected snapshot',
+    );
+    if (protectedSymlink) {
+      const symlinkRow = protectedBefore.find((row) => row.path === protectedSymlink.path);
+      assert.equal(symlinkRow?.type, 'symlink', `${protectedSymlink.path} is not snapshotted as a symlink`);
+      if (symlinkRow?.type === 'symlink') assert.equal(symlinkRow.target, protectedSymlink.target);
+    }
+    assert.equal(
       protectedBefore.find((row) => row.path === '.github/skills/dude-pack-coding-fixtures/bin/check.mjs')?.type === 'file'
         ? protectedBefore.find((row) => row.path === '.github/skills/dude-pack-coding-fixtures/bin/check.mjs')?.mode
         : undefined,
@@ -425,13 +534,13 @@ test('buildDev preserves protected trees and materializes one exact idempotent c
     assert.deepEqual(firstResult.written, expectedDestinations);
     assert.ok(firstResult.removed.includes('.github/agents/dude-obsolete.agent.md'));
     assert.ok(firstResult.removed.includes('.github/skills/dude-obsolete'));
-    assert.deepEqual(protectedAfterFirst, protectedBefore);
-    assert.deepEqual(protectedSnapshot(secondTree), protectedBefore);
+    assertExactTree(protectedAfterFirst, protectedBefore, 'protected tree after first materialization');
+    assertExactTree(protectedSnapshot(secondTree), protectedBefore, 'protected tree after second materialization');
 
     for (const { abs, deployRel } of projectableSources) {
       const destination = path.join(root, deployRel);
       assert.equal(fs.lstatSync(destination).isFile(), true, `${deployRel} is not a regular file`);
-      assert.deepEqual(fs.readFileSync(destination), fs.readFileSync(abs), `${deployRel} bytes differ`);
+      assertExactBytes(fs.readFileSync(destination), fs.readFileSync(abs), deployRel);
       assert.equal(
         normalizedFileMode(fs.lstatSync(destination)),
         normalizedFileMode(fs.lstatSync(abs)),
@@ -441,10 +550,10 @@ test('buildDev preserves protected trees and materializes one exact idempotent c
     for (const rel of sourceTestDestinations) assert.equal(has(root, rel), false, `${rel} was generated`);
     for (const rel of staleDestinations) assert.equal(has(root, rel), false, `${rel} was not removed`);
 
-    assert.deepEqual(firstCoreSnapshot, expectedCoreSnapshot(projectableSources));
+    assertExactTree(firstCoreSnapshot, expectedCoreSnapshot(projectableSources), 'generated core projection');
     assert.deepEqual(enumerateCorePaths(root), expectedDestinations);
     assert.deepEqual(secondResult.written, expectedDestinations);
-    assert.deepEqual(secondTree, firstTree);
+    assertExactTree(secondTree, firstTree, 'complete tree after second materialization');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

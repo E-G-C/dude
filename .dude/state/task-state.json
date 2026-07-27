@@ -118,15 +118,19 @@
       "T008@0074f1b8": " ",
       "T009@00758fef": " "
     },
-    "updated_at": "2026-07-23T00:55:22.866Z"
+    "updated_at": "2026-07-27T18:58:37.000Z"
   },
   ".dude/specs/008-automatic-core-dogfood-promotion/tasks.md": {
     "glyphs": {
       "T001@8f2c1a47": "x",
-      "T002@5b7d930e": "~",
-      "T003@c4e6812d": " "
+      "T002@5b7d930e": "x",
+      "T004@e2a91f6c": "x",
+      "T005@3d7b0af5": "x",
+      "T006@62726964": "x",
+      "T007@9a4e7c12": "x",
+      "T003@c4e6812d": "x"
     },
-    "updated_at": "2026-07-24T11:04:12.624Z"
+    "updated_at": "2026-07-27T19:44:06.769Z"
   },
   ".dude/specs/009-autonomous-learning-governance/tasks.md": {
     "glyphs": {
@@ -138,8 +142,8 @@
       "T006@6c616e65": "x",
       "T007@646f6373": "x",
       "T008@70726f6f": "x",
-      "T009@696e6369": "!"
+      "T009@696e6369": "x"
     },
-    "updated_at": "2026-07-26T02:39:06.956Z"
+    "updated_at": "2026-07-27T19:24:25.591Z"
   }
 }
