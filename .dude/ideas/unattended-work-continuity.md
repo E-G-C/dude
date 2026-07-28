@@ -35,6 +35,8 @@ I do not know yet whether this is a new capability or just a tightening of the e
    Answer:
 6. Is this a new capability, or a tightening of `dude-work` stop discipline inside what Feature 005 already settled?
    Answer:
+7. Beyond naming a reason from the closed set, what must a halt identify about its specific cause so the owner of an unattended run can act on it without reading the runtime's internals?
+   Answer:
 
 ## Assumptions
 
@@ -49,15 +51,38 @@ No additional assumptions have been provided.
 - Because no rule forces a halt to name its reason, an illegitimate halt is indistinguishable from a legitimate one after the fact.
 - The repeated hard-stop authorization pattern (five requests, five approvals) is raised as an open design question, not as a settled requirement.
 - Whether this is a new capability or a tightening of existing `dude-work` stop discipline is deliberately left open.
+- A named halt is not automatically an actionable halt. The 2026-07-28 run below did name a legitimate reason from the closed set and was still effectively undiagnosable: locating the cause took reading four internal functions and bisecting a temp copy. The wanted outcome extends question 5 rather than replacing it — a halt should name its reason *and* identify what specifically made it stop, so the owner of an unattended run can act without reading the runtime's internals. Naming remains necessary; on this evidence it is not sufficient.
+- Unattended continuity must survive its own audit trail. An append-only record the system writes must never permanently disable the policy that wrote it. A run that records a governance incident and thereby loses the ability to run unattended on that feature has defeated the outcome this idea exists to produce.
+
+## Dogfooding Evidence
+
+### 2026-07-28 — autonomous run hard-stopped before claiming any task (feature 007)
+
+Invocation: `@dude work --max unlimited --recover-on-block --recovery-cycles unlimited --policy autonomous` on feature `007-technical-docs-pack-remediation`.
+
+Outcome: a hard stop *before* any task was claimed. Reason `evidence-incomplete`, blocker subject `occurrence-retention`. `classifyOutcomeReason('evidence-incomplete')` returns `hard-stop` and `mayContinueAutonomously` returns false. No task state, board, snapshot, or definition byte changed.
+
+Root cause — a write/read round-trip defect in core `src/skills/dude-work/recovery.mjs` (mirrored to `.github/`): the runtime writes a lane-history line of the form `- dude-run-event: {...,"type":"incident-supersession",...}` into a feature's `## Lightweight Execution History`, and `validateEventCommitmentV1` accepts that kind, but the reader constant `V2_EVENT_TYPES` omits it. `isV2AuthoritativeEventRecord` therefore returns false, `t002EventCandidate` returns null, and `parseV2EventLines` throws `contains an unknown prefixed event record`. That surfaces through `dualRetainedOccurrenceEventsV2` as `evidence-incomplete`.
+
+Causation proven on a temp copy: with the event line present, identical autonomous authorization returns `evidence-incomplete`; with the line removed, it returns `authorized`. Guarded policy is unaffected.
+
+Severity worth carrying into definition: lane history is append-only audit evidence. Once an `incident-supersession` event is written to a feature, autonomous mode is permanently unusable on that feature, because the only way to satisfy the reader is to delete audit evidence — exactly what must not happen. The event is written by the incident-correction path, so the machinery that records a governance incident is what disables the governance mode. Feature 009's own `T009@696e6369` materialization wrote the one now sitting on feature 007.
+
+What this evidence establishes for this idea:
+
+- Diagnosability: the closed-set naming rule contemplated by question 5 held here, and the halt was still opaque without source-level investigation.
+- Continuity: a record the system itself wrote permanently disabled the policy that wrote it.
 
 ## Relationship To Existing Work
 
 - Feature 005 (`autonomous-work-modes`, complete) settled *which* recoverable checkpoints an autonomous policy may pass, and shipped the policy selector, the hard-stop taxonomy, and sequential continuation after a stop. The gap here is different: the coordinator halted without invoking any checkpoint at all. That reads as a discipline and observability gap in `dude-work`, not a change to 005's policy semantics.
 - Feature 009 (`autonomous-learning-governance`) governs the opposite failure mode — work that repeats without progress — and deliberately *adds* stop conditions (`learning-required`, `learning-governance-conflict`, scoped halts, budget exhaustion, Controlled Unresolved End). Any "closed set of named stops" rule this idea produces would have to account for those additions, so the set is a moving target until 009 closes.
-- Current assessment: a new, small feature rather than a refinement of 005 — sequenced after Feature 009 closes. Question 5 (named-reason echo) is largely a discipline rule and the cheaper half; question 2 (auto-authorized revisions past `two failed attempts`) lands directly on the runtime that 009's in-flight tasks are actively changing.
-- Feature 009's package is `.dude/specs/009-autonomous-learning-governance/`. As of 2026-07-25 it is near-terminal but not closed: 8 of 9 tasks are closed, and the remaining `T009@696e6369` is `[!]` blocked on a typed `external-dependency`, waiting for Feature 008's core dogfood promotion to complete on main. Its `spec.md` is immutable through that implementation. That status is a point-in-time observation, so re-check it at definition time rather than trusting it as current. Everything above is a sequencing note only; this idea proposes no change to Feature 009's package.
+- Current assessment: a new, small feature rather than a refinement of 005 — sequenced after Feature 009 closes. Question 5 (named-reason echo) is largely a discipline rule and the cheaper half; question 2 (auto-authorized revisions past `two failed attempts`) lands directly on the runtime Feature 009 changed.
+- Feature 009's package is `.dude/specs/009-autonomous-learning-governance/`. Observed on 2026-07-28 by reading `.dude/specs/009-autonomous-learning-governance/tasks.md` directly: all nine canonical tasks, `T001@7365616c` through `T009@696e6369`, carry `[x]`, and the generated board lists all nine under Done with Ready Now, In Progress, and Blocked empty. This supersedes the 2026-07-25 note here, which recorded 8 of 9 closed with `T009@696e6369` `[!]` blocked on a typed `external-dependency` awaiting Feature 008's core dogfood promotion. Only task states in that one file were observed; package closure itself was not verified. Its `spec.md` remains immutable through implementation. This is still a point-in-time observation, so re-check it at definition time rather than trusting it as current. It is a sequencing note only; this idea proposes no change to Feature 009's package.
 - The external "struggle indicators / stuck-detection" pattern captured below is the complementary half to Feature 009 (`autonomous-learning-governance`), which governs work that repeats without progress: the same liveness/progress signal that decides continue-versus-stop is what would replace discretionary, human-style halts here — a design observation only, implying no change to Feature 009's package.
 - For whoever defines this idea: 009 is related because both features govern the same continue-versus-stop decision from opposite directions. This idea targets halts that happen without a legitimate named reason; 009 targets work that continues without progress. Read 009's shipped stop conditions first, and treat its closed set of named stops as the baseline to extend rather than contradict. The two have to stay consistent: any rule requiring every halt to name a reason from a closed set must accommodate the stop conditions 009 adds.
+- Scope boundary drawn by the coordinator on 2026-07-28: the writer/reader vocabulary mismatch recorded under Dogfooding Evidence is a `src/**` correctness bug in Feature 009's shipped runtime, and it is blocking autonomous mode now. This idea is sequenced after Feature 009 closes and still has unanswered open questions. The coordinator's assessment is that the vocabulary and round-trip *fix* should be separable from this idea and may warrant its own small feature. This idea carries the diagnosability and continuity requirements and keeps the 2026-07-28 run as evidence; it does not own the code fix, and nothing here schedules or specifies it.
+- Candidate requirement the coordinator flagged as valuable regardless of where that fix lands: a round-trip invariant asserting that every event type the writer can emit is accepted by the reader. Recorded as a candidate outcome only — brainstorm selects no mechanic, test shape, or enforcement point.
 
 ## External Precedents
 
@@ -95,4 +120,5 @@ Cautions (do not import): Ralph achieves unattended runs by auto-approving every
 - 2026-07-25 UTC - brainstorm refreshed with external research: snarktank/ralph and Th0rgal/open-ralph-wiggum (Ralph loop technique); added External Precedents.
 - 2026-07-25 UTC - recorded external source repository URLs in External Precedents for future reference.
 - 2026-07-25 UTC - refreshed the Feature 009 relationship note with its package path and current blocked status.
+- 2026-07-28 UTC - brainstorm refreshed: added Dogfooding Evidence for the 2026-07-28 autonomous hard-stop on feature 007, derived diagnosability and audit-trail-continuity outcomes into Normalized Intent, recorded the coordinator's scope boundary excluding the underlying `src/**` fix plus the round-trip invariant candidate, re-observed Feature 009's tasks as all closed, and appended one unanswered open question.
 <!-- dude:managed:end -->
