@@ -826,26 +826,6 @@ test('scanner receives every canonical regular source file once, including block
       regularPaths.map((relativePath) => `read:${relativePath}`),
     );
     assert.equal(new Set(regularPaths).size, regularPaths.length);
-
-  test('one-line strict text above the former physical-line cap remains plannable', async () => {
-    await withWorkspace(async (workspaceRoot) => {
-      const fixture = sourceFixture({
-        'artifact/SKILL.md': skillDocument(),
-        'artifact/long.txt': '_'.repeat(16_385),
-      });
-      const analysis = await analyzePublicDirectoryArtifacts(fixture.sourceAnalysis, workspaceRoot);
-      assert.equal(analysis.static_decision, 'clean');
-      assert.ok(analysis.outputs.some((output) => output.source_path === 'artifact/long.txt'));
-
-      const plan = await planDirectoryArtifacts(
-        analysis,
-        null,
-        fixture.sourceAnalysis,
-        workspaceRoot,
-      );
-      assert.equal(plan.decision, 'warned');
-    });
-  });
     assert.deepEqual(
       [...new Set(analysis.static_findings.map((finding) => finding.path))],
       [
@@ -862,6 +842,26 @@ test('scanner receives every canonical regular source file once, including block
       item.code === 'entrypoint-required-field-invalid' && item.path === 'bad/SKILL.md'
     )));
     assert.equal(analysis.static_decision, 'blocked');
+  });
+});
+
+test('one-line strict text above the former physical-line cap remains plannable', async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const fixture = sourceFixture({
+      'artifact/SKILL.md': skillDocument(),
+      'artifact/long.txt': '_'.repeat(16_385),
+    });
+    const analysis = await analyzePublicDirectoryArtifacts(fixture.sourceAnalysis, workspaceRoot);
+    assert.equal(analysis.static_decision, 'clean');
+    assert.ok(analysis.outputs.some((output) => output.source_path === 'artifact/long.txt'));
+
+    const plan = await planDirectoryArtifacts(
+      analysis,
+      null,
+      fixture.sourceAnalysis,
+      workspaceRoot,
+    );
+    assert.equal(plan.decision, 'warned');
   });
 });
 

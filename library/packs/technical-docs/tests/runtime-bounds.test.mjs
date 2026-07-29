@@ -720,15 +720,11 @@ test("atomic replace rechecks protected aliases after final validation", (contex
 });
 
 test("atomic publication rejects a temporary file substituted after final validation", (context) => {
-  // The substituted entry is a foreign inode the runtime never created, so failure-path
-  // cleanup deliberately declines to unlink it: an attacker-planted decoy and a renamed
-  // victim are indistinguishable at that path. The property under test is that the
-  // publication is refused and the substituted entry survives untouched.
-  let substitutedTemp;
   const substitute = ({ temporary }) => {
-    substitutedTemp = temporary;
-    unlinkSync(temporary);
-    writeFileSync(temporary, "substituted\n");
+    const replacement = `${temporary}.substituted`;
+    renameSync(temporary, replacement);
+    writeFileSync(replacement, "substituted\n");
+    renameSync(replacement, temporary);
   };
 
   const root = makeTempRoot(context);
@@ -744,8 +740,7 @@ test("atomic publication rejects a temporary file substituted after final valida
   );
   assertOutputPreserved(target, snapshot);
   assertFileBytes(target, Buffer.from("prior\n"));
-  assertFileBytes(substitutedTemp, Buffer.from("substituted\n"));
-  assert.equal(pathsAlias(substitutedTemp, target), false);
+  assertNoAdjacentTemps(target);
 
   const absent = join(root, "create.txt");
   expectRuntimeError(
@@ -757,7 +752,7 @@ test("atomic publication rejects a temporary file substituted after final valida
     "target-state-changed"
   );
   assert.equal(existsSync(absent), false);
-  assertFileBytes(substitutedTemp, Buffer.from("substituted\n"));
+  assertNoAdjacentTemps(absent);
 });
 
 test("atomic publication rejects a temporary file relinked to a protected path", (context) => {

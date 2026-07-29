@@ -50,6 +50,7 @@ const RETIRED_EXACT_TOKENS = [
 
 const PROJECT_SKILL = '.github/skills/project/SKILL.md';
 const CI_WORKFLOW = '.github/workflows/ci.yml';
+const RELEASE_WORKFLOW = '.github/workflows/release.yml';
 
 const CI_OWNED_ROOTS = ['src', '.github', '.dude'];
 const GIT_VISIBLE_STATUS_ARGS = ['status', '--porcelain', '--untracked-files=all'];
@@ -326,6 +327,116 @@ function workflowStepRun(step) {
     body.push(lines[index].slice(Math.min(indentation, 10)));
   }
   return body.join('\n').trimEnd();
+}
+
+/** @param {string} step @param {string} key */
+function workflowStepWithValues(step, key) {
+  const lines = step.split('\n');
+  const withIndexes = lines
+    .map((line, index) => (line === '        with:' ? index : -1))
+    .filter((index) => index !== -1);
+  if (withIndexes.length !== 1) return [];
+
+  const values = [];
+  for (let index = withIndexes[0] + 1; index < lines.length; index += 1) {
+    if (lines[index].trim() === '') continue;
+    const indentation = /^ */.exec(lines[index])?.[0].length ?? 0;
+    if (indentation <= 8) break;
+    const entry = /^          ([A-Za-z0-9_-]+):\s*(.*?)\s*$/.exec(lines[index]);
+    if (entry?.[1] === key) values.push(entry[2]);
+  }
+  return values;
+}
+
+/** @param {string} source @param {'ci' | 'release'} kind */
+function workflowActionContract(source, kind) {
+  const jobName = kind === 'ci' ? 'validate' : 'release';
+  /** @type {string[]} */
+  const failures = [];
+  /** @type {string[]} */
+  let steps = [];
+  try {
+    steps = workflowJobSteps(source, jobName);
+  } catch {
+    failures.push(`${jobName} job must have one parseable steps block`);
+  }
+
+  const checkoutIndexes = steps
+    .map((step, index) => workflowStepUses(step)?.startsWith('actions/checkout@') ? index : -1)
+    .filter((index) => index !== -1);
+  if (checkoutIndexes.length !== 1) {
+    failures.push(`${jobName} must have exactly one actions/checkout step`);
+  } else {
+    const checkoutStep = steps[checkoutIndexes[0]];
+    if (workflowStepUses(checkoutStep) !== 'actions/checkout@v7') {
+      failures.push(`${jobName} checkout must use actions/checkout@v7`);
+    }
+    const fetchDepthValues = workflowStepWithValues(checkoutStep, 'fetch-depth');
+    if (
+      fetchDepthValues.length !== 1
+      || !['0', "'0'", '"0"'].includes(fetchDepthValues[0])
+    ) {
+      failures.push(`${jobName} checkout fetch-depth must be exactly 0 or '0'`);
+    }
+    const credentialValues = workflowStepWithValues(checkoutStep, 'persist-credentials');
+    if (
+      credentialValues.length !== 1
+      || !['false', "'false'", '"false"'].includes(credentialValues[0])
+    ) {
+      failures.push(`${jobName} checkout persist-credentials must be exactly false or 'false'`);
+    }
+  }
+
+  const setupIndexes = steps
+    .map((step, index) => workflowStepUses(step)?.startsWith('actions/setup-node@') ? index : -1)
+    .filter((index) => index !== -1);
+  if (setupIndexes.length !== 1) {
+    failures.push(`${jobName} must have exactly one actions/setup-node step`);
+  } else if (workflowStepUses(steps[setupIndexes[0]]) !== 'actions/setup-node@v7') {
+    failures.push(`${jobName} setup must use actions/setup-node@v7`);
+  }
+
+  if (kind === 'ci') {
+    const driftIndexes = steps
+      .map((step, index) => workflowStepName(step) === 'Dev-bundle drift check' ? index : -1)
+      .filter((index) => index !== -1);
+    if (driftIndexes.length !== 1) {
+      failures.push('validate must have exactly one Dev-bundle drift check step');
+    } else if (setupIndexes.length === 1 && driftIndexes[0] !== setupIndexes[0] + 1) {
+      failures.push('Dev-bundle drift check must directly follow actions/setup-node');
+    }
+  }
+
+  return { failures, steps };
+}
+
+/** @param {'ci' | 'release'} kind @param {Record<string, unknown>} [overrides] */
+function workflowActionFixture(kind, overrides = {}) {
+  const options = {
+    checkoutUses: ['actions/checkout@v7'],
+    fetchDepth: '0',
+    persistCredentials: 'false',
+    setupUses: ['actions/setup-node@v7'],
+    stepBetweenSetupAndDrift: false,
+    ...overrides,
+  };
+  const jobName = kind === 'ci' ? 'validate' : 'release';
+  const lines = ['jobs:', `  ${jobName}:`, '    steps:'];
+  for (const uses of options.checkoutUses) {
+    lines.push(`      - uses: ${uses}`, '        with:');
+    if (options.fetchDepth !== null) lines.push(`          fetch-depth: ${options.fetchDepth}`);
+    if (options.persistCredentials !== null) {
+      lines.push(`          persist-credentials: ${options.persistCredentials}`);
+    }
+  }
+  for (const uses of options.setupUses) lines.push(`      - uses: ${uses}`);
+  if (kind === 'ci') {
+    if (options.stepBetweenSetupAndDrift) lines.push('      - name: Intervening step', '        run: true');
+    lines.push('      - name: Dev-bundle drift check', '        run: node scripts/build-dev.mjs');
+  } else {
+    lines.push('      - name: Unit tests', '        run: node --test');
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 /** @param {string} root @param {string[]} args */
@@ -2105,6 +2216,53 @@ for (const [relative, heading] of RECOVERY_DOC_SECTIONS) {
   });
 }
 
+test('T001 workflow action fixtures enforce canonical checkout and setup for CI and release', () => {
+  for (const kind of ['ci', 'release']) {
+    const jobName = kind === 'ci' ? 'validate' : 'release';
+    for (const [label, overrides] of [
+      ['native scalar values', {}],
+      ['string scalar values', { fetchDepth: "'0'", persistCredentials: "'false'" }],
+    ]) {
+      assert.deepEqual(
+        workflowActionContract(workflowActionFixture(kind, overrides), kind).failures,
+        [],
+        `${kind}: canonical ${label}`,
+      );
+    }
+
+    for (const [label, overrides, expectedFailure] of [
+      ['old checkout major', { checkoutUses: ['actions/checkout@v4'] }, `${jobName} checkout must use actions/checkout@v7`],
+      ['old setup major', { setupUses: ['actions/setup-node@v4'] }, `${jobName} setup must use actions/setup-node@v7`],
+      ['shallow fetch depth', { fetchDepth: '1' }, `${jobName} checkout fetch-depth must be exactly 0 or '0'`],
+      ['missing fetch depth', { fetchDepth: null }, `${jobName} checkout fetch-depth must be exactly 0 or '0'`],
+      ['persisted credentials', { persistCredentials: 'true' }, `${jobName} checkout persist-credentials must be exactly false or 'false'`],
+      ['missing credential setting', { persistCredentials: null }, `${jobName} checkout persist-credentials must be exactly false or 'false'`],
+      ['duplicate checkout', { checkoutUses: ['actions/checkout@v7', 'actions/checkout@v7'] }, `${jobName} must have exactly one actions/checkout step`],
+      ['duplicate setup', { setupUses: ['actions/setup-node@v7', 'actions/setup-node@v7'] }, `${jobName} must have exactly one actions/setup-node step`],
+    ]) {
+      const { failures } = workflowActionContract(workflowActionFixture(kind, overrides), kind);
+      assert.ok(failures.includes(expectedFailure), `${kind}: ${label}: ${failures.join('; ')}`);
+    }
+  }
+
+  const reordered = workflowActionContract(
+    workflowActionFixture('ci', { stepBetweenSetupAndDrift: true }),
+    'ci',
+  );
+  assert.ok(
+    reordered.failures.includes('Dev-bundle drift check must directly follow actions/setup-node'),
+    'CI retains setup-node to drift-check ordering',
+  );
+});
+
+test('T001 release source uses canonical non-persisting full-history actions', () => {
+  assert.deepEqual(
+    workflowActionContract(read(RELEASE_WORKFLOW), 'release').failures,
+    [],
+    `${RELEASE_WORKFLOW}: action source contract`,
+  );
+});
+
 test('T001 CI source contract proves bounded policy/Git predicate coverage only, not future Spec Lead, Reviewer, or close behavior', () => {
   // Arrange
   const workflow = read(CI_WORKFLOW);
@@ -2127,37 +2285,12 @@ test('T001 CI source contract proves bounded policy/Git predicate coverage only,
     failures.push('top-level permissions must contain only contents: read');
   }
 
-  /** @type {string[]} */
-  let steps = [];
-  try {
-    steps = workflowJobSteps(workflow, 'validate');
-  } catch {
-    failures.push('validate job must have one parseable steps block');
-  }
-  const checkoutIndexes = steps
-    .map((step, index) => workflowStepUses(step)?.startsWith('actions/checkout@') ? index : -1)
-    .filter((index) => index !== -1);
-  if (checkoutIndexes.length !== 1) {
-    failures.push('validate must have exactly one actions/checkout step');
-  } else if (!/^          persist-credentials:\s*false\s*$/m.test(steps[checkoutIndexes[0]])) {
-    failures.push('checkout must set persist-credentials: false in its with block');
-  }
-
-  const setupIndexes = steps
-    .map((step, index) => workflowStepUses(step)?.startsWith('actions/setup-node@') ? index : -1)
-    .filter((index) => index !== -1);
+  const actionContract = workflowActionContract(workflow, 'ci');
+  failures.push(...actionContract.failures);
+  const { steps } = actionContract;
   const driftIndexes = steps
     .map((step, index) => workflowStepName(step) === 'Dev-bundle drift check' ? index : -1)
     .filter((index) => index !== -1);
-  if (setupIndexes.length !== 1) failures.push('validate must have exactly one actions/setup-node step');
-  if (driftIndexes.length !== 1) failures.push('validate must have exactly one Dev-bundle drift check step');
-  if (
-    setupIndexes.length === 1
-    && driftIndexes.length === 1
-    && driftIndexes[0] !== setupIndexes[0] + 1
-  ) {
-    failures.push('Dev-bundle drift check must directly follow actions/setup-node');
-  }
 
   // Act
   if (driftIndexes.length === 1) {

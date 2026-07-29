@@ -839,11 +839,69 @@ for (const role of [...orphanHandles.keys()].sort()) {
   else report(`orphan @${role} reference in ${first}`);
 }
 
-// --- Check 5: coordinator-only block in non-dude / non-spec-lead agents ------
+/**
+ * Return real level-2 Scope section bodies outside CommonMark fenced blocks.
+ * @param {string} content
+ * @returns {string[]}
+ */
+function agentScopeSections(content) {
+  const lines = splitLines(content);
+  let bodyStart = 0;
+  if (lines[0] === '---') {
+    const frontmatterEnd = lines.indexOf('---', 1);
+    if (frontmatterEnd >= 0) bodyStart = frontmatterEnd + 1;
+  }
+
+  /** @type {string[]} */
+  const sections = [];
+  /** @type {{ marker: string, length: number } | null} */
+  let fence = null;
+  /** @type {number | null} */
+  let scopeStart = null;
+  for (let index = bodyStart; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (fence) {
+      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+      if (close && close[1][0] === fence.marker && close[1].length >= fence.length) fence = null;
+      continue;
+    }
+    const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
+      fence = { marker: open[1][0], length: open[1].length };
+      continue;
+    }
+    if (/^ {0,3}## Scope[ \t]*$/.test(line)) {
+      if (scopeStart !== null) sections.push(lines.slice(scopeStart, index).join('\n'));
+      scopeStart = index + 1;
+      continue;
+    }
+    if (scopeStart !== null && /^ {0,3}##(?:[ \t]+.*)?[ \t]*$/.test(line)) {
+      sections.push(lines.slice(scopeStart, index).join('\n'));
+      scopeStart = null;
+    }
+  }
+  if (scopeStart !== null) sections.push(lines.slice(scopeStart).join('\n'));
+  return sections;
+}
+
+// --- Check 5: direct-agent authoring contract -------------------------------
+const AGENT_SCOPE_EXEMPTIONS = new Set(['dude.agent.md']);
+const COORDINATOR_BOUNDARY_EXEMPTIONS = new Set(['dude.agent.md', 'dude-spec-lead.agent.md']);
 for (const file of listFiles(path.join(ROOT, '.github/agents'), '.agent.md')) {
   const base = path.basename(file);
-  if (base === 'dude.agent.md' || base === 'dude-spec-lead.agent.md') continue;
-  if (!read(file).includes('**Coordinator-only artifacts:**')) {
+  const content = read(file);
+  if (!AGENT_SCOPE_EXEMPTIONS.has(base)) {
+    const scopes = agentScopeSections(content);
+    if (scopes.length === 0) {
+      fail(`${relpath(file)}  missing exact level-2 '## Scope' section (see team-expansion template)`);
+    } else if (scopes.length > 1) {
+      fail(`${relpath(file)}  duplicate level-2 '## Scope' sections (found ${scopes.length}; expected exactly one)`);
+    } else if (!scopes[0].trim()) {
+      fail(`${relpath(file)}  empty '## Scope' section`);
+    }
+  }
+  if (COORDINATOR_BOUNDARY_EXEMPTIONS.has(base)) continue;
+  if (!content.includes('**Coordinator-only artifacts:**')) {
     fail(
       `${relpath(file)}  missing '**Coordinator-only artifacts:**' boundary block (see team-expansion template)`,
     );

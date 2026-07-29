@@ -113,6 +113,26 @@ const COORDINATOR_PARAGRAPH =
   '`<!-- dude:board:* -->`), or `status:` / `spec_path:` frontmatter. Report ' +
   'changes back to `@dude` instead.';
 
+/**
+ * @param {{ name?: string, includeBoundary?: boolean, scopeBodies?: string[], eol?: string }} [options]
+ * @returns {string}
+ */
+function agentDocument(options = {}) {
+  const eol = options.eol || '\n';
+  const lines = [
+    '---',
+    `name: ${options.name || 'Fixture Agent'}`,
+    'description: "Agent fixture"',
+    '---',
+  ];
+  if (options.includeBoundary !== false) lines.push('', COORDINATOR_PARAGRAPH);
+  for (const scopeBody of options.scopeBodies ?? ['- Fixture responsibility.']) {
+    lines.push('', '## Scope', '', ...scopeBody.split('\n'));
+  }
+  lines.push('', '## Boundaries', '', '- Fixture boundary.', '');
+  return lines.join(eol);
+}
+
 /** @param {string} idea @returns {string} */
 function ideaAudit(idea) {
   return `<!-- audit log: .dude/ideas/${idea}.md#coordinator-log -->`;
@@ -169,12 +189,12 @@ test('lint accepts exact agent and skill frontmatter under LF and CRLF', () => {
     write(
       root,
       '.github/agents/dude-local-lf.agent.md',
-      `---\nname: LF Agent\ndescription: "LF fixture"\n---\n${COORDINATOR_PARAGRAPH}\n`,
+      agentDocument({ name: 'LF Agent' }),
     );
     write(
       root,
       '.github/agents/dude-local-crlf.agent.md',
-      ['---', 'name: CRLF Agent', 'description: "CRLF fixture"', '---', COORDINATOR_PARAGRAPH, ''].join('\r\n'),
+      agentDocument({ name: 'CRLF Agent', eol: '\r\n' }),
     );
     write(
       root,
@@ -201,6 +221,248 @@ test('lint accepts exact agent and skill frontmatter under LF and CRLF', () => {
     // Assert
     assert.equal(result.code, 0, result.output);
     assert.match(result.output, /0 warning\(s\), 0 failure\(s\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint accepts a non-exempt direct agent with one non-empty Scope and coordinator boundary', () => {
+  const root = rootWithManifest();
+  try {
+    write(root, '.github/agents/dude-local-canonical.agent.md', agentDocument());
+
+    const result = lint(root);
+
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /0 warning\(s\), 0 failure\(s\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint rejects a non-exempt direct agent with no Scope section', () => {
+  const root = rootWithManifest();
+  try {
+    write(
+      root,
+      '.github/agents/dude-local-missing-scope.agent.md',
+      agentDocument({ scopeBodies: [] }),
+    );
+
+    const result = lint(root);
+
+    assert.equal(result.code, 1, result.output);
+    assert.match(result.output, /missing exact level-2 '## Scope' section/);
+    assert.doesNotMatch(result.output, /missing '\*\*Coordinator-only artifacts:\*\*' boundary block/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint rejects duplicate Scope sections in a non-exempt direct agent', () => {
+  const root = rootWithManifest();
+  try {
+    write(
+      root,
+      '.github/agents/dude-local-duplicate-scope.agent.md',
+      agentDocument({ scopeBodies: ['- First responsibility.', '- Second responsibility.'] }),
+    );
+
+    const result = lint(root);
+
+    assert.equal(result.code, 1, result.output);
+    assert.match(result.output, /duplicate level-2 '## Scope' sections \(found 2; expected exactly one\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint rejects a whitespace-only Scope section before the next level-2 heading', () => {
+  const root = rootWithManifest();
+  try {
+    write(
+      root,
+      '.github/agents/dude-local-empty-scope.agent.md',
+      agentDocument({ scopeBodies: [' \t'] }),
+    );
+
+    const result = lint(root);
+
+    assert.equal(result.code, 1, result.output);
+    assert.match(result.output, /empty '## Scope' section/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint treats one-to-three-space level-2 headings as Scope terminators', () => {
+  for (const indentation of [1, 2, 3]) {
+    const root = rootWithManifest();
+    try {
+      const boundary = `${' '.repeat(indentation)}## Boundaries`;
+      write(
+        root,
+        '.github/agents/dude-local-indented-boundary.agent.md',
+        agentDocument({ scopeBodies: [''] }).replace('\n## Boundaries\n', `\n${boundary}\n`),
+      );
+
+      const result = lint(root);
+
+      assert.equal(result.code, 1, `${indentation}-space heading\n${result.output}`);
+      assert.match(result.output, /empty '## Scope' section/, `${indentation}-space heading`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('lint rejects duplicate Scope sections indented one to three spaces', () => {
+  for (const indentation of [1, 2, 3]) {
+    const root = rootWithManifest();
+    try {
+      const secondScope = `${' '.repeat(indentation)}## Scope \t`;
+      write(
+        root,
+        '.github/agents/dude-local-indented-duplicate.agent.md',
+        agentDocument({ scopeBodies: ['- First responsibility.'] }).replace(
+          '\n## Boundaries\n',
+          `\n${secondScope}\n\n- Second responsibility.\n\n## Boundaries\n`,
+        ),
+      );
+
+      const result = lint(root);
+
+      assert.equal(result.code, 1, `${indentation}-space heading\n${result.output}`);
+      assert.match(
+        result.output,
+        /duplicate level-2 '## Scope' sections \(found 2; expected exactly one\)/,
+        `${indentation}-space heading`,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('lint ignores indented Scope headings inside matching backtick and tilde fences', () => {
+  const root = rootWithManifest();
+  try {
+    write(
+      root,
+      '.github/agents/dude-local-fenced-scope.agent.md',
+      agentDocument({
+        scopeBodies: [[
+          '- Real responsibility.',
+          ' ```md',
+          ' ## Scope',
+          '   ```',
+          '  ~~~~md',
+          '   ## Scope',
+          ' ~~~~',
+        ].join('\n')],
+      }),
+    );
+
+    const result = lint(root);
+
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /0 warning\(s\), 0 failure\(s\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint does not recognize four-space-indented or level-3 Scope headings', () => {
+  for (const heading of ['    ## Scope', '### Scope']) {
+    const root = rootWithManifest();
+    try {
+      write(
+        root,
+        '.github/agents/dude-local-noncanonical-scope.agent.md',
+        agentDocument({ scopeBodies: [] }).replace(
+          '\n## Boundaries\n',
+          `\n${heading}\n\n- Fake responsibility.\n\n## Boundaries\n`,
+        ),
+      );
+
+      const result = lint(root);
+
+      assert.equal(result.code, 1, `${heading}\n${result.output}`);
+      assert.match(result.output, /missing exact level-2 '## Scope' section/, heading);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('lint keeps four-space-indented heading text as nonempty Scope content', () => {
+  const root = rootWithManifest();
+  try {
+    write(
+      root,
+      '.github/agents/dude-local-indented-content.agent.md',
+      agentDocument({ scopeBodies: ['    ## Boundaries'] }),
+    );
+
+    const result = lint(root);
+
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /0 warning\(s\), 0 failure\(s\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint retains the coordinator-boundary requirement for non-exempt direct agents', () => {
+  const root = rootWithManifest();
+  try {
+    write(
+      root,
+      '.github/agents/dude-local-missing-boundary.agent.md',
+      agentDocument({ includeBoundary: false }),
+    );
+
+    const result = lint(root);
+
+    assert.equal(result.code, 1, result.output);
+    assert.match(result.output, /missing '\*\*Coordinator-only artifacts:\*\*' boundary block/);
+    assert.doesNotMatch(result.output, /(?:missing|duplicate|empty).*'## Scope'/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint exempts Dude from Scope and boundary while requiring Scope on boundary-exempt Spec Lead', () => {
+  const root = rootWithManifest();
+  try {
+    write(
+      root,
+      '.github/agents/dude.agent.md',
+      agentDocument({ name: 'Dude', includeBoundary: false, scopeBodies: [] }),
+    );
+    write(
+      root,
+      '.github/agents/dude-spec-lead.agent.md',
+      agentDocument({ name: 'Spec Lead', includeBoundary: false }),
+    );
+
+    const accepted = lint(root);
+    assert.equal(accepted.code, 0, accepted.output);
+
+    write(
+      root,
+      '.github/agents/dude-spec-lead.agent.md',
+      agentDocument({ name: 'Spec Lead', includeBoundary: false, scopeBodies: [] }),
+    );
+    const rejected = lint(root);
+
+    assert.equal(rejected.code, 1, rejected.output);
+    assert.match(
+      rejected.output,
+      /\.github\/agents\/dude-spec-lead\.agent\.md  missing exact level-2 '## Scope' section/,
+    );
+    assert.doesNotMatch(rejected.output, /missing '\*\*Coordinator-only artifacts:\*\*' boundary block/);
+    assert.doesNotMatch(rejected.output, /dude\.agent\.md  .*'## Scope'/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

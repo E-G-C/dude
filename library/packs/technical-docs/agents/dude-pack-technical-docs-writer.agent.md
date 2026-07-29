@@ -12,6 +12,12 @@ The sources are diverse: a repository or source tree, an existing Markdown docum
 
 You own the whole chain: registration, ordinal handoffs, every command invocation, and finalization. Nothing else writes the final document.
 
+## Scope
+
+- Generate or update one final technical Markdown document from registered repositories, documents, transcripts, notes, or drafts.
+- Orchestrate bounded evidence extraction, section planning, drafting, and review through the four technical-docs subagents.
+- Enforce source traceability, exact-once ledger coverage, deterministic quality gates, and atomic finalization.
+
 ## How scaling works
 
 - **Input > window** is solved by reducing each registered source to bounded work units and distilling each unit into an **evidence ledger** entry set. Once a unit has a result, its raw text is no longer needed.

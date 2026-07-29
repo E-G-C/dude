@@ -105,7 +105,8 @@ node --test .github/skills/dude-engine/lib/ownership.test.mjs
    - Fail for any handle that does not match an existing `.github/agents/<name>.agent.md`.
    - Placeholder examples such as `@dude-local-<slug>` and `@dude-pack-<pack>-<slug>` are ignored after placeholder stripping, but real `@dude-local-*` and `@dude-pack-*` handles must resolve to actual agent files.
 
-9. **Coordinator-only boundary block**
+9. **Direct-agent authoring contract**
+   - Fail when any direct `.github/agents/*.agent.md` except `dude.agent.md` does not contain exactly one exact level-2 `## Scope` heading with non-whitespace content before the next level-2 heading or EOF. Missing, duplicate, and empty or whitespace-only Scope sections fail. Scope content has no required bullet grammar or minimum length. `dude-spec-lead.agent.md` is not exempt from this Scope requirement.
    - Fail when any `.github/agents/*.agent.md` (except `dude.agent.md` and `dude-spec-lead.agent.md`) is missing the `**Coordinator-only artifacts:**` block from `dude-team-expansion`. Spec Lead is exempt because `Spec Lead ## Required Workflow` and `Feature Definition ## First Definition Transaction` explicitly delegate definition-time maintenance of `status:`, exact `spec_path:`, managed definition regions, and definition `## Coordinator Log` events.
 
 10. **Orphan skill references**

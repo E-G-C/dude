@@ -253,7 +253,7 @@ test('directory artifact CLI emits exact canonical JSON bytes for raw ceiling ro
     fs.mkdirSync(path.join(sourceRoot, 'agents'), { recursive: true });
     fs.writeFileSync(
       path.join(sourceRoot, 'agents', 'review.agent.md'),
-      `---\nname: "Directory Reviewer"\ndescription: "Reviews directory fixtures"\n---\n${DIRECTORY_COORDINATOR_PARAGRAPH}\n`,
+      `---\nname: "Directory Reviewer"\ndescription: "Reviews directory fixtures"\n---\n${DIRECTORY_COORDINATOR_PARAGRAPH}\n\n## Scope\n\n- Review imported directory fixture agents.\n`,
     );
 
     const analyzed = spawnSync(process.execPath, [SCRIPT, 'analyze-directory', sourceRoot], {
@@ -376,6 +376,10 @@ test('directory CLI installs unchanged canonical agents that lint under LF and C
           'description: "Reviews directory fixtures"',
           '---',
           DIRECTORY_COORDINATOR_PARAGRAPH,
+          '',
+          '## Scope',
+          '',
+          '- Review imported directory fixture agents.',
           '',
         ].join(separator);
         fs.writeFileSync(path.join(sourceRoot, 'agents', 'review.agent.md'), source);

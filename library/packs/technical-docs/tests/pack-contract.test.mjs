@@ -48,17 +48,6 @@ const EXPECTED_PROMPTS = [
 
 const DIAGRAMS_SKILL_REL = `${PACK_REL}/skills/dude-pack-technical-docs-diagrams/SKILL.md`;
 
-/** The paths T007 is allowed to write, as repository-relative POSIX paths. */
-const T007_WRITE_SET = new Set([
-  `${PACK_REL}/pack.md`,
-  ...EXPECTED_AGENTS.map((name) => `${PACK_REL}/agents/${name}`),
-  ...EXPECTED_SKILLS.filter((name) => name !== "dude-pack-technical-docs-diagrams").map(
-    (name) => `${PACK_REL}/skills/${name}/SKILL.md`
-  ),
-  ...EXPECTED_PROMPTS.map((name) => `${PACK_REL}/prompts/${name}`),
-  `${PACK_REL}/tests/pack-contract.test.mjs`,
-]);
-
 const NUMBER_WORDS = ["nine", "ten", "eleven", "twelve", "thirteen", "fourteen"];
 
 function numberWord(count) {
@@ -100,11 +89,6 @@ function gitBytes(args) {
 
 function baseFileBytes(relPath) {
   return gitBytes(["show", `${BASE_REV}:${relPath}`]);
-}
-
-function basePackPaths() {
-  const listing = gitBytes(["ls-tree", "-r", "--name-only", "-z", BASE_REV, "--", `${PACK_REL}/`]).toString("utf8");
-  return listing.split("\0").filter((entry) => entry.length > 0);
 }
 
 /* --------------------------------------------------------------- frontmatter */
@@ -593,50 +577,4 @@ test("the diagrams skill is unchanged from base", (context) => {
   }
   assert.ok(current.equals(baseFileBytes(DIAGRAMS_SKILL_REL)), "the diagrams skill is not byte-identical to base");
 });
-
-/* ----------------------------------------------------------- 8. write boundary */
-
-test("no path outside the declared T007 write set differs from base", (context) => {
-  const probe = probeBase();
-  if (!probe.available) {
-    context.diagnostic(probe.reason);
-    context.skip("base-revision comparison unavailable");
-    return;
-  }
-
-  const basePaths = basePackPaths();
-  assert.ok(basePaths.length > 0, `base revision carries no ${PACK_REL} tree`);
-  let compared = 0;
-  for (const relPath of basePaths) {
-    if (T007_WRITE_SET.has(relPath)) continue;
-    const absolute = join(REPO_ROOT, relPath);
-    assert.ok(existsSync(absolute), `${relPath} was removed but is outside the T007 write set`);
-    assert.ok(
-      readFileSync(absolute).equals(baseFileBytes(relPath)),
-      `${relPath} changed but is outside the T007 write set`
-    );
-    compared += 1;
-  }
-  assert.ok(compared > 0, "no protected path was compared, so this check would pass vacuously");
-
-  const baseSet = new Set(basePaths);
-  const current = [];
-  (function walk(dir) {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const absolute = join(dir, entry.name);
-      if (entry.isDirectory()) walk(absolute);
-      else current.push(toPosix(relative(REPO_ROOT, absolute)));
-    }
-  })(PACK_DIR);
-  for (const relPath of current) {
-    if (baseSet.has(relPath) || T007_WRITE_SET.has(relPath)) continue;
-    // Later phases add authoring-only tests, which the install mechanism cannot reach.
-    assert.ok(relPath.startsWith(`${PACK_REL}/tests/`), `${relPath} was added outside the T007 write set`);
-  }
-
-  // Non-vacuity: every declared write-set path must exist, so the exclusion list above
-  // cannot be silently hiding a path that no longer exists.
-  for (const relPath of T007_WRITE_SET) {
-    assert.ok(existsSync(join(REPO_ROOT, relPath)), `the declared write set names a missing path: ${relPath}`);
-  }
-});
+// Task-scoped write boundaries expire at task close; they are not permanent pack contracts.
