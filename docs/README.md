@@ -17,6 +17,7 @@ Read only what you need:
 
 ## Advanced Topics
 
+- [Repository development workflow](commands.md#repository-development-workflow) for core, pack, project-local, and docs-only changes.
 - [Pack catalog](../library/packs/README.md) — the 16 optional expansions (tracked boards, release tooling, domain specialists, documentation pipelines, prose quality) and how to install them.
 - [Starting from a PRD draft](prd-drafts.md) — turn a longer markdown PRD into Dude files.
 - [Detailed walkthrough](walkthrough.md) — end-to-end example using the built-in authentication sample.

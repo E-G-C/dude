@@ -241,6 +241,7 @@ Default cap is `--max 3`. The full verb is documented in
 Read these only when you need more than the quick start:
 
 - [Docs index](docs/README.md) — where to go next.
+- [Repository development workflow](docs/commands.md#repository-development-workflow) for core, pack, project-local, and docs-only changes.
 - [Setup and first feature](docs/setup.md) — first-time install, guardrails, and roster customization.
 - [Workflow modes and lifecycle](docs/workflow.md) — what changes when you stop, use `tasks.md`, or move to Beads.
 - [Commands and prompt shapes](docs/commands.md) — full command reference.

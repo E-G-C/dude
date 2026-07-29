@@ -754,6 +754,149 @@ pack, so the maintainer's own `@dude` works. Consumers never see `src/`.
 - Run `scripts/build-dev.mjs` after editing `src/`; CI fails if `.github/` drifts
   out of sync with `src/`.
 
+### Repository development workflow
+
+Classify every changed path by ownership. If a change spans classes, follow the
+workflow for each class.
+
+| Class | Authoritative edit surface | Output and ownership rule |
+|---|---|---|
+| Core | `src/**` | `node scripts/build-dev.mjs` writes the generated, committed `.github/**` core projection. Do not hand-edit generated core. |
+| Pack | `library/packs/<name>/**` | Install into a disposable root for live validation. Commit pack source only; do not promote it through the core build. |
+| Project-local | `.github/skills/project/**`, `.github/skills/dude-local-*/**`, `.github/workflows/**`, and `.dude/**` when the applicable workflow grants ownership | Edit project-owned files directly. They are not generated core. |
+| Docs-only | `README.md` and `docs/**` | Edit directly and run relevant documentation checks. Do not run `build-dev` unless `src/**` also changed. |
+
+#### Core changes
+
+1. Edit the authoritative files under `src/**`.
+2. Run the focused tests for the changed behavior.
+3. Project the current core source into the development bundle:
+
+  ```bash
+  node scripts/build-dev.mjs
+  ```
+
+  The build projects all current `src/**` edits together. It removes stale
+  core outputs and writes the canonical generated core under `.github/`. It
+  preserves installed packs, `dude-local-*` customizations,
+  `.github/skills/project/**`, `.github/workflows/**`, and `.dude/**`.
+4. Run the named non-mutating source/generated parity test:
+
+  ```bash
+  node --test \
+    --test-name-pattern='checked-in dev core is a byte-identical non-mutating projection of authoritative source' \
+    scripts/build-dev.test.mjs
+  ```
+
+5. Reload or restart VS Code agent discovery when an agent, skill, or
+  frontmatter change is not visible in the active session.
+6. Name one affected behavior and exercise it through the generated `.github/`
+  bundle. For a lint change, for example, name `workspace lint accepts this
+  repository` and run `node .github/skills/dude-lint/lint.mjs .`.
+7. Continue editing and repeat the useful parts of the loop. You may run less
+  while iterating.
+
+After `build-dev`, focused tests, parity, and one named behavior make a
+trustworthy small preview. Target less than two minutes for the focused tests,
+local build, and parity check; manual reload time and external behavior latency
+are excluded. The preview is informational only. It creates no baseline,
+digest, accepted line, persistent report, task-state transition, close decision,
+or final-acceptance authority.
+
+Every run includes all concurrent `src/**` edits in the checkout. When rare
+work needs an isolated preview, manually create a clean checkout or Git
+worktree, run the same loop there, and remove it afterward. This is optional
+isolation with existing Git tooling, not a separate workflow or acceptance
+mechanism.
+
+For final acceptance, run fresh ordinary feature verification and independent
+review, then rerun parity. Commit the authoritative `src/**` changes together
+with their generated `.github/**` core projection.
+
+Worked core example: after changing
+`src/skills/dude-compose/compose.mjs`, run
+`node --test src/skills/dude-compose/compose.test.mjs`, run
+`node scripts/build-dev.mjs`, and run the parity command above. Name the
+generated-bundle behavior `compose verifies the current pack catalog` and exercise it with
+`node .github/skills/dude-compose/compose.mjs verify`. Reload VS Code if the
+change also affects discovered skill or frontmatter content. Finish with fresh
+feature verification, review, parity, and a commit containing source plus the
+generated core output.
+
+#### Pack changes
+
+1. Edit `library/packs/<name>/**` and run that pack's focused tests.
+2. Verify the complete pack catalog:
+
+  ```bash
+  node .github/skills/dude-compose/compose.mjs verify
+  ```
+
+3. Create a disposable core bundle, then install the local pack with the
+  supported argument order:
+
+  ```bash
+  node scripts/build-release.mjs --out <tmp> --tag v0.0.0
+  node .github/skills/dude-compose/compose.mjs add <name> --root <tmp> --library "$PWD/library/packs" --no-fetch
+  ```
+
+  Replace `<name>` and `<tmp>` with the pack name and disposable root. Lint
+  that root with `node .github/skills/dude-lint/lint.mjs <tmp>`, then exercise
+  the changed behavior through the installed `.github/` artifacts. Reload or
+  open a VS Code session rooted there when discovery changes require it. The
+  temporary release build seeds core and metadata in `<tmp>`; it does not
+  change the repository's `.github/` bundle or promote the pack into core. A
+  pristine root may warn that `.dude/ideas` is missing; require zero lint
+  failures.
+4. Remove the disposable root after the check, including after an interrupted
+  attempt. It is temporary validation output and has no acceptance authority.
+5. Run fresh final checks and review, then commit `library/packs/<name>/**`
+  source only. Do not run core `build-dev` to promote a pack.
+
+Worked pack example: for a Beads workflow change, run
+`node --test library/packs/beads/skills/dude-pack-beads-workflow/beads.test.mjs`
+and compose verification. Then install and lint it in a disposable root:
+
+```bash
+PACK_ROOT="$(mktemp -d)"
+node scripts/build-release.mjs --out "$PACK_ROOT" --tag v0.0.0
+node .github/skills/dude-compose/compose.mjs add beads --root "$PACK_ROOT" --library "$PWD/library/packs" --no-fetch
+node .github/skills/dude-lint/lint.mjs "$PACK_ROOT"
+node "$PACK_ROOT/.github/skills/dude-pack-beads-workflow/beads.mjs" --help
+```
+
+This names and exercises the behavior `the installed Beads helper prints its
+plan-import and mirror usage`. Reload that disposable session if needed, and
+run `rm -rf "$PACK_ROOT"` when finished. Commit the `library/packs/beads/**`
+source after fresh pack verification and review.
+
+#### Project-local and docs-only changes
+
+For project-local work, edit only the directly owned `.github/skills/project/**`,
+`.github/skills/dude-local-*/**`, `.github/workflows/**`, or applicable
+`.dude/**` paths. Run focused checks for the changed behavior, then run:
+
+```bash
+node .github/skills/dude-lint/lint.mjs .
+git diff --check -- .github .dude
+```
+
+Reload VS Code when discovery or frontmatter changed. Do not run `build-dev`
+unless the same change also edits core source; the core build preserves these
+project-owned paths rather than generating them.
+
+For docs-only work, edit `README.md` or `docs/**` directly and use the checks
+that cover the changed text. This repository's usual narrow checks are:
+
+```bash
+node --test scripts/current-format-contract.test.mjs
+git diff --check -- README.md docs
+```
+
+Docs-only work needs no development build. A mixed docs and core change follows
+both workflows and receives fresh ordinary verification and review before
+commit.
+
 ### Releases and CI
 
 `.github/workflows/ci.yml` runs on every push and PR (Node 20 + 22): unit tests,

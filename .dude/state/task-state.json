@@ -161,5 +161,13 @@
       "T002@76616c69": "x"
     },
     "updated_at": "2026-07-28T23:10:45.643Z"
+  },
+  ".dude/specs/012-core-dogfood-close-simplification/tasks.md": {
+    "glyphs": {
+      "T001@72657469": "x",
+      "T002@646f6373": "x",
+      "T003@76657269": "x"
+    },
+    "updated_at": "2026-07-29T17:14:23.117Z"
   }
 }

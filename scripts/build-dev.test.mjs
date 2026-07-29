@@ -428,8 +428,8 @@ test('buildDev preserves protected trees and materializes one exact idempotent c
       ['.github/prompts/dude-pack-coding-run.prompt.md', Buffer.from('# Pack prompt\r\n', 'utf8'), 0o644],
       ['.github/skills/project/SKILL.md', Buffer.from('# Project skill\n', 'utf8'), 0o644],
       ['.github/skills/project/references/nested/context.bin', Buffer.from([0x01, 0x02, 0xfe]), 0o644],
-      ['.github/skills/dude-local-core-dogfood-promotion/SKILL.md', Buffer.from('# Local promotion skill\n', 'utf8'), 0o644],
-      ['.github/skills/dude-local-core-dogfood-promotion/references/nested/policy.bin', Buffer.from([0x00, 0x7f, 0xff]), 0o644],
+      ['.github/skills/dude-local-preservation-fixture/SKILL.md', Buffer.from('# Local preservation fixture\n', 'utf8'), 0o644],
+      ['.github/skills/dude-local-preservation-fixture/references/nested/data.bin', Buffer.from([0x00, 0x7f, 0xff]), 0o644],
       ['.github/workflows/ci.yml', Buffer.from('name: fixture\n', 'utf8'), 0o644],
       ['.github/workflows/reusable/nested/check.yml', Buffer.from('on: workflow_call\r\n', 'utf8'), 0o644],
       ['.dude/metadata/bundle-manifest.md', Buffer.from(MANIFEST, 'utf8'), 0o644],
@@ -447,7 +447,7 @@ test('buildDev preserves protected trees and materializes one exact idempotent c
     const protectedSymlink = process.platform === 'win32'
       ? null
       : {
-          path: '.github/skills/dude-local-core-dogfood-promotion/references/current',
+          path: '.github/skills/dude-local-preservation-fixture/references/current',
           target: '../SKILL.md',
         };
     if (protectedSymlink) {
@@ -456,7 +456,7 @@ test('buildDev preserves protected trees and materializes one exact idempotent c
     for (const rel of [
       '.github/skills/dude-pack-coding-fixtures/data/empty',
       '.github/skills/project/references/empty',
-      '.github/skills/dude-local-core-dogfood-promotion/references/empty',
+      '.github/skills/dude-local-preservation-fixture/references/empty',
       '.github/workflows/archive/empty',
       '.dude/state/runs/empty',
     ]) {
@@ -496,9 +496,9 @@ test('buildDev preserves protected trees and materializes one exact idempotent c
       [],
     );
     assert.equal(
-      protectedBefore.some((row) => row.path === '.github/skills/dude-local-core-dogfood-promotion/SKILL.md'),
+      protectedBefore.some((row) => row.path === '.github/skills/dude-local-preservation-fixture/SKILL.md'),
       true,
-      'project-local promotion skill is absent from the protected snapshot',
+      'project-local preservation fixture is absent from the protected snapshot',
     );
     if (protectedSymlink) {
       const symlinkRow = protectedBefore.find((row) => row.path === protectedSymlink.path);
