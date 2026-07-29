@@ -19,7 +19,9 @@ namespace, which the engine treats as a distinct ownership tier:
 
 | Pack | Provides | Install when |
 |---|---|---|
+| `authoring` | 5 bundle-authoring smith agents (agent, skill, instruction, prompt, pack) + 3 convention skills | you build or maintain Dude bundles themselves |
 | `beads` | tracked execution via Beads (workflow + spec import) | you want a Beads-backed live board instead of `tasks.md` |
+| `coding` | coder, tester, architect, and code-reviewer agents + spec-artifacts skill | you use Dude on a software project |
 | `release` | release-manager agent + tag / pipeline-parity / writeback skills | you ship versioned releases via GitHub Actions or Azure Pipelines |
 | `web` | backend + frontend specialist agents | you build web apps (APIs + UI) |
 | `practices` | tests-first (TDD) workflow skill | you want a tests-first implementation discipline |
@@ -30,7 +32,7 @@ namespace, which the engine treats as a distinct ownership tier:
 | `fluent-ui` | Fluent UI React v9 specialist agent | you build UIs with `@fluentui/react-components` |
 | `copilot-sdk` | GitHub Copilot SDK specialist agent | you build apps on the Copilot SDK |
 | `newsroom` | newsroom writer + event deep-fetcher agents + article / calendar-event / static-safe-time skills | you publish news & events to a Hugo/Docsy site's News section |
-| `writing` | avoid-AI-writing-tropes prose-quality skill | you want a canonical guard against AI writing tells |
+| `writing` | avoid-AI-writing-tropes and professional-style prose-quality skills | you want a canonical guard against AI writing tells and consistent prose voice |
 | `design` | design-proposal lane skill (propose → mockup → preview → approve → apply) | you want a visual design workflow overlaid on the task lifecycle |
 | `technical-docs` | 5 technical-document agents + 7 skills (evidence-ledger pipeline) + 2 prompts | you generate or update technical docs from a repo, transcripts, notes, drafts, or existing docs |
 
