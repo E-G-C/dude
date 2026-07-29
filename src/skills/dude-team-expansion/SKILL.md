@@ -104,7 +104,7 @@ Pick the right tool configuration for the agent's role:
 |-----------|-------|
 | **Read-heavy** (reviewers, analysts) | `["read/readFile", "search/listDirectory", "search/codebase", "search/fileSearch", "search/textSearch", "execute/runInTerminal", "read/problems"]` |
 | **Write-heavy** (implementers) | `["read/readFile", "edit/createFile", "edit/editFiles", "execute/runInTerminal", "search/listDirectory", "search/codebase", "search/fileSearch", "search/textSearch"]` |
-| **Orchestrators** | Add `"agent"` to the write-heavy list |
+| **Orchestrators** | Write-heavy list plus `"agent"` and `"todo"`, with the full `"execute"` set replacing `"execute/runInTerminal"` so backgrounded command output can be read back |
 
 ## Use A Skill Instead Of An Agent When
 
