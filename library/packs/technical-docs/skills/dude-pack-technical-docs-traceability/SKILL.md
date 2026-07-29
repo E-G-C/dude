@@ -47,16 +47,39 @@ code, tests, configuration, or schema, not to assumption or convention.
 - Do not infer undocumented behavior.
 - Do not describe planned-but-absent features.
 - Do not promote a comment or TODO into a guarantee.
-- Prefer citing the interface (the symbol, endpoint, or config key) the evidence
-  came from.
+- Cite the exact lines the evidence came from. A repository locator is
+  `<repo ref>:<path>#L<start>-L<end>`; a symbol name alone is not a locator.
+- Read only what the work unit's members name. A file the unit does not cover is
+  not admitted evidence for that unit.
+
+## Mandatory provenance
+
+Traceability is not advisory here; it is enforced by the runtime. Every ledger
+entry carries all four provenance fields, and they are checked against the Source
+Registry and the unit manifests:
+
+- `source-id` — the `S*` Source the entry came from, which must match its unit's
+  Source.
+- `source-kind` — which must match that Source's registered kind.
+- `source-chunk` — the `C*` / `E*` / `R*` unit that produced the entry.
+- `source-ref` — a locator ending in `#L<start>-L<end>` whose prefix equals one of
+  the unit's own locators and whose line span falls inside it.
+
+No entry may omit `source-ref`, including entries from a transcript, notes, or a
+draft. An entry whose locator does not agree with its unit is rejected before it
+can reach the ledger, so a fabricated or guessed pointer fails the run rather than
+reaching the reader. The exact forms are in
+`dude-pack-technical-docs-evidence-ledger`.
 
 ## Ledger traceability
 
-Traceability is enforced concretely through the evidence ledger defined in
-`dude-pack-technical-docs-evidence-ledger`. Every document statement maps to one
-or more evidence-ledger ids, and the coverage check verifies that every ledger id
-is represented in the final document. Representing an id (even as a
-`[NEEDS CLARIFICATION: ...]` open issue) preserves the point; silently dropping an
-id is a traceability failure. Every ledger entry in turn carries a `source-ref`
-back to the source it came from, so tracing runs end to end: statement -> ledger
-id -> source-ref -> source.
+Every document statement maps to one or more ledger ids, and the coverage gate
+verifies that every ledger id is represented exactly once in the final document.
+Representing an id, even as a `[NEEDS CLARIFICATION: ...]` open issue, preserves
+the point; silently dropping an id is a traceability failure and fails the gate.
+
+The chain therefore runs end to end and is machine-checked at every link:
+statement → consumed record → ledger id → `source-ref` → registered Source →
+registered bytes. `finalize.mjs` re-reads every registered file Source before
+publication, so a document can only be published while its evidence still matches
+the sources it claims.

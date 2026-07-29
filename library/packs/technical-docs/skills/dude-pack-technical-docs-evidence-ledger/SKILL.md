@@ -5,25 +5,104 @@ description: "Use when a technical-docs pipeline step needs the shared evidence-
 
 # Evidence Ledger — Intermediate Representation
 
-The **evidence ledger** is the durable, compact memory that lets the pipeline process sources larger than the context window and prove that no detail was lost. Every traceable item in a source becomes one atomic ledger entry. Once a chunk has been distilled into ledger entries, the raw chunk can be dropped from context. The ledger carries its meaning forward.
+The **evidence ledger** is the durable, compact memory that lets the pipeline process sources larger than the context window and prove that no detail was lost. Every traceable item in a source becomes one atomic ledger entry. Once a work unit is distilled into a result, its raw text is no longer needed.
 
-Three shared data contracts are defined here. They are the single source of truth for the extractor, planner, drafter, and coverage steps.
+Five data contracts are defined here: the per-unit extraction result, the result index, `ledger.jsonl`, the Outline, and `consumed.jsonl`. They are the single source of truth for the extractor, planner, drafter, and gates. Source identity, unit manifests, and the `C*` / `E*` / `R*` prefixes are owned by `dude-pack-technical-docs-source-intake`.
 
-## 1. Ledger (`ledger.jsonl`) — produced by the extractor
+Common rules:
 
-One JSON object per line (JSONL), appended as each chunk is processed. Fields:
+- Every structured artifact carries `schemaVersion: 2`. An unversioned artifact is rejected, not normalized.
+- JSON uses UTF-8, fixed field order, two-space indentation, LF endings, and one terminal newline.
+- JSONL is one compact JSON object per nonblank line. A scalar, an array, a bare id, a comment, a blank required file, an unknown field, and a malformed line are all invalid.
+- Hashes are lowercase SHA-256 over exact file bytes.
+- Persisted paths are normalized workspace-relative POSIX paths.
+- Duplicate source, unit, evidence, decision, action, or consumed identities fail before authorization.
+
+## 1. Extraction result — produced by the extractor
+
+The extractor writes exactly one result per expected work unit, at the exact conventional path `<workdir>/results/<UnitId>.json`. The filename is derived from the unit id; it is never chosen freely.
+
+```json
+{
+  "schemaVersion": 2,
+  "unitId": "C012",
+  "sourceId": "S001",
+  "unitDigest": "<sha256 of the unit as recorded in its manifest>",
+  "status": "evidence",
+  "examined": [
+    { "sourceRef": "notes/kickoff.txt#L120-L164", "sha256": "<digest>" }
+  ],
+  "fragment": {
+    "path": "parts/C012.jsonl",
+    "bytes": 2481,
+    "sha256": "<digest>",
+    "entryCount": 9
+  }
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `unitId` | Yes | The one unit this result describes. |
+| `sourceId` | Yes | The Source that unit belongs to. |
+| `unitDigest` | Yes | The unit digest recorded in the unit manifest. |
+| `status` | Yes | `evidence` or `no-documentable-evidence`. |
+| `examined` | Yes | Nonempty `{sourceRef, sha256}` list that must cover the unit's members **exactly** — no missing member, no extra, no duplicate. |
+| `fragment` | evidence only | `{path, bytes, sha256, entryCount}` with `entryCount > 0`. The path is declared here and is never inferred from a filename convention. |
+| `reason` | no-evidence only | Nonempty explanation. A no-evidence result must not declare a fragment. |
+
+`no-documentable-evidence` is a legitimate outcome for a unit that genuinely carries nothing documentable, such as a lockfile slice. Never invent an entry to avoid it, and never omit the result for a unit.
+
+The fragment file itself is JSONL evidence records (section 3) in canonical evidence-id order.
+
+## 2. Result index (`results.json`) — produced by `merge-ledger.mjs --mode index`
+
+The index is script-authored. Nothing else writes it, and merge consumes nothing else.
+
+```json
+{
+  "schemaVersion": 2,
+  "sourceRegistry": { "path": "sources.json", "bytes": 1842, "sha256": "<digest>" },
+  "unitManifests": [
+    { "sourceId": "S001", "path": "units/chunks.json", "bytes": 9214, "sha256": "<digest>" }
+  ],
+  "results": [
+    { "unitId": "C001", "sourceId": "S001", "sourceKind": "transcript", "path": "results/C001.json", "bytes": 612, "sha256": "<digest>" }
+  ]
+}
+```
+
+- `unitManifests` holds exactly one complete manifest per registered Source, in Source Registry order.
+- `results` holds exactly one validated result per expected unit, ordered by prefix rank `C`, `E`, `R`, then numeric ordinal.
+- Every path is relative to the directory containing `results.json` and must resolve to a contained, non-symlink regular file.
+- Index mode validates each result's expected unit, source, source kind, unit digest, schema, bytes, and digest, plus every evidence fragment's containment, bytes, digest, record count, schema, and canonical order.
+- The results directory must contain exactly the expected per-unit files. Missing, duplicate, unexpected, stale, aliased, malformed, or changed files fail.
+- Merge mode verifies each indexed result and fragment again and never enumerates a directory, expands a glob, or rereads a unit manifest.
+
+## 3. Ledger (`ledger.jsonl`) — produced by `merge-ledger.mjs --mode merge`
+
+One JSON object per line, ordered by index unit order and then numeric `F` ordinal. Fields, in this exact order:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `id` | Yes | Stable unique id, **chunk-prefixed**: `<chunkId>-F<NNN>` (e.g. `C012-F003` or `R004-F001`). The chunk prefix guarantees uniqueness even when chunks are extracted in parallel. Zero-pad `<NNN>` within the chunk. Never reuse or renumber an id. |
-| `text` | Yes | Exactly one atomic item: a fact, step, decision, parameter, example, behavior, interface, schema, or constraint. Paraphrase for clarity, but keep it strictly traceable to its source. Make it self-contained, understandable without the original source. |
+| `id` | Yes | `<unitId>-F<NNN>`, with a three-digit positive ordinal local to the unit (e.g. `C012-F003`, `R004-F001`). Never reuse or renumber an id. |
+| `text` | Yes | Exactly one atomic item. Paraphrase for clarity, but keep it strictly traceable and self-contained. |
 | `type` | Yes | One of the type taxonomy values below. |
-| `tag` | Yes | Short lowercase kebab-case theme slug used to group entries into sections (e.g. `profile-section`, `notifications`, `auth`). |
-| `source-chunk` | Yes | The chunk id this entry came from (e.g. `C012` or `R004`). |
-| `source-kind` | When known | The kind of source behind the entry: `repo`, `document`, `transcript`, `notes`, or `draft`. Set it whenever intake knows the kind, which in practice is every run, so downstream steps can treat repository evidence and prose differently. |
-| `source-ref` | repo / document | A precise pointer into the source. For `repo`, a repository path with an optional `#L<start>-L<end>` line range or a trailing `:<symbol>` name (e.g. `src/auth/session.ts#L42-L88` or `src/auth/session.ts:createSession`). For `document`, a heading path (e.g. `Configuration > Retries`). For prose sources (`transcript`, `notes`, `draft`) the `source-chunk` is already the pointer, so omit `source-ref`. |
-| `importance` | No | `high` \| `medium` \| `low`. Drives prioritization when coverage gaps are found. Default `medium`. |
-| `refs` | No | Array of related ledger ids (e.g. a `parameter` that belongs to a `decision`). |
+| `tag` | Yes | Short lowercase kebab-case theme slug used to group entries into sections (e.g. `profile-section`, `auth`). |
+| `source-id` | Yes | The `S*` id of the Source the entry came from. Must match the unit's Source. |
+| `source-kind` | Yes | `transcript`, `notes`, `draft`, `document`, or `repo`. Must match the Source's kind. |
+| `source-chunk` | Yes | The `C*` / `E*` / `R*` unit id this entry came from. |
+| `source-ref` | Yes | A validated locator ending in `#L<start>-L<end>`. Its prefix must equal one of the unit's own locator prefixes and its line span must fall inside that locator. No entry may omit it. |
+| `importance` | No | `high`, `medium`, or `low`. Omitted means `medium`. |
+| `refs` | No | Unique array of other evidence ids. An entry may not reference itself or repeat a reference. |
+
+### Locator forms
+
+| Source kind | `source-ref` form |
+|---|---|
+| `transcript`, `notes`, `draft` | `<source.ref>#L<start>-L<end>` |
+| `document` | `<source.ref>:<Heading > Path>#L<start>-L<end>` |
+| `repo` | `<repo ref>:<path>#L<start>-L<end>` |
 
 ### Type taxonomy
 
@@ -41,43 +120,31 @@ One JSON object per line (JSONL), appended as each chunk is processed. Fields:
 ### Atomicity and traceability rules
 
 - One idea per entry. Split compound statements into separate entries.
-- Every entry must be supported by its source. Apply `dude-pack-technical-docs-traceability`: zero fabrication. If a detail is uncertain or missing, record it as an `open-question` with a `[NEEDS CLARIFICATION: ...]` marker rather than inventing it.
-- Repeated mentions of the same point across different chunks each get their own entry at extraction time (extraction is parallel and chunk-local). Consolidation happens later, at the planner's reduce step.
-
-### Chunk-id provenance (prose, prior document, and repository)
-
-The orchestrator assigns chunk ids by **prefix** to encode provenance directly in the ledger; downstream agents read the prefix to tell new prose, prior document, and repository evidence apart.
-
-- `C*` (e.g. `C001`, `C012`) — chunks of **new prose source material**: transcripts, rough notes, and drafts. Default for all runs.
-- `E*` (e.g. `E001`, `E003`) — chunks of the **existing technical document** in *update mode*. The extractor processes these chunks the same way, but the prefix tells the planner to map ids onto the existing section structure and tells the drafter to treat the ids as prior content, preserved unless the new ledger contradicts them.
-- `R*` (e.g. `R001`, `R012`) — **repository-derived evidence** produced by the repository intake path (see `dude-pack-technical-docs-source-intake`): code, configuration, tests, and schemas. The extractor emits `R*` entries exactly as it emits prose entries, and they enter the same ledger under the same coverage guarantee. The prefix lets the planner and drafter tell repository evidence from prose material, so a repository-only run, a prose-only run, and a mixed run all share one ledger and one coverage gate.
-
-A prose-only fresh run holds only `C*` ids. Repository intake adds `R*` ids. Update mode adds `E*` ids for the existing document. One ledger file can hold any mix, and coverage spans the union, so the coverage gate proves no detail was lost from any source.
+- Every entry must be supported by its own unit. Apply `dude-pack-technical-docs-traceability`: zero fabrication. If a detail is uncertain or missing, record it as an `open-question` with a `[NEEDS CLARIFICATION: ...]` marker rather than inventing it.
+- Extraction is unit-local. Repeated mentions of the same point across units each get their own entry; consolidation happens later, at the planner's reduce step.
+- `C*` ids come from new prose material, `E*` ids from the existing document in update mode, and `R*` ids from repository evidence. One ledger holds any mix, and coverage spans the union.
 
 ### Example
 
 ```jsonl
-{"id":"C001-F001","text":"The onboarding portal has three areas: profile, tasks, and settings.","type":"fact","tag":"portal-overview","source-chunk":"C001","source-kind":"transcript","importance":"high"}
-{"id":"C001-F002","text":"The profile section shows a progress bar for onboarding completion percentage.","type":"fact","tag":"profile-section","source-chunk":"C001","source-kind":"transcript"}
-{"id":"C002-F001","text":"Notification frequency can be immediate, daily digest, or weekly summary.","type":"parameter","tag":"notifications","source-chunk":"C002","source-kind":"transcript","importance":"high"}
-{"id":"C003-F001","text":"An FAQ section was proposed but not implemented.","type":"decision","tag":"future-work","source-chunk":"C003","source-kind":"notes"}
-{"id":"R004-F001","text":"createSession issues a signed session token and sets an httpOnly cookie named sid.","type":"behavior","tag":"auth","source-chunk":"R004","source-kind":"repo","source-ref":"src/auth/session.ts:createSession","importance":"high"}
-{"id":"R004-F002","text":"SESSION_TTL_SECONDS sets the session lifetime and defaults to 3600.","type":"parameter","tag":"auth","source-chunk":"R004","source-kind":"repo","source-ref":"src/auth/config.ts#L12-L14"}
-{"id":"R007-F001","text":"POST /sessions creates a session and returns 201 with the new session id.","type":"interface","tag":"auth","source-chunk":"R007","source-kind":"repo","source-ref":"src/routes/sessions.ts:POST /sessions"}
-{"id":"R007-F002","text":"A Session record has the fields id, userId, createdAt, and expiresAt.","type":"schema","tag":"auth","source-chunk":"R007","source-kind":"repo","source-ref":"src/models/session.ts:Session"}
+{"id":"C001-F001","text":"The onboarding portal has three areas: profile, tasks, and settings.","type":"fact","tag":"portal-overview","source-id":"S001","source-kind":"transcript","source-chunk":"C001","source-ref":"sources/kickoff.vtt#L14-L21","importance":"high"}
+{"id":"C002-F001","text":"Notification frequency can be immediate, daily digest, or weekly summary.","type":"parameter","tag":"notifications","source-id":"S001","source-kind":"transcript","source-chunk":"C002","source-ref":"sources/kickoff.vtt#L188-L194","importance":"high"}
+{"id":"E004-F002","text":"Retries use exponential backoff with a ceiling of five attempts.","type":"behavior","tag":"retries","source-id":"S004","source-kind":"document","source-chunk":"E004","source-ref":"docs/platform.md:Configuration > Retries#L212-L219"}
+{"id":"R004-F001","text":"createSession issues a signed session token and sets an httpOnly cookie named sid.","type":"behavior","tag":"auth","source-id":"S007","source-kind":"repo","source-chunk":"R004","source-ref":"@root:src/auth/session.ts#L42-L88","importance":"high"}
+{"id":"R007-F002","text":"A Session record has the fields id, userId, createdAt, and expiresAt.","type":"schema","tag":"auth","source-id":"S007","source-kind":"repo","source-chunk":"R007","source-ref":"@root:src/models/session.ts#L9-L18"}
 ```
 
-## 2. Outline (`outline.md`) — produced by the planner
+## 4. Outline (`outline.md`) — produced by the planner
 
-The outline is the **coverage contract**: it names every section and assigns the ledger ids that section must represent. Every ledger id must be assigned to exactly one section (consolidated duplicates are listed together). Format:
+The Outline is the **exact-once coverage contract**. Its grammar is strict: `coverage.mjs --mode outline` rejects any line it does not recognize.
 
 ```markdown
 # Outline: <document title>
-terminology: <CanonicalName> (also: <variant>, <variant>)   (optional; one line per normalized entity, placed under the title)
+ledger-sha256: <64-hex digest of the ledger this outline was planned against>
 
 ## <Section heading>
 covers: C001-F001, C001-F002
-diagram: <flow name> | C002-F001, C002-F003   (optional; omit if no qualifying non-linear flow)
+diagram: <flow name> | C002-F001, C002-F003
 notes: <optional grouping or cross-section note>
 
 ## <Next section heading>
@@ -85,12 +152,16 @@ covers: R004-F001, R004-F002, R007-F001
 ```
 
 Rules:
-- `covers:` lists the ledger ids the section is responsible for. The union of all `covers:` lines must equal the full set of ledger ids, counting `C*`, `R*`, and `E*` alike (minus ids explicitly merged as duplicates, which are recorded on the surviving id's line). That equality is what proves no evidence was dropped.
-- When the planner merges duplicate entries, it keeps one surviving id and lists the merged ids on the same `covers:` line so coverage still counts them.
-- `diagram:` flags a qualifying non-linear flow (decision branches, alternate paths, retries, exceptions, loops, parallel routing, branching state lifecycles, or multi-actor interactions with non-linear control flow) and the ids that compose it. Use it to mark **cross-section flows** so the reviewer can build one coherent diagram from the ledger rather than from split prose. Do not flag a diagram for a taxonomy, field list, straight-line procedure, pure request/response chain, or anything that is really a table.
-- `terminology:` (optional, document-level, placed directly under the title) records a canonical name for an entity that appears under variant spellings in the ledger, so the drafter uses one consistent term. It carries no ids and does not affect coverage.
 
-## 3. Consumed manifest (`consumed.jsonl`) — produced by the drafter
+- Line 1 must be `# Outline: <title>` and line 2 must be `ledger-sha256: <digest>`. A digest that does not match the supplied ledger fails as a stale Outline.
+- Only `## <heading>`, `covers:`, `diagram:`, and `notes:` lines are permitted outside fenced content. Blank lines are allowed. There is no `terminology:` line.
+- Every section requires exactly one `covers:` line, and no section may repeat a field.
+- Ids on a `covers:` line are separated by a comma and exactly one space.
+- Every ledger id appears on exactly one `covers:` line. An unknown, missing, or duplicated id fails the gate. When the planner merges duplicates, it lists the merged ids on the surviving section's line so they are still counted once each.
+- `diagram:` flags a qualifying non-linear flow (decision branches, alternate paths, retries, exceptions, loops, parallel routing, branching state lifecycles, or multi-actor interactions with non-linear control flow) and the ids that compose it. Use it to mark cross-section flows so the reviewer builds one coherent diagram. Do not flag a taxonomy, field list, straight-line procedure, pure request/response chain, or anything that is really a table.
+- Regenerating the ledger invalidates the Outline: replan it and rerun outline coverage.
+
+## 5. Consumed manifest (`consumed.jsonl`) — produced by the drafter
 
 While writing each section, the drafter appends one line per ledger id it represented:
 
@@ -102,8 +173,14 @@ While writing each section, the drafter appends one line per ledger id it repres
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `id` | Yes | The ledger id the drafter represented in this section. |
-| `section` | Yes | The section heading the id was represented in. |
-| `resolution` | No | Lifecycle marker for prior content in update mode. Allowed values: `superseded` (an `E*` id whose content was replaced by newer `C*` or `R*` material covering the same point — record both as consumed) and `split` (one id whose content was distributed across more than one section — also record it consumed in each section). Omit for the normal case. |
+| `id` | Yes | The ledger id the drafter represented. |
+| `section` | Yes | The exact heading text of a section that exists in the evaluated document. |
+| `resolution` | No | Only `superseded`: an `E*` id whose content was replaced by newer `C*` or `R*` material covering the same point. No other value is accepted. |
 
-This is the audit trail that the runtime coverage check (`node .github/skills/dude-pack-technical-docs-runtime/scripts/coverage.mjs`) verifies against the ledger. Record an id as consumed even when it is represented as an open issue (`[NEEDS CLARIFICATION: ...]`); the point is preserved, not dropped. The `resolution` field is informational and does not affect the gate; the gate cares only that every ledger id appears at least once. **Never** place these ids or any audit metadata inside the document Markdown; the manifest is a separate sidecar file.
+Rules:
+
+- Coverage is **exact-once**: every ledger id appears in exactly one record. A second record for the same id is a duplicate violation, so one id cannot be split across sections. When an id's content spans sections, record it in the section that carries the point and cross-reference in prose.
+- `section` must name a heading the document actually contains; a name the document does not have is a missing-section violation.
+- A record for an id that is not in the ledger is a dangling violation; a ledger id with no record is uncovered.
+- Record an id as consumed even when it is represented as `[NEEDS CLARIFICATION: ...]`; the point is preserved, not dropped.
+- **Never** place ledger ids or audit metadata inside the document Markdown. The manifest is a separate sidecar that `coverage.mjs --mode document` reads.

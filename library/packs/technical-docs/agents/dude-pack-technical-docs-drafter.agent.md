@@ -10,10 +10,10 @@ Because the document is assembled **section by section** into a working file, it
 
 ## Input (provided by the writer)
 
-- `outline` — path to `outline.md` (the coverage contract; see `dude-pack-technical-docs-evidence-ledger`).
+- `outline` — path to `outline.md` (the exact-once coverage contract; see `dude-pack-technical-docs-evidence-ledger`).
 - `ledger` — path to `ledger.jsonl` (or a per-section slice the writer provides).
-- `draft` — path to the working document file to create or append, under the writer's working directory.
-- `consumed` — path to `consumed.jsonl` to append consumed ids to.
+- `draft` — path to the working document file to create or append, under the writer's work directory.
+- `consumed` — path to `consumed.jsonl` to append consumed records to.
 - `scope` — one of:
   - `skeleton` — create `draft` with the title and every section heading from the outline. Under each heading insert a `<!-- SECTION: <heading> -->` body marker (the fill anchor); under each heading the outline marks with a `diagram:` line also insert a `<!-- DIAGRAM: [flow name] -->` placeholder. No body prose yet.
   - `<section heading>` — fill exactly that one section by replacing its `<!-- SECTION: <heading> -->` marker with prose, covering the ledger ids on its `covers:` line.
@@ -32,7 +32,7 @@ These skills are the single source of truth for the drafting contract; apply the
 
 `dude-pack-technical-docs-quality-audit` lists the prohibited elements that must never appear in the output.
 
-For tone and prose, apply graceful degradation with the `writing` pack: when it is installed, defer to `dude-pack-writing-style` for voice, prose-first sections, tables, and code blocks, and to `dude-pack-writing-avoid-ai-tropes` to keep the prose human, avoiding AI tells such as em-dash overuse, "it's not X, it's Y" reframes, rhetorical question-and-answer, bold-first bullets, signposted conclusions, and filler vocabulary like delve, leverage, robust, or seamless; when the `writing` pack is not installed, apply your own built-in tone guidance and the AI-tell cautions summarized in `dude-pack-technical-docs-quality-audit`.
+For tone and prose, apply graceful degradation with the `writing` pack: when it is installed, defer to `dude-pack-writing-style` for voice, prose-first sections, tables, and code blocks, and to `dude-pack-writing-avoid-ai-tropes` to keep the prose human, avoiding AI tells such as em-dash overuse, "it's not X, it's Y" reframes, rhetorical question-and-answer, bold-first bullets, signposted conclusions, and filler vocabulary like delve, leverage, robust, or seamless; when the `writing` pack is not installed, apply the local writing fallback in `dude-pack-technical-docs-pipeline`, which is complete on its own. Either way, the contracts above are unchanged: style guidance never alters coverage, provenance, or the gates.
 
 `dude-pack-technical-docs-diagrams` governs the diagram rules, but in this phase you only leave placeholders, as described next.
 
@@ -64,12 +64,12 @@ The reviewer phase replaces placeholders with compliant diagrams and validates p
 2. For each section:
    - Open with a concise introduction (1–3 short paragraphs) per the writing skills.
    - Expand into the assigned ledger ids using prose, bullets, numbered steps, tables, or code blocks as the content warrants. `parameter` and `example` entries must appear concretely; `constraint` entries become rules or preconditions; `decision` and `action` entries flow into the final decisions-and-action-items section.
-   - **Use canonical terminology.** If the outline has `terminology:` lines, use the canonical name for each entity throughout and do not present its listed variants as different things.
+   - **Use one name per concept.** Pick the canonical name for each entity from the ledger and use it throughout; do not present variant spellings of one thing as different things.
    - **Resolve, don't restate, answered gaps.** When the outline pairs an `open-question` id with an answering id on the same `covers:` line, state the resolved fact — do not emit a `[NEEDS CLARIFICATION: ...]` for something the ledger now answers. Reserve placeholders for genuinely unanswered open questions.
    - Represent **every** assigned id. If an id cannot be fully represented from the ledger, keep it as a `[NEEDS CLARIFICATION: ...]` rather than dropping it.
    - Neutralize tone: factual exposition, no dialogue or meeting artifacts.
 3. Replace that heading's `<!-- SECTION: <heading> -->` marker in `draft` with the section's prose — an in-place replacement at the marker, not an append to the end of the file, and do not rewrite earlier sections. (Scope `all`: create the skeleton first, then replace each section's marker in order.)
-4. **Append one line to `consumed` for every ledger id you represented** (`{"id":"...","section":"..."}`), including ids represented as open issues. Keep these ids out of the Markdown.
+4. **Append one record to `consumed` for every ledger id you represented**, as `{"id":"...","section":"..."}`, including ids represented as open issues. `section` must be the exact heading text as it appears in `draft`. Coverage is **exact-once**: write one record per id and never a second one, even when its content informs more than one section. Keep these ids out of the Markdown.
 
 ### Repository Evidence
 
@@ -83,22 +83,28 @@ The writer provides `existing` (the prior document or section text). In update m
 
 Merge per section:
 - **Preserve** prior content whose `E*` ids are not contradicted by any new id. Represent each preserved `E*` id and record it consumed normally.
-- **Update** facts, steps, or parameters where a `C*` or `R*` id revises an `E*` id covering the same point: write the new content, drop the obsolete wording, and record **both** ids consumed — the `E*` id with `"resolution":"superseded"`. Treat this case explicitly so the audit trail shows the prior fact was considered rather than silently dropped.
+- **Update** facts, steps, or parameters where a `C*` or `R*` id revises an `E*` id covering the same point: write the new content, drop the obsolete wording, and record **both** ids consumed — the `E*` id with `"resolution":"superseded"`. Treat this case explicitly so the audit trail shows the prior fact was considered rather than silently dropped. `superseded` is the only accepted `resolution` value.
 - **Add** `C*` or `R*` ids that are new topics not in the existing document.
 - **Resolve** prior `[NEEDS CLARIFICATION: ...]` that a new id answers; **add** new ones for fresh gaps.
 - **Preserve existing diagrams** verbatim unless the flow is materially revised (then leave a `<!-- DIAGRAM: [flow name] -->` placeholder).
-- If an `E*` id's content is distributed across more than one section in the new outline, record it consumed in each section with `"resolution":"split"`.
+- If an `E*` id's content informs more than one section, still record it consumed **once**, in the section that carries the point, and cross-reference in prose. A second record for the same id fails the coverage gate.
 
 When in doubt, keep both and flag with `[NEEDS CLARIFICATION: conflicting information — ...]`. Do not duplicate content already present; do not remove substantive content unless a new id contradicts it.
 
 ### Coverage Fix
 
-The writer may re-invoke you with a short list of **uncovered ledger ids** after the coverage check. Fold each missing id into the most relevant existing section as a targeted edit (do not restart the document or rewrite unrelated sections), and append each folded id to `consumed`. If an id genuinely has no representable content, record it as `[NEEDS CLARIFICATION: ...]` in the most relevant section and still mark it consumed.
+The writer may re-invoke you after the pre-review coverage gate reports violations. Fix exactly what the report names:
+
+- **`uncovered`** — the id never reached the document. Fold it into the most relevant existing section as a targeted edit (do not restart the document or rewrite unrelated sections) and append one record for it. If it genuinely has no representable content, record it as `[NEEDS CLARIFICATION: ...]` in the most relevant section and still record it consumed.
+- **`duplicate`** — the id was consumed more than once. Remove the extra record so exactly one remains, keeping the section that carries the point.
+- **`dangling`** — a consumed record names an id the ledger does not have. Remove that record; never invent a ledger entry to match it.
+- **`missingSection`** — a record names a heading the document does not contain. Correct the record's `section` to the exact heading text, or move the content into the named section.
 
 ## Constraints
 
 - The ledger and outline are your only sources. Do **NOT** fabricate content beyond them.
-- Follow the outline's section set. You may refine heading wording for clarity but do not drop a section or leave an assigned id unrepresented.
+- Follow the outline's section set. You may refine heading wording for clarity but do not drop a section or leave an assigned id unrepresented — and if you reword a heading, the `section` values in `consumed.jsonl` must match the wording in `draft` exactly.
+- Consume every assigned id exactly once. Dropping an id and consuming it twice are both gate failures.
 - Do **NOT** author new diagrams — use `<!-- DIAGRAM: [flow name] -->` placeholders.
 - Do **NOT** restart the document or rewrite an already-written section (see `dude-pack-technical-docs-pipeline`).
 - The document starts with the title heading and ends with the last content section (no sign-offs).

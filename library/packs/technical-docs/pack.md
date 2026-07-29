@@ -36,13 +36,16 @@ The technical-documentation domain pack. Install it when you need to write or
 update a technical document from real source material and keep every claim
 traceable to where it came from.
 
-The pack runs a five-agent pipeline. It reads the sources and records what they
-say as an evidence ledger, plans a section outline from that ledger, drafts the
-document one section at a time, then reviews the draft and audits it against
-coverage and lint gates. Because the ledger and the outline carry state between
-steps, the pipeline can document material larger than a single context window:
-each step reads only the slice it needs instead of holding the whole document in
-the prompt.
+The pack runs a five-agent pipeline over one authoritative Source Registry.
+`source-manifest.mjs` resolves source identity, the work directory, the output,
+the output mode, and all 17 limits exactly once. Each registered source is then
+processed on its own into bounded work units, distilled into an evidence ledger,
+planned into a section outline, drafted one section at a time, reviewed, and
+published by `finalize.mjs` only when a chain of digest-bound gate reports still
+describes the exact bytes on disk. Because the registry, the ledger, and the
+outline carry state between steps, the pipeline can document material larger than
+a single context window: each step reads only the slice it needs instead of
+holding the whole document in the prompt.
 
 ## Source kinds
 
@@ -56,45 +59,60 @@ is only one kind. The pack accepts:
 - a rough draft
 - any mix of these
 
-Each kind has its own intake path into the evidence ledger. A repository-only
-run, a transcript-only run, and a mixed run all converge on the same
-ledger-backed pipeline, so the drafting and audit steps do not care where a given
-fact originated.
+Every source is registered separately and keeps its own id, so nothing is
+concatenated and no unit loses its origin. A repository-only run, a
+transcript-only run, and a mixed run all converge on the same ledger and the same
+gates, so drafting and audit do not care where a given fact originated.
+
+## Output modes
+
+The output mode is explicit and is never inferred from whether the target exists:
+
+- `create` — the output must be absent at registration and is published with
+  no-replace semantics.
+- `replace` — the output must exist, and its registered bytes must still be there
+  immediately before publication.
+- `update` — exactly one `--update-document` is registered both as a source and as
+  the output target, and it is the only source the output may alias.
 
 ## Provides
 
 ### Agents
 
-- `dude-pack-technical-docs-writer` — orchestrator: classifies the sources, runs
-  the pipeline, and owns the working directory and the final document.
-- `dude-pack-technical-docs-extractor` — turns one source unit, either a prose
-  chunk or a slice of a repository inventory, into atomic evidence-ledger entries.
+- `dude-pack-technical-docs-writer` — orchestrator: registers the sources, runs the
+  canonical gate sequence, and owns the work directory and finalization.
+- `dude-pack-technical-docs-extractor` — turns exactly one declared work unit into
+  one strict extraction result plus, when the unit carries evidence, one evidence
+  fragment.
 - `dude-pack-technical-docs-planner` — reduces the evidence ledger to a section
-  outline, which becomes the coverage contract for the draft.
+  outline, the exact-once coverage contract for the draft.
 - `dude-pack-technical-docs-drafter` — drafts the document section by section from
-  the ledger and the outline.
-- `dude-pack-technical-docs-reviewer` — inserts diagrams for genuine non-linear
-  flows and runs the semantic audit.
+  the ledger and the outline and records strict consumed data.
+- `dude-pack-technical-docs-reviewer` — reviews the pre-gated draft, inserts
+  diagrams for genuine non-linear flows, and emits the semantic review report.
 
 ### Skills
 
-- `dude-pack-technical-docs-source-intake` — classifies and preprocesses each
-  source kind (repository, document, transcript, notes, draft, or mixed) and
-  defines how each becomes ledger entries.
-- `dude-pack-technical-docs-evidence-ledger` — the ledger, outline, and
-  consumed-data contracts: schema, ids, and source provenance.
+- `dude-pack-technical-docs-source-intake` — the Source Registry contract: the
+  `@root` anchor, explicit output modes, expected target state, independent
+  per-source processing, ordinal handoffs, and complete repository accounting.
+- `dude-pack-technical-docs-evidence-ledger` — the schema-version-2 data
+  contracts: per-unit extraction results, the result index, `ledger.jsonl`, the
+  Outline, and `consumed.jsonl`.
 - `dude-pack-technical-docs-traceability` — the zero-fabrication rule: every
-  statement traces to a ledger entry, and every ledger entry traces to a named
-  source reference.
-- `dude-pack-technical-docs-pipeline` — the section-planning workflow, incremental
-  section-by-section assembly, and the decisions and action-items conventions.
+  statement traces to a ledger entry, and every ledger entry carries a source id
+  and a validated source reference.
+- `dude-pack-technical-docs-pipeline` — the canonical gate sequence, incremental
+  section-by-section assembly, the mutation-invalidation rule, the decisions and
+  action-items convention, and the local writing fallback.
 - `dude-pack-technical-docs-diagrams` — Mermaid diagram rules: type selection,
   diagram integrity, and when not to diagram.
-- `dude-pack-technical-docs-quality-audit` — the prohibited-elements list and the
-  final semantic audit checklist.
-- `dude-pack-technical-docs-runtime` — the deterministic Node helper scripts:
-  preprocess, chunk, recall audit, ledger digest, headings, coverage, lint, ledger
-  merge, and repository inventory.
+- `dude-pack-technical-docs-quality-audit` — the prohibited-elements list, the
+  semantic audit checklist, and the review report the final gates bind to.
+- `dude-pack-technical-docs-runtime` — the eleven deterministic Node commands
+  (`source-manifest`, `preprocess`, `headings`, `chunk`, `repo-inventory`,
+  `merge-ledger`, `extraction-audit`, `ledger-digest`, `coverage`, `lint`, and
+  `finalize`) and the internal `lib/runtime.mjs` module they share.
 
 ### Prompts
 
@@ -106,16 +124,16 @@ fact originated.
 
 ## When installed
 
-Documentation requests route to `dude-pack-technical-docs-writer`, which
-classifies the sources and drives the extractor, planner, drafter, and reviewer
-through the pipeline. The two prompts are the usual entry points: use
+Documentation requests route to `dude-pack-technical-docs-writer`, which registers
+the sources and drives the extractor, planner, drafter, and reviewer through the
+canonical sequence. The two prompts are the usual entry points: use
 `write-technical-document` for any mix of sources, and `document-this-repository`
 when the source is mainly a code repository.
 
 ## Requires
 
-- Node.js, which the Dude bundle already assumes. The pack's runtime scripts run
-  on it.
+- Node.js, which the Dude bundle already assumes. The pack's runtime commands use
+  Node built-ins only, with no dependency and no network access.
 - No external tools. `requires.tools` is intentionally empty.
 
 ## Install / remove
@@ -127,8 +145,10 @@ when the source is mainly a code repository.
 
 ## Related packs
 
-- `writing` — recommended. The drafter and reviewer defer to
+- `writing` — recommended, never required. The drafter and reviewer defer to
   `dude-pack-writing-style` and `dude-pack-writing-avoid-ai-tropes` when those
-  skills are installed, and fall back to their own built-in guidance when they are
-  not. The manifest has no cross-pack `requires`, so this pairing is a
-  recommendation, not a hard dependency.
+  skills are installed. When they are not, the local writing fallback in
+  `dude-pack-technical-docs-pipeline` stands on its own, so every supported source
+  mode completes standalone. Installed writing skills refine style only; they
+  cannot change intake, traceability, the gates, or finalization. The manifest has
+  no cross-pack `requires`.
