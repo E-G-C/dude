@@ -108,17 +108,17 @@
   },
   ".dude/specs/007-technical-docs-pack-remediation/tasks.md": {
     "glyphs": {
-      "T001@00709e37": "!",
-      "T002@00713c6e": " ",
-      "T003@0071daa5": " ",
-      "T004@007278dc": " ",
-      "T005@00731713": " ",
-      "T006@0073b54a": " ",
+      "T001@00709e37": "x",
+      "T002@00713c6e": "x",
+      "T003@0071daa5": "x",
+      "T004@007278dc": "x",
+      "T005@00731713": "x",
+      "T006@0073b54a": "x",
       "T007@00745381": " ",
       "T008@0074f1b8": " ",
       "T009@00758fef": " "
     },
-    "updated_at": "2026-07-27T18:58:37.000Z"
+    "updated_at": "2026-07-29T01:12:13.539Z"
   },
   ".dude/specs/008-automatic-core-dogfood-promotion/tasks.md": {
     "glyphs": {
@@ -145,5 +145,21 @@
       "T009@696e6369": "x"
     },
     "updated_at": "2026-07-27T19:24:25.591Z"
+  },
+  ".dude/specs/010-core-autonomous-event-round-trip/tasks.md": {
+    "glyphs": {
+      "T001@766f6361": "x",
+      "T002@77726974": "x",
+      "T003@74726970": "x",
+      "T004@636c6f73": "x"
+    },
+    "updated_at": "2026-07-29T00:18:58.530Z"
+  },
+  ".dude/specs/011-historical-core-dogfood-fixture-repair/tasks.md": {
+    "glyphs": {
+      "T001@66697874": "x",
+      "T002@76616c69": "x"
+    },
+    "updated_at": "2026-07-28T23:10:45.643Z"
   }
 }

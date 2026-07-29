@@ -6,13 +6,17 @@ import {
   linkSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
+  readdirSync,
   renameSync,
+  rmSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   DEFAULT_LIMITS,
@@ -67,15 +71,22 @@ import {
 import {
   CANONICAL_TEMP_ROOT,
   assertFileBytes,
+  assertNoAdjacentStages,
   assertNoAdjacentTemps,
   assertOutputPreserved,
+  buildFinalizationFixture,
   canCreateHardlink,
   canCreateSymlink,
   canEnforceUnreadableFile,
+  canResolveCaseInsensitivePath,
   captureOutput,
   fixturePath,
   makeTempRoot,
+  readJsonFixture,
+  removeFixture,
+  runFinalize,
   runNode,
+  runtimeScript,
   sha256,
   writeFixture,
   writeJsonFixture,
@@ -635,6 +646,27 @@ test("atomic replace revalidates expected target state after staging", (context)
   assertNoAdjacentTemps(target);
 });
 
+test("atomic replace rechecks expected target state after final validation", (context) => {
+  const root = makeTempRoot(context);
+  const target = writeFixture(root, "expected.txt", "registered\n");
+  const expectedTarget = {
+    state: "file",
+    bytes: Buffer.byteLength("registered\n"),
+    sha256: sha256("registered\n"),
+  };
+  expectRuntimeError(
+    () => writeAtomicFile(target, "candidate\n", {
+      mode: "replace",
+      workspaceRoot: root,
+      expectedTarget,
+      validateBeforePublish: () => writeFileSync(target, "concurrent\n"),
+    }),
+    "target-state-changed"
+  );
+  assertFileBytes(target, Buffer.from("concurrent\n"));
+  assertNoAdjacentTemps(target);
+});
+
 test("atomic replace rechecks protected aliases after staging", (context) => {
   const root = makeTempRoot(context);
   if (!canCreateHardlink(root)) {
@@ -662,26 +694,191 @@ test("atomic replace rechecks protected aliases after staging", (context) => {
   assertNoAdjacentTemps(target);
 });
 
-test("adjacent staged directories publish only to an absent destination", (context) => {
+test("atomic replace rechecks protected aliases after final validation", (context) => {
+  const root = makeTempRoot(context);
+  if (!canCreateHardlink(root)) {
+    context.skip("hard links are unavailable on this host");
+    return;
+  }
+  const target = writeFixture(root, "target.txt", "registered\n");
+  const protectedFile = writeFixture(root, "protected.txt", "protected\n");
+  expectRuntimeError(
+    () => writeAtomicFile(target, "candidate\n", {
+      mode: "replace",
+      workspaceRoot: root,
+      protectedPaths: [protectedFile],
+      validateBeforePublish: () => {
+        unlinkSync(target);
+        linkSync(protectedFile, target);
+      },
+    }),
+    "protected-path-alias"
+  );
+  assert.equal(pathsAlias(target, protectedFile), true);
+  assertFileBytes(protectedFile, Buffer.from("protected\n"));
+  assertNoAdjacentTemps(target);
+});
+
+test("atomic publication rejects a temporary file substituted after final validation", (context) => {
+  // The substituted entry is a foreign inode the runtime never created, so failure-path
+  // cleanup deliberately declines to unlink it: an attacker-planted decoy and a renamed
+  // victim are indistinguishable at that path. The property under test is that the
+  // publication is refused and the substituted entry survives untouched.
+  let substitutedTemp;
+  const substitute = ({ temporary }) => {
+    substitutedTemp = temporary;
+    unlinkSync(temporary);
+    writeFileSync(temporary, "substituted\n");
+  };
+
+  const root = makeTempRoot(context);
+  const target = writeFixture(root, "replace.txt", "prior\n");
+  const snapshot = captureOutput(target);
+  expectRuntimeError(
+    () => writeAtomicFile(target, "candidate\n", {
+      mode: "replace",
+      workspaceRoot: root,
+      validateBeforePublish: substitute,
+    }),
+    "target-state-changed"
+  );
+  assertOutputPreserved(target, snapshot);
+  assertFileBytes(target, Buffer.from("prior\n"));
+  assertFileBytes(substitutedTemp, Buffer.from("substituted\n"));
+  assert.equal(pathsAlias(substitutedTemp, target), false);
+
+  const absent = join(root, "create.txt");
+  expectRuntimeError(
+    () => writeAtomicFile(absent, "candidate\n", {
+      mode: "create",
+      workspaceRoot: root,
+      validateBeforePublish: substitute,
+    }),
+    "target-state-changed"
+  );
+  assert.equal(existsSync(absent), false);
+  assertFileBytes(substitutedTemp, Buffer.from("substituted\n"));
+});
+
+test("atomic publication rejects a temporary file relinked to a protected path", (context) => {
+  const root = makeTempRoot(context);
+  if (!canCreateHardlink(root)) {
+    context.skip("hard links are unavailable on this host");
+    return;
+  }
+  const target = writeFixture(root, "target.txt", "prior\n");
+  const protectedFile = writeFixture(root, "protected.txt", "protected\n");
+  const snapshot = captureOutput(target);
+  let relinkedTemp;
+  expectRuntimeError(
+    () => writeAtomicFile(target, "candidate\n", {
+      mode: "replace",
+      workspaceRoot: root,
+      protectedPaths: [protectedFile],
+      validateBeforePublish: ({ temporary }) => {
+        relinkedTemp = temporary;
+        unlinkSync(temporary);
+        linkSync(protectedFile, temporary);
+      },
+    }),
+    "target-state-changed"
+  );
+  assertOutputPreserved(target, snapshot);
+  assertFileBytes(target, Buffer.from("prior\n"));
+  assertFileBytes(protectedFile, Buffer.from("protected\n"));
+  assert.equal(pathsAlias(target, protectedFile), false);
+  // The temp name now links the protected file, so cleanup must not unlink it: removing
+  // that name is exactly how a hijacked temp path turns cleanup into victim deletion.
+  assert.equal(pathsAlias(relinkedTemp, protectedFile), true);
+  assertFileBytes(relinkedTemp, Buffer.from("protected\n"));
+});
+
+test("atomic publication rejects a temporary file rewritten in place after final validation", (context) => {
+  const root = makeTempRoot(context);
+
+  // Same-length rewrite keeps device, inode, and size identical, so only the staged
+  // digest recheck can detect it.
+  const sameLength = writeFixture(root, "same-length.txt", "prior\n");
+  const sameLengthSnapshot = captureOutput(sameLength);
+  const sameLengthIdentity = fileIdentity(sameLength);
+  expectRuntimeError(
+    () => writeAtomicFile(sameLength, "candidate\n", {
+      mode: "replace",
+      workspaceRoot: root,
+      validateBeforePublish: ({ temporary }) => {
+        assert.equal(Buffer.byteLength("malicious\n"), Buffer.byteLength("candidate\n"));
+        writeFileSync(temporary, "malicious\n");
+      },
+    }),
+    "target-state-changed"
+  );
+  assertOutputPreserved(sameLength, sameLengthSnapshot);
+  assertFileBytes(sameLength, Buffer.from("prior\n"));
+  assert.deepEqual(fileIdentity(sameLength), sameLengthIdentity);
+  assertNoAdjacentTemps(sameLength);
+
+  // Different-length rewrite reuses the same inode too, so the size change alone must
+  // not be mistaken for a substituted entry.
+  const otherLength = writeFixture(root, "other-length.txt", "prior\n");
+  const otherLengthSnapshot = captureOutput(otherLength);
+  expectRuntimeError(
+    () => writeAtomicFile(otherLength, "candidate\n", {
+      mode: "replace",
+      workspaceRoot: root,
+      validateBeforePublish: ({ temporary }) => writeFileSync(temporary, "malicious payload\n"),
+    }),
+    "target-state-changed"
+  );
+  assertOutputPreserved(otherLength, otherLengthSnapshot);
+  assertFileBytes(otherLength, Buffer.from("prior\n"));
+  assertNoAdjacentTemps(otherLength);
+});
+
+test("staged-directory reuse rejects a destination mutated in place during verification", (context) => {
+  const root = makeTempRoot(context);
+  const target = join(root, "reusable");
+  mkdirSync(target);
+  writeFixture(target, "result.json", "same\n");
+  const targetIdentity = fileIdentity(target);
+  const staged = createStagedDirectory(target, { workspaceRoot: root });
+  writeFixture(staged, "result.json", "same\n");
+
+  const entriesMatch = (left, right) => {
+    const leftNames = readdirSync(left).sort();
+    const rightNames = readdirSync(right).sort();
+    return leftNames.length === rightNames.length && leftNames.every((name, index) => name === rightNames[index]);
+  };
+
+  let published;
+  expectRuntimeError(
+    () => {
+      published = publishStagedDirectory(staged, target, {
+        workspaceRoot: root,
+        // The destination directory is mutated in place, so its identity never changes
+        // and only exact membership verification can reject the reuse.
+        validateBeforePublish: () => writeFixture(target, "injected.json", "injected\n"),
+        verifyExisting: ({ staged: currentStage, target: currentTarget }) => (
+          entriesMatch(currentStage, currentTarget)
+          && hashFile(join(currentStage, "result.json")).sha256 === hashFile(join(currentTarget, "result.json")).sha256
+        ),
+      });
+    },
+    "staged-directory-mismatch"
+  );
+  assert.equal(published, undefined, "in-place destination mutation must not report a reused publication");
+  assert.deepEqual(fileIdentity(target), targetIdentity);
+  assertFileBytes(join(target, "result.json"), Buffer.from("same\n"));
+  assert.equal(existsSync(staged), false);
+  assertNoAdjacentStages(target);
+});
+
+test("adjacent staged directories publish to absent destinations and reuse exact matches", (context) => {
   const root = makeTempRoot(context);
   const target = join(root, "published");
   const staged = createStagedDirectory(target, { workspaceRoot: root });
   writeFixture(staged, "result.json", "result\n");
   assert.deepEqual(publishStagedDirectory(staged, target, { workspaceRoot: root }), { path: target, reused: false });
   assertFileBytes(join(target, "result.json"), Buffer.from("result\n"));
-
-  const blockedTarget = join(root, "blocked-publish");
-  const blockedStage = createStagedDirectory(blockedTarget, { workspaceRoot: root });
-  writeFixture(blockedStage, "result.json", "staged\n");
-  expectRuntimeError(
-    () => publishStagedDirectory(blockedStage, blockedTarget, {
-      workspaceRoot: root,
-      testHooks: { beforeDirectoryPublish: () => mkdirSync(blockedTarget) },
-    }),
-    "output-exists"
-  );
-  assert.equal(lstatSync(blockedStage).isDirectory(), true);
-  assert.equal(lstatSync(blockedTarget).isDirectory(), true);
 
   const reusableTarget = join(root, "reusable");
   mkdirSync(reusableTarget);
@@ -696,18 +893,132 @@ test("adjacent staged directories publish only to an absent destination", (conte
   }), { path: reusableTarget, reused: true });
   assert.equal(existsSync(reusableStage), false);
   assertFileBytes(join(reusableTarget, "result.json"), Buffer.from("same\n"));
+});
 
-  const mismatchStage = createStagedDirectory(reusableTarget, { workspaceRoot: root });
-  writeFixture(mismatchStage, "result.json", "different\n");
+test("failed staged-directory publication cleans its temporary directory", (context) => {
+  const root = makeTempRoot(context);
+  const target = join(root, "blocked-publish");
+  const staged = createStagedDirectory(target, { workspaceRoot: root });
+  writeFixture(staged, "result.json", "staged\n");
   expectRuntimeError(
-    () => publishStagedDirectory(mismatchStage, reusableTarget, {
+    () => publishStagedDirectory(staged, target, {
+      workspaceRoot: root,
+      testHooks: { beforeDirectoryPublish: () => mkdirSync(target) },
+    }),
+    "output-exists"
+  );
+  assert.equal(existsSync(staged), false);
+  assertNoAdjacentStages(target);
+  assert.equal(lstatSync(target).isDirectory(), true);
+});
+
+test("failed staged-directory reuse cleans its temporary directory", (context) => {
+  const root = makeTempRoot(context);
+  const target = join(root, "reusable");
+  mkdirSync(target);
+  writeFixture(target, "result.json", "same\n");
+  const staged = createStagedDirectory(target, { workspaceRoot: root });
+  writeFixture(staged, "result.json", "different\n");
+  expectRuntimeError(
+    () => publishStagedDirectory(staged, target, {
       workspaceRoot: root,
       verifyExisting: () => false,
     }),
     "staged-directory-mismatch"
   );
-  assert.equal(lstatSync(mismatchStage).isDirectory(), true);
-  assertFileBytes(join(reusableTarget, "result.json"), Buffer.from("same\n"));
+  assert.equal(existsSync(staged), false);
+  assertNoAdjacentStages(target);
+  assertFileBytes(join(target, "result.json"), Buffer.from("same\n"));
+});
+
+test("staged-directory publication rejects a staged directory substituted after final validation", (context) => {
+  const root = makeTempRoot(context);
+  const target = join(root, "published");
+  const staged = createStagedDirectory(target, { workspaceRoot: root });
+  writeFixture(staged, "result.json", "staged\n");
+  const decoy = join(root, "decoy");
+  mkdirSync(decoy);
+  writeFixture(decoy, "result.json", "substituted\n");
+  expectRuntimeError(
+    () => publishStagedDirectory(staged, target, {
+      workspaceRoot: root,
+      validateBeforePublish: () => {
+        rmSync(staged, { recursive: true });
+        renameSync(decoy, staged);
+      },
+    }),
+    "staged-directory-changed"
+  );
+  assert.equal(existsSync(target), false);
+
+  const fileTarget = join(root, "file-published");
+  const fileStage = createStagedDirectory(fileTarget, { workspaceRoot: root });
+  writeFixture(fileStage, "result.json", "staged\n");
+  expectRuntimeError(
+    () => publishStagedDirectory(fileStage, fileTarget, {
+      workspaceRoot: root,
+      validateBeforePublish: () => {
+        rmSync(fileStage, { recursive: true });
+        writeFileSync(fileStage, "substituted\n");
+      },
+    }),
+    "staged-directory-changed"
+  );
+  assert.equal(existsSync(fileTarget), false);
+});
+
+test("staged-directory reuse rejects a destination substituted after final validation", (context) => {
+  const root = makeTempRoot(context);
+  const target = join(root, "reusable");
+  mkdirSync(target);
+  writeFixture(target, "result.json", "same\n");
+  const staged = createStagedDirectory(target, { workspaceRoot: root });
+  writeFixture(staged, "result.json", "same\n");
+  const decoy = join(root, "decoy");
+  mkdirSync(decoy);
+  writeFixture(decoy, "result.json", "substituted\n");
+
+  expectRuntimeError(
+    () => publishStagedDirectory(staged, target, {
+      workspaceRoot: root,
+      verifyExisting: () => true,
+      validateBeforePublish: () => {
+        rmSync(target, { recursive: true });
+        renameSync(decoy, target);
+      },
+    }),
+    "staged-directory-changed"
+  );
+  assertFileBytes(join(target, "result.json"), Buffer.from("substituted\n"));
+  assert.equal(existsSync(staged), false);
+  assertNoAdjacentStages(target);
+});
+
+test("case-insensitive staged and target aliases cannot delete a reused destination", (context) => {
+  const root = makeTempRoot(context);
+  if (!canResolveCaseInsensitivePath(root)) {
+    context.skip("case-insensitive path resolution is unavailable on this host");
+    return;
+  }
+  const target = join(root, "PublishedCase");
+  mkdirSync(target);
+  writeFixture(target, "result.json", "preserved\n");
+  const stagedAlias = join(root, "publishedcase");
+
+  let caught;
+  try {
+    publishStagedDirectory(stagedAlias, target, {
+      workspaceRoot: root,
+      verifyExisting: () => true,
+    });
+  } catch (error) {
+    caught = error;
+  }
+
+  assert.equal(existsSync(target), true, "destination was removed through a case-insensitive staged alias");
+  assertFileBytes(join(target, "result.json"), Buffer.from("preserved\n"));
+  assert.ok(caught instanceof RuntimeError, "expected RuntimeError");
+  assert.equal(caught.code, "invalid-staged-directory");
 });
 
 test("the harness invokes Node directly without a shell", () => {
@@ -715,4 +1026,223 @@ test("the harness invokes Node directly without a shell", () => {
   assert.equal(result.status, 0);
   assert.equal(result.stdout, "direct-node");
   assert.equal(result.stderr, "");
+});
+
+const SOURCE_MANIFEST = fileURLToPath(
+  new URL("../skills/dude-pack-technical-docs-runtime/scripts/source-manifest.mjs", import.meta.url)
+);
+
+function assertBoundRejected(args, code, registryPath) {
+  const result = runNode(SOURCE_MANIFEST, args);
+  assert.equal(result.status, EXIT_CODES.INVALID_INPUT, result.stderr);
+  assert.match(result.stderr, new RegExp(`^${code}: `));
+  assert.equal(existsSync(registryPath), false, `a rejected bound wrote ${registryPath}`);
+}
+
+test("source-manifest validates every limit flag and persists the effective bounds", (context) => {
+  const root = makeTempRoot(context);
+  writeFixture(root, "notes.md", "notes\n");
+  const registryPath = join(root, ".td-work/sources.json");
+  const base = [
+    "--workspace-root", root,
+    "--mode", "create",
+    "--workdir", join(root, ".td-work"),
+    "--output", join(root, "output.md"),
+    "--notes", join(root, "notes.md"),
+  ];
+
+  const accepted = runNode(SOURCE_MANIFEST, [
+    ...base,
+    "--limit-sources-per-run", "5",
+    "--limit-unit-approximate-tokens", "1200",
+    "--limit-unit-overlap-approximate-tokens", "100",
+    "--out", registryPath,
+  ]);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(registryPath, "utf8")).limits, {
+    ...DEFAULT_LIMITS,
+    sourcesPerRun: 5,
+    unitApproximateTokens: 1200,
+    unitOverlapApproximateTokens: 100,
+  });
+
+  assertBoundRejected(
+    [...base, "--limit-sources-per-run", "01", "--out", join(root, ".td-work/noncanonical.json")],
+    "invalid-integer",
+    join(root, ".td-work/noncanonical.json")
+  );
+  assertBoundRejected(
+    [...base, "--limit-sources-per-run", "0", "--out", join(root, ".td-work/zero.json")],
+    "integer-out-of-range",
+    join(root, ".td-work/zero.json")
+  );
+  assertBoundRejected(
+    [
+      ...base,
+      "--limit-unit-overlap-approximate-tokens", String(LIMIT_DEFINITIONS.unitApproximateTokens.default),
+      "--out", join(root, ".td-work/relation.json"),
+    ],
+    "invalid-limit-relation",
+    join(root, ".td-work/relation.json")
+  );
+});
+
+test("source-manifest enforces the per-run source count and per-file byte bounds", (context) => {
+  const root = makeTempRoot(context);
+  writeFixture(root, "notes.md", "notes\n");
+  writeFixture(root, "draft.md", "draft\n");
+  const base = [
+    "--workspace-root", root,
+    "--mode", "create",
+    "--workdir", join(root, ".td-work"),
+    "--output", join(root, "output.md"),
+  ];
+
+  assertBoundRejected(
+    [
+      ...base,
+      "--notes", join(root, "notes.md"),
+      "--draft", join(root, "draft.md"),
+      "--limit-sources-per-run", "1",
+      "--out", join(root, ".td-work/too-many.json"),
+    ],
+    "array-too-long",
+    join(root, ".td-work/too-many.json")
+  );
+
+  assertBoundRejected(
+    [
+      ...base,
+      "--notes", join(root, "notes.md"),
+      "--limit-text-source-bytes-per-file", "4",
+      "--out", join(root, ".td-work/too-large.json"),
+    ],
+    "file-byte-limit",
+    join(root, ".td-work/too-large.json")
+  );
+});
+
+test("lint applies the registry's exact document bound and rejects one byte over", (context) => {
+  const root = makeTempRoot(context);
+  writeFixture(root, "notes.md", "notes\n");
+  const registryPath = join(root, ".td-work/sources.json");
+  const registered = runNode(SOURCE_MANIFEST, [
+    "--workspace-root", root,
+    "--mode", "create",
+    "--workdir", join(root, ".td-work"),
+    "--output", join(root, "out/document.md"),
+    "--notes", join(root, "notes.md"),
+    "--limit-document-bytes", "64",
+    "--out", registryPath,
+  ]);
+  assert.equal(registered.status, 0, registered.stderr);
+  assert.equal(readJsonFixture(registryPath).limits.documentBytes, 64);
+
+  const prefix = "# Guide\n\n## Overview\n\n";
+  const exact = writeFixture(root, "exact.md", `${prefix}${"x".repeat(64 - prefix.length - 1)}\n`);
+  const over = writeFixture(root, "over.md", `${prefix}${"x".repeat(64 - prefix.length)}\n`);
+  assert.equal(readFileSync(exact).length, 64);
+  assert.equal(readFileSync(over).length, 65);
+
+  const reportPath = join(root, ".td-work/lint.json");
+  const lintArgs = (file) => [
+    "--workspace-root", root,
+    "--sources", registryPath,
+    "--stage", "final",
+    file,
+    "--json", reportPath,
+  ];
+
+  const accepted = runNode(runtimeScript("lint.mjs"), lintArgs(exact));
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(readJsonFixture(reportPath).configuration.documentBytes, 64);
+  const snapshot = captureOutput(reportPath);
+
+  const rejected = runNode(runtimeScript("lint.mjs"), lintArgs(over));
+  assert.equal(rejected.status, EXIT_CODES.INVALID_INPUT, rejected.stderr);
+  assert.match(rejected.stderr, /^file-byte-limit: /);
+  assertOutputPreserved(reportPath, snapshot);
+  assertNoAdjacentTemps(reportPath);
+
+  writeFixture(root, "empty.md", "");
+  const empty = runNode(runtimeScript("lint.mjs"), lintArgs(join(root, "empty.md")));
+  assert.equal(empty.status, EXIT_CODES.EMPTY_INPUT, empty.stderr);
+  assert.match(empty.stderr, /^empty-document: /);
+  assertOutputPreserved(reportPath, snapshot);
+});
+
+test("finalization refuses empty, missing, and escaping evidence before publishing", (context) => {
+  const root = makeTempRoot(context);
+  const outside = makeTempRoot(context, "technical-docs-outside-");
+  const fixture = buildFinalizationFixture(root);
+  writeFixture(outside, "external.md", "# External\n");
+  writeFixture(root, `${fixture.work}/empty.md`, "");
+  writeFixture(root, `${fixture.work}/empty.jsonl`, "");
+
+  const cases = [
+    [EXIT_CODES.EMPTY_INPUT, "empty-document", { "--draft": join(root, `${fixture.work}/empty.md`) }],
+    [EXIT_CODES.EMPTY_INPUT, "empty-jsonl", { "--consumed": join(root, `${fixture.work}/empty.jsonl`) }],
+    [EXIT_CODES.INVALID_INPUT, "missing-path", { "--draft": join(root, `${fixture.work}/absent.md`) }],
+    [EXIT_CODES.INVALID_INPUT, "missing-path", { "--sources": join(root, `${fixture.work}/absent.json`) }],
+    [EXIT_CODES.INVALID_INPUT, "path-outside-root", { "--draft": join(outside, "external.md") }],
+    [EXIT_CODES.INVALID_INPUT, "path-outside-root", { "--sources": join(outside, "external.md") }],
+    [EXIT_CODES.INVALID_INPUT, "path-outside-root", { "--final-lint": join(outside, "external.md") }],
+  ];
+
+  for (const [status, code, overrides] of cases) {
+    const result = runFinalize(fixture, overrides);
+    assert.equal(result.status, status, `${code} case exited ${result.status}: ${result.stderr}`);
+    assert.match(result.stderr, new RegExp(`^${code}: `), `expected ${code}, saw: ${result.stderr}`);
+    assert.equal(existsSync(fixture.paths.output), false, `${code} case published output`);
+  }
+
+  const escapedRoot = runNode(runtimeScript("finalize.mjs"), [
+    ...fixture.args.map((value, index) => (index === 1 ? outside : value)),
+  ]);
+  assert.equal(escapedRoot.status, EXIT_CODES.INVALID_INPUT, escapedRoot.stderr);
+  assert.equal(existsSync(fixture.paths.output), false);
+});
+
+test("finalization creates a contained output parent one verified segment at a time", (context) => {
+  const root = makeTempRoot(context);
+  const fixture = buildFinalizationFixture(root, { output: "out/nested/deep/document.md" });
+  for (const segment of ["out", "out/nested", "out/nested/deep"]) {
+    assert.equal(existsSync(join(root, segment)), false, `${segment} must not exist before finalization`);
+  }
+
+  const published = runFinalize(fixture);
+  assert.equal(published.status, 0, published.stderr);
+  for (const segment of ["out", "out/nested", "out/nested/deep"]) {
+    const stat = lstatSync(join(root, segment));
+    assert.equal(stat.isDirectory(), true, `${segment} must be a directory`);
+    assert.equal(stat.isSymbolicLink(), false, `${segment} must not be a symlink`);
+  }
+  assert.deepEqual(readdirSync(join(root, "out/nested/deep")), ["document.md"]);
+  assert.equal(readFileSync(fixture.paths.output, "utf8"), fixture.reviewedDocument);
+  assertNoAdjacentTemps(fixture.paths.output);
+});
+
+test("finalization never writes through a symlinked output parent or target", (context) => {
+  const root = makeTempRoot(context);
+  const outside = makeTempRoot(context, "technical-docs-outside-");
+  if (!canCreateSymlink(root)) return;
+
+  const linkedParent = buildFinalizationFixture(root);
+  mkdirSync(join(outside, "captured"));
+  symlinkSync(join(outside, "captured"), join(root, "out"), "dir");
+  const throughParent = runFinalize(linkedParent);
+  assert.equal(throughParent.status, EXIT_CODES.INVALID_INPUT, throughParent.stderr);
+  assert.match(throughParent.stderr, /^unsafe-output-parent: /);
+  assert.deepEqual(readdirSync(join(outside, "captured")), [], "publication escaped through a symlinked parent");
+
+  const linkedTarget = buildFinalizationFixture(makeTempRoot(context), { mode: "replace" });
+  writeFixture(outside, "decoy.md", "# Decoy\n");
+  removeFixture(linkedTarget.paths.output);
+  symlinkSync(join(outside, "decoy.md"), linkedTarget.paths.output, "file");
+  const decoy = captureOutput(join(outside, "decoy.md"));
+  const throughTarget = runFinalize(linkedTarget);
+  assert.equal(throughTarget.status, EXIT_CODES.INVALID_INPUT, throughTarget.stderr);
+  assert.match(throughTarget.stderr, /^unsafe-output-target: /);
+  assertOutputPreserved(join(outside, "decoy.md"), decoy);
+  assertNoAdjacentTemps(linkedTarget.paths.output);
 });

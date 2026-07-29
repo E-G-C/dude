@@ -1442,6 +1442,7 @@ export function writeAtomicFile(targetPath, value, options = {}) {
 
   let temporary;
   let descriptor;
+  let temporaryIdentity = null;
   let createPublished = false;
   try {
     for (let attempt = 0; attempt < 20; attempt++) {
@@ -1458,6 +1459,7 @@ export function writeAtomicFile(targetPath, value, options = {}) {
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = undefined;
+    temporaryIdentity = identityFromStat(tryLstat(temporary));
 
     options.testHooks?.afterTempFlush?.({ target, temporary, mode });
     if (options.expectedTarget !== undefined) {
@@ -1467,6 +1469,27 @@ export function writeAtomicFile(targetPath, value, options = {}) {
     options.validateBeforePublish?.(Object.freeze({ target, temporary, mode, bytes: bytes.length, sha256: digest }));
     if (options.testOnlyInjectFailure === "before-publish") {
       fail("injected-write-failure", "injected failure before atomic publication", { path: target });
+    }
+    if (options.expectedTarget !== undefined) {
+      validateExpectedTarget(target, options.expectedTarget, { workspaceRoot: options.workspaceRoot });
+    }
+    if (options.protectedPaths !== undefined) assertNoProtectedTargetAlias(target, options.protectedPaths);
+    const finalTemporaryStat = tryLstat(temporary);
+    const finalTemporaryIdentity = identityFromStat(finalTemporaryStat);
+    if (
+      finalTemporaryStat === null
+      || finalTemporaryStat.isSymbolicLink()
+      || !finalTemporaryStat.isFile()
+      || (temporaryIdentity !== null && finalTemporaryIdentity !== null && !identitiesEqual(temporaryIdentity, finalTemporaryIdentity))
+    ) {
+      fail("target-state-changed", "atomic temporary file changed before publication", { path: target });
+    }
+    let stagedDigest = null;
+    try {
+      stagedDigest = sha256Bytes(readStableBytes(temporary, { maxBytes: bytes.length, exactBytes: bytes.length }));
+    } catch { /* an unreadable, resized, or retyped temporary is itself a change */ }
+    if (stagedDigest !== digest) {
+      fail("target-state-changed", "atomic temporary file content changed before publication", { path: target });
     }
     if (mode === "create") {
       linkSync(temporary, target);
@@ -1481,7 +1504,7 @@ export function writeAtomicFile(targetPath, value, options = {}) {
     return Object.freeze({ path: target, bytes: bytes.length, sha256: digest, mode });
   } catch (error) {
     if (createPublished) {
-      try { unlinkSync(target); } catch { /* cleanup below still removes the temp name */ }
+      try { unlinkSync(target); } catch { /* cleanup below removes the temp name only while it is still ours */ }
     }
     if (error instanceof RuntimeError) throw error;
     const code = mode === "create" && error?.code === "EEXIST" ? "output-exists" : "atomic-write-failed";
@@ -1491,7 +1514,15 @@ export function writeAtomicFile(targetPath, value, options = {}) {
       try { closeSync(descriptor); } catch { /* preserve the primary failure */ }
     }
     if (temporary !== undefined) {
-      try { unlinkSync(temporary); } catch { /* preserve the primary failure */ }
+      try {
+        const cleanupStat = tryLstat(temporary);
+        if (
+          cleanupStat !== null
+          && !cleanupStat.isSymbolicLink()
+          && cleanupStat.isFile()
+          && identitiesEqual(temporaryIdentity, identityFromStat(cleanupStat))
+        ) unlinkSync(temporary);
+      } catch { /* preserve the primary failure */ }
     }
   }
 }
@@ -1522,14 +1553,32 @@ export function createStagedDirectory(targetPath, options = {}) {
   fail("staged-directory-collision", "could not allocate an adjacent staged directory", { path: target });
 }
 
+function assertDistinctStagedDirectory(staged, target) {
+  if (pathsAlias(staged, target)) {
+    fail("invalid-staged-directory", "staged directory must not alias its destination", { path: staged });
+  }
+}
+
+function removeOwnedStagedDirectory(staged, target, expectedIdentity) {
+  const currentStat = tryLstat(staged);
+  if (
+    currentStat === null
+    || currentStat.isSymbolicLink()
+    || !currentStat.isDirectory()
+    || !identitiesEqual(expectedIdentity, identityFromStat(currentStat))
+    || pathsAlias(staged, target)
+  ) return;
+  rmSync(staged, { recursive: true });
+}
+
 /**
  * Publish an adjacent staged directory to an absent destination, or reuse an
  * existing directory only when verifyExisting proves exact entry/digest
  * equality. The verifier owns recursive membership and digest validation.
  * Portable Node has no renameat2(RENAME_NOREPLACE), so this API rechecks the
  * destination immediately before rename but still requires a trusted immutable
- * parent namespace for the final lookup or reuse cleanup. On failed validation,
- * the staged directory is retained and an existing destination is never removed.
+ * parent namespace for the final lookup or cleanup. Failed attempts remove only
+ * the originally validated, non-aliased staged directory.
  */
 export function publishStagedDirectory(stagedPath, targetPath, options = {}) {
   const staged = resolve(stagedPath);
@@ -1555,52 +1604,88 @@ export function publishStagedDirectory(stagedPath, targetPath, options = {}) {
   if (!stagedStat?.isDirectory() || stagedStat.isSymbolicLink()) {
     fail("invalid-staged-directory", "staged path must be an existing non-symlink directory", { path: staged });
   }
+  assertDistinctStagedDirectory(staged, target);
+  const stagedIdentity = identityFromStat(stagedStat);
 
-  options.testHooks?.beforeDirectoryPublish?.({ staged, target });
-  assertNoSymlinkComponents(staged);
-  assertNoSymlinkComponents(parent);
-  const targetStat = tryLstat(target);
-  if (targetStat !== null) {
-    if (options.verifyExisting === undefined) {
-      fail("output-exists", "staged-directory destination already exists", { path: target });
-    }
-    assertNoSymlinkComponents(target);
-    if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) {
-      fail("unsafe-output-target", "existing staged-directory destination must be a non-symlink directory", { path: target });
-    }
-    const expectedIdentity = identityFromStat(targetStat);
-    const verified = options.verifyExisting(Object.freeze({ staged, target })) === true;
-    assertNoSymlinkComponents(staged);
-    assertNoSymlinkComponents(target);
-    const finalStagedStat = tryLstat(staged);
-    const finalTargetStat = tryLstat(target);
-    if (
-      !finalStagedStat?.isDirectory()
-      || finalStagedStat.isSymbolicLink()
-      || !finalTargetStat?.isDirectory()
-      || finalTargetStat.isSymbolicLink()
-      || !identitiesEqual(expectedIdentity, identityFromStat(finalTargetStat))
-    ) {
-      fail("staged-directory-changed", "staged or existing directory changed during verification", { path: target });
-    }
-    if (!verified) fail("staged-directory-mismatch", "existing directory does not exactly match the staged directory", { path: target });
-    options.validateBeforePublish?.(Object.freeze({ staged, target, reused: true }));
-    rmSync(staged, { recursive: true });
-    syncDirectoryBestEffort(parent);
-    return Object.freeze({ path: target, reused: true });
-  }
-
-  options.validateBeforePublish?.(Object.freeze({ staged, target, reused: false }));
-  assertNoSymlinkComponents(staged);
-  assertNoSymlinkComponents(parent);
-  if (tryLstat(target) !== null) fail("output-exists", "staged-directory destination appeared before publication", { path: target });
+  let stagedOwned = true;
   try {
-    renameSync(staged, target);
-    syncDirectoryBestEffort(parent);
-    return Object.freeze({ path: target, reused: false });
-  } catch (error) {
-    if (error instanceof RuntimeError) throw error;
-    fail("staged-directory-publish-failed", `cannot publish staged directory: ${error.message}`, { path: target, cause: error });
+    options.testHooks?.beforeDirectoryPublish?.({ staged, target });
+    assertNoSymlinkComponents(staged);
+    assertNoSymlinkComponents(parent);
+    assertDistinctStagedDirectory(staged, target);
+    const targetStat = tryLstat(target);
+    if (targetStat !== null) {
+      if (options.verifyExisting === undefined) {
+        fail("output-exists", "staged-directory destination already exists", { path: target });
+      }
+      assertNoSymlinkComponents(target);
+      if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) {
+        fail("unsafe-output-target", "existing staged-directory destination must be a non-symlink directory", { path: target });
+      }
+      const expectedIdentity = identityFromStat(targetStat);
+      options.validateBeforePublish?.(Object.freeze({ staged, target, reused: true }));
+      assertNoSymlinkComponents(staged);
+      assertNoSymlinkComponents(target);
+      assertDistinctStagedDirectory(staged, target);
+      const validatedTargetStat = tryLstat(target);
+      const validatedTargetIdentity = identityFromStat(validatedTargetStat);
+      if (
+        !validatedTargetStat?.isDirectory()
+        || validatedTargetStat.isSymbolicLink()
+        || (expectedIdentity !== null && validatedTargetIdentity !== null && !identitiesEqual(expectedIdentity, validatedTargetIdentity))
+      ) {
+        fail("staged-directory-changed", "existing directory changed before reuse completed", { path: target });
+      }
+      const verified = options.verifyExisting(Object.freeze({ staged, target })) === true;
+      assertNoSymlinkComponents(staged);
+      assertNoSymlinkComponents(target);
+      assertDistinctStagedDirectory(staged, target);
+      const finalStagedStat = tryLstat(staged);
+      const finalTargetStat = tryLstat(target);
+      const finalTargetIdentity = identityFromStat(finalTargetStat);
+      if (
+        !finalStagedStat?.isDirectory()
+        || finalStagedStat.isSymbolicLink()
+        || !finalTargetStat?.isDirectory()
+        || finalTargetStat.isSymbolicLink()
+        || (expectedIdentity !== null && finalTargetIdentity !== null && !identitiesEqual(expectedIdentity, finalTargetIdentity))
+      ) {
+        fail("staged-directory-changed", "staged or existing directory changed during verification", { path: target });
+      }
+      if (!verified) fail("staged-directory-mismatch", "existing directory does not exactly match the staged directory", { path: target });
+      removeOwnedStagedDirectory(staged, target, stagedIdentity);
+      stagedOwned = false;
+      syncDirectoryBestEffort(parent);
+      return Object.freeze({ path: target, reused: true });
+    }
+
+    options.validateBeforePublish?.(Object.freeze({ staged, target, reused: false }));
+    assertNoSymlinkComponents(staged);
+    assertNoSymlinkComponents(parent);
+    assertDistinctStagedDirectory(staged, target);
+    const publishStagedStat = tryLstat(staged);
+    const publishStagedIdentity = identityFromStat(publishStagedStat);
+    if (
+      !publishStagedStat?.isDirectory()
+      || publishStagedStat.isSymbolicLink()
+      || (stagedIdentity !== null && publishStagedIdentity !== null && !identitiesEqual(stagedIdentity, publishStagedIdentity))
+    ) {
+      fail("staged-directory-changed", "staged directory changed before publication", { path: staged });
+    }
+    if (tryLstat(target) !== null) fail("output-exists", "staged-directory destination appeared before publication", { path: target });
+    try {
+      renameSync(staged, target);
+      stagedOwned = false;
+      syncDirectoryBestEffort(parent);
+      return Object.freeze({ path: target, reused: false });
+    } catch (error) {
+      if (error instanceof RuntimeError) throw error;
+      fail("staged-directory-publish-failed", `cannot publish staged directory: ${error.message}`, { path: target, cause: error });
+    }
+  } finally {
+    if (stagedOwned) {
+      try { removeOwnedStagedDirectory(staged, target, stagedIdentity); } catch { /* preserve the primary publication failure */ }
+    }
   }
 }
 

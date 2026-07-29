@@ -4237,16 +4237,21 @@ function projectionDeltaRowsFixture(before, after) {
 function cloneFixtureRepository(sourceRoot) {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-transient-clone-'));
   const root = path.join(parent, 'repo');
-  git(parent, ['clone', '--quiet', '--no-hardlinks', sourceRoot, root]);
-  for (const entry of fs.readdirSync(sourceRoot).filter((candidate) => candidate !== '.git')) {
-    fs.cpSync(path.join(sourceRoot, entry), path.join(root, entry), {
-      recursive: true,
-      force: true,
-    });
+  try {
+    git(parent, ['clone', '--quiet', '--no-hardlinks', sourceRoot, root]);
+    for (const entry of fs.readdirSync(sourceRoot).filter((candidate) => candidate !== '.git')) {
+      fs.cpSync(path.join(sourceRoot, entry), path.join(root, entry), {
+        recursive: true,
+        force: true,
+      });
+    }
+    git(root, ['config', 'user.name', 'Dude Test']);
+    git(root, ['config', 'user.email', 'dude-test@example.invalid']);
+    return { parent, root };
+  } catch (error) {
+    fs.rmSync(parent, { recursive: true, force: true });
+    throw error;
   }
-  git(root, ['config', 'user.name', 'Dude Test']);
-  git(root, ['config', 'user.email', 'dude-test@example.invalid']);
-  return { parent, root };
 }
 
 /** @param {string} sourceRoot */
@@ -4348,12 +4353,14 @@ function commitFixture(root, message) {
   return git(root, ['rev-parse', 'HEAD']).trim();
 }
 
-function createTransientPacketRepositoryFixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-transient-event-'));
-  git(path.dirname(root), ['clone', '--quiet', '--no-hardlinks', ROOT, root]);
+function initializeTransientPacketRepositoryFixture(root, sourceRoot) {
+  git(path.dirname(root), ['clone', '--quiet', '--no-local', '--depth=1', sourceRoot, root]);
+  assert.equal(git(root, ['rev-list', '--count', 'HEAD']).trim(), '1', 'fixture starts depth one');
+  git(root, ['checkout', '--quiet', '-B', 'main']);
   git(root, ['config', 'user.name', 'Dude Test']);
   git(root, ['config', 'user.email', 'dude-test@example.invalid']);
   git(root, ['config', 'core.fileMode', 'true']);
+  removeFixturePath(root, '.dude');
   fs.cpSync(path.join(ROOT, '.dude'), path.join(root, '.dude'), {
     recursive: true,
     force: true,
@@ -4367,15 +4374,79 @@ function createTransientPacketRepositoryFixture() {
   }
 
   const t009Paths = currentT009DeclaredPathsFixture();
-  const baselineHead = '136f6bb8353de887a94afc26b5197524cb78d935';
-  const currentHead = git(root, ['rev-parse', '--verify', 'HEAD^{commit}']).trim();
-  const currentDelta = deriveGitDeltaFixture(root, baselineHead, currentHead);
-  assert.equal(currentDelta.changedRows.length, 20, 'real current event has twenty source rows');
+  const eventPaths = sortFixturePaths([
+    ...t009Paths,
+    ...T007_FEATURE_003_PATHS,
+    ...T007_FEATURE_006_PATHS,
+  ]);
+  assert.equal(eventPaths.length, 20, 'synthetic event has twenty source paths');
+  assert.equal(new Set(eventPaths).size, 20, 'synthetic event source paths are disjoint');
+  const currentSources = new Map(eventPaths.map((relative) => {
+    const absolute = path.join(ROOT, ...relative.split('/'));
+    const stat = fs.lstatSync(absolute);
+    assert.equal(stat.isFile(), true, `${relative}: current source is a regular file`);
+    return [relative, {
+      content: fs.readFileSync(absolute, 'utf8'),
+      mode: (stat.mode & 0o111) === 0 ? 0o644 : 0o755,
+    }];
+  }));
+  const addedPath = T007_FEATURE_006_PATHS[0];
+  for (const relative of eventPaths) {
+    if (relative === addedPath) {
+      removeFixturePath(root, relative);
+      continue;
+    }
+    const current = currentSources.get(relative);
+    assert.ok(current, `${relative}: current source snapshot exists`);
+    writeFixture(root, relative, `synthetic baseline for ${relative}\n`);
+    fs.chmodSync(path.join(root, ...relative.split('/')), current.mode);
+  }
+  buildDev({ repoRoot: root });
+  const baselineHead = commitFixture(root, 'synthetic original baseline');
+
+  for (const relative of eventPaths) {
+    const current = currentSources.get(relative);
+    assert.ok(current, `${relative}: current source snapshot exists`);
+    writeFixture(root, relative, current.content);
+    fs.chmodSync(path.join(root, ...relative.split('/')), current.mode);
+  }
+  for (const relative of [...T007_FEATURE_003_PATHS, ...T007_FEATURE_006_PATHS]) {
+    const destination = srcToDeploy(relative);
+    if (!isReleaseFile(destination)) {
+      removeFixturePath(root, destination);
+      continue;
+    }
+    const current = currentSources.get(relative);
+    assert.ok(current, `${relative}: contributor source snapshot exists`);
+    writeFixture(root, destination, current.content);
+    fs.chmodSync(path.join(root, ...destination.split('/')), current.mode);
+  }
+
+  git(root, ['add', '--all']);
+  const candidateTree = git(root, ['write-tree']).trim();
+  const candidateDelta = deriveGitDeltaFixture(root, baselineHead, candidateTree);
+  assert.equal(candidateDelta.changedRows.length, 20, 'synthetic current event has twenty source rows');
   assert.deepEqual(
-    currentDelta.changedPaths,
-    sortFixturePaths([...t009Paths, ...T007_FEATURE_003_PATHS, ...T007_FEATURE_006_PATHS]),
-    'real current event has the exact 10/9/1 source partition',
+    candidateDelta.changedPaths,
+    eventPaths,
+    'synthetic current event has the exact 10/9/1 source partition',
   );
+  const acceptedDeclarationIdentity = fixtureIdentity(t009Paths);
+  const acceptedChangedRows = candidateDelta.changedRows.filter(({ path: candidate }) => (
+    t009Paths.includes(candidate)
+  ));
+  assert.equal(acceptedChangedRows.length, 10, 'synthetic T008 identity covers ten changed rows');
+  const acceptedChangedIdentity = fixtureIdentity(acceptedChangedRows);
+  rewriteTextFixture(root, T007_TRANSIENT_IDENTITIES.adopterOwner, (source) => source.replace(
+    new RegExp(
+      `(claimed ${T007_TRANSIENT_IDENTITIES.adopterAcceptanceTask}[^\\n]*declaration identity )`
+      + '[0-9a-f]{64}( and changed-source identity )[0-9a-f]{64}',
+    ),
+    `$1${acceptedDeclarationIdentity}$2${acceptedChangedIdentity}`,
+  ));
+  const acceptedRevision = commitFixture(root, 'synthetic accepted source revision');
+  git(root, ['commit', '--quiet', '--allow-empty', '-m', 'synthetic continuity revision']);
+  const continuityRevision = git(root, ['rev-parse', '--verify', 'HEAD^{commit}']).trim();
 
   const policyTasksPath = T007_TRANSIENT_IDENTITIES.policySpec.replace(/\/spec\.md$/, '/tasks.md');
   const policyTasks = parseTasks(
@@ -4482,6 +4553,35 @@ function createTransientPacketRepositoryFixture() {
     normalizedAdopterTask.glyph,
     `${adopterTasksPath}: normalized T009 task and snapshot agree`,
   );
+  const currentHead = commitFixture(root, 'synthetic current pre-materialization event');
+  const currentDelta = deriveGitDeltaFixture(root, baselineHead, currentHead);
+  assert.equal(currentDelta.changedRows.length, 20, 'synthetic committed event has twenty source rows');
+  assert.deepEqual(
+    currentDelta.changedPaths,
+    eventPaths,
+    'synthetic committed event retains the exact 10/9/1 source partition',
+  );
+  const baselineSrcTree = git(root, ['rev-parse', '--verify', `${baselineHead}:src`]).trim();
+  rewriteTextFixture(root, T007_TRANSIENT_IDENTITIES.adopterOwner, (source) => source.replace(
+    new RegExp(
+      `core-dogfood-baseline v1 terminal=${T007_TRANSIENT_IDENTITIES.adopterTerminal}`
+      + ' head=[0-9a-f]{40} src_tree=[0-9a-f]{40}',
+    ),
+    `core-dogfood-baseline v1 terminal=${T007_TRANSIENT_IDENTITIES.adopterTerminal}`
+      + ` head=${baselineHead} src_tree=${baselineSrcTree}`,
+  ));
+  rewriteTextFixture(root, T007_TRANSIENT_IDENTITIES.adopterOwner, (source) => source.replace(
+    new RegExp(
+      `user explicitly authorized ${T007_TRANSIENT_IDENTITIES.adopterTerminal}`
+      + ' continuity from original baseline [0-9a-f]{40} through revisions [^\\n]+'
+      + ', to current HEAD [0-9a-f]{40}; authorization is bound to the original Feature009 owner,'
+      + ' terminal, and serialized interval and grants no authority after HEAD or chain drift',
+    ),
+    `user explicitly authorized ${T007_TRANSIENT_IDENTITIES.adopterTerminal}`
+      + ` continuity from original baseline ${baselineHead} through revisions ${acceptedRevision},`
+      + ` ${continuityRevision}, to current HEAD ${currentHead}; authorization is bound to the original`
+      + ' Feature009 owner, terminal, and serialized interval and grants no authority after HEAD or chain drift',
+  ));
   const policyIdentity = fixtureIdentity([
     read(PROJECT_SKILL),
     read(CORE_DOGFOOD_LOCAL_SKILL),
@@ -4492,7 +4592,11 @@ function createTransientPacketRepositoryFixture() {
   const continuityChain = git(root, [
     'rev-list', '--reverse', '--topo-order', `${baselineHead}..${currentHead}`,
   ]).trim().split('\n').filter(Boolean);
-  assert.equal(continuityChain.at(-1), currentHead, 'continuity chain reaches current HEAD');
+  assert.deepEqual(
+    continuityChain,
+    [acceptedRevision, continuityRevision, currentHead],
+    'continuity chain reaches current HEAD through both synthetic revisions',
+  );
   return {
     baselineHead,
     continuityChain,
@@ -4500,6 +4604,17 @@ function createTransientPacketRepositoryFixture() {
     root,
     t009Paths,
   };
+}
+
+/** @param {string} [sourceRoot] */
+function createTransientPacketRepositoryFixture(sourceRoot = ROOT) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-transient-event-'));
+  try {
+    return initializeTransientPacketRepositoryFixture(root, sourceRoot);
+  } catch (error) {
+    fs.rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 /**
@@ -5812,30 +5927,86 @@ function inspectOneTimeFinalCloseFixture(root, facts, evidence, ownerBeforeAppen
 /** @param {string} sourceRoot @param {string|null} [olderAcceptedLine] */
 function prepareOneTimeFinalCloseFixture(sourceRoot, olderAcceptedLine = null) {
   const clone = cloneFixtureRepository(sourceRoot);
-  const facts = deriveTransientPacketFixture(clone.root);
-  assert.deepEqual(facts.failures, [], 'final-close preparation packet');
-  const protectedBefore = protectedFilesystemRowsFixture(clone.root);
-  const materialized = buildDev({ repoRoot: clone.root });
-  assert.deepEqual(materialized.written, facts.materializerWritten);
-  assert.deepEqual(materialized.removed, facts.materializerRemoved);
-  assert.deepEqual(protectedFilesystemRowsFixture(clone.root), protectedBefore);
-  const evidence = oneTimeFinalEvidenceFixture(facts);
-  const acceptedLine = evidence.line.replace('<UTC>', '2026-07-26T23:59:00Z');
-  const ownerPath = path.join(clone.root, T007_TRANSIENT_IDENTITIES.adopterOwner);
-  let ownerBeforeAppend = fs.readFileSync(ownerPath, 'utf8');
-  if (olderAcceptedLine) {
-    ownerBeforeAppend = appendOwnerLogLineFixture(ownerBeforeAppend, olderAcceptedLine);
-    fs.writeFileSync(ownerPath, ownerBeforeAppend);
+  try {
+    const facts = deriveTransientPacketFixture(clone.root);
+    assert.deepEqual(facts.failures, [], 'final-close preparation packet');
+    const protectedBefore = protectedFilesystemRowsFixture(clone.root);
+    const materialized = buildDev({ repoRoot: clone.root });
+    assert.deepEqual(materialized.written, facts.materializerWritten);
+    assert.deepEqual(materialized.removed, facts.materializerRemoved);
+    assert.deepEqual(protectedFilesystemRowsFixture(clone.root), protectedBefore);
+    const evidence = oneTimeFinalEvidenceFixture(facts);
+    const acceptedLine = evidence.line.replace('<UTC>', '2026-07-26T23:59:00Z');
+    const ownerPath = path.join(clone.root, T007_TRANSIENT_IDENTITIES.adopterOwner);
+    let ownerBeforeAppend = fs.readFileSync(ownerPath, 'utf8');
+    if (olderAcceptedLine) {
+      ownerBeforeAppend = appendOwnerLogLineFixture(ownerBeforeAppend, olderAcceptedLine);
+      fs.writeFileSync(ownerPath, ownerBeforeAppend);
+    }
+    fs.writeFileSync(ownerPath, appendOwnerLogLineFixture(ownerBeforeAppend, acceptedLine));
+    return {
+      ...clone,
+      acceptedLine,
+      evidence,
+      facts,
+      ownerBeforeAppend,
+    };
+  } catch (error) {
+    fs.rmSync(clone.parent, { recursive: true, force: true });
+    throw error;
   }
-  fs.writeFileSync(ownerPath, appendOwnerLogLineFixture(ownerBeforeAppend, acceptedLine));
-  return {
-    ...clone,
-    acceptedLine,
-    evidence,
-    facts,
-    ownerBeforeAppend,
-  };
 }
+
+test('T007 Core Dogfood fixture setup and close preparation failures remove only new roots', (t) => {
+  const tempRoots = (prefix) => new Set(fs.readdirSync(os.tmpdir())
+    .filter((entry) => entry.startsWith(prefix)));
+  const preExistingEventRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-transient-event-'));
+  const preExistingCloneRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-transient-clone-'));
+  t.after(() => {
+    fs.rmSync(preExistingEventRoot, { recursive: true, force: true });
+    fs.rmSync(preExistingCloneRoot, { recursive: true, force: true });
+  });
+
+  const eventRootsBefore = tempRoots('dude-transient-event-');
+  const missingSource = path.join(os.tmpdir(), `dude-missing-source-${process.pid}-${Date.now()}`);
+  assert.throws(() => createTransientPacketRepositoryFixture(missingSource));
+  assert.deepEqual(
+    [...tempRoots('dude-transient-event-')].filter((entry) => !eventRootsBefore.has(entry)),
+    [],
+    'failed setup removes its event root without touching pre-existing roots',
+  );
+  assert.equal(fs.existsSync(preExistingEventRoot), true, 'failed setup retains a pre-existing event root');
+
+  const cloneRootsBeforeSetupFailure = tempRoots('dude-transient-clone-');
+  assert.throws(() => prepareOneTimeFinalCloseFixture(missingSource));
+  assert.deepEqual(
+    [...tempRoots('dude-transient-clone-')].filter((entry) => !cloneRootsBeforeSetupFailure.has(entry)),
+    [],
+    'failed close clone setup removes its new root without touching pre-existing roots',
+  );
+  assert.equal(
+    fs.existsSync(preExistingCloneRoot),
+    true,
+    'failed close clone setup retains a pre-existing clone root',
+  );
+
+  const fixture = createTransientPacketRepositoryFixture();
+  const broken = cloneFixtureRepository(fixture.root);
+  try {
+    writeFixture(broken.root, '.dude/state/task-state.json', '{}\n');
+    const cloneRootsBefore = tempRoots('dude-transient-clone-');
+    assert.throws(() => prepareOneTimeFinalCloseFixture(broken.root));
+    assert.deepEqual(
+      [...tempRoots('dude-transient-clone-')].filter((entry) => !cloneRootsBefore.has(entry)),
+      [],
+      'failed close preparation removes its clone root without touching pre-existing roots',
+    );
+    assert.equal(fs.existsSync(preExistingCloneRoot), true, 'failed close retains a pre-existing clone root');
+  } finally {
+    fs.rmSync(broken.parent, { recursive: true, force: true });
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
 
 /** @param {string} source */
 function transientPacketPolicyFailures(source) {

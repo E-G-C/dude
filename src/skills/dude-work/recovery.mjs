@@ -3195,12 +3195,29 @@ function autonomousAttemptIdentity(target, attemptOrdinal, authorizationEvidence
 }
 
 const V2_IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9._:/@-]{0,127}$/;
-const V2_EVENT_TYPES = Object.freeze([
-  'approach-occurrence',
-  'finding-occurrence',
-  'learning-review',
-  'learning-governance',
-]);
+/**
+ * The single shared declaration of every lane-history event type this runtime's
+ * writer may emit. Each type is declared exactly once with its retention
+ * relevance and its own validator: `retention-relevant` types feed occurrence
+ * retention and repeat detection, `audit-only` types are validated just as
+ * strictly and are then excluded from retention decisions. A type absent from
+ * this declaration is unknown and keeps failing closed.
+ */
+export const LANE_EVENT_TYPES = Object.freeze({
+  'approach-occurrence': Object.freeze({ relevance: 'retention-relevant', validate: validateApproachOccurrenceEventV1 }),
+  'finding-occurrence': Object.freeze({ relevance: 'retention-relevant', validate: validateFindingOccurrenceEventV1 }),
+  'learning-review': Object.freeze({ relevance: 'audit-only', validate: validateLearningReviewEventV2 }),
+  'learning-governance': Object.freeze({ relevance: 'audit-only', validate: validateGovernanceEventV1 }),
+  'incident-supersession': Object.freeze({ relevance: 'audit-only', validate: validateIncidentSupersessionEventV1 }),
+});
+
+/** @param {unknown} type @returns {{relevance: string, validate: (value: unknown, label: string) => unknown} | null} */
+function laneEventDeclaration(type) {
+  if (typeof type !== 'string' || !Object.hasOwn(LANE_EVENT_TYPES, type)) return null;
+  return /** @type {Record<string, {relevance: string, validate: (value: unknown, label: string) => unknown}>} */ (
+    LANE_EVENT_TYPES
+  )[type];
+}
 const V2_GOVERNANCE_PHASES = Object.freeze([
   'required',
   'reviewed',
@@ -3832,7 +3849,7 @@ export function validateEventCommitmentV1(value, label = 'EventCommitmentV1') {
   const commitment = assertExactRecord(value, ['kind', 'eventHash'], [], label);
   assertEnum(
     commitment.kind,
-    ['approach-occurrence', 'finding-occurrence', 'learning-review', 'learning-governance', 'incident-supersession'],
+    Object.keys(LANE_EVENT_TYPES),
     `${label}.kind`,
   );
   assertHash(commitment.eventHash, `${label}.eventHash`);
@@ -4197,12 +4214,9 @@ function trustedEnvelopeIndexFromInspectionV2(inspection) {
 /** @param {unknown} value @param {string} label */
 function validateT002AuthoritativeEvent(value, label) {
   const record = assertRecord(value, label);
-  const type = record.type;
-  if (type === 'approach-occurrence') return validateApproachOccurrenceEventV1(value, label);
-  if (type === 'finding-occurrence') return validateFindingOccurrenceEventV1(value, label);
-  if (type === 'learning-review' && record.version === 2) return validateLearningReviewEventV2(value, label);
-  if (type === 'learning-governance') return validateGovernanceEventV1(value, label);
-  return invalid(`${label}.type`, 'is not an authoritative autonomous v2 event');
+  const declared = isV2AuthoritativeEventRecord(record) ? laneEventDeclaration(record.type) : null;
+  if (!declared) return invalid(`${label}.type`, 'is not an authoritative autonomous v2 event');
+  return declared.validate(value, label);
 }
 
 /** @param {string} purpose @param {Record<string, unknown>} target @param {Record<string, unknown>[]} events @param {string} label */
@@ -4534,7 +4548,7 @@ function inspectionSourceBodyV2(inspection, source) {
 function isV2AuthoritativeEventRecord(value) {
   if (!isPlainRecord(value)) return false;
   const record = /** @type {Record<string, unknown>} */ (value);
-  if (!V2_EVENT_TYPES.includes(/** @type {string} */ (record.type))) return false;
+  if (!laneEventDeclaration(record.type)) return false;
   return record.type !== 'learning-review' || record.version === 2;
 }
 
@@ -4706,7 +4720,10 @@ function validateOccurrenceSurfaceV2(events, surface) {
   /** @type {Map<string, string>} */
   const chronology = new Map();
   for (const event of events) {
-    if (!['approach-occurrence', 'finding-occurrence'].includes(/** @type {string} */ (event.type))) continue;
+    // Declared audit-only records are already validated by this point; they are
+    // excluded here by declared relevance so retention and repeat detection
+    // never see them.
+    if (laneEventDeclaration(event.type)?.relevance !== 'retention-relevant') continue;
     const eventHash = /** @type {string} */ (event.eventHash);
     const eventJson = canonicalJson(event);
     if (byHash.has(eventHash)) {
@@ -9079,9 +9096,7 @@ export function validateIncidentSupersessionEventV1(value, label = 'IncidentSupe
 
 /** Closed set of events one autonomous v2 lane line or batch may carry. @param {unknown} value @param {string} label */
 function validateV2ProjectableEvent(value, label) {
-  return /** @type {Record<string, unknown>} */ (assertRecord(value, label)).type === 'incident-supersession'
-    ? validateIncidentSupersessionEventV1(value, label)
-    : validateT002AuthoritativeEvent(value, label);
+  return validateT002AuthoritativeEvent(value, label);
 }
 
 /** @param {unknown} value @param {string} [label] */

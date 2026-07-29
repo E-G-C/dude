@@ -17813,3 +17813,439 @@ test('T005 incident contracts: an exact-evidence preview binds its lines, owner 
     }
   });
 });
+
+
+
+// --- Feature 010 T001: shared lane-history event-type declaration ---------
+
+/** One complete declared audit-only lane-history event. @param {Record<string, unknown>} [overrides] */
+function t001AuditOnlyEvent(overrides = {}) {
+  const body = {
+    type: 'incident-supersession',
+    version: 1,
+    incidentIdentity: t002Hash('t001-incident'),
+    intentIdentity: t002Hash('t001-intent'),
+    target: canonicalTarget(F7_TARGET),
+    priorDispositionIdentity: t002Hash('t001-prior-disposition'),
+    acceptedFeatureEvidenceIdentity: t002Hash('t001-accepted-feature-evidence'),
+    branch: 'exact-evidence',
+    conclusion: 'unauthorized-block-superseded',
+    resultingTargetState: 'in-progress-learning-required',
+    evidenceInventoryHash: t002Hash('t001-evidence-inventory'),
+    ...overrides,
+  };
+  return { ...body, eventHash: sha256(canonicalJson(body)) };
+}
+
+/** Authorize the same otherwise-valid autonomous attempt against the workspace lane history. @param {string} root */
+function t001Authorize(root) {
+  const runCommand = runtimeFunction('runCommand');
+  return runCommand('authorize', {
+    trigger: 'post-failure',
+    state: autonomousState(),
+    input: autonomousInspectInput(root),
+    assessment: {
+      ...transitionAssessment('retry-task'),
+      evidenceHash: inspect(autonomousInspectInput(root)).evidenceHash,
+    },
+    mode: 'recovery',
+  }).authorization;
+}
+
+test('T001 shared declaration: a declared audit-only lane record authorizes autonomously and is never rewritten', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const tasksPath = path.join(root, TASKS_PATH);
+    const auditBytes = t002HistoryTasksRecordBytes([`${t002V2EventLine(t001AuditOnlyEvent())}\n`]);
+
+    // Act
+    const withoutAudit = t001Authorize(root);
+    fs.writeFileSync(tasksPath, auditBytes);
+    const withAudit = t001Authorize(root);
+
+    // Assert
+    assert.equal(withoutAudit.authorized, true);
+    assert.equal(withAudit.authorized, true);
+    assert.equal(Object.hasOwn(withAudit, 'blocker'), false);
+    // The read is reader-side only: the append-only record survives byte-identical.
+    assert.deepEqual(fs.readFileSync(tasksPath), auditBytes);
+  });
+});
+
+test('T001 shared declaration: a corrupt declared audit-only lane record still fails closed', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const valid = t001AuditOnlyEvent();
+    const corruptRecords = [
+      ['tampered body', { ...valid, evidenceInventoryHash: t002Hash('t001-tampered-inventory') }],
+      // Self-consistent bytes carrying a contradictory branch: an audit-only
+      // record is validated exactly as strictly as a retention-relevant one.
+      ['contradictory branch', t001AuditOnlyEvent({ branch: 'evidence-incomplete' })],
+      ['foreign target', t001AuditOnlyEvent({ target: canonicalTarget(TARGET) })],
+    ];
+
+    // Act and Assert
+    for (const [label, event] of corruptRecords) {
+      fs.writeFileSync(
+        path.join(root, TASKS_PATH),
+        t002HistoryTasksRecordBytes([`${t002V2EventLine(/** @type {Record<string, unknown>} */ (event))}\n`]),
+      );
+      const refused = t001Authorize(root);
+      assert.equal(refused.authorized, false, /** @type {string} */ (label));
+      assert.equal(refused.reason, 'evidence-incomplete', /** @type {string} */ (label));
+      assert.equal(refused.blocker.subject, 'occurrence-retention', /** @type {string} */ (label));
+      assert.equal(classifyOutcomeReason(refused.reason), 'hard-stop', /** @type {string} */ (label));
+    }
+  });
+});
+
+test('T001 shared declaration: an undeclared lane record keeps failing closed', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const undeclared = { type: 'unknown-audit', version: 1 };
+    fs.writeFileSync(
+      path.join(root, TASKS_PATH),
+      t002HistoryTasksRecordBytes([`${t002V2EventLine(undeclared)}\n`]),
+    );
+
+    // Act
+    const refused = t001Authorize(root);
+
+    // Assert
+    assert.equal(refused.authorized, false);
+    assert.equal(refused.reason, 'evidence-incomplete');
+    assert.equal(refused.blocker.subject, 'occurrence-retention');
+    assert.equal(classifyOutcomeReason(refused.reason), 'hard-stop');
+  });
+});
+
+test('T001 shared declaration: declared audit-only records leave retention and repeat detection unchanged', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ verdict: 'accepted', checkOutcome: 'passed' });
+    const captured = recoveryRuntime.captureCompletionV2(
+      fixture.state,
+      autonomousInspectInput(root, t002TrustedStreams([fixture])),
+      fixture.completion,
+    );
+    const occurrenceRecords = captured.occurrenceEvents.map((event) => `${t002V2EventLine(event)}\n`);
+    const auditRecord = `${t002V2EventLine(t001AuditOnlyEvent())}\n`;
+    /** @param {string[]} records */
+    const finalize = (records) => recoveryRuntime.finalizeCompletionV2(
+      captured.state,
+      t002RetentionInputWithTaskHistory(
+        root,
+        captured.occurrenceEvents,
+        t002HistoryTasksRecordBytes(records),
+        [fixture],
+      ),
+      captured.occurrenceEvents,
+    );
+
+    // Act
+    const retentionOnly = finalize(occurrenceRecords);
+    // Repeated audit-only records must accumulate into no retention signal.
+    const withAudit = finalize([auditRecord, ...occurrenceRecords, auditRecord]);
+    const auditOnly = finalize([auditRecord]);
+
+    // Assert
+    assert.equal(retentionOnly.finalized, true);
+    assert.equal(withAudit.finalized, true);
+    assert.equal(withAudit.completed, true);
+    assert.equal(withAudit.reason, 'completed');
+    assert.equal(canonicalJson(withAudit.state), canonicalJson(retentionOnly.state));
+    // Lane history holding only audit-only records reads exactly like empty
+    // lane history: incomplete retention, not a parse failure.
+    assert.equal(auditOnly.finalized, false);
+    assert.equal(auditOnly.reason, 'occurrence-retention-incomplete');
+    assert.equal(canonicalJson(auditOnly.state), canonicalJson(captured.state));
+  });
+});
+
+test('T001 shared declaration: a legacy v1 learning-review record stays non-authoritative', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange: the declaration carries the `learning-review` token, but Feature
+    // 005 v1 history sharing that token is legacy-audit-only and must remain a
+    // non-candidate rather than become a validated v2 record.
+    const legacy = { type: 'learning-review', version: 1, outcome: 'legacy-audit-only' };
+    const input = autonomousInspectInput(root, {
+      currentRun: [capture(TARGET, 'failed', [{ event: legacy }])],
+    });
+
+    // Act
+    const authorization = runtimeFunction('runCommand')('authorize', {
+      trigger: 'post-failure',
+      state: autonomousState(),
+      input,
+      assessment: { ...transitionAssessment('retry-task'), evidenceHash: inspect(input).evidenceHash },
+      mode: 'recovery',
+    }).authorization;
+
+    // Assert
+    assert.equal(authorization.authorized, true);
+    assert.equal(authorization.reason, 'authorized');
+  });
+});
+
+test('T002 writer commitment derives every accepted kind from the shared declaration', () => {
+  const declaredKinds = Object.keys(recoveryRuntime.LANE_EVENT_TYPES);
+  assert.ok(declaredKinds.length > 0);
+  assert.match(
+    recoveryRuntime.validateEventCommitmentV1.toString(),
+    /Object\.keys\(LANE_EVENT_TYPES\)/,
+  );
+
+  for (const [index, kind] of declaredKinds.entries()) {
+    const commitment = { kind, eventHash: sha256(`feature-010-t002-${index}`) };
+    assert.equal(recoveryRuntime.validateEventCommitmentV1(commitment), commitment, kind);
+  }
+
+  assert.throws(
+    () => recoveryRuntime.validateEventCommitmentV1(
+      { kind: 'undeclared-event', eventHash: sha256('feature-010-t002-undeclared') },
+      'T002 undeclared commitment',
+    ),
+    /T002 undeclared commitment\.kind must be one of/,
+  );
+});
+
+test('T002 projection commitment preserves declared kinds and nested rejection behavior', () => {
+  // Arrange
+  const declaredKinds = Object.keys(recoveryRuntime.LANE_EVENT_TYPES);
+  const declaredPurposes = [
+    'occurrence-retention',
+    'incident-evidence',
+    'governance-required',
+    'learning-result',
+    'governance-snapshot',
+    'incident-supersession',
+  ];
+
+  // Act and Assert
+  for (const purpose of declaredPurposes) {
+    for (const kind of declaredKinds) {
+      const commitment = {
+        purpose,
+        batchIdentity: sha256(`feature-010-t002-projection-${purpose}-${kind}`),
+        eventCommitments: [{
+          kind,
+          eventHash: sha256(`feature-010-t002-projection-event-${purpose}-${kind}`),
+        }],
+      };
+      assert.equal(
+        recoveryRuntime.validateProjectionCommitmentV1(commitment),
+        commitment,
+        `${purpose}/${kind}`,
+      );
+    }
+    assert.throws(
+      () => recoveryRuntime.validateProjectionCommitmentV1({
+        purpose,
+        batchIdentity: sha256(`feature-010-t002-projection-undeclared-${purpose}`),
+        eventCommitments: [{
+          kind: 'undeclared-event',
+          eventHash: sha256(`feature-010-t002-projection-undeclared-event-${purpose}`),
+        }],
+      }, `T002 projection commitment ${purpose}`),
+      new RegExp(`T002 projection commitment ${purpose}\\.eventCommitments\\[0\\]\\.kind must be one of`),
+    );
+  }
+  for (const kind of declaredKinds) {
+    assert.throws(
+      () => recoveryRuntime.validateProjectionCommitmentV1({
+        purpose: 'undeclared-purpose',
+        batchIdentity: sha256(`feature-010-t002-projection-undeclared-purpose-${kind}`),
+        eventCommitments: [{
+          kind,
+          eventHash: sha256(`feature-010-t002-projection-undeclared-purpose-event-${kind}`),
+        }],
+      }, 'T002 projection commitment undeclared purpose'),
+      /T002 projection commitment undeclared purpose\.purpose must be one of/,
+    );
+  }
+});
+
+// --- Feature 010 T003: independently observed event round trip -----------
+
+const T003_UNDECLARED_EVENT_TYPE = 'undeclared-round-trip-sentinel';
+
+/** @param {Set<string>} writerTypes @param {Set<string>} readerTypes @param {Record<string, unknown>} declarations */
+function assertLaneEventRoundTrip(writerTypes, readerTypes, declarations) {
+  const sorted = (values) => [...values].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+  assert.deepEqual(sorted(writerTypes), sorted(readerTypes), 'writer and reader event acceptance must match exactly');
+  assert.deepEqual(
+    sorted(writerTypes),
+    sorted(new Set(Object.keys(declarations))),
+    'writer and declared event types must match exactly',
+  );
+  for (const [type, value] of Object.entries(declarations)) {
+    const declaration = /** @type {Record<string, unknown>} */ (value);
+    assert.equal(
+      Object.hasOwn(declaration, 'relevance')
+        && ['retention-relevant', 'audit-only'].includes(/** @type {string} */ (declaration.relevance)),
+      true,
+      `${type} must declare exactly one valid relevance`,
+    );
+  }
+}
+
+function t003WriterAcceptedTypes() {
+  const label = 'T003 writer discovery';
+  const prefix = `${label}.kind must be one of `;
+  /** @type {unknown} */
+  let thrown;
+  try {
+    recoveryRuntime.validateEventCommitmentV1({
+      kind: T003_UNDECLARED_EVENT_TYPE,
+      eventHash: sha256('feature-010-t003-writer-probe'),
+    }, label);
+  } catch (error) {
+    thrown = error;
+  }
+  assert.ok(thrown instanceof Error, 'the undeclared writer sentinel must be rejected');
+  assert.equal(thrown.message.startsWith(prefix), true, 'writer discovery must preserve the assertEnum label and prefix');
+  const accepted = thrown.message.slice(prefix.length).split(', ');
+  assert.ok(accepted.length > 0 && accepted.every((type) => type.length > 0), 'writer discovery must yield a nonempty set');
+  assert.equal(new Set(accepted).size, accepted.length, 'writer discovery must yield unique event types');
+  return new Set(accepted);
+}
+
+/** @param {string} root @param {Record<string, unknown>[]} currentEvents @param {Record<string, unknown>[]} laneEvents @param {ReturnType<typeof t002PendingFixture>} trustedFixture */
+function t003ReaderAuthorization(root, currentEvents, laneEvents, trustedFixture) {
+  const input = t002RetentionInput(root, currentEvents, laneEvents, [trustedFixture]);
+  return runtimeFunction('runCommand')('authorize', {
+    trigger: 'post-failure',
+    state: autonomousState(),
+    input,
+    assessment: {
+      ...transitionAssessment('retry-task'),
+      evidenceHash: inspect(input).evidenceHash,
+    },
+    mode: 'recovery',
+  }).authorization;
+}
+
+test('T003 round-trip invariant independently observes writer and reader acceptance', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const trustedFixture = t002PendingFixture({ checkOutcome: 'passed', verdict: 'rejected' });
+    const occurrenceCapture = recoveryRuntime.captureCompletionV2(
+      trustedFixture.state,
+      autonomousInspectInput(root, t002TrustedStreams([trustedFixture])),
+      trustedFixture.completion,
+    );
+    const occurrenceByType = Object.fromEntries(
+      occurrenceCapture.occurrenceEvents.map((event) => [event.type, event]),
+    );
+    const repeatEvents = [
+      t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 't003-round-trip' }),
+      t002ApproachEvent({ attemptOrdinal: 2, basisLabel: 't003-round-trip' }),
+    ];
+    const governance = t002RequiredGovernance(repeatEvents);
+    const failedSet = /** @type {Record<string, unknown>} */ (governance.failedApproachSet);
+    const failedBases = /** @type {string[]} */ (failedSet.approachBasisIdentities);
+    const credible = t003CredibleAlternative(
+      TARGET,
+      failedBases,
+      /** @type {string} */ (failedSet.setIdentity),
+      't003-round-trip',
+    );
+    const eventFixtures = {
+      'approach-occurrence': [occurrenceByType['approach-occurrence']],
+      'finding-occurrence': occurrenceCapture.occurrenceEvents,
+      'learning-review': [recoveryRuntime.buildLearningReviewEventV2({
+        governanceIdentity: governance.governanceIdentity,
+        target: governance.target,
+        trigger: governance.trigger,
+        failedApproachSetIdentity: failedSet.setIdentity,
+        preLearningEvidenceHash: t002Hash('t003-round-trip-pre-learning'),
+        assumptionSetHash: t002Hash('t003-round-trip-assumptions'),
+        findings: [t003LearningFinding('round-trip reader fixture')],
+        alternatives: [credible],
+        outcome: 'selected-alternative',
+        selectedAlternativeIdentity: credible.alternativeIdentity,
+      })],
+      'learning-governance': [recoveryRuntime.buildGovernanceEventV1(governance)],
+      'incident-supersession': [t001AuditOnlyEvent()],
+    };
+
+    // Act: discover the complete writer set from the real validator, then
+    // require both acceptance and strict rejection through the lane reader.
+    const writerTypes = t003WriterAcceptedTypes();
+    const readerTypes = new Set();
+    for (const type of writerTypes) {
+      assert.equal(Object.hasOwn(eventFixtures, type), true, `${type} must have an explicit valid reader fixture`);
+      const events = clone(/** @type {Record<string, unknown>[]} */ (eventFixtures[type]));
+      const targetIndexes = events
+        .map((event, index) => event.type === type ? index : -1)
+        .filter((index) => index >= 0);
+      assert.equal(targetIndexes.length, 1, `${type} fixture must contain exactly one target event`);
+      if (type === 'incident-supersession') {
+        assert.deepEqual(events[targetIndexes[0]].target, canonicalTarget(F7_TARGET));
+      }
+      const corruptEvents = clone(events);
+      corruptEvents[targetIndexes[0]].eventHash = sha256(`feature-010-t003-corrupt-${type}`);
+      const declaration = /** @type {{relevance: string}} */ (recoveryRuntime.LANE_EVENT_TYPES[type]);
+      const currentEvents = declaration.relevance === 'retention-relevant' ? events : [];
+      const corruptCurrentEvents = declaration.relevance === 'retention-relevant' ? corruptEvents : [];
+
+      const accepted = t003ReaderAuthorization(root, currentEvents, events, trustedFixture);
+      const refused = t003ReaderAuthorization(root, corruptCurrentEvents, corruptEvents, trustedFixture);
+      assert.equal(accepted.authorized, true, `${type} valid reader fixture must authorize`);
+      assert.equal(refused.authorized, false, `${type} corrupt reader fixture must be rejected`);
+      assert.equal(refused.reason, 'evidence-incomplete', `${type} corrupt reader reason`);
+      assert.equal(refused.blocker.subject, 'occurrence-retention', `${type} corrupt reader blocker`);
+      readerTypes.add(type);
+    }
+    const undeclared = t003ReaderAuthorization(
+      root,
+      [],
+      [{ type: T003_UNDECLARED_EVENT_TYPE, version: 1 }],
+      trustedFixture,
+    );
+
+    // Assert
+    assertLaneEventRoundTrip(writerTypes, readerTypes, recoveryRuntime.LANE_EVENT_TYPES);
+    assert.equal(writerTypes.has(T003_UNDECLARED_EVENT_TYPE), false);
+    assert.equal(undeclared.authorized, false);
+    assert.equal(undeclared.reason, 'evidence-incomplete');
+    assert.equal(undeclared.blocker.subject, 'occurrence-retention');
+    assert.deepEqual(
+      [...writerTypes].sort(),
+      ['approach-occurrence', 'finding-occurrence', 'incident-supersession', 'learning-governance', 'learning-review'],
+    );
+  });
+});
+
+test('T003 round-trip invariant fails for either divergence direction and invalid relevance', () => {
+  // Arrange
+  const exact = new Set(['retained', 'audit']);
+  const declarations = {
+    retained: { relevance: 'retention-relevant' },
+    audit: { relevance: 'audit-only' },
+  };
+
+  // Act and Assert
+  assert.doesNotThrow(() => assertLaneEventRoundTrip(exact, exact, declarations));
+  assert.throws(
+    () => assertLaneEventRoundTrip(new Set([...exact, 'writer-only']), exact, declarations),
+    /writer and reader event acceptance must match exactly/,
+  );
+  assert.throws(
+    () => assertLaneEventRoundTrip(exact, new Set([...exact, 'reader-only']), declarations),
+    /writer and reader event acceptance must match exactly/,
+  );
+  assert.throws(
+    () => assertLaneEventRoundTrip(new Set(['retained']), new Set(['retained']), declarations),
+    /writer and declared event types must match exactly/,
+  );
+  for (const relevance of [undefined, 'sometimes-relevant']) {
+    assert.throws(
+      () => assertLaneEventRoundTrip(exact, exact, {
+        ...declarations,
+        audit: relevance === undefined ? {} : { relevance },
+      }),
+      /audit must declare exactly one valid relevance/,
+    );
+  }
+});
