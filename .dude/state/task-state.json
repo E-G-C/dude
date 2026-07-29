@@ -115,10 +115,10 @@
       "T005@00731713": "x",
       "T006@0073b54a": "x",
       "T007@00745381": "x",
-      "T008@0074f1b8": " ",
+      "T008@0074f1b8": "x",
       "T009@00758fef": " "
     },
-    "updated_at": "2026-07-29T02:43:29.032Z"
+    "updated_at": "2026-07-29T03:08:16.848Z"
   },
   ".dude/specs/008-automatic-core-dogfood-promotion/tasks.md": {
     "glyphs": {
