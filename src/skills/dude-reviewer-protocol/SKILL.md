@@ -7,7 +7,7 @@ description: "Use for independent verdicts, rejection routing, revision ownershi
 
 The reviewer stays independent from implementation, revision, testing, and close. A verdict is `APPROVE`, `REJECT`, or `ESCALATE`; rejection includes concrete findings and approval means materially ready.
 
-For explicit autonomous Work, supply the grounded finding and occurrence evidence and defer every repeat-triggered disposition to `dude-work` learning governance. Guarded and non-Work disposition remains unchanged.
+For explicit autonomous Work, supply the grounded finding and occurrence evidence and defer every repeat-triggered disposition, escalation, and user notification to `dude-work` learning governance. Guarded and non-Work disposition remains unchanged.
 
 ## Rejection Procedure
 
@@ -15,6 +15,6 @@ For explicit autonomous Work, supply the grounded finding and occurrence evidenc
 2. The coordinator records the findings, loads `dude-receiving-code-review`, and assigns a different reviser if available and credible; otherwise it may assign the original author.
 3. The selected reviser validates each finding, addresses accepted findings, and reruns focused verification without self-approving or selecting a reviewer.
 4. The coordinator sends the revision to an independent reviewer for re-review.
-5. A second failure on the same finding escalates to the user; do not repeat the loop or fake certainty.
+5. Outside an explicit autonomous policy, a second failure on the same finding escalates to the user, and under that policy the autonomous Work deferral governs instead; do not repeat the loop or fake certainty.
 
 Also escalate unresolved product authority, insufficient evidence, or an artifact boundary too unclear for fair judgment.

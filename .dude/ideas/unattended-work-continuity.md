@@ -1,8 +1,8 @@
 ---
 title: Unattended Work Continuity
 slug: unattended-work-continuity
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/013-unattended-work-continuity/spec.md
 ---
 
 # Idea: Unattended Work Continuity
@@ -108,11 +108,23 @@ Cautions (do not import): Ralph achieves unattended runs by auto-approving every
 - Do not weaken fresh verification or independent review; a continued loop is not an approved loop.
 - Keep the scope proportionate — no new lane, ledger, or command is assumed.
 
+## Definition Disposition
+
+Recorded by @dude-spec-lead at first definition (`define unattended-work-continuity` → `.dude/specs/013-unattended-work-continuity/spec.md`). The `## Open Questions` answers stay user-controlled and unchanged; the following are conscious definition-time assumptions carried into the spec's `## Assumptions` and `## Clarifications` equivalents, inventing no scope beyond the normalized intent, constraints, and relationship notes.
+
+- Q1, Q6 — Assumed: reclassify no stop; this is a discipline and observability tightening of `dude-work`, not a change to Feature 005 policy semantics. A new, small feature sequenced after Feature 009 (observed 2026-07-28 with all nine canonical tasks closed; point-in-time, package closure not independently verified).
+- Q2 — Deferred (out of scope): auto-authorizing bounded revisions past `two failed attempts` would relax an existing Feature 005 / Feature 009 hard stop and lands on the runtime Feature 009 changed; the idea itself raised it as unsettled. Not decided here.
+- Q3 — Assumed yes: reporting is decoupled from stopping; a progress report is never a stop.
+- Q4 — Assumed: safety floor is exactly the existing invocation-wide categories (destructive operations, spending, credentials, external authorization, ownership ambiguity) plus mandatory verification and independent review; none weakened.
+- Q5 — Assumed yes: every halt echoes a named reason from the existing closed stop set, making an unnameable halt structurally impossible.
+- Q7 — Assumed: beyond naming a reason, a halt must identify the affected target, the specific subject or condition that caused it, and the next owner action, sufficient to act without reading the runtime's internals.
+- Continuity / round-trip invariant — Handed off, not re-owned: the audit-trail continuity outcome and the round-trip invariant (every writer-emittable event type is reader-acceptable) are already owned by defined Feature 010 (`.dude/specs/010-core-autonomous-event-round-trip/spec.md`, User Stories 1 and 3). Feature 013 adds no overlapping guard.
+
 ## Definition Checklist
 
 - [x] Outcome is clear enough for brainstorm
 - [x] Scope is coherent as one idea ledger
-- [ ] Open questions are resolved or consciously assumed
+- [x] Open questions are resolved or consciously assumed
 
 ## Coordinator Log
 
@@ -121,4 +133,7 @@ Cautions (do not import): Ralph achieves unattended runs by auto-approving every
 - 2026-07-25 UTC - recorded external source repository URLs in External Precedents for future reference.
 - 2026-07-25 UTC - refreshed the Feature 009 relationship note with its package path and current blocked status.
 - 2026-07-28 UTC - brainstorm refreshed: added Dogfooding Evidence for the 2026-07-28 autonomous hard-stop on feature 007, derived diagnosability and audit-trail-continuity outcomes into Normalized Intent, recorded the coordinator's scope boundary excluding the underlying `src/**` fix plus the round-trip invariant candidate, re-observed Feature 009's tasks as all closed, and appended one unanswered open question.
+- 2026-07-30 UTC - defined as Feature 013; spec_path `.dude/specs/013-unattended-work-continuity/spec.md`. Open questions resolved as conscious assumptions (see Definition Disposition): Q1/Q6 discipline-and-observability tightening reclassifying no stop; Q3 decoupled reporting; Q4 unchanged safety floor; Q5 mandatory named-reason echo; Q7 actionable halt detail; Q2 deferred as out of scope (would relax an existing hard stop). Continuity and the round-trip invariant handed to defined Feature 010 rather than re-owned. Staged spec/plan/tasks (five all-open canonical units); plan carries zero active ObjectiveRegistry regions.
+- 2026-07-30 UTC - re-defined (unchanged-intent refresh): user-controlled `## Idea`, `## Open Questions` (answers still blank), and `## Assumptions` are byte-unchanged; `status: defined` and exact `spec_path:` preserved. Reconciliation re-verified against unchanged intent — all five canonical tasks kept one-to-one with durable keys preserved and states left `[ ]` (kept T001@6b656570; T002@6e616d65, T003@73616665, T004@646f6373, T005@72657677 kept with a non-semantic auditability refinement); zero dropped, zero new. Normalized `tasks.md` traceability breadcrumbs by adding explicit `(US… → FR…)` trace suffixes to T002–T005 to match T001, changing no scope, key, or state. spec.md and plan.md unchanged (plan still carries zero active ObjectiveRegistry regions). Feature 010's opposite-ownership prose is in its own package and untouched; Feature 013's handoff wording verified accurate against Feature 010 US1/US3 and left as-is. Generated board fence left for coordinator regeneration (dependency-gated T002–T005).
+- 2026-07-30 UTC - coordinator regenerated the derived board fence in `.dude/specs/013-unattended-work-continuity/tasks.md` deterministically via `dude-lightweight-execution/board.mjs render`, refreshing the stale T001@6b656570 board entry to match its canonical unit. Verified against the renderer contract that dependency-gated open tasks (T002@6e616d65 through T005@72657677) correctly appear in no bucket: `Ready Now` lists only dependency-satisfied open tasks and `Blocked` is reserved for `[!]`. No task glyph, task metadata, or execution state changed; the lane remains Definition Only with all five tasks `[ ]`.
 <!-- dude:managed:end -->

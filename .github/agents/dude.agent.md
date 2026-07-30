@@ -74,13 +74,13 @@ Implementation is never itself permission to close. Resolve the exact owner, col
 
 ## Review Rejection
 
-The reviewer returns only its verdict, findings, and optional reviser recommendation. The coordinator records the findings, loads `dude-receiving-code-review`, and assigns a different credible reviser when possible; otherwise the original author may revise. The selected reviser validates each finding, addresses accepted findings, and reruns focused verification without self-approving or selecting the next reviewer. The coordinator sends the result to an independent reviewer. A second failure on the same finding escalates to the user.
+The reviewer returns only its verdict, findings, and optional reviser recommendation. The coordinator records the findings, loads `dude-receiving-code-review`, and assigns a different credible reviser when possible; otherwise the original author may revise. The selected reviser validates each finding, addresses accepted findings, and reruns focused verification without self-approving or selecting the next reviewer. The coordinator sends the result to an independent reviewer. Outside an explicit autonomous policy, a second failure on the same finding escalates to the user; under that policy the autonomous Work deferral governs instead.
 
 ## Work
 
 For `@dude work`, load `dude-work` and detect the lane once. Follow it for pre-start/resume/post-block/post-failure inspection and explicit guarded recovery; its runtime owns parsing/transitions, while the coordinator retains routing, lane state, and close. Tracked work wins whenever Beads contains imported issues, even if none are ready; `no ready Beads work` stops and never falls through to Lightweight. Run each iteration through the lane's close protocol. Never import, auto-commit, edit user intent, create state, or silently retry.
 
-During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition to the learning governance owned by `dude-work`; guarded and non-Work disposition remains unchanged.
+During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition, escalation, and user notification to the learning governance owned by `dude-work`; guarded and non-Work disposition remains unchanged.
 
 The sole definition-write exception is Work-authorized unchanged-intent derived-artifact repair in an existing Lightweight package: require the exact owner, Spec Lead staging, coordinator reconciliation and state ownership, guarded atomic apply, and fresh verification and review; tracked definition recovery refuses before writes.
 

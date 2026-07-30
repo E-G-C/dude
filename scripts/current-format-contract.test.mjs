@@ -1332,9 +1332,9 @@ test('T008 reviewer, coordinator, and reviser responsibilities are section-bound
         'The coordinator records the findings, loads `dude-receiving-code-review`, and assigns a different credible reviser when possible',
         'The selected reviser validates each finding, addresses accepted findings, and reruns focused verification without self-approving or selecting the next reviewer.',
         'The coordinator sends the result to an independent reviewer.',
-        'A second failure on the same finding escalates to the user.',
+        'Outside an explicit autonomous policy, a second failure on the same finding escalates to the user; under that policy the autonomous Work deferral governs instead.',
       ],
-      ruleLine: 'The reviewer returns only its verdict, findings, and optional reviser recommendation. The coordinator records the findings, loads `dude-receiving-code-review`, and assigns a different credible reviser when possible; otherwise the original author may revise. The selected reviser validates each finding, addresses accepted findings, and reruns focused verification without self-approving or selecting the next reviewer. The coordinator sends the result to an independent reviewer. A second failure on the same finding escalates to the user.',
+      ruleLine: 'The reviewer returns only its verdict, findings, and optional reviser recommendation. The coordinator records the findings, loads `dude-receiving-code-review`, and assigns a different credible reviser when possible; otherwise the original author may revise. The selected reviser validates each finding, addresses accepted findings, and reruns focused verification without self-approving or selecting the next reviewer. The coordinator sends the result to an independent reviewer. Outside an explicit autonomous policy, a second failure on the same finding escalates to the user; under that policy the autonomous Work deferral governs instead.',
     },
     {
       relative: 'src/skills/dude-reviewer-protocol/SKILL.md',
@@ -1344,7 +1344,7 @@ test('T008 reviewer, coordinator, and reviser responsibilities are section-bound
         'The coordinator records the findings, loads `dude-receiving-code-review`, and assigns a different reviser if available and credible',
         'The selected reviser validates each finding, addresses accepted findings, and reruns focused verification without self-approving or selecting a reviewer.',
         'The coordinator sends the revision to an independent reviewer for re-review.',
-        'A second failure on the same finding escalates to the user',
+        'Outside an explicit autonomous policy, a second failure on the same finding escalates to the user, and under that policy the autonomous Work deferral governs instead',
       ],
       ruleLine: '1. The reviewer records and returns its verdict, concrete findings, and optional reviser recommendation; it does not load the receiving-review skill, assign, or revise.',
     },
@@ -2677,22 +2677,22 @@ test('T007 autonomous disposition defers away from the generic reviewer with gua
     {
       relative: 'src/skills/dude-reviewer-protocol/SKILL.md',
       heading: '# Reviewer Protocol',
-      ruleLine: 'For explicit autonomous Work, supply the grounded finding and occurrence evidence and defer every repeat-triggered disposition to `dude-work` learning governance. Guarded and non-Work disposition remains unchanged.',
+      ruleLine: 'For explicit autonomous Work, supply the grounded finding and occurrence evidence and defer every repeat-triggered disposition, escalation, and user notification to `dude-work` learning governance. Guarded and non-Work disposition remains unchanged.',
     },
     {
       relative: 'src/skills/dude-receiving-code-review/SKILL.md',
       heading: '## Revision Procedure',
-      ruleLine: 'For explicit autonomous Work, preserve the exact finding and attempt evidence and defer every repeat-triggered disposition to `dude-work` learning governance; guarded and non-Work revision behavior remains unchanged.',
+      ruleLine: 'For explicit autonomous Work, preserve the exact finding and attempt evidence and defer every repeat-triggered disposition, escalation, and user notification to `dude-work` learning governance; guarded and non-Work revision behavior remains unchanged.',
     },
     {
       relative: 'src/agents/dude.agent.md',
       heading: '## Work',
-      ruleLine: 'During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition to the learning governance owned by `dude-work`; guarded and non-Work disposition remains unchanged.',
+      ruleLine: 'During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition, escalation, and user notification to the learning governance owned by `dude-work`; guarded and non-Work disposition remains unchanged.',
     },
     {
       relative: 'src/instructions/dude.instructions.md',
       heading: '# Dude Shared Rules',
-      ruleLine: '13. During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition to `dude-work` learning governance; guarded and non-Work behavior remains unchanged.',
+      ruleLine: '13. During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition, escalation, and user notification to `dude-work` learning governance; guarded and non-Work behavior remains unchanged.',
     },
     {
       relative: 'src/skills/dude-lightweight-execution/SKILL.md',

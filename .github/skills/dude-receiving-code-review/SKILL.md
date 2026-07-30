@@ -9,7 +9,7 @@ description: "Use before accepting, implementing, or disputing review feedback a
 
 The selected reviser or original author validates and addresses findings; the coordinator owns assignment and selection of the next independent reviewer.
 
-For explicit autonomous Work, preserve the exact finding and attempt evidence and defer every repeat-triggered disposition to `dude-work` learning governance; guarded and non-Work revision behavior remains unchanged.
+For explicit autonomous Work, preserve the exact finding and attempt evidence and defer every repeat-triggered disposition, escalation, and user notification to `dude-work` learning governance; guarded and non-Work revision behavior remains unchanged.
 
 1. Read every finding and clarify ambiguity before changing artifacts.
 2. Verify each finding against requirements, project guardrails, code, and available evidence.
