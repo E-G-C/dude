@@ -108,6 +108,17 @@ function unquote(value) {
   return value;
 }
 
+function parseInlineSequence(value) {
+  if (!value.startsWith("[") || !value.endsWith("]")) return null;
+  const body = value.slice(1, -1).trim();
+  if (body.length === 0) return [];
+  return body.split(",").map((item) => {
+    const scalar = item.trim();
+    assert.ok(scalar.length > 0, `empty inline sequence item in "${value}"`);
+    return unquote(scalar);
+  });
+}
+
 /** Split `key: value` while tolerating a quoted key that may itself contain a colon. */
 function splitMapping(content) {
   if (content.startsWith('"')) {
@@ -122,8 +133,8 @@ function splitMapping(content) {
 }
 
 /**
- * Parse the exact YAML subset the pack manifest uses: nested maps, `- ` sequences,
- * inline `[]`, and quoted scalars. Anything else fails loudly instead of being guessed.
+ * Parse the exact YAML subset pack frontmatter uses: nested maps, block and inline
+ * sequences, and quoted scalars. Anything else fails loudly instead of being guessed.
  */
 function parseFrontmatter(text) {
   const lines = text
@@ -145,8 +156,9 @@ function parseFrontmatter(text) {
     }
     assert.ok(!Array.isArray(parent), `unexpected mapping key inside a sequence: "${content}"`);
     const { key, value } = splitMapping(content);
-    if (value === "[]") {
-      parent[key] = [];
+    const inlineSequence = parseInlineSequence(value);
+    if (inlineSequence !== null) {
+      parent[key] = inlineSequence;
       continue;
     }
     if (value !== "") {
@@ -339,6 +351,38 @@ test("pack.md frontmatter keeps its exact structure, values, and key order", () 
   assert.deepEqual(parsed.hooks, ["routing"]);
 });
 
+test("technical-docs subagents use Copilot CLI generic tool categories", () => {
+  const expected = new Map([
+    ["dude-pack-technical-docs-extractor.agent.md", ["read", "search", "edit"]],
+    ["dude-pack-technical-docs-planner.agent.md", ["read", "edit"]],
+    ["dude-pack-technical-docs-drafter.agent.md", ["read", "edit"]],
+    ["dude-pack-technical-docs-reviewer.agent.md", ["read", "search", "edit"]],
+  ]);
+  let checked = 0;
+
+  for (const [name, expectedTools] of expected) {
+    const { frontmatter } = splitFrontmatter(readFileSync(join(PACK_DIR, "agents", name)));
+    const parsed = parseFrontmatter(frontmatter.toString("utf8"));
+    assert.deepEqual(parsed.tools, expectedTools, `${name} must declare the ordered generic tool categories`);
+    for (const category of parsed.tools) {
+      assert.doesNotMatch(category, /\//, `${name} must not use slash-qualified tool identifiers`);
+    }
+    checked += 1;
+  }
+
+  assert.equal(checked, 4, "exactly four pipeline subagent declarations must be checked");
+  const previousBadCategories = ["read/readFile", "search/codebase", "edit/createFile", "edit/editFiles"];
+  assert.notDeepEqual(
+    previousBadCategories,
+    expected.get("dude-pack-technical-docs-extractor.agent.md"),
+    "the ordered category guard must reject the previous extractor declaration"
+  );
+  assert.ok(
+    previousBadCategories.some((category) => category.includes("/")),
+    "the slash-qualified guard must reject the previous declaration"
+  );
+});
+
 /* ------------------------------------------------------- 3. references resolve */
 
 test("every relative link in the pack resolves to a real file", () => {
@@ -523,6 +567,28 @@ test("the retired recall-gate label is absent from the pack", () => {
   for (const file of MARKDOWN) {
     assert.ok(!/recall gate/i.test(file.text), `${file.rel} still labels a command a "recall gate"`);
   }
+});
+
+test("persisted fragment paths are workspace-root-relative", () => {
+  const bareFragmentPath = /(?<![A-Za-z0-9_./-])parts\/[A-Za-z0-9._<>-]+\.jsonl\b/;
+  const owners = [
+    "agents/dude-pack-technical-docs-extractor.agent.md",
+    "skills/dude-pack-technical-docs-evidence-ledger/SKILL.md",
+  ].map((path) => ({ path, text: readFileSync(join(PACK_DIR, path), "utf8") }));
+
+  for (const owner of owners) {
+    assert.ok(
+      owner.text.includes(".td-work/<base>/parts/C012.jsonl"),
+      `${owner.path} must show a workspace-root-relative fragment path`
+    );
+    assert.doesNotMatch(owner.text, bareFragmentPath, `${owner.path} retains a bare persisted fragment path`);
+  }
+  const alternateBareExample = owners[0].text.replace(
+    ".td-work/<base>/parts/C012.jsonl",
+    "parts/R987.jsonl"
+  );
+  assert.notEqual(alternateBareExample, owners[0].text, "the alternate bare-path mutation changed no text");
+  assert.match(alternateBareExample, bareFragmentPath, "the guard missed an alternate bare unit path");
 });
 
 /* --------------------------------------------- 6. tests stay out of the install */

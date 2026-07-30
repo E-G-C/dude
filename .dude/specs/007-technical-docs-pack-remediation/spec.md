@@ -104,11 +104,12 @@ As a pack maintainer, I can establish readiness from fresh post-review evidence 
 - **FR-033:** The public surface MUST remain 5 agents, 7 skills, and 2 prompts unless separately accepted evidence narrowly justifies a specification amendment.
 - **FR-034:** The pack MUST preserve its namespace, zero-fabrication traceability, coordinator-owned workflow boundaries, and independent approval boundary.
 - **FR-035:** Focused automated tests MUST cover each accepted runtime, parsing, provenance, accounting, freshness, and routing defect.
-- **FR-036:** End-to-end verification MUST cover transcript-only, repository-only, mixed-source, and existing-document update modes.
+- **FR-036:** Automated end-to-end product verification MUST cover transcript-only, repository-only, mixed-source, and existing-document update behavior. T009 live acceptance MUST cover exactly three bounded non-repository modes: transcript-only; mixed prose from transcript, notes, and draft with no repository source; and existing-document update from a prior generated document plus new transcript evidence. Repository-only live acceptance is deferred to separate future bounded or scoped repository work and MUST NOT narrow repository product support.
 - **FR-037:** Composition verification MUST cover both standalone technical-docs operation and operation with the optional writing pack present.
 - **FR-038:** Installation and removal verification MUST prove that the pack is added completely and removed without residual pack-owned artifacts or references.
 - **FR-039:** Readiness evidence MUST include passing focused tests, the full repository test suite, pack composition checks, lint, and release-artifact verification.
 - **FR-040:** The pack MUST receive fresh independent approval after all readiness evidence is produced, and any later mutation MUST invalidate that approval.
+- **FR-041:** Before model extraction in each T009 live-acceptance mode, a deterministic cost preflight MUST report source count, extraction-unit count, approximate tokens, expected model calls and batches, and ETA. Extraction MUST NOT begin without explicit user approval when the preflight projects more than 20 extraction units or model calls, or more than 10 minutes.
 
 ## Key Entities
 
@@ -123,7 +124,7 @@ As a pack maintainer, I can establish readiness from fresh post-review evidence 
 ## Success Criteria
 
 - **SC-001:** Across accepted fixtures, zero admitted source units disappear silently; every encountered repository path and every admitted non-repository source is represented or has an explicit disposition.
-- **SC-002:** Transcript-only, repository-only from a fresh workspace, mixed-source, and existing-document update acceptance suites all pass.
+- **SC-002:** Automated acceptance suites pass for transcript-only, repository-only from a fresh workspace, mixed-source, and existing-document update behavior, while T009 live acceptance completes exactly transcript-only, repository-free mixed prose, and prior-generated-document update with new transcript evidence.
 - **SC-003:** Every malformed, empty, duplicate, missing, or unreadable-input fixture fails closed without a passing completeness result or authorized output.
 - **SC-004:** Every outside-root, symlink-escape, entry-point escape, and input/output-alias fixture is rejected with no read or write outside the admitted boundary.
 - **SC-005:** Repeated valid runs produce identical deterministic runtime results, while injected failures leave prior valid output unchanged and create no partial output.
@@ -135,6 +136,7 @@ As a pack maintainer, I can establish readiness from fresh post-review evidence 
 - **SC-011:** A pristine core-only release build and lint of that pristine release complete without failures; in a separate disposable copy of the pristine release, installing technical-docs from the catalog yields its complete intended installed surface, and removing it leaves zero pack-owned artifacts or stale references.
 - **SC-012:** An independent reviewer approves the complete fresh evidence set with no unresolved rejection finding.
 - **SC-013:** Unless separately amended from accepted evidence, pack inspection reports exactly 5 agents, 7 skills, and 2 prompts under the intended namespace.
+- **SC-014:** For every T009 live mode, preflight records all required cost fields before any model call, and zero extractions begin without recorded explicit approval when the mode projects more than 20 extraction units or model calls, or more than 10 minutes.
 
 ## Assumptions
 

@@ -1014,6 +1014,96 @@ test("lint applies shared CommonMark fence rules and binds its stage and inputs"
     "only the stage may differ between two runs over identical bytes"
   );
 
+  const diagramPlaceholder = writeFixture(root, "diagram-placeholder.md", [
+    "# Guide",
+    "",
+    "## Flow",
+    "",
+    "<!-- DIAGRAM: flow -->",
+    "",
+  ].join("\n"));
+  const diagramPlaceholderBytes = readFileSync(diagramPlaceholder);
+  const preReviewDiagramPath = join(root, ".td-work/pre-review-diagram.json");
+  const preReviewDiagram = runNode(LINT, lintArgs("pre-review", diagramPlaceholder, preReviewDiagramPath));
+  assert.equal(preReviewDiagram.status, 0, preReviewDiagram.stderr);
+  const preReviewDiagramReport = readJsonFixture(preReviewDiagramPath);
+  assert.equal(preReviewDiagramReport.stage, "pre-review");
+  assert.equal(preReviewDiagramReport.ok, true);
+  assert.equal(preReviewDiagramReport.counts.violations, 0);
+  assert.deepEqual(preReviewDiagramReport.violations, []);
+
+  const invalidDiagramLines = [
+    ["embedded-before", "Before <!-- DIAGRAM: flow -->"],
+    ["embedded-after", "<!-- DIAGRAM: flow --> after"],
+    ["empty-flow-name", "<!-- DIAGRAM:  -->"],
+    ["missing-closer", "<!-- DIAGRAM: flow"],
+    ["second-html-comment", "<!-- DIAGRAM: flow --> <!-- note -->"],
+    ["multiple-diagram-comments", "<!-- DIAGRAM: first --> <!-- DIAGRAM: second -->"],
+  ];
+  for (const [name, line] of invalidDiagramLines) {
+    const invalidDocument = writeFixture(root, `${name}.md`, `# Guide\n\n${line}\n`);
+    const invalidReportPath = join(root, `.td-work/pre-review-${name}.json`);
+
+    const invalidResult = runNode(LINT, lintArgs("pre-review", invalidDocument, invalidReportPath));
+
+    assert.equal(invalidResult.status, 1, `${name}: ${invalidResult.stderr}`);
+    const invalidReport = readJsonFixture(invalidReportPath);
+    assert.equal(invalidReport.stage, "pre-review", name);
+    assert.equal(invalidReport.ok, false, name);
+    assert.equal(invalidReport.counts.violations, 1, `${name} produced duplicate diagnostics`);
+    assert.deepEqual(
+      invalidReport.violations.map(({ code, line: lineNumber }) => ({ code, line: lineNumber })),
+      [{ code: "html-comment", line: 3 }],
+      name
+    );
+  }
+
+  const finalDiagramPath = join(root, ".td-work/final-diagram.json");
+  const finalDiagram = runNode(LINT, lintArgs("final", diagramPlaceholder, finalDiagramPath));
+  assert.equal(finalDiagram.status, 1, finalDiagram.stderr);
+  const finalDiagramReport = readJsonFixture(finalDiagramPath);
+  assert.equal(finalDiagramReport.stage, "final");
+  assert.equal(finalDiagramReport.ok, false);
+  assert.equal(finalDiagramReport.counts.violations, 1);
+  assert.deepEqual(finalDiagramReport.violations.map((violation) => violation.code), ["leftover-placeholder"]);
+  assert.deepEqual(finalDiagramReport.inputs, preReviewDiagramReport.inputs);
+  assert.equal(
+    preReviewDiagramReport.inputs.find((input) => input.role === "document").sha256,
+    sha256(diagramPlaceholderBytes)
+  );
+  assert.equal(
+    preReviewDiagramReport.inputs.find((input) => input.role === "source-registry").sha256,
+    sha256(readFileSync(registryPath))
+  );
+  assert.deepEqual(readFileSync(diagramPlaceholder), diagramPlaceholderBytes, "lint mutated the document fixture");
+  assert.deepEqual(
+    {
+      ...finalDiagramReport,
+      stage: "pre-review",
+      ok: true,
+      counts: { ...finalDiagramReport.counts, violations: 0 },
+      violations: [],
+    },
+    preReviewDiagramReport,
+    "only the stage and stage-dependent result may differ for the DIAGRAM placeholder"
+  );
+
+  const sectionPlaceholder = writeFixture(
+    root,
+    "section-placeholder.md",
+    "# Guide\n\n<!-- SECTION: overview -->\n"
+  );
+  const preReviewSection = runNode(
+    LINT,
+    lintArgs("pre-review", sectionPlaceholder, join(root, ".td-work/pre-review-section.json"))
+  );
+  assert.equal(preReviewSection.status, 1, preReviewSection.stderr);
+  const preReviewSectionReport = readJsonFixture(join(root, ".td-work/pre-review-section.json"));
+  assert.equal(preReviewSectionReport.stage, "pre-review");
+  assert.equal(preReviewSectionReport.ok, false);
+  assert.equal(preReviewSectionReport.counts.violations, 1);
+  assert.deepEqual(preReviewSectionReport.violations.map((violation) => violation.code), ["leftover-section"]);
+
   // A three-backtick closer cannot close a four-backtick opener.
   const unclosed = writeFixture(root, "unclosed.md", "# Guide\n\n````text\n```\nBody\n");
   const unclosedResult = runNode(LINT, lintArgs("final", unclosed, join(root, ".td-work/unclosed.json")));

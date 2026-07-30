@@ -4,10 +4,10 @@
 // Catches the mechanical defects a semantic review pass tends to miss, so the
 // reviewer only acts on real violations instead of re-reading the whole document.
 //
-// Checks: leftover <!-- DIAGRAM --> and <!-- SECTION --> markers, any HTML
-// comment or tag, unclosed CommonMark fences, a missing top-level title, heading
-// level jumps, and purely linear Mermaid blocks. Clarification markers are
-// counted. Fence tracking is the shared CommonMark implementation, so a ``` line
+// Checks: leftover <!-- SECTION --> markers, final-stage <!-- DIAGRAM --> markers,
+// other HTML comments or tags, unclosed CommonMark fences, a missing top-level
+// title, heading level jumps, and purely linear Mermaid blocks. Clarification
+// markers are counted. Fence tracking is the shared CommonMark implementation, so a ``` line
 // inside a ~~~ block does not close it and a closer shorter than its opener does
 // not close it either.
 //
@@ -71,6 +71,7 @@ const ATX_CLOSING_SEQUENCE = /[ \t]+#+[ \t]*$/;
 const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
 const BLANK_LINE = /^[ \t]*$/;
 const CLARIFICATION_MARKER = /\[NEEDS CLARIFICATION/g;
+const DIAGRAM_PLACEHOLDER = /^[ \t]*<!-- DIAGRAM: [^\s<>](?:[^<>\r\n]*[^\s<>])? -->[ \t]*$/;
 const DIAGRAM_CAPTION = /^Diagram\b/i;
 
 const CLI_DEFINITIONS = Object.freeze({
@@ -258,7 +259,7 @@ function atxHeadingText(raw) {
 }
 
 /** Inspect one document revision with shared CommonMark fence tracking. */
-function lint(text) {
+function lint(text, stage) {
   const lines = splitLines(text);
   const violations = [];
   const add = (code, line, message) => violations.push({ code, line, message });
@@ -296,8 +297,10 @@ function lint(text) {
 
     if (firstNonBlankLine === null && !BLANK_LINE.test(line)) firstNonBlankLine = lineNumber;
 
-    if (/<!--\s*DIAGRAM\b/i.test(line)) {
-      add("leftover-placeholder", lineNumber, "Unresolved <!-- DIAGRAM ... --> placeholder remains.");
+    if (DIAGRAM_PLACEHOLDER.test(line)) {
+      if (stage === "final") add("leftover-placeholder", lineNumber, "Unresolved <!-- DIAGRAM ... --> placeholder remains.");
+    } else if (/<!--\s*DIAGRAM\b/i.test(line)) {
+      add("html-comment", lineNumber, "HTML comment present in output.");
     } else if (/<!--\s*SECTION\b/i.test(line)) {
       add("leftover-section", lineNumber, "Unfilled <!-- SECTION ... --> marker remains (a section was never drafted).");
     } else if (/<!--/.test(line)) {
@@ -350,7 +353,7 @@ function run(argv) {
   const partitioned = partitionArgv(argv);
   const options = parseCliOptions(partitioned.optionTokens, CLI_DEFINITIONS);
   const documentArgument = requireDocumentArgument(partitioned.positionals);
-  requireEnum(options.stage, STAGES, "--stage");
+  const stage = requireEnum(options.stage, STAGES, "--stage");
   const workspaceRoot = acquireWorkspaceRoot(options.workspaceRoot);
 
   const registryPath = toWorkspacePath(workspaceRoot, resolve(options.sources), { name: "source registry" });
@@ -380,7 +383,7 @@ function run(argv) {
     });
   }
 
-  const result = lint(decodeUtf8(documentBytes, { path: documentPath, allowBom: true }));
+  const result = lint(decodeUtf8(documentBytes, { path: documentPath, allowBom: true }), stage);
   const outPath = toWorkspacePath(workspaceRoot, resolve(options.json), { name: "report output" });
   const target = ensureContainedOutputParent(workspaceRoot, outPath, { name: "report output" });
   const readPaths = [documentAbsolute, registryAbsolute];

@@ -17,7 +17,7 @@ The canonical feature identity is `.dude/specs/007-technical-docs-pack-remediati
 - Require digest-bound pre-review diagnostics and post-review final gates.
 - Bind create, replace, and update targets to their registered expected state and reject output drift immediately before publication.
 - Keep the writing pack optional with complete local guidance.
-- Add authoring-only Node tests and live verification for all four source modes.
+- Add authoring-only Node tests covering all four supported product behaviors and bounded live verification for three non-repository acceptance modes.
 - Regenerate prototype work data under the new contracts; no legacy compatibility or migration path will be implemented.
 
 ## Technical Context
@@ -28,7 +28,7 @@ The canonical feature identity is `.dude/specs/007-technical-docs-pack-remediati
 
 **Storage**: UTF-8 JSON, object-only JSONL, Markdown, text chunks, and digest-bound report sidecars in a declared work directory. No database or persistent service.
 
-**Testing**: Node built-in test runner with temporary generated fixtures and public CLI invocation through `spawnSync(process.execPath, ...)`; focused pack tests, full repository tests, compose verification, lint, release verification, and four live agent workflows.
+**Testing**: Node built-in test runner with temporary generated fixtures and public CLI invocation through `spawnSync(process.execPath, ...)`; focused pack tests, automated product coverage across all four supported behaviors, full repository tests, compose verification, lint, release verification, and three bounded live agent workflows.
 
 **Target Platform**: Cross-platform Node execution on macOS, Linux, and Windows filesystems. Permission and symlink tests use capability probes where the host cannot enforce the condition.
 
@@ -778,23 +778,26 @@ All automated tests live under `library/packs/technical-docs/tests/`, outside sh
 
 Every test invokes public CLI commands even when pure helpers also receive focused coverage. A failed operation must leave any prior valid data output unchanged and no temporary artifact behind.
 
-### Four Live End-to-End Modes
+### Automated Four-Mode Product Coverage And Three Bounded Live Modes
 
-`tests/manual-agent-e2e.md` defines and records four actual writer-agent runs:
+Automated tests remain responsible for transcript-only, repository-only, mixed-source, and existing-document update product behavior. Repository-focused automated tests remain authoritative for current repository readiness. Repository-only live acceptance is deferred to separate future bounded or scoped repository work.
+
+`tests/manual-agent-e2e.md` defines and records exactly three actual writer-agent runs:
 
 1. **Transcript-only**: only `C*` units; valid WEBVTT cue text retained; transcript Source references preserved; final coverage and lint pass.
-2. **Repository-only in a fresh workspace**: root Source uses `@root`; every encountered descendant path has a disposition; every admitted file slice belongs to an `R*` unit; every unit has one exact result; contained output parent is created safely.
-3. **Mixed-source**: repository, transcript, notes, and draft remain separate; unique sentinels retain correct Source IDs/references; no unit or ledger identity collides; two repositories demonstrate `nextOrdinal` handoff.
-4. **Existing-document update**: explicit update mode; `E*` entries retain heading paths; unchanged content remains; superseded and replacement evidence is consumed; `expectedTarget` is checked immediately before atomic replacement.
+2. **Mixed prose**: transcript, notes, and draft remain separate with no repository Source; unique sentinels retain correct Source IDs and references without unit or ledger collisions.
+3. **Existing-document update**: a prior generated document plus new transcript evidence uses explicit update mode; `E*` entries retain heading paths; unchanged content remains; superseded and replacement evidence is consumed; `expectedTarget` is checked immediately before atomic replacement.
 
-Each run records Source Registry, unit manifest, result index, ledger, digest, review, final coverage, final lint, and output hashes. Checked-in fixtures or simulated agent prose do not substitute for these live runs.
+Before any model call, each run performs deterministic intake and cost preflight reporting source count, extraction-unit count, approximate tokens, expected model calls and batches, and ETA. A run projected to exceed 20 extraction units or model calls, or 10 minutes, pauses for explicit user approval before extraction.
+
+Each completed run records full canonical source, unit, ledger, semantic-review, final-coverage, final-lint, output-hash, and mode-specific traceability evidence. The independent reviewer receives the same final unmodified evidence set. Existing transcript-only evidence may be reused only when its complete chain is hash-current. `tech-expanded-output.md` remains user delivery and is not canonical update-mode evidence. Checked-in fixtures or simulated agent prose do not substitute for these three live runs.
 
 ### Completion Verification
 
 Run verification in this order:
 
 1. Focused technical-docs Node tests.
-2. Four live end-to-end modes.
+2. Three bounded live end-to-end modes, each after deterministic cost preflight and any required approval.
 3. Full repository test discovery, excluding `dist`.
 4. Standalone `compose verify`.
 5. Dedicated standalone and writing-enabled install/remove tests.
@@ -807,7 +810,7 @@ Run verification in this order:
 12. Run whitespace/diff validation.
 13. Obtain fresh independent review over the complete evidence set.
 
-Any mutation after a passing step reruns that step and every affected downstream verification. Readiness requires focused tests, full tests, composition, lifecycle cleanup, lint, pristine release verification, separate disposable install/remove inspection, all four live runs, and independent approval.
+Any mutation after a passing step reruns that step and every affected downstream verification. Readiness requires automated product coverage across all four supported behaviors, focused tests, full tests, composition, lifecycle cleanup, lint, pristine release verification, separate disposable install/remove inspection, all three bounded live runs, and independent approval.
 
 ## Implementation Phases and Safe Dependency Order
 
@@ -823,7 +826,7 @@ The labels below are proposed task labels only. The Spec Lead will derive canoni
 | 6. Fresh gates and finalization | `T006` | Extend coverage and lint, implement semantic-review handoff validation and `finalize.mjs`, enforce the digest chain, and revalidate `expectedTarget` immediately before publication. | Depends on `T002` through `T005`. Run focused stale-report, target-drift, mutation, coverage, lint, and atomic-finalization tests. |
 | 7. Pack workflow alignment | `T007` | Update only the body of `pack.md`; align 5 agents, 6 affected skills, and 2 prompts; preserve `pack.md` frontmatter byte-for-byte; leave diagrams and every path outside the declared write set unchanged. | Depends on stable commands and contracts from `T003` through `T006`. Run pack-contract tests that enforce the surface, frontmatter, references, and write boundary. |
 | 8. Automated composition and lifecycle evidence | `T008` | Complete authoring-only tests, standalone/writing matrices, install/remove cleanup, and pristine-release plus separate disposable installed-surface checks. | Depends on `T007`. Run focused pack tests, then full repository tests, compose, lint, and release checks. |
-| 9. Live acceptance and independent approval | `T009` | Execute and record all four live modes, assemble fresh readiness evidence, and obtain independent approval. | Depends on `T008`. Any mutation returns to the earliest affected phase and refreshes downstream evidence. |
+| 9. Bounded live acceptance and independent approval | `T009` | Preflight and execute transcript-only, repository-free mixed prose, and prior-generated-document update with new transcript evidence; preserve full canonical evidence and obtain independent approval. | Depends on `T008`. Approval is required before extraction above 20 units or calls or 10 estimated minutes. Repository-only live acceptance is deferred. |
 
 ## Exact Source Write Inventory
 
@@ -874,14 +877,15 @@ The diagrams skill is intentionally unchanged. No instruction file, dependency m
 
 | Requirements | Success criteria | Plan phases | Proposed labels |
 |---|---|---|---|
-| `FR-001` through `FR-006` | `SC-001`, `SC-002` | Source Registry, per-source `C*`/`E*` processing, strict provenance, workflow alignment, and four-mode acceptance | `T002`, `T003`, `T007`, `T009` |
-| `FR-007` through `FR-014` | `SC-001`, `SC-002`, `SC-004`, `SC-005` | Shared root/path safety, output exclusions, complete repository accounting, ordinal-chained deterministic `R*` units, safe parents, expected-target binding, and finalization | `T001`, `T002`, `T004`, `T006`, `T009` |
+| `FR-001` through `FR-006` | `SC-001`, `SC-002` | Source Registry, per-source `C*`/`E*` processing, strict provenance, workflow alignment, automated four-mode product coverage, and bounded three-mode live acceptance | `T002`, `T003`, `T007`, `T008`, `T009` |
+| `FR-007` through `FR-014` | `SC-001`, `SC-002`, `SC-004`, `SC-005` | Shared root/path safety, output exclusions, complete repository accounting, ordinal-chained deterministic `R*` units, safe parents, expected-target binding, finalization, and automated repository readiness coverage | `T001`, `T002`, `T004`, `T006`, `T008` |
 | `FR-015` through `FR-022` | `SC-003`, `SC-005` | Strict schemas, exact results, deterministic index/merge, all bounds, duplicate detection, deterministic artifacts, atomic writes, and failure preservation | `T001`, `T002`, `T005`, `T006`, `T008` |
 | `FR-023` through `FR-026` | `SC-006` | WEBVTT state handling, Unicode-safe chunks, budget enforcement, CommonMark fences, `C#`, and exact decision/action routing | `T001`, `T003`, `T005`, `T008` |
 | `FR-027` through `FR-030` | `SC-007` | Canonical ordering, stage-specific reports, semantic-review digest handoff, final gates, invalidation, expected-target revalidation, and safe finalization | `T005`, `T006`, `T007`, `T009` |
 | `FR-031` through `FR-034` | `SC-008`, `SC-013` | Optional-writing fallback, resolvable identities, preserved namespace/public surface/frontmatter, and coordinator boundary | `T007`, `T008` |
-| `FR-035` through `FR-037` | `SC-002`, `SC-006`, `SC-008`, `SC-010` | Focused runtime/contract tests, all four modes, and standalone/writing-enabled composition | `T008`, `T009` |
+| `FR-035` through `FR-037` | `SC-002`, `SC-006`, `SC-008`, `SC-010` | Focused runtime/contract tests, automated coverage across all four supported behaviors, standalone/writing-enabled composition, and bounded three-mode live acceptance | `T008`, `T009` |
 | `FR-038` through `FR-040` | `SC-009`, `SC-011`, `SC-012` | Install/remove cleanup, full suite, compose, lint, pristine core release, separate disposable installed-surface verification, evidence refresh, and independent approval | `T008`, `T009` |
+| `FR-041` | `SC-014` | Deterministic live cost preflight and approval enforcement before model extraction | `T009` |
 
 ## Risks and Mitigations
 

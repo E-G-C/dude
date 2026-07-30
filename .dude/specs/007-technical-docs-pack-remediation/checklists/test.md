@@ -76,14 +76,17 @@
 - [ ] Failed finalization leaves the prior final document unchanged and no partial publication.
 - [ ] The canonical sequence is consistent across the manifest, 5 agents, 6 affected skills, and 2 prompts.
 
-## Four Live Modes
+## Automated Four-Mode Coverage And Three Bounded Live Modes
 
+- [ ] Automated product coverage passes for transcript-only, repository-only in a fresh workspace, mixed-source, and existing-document update behavior; repository-focused tests remain authoritative for current repository readiness.
 - [ ] Transcript-only live mode produces only `C*` units, preserves reserved-word cue text, and retains transcript references through the final document.
-- [ ] Repository-only live mode starts in a fresh workspace, accounts for every encountered path, assigns every admitted slice to `R*`, and creates the contained output parent safely.
-- [ ] Mixed-source live mode keeps repository, transcript, notes, and draft identities separate and preserves source-specific sentinels without ID collisions.
-- [ ] Existing-document update live mode produces heading-bound `E*` evidence, preserves unchanged content, records superseded evidence, verifies the update-source hash, and atomically replaces only the authorized target.
-- [ ] Each live mode records Source Registry, unit, ledger, review, final-coverage, final-lint, and final-output hashes.
-- [ ] Checked-in fixtures or simulated prose are not treated as substitutes for the four actual writer-agent runs.
+- [ ] Mixed-prose live mode keeps transcript, notes, and draft identities separate without a repository Source and preserves source-specific sentinels without ID collisions.
+- [ ] Existing-document update live mode uses a prior generated document plus new transcript evidence, produces heading-bound `E*` evidence, preserves unchanged content, records superseded evidence, verifies the update-source hash, and atomically replaces only the authorized target.
+- [ ] Before model calls, each live mode deterministically reports source count, extraction-unit count, approximate tokens, expected model calls and batches, and ETA.
+- [ ] Extraction does not begin without explicit user approval when preflight projects more than 20 extraction units or model calls, or more than 10 minutes.
+- [ ] Each completed live mode records full canonical source, unit, ledger, semantic-review, final-coverage, final-lint, final-output-hash, and mode-specific traceability evidence in the final unmodified evidence set presented for independent review.
+- [ ] Existing transcript-only evidence is reused only when its complete chain is hash-current, and `tech-expanded-output.md` is treated as user delivery rather than canonical update-mode evidence.
+- [ ] Checked-in fixtures or simulated prose are not treated as substitutes for the three actual writer-agent runs.
 
 ## Pack And Lifecycle
 

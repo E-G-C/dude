@@ -422,4 +422,4 @@ node .github/skills/dude-compose/compose.mjs verify
 node .github/skills/dude-lint/lint.mjs .
 ```
 
-Also run full repository test discovery excluding `dist`, all four live modes above, lifecycle cleanup, and the pristine-release procedure. Treat any later mutation as invalidating the affected evidence and all downstream checks.
+Also run full repository test discovery excluding `dist`, automated product coverage for all four supported behaviors plus the three bounded non-repository T009 live modes above after deterministic cost preflight and any required threshold approval, lifecycle cleanup, and the pristine-release procedure. Treat any later mutation as invalidating the affected evidence and all downstream checks.

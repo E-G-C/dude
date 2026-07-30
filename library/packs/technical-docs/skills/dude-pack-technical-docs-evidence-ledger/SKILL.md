@@ -33,7 +33,7 @@ The extractor writes exactly one result per expected work unit, at the exact con
     { "sourceRef": "notes/kickoff.txt#L120-L164", "sha256": "<digest>" }
   ],
   "fragment": {
-    "path": "parts/C012.jsonl",
+    "path": ".td-work/<base>/parts/C012.jsonl",
     "bytes": 2481,
     "sha256": "<digest>",
     "entryCount": 9
@@ -48,7 +48,7 @@ The extractor writes exactly one result per expected work unit, at the exact con
 | `unitDigest` | Yes | The unit digest recorded in the unit manifest. |
 | `status` | Yes | `evidence` or `no-documentable-evidence`. |
 | `examined` | Yes | Nonempty `{sourceRef, sha256}` list that must cover the unit's members **exactly** — no missing member, no extra, no duplicate. |
-| `fragment` | evidence only | `{path, bytes, sha256, entryCount}` with `entryCount > 0`. The path is declared here and is never inferred from a filename convention. |
+| `fragment` | evidence only | `{path, bytes, sha256, entryCount}` with `entryCount > 0`. Persisted `fragment.path` is a normalized workspace-relative POSIX path; it is declared here and is never inferred from a filename convention. |
 | `reason` | no-evidence only | Nonempty explanation. A no-evidence result must not declare a fragment. |
 
 `no-documentable-evidence` is a legitimate outcome for a unit that genuinely carries nothing documentable, such as a lockfile slice. Never invent an entry to avoid it, and never omit the result for a unit.
