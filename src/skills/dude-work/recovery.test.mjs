@@ -162,7 +162,6 @@ function emptyState(policy = {}) {
       recovery: 1,
       recover: false,
       untilBlocked: false,
-      parallel: 1,
       mode: 'guarded',
       ...policy,
     },
@@ -554,7 +553,7 @@ function sizedCanonicalCompleteRequest(expectedBytes) {
   ].join(''));
   const suffix = Buffer.from([
     '/spec.md","taskKey":"T001@8f31c2a7"}},"state":{"completed":[],"overallUsed":0,"pending":[],',
-    '"policy":{"mode":"guarded","overall":"unlimited","parallel":1,"recover":false,"recovery":1,"untilBlocked":false},',
+    '"policy":{"mode":"guarded","overall":"unlimited","recover":false,"recovery":1,"untilBlocked":false},',
     '"recoveryUsed":[]}}',
   ].join(''));
   const slugBytes = expectedBytes - prefix.byteLength - suffix.byteLength;
@@ -901,35 +900,29 @@ test('optional unverified tracked task metadata cannot change packet or no-progr
   );
 });
 
-test('parseInvocation applies exact defaults, selector grammar, and sequential parallel compatibility', () => {
+test('parseInvocation applies exact defaults and selector grammar', () => {
   assert.deepEqual(parseInvocation([]), {
-    policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, parallel: 1, mode: 'guarded' },
+    policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, mode: 'guarded' },
   });
   assert.deepEqual(parseInvocation(['004-pre-work-log-learning']), {
     feature: '004-pre-work-log-learning',
-    policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, parallel: 1, mode: 'guarded' },
+    policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, mode: 'guarded' },
   });
   assert.deepEqual(parseInvocation(['--until', 'blocked']), {
-    policy: { overall: 25, recovery: 1, recover: false, untilBlocked: true, parallel: 1, mode: 'guarded' },
+    policy: { overall: 25, recovery: 1, recover: false, untilBlocked: true, mode: 'guarded' },
   });
   assert.deepEqual(parseInvocation(['--policy', 'guarded']), {
-    policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, parallel: 1, mode: 'guarded' },
+    policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, mode: 'guarded' },
   });
   assert.deepEqual(parseInvocation(['feature', '--policy', 'autonomous']), {
     feature: 'feature',
-    policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, parallel: 1, mode: 'autonomous' },
+    policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, mode: 'autonomous' },
   });
-  for (const parallel of ['1', '2', '9007199254740991']) {
-    assert.deepEqual(parseInvocation(['feature', '--max', '7', '--parallel', parallel]), {
-      feature: 'feature',
-      policy: { overall: 7, recovery: 1, recover: false, untilBlocked: false, parallel: 1, mode: 'guarded' },
-    }, parallel);
-  }
   assert.deepEqual(parseInvocation([
-    '--max', 'unlimited', '--recovery-cycles', 'unlimited', '--recover-on-block', '--parallel', '3',
+    '--max', 'unlimited', '--recovery-cycles', 'unlimited', '--recover-on-block',
   ]), {
     policy: {
-      overall: 'unlimited', recovery: 'unlimited', recover: true, untilBlocked: false, parallel: 1, mode: 'guarded',
+      overall: 'unlimited', recovery: 'unlimited', recover: true, untilBlocked: false, mode: 'guarded',
     },
   });
 });
@@ -941,21 +934,10 @@ test('parseInvocation rejects every malformed option and positional combination'
     ['--max', '2', 'one'],
     ['--unknown'],
     ['--max'],
-    ['--max', '--parallel', '2'],
     ['--max', '0'],
     ['--max', '+1'],
     ['--max', '１'],
     ['--max', '9007199254740992'],
-    ['--parallel'],
-    ['--parallel', '0'],
-    ['--parallel', '+1'],
-    ['--parallel', 'unlimited'],
-    ['--parallel', '-1'],
-    ['--parallel', '１'],
-    ['--parallel', '9007199254740992'],
-    ['--parallel', 'many'],
-    ['--parallel', '1.5'],
-    ['--parallel', '1', '--parallel', '2'],
     ['--until', 'done'],
     ['--until'],
     ['--max', '1', '--max', '2'],
@@ -3106,7 +3088,7 @@ test('exported boundaries reject malformed caller arrays without invoking indexe
   };
   const pendingApproach = assessmentApproach(validAssessment);
   const validState = {
-    policy: { overall: 'unlimited', recovery: 1, recover: true, untilBlocked: false, parallel: 1, mode: 'guarded' },
+    policy: { overall: 'unlimited', recovery: 1, recover: true, untilBlocked: false, mode: 'guarded' },
     overallUsed: 2,
     recoveryUsed: [{ targetKey: targetKey(TARGET), targetHash: targetHash(TARGET), count: 1 }],
     pending: [{
@@ -3309,7 +3291,7 @@ test('Assessment, Blocker, Inspection, and minimal RunState invariants are exact
   const pendingAssessment = boundAssessment;
   const pendingApproach = assessmentApproach(pendingAssessment);
   const state = {
-    policy: { overall: 'unlimited', recovery: 1, recover: true, untilBlocked: false, parallel: 1, mode: 'guarded' },
+    policy: { overall: 'unlimited', recovery: 1, recover: true, untilBlocked: false, mode: 'guarded' },
     overallUsed: 1,
     recoveryUsed: [{ targetKey: targetKey(TARGET), targetHash: targetHash(TARGET), count: 1 }],
     pending: [{
@@ -3509,7 +3491,6 @@ test('B: RunState rejects every state with more than one pending authorization',
         recovery: 'unlimited',
         recover: recoveryUsed.length > 0,
         untilBlocked: false,
-        parallel: 1,
         mode: 'guarded',
       },
       overallUsed: pending.length,
@@ -3526,16 +3507,6 @@ test('B: RunState rejects every state with more than one pending authorization',
   const validSequential = pendingState([pendingEntry(TARGET, [])]);
   assert.doesNotThrow(() => validateRunState(validSequential));
   assert.throws(() => validateRunState(disjointButUnauthoritative), /more than one pending|sequential/i);
-  for (const parallel of [0, 2, Number.MAX_SAFE_INTEGER]) {
-    assert.throws(
-      () => validateRunState({
-        ...validSequential,
-        policy: { ...validSequential.policy, parallel },
-      }),
-      /parallel.*(?:positive safe integer|literal.*1|must.*1)/i,
-      String(parallel),
-    );
-  }
 
   const featureRecovery = {
     ...emptyState({ overall: 'unlimited', recovery: 'unlimited', recover: true }),
@@ -5158,23 +5129,6 @@ test('B: a second pending authorization is never dispatchable without authoritat
   );
   assert.equal(duplicate.reason, 'not-dispatchable');
   assert.strictEqual(duplicate.state, first.state);
-
-  const capacityFirst = authorizeAttempt(
-    emptyState({ overall: 'unlimited', recovery: 'unlimited', recover: true, parallel: 1 }),
-    TARGET,
-    baseRaw,
-    transitionAssessment('retry-task', { targets: ['src/first.mjs'] }),
-    'recovery',
-  );
-  const capacity = authorizeAttempt(
-    capacityFirst.state,
-    secondTarget,
-    secondRaw,
-    transitionAssessment('retry-task', { targets: ['src/second.mjs'] }),
-    'recovery',
-  );
-  assert.equal(capacity.reason, 'not-dispatchable');
-  assert.strictEqual(capacity.state, capacityFirst.state);
 
   const relationCases = [
     ['dependency', [

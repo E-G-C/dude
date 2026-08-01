@@ -84,7 +84,7 @@ Minimal example:
 # Open .dude/ideas/expense-entry.md, then read the idea and answer the prompts.
 @dude define expense-entry
 @dude status
-@dude work expense-entry --max 3
+@dude work expense-entry
 ```
 
 If you only want a plan, use this instead:
@@ -140,7 +140,7 @@ spec artifacts as the source of intent.
 | `@dude brainstorm <idea-or-file.md>` | Create or refresh one flat idea file without creating a spec package |
 | `@dude define <slug>` | Turn the matching idea into spec, plan, and tasks |
 | `@dude status` | See where you are and what is live |
-| `@dude work [<feature>] [--max N]` | Keep going: run the next few ready tasks in whichever lane is already live |
+| `@dude work [<feature>]` | Keep going: run the next few ready tasks in whichever lane is already live |
 | `@dude list packs` | See available and installed optional packs |
 | `@dude add pack <name>` | Install an optional capability (e.g. `beads`, `release`, `web`, `practices`) |
 | `@dude track` | Move work onto a tracked board (requires the `beads` pack) |
@@ -228,12 +228,14 @@ re-issuing one verb per task. It is not a new lane — it runs inside whichever
 execution lane is already live (Lightweight from `tasks.md`, or a tracked board
 when the beads pack is installed) and stops on the first natural boundary (no
 ready task, a real blocker, failed verification, or the configured limit).
-Default cap is `--max 3`. The full verb is documented in
+Work is sequential, one task at a time, and users do not configure concurrency.
+Outside Work, coordinator dispatch can fan out only after the existing safety
+checks prove tasks independent. Default cap is `--max 3`. The full verb is documented in
 [docs/commands.md](docs/commands.md#dude-work).
 
 ```text
-@dude work expense-entry --max 3
-@dude work --until blocked
+@dude work
+@dude work expense-entry
 ```
 
 ## Detailed Docs

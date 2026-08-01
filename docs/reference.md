@@ -45,7 +45,7 @@ the feature:
     ├── research.md        # Technical decisions and unknowns
     ├── data-model.md      # Entities and relationships
     ├── quickstart.md      # Feature smoke-test steps and manual verification flows
-    ├── tasks.md           # Phased, traceable, parallel-safe tasks
+    ├── tasks.md           # Phased, traceable tasks
     ├── contracts/
     │   ├── api.md         # Endpoint shapes and methods
     │   └── schemas.md     # Shared data contracts
@@ -147,7 +147,7 @@ Each canonical task header in `tasks.md` follows:
 
 - `T001` — sequential ID
 - `@a1b2c3d4` — durable reconciliation key
-- `[P]` — parallel-safe within the phase
+- `[P]` — independence candidate only; it neither proves safety nor authorizes fan-out
 - `[US1]` — traces to User Story 1
 - `[Shared]` — cross-story setup, foundational, or polish work
 - task-state glyphs are `[ ]`, `[~]`, `[!]`, and `[x]`
@@ -182,7 +182,8 @@ Dependency rules for import:
 
 - every task in a phase waits for the previous phase to complete
 - non-`[P]` tasks depend on all earlier tasks in the same phase
-- `[P]` tasks can start in parallel once the phase is unblocked
+- `[P]` tasks omit synthetic sibling dependencies unless `deps:` or the source
+  text records a real blocker; import metadata does not authorize dispatch
 - `deps:` may add explicit blockers when phase order alone is not precise
   enough
 
@@ -212,12 +213,14 @@ Feature-only inspection remains read-only, unavailable optional session history
 alone is nonblocking, and evidence overflow permits only a descriptor report,
 not recovery.
 
+Work is sequential and processes one task at a time. Users do not configure
+concurrency. Outside `@dude work`, internal coordinator dispatch may fan out
+only when existing dependency, blocker, and known-disjoint-write checks prove
+it safe.
+
 Overall `--max` and exact-target recovery `--recovery-cycles` budgets are
 independent; each may be finite or `unlimited`, and `unlimited` never bypasses
-no-progress or hard intent, approval, authority, or safety stops. Positive ASCII
-safe integer `--parallel` values are accepted only for compatibility; every
-accepted value is discarded, normalizes the effective policy to `1`, and grants
-no concurrency or fan-out.
+no-progress or hard intent, approval, authority, or safety stops.
 
 One evidence-bound Assessment carries its Inspection's `evidenceHash`. Work
 freshly re-inspects before authorization, and drift refuses without changing
@@ -300,8 +303,8 @@ flowchart TD
   guide.
 - `@dude status` is read-only and does not import or mutate work; it may still
   query Beads when tracked execution is already active.
-- Dude handles parallel execution internally when multiple ready tasks are safe
-  to fan out.
+- Generic dispatch follows the Work distinction above; `[P]` alone authorizes
+  nothing.
 - Do not use `tasks.md` as the live board after import; it is only a
   non-authoritative Beads mirror when updated in this lane.
 

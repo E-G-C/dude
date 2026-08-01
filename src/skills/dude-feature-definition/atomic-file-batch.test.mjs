@@ -2682,7 +2682,7 @@ test('F: authorized definition repair applies owner/spec/plan/tasks and complete
       taskKey: DEFINITION_TASK_KEY,
     };
     const state = {
-      policy: { overall: 3, recovery: 1, recover: true, untilBlocked: false, parallel: 1, mode: 'guarded' },
+      policy: { overall: 3, recovery: 1, recover: true, untilBlocked: false, mode: 'guarded' },
       overallUsed: 0,
       recoveryUsed: [],
       pending: [],

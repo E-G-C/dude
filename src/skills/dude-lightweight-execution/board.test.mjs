@@ -527,7 +527,7 @@ const LANE_OTHER_KEY = 'T002@6f746865';
 const LANE_STAMP = '2026-07-25T12:00:00Z';
 const LANE_TARGET = { specPath: LANE_SPEC, lane: 'lightweight', taskKey: LANE_TASK_KEY };
 const LANE_RUN_STATE = {
-  policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, parallel: 1, mode: 'autonomous' },
+  policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, mode: 'autonomous' },
   overallUsed: 0,
   recoveryUsed: [],
   pending: [],

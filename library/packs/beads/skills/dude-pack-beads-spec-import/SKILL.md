@@ -62,7 +62,7 @@ Dude writes feature definitions under `.dude/specs/`:
 
 - `T001@a1b2c3d4` style task IDs with a human sequence plus durable suffix
 - task-state glyphs: `[ ]` not started, `[~]` in progress, `[!]` blocked, `[x]` done
-- `[P]` for parallel-safe tasks
+- `[P]` for independence candidates; it neither proves safety nor authorizes fan-out
 - optional indented metadata lines such as `deps:` and `blocked-by:`
 
 Compatible task-header regex (Python `re` syntax, defined in `dude-feature-definition` skill):
@@ -186,7 +186,7 @@ The mechanical helper never appends the idea's `## Coordinator Log`.
 - `[~]` -> in-progress Beads task issue
 - `[!]` -> blocked Beads task issue
 - `[x]` -> completed markdown history, not imported again
-- `[P]` marker -> parallel-eligible within the phase
+- `[P]` marker -> independence candidate within the phase; import metadata never authorizes dispatch or fan-out
 - checkpoint text -> acceptance or completion notes
 
 ## Priority Mapping

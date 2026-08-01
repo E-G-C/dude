@@ -237,14 +237,15 @@ In this lane:
 - one bounded task may still include closely related code, tests, and docs when
   one verification step proves the slice
 
-3. Continue execution from the ready-now task or parallel-safe ready set, or
-   resume any existing `[~]` task first.
+3. Continue execution from the ready-now task or ready set, or resume any
+  existing `[~]` task first. `[P]` is only an independence candidate; it
+  neither proves safety nor authorizes fan-out.
 
 Illustrative prompts:
 
 ```text
 @dude status
-@dude work authentication --max 1
+@dude work authentication
 ```
 
 `@dude status` should now report Lightweight Execution with
@@ -279,9 +280,14 @@ inside one of them and stops on the first natural boundary.
 Use it when you want Dude to keep going without re-issuing one verb per task:
 
 ```text
-@dude work expense-entry --max 3
-@dude work --until blocked
+@dude work
+@dude work expense-entry
 ```
+
+Work is sequential and processes one task at a time. Users do not configure
+concurrency. Outside `@dude work`, internal coordinator dispatch may fan out
+only when existing dependency, blocker, and known-disjoint-write checks prove
+it safe.
 
 The optional feature selector must precede all flags. It disambiguates
 Lightweight work only and is ignored in Tracked Execution. Overall work defaults
@@ -289,10 +295,7 @@ to three authorizations; `--until blocked` implies 25 only when no explicit
 `--max` is present. With `--recover-on-block`, recovery defaults to `1` cycle per
 exact target. The overall and exact-target
 recovery budgets are independent; finite values must be positive, while
-`unlimited` removes only the corresponding numeric cap. Positive ASCII safe
-integer `--parallel` values are accepted only for compatibility: every accepted
-value is discarded, normalizes the effective policy to `1`, and grants no concurrency or fan-out.
-Recovery cycles without recovery opt-in, and recovery
+`unlimited` removes only the corresponding numeric cap. Recovery cycles without recovery opt-in, and recovery
 combined with `--until blocked`, are rejected before mutation. See the
 [complete grammar and flag rules](commands.md#dude-work).
 

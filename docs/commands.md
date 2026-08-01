@@ -20,7 +20,7 @@ it with `@dude add pack beads`.
 | `@dude brainstorm <idea>` | Create or refresh one flat `.dude/ideas/<slug>.md` collaboration file without creating a spec package. |
 | `@dude define <slug>` | Turn the matching idea into a reusable package under `.dude/specs/<feature>/`. |
 | `@dude status` | Read-only report of the current lane, live artifact, next step, and blockers. |
-| `@dude work [<feature>] [--max <N\|unlimited>] [--until blocked] [--parallel <N>] [--recover-on-block] [--recovery-cycles <N\|unlimited>] [--policy guarded\|autonomous]` | Run the next few ready tasks back-to-back inside whichever execution lane is already live, with optional Work-authorized recovery and an optional autonomous policy. Not a new lane. |
+| `@dude work [<feature>] [--max <N\|unlimited>] [--until blocked] [--recover-on-block] [--recovery-cycles <N\|unlimited>] [--policy guarded\|autonomous]` | Run the next few ready tasks back-to-back inside whichever execution lane is already live, with optional Work-authorized recovery and an optional autonomous policy. Not a new lane. |
 | `@dude list packs` | Read-only list of available and installed optional packs. |
 | `@dude add pack <name>` / `@dude remove pack <name>` | Install or uninstall an optional capability pack (e.g. `beads`, `release`, `web`, `practices`). |
 | `@dude track` | Import or resume tracked execution on a tracked board. Requires the `beads` pack. |
@@ -183,14 +183,25 @@ iterates inside whichever execution lane is already live (Lightweight from
 `.dude/specs/<feature>/tasks.md` or Tracked from Beads) and stops on the first
 natural boundary.
 
-Preferred form:
+Preferred forms:
 
 ```text
-@dude work [<feature>] [--max <N|unlimited>] [--until blocked] [--parallel <N>] [--recover-on-block] [--recovery-cycles <N|unlimited>] [--policy guarded|autonomous]
+@dude work
+@dude work <feature>
+```
+
+Advanced grammar:
+
+```text
+@dude work [<feature>] [--max <N|unlimited>] [--until blocked] [--recover-on-block] [--recovery-cycles <N|unlimited>] [--policy guarded|autonomous]
 ```
 
 Meaning: keep running the next ready task back-to-back in the active execution
 lane until a stop condition fires.
+
+Work is sequential and processes one task at a time. Users do not configure
+concurrency. Outside Work, coordinator dispatch may fan out only after the
+existing safety checks prove tasks independent.
 
 Flags:
 
@@ -202,10 +213,6 @@ Flags:
   numeric cap.
 - `--until blocked` — keep going until the first natural stop. It implies an
   overall max of `25` only when `--max` is omitted.
-- `--parallel <N>` — compatibility-only input. It accepts a positive ASCII safe
-  integer, but every accepted value is discarded after validation and
-  normalizes the effective recovery capacity and `policy.parallel` to `1`; it
-  grants no concurrency or fan-out authority.
 - `--recover-on-block` — explicitly permit Work-authorized recovery after the required
   post-block or post-failure inspection. Without it, inspection never
   authorizes a retry.
@@ -216,15 +223,11 @@ Flags:
   `guarded`; `autonomous` is an explicit opt-in. Unknown, duplicate, or
   otherwise invalid values are rejected before any mutation. Autonomy relaxes
   no hard stop, budget, verification, review, owner, evidence, lane, or close
-  rule. It is orthogonal to the numeric budgets and to the compatibility-only
-  `--parallel` input.
+  rule. It is independent of the numeric budgets.
 
 The complete invocation is validated before any claim or mutation. A second
 selector, a selector after flags, invalid values, recovery cycles without
 recovery opt-in, and recovery combined with `--until blocked` are rejected.
-For `--parallel`, zero, signed, unsafe, non-ASCII, `unlimited`, symbolic,
-missing, malformed, or duplicate values are invalid and rejected before
-mutation.
 
 The fully uncapped numeric form is experimental:
 

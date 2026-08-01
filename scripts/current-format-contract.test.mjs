@@ -1927,7 +1927,7 @@ test('T007 Work is the sole detailed normative inspection and recovery owner', (
   assert.deepEqual(headingOwners, [RECOVERY_POLICY_OWNER]);
 
   const forbiddenDetails = [
-    ['command grammar', /(?:@dude work[^\n]*(?:--max|--until blocked|--parallel)|--(?:recover-on-block|recovery-cycles)\b)/i],
+    ['command grammar', /(?:@dude work[^\n]*(?:--max|--until blocked)|--(?:recover-on-block|recovery-cycles)\b)/i],
     ['numeric packet bounds', /(?:\b16\b[^\n]{0,48}\b(?:available )?(?:evidence )?items?\b|\b65[,_]?536\b[^\n]{0,48}\b(?:UTF-8 )?bytes?\b)/i],
     ['runtime transition fields', /\b(?:authorizeAttempt|completeAttempt|RunState|evidenceHash|approachHash|resultHash|recoveryUsed)\b/],
     ['CLI or source wire schema', /\bcanonical base64\b|\{`?substantive`?,`?presentation\?`?\}/i],
@@ -1957,11 +1957,7 @@ test('T008 Work detailed owner defines the sequential-v1 recovery trust boundary
   const recovery = markdownSection(source, '## Inspection And Recovery');
   const failures = [
     ...missingParagraphRequirements(grammar, [
-      ['every positive --parallel value is compatibility-only', [
-        [/--parallel/i, /positive/i, /compatib/i],
-        [/(?:effective|normaliz)[^\n]{0,32}(?:capacity|policy\.parallel|parallel)[^\n]{0,16}(?:`1`|1|one)/i],
-      ]],
-      ['invalid --parallel values reject before mutation', [/--parallel/i, /(?:zero|`0`)/i, /signed/i, /unsafe/i, /non-ASCII/i, /unlimited/i, /symbolic/i, /missing/i, /malformed/i, /duplicate/i, /reject|refus/i]],
+      ['Work is sequential and processes one task at a time', [/Work is sequential/i, /one task at a time/i]],
     ]),
     ...missingParagraphRequirements(recovery, [
       ['one Assessment is bound to its Inspection evidenceHash', [
@@ -2036,10 +2032,6 @@ test('T007 feature-005 policy selection and autonomous definition-plan evidence 
   assert.match(
     section,
     /relaxes\s+no hard stop, budget, verification, review, owner, evidence, lane, or close/i,
-  );
-  assert.match(
-    section,
-    /orthogonal to the numeric budgets and to the compatibility-only\s+`--parallel`/i,
   );
   assert.match(raw, /@dude work[^\n]*\[--policy guarded\|autonomous\]/);
 
@@ -2166,11 +2158,7 @@ for (const [relative, heading] of RECOVERY_DOC_SECTIONS) {
       'docs/commands.md': [
         ['optional pre-flag feature selector', [/(?:optional|zero or one)/i, /(?:`?<feature>`?|feature selector)/i, /(?:before|ahead of|precedes?)[^\n]{0,48}(?:all|any)?\s*flags?/i]],
         ['finite or unlimited overall maximum', [/(?:--max|overall[^\n]{0,32}(?:max|budget))/i, /(?:finite|positive|<N)/i, /unlimited/i]],
-        ['positive --parallel input is compatibility-only and effectively sequential', [
-          [/--parallel/i, /positive/i, /(?:ASCII|safe integer)/i, /compatib/i],
-          [/--parallel|accepted value/i, /(?:effective|normaliz)[^\n]{0,32}(?:capacity|policy|parallel)[^\n]{0,16}(?:`1`|1|one)/i, /no[^\n]{0,32}(?:concurr|fan-out)/i],
-        ]],
-        ['invalid --parallel values are fully defined', [/--parallel/i, /(?:zero|`0`)/i, /signed/i, /unsafe/i, /non-ASCII/i, /unlimited/i, /symbolic/i, /missing/i, /malformed/i, /duplicate/i, /reject|invalid/i]],
+        ['sequential one-task execution', [/Work is sequential/i, /one task at a time/i]],
         ['explicit --recover-on-block flag', [/--recover-on-block/]],
         ['finite or unlimited --recovery-cycles with default 1', [/--recovery-cycles/i, /(?:finite|positive|<N)/i, /unlimited/i, /default(?:s)?(?: to)?[^\n]{0,16}(?:`1`|1|one)/i]],
         ['ordinary post-block inspection and stop', [/(?:ordinary|without[^\n]*--recover-on-block)/i, /(?:post-block|after[^\n]*block)/i, /inspect/i, /stop/i]],
@@ -2184,7 +2172,7 @@ for (const [relative, heading] of RECOVERY_DOC_SECTIONS) {
       ],
       'docs/workflow.md': [
         ['Lightweight-only optional selector ignored in Tracked Execution', [[/optional/i, /feature selector/i, /Lightweight/i, /ignored[^\n]*Tracked/i]]],
-        ['positive --parallel input has effective sequential behavior', [[/--parallel/i, /positive|accepted/i, /compatib/i, /(?:effective|normaliz)[^\n]{0,32}(?:`1`|1|one)/i, /no[^\n]{0,32}(?:concurr|simultaneous|fan-out)/i]]],
+        ['sequential one-task execution', [[/Work is sequential/i, /one task at a time/i]]],
         ['explicit --recover-on-block flag', [[/--recover-on-block/]]],
         ['independent finite-or-unlimited overall and exact-target budgets with recovery default 1', [
           [/overall|--max/i, /recovery|exact target|--recovery-cycles/i, /finite|positive/i, /unlimited/i, /default(?:s)?(?: to)?[^\n]{0,24}(?:`1`|1|one)/i],
@@ -2200,7 +2188,7 @@ for (const [relative, heading] of RECOVERY_DOC_SECTIONS) {
       ],
       'docs/reference.md': [
         ['ordinary post-block inspection and stop versus explicit recovery', [[/ordinary/i, /post-block|after[^\n]*block/i, /inspect/i, /stop/i, /explicit[^\n]*recovery/i]]],
-        ['positive --parallel input has effective sequential behavior', [[/--parallel/i, /positive|accepted/i, /compatib/i, /(?:effective|normaliz)[^\n]{0,32}(?:`1`|1|one)/i, /no[^\n]{0,32}(?:concurr|simultaneous|fan-out)/i]]],
+        ['sequential one-task execution', [[/Work is sequential/i, /one task at a time/i]]],
         ['independent budgets and unlimited no-progress hard stops', [
           [/independent|separate/i, /overall/i, /(?:exact[- ]target|per[- ]target)[^\n]*recovery|recovery[^\n]*(?:exact[- ]target|per[- ]target)/i],
           [/unlimited/i, /no-progress/i, /(?:intent|approval|authority|safety|hard)/i, /(?:(?:does not|cannot|never)[^\n]*bypass|stop[^\n]*remain[^\n]*in force|must[^\n]*stop)/i],
@@ -2542,7 +2530,8 @@ const FORBIDDEN_USER_COMMANDS = [
   'govern', 'learning', 'project', 'projection', 'resume', 'suspend', 'halt', 'permit',
 ].map((verb) => `@dude ${verb}`);
 
-const WORK_GRAMMAR_LINE = '@dude work [<feature>] [--max <N|unlimited>] [--until blocked] [--parallel <N>] [--recover-on-block] [--recovery-cycles <N|unlimited>] [--policy guarded|autonomous]';
+const WORK_GRAMMAR_LINE = '@dude work [<feature>] [--max <N|unlimited>] [--until blocked] [--recover-on-block] [--recovery-cycles <N|unlimited>] [--policy guarded|autonomous]';
+const REMOVED_WORK_OPTION = `--${'parallel'}`;
 
 // The eight generated core paths T009 alone may materialize.
 const GENERATED_CORE_PAIRS = [
@@ -2576,6 +2565,101 @@ function concurrencyGrants(text) {
     CONCURRENCY_TOKEN.test(sentence) && !CONCURRENCY_DENIAL.test(sentence)
   ));
 }
+
+test('T002 Work guidance leads with simple sequential forms', () => {
+  const owner = read(GOVERNANCE_POLICY_OWNER);
+  const ownerInvocations = owner.split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('@dude work'));
+  assert.deepEqual(ownerInvocations.slice(0, 2), ['@dude work', '@dude work <feature>']);
+  assert.ok(
+    ownerInvocations.indexOf(WORK_GRAMMAR_LINE) > ownerInvocations.indexOf('@dude work <feature>'),
+    'the detailed grammar follows the two primary forms',
+  );
+
+  for (const relative of ['README.md', 'docs/commands.md', 'docs/workflow.md', 'docs/walkthrough.md']) {
+    const firstRunnable = read(relative).split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.startsWith('@dude work'));
+    assert.ok(
+      /^@dude work(?: [a-z0-9][a-z0-9-]*| <feature>)?$/.test(firstRunnable ?? ''),
+      `${relative} first runnable Work example is simple`,
+    );
+  }
+
+  for (const relative of [
+    GOVERNANCE_POLICY_OWNER,
+    'README.md',
+    'docs/commands.md',
+    'docs/reference.md',
+    'docs/walkthrough.md',
+    'docs/workflow.md',
+  ]) {
+    assert.equal(read(relative).includes(REMOVED_WORK_OPTION), false, `${relative} omits the removed Work option`);
+  }
+
+  const grammar = markdownSection(owner, '## Grammar And Limits').replace(/\s+/g, ' ');
+  assert.match(grammar, /Work is sequential and processes one task at a time/i);
+});
+
+test('T002 [P] remains a candidate signal and generic fan-out remains internal', () => {
+  const reference = visibleMarkdown(read('docs/reference.md'));
+  const workflow = visibleMarkdown(read('docs/workflow.md'));
+  const beadsImport = visibleMarkdown(read('library/packs/beads/skills/dude-pack-beads-spec-import/SKILL.md'));
+  const affirmativePClaim = /\[P\](?:(?!\b(?:never|neither|cannot|can't|(?:do|does|did)\s+not|doesn't)\b)[^.!?])*(?:\bauthoriz(?:e|es|ed|ing)\b[^.!?]*(?:\bdispatch\b|\bfan(?:\s*-\s*|\s+)out\b)|\bproves?\s+safety\b|\bis\s+(?:a\s+)?proof\s+of\s+safety\b)/i;
+  const staleParallelLabel = /\bparallel(?:\s*-\s*|\s+)(?:safe|eligible)\b/i;
+  const hasContradictoryParallelClaim = (content) => sentences(content).some((sentence) => (
+    affirmativePClaim.test(sentence) || staleParallelLabel.test(sentence)
+  ));
+
+  for (const [relative, content] of [
+    ['docs/reference.md', reference],
+    ['docs/workflow.md', workflow],
+    ['library/packs/beads/skills/dude-pack-beads-spec-import/SKILL.md', beadsImport],
+  ]) {
+    assert.equal(hasContradictoryParallelClaim(content), false, `${relative} has no contradictory parallel claim`);
+    assert.match(content, /\[P\][^.!?]*(?:candidate|independence signal)/i, `${relative} defines [P] as a candidate signal`);
+    assert.match(
+      content,
+      /\[P\][^.!?]*(?:does not|never|neither)[^.!?]*(?:prove safety|authoriz[^.!?]*fan-out)/i,
+      `${relative} denies [P] dispatch authority`,
+    );
+  }
+
+  for (const mutation of [
+    '[P] authorizes dispatch.',
+    '[P] authorizes fan-out.',
+    '[P] proves safety.',
+    '[P] is proof of safety.',
+    'This task is PARALLEL - SAFE.',
+    'This task is parallel   eligible.',
+  ]) {
+    assert.equal(
+      hasContradictoryParallelClaim(`${reference}\n\n${mutation}`),
+      true,
+      `in-memory additive contradiction is rejected: ${mutation}`,
+    );
+  }
+
+  assert.match(
+    beadsImport,
+    /`?\[P\]`? tasks do not depend on sibling tasks unless `deps:` or the source text states a real blocker/i,
+    'Beads import preserves synthetic sibling-dependency suppression',
+  );
+  assert.match(
+    beadsImport,
+    /import metadata[^.!?]*(?:does not|never)[^.!?]*authoriz[^.!?]*(?:dispatch|fan-out)/i,
+    'Beads import metadata grants no dispatch authority',
+  );
+
+  for (const [relative, content] of [['docs/reference.md', reference], ['docs/workflow.md', workflow]]) {
+    const normalized = content.replace(/\s+/g, ' ');
+    assert.match(normalized, /Outside `@dude work`[^.]*coordinator[^.]*fan out/i, `${relative} scopes generic fan-out outside Work`);
+    assert.match(normalized, /dependenc[^.]*blocker[^.]*known[^.]*disjoint[^.]*write/i, `${relative} retains the fan-out safety proof`);
+    assert.match(normalized, /Work[^.]*sequential[^.]*one task at a time/i, `${relative} keeps Work sequential`);
+    assert.match(normalized, /users? do not configure concurrency/i, `${relative} exposes no concurrency control`);
+  }
+});
 
 /**
  * Report generated-core files that carry governance content while the declared
@@ -2884,7 +2968,7 @@ test('T007 governance introduces no user-facing command and no new grammar', () 
     assert.deepEqual(
       read(relative).split('\n').filter((line) => line.startsWith('@dude work [')),
       [WORK_GRAMMAR_LINE],
-      `${relative} keeps the exact unchanged Work grammar`,
+      `${relative} keeps the exact supported Work grammar`,
     );
   }
 
@@ -2893,7 +2977,7 @@ test('T007 governance introduces no user-facing command and no new grammar', () 
   )].sort();
   assert.deepEqual(
     grammarFlags,
-    ['--max', '--parallel', '--policy', '--recover-on-block', '--recovery-cycles', '--until'],
+    ['--max', '--policy', '--recover-on-block', '--recovery-cycles', '--until'],
   );
   const proseFlags = [
     ...markdownSection(read(GOVERNANCE_POLICY_OWNER), '## Grammar And Limits').matchAll(/--[a-z][a-z-]*/g),

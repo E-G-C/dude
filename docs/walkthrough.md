@@ -163,7 +163,7 @@ Execution:
 
 ```text
 @dude status
-@dude work authentication --max 1
+@dude work authentication
 ```
 
 At that point, `.dude/specs/001-authentication/tasks.md` is the live markdown
@@ -195,7 +195,7 @@ Updated:
 Next:
 - Continue execution from tasks.md
 
-You: @dude work authentication --max 1
+You: @dude work authentication
 
 Dude:
 Lane: Lightweight Execution · Live: .dude/specs/001-authentication/tasks.md

@@ -340,7 +340,7 @@ test('installed recovery wrappers bind Beads normalization and preserve UTF-8 is
     );
 
     const state = {
-      policy: { overall: 3, recovery: 1, recover: true, untilBlocked: false, parallel: 1, mode: 'guarded' },
+      policy: { overall: 3, recovery: 1, recover: true, untilBlocked: false, mode: 'guarded' },
       overallUsed: 0,
       recoveryUsed: [],
       pending: [],
@@ -1994,7 +1994,7 @@ const TRACKED_ISSUE_ID = 'bd-101';
 const TRACKED_TASK_KEY = 'T001@74726b64';
 const TRACKED_TARGET = { specPath: TRACKED_SPEC, lane: 'tracked', issueId: TRACKED_ISSUE_ID };
 const TRACKED_RUN_STATE = {
-  policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, parallel: 1, mode: 'autonomous' },
+  policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, mode: 'autonomous' },
   overallUsed: 0,
   recoveryUsed: [],
   pending: [],

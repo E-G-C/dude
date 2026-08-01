@@ -9,13 +9,22 @@ description: "Use for @dude work continuous execution inside the active Lightwei
 
 ## Grammar And Limits
 
+Primary forms:
+
 ```text
-@dude work [<feature>] [--max <N|unlimited>] [--until blocked] [--parallel <N>] [--recover-on-block] [--recovery-cycles <N|unlimited>] [--policy guarded|autonomous]
+@dude work
+@dude work <feature>
 ```
 
-Parse the complete invocation with `recovery.mjs` before any claim or mutation; it owns the exact grammar, value validation, and incompatible combinations. Accept at most one feature selector and only before flags. It disambiguates Lightweight work; Tracked Execution ignores it. `--max`: Default `3`, Hard floor `1`, soft ceiling `25` for warnings; `unlimited` removes only the numeric cap. `--until blocked` implies `25` only when max is omitted. Recovery defaults to one cycle but is disabled unless `--recover-on-block` is present. `--policy` defaults to `guarded`; `autonomous` is explicit opt-in and relaxes no hard stop, budget, verification, review, owner, evidence, lane, or close rule.
+Advanced controls:
 
-`--parallel <N>` is compatibility-only. Accept every positive ASCII safe integer, normalize effective `policy.parallel` and capacity to `1`, discard the requested value, and grant no concurrent recovery authorization. Reject zero, signed, unsafe, non-ASCII, `unlimited`, symbolic, missing, malformed, or duplicate `--parallel` values before mutation. Refuse every other invalid invocation, including recovery cycles without recovery opt-in, before mutation.
+```text
+@dude work [<feature>] [--max <N|unlimited>] [--until blocked] [--recover-on-block] [--recovery-cycles <N|unlimited>] [--policy guarded|autonomous]
+```
+
+Work is sequential and processes one task at a time.
+
+Parse the complete invocation with `recovery.mjs` before any claim or mutation; it owns the exact grammar, value validation, and incompatible combinations. Accept at most one feature selector and only before flags. It disambiguates Lightweight work; Tracked Execution ignores it. `--max`: Default `3`, Hard floor `1`, soft ceiling `25` for warnings; `unlimited` removes only the numeric cap. `--until blocked` implies `25` only when max is omitted. Recovery defaults to one cycle but is disabled unless `--recover-on-block` is present. `--policy` defaults to `guarded`; `autonomous` is explicit opt-in and relaxes no hard stop, budget, verification, review, owner, evidence, lane, or close rule. Refuse every other invalid invocation, including recovery cycles without recovery opt-in, before mutation.
 
 ## Detect The Lane Once
 

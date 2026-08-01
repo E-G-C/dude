@@ -2994,7 +2994,7 @@ export function validateRunState(value) {
   );
   const policy = assertExactRecord(
     state.policy,
-    ['overall', 'recovery', 'recover', 'untilBlocked', 'parallel', 'mode'],
+    ['overall', 'recovery', 'recover', 'untilBlocked', 'mode'],
     [],
     'RunState.policy',
   );
@@ -3002,7 +3002,6 @@ export function validateRunState(value) {
   validateBudget(policy.recovery, 'RunState.policy.recovery');
   if (typeof policy.recover !== 'boolean') invalid('RunState.policy.recover', 'must be a boolean');
   if (typeof policy.untilBlocked !== 'boolean') invalid('RunState.policy.untilBlocked', 'must be a boolean');
-  if (policy.parallel !== 1) invalid('RunState.policy.parallel', 'must be the literal safe integer 1');
   assertEnum(policy.mode, ['guarded', 'autonomous'], 'RunState.policy.mode');
   if (policy.recover && policy.untilBlocked) invalid('RunState.policy', 'cannot combine recovery with until-blocked');
   assertSafeInteger(state.overallUsed, 'RunState.overallUsed', false);
@@ -9236,7 +9235,7 @@ export function classifyOutcomeReason(reason) {
  * It never fans out and holds no concurrency: it only LICENSES a single
  * candidate for consideration. Actual dispatch still flows through the
  * unchanged `authorizeAttempt`, which re-enforces `not-dispatchable` while any
- * authorization is pending and keeps `policy.parallel === 1`.
+ * authorization is pending.
  *
  * Revisiting a blocked task is intentionally not decided here: the unchanged
  * `authorizeInspectedAttempt` already refuses a repeat without new evidence
@@ -9338,7 +9337,7 @@ export function parseInvocation(argv) {
   while (index < tokens.length) {
     const option = tokens[index];
     if (!option.startsWith('-')) invalid('feature selector', 'must appear before all flags');
-    if (!['--max', '--recover-on-block', '--recovery-cycles', '--until', '--parallel', '--policy'].includes(option)) {
+    if (!['--max', '--recover-on-block', '--recovery-cycles', '--until', '--policy'].includes(option)) {
       invalid('option', `is unknown: ${option}`);
     }
     if (seen.has(option)) invalid('option', `must not be repeated: ${option}`);
@@ -9362,8 +9361,6 @@ export function parseInvocation(argv) {
     } else if (option === '--policy') {
       if (token !== 'guarded' && token !== 'autonomous') invalid('--policy', "accepts only 'guarded' or 'autonomous'");
       mode = token;
-    } else {
-      parsePositiveOption(token, option, false);
     }
   }
   if (seen.has('--recovery-cycles') && !recover) {
@@ -9371,7 +9368,7 @@ export function parseInvocation(argv) {
   }
   if (recover && untilBlocked) invalid('options', 'cannot combine recovery with --until blocked');
   if (untilBlocked && !explicitMax) overall = 25;
-  const policy = { overall, recovery, recover, untilBlocked, parallel: 1, mode };
+  const policy = { overall, recovery, recover, untilBlocked, mode };
   return feature === undefined ? { policy } : { feature, policy };
 }
 
@@ -11456,7 +11453,6 @@ export function suspendTargetV2(stateValue, inputValue, suspensionValue, depende
       version: 1,
       evidenceHash: inspection.evidenceHash,
       pendingAuthorizations: /** @type {unknown[]} */ (state.pending).length,
-      parallel: /** @type {Record<string, unknown>} */ (state.policy).parallel,
       stoppedReason: stopped.reason,
     })),
     dependencyProofHash: sha256(canonicalJson({
