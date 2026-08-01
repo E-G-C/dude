@@ -332,9 +332,10 @@ budgets remain independent; no-progress, intent, approval, dependency,
 identity, reconciliation, authority, safety, verification, and review stops
 remain in force even with unlimited numeric budgets.
 
-Ordinary Work does not revise definitions. Explicit recovery may repair an
-unchanged-intent derived definition defect only inside an existing Lightweight
-package across exactly four paths: the exact owner idea ledger plus sibling
+Ordinary Work does not revise definitions. Under explicit `--policy autonomous`
+Work with recovery opted in, an unchanged-intent derived definition defect may
+be repaired only inside an existing Lightweight package across exactly four
+paths: the exact owner idea ledger plus sibling
 `spec.md`, `plan.md`, and `tasks.md`. It preserves the complete user-owned Idea,
 Open Questions, and Assumptions sections; supporting contracts remain an
 explicit-definition concern. Tracked definition recovery is inspection-first:

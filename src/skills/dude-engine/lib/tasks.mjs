@@ -1,4 +1,6 @@
 // @ts-check
+import { isUtf8 } from 'node:buffer';
+
 /**
  * Dude `tasks.md` engine — pure parse / derive / render / mutate logic for the
  * Lightweight Execution board, plus the coordinator-state snapshot used to
@@ -44,6 +46,213 @@ const HEADER_RE = /^- \[( |~|!|x)\] (T\d{3,}@[a-z0-9]{8})( \[P\])?( \[[^\]]+\])?
 const LOOSE_HEADER_RE = /^- \[[^\]]*\]/;
 const HEADING_RE = /^#{2,3}\s+(.+?)\s*$/;
 const HISTORY_HEADING_RE = /^##[ \t]+Lightweight[ \t]+Execution[ \t]+History([ \t]|$)/;
+
+/**
+ * @param {Buffer} bytes
+ * @param {number} offset
+ * @param {number} end
+ * @param {string} token
+ */
+function hasAsciiTokenAt(bytes, offset, end, token) {
+  if (offset + token.length > end) return false;
+  for (let index = 0; index < token.length; index += 1) {
+    if (bytes[offset + index] !== token.charCodeAt(index)) return false;
+  }
+  return true;
+}
+
+/** @param {string} text */
+function isStandaloneVisibleComment(text) {
+  return text === BOARD_NOTICE
+    || text === CANONICAL_NOTICE
+    || /^<!-- dude:[a-z0-9-]+:(?:start|end) -->$/.test(text)
+    || /^<!-- audit log: [^\r\n]+ -->$/.test(text);
+}
+
+/**
+ * Index line-local backtick runs once and link each run to its next exact-length run.
+ * @param {Buffer} bytes
+ * @param {number} start
+ * @param {number} end
+ */
+function indexLineBacktickRuns(bytes, start, end) {
+  /** @type {Array<{start:number,end:number,length:number}>} */
+  const runs = [];
+  let cursor = start;
+  while (cursor < end) {
+    if (bytes[cursor] !== 0x60) {
+      cursor += 1;
+      continue;
+    }
+    const runStart = cursor;
+    while (cursor < end && bytes[cursor] === 0x60) cursor += 1;
+    runs.push({ start: runStart, end: cursor, length: cursor - runStart });
+  }
+
+  const nextEqual = Array(runs.length).fill(-1);
+  /** @type {Map<number, number>} */
+  const nextByLength = new Map();
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    nextEqual[index] = nextByLength.get(runs[index].length) ?? -1;
+    nextByLength.set(runs[index].length, index);
+  }
+  return { runs, nextEqual };
+}
+
+/**
+ * Scan the bounded Markdown visibility subset shared by task parsing and
+ * definition recovery. Raw byte offsets and logical newline boundaries are
+ * retained while hidden syntax is replaced with ASCII spaces.
+ * @param {Buffer} bytes
+ * @param {string} state
+ * @param {'generic'|'tasks'} mode
+ */
+export function scanMarkdownVisibility(bytes, state, mode) {
+  const subject = mode === 'tasks' ? 'tasks' : 'definition artifact';
+  if (!isUtf8(bytes)) throw new Error(`${state} ${subject} must be valid UTF-8`);
+  const masked = Buffer.from(bytes);
+  /** @type {Array<{start:number,contentEnd:number,end:number,text:string}>} */
+  const lines = [];
+  /** @type {{kind:'base'}|{kind:'fence',marker:string,openingLength:number,openingOffset:number}|{kind:'htmlComment',openingOffset:number}} */
+  let visibility = { kind: 'base' };
+  let inBoard = false;
+  /** @type {number|null} */
+  let historyOffset = null;
+  let lineStart = 0;
+
+  while (lineStart <= bytes.length) {
+    let contentEnd = lineStart;
+    while (contentEnd < bytes.length && bytes[contentEnd] !== 0x0a && bytes[contentEnd] !== 0x0d) {
+      contentEnd += 1;
+    }
+    let lineEnd = contentEnd;
+    if (lineEnd < bytes.length) {
+      lineEnd += bytes[lineEnd] === 0x0d && bytes[lineEnd + 1] === 0x0a ? 2 : 1;
+    }
+    const line = { start: lineStart, contentEnd, end: lineEnd };
+    const rawText = bytes.subarray(line.start, line.contentEnd).toString('utf8');
+    if (visibility.kind === 'fence') {
+      masked.fill(0x20, line.start, line.contentEnd);
+      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(rawText);
+      if (close
+        && close[1][0] === visibility.marker
+        && close[1].length >= visibility.openingLength) {
+        visibility = { kind: 'base' };
+      }
+      lines.push({ ...line, text: masked.subarray(line.start, line.contentEnd).toString('utf8') });
+      if (line.contentEnd === bytes.length) break;
+      lineStart = line.end;
+      continue;
+    }
+
+    const standaloneVisibleComment = isStandaloneVisibleComment(rawText);
+    if (visibility.kind === 'htmlComment' && standaloneVisibleComment) {
+      masked.fill(0x20, line.start, line.contentEnd);
+      lines.push({ ...line, text: masked.subarray(line.start, line.contentEnd).toString('utf8') });
+      if (line.contentEnd === bytes.length) break;
+      lineStart = line.end;
+      continue;
+    }
+
+    if (visibility.kind === 'base' && !standaloneVisibleComment) {
+      const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(rawText);
+      if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
+        let openingOffset = line.start;
+        while (openingOffset < line.contentEnd
+          && openingOffset - line.start < 3
+          && bytes[openingOffset] === 0x20) {
+          openingOffset += 1;
+        }
+        visibility = {
+          kind: 'fence',
+          marker: open[1][0],
+          openingLength: open[1].length,
+          openingOffset,
+        };
+        masked.fill(0x20, line.start, line.contentEnd);
+        lines.push({ ...line, text: masked.subarray(line.start, line.contentEnd).toString('utf8') });
+        if (line.contentEnd === bytes.length) break;
+        lineStart = line.end;
+        continue;
+      }
+    }
+
+    if (!(visibility.kind === 'base' && standaloneVisibleComment)) {
+      const { runs, nextEqual } = indexLineBacktickRuns(bytes, line.start, line.contentEnd);
+      let runIndex = 0;
+      let cursor = line.start;
+      while (cursor < line.contentEnd) {
+        while (runIndex < runs.length && runs[runIndex].start < cursor) runIndex += 1;
+
+        if (visibility.kind === 'htmlComment') {
+          const hiddenStart = cursor;
+          while (cursor < line.contentEnd
+            && !hasAsciiTokenAt(bytes, cursor, line.contentEnd, '-->')) {
+            cursor += 1;
+          }
+          if (cursor < line.contentEnd) {
+            cursor += 3;
+            masked.fill(0x20, hiddenStart, cursor);
+            visibility = { kind: 'base' };
+          } else {
+            masked.fill(0x20, hiddenStart, line.contentEnd);
+          }
+          continue;
+        }
+
+        const run = runs[runIndex];
+        if (run && run.start === cursor) {
+          const closeIndex = nextEqual[runIndex];
+          if (closeIndex !== -1) {
+            cursor = runs[closeIndex].end;
+            runIndex = closeIndex + 1;
+          } else {
+            cursor = run.end;
+            runIndex += 1;
+          }
+          continue;
+        }
+
+        if (hasAsciiTokenAt(bytes, cursor, line.contentEnd, '<!--')) {
+          visibility = { kind: 'htmlComment', openingOffset: cursor };
+          continue;
+        }
+        cursor += 1;
+      }
+    }
+
+    if (mode === 'tasks') {
+      const activeText = masked.subarray(line.start, line.contentEnd).toString('utf8');
+      if (activeText === BOARD_START) {
+        inBoard = true;
+      } else if (activeText === BOARD_END) {
+        inBoard = false;
+      } else if (!inBoard && HISTORY_HEADING_RE.test(activeText)) {
+        historyOffset = line.start;
+        break;
+      }
+    }
+
+    lines.push({ ...line, text: masked.subarray(line.start, line.contentEnd).toString('utf8') });
+    if (line.contentEnd === bytes.length) break;
+    lineStart = line.end;
+  }
+
+  if (historyOffset === null) {
+    if (visibility.kind === 'fence') {
+      throw new Error(`${state} ${subject} has an unclosed fenced block`);
+    }
+    if (visibility.kind === 'htmlComment') {
+      throw new Error(`${state} ${subject} has an unclosed HTML comment`);
+    }
+  }
+  const activeEnd = historyOffset ?? bytes.length;
+  const maskedPrefix = masked.subarray(0, activeEnd);
+  if (historyOffset !== null) {
+    lines.push({ start: activeEnd, contentEnd: activeEnd, end: activeEnd, text: '' });
+  }
+  return { maskedPrefix, lines, historyOffset, activeEnd };
+}
 
 /**
  * Split source into logical lines while retaining every raw separator boundary.
@@ -277,6 +486,18 @@ export function parseTasks(content, opts = {}) {
     byId,
     warnings,
   };
+}
+
+/**
+ * Parse only authoritative visible task syntax while retaining raw byte
+ * offsets for callers that reconcile exact artifact bytes.
+ * @param {Buffer} bytes
+ * @param {{path?:string,state?:string}} [opts]
+ */
+export function parseVisibleTasks(bytes, opts = {}) {
+  const visibility = scanMarkdownVisibility(bytes, opts.state ?? 'current', 'tasks');
+  const parsed = parseTasks(visibility.maskedPrefix.toString('utf8'), { path: opts.path });
+  return { ...visibility, parsed };
 }
 
 /**

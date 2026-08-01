@@ -896,7 +896,7 @@ test('T008 definition authority, rerun safety, guardrails, gates, and reconcilia
         'During explicit `brainstorm` or `define`, the Spec Lead is the delegated definition writer',
         'Specialists otherwise do not mutate workflow state.',
       ],
-      ruleLine: '1. The coordinator exclusively owns execution-lane and tracked state, task glyphs and metadata, generated boards and mirrors, archive/discovered/execution-history state, execution, execution-reconciliation, and close log events, and close. Ordinary definition authority has only the guarded Work exception below. During explicit `brainstorm` or `define`, the Spec Lead is the delegated definition writer for idea/package artifacts, `status:`, exact `spec_path:`, managed definition regions, and definition `## Coordinator Log` events under `dude-feature-definition`; on re-definition it stages reconciliation and proposed canonical task units but never applies coordinator-owned state. Specialists otherwise do not mutate workflow state.',
+      ruleLine: '1. The coordinator exclusively owns execution-lane and tracked state, task glyphs and metadata, generated boards and mirrors, archive/discovered/execution-history state, execution, execution-reconciliation, and close log events, and close. Ordinary definition authority has only the Work-authorized exception below. During explicit `brainstorm` or `define`, the Spec Lead is the delegated definition writer for idea/package artifacts, `status:`, exact `spec_path:`, managed definition regions, and definition `## Coordinator Log` events under `dude-feature-definition`; on re-definition it stages reconciliation and proposed canonical task units but never applies coordinator-owned state. Specialists otherwise do not mutate workflow state.',
     },
     {
       relative: 'src/agents/dude.agent.md',
@@ -1063,12 +1063,12 @@ test('T008 definition authority, rerun safety, guardrails, gates, and reconcilia
       relative: 'src/skills/dude-feature-definition/SKILL.md',
       heading: '## Re-definition',
       needles: [
-        'Dropping any non-open task is a hard pause for user confirmation',
+        'Dropping any non-open task is a hard pause for user confirmation, except for the single case below.',
         '`## Lightweight Execution History`',
         'read-only evidence, and are never parsed or regenerated',
         'Preserve any `## Discovered During Execution` section verbatim immediately before history',
       ],
-      ruleLine: 'Dropping any non-open task is a hard pause for user confirmation. The user may confirm, reject, force keep/drop, or archive dropped rows. Archived rows go in terminal `## Lightweight Execution History`, remain read-only evidence, and are never parsed or regenerated. Preserve any `## Discovered During Execution` section verbatim immediately before history; its synced `T9001`-`T9999` rows are outside spec-derived reconciliation.',
+      ruleLine: 'Dropping any non-open task is a hard pause for user confirmation, except for the single case below. The user may confirm, reject, force keep/drop, or archive dropped rows. Archived rows go in terminal `## Lightweight Execution History`, remain read-only evidence, and are never parsed or regenerated. Preserve any `## Discovered During Execution` section verbatim immediately before history; its synced `T9001`-`T9999` rows are outside spec-derived reconciliation.',
     },
     {
       relative: 'src/skills/dude-feature-definition/SKILL.md',
@@ -1892,7 +1892,8 @@ test('T006 authority keeps one guarded Lightweight derived-artifact repair excep
     /Work-authorized[\s\S]*unchanged-intent[\s\S]*existing Lightweight package/i,
     /exact[- ]owner[\s\S]*Spec Lead[\s\S]*stag/i,
     /coordinator[\s\S]*reconciliation[\s\S]*(?:execution[- ]state|state ownership)/i,
-    /(?:atomic|all-or-restored)[\s\S]*verification[\s\S]*review/i,
+    // Review precedes the atomic batch, and lint plus verification are bound inside it.
+    /review[\s\S]*(?:atomic|all-or-restored)[\s\S]*lint[\s\S]*verification/i,
     /tracked[\s\S]*refus[\s\S]*before writes/i,
   ]);
 });
@@ -1991,6 +1992,9 @@ test('T008 Work detailed owner defines the sequential-v1 recovery trust boundary
       ['tracked definition refusal occurs after inspection and Assessment validation', [
         [/tracked[^\n]{0,32}definition recovery/i, /(?:only )?after[^\n]{0,48}(?:fresh )?Inspection/i, /Assessment[^\n]{0,24}validat/i, /before[^\n]{0,32}(?:helper|write)/i, /refus|unsupported/i],
       ]],
+      ['Lightweight definition recovery requires explicit autonomous policy', [
+        [/`--policy autonomous`/, /unchanged[- ]intent/i, /recovery|repair/i, /opt(?:ed|-in| in)/i],
+      ]],
       ['Lightweight definition recovery has the exact four-path scope', [/exact[^\n]{0,24}(?:four|4)[- ]path|exact owner/i, /owner[^\n]{0,16}(?:ledger|idea)/i, /`spec\.md`/i, /`plan\.md`/i, /`tasks\.md`/i, /`contracts\/schemas\.md`[^\n]{0,24}(?:exclude|refus|explicit definition)/i]],
       ['definition recovery byte-preserves all user-owned sections', [/byte/i, /`?## Idea`?/i, /`?## Open Questions`?/i, /`?## Assumptions`?/i, /preserv|compar/i]],
       ['durable retention depends on owner-inspected current state', [/retention|durable/i, /owner/i, /inspect/i, /current/i, /duplicates/i, /overlaps/i, /destinations?/i, /caller|model/i, /(?:cannot|must not|never)/i]],
@@ -2017,7 +2021,7 @@ test('T007 recovery-specific always-loaded prompt proxy is deterministic and bou
   });
   const promptProxy = selectedLines.join('');
   const promptBytes = Buffer.byteLength(promptProxy, 'utf8');
-  assert.equal(promptBytes, 1112, 'current recovery-specific always-loaded prompt proxy');
+  assert.equal(promptBytes, 1168, 'current recovery-specific always-loaded prompt proxy');
   assert.ok(promptBytes <= 1200, `recovery prompt proxy is ${promptBytes} bytes (limit 1200)`);
 });
 
@@ -2173,6 +2177,7 @@ for (const [relative, heading] of RECOVERY_DOC_SECTIONS) {
         ['independent budgets and unlimited no-progress hard stops', [/independent|separate/i, /overall|--max/i, /recovery|--recovery-cycles/i, /unlimited/i, /no-progress/i, /(?:hard|must|still)[^\n]{0,48}stop|never[^\n]{0,48}bypass|remain[^\n]{0,48}in force/i]],
         ['Assessment advice is bound to fresh Inspection evidence', [/(?:Assessment[^\n]{0,80}(?:bound|carr)[^\n]{0,48}(?:Inspection|evidenceHash)|(?:Inspection|evidenceHash)[^\n]{0,80}bound[^\n]{0,48}Assessment)/i]],
         ['CLI byte transport is canonical base64', [/CLI|implementation boundary/i, /byte/i, /canonical[^\n]{0,16}base64/i]],
+        ['runtime definition recovery requires explicit autonomous policy', [/`--policy autonomous`/, /unchanged[- ]intent/i, /recovery|repair/i, /opt(?:ed|-in| in)/i]],
         ['runtime definition recovery has exactly four paths', [/unchanged(?:[- ]intent|[^.\n]{0,40}user intent)/i, /existing\s+Lightweight/i, /exact owner/i, /owner[^\n]{0,16}(?:ledger|idea)/i, /`spec\.md`/i, /`plan\.md`/i, /`tasks\.md`/i, /exactly|only/i]],
         ['tracked definition repair inspects first and refuses before writes', [/tracked/i, /definition/i, /recovery|repair/i, /(?:inspection[- ]first|only after[^\n]{0,32}(?:fresh )?inspect)/i, /Assessment/i, /refus|unsupported/i, /before[^\n]*write/i]],
         ['durable retention requires owner inspection', [/retain|durable/i, /owner/i, /inspect/i, /current/i, /duplicates|overlaps|destination/i]],
@@ -2970,4 +2975,253 @@ test('T007 generated core carries no governance content outside a complete mater
   for (const relative of [GOVERNANCE_POLICY_OWNER, ...GOVERNANCE_POINTER_SURFACES]) {
     assert.equal(relative.startsWith('src/'), true, relative);
   }
+});
+
+// --- T005: one detailed owner per automatic-redefinition boundary -------------
+
+const REDEFINITION_WORK_OWNER = 'src/skills/dude-work/SKILL.md';
+const REDEFINITION_WORK_SECTION = '## Automatic Unchanged-Intent Redefinition';
+const REDEFINITION_DEFINITION_OWNER = 'src/skills/dude-feature-definition/SKILL.md';
+const REDEFINITION_DEFINITION_SECTION = '## Re-definition';
+
+// Authority surfaces that may only point at the two owners above.
+const REDEFINITION_TERSE_SURFACES = [
+  'src/agents/dude-spec-lead.agent.md',
+  'src/agents/dude.agent.md',
+  'src/instructions/dude.instructions.md',
+];
+
+// Surfaces Feature 013 and Feature 014 own, which this boundary may not colonize.
+const REDEFINITION_NEIGHBOUR_SURFACES = [
+  'src/skills/dude-lightweight-execution/SKILL.md',
+  'src/skills/dude-receiving-code-review/SKILL.md',
+  'src/skills/dude-reviewer-protocol/SKILL.md',
+];
+
+// Detail only the Work owner may state. Each marker is separately proven against
+// the owner section, so none of them can pass vacuously.
+const REDEFINITION_WORK_DETAIL_MARKERS = [
+  ['automatic eligibility evidence', /\bimpossible gate\b|\bartificial retry\b/i],
+  ['single pre-apply semantic review', /\bexactly one independent reviewer\b/i],
+  ['rollback-bound post-apply checks', /\brecomputes proposal identity\b|\brevalidates the review identity\b/i],
+  ['lane-refresh prerequisite before resume', /\bderived lane snapshot\b/i],
+  ['semantic termination hand-off', /`no-progress-verified`/],
+];
+
+// Detail only the feature-definition owner may state.
+const REDEFINITION_DEFINITION_DETAIL_MARKERS = [
+  ['non-open drop pause', /\bhard pause for user confirmation\b/i],
+  ['dropped-defective archive conditions', /\barchive record\b|\bnever marked complete\b/i],
+  ['parsed structural integrity', /\bappend-only complete coordinator-log prefix\b/i],
+];
+
+// The exact phrase every terse surface uses, so a restatement is countable.
+const REDEFINITION_POINTER_PHRASE = /unchanged-intent derived-(?:artifact|definition) repair/i;
+
+// Existing runtime surfaces this feature reuses instead of extending.
+const REDEFINITION_RUNTIME_ACTIONS = [
+  'execute-task',
+  'retry-task',
+  'address-test',
+  'address-review',
+  'reconcile-derived-definition',
+  'retain-learning',
+  'none',
+];
+
+const REDEFINITION_RUNTIME_BLOCKERS = [
+  'ambiguous-state',
+  'evidence-incomplete',
+  'clarification-required',
+  'approval-required',
+  'external-dependency',
+  'safety-or-authority',
+  'verification-failed',
+  'review-rejected',
+  'tracked-definition-recovery-unsupported',
+  'objective-source-conflict',
+];
+
+const REDEFINITION_FORBIDDEN_COMMANDS = [
+  ...FORBIDDEN_USER_COMMANDS,
+  '@dude redefine', '@dude reconcile', '@dude repair', '@dude propose', '@dude rollback',
+];
+
+/** @param {string} source @param {string} name */
+function frozenRuntimeList(source, name) {
+  const match = new RegExp(`(?:export )?const ${name} = Object\\.freeze\\(\\[([\\s\\S]*?)\\]\\)`).exec(source);
+  assert.ok(match, `recovery.mjs declares ${name}`);
+  return [...match[1].matchAll(/'([a-z0-9-]+)'/g)].map((entry) => entry[1]);
+}
+
+test('T005 automatic redefinition states each rule once at its owner', () => {
+  const surfaces = [REDEFINITION_WORK_OWNER, REDEFINITION_DEFINITION_OWNER, ...REDEFINITION_TERSE_SURFACES];
+  for (const relative of [...surfaces, ...REDEFINITION_NEIGHBOUR_SURFACES]) {
+    assert.equal(fs.statSync(path.join(ROOT, relative)).isFile(), true, relative);
+  }
+  assert.deepEqual(REDEFINITION_TERSE_SURFACES, [...REDEFINITION_TERSE_SURFACES].sort());
+  assert.equal(REDEFINITION_TERSE_SURFACES.includes(REDEFINITION_WORK_OWNER), false);
+  assert.equal(REDEFINITION_TERSE_SURFACES.includes(REDEFINITION_DEFINITION_OWNER), false);
+
+  const headingOwners = [...surfaces, ...REDEFINITION_NEIGHBOUR_SURFACES]
+    .filter((relative) => visibleMarkdown(read(relative)).split('\n')
+      .some((line) => line.trim() === REDEFINITION_WORK_SECTION));
+  assert.deepEqual(headingOwners, [REDEFINITION_WORK_OWNER]);
+
+  const work = markdownSection(read(REDEFINITION_WORK_OWNER), REDEFINITION_WORK_SECTION);
+  const definition = markdownSection(read(REDEFINITION_DEFINITION_OWNER), REDEFINITION_DEFINITION_SECTION);
+  for (const [label, pattern] of REDEFINITION_WORK_DETAIL_MARKERS) {
+    assert.match(work, pattern, `the Work owner must state ${label}`);
+  }
+  for (const [label, pattern] of REDEFINITION_DEFINITION_DETAIL_MARKERS) {
+    assert.match(definition, pattern, `the definition owner must state ${label}`);
+  }
+
+  // Neither owner restates the other's detail, and no other surface restates either.
+  const leakage = [
+    ...[REDEFINITION_DEFINITION_OWNER, ...REDEFINITION_TERSE_SURFACES, ...REDEFINITION_NEIGHBOUR_SURFACES]
+      .flatMap((relative) => REDEFINITION_WORK_DETAIL_MARKERS
+        .filter(([, pattern]) => pattern.test(visibleMarkdown(read(relative))))
+        .map(([label]) => `${relative} duplicates ${label}`)),
+    ...[REDEFINITION_WORK_OWNER, ...REDEFINITION_TERSE_SURFACES, ...REDEFINITION_NEIGHBOUR_SURFACES]
+      .flatMap((relative) => REDEFINITION_DEFINITION_DETAIL_MARKERS
+        .filter(([, pattern]) => pattern.test(visibleMarkdown(read(relative))))
+        .map(([label]) => `${relative} duplicates ${label}`)),
+  ];
+  assert.deepEqual(leakage, []);
+
+  // A terse surface carries one pointer line, never a second restatement.
+  for (const relative of REDEFINITION_TERSE_SURFACES) {
+    const pointers = visibleMarkdown(read(relative)).split('\n')
+      .filter((line) => REDEFINITION_POINTER_PHRASE.test(line));
+    assert.equal(pointers.length, 1, `${relative}: exactly one redefinition pointer`);
+    assert.ok(
+      Buffer.byteLength(pointers[0], 'utf8') <= 440,
+      `${relative}: pointer is ${Buffer.byteLength(pointers[0], 'utf8')} bytes (limit 440)`,
+    );
+    assert.match(pointers[0], /`dude-work`|`dude-feature-definition`|Work-authorized/, relative);
+  }
+});
+
+test('T005 the Work owner states every eligibility, ordering, and continuation rule', () => {
+  const work = markdownSection(read(REDEFINITION_WORK_OWNER), REDEFINITION_WORK_SECTION);
+  const failures = missingParagraphRequirements(work, [
+    ['the automatic route is explicit-autonomous Lightweight only', [
+      [/sole detailed owner/i, /without a user prompt/i, /`dude-feature-definition`/],
+      [/explicit `autonomous`/i, /Lightweight/i],
+      [/deterministic contradiction/i, /impossible gate/i, /materially different implementation approaches/i],
+      [/viable alternative/i, /stale/i, /ambiguous/i, /wrong-target/i, /caller-asserted/i, /ineligible/i],
+      [/[Gg]uarded Work/, /non-Work/, /ordinary explicit redefinition/, /unchanged/],
+      [/tracked/i, /refuse/i, /before any helper or write/i],
+    ]],
+    ['composition precedes exactly one semantic review, which precedes apply', [
+      [/Spec Lead stages/i, /coordinator composes/i, /exact final four-path bytes/i, /reconciliation effect/i],
+      [/deterministic validation/i, /identity/i, /closed structure/i, /mapping shape/i, /only/i],
+      [/exactly one independent reviewer/i, /outcome equivalence/i, /equal-or-stronger/i, /task-scope/i, /decomposition/i, /successor-check/i, /`dropped-defective`/],
+      [/hash/i, /identity/i, /self-attestation/i, /semantic equivalence/i],
+      [/review bound to an earlier stage or different bytes is stale/i],
+      [/[Oo]nly those reviewed bytes/, /only the coordinator/i, /snapshot state/i],
+    ]],
+    ['post-apply checks are synchronous and rollback-bound', [
+      [/synchronous callback/i, /reread/i, /reparse/i, /applied bytes/i, /recomputes proposal identity/i, /revalidates the review identity/i, /fresh lint/i, /required verification/i],
+      [/structural, identity, lint, or verification failure/i, /rollback of all four paths/i],
+      [/incomplete rollback/i, /distinct hard failure/i, /no restoration claim/i],
+      [/[Ss]emantic review is never rerun after apply/],
+    ]],
+    ['resume needs the lane refresh and defers termination', [
+      [/resumes only after/i, /derived lane snapshot/i, /all-or-restored boundary/i],
+      [/snapshot failure/i, /prevents resume/i, /never joins/i],
+      [/no second semantic review/i, /no user prompt/i],
+      [/`## Autonomous Learning Governance`/, /alone decides/i, /distinguishing evidence/i, /`no-progress-verified`/],
+      [/budgets/i, /backstops/i, /never substitute/i],
+      [/adds no lane, command, persistent store, ledger, transaction engine, objective system, or quality reduction/i],
+    ]],
+  ]);
+  assert.deepEqual(failures, [], `${REDEFINITION_WORK_OWNER}: automatic redefinition contract`);
+});
+
+test('T005 the definition owner states staging, integrity, reconciliation, and every drop rule', () => {
+  const definition = markdownSection(read(REDEFINITION_DEFINITION_OWNER), REDEFINITION_DEFINITION_SECTION);
+  const failures = missingParagraphRequirements(definition, [
+    ['the Spec Lead stages only its half plus mappings', [
+      [/`dude-work`/, /`## Automatic Unchanged-Intent Redefinition`/, /this skill owns the definition half/i],
+      [/exact-owner gate/i, /Spec Lead stages only/i, /semantic mappings/i],
+      [/coordinator owns the reconciliation and execution-state half/i, /composes the exact final bytes/i],
+    ]],
+    ['parsed integrity precedes any write and proves no semantic equivalence', [
+      [/[Bb]efore any write/, /exact ownership/i, /one balanced active managed region/i, /append-only complete coordinator-log prefix/i, /byte-identical/i, /canonical tasks/i, /discovered-work and history bytes/i],
+      [/never establishes semantic equivalence/i],
+      [/independent review has already approved/i, /atomic\/all-or-restored four-path batch/i, /fresh lint and verification/i],
+      [/[Tt]racked definition recovery refuses before writes/],
+    ]],
+    ['the non-open drop pause states its exception inline', [
+      [/hard pause for user confirmation/i, /except/i],
+    ]],
+    ['the single autonomous exception is closed', [
+      [/sole exception/i, /`dropped-defective`/, /autonomous Lightweight/i],
+      [/exact ownership/i, /byte-unchanged intent/i, /trusted defect evidence/i, /equal-or-stronger/i, /independent approval/i, /archive mapping/i],
+      [/open successors/i, /no state or completion evidence/i, /byte-preserved prior history/i, /append-only archive record/i],
+      [/never marked complete/i],
+      [/[Aa]ny missing condition/, /guarded Work/i, /non-Work/i, /ordinary explicit redefinition/i, /every other non-open drop/i, /keep the pause/i],
+    ]],
+  ]);
+  assert.deepEqual(failures, [], `${REDEFINITION_DEFINITION_OWNER}: definition-half contract`);
+
+  // Protected user intent stays stated once, in this skill's Ownership section.
+  assertSectionMatchesAll(REDEFINITION_DEFINITION_OWNER, '## Ownership', [
+    /`## Idea`[^\n]*`## Open Questions`[^\n]*`## Assumptions`[^\n]*user-controlled/i,
+  ]);
+
+  // Feature 014 regression: a reader must never meet an unconditional pause rule
+  // and stop before the section that qualifies it.
+  const pauseSentences = [
+    REDEFINITION_WORK_OWNER,
+    REDEFINITION_DEFINITION_OWNER,
+    ...REDEFINITION_TERSE_SURFACES,
+    ...REDEFINITION_NEIGHBOUR_SURFACES,
+  ].flatMap((relative) => sentences(visibleMarkdown(read(relative)))
+    .filter((sentence) => /hard pause for user confirmation|pauses? for the user/i.test(sentence))
+    .map((sentence) => [relative, sentence]));
+  assert.ok(pauseSentences.length >= 1, 'the non-open-drop pause is stated somewhere');
+  assert.deepEqual(
+    pauseSentences.filter(([, sentence]) => !/\b(?:except|exception|unless|outside)\b/i.test(sentence))
+      .map(([relative]) => relative),
+    [],
+    'every non-open-drop pause sentence carries its exception inline',
+  );
+});
+
+test('T005 automatic redefinition adds no action, command, or persistence surface', () => {
+  const runtime = read('src/skills/dude-work/recovery.mjs');
+  assert.deepEqual(frozenRuntimeList(runtime, 'ACTIONS'), REDEFINITION_RUNTIME_ACTIONS);
+  assert.deepEqual(frozenRuntimeList(runtime, 'BLOCKER_CODES'), REDEFINITION_RUNTIME_BLOCKERS);
+  assert.ok(
+    runtime.includes("'reconcile-derived-definition': Object.freeze(['lint', 'review', 'verification'])"),
+    'the reused action keeps its exact check set',
+  );
+  assert.deepEqual(runtimeStringList(runtime, 'public commands'), GOVERNANCE_PUBLIC_COMMANDS);
+
+  const work = markdownSection(read(REDEFINITION_WORK_OWNER), REDEFINITION_WORK_SECTION);
+  assert.deepEqual([...work.matchAll(/--[a-z][a-z-]*/g)].map((entry) => entry[0]), [], 'no new Work flag');
+  assert.doesNotMatch(work, /\b(?:ObjectiveRegistry|EvaluationContract|RunState)\b/, 'no objective or run-state surface');
+  assert.deepEqual(concurrencyGrants(work), [], 'the automatic route grants no concurrency');
+
+  for (const relative of [
+    REDEFINITION_WORK_OWNER,
+    REDEFINITION_DEFINITION_OWNER,
+    ...REDEFINITION_TERSE_SURFACES,
+    ...PUBLIC_DOC_FILES,
+  ]) {
+    const content = read(relative);
+    for (const forbidden of REDEFINITION_FORBIDDEN_COMMANDS) {
+      assert.equal(content.includes(forbidden), false, `${relative} presents ${forbidden}`);
+    }
+  }
+
+  // Feature 009 keeps its package: the route hands off, it does not restate policy.
+  const governanceLeakage = GOVERNANCE_DETAIL_MARKERS
+    .filter(([label, pattern]) => label !== 'governance phase names' && pattern.test(work))
+    .map(([label]) => label);
+  assert.deepEqual(governanceLeakage, [], 'redefinition restates learning-governance detail');
+  assert.match(work, /`## Autonomous Learning Governance`[^\n]{0,96}alone decides/i);
 });

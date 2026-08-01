@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import {
   parseTasks,
+  parseVisibleTasks,
   readyTasks,
   nextTask,
   deriveDependencies,
@@ -67,6 +68,21 @@ function historySuffixOf(content) {
   return history.suffix;
 }
 
+test('T003 unified Markdown scanner implementation contains no suffix-search operations', () => {
+  const runtimeSource = fs.readFileSync(new URL('./tasks.mjs', import.meta.url), 'utf8');
+  const scannerStart = runtimeSource.indexOf('function indexLineBacktickRuns(');
+  const scannerEnd = runtimeSource.indexOf('\nfunction tokenizeLogicalLines(', scannerStart);
+  assert.notEqual(scannerStart, -1, 'backtick indexer declaration is present');
+  assert.notEqual(scannerEnd, -1, 'scanner source has a stable adjacent boundary');
+  const scannerSource = runtimeSource.slice(scannerStart, scannerEnd);
+
+  assert.doesNotMatch(scannerSource, /\b(?:indexOf|lastIndexOf)\s*\(/);
+  assert.doesNotMatch(
+    scannerSource,
+    /\b(?:find|search|scan)[A-Za-z0-9_$]*suffix[A-Za-z0-9_$]*\s*\(/i,
+  );
+});
+
 test('parseTasks extracts headers, flags, labels, deps, and metadata', () => {
   const p = parseTasks(FIXTURE, { path: 'tasks.md' });
   assert.equal(p.tasks.length, 5);
@@ -93,6 +109,43 @@ test('parseTasks records warnings for duplicate, malformed, and dangling deps', 
   assert.ok(p.warnings.some((w) => /duplicate task id T001/.test(w)));
   assert.ok(p.warnings.some((w) => /unknown id T404@00000000/.test(w)));
   assert.ok(p.warnings.some((w) => /malformed task line/.test(w)));
+});
+
+test('parseVisibleTasks ignores fenced board markers without hiding real task bytes', () => {
+  const source = [
+    '- [ ] T001@aaaaaaaa First visible task',
+    '```md',
+    BOARD_START,
+    '```',
+    '- [~] T002@bbbbbbbb Real task after the fenced marker',
+    '<!--',
+    BOARD_END,
+    '-->',
+    '## Lightweight Execution History',
+    '- archived row',
+    '',
+  ].join('\r\n');
+  assert.deepEqual(
+    parseTasks(source).tasks.map((task) => task.id),
+    ['T001@aaaaaaaa'],
+    'the raw parser demonstrates the fenced-board omission hazard',
+  );
+
+  const bytes = Buffer.from(source);
+  const visible = parseVisibleTasks(bytes, { path: 'tasks.md', state: 'fixture' });
+  assert.deepEqual(
+    visible.parsed.tasks.map((task) => task.id),
+    ['T001@aaaaaaaa', 'T002@bbbbbbbb'],
+  );
+  assert.equal(
+    visible.lines.find((line) => line.text.startsWith('- [~]'))?.start,
+    bytes.indexOf(Buffer.from('- [~] T002@bbbbbbbb')),
+  );
+  assert.equal(
+    visible.historyOffset,
+    bytes.indexOf(Buffer.from('## Lightweight Execution History')),
+  );
+  assert.equal(visible.activeEnd, visible.historyOffset);
 });
 
 test('readyTasks = todo with deps satisfied, ordered by phase then num', () => {

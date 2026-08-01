@@ -11,7 +11,7 @@ import {
   parseSpecIdentity,
   resolveSpecIdentity,
 } from '../dude-engine/lib/feature-identity.mjs';
-import { parseTasks } from '../dude-engine/lib/tasks.mjs';
+import { parseTasks, parseVisibleTasks } from '../dude-engine/lib/tasks.mjs';
 import { resolveWorkspacePath } from '../dude-engine/lib/workspace-paths.mjs';
 
 const SOURCES = Object.freeze([
@@ -113,6 +113,37 @@ const MAX_PACKET_ITEMS = 16;
 const MAX_PACKET_BYTES = 65_536;
 const MAX_REGISTRY_ENTRIES = 64;
 const MAX_LEARNING_GOVERNANCE_BYTES = 32_768;
+const MAX_DEFINITION_REVISION_PROPOSAL_BYTES = 32_768;
+const MAX_DEFINITION_REVISION_COMPONENT_BYTES = 131_072;
+const MAX_DEFINITION_REVISION_PROOF_BYTES = 262_144;
+const MAX_DEFINITION_REVISION_REVIEW_BYTES = 262_144;
+const MAX_DEFINITION_REVISION_ROWS = 64;
+const DEFINITION_OBLIGATION_CATEGORIES = Object.freeze([
+  'acceptance',
+  'failure',
+  'meaning-of-done',
+  'outcome',
+  'quality',
+  'safety',
+  'scope',
+]);
+const DEFINITION_SPEC_EDIT_CLASSES = Object.freeze([
+  'none',
+  'contradiction-clarification',
+  'accidental-execution-constraint-relocation-or-replacement',
+  'verified-execution-assumption',
+]);
+const DEFINITION_TASK_RECONCILIATION_DISPOSITIONS = Object.freeze([
+  'one-to-one-kept',
+  'changed',
+  'split',
+  'merged',
+  'dropped',
+  'dropped-defective',
+  'new',
+]);
+const DEFINITION_REVISION_REVIEW_ENVELOPE_TYPE = 'definition-revision-semantic-review-envelope';
+const DEFINITION_RECOVERY_ARCHIVE_PREFIX = '- dude-definition-recovery-archive: ';
 // Assembled by concatenation so no literal active registry marker line ever appears in source.
 const OBJECTIVE_REGISTRY_START = '<' + '!-- dude:objective-registry:start --' + '>';
 const OBJECTIVE_REGISTRY_END = '<' + '!-- dude:objective-registry:end --' + '>';
@@ -165,6 +196,28 @@ function assertRecord(value, label) {
     }
   }
   return /** @type {Record<string, unknown>} */ (value);
+}
+
+/** @param {unknown} value @param {string} label @param {Set<object>} [ancestors] */
+function assertProxyFreeDataGraph(value, label, ancestors = new Set()) {
+  if (value === null || typeof value !== 'object') return;
+  if (utilTypes.isProxy(value)) invalid(label, 'must not contain a Proxy');
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return;
+  if (ancestors.has(value)) invalid(label, 'must not contain a cycle');
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const rows = assertDenseDataArray(value, label);
+      rows.forEach((row, index) => assertProxyFreeDataGraph(row, `${label}[${index}]`, ancestors));
+      return;
+    }
+    const record = assertRecord(value, label);
+    for (const key of Object.keys(record)) {
+      assertProxyFreeDataGraph(record[key], `${label}.${key}`, ancestors);
+    }
+  } finally {
+    ancestors.delete(value);
+  }
 }
 
 /**
@@ -231,9 +284,18 @@ function assertHash(value, label) {
   }
 }
 
+// A hostile [[Prototype]] leaves canonical bytes unchanged while redirecting
+// every method lookup a later reader performs on the raw value.
+/** @param {unknown} value @param {string} label */
+function assertPlainArrayPrototype(value, label) {
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Array.prototype && prototype !== null) invalid(label, 'must be a plain array');
+}
+
 /** @param {unknown} value @param {string} label @returns {unknown[]} */
 function assertDenseDataArray(value, label) {
   if (!Array.isArray(value)) invalid(label, 'must be an array');
+  assertPlainArrayPrototype(value, label);
   const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
   if (!lengthDescriptor || !('value' in lengthDescriptor)
     || lengthDescriptor.enumerable || lengthDescriptor.configurable) {
@@ -271,6 +333,7 @@ function assertDenseDataArray(value, label) {
 /** @param {unknown} value @param {string} label */
 function assertDenseDataArrayLength(value, label) {
   if (!Array.isArray(value)) invalid(label, 'must be an array');
+  assertPlainArrayPrototype(value, label);
   const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
   if (!lengthDescriptor || !('value' in lengthDescriptor)
     || lengthDescriptor.enumerable || lengthDescriptor.configurable) {
@@ -1202,7 +1265,22 @@ function normalizeTaskHistory(value, target) {
       usable: false,
     };
   }
-  const parsed = parseTasks(captured.text, { path: expectedPath });
+  const parsedVisible = (() => {
+    try {
+      return parseVisibleTasks(captured.bytes, { path: expectedPath });
+    } catch {
+      return null;
+    }
+  })();
+  if (!parsedVisible) {
+    return {
+      item: acquiredEvidence('task-history', true, 'malformed', canonicalJson({ path: expectedPath })),
+      tasks: [],
+      targetTask: null,
+      usable: false,
+    };
+  }
+  const parsed = parsedVisible.parsed;
   const discovered = extractDiscoveredSection(parsed);
   const tasks = parsed.tasks.map(normalizeTask);
   const taskKey = target.lane === 'lightweight' && typeof target.taskKey === 'string'
@@ -1217,7 +1295,9 @@ function normalizeTaskHistory(value, target) {
     canonicalTasks: taskKey ? (targetTask ? [targetTask] : []) : tasks,
     dependencies,
     discovered: discovered.text,
-    history: parsed.history?.suffix || '',
+    history: parsedVisible.historyOffset === null
+      ? ''
+      : captured.bytes.subarray(parsedVisible.historyOffset).toString('utf8'),
   });
   if (parsed.warnings.length || discovered.malformed) {
     return {
@@ -1250,8 +1330,18 @@ function normalizeTaskHistory(value, target) {
  * @param {string|null} ownerIdeaPath
  * @param {string|null} verifiedTaskKey
  * @param {string|undefined} acquisitionStatus
+ * @param {Record<string, unknown>|null} definitionPrestate
+ * @param {Record<string, unknown>|null} definitionProjectionBase
  */
-function normalizeDefinitionPlan(value, target, ownerIdeaPath, verifiedTaskKey, acquisitionStatus) {
+function normalizeDefinitionPlan(
+  value,
+  target,
+  ownerIdeaPath,
+  verifiedTaskKey,
+  acquisitionStatus,
+  definitionPrestate,
+  definitionProjectionBase,
+) {
   const plan = assertExactRecord(value, ['path', 'bytes'], [], 'rawInputs.definitionPlan');
   const specPath = /** @type {string} */ (target.specPath);
   const siblingPlanPath = `${specPath.slice(0, -'spec.md'.length)}plan.md`;
@@ -1295,6 +1385,8 @@ function normalizeDefinitionPlan(value, target, ownerIdeaPath, verifiedTaskKey, 
       planDescriptor,
       ownerBindingHash,
       registryHash: null,
+      ...(definitionPrestate ? { definitionPrestate } : {}),
+      ...(definitionProjectionBase ? { definitionProjectionBase } : {}),
     }));
   }
   const registry = /** @type {Record<string, unknown>} */ (scan.registry);
@@ -1307,7 +1399,14 @@ function normalizeDefinitionPlan(value, target, ownerIdeaPath, verifiedTaskKey, 
     ? (typeof target.taskKey === 'string' ? target.taskKey : null)
     : (typeof verifiedTaskKey === 'string' ? verifiedTaskKey : null);
   /** @type {Record<string, unknown>} */
-  const body = { path: plan.path, planDescriptor, ownerBindingHash, registryHash };
+  const body = {
+    path: plan.path,
+    planDescriptor,
+    ownerBindingHash,
+    registryHash,
+    ...(definitionPrestate ? { definitionPrestate } : {}),
+    ...(definitionProjectionBase ? { definitionProjectionBase } : {}),
+  };
   if (selectionKey !== null) {
     const selectedEntry = /** @type {Record<string, unknown>[]} */ (registry.entries)
       .find((entry) => entry.taskKey === selectionKey);
@@ -1714,7 +1813,7 @@ function chargeRawInputBodies(raw, budget, workspaceCharged, capturesCharged, ta
  * @param {unknown} targetValue
  * @param {unknown} rawValue
  * @param {unknown} [dependenciesValue]
- * @param {{ownerDiagnostics?:unknown[],budget?:{used:number},workspaceCharged?:boolean,capturesCharged?:boolean,policyMode?:string,definitionPlanStatus?:string}} [context]
+ * @param {{ownerDiagnostics?:unknown[],budget?:{used:number},workspaceCharged?:boolean,capturesCharged?:boolean,policyMode?:string,definitionPlanStatus?:string,definitionSpec?:{path:string,bytes:Buffer|null},definitionSpecStatus?:string,definitionTaskSuffix?:Buffer}} [context]
  */
 function collectEvidenceInternal(targetValue, rawValue, dependenciesValue, context = {}) {
   const dependencies = validateDependencies(dependenciesValue);
@@ -1750,8 +1849,35 @@ function collectEvidenceInternal(targetValue, rawValue, dependenciesValue, conte
   const owner = normalizeOwnerLog(raw.directIdeas, /** @type {string} */ (target.specPath), context.ownerDiagnostics || []);
   const taskHistory = normalizeTaskHistory(raw.tasks, target);
   const lane = normalizeLaneHistory(raw.lane, target, taskHistory, dependencies);
+  const definitionPrestate = policyMode === 'autonomous'
+    ? acquiredDefinitionPrestateV1(
+      raw,
+      target,
+      owner.ownerIdeaPath,
+      context.definitionSpec,
+      context.definitionSpecStatus,
+    )
+    : null;
+  const definitionProjectionBase = policyMode === 'autonomous'
+    ? acquiredDefinitionProjectionBaseV1(
+      raw,
+      target,
+      owner.ownerIdeaPath,
+      context.definitionSpec,
+      context.definitionSpecStatus,
+      context.definitionTaskSuffix,
+    )
+    : null;
   const definitionPlan = policyMode === 'autonomous'
-    ? normalizeDefinitionPlan(raw.definitionPlan, target, owner.ownerIdeaPath, lane.verifiedTaskKey, context.definitionPlanStatus)
+    ? normalizeDefinitionPlan(
+      raw.definitionPlan,
+      target,
+      owner.ownerIdeaPath,
+      lane.verifiedTaskKey,
+      context.definitionPlanStatus,
+      definitionPrestate,
+      definitionProjectionBase,
+    )
     : null;
   const currentRun = normalizeCaptureStream(
     raw.currentRun,
@@ -2094,13 +2220,14 @@ function readTasks(root, tasksPath, budget) {
 }
 
 /**
- * Fail-soft read of the sibling plan.md under the autonomous policy. Oversize is a
- * soft overflow, an aggregate-limit refusal still throws, and a missing or unstable
- * plan surfaces as a status rather than an exception.
+ * Fail-soft read of one definition file under the autonomous policy. Oversize is
+ * a soft overflow, an aggregate-limit refusal still throws, and a missing or
+ * unstable file surfaces as a status rather than an exception.
  * @param {string} root @param {string} relativePath @param {{used:number}} budget
+ * @param {string} label
  * @returns {{bytes:Buffer}|{bytes:null,status:string}}
  */
-function readPlanFile(root, relativePath, budget) {
+function readAutonomousDefinitionFile(root, relativePath, budget, label) {
   let beforePath;
   try {
     beforePath = inspectWorkspaceFilePath(root, relativePath);
@@ -2123,7 +2250,7 @@ function readPlanFile(root, relativePath, budget) {
     }
     if (beforeRead.size > BigInt(MAX_SOURCE_BODY_BYTES)) return { bytes: null, status: 'overflow' };
     const byteLength = Number(beforeRead.size);
-    chargeBodyLength(byteLength, 'rawInputs.definitionPlan workspace file source body', budget);
+    chargeBodyLength(byteLength, `${label} workspace file source body`, budget);
     const bytes = Buffer.allocUnsafe(byteLength);
     let offset = 0;
     while (offset < byteLength) {
@@ -2146,8 +2273,17 @@ function readPlanFile(root, relativePath, budget) {
   }
 }
 
-/** @param {unknown} value @param {unknown} [dependenciesValue] @param {boolean} [transport] @param {string} [policyModeOverride] */
-function acquireInspection(value, dependenciesValue, transport = false, policyModeOverride = undefined) {
+/**
+ * @param {unknown} value @param {unknown} [dependenciesValue] @param {boolean} [transport]
+ * @param {string} [policyModeOverride] @param {{definitionTaskSuffix?:Buffer}} [acquisitionOptions]
+ */
+function acquireInspection(
+  value,
+  dependenciesValue,
+  transport = false,
+  policyModeOverride = undefined,
+  acquisitionOptions = {},
+) {
   const dependencies = validateDependencies(dependenciesValue);
   const input = assertExactRecord(
     value,
@@ -2202,11 +2338,28 @@ function acquireInspection(value, dependenciesValue, transport = false, policyMo
   let definitionPlan;
   /** @type {string|undefined} */
   let definitionPlanStatus;
+  /** @type {{path:string,bytes:Buffer|null}|undefined} */
+  let definitionSpec;
+  /** @type {string|undefined} */
+  let definitionSpecStatus;
   if (policyMode === 'autonomous') {
     const planPath = `${specPath.slice(0, -'spec.md'.length)}plan.md`;
-    const planRead = readPlanFile(/** @type {string} */ (input.root), planPath, budget);
+    const planRead = readAutonomousDefinitionFile(
+      /** @type {string} */ (input.root),
+      planPath,
+      budget,
+      'rawInputs.definitionPlan',
+    );
     definitionPlan = { path: planPath, bytes: planRead.bytes };
     definitionPlanStatus = 'status' in planRead ? planRead.status : undefined;
+    const specRead = readAutonomousDefinitionFile(
+      /** @type {string} */ (input.root),
+      specPath,
+      budget,
+      'definition prestate spec',
+    );
+    definitionSpec = { path: specPath, bytes: specRead.bytes };
+    definitionSpecStatus = 'status' in specRead ? specRead.status : undefined;
   }
   const acquiredInput = transport
     ? materializeTransportInput(input, 'inspect input', budget)
@@ -2231,6 +2384,11 @@ function acquireInspection(value, dependenciesValue, transport = false, policyMo
       capturesCharged: transport,
       policyMode,
       definitionPlanStatus,
+      definitionSpec,
+      definitionSpecStatus,
+      ...(acquisitionOptions.definitionTaskSuffix
+        ? { definitionTaskSuffix: acquisitionOptions.definitionTaskSuffix }
+        : {}),
     })),
   };
 }
@@ -2906,7 +3064,10 @@ export function validateRunState(value) {
       target,
       { action: record.action, materialInputs: record.materialInputs },
     )) invalid(`RunState.pending[${index}].materialInputs`, 'does not match its stored action');
-    if (approachHash({ action: record.action, materialInputs: record.materialInputs }) !== record.approachHash) {
+    const proposalBoundApproach = policy.mode === 'autonomous'
+      && record.action === 'reconcile-derived-definition';
+    if (!proposalBoundApproach
+      && approachHash({ action: record.action, materialInputs: record.materialInputs }) !== record.approachHash) {
       invalid(`RunState.pending[${index}].approachHash`, 'does not match action and materialInputs');
     }
     assertEnum(record.mode, ['ordinary', 'recovery'], `RunState.pending[${index}].mode`);
@@ -2955,12 +3116,22 @@ export function validateRunState(value) {
       if (policy.mode !== 'autonomous') {
         invalid('RunState.pendingCompletion', 'v2 retention requires autonomous policy');
       }
-      // Only the exact governed authorized attempt may retain a completion
-      // while a governance case is open.
+      const definitionReconciliationRetention = hasLearningGovernance
+        && pending.length === 1
+        && pending[0].action === 'reconcile-derived-definition'
+        && pending[0].mode === 'recovery'
+        && ['projected', 'no-progress-verified'].includes(
+          /** @type {string} */ (/** @type {Record<string, unknown>} */ (state.learningGovernance).phase),
+        )
+        && pendingCompletion.attemptIdentity
+          === completionApproachContextV2(state, pending[0]).attemptIdentity;
+      // Only a Feature 009 authorized attempt or the exact proposal-bound
+      // definition reconciliation may retain completion beside governance.
       if (hasLearningGovernance
         && !V2_AUTHORIZED_PHASES.includes(
           /** @type {string} */ (/** @type {Record<string, unknown>} */ (state.learningGovernance).phase),
-        )) {
+        )
+        && !definitionReconciliationRetention) {
         invalid('RunState.pendingCompletion', 'v2 retention cannot coexist with active learning governance');
       }
       if (pending.length !== 1
@@ -3029,12 +3200,18 @@ export function validateRunState(value) {
     }
     const governedPending = pending.filter((entry) => targetKey(entry.target) === targetKey(governance.target));
     if (governedPending.length > 0) {
-      // A governed target holds a pending attempt only in an authorized phase,
-      // and only the exact attempt that consumed its attempt permit.
-      if (!V2_AUTHORIZED_PHASES.includes(/** @type {string} */ (governance.phase))
-        || governedPending.length !== 1
-        || completionApproachContextV2(state, governedPending[0]).attemptIdentity
-          !== governance.authorizedAttemptIdentity) {
+      const definitionReconciliationPending = governedPending.length === 1
+        && governedPending[0].action === 'reconcile-derived-definition'
+        && governedPending[0].mode === 'recovery'
+        && ['projected', 'no-progress-verified'].includes(/** @type {string} */ (governance.phase));
+      // Feature 009 still owns alternative permits. The sole additional shape
+      // is the existing definition-reconciliation action beside its retained
+      // no-alternative branch; authorization derives that branch freshly.
+      const permittedAlternativePending = V2_AUTHORIZED_PHASES.includes(/** @type {string} */ (governance.phase))
+        && governedPending.length === 1
+        && completionApproachContextV2(state, governedPending[0]).attemptIdentity
+          === governance.authorizedAttemptIdentity;
+      if (!definitionReconciliationPending && !permittedAlternativePending) {
         invalid('RunState.pending', 'must not authorize the learning-governed target');
       }
     }
@@ -3483,6 +3660,2678 @@ export function capturedBytesV1(value) {
         ? Buffer.from(value.buffer, value.byteOffset, value.byteLength)
         : invalid('CapturedBytesV1 input', 'must be text or bytes');
   return { base64: bytes.toString('base64'), sha256: sha256(bytes), byteLength: bytes.byteLength };
+}
+
+/** @param {unknown} value @param {string} label @param {number} [min] */
+function validateDefinitionHashSetV1(value, label, min = 1) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  return validateV2HashSet(value, label, min, 16);
+}
+
+/** @param {unknown} value @param {string} label @param {number} [min] */
+function validateDefinitionRevisionHashSetV1(value, label, min = 1) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  return validateV2HashSet(value, label, min, MAX_DEFINITION_REVISION_ROWS);
+}
+
+/** @param {Record<string, unknown>} mapping @param {string} category */
+function definitionObligationMappingIdentityV1(mapping, category) {
+  return sha256(canonicalJson({
+    version: 1,
+    category,
+    sourceAnchorIdentity: mapping.sourceAnchorIdentity,
+    successorAnchorIdentities: mapping.successorAnchorIdentities,
+    relation: mapping.relation,
+  }));
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateDefinitionObligationMappingSetV1(
+  value,
+  label = 'DefinitionObligationMappingSetV1',
+) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const set = assertExactRecord(value, ['version', 'categories', 'componentIdentity'], [], label);
+  if (set.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  if (utilTypes.isProxy(set.categories)) invalid(`${label}.categories`, 'must not be a Proxy');
+  const categories = assertDenseDataArray(set.categories, `${label}.categories`);
+  if (categories.length !== DEFINITION_OBLIGATION_CATEGORIES.length) {
+    invalid(
+      `${label}.categories`,
+      `must contain exactly ${DEFINITION_OBLIGATION_CATEGORIES.join(', ')} including safety`,
+    );
+  }
+  const mappingIdentities = new Set();
+  categories.forEach((categoryValue, categoryIndex) => {
+    const categoryLabel = `${label}.categories[${categoryIndex}]`;
+    if (utilTypes.isProxy(categoryValue)) invalid(categoryLabel, 'must not be a Proxy');
+    const category = assertExactRecord(
+      categoryValue,
+      ['category', 'preChangeAnchors', 'postChangeAnchors', 'mappings'],
+      [],
+      categoryLabel,
+    );
+    if (category.category !== DEFINITION_OBLIGATION_CATEGORIES[categoryIndex]) {
+      invalid(
+        `${categoryLabel}.category`,
+        `must be ${DEFINITION_OBLIGATION_CATEGORIES[categoryIndex]} in the complete sorted category table`,
+      );
+    }
+    const preChangeAnchors = validateDefinitionRevisionHashSetV1(
+      category.preChangeAnchors,
+      `${categoryLabel}.preChangeAnchors`,
+    );
+    const postChangeAnchors = validateDefinitionRevisionHashSetV1(
+      category.postChangeAnchors,
+      `${categoryLabel}.postChangeAnchors`,
+    );
+    if (utilTypes.isProxy(category.mappings)) invalid(`${categoryLabel}.mappings`, 'must not be a Proxy');
+    const mappings = assertDenseDataArray(category.mappings, `${categoryLabel}.mappings`);
+    if (mappings.length < 1 || mappings.length > MAX_DEFINITION_REVISION_ROWS) {
+      invalid(
+        `${categoryLabel}.mappings`,
+        `must contain 1 through ${MAX_DEFINITION_REVISION_ROWS} rows`,
+      );
+    }
+    const preChangeSet = new Set(preChangeAnchors);
+    const postChangeSet = new Set(postChangeAnchors);
+    const mappedSources = new Set();
+    mappings.forEach((mappingValue, mappingIndex) => {
+      const mappingLabel = `${categoryLabel}.mappings[${mappingIndex}]`;
+      if (utilTypes.isProxy(mappingValue)) invalid(mappingLabel, 'must not be a Proxy');
+      const mapping = assertExactRecord(
+        mappingValue,
+        [
+          'mappingIdentity', 'sourceAnchorIdentity', 'successorAnchorIdentities',
+          'relation',
+        ],
+        [],
+        mappingLabel,
+      );
+      assertHash(mapping.mappingIdentity, `${mappingLabel}.mappingIdentity`);
+      assertHash(mapping.sourceAnchorIdentity, `${mappingLabel}.sourceAnchorIdentity`);
+      const successors = validateDefinitionRevisionHashSetV1(
+        mapping.successorAnchorIdentities,
+        `${mappingLabel}.successorAnchorIdentities`,
+      );
+      assertEnum(mapping.relation, ['equal', 'stronger'], `${mappingLabel}.relation`);
+      if (!preChangeSet.has(/** @type {string} */ (mapping.sourceAnchorIdentity))) {
+        invalid(`${mappingLabel}.sourceAnchorIdentity`, 'must resolve in the declared pre-change anchors');
+      }
+      if (mappedSources.has(mapping.sourceAnchorIdentity)) {
+        invalid(`${categoryLabel}.mappings`, 'must map each pre-change anchor exactly once');
+      }
+      if (successors.some((identity) => !postChangeSet.has(identity))) {
+        invalid(`${mappingLabel}.successorAnchorIdentities`, 'must resolve in the declared post-change anchors');
+      }
+      const expectedIdentity = definitionObligationMappingIdentityV1(mapping, /** @type {string} */ (category.category));
+      if (mapping.mappingIdentity !== expectedIdentity) {
+        invalid(`${mappingLabel}.mappingIdentity`, 'must equal the exact closed mapping identity');
+      }
+      if (mappingIdentities.has(mapping.mappingIdentity)) {
+        invalid(`${label}.categories`, 'must contain duplicate-free mapping identities');
+      }
+      if (mappingIndex > 0 && compareUtf8(
+        /** @type {string} */ (/** @type {Record<string, unknown>} */ (mappings[mappingIndex - 1])).sourceAnchorIdentity,
+        /** @type {string} */ (mapping.sourceAnchorIdentity),
+      ) >= 0) {
+        invalid(`${categoryLabel}.mappings`, 'must be sorted by sourceAnchorIdentity and duplicate-free');
+      }
+      mappedSources.add(mapping.sourceAnchorIdentity);
+      mappingIdentities.add(mapping.mappingIdentity);
+    });
+    if (mappedSources.size !== preChangeSet.size
+      || preChangeAnchors.some((identity) => !mappedSources.has(identity))) {
+      invalid(`${categoryLabel}.mappings`, 'must map every declared pre-change anchor exactly once');
+    }
+  });
+  assertHash(set.componentIdentity, `${label}.componentIdentity`);
+  const expectedIdentity = sha256(canonicalJson({ version: 1, categories: set.categories }));
+  if (set.componentIdentity !== expectedIdentity) {
+    invalid(`${label}.componentIdentity`, 'must equal the exact closed component identity');
+  }
+  if (Buffer.byteLength(canonicalJson(set)) > MAX_DEFINITION_REVISION_COMPONENT_BYTES) {
+    invalid(label, `must serialize to at most ${MAX_DEFINITION_REVISION_COMPONENT_BYTES} UTF-8 bytes`);
+  }
+  return value;
+}
+
+/** Build one closed obligation mapping component without inferring semantic strength. @param {unknown} value */
+export function buildDefinitionObligationMappingSetV1(value) {
+  const label = 'buildDefinitionObligationMappingSetV1';
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  assertProxyFreeDataGraph(value, label);
+  const input = assertExactRecord(value, ['categories'], [], label);
+  if (utilTypes.isProxy(input.categories)) invalid(`${label}.categories`, 'must not be a Proxy');
+  const categories = assertDenseDataArray(input.categories, `${label}.categories`).map(
+    (categoryValue, categoryIndex) => {
+      const categoryLabel = `${label}.categories[${categoryIndex}]`;
+      if (utilTypes.isProxy(categoryValue)) invalid(categoryLabel, 'must not be a Proxy');
+      const category = assertExactRecord(
+        categoryValue,
+        ['category', 'preChangeAnchors', 'postChangeAnchors', 'mappings'],
+        [],
+        categoryLabel,
+      );
+      if (utilTypes.isProxy(category.mappings)) invalid(`${categoryLabel}.mappings`, 'must not be a Proxy');
+      const mappings = assertDenseDataArray(category.mappings, `${categoryLabel}.mappings`).map(
+        (mappingValue, mappingIndex) => {
+          const mappingLabel = `${categoryLabel}.mappings[${mappingIndex}]`;
+          if (utilTypes.isProxy(mappingValue)) invalid(mappingLabel, 'must not be a Proxy');
+          const mapping = assertExactRecord(
+            mappingValue,
+            ['sourceAnchorIdentity', 'successorAnchorIdentities', 'relation'],
+            [],
+            mappingLabel,
+          );
+          return {
+            ...mapping,
+            mappingIdentity: definitionObligationMappingIdentityV1(
+              mapping,
+              /** @type {string} */ (category.category),
+            ),
+          };
+        },
+      );
+      return {
+        category: category.category,
+        preChangeAnchors: category.preChangeAnchors,
+        postChangeAnchors: category.postChangeAnchors,
+        mappings,
+      };
+    },
+  );
+  const body = JSON.parse(canonicalJson({ version: 1, categories }));
+  const set = { ...body, componentIdentity: sha256(canonicalJson(body)) };
+  validateDefinitionObligationMappingSetV1(set);
+  return set;
+}
+
+/** @param {Record<string, unknown>} mapping */
+function definitionCheckMappingIdentityV1(mapping) {
+  return sha256(canonicalJson({
+    version: 1,
+    oldCheckIdentity: mapping.oldCheckIdentity,
+    newCheckIdentity: mapping.newCheckIdentity,
+    disposition: mapping.disposition,
+    intendedInvariantIdentity: mapping.intendedInvariantIdentity,
+    triggerEvidenceIdentities: mapping.triggerEvidenceIdentities,
+  }));
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateDefinitionCheckMappingSetV1(
+  value,
+  label = 'DefinitionCheckMappingSetV1',
+) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const set = assertExactRecord(
+    value,
+    [
+      'version', 'preChangeCheckAnchors', 'postChangeCheckAnchors', 'mappings',
+      'componentIdentity',
+    ],
+    [],
+    label,
+  );
+  if (set.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  const preChangeAnchors = validateDefinitionRevisionHashSetV1(
+    set.preChangeCheckAnchors,
+    `${label}.preChangeCheckAnchors`,
+  );
+  const postChangeAnchors = validateDefinitionRevisionHashSetV1(
+    set.postChangeCheckAnchors,
+    `${label}.postChangeCheckAnchors`,
+  );
+  if (utilTypes.isProxy(set.mappings)) invalid(`${label}.mappings`, 'must not be a Proxy');
+  const mappings = assertDenseDataArray(set.mappings, `${label}.mappings`);
+  if (mappings.length < 1 || mappings.length > MAX_DEFINITION_REVISION_ROWS) {
+    invalid(`${label}.mappings`, `must contain 1 through ${MAX_DEFINITION_REVISION_ROWS} rows`);
+  }
+  const preChangeSet = new Set(preChangeAnchors);
+  const postChangeSet = new Set(postChangeAnchors);
+  const mappedSources = new Set();
+  const mappingIdentities = new Set();
+  mappings.forEach((mappingValue, mappingIndex) => {
+    const mappingLabel = `${label}.mappings[${mappingIndex}]`;
+    if (utilTypes.isProxy(mappingValue)) invalid(mappingLabel, 'must not be a Proxy');
+    const mapping = assertExactRecord(
+      mappingValue,
+      [
+        'mappingIdentity', 'oldCheckIdentity', 'newCheckIdentity', 'disposition',
+        'intendedInvariantIdentity', 'triggerEvidenceIdentities',
+      ],
+      [],
+      mappingLabel,
+    );
+    // intendedInvariantIdentity resolves against no declared anchor set; the
+    // reviewer's intendedInvariantJudgment over mappingIdentity resolves it.
+    for (const field of ['mappingIdentity', 'oldCheckIdentity', 'newCheckIdentity', 'intendedInvariantIdentity']) {
+      assertHash(mapping[field], `${mappingLabel}.${field}`);
+    }
+    assertEnum(mapping.disposition, ['retained', 'successor'], `${mappingLabel}.disposition`);
+    const triggerEvidence = validateDefinitionRevisionHashSetV1(
+      mapping.triggerEvidenceIdentities,
+      `${mappingLabel}.triggerEvidenceIdentities`,
+      0,
+    );
+    if (!preChangeSet.has(/** @type {string} */ (mapping.oldCheckIdentity))) {
+      invalid(`${mappingLabel}.oldCheckIdentity`, 'must resolve in the declared pre-change checks');
+    }
+    if (!postChangeSet.has(/** @type {string} */ (mapping.newCheckIdentity))) {
+      invalid(`${mappingLabel}.newCheckIdentity`, 'must resolve in the declared post-change checks');
+    }
+    if (mappedSources.has(mapping.oldCheckIdentity)) {
+      invalid(`${label}.mappings`, 'must map each pre-change check exactly once');
+    }
+    if (mapping.disposition === 'retained') {
+      if (mapping.oldCheckIdentity !== mapping.newCheckIdentity) {
+        invalid(mappingLabel, 'retained checks must keep the exact old check identity');
+      }
+      if (triggerEvidence.length !== 0) {
+        invalid(`${mappingLabel}.triggerEvidenceIdentities`, 'must be empty for a retained check');
+      }
+    } else {
+      if (mapping.oldCheckIdentity === mapping.newCheckIdentity) {
+        invalid(mappingLabel, 'a successor check must have a different exact check identity');
+      }
+      if (triggerEvidence.length < 1) {
+        invalid(
+          `${mappingLabel}.triggerEvidenceIdentities`,
+          'must retain trigger evidence for a replaced defective literal',
+        );
+      }
+    }
+    const expectedIdentity = definitionCheckMappingIdentityV1(mapping);
+    if (mapping.mappingIdentity !== expectedIdentity) {
+      invalid(`${mappingLabel}.mappingIdentity`, 'must equal the exact closed mapping identity');
+    }
+    if (mappingIdentities.has(mapping.mappingIdentity)) {
+      invalid(`${label}.mappings`, 'must contain duplicate-free mapping identities');
+    }
+    if (mappingIndex > 0 && compareUtf8(
+      /** @type {string} */ (/** @type {Record<string, unknown>} */ (mappings[mappingIndex - 1])).oldCheckIdentity,
+      /** @type {string} */ (mapping.oldCheckIdentity),
+    ) >= 0) {
+      invalid(`${label}.mappings`, 'must be sorted by oldCheckIdentity and duplicate-free');
+    }
+    mappedSources.add(mapping.oldCheckIdentity);
+    mappingIdentities.add(mapping.mappingIdentity);
+  });
+  if (mappedSources.size !== preChangeSet.size
+    || preChangeAnchors.some((identity) => !mappedSources.has(identity))) {
+    invalid(`${label}.mappings`, 'must map every declared pre-change check exactly once');
+  }
+  assertHash(set.componentIdentity, `${label}.componentIdentity`);
+  const expectedIdentity = sha256(canonicalJson({
+    version: 1,
+    preChangeCheckAnchors: set.preChangeCheckAnchors,
+    postChangeCheckAnchors: set.postChangeCheckAnchors,
+    mappings: set.mappings,
+  }));
+  if (set.componentIdentity !== expectedIdentity) {
+    invalid(`${label}.componentIdentity`, 'must equal the exact closed component identity');
+  }
+  if (Buffer.byteLength(canonicalJson(set)) > MAX_DEFINITION_REVISION_COMPONENT_BYTES) {
+    invalid(label, `must serialize to at most ${MAX_DEFINITION_REVISION_COMPONENT_BYTES} UTF-8 bytes`);
+  }
+  return value;
+}
+
+/** Build one closed check mapping component without judging adequacy. @param {unknown} value */
+export function buildDefinitionCheckMappingSetV1(value) {
+  const label = 'buildDefinitionCheckMappingSetV1';
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  assertProxyFreeDataGraph(value, label);
+  const input = assertExactRecord(
+    value,
+    ['preChangeCheckAnchors', 'postChangeCheckAnchors', 'mappings'],
+    [],
+    label,
+  );
+  if (utilTypes.isProxy(input.mappings)) invalid(`${label}.mappings`, 'must not be a Proxy');
+  const mappings = assertDenseDataArray(input.mappings, `${label}.mappings`).map(
+    (mappingValue, mappingIndex) => {
+      const mappingLabel = `${label}.mappings[${mappingIndex}]`;
+      if (utilTypes.isProxy(mappingValue)) invalid(mappingLabel, 'must not be a Proxy');
+      const mapping = assertExactRecord(
+        mappingValue,
+        [
+          'oldCheckIdentity', 'newCheckIdentity', 'disposition',
+          'intendedInvariantIdentity', 'triggerEvidenceIdentities',
+        ],
+        [],
+        mappingLabel,
+      );
+      return { ...mapping, mappingIdentity: definitionCheckMappingIdentityV1(mapping) };
+    },
+  );
+  const body = JSON.parse(canonicalJson({
+    version: 1,
+    preChangeCheckAnchors: input.preChangeCheckAnchors,
+    postChangeCheckAnchors: input.postChangeCheckAnchors,
+    mappings,
+  }));
+  const set = { ...body, componentIdentity: sha256(canonicalJson(body)) };
+  validateDefinitionCheckMappingSetV1(set);
+  return set;
+}
+
+/** @param {unknown} value @param {string} label */
+function assertDefinitionTaskKeyV1(value, label) {
+  if (typeof value !== 'string' || !TASK_KEY_PATTERN.test(value)) {
+    invalid(label, 'must be a durable task key');
+  }
+}
+
+/** @param {unknown} value @param {string} label @param {number} min */
+function validateDefinitionTaskKeySetV1(value, label, min) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  return validateV2SortedSet(
+    value,
+    assertDefinitionTaskKeyV1,
+    min,
+    MAX_DEFINITION_REVISION_ROWS,
+    label,
+  );
+}
+
+/** @param {unknown} value @param {string} label */
+function validateDefinitionTaskAnchorV1(value, label) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const anchor = assertExactRecord(
+    value,
+    ['taskKey', 'taskScopeIdentity', 'acceptanceObligationIdentities'],
+    [],
+    label,
+  );
+  assertDefinitionTaskKeyV1(anchor.taskKey, `${label}.taskKey`);
+  // taskScopeIdentity resolves against no declared anchor set; the reviewer's
+  // taskScopeJudgment over reconciliationIdentity resolves it.
+  assertHash(anchor.taskScopeIdentity, `${label}.taskScopeIdentity`);
+  validateDefinitionRevisionHashSetV1(
+    anchor.acceptanceObligationIdentities,
+    `${label}.acceptanceObligationIdentities`,
+  );
+  return anchor;
+}
+
+/** @param {unknown} value @param {string} label @param {number} min @param {number} max */
+function validateDefinitionTaskAnchorSetV1(value, label, min, max) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const anchors = assertDenseDataArray(value, label);
+  if (anchors.length < min || anchors.length > max) {
+    invalid(label, `must contain ${min} through ${max} rows`);
+  }
+  anchors.forEach((anchorValue, index) => {
+    const anchor = validateDefinitionTaskAnchorV1(anchorValue, `${label}[${index}]`);
+    if (index > 0 && compareUtf8(
+      /** @type {string} */ (/** @type {Record<string, unknown>} */ (anchors[index - 1])).taskKey,
+      /** @type {string} */ (anchor.taskKey),
+    ) >= 0) invalid(label, 'must be sorted by taskKey and duplicate-free');
+  });
+  return /** @type {Record<string, unknown>[]} */ (anchors);
+}
+
+/** @param {unknown} value @param {string} label */
+function validateDroppedDefectiveArchiveV1(value, label) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const archive = assertExactRecord(
+    value,
+    [
+      'archiveIdentity', 'defectEvidenceIdentities', 'triggerEvidenceIdentities',
+      'successorTaskKeys', 'successorObligationMappingIdentities',
+      'successorCheckMappingIdentities',
+    ],
+    [],
+    label,
+  );
+  // archiveIdentity resolves against no declared anchor set; the reviewer's
+  // archiveAuthorityJudgment over reconciliationIdentity resolves it.
+  assertHash(archive.archiveIdentity, `${label}.archiveIdentity`);
+  validateDefinitionRevisionHashSetV1(
+    archive.defectEvidenceIdentities,
+    `${label}.defectEvidenceIdentities`,
+  );
+  validateDefinitionRevisionHashSetV1(
+    archive.triggerEvidenceIdentities,
+    `${label}.triggerEvidenceIdentities`,
+  );
+  validateDefinitionTaskKeySetV1(archive.successorTaskKeys, `${label}.successorTaskKeys`, 1);
+  validateDefinitionRevisionHashSetV1(
+    archive.successorObligationMappingIdentities,
+    `${label}.successorObligationMappingIdentities`,
+  );
+  validateDefinitionRevisionHashSetV1(
+    archive.successorCheckMappingIdentities,
+    `${label}.successorCheckMappingIdentities`,
+  );
+  return archive;
+}
+
+/** @param {unknown} value @param {string} label @param {boolean} withIdentity */
+function definitionTaskReconciliationRowBodyV1(value, label, withIdentity) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const candidate = assertRecord(value, label);
+  assertEnum(candidate.disposition, DEFINITION_TASK_RECONCILIATION_DISPOSITIONS, `${label}.disposition`);
+  const dropped = candidate.disposition === 'dropped-defective';
+  const row = assertExactRecord(
+    value,
+    [
+      ...(withIdentity ? ['reconciliationIdentity'] : []),
+      'disposition', 'oldTasks', 'finalTasks', 'decompositionBasisIdentities',
+      ...(dropped ? ['archive'] : []),
+    ],
+    [],
+    label,
+  );
+  const cardinalities = {
+    'one-to-one-kept': [1, 1, 1, 1],
+    changed: [1, 1, 1, 1],
+    split: [1, 1, 2, MAX_DEFINITION_REVISION_ROWS],
+    merged: [2, MAX_DEFINITION_REVISION_ROWS, 1, 1],
+    dropped: [1, 1, 0, 0],
+    'dropped-defective': [1, 1, 1, MAX_DEFINITION_REVISION_ROWS],
+    new: [0, 0, 1, 1],
+  }[/** @type {keyof typeof cardinalities} */ (row.disposition)];
+  const oldTasks = validateDefinitionTaskAnchorSetV1(
+    row.oldTasks,
+    `${label}.oldTasks`,
+    cardinalities[0],
+    cardinalities[1],
+  );
+  const finalTasks = validateDefinitionTaskAnchorSetV1(
+    row.finalTasks,
+    `${label}.finalTasks`,
+    cardinalities[2],
+    cardinalities[3],
+  );
+  validateDefinitionRevisionHashSetV1(
+    row.decompositionBasisIdentities,
+    `${label}.decompositionBasisIdentities`,
+  );
+  if (row.disposition === 'one-to-one-kept'
+    && oldTasks[0].taskKey !== finalTasks[0].taskKey) {
+    invalid(label, 'one-to-one-kept must retain the exact durable task key');
+  }
+  if (dropped) {
+    const archive = validateDroppedDefectiveArchiveV1(row.archive, `${label}.archive`);
+    const finalTaskKeys = finalTasks.map((anchor) => anchor.taskKey);
+    if (canonicalJson(archive.successorTaskKeys) !== canonicalJson(finalTaskKeys)) {
+      invalid(`${label}.archive.successorTaskKeys`, 'must identify every exact final successor task');
+    }
+  }
+  const body = {
+    disposition: row.disposition,
+    oldTasks: row.oldTasks,
+    finalTasks: row.finalTasks,
+    decompositionBasisIdentities: row.decompositionBasisIdentities,
+    ...(dropped ? { archive: row.archive } : {}),
+  };
+  if (withIdentity) {
+    assertHash(row.reconciliationIdentity, `${label}.reconciliationIdentity`);
+    const expectedIdentity = sha256(canonicalJson({ version: 1, ...body }));
+    if (row.reconciliationIdentity !== expectedIdentity) {
+      invalid(`${label}.reconciliationIdentity`, 'must equal the exact closed reconciliation identity');
+    }
+  }
+  return body;
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateDefinitionTaskReconciliationV1(
+  value,
+  label = 'DefinitionTaskReconciliationV1',
+) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const reconciliation = assertExactRecord(
+    value,
+    ['version', 'declaredOldTaskKeys', 'declaredFinalTaskKeys', 'rows', 'componentIdentity'],
+    [],
+    label,
+  );
+  if (reconciliation.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  const declaredOld = validateDefinitionTaskKeySetV1(
+    reconciliation.declaredOldTaskKeys,
+    `${label}.declaredOldTaskKeys`,
+    0,
+  );
+  const declaredFinal = validateDefinitionTaskKeySetV1(
+    reconciliation.declaredFinalTaskKeys,
+    `${label}.declaredFinalTaskKeys`,
+    1,
+  );
+  if (utilTypes.isProxy(reconciliation.rows)) invalid(`${label}.rows`, 'must not be a Proxy');
+  const rows = assertDenseDataArray(reconciliation.rows, `${label}.rows`);
+  if (rows.length < 1 || rows.length > MAX_DEFINITION_REVISION_ROWS) {
+    invalid(`${label}.rows`, `must contain 1 through ${MAX_DEFINITION_REVISION_ROWS} rows`);
+  }
+  const oldCoverage = new Set();
+  const finalCoverage = new Set();
+  const rowIdentities = new Set();
+  rows.forEach((rowValue, rowIndex) => {
+    const rowLabel = `${label}.rows[${rowIndex}]`;
+    definitionTaskReconciliationRowBodyV1(rowValue, rowLabel, true);
+    const row = /** @type {Record<string, unknown>} */ (rowValue);
+    if (rowIdentities.has(row.reconciliationIdentity)) {
+      invalid(`${label}.rows`, 'must contain duplicate-free reconciliation identities');
+    }
+    if (rowIndex > 0 && compareUtf8(
+      /** @type {string} */ (/** @type {Record<string, unknown>} */ (rows[rowIndex - 1])).reconciliationIdentity,
+      /** @type {string} */ (row.reconciliationIdentity),
+    ) >= 0) {
+      invalid(`${label}.rows`, 'must be sorted by reconciliationIdentity and duplicate-free');
+    }
+    for (const anchor of /** @type {Record<string, unknown>[]} */ (row.oldTasks)) {
+      if (oldCoverage.has(anchor.taskKey)) invalid(`${label}.rows`, 'must cover each old task exactly once');
+      oldCoverage.add(anchor.taskKey);
+    }
+    for (const anchor of /** @type {Record<string, unknown>[]} */ (row.finalTasks)) {
+      if (finalCoverage.has(anchor.taskKey)) invalid(`${label}.rows`, 'must cover each final task exactly once');
+      finalCoverage.add(anchor.taskKey);
+    }
+    rowIdentities.add(row.reconciliationIdentity);
+  });
+  if (canonicalJson([...oldCoverage].sort(compareUtf8)) !== canonicalJson(declaredOld)) {
+    invalid(`${label}.rows`, 'must completely and exactly cover declaredOldTaskKeys');
+  }
+  if (canonicalJson([...finalCoverage].sort(compareUtf8)) !== canonicalJson(declaredFinal)) {
+    invalid(`${label}.rows`, 'must completely and exactly cover declaredFinalTaskKeys');
+  }
+  assertHash(reconciliation.componentIdentity, `${label}.componentIdentity`);
+  const expectedIdentity = sha256(canonicalJson({
+    version: 1,
+    declaredOldTaskKeys: reconciliation.declaredOldTaskKeys,
+    declaredFinalTaskKeys: reconciliation.declaredFinalTaskKeys,
+    rows: reconciliation.rows,
+  }));
+  if (reconciliation.componentIdentity !== expectedIdentity) {
+    invalid(`${label}.componentIdentity`, 'must equal the exact closed component identity');
+  }
+  if (Buffer.byteLength(canonicalJson(reconciliation)) > MAX_DEFINITION_REVISION_COMPONENT_BYTES) {
+    invalid(label, `must serialize to at most ${MAX_DEFINITION_REVISION_COMPONENT_BYTES} UTF-8 bytes`);
+  }
+  return value;
+}
+
+/** Build one closed task-reconciliation component without deciding task state. @param {unknown} value */
+export function buildDefinitionTaskReconciliationV1(value) {
+  const label = 'buildDefinitionTaskReconciliationV1';
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  assertProxyFreeDataGraph(value, label);
+  const input = assertExactRecord(
+    value,
+    ['declaredOldTaskKeys', 'declaredFinalTaskKeys', 'rows'],
+    [],
+    label,
+  );
+  if (utilTypes.isProxy(input.rows)) invalid(`${label}.rows`, 'must not be a Proxy');
+  const rows = assertDenseDataArray(input.rows, `${label}.rows`).map((rowValue, rowIndex) => {
+    const body = definitionTaskReconciliationRowBodyV1(
+      rowValue,
+      `${label}.rows[${rowIndex}]`,
+      false,
+    );
+    return {
+      ...JSON.parse(canonicalJson(body)),
+      reconciliationIdentity: sha256(canonicalJson({ version: 1, ...body })),
+    };
+  }).sort((left, right) => compareUtf8(left.reconciliationIdentity, right.reconciliationIdentity));
+  const body = JSON.parse(canonicalJson({
+    version: 1,
+    declaredOldTaskKeys: input.declaredOldTaskKeys,
+    declaredFinalTaskKeys: input.declaredFinalTaskKeys,
+    rows,
+  }));
+  const reconciliation = { ...body, componentIdentity: sha256(canonicalJson(body)) };
+  validateDefinitionTaskReconciliationV1(reconciliation);
+  return reconciliation;
+}
+
+/** @param {Record<string, unknown>} proof @param {string} label */
+function validateDefinitionRevisionProofCrossReferencesV1(proof, label) {
+  const obligationMappings = /** @type {Record<string, unknown>} */ (proof.obligationMappings);
+  const checkMappings = /** @type {Record<string, unknown>} */ (proof.checkMappings);
+  const reconciliation = /** @type {Record<string, unknown>} */ (proof.taskReconciliation);
+  const categories = /** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(obligationMappings.categories, `${label}.obligationMappings.categories`)
+  );
+  const acceptanceCategory = /** @type {Record<string, unknown>} */ (
+    categories.find((category) => category.category === 'acceptance')
+  );
+  const preAcceptanceIdentities = new Set(/** @type {string[]} */ (assertDenseDataArray(
+    acceptanceCategory.preChangeAnchors,
+    `${label}.obligationMappings.acceptance.preChangeAnchors`,
+  )));
+  const finalAcceptanceIdentities = new Set(/** @type {string[]} */ (assertDenseDataArray(
+    acceptanceCategory.postChangeAnchors,
+    `${label}.obligationMappings.acceptance.postChangeAnchors`,
+  )));
+  const obligationIdentities = new Set(categories
+    .flatMap((category, categoryIndex) => /** @type {Record<string, unknown>[]} */ (
+      assertDenseDataArray(
+        category.mappings,
+        `${label}.obligationMappings.categories[${categoryIndex}].mappings`,
+      )
+    ))
+    .map((mapping) => mapping.mappingIdentity));
+  const checkIdentities = new Set(/** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(checkMappings.mappings, `${label}.checkMappings.mappings`)
+  ).map((mapping) => mapping.mappingIdentity));
+  const ownedPreAcceptance = new Set();
+  const ownedPostAcceptance = new Set();
+  const rows = /** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(reconciliation.rows, `${label}.taskReconciliation.rows`)
+  );
+  for (const [rowIndex, row] of rows.entries()) {
+    const rowLabel = `${label}.taskReconciliation.rows[${rowIndex}]`;
+    /** @type {Record<string, Record<string, unknown>[]>} */
+    const anchorSets = {};
+    for (const [field, allowed, owned] of /** @type {[string, Set<unknown>, Set<unknown>][]} */ ([
+      ['oldTasks', preAcceptanceIdentities, ownedPreAcceptance],
+      ['finalTasks', finalAcceptanceIdentities, ownedPostAcceptance],
+    ])) {
+      const tasks = /** @type {Record<string, unknown>[]} */ (
+        assertDenseDataArray(row[field], `${rowLabel}.${field}`)
+      );
+      anchorSets[field] = tasks;
+      for (const [taskIndex, task] of tasks.entries()) {
+        const identities = /** @type {string[]} */ (assertDenseDataArray(
+          task.acceptanceObligationIdentities,
+          `${rowLabel}.${field}[${taskIndex}].acceptanceObligationIdentities`,
+        ));
+        if (identities.some((identity) => !allowed.has(identity))) {
+          invalid(
+            `${rowLabel}.${field}[${taskIndex}].acceptanceObligationIdentities`,
+            'must resolve in the exact acceptance obligation anchors',
+          );
+        }
+        for (const identity of identities) owned.add(identity);
+      }
+    }
+    if (row.disposition === 'one-to-one-kept'
+      && anchorSets.oldTasks[0].taskScopeIdentity !== anchorSets.finalTasks[0].taskScopeIdentity) {
+      invalid(rowLabel, 'one-to-one-kept must retain the exact task scope identity');
+    }
+    if (row.disposition !== 'dropped-defective') continue;
+    const archive = /** @type {Record<string, unknown>} */ (row.archive);
+    if (/** @type {string[]} */ (assertDenseDataArray(
+      archive.successorObligationMappingIdentities,
+      `${rowLabel}.archive.successorObligationMappingIdentities`,
+    )).some((identity) => !obligationIdentities.has(identity))) {
+      invalid(
+        `${rowLabel}.archive.successorObligationMappingIdentities`,
+        'must resolve in the exact obligation mapping component',
+      );
+    }
+    if (/** @type {string[]} */ (assertDenseDataArray(
+      archive.successorCheckMappingIdentities,
+      `${rowLabel}.archive.successorCheckMappingIdentities`,
+    )).some((identity) => !checkIdentities.has(identity))) {
+      invalid(
+        `${rowLabel}.archive.successorCheckMappingIdentities`,
+        'must resolve in the exact check mapping component',
+      );
+    }
+  }
+  if (ownedPreAcceptance.size !== preAcceptanceIdentities.size) {
+    invalid(
+      `${label}.obligationMappings.acceptance.preChangeAnchors`,
+      'must each be owned by exactly one entering task',
+    );
+  }
+  if (ownedPostAcceptance.size !== finalAcceptanceIdentities.size) {
+    invalid(
+      `${label}.obligationMappings.acceptance.postChangeAnchors`,
+      'must each be owned by exactly one final task',
+    );
+  }
+}
+
+/**
+ * Close the proof graph against the evidence the proposal actually bound. The
+ * proof may not invent a decomposition basis, a trigger, or a defect.
+ * @param {Record<string, unknown>} proposal @param {Record<string, unknown>} proof @param {string} label
+ */
+function validateDefinitionRevisionProposalClosureV1(proposal, proof, label) {
+  const references = /** @type {Record<string, unknown>} */ (proposal.reviewerEvidenceReferences);
+  const blockerIdentities = new Set(assertDenseDataArray(
+    references.blockerEvidenceIdentities,
+    `${label}.proposal.reviewerEvidenceReferences.blockerEvidenceIdentities`,
+  ));
+  const decompositionIdentities = new Set(assertDenseDataArray(
+    references.decompositionEvidenceIdentities,
+    `${label}.proposal.reviewerEvidenceReferences.decompositionEvidenceIdentities`,
+  ));
+  const checkMappings = /** @type {Record<string, unknown>} */ (proof.checkMappings);
+  const successorTriggerIdentities = new Set();
+  const checkRows = /** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(checkMappings.mappings, `${label}.proof.checkMappings.mappings`)
+  );
+  for (const [index, mapping] of checkRows.entries()) {
+    if (mapping.disposition !== 'successor') continue;
+    const mappingLabel = `${label}.proof.checkMappings.mappings[${index}].triggerEvidenceIdentities`;
+    const triggers = /** @type {string[]} */ (
+      assertDenseDataArray(mapping.triggerEvidenceIdentities, mappingLabel)
+    );
+    if (triggers.some((identity) => !blockerIdentities.has(identity))) {
+      invalid(mappingLabel, 'must resolve in the exact proposal blocker evidence references');
+    }
+    for (const identity of triggers) successorTriggerIdentities.add(identity);
+  }
+  const reconciliation = /** @type {Record<string, unknown>} */ (proof.taskReconciliation);
+  const rows = /** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(reconciliation.rows, `${label}.proof.taskReconciliation.rows`)
+  );
+  for (const [rowIndex, row] of rows.entries()) {
+    const rowLabel = `${label}.proof.taskReconciliation.rows[${rowIndex}]`;
+    if (/** @type {string[]} */ (assertDenseDataArray(
+      row.decompositionBasisIdentities,
+      `${rowLabel}.decompositionBasisIdentities`,
+    )).some((identity) => !decompositionIdentities.has(identity))) {
+      invalid(
+        `${rowLabel}.decompositionBasisIdentities`,
+        'must resolve in the exact proposal decomposition evidence references',
+      );
+    }
+    if (row.disposition !== 'dropped-defective') continue;
+    const archive = /** @type {Record<string, unknown>} */ (row.archive);
+    if (/** @type {string[]} */ (assertDenseDataArray(
+      archive.defectEvidenceIdentities,
+      `${rowLabel}.archive.defectEvidenceIdentities`,
+    )).some((identity) => !blockerIdentities.has(identity))) {
+      invalid(
+        `${rowLabel}.archive.defectEvidenceIdentities`,
+        'must resolve in the exact proposal blocker evidence references',
+      );
+    }
+    if (/** @type {string[]} */ (assertDenseDataArray(
+      archive.triggerEvidenceIdentities,
+      `${rowLabel}.archive.triggerEvidenceIdentities`,
+    )).some((identity) => !successorTriggerIdentities.has(identity))) {
+      invalid(
+        `${rowLabel}.archive.triggerEvidenceIdentities`,
+        'must resolve in the exact successor check trigger evidence',
+      );
+    }
+  }
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateDefinitionRevisionProofV1(value, label = 'DefinitionRevisionProofV1') {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const proof = assertExactRecord(
+    value,
+    [
+      'type', 'version', 'proposalIdentity', 'target', 'owner',
+      'eligibilityIdentity', 'prestateDescriptorIdentity',
+      'coordinatorFinalDescriptors', 'coordinatorFinalDescriptorIdentity',
+      'specEditClass', 'authorities', 'obligationMappings', 'checkMappings',
+      'taskReconciliation', 'proofIdentity',
+    ],
+    [],
+    label,
+  );
+  if (proof.type !== 'definition-revision-proof') {
+    invalid(`${label}.type`, 'must be definition-revision-proof');
+  }
+  if (proof.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  assertHash(proof.proposalIdentity, `${label}.proposalIdentity`);
+  assertHash(proof.eligibilityIdentity, `${label}.eligibilityIdentity`);
+  assertHash(proof.prestateDescriptorIdentity, `${label}.prestateDescriptorIdentity`);
+  if (utilTypes.isProxy(proof.target)) invalid(`${label}.target`, 'must not be a Proxy');
+  const target = /** @type {Record<string, unknown>} */ (
+    validateAffectedTargetV2(proof.target, `${label}.target`)
+  );
+  if (target.lane !== 'lightweight') invalid(`${label}.target.lane`, 'must be lightweight');
+  if (utilTypes.isProxy(proof.owner)) invalid(`${label}.owner`, 'must not be a Proxy');
+  const owner = assertExactRecord(proof.owner, ['ideaPath', 'specPath'], [], `${label}.owner`);
+  assertDirectIdeaPath(owner.ideaPath, `${label}.owner.ideaPath`);
+  if (owner.specPath !== target.specPath) invalid(`${label}.owner.specPath`, 'must match the exact target specification');
+  const descriptors = validateDefinitionArtifactDescriptorsV1(
+    proof.coordinatorFinalDescriptors,
+    exactDefinitionRevisionPathsV1(target, owner),
+    `${label}.coordinatorFinalDescriptors`,
+  );
+  assertHash(proof.coordinatorFinalDescriptorIdentity, `${label}.coordinatorFinalDescriptorIdentity`);
+  if (proof.coordinatorFinalDescriptorIdentity !== sha256(canonicalJson(descriptors))) {
+    invalid(
+      `${label}.coordinatorFinalDescriptorIdentity`,
+      'must bind the complete ordered coordinator-final descriptor set',
+    );
+  }
+  assertEnum(proof.specEditClass, DEFINITION_SPEC_EDIT_CLASSES, `${label}.specEditClass`);
+  if (utilTypes.isProxy(proof.authorities)) invalid(`${label}.authorities`, 'must not be a Proxy');
+  const authorities = assertExactRecord(
+    proof.authorities,
+    ['stagerAuthorityIdentity', 'coordinatorAuthorityIdentity'],
+    [],
+    `${label}.authorities`,
+  );
+  assertHash(authorities.stagerAuthorityIdentity, `${label}.authorities.stagerAuthorityIdentity`);
+  assertHash(authorities.coordinatorAuthorityIdentity, `${label}.authorities.coordinatorAuthorityIdentity`);
+  if (authorities.stagerAuthorityIdentity === authorities.coordinatorAuthorityIdentity) {
+    invalid(`${label}.authorities`, 'must bind distinct stager and coordinator authorities');
+  }
+  validateDefinitionObligationMappingSetV1(proof.obligationMappings, `${label}.obligationMappings`);
+  validateDefinitionCheckMappingSetV1(proof.checkMappings, `${label}.checkMappings`);
+  validateDefinitionTaskReconciliationV1(proof.taskReconciliation, `${label}.taskReconciliation`);
+  validateDefinitionRevisionProofCrossReferencesV1(proof, label);
+  assertHash(proof.proofIdentity, `${label}.proofIdentity`);
+  const { proofIdentity, ...body } = proof;
+  if (proofIdentity !== sha256(canonicalJson(body))) {
+    invalid(`${label}.proofIdentity`, 'must equal the exact closed proof identity');
+  }
+  if (Buffer.byteLength(canonicalJson(proof)) > MAX_DEFINITION_REVISION_PROOF_BYTES) {
+    invalid(label, `must serialize to at most ${MAX_DEFINITION_REVISION_PROOF_BYTES} UTF-8 bytes`);
+  }
+  return value;
+}
+
+/** Build one exact proof over closed mapping components without inferring semantics. @param {unknown} value */
+export function buildDefinitionRevisionProofV1(value) {
+  const label = 'buildDefinitionRevisionProofV1';
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  assertProxyFreeDataGraph(value, label);
+  const input = assertExactRecord(
+    value,
+    [
+      'proposalIdentity', 'target', 'owner', 'eligibilityIdentity',
+      'prestateDescriptorIdentity', 'coordinatorFinalDescriptors',
+      'specEditClass', 'authorities', 'obligationMappings', 'checkMappings',
+      'taskReconciliation',
+    ],
+    [],
+    label,
+  );
+  const body = JSON.parse(canonicalJson({
+    type: 'definition-revision-proof',
+    version: 1,
+    proposalIdentity: input.proposalIdentity,
+    target: input.target,
+    owner: input.owner,
+    eligibilityIdentity: input.eligibilityIdentity,
+    prestateDescriptorIdentity: input.prestateDescriptorIdentity,
+    coordinatorFinalDescriptors: input.coordinatorFinalDescriptors,
+    coordinatorFinalDescriptorIdentity: sha256(canonicalJson(input.coordinatorFinalDescriptors)),
+    specEditClass: input.specEditClass,
+    authorities: input.authorities,
+    obligationMappings: input.obligationMappings,
+    checkMappings: input.checkMappings,
+    taskReconciliation: input.taskReconciliation,
+  }));
+  const proof = { ...body, proofIdentity: sha256(canonicalJson(body)) };
+  validateDefinitionRevisionProofV1(proof);
+  return proof;
+}
+
+/** @param {unknown} proposalValue @param {unknown} proofValue @param {string} [label] */
+export function validateDefinitionRevisionProofBindingV1(
+  proposalValue,
+  proofValue,
+  label = 'DefinitionRevisionProofBindingV1',
+) {
+  const proposal = /** @type {Record<string, unknown>} */ (
+    validateDefinitionRevisionProposalV1(proposalValue, `${label}.proposal`)
+  );
+  const proof = /** @type {Record<string, unknown>} */ (
+    validateDefinitionRevisionProofV1(proofValue, `${label}.proof`)
+  );
+  for (const field of ['proposalIdentity', 'target', 'owner', 'coordinatorFinalDescriptors']) {
+    const proofField = field === 'proposalIdentity' ? proof.proposalIdentity : proof[field];
+    const proposalField = field === 'proposalIdentity' ? proposal.proposalIdentity : proposal[field];
+    if (canonicalJson(proofField) !== canonicalJson(proposalField)) {
+      invalid(`${label}.${field}`, 'must bind the exact proposal value');
+    }
+  }
+  const obligationMappings = /** @type {Record<string, unknown>} */ (proof.obligationMappings);
+  const checkMappings = /** @type {Record<string, unknown>} */ (proof.checkMappings);
+  const reconciliation = /** @type {Record<string, unknown>} */ (proof.taskReconciliation);
+  const eligibility = /** @type {Record<string, unknown>} */ (proposal.eligibility);
+  if (proof.eligibilityIdentity !== eligibility.eligibilityIdentity) {
+    invalid(`${label}.eligibilityIdentity`, 'must bind the exact proposal eligibility identity');
+  }
+  if (proof.prestateDescriptorIdentity !== sha256(canonicalJson(proposal.prestateDescriptors))) {
+    invalid(
+      `${label}.prestateDescriptorIdentity`,
+      'must bind the complete ordered proposal prestate descriptor set',
+    );
+  }
+  const expectedMappingReferences = [
+    /** @type {string} */ (obligationMappings.componentIdentity),
+    /** @type {string} */ (checkMappings.componentIdentity),
+  ].sort(compareUtf8);
+  if (canonicalJson(proposal.mappingReferences) !== canonicalJson(expectedMappingReferences)) {
+    invalid(`${label}.proposal.mappingReferences`, 'must exactly identify both proof mapping components');
+  }
+  if (canonicalJson(proposal.reconciliationReferences)
+    !== canonicalJson([reconciliation.componentIdentity])) {
+    invalid(
+      `${label}.proposal.reconciliationReferences`,
+      'must exactly identify the proof reconciliation component',
+    );
+  }
+  validateDefinitionRevisionProposalClosureV1(proposal, proof, label);
+  return proofValue;
+}
+
+/** @param {unknown} value @param {string} label @param {string[]} expectedIdentities @param {string[]} fields */
+function validateDefinitionSemanticJudgmentRowsV1(
+  value,
+  label,
+  expectedIdentities,
+  fields,
+) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const rows = assertDenseDataArray(value, label);
+  if (rows.length !== expectedIdentities.length) {
+    invalid(label, `must contain exactly ${expectedIdentities.length} complete judgment rows`);
+  }
+  rows.forEach((rowValue, index) => {
+    const rowLabel = `${label}[${index}]`;
+    if (utilTypes.isProxy(rowValue)) invalid(rowLabel, 'must not be a Proxy');
+    const row = assertExactRecord(rowValue, ['identity', ...fields], [], rowLabel);
+    assertHash(row.identity, `${rowLabel}.identity`);
+    if (row.identity !== expectedIdentities[index]) {
+      invalid(`${rowLabel}.identity`, 'must match the complete sorted proof identity set');
+    }
+  });
+  return /** @type {Record<string, unknown>[]} */ (rows);
+}
+
+/** @param {Record<string, unknown>} proof */
+function definitionObligationMappingRowsV1(proof) {
+  const obligationMappings = /** @type {Record<string, unknown>} */ (proof.obligationMappings);
+  return /** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(obligationMappings.categories, 'proof.obligationMappings.categories')
+  ).flatMap((category, index) => /** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(
+      category.mappings,
+      `proof.obligationMappings.categories[${index}].mappings`,
+    )
+  ));
+}
+
+/** @param {Record<string, unknown>} proof */
+function definitionObligationMappingIdentitiesV1(proof) {
+  return definitionObligationMappingRowsV1(proof)
+    .map((mapping) => /** @type {string} */ (mapping.mappingIdentity))
+    .sort(compareUtf8);
+}
+
+/** @param {Record<string, unknown>} proof */
+function definitionCheckMappingRowsV1(proof) {
+  const checkMappings = /** @type {Record<string, unknown>} */ (proof.checkMappings);
+  return /** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(checkMappings.mappings, 'proof.checkMappings.mappings')
+  );
+}
+
+/** @param {Record<string, unknown>} proof */
+function definitionCheckMappingIdentitiesV1(proof) {
+  return definitionCheckMappingRowsV1(proof)
+    .map((mapping) => /** @type {string} */ (mapping.mappingIdentity))
+    .sort(compareUtf8);
+}
+
+/** @param {Record<string, unknown>} proof */
+function definitionReconciliationRowsByIdentityV1(proof) {
+  const reconciliation = /** @type {Record<string, unknown>} */ (proof.taskReconciliation);
+  return /** @type {Record<string, unknown>[]} */ (
+    assertDenseDataArray(reconciliation.rows, 'proof.taskReconciliation.rows')
+  )
+    .slice()
+    .sort((left, right) => compareUtf8(
+      /** @type {string} */ (left.reconciliationIdentity),
+      /** @type {string} */ (right.reconciliationIdentity),
+    ));
+}
+
+/**
+ * Derive only whether the reviewer's declared result is internally consistent
+ * with the exact relations and dispositions the proof asserts. This does not
+ * infer any semantic judgment.
+ * @param {Record<string, unknown>} review @param {Record<string, unknown>} proof
+ */
+function expectedDefinitionSemanticReviewResultV1(review, proof) {
+  let rejected = false;
+  let clarificationRequired = false;
+  /** @param {unknown} judgment @param {string[]} approved */
+  const observe = (judgment, approved) => {
+    if (judgment === 'ambiguous' || judgment === 'normative-change') {
+      clarificationRequired = true;
+    } else if (!approved.includes(/** @type {string} */ (judgment))) {
+      rejected = true;
+    }
+  };
+  observe(review.outcomeJudgment, ['equivalent']);
+  const assertedRelations = new Map(definitionObligationMappingRowsV1(proof)
+    .map((mapping) => [mapping.mappingIdentity, /** @type {string} */ (mapping.relation)]));
+  /** @type {Set<unknown>} */
+  const relationConsistentMappings = new Set();
+  for (const row of /** @type {Record<string, unknown>[]} */ (review.obligationJudgments)) {
+    const relation = assertedRelations.get(row.identity);
+    observe(row.judgment, relation === undefined ? [] : [relation]);
+    if (row.judgment === relation) relationConsistentMappings.add(row.identity);
+  }
+  const proofRows = new Map(definitionReconciliationRowsByIdentityV1(proof)
+    .map((row) => [row.reconciliationIdentity, row]));
+  for (const judgment of /** @type {Record<string, unknown>[]} */ (review.taskReconciliationJudgments)) {
+    const row = /** @type {Record<string, unknown>} */ (proofRows.get(judgment.identity));
+    const statePreserving = row.disposition === 'one-to-one-kept';
+    observe(
+      judgment.taskScopeJudgment,
+      [statePreserving ? 'unchanged' : 'not-state-preserving'],
+    );
+    observe(
+      judgment.acceptanceObligationJudgment,
+      [statePreserving ? 'unchanged' : 'not-state-preserving'],
+    );
+    observe(
+      judgment.decompositionBasisJudgment,
+      ['one-to-one-kept', 'dropped-defective'].includes(/** @type {string} */ (row.disposition))
+        ? ['equivalent']
+        : ['equivalent', 'different'],
+    );
+  }
+  const checkDispositions = new Map(definitionCheckMappingRowsV1(proof)
+    .map((mapping) => [mapping.mappingIdentity, /** @type {string} */ (mapping.disposition)]));
+  for (const row of /** @type {Record<string, unknown>[]} */ (review.checkJudgments)) {
+    const retained = checkDispositions.get(row.identity) === 'retained';
+    observe(row.intendedInvariantJudgment, ['adequate']);
+    observe(row.successorCheckJudgment, [retained ? 'not-applicable' : 'adequate']);
+    observe(row.triggerEvidenceJudgment, [retained ? 'not-applicable' : 'binding']);
+  }
+  for (const row of /** @type {Record<string, unknown>[]} */ (review.droppedDefectiveJudgments)) {
+    const proofRow = /** @type {Record<string, unknown>} */ (proofRows.get(row.identity));
+    const archive = /** @type {Record<string, unknown>} */ (proofRow.archive);
+    const successorsConsistent = /** @type {string[]} */ (assertDenseDataArray(
+      archive.successorObligationMappingIdentities,
+      'proof.taskReconciliation.archive.successorObligationMappingIdentities',
+    )).every((identity) => relationConsistentMappings.has(identity));
+    observe(row.defectClassificationJudgment, ['approved']);
+    observe(row.archiveAuthorityJudgment, ['approved']);
+    observe(row.successorTaskScopeJudgment, ['equivalent']);
+    observe(row.successorObligationJudgment, successorsConsistent ? ['equal-or-stronger'] : []);
+    observe(row.successorCheckJudgment, ['adequate']);
+  }
+  const specEditClassJudgment = /** @type {Record<string, unknown>} */ (review.specEditClassJudgment);
+  observe(specEditClassJudgment.judgment, ['approved']);
+  return clarificationRequired ? 'clarification-required' : rejected ? 'rejected' : 'approved';
+}
+
+/** @param {unknown} value @param {unknown} proofValue @param {string} [label] */
+export function validateDefinitionRevisionSemanticReviewEnvelopeV1(
+  value,
+  proofValue,
+  label = 'DefinitionRevisionSemanticReviewEnvelopeV1',
+) {
+  const proof = /** @type {Record<string, unknown>} */ (
+    validateDefinitionRevisionProofV1(proofValue, `${label}.proof`)
+  );
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const review = assertExactRecord(
+    value,
+    [
+      'type', 'version', 'target', 'proposalIdentity', 'proofIdentity',
+      'preparationIdentity', 'reviewRequestIdentity',
+      'coordinatorFinalDescriptors', 'coordinatorFinalDescriptorIdentity',
+      'reviewerAuthorityIdentity', 'reviewInvocationIdentity',
+      'stagerAuthorityIdentity', 'coordinatorAuthorityIdentity', 'outcomeJudgment',
+      'obligationJudgments', 'taskReconciliationJudgments', 'checkJudgments',
+      'droppedDefectiveJudgments', 'specEditClassJudgment', 'finalResult',
+      'reviewIdentity',
+    ],
+    [],
+    label,
+  );
+  if (review.type !== 'definition-revision-semantic-review-envelope') {
+    invalid(`${label}.type`, 'must be definition-revision-semantic-review-envelope');
+  }
+  if (review.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  if (utilTypes.isProxy(review.target)) invalid(`${label}.target`, 'must not be a Proxy');
+  validateAffectedTargetV2(review.target, `${label}.target`);
+  for (const field of [
+    'proposalIdentity', 'proofIdentity', 'preparationIdentity', 'reviewRequestIdentity',
+    'coordinatorFinalDescriptorIdentity',
+    'reviewerAuthorityIdentity', 'reviewInvocationIdentity', 'stagerAuthorityIdentity',
+    'coordinatorAuthorityIdentity', 'reviewIdentity',
+  ]) assertHash(review[field], `${label}.${field}`);
+  const owner = /** @type {Record<string, unknown>} */ (proof.owner);
+  const target = /** @type {Record<string, unknown>} */ (proof.target);
+  const descriptors = validateDefinitionArtifactDescriptorsV1(
+    review.coordinatorFinalDescriptors,
+    exactDefinitionRevisionPathsV1(target, owner),
+    `${label}.coordinatorFinalDescriptors`,
+  );
+  if (review.coordinatorFinalDescriptorIdentity !== sha256(canonicalJson(descriptors))) {
+    invalid(
+      `${label}.coordinatorFinalDescriptorIdentity`,
+      'must bind the complete ordered coordinator-final descriptor set',
+    );
+  }
+  const proofAuthorities = /** @type {Record<string, unknown>} */ (proof.authorities);
+  for (const [reviewField, proofField] of [
+    ['target', 'target'],
+    ['proposalIdentity', 'proposalIdentity'],
+    ['proofIdentity', 'proofIdentity'],
+    ['coordinatorFinalDescriptors', 'coordinatorFinalDescriptors'],
+    ['coordinatorFinalDescriptorIdentity', 'coordinatorFinalDescriptorIdentity'],
+  ]) {
+    if (canonicalJson(review[reviewField]) !== canonicalJson(proof[proofField])) {
+      invalid(`${label}.${reviewField}`, 'must bind the exact proof value');
+    }
+  }
+  if (review.stagerAuthorityIdentity !== proofAuthorities.stagerAuthorityIdentity
+    || review.coordinatorAuthorityIdentity !== proofAuthorities.coordinatorAuthorityIdentity) {
+    invalid(`${label}.stagerAuthorityIdentity`, 'must bind the proof authorities');
+  }
+  if (review.reviewerAuthorityIdentity === proofAuthorities.stagerAuthorityIdentity
+    || review.reviewerAuthorityIdentity === proofAuthorities.coordinatorAuthorityIdentity) {
+    invalid(`${label}.reviewerAuthorityIdentity`, 'must be independent of stager and coordinator');
+  }
+  assertEnum(
+    review.outcomeJudgment,
+    ['equivalent', 'weaker', 'narrower', 'ambiguous', 'normative-change', 'rejected'],
+    `${label}.outcomeJudgment`,
+  );
+  const obligationRows = validateDefinitionSemanticJudgmentRowsV1(
+    review.obligationJudgments,
+    `${label}.obligationJudgments`,
+    definitionObligationMappingIdentitiesV1(proof),
+    ['judgment'],
+  );
+  obligationRows.forEach((row, index) => assertEnum(
+    row.judgment,
+    ['equal', 'stronger', 'weaker', 'narrower', 'ambiguous', 'normative-change', 'rejected'],
+    `${label}.obligationJudgments[${index}].judgment`,
+  ));
+  const reconciliationRows = definitionReconciliationRowsByIdentityV1(proof);
+  const taskRows = validateDefinitionSemanticJudgmentRowsV1(
+    review.taskReconciliationJudgments,
+    `${label}.taskReconciliationJudgments`,
+    reconciliationRows.map((row) => /** @type {string} */ (row.reconciliationIdentity)),
+    ['taskScopeJudgment', 'acceptanceObligationJudgment', 'decompositionBasisJudgment'],
+  );
+  taskRows.forEach((row, index) => {
+    for (const field of ['taskScopeJudgment', 'acceptanceObligationJudgment']) {
+      assertEnum(
+        row[field],
+        [
+          'unchanged', 'not-state-preserving', 'weaker', 'narrower', 'ambiguous',
+          'normative-change', 'rejected',
+        ],
+        `${label}.taskReconciliationJudgments[${index}].${field}`,
+      );
+    }
+    assertEnum(
+      row.decompositionBasisJudgment,
+      ['equivalent', 'different', 'ambiguous', 'normative-change', 'rejected'],
+      `${label}.taskReconciliationJudgments[${index}].decompositionBasisJudgment`,
+    );
+  });
+  const checkRows = validateDefinitionSemanticJudgmentRowsV1(
+    review.checkJudgments,
+    `${label}.checkJudgments`,
+    definitionCheckMappingIdentitiesV1(proof),
+    ['intendedInvariantJudgment', 'successorCheckJudgment', 'triggerEvidenceJudgment'],
+  );
+  checkRows.forEach((row, index) => {
+    assertEnum(
+      row.intendedInvariantJudgment,
+      ['adequate', 'inadequate', 'ambiguous', 'normative-change', 'rejected'],
+      `${label}.checkJudgments[${index}].intendedInvariantJudgment`,
+    );
+    assertEnum(
+      row.successorCheckJudgment,
+      ['adequate', 'inadequate', 'not-applicable', 'ambiguous', 'normative-change', 'rejected'],
+      `${label}.checkJudgments[${index}].successorCheckJudgment`,
+    );
+    assertEnum(
+      row.triggerEvidenceJudgment,
+      ['binding', 'not-binding', 'not-applicable', 'ambiguous', 'normative-change', 'rejected'],
+      `${label}.checkJudgments[${index}].triggerEvidenceJudgment`,
+    );
+  });
+  const droppedRows = reconciliationRows.filter((row) => row.disposition === 'dropped-defective');
+  const droppedJudgments = validateDefinitionSemanticJudgmentRowsV1(
+    review.droppedDefectiveJudgments,
+    `${label}.droppedDefectiveJudgments`,
+    droppedRows.map((row) => /** @type {string} */ (row.reconciliationIdentity)),
+    [
+      'defectClassificationJudgment', 'archiveAuthorityJudgment',
+      'successorTaskScopeJudgment', 'successorObligationJudgment',
+      'successorCheckJudgment',
+    ],
+  );
+  droppedJudgments.forEach((row, index) => {
+    for (const field of ['defectClassificationJudgment', 'archiveAuthorityJudgment']) {
+      assertEnum(
+        row[field],
+        ['approved', 'rejected', 'ambiguous', 'normative-change'],
+        `${label}.droppedDefectiveJudgments[${index}].${field}`,
+      );
+    }
+    assertEnum(
+      row.successorTaskScopeJudgment,
+      ['equivalent', 'weaker', 'narrower', 'ambiguous', 'normative-change', 'rejected'],
+      `${label}.droppedDefectiveJudgments[${index}].successorTaskScopeJudgment`,
+    );
+    assertEnum(
+      row.successorObligationJudgment,
+      ['equal-or-stronger', 'weaker', 'narrower', 'ambiguous', 'normative-change', 'rejected'],
+      `${label}.droppedDefectiveJudgments[${index}].successorObligationJudgment`,
+    );
+    assertEnum(
+      row.successorCheckJudgment,
+      ['adequate', 'inadequate', 'ambiguous', 'normative-change', 'rejected'],
+      `${label}.droppedDefectiveJudgments[${index}].successorCheckJudgment`,
+    );
+  });
+  if (utilTypes.isProxy(review.specEditClassJudgment)) {
+    invalid(`${label}.specEditClassJudgment`, 'must not be a Proxy');
+  }
+  const specEditClassJudgment = assertExactRecord(
+    review.specEditClassJudgment,
+    ['specEditClass', 'judgment'],
+    [],
+    `${label}.specEditClassJudgment`,
+  );
+  assertEnum(
+    specEditClassJudgment.specEditClass,
+    DEFINITION_SPEC_EDIT_CLASSES,
+    `${label}.specEditClassJudgment.specEditClass`,
+  );
+  if (specEditClassJudgment.specEditClass !== proof.specEditClass) {
+    invalid(`${label}.specEditClassJudgment.specEditClass`, 'must match the exact proof class');
+  }
+  assertEnum(
+    specEditClassJudgment.judgment,
+    ['approved', 'rejected', 'ambiguous', 'normative-change'],
+    `${label}.specEditClassJudgment.judgment`,
+  );
+  assertEnum(review.finalResult, ['approved', 'rejected', 'clarification-required'], `${label}.finalResult`);
+  const expectedResult = expectedDefinitionSemanticReviewResultV1(review, proof);
+  if (review.finalResult !== expectedResult) {
+    invalid(
+      `${label}.finalResult`,
+      `must be ${expectedResult} for the complete declared semantic judgments`,
+    );
+  }
+  const { reviewIdentity, ...body } = review;
+  if (reviewIdentity !== sha256(canonicalJson(body))) {
+    invalid(`${label}.reviewIdentity`, 'must equal the exact closed semantic-review identity');
+  }
+  if (Buffer.byteLength(canonicalJson(review)) > MAX_DEFINITION_REVISION_REVIEW_BYTES) {
+    invalid(label, `must serialize to at most ${MAX_DEFINITION_REVISION_REVIEW_BYTES} UTF-8 bytes`);
+  }
+  return value;
+}
+
+/**
+ * Build an identity over reviewer-authored judgments without creating those
+ * judgments. Reviewer-side only: the evaluation path never reaches this and
+ * sources every review from a fresh Inspection instead.
+ * Preparation and request identities establish ordering and exact-request
+ * binding when checked by the coordinator; they are not reviewer attestation.
+ * @param {unknown} value @param {unknown} proofValue
+ */
+export function buildDefinitionRevisionSemanticReviewEnvelopeV1(value, proofValue) {
+  const label = 'buildDefinitionRevisionSemanticReviewEnvelopeV1';
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  assertProxyFreeDataGraph(value, label);
+  const input = assertExactRecord(
+    value,
+    [
+      'target', 'proposalIdentity', 'proofIdentity', 'preparationIdentity',
+      'reviewRequestIdentity', 'coordinatorFinalDescriptors',
+      'coordinatorFinalDescriptorIdentity', 'reviewerAuthorityIdentity',
+      'reviewInvocationIdentity', 'stagerAuthorityIdentity', 'coordinatorAuthorityIdentity',
+      'outcomeJudgment', 'obligationJudgments', 'taskReconciliationJudgments',
+      'checkJudgments', 'droppedDefectiveJudgments', 'specEditClassJudgment',
+      'finalResult',
+    ],
+    [],
+    label,
+  );
+  const body = JSON.parse(canonicalJson({
+    type: 'definition-revision-semantic-review-envelope',
+    version: 1,
+    ...input,
+  }));
+  const review = { ...body, reviewIdentity: sha256(canonicalJson(body)) };
+  validateDefinitionRevisionSemanticReviewEnvelopeV1(review, proofValue);
+  return review;
+}
+
+/** @param {unknown} captureValue @param {string} label */
+function trustedDefinitionRevisionSemanticReviewBodyV1(captureValue, label) {
+  assertProxyFreeDataGraph(captureValue, label);
+  const normalized = trustedEnvelopeBodyV2(captureValue, 'independent-review', label);
+  const capturedBytes = /** @type {Record<string, unknown>} */ (normalized.capture.bytes);
+  if (normalized.capture.outcomeHash !== capturedBytes.sha256) {
+    invalid(`${label}.outcomeHash`, 'must bind the exact captured semantic-review bytes');
+  }
+  const review = assertRecord(normalized.envelope, `${label}.bytes`);
+  if (canonicalJson(normalized.capture.target) !== canonicalJson(review.target)) {
+    invalid(`${label}.target`, 'must match the captured semantic-review target');
+  }
+  if (review.reviewerAuthorityIdentity !== normalized.authority.authorityIdentity
+    || review.reviewInvocationIdentity !== normalized.authority.invocationIdentity) {
+    invalid(`${label}.authority`, 'must bind the reviewer authority and invocation');
+  }
+  return { review, capture: normalized.capture, authority: normalized.authority };
+}
+
+/**
+ * Resolve the one definition semantic review that the fresh Inspection actually
+ * carries for this exact proof. Self-consistency over caller bytes proves
+ * nothing about attribution, so the review is only ever sourced here.
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>} proof
+ * @param {{preparationIdentity:string,reviewRequestIdentity:string}|null} [requestBinding]
+ */
+function trustedDefinitionRevisionSemanticReviewFromInspectionV1(
+  inspection,
+  proof,
+  requestBinding = null,
+) {
+  /** @type {{review:Record<string, unknown>,sourceState:string}[]} */
+  const matches = [];
+  try {
+    for (const row of trustedCaptureRowsFromInspectionV2(inspection)) {
+      if (row.kind !== 'independent-review') continue;
+      const label = 'definition semantic-review trusted capture';
+      const body = trustedEnvelopeBodyV2(row.capture, 'independent-review', label).envelope;
+      if (body.type === 'independent-review-envelope') continue;
+      if (body.type !== DEFINITION_REVISION_REVIEW_ENVELOPE_TYPE) {
+        invalid(`${label}.type`, 'must be a known trusted review envelope type');
+      }
+      const normalized = trustedDefinitionRevisionSemanticReviewBodyV1(row.capture, label);
+      const review = /** @type {Record<string, unknown>} */ (normalized.review);
+      if (review.proofIdentity !== proof.proofIdentity) continue;
+      matches.push({ review, sourceState: row.sourceState });
+    }
+  } catch {
+    return { reason: 'untrusted-review' };
+  }
+  const exactMatches = requestBinding === null
+    ? matches
+    : matches.filter(({ review }) => (
+      review.preparationIdentity === requestBinding.preparationIdentity
+      && review.reviewRequestIdentity === requestBinding.reviewRequestIdentity
+    ));
+  if (exactMatches.length === 0) {
+    return {
+      reason: matches.length === 0 ? 'missing-review-evidence' : 'review-request-mismatch',
+      semanticReviewCount: 0,
+    };
+  }
+  if (exactMatches.length !== 1 || (requestBinding !== null && matches.length !== 1)) {
+    return { reason: 'ambiguous-review-evidence', semanticReviewCount: exactMatches.length };
+  }
+  const semanticReviewCount = exactMatches.length;
+  const { review, sourceState } = exactMatches[0];
+  const expectedState = review.finalResult === 'approved' ? 'accepted' : 'rejected';
+  if (!['approved', 'rejected', 'clarification-required'].includes(/** @type {string} */ (review.finalResult))
+    || sourceState !== expectedState) {
+    return { reason: 'review-state-mismatch', semanticReviewCount };
+  }
+  const inspected = inspectedDefinitionRevisionProposalV1(inspection);
+  if (inspected.reason) {
+    return { reason: /** @type {string} */ (inspected.reason), semanticReviewCount };
+  }
+  const inspectedProposal = /** @type {Record<string, unknown>} */ (inspected.proposal);
+  if (review.proposalIdentity !== inspectedProposal.proposalIdentity) {
+    return { reason: 'stale-review-identity', semanticReviewCount };
+  }
+  return { review, semanticReviewCount };
+}
+
+/** @param {string} reason */
+function refusedDefinitionRevisionEvaluationV1(reason) {
+  return { approved: false, result: 'refused', reason };
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateDefinitionRecoveryFeature009EvidenceV1(
+  value,
+  label = 'DefinitionRecoveryFeature009EvidenceV1',
+) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const evidence = assertExactRecord(
+    value,
+    [
+      'type', 'version', 'target', 'proposalIdentity', 'reviewIdentity',
+      'blockerEvidenceIdentities', 'decompositionEvidenceIdentities',
+      'decompositionRelationships', 'evidenceIdentity',
+    ],
+    [],
+    label,
+  );
+  if (evidence.type !== 'definition-recovery-feature009-evidence' || evidence.version !== 1) {
+    invalid(label, 'must be version 1 definition-recovery-feature009-evidence');
+  }
+  validateAffectedTargetV2(evidence.target, `${label}.target`);
+  assertHash(evidence.proposalIdentity, `${label}.proposalIdentity`);
+  assertHash(evidence.reviewIdentity, `${label}.reviewIdentity`);
+  validateDefinitionRevisionHashSetV1(
+    evidence.blockerEvidenceIdentities,
+    `${label}.blockerEvidenceIdentities`,
+  );
+  validateDefinitionRevisionHashSetV1(
+    evidence.decompositionEvidenceIdentities,
+    `${label}.decompositionEvidenceIdentities`,
+  );
+  if (utilTypes.isProxy(evidence.decompositionRelationships)) {
+    invalid(`${label}.decompositionRelationships`, 'must not be a Proxy');
+  }
+  const relationships = assertDenseDataArray(
+    evidence.decompositionRelationships,
+    `${label}.decompositionRelationships`,
+  );
+  if (relationships.length < 1 || relationships.length > MAX_DEFINITION_REVISION_ROWS) {
+    invalid(`${label}.decompositionRelationships`, `must contain 1 through ${MAX_DEFINITION_REVISION_ROWS} rows`);
+  }
+  relationships.forEach((rowValue, index) => {
+    const row = assertExactRecord(
+      rowValue,
+      ['reconciliationIdentity', 'judgment'],
+      [],
+      `${label}.decompositionRelationships[${index}]`,
+    );
+    assertHash(row.reconciliationIdentity, `${label}.decompositionRelationships[${index}].reconciliationIdentity`);
+    assertEnum(
+      row.judgment,
+      ['equivalent', 'different'],
+      `${label}.decompositionRelationships[${index}].judgment`,
+    );
+    if (index > 0 && compareUtf8(
+      /** @type {string} */ (/** @type {Record<string, unknown>} */ (relationships[index - 1])).reconciliationIdentity,
+      /** @type {string} */ (row.reconciliationIdentity),
+    ) >= 0) {
+      invalid(`${label}.decompositionRelationships`, 'must be sorted and duplicate-free');
+    }
+  });
+  assertHash(evidence.evidenceIdentity, `${label}.evidenceIdentity`);
+  const { evidenceIdentity, ...body } = evidence;
+  if (evidenceIdentity !== sha256(canonicalJson(body))) {
+    invalid(`${label}.evidenceIdentity`, 'must bind the exact proposal-bound semantic evidence');
+  }
+  return value;
+}
+
+/**
+ * Adapt exact proposal-bound evidence to Feature 009's existing finding shape.
+ * This creates no new governance event, policy, counter, or store.
+ * @param {unknown} value
+ */
+export function buildDefinitionRecoveryLearningFindingV1(value) {
+  const evidence = /** @type {Record<string, unknown>} */ (
+    validateDefinitionRecoveryFeature009EvidenceV1(value)
+  );
+  const body = {
+    version: 1,
+    statement: 'The reviewed definition-recovery blocker and decomposition relationships are proposal-bound.',
+    evidenceIdentities: [
+      evidence.proposalIdentity,
+      evidence.reviewIdentity,
+      evidence.evidenceIdentity,
+    ].sort(compareUtf8),
+    assumptionIdentities: [],
+  };
+  const finding = { ...body, findingIdentity: sha256(canonicalJson(body)) };
+  validateLearningFindingV1(finding, 'DefinitionRecoveryLearningFindingV1');
+  return finding;
+}
+
+/** @param {Record<string, unknown>} proposal @param {Record<string, unknown>} review */
+function definitionRecoveryFeature009EvidenceV1(proposal, review) {
+  const references = /** @type {Record<string, unknown>} */ (proposal.reviewerEvidenceReferences);
+  const body = JSON.parse(canonicalJson({
+    type: 'definition-recovery-feature009-evidence',
+    version: 1,
+    target: proposal.target,
+    proposalIdentity: proposal.proposalIdentity,
+    reviewIdentity: review.reviewIdentity,
+    blockerEvidenceIdentities: references.blockerEvidenceIdentities,
+    decompositionEvidenceIdentities: references.decompositionEvidenceIdentities,
+    decompositionRelationships: /** @type {Record<string, unknown>[]} */ (
+      review.taskReconciliationJudgments
+    ).map((row) => ({
+      reconciliationIdentity: row.identity,
+      judgment: row.decompositionBasisJudgment,
+    })).sort((left, right) => compareUtf8(left.reconciliationIdentity, right.reconciliationIdentity)),
+  }));
+  const evidence = { ...body, evidenceIdentity: sha256(canonicalJson(body)) };
+  validateDefinitionRecoveryFeature009EvidenceV1(evidence);
+  return evidence;
+}
+
+/**
+ * Validate one exact proposal and proof against the one independent semantic
+ * review the fresh Inspection carries for that proof. No caller can supply a
+ * review body. This capability is non-mutating; T004 owns acquisition and
+ * application order.
+ * @param {unknown} value
+ */
+export function evaluateDefinitionRevisionV1(value) {
+  let input;
+  try {
+    if (utilTypes.isProxy(value)) invalid('DefinitionRevisionEvaluationV1', 'must not be a Proxy');
+    input = assertExactRecord(
+      value,
+      ['inspection', 'proposal', 'proof'],
+      ['preparationIdentity', 'reviewRequestIdentity'],
+      'DefinitionRevisionEvaluationV1',
+    );
+    assertProxyFreeDataGraph(input.inspection, 'DefinitionRevisionEvaluationV1.inspection');
+    assertProxyFreeDataGraph(input.proposal, 'DefinitionRevisionEvaluationV1.proposal');
+    assertProxyFreeDataGraph(input.proof, 'DefinitionRevisionEvaluationV1.proof');
+  } catch {
+    return refusedDefinitionRevisionEvaluationV1('invalid-request');
+  }
+  const hasPreparationIdentity = Object.hasOwn(input, 'preparationIdentity');
+  const hasReviewRequestIdentity = Object.hasOwn(input, 'reviewRequestIdentity');
+  if (hasPreparationIdentity !== hasReviewRequestIdentity) {
+    return refusedDefinitionRevisionEvaluationV1('invalid-request');
+  }
+  let requestBinding = null;
+  if (hasPreparationIdentity) {
+    try {
+      assertHash(input.preparationIdentity, 'DefinitionRevisionEvaluationV1.preparationIdentity');
+      assertHash(input.reviewRequestIdentity, 'DefinitionRevisionEvaluationV1.reviewRequestIdentity');
+      requestBinding = {
+        preparationIdentity: /** @type {string} */ (input.preparationIdentity),
+        reviewRequestIdentity: /** @type {string} */ (input.reviewRequestIdentity),
+      };
+    } catch {
+      return refusedDefinitionRevisionEvaluationV1('invalid-request');
+    }
+  }
+  const refuse = (reason, semanticReviewCount = 0) => ({
+    ...refusedDefinitionRevisionEvaluationV1(reason),
+    ...(requestBinding === null ? {} : { semanticReviewCount }),
+  });
+  let inspection;
+  try {
+    inspection = /** @type {Record<string, unknown>} */ (validateInspection(input.inspection));
+  } catch {
+    return refuse('invalid-inspection');
+  }
+  let proposal;
+  try {
+    proposal = /** @type {Record<string, unknown>} */ (
+      validateDefinitionRevisionProposalV1(input.proposal)
+    );
+  } catch {
+    return refuse('invalid-proposal');
+  }
+  let proof;
+  try {
+    proof = /** @type {Record<string, unknown>} */ (validateDefinitionRevisionProofV1(input.proof));
+  } catch {
+    return refuse('invalid-proof');
+  }
+  try {
+    validateDefinitionRevisionProofBindingV1(proposal, proof);
+  } catch {
+    return refuse('proof-binding-mismatch');
+  }
+  const resolved = trustedDefinitionRevisionSemanticReviewFromInspectionV1(
+    inspection,
+    proof,
+    requestBinding,
+  );
+  if (resolved.reason) return refuse(resolved.reason, resolved.semanticReviewCount ?? 0);
+  const review = /** @type {Record<string, unknown>} */ (resolved.review);
+  const proofAuthorities = /** @type {Record<string, unknown>} */ (proof.authorities);
+  for (const [reviewField, proofField] of [
+    ['target', 'target'],
+    ['proposalIdentity', 'proposalIdentity'],
+    ['proofIdentity', 'proofIdentity'],
+    ['coordinatorFinalDescriptors', 'coordinatorFinalDescriptors'],
+    ['coordinatorFinalDescriptorIdentity', 'coordinatorFinalDescriptorIdentity'],
+  ]) {
+    try {
+      if (canonicalJson(review[reviewField]) !== canonicalJson(proof[proofField])) {
+        return refuse('review-binding-mismatch', 1);
+      }
+    } catch {
+      return refuse('semantic-review-invalid', 1);
+    }
+  }
+  if (review.stagerAuthorityIdentity !== proofAuthorities.stagerAuthorityIdentity
+    || review.coordinatorAuthorityIdentity !== proofAuthorities.coordinatorAuthorityIdentity) {
+    return refuse('review-binding-mismatch', 1);
+  }
+  if (review.reviewerAuthorityIdentity === proofAuthorities.stagerAuthorityIdentity
+    || review.reviewerAuthorityIdentity === proofAuthorities.coordinatorAuthorityIdentity) {
+    return refuse('self-review', 1);
+  }
+  try {
+    validateDefinitionRevisionSemanticReviewEnvelopeV1(review, proof);
+  } catch {
+    return refuse('semantic-review-invalid', 1);
+  }
+  if (review.finalResult === 'clarification-required') {
+    return refuse('clarification-required', 1);
+  }
+  if (review.finalResult === 'rejected') {
+    return refuse('review-rejected', 1);
+  }
+  return {
+    approved: true,
+    result: 'approved',
+    reason: 'approved',
+    proposalIdentity: proposal.proposalIdentity,
+    proofIdentity: proof.proofIdentity,
+    reviewIdentity: review.reviewIdentity,
+    feature009Evidence: definitionRecoveryFeature009EvidenceV1(proposal, review),
+    ...(requestBinding === null ? {} : { semanticReviewCount: resolved.semanticReviewCount }),
+  };
+}
+
+/**
+ * Re-resolve and validate the already captured review envelope by exact
+ * identity. This is deterministic post-apply identity validation, not another
+ * semantic review invocation.
+ * @param {unknown} value
+ */
+export function revalidateDefinitionRevisionReviewIdentityV1(value) {
+  const label = 'DefinitionRevisionReviewIdentityRevalidationV1';
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const input = assertExactRecord(
+    value,
+    ['inspection', 'proposal', 'proof', 'reviewIdentity'],
+    [],
+    label,
+  );
+  assertProxyFreeDataGraph(input.inspection, `${label}.inspection`);
+  assertProxyFreeDataGraph(input.proposal, `${label}.proposal`);
+  assertProxyFreeDataGraph(input.proof, `${label}.proof`);
+  assertHash(input.reviewIdentity, `${label}.reviewIdentity`);
+  const inspection = /** @type {Record<string, unknown>} */ (
+    validateInspection(input.inspection)
+  );
+  const proposal = /** @type {Record<string, unknown>} */ (
+    validateDefinitionRevisionProposalV1(input.proposal, `${label}.proposal`)
+  );
+  const proof = /** @type {Record<string, unknown>} */ (
+    validateDefinitionRevisionProofV1(input.proof, `${label}.proof`)
+  );
+  validateDefinitionRevisionProofBindingV1(proposal, proof, `${label}.binding`);
+  const resolved = trustedDefinitionRevisionSemanticReviewFromInspectionV1(inspection, proof);
+  if (resolved.reason) invalid(label, `cannot resolve the exact trusted review: ${resolved.reason}`);
+  const review = /** @type {Record<string, unknown>} */ (resolved.review);
+  validateDefinitionRevisionSemanticReviewEnvelopeV1(review, proof, `${label}.review`);
+  if (review.finalResult !== 'approved'
+    || review.reviewIdentity !== input.reviewIdentity
+    || review.proposalIdentity !== proposal.proposalIdentity) {
+    invalid(label, 'does not match the exact approved proposal-bound review identity');
+  }
+  return {
+    proposalIdentity: proposal.proposalIdentity,
+    reviewIdentity: review.reviewIdentity,
+    coordinatorFinalDescriptors: JSON.parse(canonicalJson(proposal.coordinatorFinalDescriptors)),
+  };
+}
+
+/** @param {unknown} value @param {string[]} expectedPaths @param {string} label */
+function definitionRecoveryArtifactRowsV1(value, expectedPaths, label) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const rows = assertDenseDataArray(value, label);
+  if (rows.length !== expectedPaths.length) {
+    invalid(label, `must contain exactly ${expectedPaths.length} artifact rows`);
+  }
+  return rows.map((rowValue, index) => {
+    const rowLabel = `${label}[${index}]`;
+    if (utilTypes.isProxy(rowValue)) invalid(rowLabel, 'must not be a Proxy');
+    const row = assertExactRecord(rowValue, ['path', 'expected', 'staged'], [], rowLabel);
+    if (row.path !== expectedPaths[index]) {
+      invalid(`${rowLabel}.path`, 'must match the exact sorted four-artifact scope');
+    }
+    const expected = byteSequence(row.expected);
+    const staged = byteSequence(row.staged);
+    if (!expected || !staged) invalid(rowLabel, 'must carry exact expected and staged byte sequences');
+    if (expected.byteLength > MAX_SOURCE_BODY_BYTES || staged.byteLength > MAX_SOURCE_BODY_BYTES) {
+      invalid(rowLabel, `artifact bytes must not exceed ${MAX_SOURCE_BODY_BYTES}`);
+    }
+    return { path: /** @type {string} */ (row.path), expected, staged };
+  });
+}
+
+/** @param {{path:string,expected:Buffer,staged:Buffer}[]} rows @param {'expected'|'staged'} field */
+function definitionRecoveryDescriptorsV1(rows, field) {
+  return rows.map((row) => ({ path: row.path, ...contentDescriptor(row[field]) }));
+}
+
+/** @param {Buffer} bytes @param {string} label */
+function definitionRecoveryUtf8V1(bytes, label) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    invalid(label, 'must be strict UTF-8');
+  }
+}
+
+/** @param {Buffer} bytes @param {string} taskPath @param {string} label */
+function parsedDefinitionRecoveryTasksV1(bytes, taskPath, label) {
+  definitionRecoveryUtf8V1(bytes, label);
+  let visible;
+  try {
+    visible = parseVisibleTasks(bytes, { path: taskPath, state: label });
+  } catch (error) {
+    invalid(label, error instanceof Error ? error.message : 'must contain visible Markdown task syntax');
+  }
+  const parsed = visible.parsed;
+  if (parsed.boardIssue || parsed.warnings.length !== 0 || parsed.tasks.length !== parsed.byId.size) {
+    invalid(label, 'must contain one valid canonical task set with no parser diagnostics');
+  }
+  return {
+    parsed,
+    bytes: Buffer.from(bytes),
+    lines: visible.lines,
+    activeEnd: visible.activeEnd,
+    history: visible.historyOffset === null
+      ? null
+      : {
+        startOffset: visible.historyOffset,
+        suffix: bytes.subarray(visible.historyOffset).toString('utf8'),
+      },
+  };
+}
+
+/** @param {ReturnType<typeof parsedDefinitionRecoveryTasksV1>} visible @param {string} label */
+function partitionDefinitionRecoveryTasksV1(visible, label) {
+  const { parsed } = visible;
+  const inBoard = (lineIndex) => parsed.board !== null
+    && lineIndex >= parsed.board.startLine
+    && lineIndex <= parsed.board.endLine;
+  const discoveredLines = visible.lines.flatMap((line, index) => (
+    line.start < visible.activeEnd
+      && !inBoard(index)
+      && /^##[ \t]+Discovered[ \t]+During[ \t]+Execution(?:[ \t]+#+)?[ \t]*$/.test(line.text)
+      ? [index]
+      : []
+  ));
+  if (discoveredLines.length > 1) invalid(label, 'must contain at most one active discovered-work section');
+  const discoveredLine = discoveredLines[0] ?? -1;
+  const canonicalTasks = parsed.tasks.filter((task) => (
+    discoveredLine === -1 || task.headerLine < discoveredLine
+  ));
+  const canonicalById = new Map(canonicalTasks.map((task) => [task.id, task]));
+  const discovered = discoveredLine === -1
+    ? null
+    : visible.bytes.subarray(visible.lines[discoveredLine].start, visible.activeEnd).toString('utf8');
+  return { canonicalTasks, canonicalById, discovered };
+}
+
+/** @param {import('../dude-engine/lib/tasks.mjs').Task} task */
+function definitionRecoveryTaskMeaningV1(task) {
+  return {
+    id: task.id,
+    parallel: task.parallel,
+    label: task.label,
+    description: task.description,
+    deps: task.deps,
+    order: task.order,
+  };
+}
+
+/** @param {import('../dude-engine/lib/tasks.mjs').Task[]} left @param {import('../dude-engine/lib/tasks.mjs').Task[]} right @param {string} label */
+function assertDefinitionRecoveryTaskMeaningEqualV1(left, right, label) {
+  const leftRows = left.map(definitionRecoveryTaskMeaningV1);
+  const rightRows = right.map(definitionRecoveryTaskMeaningV1);
+  if (canonicalJson(leftRows) !== canonicalJson(rightRows)) {
+    invalid(label, 'must preserve the exact staged canonical task meaning and order');
+  }
+}
+
+/** @param {Buffer} stageBytes @param {Buffer} finalBytes */
+function assertDefinitionRecoveryOwnerStageConsumedV1(stageBytes, finalBytes) {
+  const label = 'definition recovery coordinator owner composition';
+  const split = (bytes, side) => {
+    const text = definitionRecoveryUtf8V1(bytes, `${label}.${side}`);
+    const headings = [...text.matchAll(/^## Coordinator Log[^\r\n]*(?:\r\n|\n|\r)/gm)];
+    if (headings.length !== 1) invalid(`${label}.${side}`, 'must contain exactly one Coordinator Log');
+    const heading = /** @type {RegExpMatchArray} */ (headings[0]);
+    const headingStart = /** @type {number} */ (heading.index);
+    const marker = '<!-- dude:managed:end -->';
+    const markerStart = text.indexOf(marker, headingStart + heading[0].length);
+    if (markerStart === -1 || text.indexOf(marker, markerStart + marker.length) !== -1) {
+      invalid(`${label}.${side}`, 'must contain one terminal managed end after Coordinator Log');
+    }
+    return {
+      prefix: text.slice(0, headingStart),
+      log: text.slice(headingStart, markerStart),
+      suffix: text.slice(markerStart),
+    };
+  };
+  const staged = split(stageBytes, 'stage');
+  const composed = split(finalBytes, 'final');
+  if (staged.prefix !== composed.prefix || staged.suffix !== composed.suffix
+    || !composed.log.startsWith(staged.log)) {
+    invalid(label, 'must consume the exact Spec Lead owner stage and only append coordinator log bytes');
+  }
+}
+
+/** @param {unknown} value @param {string} label */
+function validateDefinitionRecoveryArchiveRecordV1(value, label) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const record = assertExactRecord(
+    value,
+    [
+      'type', 'version', 'reconciliationIdentity', 'archiveIdentity',
+      'priorTaskKey', 'priorTaskScopeIdentity', 'priorGlyph', 'defectReason',
+      'defectEvidenceIdentities', 'triggerEvidenceIdentities', 'successorTaskKeys',
+      'successorObligationMappingIdentities', 'successorCheckMappingIdentities',
+    ],
+    [],
+    label,
+  );
+  if (record.type !== 'dropped-defective' || record.version !== 1) {
+    invalid(label, 'must be a version 1 dropped-defective archive record');
+  }
+  for (const field of ['reconciliationIdentity', 'archiveIdentity', 'priorTaskScopeIdentity']) {
+    assertHash(record[field], `${label}.${field}`);
+  }
+  assertDefinitionTaskKeyV1(record.priorTaskKey, `${label}.priorTaskKey`);
+  assertEnum(record.priorGlyph, ['~', '!', 'x'], `${label}.priorGlyph`);
+  assertUnicodeScalarString(record.defectReason, `${label}.defectReason`);
+  if (/** @type {string} */ (record.defectReason).trim().length === 0
+    || Buffer.byteLength(/** @type {string} */ (record.defectReason)) > 512) {
+    invalid(`${label}.defectReason`, 'must be non-empty and at most 512 UTF-8 bytes');
+  }
+  validateDefinitionRevisionHashSetV1(record.defectEvidenceIdentities, `${label}.defectEvidenceIdentities`);
+  validateDefinitionRevisionHashSetV1(record.triggerEvidenceIdentities, `${label}.triggerEvidenceIdentities`);
+  validateDefinitionTaskKeySetV1(record.successorTaskKeys, `${label}.successorTaskKeys`, 1);
+  validateDefinitionRevisionHashSetV1(
+    record.successorObligationMappingIdentities,
+    `${label}.successorObligationMappingIdentities`,
+  );
+  validateDefinitionRevisionHashSetV1(
+    record.successorCheckMappingIdentities,
+    `${label}.successorCheckMappingIdentities`,
+  );
+  return record;
+}
+
+/**
+ * Enforce only the state and archive consequences of the reviewed semantic
+ * reconciliation. Semantic equivalence remains the independent reviewer's job.
+ * @param {Buffer} currentBytes @param {Buffer} stageBytes @param {Buffer} finalBytes
+ * @param {Record<string, unknown>} reconciliation @param {unknown} archiveRecordsValue
+ * @param {string} taskPath
+ */
+function composeDefinitionTaskReconciliationV1(
+  currentBytes,
+  stageBytes,
+  finalBytes,
+  reconciliation,
+  archiveRecordsValue,
+  taskPath,
+) {
+  const current = parsedDefinitionRecoveryTasksV1(currentBytes, taskPath, 'definition recovery current tasks');
+  const stage = parsedDefinitionRecoveryTasksV1(stageBytes, taskPath, 'definition recovery Spec Lead task stage');
+  const final = parsedDefinitionRecoveryTasksV1(finalBytes, taskPath, 'definition recovery coordinator-final tasks');
+  const currentParts = partitionDefinitionRecoveryTasksV1(current, 'definition recovery current tasks');
+  const stageParts = partitionDefinitionRecoveryTasksV1(stage, 'definition recovery Spec Lead task stage');
+  const finalParts = partitionDefinitionRecoveryTasksV1(final, 'definition recovery coordinator-final tasks');
+  assertDefinitionRecoveryTaskMeaningEqualV1(
+    stageParts.canonicalTasks,
+    finalParts.canonicalTasks,
+    'definition recovery coordinator-final tasks',
+  );
+  if (stageParts.canonicalTasks.some((task) => (
+    task.glyph !== ' ' || task.blockedBy !== null || task.extraMeta.length !== 0
+  ))) {
+    invalid('definition recovery Spec Lead task stage', 'must leave every staged task open without execution state');
+  }
+  if (stageParts.discovered !== currentParts.discovered
+    || finalParts.discovered !== currentParts.discovered) {
+    invalid('definition recovery discovered work', 'must remain byte-identical outside canonical task reconciliation');
+  }
+  const currentKeys = currentParts.canonicalTasks.map((task) => task.id).sort(compareUtf8);
+  const finalKeys = finalParts.canonicalTasks.map((task) => task.id).sort(compareUtf8);
+  if (canonicalJson(currentKeys) !== canonicalJson(reconciliation.declaredOldTaskKeys)
+    || canonicalJson(finalKeys) !== canonicalJson(reconciliation.declaredFinalTaskKeys)) {
+    invalid('definition recovery task reconciliation', 'must exactly cover current and coordinator-final canonical tasks');
+  }
+  const rows = definitionReconciliationRowsByIdentityV1({ taskReconciliation: reconciliation });
+  for (const row of rows) {
+    const disposition = /** @type {string} */ (row.disposition);
+    const oldTasks = /** @type {Record<string, unknown>[]} */ (row.oldTasks);
+    const finalTasks = /** @type {Record<string, unknown>[]} */ (row.finalTasks);
+    if (disposition === 'dropped') {
+      const old = currentParts.canonicalById.get(/** @type {string} */ (oldTasks[0].taskKey));
+      if (!old) invalid('definition recovery dropped task', 'must resolve in current tasks');
+      if (old.glyph !== ' ') {
+        invalid('clarification-required:', `non-open task ${old.id} cannot be dropped automatically`);
+      }
+    }
+    for (const anchor of finalTasks) {
+      const finalTask = finalParts.canonicalById.get(/** @type {string} */ (anchor.taskKey));
+      if (!finalTask) invalid('definition recovery final task', 'must resolve in coordinator-final tasks');
+      if (disposition === 'one-to-one-kept') {
+        const oldTask = currentParts.canonicalById.get(/** @type {string} */ (oldTasks[0].taskKey));
+        if (!oldTask
+          || finalTask.glyph !== oldTask.glyph
+          || finalTask.blockedBy !== oldTask.blockedBy
+          || canonicalJson(finalTask.extraMeta) !== canonicalJson(oldTask.extraMeta)) {
+          invalid('definition recovery kept task', 'must preserve its exact prior glyph and execution metadata');
+        }
+      } else if (finalTask.glyph !== ' ' || finalTask.blockedBy !== null
+        || finalTask.extraMeta.length !== 0) {
+        invalid('definition recovery successor task', 'must be open with no inherited state or completion metadata');
+      }
+    }
+  }
+  if (stage.history?.suffix !== current.history?.suffix) {
+    invalid('definition recovery Spec Lead task stage', 'must byte-preserve prior Lightweight execution history');
+  }
+  if (utilTypes.isProxy(archiveRecordsValue)) invalid('definition recovery archive records', 'must not be a Proxy');
+  const archiveValues = assertDenseDataArray(archiveRecordsValue, 'definition recovery archive records');
+  const droppedRows = rows.filter((row) => row.disposition === 'dropped-defective');
+  if (archiveValues.length !== droppedRows.length) {
+    invalid('definition recovery archive records', 'must contain exactly one record per dropped-defective row');
+  }
+  const archives = archiveValues.map((value, index) => validateDefinitionRecoveryArchiveRecordV1(
+    value,
+    `definition recovery archive records[${index}]`,
+  ));
+  for (let index = 0; index < archives.length; index += 1) {
+    const archiveRecord = archives[index];
+    const row = droppedRows[index];
+    if (archiveRecord.reconciliationIdentity !== row.reconciliationIdentity) {
+      invalid('definition recovery archive records', 'must be sorted by and bind the exact reconciliation rows');
+    }
+    const proofArchive = /** @type {Record<string, unknown>} */ (row.archive);
+    const oldAnchor = /** @type {Record<string, unknown>} */ (
+      /** @type {Record<string, unknown>[]} */ (row.oldTasks)[0]
+    );
+    const oldTask = currentParts.canonicalById.get(/** @type {string} */ (oldAnchor.taskKey));
+    if (!oldTask || oldTask.glyph === ' '
+      || archiveRecord.priorTaskKey !== oldAnchor.taskKey
+      || archiveRecord.priorTaskScopeIdentity !== oldAnchor.taskScopeIdentity
+      || archiveRecord.priorGlyph !== oldTask.glyph) {
+      invalid('definition recovery archive record', 'must bind the exact non-open prior task identity and state');
+    }
+    for (const field of [
+      'archiveIdentity', 'defectEvidenceIdentities', 'triggerEvidenceIdentities',
+      'successorTaskKeys', 'successorObligationMappingIdentities',
+      'successorCheckMappingIdentities',
+    ]) {
+      if (canonicalJson(archiveRecord[field]) !== canonicalJson(proofArchive[field])) {
+        invalid(`definition recovery archive record.${field}`, 'must match the exact reviewed archive mapping');
+      }
+    }
+  }
+  const historyAppend = archives.length === 0
+    ? null
+    : Buffer.from(archives.map((record) => (
+      `${DEFINITION_RECOVERY_ARCHIVE_PREFIX}${canonicalJson(record)}\n`
+    )).join(''));
+  const expectedFinalHistory = `${current.history?.suffix ?? ''}${historyAppend?.toString('utf8') ?? ''}`;
+  if ((final.history?.suffix ?? '') !== expectedFinalHistory) {
+    invalid('definition recovery coordinator-final tasks', 'must preserve prior history and append the exact complete archive');
+  }
+  return historyAppend;
+}
+
+/**
+ * Consume a Spec Lead-authorized stage and bind the coordinator's exact final
+ * four-path bytes plus every represented reconciliation effect.
+ * @param {unknown} value
+ */
+export function composeDefinitionRecoveryV1(value) {
+  if (utilTypes.isProxy(value)) invalid('DefinitionRecoveryCompositionV1', 'must not be a Proxy');
+  assertProxyFreeDataGraph(value, 'DefinitionRecoveryCompositionV1');
+  const input = assertExactRecord(
+    value,
+    ['version', 'mode', 'intent', 'target', 'owner', 'eligibility', 'stage', 'coordinator'],
+    [],
+    'DefinitionRecoveryCompositionV1',
+  );
+  if (input.version !== 1 || input.mode !== 'autonomous' || input.intent !== 'unchanged') {
+    invalid('DefinitionRecoveryCompositionV1', 'requires version 1 explicit autonomous unchanged-intent recovery');
+  }
+  const target = /** @type {Record<string, unknown>} */ (
+    validateAffectedTargetV2(input.target, 'DefinitionRecoveryCompositionV1.target')
+  );
+  if (target.lane !== 'lightweight') invalid('DefinitionRecoveryCompositionV1.target.lane', 'must be lightweight');
+  const owner = assertExactRecord(input.owner, ['ideaPath', 'specPath'], [], 'DefinitionRecoveryCompositionV1.owner');
+  assertDirectIdeaPath(owner.ideaPath, 'DefinitionRecoveryCompositionV1.owner.ideaPath');
+  if (owner.specPath !== target.specPath) invalid('DefinitionRecoveryCompositionV1.owner.specPath', 'must match target');
+  const expectedPaths = exactDefinitionRevisionPathsV1(target, owner);
+  const eligibility = /** @type {Record<string, unknown>} */ (
+    validateDefinitionReconciliationEligibilityV1(input.eligibility, 'DefinitionRecoveryCompositionV1.eligibility')
+  );
+  const stage = assertExactRecord(
+    input.stage,
+    [
+      'authorityIdentity', 'artifacts', 'specEditClass', 'obligationMappings',
+      'checkMappings', 'taskReconciliation', 'reviewerEvidenceReferences',
+    ],
+    [],
+    'DefinitionRecoveryCompositionV1.stage',
+  );
+  const coordinator = assertExactRecord(
+    input.coordinator,
+    ['authorityIdentity', 'artifacts', 'archiveRecords'],
+    [],
+    'DefinitionRecoveryCompositionV1.coordinator',
+  );
+  assertHash(stage.authorityIdentity, 'DefinitionRecoveryCompositionV1.stage.authorityIdentity');
+  assertHash(coordinator.authorityIdentity, 'DefinitionRecoveryCompositionV1.coordinator.authorityIdentity');
+  if (stage.authorityIdentity === coordinator.authorityIdentity) {
+    invalid('DefinitionRecoveryCompositionV1.coordinator.authorityIdentity', 'must be distinct from the Spec Lead');
+  }
+  assertEnum(stage.specEditClass, DEFINITION_SPEC_EDIT_CLASSES, 'DefinitionRecoveryCompositionV1.stage.specEditClass');
+  validateDefinitionObligationMappingSetV1(stage.obligationMappings, 'DefinitionRecoveryCompositionV1.stage.obligationMappings');
+  validateDefinitionCheckMappingSetV1(stage.checkMappings, 'DefinitionRecoveryCompositionV1.stage.checkMappings');
+  const reconciliation = /** @type {Record<string, unknown>} */ (
+    validateDefinitionTaskReconciliationV1(
+      stage.taskReconciliation,
+      'DefinitionRecoveryCompositionV1.stage.taskReconciliation',
+    )
+  );
+  validateDefinitionReviewerEvidenceReferencesV1(
+    stage.reviewerEvidenceReferences,
+    'DefinitionRecoveryCompositionV1.stage.reviewerEvidenceReferences',
+  );
+  const stageArtifacts = definitionRecoveryArtifactRowsV1(
+    stage.artifacts,
+    expectedPaths,
+    'DefinitionRecoveryCompositionV1.stage.artifacts',
+  );
+  const finalArtifacts = definitionRecoveryArtifactRowsV1(
+    coordinator.artifacts,
+    expectedPaths,
+    'DefinitionRecoveryCompositionV1.coordinator.artifacts',
+  );
+  for (let index = 0; index < expectedPaths.length; index += 1) {
+    if (!stageArtifacts[index].expected.equals(finalArtifacts[index].expected)) {
+      invalid('DefinitionRecoveryCompositionV1.coordinator.artifacts', 'must use the exact staged prestate bytes');
+    }
+  }
+  const ownerPath = /** @type {string} */ (owner.ideaPath);
+  const packageRoot = /** @type {string} */ (target.specPath).slice(0, -'spec.md'.length);
+  const planPath = `${packageRoot}plan.md`;
+  const specPath = /** @type {string} */ (target.specPath);
+  const taskPath = `${packageRoot}tasks.md`;
+  const stageByPath = new Map(stageArtifacts.map((row) => [row.path, row]));
+  const finalByPath = new Map(finalArtifacts.map((row) => [row.path, row]));
+  for (const artifactPath of [planPath, specPath]) {
+    if (!stageByPath.get(artifactPath)?.staged.equals(finalByPath.get(artifactPath)?.staged)) {
+      invalid(`DefinitionRecoveryCompositionV1.coordinator.artifacts.${artifactPath}`, 'must equal the exact Spec Lead stage');
+    }
+  }
+  assertDefinitionRecoveryOwnerStageConsumedV1(
+    /** @type {{staged:Buffer}} */ (stageByPath.get(ownerPath)).staged,
+    /** @type {{staged:Buffer}} */ (finalByPath.get(ownerPath)).staged,
+  );
+  const historyAppend = composeDefinitionTaskReconciliationV1(
+    /** @type {{expected:Buffer}} */ (finalByPath.get(taskPath)).expected,
+    /** @type {{staged:Buffer}} */ (stageByPath.get(taskPath)).staged,
+    /** @type {{staged:Buffer}} */ (finalByPath.get(taskPath)).staged,
+    reconciliation,
+    coordinator.archiveRecords,
+    taskPath,
+  );
+  const prestateDescriptors = definitionRecoveryDescriptorsV1(finalArtifacts, 'expected');
+  const coordinatorFinalDescriptors = definitionRecoveryDescriptorsV1(finalArtifacts, 'staged');
+  const obligationMappings = /** @type {Record<string, unknown>} */ (stage.obligationMappings);
+  const checkMappings = /** @type {Record<string, unknown>} */ (stage.checkMappings);
+  const proposal = buildDefinitionRevisionProposalV1({
+    target,
+    owner,
+    eligibility,
+    prestateDescriptors,
+    coordinatorFinalDescriptors,
+    mappingReferences: [obligationMappings.componentIdentity, checkMappings.componentIdentity]
+      .sort(compareUtf8),
+    reconciliationReferences: [reconciliation.componentIdentity],
+    reviewerEvidenceReferences: stage.reviewerEvidenceReferences,
+  });
+  const proof = buildDefinitionRevisionProofV1({
+    proposalIdentity: proposal.proposalIdentity,
+    target,
+    owner,
+    eligibilityIdentity: eligibility.eligibilityIdentity,
+    prestateDescriptorIdentity: sha256(canonicalJson(prestateDescriptors)),
+    coordinatorFinalDescriptors,
+    specEditClass: stage.specEditClass,
+    authorities: {
+      stagerAuthorityIdentity: stage.authorityIdentity,
+      coordinatorAuthorityIdentity: coordinator.authorityIdentity,
+    },
+    obligationMappings,
+    checkMappings,
+    taskReconciliation: reconciliation,
+  });
+  validateDefinitionRevisionProofBindingV1(proposal, proof, 'DefinitionRecoveryCompositionV1.binding');
+  const stageIdentity = sha256(canonicalJson({
+    authorityIdentity: stage.authorityIdentity,
+    descriptors: definitionRecoveryDescriptorsV1(stageArtifacts, 'staged'),
+    specEditClass: stage.specEditClass,
+    obligationMappingIdentity: obligationMappings.componentIdentity,
+    checkMappingIdentity: checkMappings.componentIdentity,
+    taskReconciliationIdentity: reconciliation.componentIdentity,
+    reviewerEvidenceReferences: stage.reviewerEvidenceReferences,
+  }));
+  const compositionIdentity = sha256(canonicalJson({
+    stageIdentity,
+    coordinatorAuthorityIdentity: coordinator.authorityIdentity,
+    proposalIdentity: proposal.proposalIdentity,
+    proofIdentity: proof.proofIdentity,
+    archiveRecords: coordinator.archiveRecords,
+  }));
+  return {
+    stageIdentity,
+    compositionIdentity,
+    proposal,
+    proof,
+    changes: finalArtifacts.map((row) => ({
+      path: row.path,
+      expected: Buffer.from(row.expected),
+      staged: Buffer.from(row.staged),
+    })),
+    reconciliationEvidence: {
+      reconciliationIdentity: reconciliation.componentIdentity,
+      historyAppend: historyAppend === null ? null : { path: taskPath, bytes: historyAppend },
+    },
+  };
+}
+
+/**
+ * Validate the closed authorization shape and its exact proposal binding
+ * without consulting a fresh Inspection.
+ * @param {unknown} value @param {unknown} proposalValue @param {string} [label]
+ */
+function validatedDefinitionRecoveryAuthorizationShapeV1(
+  value,
+  proposalValue,
+  label = 'DefinitionRecoveryAuthorizationV1',
+) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  assertProxyFreeDataGraph(value, label);
+  const authorization = assertExactRecord(
+    value,
+    ['authorized', 'reason', 'state', 'definitionReconciliation'],
+    ['attemptIdentity', 'claimRequired'],
+    label,
+  );
+  if (authorization.authorized !== true || authorization.reason !== 'authorized') {
+    invalid(label, 'must be one accepted authorization');
+  }
+  const proposal = /** @type {Record<string, unknown>} */ (
+    validateDefinitionRevisionProposalV1(proposalValue, `${label}.proposal`)
+  );
+  const state = /** @type {Record<string, unknown>} */ (
+    validateRunState(authorization.state)
+  );
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid(`${label}.state.policy.mode`, 'must be autonomous');
+  }
+  const pendingRows = /** @type {Record<string, unknown>[]} */ (state.pending);
+  if (pendingRows.length !== 1) invalid(`${label}.state.pending`, 'must contain exactly one pending recovery');
+  const pending = pendingRows[0];
+  const materialInputs = /** @type {Record<string, unknown>} */ (pending.materialInputs);
+  if (pending.action !== 'reconcile-derived-definition'
+    || pending.mode !== 'recovery'
+    || pending.approachHash !== proposal.proposalIdentity
+    || targetKey(/** @type {Record<string, unknown>} */ (pending.target)) !== targetKey(
+      /** @type {Record<string, unknown>} */ (proposal.target),
+    )
+    || canonicalJson(materialInputs.checks) !== canonicalJson(['lint', 'review', 'verification'])) {
+    invalid(`${label}.state.pending`, 'must bind the exact authorized definition proposal and checks');
+  }
+  const binding = assertExactRecord(
+    authorization.definitionReconciliation,
+    [
+      'version', 'variant', 'proposalIdentity', 'eligibilityIdentity', 'proposal',
+      'reviewerEvidenceReferences', 'approachBasis', 'approachBasisIdentity',
+    ],
+    [],
+    `${label}.definitionReconciliation`,
+  );
+  if (binding.version !== 1
+    || binding.proposalIdentity !== proposal.proposalIdentity
+    || canonicalJson(binding.proposal) !== canonicalJson(proposal)
+    || canonicalJson(binding.reviewerEvidenceReferences)
+      !== canonicalJson(proposal.reviewerEvidenceReferences)) {
+    invalid(`${label}.definitionReconciliation`, 'must bind the exact proposal and reviewer evidence references');
+  }
+  const eligibility = /** @type {Record<string, unknown>} */ (proposal.eligibility);
+  if (binding.variant !== eligibility.variant
+    || binding.eligibilityIdentity !== eligibility.eligibilityIdentity) {
+    invalid(`${label}.definitionReconciliation`, 'must bind the exact trusted eligibility variant');
+  }
+  validateApproachBasisV1(binding.approachBasis, `${label}.definitionReconciliation.approachBasis`);
+  if (binding.approachBasisIdentity !== sha256(canonicalJson(binding.approachBasis))
+    || canonicalJson(binding.approachBasis.mechanismIdentities)
+      !== canonicalJson([proposal.proposalIdentity])) {
+    invalid(`${label}.definitionReconciliation.approachBasis`, 'must bind the exact proposal-only approach identity');
+  }
+  return { authorization, proposal, state, materialInputs, binding };
+}
+
+/**
+ * Validate only the authorization shape used during deterministic preparation.
+ * Fresh evidence is deliberately re-derived by validateDefinitionRecoveryAuthorizationV1.
+ * @param {unknown} value @param {unknown} proposalValue @param {string} [label]
+ */
+export function validateDefinitionRecoveryAuthorizationShapeV1(
+  value,
+  proposalValue,
+  label = 'DefinitionRecoveryAuthorizationShapeV1',
+) {
+  validatedDefinitionRecoveryAuthorizationShapeV1(value, proposalValue, label);
+  return value;
+}
+
+/**
+ * Bind execution to the exact transient authorization produced by the existing
+ * T001 recovery path. This adds no authorization policy or persisted state.
+ * @param {unknown} value @param {unknown} proposalValue @param {unknown} inspectionValue
+ * @param {string} [label]
+ */
+export function validateDefinitionRecoveryAuthorizationV1(
+  value,
+  proposalValue,
+  inspectionValue,
+  label = 'DefinitionRecoveryAuthorizationV1',
+) {
+  const { state, proposal, materialInputs, binding } = validatedDefinitionRecoveryAuthorizationShapeV1(
+    value,
+    proposalValue,
+    label,
+  );
+  assertProxyFreeDataGraph(inspectionValue, `${label}.inspection`);
+  const inspection = /** @type {Record<string, unknown>} */ (
+    validateInspection(inspectionValue)
+  );
+  if (targetKey(inspection.target) !== targetKey(/** @type {Record<string, unknown>} */ (proposal.target))) {
+    invalid(`${label}.inspection.target`, 'must match the exact proposal target');
+  }
+  const derived = deriveDefinitionReconciliationBindingV1(
+    state,
+    /** @type {Record<string, unknown>} */ (proposal.target),
+    inspection,
+    materialInputs,
+  );
+  if (!derived.binding
+    || canonicalJson(derived.binding) !== canonicalJson(binding)) {
+    invalid(`${label}.inspection`, 'must freshly re-derive the exact trusted eligibility binding');
+  }
+  return value;
+}
+
+/**
+ * Validate the exact identity body for one closed automatic-redefinition
+ * eligibility variant. These references bind evidence; they do not establish
+ * semantic equivalence between definitions or decompositions.
+ * @param {unknown} value @param {string} label @param {boolean} withIdentity
+ */
+function definitionReconciliationEligibilityBodyV1(value, label, withIdentity) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const candidate = assertRecord(value, label);
+  assertEnum(
+    candidate.variant,
+    ['definition-contradiction', 'learning-no-alternative'],
+    `${label}.variant`,
+  );
+  const identityField = withIdentity ? ['eligibilityIdentity'] : [];
+  if (candidate.variant === 'definition-contradiction') {
+    const eligibility = assertExactRecord(
+      value,
+      [
+        'variant', 'proofKind', 'blockerEvidenceIdentity', 'gateEvidenceIdentity',
+        'definitionReferenceIdentities', 'causalEvidenceIdentities',
+        ...identityField,
+      ],
+      [],
+      label,
+    );
+    assertEnum(eligibility.proofKind, ['contradiction', 'impossible-gate'], `${label}.proofKind`);
+    assertHash(eligibility.blockerEvidenceIdentity, `${label}.blockerEvidenceIdentity`);
+    assertHash(eligibility.gateEvidenceIdentity, `${label}.gateEvidenceIdentity`);
+    validateDefinitionHashSetV1(
+      eligibility.definitionReferenceIdentities,
+      `${label}.definitionReferenceIdentities`,
+      eligibility.proofKind === 'contradiction' ? 2 : 1,
+    );
+    validateDefinitionHashSetV1(eligibility.causalEvidenceIdentities, `${label}.causalEvidenceIdentities`);
+    return {
+      variant: eligibility.variant,
+      proofKind: eligibility.proofKind,
+      blockerEvidenceIdentity: eligibility.blockerEvidenceIdentity,
+      gateEvidenceIdentity: eligibility.gateEvidenceIdentity,
+      definitionReferenceIdentities: eligibility.definitionReferenceIdentities,
+      causalEvidenceIdentities: eligibility.causalEvidenceIdentities,
+    };
+  }
+  const eligibility = assertExactRecord(
+    value,
+    [
+      'variant', 'blockerEvidenceIdentity', 'governanceIdentity', 'reviewIdentity',
+      'learningReviewEventHash', 'failedApproachSetIdentity', 'noProgressProofIdentity',
+      'noNewDistinguishingEvidenceHash', 'projectionReferenceIdentity',
+      ...identityField,
+    ],
+    [],
+    label,
+  );
+  for (const field of [
+    'blockerEvidenceIdentity', 'governanceIdentity', 'reviewIdentity',
+    'learningReviewEventHash', 'failedApproachSetIdentity', 'noProgressProofIdentity',
+    'noNewDistinguishingEvidenceHash', 'projectionReferenceIdentity',
+  ]) assertHash(eligibility[field], `${label}.${field}`);
+  return {
+    variant: eligibility.variant,
+    blockerEvidenceIdentity: eligibility.blockerEvidenceIdentity,
+    governanceIdentity: eligibility.governanceIdentity,
+    reviewIdentity: eligibility.reviewIdentity,
+    learningReviewEventHash: eligibility.learningReviewEventHash,
+    failedApproachSetIdentity: eligibility.failedApproachSetIdentity,
+    noProgressProofIdentity: eligibility.noProgressProofIdentity,
+    noNewDistinguishingEvidenceHash: eligibility.noNewDistinguishingEvidenceHash,
+    projectionReferenceIdentity: eligibility.projectionReferenceIdentity,
+  };
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateDefinitionReconciliationEligibilityV1(
+  value,
+  label = 'DefinitionReconciliationEligibilityV1',
+) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const eligibility = assertRecord(value, label);
+  const body = definitionReconciliationEligibilityBodyV1(eligibility, label, true);
+  assertHash(eligibility.eligibilityIdentity, `${label}.eligibilityIdentity`);
+  if (eligibility.eligibilityIdentity !== sha256(canonicalJson(body))) {
+    invalid(`${label}.eligibilityIdentity`, 'must equal the exact closed eligibility identity');
+  }
+  return value;
+}
+
+/** Build one exact eligibility value without inferring semantic facts. @param {unknown} value */
+export function buildDefinitionReconciliationEligibilityV1(value) {
+  const body = definitionReconciliationEligibilityBodyV1(
+    value,
+    'buildDefinitionReconciliationEligibilityV1',
+    false,
+  );
+  const eligibility = {
+    ...JSON.parse(canonicalJson(body)),
+    eligibilityIdentity: sha256(canonicalJson(body)),
+  };
+  validateDefinitionReconciliationEligibilityV1(eligibility);
+  return eligibility;
+}
+
+/** @param {unknown} value @param {string[]} expectedPaths @param {string} label */
+function validateDefinitionArtifactDescriptorsV1(value, expectedPaths, label) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const rows = assertDenseDataArray(value, label);
+  if (rows.length !== expectedPaths.length) {
+    invalid(label, `must contain exactly ${expectedPaths.length} descriptors`);
+  }
+  rows.forEach((rowValue, index) => {
+    const rowLabel = `${label}[${index}]`;
+    if (utilTypes.isProxy(rowValue)) invalid(rowLabel, 'must not be a Proxy');
+    const row = assertExactRecord(rowValue, ['path', 'sha256', 'byteLength'], [], rowLabel);
+    if (row.path !== expectedPaths[index]) invalid(`${rowLabel}.path`, 'must match the exact four-artifact scope');
+    assertHash(row.sha256, `${rowLabel}.sha256`);
+    assertSafeInteger(row.byteLength, `${rowLabel}.byteLength`, false);
+    if (/** @type {number} */ (row.byteLength) > MAX_SOURCE_BODY_BYTES) {
+      invalid(`${rowLabel}.byteLength`, `must not exceed ${MAX_SOURCE_BODY_BYTES} bytes`);
+    }
+  });
+  return rows;
+}
+
+/** @param {unknown} value @param {string} label */
+function validateDefinitionReviewerEvidenceReferencesV1(value, label) {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const references = assertExactRecord(
+    value,
+    ['blockerEvidenceIdentities', 'decompositionEvidenceIdentities'],
+    [],
+    label,
+  );
+  validateDefinitionHashSetV1(references.blockerEvidenceIdentities, `${label}.blockerEvidenceIdentities`);
+  validateDefinitionHashSetV1(
+    references.decompositionEvidenceIdentities,
+    `${label}.decompositionEvidenceIdentities`,
+  );
+  return references;
+}
+
+/** @param {Record<string, unknown>} target @param {Record<string, unknown>} owner */
+function exactDefinitionRevisionPathsV1(target, owner) {
+  const packageRoot = /** @type {string} */ (target.specPath).slice(0, -'spec.md'.length);
+  return [
+    /** @type {string} */ (owner.ideaPath),
+    `${packageRoot}plan.md`,
+    `${packageRoot}spec.md`,
+    `${packageRoot}tasks.md`,
+  ].sort(compareUtf8);
+}
+
+/** @param {Record<string, unknown>} target @param {Record<string, unknown>} owner @param {unknown} descriptorsValue @param {string} label */
+function definitionSourceRevisionIdentityV1(target, owner, descriptorsValue, label) {
+  const expectedPaths = exactDefinitionRevisionPathsV1(target, owner);
+  const descriptors = /** @type {Record<string, unknown>[]} */ (
+    validateDefinitionArtifactDescriptorsV1(descriptorsValue, expectedPaths, `${label}.descriptors`)
+  );
+  const writeSet = { candidatePaths: expectedPaths, protectedPaths: [] };
+  const fileStates = descriptors.map((descriptor) => ({ ...descriptor, state: 'file' }));
+  validateFileStateDescriptors(fileStates, writeSet, `${label}.fileStates`);
+  return stateIdentity(writeSetIdentity(writeSet), fileStates);
+}
+
+/**
+ * Keep append-only execution history outside the active definition source
+ * revision. Exact proposal descriptors still retain the complete task bytes.
+ * @param {Buffer} bytes @param {string} taskPath
+ */
+function definitionTaskSourceBytesV1(bytes, taskPath) {
+  const text = bytes.toString('utf8');
+  if (!Buffer.from(text, 'utf8').equals(bytes)) return null;
+  let visible;
+  try {
+    visible = parseVisibleTasks(bytes, { path: taskPath, state: 'definition task source' });
+  } catch {
+    return null;
+  }
+  if (visible.parsed.warnings.length > 0) return null;
+  if (visible.historyOffset === null) return bytes;
+  let source = bytes.subarray(0, visible.activeEnd).toString('utf8');
+  const separator = visible.parsed.preferredSeparator;
+  if (separator.length > 0 && source.endsWith(`${separator}${separator}`)) {
+    source = source.slice(0, -separator.length);
+  }
+  return Buffer.from(source, 'utf8');
+}
+
+/**
+ * Derive an acquisition-only prestate binding from exact workspace bytes.
+ * @param {Record<string, unknown>} raw @param {Record<string, unknown>} target
+ * @param {string|null} ownerIdeaPath @param {{path:string,bytes:Buffer|null}|undefined} spec
+ * @param {string|undefined} specStatus @param {Buffer} [taskBytesOverride] @param {string} [label]
+ */
+function acquiredDefinitionPrestateV1(
+  raw,
+  target,
+  ownerIdeaPath,
+  spec,
+  specStatus,
+  taskBytesOverride = undefined,
+  label = 'acquired definition prestate',
+) {
+  if (ownerIdeaPath === null || !spec || specStatus !== undefined || !byteSequence(spec.bytes)) return null;
+  const owner = { ideaPath: ownerIdeaPath, specPath: target.specPath };
+  const expectedPaths = exactDefinitionRevisionPathsV1(target, owner);
+  const ideas = /** @type {Record<string, unknown>[]} */ (raw.directIdeas);
+  const ownerRows = ideas.filter((idea) => idea.path === ownerIdeaPath && byteSequence(idea.bytes));
+  const tasks = /** @type {Record<string, unknown>} */ (raw.tasks);
+  const plan = /** @type {Record<string, unknown>} */ (raw.definitionPlan);
+  const acquiredTaskBytes = byteSequence(tasks.bytes);
+  if (ownerRows.length !== 1
+    || tasks.path !== expectedPaths.find((entry) => entry.endsWith('/tasks.md'))
+    || plan.path !== expectedPaths.find((entry) => entry.endsWith('/plan.md'))
+    || spec.path !== target.specPath) return null;
+  const captures = new Map([
+    [ownerIdeaPath, byteSequence(ownerRows[0].bytes)],
+    [/** @type {string} */ (tasks.path), taskBytesOverride ?? acquiredTaskBytes],
+    [/** @type {string} */ (plan.path), byteSequence(plan.bytes)],
+    [/** @type {string} */ (spec.path), byteSequence(spec.bytes)],
+  ]);
+  if ([...captures.values()].some((bytes) => bytes === null)) return null;
+  const prestateDescriptors = expectedPaths.map((artifactPath) => ({
+    path: artifactPath,
+    ...contentDescriptor(/** @type {Buffer} */ (captures.get(artifactPath))),
+  }));
+  const taskPath = /** @type {string} */ (tasks.path);
+  const taskSourceBytes = definitionTaskSourceBytesV1(
+    /** @type {Buffer} */ (captures.get(taskPath)),
+    taskPath,
+  );
+  if (taskSourceBytes === null) return null;
+  const sourceRevisionDescriptors = expectedPaths.map((artifactPath) => ({
+    path: artifactPath,
+    ...contentDescriptor(artifactPath === taskPath
+      ? taskSourceBytes
+      : /** @type {Buffer} */ (captures.get(artifactPath))),
+  }));
+  return {
+    prestateDescriptors,
+    sourceRevisionIdentity: definitionSourceRevisionIdentityV1(
+      target,
+      owner,
+      sourceRevisionDescriptors,
+      label,
+    ),
+  };
+}
+
+/**
+ * Strip only one exact committed occurrence suffix from fresh task bytes.
+ * @param {Record<string, unknown>} raw @param {Record<string, unknown>} target
+ * @param {string|null} ownerIdeaPath @param {{path:string,bytes:Buffer|null}|undefined} spec
+ * @param {string|undefined} specStatus @param {Buffer|undefined} expectedSuffix
+ */
+function acquiredDefinitionProjectionBaseV1(
+  raw,
+  target,
+  ownerIdeaPath,
+  spec,
+  specStatus,
+  expectedSuffix,
+) {
+  if (!expectedSuffix || expectedSuffix.byteLength === 0) return null;
+  const tasks = /** @type {Record<string, unknown>} */ (raw.tasks);
+  const taskBytes = byteSequence(tasks.bytes);
+  if (!taskBytes || taskBytes.byteLength < expectedSuffix.byteLength) return null;
+  const suffixOffset = taskBytes.byteLength - expectedSuffix.byteLength;
+  if (!taskBytes.subarray(suffixOffset).equals(expectedSuffix)) return null;
+  return acquiredDefinitionPrestateV1(
+    raw,
+    target,
+    ownerIdeaPath,
+    spec,
+    specStatus,
+    taskBytes.subarray(0, suffixOffset),
+    'acquired definition projection base',
+  );
+}
+
+/** @param {Record<string, unknown>} proposal @param {string} label */
+function validateDefinitionRevisionProposalBodyV1(proposal, label) {
+  if (proposal.version !== 1) invalid(`${label}.version`, 'must be the literal safe integer 1');
+  if (utilTypes.isProxy(proposal.target)) invalid(`${label}.target`, 'must not be a Proxy');
+  const target = /** @type {Record<string, unknown>} */ (
+    validateAffectedTargetV2(proposal.target, `${label}.target`)
+  );
+  if (target.lane !== 'lightweight') invalid(`${label}.target.lane`, 'must be lightweight');
+  if (canonicalJson(target) !== canonicalJson(canonicalTarget(target))) {
+    invalid(`${label}.target`, 'must use the canonical affected-target shape');
+  }
+  if (utilTypes.isProxy(proposal.owner)) invalid(`${label}.owner`, 'must not be a Proxy');
+  const owner = assertExactRecord(proposal.owner, ['ideaPath', 'specPath'], [], `${label}.owner`);
+  assertDirectIdeaPath(owner.ideaPath, `${label}.owner.ideaPath`);
+  if (owner.specPath !== target.specPath) invalid(`${label}.owner.specPath`, 'must match the exact target specification');
+  const expectedPaths = exactDefinitionRevisionPathsV1(target, owner);
+  validateDefinitionReconciliationEligibilityV1(proposal.eligibility, `${label}.eligibility`);
+  validateDefinitionArtifactDescriptorsV1(proposal.prestateDescriptors, expectedPaths, `${label}.prestateDescriptors`);
+  validateDefinitionArtifactDescriptorsV1(
+    proposal.coordinatorFinalDescriptors,
+    expectedPaths,
+    `${label}.coordinatorFinalDescriptors`,
+  );
+  validateDefinitionHashSetV1(proposal.mappingReferences, `${label}.mappingReferences`);
+  validateDefinitionHashSetV1(proposal.reconciliationReferences, `${label}.reconciliationReferences`);
+  const reviewerReferences = validateDefinitionReviewerEvidenceReferencesV1(
+    proposal.reviewerEvidenceReferences,
+    `${label}.reviewerEvidenceReferences`,
+  );
+  const eligibility = /** @type {Record<string, unknown>} */ (proposal.eligibility);
+  if (!/** @type {string[]} */ (reviewerReferences.blockerEvidenceIdentities)
+    .includes(/** @type {string} */ (eligibility.blockerEvidenceIdentity))) {
+    invalid(
+      `${label}.reviewerEvidenceReferences.blockerEvidenceIdentities`,
+      'must include the eligibility blocker evidence identity',
+    );
+  }
+}
+
+/** @param {unknown} value @param {string} [label] */
+export function validateDefinitionRevisionProposalV1(value, label = 'DefinitionRevisionProposalV1') {
+  if (utilTypes.isProxy(value)) invalid(label, 'must not be a Proxy');
+  const proposal = assertExactRecord(
+    value,
+    [
+      'version', 'target', 'owner', 'eligibility', 'prestateDescriptors',
+      'coordinatorFinalDescriptors', 'mappingReferences', 'reconciliationReferences',
+      'reviewerEvidenceReferences', 'proposalIdentity',
+    ],
+    [],
+    label,
+  );
+  validateDefinitionRevisionProposalBodyV1(proposal, label);
+  assertHash(proposal.proposalIdentity, `${label}.proposalIdentity`);
+  const { proposalIdentity, ...body } = proposal;
+  if (proposalIdentity !== sha256(canonicalJson(body))) {
+    invalid(`${label}.proposalIdentity`, 'must equal the exact closed proposal identity');
+  }
+  if (Buffer.byteLength(canonicalJson(proposal)) > MAX_DEFINITION_REVISION_PROPOSAL_BYTES) {
+    invalid(label, `must serialize to at most ${MAX_DEFINITION_REVISION_PROPOSAL_BYTES} UTF-8 bytes`);
+  }
+  return value;
+}
+
+/** Build one transient exact proposal identity without normalizing semantic content. @param {unknown} value */
+export function buildDefinitionRevisionProposalV1(value) {
+  if (utilTypes.isProxy(value)) invalid('buildDefinitionRevisionProposalV1', 'must not be a Proxy');
+  const input = assertExactRecord(
+    value,
+    [
+      'target', 'owner', 'eligibility', 'prestateDescriptors', 'coordinatorFinalDescriptors',
+      'mappingReferences', 'reconciliationReferences', 'reviewerEvidenceReferences',
+    ],
+    [],
+    'buildDefinitionRevisionProposalV1',
+  );
+  const body = { version: 1, ...input };
+  validateDefinitionRevisionProposalBodyV1(body, 'buildDefinitionRevisionProposalV1');
+  const canonicalBody = JSON.parse(canonicalJson(body));
+  const proposal = {
+    ...canonicalBody,
+    proposalIdentity: sha256(canonicalJson(canonicalBody)),
+  };
+  validateDefinitionRevisionProposalV1(proposal);
+  return proposal;
 }
 
 /** @param {unknown} value @param {string} [label] */
@@ -4190,8 +7039,20 @@ function trustedEnvelopeIndexFromInspectionV2(inspection) {
   const reviewCaptures = captures.filter((row) => row.kind === 'independent-review');
   /** @type {Map<string, Record<string, unknown>>} */
   const reviews = new Map();
+  /** @type {Map<string, Record<string, unknown>>} */
+  const definitionReviews = new Map();
   for (const row of reviewCaptures) {
     const body = trustedEnvelopeBodyV2(row.capture, 'independent-review', 'independent-review trusted capture').envelope;
+    // Definition-revision semantic reviews travel the same trusted review
+    // stream. They are segregated by decoded type so V2 review resolution and
+    // every verdict built on it stay byte-identical.
+    if (body.type === DEFINITION_REVISION_REVIEW_ENVELOPE_TYPE) {
+      definitionReviews.set(row.captureIdentity, { ...row, envelope: body });
+      continue;
+    }
+    if (body.type !== 'independent-review-envelope') {
+      invalid('independent-review envelope.type', 'must be a known trusted review envelope type');
+    }
     const verificationIdentity = body.verificationEnvelopeIdentity;
     assertHash(verificationIdentity, 'independent-review envelope.verificationEnvelopeIdentity');
     const verificationRow = verifications.get(/** @type {string} */ (verificationIdentity));
@@ -4208,7 +7069,7 @@ function trustedEnvelopeIndexFromInspectionV2(inspection) {
     if (reviews.has(identity)) invalid('trusted Inspection review captures', 'contain a duplicate envelope identity');
     reviews.set(identity, { ...row, envelope, verification: verificationRow.envelope });
   }
-  return { captures, verifications, reviews };
+  return { captures, verifications, reviews, definitionReviews };
 }
 
 /** @param {unknown} value @param {string} label */
@@ -4318,7 +7179,13 @@ function validateCompletionV2Binding(pending, completion, label) {
 function completionApproachContextV2(state, pending) {
   const target = /** @type {Record<string, unknown>} */ (pending.target);
   const materialInputs = /** @type {Record<string, unknown>} */ (pending.materialInputs);
-  const basis = autonomousApproachBasis(target, /** @type {string} */ (pending.action), materialInputs);
+  const basis = pending.action === 'reconcile-derived-definition'
+    ? definitionReconciliationApproachBasisFromProposalIdentityV1(
+      target,
+      materialInputs,
+      /** @type {string} */ (pending.approachHash),
+    )
+    : autonomousApproachBasis(target, /** @type {string} */ (pending.action), materialInputs);
   validateApproachBasisV1(basis);
   const approachBasisIdentity = sha256(canonicalJson(basis));
   const attemptOrdinal = /** @type {number} */ (state.overallUsed);
@@ -4400,14 +7267,27 @@ export function captureCompletionV2(stateValue, inputValue, completionValue, dep
   if (targetKey(inspection.target) !== targetKey(completionTarget)) {
     invalid('captureCompletionV2 inspection.target', 'must match the completion target');
   }
+  const definitionReconciliationCandidate = pending.action === 'reconcile-derived-definition';
+  const definitionReconciliation = definitionReconciliationCandidate
+    ? currentDefinitionReconciliationBindingV1(
+      state,
+      pending,
+      inspection,
+      completion.attemptIdentity,
+    )
+    : null;
+  if (definitionReconciliationCandidate && !definitionReconciliation) {
+    return respond({ captured: false, finalized: false, reason: 'learning-governance-conflict', state });
+  }
   if (Object.hasOwn(state, 'learningGovernance')) {
-    // Only the exact governed authorized attempt may retain a completion; every
-    // other occupied singleton stays a conflict.
     const governance = activeGovernanceCaseV2(state);
-    if (!governance
-      || !V2_AUTHORIZED_PHASES.includes(/** @type {string} */ (governance.phase))
-      || targetKey(governance.target) !== targetKey(completionTarget)
-      || governance.authorizedAttemptIdentity !== completion.attemptIdentity) {
+    const permittedAlternative = governance
+      && V2_AUTHORIZED_PHASES.includes(/** @type {string} */ (governance.phase))
+      && targetKey(governance.target) === targetKey(completionTarget)
+      && governance.authorizedAttemptIdentity === completion.attemptIdentity;
+    const permittedLearningReconciliation = definitionReconciliation?.variant
+      === 'learning-no-alternative';
+    if (!permittedAlternative && !permittedLearningReconciliation) {
       return respond({ captured: false, finalized: false, reason: 'learning-governance-conflict', state });
     }
   }
@@ -4799,11 +7679,19 @@ function validateRetainedOccurrenceAuthorityV2(events, trusted) {
       const expectedDisposition = trustedCompletionDispositionV2(verificationEnvelope, reviewEnvelope);
       const chronology = /** @type {Record<string, unknown>} */ (occurrence.chronology);
       const retainedBasis = /** @type {Record<string, unknown>} */ (event.basis);
-      const derivedBasis = autonomousApproachBasis(
-        /** @type {Record<string, unknown>} */ (event.target),
-        /** @type {string} */ (retainedBasis.action),
-        /** @type {Record<string, unknown>} */ (retainedBasis.materialInputs),
-      );
+      const mechanismIdentities = /** @type {string[]} */ (retainedBasis.mechanismIdentities);
+      const derivedBasis = retainedBasis.action === 'reconcile-derived-definition'
+        && mechanismIdentities.length === 1
+        ? definitionReconciliationApproachBasisFromProposalIdentityV1(
+          /** @type {Record<string, unknown>} */ (event.target),
+          /** @type {Record<string, unknown>} */ (retainedBasis.materialInputs),
+          mechanismIdentities[0],
+        )
+        : autonomousApproachBasis(
+          /** @type {Record<string, unknown>} */ (event.target),
+          /** @type {string} */ (retainedBasis.action),
+          /** @type {Record<string, unknown>} */ (retainedBasis.materialInputs),
+        );
       validateApproachBasisV1(derivedBasis, `retained occurrence events[${index}].basis`);
       const basisIdentity = sha256(canonicalJson(derivedBasis));
       if (verificationEnvelope.attemptIdentity !== occurrence.attemptIdentity
@@ -5022,6 +7910,17 @@ function validateFinalizeEventBindingV2(state, pendingCompletion, eventBodiesVal
   return { events, pending: pendingRows[0] };
 }
 
+/** @param {Record<string, unknown>[]} events */
+function definitionOccurrenceProjectionSuffixV1(events) {
+  return Buffer.concat(events.map((event, index) => {
+    const item = v2ProjectionPlanItem(event, `finalizeCompletionV2 occurrenceEvents[${index}]`);
+    if (item.laneEventLineTerminator !== 'LF') {
+      invalid('finalizeCompletionV2 occurrenceEvents', 'must use LF-terminated projection records');
+    }
+    return Buffer.from(`${item.laneEventLine}\n`, 'utf8');
+  }));
+}
+
 /**
  * Finalize one captured completion only after fresh exact dual retention. It
  * returns a governance-required body only for the earliest retained repeat.
@@ -5039,7 +7938,23 @@ export function finalizeCompletionV2(stateValue, inputValue, occurrenceEventsVal
   const pendingCompletion = /** @type {Record<string, unknown>} */ (
     validatePendingCompletionRetentionV2(state.pendingCompletion)
   );
-  const acquired = acquireInspection(inputValue, dependencies, publicRoute, 'autonomous');
+  const pendingRows = /** @type {Record<string, unknown>[]} */ (state.pending);
+  const definitionReconciliationCandidate = pendingRows.length === 1
+    && pendingRows[0].action === 'reconcile-derived-definition';
+  let binding = definitionReconciliationCandidate
+    ? validateFinalizeEventBindingV2(
+      state,
+      pendingCompletion,
+      finalizeOccurrenceEventBodiesV2(occurrenceEventsValue, pendingCompletion, publicRoute),
+    )
+    : null;
+  const acquired = acquireInspection(
+    inputValue,
+    dependencies,
+    publicRoute,
+    'autonomous',
+    binding ? { definitionTaskSuffix: definitionOccurrenceProjectionSuffixV1(binding.events) } : {},
+  );
   const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
   if (inspection.overflow) return { inspection };
   /** @param {Record<string, unknown>} completionResult */
@@ -5050,11 +7965,23 @@ export function finalizeCompletionV2(stateValue, inputValue, occurrenceEventsVal
     || targetKey(inspection.target) !== targetKey(pendingCompletion.target)) {
     return respond({ captured: true, finalized: false, completed: false, reason: 'occurrence-retention-incomplete', state });
   }
-  const binding = validateFinalizeEventBindingV2(
+  binding ??= validateFinalizeEventBindingV2(
     state,
     pendingCompletion,
     finalizeOccurrenceEventBodiesV2(occurrenceEventsValue, pendingCompletion, publicRoute),
   );
+  const definitionReconciliation = definitionReconciliationCandidate
+    ? currentDefinitionReconciliationBindingV1(
+      state,
+      binding.pending,
+      inspection,
+      pendingCompletion.attemptIdentity,
+      binding.events,
+    )
+    : null;
+  if (definitionReconciliationCandidate && !definitionReconciliation) {
+    return respond({ captured: true, finalized: false, completed: false, reason: 'learning-governance-conflict', state });
+  }
   let retained;
   let trusted;
   try {
@@ -5113,6 +8040,20 @@ export function finalizeCompletionV2(stateValue, inputValue, occurrenceEventsVal
       }));
       validateLearningGovernanceV1(nextState.learningGovernance);
     }
+    validateRunState(nextState);
+    return respond({
+      captured: true,
+      finalized: true,
+      completed: disposition === 'accepted',
+      reason: disposition === 'accepted' ? 'completed' : /** @type {string} */ (disposition),
+      resultIdentity: pendingCompletion.resultIdentity,
+      state: nextState,
+    });
+  }
+  if (definitionReconciliation?.variant === 'learning-no-alternative') {
+    const disposition = /** @type {Record<string, unknown>} */ (
+      /** @type {Record<string, unknown>} */ (binding.events[0]).occurrence
+    ).disposition;
     validateRunState(nextState);
     return respond({
       captured: true,
@@ -5237,6 +8178,455 @@ function comparePending(left, right) {
     || compareUtf8(/** @type {string} */ (left.approachHash), /** @type {string} */ (right.approachHash));
 }
 
+/** @param {Record<string, unknown>} inspection @param {Record<string, unknown>} target */
+function resolvedDefinitionOwnerV1(inspection, target) {
+  const matches = /** @type {Record<string, unknown>[]} */ (inspection.items)
+    .filter((item) => item.source === 'owner-log' && item.status === 'present' && typeof item.text === 'string');
+  if (matches.length !== 1) return null;
+  try {
+    const owner = assertExactRecord(
+      JSON.parse(/** @type {string} */ (matches[0].text)),
+      ['ideaPath', 'specPath', 'coordinatorLog'],
+      [],
+      'definition reconciliation owner',
+    );
+    assertDirectIdeaPath(owner.ideaPath, 'definition reconciliation owner.ideaPath');
+    assertUnicodeScalarString(owner.coordinatorLog, 'definition reconciliation owner.coordinatorLog');
+    if (owner.specPath !== target.specPath) return null;
+    return { ideaPath: owner.ideaPath, specPath: owner.specPath };
+  } catch {
+    return null;
+  }
+}
+
+/** @param {Record<string, unknown>} inspection */
+function inspectedDefinitionRevisionProposalV1(inspection) {
+  /** @type {Record<string, unknown>[]} */
+  const proposals = [];
+  try {
+    const items = /** @type {Record<string, unknown>[]} */ (inspection.items)
+      .filter((item) => item.source === 'current-run' && item.status === 'present' && typeof item.text === 'string');
+    for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+      const parsed = JSON.parse(/** @type {string} */ (items[itemIndex].text));
+      if (Array.isArray(parsed)) {
+        if (assertDenseDataArray(parsed, `definition proposal source[${itemIndex}]`).length !== 0) {
+          return { reason: 'malformed-proposal-evidence' };
+        }
+        continue;
+      }
+      const body = assertExactRecord(
+        parsed,
+        ['target', 'state', 'records'],
+        [],
+        `definition proposal source[${itemIndex}]`,
+      );
+      if (targetKey(body.target) !== targetKey(inspection.target)) return { reason: 'wrong-target-proposal-evidence' };
+      for (const [recordIndex, value] of assertDenseDataArray(
+        body.records,
+        `definition proposal source[${itemIndex}].records`,
+      ).entries()) {
+        const record = assertRecord(value, `definition proposal source[${itemIndex}].records[${recordIndex}]`);
+        if (record.type !== 'definition-revision-proposal') continue;
+        const envelope = assertExactRecord(
+          record,
+          ['type', 'version', 'proposal'],
+          [],
+          `definition proposal source[${itemIndex}].records[${recordIndex}]`,
+        );
+        if (body.state !== 'blocked' || envelope.version !== 1) return { reason: 'malformed-proposal-evidence' };
+        validateDefinitionRevisionProposalV1(envelope.proposal);
+        proposals.push(/** @type {Record<string, unknown>} */ (envelope.proposal));
+      }
+    }
+  } catch {
+    return { reason: 'malformed-proposal-evidence' };
+  }
+  if (proposals.length === 0) return { reason: 'missing-proposal-evidence' };
+  if (proposals.length !== 1) return { reason: 'ambiguous-proposal-evidence' };
+  return { proposal: JSON.parse(canonicalJson(proposals[0])) };
+}
+
+/** @param {Set<string>} allowed @param {unknown} values */
+function definitionReferencesResolveV1(allowed, values) {
+  return /** @type {string[]} */ (values).every((identity) => allowed.has(identity));
+}
+
+/** Resolve one closed contradiction bundle per fresh trusted finding occurrence. @param {Record<string, unknown>} inspection */
+function trustedDefinitionContradictionReferencesV1(inspection) {
+  try {
+    const trusted = trustedEnvelopeIndexFromInspectionV2(inspection);
+    const bundles = [];
+    for (const row of trusted.reviews.values()) {
+      const review = /** @type {Record<string, unknown>} */ (row.envelope);
+      for (const findingValue of /** @type {Record<string, unknown>[]} */ (review.findings)) {
+        const finding = /** @type {Record<string, unknown>} */ (findingValue);
+        const basis = /** @type {Record<string, unknown>} */ (finding.basis);
+        const proofKind = basis.failureClass === 'definition-contradiction'
+          ? 'contradiction'
+          : basis.failureClass === 'impossible-definition-gate'
+            ? 'impossible-gate'
+            : null;
+        if (proofKind === null) continue;
+        const expectation = /** @type {Record<string, unknown>} */ (basis.expectation);
+        const observation = /** @type {Record<string, unknown>} */ (finding.observation);
+        const gateIdentities = new Set([
+          /** @type {string} */ (basis.checkDefinitionIdentity),
+          /** @type {string} */ (observation.identity),
+        ]);
+        const causalIdentities = new Set([
+          /** @type {string} */ (finding.findingIdentity),
+          /** @type {string} */ (finding.basisIdentity),
+          /** @type {string} */ (expectation.identity),
+          /** @type {string} */ (basis.checkDefinitionIdentity),
+          /** @type {string} */ (observation.identity),
+        ]);
+        if (observation.kind === 'check-result') {
+          const verification = /** @type {Record<string, unknown>} */ (row.verification);
+          const check = /** @type {Record<string, unknown>[]} */ (verification.checks)
+            .find((candidate) => candidate.checkIdentity === observation.identity);
+          if (!check) return null;
+          for (const identity of [check.checkIdentity, check.definitionIdentity, check.evidenceIdentity]) {
+            gateIdentities.add(/** @type {string} */ (identity));
+            causalIdentities.add(/** @type {string} */ (identity));
+          }
+        }
+        bundles.push({
+          blockerIdentity: finding.findingIdentity,
+          proofKind,
+          sourceRevisionIdentity: review.sourceRevisionIdentity,
+          definitionIdentities: new Set([
+            /** @type {string} */ (expectation.identity),
+            /** @type {string} */ (basis.checkDefinitionIdentity),
+          ]),
+          gateIdentities,
+          causalIdentities,
+          blockerIdentities: new Set([/** @type {string} */ (finding.findingIdentity)]),
+          decompositionIdentities: new Set([/** @type {string} */ (finding.basisIdentity)]),
+        });
+      }
+    }
+    return bundles;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve one source revision from the fresh trusted reviews that authorize the
+ * exact retained occurrence proof.
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>[]} retained
+ */
+function trustedRetainedSourceRevisionIdentityV1(inspection, retained) {
+  try {
+    const trusted = trustedEnvelopeIndexFromInspectionV2(inspection);
+    const revisions = retained.map((event) => {
+      const reviewEnvelopeIdentity = event.type === 'approach-occurrence'
+        ? event.reviewEnvelopeIdentity
+        : /** @type {Record<string, unknown>} */ (event.occurrence).reviewEnvelopeIdentity;
+      const review = trusted.reviews.get(/** @type {string} */ (reviewEnvelopeIdentity));
+      if (!review) return null;
+      return /** @type {Record<string, unknown>} */ (review.envelope).sourceRevisionIdentity;
+    });
+    if (revisions.some((revision) => revision === null)) return null;
+    const unique = [...new Set(/** @type {string[]} */ (revisions))].sort(compareUtf8);
+    return unique.length === 1 ? unique[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>} target
+ * @param {Record<string, unknown>} state @param {Set<string>|undefined} [projectedOccurrenceEventHashes]
+ */
+function currentFeature009DefinitionEvidenceV1(
+  inspection,
+  target,
+  state,
+  projectedOccurrenceEventHashes = undefined,
+) {
+  let governance;
+  try {
+    governance = activeGovernanceCaseV2(state);
+  } catch {
+    return { kind: 'incomplete' };
+  }
+  if (!governance || targetKey(governance.target) !== targetKey(target)) return { kind: 'none' };
+  if (!['projected', 'alternative-inspected', 'no-progress-verified'].includes(
+    /** @type {string} */ (governance.phase),
+  ) || Object.hasOwn(governance, 'controlledEnd')) return { kind: 'incomplete' };
+  const rebound = reboundGovernanceEvidenceV2(inspection, governance);
+  if (rebound.reason) return { kind: 'incomplete' };
+  const retained = retainedLearningResultV2(inspection, governance);
+  if (retained.reason) return { kind: 'incomplete' };
+  const reviewEvent = /** @type {Record<string, unknown>} */ (retained.reviewEvent);
+  if (reviewEvent.outcome === 'selected-alternative') return { kind: 'viable-alternative' };
+  if (reviewEvent.outcome !== 'no-progress'
+    || !['projected', 'no-progress-verified'].includes(/** @type {string} */ (governance.phase))) {
+    return { kind: 'incomplete' };
+  }
+  const failedApproachSet = /** @type {Record<string, unknown>} */ (rebound.failedApproachSet);
+  try {
+    const alternatives = requireCompleteFailedSetComparisonV2(
+      reviewEvent.alternatives,
+      failedApproachSet,
+      'definition reconciliation learning alternatives',
+    );
+    if (alternatives.credible.length !== 0) return { kind: 'viable-alternative' };
+  } catch {
+    return { kind: 'incomplete' };
+  }
+  const proof = /** @type {Record<string, unknown>} */ (reviewEvent.noProgressProof);
+  const proofRetained = projectedOccurrenceEventHashes
+    ? /** @type {Record<string, unknown>[]} */ (rebound.retained)
+      .filter((event) => !projectedOccurrenceEventHashes.has(/** @type {string} */ (event.eventHash)))
+    : /** @type {Record<string, unknown>[]} */ (rebound.retained);
+  const sourceRevisionIdentity = trustedRetainedSourceRevisionIdentityV1(inspection, proofRetained);
+  if (proof.failedApproachSetIdentity !== failedApproachSet.setIdentity
+    || sourceRevisionIdentity === null
+    || proof.completeEvidenceHash !== noProgressCompleteEvidenceHashV2(
+      failedApproachSet,
+      proofRetained,
+    )) return { kind: 'incomplete' };
+  const blockerIdentities = new Set(
+    /** @type {Record<string, unknown>[]} */ (reviewEvent.findings)
+      .map((finding) => /** @type {string} */ (finding.findingIdentity)),
+  );
+  const decompositionIdentities = new Set([
+    /** @type {string} */ (failedApproachSet.setIdentity),
+    .../** @type {string[]} */ (failedApproachSet.approachBasisIdentities),
+    /** @type {string} */ (proof.proofIdentity),
+  ]);
+  for (const alternative of /** @type {Record<string, unknown>[]} */ (reviewEvent.alternatives)) {
+    for (const identity of [
+      alternative.alternativeIdentity,
+      alternative.approachBasisIdentity,
+      alternative.semanticAssessmentIdentity,
+    ]) decompositionIdentities.add(/** @type {string} */ (identity));
+  }
+  return {
+    kind: 'learning-no-alternative',
+    governance,
+    reviewEvent,
+    failedApproachSet,
+    proof,
+    sourceRevisionIdentity,
+    projectionRef: retained.projectionRef,
+    blockerIdentities,
+    decompositionIdentities,
+  };
+}
+
+/** @param {Record<string, unknown>} target @param {Record<string, unknown>} materialInputs @param {string} proposalIdentity */
+function definitionReconciliationApproachBasisFromProposalIdentityV1(
+  target,
+  materialInputs,
+  proposalIdentity,
+) {
+  assertHash(proposalIdentity, 'definition reconciliation proposal identity');
+  const basis = autonomousApproachBasis(target, 'reconcile-derived-definition', materialInputs);
+  basis.mechanismIdentities = [proposalIdentity];
+  basis.evidenceAcquisitionIdentities = [sha256(canonicalJson({
+    kind: 'proposal-bound-eligibility-evidence',
+    proposalIdentity,
+  }))];
+  basis.validationPlanIdentities = [
+    sha256(canonicalJson({
+      kind: 'proposal-bound-blocker-evidence',
+      proposalIdentity,
+    })),
+    sha256(canonicalJson({
+      kind: 'proposal-bound-decomposition-evidence',
+      proposalIdentity,
+    })),
+  ].sort(compareUtf8);
+  validateApproachBasisV1(basis, 'definition reconciliation approach basis');
+  return basis;
+}
+
+/**
+ * @param {Record<string, unknown>} state @param {Record<string, unknown>} target
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>} materialInputs
+ * @param {'definitionPrestate'|'definitionProjectionBase'} [prestateField]
+ * @param {Set<string>|undefined} [projectedOccurrenceEventHashes]
+ */
+function deriveDefinitionReconciliationBindingV1(
+  state,
+  target,
+  inspection,
+  materialInputs,
+  prestateField = 'definitionPrestate',
+  projectedOccurrenceEventHashes = undefined,
+) {
+  const inspected = inspectedDefinitionRevisionProposalV1(inspection);
+  if (!inspected.proposal) return inspected;
+  const proposal = /** @type {Record<string, unknown>} */ (inspected.proposal);
+  const owner = resolvedDefinitionOwnerV1(inspection, target);
+  if (!owner
+    || targetKey(proposal.target) !== targetKey(target)
+    || canonicalJson(proposal.owner) !== canonicalJson(owner)) {
+    return { reason: 'wrong-target-proposal-evidence' };
+  }
+  const eligibility = /** @type {Record<string, unknown>} */ (proposal.eligibility);
+  const references = /** @type {Record<string, unknown>} */ (proposal.reviewerEvidenceReferences);
+  let currentPrestate;
+  try {
+    const planItems = /** @type {Record<string, unknown>[]} */ (inspection.items)
+      .filter((item) => item.source === 'definition-plan'
+        && item.status === 'present'
+        && typeof item.text === 'string');
+    if (planItems.length !== 1) return { reason: 'stale-definition-prestate' };
+    const planBody = assertRecord(
+      JSON.parse(/** @type {string} */ (planItems[0].text)),
+      'definition reconciliation Inspection plan',
+    );
+    currentPrestate = assertExactRecord(
+      planBody[prestateField],
+      ['prestateDescriptors', 'sourceRevisionIdentity'],
+      [],
+      `definition reconciliation Inspection ${prestateField}`,
+    );
+    assertHash(
+      currentPrestate.sourceRevisionIdentity,
+      `definition reconciliation Inspection ${prestateField}.sourceRevisionIdentity`,
+    );
+    if (canonicalJson(currentPrestate.prestateDescriptors)
+        !== canonicalJson(proposal.prestateDescriptors)) {
+      return { reason: 'stale-definition-prestate' };
+    }
+  } catch {
+    return { reason: 'stale-definition-prestate' };
+  }
+  const learning = currentFeature009DefinitionEvidenceV1(
+    inspection,
+    target,
+    state,
+    projectedOccurrenceEventHashes,
+  );
+  if (eligibility.variant === 'definition-contradiction') {
+    if (learning.kind === 'viable-alternative') return { reason: 'viable-implementation-alternative' };
+    if (learning.kind !== 'none') return { reason: 'conflicting-eligibility-evidence' };
+    const trustedBundles = trustedDefinitionContradictionReferencesV1(inspection);
+    const trustedBundle = trustedBundles?.find((bundle) => (
+      bundle.blockerIdentity === eligibility.blockerEvidenceIdentity
+      && bundle.proofKind === eligibility.proofKind
+      && bundle.sourceRevisionIdentity === currentPrestate.sourceRevisionIdentity
+      && bundle.gateIdentities.has(eligibility.gateEvidenceIdentity)
+      && definitionReferencesResolveV1(bundle.definitionIdentities, eligibility.definitionReferenceIdentities)
+      && definitionReferencesResolveV1(bundle.causalIdentities, eligibility.causalEvidenceIdentities)
+      && definitionReferencesResolveV1(bundle.blockerIdentities, references.blockerEvidenceIdentities)
+      && definitionReferencesResolveV1(
+        bundle.decompositionIdentities,
+        references.decompositionEvidenceIdentities,
+      )
+    ));
+    if (!trustedBundle) return { reason: 'untrusted-contradiction-evidence' };
+  } else {
+    if (learning.kind === 'viable-alternative') return { reason: 'viable-implementation-alternative' };
+    if (learning.kind !== 'learning-no-alternative') return { reason: 'stale-learning-evidence' };
+    if (learning.sourceRevisionIdentity !== currentPrestate.sourceRevisionIdentity) {
+      return { reason: 'stale-learning-evidence' };
+    }
+    if (!learning.blockerIdentities.has(/** @type {string} */ (eligibility.blockerEvidenceIdentity))
+      || !definitionReferencesResolveV1(learning.blockerIdentities, references.blockerEvidenceIdentities)
+      || !definitionReferencesResolveV1(
+        learning.decompositionIdentities,
+        references.decompositionEvidenceIdentities,
+      )
+      || !/** @type {string[]} */ (references.decompositionEvidenceIdentities)
+        .includes(/** @type {string} */ (learning.failedApproachSet.setIdentity))) {
+      return { reason: 'conflicting-learning-evidence' };
+    }
+    const expectedEligibility = buildDefinitionReconciliationEligibilityV1({
+      variant: 'learning-no-alternative',
+      blockerEvidenceIdentity: eligibility.blockerEvidenceIdentity,
+      governanceIdentity: learning.governance.governanceIdentity,
+      reviewIdentity: learning.reviewEvent.reviewIdentity,
+      learningReviewEventHash: learning.reviewEvent.eventHash,
+      failedApproachSetIdentity: learning.failedApproachSet.setIdentity,
+      noProgressProofIdentity: learning.proof.proofIdentity,
+      noNewDistinguishingEvidenceHash: learning.proof.noNewDistinguishingEvidenceHash,
+      projectionReferenceIdentity: sha256(canonicalJson(learning.projectionRef)),
+    });
+    if (canonicalJson(expectedEligibility) !== canonicalJson(eligibility)) {
+      return { reason: 'stale-learning-evidence' };
+    }
+  }
+  const approachBasis = definitionReconciliationApproachBasisFromProposalIdentityV1(
+    target,
+    materialInputs,
+    /** @type {string} */ (proposal.proposalIdentity),
+  );
+  return {
+    binding: {
+      version: 1,
+      variant: eligibility.variant,
+      proposalIdentity: proposal.proposalIdentity,
+      eligibilityIdentity: eligibility.eligibilityIdentity,
+      proposal: JSON.parse(canonicalJson(proposal)),
+      reviewerEvidenceReferences: JSON.parse(canonicalJson(references)),
+      approachBasis,
+      approachBasisIdentity: sha256(canonicalJson(approachBasis)),
+    },
+  };
+}
+
+/**
+ * Rebind the exact proposal variant for one pending definition reconciliation.
+ * Learning requires its matching occupied governance; contradiction requires
+ * the singleton to be unoccupied.
+ * @param {Record<string, unknown>} state @param {Record<string, unknown>} pending
+ * @param {Record<string, unknown>} inspection @param {unknown} attemptIdentity
+ * @param {Record<string, unknown>[]|undefined} [projectedOccurrenceEvents]
+ */
+function currentDefinitionReconciliationBindingV1(
+  state,
+  pending,
+  inspection,
+  attemptIdentity,
+  projectedOccurrenceEvents = undefined,
+) {
+  try {
+    if (pending.action !== 'reconcile-derived-definition'
+      || pending.mode !== 'recovery'
+      || targetKey(inspection.target) !== targetKey(pending.target)
+      || completionApproachContextV2(state, pending).attemptIdentity !== attemptIdentity) return null;
+    const projectedOccurrenceEventHashes = projectedOccurrenceEvents
+      ? new Set(projectedOccurrenceEvents.map((event) => /** @type {string} */ (event.eventHash)))
+      : undefined;
+    const derived = deriveDefinitionReconciliationBindingV1(
+      state,
+      /** @type {Record<string, unknown>} */ (pending.target),
+      inspection,
+      /** @type {Record<string, unknown>} */ (pending.materialInputs),
+      projectedOccurrenceEvents ? 'definitionProjectionBase' : 'definitionPrestate',
+      projectedOccurrenceEventHashes,
+    );
+    if (!derived.binding
+      || derived.binding.proposalIdentity !== pending.approachHash) return null;
+    const occupied = Object.hasOwn(state, 'learningGovernance');
+    if ((derived.binding.variant === 'learning-no-alternative' && !occupied)
+      || (derived.binding.variant === 'definition-contradiction' && occupied)) return null;
+    return derived.binding;
+  } catch {
+    return null;
+  }
+}
+
+/** @param {Record<string, unknown>} state @param {Record<string, unknown>} inspection @param {string} reason */
+function definitionReconciliationRefusalV1(state, inspection, reason) {
+  const code = ['ambiguous-proposal-evidence', 'conflicting-eligibility-evidence',
+    'conflicting-learning-evidence', 'viable-implementation-alternative'].includes(reason)
+    ? 'clarification-required'
+    : 'evidence-incomplete';
+  const blocker = {
+    code,
+    subject: `definition-reconciliation:${reason}`,
+    evidenceHash: inspection.evidenceHash,
+  };
+  return authorizationRefusal(state, code, blocker);
+}
+
 /**
  * Authorize one transient ordinary or recovery attempt.
  * @param {unknown} stateValue
@@ -5281,7 +8671,7 @@ function authorizeInspectedAttempt(state, target, inspection, assessmentValue, m
     return authorizationRefusal(state, /** @type {string} */ (blocker.code), blocker);
   }
   const { action, materialInputs } = canonicalAssessment(assessment);
-  const candidateApproachHash = approachHash({ action, materialInputs });
+  let candidateApproachHash = approachHash({ action, materialInputs });
 
   if (assessment.intent !== 'unchanged') {
     const blocker = {
@@ -5330,7 +8720,22 @@ function authorizeInspectedAttempt(state, target, inspection, assessmentValue, m
       }
     }
   }
-  if (hasUnresolvedLearningGovernance(state, target) && !consumed?.governance) {
+  let definitionReconciliationBinding = null;
+  if (policy.mode === 'autonomous' && action === 'reconcile-derived-definition') {
+    const derived = deriveDefinitionReconciliationBindingV1(state, target, inspection, materialInputs);
+    if (!derived.binding) {
+      return definitionReconciliationRefusalV1(
+        state,
+        inspection,
+        /** @type {string} */ (derived.reason),
+      );
+    }
+    definitionReconciliationBinding = derived.binding;
+    candidateApproachHash = /** @type {string} */ (definitionReconciliationBinding.proposalIdentity);
+  }
+  if (hasUnresolvedLearningGovernance(state, target)
+    && !consumed?.governance
+    && !definitionReconciliationBinding) {
     return authorizationRefusal(state, 'learning-required');
   }
   const claimedEquivalent = assessment.equivalence === 'same' || assessment.equivalence === 'equivalent';
@@ -5361,9 +8766,12 @@ function authorizeInspectedAttempt(state, target, inspection, assessmentValue, m
   const legacyCompleted = completed.filter((entry) => !retainedV2Approaches.some((event) => {
     const occurrence = /** @type {Record<string, unknown>} */ (event.occurrence);
     const basis = /** @type {Record<string, unknown>} */ (event.basis);
+    const retainedApproachHash = basis.action === 'reconcile-derived-definition'
+      ? /** @type {string[]} */ (basis.mechanismIdentities)[0]
+      : approachHash({ action: basis.action, materialInputs: basis.materialInputs });
     return occurrence.authorizationEvidenceHash === entry.evidenceHash
       && occurrence.resultIdentity === entry.resultHash
-      && approachHash({ action: basis.action, materialInputs: basis.materialInputs }) === entry.approachHash;
+      && retainedApproachHash === entry.approachHash;
   }));
   const resultPairs = new Map();
   for (const entry of legacyCompleted) {
@@ -5482,6 +8890,9 @@ function authorizeInspectedAttempt(state, target, inspection, assessmentValue, m
       state: nextState,
       attemptIdentity: authorizedAttemptIdentity,
       claimRequired,
+      ...(definitionReconciliationBinding
+        ? { definitionReconciliation: definitionReconciliationBinding }
+        : {}),
     };
   }
   validateRunState(nextState);
@@ -5495,8 +8906,18 @@ function authorizeInspectedAttempt(state, target, inspection, assessmentValue, m
         nextPending.find((entry) => targetKey(entry.target) === targetKey(target)),
       ).attemptIdentity,
       claimRequired: lightweightClaimRequiredV2(inspection, target),
+      ...(definitionReconciliationBinding
+        ? { definitionReconciliation: definitionReconciliationBinding }
+        : {}),
     }
-    : { authorized: true, reason: 'authorized', state: nextState };
+    : {
+      authorized: true,
+      reason: 'authorized',
+      state: nextState,
+      ...(definitionReconciliationBinding
+        ? { definitionReconciliation: definitionReconciliationBinding }
+        : {}),
+    };
 }
 
 /** Derive claim need from fresh Inspection task facts, never from a caller claim. @param {Record<string, unknown>} inspection @param {Record<string, unknown>} target */

@@ -1,9 +1,11 @@
 // @ts-check
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 
 import {
   authorizeAttempt,
@@ -11,6 +13,7 @@ import {
   collectEvidence,
   completeAttempt,
 } from '../dude-work/recovery.mjs';
+import { BOARD_NOTICE, parseTasks, renderBoard } from '../dude-engine/lib/tasks.mjs';
 import * as atomicRuntime from './atomic-file-batch.mjs';
 import {
   applyAtomicFileBatch,
@@ -64,9 +67,15 @@ function definitionOwnerBytes(logEntry, options = {}) {
     '',
     options.assumptions ?? '- Recovery preserves user intent byte-for-byte.',
     '',
+    '<!-- dude:managed:start -->',
+    '## Normalized Intent',
+    '',
+    '- Keep the promised outcome unchanged.',
+    '',
     '## Coordinator Log',
     '',
     `- ${logEntry}`,
+    '<!-- dude:managed:end -->',
   ].join(newline);
   return Buffer.from(options.terminalNewline === false ? text : `${text}${newline}`);
 }
@@ -74,6 +83,8 @@ function definitionOwnerBytes(logEntry, options = {}) {
 /** @param {string} description */
 function definitionTasksBytes(description) {
   return Buffer.from([
+    `<!-- audit log: ${DEFINITION_IDEA_PATH}#coordinator-log -->`,
+    '',
     '# Tasks',
     '',
     `- [~] ${DEFINITION_TASK_KEY} [Shared] ${description}`,
@@ -130,6 +141,236 @@ function definitionScope() {
     `${DEFINITION_ROOT}spec.md`,
     `${DEFINITION_ROOT}tasks.md`,
   ];
+}
+
+/** @param {string | Buffer} value */
+function definitionHash(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+/** @param {ReturnType<typeof definitionFixtureBytes>} value */
+function definitionBytesByPath(value) {
+  return new Map([
+    [DEFINITION_IDEA_PATH, value.owner],
+    [`${DEFINITION_ROOT}plan.md`, value.plan],
+    [`${DEFINITION_ROOT}spec.md`, value.spec],
+    [`${DEFINITION_ROOT}tasks.md`, value.tasks],
+  ]);
+}
+
+/** @param {ReturnType<typeof definitionFixtureBytes>} value */
+function definitionDescriptors(value) {
+  const bytesByPath = definitionBytesByPath(value);
+  return definitionScope().map((relativePath) => {
+    const bytes = bytesByPath.get(relativePath);
+    assert.ok(bytes);
+    return {
+      path: relativePath,
+      sha256: definitionHash(bytes),
+      byteLength: bytes.byteLength,
+    };
+  });
+}
+
+/** @param {ReturnType<typeof definitionDescriptors>} descriptors */
+function copyDefinitionDescriptors(descriptors) {
+  return descriptors.map((descriptor) => ({ ...descriptor }));
+}
+
+/**
+ * @param {ReturnType<typeof definitionFixtureBytes>} expected
+ * @param {ReturnType<typeof definitionFixtureBytes>} staged
+ * @param {{
+ *   reconciliation?: (view:ReadonlyArray<Record<string, unknown>>) => unknown,
+ *   historyAppend?: Buffer | null,
+ *   postApply?: Record<string, Function>,
+ *   calls?: Record<string, number>,
+ * }} [options]
+ */
+function definitionRecoveryContract(expected, staged, options = {}) {
+  const prestateDescriptors = definitionDescriptors(expected);
+  const coordinatorFinalDescriptors = definitionDescriptors(staged);
+  const proposalIdentity = definitionHash(`proposal:${JSON.stringify(coordinatorFinalDescriptors)}`);
+  const reviewIdentity = definitionHash(`review:${proposalIdentity}`);
+  const reconciliationIdentity = definitionHash(`reconciliation:${proposalIdentity}`);
+  const binding = {
+    proposalIdentity,
+    prestateDescriptors: copyDefinitionDescriptors(prestateDescriptors),
+    coordinatorFinalDescriptors: copyDefinitionDescriptors(coordinatorFinalDescriptors),
+    reconciliationIdentity,
+    review: {
+      proposalIdentity,
+      reviewIdentity,
+      coordinatorFinalDescriptors: copyDefinitionDescriptors(coordinatorFinalDescriptors),
+    },
+  };
+  const calls = options.calls ?? {};
+  const observe = (name) => { calls[name] = (calls[name] ?? 0) + 1; };
+  const identityResult = () => ({
+    proposalIdentity,
+    coordinatorFinalDescriptors: copyDefinitionDescriptors(coordinatorFinalDescriptors),
+  });
+  const reviewResult = () => ({
+    proposalIdentity,
+    reviewIdentity,
+    coordinatorFinalDescriptors: copyDefinitionDescriptors(coordinatorFinalDescriptors),
+  });
+  const gateResult = (gate) => ({
+    status: 'passed',
+    proposalIdentity,
+    reviewIdentity,
+    coordinatorFinalDescriptors: copyDefinitionDescriptors(coordinatorFinalDescriptors),
+    evidenceIdentity: definitionHash(`${gate}:${proposalIdentity}:${reviewIdentity}`),
+  });
+  const postApply = Object.freeze(options.postApply ?? {
+    recomputeProposalIdentity(context) {
+      observe('proposal');
+      assert.equal(context.proposalIdentity, proposalIdentity);
+      return identityResult();
+    },
+    validateReviewIdentity(context) {
+      observe('review');
+      assert.equal(context.reviewIdentity, reviewIdentity);
+      return reviewResult();
+    },
+    lint() {
+      observe('lint');
+      return gateResult('lint');
+    },
+    verification() {
+      observe('verification');
+      return gateResult('verification');
+    },
+  });
+  const validateReconciliation = (view) => {
+      observe('reconciliation');
+      if (options.reconciliation) {
+        const result = options.reconciliation(view);
+        if (result !== undefined) return result;
+      }
+      return {
+        reconciliationIdentity,
+        historyAppend: options.historyAppend === undefined || options.historyAppend === null
+          ? null
+          : {
+            path: `${DEFINITION_ROOT}tasks.md`,
+            bytes: Buffer.from(options.historyAppend),
+          },
+      };
+  };
+  return {
+    binding,
+    validateReconciliation,
+    postApply,
+  };
+}
+
+/** @param {Record<string, unknown>} contract @param {Record<string, unknown>} callbacks */
+function replaceDefinitionRecoveryCallbacks(contract, callbacks) {
+  return {
+    ...contract,
+    validateReconciliation: callbacks.validateReconciliation || contract.validateReconciliation,
+    postApply: Object.freeze(callbacks.postApply || contract.postApply),
+  };
+}
+
+/**
+ * Drive `applyAtomicFileBatch` under a test-local restatement of the sealed
+ * coordinator gate contract. The sealer is module-private, so this helper
+ * cannot reach `applyDefinitionRecovery`; it exercises the atomic batch and the
+ * reconciliation validator only. The production `validateAppliedDefinitionRecovery`
+ * loop is covered by the `T004 integration post-apply` tests in
+ * `../dude-work/recovery.test.mjs`, which drive `commitDefinitionRecoveryV1`.
+ * @param {string} root
+ * @param {ReturnType<typeof definitionFixtureBytes>} expected
+ * @param {ReturnType<typeof definitionFixtureBytes>} staged
+ * @param {Record<string, unknown>} [overrides]
+ */
+function applyDefinitionFixture(root, expected, staged, overrides = {}) {
+  const { contractOptions, contractOverride, ...requestOverrides } = overrides;
+  const contract = contractOverride || definitionRecoveryContract(expected, staged, contractOptions);
+  const changes = definitionChanges(expected, staged);
+  const transition = atomicRuntime.validateDefinitionRecoveryArtifactTransitionV1({
+    root,
+    specPath: DEFINITION_SPEC_PATH,
+    changes,
+  });
+  const exactDescriptors = (actual, expectedRows, label) => {
+    if (JSON.stringify(actual) !== JSON.stringify(expectedRows)) {
+      throw new Error(`${label} do not match exact artifact bytes`);
+    }
+  };
+  exactDescriptors(
+    contract.binding.prestateDescriptors,
+    transition.prestateDescriptors,
+    'definition recovery prestate descriptors',
+  );
+  exactDescriptors(
+    contract.binding.coordinatorFinalDescriptors,
+    transition.finalDescriptors,
+    'definition recovery coordinator-final descriptors',
+  );
+  exactDescriptors(
+    contract.binding.review.coordinatorFinalDescriptors,
+    transition.finalDescriptors,
+    'definition recovery review descriptors',
+  );
+  const expectedHistoryAppend = transition.historyAppend === null
+    ? null
+    : Buffer.from(transition.historyAppend.base64, 'base64');
+  const validateEvidence = (evidence) => {
+    assert.equal(evidence.reconciliationIdentity, contract.binding.reconciliationIdentity);
+    if (expectedHistoryAppend === null) {
+      assert.equal(evidence.historyAppend, null);
+      return;
+    }
+    if (evidence.historyAppend === null || typeof evidence.historyAppend !== 'object') {
+      throw new Error('reconciliation did not authorize the exact history archive append');
+    }
+    assert.equal(evidence.historyAppend.path, transition.taskPath);
+    assert.deepEqual(evidence.historyAppend.bytes, expectedHistoryAppend);
+  };
+  return applyAtomicFileBatch({
+    root,
+    changes,
+    validators: [(view) => validateEvidence(contract.validateReconciliation(view))],
+    ...(requestOverrides.failureInjector
+      ? { failureInjector: requestOverrides.failureInjector }
+      : {}),
+  }, () => {
+    atomicRuntime.validateDefinitionRecoveryArtifactTransitionV1({
+      root,
+      specPath: DEFINITION_SPEC_PATH,
+      changes: definitionChanges(staged, staged),
+    });
+    const context = Object.freeze({
+      proposalIdentity: contract.binding.proposalIdentity,
+      reviewIdentity: contract.binding.review.reviewIdentity,
+      coordinatorFinalDescriptors: Object.freeze(
+        copyDefinitionDescriptors(contract.binding.coordinatorFinalDescriptors).map(Object.freeze),
+      ),
+    });
+    const expectedDescriptors = definitionDescriptors(staged);
+    for (const field of ['recomputeProposalIdentity', 'validateReviewIdentity', 'lint', 'verification']) {
+      const result = contract.postApply[field](context);
+      if (result && typeof result === 'object' && typeof result.then === 'function') {
+        throw new TypeError(`${field} must be synchronous`);
+      }
+      if (result.proposalIdentity !== contract.binding.proposalIdentity) {
+        throw new Error(`${field} proposal identity does not match the applied proposal`);
+      }
+      if (field !== 'recomputeProposalIdentity') {
+        if (result.reviewIdentity !== contract.binding.review.reviewIdentity) {
+          throw new Error(`${field} review identity does not match the independent review`);
+        }
+      }
+      assert.deepEqual(result.coordinatorFinalDescriptors, expectedDescriptors);
+      if (field === 'lint' || field === 'verification') {
+        assert.equal(result.status, 'passed');
+        assert.match(result.evidenceIdentity, /^[0-9a-f]{64}$/);
+      }
+    }
+  });
 }
 
 /** @param {(root: string) => void} run */
@@ -210,6 +451,1221 @@ function captureError(action) {
 function createDirectoryLink(target, link) {
   fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir');
 }
+
+test('T003 repair probe: Feature 014 rejects balanced Coordinator Log prefix corruption', () => {
+  withTemporaryDirectory((root) => {
+    const current = definitionFixtureBytes();
+    const stagedOwner = current.owner.toString('utf8')
+      .replace(
+        '- recovery authorized\n',
+        '- recovery\n- inserted inside prior event\n- authorized\n',
+      );
+    const staged = { ...current, owner: Buffer.from(stagedOwner) };
+    writeDefinitionFixture(root, current);
+    const before = snapshotTree(root);
+
+    assert.throws(
+      () => applyDefinitionFixture(root, current, staged),
+      /staged Coordinator Log must preserve the exact current log prefix/,
+    );
+    assertRestored(root, before);
+  });
+});
+
+test('T003 repair probe: Feature 014 rejects one stray managed end with unchanged log', () => {
+  withTemporaryDirectory((root) => {
+    const current = definitionFixtureBytes();
+    const staged = {
+      ...current,
+      owner: Buffer.concat([current.owner, Buffer.from('<!-- dude:managed:end -->\n')]),
+    };
+    writeDefinitionFixture(root, current);
+    const before = snapshotTree(root);
+
+    assert.throws(
+      () => applyDefinitionFixture(root, current, staged),
+      /must contain exactly one balanced active managed region|reversed or stray managed.*end fence/,
+    );
+    assertRestored(root, before);
+  });
+});
+
+test('T003 unified Markdown scanner ignores generic comment and inline-code lookalikes', () => {
+  withTemporaryDirectory((root) => {
+    const base = definitionFixtureBytes();
+    const opaqueLookalikes = [
+      '<!-- opaque generic controls',
+      '<!-- dude:managed:start -->',
+      '## Coordinator Log',
+      '<!-- dude:managed:end -->',
+      '-->',
+      '',
+      '`<!-- dude:managed:start -->` ``## Coordinator Log`` ```<!-- dude:managed:end -->```',
+    ].join('\n');
+    const ownerText = base.owner.toString('utf8').replace(
+      '<!-- dude:managed:start -->',
+      `${opaqueLookalikes}\n<!-- dude:managed:start -->`,
+    );
+    const current = {
+      ...base,
+      owner: Buffer.from(ownerText),
+      spec: Buffer.from(`${base.spec.toString('utf8')}${opaqueLookalikes}\n`),
+      plan: Buffer.from(`${base.plan.toString('utf8')}${opaqueLookalikes}\n`),
+    };
+    const staged = {
+      ...current,
+      owner: Buffer.from(ownerText.replace(
+        '- recovery authorized\n',
+        '- recovery authorized\n- generic scanner lookalikes ignored\n',
+      )),
+    };
+    writeDefinitionFixture(root, current);
+
+    assert.equal(ownerText.match(/^## Coordinator Log$/gm)?.length, 2);
+    assert.doesNotThrow(() => applyDefinitionFixture(root, current, staged));
+    assert.deepEqual(
+      fs.readFileSync(path.join(root, DEFINITION_IDEA_PATH)),
+      staged.owner,
+      'only the active Coordinator Log accepts the append',
+    );
+    assert.deepEqual(fs.readFileSync(path.join(root, `${DEFINITION_ROOT}spec.md`)), current.spec);
+    assert.deepEqual(fs.readFileSync(path.join(root, `${DEFINITION_ROOT}plan.md`)), current.plan);
+    assertNoAtomicTemps(root);
+  });
+});
+
+test('T003 paired inline spans keep controls lexically inert', () => {
+  withTemporaryDirectory((root) => {
+    const base = definitionFixtureBytes();
+    const fakeRows = (label) => [
+      '<!-- dude:board:start -->',
+      `<!-- audit log: .dude/ideas/${label}.md#coordinator-log -->`,
+      '# Tasks',
+      `- [ ] ${DEFINITION_TASK_KEY} [Shared] ${label} duplicate`,
+      '    deps: T098@dddddddd',
+      '## Discovered During Execution',
+      `- [ ] T099@bbbbbbbb [Shared] ${label} discovered`,
+      `## Lightweight Execution History ${label} suffix`,
+      '<!-- dude:managed:start -->',
+      '<!-- dude:managed:end -->',
+      '<!-- dude:board:end -->',
+    ];
+    const opaqueControls = [
+      '````md',
+      ...fakeRows('four-backtick'),
+      '````',
+      '',
+      '~~~md',
+      ...fakeRows('tilde-fence'),
+      '~~~',
+      '',
+      '<!-- multiline task controls',
+      ...fakeRows('multiline-comment'),
+      '-->',
+      '',
+      '`<!-- dude:managed:start -->` `<!-- dude:managed:end -->` `<!-- dude:board:start -->`',
+      '``<!-- audit log: .dude/ideas/inline.md#coordinator-log -->`` ``# Tasks`` ``## Discovered During Execution`` ``<!-- dude:board:end -->``',
+      `\`\`\`- [ ] ${DEFINITION_TASK_KEY} [Shared] inline duplicate\`\`\` \`\`\`    deps: T098@dddddddd\`\`\` \`\`\`## Lightweight Execution History inline suffix\`\`\``,
+    ].join('\n');
+    const dangerousInlineOpener = '`<!--`';
+    const realTaskLine = `- [~] ${DEFINITION_TASK_KEY} [Shared] Real task after paired inline span`;
+    const singleTaskSource = base.tasks.toString('utf8').replace(
+      '- [ ] T9001@aaaaaaaa [Shared] Preserve discovered work',
+      '- No discovered work.',
+    );
+    let taskText = renderBoard(parseTasks(singleTaskSource));
+    taskText = taskText.replace(
+      `${BOARD_NOTICE}\n`,
+      `${BOARD_NOTICE}\n##\tLightweight\tExecution\tHistory board suffix\n- [ ] T096@ffffffff [Shared] board-contained fake task\n`,
+    );
+    taskText = taskText
+      .replace(
+        `- [~] ${DEFINITION_TASK_KEY} [Shared] Original final review`,
+        `${opaqueControls}\n${dangerousInlineOpener}\n${realTaskLine}\n-->`,
+      )
+      .replace(
+        '## Lightweight Execution History\n- retained execution event',
+        '##\tLightweight\tExecution\tHistory authoritative suffix\n- retained execution event',
+      );
+    const tasks = Buffer.from(taskText);
+    const current = { ...base, tasks };
+    const staged = {
+      ...current,
+      owner: Buffer.from(current.owner.toString('utf8').replace(
+        '- recovery authorized\n',
+        '- recovery authorized\n- task scanner lookalikes ignored\n',
+      )),
+    };
+    writeDefinitionFixture(root, current);
+
+    assert.match(taskText, /four-backtick duplicate/);
+    assert.match(taskText, /board-contained fake task/);
+    assert.match(taskText, /inline duplicate/);
+    assert.match(taskText, /deps: T098@dddddddd/);
+    assert.match(taskText, /Lightweight\tExecution\tHistory authoritative suffix/);
+    assert.ok(
+      taskText.indexOf(dangerousInlineOpener) < taskText.indexOf(realTaskLine),
+      'the paired inline comment opener precedes the only active canonical task',
+    );
+    assert.equal(taskText.split('\n').filter((line) => line === realTaskLine).length, 1);
+    const result = applyDefinitionFixture(root, current, staged);
+    assert.equal(
+      result.count,
+      4,
+      'paired inline duplicate ID and missing dependency remain lexically inert',
+    );
+    const applied = fs.readFileSync(path.join(root, `${DEFINITION_ROOT}tasks.md`));
+    assert.deepEqual(applied, tasks);
+    const appliedText = applied.toString('utf8');
+    assert.equal(appliedText.split('\n').filter((line) => line === realTaskLine).length, 1);
+    assert.match(appliedText, /^- No discovered work\.$/m);
+    assertNoAtomicTemps(root);
+  });
+});
+
+test('T003 unified Markdown scanner keeps unmatched and mismatched backticks line-local and literal', () => {
+  withTemporaryDirectory((root) => {
+    const base = definitionFixtureBytes();
+    const literalBackticks = [
+      '` unmatched run',
+      '`` mismatched with `',
+      '```mismatched``',
+      '``mismatched` <!-- closed literal comment -->',
+    ].join('\n');
+    const tasks = Buffer.from(base.tasks.toString('utf8').replace(
+      `- [~] ${DEFINITION_TASK_KEY} [Shared] Original final review`,
+      `${literalBackticks}\n- [~] ${DEFINITION_TASK_KEY} [Shared] Real task after literal backticks`,
+    ));
+    const current = { ...base, tasks };
+    const staged = {
+      ...current,
+      owner: Buffer.from(current.owner.toString('utf8').replace(
+        '- recovery authorized\n',
+        '- recovery authorized\n- literal backticks retained\n',
+      )),
+    };
+    writeDefinitionFixture(root, current);
+
+    const result = applyDefinitionFixture(root, current, staged);
+    assert.equal(result.count, 4);
+    const applied = fs.readFileSync(path.join(root, `${DEFINITION_ROOT}tasks.md`));
+    assert.deepEqual(applied, tasks);
+    assert.match(applied.toString('utf8'), /Real task after literal backticks/);
+    assert.match(applied.toString('utf8'), /Preserve discovered work/);
+    assertNoAtomicTemps(root);
+  });
+
+  withTemporaryDirectory((root) => {
+    const base = definitionFixtureBytes();
+    const tasks = Buffer.from(base.tasks.toString('utf8').replace(
+      `- [~] ${DEFINITION_TASK_KEY} [Shared] Original final review`,
+      `\`\` mismatched with \` before active opener <!--\n- [~] ${DEFINITION_TASK_KEY} [Shared] Hidden only by the unclosed comment`,
+    ));
+    const current = { ...base, tasks };
+    const staged = {
+      ...current,
+      owner: Buffer.from(current.owner.toString('utf8').replace(
+        '- recovery authorized\n',
+        '- recovery authorized\n- unmatched opener rejection staged\n',
+      )),
+    };
+    writeDefinitionFixture(root, current);
+    const before = snapshotTree(root);
+
+    assert.throws(
+      () => applyDefinitionFixture(root, current, staged),
+      /unclosed HTML comment/,
+    );
+    assertRestored(root, before);
+  });
+});
+
+test('T003 unified Markdown scanner preserves LF, CRLF, bare CR, mixed, and task bytes without a terminal newline', async (context) => {
+  const lfTasks = definitionFixtureBytes().tasks.toString('utf8');
+  const logicalLines = lfTasks.split('\n');
+  const mixedSeparators = ['\n', '\r\n', '\r'];
+  const mixedTasks = logicalLines.map((line, index) => (
+    index === logicalLines.length - 1
+      ? line
+      : `${line}${mixedSeparators[index % mixedSeparators.length]}`
+  )).join('');
+  const cases = [
+    ['LF', lfTasks],
+    ['CRLF', lfTasks.replaceAll('\n', '\r\n')],
+    ['bare CR', lfTasks.replaceAll('\n', '\r')],
+    ['mixed separators', mixedTasks],
+    ['no terminal newline', lfTasks.slice(0, -1)],
+  ];
+
+  for (const [name, taskText] of cases) {
+    await context.test(name, () => {
+      withTemporaryDirectory((root) => {
+        const base = definitionFixtureBytes();
+        const tasks = Buffer.from(taskText);
+        const current = { ...base, tasks };
+        const staged = {
+          ...current,
+          owner: Buffer.from(current.owner.toString('utf8').replace(
+            '- recovery authorized\n',
+            `- recovery authorized\n- ${name} task bytes retained\n`,
+          )),
+        };
+        writeDefinitionFixture(root, current);
+
+        const result = applyDefinitionFixture(root, current, staged);
+        assert.equal(result.count, 4);
+        assert.deepEqual(
+          fs.readFileSync(path.join(root, `${DEFINITION_ROOT}tasks.md`)),
+          tasks,
+          `${name} bytes remain exact`,
+        );
+        assertNoAtomicTemps(root);
+      });
+    });
+  }
+});
+
+test('T003 unified Markdown scanner processes near-limit backtick-heavy lines within two seconds', (context) => {
+  withTemporaryDirectory((root) => {
+    const base = definitionFixtureBytes();
+    const rowCount = 21_000;
+    const backticksPerRow = 12;
+    const backtickRow = '`one` ``two`` ```three``` scanner row 0123456789\n';
+    const backtickRows = backtickRow.repeat(rowCount);
+    const observedBackticks = backtickRows.length - backtickRows.replaceAll('`', '').length;
+    const observedRows = backtickRows.length - backtickRows.replaceAll('\n', '').length;
+    const spec = Buffer.from(`${base.spec.toString('utf8')}${backtickRows}`);
+    assert.equal(observedRows, rowCount, 'every generated scanner row ends in a newline');
+    assert.equal(
+      observedBackticks,
+      rowCount * backticksPerRow,
+      'every scanner row retains paired one-, two-, and three-backtick spans',
+    );
+    assert.ok(spec.byteLength >= 1_000_000 && spec.byteLength < 1_100_000);
+    assert.ok(observedBackticks / Buffer.byteLength(backtickRows) > 0.2);
+    const current = { ...base, spec };
+    const staged = {
+      ...current,
+      owner: Buffer.from(current.owner.toString('utf8').replace(
+        '- recovery authorized\n',
+        '- recovery authorized\n- near-limit scanner fixture retained\n',
+      )),
+    };
+    writeDefinitionFixture(root, current);
+
+    const startedAt = performance.now();
+    const result = applyDefinitionFixture(root, current, staged);
+    const elapsedMs = performance.now() - startedAt;
+    context.diagnostic(
+      `near-limit backtick scanner: ${spec.byteLength} bytes, ${rowCount} rows, ${observedBackticks} backticks in ${elapsedMs.toFixed(2)} ms`,
+    );
+
+    assert.equal(result.count, 4);
+    assert.deepEqual(fs.readFileSync(path.join(root, `${DEFINITION_ROOT}spec.md`)), spec);
+    assert.ok(elapsedMs < 2_000, `near-limit scanner fixture took ${elapsedMs.toFixed(2)} ms`);
+    assertNoAtomicTemps(root);
+  });
+});
+
+test('T003 repair probe: fenced and commented task lookalikes are inert', () => {
+  withTemporaryDirectory((root) => {
+    const base = definitionFixtureBytes();
+    const tasks = Buffer.from([
+      `<!-- audit log: ${DEFINITION_IDEA_PATH}#coordinator-log -->`,
+      '',
+      '# Tasks',
+      '',
+      `- [~] ${DEFINITION_TASK_KEY} [Shared] Real canonical task`,
+      '',
+      '````md',
+      '<!-- dude:board:start -->',
+      '## Lightweight Execution History from a fenced board',
+      `- [ ] ${DEFINITION_TASK_KEY} [Shared] Fenced duplicate`,
+      '<!-- dude:board:end -->',
+      '```',
+      '````',
+      '',
+      '~~~md',
+      '<!-- audit log: .dude/ideas/other.md#coordinator-log -->',
+      '- [?] T099@bbbbbbbb malformed fenced row',
+      '##\tLightweight\tExecution\tHistory fenced suffix',
+      '~~~',
+      '',
+      '<!-- outer board comment',
+      '<!-- dude:board:start -->',
+      '<!-- outer audit comment',
+      '<!-- audit log: .dude/ideas/other.md#coordinator-log -->',
+      '<!-- outer task comment',
+      `- [ ] ${DEFINITION_TASK_KEY} [Shared] Commented duplicate`,
+      '-->',
+      '<!-- outer managed comment',
+      '<!-- dude:managed:end -->',
+      '-->',
+      '',
+      '## Discovered During Execution',
+      '- [ ] T9001@aaaaaaaa [Shared] Preserve discovered work',
+      '',
+      '## Lightweight Execution History',
+      '- retained execution event',
+      '',
+    ].join('\n'));
+    const current = { ...base, tasks };
+    const staged = {
+      ...current,
+      owner: Buffer.from(current.owner.toString('utf8').replace(
+        '- recovery authorized\n',
+        '- recovery authorized\n- lexical lookalikes ignored\n',
+      )),
+    };
+    writeDefinitionFixture(root, current);
+
+    assert.doesNotThrow(() => applyDefinitionFixture(root, current, staged));
+    assert.deepEqual(fs.readFileSync(path.join(root, `${DEFINITION_ROOT}tasks.md`)), tasks);
+    assertNoAtomicTemps(root);
+  });
+});
+
+test('T003 repair probe: active unclosed task fences and comments reject', async (context) => {
+  const cases = [
+    ['fence', '````md\n- [ ] T099@bbbbbbbb fenced row\n', /unclosed fenced block/i],
+    ['comment', '<!-- active comment\n- [ ] T099@bbbbbbbb commented row\n', /unclosed HTML comment/i],
+  ];
+  for (const [name, opening, expectedError] of cases) {
+    await context.test(name, () => {
+      withTemporaryDirectory((root) => {
+        const base = definitionFixtureBytes();
+        const tasks = Buffer.from(base.tasks.toString('utf8').replace(
+          '## Discovered During Execution',
+          `${opening}## Discovered During Execution`,
+        ));
+        const current = { ...base, tasks };
+        writeDefinitionFixture(root, current);
+        const before = snapshotTree(root);
+
+        assert.throws(
+          () => applyDefinitionFixture(root, current, current),
+          expectedError,
+        );
+        assertRestored(root, before);
+      });
+    });
+  }
+});
+
+test('T003 repair probe: archived malformed Markdown is opaque after suffixed history', async (context) => {
+  const archives = [
+    [
+      'unclosed fence',
+      [
+        '````md',
+        '## Archived H2',
+        '<!-- dude:managed:end -->',
+      ].join('\n'),
+    ],
+    [
+      'unclosed comment',
+      [
+        '<!-- archived comment',
+        '## Archived H2',
+      ].join('\n'),
+    ],
+  ];
+  for (const [name, archive] of archives) {
+    await context.test(name, () => {
+      withTemporaryDirectory((root) => {
+        const base = definitionFixtureBytes();
+        const tasks = Buffer.from(base.tasks.toString('utf8')
+          .replace(
+            '## Lightweight Execution History\n- retained execution event\n',
+            `##\tLightweight\tExecution\tHistory archived suffix\n- retained execution event\n${archive}`,
+          ));
+        const current = { ...base, tasks };
+        const staged = {
+          ...current,
+          owner: Buffer.from(current.owner.toString('utf8').replace(
+            '- recovery authorized\n',
+            '- recovery authorized\n- opaque archive retained\n',
+          )),
+        };
+        writeDefinitionFixture(root, current);
+
+        assert.doesNotThrow(() => applyDefinitionFixture(root, current, staged));
+        assert.deepEqual(fs.readFileSync(path.join(root, `${DEFINITION_ROOT}tasks.md`)), tasks);
+        assertNoAtomicTemps(root);
+      });
+    });
+  }
+});
+
+test('T003 repair probe: Discovered must remain adjacent to terminal history', () => {
+  withTemporaryDirectory((root) => {
+    const base = definitionFixtureBytes();
+    const discovered = [
+      '## Discovered During Execution',
+      '- [ ] T9001@aaaaaaaa [Shared] Preserve discovered work',
+      '',
+    ].join('\n');
+    const currentTasks = base.tasks.toString('utf8').replace(
+      '# Tasks\n\n',
+      '# Tasks\n\n## Implementation\n\n',
+    );
+    const stagedTasks = currentTasks
+      .replace(discovered, '')
+      .replace('## Implementation\n\n', `${discovered}## Implementation\n\n`);
+    const current = { ...base, tasks: Buffer.from(currentTasks) };
+    const staged = { ...current, tasks: Buffer.from(stagedTasks) };
+    writeDefinitionFixture(root, current);
+    const before = snapshotTree(root);
+
+    assert.throws(
+      () => applyDefinitionFixture(root, current, staged),
+      /Discovered During Execution must be the final active H2/,
+    );
+    assertRestored(root, before);
+  });
+});
+
+test('T003 repair probe: terminal Discovered preserves trailing blanks with or without history', async (context) => {
+  for (const history of [true, false]) {
+    await context.test(history ? 'with history' : 'without history', () => {
+      withTemporaryDirectory((root) => {
+        const base = definitionFixtureBytes();
+        let taskText = base.tasks.toString('utf8').replace(
+          '\n\n## Lightweight Execution History',
+          '\n\n\n\n## Lightweight Execution History',
+        );
+        if (!history) {
+          taskText = taskText.replace(
+            '## Lightweight Execution History\n- retained execution event\n',
+            '',
+          );
+        }
+        const tasks = Buffer.from(taskText);
+        const current = { ...base, tasks };
+        const staged = {
+          ...current,
+          owner: Buffer.from(current.owner.toString('utf8').replace(
+            '- recovery authorized\n',
+            '- recovery authorized\n- terminal discovered retained\n',
+          )),
+        };
+        writeDefinitionFixture(root, current);
+
+        assert.doesNotThrow(() => applyDefinitionFixture(root, current, staged));
+        assert.deepEqual(fs.readFileSync(path.join(root, `${DEFINITION_ROOT}tasks.md`)), tasks);
+        assertNoAtomicTemps(root);
+      });
+    });
+  }
+});
+
+test('T003 repair probe: bound generator callbacks reject before staging', async (context) => {
+  for (const name of ['generator', 'async generator']) {
+    await context.test(name, () => {
+      withTemporaryDirectory((root) => {
+        const events = [];
+        let bodyCalls = 0;
+        const validator = name === 'generator'
+          ? function* generatorValidator() {
+            bodyCalls += 1;
+          }
+          : async function* asyncGeneratorValidator() {
+            bodyCalls += 1;
+          };
+
+        assert.throws(() => applyAtomicFileBatch({
+          root,
+          changes: [missingChange('target.bin')],
+          validators: [validator.bind(null)],
+          failureInjector(event) { events.push(event.operation); },
+        }), /validators\[0\] must be a synchronous function/);
+        assert.deepEqual(events, []);
+        assert.equal(bodyCalls, 0);
+        assert.deepEqual(snapshotTree(root), []);
+      });
+    });
+  }
+});
+
+test('T003 repair probe: bound async callback rejects before staging', () => {
+  withTemporaryDirectory((root) => {
+    const events = [];
+    let bodyCalls = 0;
+    async function afterApply() {
+      bodyCalls += 1;
+    }
+
+    assert.throws(() => applyAtomicFileBatch({
+      root,
+      changes: [missingChange('target.bin')],
+      failureInjector(event) { events.push(event.operation); },
+    }, afterApply.bind(null)), /afterApply must be a synchronous function/);
+    assert.deepEqual(events, []);
+    assert.equal(bodyCalls, 0);
+    assert.deepEqual(snapshotTree(root), []);
+  });
+});
+
+test('T003 repair probe: regular bound sync callback runs once and commits', () => {
+  withTemporaryDirectory((root) => {
+    let calls = 0;
+    function validator(view) {
+      calls += 1;
+      assert.equal(view.length, 1);
+    }
+
+    applyAtomicFileBatch({
+      root,
+      changes: [missingChange('target.bin', Buffer.from('committed'))],
+      validators: [validator.bind(null)],
+    });
+    assert.equal(calls, 1);
+    assert.deepEqual(fs.readFileSync(path.join(root, 'target.bin')), Buffer.from('committed'));
+    assertNoAtomicTemps(root);
+  });
+});
+
+test('T003 repair probe: iterator callback results roll back without iteration', async (context) => {
+  const cases = [
+    {
+      name: 'generator',
+      create(calls) {
+        return () => (function* generatorResult() { calls.next += 1; })();
+      },
+    },
+    {
+      name: 'async generator',
+      create(calls) {
+        return () => (async function* asyncGeneratorResult() { calls.next += 1; })();
+      },
+    },
+    {
+      name: 'array iterator',
+      create() {
+        return () => [1, 2][Symbol.iterator]();
+      },
+    },
+    {
+      name: 'custom iterator',
+      create(calls) {
+        const prototype = {
+          next() {
+            calls.next += 1;
+            return { done: true };
+          },
+          [Symbol.iterator]() {
+            calls.iterator += 1;
+            return this;
+          },
+        };
+        return () => Object.create(prototype);
+      },
+    },
+  ];
+  for (const fixture of cases) {
+    await context.test(fixture.name, () => {
+      withTemporaryDirectory((root) => {
+        const prior = Buffer.from('prior');
+        fs.writeFileSync(path.join(root, 'target.bin'), prior);
+        const before = snapshotTree(root);
+        const calls = { next: 0, iterator: 0 };
+
+        assert.throws(() => applyAtomicFileBatch({
+          root,
+          changes: [{ path: 'target.bin', expected: prior, staged: Buffer.from('staged') }],
+        }, fixture.create(calls)), /afterApply must be synchronous/);
+        assert.deepEqual(calls, { next: 0, iterator: 0 });
+        assertRestored(root, before);
+      });
+    });
+  }
+});
+
+test('T003 repair probe: bare CR tasks without terminal newline preserve exact bytes', () => {
+  withTemporaryDirectory((root) => {
+    const base = definitionFixtureBytes();
+    const tasks = Buffer.from(base.tasks.toString('utf8').replaceAll('\n', '\r').slice(0, -1));
+    const current = { ...base, tasks };
+    const staged = {
+      ...current,
+      owner: Buffer.from(current.owner.toString('utf8').replace(
+        '- recovery authorized\n',
+        '- recovery authorized\n- CR tasks retained\n',
+      )),
+    };
+    writeDefinitionFixture(root, current);
+
+    assert.doesNotThrow(() => applyDefinitionFixture(root, current, staged));
+    assert.deepEqual(fs.readFileSync(path.join(root, `${DEFINITION_ROOT}tasks.md`)), tasks);
+    assertNoAtomicTemps(root);
+  });
+});
+
+test('T003 pre-fix: unexpected post-write thenable throws through rollback', () => {
+  withTemporaryDirectory((root) => {
+    const prior = Buffer.from('prior');
+    fs.writeFileSync(path.join(root, 'existing.bin'), prior);
+    const before = snapshotTree(root);
+    let thenCalls = 0;
+
+    assert.throws(() => applyAtomicFileBatch({
+      root,
+      changes: [
+        { path: 'existing.bin', expected: prior, staged: Buffer.from('staged') },
+        missingChange('created/new.bin'),
+      ],
+    }, () => ({
+      then() {
+        thenCalls += 1;
+      },
+    })), /afterApply must be synchronous/);
+    assert.equal(thenCalls, 0, 'thenable is rejected without invoking then');
+    assertRestored(root, before);
+  });
+});
+
+test('T003 managed-region parser rejects malformed active markers and ignores fenced lookalikes', () => {
+  const malformed = [
+    ['missing start', (text) => text.replace('<!-- dude:managed:start -->\n', '')],
+    ['missing end', (text) => text.replace('<!-- dude:managed:end -->\n', '')],
+    ['duplicate pair', (text) => `${text}<!-- dude:managed:start -->\nextra\n<!-- dude:managed:end -->\n`],
+    ['reversed', (text) => text
+      .replace('<!-- dude:managed:start -->', '<!-- dude:managed:temporary -->')
+      .replace('<!-- dude:managed:end -->', '<!-- dude:managed:start -->')
+      .replace('<!-- dude:managed:temporary -->', '<!-- dude:managed:end -->')],
+    ['nested', (text) => text.replace(
+      '## Normalized Intent\n',
+      '<!-- dude:managed:start -->\n## Normalized Intent\n<!-- dude:managed:end -->\n',
+    )],
+  ];
+  for (const [name, mutate] of malformed) {
+    withTemporaryDirectory((root) => {
+      const current = definitionFixtureBytes();
+      const staged = { ...current, owner: Buffer.from(mutate(current.owner.toString('utf8'))) };
+      writeDefinitionFixture(root, current);
+      const before = snapshotTree(root);
+      const operations = [];
+      assert.throws(
+        () => applyDefinitionFixture(root, current, staged, {
+          failureInjector(event) { operations.push(event.operation); },
+        }),
+        /managed|Coordinator Log|fence|structure/i,
+        name,
+      );
+      assert.equal(operations.includes('rename'), false, `${name}: no apply rename`);
+      assertRestored(root, before);
+    });
+  }
+
+  withTemporaryDirectory((root) => {
+    const current = definitionFixtureBytes();
+    const owner = Buffer.from(current.owner.toString('utf8').replace(
+      '- Keep the promised outcome unchanged.',
+      [
+        '- Keep the promised outcome unchanged.',
+        '',
+        '```md',
+        '<!-- dude:managed:start -->',
+        '## Coordinator Log',
+        '<!-- dude:managed:end -->',
+        '```',
+        '',
+        '`<!-- dude:managed:end -->`',
+        '<!-- lookalike: <!-- dude:managed:end --> -->',
+      ].join('\n'),
+    ));
+    const expected = { ...current, owner };
+    const staged = {
+      ...expected,
+      owner: Buffer.from(owner.toString('utf8').replace(
+        '- recovery authorized\n',
+        '- recovery authorized\n- fenced lookalikes ignored\n',
+      )),
+    };
+    writeDefinitionFixture(root, expected);
+    assert.doesNotThrow(() => applyDefinitionFixture(root, expected, staged));
+    assertNoAtomicTemps(root);
+  });
+});
+
+test('T003 balanced generated board and other managed fences do not become canonical task state', () => {
+  withTemporaryDirectory((root) => {
+    const base = definitionFixtureBytes();
+    const tasks = Buffer.from(renderBoard(parseTasks(base.tasks.toString('utf8'))).replace(
+      `${BOARD_NOTICE}\n`,
+      `${BOARD_NOTICE}\n##\tLightweight\tExecution\tHistory generated suffix\n- [?] T099@bbbbbbbb malformed generated row\n`,
+    ));
+    const plan = Buffer.from([
+      '# Implementation Plan',
+      '',
+      '<!-- dude:objective-registry:start -->',
+      '{"version":1}',
+      '<!-- dude:objective-registry:end -->',
+      '',
+      '```md',
+      '<!-- dude:objective-registry:end -->',
+      '```',
+      '',
+    ].join('\n'));
+    const current = { ...base, plan, tasks };
+    const staged = {
+      ...current,
+      owner: Buffer.from(current.owner.toString('utf8').replace(
+        '- recovery authorized\n',
+        '- recovery authorized\n- balanced generated regions retained\n',
+      )),
+    };
+    writeDefinitionFixture(root, current);
+
+    assert.doesNotThrow(() => applyDefinitionFixture(root, current, staged));
+    const applied = parseTasks(fs.readFileSync(path.join(root, `${DEFINITION_ROOT}tasks.md`), 'utf8'));
+    assert.equal(applied.board !== null, true);
+    assert.deepEqual(applied.tasks.map((task) => task.id), [DEFINITION_TASK_KEY, 'T9001@aaaaaaaa']);
+    assertNoAtomicTemps(root);
+  });
+});
+
+test('T003 Coordinator Log must remain one terminal append-only complete section', () => {
+  const cases = [
+    ['missing', (text) => text.replace('## Coordinator Log\n\n- recovery authorized\n', '')],
+    ['duplicate', (text) => text.replace(
+      '<!-- dude:managed:end -->',
+      '## Coordinator Log\n\n- duplicate\n<!-- dude:managed:end -->',
+    )],
+    ['moved', (text) => text
+      .replace('## Coordinator Log\n\n- recovery authorized\n', '')
+      .replace(
+        '<!-- dude:managed:start -->\n',
+        '<!-- dude:managed:start -->\n## Coordinator Log\n\n- recovery authorized\n',
+      )],
+    ['split', (text) => text.replace(
+      '- recovery authorized\n<!-- dude:managed:end -->',
+      '- recovery authorized\n## Split Log\n- continuation\n<!-- dude:managed:end -->',
+    )],
+    ['truncated', (text) => text.replace('- recovery authorized', '- recovery author')],
+    ['prefix altered', (text) => text.replace('- recovery authorized', '- recovery authorized ')],
+    ['partial append', (text) => text.replace(
+      '<!-- dude:managed:end -->',
+      '- incomplete append<!-- dude:managed:end -->',
+    )],
+  ];
+  for (const [name, mutate] of cases) {
+    withTemporaryDirectory((root) => {
+      const current = definitionFixtureBytes();
+      const staged = { ...current, owner: Buffer.from(mutate(current.owner.toString('utf8'))) };
+      writeDefinitionFixture(root, current);
+      const before = snapshotTree(root);
+      assert.throws(
+        () => applyDefinitionFixture(root, current, staged),
+        /Coordinator Log|managed|prefix|complete|terminal/i,
+        name,
+      );
+      assertRestored(root, before);
+    });
+  }
+});
+
+test('T003 owner and protected user bytes reject duplicate identity, EOL drift, and trailing whitespace', () => {
+  const cases = [
+    ['duplicate owner key', (text) => text.replace(
+      `spec_path: ${DEFINITION_SPEC_PATH}\n`,
+      `spec_path: ${DEFINITION_SPEC_PATH}\nspec_path: ${DEFINITION_SPEC_PATH}\n`,
+    )],
+    ['Idea EOL drift', (text) => text.replace(
+      'Inspect exact work history before acting.\n\n## Open Questions',
+      'Inspect exact work history before acting.\r\n\r\n## Open Questions',
+    )],
+    ['Open Questions trailing whitespace', (text) => text.replace('- None.\n\n', '- None. \n\n')],
+    ['Assumptions terminal whitespace', (text) => text.replace(
+      '- Recovery preserves user intent byte-for-byte.\n',
+      '- Recovery preserves user intent byte-for-byte.\t\n',
+    )],
+  ];
+  for (const [name, mutate] of cases) {
+    withTemporaryDirectory((root) => {
+      const current = definitionFixtureBytes();
+      const staged = { ...current, owner: Buffer.from(mutate(current.owner.toString('utf8'))) };
+      writeDefinitionFixture(root, current);
+      const before = snapshotTree(root);
+      assert.throws(
+        () => applyDefinitionFixture(root, current, staged),
+        /owner|frontmatter|spec_path|Idea|Open Questions|Assumptions|bytes/i,
+        name,
+      );
+      assertRestored(root, before);
+    });
+  }
+});
+
+test('T003 task parser rejects audit, canonical, dependency, board, discovered, and history corruption', () => {
+  const cases = [
+    ['wrong audit owner', (text) => text.replace(DEFINITION_IDEA_PATH, '.dude/ideas/other.md')],
+    ['malformed glyph', (text) => text.replace(`- [~] ${DEFINITION_TASK_KEY}`, `- [?] ${DEFINITION_TASK_KEY}`)],
+    ['duplicate task id', (text) => text.replace(
+      '## Discovered During Execution',
+      `- [ ] ${DEFINITION_TASK_KEY} [Shared] Duplicate\n\n## Discovered During Execution`,
+    )],
+    ['missing dependency', (text) => text.replace(
+      `- [~] ${DEFINITION_TASK_KEY} [Shared]`,
+      `- [~] ${DEFINITION_TASK_KEY} [Shared]`,
+    ).replace('\n\n## Discovered', '\n    deps: T099@bbbbbbbb\n\n## Discovered')],
+    ['duplicate dependency', (text) => text.replace(
+      '\n\n## Discovered',
+      `\n    deps: T9001@aaaaaaaa, T9001@aaaaaaaa\n\n## Discovered`,
+    )],
+    ['unclosed board', (text) => `<!-- dude:board:start -->\n${text}`],
+    ['discovered loss', (text) => text.replace(
+      '## Discovered During Execution\n- [ ] T9001@aaaaaaaa [Shared] Preserve discovered work\n\n',
+      '',
+    )],
+    ['history loss', (text) => text.replace(
+      '## Lightweight Execution History\n- retained execution event\n',
+      '',
+    )],
+  ];
+  for (const [name, mutate] of cases) {
+    withTemporaryDirectory((root) => {
+      const current = definitionFixtureBytes();
+      const staged = { ...current, tasks: Buffer.from(mutate(current.tasks.toString('utf8'))) };
+      writeDefinitionFixture(root, current);
+      const before = snapshotTree(root);
+      assert.throws(
+        () => applyDefinitionFixture(root, current, staged),
+        /audit|task|duplicate|depend|board|Discovered|history|preserve|canonical/i,
+        name,
+      );
+      assertRestored(root, before);
+    });
+  }
+});
+
+test('T003 permits only an exact append-only history archive authorized by reconciliation', () => {
+  withTemporaryDirectory((root) => {
+    const current = definitionFixtureBytes();
+    const append = Buffer.from('- archived dropped-defective T099@bbbbbbbb -> T100@cccccccc\n');
+    const staged = { ...current, tasks: Buffer.concat([current.tasks, append]) };
+    writeDefinitionFixture(root, current);
+    const calls = {};
+    const result = applyDefinitionFixture(root, current, staged, {
+      contractOptions: { historyAppend: append, calls },
+    });
+    assert.equal(result.count, 4);
+    assert.deepEqual(fs.readFileSync(path.join(root, `${DEFINITION_ROOT}tasks.md`)), staged.tasks);
+    assert.deepEqual(calls, {
+      reconciliation: 1,
+      proposal: 1,
+      review: 1,
+      lint: 1,
+      verification: 1,
+    });
+    assertNoAtomicTemps(root);
+  });
+
+  withTemporaryDirectory((root) => {
+    const current = definitionFixtureBytes();
+    const append = Buffer.from('- unauthorized archive\n');
+    const staged = { ...current, tasks: Buffer.concat([current.tasks, append]) };
+    writeDefinitionFixture(root, current);
+    const before = snapshotTree(root);
+    assert.throws(
+      () => applyDefinitionFixture(root, current, staged),
+      /history|archive|reconciliation|authorized/i,
+    );
+    assertRestored(root, before);
+  });
+});
+
+test('T003 coordinator gate contract: exact descriptor, proposal, and review drift refuse or roll back all four paths', () => {
+  const cases = [
+    {
+      name: 'prestate descriptor drift',
+      arrange(current, staged) {
+        const contract = definitionRecoveryContract(current, staged);
+        contract.binding.prestateDescriptors[0].sha256 = definitionHash('wrong prestate');
+        return contract;
+      },
+      expected: /prestate|descriptor|expected/i,
+    },
+    {
+      name: 'coordinator-final descriptor drift',
+      arrange(current, staged) {
+        const contract = definitionRecoveryContract(current, staged);
+        contract.binding.coordinatorFinalDescriptors[1].byteLength += 1;
+        return contract;
+      },
+      expected: /coordinator-final|descriptor|staged/i,
+    },
+    {
+      name: 'review descriptor drift',
+      arrange(current, staged) {
+        const contract = definitionRecoveryContract(current, staged);
+        contract.binding.review.coordinatorFinalDescriptors[2].sha256 = definitionHash('wrong review');
+        return contract;
+      },
+      expected: /review|descriptor/i,
+    },
+    {
+      name: 'proposal identity drift',
+      arrange(current, staged) {
+        const contract = definitionRecoveryContract(current, staged);
+        return replaceDefinitionRecoveryCallbacks(contract, {
+          postApply: {
+            ...contract.postApply,
+            recomputeProposalIdentity: () => ({
+              proposalIdentity: definitionHash('post-write proposal drift'),
+              coordinatorFinalDescriptors: definitionDescriptors(staged),
+            }),
+          },
+        });
+      },
+      expected: /proposal.*identity/i,
+    },
+    {
+      name: 'review identity drift',
+      arrange(current, staged) {
+        const contract = definitionRecoveryContract(current, staged);
+        return replaceDefinitionRecoveryCallbacks(contract, {
+          postApply: {
+            ...contract.postApply,
+            validateReviewIdentity: () => ({
+              proposalIdentity: contract.binding.proposalIdentity,
+              reviewIdentity: definitionHash('post-write review drift'),
+              coordinatorFinalDescriptors: definitionDescriptors(staged),
+            }),
+          },
+        });
+      },
+      expected: /review.*identity/i,
+    },
+  ];
+  for (const fixture of cases) {
+    withTemporaryDirectory((root) => {
+      const current = definitionFixtureBytes();
+      const staged = {
+        ...current,
+        owner: Buffer.from(current.owner.toString('utf8').replace(
+          '- recovery authorized\n',
+          '- recovery authorized\n- exact identity staged\n',
+        )),
+        plan: Buffer.from('# Implementation Plan\n\nRepaired design.\n'),
+      };
+      writeDefinitionFixture(root, current);
+      const before = snapshotTree(root);
+      const contract = fixture.arrange(current, staged);
+      assert.throws(
+        () => applyDefinitionFixture(root, current, staged, { contractOverride: contract }),
+        fixture.expected,
+        fixture.name,
+      );
+      assertRestored(root, before);
+    });
+  }
+});
+
+test('T003 coordinator gate contract: post-write parse, lint, verification, and unexpected thenable failures roll back exactly', () => {
+  const cases = [
+    {
+      name: 'post-write parse failure',
+      contractOptions: {},
+      failureInjector(root, event) {
+        if (event.operation === 'validate-applied') {
+          const ownerPath = path.join(root, DEFINITION_IDEA_PATH);
+          fs.writeFileSync(ownerPath, fs.readFileSync(ownerPath, 'utf8').replace(
+            '<!-- dude:managed:end -->',
+            '',
+          ));
+        }
+      },
+      expected: /managed|structure|applied|descriptor|does not match expected bytes/i,
+    },
+    {
+      name: 'lint failure',
+      postApply(staged, contract) {
+        return {
+          ...contract.postApply,
+          lint() { throw new Error('fresh lint failed'); },
+        };
+      },
+      expected: /fresh lint failed/,
+    },
+    {
+      name: 'verification failure',
+      postApply(staged, contract) {
+        return {
+          ...contract.postApply,
+          verification() { throw new Error('required verification failed'); },
+        };
+      },
+      expected: /required verification failed/,
+    },
+    {
+      name: 'unexpected thenable',
+      postApply(staged, contract) {
+        return {
+          ...contract.postApply,
+          lint() { return { then() { assert.fail('then must not execute'); } }; },
+        };
+      },
+      expected: /lint.*synchronous|synchronous.*lint/i,
+    },
+  ];
+  for (const fixture of cases) {
+    withTemporaryDirectory((root) => {
+      const current = definitionFixtureBytes();
+      const staged = {
+        ...current,
+        owner: Buffer.from(current.owner.toString('utf8').replace(
+          '- recovery authorized\n',
+          '- recovery authorized\n- post-apply staged\n',
+        )),
+        spec: Buffer.from('# Feature Specification\n\nRepaired requirements.\n'),
+        plan: Buffer.from('# Implementation Plan\n\nRepaired design.\n'),
+        tasks: definitionTasksBytes('Repaired canonical task'),
+      };
+      writeDefinitionFixture(root, current);
+      const before = snapshotTree(root);
+      let contract = definitionRecoveryContract(current, staged, fixture.contractOptions);
+      if (fixture.postApply) {
+        contract = replaceDefinitionRecoveryCallbacks(contract, {
+          postApply: fixture.postApply(staged, contract),
+        });
+      }
+      assert.throws(() => applyDefinitionFixture(root, current, staged, {
+        contractOverride: contract,
+        ...(fixture.failureInjector ? {
+          failureInjector(event) { fixture.failureInjector(root, event); },
+        } : {}),
+      }), fixture.expected, fixture.name);
+      assertRestored(root, before);
+    });
+  }
+});
+
+test('T004 integration security: unreachable-by-construction post-apply invariants stay wired', () => {
+  // `applyDefinitionRecovery` is only reachable through
+  // `commitDefinitionRecoveryV1`, whose branded capabilities always report
+  // passed gate evidence and the bound identities. These three defences
+  // therefore cannot be triggered behaviourally without exporting the sealer,
+  // which `callback sealer is unavailable externally` forbids, so they are
+  // pinned structurally instead.
+  const source = fs.readFileSync(new URL('./atomic-file-batch.mjs', import.meta.url), 'utf8');
+  // Once where gate evidence is validated, once again post-apply.
+  assert.equal(
+    source.split("if (value.status !== 'passed') throw new Error(`${label} must report passed fresh evidence`);").length - 1,
+    2,
+  );
+  assert.match(
+    source,
+    /if \(result\.proposalIdentity !== binding\.proposalIdentity\) \{[\s\S]*?does not match the exact applied proposal/,
+  );
+  assert.match(
+    source,
+    /if \(identityFields\.includes\('reviewIdentity'\)[\s\S]*?result\.reviewIdentity !== binding\.reviewIdentity\) \{[\s\S]*?does not match the independent review/,
+  );
+});
+
+test('T004 integration security: callback sealer is unavailable externally', () => {
+  withTemporaryDirectory((root) => {
+    const current = definitionFixtureBytes();
+    writeDefinitionFixture(root, current);
+    const before = snapshotTree(root);
+    assert.equal(
+      Object.hasOwn(atomicRuntime, 'sealDefinitionRecoveryCoordinatorCapabilities'),
+      false,
+    );
+    assert.equal(atomicRuntime.sealDefinitionRecoveryCoordinatorCapabilities, undefined);
+    assertRestored(root, before);
+  });
+});
+
+test('T004 integration security: callback substitution is refused before atomic helper entry', () => {
+  withTemporaryDirectory((root) => {
+    const current = definitionFixtureBytes();
+    writeDefinitionFixture(root, current);
+    const before = snapshotTree(root);
+    const contract = definitionRecoveryContract(current, current);
+    assert.equal(Object.isFrozen(contract.postApply), true);
+
+    for (const [label, overrides] of [
+      ['post-apply callback', {
+        validateReconciliation: contract.validateReconciliation,
+        postApply: Object.freeze({
+          ...contract.postApply,
+          lint() { throw new Error('substituted lint must not execute'); },
+        }),
+      }],
+      ['reconciliation callback', {
+        validateReconciliation() { throw new Error('substituted reconciliation must not execute'); },
+        postApply: contract.postApply,
+      }],
+    ]) {
+      let helperEvents = 0;
+      assert.throws(() => definitionRecoveryFunction()({
+        lane: 'lightweight',
+        root,
+        specPath: DEFINITION_SPEC_PATH,
+        changes: definitionChanges(current, current),
+        binding: contract.binding,
+        ...overrides,
+        failureInjector() { helperEvents += 1; },
+      }), /sealed internal coordinator capabilities/, label);
+      assert.equal(helperEvents, 0, label);
+      assertRestored(root, before);
+    }
+  });
+});
+
+test('T003 rollback failure after an atomic post-apply gate remains AtomicFileBatchRollbackError', () => {
+  withTemporaryDirectory((root) => {
+    const prior = Buffer.from('prior');
+    fs.writeFileSync(path.join(root, 'target.bin'), prior);
+    const error = captureError(() => applyAtomicFileBatch({
+      root,
+      changes: [{ path: 'target.bin', expected: prior, staged: Buffer.from('staged') }],
+      failureInjector(event) {
+        if (event.operation === 'rollback-rename' && event.index === 0) {
+          throw new Error('incomplete definition rollback');
+        }
+      },
+    }, () => { throw new Error('post-apply lint failure'); }));
+    assert.equal(error.name, 'AtomicFileBatchRollbackError');
+    assert.equal(error.code, 'ATOMIC_FILE_BATCH_ROLLBACK_FAILED');
+    assert.equal(error.cause?.message, 'post-apply lint failure');
+    assert.ok(error.rollbackErrors.some((entry) => entry.message === 'incomplete definition rollback'));
+  });
+});
+
+test('T003 valid final proposal applies and each rollback-bound gate executes exactly once', () => {
+  withTemporaryDirectory((root) => {
+    const current = definitionFixtureBytes();
+    const staged = {
+      owner: Buffer.from(current.owner.toString('utf8').replace(
+        '- recovery authorized\n',
+        '- recovery authorized\n- valid final proposal\n',
+      )),
+      spec: Buffer.from('# Feature Specification\n\nValidated final requirements.\n'),
+      plan: Buffer.from('# Implementation Plan\n\nValidated final design.\n'),
+      tasks: definitionTasksBytes('Validated final canonical task'),
+    };
+    writeDefinitionFixture(root, current);
+    const calls = {};
+    const result = applyDefinitionFixture(root, current, staged, {
+      contractOptions: { calls },
+    });
+    assert.deepEqual(result, { count: 4, paths: definitionScope() });
+    assert.deepEqual(calls, {
+      reconciliation: 1,
+      proposal: 1,
+      review: 1,
+      lint: 1,
+      verification: 1,
+    });
+    for (const [relativePath, bytes] of definitionBytesByPath(staged)) {
+      assert.deepEqual(fs.readFileSync(path.join(root, relativePath)), bytes);
+    }
+    assertNoAtomicTemps(root);
+  });
+});
 
 test('replaces and creates exact Buffer bytes in byte-sorted order without mutating inputs', () => {
   withTemporaryDirectory((root) => {
@@ -874,6 +2330,34 @@ test('F: applyDefinitionRecovery refuses tracked requests before any filesystem 
   }
 });
 
+test('T004 integration: prepareDefinitionRecoveryV1 refuses tracked before any filesystem helper', () => {
+  const methods = [
+    'lstatSync',
+    'readFileSync',
+    'writeFileSync',
+    'mkdirSync',
+    'openSync',
+    'realpathSync',
+    'renameSync',
+    'readdirSync',
+  ];
+  const originals = new Map(methods.map((method) => [method, fs[method]]));
+  const accesses = [];
+  try {
+    for (const method of methods) {
+      Reflect.set(fs, method, () => {
+        accesses.push(method);
+        throw new Error(`unexpected filesystem access through ${method}`);
+      });
+    }
+    const error = captureError(() => atomicRuntime.prepareDefinitionRecoveryV1({ lane: 'tracked' }));
+    assert.equal(error.code, 'tracked-definition-recovery-unsupported');
+    assert.deepEqual(accesses, []);
+  } finally {
+    for (const [method, original] of originals) Reflect.set(fs, method, original);
+  }
+});
+
 test('F: applyDefinitionRecovery requires one exact current and staged owner plus reconciliation validation', () => {
   const applyDefinitionRecovery = definitionRecoveryFunction();
   const ownerCases = [
@@ -900,12 +2384,10 @@ test('F: applyDefinitionRecovery requires one exact current and staged owner plu
       writeDefinitionFixture(root, current);
       fixture.setup(root, current);
       const before = snapshotTree(root);
-      assert.throws(() => applyDefinitionRecovery({
-        lane: 'lightweight',
+      assert.throws(() => atomicRuntime.validateDefinitionRecoveryArtifactTransitionV1({
         root,
         specPath: DEFINITION_SPEC_PATH,
         changes: definitionChanges(current, current),
-        validateReconciliation() {},
       }), fixture.expected, fixture.name);
       assertRestored(root, before);
     });
@@ -922,12 +2404,15 @@ test('F: applyDefinitionRecovery requires one exact current and staged owner plu
       )),
     };
     const before = snapshotTree(root);
+    const contract = definitionRecoveryContract(current, staged);
     assert.throws(() => applyDefinitionRecovery({
       lane: 'lightweight',
       root,
       specPath: DEFINITION_SPEC_PATH,
       changes: definitionChanges(current, staged),
-    }), /validateReconciliation|reconciliation validator/i);
+      binding: contract.binding,
+      postApply: contract.postApply,
+    }), /missing validateReconciliation|sealed internal coordinator capabilities/i);
     assertRestored(root, before);
 
     const wrongOwner = {
@@ -936,30 +2421,27 @@ test('F: applyDefinitionRecovery requires one exact current and staged owner plu
     };
     const wrongOwnerText = Buffer.from(wrongOwner.owner).toString('utf8')
       .replace(`spec_path: ${DEFINITION_SPEC_PATH}`, 'spec_path: .dude/specs/999-other/spec.md');
-    assert.throws(() => applyDefinitionRecovery({
-      lane: 'lightweight',
+    const wrongOwnerStaged = { ...staged, owner: Buffer.from(wrongOwnerText) };
+    assert.throws(() => atomicRuntime.validateDefinitionRecoveryArtifactTransitionV1({
       root,
       specPath: DEFINITION_SPEC_PATH,
-      changes: definitionChanges(current, { ...staged, owner: Buffer.from(wrongOwnerText) }),
-      validateReconciliation() {},
+      changes: definitionChanges(current, wrongOwnerStaged),
     }), /owner|spec_path|specification/i);
     assertRestored(root, before);
 
     const wrongStatusText = staged.owner.toString('utf8')
       .replace('status: defined', 'status: draft');
-    assert.throws(() => applyDefinitionRecovery({
-      lane: 'lightweight',
+    const wrongStatusStaged = { ...staged, owner: Buffer.from(wrongStatusText) };
+    assert.throws(() => atomicRuntime.validateDefinitionRecoveryArtifactTransitionV1({
       root,
       specPath: DEFINITION_SPEC_PATH,
-      changes: definitionChanges(current, { ...staged, owner: Buffer.from(wrongStatusText) }),
-      validateReconciliation() {},
+      changes: definitionChanges(current, wrongStatusStaged),
     }), /owner|status|defined/i);
     assertRestored(root, before);
   });
 });
 
 test('F: definition recovery requires exactly owner, spec, plan, and tasks before helper entry', async (context) => {
-  const applyDefinitionRecovery = definitionRecoveryFunction();
   const scope = definitionScope();
   const cases = [
     ...scope.map((missingPath) => ({
@@ -1008,19 +2490,12 @@ test('F: definition recovery requires exactly owner, spec, plan, and tasks befor
         const current = definitionFixtureBytes();
         writeDefinitionFixture(root, current);
         const before = snapshotTree(root);
-        let helperEvents = 0;
-        const error = captureError(() => applyDefinitionRecovery({
-          lane: 'lightweight',
+        const error = captureError(() => atomicRuntime.validateDefinitionRecoveryArtifactTransitionV1({
           root,
           specPath: DEFINITION_SPEC_PATH,
           changes: fixture.mutate(definitionChanges(current, current)),
-          validateReconciliation() {},
-          failureInjector() {
-            helperEvents += 1;
-          },
         }));
         assert.match(error.message, /exact|four|owner|spec|plan|tasks|scope|contracts/i);
-        assert.equal(helperEvents, 0, 'scope refusal must precede atomic helper entry');
         assertRestored(root, before);
       });
     });
@@ -1028,7 +2503,6 @@ test('F: definition recovery requires exactly owner, spec, plan, and tasks befor
 });
 
 test('F: definition recovery preserves complete user-owned section bytes and boundaries', async (context) => {
-  const applyDefinitionRecovery = definitionRecoveryFunction();
   const changedCases = [
     ['Idea content', 'Inspect exact work history before acting.', 'Changed intent.'],
     ['Open Questions content', '- None.', '- Which behavior should change?'],
@@ -1045,19 +2519,12 @@ test('F: definition recovery preserves complete user-owned section bytes and bou
           owner: Buffer.from(current.owner.toString('utf8').replace(beforeText, afterText)),
         };
         const before = snapshotTree(root);
-        let helperEvents = 0;
-        const error = captureError(() => applyDefinitionRecovery({
-          lane: 'lightweight',
+        const error = captureError(() => atomicRuntime.validateDefinitionRecoveryArtifactTransitionV1({
           root,
           specPath: DEFINITION_SPEC_PATH,
           changes: definitionChanges(current, staged),
-          validateReconciliation() {},
-          failureInjector() {
-            helperEvents += 1;
-          },
         }));
         assert.match(error.message, /Idea|Open Questions|Assumptions|user-owned|section|intent|bytes/i);
-        assert.equal(helperEvents, 0, 'protected-section refusal must precede atomic helper entry');
         assertRestored(root, before);
       });
     });
@@ -1092,19 +2559,15 @@ test('F: definition recovery preserves complete user-owned section bytes and bou
           const staged = side === 'staged' ? malformed : valid;
           writeDefinitionFixture(root, expected);
           const before = snapshotTree(root);
-          let helperEvents = 0;
-          const error = captureError(() => applyDefinitionRecovery({
-            lane: 'lightweight',
+          const error = captureError(() => atomicRuntime.validateDefinitionRecoveryArtifactTransitionV1({
             root,
             specPath: DEFINITION_SPEC_PATH,
             changes: definitionChanges(expected, staged),
-            validateReconciliation() {},
-            failureInjector() {
-              helperEvents += 1;
-            },
           }));
-          assert.match(error.message, /Idea|Open Questions|Assumptions|section|heading|boundary|owner|defined/i);
-          assert.equal(helperEvents, 0, 'malformed-section refusal must precede atomic helper entry');
+          assert.match(
+            error.message,
+            /Idea|Open Questions|Assumptions|section|heading|boundary|owner|defined|fenced/i,
+          );
           assertRestored(root, before);
         });
       });
@@ -1114,31 +2577,27 @@ test('F: definition recovery preserves complete user-owned section bytes and bou
   for (const fixture of [
     {
       name: 'fenced heading lookalikes',
-      current: definitionOwnerBytes('recovery authorized', {
+      options: {
         idea: 'Intent.\n\n```md\n## Open Questions\n## Assumptions\n```',
-      }),
-      staged: definitionOwnerBytes('recovery staged', {
-        idea: 'Intent.\n\n```md\n## Open Questions\n## Assumptions\n```',
-      }),
+      },
     },
     {
       name: 'CRLF without terminal newline',
-      current: definitionOwnerBytes('recovery authorized', { newline: '\r\n', terminalNewline: false }),
-      staged: definitionOwnerBytes('recovery staged', { newline: '\r\n', terminalNewline: false }),
+      options: { newline: '\r\n', terminalNewline: false },
     },
   ]) {
     await context.test(`accepts preserved ${fixture.name}`, () => {
       withTemporaryDirectory((root) => {
-        const current = { ...definitionFixtureBytes(), owner: fixture.current };
-        const staged = { ...current, owner: fixture.staged };
+        const owner = definitionOwnerBytes('recovery authorized', fixture.options);
+        const newline = fixture.options.newline ?? '\n';
+        const stagedOwner = Buffer.from(owner.toString('utf8').replace(
+          `- recovery authorized${newline}`,
+          `- recovery authorized${newline}- recovery staged${newline}`,
+        ));
+        const current = { ...definitionFixtureBytes(), owner };
+        const staged = { ...current, owner: stagedOwner };
         writeDefinitionFixture(root, current);
-        const result = applyDefinitionRecovery({
-          lane: 'lightweight',
-          root,
-          specPath: DEFINITION_SPEC_PATH,
-          changes: definitionChanges(current, staged),
-          validateReconciliation() {},
-        });
+        const result = applyDefinitionFixture(root, current, staged);
         assert.deepEqual(result.paths, definitionScope());
         assert.deepEqual(fs.readFileSync(path.join(root, DEFINITION_IDEA_PATH)), staged.owner);
         assertNoAtomicTemps(root);
@@ -1148,7 +2607,6 @@ test('F: definition recovery preserves complete user-owned section bytes and bou
 });
 
 test('F: applyDefinitionRecovery delegates one sorted batch and restores on reconciliation or apply failure', () => {
-  const applyDefinitionRecovery = definitionRecoveryFunction();
   const faults = [
     {
       name: 'reconciliation rejection',
@@ -1190,14 +2648,13 @@ test('F: applyDefinitionRecovery delegates one sorted batch and restores on reco
       };
       writeDefinitionFixture(root, current);
       const before = snapshotTree(root);
-      assert.throws(() => applyDefinitionRecovery({
-        lane: 'lightweight',
-        root,
-        specPath: DEFINITION_SPEC_PATH,
-        changes: definitionChanges(current, staged),
-        validateReconciliation: fixture.drift
-          ? () => fs.writeFileSync(path.join(root, `${DEFINITION_ROOT}plan.md`), 'foreign drift')
-          : fixture.validateReconciliation,
+      const validateReconciliation = fixture.drift
+        ? () => {
+          fs.writeFileSync(path.join(root, `${DEFINITION_ROOT}plan.md`), 'foreign drift');
+        }
+        : fixture.validateReconciliation;
+      assert.throws(() => applyDefinitionFixture(root, current, staged, {
+        contractOptions: { reconciliation: validateReconciliation },
         ...(fixture.failureInjector ? { failureInjector: fixture.failureInjector } : {}),
       }), fixture.expected, fixture.name);
       assertRestored(root, before);
@@ -1206,7 +2663,6 @@ test('F: applyDefinitionRecovery delegates one sorted batch and restores on reco
 });
 
 test('F: authorized definition repair applies owner/spec/plan/tasks and completes only after all gates', () => {
-  const applyDefinitionRecovery = definitionRecoveryFunction();
   withTemporaryDirectory((root) => {
     const current = definitionFixtureBytes();
     const staged = {
@@ -1265,18 +2721,14 @@ test('F: authorized definition repair applies owner/spec/plan/tasks and complete
     assert.deepEqual(authorized.state.pending[0].materialInputs.checks, ['lint', 'review', 'verification']);
 
     let reconciliationChecks = 0;
-    const applied = applyDefinitionRecovery({
-      lane: 'lightweight',
-      root,
-      specPath: DEFINITION_SPEC_PATH,
-      changes: definitionChanges(current, staged),
-      validateReconciliation(view) {
+    const applied = applyDefinitionFixture(root, current, staged, {
+      contractOptions: { reconciliation(view) {
         reconciliationChecks += 1;
         const tasks = view.find((entry) => entry.path === `${DEFINITION_ROOT}tasks.md`)?.staged.toString('utf8');
         assert.match(tasks || '', new RegExp(`\\[~\\] ${DEFINITION_TASK_KEY.replace('@', '\\@')}`));
         assert.match(tasks || '', /Preserve discovered work/);
         assert.match(tasks || '', /retained execution event/);
-      },
+      } },
     });
     assert.equal(reconciliationChecks, 1);
     assert.deepEqual(applied, {

@@ -20,7 +20,7 @@ it with `@dude add pack beads`.
 | `@dude brainstorm <idea>` | Create or refresh one flat `.dude/ideas/<slug>.md` collaboration file without creating a spec package. |
 | `@dude define <slug>` | Turn the matching idea into a reusable package under `.dude/specs/<feature>/`. |
 | `@dude status` | Read-only report of the current lane, live artifact, next step, and blockers. |
-| `@dude work [<feature>] [--max <N\|unlimited>] [--until blocked] [--parallel <N>] [--recover-on-block] [--recovery-cycles <N\|unlimited>] [--policy guarded\|autonomous]` | Run the next few ready tasks back-to-back inside whichever execution lane is already live, with optional guarded recovery and an optional autonomous policy. Not a new lane. |
+| `@dude work [<feature>] [--max <N\|unlimited>] [--until blocked] [--parallel <N>] [--recover-on-block] [--recovery-cycles <N\|unlimited>] [--policy guarded\|autonomous]` | Run the next few ready tasks back-to-back inside whichever execution lane is already live, with optional Work-authorized recovery and an optional autonomous policy. Not a new lane. |
 | `@dude list packs` | Read-only list of available and installed optional packs. |
 | `@dude add pack <name>` / `@dude remove pack <name>` | Install or uninstall an optional capability pack (e.g. `beads`, `release`, `web`, `practices`). |
 | `@dude track` | Import or resume tracked execution on a tracked board. Requires the `beads` pack. |
@@ -206,7 +206,7 @@ Flags:
   integer, but every accepted value is discarded after validation and
   normalizes the effective recovery capacity and `policy.parallel` to `1`; it
   grants no concurrency or fan-out authority.
-- `--recover-on-block` — explicitly permit guarded recovery after the required
+- `--recover-on-block` — explicitly permit Work-authorized recovery after the required
   post-block or post-failure inspection. Without it, inspection never
   authorizes a retry.
 - `--recovery-cycles <N|unlimited>` — per-exact-target recovery budget. A
@@ -303,20 +303,21 @@ ambiguity, and authority or safety failures remain hard stops even when both
 numeric budgets are unlimited. Fresh verification or lint failure and review
 rejection stop completion and become evidence for a later inspection.
 
-Ordinary Work does not revise definition artifacts. Explicit recovery may
-repair an unchanged-intent derived definition defect only in an existing
+Ordinary Work does not revise definition artifacts. Only `--policy autonomous`
+Work with recovery opted in may repair an unchanged-intent derived definition
+defect, and only in an existing
 Lightweight package and across exactly four paths: the exact owner idea ledger
 plus its sibling `spec.md`, `plan.md`, and `tasks.md`. Recovery byte-preserves
 the complete `## Idea`, `## Open Questions`, and `## Assumptions` sections.
 `contracts/schemas.md` is outside runtime recovery and may change only through
 explicit `@dude define`. The Spec Lead stages definition changes; the
-coordinator owns reconciliation and execution-state changes; the guarded file
-batch applies atomically; and fresh verification, lint, and independent review
-still follow. Changed or ambiguous user intent returns to the user-controlled
-idea and explicit definition. Tracked definition recovery is inspection-first:
-only after a fresh Inspection and Assessment validation does it refuse as
-unsupported, before any helper or write. These exceptions do not transfer
-lane-state or close authority away from the coordinator.
+coordinator owns reconciliation and execution-state changes; exactly one
+independent review precedes the all-or-restored batch; and rollback-bound lint
+and verification follow. Changed or ambiguous user intent returns to the
+user-controlled idea and explicit definition. Tracked definition recovery is
+inspection-first: only after a fresh Inspection and Assessment validation does
+it refuse as unsupported, before any helper or write. These exceptions do not
+transfer lane-state or close authority away from the coordinator.
 
 Under `--policy autonomous`, Work requires learning before a task is retried,
 escalated, blocked, closed, or reported as no progress once it has
@@ -366,7 +367,7 @@ Updated:
 Blockers:
 - Stopped after iteration 2: verification failed on dude-def
 Next:
-- Run @dude flag test-failure: <details> to route the failure, or explicitly choose guarded recovery on a later Work run
+- Run @dude flag test-failure: <details> to route the failure, or explicitly opt in to recovery on a later Work run
 ```
 
 Illustrative result — refusal when no execution lane is live:

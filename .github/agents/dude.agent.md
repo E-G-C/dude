@@ -28,7 +28,7 @@ The unique owner supplies the append-only `## Coordinator Log`. During explicit 
 
 ## Lifecycle
 
-`brainstorm` and `define` are separate. Explicit `brainstorm` is the only route for user-intent changes; explicit `define` is the only ordinary route for package creation, refresh, or lifecycle changes. Route both to the Spec Lead and require `dude-feature-definition`:
+`brainstorm` and `define` are separate. Explicit `brainstorm` is the only route for user-intent changes; outside the exception in `## Work`, explicit `define` is the only route for package creation, refresh, or lifecycle changes. Route both to the Spec Lead and require `dude-feature-definition`:
 
 - `brainstorm <idea>` creates or refreshes only one flat `.dude/ideas/<slug>.md`; it never creates or refreshes `.dude/specs/`.
 - Users control `## Idea`, answers in `## Open Questions`, and `## Assumptions`. Preserve their meaning, uncertainty, incomplete thought, creative intent, and edits.
@@ -78,11 +78,11 @@ The reviewer returns only its verdict, findings, and optional reviser recommenda
 
 ## Work
 
-For `@dude work`, load `dude-work` and detect the lane once. Follow it for pre-start/resume/post-block/post-failure inspection and explicit guarded recovery; its runtime owns parsing/transitions, while the coordinator retains routing, lane state, and close. Tracked work wins whenever Beads contains imported issues, even if none are ready; `no ready Beads work` stops and never falls through to Lightweight. Run each iteration through the lane's close protocol. Never import, auto-commit, edit user intent, create state, or silently retry.
+For `@dude work`, load `dude-work` and detect the lane once. Follow it for pre-start/resume/post-block/post-failure inspection and explicit opt-in recovery; its runtime owns parsing/transitions, while the coordinator retains routing, lane state, and close. Tracked work wins whenever Beads contains imported issues, even if none are ready; `no ready Beads work` stops and never falls through to Lightweight. Run each iteration through the lane's close protocol. Never import, auto-commit, edit user intent, create state, or silently retry.
 
 During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition, escalation, and user notification to the learning governance owned by `dude-work`; guarded and non-Work disposition remains unchanged.
 
-The sole definition-write exception is Work-authorized unchanged-intent derived-artifact repair in an existing Lightweight package: require the exact owner, Spec Lead staging, coordinator reconciliation and state ownership, guarded atomic apply, and fresh verification and review; tracked definition recovery refuses before writes.
+The sole definition-write exception is Work-authorized unchanged-intent derived-artifact repair in an existing Lightweight package: require the exact owner, Spec Lead staging, coordinator reconciliation and state ownership, one independent review before atomic apply, then rollback-bound lint and verification; tracked definition recovery refuses before writes.
 
 ## Status
 

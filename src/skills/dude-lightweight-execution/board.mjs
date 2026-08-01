@@ -29,9 +29,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { types as utilTypes } from 'node:util';
 
 import {
   parseTasks,
+  parseVisibleTasks,
   readyTasks,
   nextTask,
   renderBoard,
@@ -59,6 +61,7 @@ import {
   validateLaneMutationPermitV1,
   validateLightweightAtomicReceiptV1,
 } from '../dude-work/recovery.mjs';
+import { commitDefinitionRecoveryV1 } from '../dude-feature-definition/atomic-file-batch.mjs';
 
 /** @param {ReturnType<typeof parseTasks>} parsed @param {string} id @returns {string[]} */
 function taskUnitLines(parsed, id) {
@@ -375,6 +378,39 @@ function isPlainRecord(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Detach one canonical data graph without observing accessors or Proxy traps.
+ * @param {unknown} value
+ */
+function snapshotLaneRefreshData(value) {
+  /** @param {unknown} entry @param {Set<object>} ancestors */
+  const assertDataGraph = (entry, ancestors) => {
+    if (entry === null || typeof entry !== 'object') return;
+    if (utilTypes.isProxy(entry) || ancestors.has(entry)) throw new TypeError('invalid lane refresh data');
+    const prototype = Object.getPrototypeOf(entry);
+    if (Array.isArray(entry)) {
+      if (prototype !== Array.prototype && prototype !== null) throw new TypeError('invalid lane refresh data');
+    } else if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError('invalid lane refresh data');
+    }
+    ancestors.add(entry);
+    try {
+      for (const key of Reflect.ownKeys(entry)) {
+        const descriptor = Object.getOwnPropertyDescriptor(entry, key);
+        if (!descriptor || !('value' in descriptor)) throw new TypeError('invalid lane refresh data');
+        if (key !== 'length' && (typeof key !== 'string' || !descriptor.enumerable)) {
+          throw new TypeError('invalid lane refresh data');
+        }
+        assertDataGraph(descriptor.value, ancestors);
+      }
+    } finally {
+      ancestors.delete(entry);
+    }
+  };
+  assertDataGraph(value, new Set());
+  return JSON.parse(canonicalJson(value));
 }
 
 /**
@@ -758,25 +794,40 @@ function laneHistoryIndex(historyText) {
 }
 
 /**
+ * Parse only authoritative visible task syntax for the lane trust boundary, so
+ * fenced and commented lookalikes can never become canonical lane state.
+ * @param {Buffer} bytes @param {string} absolutePath @param {string} reason
+ */
+function parseVisibleLaneTasks(bytes, absolutePath, reason) {
+  try {
+    return parseVisibleTasks(bytes, { path: absolutePath });
+  } catch {
+    return refuse(reason);
+  }
+}
+
+/**
  * Build the exact `tasks.md` postimage with byte-precise edits over the fresh
  * source: only the glyph, the `blocked-by:` metadata line, and appended lane
  * event records may change.
- * @param {ReturnType<typeof parseTasks>} parsed
+ * @param {ReturnType<typeof parseVisibleTasks>} visible
+ * @param {Buffer} bytes
  * @param {import('../dude-engine/lib/tasks.mjs').Task} task
  * @param {Record<string, unknown>} mutation
  * @param {{kind:string,before:string|null,after:string|null}} blocker
  * @param {string[]} appendRecords
  */
-function lightweightTasksPostimage(parsed, task, mutation, blocker, appendRecords) {
-  /** @type {{start:number,end:number,text:string}[]} */
+function lightweightTasksPostimage(visible, bytes, task, mutation, blocker, appendRecords) {
+  const parsed = visible.parsed;
+  /** @type {{start:number,end:number,text:Buffer}[]} */
   const edits = [];
-  const headerMeta = parsed.lineMeta[task.headerLine];
+  const headerLine = visible.lines[task.headerLine];
   const glyphMatch = /^- \[[^\]]*\]/.exec(parsed.lines[task.headerLine]);
   if (!glyphMatch) refuse('lane-prestate-mismatch');
   edits.push({
-    start: headerMeta.startOffset,
-    end: headerMeta.startOffset + glyphMatch[0].length,
-    text: `- [${mutation.toGlyph}]`,
+    start: headerLine.start,
+    end: headerLine.start + glyphMatch[0].length,
+    text: Buffer.from(`- [${mutation.toGlyph}]`),
   });
 
   if (blocker.kind !== 'unchanged') {
@@ -793,36 +844,43 @@ function lightweightTasksPostimage(parsed, task, mutation, blocker, appendRecord
     const indent = firstMetaIndent ?? '   ';
     if (blocker.kind === 'add') {
       if (blockedLine !== -1) refuse('lane-prestate-mismatch');
-      const separator = headerMeta.separator || parsed.preferredSeparator;
+      const separator = bytes.subarray(headerLine.contentEnd, headerLine.end).toString('utf8')
+        || parsed.preferredSeparator;
       edits.push({
-        start: headerMeta.endOffset,
-        end: headerMeta.endOffset,
-        text: `${indent}blocked-by: ${blocker.after}${separator}`,
+        start: headerLine.end,
+        end: headerLine.end,
+        text: Buffer.from(`${indent}blocked-by: ${blocker.after}${separator}`),
       });
     } else {
       if (blockedLine === -1) refuse('lane-prestate-mismatch');
-      const meta = parsed.lineMeta[blockedLine];
+      const meta = visible.lines[blockedLine];
       edits.push(blocker.kind === 'remove'
-        ? { start: meta.startOffset, end: meta.endOffset, text: '' }
-        : { start: meta.startOffset, end: meta.contentEndOffset, text: `${indent}blocked-by: ${blocker.after}` });
+        ? { start: meta.start, end: meta.end, text: Buffer.alloc(0) }
+        : {
+          start: meta.start,
+          end: meta.contentEnd,
+          text: Buffer.from(`${indent}blocked-by: ${blocker.after}`),
+        });
     }
   }
 
   if (appendRecords.length > 0) {
-    if (!parsed.history) refuse('lane-prestate-mismatch');
-    if (!parsed.source.endsWith('\n')) refuse('lane-prestate-mismatch');
-    edits.push({ start: parsed.source.length, end: parsed.source.length, text: appendRecords.join('') });
+    if (visible.historyOffset === null) refuse('lane-prestate-mismatch');
+    if (bytes.length === 0 || bytes[bytes.length - 1] !== 0x0a) refuse('lane-prestate-mismatch');
+    edits.push({ start: bytes.length, end: bytes.length, text: Buffer.from(appendRecords.join('')) });
   }
 
   edits.sort((left, right) => left.start - right.start);
   let cursor = 0;
-  let out = '';
+  /** @type {Buffer[]} */
+  const parts = [];
   for (const edit of edits) {
     if (edit.start < cursor) refuse('lane-prestate-mismatch');
-    out += parsed.source.slice(cursor, edit.start) + edit.text;
+    parts.push(bytes.subarray(cursor, edit.start), edit.text);
     cursor = edit.end;
   }
-  return `${out}${parsed.source.slice(cursor)}`;
+  parts.push(bytes.subarray(cursor));
+  return Buffer.concat(parts);
 }
 
 /**
@@ -919,7 +977,12 @@ function commitLightweightWorkRequest(requestValue, context) {
   const snapshot = parseTaskState(fresh.taskState.bytes.toString('utf8'));
   if (snapshot.status === 'corrupt') refuse('snapshot-corrupt');
 
-  const parsed = parseTasks(fresh.tasks.bytes.toString('utf8'), { path: surfaces.tasks.absolutePath });
+  const visible = parseVisibleLaneTasks(
+    fresh.tasks.bytes,
+    surfaces.tasks.absolutePath,
+    'mapping-missing',
+  );
+  const parsed = visible.parsed;
   if (parsed.boardIssue) refuse('mapping-missing');
   const rows = parsed.tasks.filter((row) => row.id === target.taskKey);
   if (rows.length === 0) refuse('mapping-missing');
@@ -990,7 +1053,9 @@ function commitLightweightWorkRequest(requestValue, context) {
   if (derived.mutation.fromGlyph !== task.glyph) refuse('lane-prestate-mismatch');
   if (derived.blocker.before !== task.blockedBy) refuse('lane-prestate-mismatch');
 
-  const history = parsed.history ? parsed.history.suffix : '';
+  const history = visible.historyOffset === null
+    ? ''
+    : fresh.tasks.bytes.subarray(visible.historyOffset).toString('utf8');
   const existing = laneHistoryIndex(history);
   /** @type {string[]} */
   const appendRecords = [];
@@ -1013,13 +1078,18 @@ function commitLightweightWorkRequest(requestValue, context) {
   }
 
   const tasksNext = lightweightTasksPostimage(
-    parsed,
+    visible,
+    fresh.tasks.bytes,
     task,
     derived.mutation,
     derived.blocker,
     appendRecords,
   );
-  const verify = parseTasks(tasksNext, { path: surfaces.tasks.absolutePath });
+  const verify = parseVisibleLaneTasks(
+    tasksNext,
+    surfaces.tasks.absolutePath,
+    'mutation-schema-mismatch',
+  ).parsed;
   const verifyTask = verify.byId.get(target.taskKey);
   if (verify.boardIssue
     || !verifyTask
@@ -1030,7 +1100,7 @@ function commitLightweightWorkRequest(requestValue, context) {
 
   // A permit that would change neither tasks nor owner bytes has already been
   // consumed; only the snapshot timestamp would move.
-  if (tasksNext === parsed.source && ownerNext === ownerText) refuse('permit-replayed');
+  if (tasksNext.equals(fresh.tasks.bytes) && ownerNext === ownerText) refuse('permit-replayed');
 
   const merged = { ...(snapshot.status === 'ok' ? snapshot.state : {}) };
   merged[tasksPath] = {
@@ -1043,7 +1113,7 @@ function commitLightweightWorkRequest(requestValue, context) {
   const taskStateNext = `${JSON.stringify(ordered, null, 2)}\n`;
 
   const files = [
-    { absolutePath: surfaces.tasks.absolutePath, before: fresh.tasks.bytes, after: Buffer.from(tasksNext) },
+    { absolutePath: surfaces.tasks.absolutePath, before: fresh.tasks.bytes, after: tasksNext },
     { absolutePath: surfaces.taskState.absolutePath, before: fresh.taskState.bytes, after: Buffer.from(taskStateNext) },
     { absolutePath: surfaces.owner.absolutePath, before: fresh.owner.bytes, after: Buffer.from(ownerNext) },
   ];
@@ -1108,6 +1178,149 @@ export function applyLightweightWorkRequest(requestValue) {
       : 'invalid-request-shape';
     return { ok: false, phase: 'refused', reason, unchangedPrestateHash: observed() };
   }
+}
+
+/**
+ * Validate only the fields that bind a lane refresh to an accepted definition.
+ * This performs no filesystem access and never invokes the lane mutation helper.
+ * @param {unknown} requestValue @param {unknown} bindingValue
+ */
+function matchesAcceptedDefinitionRecovery(requestValue, bindingValue) {
+  try {
+    const binding = exactRecord(bindingValue, [
+      'root', 'owner', 'target', 'tasksPath', 'tasksDescriptor', 'proposalIdentity',
+    ]);
+    const request = exactRecord(requestValue, [
+      'version', 'operation', 'root', 'owner', 'target', 'state', 'permit', 'mapping', 'expected', 'mutation',
+    ]);
+    if (request.version !== 1 || request.operation !== 'work-project' || request.root !== binding.root) {
+      return false;
+    }
+    const boundOwner = exactRecord(binding.owner, ['ideaPath', 'specPath']);
+    const owner = exactRecord(request.owner, ['ideaPath', 'specPath', 'ownerCapture', 'ownerBindingHash']);
+    if (owner.ideaPath !== boundOwner.ideaPath || owner.specPath !== boundOwner.specPath) return false;
+    const boundTarget = requireLightweightTarget(binding.target);
+    const target = requireLightweightTarget(request.target);
+    if (canonicalJson(target) !== canonicalJson(boundTarget)) return false;
+    if (binding.tasksPath !== tasksPathForSpec(boundTarget.specPath)) return false;
+    const tasksDescriptor = requireDescriptor(binding.tasksDescriptor);
+    requireHash(binding.proposalIdentity);
+
+    const mapping = exactRecord(request.mapping, [
+      'version', 'lane', 'target', 'ownerBindingHash', 'tasksPath', 'tasksDescriptor',
+      'taskStatePath', 'taskStateDescriptor', 'taskKey',
+    ]);
+    if (mapping.version !== 1
+      || mapping.lane !== 'lightweight'
+      || canonicalJson(requireLightweightTarget(mapping.target)) !== canonicalJson(boundTarget)
+      || mapping.tasksPath !== binding.tasksPath
+      || mapping.taskKey !== boundTarget.taskKey
+      || canonicalJson(requireDescriptor(mapping.tasksDescriptor)) !== canonicalJson(tasksDescriptor)) {
+      return false;
+    }
+
+    const expected = exactRecord(request.expected, ['tasksPath', 'tasks', 'taskStatePath', 'taskState']);
+    if (expected.tasksPath !== binding.tasksPath
+      || canonicalJson(descriptorOf(requireCapturedBytes(expected.tasks))) !== canonicalJson(tasksDescriptor)) {
+      return false;
+    }
+
+    const derived = requireLightweightMutation(request.mutation, 'work-project', boundTarget);
+    if (derived.eventLines.lines.length !== 1) return false;
+    const exactLine = derived.eventLines.lines[0].exactLine;
+    const event = exactRecord(
+      JSON.parse(exactLine.slice(LANE_EVENT_PREFIX.length)),
+      ['type', 'version', 'proposalIdentity', 'eventHash'],
+    );
+    if (event.type !== 'definition-recovery-resumed'
+      || event.version !== 1
+      || event.proposalIdentity !== binding.proposalIdentity) {
+      return false;
+    }
+    const { eventHash, ...eventBody } = event;
+    return eventHash === sha256(canonicalJson(eventBody))
+      && exactLine === `${LANE_EVENT_PREFIX}${canonicalJson(event)}`;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sequence one accepted four-path definition transaction before the optional
+ * coordinator-owned Lightweight refresh. The lane request retains its own
+ * all-or-restored boundary and is never enrolled as a fifth definition path.
+ * @param {unknown} requestValue
+ */
+export function executeLightweightDefinitionRecoveryV1(requestValue) {
+  if (!isPlainRecord(requestValue)) {
+    return { accepted: false, resumed: false, reason: 'invalid-request-shape' };
+  }
+  const allowed = new Set(['definition', 'laneRefresh']);
+  if (Object.keys(requestValue).some((key) => !allowed.has(key))
+    || !Object.hasOwn(requestValue, 'definition')) {
+    return { accepted: false, resumed: false, reason: 'invalid-request-shape' };
+  }
+  // Pin the lane refresh to one exact value before any use: an accessor or
+  // non-enumerable own property could otherwise hand the binding gate and the
+  // executor two different requests.
+  const laneRefreshDescriptor = Object.getOwnPropertyDescriptor(requestValue, 'laneRefresh');
+  if (laneRefreshDescriptor
+    && (!('value' in laneRefreshDescriptor) || !laneRefreshDescriptor.enumerable)) {
+    return { accepted: false, resumed: false, reason: 'invalid-request-shape' };
+  }
+  let laneRefreshRequest;
+  try {
+    laneRefreshRequest = laneRefreshDescriptor
+      ? snapshotLaneRefreshData(laneRefreshDescriptor.value)
+      : undefined;
+  } catch {
+    return { accepted: false, resumed: false, reason: 'invalid-request-shape' };
+  }
+  const definition = commitDefinitionRecoveryV1(requestValue.definition);
+  if (!definition.accepted) {
+    return {
+      accepted: false,
+      resumed: false,
+      reason: definition.reason,
+      definition,
+      laneRefresh: null,
+    };
+  }
+  if (!laneRefreshDescriptor || laneRefreshRequest === null) {
+    return {
+      accepted: true,
+      resumed: false,
+      reason: 'lane-refresh-missing',
+      definition,
+      laneRefresh: null,
+    };
+  }
+  if (!matchesAcceptedDefinitionRecovery(laneRefreshRequest, definition.binding)) {
+    return {
+      accepted: true,
+      resumed: false,
+      reason: 'lane-refresh-mismatch',
+      definition,
+      laneRefresh: null,
+    };
+  }
+  const laneRefresh = applyLightweightWorkRequest(laneRefreshRequest);
+  if (!laneRefresh.ok) {
+    return {
+      accepted: true,
+      resumed: false,
+      reason: 'lane-refresh-failed',
+      definition,
+      laneRefresh,
+    };
+  }
+  return {
+    accepted: true,
+    resumed: true,
+    reason: 'resumed',
+    definition,
+    laneRefresh,
+  };
 }
 
 /** @param {string} metaUrl @param {string|undefined} argv1 @returns {boolean} */

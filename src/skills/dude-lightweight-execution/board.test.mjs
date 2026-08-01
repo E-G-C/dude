@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { run, parseArgs, applyLightweightWorkRequest } from './board.mjs';
+import { parseTasks } from '../dude-engine/lib/tasks.mjs';
 import { canonicalJson } from '../dude-work/recovery.mjs';
 
 /** Absolute path to the board CLI, spawned as a child process end-to-end. */
@@ -779,6 +780,27 @@ function assertLaneRefusal(root, request, reason, label, options = {}) {
   }
   return result;
 }
+
+test('T006 lane mutation reads only visible task syntax, never fenced lookalikes', () => {
+  const root = scaffoldLane();
+  try {
+    const fenced = LANE_TASKS_FIXTURE.replace(
+      `- [ ] ${LANE_OTHER_KEY} [US3] Another canonical unit\n`,
+      `- [ ] ${LANE_OTHER_KEY} [US3] Another canonical unit\n\n\`\`\`md\n- [x] ${LANE_TASK_KEY} [US3] Fenced lookalike\n\`\`\`\n`,
+    );
+    writeLaneFile(root, LANE_TASKS, fenced);
+    // Raw parsing cannot separate the fenced lookalike from real task syntax.
+    assert.equal(parseTasks(fenced).tasks.filter((row) => row.id === LANE_TASK_KEY).length, 2);
+
+    const result = applyLightweightWorkRequest(laneRequest(root));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const after = fs.readFileSync(path.join(root, ...LANE_TASKS.split('/')), 'utf8');
+    assert.match(after, new RegExp(`- \\[~\\] ${LANE_TASK_KEY} \\[US3\\] Implement the lane boundary`));
+    assert.match(after, new RegExp(`- \\[x\\] ${LANE_TASK_KEY} \\[US3\\] Fenced lookalike`));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('T006 lightweight work-set commits an exact claim only after fresh poststate capture', () => {
   const root = scaffoldLane();

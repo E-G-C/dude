@@ -10,7 +10,13 @@ import { fileURLToPath } from 'node:url';
 
 import { resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
 import { parseSpecIdentity } from '../dude-engine/lib/feature-identity.mjs';
+import { BOARD_END, BOARD_START, parseTasks } from '../dude-engine/lib/tasks.mjs';
 import { analyzeAppend } from '../dude-memory-ledger/memory.mjs';
+import {
+  commitDefinitionRecoveryV1,
+  prepareDefinitionRecoveryV1,
+} from '../dude-feature-definition/atomic-file-batch.mjs';
+import { executeLightweightDefinitionRecoveryV1 } from '../dude-lightweight-execution/board.mjs';
 import * as recoveryRuntime from './recovery.mjs';
 
 import {
@@ -3670,6 +3676,36 @@ test('inspect acquires one exact owner and canonical task while ignoring generat
   });
 });
 
+test('task-history evidence parses only visible task syntax, never fenced or commented lookalikes', () => {
+  const bytes = Buffer.from([
+    '# Tasks',
+    '',
+    `- [~] ${TASK_KEY} [US1] Canonical task`,
+    '    blocked-by: waiting',
+    '```md',
+    `- [x] ${TASK_KEY} [US1] Fenced lookalike`,
+    '```',
+    '',
+    '## Lightweight Execution History',
+    '- retained history',
+    '',
+  ].join('\n'));
+  // The raw parser cannot tell the fenced lookalike apart from real syntax, so
+  // it reports a duplicate-id diagnostic that would make the evidence unusable.
+  const raw = parseTasks(bytes.toString('utf8'));
+  assert.equal(raw.tasks.filter((row) => row.id === TASK_KEY).length, 2);
+  assert.ok(raw.warnings.some((warning) => /duplicate task id/.test(warning)));
+
+  const items = collectEvidence(TARGET, rawInputs({
+    tasks: { path: TASKS_PATH, bytes },
+  }));
+  const history = items.find((item) => item.source === 'task-history');
+  assert.equal(history?.status, 'present');
+  assert.match(history?.text || '', new RegExp(TASK_KEY.replace('@', '\\@')));
+  assert.doesNotMatch(history?.text || '', /Fenced lookalike/);
+  assert.match(history?.text || '', /retained history/);
+});
+
 test('owner acquisition fails closed for zero, multiple, and malformed direct owners', () => {
   const cases = [
     {
@@ -6237,7 +6273,6 @@ test('T002 B: autonomous licenses only authorized recovery continuation while gu
   const recoveries = [
     ['address-test', { verification: [capture(TARGET, 'failed', [{ historical: true }])] }, { targets: ['src/test.mjs'], checks: ['lint', 'verification'] }],
     ['address-review', { review: [capture(TARGET, 'rejected', [{ historical: true }])] }, { targets: ['src/review.mjs'], checks: ['review', 'verification'] }],
-    ['reconcile-derived-definition', { currentRun: [capture(TARGET, 'blocked', [{ historical: true }])] }, { targets: definitionTargets(), checks: ['lint', 'review', 'verification'] }],
   ];
   for (const [action, rawOverrides, assessmentOverrides] of recoveries) {
     const raw = transitionRaw(TARGET, /** @type {Record<string, unknown>} */ (rawOverrides));
@@ -6265,6 +6300,34 @@ test('T002 B: autonomous licenses only authorized recovery continuation while gu
       /** @type {string} */ (action),
     );
   }
+
+  const definitionRaw = transitionRaw(TARGET, {
+    currentRun: [capture(TARGET, 'blocked', [{ historical: true }])],
+  });
+  const definitionAssessment = transitionAssessment('reconcile-derived-definition', {
+    targets: definitionTargets(),
+    checks: ['lint', 'review', 'verification'],
+  });
+  const autonomousDefinition = authorizeAttempt(
+    autonomousState(),
+    TARGET,
+    definitionRaw,
+    definitionAssessment,
+    'recovery',
+  );
+  assert.equal(autonomousDefinition.authorized, false);
+  assert.equal(autonomousDefinition.reason, 'evidence-incomplete');
+  assert.equal(mayContinueAutonomously(autonomousDefinition), false);
+  const guardedDefinition = authorizeAttempt(
+    guardedContinuationState(),
+    TARGET,
+    definitionRaw,
+    definitionAssessment,
+    'recovery',
+  );
+  assert.equal(guardedDefinition.authorized, true);
+  assert.equal(guardedDefinition.reason, 'authorized');
+  assert.equal(mayContinueAutonomously(guardedDefinition), false);
 
   const ordinary = authorizeAttempt(autonomousState(), TARGET, transitionRaw(TARGET), transitionAssessment('execute-task'), 'ordinary');
   assert.equal(ordinary.authorized, true);
@@ -11255,7 +11318,7 @@ function t002EnvelopeFixture(overrides = {}) {
     target: clone(overrides.target || TARGET),
     expectation: { kind: 'governing-rule', identity: t002Hash('expectation') },
     subjects: [TASK_KEY],
-    failureClass: 'verification-failure',
+    failureClass: overrides.failureClass || 'verification-failure',
     checkDefinitionIdentity: definitionIdentity,
   };
   const basisIdentity = sha256(canonicalJson(basis));
@@ -13309,8 +13372,9 @@ function t003SortAlternatives(rows) {
  * projection, finalize, required-governance projection, learn, learning-result
  * projection, and the branch transition.
  * @param {string} root @param {'finding'|'approach'} channel @param {'selected-alternative'|'no-progress'} branch
+ * @param {{sourceRevisionIdentity?:string,sourceRevisionIdentities?:string[]}} [options]
  */
-function t003PublicFlow(root, channel, branch) {
+function t003PublicFlow(root, channel, branch, options = {}) {
   const findingChannel = channel === 'finding';
   /** @param {number} attemptOrdinal @param {Record<string, unknown>[]|null} priorCompleted @param {string} label */
   const fixtureFor = (attemptOrdinal, priorCompleted, label) => t002PendingFixture({
@@ -13318,6 +13382,12 @@ function t003PublicFlow(root, channel, branch) {
     ...(priorCompleted ? { priorCompleted } : {}),
     checkOutcome: findingChannel ? 'passed' : 'failed',
     verdict: findingChannel ? 'rejected' : 'accepted',
+    ...(options.sourceRevisionIdentities?.[attemptOrdinal - 1] || options.sourceRevisionIdentity
+      ? {
+        sourceRevisionIdentity: options.sourceRevisionIdentities?.[attemptOrdinal - 1]
+          || options.sourceRevisionIdentity,
+      }
+      : {}),
     materialInputs: {
       targets: [`src/${label}.mjs`],
       operations: ['retry-task'],
@@ -13450,6 +13520,5397 @@ function t003PublicFlow(root, channel, branch) {
     fixtures: [first, second],
   };
 }
+
+// --- Feature 015 T001: automatic unchanged-intent redefinition ------------
+
+/** @param {string} label @param {Record<string, unknown>} [target] @param {string} [ideaPath] */
+function t001DefinitionDescriptors(label, target = TARGET, ideaPath = IDEA_PATH) {
+  return definitionTargets(/** @type {string} */ (target.specPath), ideaPath)
+    .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))
+    .map((artifactPath) => ({ path: artifactPath, ...contentDescriptor(`${label}:${artifactPath}`) }));
+}
+
+/** @param {string} root @param {Record<string, unknown>} [target] @param {string} [ideaPath] */
+function t001WorkspaceDefinitionDescriptors(root, target = TARGET, ideaPath = IDEA_PATH) {
+  return definitionTargets(/** @type {string} */ (target.specPath), ideaPath)
+    .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))
+    .map((artifactPath) => ({
+      path: artifactPath,
+      ...contentDescriptor(fs.readFileSync(path.join(root, artifactPath))),
+    }));
+}
+
+/** @param {Record<string, unknown>[]} descriptors */
+function t001SourceRevisionIdentity(descriptors) {
+  const writeSet = {
+    candidatePaths: descriptors.map((descriptor) => descriptor.path),
+    protectedPaths: [],
+  };
+  return recoveryRuntime.stateIdentity(
+    recoveryRuntime.writeSetIdentity(writeSet),
+    descriptors.map((descriptor) => ({ ...descriptor, state: 'file' })),
+  );
+}
+
+/** @param {string} root */
+function t001CurrentSourceRevisionIdentity(root) {
+  const inspection = inspect(autonomousInspectInput(root));
+  const planItem = inspection.items.find((item) => item.source === 'definition-plan');
+  assert.equal(planItem?.status, 'present');
+  const plan = JSON.parse(/** @type {string} */ (planItem.text));
+  assert.ok(plan.definitionPrestate);
+  return plan.definitionPrestate.sourceRevisionIdentity;
+}
+
+/** @param {string} root @param {'finding'|'approach'} channel @param {'selected-alternative'|'no-progress'} branch */
+function t001PublicFlow(root, channel, branch) {
+  return t003PublicFlow(root, channel, branch, {
+    sourceRevisionIdentity: t001CurrentSourceRevisionIdentity(root),
+  });
+}
+
+/** @param {Record<string, unknown>} governance */
+function t001ForeignProjectedGovernance(governance) {
+  const foreign = clone(governance);
+  foreign.target = canonicalTarget(SECOND_TARGET);
+  foreign.failedApproachSet.target = canonicalTarget(SECOND_TARGET);
+  const { setIdentity: ignoredSetIdentity, ...failedSetBody } = foreign.failedApproachSet;
+  foreign.failedApproachSet.setIdentity = sha256(canonicalJson(failedSetBody));
+  foreign.governanceIdentity = sha256(canonicalJson({
+    version: 1,
+    target: foreign.target,
+    repeatIdentity: sha256(canonicalJson(foreign.trigger)),
+  }));
+  foreign.triggerEvidenceHash = sha256(canonicalJson({
+    trigger: foreign.trigger,
+    failedApproachSetIdentity: foreign.failedApproachSet.setIdentity,
+  }));
+  recoveryRuntime.validateLearningGovernanceV1(foreign);
+  return foreign;
+}
+
+/**
+ * @param {Record<string, unknown>} eligibility
+ * @param {Record<string, unknown>} reviewerEvidenceReferences
+ * @param {Record<string, unknown>} [overrides]
+ */
+function t001DefinitionProposal(eligibility, reviewerEvidenceReferences, overrides = {}) {
+  const target = /** @type {Record<string, unknown>} */ (overrides.target || TARGET);
+  const ideaPath = /** @type {string} */ (overrides.ideaPath || IDEA_PATH);
+  return recoveryRuntime.buildDefinitionRevisionProposalV1({
+    target,
+    owner: { ideaPath, specPath: target.specPath },
+    eligibility,
+    prestateDescriptors: overrides.prestateDescriptors || t001DefinitionDescriptors('prestate', target, ideaPath),
+    coordinatorFinalDescriptors: overrides.coordinatorFinalDescriptors
+      || t001DefinitionDescriptors('coordinator-final', target, ideaPath),
+    mappingReferences: overrides.mappingReferences || [t003Hash('t001-mapping-set')],
+    reconciliationReferences: overrides.reconciliationReferences || [t003Hash('t001-reconciliation-set')],
+    reviewerEvidenceReferences,
+  });
+}
+
+/** @param {Record<string, unknown>} proposal */
+function t001ProposalRecord(proposal) {
+  return { type: 'definition-revision-proposal', version: 1, proposal };
+}
+
+/** @param {Record<string, unknown>} state @param {Record<string, unknown>} input */
+function t001AuthorizeDefinition(state, input) {
+  const inspection = inspect(input);
+  return runtimeFunction('runCommand')('authorize', {
+    trigger: 'post-block',
+    state,
+    input,
+    assessment: {
+      ...transitionAssessment('reconcile-derived-definition', { targets: definitionTargets() }),
+      evidenceHash: inspection.evidenceHash,
+    },
+    mode: 'recovery',
+  }).authorization;
+}
+
+/** @param {ReturnType<typeof t002PendingFixture>} fixture @param {Record<string, unknown>} [overrides] */
+function t001ContradictionProposal(fixture, overrides = {}) {
+  const finding = /** @type {Record<string, unknown>} */ (fixture.finding);
+  const basis = /** @type {Record<string, unknown>} */ (finding.basis);
+  const expectation = /** @type {Record<string, unknown>} */ (basis.expectation);
+  const check = /** @type {Record<string, unknown>} */ (fixture.verification.checks[0]);
+  const proofKind = basis.failureClass === 'impossible-definition-gate'
+    ? 'impossible-gate'
+    : 'contradiction';
+  const eligibility = recoveryRuntime.buildDefinitionReconciliationEligibilityV1({
+    variant: 'definition-contradiction',
+    proofKind,
+    blockerEvidenceIdentity: finding.findingIdentity,
+    gateEvidenceIdentity: check.checkIdentity,
+    definitionReferenceIdentities: [expectation.identity, basis.checkDefinitionIdentity]
+      .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+    causalEvidenceIdentities: [finding.findingIdentity, finding.basisIdentity, check.checkIdentity]
+      .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+  });
+  return t001DefinitionProposal(eligibility, {
+    blockerEvidenceIdentities: [finding.findingIdentity],
+    decompositionEvidenceIdentities: [finding.basisIdentity],
+  }, overrides);
+}
+
+/** @param {ReturnType<typeof t003PublicFlow>} flow @param {Record<string, unknown>} [overrides] */
+function t001LearningProposal(flow, overrides = {}) {
+  const review = /** @type {Record<string, unknown>} */ (flow.learned.learning.reviewEvent);
+  const proof = /** @type {Record<string, unknown>} */ (review.noProgressProof || {});
+  const blockerEvidenceIdentity = /** @type {string} */ (
+    overrides.blockerEvidenceIdentity
+      || /** @type {Record<string, unknown>} */ (review.findings[0]).findingIdentity
+  );
+  const eligibility = recoveryRuntime.buildDefinitionReconciliationEligibilityV1({
+    variant: 'learning-no-alternative',
+    blockerEvidenceIdentity,
+    governanceIdentity: review.governanceIdentity,
+    reviewIdentity: review.reviewIdentity,
+    learningReviewEventHash: review.eventHash,
+    failedApproachSetIdentity: review.failedApproachSetIdentity,
+    noProgressProofIdentity: proof.proofIdentity || t003Hash('t001-no-progress-proof'),
+    noNewDistinguishingEvidenceHash: proof.noNewDistinguishingEvidenceHash
+      || t003Hash('t001-no-new-evidence'),
+    projectionReferenceIdentity: overrides.projectionReferenceIdentity
+      || sha256(canonicalJson(flow.learningVerified.transition.projectionRef)),
+  });
+  return t001DefinitionProposal(eligibility, {
+    blockerEvidenceIdentities: [blockerEvidenceIdentity],
+    decompositionEvidenceIdentities: [
+      review.failedApproachSetIdentity,
+      ...(proof.proofIdentity ? [proof.proofIdentity] : []),
+    ].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+  }, overrides);
+}
+
+/**
+ * @param {string} root
+ * @param {ReturnType<typeof t003PublicFlow>} flow
+ * @param {Record<string, unknown>} state
+ * @param {Record<string, unknown>} proposal
+ * @param {ReturnType<typeof t002PendingFixture>[]} fixtures
+ * @param {{checkOutcome?:'passed'|'failed',verdict?:'accepted'|'rejected'}} [completionOverrides]
+ */
+function t001CaptureDefinitionReconciliation(
+  root,
+  flow,
+  state,
+  proposal,
+  fixtures,
+  completionOverrides = {},
+) {
+  const authorizationInput = t002RetentionInput(
+    root,
+    flow.learnedEvents,
+    flow.learnedEvents,
+    fixtures,
+  );
+  authorizationInput.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+  const authorized = t001AuthorizeDefinition(state, authorizationInput);
+  assert.equal(authorized.authorized, true);
+  const pending = authorized.state.pending[0];
+  const attemptIdentity = sha256(canonicalJson({
+    version: 2,
+    target: canonicalTarget(TARGET),
+    attemptOrdinal: authorized.state.overallUsed,
+    authorizationEvidenceHash: pending.evidenceHash,
+    approachBasisIdentity: sha256(canonicalJson(
+      authorized.definitionReconciliation.approachBasis,
+    )),
+  }));
+  const completionEvidence = {
+    target: TARGET,
+    ...t002EnvelopeFixture({
+      target: TARGET,
+      attemptIdentity,
+      attemptOrdinal: authorized.state.overallUsed,
+      inspectedEvidenceHash: pending.evidenceHash,
+      checkOutcome: completionOverrides.checkOutcome || 'passed',
+      verdict: completionOverrides.verdict || 'accepted',
+    }),
+  };
+  const verificationFailed = completionEvidence.verification.checks
+    .some((check) => check.outcome === 'failed');
+  const reviewRejected = completionEvidence.review.verdict === 'rejected';
+  const completion = {
+    version: 2,
+    target: TARGET,
+    attemptIdentity,
+    route: 'definition-reconciliation',
+    outcome: verificationFailed ? 'failed' : reviewRejected ? 'blocked' : 'succeeded',
+    operations: ['reconcile-derived-definition'],
+    changedTargets: verificationFailed || reviewRejected ? [] : definitionTargets(),
+    resultIdentity: completionEvidence.verification.resultIdentity,
+    verificationEnvelopeIdentity: completionEvidence.verification.envelopeIdentity,
+    reviewEnvelopeIdentity: completionEvidence.review.envelopeIdentity,
+    findingIdentities: completionEvidence.review.findings
+      .map((finding) => finding.findingIdentity),
+  };
+  const trustedFixtures = [...fixtures, completionEvidence];
+  const completionInput = t002RetentionInput(
+    root,
+    flow.learnedEvents,
+    flow.learnedEvents,
+    trustedFixtures,
+  );
+  completionInput.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+  const captured = runtimeFunction('runCommand')('complete', {
+    mode: 'capture',
+    state: authorized.state,
+    input: cliInput(completionInput),
+    completion,
+  }).completion;
+  assert.equal(captured.captured, true);
+  assert.equal(captured.reason, 'occurrence-retention-required');
+  return {
+    flow,
+    proposal,
+    authorized,
+    completionEvidence,
+    completion,
+    captured,
+    trustedFixtures,
+    retainedEvents: [...flow.learnedEvents, ...captured.projectionBatch.events],
+  };
+}
+
+/** @param {string} label @param {Record<string, unknown>} state @param {Record<string, unknown>} result */
+function t001AssertReconciliationConflictUnchanged(label, state, result) {
+  assert.equal(result.reason, 'learning-governance-conflict', label);
+  assert.strictEqual(result.state, state, label);
+  assert.equal(result.state.overallUsed, state.overallUsed, label);
+  assert.deepEqual(result.state.recoveryUsed, state.recoveryUsed, label);
+  assert.deepEqual(result.state.pending, state.pending, label);
+  assert.deepEqual(result.state.pendingCompletion, state.pendingCompletion, label);
+  assert.deepEqual(result.state.learningGovernance, state.learningGovernance, label);
+  assert.equal(canonicalJson(result.state), canonicalJson(state), label);
+}
+
+test('T001 definition reconciliation: learning authorization binds trusted proof to the current source revision', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const flow = t003PublicFlow(root, 'approach', 'no-progress');
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const proposal = t001LearningProposal(flow, { prestateDescriptors });
+    const input = t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures);
+    input.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+    const state = flow.learningVerified.transition.state;
+    const authorized = t001AuthorizeDefinition(state, input);
+    assert.equal(authorized.authorized, false);
+    assert.equal(authorized.reason, 'evidence-incomplete');
+    assert.strictEqual(authorized.state, state);
+    assert.equal(authorized.state.overallUsed, state.overallUsed);
+    assert.deepEqual(authorized.state.recoveryUsed, state.recoveryUsed);
+    assert.deepEqual(authorized.state.pending, state.pending);
+  });
+});
+
+for (const [label, artifactPath, mutate] of [
+  ['owner', IDEA_PATH, (bytes) => Buffer.concat([bytes, Buffer.from('\nowner source drift\n')])],
+  ['plan', PLAN_PATH, (bytes) => Buffer.concat([bytes, Buffer.from('\nplan source drift\n')])],
+  ['spec', SPEC_PATH, (bytes) => Buffer.concat([bytes, Buffer.from('\nspec source drift\n')])],
+  ['tasks', TASKS_PATH, (bytes) => Buffer.from(bytes.toString('utf8').replace(
+    'Transition task 1',
+    'Changed transition task 1',
+  ))],
+]) {
+  test(`T001 definition reconciliation: learning authorization refuses ${label} source drift against a rebuilt proposal`, () => {
+    withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+      const flow = t001PublicFlow(root, 'approach', 'no-progress');
+      const input = t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures);
+      const absolutePath = path.join(root, /** @type {string} */ (artifactPath));
+      fs.writeFileSync(absolutePath, mutate(fs.readFileSync(absolutePath)));
+      const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+      const proposal = t001LearningProposal(flow, { prestateDescriptors });
+      input.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+      const inspection = inspect(input);
+      const planItem = inspection.items.find((item) => item.source === 'definition-plan');
+      const plan = JSON.parse(/** @type {string} */ (planItem.text));
+      assert.deepEqual(plan.definitionPrestate.prestateDescriptors, proposal.prestateDescriptors);
+      assert.notEqual(
+        plan.definitionPrestate.sourceRevisionIdentity,
+        flow.fixtures[0].review.sourceRevisionIdentity,
+      );
+      const state = flow.learningVerified.transition.state;
+      const refused = t001AuthorizeDefinition(state, input);
+      assert.equal(refused.authorized, false);
+      assert.equal(refused.reason, 'evidence-incomplete');
+      assert.strictEqual(refused.state, state);
+      assert.equal(refused.state.overallUsed, state.overallUsed);
+      assert.deepEqual(refused.state.recoveryUsed, state.recoveryUsed);
+      assert.deepEqual(refused.state.pending, state.pending);
+    });
+  });
+}
+
+test('T001 definition reconciliation: mixed trusted proof source revisions refuse unchanged', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const currentRevision = t001CurrentSourceRevisionIdentity(root);
+    const flow = t003PublicFlow(root, 'approach', 'no-progress', {
+      sourceRevisionIdentities: [currentRevision, t003Hash('t001-mixed-source-revision')],
+    });
+    assert.equal(new Set(flow.fixtures.map((fixture) => fixture.review.sourceRevisionIdentity)).size, 2);
+    const proposal = t001LearningProposal(flow, {
+      prestateDescriptors: t001WorkspaceDefinitionDescriptors(root),
+    });
+    const input = t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures);
+    input.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+    const state = flow.learningVerified.transition.state;
+    const refused = t001AuthorizeDefinition(state, input);
+    assert.equal(refused.authorized, false);
+    assert.equal(refused.reason, 'evidence-incomplete');
+    assert.strictEqual(refused.state, state);
+    assert.deepEqual(refused.state.pending, []);
+  });
+});
+
+test('T001 definition reconciliation: one matching trusted proof source revision authorizes', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const currentRevision = t001CurrentSourceRevisionIdentity(root);
+    const flow = t001PublicFlow(root, 'approach', 'no-progress');
+    assert.deepEqual(
+      [...new Set(flow.fixtures.map((fixture) => fixture.review.sourceRevisionIdentity))],
+      [currentRevision],
+    );
+    const proposal = t001LearningProposal(flow, {
+      prestateDescriptors: t001WorkspaceDefinitionDescriptors(root),
+    });
+    const input = t002RetentionInput(root, flow.learnedEvents, flow.learnedEvents, flow.fixtures);
+    input.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+    const authorized = t001AuthorizeDefinition(flow.learningVerified.transition.state, input);
+    assert.equal(authorized.authorized, true);
+    assert.equal(authorized.definitionReconciliation.variant, 'learning-no-alternative');
+  });
+});
+
+test('T001 definition reconciliation: learning capture refuses missing governance without mutation', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const flow = t001PublicFlow(root, 'approach', 'no-progress');
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const proposal = t001LearningProposal(flow, { prestateDescriptors });
+    const fixture = t001CaptureDefinitionReconciliation(
+      root,
+      flow,
+      flow.learningVerified.transition.state,
+      proposal,
+      flow.fixtures,
+    );
+    const state = clone(fixture.authorized.state);
+    delete state.learningGovernance;
+    validateRunState(state);
+    const input = t002RetentionInput(
+      root,
+      flow.learnedEvents,
+      flow.learnedEvents,
+      fixture.trustedFixtures,
+    );
+    input.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+    const captured = runtimeFunction('runCommand')('complete', {
+      mode: 'capture',
+      state,
+      input: cliInput(input),
+      completion: fixture.completion,
+    }).completion;
+    assert.equal(captured.captured, false);
+    assert.equal(captured.finalized, false);
+    t001AssertReconciliationConflictUnchanged('missing governance capture', state, captured);
+  });
+});
+
+test('T001 definition reconciliation: learning finalize refuses missing governance before successor construction', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const flow = t001PublicFlow(root, 'approach', 'no-progress');
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const proposal = t001LearningProposal(flow, { prestateDescriptors });
+    const fixture = t001CaptureDefinitionReconciliation(
+      root,
+      flow,
+      flow.learningVerified.transition.state,
+      proposal,
+      flow.fixtures,
+    );
+    const state = clone(fixture.captured.state);
+    delete state.learningGovernance;
+    validateRunState(state);
+    const input = t002RetentionInput(
+      root,
+      fixture.retainedEvents,
+      fixture.retainedEvents,
+      fixture.trustedFixtures,
+    );
+    input.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+    const finalized = runtimeFunction('runCommand')('complete', {
+      mode: 'finalize',
+      state,
+      input: cliInput(input),
+      projectionBatch: fixture.captured.projectionBatch,
+    }).completion;
+    assert.equal(finalized.captured, true);
+    assert.equal(finalized.finalized, false);
+    assert.equal(finalized.completed, false);
+    t001AssertReconciliationConflictUnchanged('missing governance finalize', state, finalized);
+  });
+});
+
+test('T001 definition reconciliation: learning capture and finalize refuse foreign-target governance unchanged', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const flow = t001PublicFlow(root, 'approach', 'no-progress');
+    const proposal = t001LearningProposal(flow, {
+      prestateDescriptors: t001WorkspaceDefinitionDescriptors(root),
+    });
+    const fixture = t001CaptureDefinitionReconciliation(
+      root,
+      flow,
+      flow.learningVerified.transition.state,
+      proposal,
+      flow.fixtures,
+    );
+    const foreignGovernance = t001ForeignProjectedGovernance(
+      flow.learningVerified.transition.state.learningGovernance,
+    );
+
+    const captureState = clone(fixture.authorized.state);
+    captureState.learningGovernance = clone(foreignGovernance);
+    validateRunState(captureState);
+    const captureInput = t002RetentionInput(
+      root,
+      flow.learnedEvents,
+      flow.learnedEvents,
+      fixture.trustedFixtures,
+    );
+    captureInput.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+    const captured = runtimeFunction('runCommand')('complete', {
+      mode: 'capture',
+      state: captureState,
+      input: cliInput(captureInput),
+      completion: fixture.completion,
+    }).completion;
+    assert.equal(captured.captured, false);
+    assert.equal(captured.finalized, false);
+    t001AssertReconciliationConflictUnchanged('foreign governance capture', captureState, captured);
+
+    const finalizeState = clone(fixture.captured.state);
+    finalizeState.learningGovernance = clone(foreignGovernance);
+    validateRunState(finalizeState);
+    const finalizeInput = t002RetentionInput(
+      root,
+      fixture.retainedEvents,
+      fixture.retainedEvents,
+      fixture.trustedFixtures,
+    );
+    finalizeInput.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+    const finalized = runtimeFunction('runCommand')('complete', {
+      mode: 'finalize',
+      state: finalizeState,
+      input: cliInput(finalizeInput),
+      projectionBatch: fixture.captured.projectionBatch,
+    }).completion;
+    assert.equal(finalized.captured, true);
+    assert.equal(finalized.finalized, false);
+    assert.equal(finalized.completed, false);
+    t001AssertReconciliationConflictUnchanged('foreign governance finalize', finalizeState, finalized);
+  });
+});
+
+test('T001 definition reconciliation: exact proposal identity binds bytes and every closed reference without semantic collapsing', () => {
+  const fixture = t002PendingFixture({ verdict: 'rejected', checkOutcome: 'failed' });
+  const proposal = t001ContradictionProposal(fixture);
+  recoveryRuntime.validateDefinitionRevisionProposalV1(proposal);
+  recoveryRuntime.validateDefinitionReconciliationEligibilityV1(proposal.eligibility);
+  const input = clone(proposal);
+  delete input.version;
+  delete input.proposalIdentity;
+  const variants = [];
+  const mutate = (label, change) => {
+    const candidate = clone(input);
+    change(candidate);
+    variants.push([label, recoveryRuntime.buildDefinitionRevisionProposalV1(candidate)]);
+  };
+  mutate('prestate descriptor', (candidate) => {
+    candidate.prestateDescriptors[0] = {
+      ...candidate.prestateDescriptors[0],
+      ...contentDescriptor('byte-different prestate'),
+    };
+  });
+  mutate('coordinator-final bytes', (candidate) => {
+    candidate.coordinatorFinalDescriptors[3] = {
+      ...candidate.coordinatorFinalDescriptors[3],
+      ...contentDescriptor('same-looking scope\n'),
+    };
+  });
+  mutate('mapping reference', (candidate) => { candidate.mappingReferences = [t003Hash('t001-other-map')]; });
+  mutate('reconciliation reference', (candidate) => {
+    candidate.reconciliationReferences = [t003Hash('t001-other-reconciliation')];
+  });
+  mutate('blocker reviewer reference', (candidate) => {
+    candidate.reviewerEvidenceReferences.blockerEvidenceIdentities = [
+      ...candidate.reviewerEvidenceReferences.blockerEvidenceIdentities,
+      t003Hash('t001-other-blocker'),
+    ].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+  });
+  mutate('decomposition reviewer reference', (candidate) => {
+    candidate.reviewerEvidenceReferences.decompositionEvidenceIdentities = [
+      t003Hash('t001-other-decomposition'),
+    ];
+  });
+  const semanticLookalike = clone(input);
+  semanticLookalike.coordinatorFinalDescriptors[3] = {
+    ...semanticLookalike.coordinatorFinalDescriptors[3],
+    ...contentDescriptor('same-looking scope'),
+  };
+  const byteDifferent = recoveryRuntime.buildDefinitionRevisionProposalV1(semanticLookalike);
+  assert.ok(variants.every(([, candidate]) => candidate.proposalIdentity !== proposal.proposalIdentity));
+  assert.notEqual(byteDifferent.proposalIdentity, variants[1][1].proposalIdentity);
+  const tampered = clone(proposal);
+  tampered.reviewerEvidenceReferences.decompositionEvidenceIdentities[0] = t003Hash('tampered-reference');
+  assert.throws(
+    () => recoveryRuntime.validateDefinitionRevisionProposalV1(tampered),
+    /proposalIdentity/,
+  );
+  assert.throws(
+    () => recoveryRuntime.validateDefinitionRevisionProposalV1(new Proxy(proposal, {})),
+    /must not be a Proxy/,
+  );
+  const accessor = clone(input);
+  Object.defineProperty(accessor.reviewerEvidenceReferences, 'extra', { enumerable: true, get: () => true });
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionRevisionProposalV1(accessor),
+    /enumerable data property/,
+  );
+});
+
+test('T002 definition revision proof: opaque hashes cannot replace a complete safety obligation mapping', () => {
+  const fixture = t002PendingFixture({ verdict: 'rejected', checkOutcome: 'failed' });
+  const proposal = t001ContradictionProposal(fixture);
+  recoveryRuntime.validateDefinitionRevisionProposalV1(proposal);
+  const categories = [
+    'acceptance',
+    'failure',
+    'meaning-of-done',
+    'outcome',
+    'quality',
+    'scope',
+  ].map((category) => ({
+    category,
+    preChangeAnchors: [t003Hash(`t002-${category}-old`)],
+    postChangeAnchors: [t003Hash(`t002-${category}-final`)],
+    mappings: [{
+      sourceAnchorIdentity: t003Hash(`t002-${category}-old`),
+      successorAnchorIdentities: [t003Hash(`t002-${category}-final`)],
+      relation: 'equal',
+    }],
+  }));
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionObligationMappingSetV1({ categories }),
+    /safety/,
+  );
+});
+
+const T015_T002_OBLIGATION_CATEGORIES = Object.freeze([
+  'acceptance',
+  'failure',
+  'meaning-of-done',
+  'outcome',
+  'quality',
+  'safety',
+  'scope',
+]);
+
+/** @param {string} taskKey @param {string} scopeIdentity @param {string} acceptanceIdentity */
+function t015T002TaskAnchor(taskKey, scopeIdentity, acceptanceIdentity) {
+  return {
+    taskKey,
+    taskScopeIdentity: scopeIdentity,
+    acceptanceObligationIdentities: [acceptanceIdentity],
+  };
+}
+
+/** @param {Record<string, unknown>} proof @param {Record<string, unknown>} [overrides] */
+function t015T002ReviewInput(proof, overrides = {}) {
+  const obligations = /** @type {Record<string, unknown>} */ (proof.obligationMappings);
+  const checks = /** @type {Record<string, unknown>} */ (proof.checkMappings);
+  const reconciliation = /** @type {Record<string, unknown>} */ (proof.taskReconciliation);
+  const reconciliationRows = /** @type {Record<string, unknown>[]} */ (reconciliation.rows)
+    .slice()
+    .sort((left, right) => Buffer.compare(
+      Buffer.from(/** @type {string} */ (left.reconciliationIdentity)),
+      Buffer.from(/** @type {string} */ (right.reconciliationIdentity)),
+    ));
+  const reviewerAuthorityIdentity = /** @type {string} */ (
+    overrides.reviewerAuthorityIdentity || t003Hash('t015-t002-reviewer')
+  );
+  const reviewInvocationIdentity = /** @type {string} */ (
+    overrides.reviewInvocationIdentity || t003Hash('t015-t002-review-invocation')
+  );
+  const preparationIdentity = /** @type {string} */ (
+    overrides.preparationIdentity || t003Hash('t015-t002-preparation')
+  );
+  const reviewRequestIdentity = /** @type {string} */ (
+    overrides.reviewRequestIdentity || t003Hash('t015-t002-review-request')
+  );
+  const authorities = /** @type {Record<string, unknown>} */ (proof.authorities);
+  return {
+    target: clone(proof.target),
+    proposalIdentity: proof.proposalIdentity,
+    proofIdentity: proof.proofIdentity,
+    preparationIdentity,
+    reviewRequestIdentity,
+    coordinatorFinalDescriptors: clone(proof.coordinatorFinalDescriptors),
+    coordinatorFinalDescriptorIdentity: proof.coordinatorFinalDescriptorIdentity,
+    reviewerAuthorityIdentity,
+    reviewInvocationIdentity,
+    stagerAuthorityIdentity: authorities.stagerAuthorityIdentity,
+    coordinatorAuthorityIdentity: authorities.coordinatorAuthorityIdentity,
+    outcomeJudgment: 'equivalent',
+    obligationJudgments: /** @type {Record<string, unknown>[]} */ (obligations.categories)
+      .flatMap((category) => /** @type {Record<string, unknown>[]} */ (category.mappings))
+      .map((mapping) => ({ identity: mapping.mappingIdentity, judgment: mapping.relation }))
+      .sort((left, right) => Buffer.compare(Buffer.from(left.identity), Buffer.from(right.identity))),
+    taskReconciliationJudgments: reconciliationRows.map((row) => ({
+      identity: row.reconciliationIdentity,
+      taskScopeJudgment: row.disposition === 'one-to-one-kept'
+        ? 'unchanged'
+        : 'not-state-preserving',
+      acceptanceObligationJudgment: row.disposition === 'one-to-one-kept'
+        ? 'unchanged'
+        : 'not-state-preserving',
+      decompositionBasisJudgment: ['one-to-one-kept', 'dropped-defective'].includes(
+        /** @type {string} */ (row.disposition),
+      ) ? 'equivalent' : 'different',
+    })),
+    checkJudgments: /** @type {Record<string, unknown>[]} */ (checks.mappings)
+      .map((mapping) => ({
+        identity: mapping.mappingIdentity,
+        intendedInvariantJudgment: 'adequate',
+        successorCheckJudgment: mapping.disposition === 'retained' ? 'not-applicable' : 'adequate',
+        triggerEvidenceJudgment: mapping.disposition === 'retained' ? 'not-applicable' : 'binding',
+      }))
+      .sort((left, right) => Buffer.compare(Buffer.from(left.identity), Buffer.from(right.identity))),
+    droppedDefectiveJudgments: reconciliationRows
+      .filter((row) => row.disposition === 'dropped-defective')
+      .map((row) => ({
+        identity: row.reconciliationIdentity,
+        defectClassificationJudgment: 'approved',
+        archiveAuthorityJudgment: 'approved',
+        successorTaskScopeJudgment: 'equivalent',
+        successorObligationJudgment: 'equal-or-stronger',
+        successorCheckJudgment: 'adequate',
+      })),
+    specEditClassJudgment: { specEditClass: proof.specEditClass, judgment: 'approved' },
+    finalResult: 'approved',
+    ...overrides,
+  };
+}
+
+/** @param {Record<string, unknown>} [options] */
+function t015T002RevisionFixture(options = {}) {
+  const label = /** @type {string} */ (options.label || 'base');
+  const eligibilityFixture = t002PendingFixture({
+    verdict: 'rejected',
+    checkOutcome: 'failed',
+    failureClass: 'definition-contradiction',
+    ...(options.sourceRevisionIdentity
+      ? { sourceRevisionIdentity: options.sourceRevisionIdentity }
+      : {}),
+  });
+  const finding = /** @type {Record<string, unknown>} */ (eligibilityFixture.finding);
+  const evidence = {
+    blockerEvidenceIdentity: /** @type {string} */ (finding.findingIdentity),
+    decompositionEvidenceIdentity: /** @type {string} */ (finding.basisIdentity),
+  };
+  const obligationAnchors = Object.fromEntries(T015_T002_OBLIGATION_CATEGORIES.map((category) => [
+    category,
+    {
+      old: t003Hash(`t015-t002-${label}-${category}-old`),
+      final: t003Hash(`t015-t002-${label}-${category}-final`),
+    },
+  ]));
+  const obligationRelation = /** @type {string} */ (options.obligationRelation || 'equal');
+  const obligationMappings = recoveryRuntime.buildDefinitionObligationMappingSetV1({
+    categories: T015_T002_OBLIGATION_CATEGORIES.map((category) => {
+      const anchors = /** @type {Record<string, string>} */ (obligationAnchors[category]);
+      return {
+        category,
+        preChangeAnchors: [anchors.old],
+        postChangeAnchors: [anchors.final],
+        mappings: [{
+          sourceAnchorIdentity: anchors.old,
+          successorAnchorIdentities: [anchors.final],
+          relation: obligationRelation,
+        }],
+      };
+    }),
+  });
+  const checkDisposition = /** @type {string} */ (options.checkDisposition || 'successor');
+  const oldCheckIdentity = t003Hash(`t015-t002-${label}-check-old`);
+  const newCheckIdentity = checkDisposition === 'retained'
+    ? oldCheckIdentity
+    : t003Hash(`t015-t002-${label}-check-final`);
+  const checkMappings = recoveryRuntime.buildDefinitionCheckMappingSetV1({
+    preChangeCheckAnchors: [oldCheckIdentity],
+    postChangeCheckAnchors: [newCheckIdentity],
+    mappings: [{
+      oldCheckIdentity,
+      newCheckIdentity,
+      disposition: checkDisposition,
+      intendedInvariantIdentity: /** @type {string} */ (
+        options.intendedInvariantIdentity || t003Hash(`t015-t002-${label}-invariant`)
+      ),
+      triggerEvidenceIdentities: checkDisposition === 'retained'
+        ? []
+        : /** @type {string[]} */ (
+          options.triggerEvidenceIdentities || [evidence.blockerEvidenceIdentity]
+        ),
+    }],
+  });
+  const acceptanceAnchors = /** @type {Record<string, string>} */ (obligationAnchors.acceptance);
+  const defaultRows = [{
+    disposition: 'one-to-one-kept',
+    oldTasks: [t015T002TaskAnchor(
+      TASK_KEY,
+      t003Hash(`t015-t002-${label}-scope`),
+      acceptanceAnchors.old,
+    )],
+    finalTasks: [t015T002TaskAnchor(
+      TASK_KEY,
+      t003Hash(`t015-t002-${label}-scope`),
+      acceptanceAnchors.final,
+    )],
+    decompositionBasisIdentities: [evidence.decompositionEvidenceIdentity],
+  }];
+  const taskRows = typeof options.taskRows === 'function'
+    ? options.taskRows({ obligationMappings, checkMappings, obligationAnchors, evidence })
+    : defaultRows;
+  const oldTaskKeys = taskRows
+    .flatMap((row) => row.oldTasks.map((task) => task.taskKey))
+    .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+  const finalTaskKeys = taskRows
+    .flatMap((row) => row.finalTasks.map((task) => task.taskKey))
+    .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+  const taskReconciliation = recoveryRuntime.buildDefinitionTaskReconciliationV1({
+    declaredOldTaskKeys: oldTaskKeys,
+    declaredFinalTaskKeys: finalTaskKeys,
+    rows: taskRows,
+  });
+  const proposalOverrides = {
+    mappingReferences: [
+      obligationMappings.componentIdentity,
+      checkMappings.componentIdentity,
+    ].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+    reconciliationReferences: [taskReconciliation.componentIdentity],
+  };
+  const proposal = options.eligibility
+    ? t001DefinitionProposal(
+      options.eligibility,
+      typeof options.reviewerEvidenceReferences === 'function'
+        ? options.reviewerEvidenceReferences({ evidence, taskReconciliation })
+        : options.reviewerEvidenceReferences,
+      proposalOverrides,
+    )
+    : t001ContradictionProposal(eligibilityFixture, proposalOverrides);
+  const proof = recoveryRuntime.buildDefinitionRevisionProofV1({
+    proposalIdentity: proposal.proposalIdentity,
+    target: clone(proposal.target),
+    owner: clone(proposal.owner),
+    eligibilityIdentity: proposal.eligibility.eligibilityIdentity,
+    prestateDescriptorIdentity: sha256(canonicalJson(proposal.prestateDescriptors)),
+    coordinatorFinalDescriptors: clone(proposal.coordinatorFinalDescriptors),
+    specEditClass: options.specEditClass || 'none',
+    authorities: {
+      stagerAuthorityIdentity: t003Hash(`t015-t002-${label}-stager`),
+      coordinatorAuthorityIdentity: t003Hash(`t015-t002-${label}-coordinator`),
+    },
+    obligationMappings,
+    checkMappings,
+    taskReconciliation,
+  });
+  const reviewInput = t015T002ReviewInput(
+    proof,
+    /** @type {Record<string, unknown>} */ (options.reviewOverrides || {}),
+  );
+  const review = recoveryRuntime.buildDefinitionRevisionSemanticReviewEnvelopeV1(
+    reviewInput,
+    proof,
+  );
+  const semanticReviewCapture = t002TrustedCapture(
+    review,
+    'independent-review',
+    /** @type {string} */ (review.reviewerAuthorityIdentity),
+    /** @type {string} */ (review.reviewInvocationIdentity),
+  );
+  return {
+    eligibilityFixture,
+    evidence,
+    obligationAnchors,
+    obligationMappings,
+    checkMappings,
+    taskReconciliation,
+    proposal,
+    proof,
+    review,
+    semanticReviewCapture,
+  };
+}
+
+/** @param {string[]} logLines */
+function t015T004OwnerBytes(logLines) {
+  return Buffer.from([
+    '---',
+    'title: Owner',
+    'slug: owner',
+    'status: defined',
+    `spec_path: ${SPEC_PATH}`,
+    '---',
+    '',
+    '## Idea',
+    '',
+    'Intent.',
+    '',
+    '## Open Questions',
+    '',
+    '- None.',
+    '',
+    '## Assumptions',
+    '',
+    '- Intent remains unchanged.',
+    '',
+    '<!-- dude:managed:start -->',
+    '## Coordinator Log',
+    '',
+    ...logLines,
+    '<!-- dude:managed:end -->',
+    '',
+  ].join('\n'));
+}
+
+/**
+ * @param {{id:string,glyph:string,description:string,blockedBy?:string,extraMeta?:string[]}[]} rows
+ * @param {string[]} [historyLines]
+ * @param {string[]} [discoveredLines]
+ */
+function t015T004TaskBytes(
+  rows,
+  historyLines = ['- prior execution event'],
+  discoveredLines = [],
+) {
+  const taskLines = rows.flatMap((row) => [
+    `- [${row.glyph}] ${row.id} [US1] ${row.description}`,
+    ...(row.blockedBy ? [`    blocked-by: ${row.blockedBy}`] : []),
+    ...(row.extraMeta || []),
+  ]);
+  return Buffer.from([
+    `<!-- audit log: ${IDEA_PATH}#coordinator-log -->`,
+    '# Tasks',
+    '',
+    '## Phase 1',
+    '',
+    ...taskLines,
+    ...(discoveredLines.length > 0
+      ? ['', '## Discovered During Execution', ...discoveredLines]
+      : []),
+    '',
+    '## Lightweight Execution History',
+    ...historyLines,
+    '',
+  ].join('\n'));
+}
+
+/** @param {Map<string, Buffer>} expected @param {Map<string, Buffer>} staged */
+function t015T004ArtifactRows(expected, staged) {
+  return definitionTargets().sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))
+    .map((artifactPath) => ({
+      path: artifactPath,
+      expected: Buffer.from(/** @type {Buffer} */ (expected.get(artifactPath))),
+      staged: Buffer.from(/** @type {Buffer} */ (staged.get(artifactPath))),
+    }));
+}
+
+/** @param {Record<string, unknown>} [options] */
+function t015T004CompositionFixture(options = {}) {
+  const mappingFixture = /** @type {ReturnType<typeof t015T002RevisionFixture>} */ (
+    options.mappingFixture || t015T002RevisionFixture({ label: options.label || 't004-kept' })
+  );
+  const currentTasks = /** @type {Buffer} */ (options.currentTasks || t015T004TaskBytes([{
+    id: TASK_KEY,
+    glyph: '~',
+    description: 'Unchanged task',
+    blockedBy: 'definition defect',
+  }]));
+  const stageTasks = /** @type {Buffer} */ (options.stageTasks || t015T004TaskBytes([{
+    id: TASK_KEY,
+    glyph: ' ',
+    description: 'Unchanged task',
+  }]));
+  const finalTasks = /** @type {Buffer} */ (options.finalTasks || t015T004TaskBytes([{
+    id: TASK_KEY,
+    glyph: '~',
+    description: 'Unchanged task',
+    blockedBy: 'definition defect',
+  }]));
+  const current = new Map([
+    [IDEA_PATH, t015T004OwnerBytes(['- current definition'])],
+    [PLAN_PATH, Buffer.from('# Plan\n\nCurrent plan.\n')],
+    [SPEC_PATH, Buffer.from('# Spec\n\nCurrent outcome.\n')],
+    [TASKS_PATH, currentTasks],
+  ]);
+  const staged = new Map([
+    [IDEA_PATH, t015T004OwnerBytes(['- current definition', '- Spec Lead stage'])],
+    [PLAN_PATH, Buffer.from('# Plan\n\nRepaired route.\n')],
+    [SPEC_PATH, Buffer.from('# Spec\n\nCurrent outcome clarified.\n')],
+    [TASKS_PATH, stageTasks],
+  ]);
+  const final = new Map([
+    [IDEA_PATH, t015T004OwnerBytes([
+      '- current definition',
+      '- Spec Lead stage',
+      '- coordinator reconciliation',
+    ])],
+    [PLAN_PATH, staged.get(PLAN_PATH)],
+    [SPEC_PATH, staged.get(SPEC_PATH)],
+    [TASKS_PATH, finalTasks],
+  ]);
+  const input = {
+    version: 1,
+    mode: 'autonomous',
+    intent: 'unchanged',
+    target: clone(TARGET),
+    owner: { ideaPath: IDEA_PATH, specPath: SPEC_PATH },
+    eligibility: clone(mappingFixture.proposal.eligibility),
+    stage: {
+      authorityIdentity: mappingFixture.proof.authorities.stagerAuthorityIdentity,
+      artifacts: t015T004ArtifactRows(current, staged),
+      specEditClass: mappingFixture.proof.specEditClass,
+      obligationMappings: clone(mappingFixture.obligationMappings),
+      checkMappings: clone(mappingFixture.checkMappings),
+      taskReconciliation: clone(mappingFixture.taskReconciliation),
+      reviewerEvidenceReferences: clone(mappingFixture.proposal.reviewerEvidenceReferences),
+    },
+    coordinator: {
+      authorityIdentity: mappingFixture.proof.authorities.coordinatorAuthorityIdentity,
+      artifacts: t015T004ArtifactRows(current, final),
+      archiveRecords: clone(options.archiveRecords || []),
+    },
+  };
+  return { mappingFixture, current, staged, final, input };
+}
+
+/** @param {ReturnType<typeof t015T004CompositionFixture>} fixture @param {Record<string, unknown>} [reviewOverrides] @param {string} [root] */
+function t015T004ReviewedComposition(fixture, reviewOverrides = {}, root) {
+  const composed = recoveryRuntime.composeDefinitionRecoveryV1(fixture.input);
+  let prepared = null;
+  let authorizationInspection = null;
+  let inspection;
+  let authorization = null;
+  if (root) {
+    const streams = t002TrustedStreams([fixture.mappingFixture.eligibilityFixture]);
+    const authorizationInput = autonomousInspectInput(root, {
+      currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(composed.proposal)])],
+      verification: streams.verification,
+      review: streams.review,
+    });
+    authorizationInspection = inspect(authorizationInput);
+    authorization = t001AuthorizeDefinition(autonomousState(), authorizationInput);
+    assert.equal(authorization.authorized, true);
+    recoveryRuntime.validateDefinitionRecoveryAuthorizationV1(
+      authorization,
+      composed.proposal,
+      authorizationInspection,
+    );
+    prepared = prepareDefinitionRecoveryV1({
+      lane: 'lightweight',
+      root,
+      specPath: SPEC_PATH,
+      authorization,
+      composition: fixture.input,
+    });
+  }
+  const reviewInput = t015T002ReviewInput(composed.proof, {
+    ...(prepared ? {
+      preparationIdentity: prepared.preparationIdentity,
+      reviewRequestIdentity: prepared.reviewRequestIdentity,
+    } : {}),
+    ...reviewOverrides,
+  });
+  const review = recoveryRuntime.buildDefinitionRevisionSemanticReviewEnvelopeV1(
+    reviewInput,
+    composed.proof,
+  );
+  const semanticReviewCapture = t015T002CaptureReview(review);
+  if (root) {
+    const streams = t002TrustedStreams([fixture.mappingFixture.eligibilityFixture]);
+    inspection = inspect(autonomousInspectInput(root, {
+      currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(composed.proposal)])],
+      verification: streams.verification,
+      review: [
+        ...streams.review,
+        capture(TARGET, t015T002ReviewStreamState(review.finalResult), [semanticReviewCapture]),
+      ],
+    }));
+  } else {
+    inspection = t015T002Inspection({
+      eligibilityFixture: fixture.mappingFixture.eligibilityFixture,
+      proposal: composed.proposal,
+      proof: composed.proof,
+      review,
+      semanticReviewCapture,
+    });
+  }
+  return {
+    composed,
+    prepared,
+    review,
+    semanticReviewCapture,
+    authorizationInspection,
+    inspection,
+    authorization,
+  };
+}
+
+/** @param {string} root @param {Map<string, Buffer>} files */
+function t015T004WriteFiles(root, files) {
+  for (const [relativePath, bytes] of files) {
+    fs.mkdirSync(path.dirname(path.join(root, relativePath)), { recursive: true });
+    fs.writeFileSync(path.join(root, relativePath), bytes);
+  }
+}
+
+/** @param {string} root @param {Map<string, Buffer>} files */
+function t015T004AssertFiles(root, files) {
+  for (const [relativePath, bytes] of files) {
+    assert.deepEqual(fs.readFileSync(path.join(root, relativePath)), bytes, relativePath);
+  }
+}
+
+/** @param {(root:string) => void} run */
+function withT015T004Workspace(run) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dude-t015-t004-')));
+  try {
+    run(root);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/** @param {string} root @param {Record<string, unknown>} [options] */
+function t015T004ExecutableFixture(root, options = {}) {
+  const mappingFixture = t015T002RevisionFixture({
+    ...options,
+    sourceRevisionIdentity: t001CurrentSourceRevisionIdentity(root),
+  });
+  const fixture = t015T004CompositionFixture({ ...options, mappingFixture });
+  const reviewed = t015T004ReviewedComposition(fixture, {}, root);
+  return { fixture, reviewed };
+}
+
+/** @param {Buffer} value */
+function t015T004Descriptor(value) {
+  return contentDescriptor(value);
+}
+
+/**
+ * Build a valid work-project request against the known coordinator-final bytes.
+ * The wrapper freshly reacquires these bytes only after definition acceptance.
+ * @param {string} root @param {Map<string, Buffer>} final @param {Buffer} snapshotBytes
+ */
+function t015T004LaneRefreshRequest(root, final, snapshotBytes, proposalIdentity) {
+  const tasks = /** @type {Buffer} */ (final.get(TASKS_PATH));
+  const owner = /** @type {Buffer} */ (final.get(IDEA_PATH));
+  const ownerCapture = recoveryRuntime.capturedBytesV1(owner);
+  const ownerBindingHash = sha256(canonicalJson({
+    ideaPath: IDEA_PATH,
+    specPath: SPEC_PATH,
+    ownerCapture: { sha256: ownerCapture.sha256, byteLength: ownerCapture.byteLength },
+  }));
+  const mapping = {
+    version: 1,
+    lane: 'lightweight',
+    target: clone(TARGET),
+    ownerBindingHash,
+    tasksPath: TASKS_PATH,
+    tasksDescriptor: t015T004Descriptor(tasks),
+    taskStatePath: '.dude/state/task-state.json',
+    taskStateDescriptor: t015T004Descriptor(snapshotBytes),
+    taskKey: TASK_KEY,
+  };
+  const prestate = {
+    version: 1,
+    lane: 'lightweight',
+    target: clone(TARGET),
+    glyph: '~',
+    blockedBy: 'definition defect',
+    tasksDescriptor: t015T004Descriptor(tasks),
+    taskStateDescriptor: t015T004Descriptor(snapshotBytes),
+    ownerDescriptor: t015T004Descriptor(owner),
+  };
+  const eventBody = {
+    type: 'definition-recovery-resumed',
+    version: 1,
+    proposalIdentity,
+  };
+  const event = { ...eventBody, eventHash: sha256(canonicalJson(eventBody)) };
+  const mutation = {
+    version: 1,
+    lane: 'lightweight',
+    kind: 'append-event',
+    reason: 'event-projection',
+    target: clone(TARGET),
+    fromGlyph: '~',
+    toGlyph: '~',
+    blocker: { kind: 'unchanged', before: 'definition defect', after: 'definition defect' },
+    eventLines: {
+      kind: 'append-exact',
+      lines: [{
+        eventHash: event.eventHash,
+        exactLine: `- dude-run-event: ${canonicalJson(event)}`,
+        terminator: 'LF',
+      }],
+      appendIfAbsent: true,
+    },
+    ownerLog: { kind: 'none' },
+    snapshotUpdatedAt: '2026-07-31T12:00:00Z',
+  };
+  const state = autonomousState();
+  const permitBody = {
+    version: 1,
+    kind: 'lane-projection',
+    origin: 'dude-work',
+    lane: 'lightweight',
+    target: clone(TARGET),
+    subjectRunStateHash: sha256(canonicalJson(state)),
+    batchIdentity: t003Hash('t015-t004-lane-batch'),
+    eventHash: event.eventHash,
+    targetMappingHash: sha256(canonicalJson(mapping)),
+    lanePrestateHash: sha256(canonicalJson(prestate)),
+    mutationIdentity: sha256(canonicalJson(mutation)),
+  };
+  return {
+    version: 1,
+    operation: 'work-project',
+    root,
+    owner: {
+      ideaPath: IDEA_PATH,
+      specPath: SPEC_PATH,
+      ownerCapture,
+      ownerBindingHash,
+    },
+    target: clone(TARGET),
+    state,
+    permit: { ...permitBody, permitHash: sha256(canonicalJson(permitBody)) },
+    mapping,
+    expected: {
+      tasksPath: TASKS_PATH,
+      tasks: recoveryRuntime.capturedBytesV1(tasks),
+      taskStatePath: '.dude/state/task-state.json',
+      taskState: recoveryRuntime.capturedBytesV1(snapshotBytes),
+    },
+    mutation,
+  };
+}
+
+/** @param {ReturnType<typeof t015T004CompositionFixture>} fixture @param {ReturnType<typeof t015T004ReviewedComposition>} reviewed @param {string} root */
+function t015T004DefinitionExecution(fixture, reviewed, root) {
+  return {
+    prepared: reviewed.prepared,
+    inspection: reviewed.inspection,
+    gates: {
+      lint: () => ({ status: 'passed', evidenceIdentity: t003Hash('t015-t004-wrapper-lint') }),
+      verification: () => ({
+        status: 'passed',
+        evidenceIdentity: t003Hash('t015-t004-wrapper-verification'),
+      }),
+    },
+  };
+}
+
+test('T004 integration composition: exact stage becomes reviewed final bytes and kept state survives one-to-one', () => {
+  const fixture = t015T004CompositionFixture();
+  const composed = recoveryRuntime.composeDefinitionRecoveryV1(fixture.input);
+  recoveryRuntime.validateDefinitionRevisionProofBindingV1(composed.proposal, composed.proof);
+  assert.deepEqual(
+    composed.proposal.coordinatorFinalDescriptors,
+    t001DefinitionDescriptors('unused').map((descriptor) => {
+      const bytes = fixture.final.get(descriptor.path);
+      assert.ok(bytes);
+      return { path: descriptor.path, ...contentDescriptor(bytes) };
+    }),
+  );
+  assert.equal(composed.reconciliationEvidence.historyAppend, null);
+  assert.match(
+    composed.changes.find((change) => change.path === TASKS_PATH).staged.toString('utf8'),
+    new RegExp(`- \\[~\\] ${TASK_KEY} .*\n    blocked-by: definition defect`),
+  );
+
+  const preReconciliation = clone(fixture.input);
+  preReconciliation.coordinator.artifacts = clone(fixture.input.stage.artifacts);
+  assert.throws(
+    () => recoveryRuntime.composeDefinitionRecoveryV1(preReconciliation),
+    /kept task.*preserve|coordinator-final tasks/i,
+  );
+
+  const partialStage = clone(fixture.input);
+  const finalPlan = partialStage.coordinator.artifacts.find((row) => row.path === PLAN_PATH);
+  finalPlan.staged = Buffer.from('# Plan\n\nCoordinator-only route drift.\n');
+  assert.throws(
+    () => recoveryRuntime.composeDefinitionRecoveryV1(partialStage),
+    /exact Spec Lead stage/,
+  );
+});
+
+test('T004 integration composition: discovered work is preserved byte-for-byte outside reconciliation', () => {
+  const discovered = ['- [ ] T9001@bbbbbbbb [Shared] Preserve discovered work'];
+  const currentTasks = t015T004TaskBytes([{
+    id: TASK_KEY,
+    glyph: '~',
+    description: 'Unchanged task',
+  }], ['- prior execution event'], discovered);
+  const stageTasks = t015T004TaskBytes([{
+    id: TASK_KEY,
+    glyph: ' ',
+    description: 'Unchanged task',
+  }], ['- prior execution event'], discovered);
+  const finalTasks = t015T004TaskBytes([{
+    id: TASK_KEY,
+    glyph: '~',
+    description: 'Unchanged task',
+  }], ['- prior execution event'], discovered);
+  const fixture = t015T004CompositionFixture({ currentTasks, stageTasks, finalTasks });
+  const composed = recoveryRuntime.composeDefinitionRecoveryV1(fixture.input);
+  assert.match(
+    composed.changes.find((change) => change.path === TASKS_PATH).staged.toString('utf8'),
+    /T9001@bbbbbbbb \[Shared\] Preserve discovered work/,
+  );
+
+  const drifted = clone(fixture.input);
+  const taskRow = drifted.coordinator.artifacts.find((row) => row.path === TASKS_PATH);
+  taskRow.staged = t015T004TaskBytes([{
+    id: TASK_KEY,
+    glyph: '~',
+    description: 'Unchanged task',
+  }], ['- prior execution event'], ['- [ ] T9001@bbbbbbbb [Shared] Changed discovered work']);
+  assert.throws(
+    () => recoveryRuntime.composeDefinitionRecoveryV1(drifted),
+    /discovered work.*byte-identical/,
+  );
+});
+
+test('T004 integration reconciliation: changed tasks reopen without inherited state or completion metadata', () => {
+  const mappingFixture = t015T002RevisionFixture({
+    label: 't004-changed',
+    taskRows: ({ obligationAnchors, evidence }) => [{
+      disposition: 'changed',
+      oldTasks: [t015T002TaskAnchor(
+        TASK_KEY,
+        t003Hash('t015-t004-changed-old-scope'),
+        obligationAnchors.acceptance.old,
+      )],
+      finalTasks: [t015T002TaskAnchor(
+        TASK_KEY,
+        t003Hash('t015-t004-changed-final-scope'),
+        obligationAnchors.acceptance.final,
+      )],
+      decompositionBasisIdentities: [evidence.decompositionEvidenceIdentity],
+    }],
+  });
+  const fixture = t015T004CompositionFixture({
+    mappingFixture,
+    currentTasks: t015T004TaskBytes([{
+      id: TASK_KEY,
+      glyph: 'x',
+      description: 'Defective task',
+      extraMeta: ['    completion-evidence: stale'],
+    }]),
+    stageTasks: t015T004TaskBytes([{ id: TASK_KEY, glyph: ' ', description: 'Repaired task' }]),
+    finalTasks: t015T004TaskBytes([{ id: TASK_KEY, glyph: ' ', description: 'Repaired task' }]),
+  });
+  assert.doesNotThrow(() => recoveryRuntime.composeDefinitionRecoveryV1(fixture.input));
+
+  const inherited = clone(fixture.input);
+  const taskRow = inherited.coordinator.artifacts.find((row) => row.path === TASKS_PATH);
+  taskRow.staged = t015T004TaskBytes([{
+    id: TASK_KEY,
+    glyph: 'x',
+    description: 'Repaired task',
+    extraMeta: ['    completion-evidence: stale'],
+  }]);
+  assert.throws(
+    () => recoveryRuntime.composeDefinitionRecoveryV1(inherited),
+    /successor task.*open|canonical task meaning/i,
+  );
+});
+
+test('T004 integration reconciliation: split, merge, and new successors all start open', () => {
+  const cases = [
+    {
+      label: 'split',
+      taskRows: ({ obligationAnchors, evidence }) => [{
+        disposition: 'split',
+        oldTasks: [t015T002TaskAnchor(
+          TASK_KEY,
+          t003Hash('t015-t004-split-old-scope'),
+          obligationAnchors.acceptance.old,
+        )],
+        finalTasks: [
+          t015T002TaskAnchor(SECOND_TASK_KEY, t003Hash('t015-t004-split-a'), obligationAnchors.acceptance.final),
+          t015T002TaskAnchor(THIRD_TASK_KEY, t003Hash('t015-t004-split-b'), obligationAnchors.acceptance.final),
+        ],
+        decompositionBasisIdentities: [evidence.decompositionEvidenceIdentity],
+      }],
+      current: [{ id: TASK_KEY, glyph: '!', description: 'Old split task', blockedBy: 'defect' }],
+      final: [
+        { id: SECOND_TASK_KEY, glyph: ' ', description: 'Split successor A' },
+        { id: THIRD_TASK_KEY, glyph: ' ', description: 'Split successor B' },
+      ],
+    },
+    {
+      label: 'merge',
+      taskRows: ({ obligationAnchors, evidence }) => [{
+        disposition: 'merged',
+        oldTasks: [
+          t015T002TaskAnchor(TASK_KEY, t003Hash('t015-t004-merge-a'), obligationAnchors.acceptance.old),
+          t015T002TaskAnchor(SECOND_TASK_KEY, t003Hash('t015-t004-merge-b'), obligationAnchors.acceptance.old),
+        ],
+        finalTasks: [t015T002TaskAnchor(
+          THIRD_TASK_KEY,
+          t003Hash('t015-t004-merged-scope'),
+          obligationAnchors.acceptance.final,
+        )],
+        decompositionBasisIdentities: [evidence.decompositionEvidenceIdentity],
+      }],
+      current: [
+        { id: TASK_KEY, glyph: '~', description: 'Merge source A' },
+        { id: SECOND_TASK_KEY, glyph: 'x', description: 'Merge source B' },
+      ],
+      final: [{ id: THIRD_TASK_KEY, glyph: ' ', description: 'Merged successor' }],
+    },
+    {
+      label: 'new',
+      taskRows: ({ obligationAnchors, evidence }) => [
+        {
+          disposition: 'one-to-one-kept',
+          oldTasks: [t015T002TaskAnchor(
+            TASK_KEY,
+            t003Hash('t015-t004-new-kept-scope'),
+            obligationAnchors.acceptance.old,
+          )],
+          finalTasks: [t015T002TaskAnchor(
+            TASK_KEY,
+            t003Hash('t015-t004-new-kept-scope'),
+            obligationAnchors.acceptance.final,
+          )],
+          decompositionBasisIdentities: [evidence.decompositionEvidenceIdentity],
+        },
+        {
+          disposition: 'new',
+          oldTasks: [],
+          finalTasks: [t015T002TaskAnchor(
+            SECOND_TASK_KEY,
+            t003Hash('t015-t004-new-scope'),
+            obligationAnchors.acceptance.final,
+          )],
+          decompositionBasisIdentities: [evidence.decompositionEvidenceIdentity],
+        },
+      ],
+      current: [{ id: TASK_KEY, glyph: '~', description: 'Kept task' }],
+      final: [
+        { id: TASK_KEY, glyph: '~', description: 'Kept task' },
+        { id: SECOND_TASK_KEY, glyph: ' ', description: 'New task' },
+      ],
+    },
+  ];
+  for (const fixtureCase of cases) {
+    const mappingFixture = t015T002RevisionFixture({
+      label: `t004-${fixtureCase.label}`,
+      taskRows: fixtureCase.taskRows,
+    });
+    const stagedRows = fixtureCase.final.map((row) => ({ ...row, glyph: ' ', blockedBy: undefined }));
+    const fixture = t015T004CompositionFixture({
+      mappingFixture,
+      currentTasks: t015T004TaskBytes(fixtureCase.current),
+      stageTasks: t015T004TaskBytes(stagedRows),
+      finalTasks: t015T004TaskBytes(fixtureCase.final),
+    });
+    const composed = recoveryRuntime.composeDefinitionRecoveryV1(fixture.input);
+    const taskBytes = composed.changes.find((change) => change.path === TASKS_PATH).staged;
+    const parsed = parseTasks(taskBytes.toString('utf8'));
+    for (const row of fixtureCase.final) {
+      if (fixtureCase.label === 'new' && row.id === TASK_KEY) continue;
+      assert.equal(parsed.byId.get(row.id)?.glyph, ' ', `${fixtureCase.label}:${row.id}`);
+      assert.equal(parsed.byId.get(row.id)?.blockedBy, null, `${fixtureCase.label}:${row.id}`);
+      assert.deepEqual(parsed.byId.get(row.id)?.extraMeta, [], `${fixtureCase.label}:${row.id}`);
+    }
+  }
+});
+
+test('T004 integration reconciliation: an ordinary open drop is allowed but every non-open drop pauses', () => {
+  const mappingFixture = t015T002RevisionFixture({
+    label: 't004-ordinary-drop',
+    taskRows: ({ obligationAnchors, evidence }) => [
+      {
+        disposition: 'dropped',
+        oldTasks: [t015T002TaskAnchor(
+          TASK_KEY,
+          t003Hash('t015-t004-drop-old-scope'),
+          obligationAnchors.acceptance.old,
+        )],
+        finalTasks: [],
+        decompositionBasisIdentities: [evidence.decompositionEvidenceIdentity],
+      },
+      {
+        disposition: 'new',
+        oldTasks: [],
+        finalTasks: [t015T002TaskAnchor(
+          SECOND_TASK_KEY,
+          t003Hash('t015-t004-drop-new-scope'),
+          obligationAnchors.acceptance.final,
+        )],
+        decompositionBasisIdentities: [evidence.decompositionEvidenceIdentity],
+      },
+    ],
+  });
+  const fixtureFor = (glyph) => t015T004CompositionFixture({
+    mappingFixture,
+    currentTasks: t015T004TaskBytes([{ id: TASK_KEY, glyph, description: 'Ordinary dropped task' }]),
+    stageTasks: t015T004TaskBytes([{ id: SECOND_TASK_KEY, glyph: ' ', description: 'Replacement task' }]),
+    finalTasks: t015T004TaskBytes([{ id: SECOND_TASK_KEY, glyph: ' ', description: 'Replacement task' }]),
+  });
+  assert.doesNotThrow(() => recoveryRuntime.composeDefinitionRecoveryV1(fixtureFor(' ').input));
+  for (const glyph of ['~', '!', 'x']) {
+    assert.throws(
+      () => recoveryRuntime.composeDefinitionRecoveryV1(fixtureFor(glyph).input),
+      /clarification-required.*non-open task/,
+      glyph,
+    );
+  }
+});
+
+test('T004 integration reconciliation: fenced-board raw omission refuses missing real-task mapping', () => {
+  const currentTasks = Buffer.from([
+    `<!-- audit log: ${IDEA_PATH}#coordinator-log -->`,
+    '# Tasks',
+    '',
+    '## Phase 1',
+    '',
+    `- [~] ${TASK_KEY} [US1] Unchanged task`,
+    '    blocked-by: definition defect',
+    '```md',
+    BOARD_START,
+    '```',
+    `- [x] ${SECOND_TASK_KEY} [US1] Real completed task hidden from raw parsing`,
+    '<!--',
+    BOARD_END,
+    '-->',
+    '',
+    '## Lightweight Execution History',
+    '- prior execution event',
+    '',
+  ].join('\n'));
+  assert.deepEqual(
+    parseTasks(currentTasks.toString('utf8')).tasks.map((task) => task.id),
+    [TASK_KEY],
+    'the raw parser omits the real task between inert board lookalikes',
+  );
+  const fixture = t015T004CompositionFixture({ currentTasks });
+  assert.throws(
+    () => recoveryRuntime.composeDefinitionRecoveryV1(fixture.input),
+    /must exactly cover current and coordinator-final canonical tasks/,
+  );
+});
+
+/** @param {Record<string, unknown>} mappingFixture @param {string} priorGlyph */
+function t015T004DroppedArchive(mappingFixture, priorGlyph = 'x') {
+  const row = mappingFixture.taskReconciliation.rows.find(
+    (candidate) => candidate.disposition === 'dropped-defective',
+  );
+  const archive = row.archive;
+  return {
+    type: 'dropped-defective',
+    version: 1,
+    reconciliationIdentity: row.reconciliationIdentity,
+    archiveIdentity: archive.archiveIdentity,
+    priorTaskKey: row.oldTasks[0].taskKey,
+    priorTaskScopeIdentity: row.oldTasks[0].taskScopeIdentity,
+    priorGlyph,
+    defectReason: 'Trusted evidence proves the old literal gate is defective.',
+    defectEvidenceIdentities: clone(archive.defectEvidenceIdentities),
+    triggerEvidenceIdentities: clone(archive.triggerEvidenceIdentities),
+    successorTaskKeys: clone(archive.successorTaskKeys),
+    successorObligationMappingIdentities: clone(archive.successorObligationMappingIdentities),
+    successorCheckMappingIdentities: clone(archive.successorCheckMappingIdentities),
+  };
+}
+
+/** @param {Record<string, unknown>} [options] */
+function t015T004DroppedDefectiveFixture(options = {}) {
+  const mappingFixture = t015T002RevisionFixture({
+    label: options.label || 't004-dropped-defective',
+    taskRows: t015T002DroppedRows,
+  });
+  const archiveRecord = t015T004DroppedArchive(mappingFixture);
+  const archiveLine = `${DEFINITION_RECOVERY_ARCHIVE_PREFIX_FOR_TEST}${canonicalJson(archiveRecord)}`;
+  const fixture = t015T004CompositionFixture({
+    mappingFixture,
+    currentTasks: t015T004TaskBytes([{
+      id: TASK_KEY,
+      glyph: 'x',
+      description: 'Defective completed task',
+      extraMeta: ['    completion-evidence: prior-result'],
+    }]),
+    stageTasks: t015T004TaskBytes([{
+      id: SECOND_TASK_KEY,
+      glyph: ' ',
+      description: 'Equal-or-stronger successor',
+    }]),
+    finalTasks: t015T004TaskBytes([{
+      id: SECOND_TASK_KEY,
+      glyph: ' ',
+      description: 'Equal-or-stronger successor',
+    }], ['- prior execution event', archiveLine]),
+    archiveRecords: [archiveRecord],
+  });
+  return { mappingFixture, archiveRecord, archiveLine, fixture };
+}
+
+const DEFINITION_RECOVERY_ARCHIVE_PREFIX_FOR_TEST = '- dude-definition-recovery-archive: ';
+
+test('T004 integration dropped-defective: exact autonomous archive opens successors and never completes the drop', () => {
+  const dropped = t015T004DroppedDefectiveFixture();
+  const composed = recoveryRuntime.composeDefinitionRecoveryV1(dropped.fixture.input);
+  assert.deepEqual(
+    composed.reconciliationEvidence.historyAppend.bytes,
+    Buffer.from(`${dropped.archiveLine}\n`),
+  );
+  const parsed = parseTasks(
+    composed.changes.find((change) => change.path === TASKS_PATH).staged.toString('utf8'),
+  );
+  assert.equal(parsed.byId.has(TASK_KEY), false);
+  assert.equal(parsed.byId.get(SECOND_TASK_KEY)?.glyph, ' ');
+  assert.equal(parsed.byId.get(SECOND_TASK_KEY)?.extraMeta.length, 0);
+  assert.match(parsed.history?.suffix || '', /"priorGlyph":"x"/);
+  assert.doesNotMatch(parsed.history?.suffix || '', /\[x\].*dropped-defective/);
+  assert.equal(t015T004ReviewedComposition(dropped.fixture).review.finalResult, 'approved');
+});
+
+test('T004 integration dropped-defective: every missing composition safeguard refuses before writes', () => {
+  const cases = [
+    ['not autonomous', (input) => { input.mode = 'guarded'; }, /explicit autonomous/],
+    ['changed intent', (input) => { input.intent = 'changed'; }, /unchanged-intent/],
+    ['missing archive', (input) => { input.coordinator.archiveRecords = []; }, /exactly one record/],
+    ['wrong prior state', (input) => { input.coordinator.archiveRecords[0].priorGlyph = '~'; }, /exact non-open prior task/],
+    ['missing defect evidence', (input) => { input.coordinator.archiveRecords[0].defectEvidenceIdentities = []; }, /1 through 64 rows/],
+    ['wrong successor mapping', (input) => {
+      input.coordinator.archiveRecords[0].successorTaskKeys = [THIRD_TASK_KEY];
+    }, /exact reviewed archive mapping/],
+    ['inherited successor completion', (input) => {
+      const task = input.coordinator.artifacts.find((row) => row.path === TASKS_PATH);
+      task.staged = t015T004TaskBytes([{
+        id: SECOND_TASK_KEY,
+        glyph: 'x',
+        description: 'Equal-or-stronger successor',
+        extraMeta: ['    completion-evidence: inherited'],
+      }], ['- prior execution event', `${DEFINITION_RECOVERY_ARCHIVE_PREFIX_FOR_TEST}${canonicalJson(input.coordinator.archiveRecords[0])}`]);
+    }, /successor task.*open|canonical task meaning/i],
+    ['lost prior history', (input) => {
+      const task = input.coordinator.artifacts.find((row) => row.path === TASKS_PATH);
+      task.staged = t015T004TaskBytes([{
+        id: SECOND_TASK_KEY,
+        glyph: ' ',
+        description: 'Equal-or-stronger successor',
+      }], [`${DEFINITION_RECOVERY_ARCHIVE_PREFIX_FOR_TEST}${canonicalJson(input.coordinator.archiveRecords[0])}`]);
+    }, /preserve prior history/],
+  ];
+  for (const [label, mutate, expected] of cases) {
+    const dropped = t015T004DroppedDefectiveFixture({ label: `t004-negative-${label}` });
+    const input = clone(dropped.fixture.input);
+    mutate(input);
+    assert.throws(
+      () => recoveryRuntime.composeDefinitionRecoveryV1(input),
+      expected,
+      label,
+    );
+  }
+});
+
+test('T004 integration authority: guarded and non-Work composition remain unavailable', () => {
+  for (const mode of ['guarded', 'non-work']) {
+    const fixture = t015T004CompositionFixture({ label: `t004-${mode}` });
+    fixture.input.mode = mode;
+    assert.throws(
+      () => recoveryRuntime.composeDefinitionRecoveryV1(fixture.input),
+      /explicit autonomous unchanged-intent recovery/,
+      mode,
+    );
+  }
+});
+
+test('T004 integration dropped-defective: reviewer rejection pauses before writes', () => {
+  const seed = t015T004DroppedDefectiveFixture({ label: 't004-dropped-review-rejection' });
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.fixture.current);
+    const mappingFixture = t015T002RevisionFixture({
+      label: 't004-dropped-review-rejection-executable',
+      taskRows: t015T002DroppedRows,
+      sourceRevisionIdentity: t001CurrentSourceRevisionIdentity(root),
+    });
+    const archiveRecord = t015T004DroppedArchive(mappingFixture);
+    const archiveLine = `${DEFINITION_RECOVERY_ARCHIVE_PREFIX_FOR_TEST}${canonicalJson(archiveRecord)}`;
+    const fixture = t015T004CompositionFixture({
+      mappingFixture,
+      currentTasks: seed.fixture.current.get(TASKS_PATH),
+      stageTasks: t015T004TaskBytes([{
+        id: SECOND_TASK_KEY,
+        glyph: ' ',
+        description: 'Equal-or-stronger successor',
+      }]),
+      finalTasks: t015T004TaskBytes([{
+        id: SECOND_TASK_KEY,
+        glyph: ' ',
+        description: 'Equal-or-stronger successor',
+      }], ['- prior execution event', archiveLine]),
+      archiveRecords: [archiveRecord],
+    });
+    const composed = recoveryRuntime.composeDefinitionRecoveryV1(fixture.input);
+    const rejectedJudgments = t015T002ReviewInput(composed.proof).droppedDefectiveJudgments;
+    rejectedJudgments[0].archiveAuthorityJudgment = 'rejected';
+    const reviewed = t015T004ReviewedComposition(fixture, {
+      droppedDefectiveJudgments: rejectedJudgments,
+      finalResult: 'rejected',
+    }, root);
+    const result = commitDefinitionRecoveryV1({
+      ...t015T004DefinitionExecution(fixture, reviewed, root),
+    });
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'review-rejected');
+    assert.equal(result.semanticReviewCount, 1);
+    t015T004AssertFiles(root, seed.fixture.current);
+  });
+});
+
+test('T004 integration execution: compose, one review, exact apply, rollback gates, then definition acceptance', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root);
+    const gates = [];
+    const result = commitDefinitionRecoveryV1({
+      prepared: reviewed.prepared,
+      inspection: reviewed.inspection,
+      gates: {
+        lint() {
+          gates.push('lint');
+          return { status: 'passed', evidenceIdentity: t003Hash('t015-t004-lint') };
+        },
+        verification() {
+          gates.push('verification');
+          return { status: 'passed', evidenceIdentity: t003Hash('t015-t004-verification') };
+        },
+      },
+    });
+    assert.equal(result.accepted, true);
+    assert.equal(result.reason, 'definition-accepted');
+    assert.equal(result.semanticReviewCount, 1);
+    assert.equal(result.reviewIdentity, reviewed.review.reviewIdentity);
+    assert.deepEqual(result.applied, { count: 4, paths: definitionTargets().sort() });
+    assert.deepEqual(gates, ['lint', 'verification']);
+    t015T004AssertFiles(root, fixture.final);
+  });
+});
+
+test('T004 integration prepare: frozen capability carries exact final-byte review material and clones reject', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-prepared-capability',
+    });
+    const prepared = reviewed.prepared;
+    assert.equal(Object.isFrozen(prepared), true);
+    assert.equal(Object.isFrozen(prepared.reviewRequest), true);
+    assert.equal(Object.isFrozen(prepared.reviewRequest.finalArtifacts), true);
+    assert.equal(prepared.root, fs.realpathSync(root));
+    assert.equal(prepared.reviewRequest.preparationIdentity, prepared.preparationIdentity);
+    assert.equal(prepared.reviewRequest.reviewRequestIdentity, prepared.reviewRequestIdentity);
+    for (const artifact of prepared.reviewRequest.finalArtifacts) {
+      const expected = fixture.final.get(artifact.path);
+      assert.ok(expected);
+      assert.deepEqual(Buffer.from(artifact.bytes.base64, 'base64'), expected);
+      assert.deepEqual(
+        { sha256: artifact.bytes.sha256, byteLength: artifact.bytes.byteLength },
+        contentDescriptor(expected),
+      );
+    }
+    assert.throws(() => commitDefinitionRecoveryV1({
+      ...t015T004DefinitionExecution(fixture, reviewed, root),
+      prepared: clone(prepared),
+    }), /original prepared capability/);
+    t015T004AssertFiles(root, seed.current);
+  });
+});
+
+test('T004 integration prepare ordering: review acquisition starts only after zero-write preparation', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const mappingFixture = t015T002RevisionFixture({
+      label: 't004-prepare-order-spy',
+      sourceRevisionIdentity: t001CurrentSourceRevisionIdentity(root),
+    });
+    const fixture = t015T004CompositionFixture({ mappingFixture });
+    const composed = recoveryRuntime.composeDefinitionRecoveryV1(fixture.input);
+    const streams = t002TrustedStreams([mappingFixture.eligibilityFixture]);
+    const authorizationInput = autonomousInspectInput(root, {
+      currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(composed.proposal)])],
+      verification: streams.verification,
+      review: streams.review,
+    });
+    const authorization = t001AuthorizeDefinition(autonomousState(), authorizationInput);
+    assert.equal(authorization.authorized, true);
+
+    let inspectionReads = 0;
+    const forbiddenInspection = new Proxy({}, {
+      get() {
+        inspectionReads += 1;
+        throw new Error('prepare must not consult review Inspection');
+      },
+    });
+    const writeMethods = ['writeFileSync', 'renameSync', 'mkdirSync', 'unlinkSync', 'rmdirSync'];
+    const originals = new Map(writeMethods.map((method) => [method, fs[method]]));
+    let writes = 0;
+    let prepared;
+    try {
+      for (const method of writeMethods) {
+        Reflect.set(fs, method, (...args) => {
+          writes += 1;
+          return Reflect.apply(originals.get(method), fs, args);
+        });
+      }
+      assert.throws(() => prepareDefinitionRecoveryV1({
+        lane: 'lightweight',
+        root,
+        specPath: SPEC_PATH,
+        authorization,
+        composition: fixture.input,
+        inspection: forbiddenInspection,
+      }), /unknown field inspection/);
+      prepared = prepareDefinitionRecoveryV1({
+        lane: 'lightweight',
+        root,
+        specPath: SPEC_PATH,
+        authorization,
+        composition: fixture.input,
+      });
+    } finally {
+      for (const [method, original] of originals) Reflect.set(fs, method, original);
+    }
+    assert.equal(inspectionReads, 0);
+    assert.equal(writes, 0);
+
+    const order = ['prepared'];
+    const review = (() => {
+      assert.ok(prepared);
+      order.push('review-acquired');
+      return recoveryRuntime.buildDefinitionRevisionSemanticReviewEnvelopeV1(
+        t015T002ReviewInput(composed.proof, {
+          preparationIdentity: prepared.preparationIdentity,
+          reviewRequestIdentity: prepared.reviewRequestIdentity,
+        }),
+        composed.proof,
+      );
+    })();
+    assert.deepEqual(order, ['prepared', 'review-acquired']);
+    assert.equal(review.preparationIdentity, prepared.preparationIdentity);
+    t015T004AssertFiles(root, seed.current);
+  });
+});
+
+test('T004 integration review binding: another preparation and duplicate exact requests refuse with derived counts', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-review-binding',
+    });
+    const secondPrepared = prepareDefinitionRecoveryV1({
+      lane: 'lightweight',
+      root,
+      specPath: SPEC_PATH,
+      authorization: reviewed.authorization,
+      composition: fixture.input,
+    });
+    assert.notEqual(secondPrepared.preparationIdentity, reviewed.prepared.preparationIdentity);
+    const foreign = commitDefinitionRecoveryV1({
+      ...t015T004DefinitionExecution(fixture, reviewed, root),
+      prepared: secondPrepared,
+    });
+    assert.equal(foreign.accepted, false);
+    assert.equal(foreign.reason, 'review-request-mismatch');
+    assert.equal(foreign.semanticReviewCount, 0);
+
+    const secondReview = recoveryRuntime.buildDefinitionRevisionSemanticReviewEnvelopeV1(
+      t015T002ReviewInput(reviewed.composed.proof, {
+        preparationIdentity: reviewed.prepared.preparationIdentity,
+        reviewRequestIdentity: reviewed.prepared.reviewRequestIdentity,
+        reviewerAuthorityIdentity: t003Hash('t004-duplicate-reviewer'),
+        reviewInvocationIdentity: t003Hash('t004-duplicate-review-invocation'),
+      }),
+      reviewed.composed.proof,
+    );
+    const streams = t002TrustedStreams([fixture.mappingFixture.eligibilityFixture]);
+    const duplicateInspection = inspect(autonomousInspectInput(root, {
+      currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(reviewed.composed.proposal)])],
+      verification: streams.verification,
+      review: [
+        ...streams.review,
+        capture(TARGET, 'accepted', [
+          reviewed.semanticReviewCapture,
+          t015T002CaptureReview(secondReview),
+        ]),
+      ],
+    }));
+    const duplicate = commitDefinitionRecoveryV1({
+      prepared: reviewed.prepared,
+      inspection: duplicateInspection,
+      gates: t015T004DefinitionExecution(fixture, reviewed, root).gates,
+    });
+    assert.equal(duplicate.accepted, false);
+    assert.equal(duplicate.reason, 'ambiguous-review-evidence');
+    assert.equal(duplicate.semanticReviewCount, 2);
+    t015T004AssertFiles(root, seed.current);
+  });
+});
+
+test('T004 integration commit: prepare-to-review drift refuses before gates or writes', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-prepared-drift',
+    });
+    const driftedPlan = Buffer.from('# Plan\n\nDrifted after preparation.\n');
+    fs.writeFileSync(path.join(root, PLAN_PATH), driftedPlan);
+    let gateCalls = 0;
+    let inspectionReads = 0;
+    const inspection = new Proxy(reviewed.inspection, {
+      get() {
+        inspectionReads += 1;
+        throw new Error('drift preflight must run before review acquisition');
+      },
+    });
+    assert.throws(() => commitDefinitionRecoveryV1({
+      prepared: reviewed.prepared,
+      inspection,
+      gates: {
+        lint() { gateCalls += 1; return { status: 'passed', evidenceIdentity: t003Hash('drift-lint') }; },
+        verification() { gateCalls += 1; return { status: 'passed', evidenceIdentity: t003Hash('drift-verification') }; },
+      },
+    }), /does not match expected bytes|expected.*mismatch/i);
+    assert.equal(gateCalls, 0);
+    assert.equal(inspectionReads, 0);
+    assert.deepEqual(fs.readFileSync(path.join(root, PLAN_PATH)), driftedPlan);
+    for (const artifactPath of [IDEA_PATH, SPEC_PATH, TASKS_PATH]) {
+      assert.deepEqual(fs.readFileSync(path.join(root, artifactPath)), seed.current.get(artifactPath));
+    }
+    assert.deepEqual(fixture.current.get(PLAN_PATH), seed.current.get(PLAN_PATH));
+  });
+});
+
+test('T004 integration commit: exactly one semantic review is acquired and trusted gate bodies run as coordinator TCB', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-single-review-capture',
+    });
+    const inspection = clone(reviewed.inspection);
+    // KNOWN TCB: these function bodies are trusted coordinator code. Branding
+    // prevents callback substitution; it does not sandbox body side effects.
+    const calls = { lint: 0, verification: 0 };
+    const gates = {
+      lint() {
+        calls.lint += 1;
+        return { status: 'passed', evidenceIdentity: t003Hash('captured-gate-lint') };
+      },
+      verification() {
+        calls.verification += 1;
+        return { status: 'passed', evidenceIdentity: t003Hash('captured-gate-verification') };
+      },
+    };
+    const result = commitDefinitionRecoveryV1({
+      prepared: reviewed.prepared,
+      inspection,
+      gates,
+    });
+    assert.equal(result.accepted, true);
+    assert.equal(result.semanticReviewCount, 1);
+    assert.deepEqual(calls, { lint: 1, verification: 1 });
+    t015T004AssertFiles(root, fixture.final);
+  });
+});
+
+test('T004 integration commit: FR-017 post-apply review revalidation rolls back a drifted review stream', () => {
+  const drifts = [
+    {
+      label: 'unparseable review evidence',
+      mutate(inspection) {
+        const reviewItem = inspection.items.find((item) => item.source === 'review');
+        reviewItem.text = '{}';
+      },
+      expected: /EvidenceItem|Inspection|review/i,
+    },
+    {
+      label: 'review stream withdrawn after apply',
+      mutate(inspection) {
+        inspection.items = inspection.items.filter((item) => item.source !== 'review');
+      },
+      expected: /Inspection|review|evidence/i,
+    },
+    {
+      label: 'review identity replaced after apply',
+      mutate(inspection) {
+        const reviewItem = inspection.items.find((item) => item.source === 'review');
+        const payload = JSON.parse(reviewItem.text);
+        const envelope = payload.records[0].body;
+        envelope.reviewIdentity = t003Hash('t015-t004-foreign-post-apply-review');
+        reviewItem.text = canonicalJson(payload);
+        reviewItem.descriptor = contentDescriptor(Buffer.from(reviewItem.text));
+      },
+      expected: /review|identity|Inspection|descriptor/i,
+    },
+  ];
+  for (const drift of drifts) {
+    const seed = t015T004CompositionFixture();
+    withT015T004Workspace((root) => {
+      t015T004WriteFiles(root, seed.current);
+      const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+        label: `t004-post-apply-review-${drift.label}`,
+      });
+      const inspection = clone(reviewed.inspection);
+      const calls = { lint: 0, verification: 0 };
+      assert.throws(() => commitDefinitionRecoveryV1({
+        prepared: reviewed.prepared,
+        inspection,
+        gates: {
+          lint() {
+            calls.lint += 1;
+            return { status: 'passed', evidenceIdentity: t003Hash('post-apply-review-lint') };
+          },
+          verification() {
+            calls.verification += 1;
+            return { status: 'passed', evidenceIdentity: t003Hash('post-apply-review-verification') };
+          },
+        },
+        failureInjector(event) {
+          if (event.operation !== 'validate-applied') return;
+          drift.mutate(inspection);
+        },
+      }), drift.expected, drift.label);
+      // The review gate precedes both fresh gates, so neither may have run.
+      assert.deepEqual(calls, { lint: 0, verification: 0 }, drift.label);
+      t015T004AssertFiles(root, fixture.current);
+      assert.deepEqual(
+        fs.readFileSync(path.join(root, TASKS_PATH)),
+        seed.current.get(TASKS_PATH),
+        drift.label,
+      );
+    });
+  }
+});
+
+test('T004 integration commit: post-seal gate-object substitution refuses and restores all paths', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-post-seal-gate-substitution',
+    });
+    const calls = { lint: 0, verification: 0, substituted: 0 };
+    const gates = {
+      lint() {
+        calls.lint += 1;
+        return { status: 'passed', evidenceIdentity: t003Hash('original-gate-lint') };
+      },
+      verification() {
+        calls.verification += 1;
+        return { status: 'passed', evidenceIdentity: t003Hash('original-gate-verification') };
+      },
+    };
+    const request = {
+      prepared: reviewed.prepared,
+      inspection: reviewed.inspection,
+      gates,
+      failureInjector(event) {
+        if (event.operation !== 'validate-applied') return;
+        request.gates = {
+          lint() {
+            calls.substituted += 1;
+            throw new Error('substituted lint must remain unreachable');
+          },
+          verification() {
+            calls.substituted += 1;
+            throw new Error('substituted verification must remain unreachable');
+          },
+        };
+      },
+    };
+    assert.throws(() => commitDefinitionRecoveryV1(request), /gate callback changed after sealing/);
+    assert.deepEqual(calls, { lint: 0, verification: 0, substituted: 0 });
+    t015T004AssertFiles(root, fixture.current);
+  });
+});
+
+test('T004 integration execution: stale pre-reconciliation review refuses before writes', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root);
+    const streams = t002TrustedStreams([fixture.mappingFixture.eligibilityFixture]);
+    const staleInspection = inspect(autonomousInspectInput(root, {
+      currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(reviewed.composed.proposal)])],
+      ...streams,
+    }));
+    let gateCalls = 0;
+    const result = commitDefinitionRecoveryV1({
+      prepared: reviewed.prepared,
+      inspection: staleInspection,
+      gates: {
+        lint() { gateCalls += 1; return { status: 'passed', evidenceIdentity: t003Hash('unused-lint') }; },
+        verification() { gateCalls += 1; return { status: 'passed', evidenceIdentity: t003Hash('unused-verification') }; },
+      },
+    });
+    assert.equal(result.accepted, false);
+    assert.ok(['missing-review-evidence', 'stale-review-identity'].includes(result.reason));
+    assert.equal(result.semanticReviewCount, 0);
+    assert.equal(gateCalls, 0);
+    t015T004AssertFiles(root, fixture.current);
+  });
+});
+
+test('T004 integration execution: fresh lint failure restores all four exact prestates', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root);
+    let verificationCalls = 0;
+    assert.throws(() => commitDefinitionRecoveryV1({
+      prepared: reviewed.prepared,
+      inspection: reviewed.inspection,
+      gates: {
+        lint() { throw new Error('T004 fresh lint failure'); },
+        verification() {
+          verificationCalls += 1;
+          return { status: 'passed', evidenceIdentity: t003Hash('unreachable-verification') };
+        },
+      },
+    }), /T004 fresh lint failure/);
+    assert.equal(verificationCalls, 0);
+    t015T004AssertFiles(root, fixture.current);
+  });
+});
+
+test('T004 integration execution: review identity, verification, and apply failures restore exact prestates', () => {
+  const cases = [
+    {
+      label: 'post-apply review identity drift',
+      execute(fixture, reviewed, root) {
+        const inspection = clone(reviewed.inspection);
+        return commitDefinitionRecoveryV1({
+          ...t015T004DefinitionExecution(fixture, reviewed, root),
+          inspection,
+          failureInjector(event) {
+            if (event.operation !== 'validate-applied') return;
+            const reviewItem = inspection.items.find((item) => item.source === 'review');
+            reviewItem.text = '{}';
+          },
+        });
+      },
+      expected: /EvidenceItem|Inspection|review/i,
+    },
+    {
+      label: 'required verification failure',
+      execute(fixture, reviewed, root) {
+        return commitDefinitionRecoveryV1({
+          ...t015T004DefinitionExecution(fixture, reviewed, root),
+          gates: {
+            lint: () => ({ status: 'passed', evidenceIdentity: t003Hash('verification-case-lint') }),
+            verification() { throw new Error('T004 required verification failure'); },
+          },
+        });
+      },
+      expected: /T004 required verification failure/,
+    },
+    {
+      label: 'mid-apply rename failure',
+      execute(fixture, reviewed, root) {
+        return commitDefinitionRecoveryV1({
+          ...t015T004DefinitionExecution(fixture, reviewed, root),
+          failureInjector(event) {
+            if (event.operation === 'rename' && event.index === 2) {
+              throw new Error('T004 mid-apply failure');
+            }
+          },
+        });
+      },
+      expected: /T004 mid-apply failure/,
+    },
+  ];
+  for (const fixtureCase of cases) {
+    const seed = t015T004CompositionFixture();
+    withT015T004Workspace((root) => {
+      t015T004WriteFiles(root, seed.current);
+      const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+        label: `t004-${fixtureCase.label}`,
+      });
+      assert.throws(
+        () => fixtureCase.execute(fixture, reviewed, root),
+        fixtureCase.expected,
+        fixtureCase.label,
+      );
+      t015T004AssertFiles(root, seed.current);
+    });
+  }
+});
+
+test('T004 integration post-apply: a fresh gate that reports failed evidence rolls back all four paths', () => {
+  for (const failing of ['lint', 'verification']) {
+    const seed = t015T004CompositionFixture();
+    withT015T004Workspace((root) => {
+      t015T004WriteFiles(root, seed.current);
+      const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+        label: `t004-failed-gate-${failing}`,
+      });
+      const gates = {
+        lint: () => ({ status: 'passed', evidenceIdentity: t003Hash('t004-failed-gate-lint') }),
+        verification: () => ({
+          status: 'passed',
+          evidenceIdentity: t003Hash('t004-failed-gate-verification'),
+        }),
+      };
+      gates[failing] = () => ({ status: 'failed', evidenceIdentity: t003Hash(`t004-failed-${failing}`) });
+      assert.throws(() => commitDefinitionRecoveryV1({
+        prepared: reviewed.prepared,
+        inspection: reviewed.inspection,
+        gates,
+      }), /must report passed fresh evidence/, failing);
+      t015T004AssertFiles(root, fixture.current);
+    });
+  }
+});
+
+test('T004 integration post-apply: a thenable gate result rolls back all four paths without awaiting', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-thenable-gate',
+    });
+    let verificationCalls = 0;
+    assert.throws(() => commitDefinitionRecoveryV1({
+      prepared: reviewed.prepared,
+      inspection: reviewed.inspection,
+      gates: {
+        lint: () => ({ then() { assert.fail('then must never execute'); } }),
+        verification() {
+          verificationCalls += 1;
+          return { status: 'passed', evidenceIdentity: t003Hash('t004-thenable-verification') };
+        },
+      },
+    }), /synchronous/i);
+    assert.equal(verificationCalls, 0);
+    t015T004AssertFiles(root, fixture.current);
+  });
+});
+
+test('T004 integration post-apply: a gate that rewrites an applied artifact is caught by the next exact reread', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-gate-rewrites-artifact',
+    });
+    let verificationCalls = 0;
+    assert.throws(() => commitDefinitionRecoveryV1({
+      prepared: reviewed.prepared,
+      inspection: reviewed.inspection,
+      gates: {
+        lint() {
+          fs.writeFileSync(path.join(root, PLAN_PATH), Buffer.concat([
+            /** @type {Buffer} */ (fixture.final.get(PLAN_PATH)),
+            Buffer.from('Foreign post-gate drift.\n'),
+          ]));
+          return { status: 'passed', evidenceIdentity: t003Hash('t004-drifting-lint') };
+        },
+        verification() {
+          verificationCalls += 1;
+          return { status: 'passed', evidenceIdentity: t003Hash('t004-unreachable-verification') };
+        },
+      },
+    }), /applied definition bytes do not match coordinator-final descriptor/);
+    assert.equal(verificationCalls, 0);
+    t015T004AssertFiles(root, fixture.current);
+  });
+});
+
+test('T004 integration post-apply: a second defined owner discovered after apply rolls back all four paths', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-post-apply-duplicate-owner',
+    });
+    const duplicatePath = path.join(root, '.dude/ideas/duplicate-owner.md');
+    assert.throws(() => commitDefinitionRecoveryV1({
+      ...t015T004DefinitionExecution(fixture, reviewed, root),
+      failureInjector(event) {
+        if (event.operation !== 'validate-applied') return;
+        fs.writeFileSync(duplicatePath, t015T004OwnerBytes(['- duplicate claimant']));
+      },
+    }), /requires one exact defined owner/);
+    fs.rmSync(duplicatePath, { force: true });
+    t015T004AssertFiles(root, fixture.current);
+  });
+});
+
+test('T004 integration post-apply: owner structure corruption after apply rolls back all four paths', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-post-apply-owner-corruption',
+    });
+    assert.throws(() => commitDefinitionRecoveryV1({
+      ...t015T004DefinitionExecution(fixture, reviewed, root),
+      failureInjector(event) {
+        if (event.operation !== 'validate-applied') return;
+        const ownerPath = path.join(root, IDEA_PATH);
+        fs.writeFileSync(ownerPath, fs.readFileSync(ownerPath, 'utf8').replace(
+          '<!-- dude:managed:end -->',
+          '',
+        ));
+      },
+    }), /managed|owner|balanced|applied definition bytes/i);
+    t015T004AssertFiles(root, fixture.current);
+  });
+});
+
+test('T004 integration post-apply: a transient artifact race between the first read and the exact reread refuses', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-post-apply-transient-race',
+    });
+    const specAbsolute = path.join(root, SPEC_PATH);
+    const originalRead = fs.readFileSync;
+    let postApply = false;
+    let corrupted = 0;
+    try {
+      fs.readFileSync = function readFileSync(file, ...args) {
+        const bytes = Reflect.apply(originalRead, fs, [file, ...args]);
+        if (postApply
+          && corrupted === 0
+          && Buffer.isBuffer(bytes)
+          && typeof file === 'string'
+          && path.resolve(file) === specAbsolute) {
+          corrupted += 1;
+          return Buffer.concat([bytes, Buffer.from('Transient concurrent drift.\n')]);
+        }
+        return bytes;
+      };
+      assert.throws(() => commitDefinitionRecoveryV1({
+        ...t015T004DefinitionExecution(fixture, reviewed, root),
+        failureInjector(event) {
+          if (event.operation === 'validate-applied') postApply = true;
+        },
+      }), /applied coordinator-final descriptors/);
+    } finally {
+      fs.readFileSync = originalRead;
+    }
+    assert.equal(corrupted, 1);
+    t015T004AssertFiles(root, fixture.current);
+  });
+});
+
+test('T004 integration post-apply: every post-apply gate is followed by one exact four-artifact reread', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-post-apply-reread-count',
+    });
+    // plan.md is outside owner resolution, so every read below is an exact
+    // applied-bytes reacquisition inside the rollback-bound callback.
+    const planAbsolute = path.join(root, PLAN_PATH);
+    const originalRead = fs.readFileSync;
+    let postApply = false;
+    let planReads = 0;
+    let result;
+    try {
+      fs.readFileSync = function readFileSync(file, ...args) {
+        if (postApply && typeof file === 'string' && path.resolve(file) === planAbsolute) {
+          planReads += 1;
+        }
+        return Reflect.apply(originalRead, fs, [file, ...args]);
+      };
+      result = commitDefinitionRecoveryV1({
+        ...t015T004DefinitionExecution(fixture, reviewed, root),
+        failureInjector(event) {
+          if (event.operation === 'validate-applied') postApply = true;
+        },
+      });
+    } finally {
+      fs.readFileSync = originalRead;
+    }
+    assert.equal(result.accepted, true);
+    // One structural read, one exact reread, then one reread after each of
+    // recomputeProposalIdentity, validateReviewIdentity, lint, verification.
+    assert.equal(planReads, 6);
+    t015T004AssertFiles(root, fixture.final);
+  });
+});
+
+test('T004 integration execution: stale authorization refuses before review or writes', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-stale-authorization',
+    });
+    const authorization = clone(reviewed.authorization);
+    authorization.state.pending[0].approachHash = t003Hash('t004-stale-authorization-proposal');
+    assert.throws(() => prepareDefinitionRecoveryV1({
+      lane: 'lightweight',
+      root,
+      specPath: SPEC_PATH,
+      authorization,
+      composition: fixture.input,
+    }), /exact authorized definition proposal/);
+    t015T004AssertFiles(root, seed.current);
+  });
+});
+
+test('T004 integration execution: authorization without fresh trusted eligibility evidence refuses', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-missing-fresh-eligibility',
+    });
+    const inspection = inspect(autonomousInspectInput(root, {
+      currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(reviewed.composed.proposal)])],
+      review: [capture(TARGET, 'accepted', [reviewed.semanticReviewCapture])],
+    }));
+    assert.throws(() => commitDefinitionRecoveryV1({
+      ...t015T004DefinitionExecution(fixture, { ...reviewed, inspection }, root),
+      inspection,
+    }), /freshly re-derive the exact trusted eligibility binding/);
+    t015T004AssertFiles(root, seed.current);
+  });
+});
+
+test('T004 integration ordering: parsed structure refuses before semantic review is consulted', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const mappingFixture = t015T002RevisionFixture({
+      label: 't004-structure-before-review',
+      sourceRevisionIdentity: t001CurrentSourceRevisionIdentity(root),
+    });
+    const fixture = t015T004CompositionFixture({ mappingFixture });
+    const malformedPlan = Buffer.from('# Plan\n\n<!-- dude:managed:end -->\n');
+    for (const side of [fixture.input.stage.artifacts, fixture.input.coordinator.artifacts]) {
+      side.find((row) => row.path === PLAN_PATH).staged = malformedPlan;
+    }
+    assert.throws(() => t015T004ReviewedComposition(fixture, {
+      outcomeJudgment: 'weaker',
+      finalResult: 'rejected',
+    }, root), /reversed or stray.*end fence/);
+    t015T004AssertFiles(root, seed.current);
+  });
+});
+
+test('T004 integration Feature 009: current no-alternative evidence authorizes, applies, and receives proposal-bound semantics', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const flow = t001PublicFlow(root, 'approach', 'no-progress');
+    const learnedEventLines = flow.learnedEvents
+      .map((event) => `- dude-run-event: ${canonicalJson(event)}\n`)
+      .join('');
+    const currentTasks = Buffer.concat([
+      /** @type {Buffer} */ (seed.current.get(TASKS_PATH)),
+      Buffer.from(learnedEventLines),
+    ]);
+    fs.writeFileSync(path.join(root, TASKS_PATH), currentTasks);
+    const eligibilityProposal = t001LearningProposal(flow, {
+      prestateDescriptors: t001WorkspaceDefinitionDescriptors(root),
+    });
+    const eligibility = eligibilityProposal.eligibility;
+    const eligibilityReferences = eligibilityProposal.reviewerEvidenceReferences;
+    const mappingFixture = t015T002RevisionFixture({
+      label: 't004-learning-no-alternative',
+      eligibility,
+      triggerEvidenceIdentities: [eligibility.blockerEvidenceIdentity],
+      taskRows: ({ obligationAnchors }) => [{
+        disposition: 'one-to-one-kept',
+        oldTasks: [t015T002TaskAnchor(
+          TASK_KEY,
+          t003Hash('t004-learning-scope'),
+          obligationAnchors.acceptance.old,
+        )],
+        finalTasks: [t015T002TaskAnchor(
+          TASK_KEY,
+          t003Hash('t004-learning-scope'),
+          obligationAnchors.acceptance.final,
+        )],
+        decompositionBasisIdentities: [eligibilityReferences.decompositionEvidenceIdentities[0]],
+      }],
+      reviewerEvidenceReferences: () => ({
+        blockerEvidenceIdentities: [...new Set([
+          ...eligibilityReferences.blockerEvidenceIdentities,
+          eligibility.blockerEvidenceIdentity,
+        ])].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+        decompositionEvidenceIdentities: clone(eligibilityReferences.decompositionEvidenceIdentities),
+      }),
+    });
+    const stageTasks = Buffer.from(currentTasks.toString('utf8')
+      .replace(`- [~] ${TASK_KEY}`, `- [ ] ${TASK_KEY}`)
+      .replace('    blocked-by: definition defect\n', ''));
+    const fixture = t015T004CompositionFixture({
+      mappingFixture,
+      currentTasks,
+      stageTasks,
+      finalTasks: currentTasks,
+    });
+    const composed = recoveryRuntime.composeDefinitionRecoveryV1(fixture.input);
+    const input = autonomousInspectInput(root, {
+      currentRun: [capture(
+        TARGET,
+        'failed',
+        flow.learnedEvents.map((event) => ({ event })),
+      )],
+      ...t002TrustedStreams(flow.fixtures),
+    });
+    input.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(composed.proposal)]));
+    const authorization = t001AuthorizeDefinition(
+      flow.learningVerified.transition.state,
+      input,
+    );
+    assert.equal(authorization.authorized, true, JSON.stringify(authorization));
+    assert.equal(authorization.definitionReconciliation.variant, 'learning-no-alternative');
+    const prepared = prepareDefinitionRecoveryV1({
+      lane: 'lightweight',
+      root,
+      specPath: SPEC_PATH,
+      authorization,
+      composition: fixture.input,
+    });
+    const review = recoveryRuntime.buildDefinitionRevisionSemanticReviewEnvelopeV1(
+      t015T002ReviewInput(composed.proof, {
+        preparationIdentity: prepared.preparationIdentity,
+        reviewRequestIdentity: prepared.reviewRequestIdentity,
+      }),
+      composed.proof,
+    );
+    input.review.push(capture(TARGET, 'accepted', [t015T002CaptureReview(review)]));
+    const inspection = inspect(input);
+
+    const result = commitDefinitionRecoveryV1({
+      prepared,
+      inspection,
+      gates: {
+        lint: () => ({ status: 'passed', evidenceIdentity: t003Hash('t004-learning-lint') }),
+        verification: () => ({
+          status: 'passed',
+          evidenceIdentity: t003Hash('t004-learning-verification'),
+        }),
+      },
+    });
+    assert.equal(result.accepted, true);
+    recoveryRuntime.validateDefinitionRecoveryFeature009EvidenceV1(result.feature009Evidence);
+    assert.equal(result.feature009Evidence.proposalIdentity, composed.proposal.proposalIdentity);
+    assert.equal(result.feature009Evidence.reviewIdentity, review.reviewIdentity);
+    assert.deepEqual(
+      result.feature009Evidence.blockerEvidenceIdentities,
+      composed.proposal.reviewerEvidenceReferences.blockerEvidenceIdentities,
+    );
+    assert.deepEqual(
+      result.feature009Evidence.decompositionEvidenceIdentities,
+      composed.proposal.reviewerEvidenceReferences.decompositionEvidenceIdentities,
+    );
+    recoveryRuntime.validateLearningFindingV1(result.feature009Finding);
+    const governedInput = () => cliInput(t002RetentionInput(
+      root,
+      flow.governedEvents,
+      flow.governedEvents,
+      flow.fixtures,
+    ));
+    const learned = t003Invoke('learn', {
+      state: flow.governanceVerified.transition.state,
+      input: governedInput(),
+      review: {
+        version: 2,
+        target: TARGET,
+        assumptionIdentities: [t003Hash('t004-definition-recovery-assumption')],
+        findings: [result.feature009Finding],
+        alternatives: [flow.rejected],
+        outcome: 'no-progress',
+      },
+    });
+    assert.equal(learned.learning.reviewed, true);
+    assert.deepEqual(learned.learning.reviewEvent.findings, [result.feature009Finding]);
+    const learnedEvents = [...flow.governedEvents, ...learned.learning.projectionBatch.events];
+    const learnedInput = () => cliInput(t002RetentionInput(
+      root,
+      learnedEvents,
+      learnedEvents,
+      flow.fixtures,
+    ));
+    const projected = t003Invoke('transition', {
+      mode: 'verify-projection',
+      state: learned.learning.state,
+      input: learnedInput(),
+      projectionBatch: learned.learning.projectionBatch,
+    });
+    const noProgress = t003Invoke('transition', {
+      mode: 'verify-no-progress',
+      state: projected.transition.state,
+      input: learnedInput(),
+    });
+    assert.equal(noProgress.transition.reason, 'no-progress-verified');
+    fs.writeFileSync(path.join(root, TASKS_PATH), fixture.final.get(TASKS_PATH));
+    t015T004AssertFiles(root, fixture.final);
+  });
+});
+
+test('T004 integration continuation: accepted definition refreshes the lane before resume without a second review', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root);
+    const snapshotBytes = Buffer.from(`${JSON.stringify({
+      [TASKS_PATH]: {
+        glyphs: { [TASK_KEY]: '~' },
+        updated_at: '2026-07-31T11:00:00.000Z',
+      },
+    }, null, 2)}\n`);
+    t015T004WriteFiles(root, new Map([['.dude/state/task-state.json', snapshotBytes]]));
+    const result = executeLightweightDefinitionRecoveryV1({
+      definition: t015T004DefinitionExecution(fixture, reviewed, root),
+      laneRefresh: t015T004LaneRefreshRequest(
+        root,
+        fixture.final,
+        snapshotBytes,
+        reviewed.prepared.proposal.proposalIdentity,
+      ),
+    });
+    assert.equal(result.accepted, true);
+    assert.equal(result.resumed, true, JSON.stringify(result));
+    assert.equal(result.reason, 'resumed');
+    assert.equal(result.definition.semanticReviewCount, 1);
+    assert.equal(result.definition.applied.count, 4);
+    assert.equal(result.laneRefresh.ok, true);
+    assert.equal(result.laneRefresh.phase, 'committed');
+    assert.deepEqual(fs.readFileSync(path.join(root, PLAN_PATH)), fixture.final.get(PLAN_PATH));
+    assert.deepEqual(fs.readFileSync(path.join(root, SPEC_PATH)), fixture.final.get(SPEC_PATH));
+    assert.match(fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'), /definition-recovery-resumed/);
+    assert.notDeepEqual(
+      fs.readFileSync(path.join(root, '.dude/state/task-state.json')),
+      snapshotBytes,
+    );
+  });
+});
+
+test('T004 integration continuation: lane refresh failure restores lane surfaces and prevents resume', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root);
+    const snapshotPath = path.join(root, '.dude/state/task-state.json');
+    const snapshotBytes = Buffer.from(`${JSON.stringify({
+      [TASKS_PATH]: {
+        glyphs: { [TASK_KEY]: '~' },
+        updated_at: '2026-07-31T11:00:00.000Z',
+      },
+    }, null, 2)}\n`);
+    t015T004WriteFiles(root, new Map([['.dude/state/task-state.json', snapshotBytes]]));
+    const originalWrite = fs.writeFileSync;
+    let injected = false;
+    try {
+      fs.writeFileSync = function writeFileSync(file, ...args) {
+        if (!injected && path.resolve(String(file)) === snapshotPath) {
+          injected = true;
+          throw new Error('injected lane snapshot failure');
+        }
+        return Reflect.apply(originalWrite, fs, [file, ...args]);
+      };
+      const result = executeLightweightDefinitionRecoveryV1({
+        definition: t015T004DefinitionExecution(fixture, reviewed, root),
+        laneRefresh: t015T004LaneRefreshRequest(
+          root,
+          fixture.final,
+          snapshotBytes,
+          reviewed.prepared.proposal.proposalIdentity,
+        ),
+      });
+      assert.equal(injected, true);
+      assert.equal(result.accepted, true);
+      assert.equal(result.resumed, false);
+      assert.equal(result.reason, 'lane-refresh-failed');
+      assert.equal(result.definition.semanticReviewCount, 1);
+      assert.equal(result.laneRefresh.ok, false);
+      assert.equal(result.laneRefresh.phase, 'refused');
+      assert.equal(result.laneRefresh.reason, 'atomic-apply-failed');
+    } finally {
+      fs.writeFileSync = originalWrite;
+    }
+    t015T004AssertFiles(root, fixture.final);
+    assert.deepEqual(fs.readFileSync(snapshotPath), snapshotBytes);
+  });
+});
+
+test('T004 integration continuation: definition failure prevents lane refresh and resume', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-definition-failure-no-refresh',
+    });
+    const snapshotPath = path.join(root, '.dude/state/task-state.json');
+    const snapshotBytes = Buffer.from(`${JSON.stringify({
+      [TASKS_PATH]: {
+        glyphs: { [TASK_KEY]: '~' },
+        updated_at: '2026-07-31T11:00:00.000Z',
+      },
+    }, null, 2)}\n`);
+    t015T004WriteFiles(root, new Map([['.dude/state/task-state.json', snapshotBytes]]));
+    const definition = t015T004DefinitionExecution(fixture, reviewed, root);
+    definition.gates = {
+      lint: () => ({ status: 'passed', evidenceIdentity: t003Hash('no-refresh-lint') }),
+      verification() { throw new Error('definition verification blocks refresh'); },
+    };
+    const originalWrite = fs.writeFileSync;
+    let snapshotWrites = 0;
+    try {
+      fs.writeFileSync = function writeFileSync(file, ...args) {
+        if (path.resolve(String(file)) === snapshotPath) snapshotWrites += 1;
+        return Reflect.apply(originalWrite, fs, [file, ...args]);
+      };
+      assert.throws(() => executeLightweightDefinitionRecoveryV1({
+        definition,
+        laneRefresh: t015T004LaneRefreshRequest(
+          root,
+          fixture.final,
+          snapshotBytes,
+          reviewed.prepared.proposal.proposalIdentity,
+        ),
+      }), /definition verification blocks refresh/);
+    } finally {
+      fs.writeFileSync = originalWrite;
+    }
+    assert.equal(snapshotWrites, 0);
+    assert.deepEqual(fs.readFileSync(snapshotPath), snapshotBytes);
+    t015T004AssertFiles(root, seed.current);
+  });
+});
+
+test('T004 integration continuation: malformed and cross-bound refreshes never invoke the lane helper', async (context) => {
+  const cases = [
+    ['malformed', () => ({})],
+    ['cross-root', (request, root) => { request.root = `${root}/foreign`; return request; }],
+    ['cross-spec', (request) => {
+      request.target.specPath = '.dude/specs/999-foreign/spec.md';
+      return request;
+    }],
+    ['cross-task', (request) => { request.mapping.taskKey = SECOND_TASK_KEY; return request; }],
+    ['cross-descriptor', (request) => {
+      request.mapping.tasksDescriptor.sha256 = t003Hash('t004-cross-descriptor');
+      return request;
+    }],
+    ['cross-proposal', (request) => {
+      const body = {
+        type: 'definition-recovery-resumed',
+        version: 1,
+        proposalIdentity: t003Hash('t004-cross-proposal'),
+      };
+      const event = { ...body, eventHash: sha256(canonicalJson(body)) };
+      request.mutation.eventLines.lines[0] = {
+        eventHash: event.eventHash,
+        exactLine: `- dude-run-event: ${canonicalJson(event)}`,
+        terminator: 'LF',
+      };
+      return request;
+    }],
+  ];
+  for (const [label, mutate] of cases) {
+    await context.test(label, () => {
+      const seed = t015T004CompositionFixture();
+      withT015T004Workspace((root) => {
+        t015T004WriteFiles(root, seed.current);
+        const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+          label: `t004-lane-binding-${label}`,
+        });
+        const snapshotPath = path.join(root, '.dude/state/task-state.json');
+        const snapshotBytes = Buffer.from(`${JSON.stringify({
+          [TASKS_PATH]: {
+            glyphs: { [TASK_KEY]: '~' },
+            updated_at: '2026-07-31T11:00:00.000Z',
+          },
+        }, null, 2)}\n`);
+        t015T004WriteFiles(root, new Map([['.dude/state/task-state.json', snapshotBytes]]));
+        const laneRefresh = mutate(clone(t015T004LaneRefreshRequest(
+          root,
+          fixture.final,
+          snapshotBytes,
+          reviewed.prepared.proposal.proposalIdentity,
+        )), root);
+        const originalRead = fs.readFileSync;
+        const originalWrite = fs.writeFileSync;
+        let snapshotReads = 0;
+        let snapshotWrites = 0;
+        try {
+          fs.readFileSync = function readFileSync(file, ...args) {
+            if (path.resolve(String(file)) === snapshotPath) snapshotReads += 1;
+            return Reflect.apply(originalRead, fs, [file, ...args]);
+          };
+          fs.writeFileSync = function writeFileSync(file, ...args) {
+            if (path.resolve(String(file)) === snapshotPath) snapshotWrites += 1;
+            return Reflect.apply(originalWrite, fs, [file, ...args]);
+          };
+          const result = executeLightweightDefinitionRecoveryV1({
+            definition: t015T004DefinitionExecution(fixture, reviewed, root),
+            laneRefresh,
+          });
+          assert.equal(result.accepted, true);
+          assert.equal(result.resumed, false);
+          assert.equal(result.reason, 'lane-refresh-mismatch');
+          assert.equal(result.laneRefresh, null);
+        } finally {
+          fs.readFileSync = originalRead;
+          fs.writeFileSync = originalWrite;
+        }
+        assert.equal(snapshotReads, 0);
+        assert.equal(snapshotWrites, 0);
+        assert.deepEqual(fs.readFileSync(snapshotPath), snapshotBytes);
+        t015T004AssertFiles(root, fixture.final);
+      });
+    });
+  }
+});
+
+test('T004 integration continuation: an accessor laneRefresh cannot swap the request between the gate and the executor', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-lane-refresh-accessor',
+    });
+    const snapshotPath = path.join(root, '.dude/state/task-state.json');
+    const snapshotBytes = Buffer.from(`${JSON.stringify({
+      [TASKS_PATH]: {
+        glyphs: { [TASK_KEY]: '~' },
+        updated_at: '2026-07-31T11:00:00.000Z',
+      },
+    }, null, 2)}\n`);
+    t015T004WriteFiles(root, new Map([['.dude/state/task-state.json', snapshotBytes]]));
+    const boundProposalIdentity = reviewed.prepared.proposal.proposalIdentity;
+    const foreignProposalIdentity = t003Hash('t015-t004-foreign-lane-proposal');
+    const bound = t015T004LaneRefreshRequest(root, fixture.final, snapshotBytes, boundProposalIdentity);
+    // Internally self-consistent, but bound to a proposal that was never approved.
+    const foreign = t015T004LaneRefreshRequest(root, fixture.final, snapshotBytes, foreignProposalIdentity);
+    let reads = 0;
+    const request = { definition: t015T004DefinitionExecution(fixture, reviewed, root) };
+    Object.defineProperty(request, 'laneRefresh', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        reads += 1;
+        return reads <= 2 ? bound : foreign;
+      },
+    });
+    const result = executeLightweightDefinitionRecoveryV1(request);
+    assert.equal(result.accepted, false);
+    assert.equal(result.resumed, false);
+    assert.equal(result.reason, 'invalid-request-shape');
+    assert.equal(reads, 0, 'the accessor must never be observed');
+    t015T004AssertFiles(root, seed.current);
+    const tasks = fs.readFileSync(path.join(root, TASKS_PATH), 'utf8');
+    assert.doesNotMatch(tasks, new RegExp(foreignProposalIdentity));
+    assert.doesNotMatch(tasks, new RegExp(boundProposalIdentity));
+    assert.deepEqual(fs.readFileSync(snapshotPath), snapshotBytes);
+  });
+});
+
+test('T004 integration continuation: a nested laneRefresh accessor refuses before definition or lane writes', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-lane-refresh-nested-accessor',
+    });
+    const snapshotPath = path.join(root, '.dude/state/task-state.json');
+    const snapshotBytes = Buffer.from(`${JSON.stringify({
+      [TASKS_PATH]: {
+        glyphs: { [TASK_KEY]: '~' },
+        updated_at: '2026-07-31T11:00:00.000Z',
+      },
+    }, null, 2)}\n`);
+    t015T004WriteFiles(root, new Map([['.dude/state/task-state.json', snapshotBytes]]));
+    const laneRefresh = t015T004LaneRefreshRequest(
+      root,
+      fixture.final,
+      snapshotBytes,
+      reviewed.prepared.proposal.proposalIdentity,
+    );
+    let reads = 0;
+    Object.defineProperty(laneRefresh, 'root', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        reads += 1;
+        return reads === 1 ? root : `${root}-foreign`;
+      },
+    });
+    const result = executeLightweightDefinitionRecoveryV1({
+      definition: t015T004DefinitionExecution(fixture, reviewed, root),
+      laneRefresh,
+    });
+    assert.equal(result.accepted, false);
+    assert.equal(result.resumed, false);
+    assert.equal(result.reason, 'invalid-request-shape');
+    assert.equal(reads, 0, 'the nested accessor must never be observed');
+    t015T004AssertFiles(root, seed.current);
+    assert.deepEqual(fs.readFileSync(snapshotPath), snapshotBytes);
+  });
+});
+
+test('T004 integration continuation: a non-enumerable laneRefresh data property is refused before any write', () => {
+  const seed = t015T004CompositionFixture();
+  withT015T004Workspace((root) => {
+    t015T004WriteFiles(root, seed.current);
+    const { fixture, reviewed } = t015T004ExecutableFixture(root, {
+      label: 't004-lane-refresh-hidden',
+    });
+    const snapshotBytes = Buffer.from(`${JSON.stringify({
+      [TASKS_PATH]: {
+        glyphs: { [TASK_KEY]: '~' },
+        updated_at: '2026-07-31T11:00:00.000Z',
+      },
+    }, null, 2)}\n`);
+    t015T004WriteFiles(root, new Map([['.dude/state/task-state.json', snapshotBytes]]));
+    const request = { definition: t015T004DefinitionExecution(fixture, reviewed, root) };
+    Object.defineProperty(request, 'laneRefresh', {
+      value: t015T004LaneRefreshRequest(
+        root,
+        fixture.final,
+        snapshotBytes,
+        reviewed.prepared.proposal.proposalIdentity,
+      ),
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
+    const result = executeLightweightDefinitionRecoveryV1(request);
+    assert.equal(result.accepted, false);
+    assert.equal(result.resumed, false);
+    assert.equal(result.reason, 'invalid-request-shape');
+    t015T004AssertFiles(root, seed.current);
+  });
+});
+
+test('T002 definition revision proof: a full exact proposal, proof, and trusted semantic review approve', () => {
+  const fixture = t015T002RevisionFixture();
+  recoveryRuntime.validateDefinitionRevisionProofBindingV1(fixture.proposal, fixture.proof);
+  const result = recoveryRuntime.evaluateDefinitionRevisionV1({
+    inspection: t015T002Inspection(fixture),
+    proposal: fixture.proposal,
+    proof: fixture.proof,
+  });
+  recoveryRuntime.validateDefinitionRecoveryFeature009EvidenceV1(result.feature009Evidence);
+  const { feature009Evidence, ...evaluation } = result;
+  assert.deepEqual(evaluation, {
+    approved: true,
+    result: 'approved',
+    reason: 'approved',
+    proposalIdentity: fixture.proposal.proposalIdentity,
+    proofIdentity: fixture.proof.proofIdentity,
+    reviewIdentity: fixture.review.reviewIdentity,
+  });
+});
+
+/** @param {Record<string, unknown>} fixture @param {Record<string, unknown>} [overrides] */
+function t015T002Evaluate(fixture, overrides = {}) {
+  const proposal = overrides.proposal || fixture.proposal;
+  const review = /** @type {Record<string, unknown>|undefined} */ (overrides.review);
+  const reviewCaptures = /** @type {unknown[]} */ (
+    overrides.reviewCaptures
+    || (overrides.semanticReviewCapture
+      ? [overrides.semanticReviewCapture]
+      : [review ? t015T002CaptureReview(review) : fixture.semanticReviewCapture])
+  );
+  const inspection = overrides.inspection || t015T002Inspection(fixture, {
+    reviewCaptures,
+    reviewEntries: overrides.reviewEntries,
+    reviewState: overrides.reviewState
+      || t015T002ReviewStreamState(
+        (review || /** @type {Record<string, unknown>} */ (fixture.review)).finalResult,
+      ),
+    proposal: overrides.inspectedProposal || fixture.proposal,
+  });
+  return recoveryRuntime.evaluateDefinitionRevisionV1({
+    inspection,
+    proposal,
+    proof: overrides.proof || fixture.proof,
+  });
+}
+
+/** @param {Record<string, unknown>} review */
+function t015T002CaptureReview(review) {
+  return t002TrustedCapture(
+    review,
+    'independent-review',
+    /** @type {string} */ (review.reviewerAuthorityIdentity),
+    /** @type {string} */ (review.reviewInvocationIdentity),
+  );
+}
+
+/** @param {unknown} finalResult */
+function t015T002ReviewStreamState(finalResult) {
+  return finalResult === 'approved' ? 'accepted' : 'rejected';
+}
+
+/** @param {Record<string, unknown>} fixture @param {Record<string, unknown>} [options] */
+function t015T002Inspection(fixture, options = {}) {
+  const reviewCaptures = /** @type {Record<string, unknown>[]} */ (
+    options.reviewCaptures || [fixture.semanticReviewCapture]
+  );
+  const reviewState = /** @type {string} */ (
+    options.reviewState
+    || (reviewCaptures.length === 0
+      ? 'none'
+      : t015T002ReviewStreamState(/** @type {Record<string, unknown>} */ (fixture.review).finalResult))
+  );
+  const proposal = options.proposal || fixture.proposal;
+  // The same fresh Inspection carries the V2 blocker evidence T001 resolves and
+  // the definition-revision semantic review T002 resolves.
+  const eligibility = /** @type {ReturnType<typeof t002PendingFixture>|undefined} */ (
+    fixture.eligibilityFixture
+  );
+  const v2Streams = eligibility ? t002TrustedStreams([eligibility]) : { review: [], verification: [] };
+  const reviewEntries = /** @type {{state:string,captures:unknown[]}[]} */ (
+    options.reviewEntries || [{ state: reviewState, captures: reviewCaptures }]
+  );
+  /** @type {Record<string, unknown>|undefined} */
+  let inspection;
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    inspection = inspect(autonomousInspectInput(root, {
+      currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(proposal)])],
+      verification: v2Streams.verification,
+      review: [
+        ...v2Streams.review,
+        ...reviewEntries.map((entry) => capture(TARGET, entry.state, entry.captures)),
+      ],
+      .../** @type {Record<string, unknown>} */ (options.streams || {}),
+    }));
+  });
+  assert.ok(inspection);
+  return inspection;
+}
+
+/** @param {Record<string, unknown>} overrides */
+function t015T002HostileArrayPrototype(overrides) {
+  return new Proxy(Array.prototype, {
+    get(prototype, key, receiver) {
+      if (Object.hasOwn(overrides, key)) return overrides[/** @type {string} */ (key)];
+      return Reflect.get(prototype, key, receiver);
+    },
+  });
+}
+
+/** @param {Record<string, unknown>} proof @param {Record<string, unknown>} taskReconciliation */
+function t015T002RebindProofReconciliation(proof, taskReconciliation) {
+  const { proofIdentity, ...body } = clone(proof);
+  body.taskReconciliation = taskReconciliation;
+  return { ...body, proofIdentity: sha256(canonicalJson(body)) };
+}
+
+/** @param {Record<string, unknown>} fixture */
+function t015T002UnresolvableAcceptanceProof(fixture) {
+  const reconciliation = /** @type {Record<string, unknown>} */ (fixture.taskReconciliation);
+  const rows = /** @type {Record<string, unknown>[]} */ (clone(reconciliation.rows))
+    .map(({ reconciliationIdentity, ...row }) => ({
+      ...row,
+      oldTasks: /** @type {Record<string, unknown>[]} */ (row.oldTasks).map((task) => ({
+        ...task,
+        acceptanceObligationIdentities: [t003Hash('t015-t002-hostile-unresolvable')],
+      })),
+    }));
+  return t015T002RebindProofReconciliation(
+    /** @type {Record<string, unknown>} */ (fixture.proof),
+    recoveryRuntime.buildDefinitionTaskReconciliationV1({
+      declaredOldTaskKeys: clone(reconciliation.declaredOldTaskKeys),
+      declaredFinalTaskKeys: clone(reconciliation.declaredFinalTaskKeys),
+      rows,
+    }),
+  );
+}
+
+function t015T002UnresolvableCheckArchiveProof() {
+  const danglingCheckMappingIdentity = t003Hash('t015-t002-hostile-dangling-check-mapping');
+  const fixture = t015T002RevisionFixture({
+    label: 'hostile-dropped',
+    taskRows: t015T002DroppedRows,
+  });
+  const reconciliation = /** @type {Record<string, unknown>} */ (fixture.taskReconciliation);
+  const rows = /** @type {Record<string, unknown>[]} */ (clone(reconciliation.rows))
+    .map(({ reconciliationIdentity, ...row }) => (row.archive
+      ? {
+        ...row,
+        archive: {
+          .../** @type {Record<string, unknown>} */ (row.archive),
+          successorCheckMappingIdentities: [danglingCheckMappingIdentity],
+        },
+      }
+      : row));
+  return {
+    danglingCheckMappingIdentity,
+    proof: t015T002RebindProofReconciliation(
+      fixture.proof,
+      recoveryRuntime.buildDefinitionTaskReconciliationV1({
+        declaredOldTaskKeys: clone(reconciliation.declaredOldTaskKeys),
+        declaredFinalTaskKeys: clone(reconciliation.declaredFinalTaskKeys),
+        rows,
+      }),
+    ),
+  };
+}
+
+/** @param {Record<string, unknown>} review */
+function t015T002ReidentifyReview(review) {
+  const body = clone(review);
+  delete body.reviewIdentity;
+  return { ...body, reviewIdentity: sha256(canonicalJson(body)) };
+}
+
+/** @param {Record<string, unknown>} proposal */
+function t015T002ProposalInput(proposal) {
+  const input = clone(proposal);
+  delete input.version;
+  delete input.proposalIdentity;
+  return input;
+}
+
+/** @param {Record<string, unknown>} proof */
+function t015T002ProofInput(proof) {
+  return {
+    proposalIdentity: proof.proposalIdentity,
+    target: clone(proof.target),
+    owner: clone(proof.owner),
+    eligibilityIdentity: proof.eligibilityIdentity,
+    prestateDescriptorIdentity: proof.prestateDescriptorIdentity,
+    coordinatorFinalDescriptors: clone(proof.coordinatorFinalDescriptors),
+    specEditClass: proof.specEditClass,
+    authorities: clone(proof.authorities),
+    obligationMappings: clone(proof.obligationMappings),
+    checkMappings: clone(proof.checkMappings),
+    taskReconciliation: clone(proof.taskReconciliation),
+  };
+}
+
+/** @param {Record<string, unknown>} mappingSet */
+function t015T002ObligationInput(mappingSet) {
+  return {
+    categories: /** @type {Record<string, unknown>[]} */ (mappingSet.categories).map((category) => ({
+      category: category.category,
+      preChangeAnchors: clone(category.preChangeAnchors),
+      postChangeAnchors: clone(category.postChangeAnchors),
+      mappings: /** @type {Record<string, unknown>[]} */ (category.mappings).map((mapping) => ({
+        sourceAnchorIdentity: mapping.sourceAnchorIdentity,
+        successorAnchorIdentities: clone(mapping.successorAnchorIdentities),
+        relation: mapping.relation,
+      })),
+    })),
+  };
+}
+
+/**
+ * @param {Record<string, unknown>} fixture
+ * @param {(input:Record<string, unknown>) => void} mutate
+ * @param {'approved'|'rejected'|'clarification-required'} finalResult
+ */
+function t015T002EvaluateReview(fixture, mutate, finalResult) {
+  const input = t015T002ReviewInput(fixture.proof);
+  mutate(input);
+  input.finalResult = finalResult;
+  const review = recoveryRuntime.buildDefinitionRevisionSemanticReviewEnvelopeV1(
+    input,
+    fixture.proof,
+  );
+  return t015T002Evaluate(fixture, { review });
+}
+
+test('T002 definition revision proof: every required obligation category is mandatory', () => {
+  const fixture = t015T002RevisionFixture({ label: 'missing-categories' });
+  const input = t015T002ObligationInput(fixture.obligationMappings);
+  for (const category of T015_T002_OBLIGATION_CATEGORIES) {
+    assert.throws(
+      () => recoveryRuntime.buildDefinitionObligationMappingSetV1({
+        categories: input.categories.filter((row) => row.category !== category),
+      }),
+      /complete sorted category table|including safety/,
+      category,
+    );
+  }
+});
+
+test('T002 definition revision proof: obligation sources and successors are closed and duplicate-free', () => {
+  const fixture = t015T002RevisionFixture({ label: 'closed-obligations' });
+  const base = t015T002ObligationInput(fixture.obligationMappings);
+  const acceptanceIndex = base.categories.findIndex((row) => row.category === 'acceptance');
+  const cases = [
+    ['duplicate declared source', (input) => {
+      const old = input.categories[acceptanceIndex].preChangeAnchors[0];
+      input.categories[acceptanceIndex].preChangeAnchors = [old, old];
+    }],
+    ['duplicate mapping source', (input) => {
+      input.categories[acceptanceIndex].mappings.push(clone(input.categories[acceptanceIndex].mappings[0]));
+    }],
+    ['unknown mapping source', (input) => {
+      input.categories[acceptanceIndex].mappings[0].sourceAnchorIdentity = t003Hash('t015-t002-unknown-source');
+    }],
+    ['duplicate successor', (input) => {
+      const successor = input.categories[acceptanceIndex].postChangeAnchors[0];
+      input.categories[acceptanceIndex].mappings[0].successorAnchorIdentities = [successor, successor];
+    }],
+    ['dangling successor', (input) => {
+      input.categories[acceptanceIndex].mappings[0].successorAnchorIdentities = [
+        t003Hash('t015-t002-dangling-successor'),
+      ];
+    }],
+  ];
+  for (const [label, mutate] of cases) {
+    const input = clone(base);
+    mutate(input);
+    assert.throws(
+      () => recoveryRuntime.buildDefinitionObligationMappingSetV1(input),
+      /duplicate|sorted|resolve|exactly once/,
+      label,
+    );
+  }
+});
+
+test('T002 definition revision proof: descriptor path, order, hash, length, and partial-review drift refuse', () => {
+  const fixture = t015T002RevisionFixture({ label: 'descriptor-drift' });
+  const descriptorCases = [
+    ['path', (proposal) => { proposal.coordinatorFinalDescriptors[0].path = '.dude/ideas/other.md'; }, 'invalid-proposal'],
+    ['order', (proposal) => { proposal.coordinatorFinalDescriptors.reverse(); }, 'invalid-proposal'],
+    ['hash', (proposal) => { proposal.coordinatorFinalDescriptors[0].sha256 = t003Hash('t015-t002-final-hash-drift'); }, 'proof-binding-mismatch'],
+    ['length', (proposal) => { proposal.coordinatorFinalDescriptors[0].byteLength += 1; }, 'proof-binding-mismatch'],
+  ];
+  for (const [label, mutate, reason] of descriptorCases) {
+    const input = t015T002ProposalInput(fixture.proposal);
+    mutate(input);
+    let proposal;
+    try {
+      proposal = recoveryRuntime.buildDefinitionRevisionProposalV1(input);
+    } catch {
+      proposal = { ...input, version: 1, proposalIdentity: sha256(canonicalJson({ version: 1, ...input })) };
+    }
+    assert.equal(t015T002Evaluate(fixture, { proposal }).reason, reason, label);
+  }
+  const partialReview = clone(fixture.review);
+  partialReview.coordinatorFinalDescriptors.pop();
+  const reboundPartialReview = t015T002ReidentifyReview(partialReview);
+  assert.equal(t015T002Evaluate(fixture, {
+    review: reboundPartialReview,
+  }).reason, 'review-binding-mismatch');
+});
+
+test('T002 definition revision proof: stale proposal, proof, and review identities refuse exact drift', () => {
+  const fixture = t015T002RevisionFixture({ label: 'identity-drift' });
+  const staleProposal = clone(fixture.proposal);
+  staleProposal.coordinatorFinalDescriptors[0].sha256 = t003Hash('t015-t002-stale-proposal');
+  assert.equal(t015T002Evaluate(fixture, { proposal: staleProposal }).reason, 'invalid-proposal');
+
+  const staleProof = clone(fixture.proof);
+  staleProof.authorities.stagerAuthorityIdentity = t003Hash('t015-t002-stale-proof');
+  assert.equal(t015T002Evaluate(fixture, { proof: staleProof }).reason, 'invalid-proof');
+
+  const staleReview = clone(fixture.review);
+  staleReview.outcomeJudgment = 'rejected';
+  assert.equal(t015T002Evaluate(fixture, {
+    review: t015T002ReidentifyReview(staleReview),
+  }).reason, 'semantic-review-invalid');
+
+  const foreignProofInput = t015T002ProofInput(fixture.proof);
+  foreignProofInput.proposalIdentity = t003Hash('t015-t002-foreign-proposal');
+  const foreignProof = recoveryRuntime.buildDefinitionRevisionProofV1(foreignProofInput);
+  assert.equal(t015T002Evaluate(fixture, { proof: foreignProof }).reason, 'proof-binding-mismatch');
+
+  const foreignReview = clone(fixture.review);
+  foreignReview.proofIdentity = t003Hash('t015-t002-foreign-proof');
+  assert.equal(t015T002Evaluate(fixture, {
+    review: t015T002ReidentifyReview(foreignReview),
+  }).reason, 'missing-review-evidence');
+});
+
+test('T002 definition revision proof: stager and coordinator self-review refuse', () => {
+  const fixture = t015T002RevisionFixture({ label: 'self-review' });
+  for (const authorityField of ['stagerAuthorityIdentity', 'coordinatorAuthorityIdentity']) {
+    const review = clone(fixture.review);
+    review.reviewerAuthorityIdentity = fixture.proof.authorities[authorityField];
+    assert.equal(t015T002Evaluate(fixture, {
+      review: t015T002ReidentifyReview(review),
+    }).reason, 'self-review', authorityField);
+  }
+});
+
+test('T002 definition revision proof: every semantic dimension can reject but cannot approve', () => {
+  const fixture = t015T002RevisionFixture({ label: 'semantic-rejections' });
+  const cases = [
+    ['outcome', (input) => { input.outcomeJudgment = 'weaker'; }],
+    ['obligation', (input) => { input.obligationJudgments[0].judgment = 'weaker'; }],
+    ['task scope', (input) => { input.taskReconciliationJudgments[0].taskScopeJudgment = 'weaker'; }],
+    ['task acceptance', (input) => { input.taskReconciliationJudgments[0].acceptanceObligationJudgment = 'narrower'; }],
+    ['decomposition', (input) => { input.taskReconciliationJudgments[0].decompositionBasisJudgment = 'rejected'; }],
+    ['intended invariant', (input) => { input.checkJudgments[0].intendedInvariantJudgment = 'inadequate'; }],
+    ['successor check', (input) => { input.checkJudgments[0].successorCheckJudgment = 'inadequate'; }],
+    ['spec class', (input) => { input.specEditClassJudgment.judgment = 'rejected'; }],
+  ];
+  for (const [label, mutate] of cases) {
+    assert.equal(
+      t015T002EvaluateReview(fixture, mutate, 'rejected').reason,
+      'review-rejected',
+      label,
+    );
+    const inconsistent = t015T002ReviewInput(fixture.proof);
+    mutate(inconsistent);
+    assert.throws(
+      () => recoveryRuntime.buildDefinitionRevisionSemanticReviewEnvelopeV1(
+        inconsistent,
+        fixture.proof,
+      ),
+      /finalResult/,
+      `${label} cannot declare approved`,
+    );
+  }
+});
+
+test('T002 definition revision proof: ambiguity and normative change require clarification', () => {
+  const fixture = t015T002RevisionFixture({ label: 'clarification' });
+  assert.equal(t015T002EvaluateReview(
+    fixture,
+    (input) => { input.outcomeJudgment = 'ambiguous'; },
+    'clarification-required',
+  ).reason, 'clarification-required');
+  assert.equal(t015T002EvaluateReview(
+    fixture,
+    (input) => { input.specEditClassJudgment.judgment = 'normative-change'; },
+    'clarification-required',
+  ).reason, 'clarification-required');
+});
+
+test('T002 definition revision proof: missing keyed judgments refuse as incomplete', () => {
+  const fixture = t015T002RevisionFixture({ label: 'missing-judgments' });
+  for (const field of [
+    'obligationJudgments',
+    'taskReconciliationJudgments',
+    'checkJudgments',
+  ]) {
+    const review = clone(fixture.review);
+    review[field].pop();
+    assert.equal(t015T002Evaluate(fixture, {
+      review: t015T002ReidentifyReview(review),
+    }).reason, 'semantic-review-invalid', field);
+  }
+  const missingOutcome = clone(fixture.review);
+  delete missingOutcome.outcomeJudgment;
+  assert.equal(t015T002Evaluate(fixture, {
+    review: t015T002ReidentifyReview(missingOutcome),
+  }).reason, 'semantic-review-invalid');
+});
+
+test('T002 definition revision proof: changed, split, merged, and new rows never claim state preservation', () => {
+  const fixture = t015T002RevisionFixture({
+    label: 'non-preserving-rows',
+    taskRows: ({ obligationAnchors, evidence }) => {
+      const acceptance = obligationAnchors.acceptance;
+      const oldAnchor = (taskKey, label) => t015T002TaskAnchor(
+        taskKey,
+        t003Hash(`t015-t002-${label}-old-scope`),
+        acceptance.old,
+      );
+      const finalAnchor = (taskKey, label) => t015T002TaskAnchor(
+        taskKey,
+        t003Hash(`t015-t002-${label}-final-scope`),
+        acceptance.final,
+      );
+      return [
+        {
+          disposition: 'changed',
+          oldTasks: [oldAnchor('T010@aaaaaaaa', 'changed')],
+          finalTasks: [finalAnchor('T010@aaaaaaaa', 'changed')],
+          decompositionBasisIdentities: [evidence.decompositionEvidenceIdentity],
+        },
+        {
+          disposition: 'split',
+          oldTasks: [oldAnchor('T011@bbbbbbbb', 'split')],
+          finalTasks: [
+            finalAnchor('T012@cccccccc', 'split-a'),
+            finalAnchor('T013@dddddddd', 'split-b'),
+          ],
+          decompositionBasisIdentities: [evidence.decompositionEvidenceIdentity],
+        },
+        {
+          disposition: 'merged',
+          oldTasks: [
+            oldAnchor('T014@eeeeeeee', 'merge-a'),
+            oldAnchor('T015@ffffffff', 'merge-b'),
+          ],
+          finalTasks: [finalAnchor('T016@11111111', 'merged')],
+          decompositionBasisIdentities: [evidence.decompositionEvidenceIdentity],
+        },
+        {
+          disposition: 'new',
+          oldTasks: [],
+          finalTasks: [finalAnchor('T017@22222222', 'new')],
+          decompositionBasisIdentities: [evidence.decompositionEvidenceIdentity],
+        },
+      ];
+    },
+  });
+  assert.equal(t015T002Evaluate(fixture).reason, 'approved');
+  assert.ok(fixture.review.taskReconciliationJudgments.every((row) => (
+    row.taskScopeJudgment === 'not-state-preserving'
+      && row.acceptanceObligationJudgment === 'not-state-preserving'
+      && row.decompositionBasisJudgment === 'different'
+  )));
+});
+
+/** @param {Record<string, unknown>} context */
+function t015T002DroppedRows(context) {
+  const acceptance = context.obligationAnchors.acceptance;
+  const evidence = /** @type {Record<string, string>} */ (context.evidence);
+  const obligationMappingIdentity = context.obligationMappings.categories
+    .find((category) => category.category === 'acceptance').mappings[0].mappingIdentity;
+  const checkMappingIdentity = context.checkMappings.mappings[0].mappingIdentity;
+  return [{
+    disposition: 'dropped-defective',
+    oldTasks: [t015T002TaskAnchor(
+      TASK_KEY,
+      t003Hash('t015-t002-dropped-old-scope'),
+      acceptance.old,
+    )],
+    finalTasks: [t015T002TaskAnchor(
+      SECOND_TASK_KEY,
+      t003Hash('t015-t002-dropped-final-scope'),
+      acceptance.final,
+    )],
+    decompositionBasisIdentities: [evidence.decompositionEvidenceIdentity],
+    archive: {
+      archiveIdentity: t003Hash('t015-t002-dropped-archive'),
+      defectEvidenceIdentities: [evidence.blockerEvidenceIdentity],
+      triggerEvidenceIdentities: [evidence.blockerEvidenceIdentity],
+      successorTaskKeys: [SECOND_TASK_KEY],
+      successorObligationMappingIdentities: [obligationMappingIdentity],
+      successorCheckMappingIdentities: [checkMappingIdentity],
+    },
+  }];
+}
+
+test('T002 definition revision proof: dropped-defective requires complete archive, successor, and review authority', () => {
+  const fixture = t015T002RevisionFixture({
+    label: 'dropped-defective',
+    taskRows: t015T002DroppedRows,
+  });
+  assert.equal(t015T002Evaluate(fixture).reason, 'approved');
+  assert.equal(fixture.review.droppedDefectiveJudgments.length, 1);
+
+  const missingReview = clone(fixture.review);
+  missingReview.droppedDefectiveJudgments = [];
+  assert.equal(t015T002Evaluate(fixture, {
+    review: t015T002ReidentifyReview(missingReview),
+  }).reason, 'semantic-review-invalid');
+
+  assert.equal(t015T002EvaluateReview(
+    fixture,
+    (input) => { input.droppedDefectiveJudgments[0].defectClassificationJudgment = 'rejected'; },
+    'rejected',
+  ).reason, 'review-rejected');
+
+  assert.throws(
+    () => t015T002RevisionFixture({
+      label: 'dropped-missing-archive',
+      taskRows: (context) => {
+        const rows = t015T002DroppedRows(context);
+        delete rows[0].archive;
+        return rows;
+      },
+    }),
+    /archive/,
+  );
+  assert.throws(
+    () => t015T002RevisionFixture({
+      label: 'dropped-unknown-successor',
+      taskRows: (context) => {
+        const rows = t015T002DroppedRows(context);
+        rows[0].archive.successorObligationMappingIdentities = [
+          t003Hash('t015-t002-unknown-obligation-mapping'),
+        ];
+        return rows;
+      },
+    }),
+    /must resolve in the exact obligation mapping component/,
+  );
+});
+
+test('T002 definition revision proof: intended-invariant, task-scope, and archive identities are reviewer-resolved, not structurally anchored', () => {
+  // Deliberate design split: the proof declares no anchor set for these three
+  // classes, so the covering reviewer judgment is what resolves them.
+  const unanchored = {
+    invariant: t003Hash('t015-t002-invariant-in-no-declared-anchor-set'),
+    oldScope: t003Hash('t015-t002-old-scope-in-no-declared-anchor-set'),
+    finalScope: t003Hash('t015-t002-final-scope-in-no-declared-anchor-set'),
+    archive: t003Hash('t015-t002-archive-in-no-declared-anchor-set'),
+  };
+  const fixture = t015T002RevisionFixture({
+    label: 'reviewer-resolved-identities',
+    intendedInvariantIdentity: unanchored.invariant,
+    taskRows: (context) => {
+      const rows = t015T002DroppedRows(context);
+      rows[0].oldTasks[0].taskScopeIdentity = unanchored.oldScope;
+      rows[0].finalTasks[0].taskScopeIdentity = unanchored.finalScope;
+      rows[0].archive.archiveIdentity = unanchored.archive;
+      return rows;
+    },
+  });
+  const proofJson = canonicalJson(fixture.proof);
+  for (const [label, identity] of Object.entries(unanchored)) {
+    assert.equal(proofJson.split(identity).length - 1, 1, `${label} is referenced nowhere else`);
+  }
+  assert.equal(t015T002Evaluate(fixture).reason, 'approved');
+
+  for (const [label, mutate] of [
+    ['intended invariant', (input) => { input.checkJudgments[0].intendedInvariantJudgment = 'inadequate'; }],
+    ['task scope', (input) => { input.taskReconciliationJudgments[0].taskScopeJudgment = 'unchanged'; }],
+    ['archive authority', (input) => { input.droppedDefectiveJudgments[0].archiveAuthorityJudgment = 'rejected'; }],
+  ]) {
+    assert.equal(t015T002EvaluateReview(fixture, mutate, 'rejected').reason, 'review-rejected', label);
+  }
+});
+
+test('T002 definition revision proof: retained and successor checks have exact closed trigger rules', () => {
+  const successor = t015T002RevisionFixture({ label: 'successor-check' });
+  const retained = t015T002RevisionFixture({ label: 'retained-check', checkDisposition: 'retained' });
+  assert.equal(t015T002Evaluate(successor).reason, 'approved');
+  assert.equal(t015T002Evaluate(retained).reason, 'approved');
+
+  const successorRow = successor.checkMappings.mappings[0];
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionCheckMappingSetV1({
+      preChangeCheckAnchors: clone(successor.checkMappings.preChangeCheckAnchors),
+      postChangeCheckAnchors: clone(successor.checkMappings.postChangeCheckAnchors),
+      mappings: [{
+        oldCheckIdentity: successorRow.oldCheckIdentity,
+        newCheckIdentity: successorRow.newCheckIdentity,
+        disposition: 'successor',
+        intendedInvariantIdentity: successorRow.intendedInvariantIdentity,
+        triggerEvidenceIdentities: [],
+      }],
+    }),
+    /trigger evidence/,
+  );
+  const retainedRow = retained.checkMappings.mappings[0];
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionCheckMappingSetV1({
+      preChangeCheckAnchors: clone(retained.checkMappings.preChangeCheckAnchors),
+      postChangeCheckAnchors: clone(retained.checkMappings.postChangeCheckAnchors),
+      mappings: [{
+        oldCheckIdentity: retainedRow.oldCheckIdentity,
+        newCheckIdentity: retainedRow.newCheckIdentity,
+        disposition: 'retained',
+        intendedInvariantIdentity: retainedRow.intendedInvariantIdentity,
+        triggerEvidenceIdentities: [t003Hash('t015-t002-invalid-retained-trigger')],
+      }],
+    }),
+    /empty for a retained check/,
+  );
+});
+
+test('T002 definition revision proof: only none and the three settled spec correction classes can approve', () => {
+  for (const specEditClass of [
+    'none',
+    'contradiction-clarification',
+    'accidental-execution-constraint-relocation-or-replacement',
+    'verified-execution-assumption',
+  ]) {
+    const fixture = t015T002RevisionFixture({
+      label: `spec-class-${specEditClass}`,
+      specEditClass,
+    });
+    assert.equal(t015T002Evaluate(fixture).reason, 'approved', specEditClass);
+  }
+  const fixture = t015T002RevisionFixture({ label: 'unknown-spec-class' });
+  const proofInput = t015T002ProofInput(fixture.proof);
+  proofInput.specEditClass = 'normative-rewrite';
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionRevisionProofV1(proofInput),
+    /specEditClass/,
+  );
+});
+
+test('T002 definition revision proof: proxies, accessors, unknown fields, sparse arrays, oversize sets, and noncanonical values reject', () => {
+  const fixture = t015T002RevisionFixture({ label: 'hostile-values' });
+  const obligationInput = t015T002ObligationInput(fixture.obligationMappings);
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionObligationMappingSetV1(new Proxy(obligationInput, {})),
+    /Proxy/,
+  );
+  const nestedProxy = t015T002ObligationInput(fixture.obligationMappings);
+  nestedProxy.categories[0].mappings[0] = new Proxy(nestedProxy.categories[0].mappings[0], {});
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionObligationMappingSetV1(nestedProxy),
+    /Proxy/,
+  );
+  const accessor = t015T002ObligationInput(fixture.obligationMappings);
+  Object.defineProperty(accessor.categories[0], 'category', {
+    enumerable: true,
+    get: () => 'acceptance',
+  });
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionObligationMappingSetV1(accessor),
+    /enumerable data property/,
+  );
+  const unknown = t015T002ObligationInput(fixture.obligationMappings);
+  unknown.categories[0].extra = true;
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionObligationMappingSetV1(unknown),
+    /unknown field/,
+  );
+  const sparse = t015T002ObligationInput(fixture.obligationMappings);
+  sparse.categories = new Array(T015_T002_OBLIGATION_CATEGORIES.length);
+  sparse.categories[0] = obligationInput.categories[0];
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionObligationMappingSetV1(sparse),
+    /sparse array/,
+  );
+  const oversizeHashes = Array.from(
+    { length: 65 },
+    (_, index) => t003Hash(`t015-t002-oversize-${index}`),
+  ).sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionCheckMappingSetV1({
+      preChangeCheckAnchors: oversizeHashes,
+      postChangeCheckAnchors: [t003Hash('t015-t002-oversize-final')],
+      mappings: [{
+        oldCheckIdentity: oversizeHashes[0],
+        newCheckIdentity: t003Hash('t015-t002-oversize-final'),
+        disposition: 'successor',
+        intendedInvariantIdentity: t003Hash('t015-t002-oversize-invariant'),
+        triggerEvidenceIdentities: [t003Hash('t015-t002-oversize-trigger')],
+      }],
+    }),
+    /1 through 64 rows/,
+  );
+  const noncanonical = t015T002ObligationInput(fixture.obligationMappings);
+  const acceptance = noncanonical.categories[0];
+  acceptance.preChangeAnchors = [
+    acceptance.preChangeAnchors[0],
+    t003Hash('t015-t002-unsorted-anchor'),
+  ].sort((left, right) => Buffer.compare(Buffer.from(right), Buffer.from(left)));
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionObligationMappingSetV1(noncanonical),
+    /sorted and duplicate-free/,
+  );
+  const unsafeUnicode = t015T002ProofInput(fixture.proof);
+  unsafeUnicode.specEditClass = '\ud800';
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionRevisionProofV1(unsafeUnicode),
+    /unpaired surrogate/,
+  );
+});
+
+test('T002 definition revision proof: only an Inspection-sourced trusted reviewer capture can authorize', () => {
+  const fixture = t015T002RevisionFixture({ label: 'trusted-reviewer' });
+  assert.equal(t015T002Evaluate(fixture, {
+    reviewCaptures: [fixture.review],
+  }).reason, 'missing-review-evidence');
+  for (const [label, mutate] of [
+    ['authority', (capture) => { capture.authority.authorityIdentity = t003Hash('t015-t002-forged-authority'); }],
+    ['invocation', (capture) => { capture.authority.invocationIdentity = t003Hash('t015-t002-forged-invocation'); }],
+    ['kind', (capture) => { capture.authority.kind = 'verification'; }],
+    ['outcome hash', (capture) => { capture.outcomeHash = t003Hash('t015-t002-forged-outcome'); }],
+  ]) {
+    const capture = clone(fixture.semanticReviewCapture);
+    mutate(capture);
+    assert.equal(t015T002Evaluate(fixture, {
+      semanticReviewCapture: capture,
+    }).reason, 'untrusted-review', label);
+  }
+});
+
+test('T004 integration security: unknown trusted review-envelope types fail closed', () => {
+  const fixture = t015T002RevisionFixture({ label: 'unknown-review-envelope' });
+  const unknownEnvelope = t002TrustedCapture(
+    { type: 'unknown-review-envelope', version: 1, target: clone(TARGET) },
+    'independent-review',
+    t003Hash('t015-t004-unknown-reviewer'),
+    t003Hash('t015-t004-unknown-review-invocation'),
+  );
+  assert.equal(t015T002Evaluate(fixture, {
+    reviewCaptures: [fixture.semanticReviewCapture, unknownEnvelope],
+  }).reason, 'untrusted-review');
+});
+
+test('T004 integration security: evaluator rejects an Inspection Proxy before traps', () => {
+  const fixture = t015T002RevisionFixture({ label: 'inspection-proxy' });
+  let trapCalls = 0;
+  const inspection = new Proxy(t015T002Inspection(fixture), {
+    get() {
+      trapCalls += 1;
+      throw new Error('inspection proxy trap must not execute');
+    },
+  });
+  assert.deepEqual(recoveryRuntime.evaluateDefinitionRevisionV1({
+    inspection,
+    proposal: fixture.proposal,
+    proof: fixture.proof,
+  }), {
+    approved: false,
+    result: 'refused',
+    reason: 'invalid-request',
+  });
+  assert.equal(trapCalls, 0);
+});
+
+test('T002 definition revision proof: byte-different exact proposals, proofs, and reviews retain distinct identities', () => {
+  const first = t015T002RevisionFixture({ label: 'identity-a' });
+  const proposalInput = t015T002ProposalInput(first.proposal);
+  proposalInput.coordinatorFinalDescriptors[0].sha256 = t003Hash('t015-t002-identity-b-final-bytes');
+  const secondProposal = recoveryRuntime.buildDefinitionRevisionProposalV1(proposalInput);
+  const proofInput = t015T002ProofInput(first.proof);
+  proofInput.proposalIdentity = secondProposal.proposalIdentity;
+  proofInput.coordinatorFinalDescriptors = clone(secondProposal.coordinatorFinalDescriptors);
+  const secondProof = recoveryRuntime.buildDefinitionRevisionProofV1(proofInput);
+  const secondReview = recoveryRuntime.buildDefinitionRevisionSemanticReviewEnvelopeV1(
+    t015T002ReviewInput(secondProof),
+    secondProof,
+  );
+  const secondFixture = {
+    eligibilityFixture: first.eligibilityFixture,
+    proposal: secondProposal,
+    proof: secondProof,
+    review: secondReview,
+    semanticReviewCapture: t015T002CaptureReview(secondReview),
+  };
+  assert.notEqual(first.proposal.proposalIdentity, secondProposal.proposalIdentity);
+  assert.notEqual(first.proof.proofIdentity, secondProof.proofIdentity);
+  assert.notEqual(first.review.reviewIdentity, secondReview.reviewIdentity);
+  assert.equal(t015T002Evaluate(secondFixture).reason, 'approved');
+});
+
+test('T002 definition revision proof: an absent, mismatched, swapped, or misplaced review capture cannot authorize', () => {
+  const fixture = t015T002RevisionFixture({ label: 'capture-binding' });
+
+  assert.equal(recoveryRuntime.evaluateDefinitionRevisionV1({
+    inspection: t015T002Inspection(fixture, { reviewCaptures: [] }),
+    proposal: fixture.proposal,
+    proof: fixture.proof,
+  }).reason, 'missing-review-evidence');
+
+  const mismatchedAuthority = clone(fixture.semanticReviewCapture);
+  mismatchedAuthority.authority.authorityIdentity = t003Hash('t015-t002-capture-authority-drift');
+  assert.equal(recoveryRuntime.evaluateDefinitionRevisionV1({
+    inspection: t015T002Inspection(fixture, { reviewCaptures: [mismatchedAuthority] }),
+    proposal: fixture.proposal,
+    proof: fixture.proof,
+  }).reason, 'untrusted-review');
+
+  const swappedBody = t015T002ReidentifyReview({
+    ...clone(fixture.review),
+    outcomeJudgment: 'weaker',
+    finalResult: 'rejected',
+  });
+  const swappedCapture = clone(fixture.semanticReviewCapture);
+  swappedCapture.bytes = recoveryRuntime.capturedBytesV1(Buffer.from(canonicalJson(swappedBody)));
+  assert.equal(recoveryRuntime.evaluateDefinitionRevisionV1({
+    inspection: t015T002Inspection(fixture, { reviewCaptures: [swappedCapture] }),
+    proposal: fixture.proposal,
+    proof: fixture.proof,
+  }).reason, 'untrusted-review');
+
+  const verificationStream = t002TrustedStreams([
+    /** @type {ReturnType<typeof t002PendingFixture>} */ (fixture.eligibilityFixture),
+  ]).verification;
+  assert.equal(recoveryRuntime.evaluateDefinitionRevisionV1({
+    inspection: t015T002Inspection(fixture, {
+      reviewCaptures: [],
+      streams: {
+        verification: [
+          ...verificationStream,
+          capture(TARGET, 'passed', [fixture.semanticReviewCapture]),
+        ],
+      },
+    }),
+    proposal: fixture.proposal,
+    proof: fixture.proof,
+  }).reason, 'untrusted-review');
+});
+
+test('T002 definition revision proof: KNOWN RESIDUAL - an unattested reviewer authority identity is accepted, not refused', () => {
+  // Module-wide V2 parity, not a T002-specific weakness: normalizeIndependentReviewEnvelopeV2
+  // runs the identical self-consistency check and this module holds no authority registry,
+  // signature, or attestation to resolve an authority identity against.
+  const fixture = t015T002RevisionFixture({ label: 'unattested-authority' });
+  const unattested = clone(fixture.review);
+  unattested.reviewerAuthorityIdentity = sha256('reviewer-authority-present-in-no-prior-evidence');
+  unattested.reviewInvocationIdentity = sha256('review-invocation-present-in-no-prior-evidence');
+  const unattestedReview = t015T002ReidentifyReview(unattested);
+
+  const result = recoveryRuntime.evaluateDefinitionRevisionV1({
+    inspection: t015T002Inspection(fixture, {
+      reviewCaptures: [t015T002CaptureReview(unattestedReview)],
+    }),
+    proposal: fixture.proposal,
+    proof: fixture.proof,
+  });
+  recoveryRuntime.validateDefinitionRecoveryFeature009EvidenceV1(result.feature009Evidence);
+  const { feature009Evidence, ...evaluation } = result;
+  assert.deepEqual(evaluation, {
+    approved: true,
+    result: 'approved',
+    reason: 'approved',
+    proposalIdentity: fixture.proposal.proposalIdentity,
+    proofIdentity: fixture.proof.proofIdentity,
+    reviewIdentity: unattestedReview.reviewIdentity,
+  });
+});
+
+test('T002 definition revision proof: a hostile array prototype cannot neuter proof cross-references', () => {
+  const fixture = t015T002RevisionFixture({ label: 'hostile-prototype' });
+
+  const neuteredEntries = t015T002UnresolvableAcceptanceProof(fixture);
+  assert.throws(
+    () => recoveryRuntime.validateDefinitionRevisionProofV1(neuteredEntries),
+    /must resolve in the exact acceptance obligation anchors/,
+  );
+  Object.setPrototypeOf(
+    neuteredEntries.taskReconciliation.rows,
+    t015T002HostileArrayPrototype({ entries: () => [][Symbol.iterator]() }),
+  );
+  assert.throws(
+    () => recoveryRuntime.validateDefinitionRevisionProofV1(neuteredEntries),
+    /must be a plain array/,
+  );
+
+  const neuteredFind = t015T002UnresolvableAcceptanceProof(fixture);
+  const forgedCategory = {
+    category: 'acceptance',
+    preChangeAnchors: [t003Hash('t015-t002-hostile-unresolvable')],
+    postChangeAnchors: [t003Hash('t015-t002-hostile-unresolvable')],
+    mappings: [],
+  };
+  Object.setPrototypeOf(
+    neuteredFind.obligationMappings.categories,
+    t015T002HostileArrayPrototype({ find: () => forgedCategory }),
+  );
+  assert.throws(
+    () => recoveryRuntime.validateDefinitionRevisionProofV1(neuteredFind),
+    /must be a plain array/,
+  );
+
+  const neuteredMap = t015T002UnresolvableCheckArchiveProof();
+  assert.throws(
+    () => recoveryRuntime.validateDefinitionRevisionProofV1(neuteredMap.proof),
+    /must resolve in the exact check mapping component/,
+  );
+  Object.setPrototypeOf(
+    neuteredMap.proof.checkMappings.mappings,
+    t015T002HostileArrayPrototype({ map: () => [neuteredMap.danglingCheckMappingIdentity] }),
+  );
+  assert.throws(
+    () => recoveryRuntime.validateDefinitionRevisionProofV1(neuteredMap.proof),
+    /must be a plain array/,
+  );
+});
+
+test('T002 definition revision proof: null-prototype arrays stay admissible exactly like plain objects', () => {
+  const fixture = t015T002RevisionFixture({ label: 'null-prototype' });
+  const nullPrototype = t015T002ObligationInput(fixture.obligationMappings);
+  const anchors = nullPrototype.categories[0].preChangeAnchors;
+  const plain = Array.prototype.slice.call(anchors);
+  Object.setPrototypeOf(anchors, null);
+  // A null prototype carries no method to redirect, so the guard mirrors
+  // assertRecord and admits it. Nothing downstream may read methods off it.
+  assert.equal(Object.getPrototypeOf(anchors), null);
+  assert.equal(canonicalJson(anchors), canonicalJson(plain));
+  assert.deepEqual(
+    recoveryRuntime.buildDefinitionObligationMappingSetV1(nullPrototype),
+    fixture.obligationMappings,
+  );
+});
+
+test('T002 definition revision proof: a replayed review from an earlier proposal refuses as stale', () => {
+  const fixture = t015T002RevisionFixture({ label: 'stale-replay' });
+  const successor = t015T002RevisionFixture({ label: 'stale-replay-successor' });
+  assert.notEqual(fixture.proposal.proposalIdentity, successor.proposal.proposalIdentity);
+  assert.equal(t015T002Evaluate(fixture, {
+    inspectedProposal: successor.proposal,
+  }).reason, 'stale-review-identity');
+});
+
+test('T002 definition revision proof: a captured review must agree with its authoritative source state', () => {
+  const approving = t015T002RevisionFixture({ label: 'state-agreement' });
+  assert.equal(t015T002Evaluate(approving).reason, 'approved');
+  for (const reviewState of ['rejected', 'none']) {
+    assert.equal(
+      t015T002Evaluate(approving, { reviewState }).reason,
+      'review-state-mismatch',
+      reviewState,
+    );
+  }
+  const rejectingInput = t015T002ReviewInput(approving.proof);
+  rejectingInput.outcomeJudgment = 'weaker';
+  rejectingInput.finalResult = 'rejected';
+  const rejecting = recoveryRuntime.buildDefinitionRevisionSemanticReviewEnvelopeV1(
+    rejectingInput,
+    approving.proof,
+  );
+  assert.equal(t015T002Evaluate(approving, { review: rejecting }).reason, 'review-rejected');
+  assert.equal(t015T002Evaluate(approving, {
+    reviewCaptures: [t015T002CaptureReview(rejecting)],
+    reviewState: 'accepted',
+  }).reason, 'review-state-mismatch');
+});
+
+test('T002 definition revision proof: two competing reviews for one proof refuse as ambiguous', () => {
+  const fixture = t015T002RevisionFixture({ label: 'competing-reviews' });
+  const rejectingInput = t015T002ReviewInput(fixture.proof, {
+    reviewerAuthorityIdentity: t003Hash('t015-t002-competing-reviewer'),
+    reviewInvocationIdentity: t003Hash('t015-t002-competing-invocation'),
+  });
+  rejectingInput.outcomeJudgment = 'weaker';
+  rejectingInput.finalResult = 'rejected';
+  const rejecting = recoveryRuntime.buildDefinitionRevisionSemanticReviewEnvelopeV1(
+    rejectingInput,
+    fixture.proof,
+  );
+  assert.equal(rejecting.proofIdentity, fixture.proof.proofIdentity);
+  assert.equal(t015T002Evaluate(fixture, {
+    reviewEntries: [
+      { state: 'accepted', captures: [fixture.semanticReviewCapture] },
+      { state: 'rejected', captures: [t015T002CaptureReview(rejecting)] },
+    ],
+  }).reason, 'ambiguous-review-evidence');
+});
+
+test('T002 definition revision proof: acceptance obligations cannot enter or leave a revision unowned', () => {
+  const fixture = t015T002RevisionFixture({ label: 'orphan-acceptance' });
+  const sortUtf8 = (values) => values
+    .slice()
+    .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+  const cases = [
+    ['postChangeAnchors', 'must each be owned by exactly one final task', (acceptance) => {
+      const orphan = t003Hash('t015-t002-orphan-final-acceptance');
+      acceptance.postChangeAnchors = sortUtf8([...acceptance.postChangeAnchors, orphan]);
+      acceptance.mappings[0].successorAnchorIdentities = sortUtf8(
+        acceptance.postChangeAnchors,
+      );
+    }],
+    ['preChangeAnchors', 'must each be owned by exactly one entering task', (acceptance) => {
+      const orphan = t003Hash('t015-t002-orphan-entering-acceptance');
+      acceptance.preChangeAnchors = sortUtf8([...acceptance.preChangeAnchors, orphan]);
+      acceptance.mappings = sortUtf8(acceptance.preChangeAnchors).map((sourceAnchorIdentity) => ({
+        sourceAnchorIdentity,
+        successorAnchorIdentities: clone(acceptance.postChangeAnchors),
+        relation: 'equal',
+      }));
+    }],
+  ];
+  for (const [label, expected, mutate] of cases) {
+    const input = t015T002ObligationInput(fixture.obligationMappings);
+    mutate(input.categories.find((row) => row.category === 'acceptance'));
+    const proofInput = t015T002ProofInput(fixture.proof);
+    proofInput.obligationMappings = recoveryRuntime.buildDefinitionObligationMappingSetV1(input);
+    assert.throws(
+      () => recoveryRuntime.buildDefinitionRevisionProofV1(proofInput),
+      new RegExp(expected),
+      label,
+    );
+  }
+});
+
+test('T002 definition revision proof: a reviewer judgment must match the exact asserted obligation relation', () => {
+  const stronger = t015T002RevisionFixture({
+    label: 'relation-drift-stronger',
+    obligationRelation: 'stronger',
+  });
+  assert.equal(t015T002Evaluate(stronger).reason, 'approved');
+  assert.ok(stronger.review.obligationJudgments.every((row) => row.judgment === 'stronger'));
+  assert.equal(t015T002EvaluateReview(
+    stronger,
+    (input) => { input.obligationJudgments[0].judgment = 'equal'; },
+    'rejected',
+  ).reason, 'review-rejected');
+
+  const equal = t015T002RevisionFixture({ label: 'relation-drift-equal' });
+  assert.equal(t015T002EvaluateReview(
+    equal,
+    (input) => { input.obligationJudgments[0].judgment = 'stronger'; },
+    'rejected',
+  ).reason, 'review-rejected');
+});
+
+test('T002 definition revision proof: retained checks refuse a successor or binding trigger judgment', () => {
+  const retained = t015T002RevisionFixture({ label: 'retained-judgments', checkDisposition: 'retained' });
+  assert.equal(t015T002Evaluate(retained).reason, 'approved');
+  assert.ok(retained.review.checkJudgments.every((row) => (
+    row.successorCheckJudgment === 'not-applicable'
+      && row.triggerEvidenceJudgment === 'not-applicable'
+  )));
+  for (const [label, mutate] of [
+    ['successor', (input) => { input.checkJudgments[0].successorCheckJudgment = 'adequate'; }],
+    ['trigger', (input) => { input.checkJudgments[0].triggerEvidenceJudgment = 'binding'; }],
+  ]) {
+    assert.equal(t015T002EvaluateReview(retained, mutate, 'rejected').reason, 'review-rejected', label);
+  }
+  const successor = t015T002RevisionFixture({ label: 'successor-judgments' });
+  for (const [label, mutate] of [
+    ['successor', (input) => { input.checkJudgments[0].successorCheckJudgment = 'not-applicable'; }],
+    ['trigger', (input) => { input.checkJudgments[0].triggerEvidenceJudgment = 'not-binding'; }],
+  ]) {
+    assert.equal(t015T002EvaluateReview(successor, mutate, 'rejected').reason, 'review-rejected', label);
+  }
+});
+
+test('T002 definition revision proof: trigger, decomposition, and defect evidence must resolve in the proposal', () => {
+  const foreign = t003Hash('t015-t002-foreign-evidence');
+  const unanchoredTrigger = t015T002RevisionFixture({
+    label: 'unanchored-trigger',
+    triggerEvidenceIdentities: [foreign],
+  });
+  assert.throws(
+    () => recoveryRuntime.validateDefinitionRevisionProofBindingV1(
+      unanchoredTrigger.proposal,
+      unanchoredTrigger.proof,
+    ),
+    /must resolve in the exact proposal blocker evidence references/,
+  );
+  assert.equal(t015T002Evaluate(unanchoredTrigger).reason, 'proof-binding-mismatch');
+
+  const unanchoredDecomposition = t015T002RevisionFixture({
+    label: 'unanchored-decomposition',
+    taskRows: (context) => {
+      const rows = /** @type {Record<string, unknown>[]} */ (clone(
+        t015T002DroppedRows(context),
+      ));
+      rows[0].decompositionBasisIdentities = [foreign];
+      return rows;
+    },
+  });
+  assert.throws(
+    () => recoveryRuntime.validateDefinitionRevisionProofBindingV1(
+      unanchoredDecomposition.proposal,
+      unanchoredDecomposition.proof,
+    ),
+    /must resolve in the exact proposal decomposition evidence references/,
+  );
+
+  const unanchoredDefect = t015T002RevisionFixture({
+    label: 'unanchored-defect',
+    taskRows: (context) => {
+      const rows = /** @type {Record<string, unknown>[]} */ (clone(
+        t015T002DroppedRows(context),
+      ));
+      /** @type {Record<string, unknown>} */ (rows[0].archive).defectEvidenceIdentities = [foreign];
+      return rows;
+    },
+  });
+  assert.throws(
+    () => recoveryRuntime.validateDefinitionRevisionProofBindingV1(
+      unanchoredDefect.proposal,
+      unanchoredDefect.proof,
+    ),
+    /archive.defectEvidenceIdentities/,
+  );
+  assert.equal(t015T002Evaluate(unanchoredDefect).reason, 'proof-binding-mismatch');
+
+  const unanchoredArchiveTrigger = t015T002RevisionFixture({
+    label: 'unanchored-archive-trigger',
+    taskRows: (context) => {
+      const rows = /** @type {Record<string, unknown>[]} */ (clone(
+        t015T002DroppedRows(context),
+      ));
+      /** @type {Record<string, unknown>} */ (rows[0].archive).triggerEvidenceIdentities = [foreign];
+      return rows;
+    },
+  });
+  assert.throws(
+    () => recoveryRuntime.validateDefinitionRevisionProofBindingV1(
+      unanchoredArchiveTrigger.proposal,
+      unanchoredArchiveTrigger.proof,
+    ),
+    /must resolve in the exact successor check trigger evidence/,
+  );
+});
+
+test('T002 definition revision proof: a dropped-defective successor claim cannot outrun its obligation judgments', () => {
+  const fixture = t015T002RevisionFixture({
+    label: 'dropped-obligation-drift',
+    obligationRelation: 'stronger',
+    taskRows: t015T002DroppedRows,
+  });
+  assert.equal(t015T002Evaluate(fixture).reason, 'approved');
+  const archive = /** @type {Record<string, unknown>} */ (
+    fixture.taskReconciliation.rows[0].archive
+  );
+  const successorIdentities = new Set(
+    /** @type {string[]} */ (archive.successorObligationMappingIdentities),
+  );
+  const baseline = t015T002ReviewInput(fixture.proof);
+  const successorRows = /** @type {Record<string, unknown>[]} */ (baseline.obligationJudgments)
+    .filter((row) => successorIdentities.has(/** @type {string} */ (row.identity)));
+  const unrelatedRows = /** @type {Record<string, unknown>[]} */ (baseline.obligationJudgments)
+    .filter((row) => !successorIdentities.has(/** @type {string} */ (row.identity)));
+  assert.ok(successorRows.length > 0, 'the archive must name at least one successor obligation mapping');
+  assert.ok(unrelatedRows.length > 0, 'the fixture must isolate successor mappings from the rest');
+
+  // The dropped-defective row keeps claiming equal-or-stronger successors in
+  // both cases, so the rejection is a consequence of the obligation judgments
+  // rather than of the archive row's own claim.
+  for (const [label, identity] of [
+    ['archived successor mapping', /** @type {string} */ (successorRows[0].identity)],
+    ['unrelated mapping', /** @type {string} */ (unrelatedRows[0].identity)],
+  ]) {
+    const evaluated = t015T002EvaluateReview(
+      fixture,
+      (input) => {
+        assert.equal(
+          input.droppedDefectiveJudgments[0].successorObligationJudgment,
+          'equal-or-stronger',
+          label,
+        );
+        const row = input.obligationJudgments.find((entry) => entry.identity === identity);
+        row.judgment = 'equal';
+      },
+      'rejected',
+    );
+    assert.equal(evaluated.reason, 'review-rejected', label);
+  }
+
+  // A dropped-defective claim also cannot approve itself: the archive row's own
+  // successor obligation judgment must be equal-or-stronger.
+  assert.equal(t015T002EvaluateReview(
+    fixture,
+    (input) => { input.droppedDefectiveJudgments[0].successorObligationJudgment = 'weaker'; },
+    'rejected',
+  ).reason, 'review-rejected');
+});
+
+test('T002 structural pin: the FR-020 successor obligation binding stays wired into the review outcome', () => {
+  // Envelope coverage already rejects any successor obligation mapping judged
+  // against its asserted relation, so deleting this binding is behaviourally
+  // unobservable today. FR-020 still requires it, so the wiring is pinned here.
+  const source = fs.readFileSync(new URL('./recovery.mjs', import.meta.url), 'utf8');
+  assert.match(
+    source,
+    /observe\(\s*row\.successorObligationJudgment,\s*successorsConsistent \? \['equal-or-stronger'\] : \[\],?\s*\)/,
+  );
+  assert.match(source, /const successorsConsistent = [\s\S]*?relationConsistentMappings\.has\(identity\)/);
+});
+
+test('T002 definition revision proof: one-to-one-kept refuses a changed task scope identity', () => {
+  const fixture = t015T002RevisionFixture({ label: 'scope-drift' });
+  const reconciliation = /** @type {Record<string, unknown>} */ (fixture.taskReconciliation);
+  const rows = /** @type {Record<string, unknown>[]} */ (clone(reconciliation.rows))
+    .map(({ reconciliationIdentity, ...row }) => ({
+      ...row,
+      finalTasks: /** @type {Record<string, unknown>[]} */ (row.finalTasks).map((task) => ({
+        ...task,
+        taskScopeIdentity: t003Hash('t015-t002-scope-drift-final'),
+      })),
+    }));
+  const drifted = recoveryRuntime.buildDefinitionTaskReconciliationV1({
+    declaredOldTaskKeys: clone(reconciliation.declaredOldTaskKeys),
+    declaredFinalTaskKeys: clone(reconciliation.declaredFinalTaskKeys),
+    rows,
+  });
+  const proofInput = t015T002ProofInput(fixture.proof);
+  proofInput.taskReconciliation = drifted;
+  assert.throws(
+    () => recoveryRuntime.buildDefinitionRevisionProofV1(proofInput),
+    /one-to-one-kept must retain the exact task scope identity/,
+  );
+});
+
+test('T002 definition revision proof: guarded and tracked evaluation stay byte-identical and touch no source', () => {
+  const fixture = t015T002RevisionFixture({ label: 'lane-parity' });
+  const autonomous = recoveryRuntime.evaluateDefinitionRevisionV1({
+    inspection: t015T002Inspection(fixture),
+    proposal: fixture.proposal,
+    proof: fixture.proof,
+  });
+  const guarded = recoveryRuntime.evaluateDefinitionRevisionV1({
+    inspection: t015T002Inspection(fixture, { streams: { policyMode: 'guarded' } }),
+    proposal: fixture.proposal,
+    proof: fixture.proof,
+  });
+  assert.equal(canonicalJson(guarded), canonicalJson(autonomous));
+
+  const trackedInput = t015T002ProofInput(fixture.proof);
+  trackedInput.target = clone(TRACKED);
+  assert.throws(() => recoveryRuntime.buildDefinitionRevisionProofV1(trackedInput), /lane/);
+  const trackedBody = JSON.parse(canonicalJson({
+    type: 'definition-revision-proof',
+    version: 1,
+    ...trackedInput,
+    coordinatorFinalDescriptorIdentity: fixture.proof.coordinatorFinalDescriptorIdentity,
+  }));
+  const trackedProof = {
+    ...trackedBody,
+    proofIdentity: sha256(canonicalJson(trackedBody)),
+  };
+  const inspection = t015T002Inspection(fixture);
+  /** @type {Record<string, unknown>|undefined} */
+  let tracked;
+  const opened = recordOpenSync(() => {
+    tracked = recoveryRuntime.evaluateDefinitionRevisionV1({
+      inspection,
+      proposal: fixture.proposal,
+      proof: trackedProof,
+    });
+  });
+  assert.deepEqual(opened, []);
+  assert.deepEqual(tracked, { approved: false, result: 'refused', reason: 'invalid-proof' });
+});
+
+test('T002 definition revision proof: a definition-revision review capture leaves T001 authorization byte-identical', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const blocker = t002PendingFixture({
+      verdict: 'rejected',
+      checkOutcome: 'failed',
+      failureClass: 'definition-contradiction',
+      sourceRevisionIdentity: t001SourceRevisionIdentity(prestateDescriptors),
+    });
+    const proposal = t001ContradictionProposal(blocker, { prestateDescriptors });
+    const streams = t002TrustedStreams([blocker]);
+    const currentRun = [capture(TARGET, 'blocked', [t001ProposalRecord(proposal)])];
+    const revision = t015T002RevisionFixture({ label: 't001-coexistence' });
+    const withoutDefinitionReview = t001AuthorizeDefinition(
+      autonomousState(),
+      autonomousInspectInput(root, { currentRun, ...streams }),
+    );
+    const withDefinitionReview = t001AuthorizeDefinition(
+      autonomousState(),
+      autonomousInspectInput(root, {
+        currentRun,
+        verification: streams.verification,
+        review: [...streams.review, capture(TARGET, 'accepted', [revision.semanticReviewCapture])],
+      }),
+    );
+    assert.equal(withoutDefinitionReview.authorized, true);
+    assert.equal(withDefinitionReview.authorized, true);
+    assert.equal(
+      canonicalJson(withDefinitionReview.definitionReconciliation),
+      canonicalJson(withoutDefinitionReview.definitionReconciliation),
+    );
+    for (const field of ['overallUsed', 'recoveryUsed', 'completed']) {
+      assert.equal(
+        canonicalJson(withDefinitionReview.state[field]),
+        canonicalJson(withoutDefinitionReview.state[field]),
+        field,
+      );
+    }
+    assert.equal(
+      canonicalJson(withDefinitionReview.state.pending[0].approachHash),
+      canonicalJson(withoutDefinitionReview.state.pending[0].approachHash),
+    );
+    const unknownEnvelope = t002TrustedCapture(
+      { type: 'unknown-review-envelope', version: 1, target: clone(TARGET) },
+      'independent-review',
+      t003Hash('t015-t002-unknown-authority'),
+      t003Hash('t015-t002-unknown-invocation'),
+    );
+    const withUnknownEnvelope = t001AuthorizeDefinition(
+      autonomousState(),
+      autonomousInspectInput(root, {
+        currentRun,
+        verification: streams.verification,
+        review: [...streams.review, capture(TARGET, 'accepted', [unknownEnvelope])],
+      }),
+    );
+    assert.equal(withUnknownEnvelope.authorized, false);
+  });
+});
+
+test('T001 definition reconciliation: trusted deterministic contradiction authorizes with zero retries and exact proposal-bound approach evidence', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const fixture = t002PendingFixture({
+      verdict: 'rejected',
+      checkOutcome: 'failed',
+      failureClass: 'definition-contradiction',
+      sourceRevisionIdentity: t001SourceRevisionIdentity(prestateDescriptors),
+    });
+    const proposal = t001ContradictionProposal(fixture, { prestateDescriptors });
+    const input = autonomousInspectInput(root, {
+      currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(proposal)])],
+      ...t002TrustedStreams([fixture]),
+    });
+    const state = autonomousState();
+    const authorized = t001AuthorizeDefinition(state, input);
+    assert.equal(state.overallUsed, 0);
+    assert.deepEqual(state.completed, []);
+    assert.equal(authorized.authorized, true);
+    assert.equal(authorized.state.overallUsed, 1);
+    assert.equal(authorized.state.recoveryUsed[0].count, 1);
+    assert.equal(authorized.definitionReconciliation.variant, 'definition-contradiction');
+    assert.equal(authorized.definitionReconciliation.proposalIdentity, proposal.proposalIdentity);
+    assert.deepEqual(
+      authorized.definitionReconciliation.reviewerEvidenceReferences,
+      proposal.reviewerEvidenceReferences,
+    );
+    assert.deepEqual(authorized.definitionReconciliation.proposal, proposal);
+    recoveryRuntime.validateApproachBasisV1(authorized.definitionReconciliation.approachBasis);
+    assert.deepEqual(
+      authorized.definitionReconciliation.approachBasis.mechanismIdentities,
+      [proposal.proposalIdentity],
+    );
+    assert.deepEqual(
+      authorized.definitionReconciliation.approachBasis.evidenceAcquisitionIdentities,
+      [sha256(canonicalJson({
+        kind: 'proposal-bound-eligibility-evidence',
+        proposalIdentity: proposal.proposalIdentity,
+      }))],
+    );
+    assert.equal(authorized.definitionReconciliation.approachBasis.validationPlanIdentities.length, 2);
+    assert.equal(authorized.state.pending[0].approachHash, proposal.proposalIdentity);
+    assert.deepEqual(Object.keys(authorized.state.pending[0]), [
+      'target', 'evidenceHash', 'approachHash', 'action', 'materialInputs', 'mode',
+    ]);
+
+    const pending = authorized.state.pending[0];
+    const approachBasisIdentity = sha256(canonicalJson(
+      authorized.definitionReconciliation.approachBasis,
+    ));
+    const attemptIdentity = sha256(canonicalJson({
+      version: 2,
+      target: canonicalTarget(TARGET),
+      attemptOrdinal: authorized.state.overallUsed,
+      authorizationEvidenceHash: pending.evidenceHash,
+      approachBasisIdentity,
+    }));
+    const completionEvidence = {
+      target: TARGET,
+      ...t002EnvelopeFixture({
+        target: TARGET,
+        attemptIdentity,
+        attemptOrdinal: authorized.state.overallUsed,
+        inspectedEvidenceHash: pending.evidenceHash,
+        checkOutcome: 'passed',
+        verdict: 'accepted',
+      }),
+    };
+    const completionInputValue = autonomousInspectInput(root, {
+      currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(proposal)])],
+      ...t002TrustedStreams([fixture, completionEvidence]),
+    });
+    const completion = {
+      version: 2,
+      target: TARGET,
+      attemptIdentity,
+      route: 'definition-reconciliation',
+      outcome: 'succeeded',
+      operations: ['reconcile-derived-definition'],
+      changedTargets: definitionTargets(),
+      resultIdentity: completionEvidence.verification.resultIdentity,
+      verificationEnvelopeIdentity: completionEvidence.verification.envelopeIdentity,
+      reviewEnvelopeIdentity: completionEvidence.review.envelopeIdentity,
+      findingIdentities: [],
+    };
+    const captured = recoveryRuntime.captureCompletionV2(
+      authorized.state,
+      completionInputValue,
+      completion,
+    );
+    assert.equal(captured.captured, true);
+    assert.deepEqual(captured.occurrenceEvents[0].basis, authorized.definitionReconciliation.approachBasis);
+    assert.deepEqual(captured.occurrenceEvents[0].basis.mechanismIdentities, [proposal.proposalIdentity]);
+    const tamperedState = clone(authorized.state);
+    tamperedState.pending[0].approachHash = t003Hash('t001-tampered-proposal-binding');
+    validateRunState(tamperedState);
+    const refused = recoveryRuntime.captureCompletionV2(
+      tamperedState,
+      completionInputValue,
+      completion,
+    );
+    assert.equal(refused.captured, false);
+    assert.equal(refused.finalized, false);
+    t001AssertReconciliationConflictUnchanged('tampered proposal binding', tamperedState, refused);
+  });
+});
+
+test('T001 definition reconciliation: one contradiction cannot splice references across trusted finding occurrences', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const sourceRevisionIdentity = t001SourceRevisionIdentity(prestateDescriptors);
+    const first = t002PendingFixture({
+      verdict: 'rejected',
+      checkOutcome: 'failed',
+      failureClass: 'definition-contradiction',
+      sourceRevisionIdentity,
+    });
+    const second = t002PendingFixture({
+      attemptOrdinal: 2,
+      verdict: 'rejected',
+      checkOutcome: 'failed',
+      failureClass: 'definition-contradiction',
+      sourceRevisionIdentity,
+      definitionIdentity: t003Hash('t001-second-definition'),
+      checkEvidenceIdentity: t003Hash('t001-second-check-evidence'),
+    });
+    const firstBasis = /** @type {Record<string, unknown>} */ (first.finding.basis);
+    const secondBasis = /** @type {Record<string, unknown>} */ (second.finding.basis);
+    const eligibility = recoveryRuntime.buildDefinitionReconciliationEligibilityV1({
+      variant: 'definition-contradiction',
+      proofKind: 'contradiction',
+      blockerEvidenceIdentity: first.finding.findingIdentity,
+      gateEvidenceIdentity: second.verification.checks[0].checkIdentity,
+      definitionReferenceIdentities: [
+        /** @type {Record<string, unknown>} */ (firstBasis.expectation).identity,
+        secondBasis.checkDefinitionIdentity,
+      ].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+      causalEvidenceIdentities: [
+        first.finding.findingIdentity,
+        second.finding.basisIdentity,
+        second.verification.checks[0].checkIdentity,
+      ].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+    });
+    const proposal = t001DefinitionProposal(eligibility, {
+      blockerEvidenceIdentities: [first.finding.findingIdentity],
+      decompositionEvidenceIdentities: [second.finding.basisIdentity],
+    }, { prestateDescriptors });
+    const input = autonomousInspectInput(root, {
+      currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(proposal)])],
+      ...t002TrustedStreams([first, second]),
+    });
+    const state = autonomousState();
+    const refused = t001AuthorizeDefinition(state, input);
+    assert.equal(refused.authorized, false);
+    assert.equal(refused.reason, 'evidence-incomplete');
+    assert.strictEqual(refused.state, state);
+    for (const [label, intactProposal] of [
+      ['first intact bundle', t001ContradictionProposal(first, { prestateDescriptors })],
+      ['second intact bundle', t001ContradictionProposal(second, { prestateDescriptors })],
+    ]) {
+      const intactInput = autonomousInspectInput(root, {
+        currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(intactProposal)])],
+        ...t002TrustedStreams([first, second]),
+      });
+      assert.equal(
+        t001AuthorizeDefinition(autonomousState(), intactInput).authorized,
+        true,
+        /** @type {string} */ (label),
+      );
+    }
+  });
+});
+
+test('T001 definition reconciliation: one review cannot splice a finding across its exact verification check', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const sourceRevisionIdentity = t001SourceRevisionIdentity(prestateDescriptors);
+    const first = t002EnvelopeFixture({
+      verdict: 'rejected',
+      checkOutcome: 'failed',
+      failureClass: 'definition-contradiction',
+      sourceRevisionIdentity,
+      definitionIdentity: t003Hash('t001-same-review-first-definition'),
+      checkEvidenceIdentity: t003Hash('t001-same-review-first-evidence'),
+    });
+    const second = t002EnvelopeFixture({
+      verdict: 'rejected',
+      checkOutcome: 'failed',
+      failureClass: 'definition-contradiction',
+      sourceRevisionIdentity,
+      definitionIdentity: t003Hash('t001-same-review-second-definition'),
+      checkEvidenceIdentity: t003Hash('t001-same-review-second-evidence'),
+    });
+    const verification = t002ReidentifyEnvelope({
+      ...first.verification,
+      checks: [first.verification.checks[0], second.verification.checks[0]]
+        .sort((left, right) => Buffer.compare(
+          Buffer.from(left.checkIdentity),
+          Buffer.from(right.checkIdentity),
+        )),
+    });
+    const findings = [first.finding, second.finding].sort((left, right) => Buffer.compare(
+      Buffer.from(left.findingIdentity),
+      Buffer.from(right.findingIdentity),
+    ));
+    const review = t002ReidentifyEnvelope({
+      ...first.review,
+      verificationEnvelopeIdentity: verification.envelopeIdentity,
+      findings,
+    });
+    recoveryRuntime.validateIndependentReviewEnvelopeV2(review, verification);
+    const fixture = {
+      target: TARGET,
+      verification,
+      review,
+      verificationCapture: t002TrustedCapture(
+        verification,
+        'verification',
+        t002Hash('verification-authority'),
+        t002Hash('verification-invocation-1'),
+      ),
+      reviewCapture: t002TrustedCapture(
+        review,
+        'independent-review',
+        review.reviewerAuthorityIdentity,
+        review.reviewInvocationIdentity,
+      ),
+    };
+    const proposalFor = (finding, check) => {
+      const basis = /** @type {Record<string, unknown>} */ (finding.basis);
+      const expectation = /** @type {Record<string, unknown>} */ (basis.expectation);
+      const eligibility = recoveryRuntime.buildDefinitionReconciliationEligibilityV1({
+        variant: 'definition-contradiction',
+        proofKind: 'contradiction',
+        blockerEvidenceIdentity: finding.findingIdentity,
+        gateEvidenceIdentity: check.checkIdentity,
+        definitionReferenceIdentities: [expectation.identity, basis.checkDefinitionIdentity]
+          .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+        causalEvidenceIdentities: [finding.findingIdentity, finding.basisIdentity, check.checkIdentity]
+          .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+      });
+      return t001DefinitionProposal(eligibility, {
+        blockerEvidenceIdentities: [finding.findingIdentity],
+        decompositionEvidenceIdentities: [finding.basisIdentity],
+      }, { prestateDescriptors });
+    };
+    const checksByIdentity = new Map(verification.checks.map((check) => [check.checkIdentity, check]));
+    const pairs = findings.map((finding) => [
+      finding,
+      checksByIdentity.get(finding.observation.identity),
+    ]);
+    for (const [label, finding, check, expected] of [
+      ['first intact pair', pairs[0][0], pairs[0][1], true],
+      ['second intact pair', pairs[1][0], pairs[1][1], true],
+      ['first finding crossed to second check', pairs[0][0], pairs[1][1], false],
+      ['second finding crossed to first check', pairs[1][0], pairs[0][1], false],
+    ]) {
+      const proposal = proposalFor(finding, check);
+      const input = autonomousInspectInput(root, {
+        currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(proposal)])],
+        ...t002TrustedStreams([fixture]),
+      });
+      const state = autonomousState();
+      const result = t001AuthorizeDefinition(state, input);
+      assert.equal(result.authorized, expected, /** @type {string} */ (label));
+      if (!expected) {
+        assert.equal(result.reason, 'evidence-incomplete', /** @type {string} */ (label));
+        assert.strictEqual(result.state, state, /** @type {string} */ (label));
+      }
+    }
+  });
+});
+
+test('T001 definition reconciliation: observed evidence does not import unrelated verification check identities', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const sourceRevisionIdentity = t001SourceRevisionIdentity(prestateDescriptors);
+    const observed = t002EnvelopeFixture({
+      verdict: 'rejected',
+      checkOutcome: 'failed',
+      failureClass: 'definition-contradiction',
+      sourceRevisionIdentity,
+      observationKind: 'observed-evidence',
+      observationIdentity: t003Hash('t001-observed-evidence'),
+    });
+    const unrelated = t002EnvelopeFixture({
+      verdict: 'rejected',
+      checkOutcome: 'failed',
+      sourceRevisionIdentity,
+      definitionIdentity: t003Hash('t001-unrelated-definition'),
+      checkEvidenceIdentity: t003Hash('t001-unrelated-check-evidence'),
+    });
+    const unrelatedCheck = unrelated.verification.checks[0];
+    const verification = t002ReidentifyEnvelope({
+      ...observed.verification,
+      checks: [observed.verification.checks[0], unrelatedCheck].sort((left, right) => Buffer.compare(
+        Buffer.from(left.checkIdentity),
+        Buffer.from(right.checkIdentity),
+      )),
+    });
+    const review = t002ReidentifyEnvelope({
+      ...observed.review,
+      verificationEnvelopeIdentity: verification.envelopeIdentity,
+    });
+    recoveryRuntime.validateIndependentReviewEnvelopeV2(review, verification);
+    const fixture = {
+      target: TARGET,
+      verification,
+      review,
+      verificationCapture: t002TrustedCapture(
+        verification,
+        'verification',
+        t002Hash('verification-authority'),
+        t002Hash('verification-invocation-1'),
+      ),
+      reviewCapture: t002TrustedCapture(
+        review,
+        'independent-review',
+        review.reviewerAuthorityIdentity,
+        review.reviewInvocationIdentity,
+      ),
+    };
+    const finding = observed.finding;
+    const basis = /** @type {Record<string, unknown>} */ (finding.basis);
+    const expectation = /** @type {Record<string, unknown>} */ (basis.expectation);
+    const proposalFor = (gateEvidenceIdentity) => {
+      const eligibility = recoveryRuntime.buildDefinitionReconciliationEligibilityV1({
+        variant: 'definition-contradiction',
+        proofKind: 'contradiction',
+        blockerEvidenceIdentity: finding.findingIdentity,
+        gateEvidenceIdentity,
+        definitionReferenceIdentities: [expectation.identity, basis.checkDefinitionIdentity]
+          .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+        causalEvidenceIdentities: [finding.findingIdentity, finding.basisIdentity, gateEvidenceIdentity]
+          .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+      });
+      return t001DefinitionProposal(eligibility, {
+        blockerEvidenceIdentities: [finding.findingIdentity],
+        decompositionEvidenceIdentities: [finding.basisIdentity],
+      }, { prestateDescriptors });
+    };
+    for (const [label, identity, expected] of [
+      ['own observed evidence', finding.observation.identity, true],
+      ['unrelated check identity', unrelatedCheck.checkIdentity, false],
+      ['unrelated check definition identity', unrelatedCheck.definitionIdentity, false],
+      ['unrelated check evidence identity', unrelatedCheck.evidenceIdentity, false],
+    ]) {
+      const proposal = proposalFor(identity);
+      const input = autonomousInspectInput(root, {
+        currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(proposal)])],
+        ...t002TrustedStreams([fixture]),
+      });
+      const state = autonomousState();
+      const result = t001AuthorizeDefinition(state, input);
+      assert.equal(result.authorized, expected, /** @type {string} */ (label));
+      if (!expected) assert.strictEqual(result.state, state, /** @type {string} */ (label));
+    }
+  });
+});
+
+test('T001 definition reconciliation: trusted impossible definition gate authorizes through the public route', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const fixture = t002PendingFixture({
+      verdict: 'rejected',
+      checkOutcome: 'failed',
+      failureClass: 'impossible-definition-gate',
+      sourceRevisionIdentity: t001SourceRevisionIdentity(prestateDescriptors),
+    });
+    const proposal = t001ContradictionProposal(fixture, { prestateDescriptors });
+    assert.equal(proposal.eligibility.proofKind, 'impossible-gate');
+    const input = autonomousInspectInput(root, {
+      currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(proposal)])],
+      ...t002TrustedStreams([fixture]),
+    });
+    const authorized = t001AuthorizeDefinition(autonomousState(), input);
+    assert.equal(authorized.authorized, true);
+    assert.equal(authorized.definitionReconciliation.variant, 'definition-contradiction');
+  });
+});
+
+test('T001 definition reconciliation: every same-target revision gate requires fresh exact state', () => {
+  const assertRefusedUnchanged = (label, state, result) => {
+    assert.equal(result.authorized, false, label);
+    assert.equal(result.reason, 'evidence-incomplete', label);
+    assert.strictEqual(result.state, state, label);
+    assert.equal(state.overallUsed, 0, label);
+    assert.deepEqual(state.recoveryUsed, [], label);
+    assert.deepEqual(state.pending, [], label);
+    assert.equal(Object.hasOwn(state, 'pendingCompletion'), false, label);
+  };
+  for (const [label, artifactPath, changedBytes] of [
+    ['owner idea bytes', IDEA_PATH, Buffer.concat([ideaBytes(), Buffer.from('\nchanged owner bytes\n')])],
+    ['plan bytes', PLAN_PATH, Buffer.concat([noRegistryPlanBytes(SPEC_PATH), Buffer.from('\nchanged plan bytes\n')])],
+    ['spec bytes', SPEC_PATH, Buffer.from('# Spec\n\nchanged spec bytes\n')],
+    ['tasks bytes', TASKS_PATH, Buffer.concat([
+      transitionTasksBytes([{ id: TASK_KEY, glyph: '~' }]),
+      Buffer.from('\n'),
+    ])],
+  ]) {
+    withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+      const staleDescriptors = t001WorkspaceDefinitionDescriptors(root);
+      const staleRevisionIdentity = t001SourceRevisionIdentity(staleDescriptors);
+      const staleFixture = t002PendingFixture({
+        verdict: 'rejected',
+        checkOutcome: 'failed',
+        failureClass: 'definition-contradiction',
+        sourceRevisionIdentity: staleRevisionIdentity,
+      });
+      fs.writeFileSync(path.join(root, artifactPath), changedBytes);
+      const currentDescriptors = t001WorkspaceDefinitionDescriptors(root);
+      const currentRevisionIdentity = t001SourceRevisionIdentity(currentDescriptors);
+      assert.notEqual(currentRevisionIdentity, staleRevisionIdentity, label);
+
+      const staleProposal = t001ContradictionProposal(staleFixture, {
+        prestateDescriptors: currentDescriptors,
+      });
+      const staleInput = autonomousInspectInput(root, {
+        currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(staleProposal)])],
+        ...t002TrustedStreams([staleFixture]),
+      });
+      const staleState = autonomousState();
+      assertRefusedUnchanged(label, staleState, t001AuthorizeDefinition(staleState, staleInput));
+
+      const freshFixture = t002PendingFixture({
+        verdict: 'rejected',
+        checkOutcome: 'failed',
+        failureClass: 'definition-contradiction',
+        sourceRevisionIdentity: currentRevisionIdentity,
+      });
+      const freshProposal = t001ContradictionProposal(freshFixture, {
+        prestateDescriptors: currentDescriptors,
+      });
+      const freshInput = autonomousInspectInput(root, {
+        currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(freshProposal)])],
+        ...t002TrustedStreams([freshFixture]),
+      });
+      assert.equal(t001AuthorizeDefinition(autonomousState(), freshInput).authorized, true, label);
+    });
+  }
+
+  for (const [label, mutateDescriptors] of [
+    ['descriptor ordering', (descriptors) => descriptors.reverse()],
+    ['descriptor path mismatch', (descriptors) => {
+      descriptors[0].path = '.dude/ideas/not-the-owner.md';
+    }],
+  ]) {
+    withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+      const currentDescriptors = t001WorkspaceDefinitionDescriptors(root);
+      const fixture = t002PendingFixture({
+        verdict: 'rejected',
+        checkOutcome: 'failed',
+        failureClass: 'definition-contradiction',
+        sourceRevisionIdentity: t001SourceRevisionIdentity(currentDescriptors),
+      });
+      const freshProposal = t001ContradictionProposal(fixture, {
+        prestateDescriptors: currentDescriptors,
+      });
+      const malformedProposal = clone(freshProposal);
+      mutateDescriptors(malformedProposal.prestateDescriptors);
+      const { proposalIdentity: ignoredIdentity, ...malformedBody } = malformedProposal;
+      malformedProposal.proposalIdentity = sha256(canonicalJson(malformedBody));
+      assert.notEqual(malformedProposal.proposalIdentity, ignoredIdentity, label);
+      const malformedInput = autonomousInspectInput(root, {
+        currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(malformedProposal)])],
+        ...t002TrustedStreams([fixture]),
+      });
+      const staleState = autonomousState();
+      assertRefusedUnchanged(label, staleState, t001AuthorizeDefinition(staleState, malformedInput));
+
+      const freshInput = autonomousInspectInput(root, {
+        currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(freshProposal)])],
+        ...t002TrustedStreams([fixture]),
+      });
+      assert.equal(t001AuthorizeDefinition(autonomousState(), freshInput).authorized, true, label);
+    });
+  }
+});
+
+test('T001 definition reconciliation: caller-only, stale, wrong-target, ambiguous, malformed, and tampered contradiction evidence refuse', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const sourceRevisionIdentity = t001SourceRevisionIdentity(prestateDescriptors);
+    const fixture = t002PendingFixture({
+      verdict: 'rejected',
+      checkOutcome: 'failed',
+      failureClass: 'definition-contradiction',
+      sourceRevisionIdentity,
+    });
+    const genericFixture = t002PendingFixture({
+      attemptOrdinal: 2,
+      verdict: 'rejected',
+      checkOutcome: 'failed',
+      sourceRevisionIdentity,
+    });
+    const proposal = t001ContradictionProposal(fixture, { prestateDescriptors });
+    const trusted = t002TrustedStreams([fixture]);
+    const base = autonomousInspectInput(root, trusted);
+    const otherTarget = { specPath: OTHER_SPEC_PATH, lane: 'lightweight', taskKey: TASK_KEY };
+    const otherProposal = t001DefinitionProposal(
+      proposal.eligibility,
+      proposal.reviewerEvidenceReferences,
+      { target: otherTarget, ideaPath: '.dude/ideas/other.md' },
+    );
+    const malformed = clone(proposal);
+    malformed.proposalIdentity = t003Hash('t001-malformed-proposal');
+    const untrusted = clone(proposal);
+    delete untrusted.version;
+    delete untrusted.proposalIdentity;
+    untrusted.reviewerEvidenceReferences.blockerEvidenceIdentities = [
+      ...untrusted.reviewerEvidenceReferences.blockerEvidenceIdentities,
+      t003Hash('t001-caller-blocker'),
+    ].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+    const rebuiltUntrusted = recoveryRuntime.buildDefinitionRevisionProposalV1(untrusted);
+    const cases = [
+      ['caller-only assertion', base, 'evidence-incomplete'],
+      ['caller-classified generic finding', autonomousInspectInput(root, {
+        currentRun: [capture(TARGET, 'blocked', [
+          t001ProposalRecord(t001ContradictionProposal(genericFixture, { prestateDescriptors })),
+        ])],
+        ...t002TrustedStreams([genericFixture]),
+      }), 'evidence-incomplete'],
+      ['stale outer target', autonomousInspectInput(root, {
+        ...trusted,
+        currentRun: [capture({ ...TARGET, taskKey: SECOND_TASK_KEY }, 'blocked', [t001ProposalRecord(proposal)])],
+      }), 'evidence-incomplete'],
+      ['wrong inner target', autonomousInspectInput(root, {
+        ...trusted,
+        currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(otherProposal)])],
+      }), 'evidence-incomplete'],
+      ['ambiguous proposals', autonomousInspectInput(root, {
+        ...trusted,
+        currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(proposal), t001ProposalRecord(proposal)])],
+      }), 'clarification-required'],
+      ['malformed proposal', autonomousInspectInput(root, {
+        ...trusted,
+        currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(malformed)])],
+      }), 'evidence-incomplete'],
+      ['untrusted reviewer reference', autonomousInspectInput(root, {
+        ...trusted,
+        currentRun: [capture(TARGET, 'blocked', [t001ProposalRecord(rebuiltUntrusted)])],
+      }), 'evidence-incomplete'],
+    ];
+    for (const [label, input, reason] of cases) {
+      const state = autonomousState();
+      const refused = t001AuthorizeDefinition(state, input);
+      assert.equal(refused.authorized, false, /** @type {string} */ (label));
+      assert.equal(refused.reason, reason, /** @type {string} */ (label));
+      assert.strictEqual(refused.state, state, /** @type {string} */ (label));
+      assert.equal(state.overallUsed, 0, /** @type {string} */ (label));
+      assert.deepEqual(state.recoveryUsed, [], /** @type {string} */ (label));
+      assert.deepEqual(state.pending, [], /** @type {string} */ (label));
+    }
+  });
+});
+
+test('T001 definition reconciliation: current Feature 009 no-alternative evidence authorizes while viable, stale, and conflicting branches refuse', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const noAlternative = t001PublicFlow(root, 'approach', 'no-progress');
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const proposal = t001LearningProposal(noAlternative, { prestateDescriptors });
+    const input = t002RetentionInput(
+      root,
+      noAlternative.learnedEvents,
+      noAlternative.learnedEvents,
+      noAlternative.fixtures,
+    );
+    input.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+    const authorized = t001AuthorizeDefinition(noAlternative.learningVerified.transition.state, input);
+    assert.equal(authorized.authorized, true);
+    assert.equal(authorized.definitionReconciliation.variant, 'learning-no-alternative');
+    assert.equal(authorized.definitionReconciliation.proposalIdentity, proposal.proposalIdentity);
+    assert.equal(
+      authorized.definitionReconciliation.reviewerEvidenceReferences.decompositionEvidenceIdentities
+        .includes(noAlternative.failedSet.setIdentity),
+      true,
+    );
+    validateRunState(authorized.state);
+
+    const staleProposal = t001LearningProposal(noAlternative, {
+      projectionReferenceIdentity: t003Hash('t001-stale-projection'),
+      prestateDescriptors,
+    });
+    const staleInput = t002RetentionInput(
+      root,
+      noAlternative.learnedEvents,
+      noAlternative.learnedEvents,
+      noAlternative.fixtures,
+    );
+    staleInput.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(staleProposal)]));
+    const staleState = noAlternative.learningVerified.transition.state;
+    const stale = t001AuthorizeDefinition(staleState, staleInput);
+    assert.equal(stale.authorized, false);
+    assert.equal(stale.reason, 'evidence-incomplete');
+    assert.strictEqual(stale.state, staleState);
+
+    const contradiction = recoveryRuntime.buildDefinitionReconciliationEligibilityV1({
+      variant: 'definition-contradiction',
+      proofKind: 'impossible-gate',
+      blockerEvidenceIdentity: t003Hash('t001-conflicting-blocker'),
+      gateEvidenceIdentity: t003Hash('t001-conflicting-gate'),
+      definitionReferenceIdentities: [t003Hash('t001-conflicting-definition')],
+      causalEvidenceIdentities: [t003Hash('t001-conflicting-cause')],
+    });
+    const conflictingProposal = t001DefinitionProposal(contradiction, {
+      blockerEvidenceIdentities: [contradiction.blockerEvidenceIdentity],
+      decompositionEvidenceIdentities: [t003Hash('t001-conflicting-decomposition')],
+    }, { prestateDescriptors });
+    const conflictingInput = t002RetentionInput(
+      root,
+      noAlternative.learnedEvents,
+      noAlternative.learnedEvents,
+      noAlternative.fixtures,
+    );
+    conflictingInput.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(conflictingProposal)]));
+    const conflicting = t001AuthorizeDefinition(
+      noAlternative.learningVerified.transition.state,
+      conflictingInput,
+    );
+    assert.equal(conflicting.authorized, false);
+    assert.equal(conflicting.reason, 'clarification-required');
+
+    const viable = t001PublicFlow(root, 'finding', 'selected-alternative');
+    const viableProposal = t001LearningProposal(viable, {
+      prestateDescriptors: t001WorkspaceDefinitionDescriptors(root),
+    });
+    const viableInput = t002RetentionInput(root, viable.learnedEvents, viable.learnedEvents, viable.fixtures);
+    viableInput.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(viableProposal)]));
+    const viableState = viable.learningVerified.transition.state;
+    const refused = t001AuthorizeDefinition(viableState, viableInput);
+    assert.equal(refused.authorized, false);
+    assert.equal(refused.reason, 'clarification-required');
+    assert.match(refused.blocker.subject, /viable-implementation-alternative/);
+    assert.strictEqual(refused.state, viableState);
+  });
+});
+
+test('T001 definition reconciliation: projected governance refuses direct contradiction capture and finalize unchanged', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const flow = t001PublicFlow(root, 'approach', 'no-progress');
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const contradictionEvidence = t002PendingFixture({
+      attemptOrdinal: 3,
+      verdict: 'rejected',
+      checkOutcome: 'failed',
+      failureClass: 'definition-contradiction',
+      sourceRevisionIdentity: t001CurrentSourceRevisionIdentity(root),
+    });
+    const proposal = t001ContradictionProposal(contradictionEvidence, { prestateDescriptors });
+    const ungovernedState = clone(flow.learningVerified.transition.state);
+    delete ungovernedState.learningGovernance;
+    validateRunState(ungovernedState);
+    const fixture = t001CaptureDefinitionReconciliation(
+      root,
+      flow,
+      ungovernedState,
+      proposal,
+      [...flow.fixtures, contradictionEvidence],
+    );
+
+    const governedCaptureState = clone(fixture.authorized.state);
+    governedCaptureState.learningGovernance = clone(
+      flow.learningVerified.transition.state.learningGovernance,
+    );
+    validateRunState(governedCaptureState);
+    const captureInput = t002RetentionInput(
+      root,
+      flow.learnedEvents,
+      flow.learnedEvents,
+      fixture.trustedFixtures,
+    );
+    captureInput.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+    const refusedCapture = runtimeFunction('runCommand')('complete', {
+      mode: 'capture',
+      state: governedCaptureState,
+      input: cliInput(captureInput),
+      completion: fixture.completion,
+    }).completion;
+    assert.equal(refusedCapture.captured, false);
+    assert.equal(refusedCapture.finalized, false);
+    t001AssertReconciliationConflictUnchanged(
+      'occupied contradiction capture',
+      governedCaptureState,
+      refusedCapture,
+    );
+
+    const governedState = clone(fixture.captured.state);
+    governedState.learningGovernance = clone(flow.learningVerified.transition.state.learningGovernance);
+    validateRunState(governedState);
+    const finalizationInput = t002RetentionInput(
+      root,
+      fixture.retainedEvents,
+      fixture.retainedEvents,
+      fixture.trustedFixtures,
+    );
+    finalizationInput.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+    const finalized = runtimeFunction('runCommand')('complete', {
+      mode: 'finalize',
+      state: governedState,
+      input: cliInput(finalizationInput),
+      projectionBatch: fixture.captured.projectionBatch,
+    }).completion;
+    assert.equal(finalized.captured, true);
+    assert.equal(finalized.finalized, false);
+    assert.equal(finalized.completed, false);
+    t001AssertReconciliationConflictUnchanged(
+      'occupied contradiction finalize',
+      governedState,
+      finalized,
+    );
+  });
+});
+
+test('T001 definition reconciliation: direct contradiction without governance retains ordinary completion behavior', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    t002RetentionInput(root, [], [], []);
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const contradictionEvidence = t002PendingFixture({
+      verdict: 'rejected',
+      checkOutcome: 'failed',
+      failureClass: 'definition-contradiction',
+      sourceRevisionIdentity: t001CurrentSourceRevisionIdentity(root),
+    });
+    const proposal = t001ContradictionProposal(contradictionEvidence, { prestateDescriptors });
+    const fixture = t001CaptureDefinitionReconciliation(
+      root,
+      { learnedEvents: [] },
+      autonomousState(),
+      proposal,
+      [contradictionEvidence],
+    );
+    assert.equal(Object.hasOwn(fixture.authorized.state, 'learningGovernance'), false);
+    assert.equal(Object.hasOwn(fixture.captured.state, 'learningGovernance'), false);
+    const input = t002RetentionInput(
+      root,
+      fixture.retainedEvents,
+      fixture.retainedEvents,
+      fixture.trustedFixtures,
+    );
+    input.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+    const finalized = runtimeFunction('runCommand')('complete', {
+      mode: 'finalize',
+      state: fixture.captured.state,
+      input: cliInput(input),
+      projectionBatch: fixture.captured.projectionBatch,
+    }).completion;
+    assert.equal(finalized.captured, true);
+    assert.equal(finalized.finalized, true);
+    assert.equal(finalized.completed, true);
+    assert.equal(finalized.reason, 'completed');
+    assert.equal(finalized.state.pending.length, 0);
+    assert.equal(Object.hasOwn(finalized.state, 'pendingCompletion'), false);
+    assert.equal(Object.hasOwn(finalized.state, 'learningGovernance'), false);
+  });
+});
+
+test('T001 definition reconciliation: finalize requires the exact ordered LF occurrence projection suffix', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const flow = t001PublicFlow(root, 'approach', 'no-progress');
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const proposal = t001LearningProposal(flow, { prestateDescriptors });
+    const fixture = t001CaptureDefinitionReconciliation(
+      root,
+      flow,
+      flow.learningVerified.transition.state,
+      proposal,
+      flow.fixtures,
+      { verdict: 'rejected' },
+    );
+    const occurrenceEvents = fixture.captured.projectionBatch.events;
+    assert.equal(occurrenceEvents.length, 2);
+    const baseTasksBytes = t002HistoryTasksBytes(flow.learnedEvents);
+    const occurrenceRecords = occurrenceEvents.map((event) => (
+      Buffer.from(`${t002V2EventLine(event)}\n`)
+    ));
+    const exactSuffix = Buffer.concat(occurrenceRecords);
+    const taskCases = [
+      ['missing terminal suffix', Buffer.concat([
+        baseTasksBytes,
+        exactSuffix,
+        Buffer.from('post-projection task bytes\n'),
+      ])],
+      ['reordered suffix', Buffer.concat([
+        baseTasksBytes,
+        ...[...occurrenceRecords].reverse(),
+      ])],
+      ['duplicated suffix', Buffer.concat([
+        baseTasksBytes,
+        exactSuffix,
+        exactSuffix,
+      ])],
+      ['altered suffix', Buffer.concat([
+        baseTasksBytes,
+        occurrenceRecords[0],
+        Buffer.from(occurrenceRecords[1].toString('utf8').replace(/\n$/, '\r\n')),
+      ])],
+    ];
+    const stateBefore = canonicalJson(fixture.captured.state);
+    for (const [label, taskHistoryBytes] of taskCases) {
+      const finalizationInput = t002RetentionInputWithTaskHistory(
+        root,
+        fixture.retainedEvents,
+        taskHistoryBytes,
+        fixture.trustedFixtures,
+      );
+      finalizationInput.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+      const finalized = runtimeFunction('runCommand')('complete', {
+        mode: 'finalize',
+        state: fixture.captured.state,
+        input: cliInput(finalizationInput),
+        projectionBatch: fixture.captured.projectionBatch,
+      }).completion;
+      assert.equal(finalized.captured, true, /** @type {string} */ (label));
+      assert.equal(finalized.finalized, false, /** @type {string} */ (label));
+      assert.equal(finalized.completed, false, /** @type {string} */ (label));
+      assert.equal(canonicalJson(finalized.state), stateBefore, /** @type {string} */ (label));
+      assert.equal(finalized.state.overallUsed, fixture.captured.state.overallUsed, /** @type {string} */ (label));
+      assert.deepEqual(finalized.state.recoveryUsed, fixture.captured.state.recoveryUsed, /** @type {string} */ (label));
+      assert.deepEqual(finalized.state.pending, fixture.captured.state.pending, /** @type {string} */ (label));
+      assert.deepEqual(
+        finalized.state.pendingCompletion,
+        fixture.captured.state.pendingCompletion,
+        /** @type {string} */ (label),
+      );
+      assert.deepEqual(
+        finalized.state.learningGovernance,
+        fixture.captured.state.learningGovernance,
+        /** @type {string} */ (label),
+      );
+    }
+  });
+});
+
+test('T001 definition reconciliation: finalize rebinds the exact proposal and current Feature 009 proof', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const flow = t001PublicFlow(root, 'approach', 'no-progress');
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const proposal = t001LearningProposal(flow, { prestateDescriptors });
+    const fixture = t001CaptureDefinitionReconciliation(
+      root,
+      flow,
+      flow.learningVerified.transition.state,
+      proposal,
+      flow.fixtures,
+    );
+    const staleProposal = t001DefinitionProposal(
+      proposal.eligibility,
+      proposal.reviewerEvidenceReferences,
+      {
+        prestateDescriptors,
+        mappingReferences: [t003Hash('t001-stale-finalize-proposal')],
+      },
+    );
+    const tamperedProposal = clone(proposal);
+    tamperedProposal.mappingReferences = [t003Hash('t001-tampered-finalize-proposal')];
+    const tamperedLearningReview = clone(
+      fixture.retainedEvents.find((event) => event.type === 'learning-review'),
+    );
+    tamperedLearningReview.eventHash = t003Hash('t001-tampered-learning-review');
+    const exactTaskBytes = t002HistoryTasksBytes(fixture.retainedEvents);
+    const cases = [
+      {
+        label: 'stale proposal identity',
+        currentEvents: fixture.retainedEvents,
+        candidateProposal: staleProposal,
+        expectedReason: 'learning-governance-conflict',
+      },
+      {
+        label: 'tampered proposal bytes',
+        currentEvents: fixture.retainedEvents,
+        candidateProposal: tamperedProposal,
+        expectedReason: 'learning-governance-conflict',
+      },
+      {
+        label: 'stale current Feature 009 proof',
+        currentEvents: fixture.retainedEvents.filter((event) => event.type !== 'learning-review'),
+        candidateProposal: proposal,
+        expectedReason: 'learning-governance-conflict',
+      },
+      {
+        label: 'tampered current Feature 009 proof',
+        currentEvents: fixture.retainedEvents.map((event) => (
+          event.type === 'learning-review' ? tamperedLearningReview : event
+        )),
+        candidateProposal: proposal,
+        expectedReason: 'learning-governance-conflict',
+      },
+    ];
+    for (const row of cases) {
+      const finalizationInput = t002RetentionInputWithTaskHistory(
+        root,
+        row.currentEvents,
+        exactTaskBytes,
+        fixture.trustedFixtures,
+      );
+      finalizationInput.currentRun.push(capture(
+        TARGET,
+        'blocked',
+        [t001ProposalRecord(row.candidateProposal)],
+      ));
+      const finalized = runtimeFunction('runCommand')('complete', {
+        mode: 'finalize',
+        state: fixture.captured.state,
+        input: cliInput(finalizationInput),
+        projectionBatch: fixture.captured.projectionBatch,
+      }).completion;
+      assert.equal(finalized.captured, true, row.label);
+      assert.equal(finalized.finalized, false, row.label);
+      assert.equal(finalized.completed, false, row.label);
+      assert.equal(finalized.reason, row.expectedReason, row.label);
+      assert.strictEqual(finalized.state, fixture.captured.state, row.label);
+      assert.equal(canonicalJson(finalized.state), canonicalJson(fixture.captured.state), row.label);
+    }
+  });
+});
+
+test('T001 definition reconciliation: finalize refuses a missing trigger occurrence unchanged', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const flow = t001PublicFlow(root, 'approach', 'no-progress');
+    const proposal = t001LearningProposal(flow, {
+      prestateDescriptors: t001WorkspaceDefinitionDescriptors(root),
+    });
+    const fixture = t001CaptureDefinitionReconciliation(
+      root,
+      flow,
+      flow.learningVerified.transition.state,
+      proposal,
+      flow.fixtures,
+    );
+    const triggerIdentity = flow.learningVerified.transition.state
+      .learningGovernance.trigger.occurrenceIdentities[0];
+    assert.ok(fixture.retainedEvents.some((event) => event.occurrenceIdentity === triggerIdentity));
+    const currentEvents = fixture.retainedEvents
+      .filter((event) => event.occurrenceIdentity !== triggerIdentity);
+    const input = t002RetentionInputWithTaskHistory(
+      root,
+      currentEvents,
+      t002HistoryTasksBytes(fixture.retainedEvents),
+      fixture.trustedFixtures,
+    );
+    input.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+    const finalized = runtimeFunction('runCommand')('complete', {
+      mode: 'finalize',
+      state: fixture.captured.state,
+      input: cliInput(input),
+      projectionBatch: fixture.captured.projectionBatch,
+    }).completion;
+    assert.equal(finalized.captured, true);
+    assert.equal(finalized.finalized, false);
+    assert.equal(finalized.completed, false);
+    t001AssertReconciliationConflictUnchanged(
+      'missing trigger occurrence',
+      fixture.captured.state,
+      finalized,
+    );
+  });
+});
+
+test('T001 definition reconciliation: another action receives no projected-governance finalize exemption', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const flow = t001PublicFlow(root, 'approach', 'no-progress');
+    const retry = t002PendingFixture({
+      attemptOrdinal: 3,
+      priorCompleted: flow.learningVerified.transition.state.completed,
+      checkOutcome: 'passed',
+      verdict: 'accepted',
+      materialInputs: {
+        targets: ['src/t001-other-action.mjs'],
+        operations: ['retry-task'],
+        checks: ['verification'],
+      },
+    });
+    const captureInput = t002RetentionInput(
+      root,
+      flow.learnedEvents,
+      flow.learnedEvents,
+      [...flow.fixtures, retry],
+    );
+    const captured = runtimeFunction('runCommand')('complete', {
+      mode: 'capture',
+      state: retry.state,
+      input: cliInput(captureInput),
+      completion: retry.completion,
+    }).completion;
+    assert.equal(captured.captured, true);
+    const otherActionState = clone(captured.state);
+    otherActionState.learningGovernance = clone(
+      flow.learningVerified.transition.state.learningGovernance,
+    );
+    assert.throws(
+      () => validateRunState(otherActionState),
+      /cannot coexist|must not authorize the learning-governed target/,
+    );
+    const retainedEvents = [...flow.learnedEvents, ...captured.projectionBatch.events];
+    const finalizationInput = t002RetentionInput(
+      root,
+      retainedEvents,
+      retainedEvents,
+      [...flow.fixtures, retry],
+    );
+    const stateBefore = canonicalJson(otherActionState);
+    const refused = runRecoveryCli('complete', {
+      mode: 'finalize',
+      state: otherActionState,
+      input: cliInput(finalizationInput),
+      projectionBatch: captured.projectionBatch,
+    });
+    assert.equal(refused.status, 1);
+    assert.deepEqual(JSON.parse(refused.stderr), {
+      error: { code: 'recovery-invalid-request', message: 'Recovery request is invalid.' },
+    });
+    assert.equal(canonicalJson(otherActionState), stateBefore);
+    assert.deepEqual(otherActionState.pending, captured.state.pending);
+    assert.deepEqual(otherActionState.pendingCompletion, captured.state.pendingCompletion);
+    assert.deepEqual(
+      otherActionState.learningGovernance,
+      flow.learningVerified.transition.state.learningGovernance,
+    );
+  });
+});
+
+test('T001 definition reconciliation: public no-alternative attempts capture and finalize in both eligible phases', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const flow = t001PublicFlow(root, 'approach', 'no-progress');
+    const prestateDescriptors = t001WorkspaceDefinitionDescriptors(root);
+    const proposal = t001LearningProposal(flow, { prestateDescriptors });
+    for (const [phase, state] of [
+      ['projected', flow.learningVerified.transition.state],
+      ['no-progress-verified', flow.branchTransition.transition.state],
+    ]) {
+      const authorizationInput = t002RetentionInput(
+        root,
+        flow.learnedEvents,
+        flow.learnedEvents,
+        flow.fixtures,
+      );
+      authorizationInput.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+      const authorized = t001AuthorizeDefinition(state, authorizationInput);
+      assert.equal(authorized.authorized, true, /** @type {string} */ (phase));
+      const pending = authorized.state.pending[0];
+      const attemptIdentity = sha256(canonicalJson({
+        version: 2,
+        target: canonicalTarget(TARGET),
+        attemptOrdinal: authorized.state.overallUsed,
+        authorizationEvidenceHash: pending.evidenceHash,
+        approachBasisIdentity: sha256(canonicalJson(
+          authorized.definitionReconciliation.approachBasis,
+        )),
+      }));
+      const completionEvidence = {
+        target: TARGET,
+        ...t002EnvelopeFixture({
+          target: TARGET,
+          attemptIdentity,
+          attemptOrdinal: authorized.state.overallUsed,
+          inspectedEvidenceHash: pending.evidenceHash,
+          checkOutcome: 'passed',
+          verdict: 'accepted',
+          sourceRevisionIdentity: t003Hash(`t001-projected-completion-${phase}`),
+        }),
+      };
+      assert.notEqual(
+        completionEvidence.review.sourceRevisionIdentity,
+        flow.fixtures[0].review.sourceRevisionIdentity,
+        /** @type {string} */ (phase),
+      );
+      const completion = {
+        version: 2,
+        target: TARGET,
+        attemptIdentity,
+        route: 'definition-reconciliation',
+        outcome: 'succeeded',
+        operations: ['reconcile-derived-definition'],
+        changedTargets: definitionTargets(),
+        resultIdentity: completionEvidence.verification.resultIdentity,
+        verificationEnvelopeIdentity: completionEvidence.verification.envelopeIdentity,
+        reviewEnvelopeIdentity: completionEvidence.review.envelopeIdentity,
+        findingIdentities: [],
+      };
+      const completionInput = (candidateProposal) => {
+        const input = t002RetentionInput(
+          root,
+          flow.learnedEvents,
+          flow.learnedEvents,
+          [...flow.fixtures, completionEvidence],
+        );
+        input.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(candidateProposal)]));
+        return input;
+      };
+      const otherActionState = clone(authorized.state);
+      otherActionState.pending[0].action = 'retry-task';
+      otherActionState.pending[0].materialInputs = {
+        targets: ['src/t001-other-action.mjs'],
+        operations: ['retry-task'],
+        checks: ['verification'],
+      };
+      otherActionState.pending[0].approachHash = approachHash({
+        action: 'retry-task',
+        materialInputs: otherActionState.pending[0].materialInputs,
+      });
+      assert.throws(
+        () => runtimeFunction('runCommand')('complete', {
+          mode: 'capture',
+          state: otherActionState,
+          input: cliInput(completionInput(proposal)),
+          completion,
+        }),
+        /must not authorize the learning-governed target/,
+        /** @type {string} */ (phase),
+      );
+
+      const alteredProposal = t001DefinitionProposal(
+        proposal.eligibility,
+        proposal.reviewerEvidenceReferences,
+        {
+          prestateDescriptors,
+          mappingReferences: [t003Hash(`t001-altered-${phase}`)],
+        },
+      );
+      const invalidCapture = runtimeFunction('runCommand')('complete', {
+        mode: 'capture',
+        state: authorized.state,
+        input: cliInput(completionInput(alteredProposal)),
+        completion,
+      }).completion;
+      assert.equal(invalidCapture.captured, false, /** @type {string} */ (phase));
+      assert.equal(invalidCapture.reason, 'learning-governance-conflict', /** @type {string} */ (phase));
+
+      const captured = runtimeFunction('runCommand')('complete', {
+        mode: 'capture',
+        state: authorized.state,
+        input: cliInput(completionInput(proposal)),
+        completion,
+      }).completion;
+      assert.equal(captured.captured, true, /** @type {string} */ (phase));
+      assert.equal(captured.reason, 'occurrence-retention-required', /** @type {string} */ (phase));
+      const retainedEvents = [...flow.learnedEvents, ...captured.projectionBatch.events];
+      const finalizationInput = t002RetentionInput(
+        root,
+        retainedEvents,
+        retainedEvents,
+        [...flow.fixtures, completionEvidence],
+      );
+      finalizationInput.currentRun.push(capture(TARGET, 'blocked', [t001ProposalRecord(proposal)]));
+      const finalizeResponse = runtimeFunction('runCommand')('complete', {
+        mode: 'finalize',
+        state: captured.state,
+        input: cliInput(finalizationInput),
+        projectionBatch: captured.projectionBatch,
+      });
+      const finalizePlan = JSON.parse(finalizeResponse.inspection.items.find(
+        (item) => item.source === 'definition-plan',
+      ).text);
+      assert.deepEqual(
+        finalizePlan.definitionProjectionBase.prestateDescriptors,
+        proposal.prestateDescriptors,
+        /** @type {string} */ (phase),
+      );
+      const finalized = finalizeResponse.completion;
+      assert.equal(finalized.finalized, true, /** @type {string} */ (phase));
+      assert.equal(finalized.completed, true, /** @type {string} */ (phase));
+      assert.equal(finalized.reason, 'completed', /** @type {string} */ (phase));
+      assert.equal(finalized.state.learningGovernance.phase, phase);
+      assert.equal(finalized.state.pending.length, 0);
+      assert.equal(Object.hasOwn(finalized.state, 'pendingCompletion'), false);
+    }
+  });
+});
 
 test('T003 public learning and exact projection batches: capture carries the exact batch with a hash-only commitment', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {

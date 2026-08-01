@@ -225,8 +225,9 @@ counters or workflow state.
 
 Recovery never bypasses no-progress, intent, approval, dependency, identity,
 reconciliation, authority, safety, verification, review, lane-state, or close
-boundaries. The only definition exception is an atomic unchanged-intent repair
-in an existing Lightweight package across exactly four paths: the exact owner idea
+boundaries. Under explicit `--policy autonomous` Work with recovery opted in,
+the only definition exception is an atomic unchanged-intent repair in an
+existing Lightweight package across exactly four paths: the exact owner idea
 ledger plus sibling `spec.md`, `plan.md`, and `tasks.md`, with complete
 user-owned Idea, Open Questions, and Assumptions content preserved. Supporting
 contracts remain an explicit-definition concern. Tracked definition recovery is
