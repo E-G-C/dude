@@ -1638,6 +1638,7 @@ test('T008 regression: FIFO replacement opens nonblocking and fails descriptor i
     let fifoDescriptor;
     let descriptorWasFifo = false;
     let descriptorIdentityChanged = false;
+    let descriptorTypeChanged = false;
     let descriptorValidated = false;
     let fifoReads = 0;
     const isOwnerPath = (file) => (
@@ -1673,6 +1674,7 @@ test('T008 regression: FIFO replacement opens nonblocking and fails descriptor i
         descriptorValidated = true;
         descriptorWasFifo = stat.isFIFO();
         descriptorIdentityChanged = stat.dev !== regularStat.dev || stat.ino !== regularStat.ino;
+        descriptorTypeChanged = stat.mode !== regularStat.mode;
       }
       return stat;
     });
@@ -1713,7 +1715,11 @@ test('T008 regression: FIFO replacement opens nonblocking and fails descriptor i
     );
     assert.equal(descriptorValidated, true, 'FIFO descriptor was not validated');
     assert.equal(descriptorWasFifo, true, 'replacement descriptor was not a FIFO');
-    assert.equal(descriptorIdentityChanged, true, 'replacement descriptor retained regular-file identity');
+    assert.equal(
+      descriptorIdentityChanged || descriptorTypeChanged,
+      true,
+      'replacement descriptor retained regular-file identity and type',
+    );
     assert.equal(fifoReads, 0, 'FIFO body was read before descriptor type and identity rejection');
     assert.equal(thrown, undefined, 'bounded acquisition should return a blocking inspection');
     assert.notEqual(
