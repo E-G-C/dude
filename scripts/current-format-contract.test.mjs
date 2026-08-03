@@ -27,6 +27,7 @@ const ACTIVE_SOURCE_FILES = [
   'src/skills/dude-team-expansion/scaffold-agent.mjs',
   'src/skills/dude-work-intake/SKILL.md',
   'src/skills/dude-work/SKILL.md',
+  'src/skills/dude-work/host-adapter.mjs',
 ];
 
 const CURRENT_WRITERS = [
@@ -523,6 +524,29 @@ function missingParagraphRequirements(section, requirements) {
     .map(([label]) => label);
 }
 
+/**
+ * @param {string} section
+ * @param {Array<[string, RegExp[] | RegExp[][]]>} requirements
+ * @param {string} context
+ */
+function assertShipParagraphRequirements(section, requirements, context) {
+  assert.deepEqual(missingParagraphRequirements(section, requirements), [], context);
+
+  const paragraphs = section.split(/\n\s*\n/);
+  for (const [label, signalsOrClauses] of requirements) {
+    const clauses = signalsOrClauses[0] instanceof RegExp ? [signalsOrClauses] : signalsOrClauses;
+    const mutated = paragraphs
+      .filter((paragraph) => !clauses.some((signals) => (
+        signals.every((pattern) => pattern.test(paragraph))
+      )))
+      .join('\n\n');
+    assert.ok(
+      missingParagraphRequirements(mutated, [[label, signalsOrClauses]]).includes(label),
+      `${context}: removing paragraphs that satisfy ${label} must fail`,
+    );
+  }
+}
+
 /** @param {string} section */
 function staleRecoveryPhrases(section) {
   return STALE_RECOVERY_PHRASES
@@ -643,7 +667,7 @@ function installedAgentRoster() {
 test('current-format contract scans an explicit deterministic active-source inventory', () => {
   assert.deepEqual(ACTIVE_SOURCE_FILES, [...ACTIVE_SOURCE_FILES].sort());
   assert.equal(new Set(ACTIVE_SOURCE_FILES).size, ACTIVE_SOURCE_FILES.length);
-  assert.equal(ACTIVE_SOURCE_FILES.length, 17);
+  assert.equal(ACTIVE_SOURCE_FILES.length, 18);
   for (const relative of ACTIVE_SOURCE_FILES) {
     assert.equal(fs.statSync(path.join(ROOT, relative)).isFile(), true, relative);
   }
@@ -2532,6 +2556,95 @@ const FORBIDDEN_USER_COMMANDS = [
 
 const WORK_GRAMMAR_LINE = '@dude work [<feature>] [--max <N|unlimited>] [--until blocked] [--recover-on-block] [--recovery-cycles <N|unlimited>] [--policy guarded|autonomous]';
 const REMOVED_WORK_OPTION = `--${'parallel'}`;
+const SHIP_RESOLVER_OWNER = 'src/skills/dude-work-intake/SKILL.md';
+const SHIP_COORDINATOR = 'src/agents/dude.agent.md';
+const SHIP_GRAMMAR_LINE = '@dude ship [<target>]';
+const SHIP_POLICY = "{overall:'unlimited', recovery:'unlimited', recover:true, untilBlocked:false, mode:'autonomous'}";
+const SHIP_AUTHORITY_PATHS = new Set([
+  SHIP_RESOLVER_OWNER,
+  SHIP_COORDINATOR,
+  '.github/skills/dude-work-intake/SKILL.md',
+  '.github/agents/dude.agent.md',
+  'scripts/current-format-contract.test.mjs',
+]);
+const SHIP_INVENTORY_ROOTS = [
+  '.dude/metadata',
+  '.dude/state',
+  '.github',
+  'library/packs',
+  'scripts',
+  'src',
+];
+const SHIP_INVENTORY_EXCLUDED_DIRECTORIES = new Set(['.git', 'dist', 'node_modules']);
+const SHIP_AFFIRMATIVE_SUBJECT = String.raw`\bShip\s+(?:(?:may|can|will|must|shall|should|does)\s+|(?:is\s+)?(?:allowed|authorized|permitted)\s+to\s+|has\s+authority\s+to\s+)?`;
+const COORDINATOR_AFFIRMATIVE_SUBJECT = String.raw`\b(?:the\s+)?coordinator\s+(?:(?:may|can|will|must|shall|should|does)\s+|(?:is\s+)?(?:allowed|authorized|permitted)\s+to\s+|has\s+authority\s+to\s+)?`;
+const DEFINITION_WRITE_SURFACE = String.raw`(?:definition (?:artifacts?|metadata|log events?)|\`status:\`|\`spec_path:\`|managed definition regions?)`;
+const SHIP_PROHIBITED_GRANTS = [
+  {
+    label: 'Ship-owned definition writes',
+    patterns: [
+      new RegExp(`${SHIP_AFFIRMATIVE_SUBJECT}(?:own|owns|write|writes|mutate|mutates|update|updates|create|creates)\\s+(?:(?:all|any|the)\\s+)?${DEFINITION_WRITE_SURFACE}`, 'i'),
+    ],
+    mutations: [
+      'Ship writes definition artifacts under Ship authority.',
+      'Ship writes definition artifacts without changing Work defaults.',
+    ],
+  },
+  {
+    label: 'coordinator-owned definition metadata or definition log',
+    patterns: [
+      new RegExp(`${COORDINATOR_AFFIRMATIVE_SUBJECT}(?:exclusively\\s+|solely\\s+)?(?:own|owns|write|writes|mutate|mutates|update|updates|retain|retains)\\s+(?:(?:all|any|the)\\s+)?${DEFINITION_WRITE_SURFACE}`, 'i'),
+      new RegExp(`${COORDINATOR_AFFIRMATIVE_SUBJECT}(?:has|retains?)\\s+(?:(?:exclusive|sole)\\s+)?authority\\s+(?:over|for)\\s+${DEFINITION_WRITE_SURFACE}`, 'i'),
+    ],
+    mutations: [
+      'The coordinator owns definition metadata and definition log events.',
+      'The coordinator retains authority over definition log events.',
+    ],
+  },
+  {
+    label: 'tracked import or fallback',
+    patterns: [
+      new RegExp(`${SHIP_AFFIRMATIVE_SUBJECT}(?:invoke|invokes)\\s+(?:\\\`?track\\\`?|tracked import)(?=\\s|[.,;:]|$)`, 'i'),
+      new RegExp(`${SHIP_AFFIRMATIVE_SUBJECT}(?:import|imports)\\s+(?:tracked\\s+)?work\\b`, 'i'),
+      new RegExp(`${SHIP_AFFIRMATIVE_SUBJECT}(?:fall|falls)\\s+back\\s+to\\s+Lightweight Execution\\b`, 'i'),
+    ],
+    mutations: [
+      'Ship invokes track.',
+      'Ship imports tracked work.',
+      'Ship falls back to Lightweight Execution.',
+    ],
+  },
+  {
+    label: 'guardrail auto-answer or bypass',
+    patterns: [
+      new RegExp(`${SHIP_AFFIRMATIVE_SUBJECT}(?:answer|answers|auto-answer|auto-answers|supply|supplies|bypass|bypasses|grant|grants|create|creates)\\s+(?:(?:all|any|an?|the)\\s+)?(?:answers?|assumptions?|bypasses?|clarification|guardrail|checkpoints?)`, 'i'),
+    ],
+    mutations: [
+      'Ship answers guardrail checkpoints and grants a bypass.',
+      'Ship supplies an answer to a guardrail checkpoint.',
+      'Ship bypasses the guardrail-ratification checkpoint.',
+    ],
+  },
+  {
+    label: 'alternate Work implementation',
+    patterns: [
+      new RegExp(`${SHIP_AFFIRMATIVE_SUBJECT}(?:implement|implements|reimplement|reimplements|reproduce|reproduces|reinterpret|reinterprets|parse|parses|schedule|schedules)\\s+(?:(?:all|any|an?|the)\\s+)?(?:Work(?:'s)?(?:\\s+(?:internals|parser|runtime|lane detection|recovery|scheduling|execution loop))?|lane detection|execution loop|recovery|runtime)\\b`, 'i'),
+    ],
+    mutations: [
+      'Ship reimplements the Work execution loop.',
+      'Ship reproduces Work internals.',
+    ],
+  },
+];
+const SHIP_ALLOWED_AUTHORITY_CLAUSES = [
+  'Ship writes none of them.',
+  'Ship writes no definition artifacts.',
+  'Ship never invokes track.',
+  'Ship does not import tracked work.',
+  'Ship never supplies an answer to a guardrail checkpoint.',
+  'Ship does not reproduce Work internals.',
+  'Do not reproduce Work internals.',
+];
 
 // The eight generated core paths T009 alone may materialize.
 const GENERATED_CORE_PAIRS = [
@@ -2559,12 +2672,260 @@ function sentences(text) {
     .filter((sentence) => sentence.length > 0);
 }
 
+/** @param {string} section */
+function shipAuthorityViolations(section) {
+  const clauses = sentences(section)
+    .flatMap((sentence) => sentence.split(/\s*;\s*|\s+but\s+|\s+however,?\s+/i))
+    .filter(Boolean);
+  return SHIP_PROHIBITED_GRANTS
+    .filter(({ patterns }) => clauses.some((clause) => (
+      patterns.some((pattern) => pattern.test(clause))
+    )))
+    .map(({ label }) => label);
+}
+
+/** @param {string} section @param {string} context */
+function assertShipAuthorityDenials(section, context) {
+  assert.deepEqual(shipAuthorityViolations(section), [], context);
+}
+
+/** @param {string} section @param {string} context */
+function assertShipAuthorityMutations(section, context) {
+  for (const { label, mutations } of SHIP_PROHIBITED_GRANTS) {
+    for (const mutation of mutations) {
+      assert.deepEqual(
+        shipAuthorityViolations(`${section}\n\n${mutation}`),
+        [label],
+        `${context}: rejects ${label}: ${mutation}`,
+      );
+    }
+  }
+  for (const allowed of SHIP_ALLOWED_AUTHORITY_CLAUSES) {
+    assert.deepEqual(
+      shipAuthorityViolations(`${section}\n\n${allowed}`),
+      [],
+      `${context}: allows ${allowed}`,
+    );
+  }
+}
+
+/** @param {string} relativeRoot */
+function boundedShipInventory(relativeRoot) {
+  const absoluteRoot = path.join(ROOT, relativeRoot);
+  if (!fs.existsSync(absoluteRoot)) return [];
+
+  /** @type {string[]} */
+  const inventory = [];
+  /** @param {string} relativeDirectory */
+  function visit(relativeDirectory) {
+    const entries = fs.readdirSync(path.join(ROOT, relativeDirectory), { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (entry.isDirectory() && SHIP_INVENTORY_EXCLUDED_DIRECTORIES.has(entry.name)) continue;
+      const relative = path.posix.join(relativeDirectory, entry.name);
+      inventory.push(relative);
+      if (entry.isDirectory()) visit(relative);
+    }
+  }
+
+  visit(relativeRoot);
+  return inventory;
+}
+
+/** @param {string} relative */
+function prohibitedShipArtifact(relative) {
+  const normalized = relative.split(path.sep).join('/');
+  if (SHIP_AUTHORITY_PATHS.has(normalized)) return null;
+  if (!SHIP_INVENTORY_ROOTS.some((root) => normalized === root || normalized.startsWith(`${root}/`))) {
+    return null;
+  }
+  const hasShipToken = normalized.split('/')
+    .some((segment) => /(?:^|[-_.])ship(?:$|[-_.])/i.test(segment));
+  if (!hasShipToken) return null;
+  if (normalized.startsWith('.dude/state/') || normalized.startsWith('.dude/metadata/')) {
+    return 'Ship-specific state or configuration';
+  }
+  if (normalized.includes('/skills/')) return 'Ship-specific skill artifact';
+  if (/\.(?:[cm]?js|ts|json|ya?ml|toml)$/i.test(normalized)) {
+    return 'Ship-specific parser, runtime, or configuration module';
+  }
+  return 'Ship-specific implementation artifact';
+}
+
 /** Sentences that grant concurrency without any denial or scoping token. @param {string} text */
 function concurrencyGrants(text) {
   return sentences(text).filter((sentence) => (
     CONCURRENCY_TOKEN.test(sentence) && !CONCURRENCY_DENIAL.test(sentence)
   ));
 }
+
+test('Ship accepts one optional target and resolves only missing lifecycle stages', () => {
+  const ship = markdownSection(read(SHIP_RESOLVER_OWNER), '## Ship');
+
+  assert.equal(ship.split(SHIP_GRAMMAR_LINE).length - 1, 1, 'one exact Ship grammar');
+  assert.deepEqual(
+    read(GOVERNANCE_POLICY_OWNER).split('\n').filter((line) => line.startsWith('@dude work [')),
+    [WORK_GRAMMAR_LINE],
+    'Ship leaves the existing advanced Work grammar unchanged',
+  );
+
+  assertShipParagraphRequirements(ship, [
+    ['strict pre-mutation grammar', [
+      [/exactly one optional target/i, /no flags/i, /complete invocation/i, /before any mutation/i],
+      [/flag in any position or form/i, /beginning with `-`/i, /more than one target/i, /advanced Work/i, /without silently normalizing/i],
+    ]],
+    ['unmatched raw idea lifecycle', [
+      [/unmatched raw idea/i, /existing explicit `brainstorm <idea>` route/i, /lifecycle subaction/i, /exactly one ledger/i],
+      [/existing explicit `define <slug>` route/i, /distinct lifecycle subaction/i, /then Work/i],
+    ]],
+    ['draft lifecycle', [
+      [/existing draft ledger/i, /existing explicit `define <slug>` route/i, /lifecycle subaction/i, /then Work/i],
+    ]],
+    ['defined package without proactive redefinition', [
+      [/existing defined package/i, /Work as-is/i, /not proactively redefine/i, /staleness or drift/i, /merge invocation text/i],
+      [/changed intent/i, /explicit `brainstorm`/i, /package refresh/i, /explicit `define`/i],
+    ]],
+    ['bare Ship target selection', [
+      [/Bare Ship/i, /exactly one unambiguous live lifecycle target/i],
+    ]],
+    ['no Ship definition-write authority', [
+      [/no alternate definition-write route or authority/i],
+      [/delegated Spec Lead/i, /all definition artifacts/i, /`status:`/i, /exact `spec_path:`/i, /managed definition regions/i, /definition log events/i],
+      [/Ship writes none of them/i],
+    ]],
+  ], `${SHIP_RESOLVER_OWNER} ## Ship`);
+});
+
+test('Ship ambiguity and tracked precedence fail closed before mutation', () => {
+  const ship = markdownSection(read(SHIP_RESOLVER_OWNER), '## Ship');
+
+  assertShipParagraphRequirements(ship, [
+    ['tracked authority wins without fallback or import', [
+      [/Imported tracked work wins/i, /explicit lifecycle target/i, /stops before mutation/i, /tracked precedence/i],
+      [/never invokes `track`[^.]*imports work[^.]*falls back/i, /Lightweight Execution/i],
+    ]],
+    ['one exact-candidate question and fresh resolution', [
+      [/several otherwise-valid candidates/i, /exactly one pre-mutation disambiguation question/i, /exact identities/i],
+      [/Do not rank/i, /persist a default/i, /mutate anything/i],
+      [/Restart the complete resolution from the answer/i, /no second question/i, /stop/i],
+    ]],
+    ['non-selection diagnostics remain hard refusals', [
+      [/resolver or canonical-ownership diagnostic/i, /selection cannot repair/i, /hard refusal/i, /not disambiguation/i],
+    ]],
+  ], `${SHIP_RESOLVER_OWNER} ## Ship`);
+});
+
+test('Ship delegates the exact Work policy without weakening inherited boundaries', () => {
+  const ship = markdownSection(read(SHIP_RESOLVER_OWNER), '## Ship');
+
+  assert.equal(ship.split(SHIP_POLICY).length - 1, 1, 'one exact normalized Ship policy');
+  assert.match(
+    ship,
+    /`work \[feature\] --max unlimited --recover-on-block --recovery-cycles unlimited --policy autonomous`/,
+  );
+  assert.match(ship, /omit `--until blocked` because Work forbids combining until-blocked mode with recovery/i);
+
+  assertShipParagraphRequirements(ship, [
+    ['unchanged Work execution authority', [
+      [/existing Work semantics/i, /one-time lane detection/i, /natural and hard stops/i],
+      [/verification/i, /review/i, /ownership/i, /reconciliation/i, /close/i, /audit/i, /reporting/i, /learning governance/i],
+    ]],
+    ['unchanged clarification and guardrail checkpoints', [
+      [/brainstorm and definition clarification/i, /guardrail-ratification checkpoint/i],
+      [/never supplies an answer/i, /creates an assumption/i, /grants a bypass/i],
+    ]],
+    ['unchanged authority Git and state boundaries', [
+      [/Spec Lead/i, /coordinator/i, /specialist/i, /reviewer authority/i],
+      [/no workflow/i, /lane/i, /board/i, /state/i, /ledger/i, /parser/i, /runtime/i, /persistent default/i],
+      [/automatic Git or release action/i, /commands and defaults remain unchanged/i],
+    ]],
+    ['no alternate Work implementation', [
+      [/no alternate Work implementation/i, /never reproduces or reinterprets/i],
+      [/Work's parser/i, /runtime/i, /lane detection/i, /recovery/i, /scheduling/i, /execution loop/i],
+    ]],
+  ], `${SHIP_RESOLVER_OWNER} ## Ship`);
+});
+
+test('Ship coordinator delegates lifecycle and execution without a new implementation', () => {
+  assertShipParagraphRequirements(
+    markdownSection(read(SHIP_COORDINATOR), '## Mode To Skill'),
+    [['composed Ship skill route', [
+      [/Ship lifecycle/i, /`dude-work-intake`/i, /existing explicit `brainstorm`/i, /explicit `define <slug>`/i, /`dude-feature-definition`/i, /`dude-work`/i],
+    ]]],
+    `${SHIP_COORDINATOR} ## Mode To Skill`,
+  );
+
+  const coordinator = markdownSection(read(SHIP_COORDINATOR), '## Ship');
+  assertShipParagraphRequirements(coordinator, [
+    ['intake-owned validation and visible pre-mutation stops', [
+      [/load `dude-work-intake`/i, /delegate target validation and lifecycle resolution/i, /`## Ship` contract/i],
+      [/unsupported input/i, /selection ambiguity or ownership diagnostics/i, /explicit-target conflict/i, /tracked work/i, /pre-mutation stops/i],
+    ]],
+    ['explicit lifecycle subroutes without alternate authority', [
+      [/missing lifecycle stage/i, /existing explicit `brainstorm`/i, /explicit `define <slug>`/i, /distinct lifecycle subactions/i],
+      [/Ship creates no alternate definition-write route or authority/i],
+    ]],
+    ['Spec Lead retains complete definition authority', [
+      [/load `dude-feature-definition`/i, /exactly as `## Lifecycle` requires/i, /delegate all definition artifacts/i],
+      [/`status:`/i, /exact `spec_path:`/i, /managed definition regions/i, /definition log events/i, /Spec Lead/i],
+      [/Do not answer clarification or guardrail checkpoints/i],
+    ]],
+    ['coordinator retains only exact coordinator mutation authority', [
+      [/coordinator exclusively retains/i, /task glyphs and task metadata/i, /generated boards and tracked mirrors/i],
+      [/archive, discovered-work, and execution-history state/i, /execution reconciliation/i],
+      [/execution and close log events/i, /execution-lane or tracked state/i],
+    ]],
+    ['Work delegation without copied internals', [
+      [/exact resolved target/i, /intake-normalized Ship policy/i, /`dude-work`/i],
+      [/Work remains the execution owner/i, /do not reproduce or reinterpret/i, /never invoke tracked import/i],
+    ]],
+    ['existing execution response convention', [
+      [/Lane: <lane> · Live: <authority>/, /Action:/, /Updated:/, /Next:/, /Blockers:/],
+    ]],
+  ], `${SHIP_COORDINATOR} ## Ship`);
+  assert.doesNotMatch(coordinator, /recovery\.mjs|issue-attempt-permit|commit-lane-receipt/);
+  assert.doesNotMatch(coordinator, /metadata, reconciliation[^.]*log authority/i);
+});
+
+test('Ship authority sections reject affirmative forbidden grants', () => {
+  const shipSections = [
+    [`${SHIP_RESOLVER_OWNER} ## Ship`, markdownSection(read(SHIP_RESOLVER_OWNER), '## Ship')],
+    [`${SHIP_COORDINATOR} ## Ship`, markdownSection(read(SHIP_COORDINATOR), '## Ship')],
+    [`${SHIP_COORDINATOR} ## Mode To Skill`, markdownSection(read(SHIP_COORDINATOR), '## Mode To Skill')],
+  ];
+  for (const [context, section] of shipSections) {
+    assertShipAuthorityDenials(section, context);
+    assertShipAuthorityMutations(section, context);
+  }
+});
+
+test('Ship has no runtime, parser, skill, configuration, or state artifacts', () => {
+  const inventory = SHIP_INVENTORY_ROOTS
+    .flatMap((relativeRoot) => boundedShipInventory(relativeRoot))
+    .sort((left, right) => left.localeCompare(right));
+  assert.equal(new Set(inventory).size, inventory.length, 'bounded Ship inventory has unique paths');
+  const violations = inventory
+    .map((relative) => [relative, prohibitedShipArtifact(relative)])
+    .filter(([, violation]) => violation !== null);
+  assert.deepEqual(violations, [], 'bounded repository-owned implementation, configuration, and state inventory');
+
+  for (const relative of [
+    'scripts/ship-parser.mjs',
+    '.dude/metadata/ship-config.json',
+    'library/packs/example/skills/dude-pack-example-ship/SKILL.md',
+    'src/skills/dude-ship/SKILL.md',
+    '.github/skills/dude-ship/recovery.mjs',
+    '.dude/state/ship-run.json',
+  ]) {
+    assert.notEqual(prohibitedShipArtifact(relative), null, `reject ${relative}`);
+  }
+  for (const relative of [
+    ...SHIP_AUTHORITY_PATHS,
+    'scripts/ownership.mjs',
+  ]) {
+    assert.equal(prohibitedShipArtifact(relative), null, `allow ${relative}`);
+  }
+});
 
 test('T002 Work guidance leads with simple sequential forms', () => {
   const owner = read(GOVERNANCE_POLICY_OWNER);
@@ -3308,4 +3669,498 @@ test('T005 automatic redefinition adds no action, command, or persistence surfac
     .map(([label]) => label);
   assert.deepEqual(governanceLeakage, [], 'redefinition restates learning-governance detail');
   assert.match(work, /`## Autonomous Learning Governance`[^\n]{0,96}alone decides/i);
+});
+
+// --- T003: the host adapter is the sole ordinary Work runtime boundary -------
+
+const ADAPTER_OWNER = 'src/skills/dude-work/SKILL.md';
+const ADAPTER_SOURCE = 'src/skills/dude-work/host-adapter.mjs';
+const ADAPTER_BOUNDARY_SECTION = '## Host Adapter Runtime Boundary';
+const ADAPTER_CONTINUITY_SECTION = '## Supervisor And Worker Continuity';
+const ADAPTER_INCIDENT_SECTION = '## Host Incidents And Recovery Notice';
+const ADAPTER_LIFECYCLE_SECTION = '## Checkpoint Lifecycle And Manual Cleanup';
+const ADAPTER_STOPS_SECTION = '## Stops';
+
+const ADAPTER_OWNER_SECTIONS = [
+  ADAPTER_BOUNDARY_SECTION,
+  ADAPTER_CONTINUITY_SECTION,
+  ADAPTER_INCIDENT_SECTION,
+  ADAPTER_LIFECYCLE_SECTION,
+];
+
+// Authority surfaces that may point at the adapter but never restate its detail.
+const ADAPTER_POINTER_SURFACES = [
+  'src/agents/dude.agent.md',
+  'src/instructions/dude.instructions.md',
+  'src/skills/dude-lightweight-execution/SKILL.md',
+];
+
+// Detail only the Work owner may state. Each marker is separately proven against
+// the owner sections, so none of them can pass vacuously.
+const ADAPTER_DETAIL_MARKERS = [
+  ['dual revision fields', /`acceptedRevision`|`hostRevision`/],
+  ['low-level route rejection', /caller-supplied low-level route token/i],
+  ['shell mirror transport', /shell environment variable/i],
+  ['correction identity binding', /qualifying incident identity/i],
+  ['checkpoint prestate lifetime', /prestate descriptors are fixed/i],
+  ['typed recovery notice fields', /`incidentClassification`|`statePreserved`|`resumedAction`/],
+  ['adapter-worker replay seal', /replay seal/i],
+];
+
+// The lane bridge is described by role. A non-owner surface never names the
+// lane's own command line and never cites a requirement number it cannot
+// resolve. Each sample proves its pattern is live, so neither check is vacuous.
+const ADAPTER_POINTER_FORBIDDEN = [
+  ['a board command line', /\bboard\.mjs\b|`bd [a-z]/, 'node board.mjs render'],
+  ['a bridge FR citation', /\bFR-\d{2,}\b/, 'per FR-031'],
+];
+
+const ADAPTER_DOC_SECTIONS = [
+  ['docs/reference.md', '## Execution Workflow'],
+  ['docs/workflow.md', '### Optional Continuous Work'],
+];
+
+// The generated paths this boundary reaches, materialized only by the build.
+const ADAPTER_GENERATED_PAIRS = [
+  ['src/agents/dude.agent.md', '.github/agents/dude.agent.md'],
+  ['src/skills/dude-work/SKILL.md', '.github/skills/dude-work/SKILL.md'],
+  [ADAPTER_SOURCE, '.github/skills/dude-work/host-adapter.mjs'],
+];
+
+/** @param {string} heading */
+function adapterOwnerSection(heading) {
+  return markdownSection(read(ADAPTER_OWNER), heading);
+}
+
+test('T003 the adapter owns every ordinary Work runtime route', () => {
+  const boundary = adapterOwnerSection(ADAPTER_BOUNDARY_SECTION);
+  const failures = missingParagraphRequirements(boundary, [
+    ['the adapter is the sole ordinary runtime boundary', [
+      [
+        /is the sole ordinary Work runtime boundary/,
+        /ten closed semantic operations/,
+        /read-only run audit/,
+        /Inspection, authorization, completion, learning, transition, and audit reach `recovery\.mjs` only through that adapter/,
+      ],
+    ]],
+    ['no prompt-level low-level route selection', [
+      [
+        /never selects among legacy completion, trusted capture or finalize, learning, and transition routes at the prompt level/,
+        /derives each low-level route deterministically/i,
+        /rejects a caller-supplied low-level route token before invocation/,
+        /a trusted review rejection reaches the established trusted completion and recovery-or-learning flow rather than an incompatible legacy envelope/,
+      ],
+    ]],
+    ['low-level APIs stay internal compatibility surfaces', [
+      [/remain internal compatibility surfaces, not an ordinary routing choice/],
+    ]],
+    ['the adapter composes the lane effect and admits it exactly once', [
+      [
+        /The last five operations are autonomous Lightweight only, and the adapter composes the lane effect inside them/,
+        /applies exactly one permit-bound mutation through the authoritative lane owner/,
+        /derives the read-only audit/,
+        /No board command line and no direct file edit is reachable from that path/,
+        /one adapter-worker replay seal admits each permit, application, and receipt exactly once/,
+      ],
+    ]],
+    ['the bridge is the single narrow exception and changes nothing else', [
+      [
+        /single narrow exception to the established permit, close, and governance boundaries/,
+        /one ordinary accepted autonomous Lightweight completion/,
+        /every other permit, close, and governance boundary is unchanged/,
+      ],
+    ]],
+    ['incident correction is never an ordinary operation', [
+      [
+        /`incident-correction` is never an ordinary operation/,
+        /exceptional internal correction path that `## Host Incidents And Recovery Notice` governs/,
+      ],
+    ]],
+    ['effect settlement gates acceptance and failure keeps the predecessor', [
+      [
+        /Every operation begins from one exact validated accepted state/,
+        /effect settlement is its acceptance gate/,
+        /only after a different successor validates and every required authoritative effect or receipt is established/,
+        /A malformed successor, a failed receipt, or an unestablished or unverifiable effect leaves the predecessor accepted/,
+      ],
+    ]],
+    ['dual revisions detect stale and incorrect writes only', [
+      [
+        /`acceptedRevision` advances only when different validated accepted RunState bytes become accepted/,
+        /`hostRevision` advances on every serialized host-record mutation/,
+        /stale-write and incorrect-write detection guards only, never writer synchronization/,
+      ],
+    ]],
+    ['the shell mirror is transport, never authority', [
+      [/shell environment variable may mirror accepted bytes for transport/, /never authority/, /never read as fallback/],
+    ]],
+    ['the boundary adds no user-visible surface', [
+      [/adds no command, grammar, lane, board, or project state surface/, /never a second board, ledger, or event store/],
+    ]],
+  ]);
+  assert.deepEqual(failures, [], `${ADAPTER_OWNER} ${ADAPTER_BOUNDARY_SECTION}: adapter ownership contract`);
+
+  // The documented count is bound to the runtime's closed operation list, so a
+  // widened or narrowed adapter surface cannot leave the prose behind.
+  assert.equal(frozenRuntimeList(read(ADAPTER_SOURCE), 'OPERATIONS').length, 10);
+});
+
+test('T003 the supervisor owns invocation identity and exactly one writing worker', () => {
+  const continuity = adapterOwnerSection(ADAPTER_CONTINUITY_SECTION);
+  const failures = missingParagraphRequirements(continuity, [
+    ['the supervisor mints and retains identity before any worker launches', [
+      [
+        /The active coordinator turn is the invocation supervisor/,
+        /Before launching any adapter worker it creates a cryptographically random invocation identity/,
+        /retains them outside checkpoint bytes/,
+        /supplies them explicitly to every initial and replacement worker/,
+      ],
+    ]],
+    ['a checkpoint never authenticates its caller', [
+      [/Checkpoint bytes never establish caller identity/, /unmatched supplied identity refuses/],
+    ]],
+    ['exactly one worker writes and handoff is the only replacement', [
+      [
+        /Exactly one active worker token and generation may write/,
+        /Handoff is the only replacement path/,
+        /must have observed the exact prior-worker exit/,
+        /no timeout, PID inference, lock stealing, automatic takeover, or concurrent writer path/,
+      ],
+    ]],
+    ['the accepted recovery boundary hard-stops on supervisor, context, or identity loss', [
+      [
+        /persistent-shell death and replaceable adapter-worker death/,
+        /Loss of that supervisor, its coordinator context, or that identity is a hard stop/,
+        /Cross-conversation, VS Code restart, machine restart, and cross-machine resume are out of scope/,
+      ],
+    ]],
+    ['a replacement worker re-inspects and carries provenance, not capability', [
+      [
+        /performs a fresh Inspection through the adapter before any route runs/,
+        /authorities carried on the handoff receipt are provenance/,
+        /capability comes only from the trusted ports injected into that replacement worker/,
+      ],
+    ]],
+    ['prestate descriptors are fixed when the claim is created', [
+      [
+        /prestate descriptors are fixed when the ownership claim is created/,
+        /not refreshable inside a claim/i,
+        /new descriptors require a fresh claim after settlement/,
+      ],
+    ]],
+  ]);
+  assert.deepEqual(failures, [], `${ADAPTER_OWNER} ${ADAPTER_CONTINUITY_SECTION}: continuity contract`);
+  assert.deepEqual(concurrencyGrants(continuity), [], 'one-worker ownership grants no concurrency');
+});
+
+test('T003 qualifying unchanged-state refusals stay nonterminal under one correction cap', () => {
+  const incidents = adapterOwnerSection(ADAPTER_INCIDENT_SECTION);
+  const failures = missingParagraphRequirements(incidents, [
+    ['a qualifying refusal terminates nothing and continues', [
+      [
+        /Every qualifying unchanged-state refusal is nonterminal/,
+        /invokes no process exit and no Work, shell, or worker termination/,
+        /proceeds to the one permitted correction or a fresh Inspection unless a distinct existing hard stop applies/,
+        /A closed refusal is never the final observable outcome of the invocation/,
+      ],
+    ]],
+    ['zero charge is exact and an unknown side effect stays a hard stop', [
+      [
+        /Zero attempt and recovery charge applies only when the accepted state is byte-identical and no authoritative side effect occurred/,
+        /unknown or unverifiable side effect stays an irreducible hard stop/,
+      ],
+    ]],
+    ['one correction per incident identity survives churn and handoff', [
+      [
+        /At most one immediate deterministic correction exists per qualifying incident identity/,
+        /metadata churn and worker handoff never mint another correction/,
+        /consumed state carries forward across host revisions and handoff/,
+      ],
+    ]],
+    ['host incidents never pollute evidence or retry genuine failures', [
+      [
+        /Genuine implementation, test, and review failures are not host incidents/,
+        /never silently retried/,
+        /Host incidents stay transient adapter diagnostics and never enter verification, review, approach, finding, or learning records/,
+      ],
+    ]],
+    ['the recovery notice carries three typed fields and renders exactly once', [
+      [
+        /report one concise inline nonterminal notice carrying exactly `incidentClassification`, `statePreserved`, and `resumedAction`/,
+        /It renders exactly once, on the first successful corrected or resumed outcome, and every later outcome omits it/,
+        /It is progress reporting, not a stop/,
+        /creates no event or record/,
+      ],
+    ]],
+    ['the notice is admissible only on an accepted outcome and never deferred', [
+      [
+        /structurally admissible only on an `accepted` outcome/,
+        /a terminal transition discards a pending notice instead of deferring it/,
+        /That omission is accepted behavior, not a lost report/,
+      ],
+    ]],
+  ]);
+  assert.deepEqual(failures, [], `${ADAPTER_OWNER} ${ADAPTER_INCIDENT_SECTION}: host-incident contract`);
+
+  // The documented field names are the runtime's exact notice record.
+  assert.match(
+    read(ADAPTER_SOURCE),
+    /\['incidentClassification', 'statePreserved', 'resumedAction'\]/,
+    'the notice record binds the three documented fields',
+  );
+
+  // The `tool error` stop stays terminal, and the nonterminal carve-out is stated there too.
+  const stops = adapterOwnerSection(ADAPTER_STOPS_SECTION);
+  assert.deepEqual(
+    missingParagraphRequirements(stops, [
+      ['the tool error stop names its terminal and nonterminal cases', [
+        [
+          /`tool error: <detail>`/,
+          /unverifiable or after acceptance/,
+          /a qualifying pre-acceptance host incident that proves no effect is nonterminal/,
+        ],
+      ]],
+    ]),
+    [],
+    `${ADAPTER_OWNER} ${ADAPTER_STOPS_SECTION}: tool error disambiguation`,
+  );
+});
+
+test('T003 checkpoint lifecycle keeps one exclusive claim and confirmed bounded-pair cleanup', () => {
+  const lifecycle = adapterOwnerSection(ADAPTER_LIFECYCLE_SECTION);
+  const failures = missingParagraphRequirements(lifecycle, [
+    ['one exclusive claim per key lives outside the workspace', [
+      [
+        /This section governs the host continuity checkpoint, not the objective candidate checkpoint host/,
+        /One exclusive ownership claim exists per canonical workspace-target key, created before any worker write/,
+        /below the operating system temporary directory and never in the workspace/,
+        /never project file payloads/,
+      ],
+    ]],
+    ['a failed clear blocks replacement instead of reporting an end', [
+      [/A failed clear never reports an end/, /blocks replacement work/],
+    ]],
+    ['age is diagnostic and authorizes nothing', [
+      [
+        /Creation and update times are diagnostic only/,
+        /Age never authorizes resume, cleanup, ownership transfer, takeover, or replacement work/,
+        /no expiry, timer, background sweep, or lock stealing exists/,
+      ],
+    ]],
+    ['the stale-orphan diagnostic is safe and caller-independent', [
+      [
+        /An orphan claim or checkpoint refuses lazily on the next claim or load/,
+        /derives the workspace-target key itself/,
+        /never accepts a caller-chosen cleanup path and adds no cleanup command/,
+      ],
+    ]],
+    ['manual cleanup is confirmed, bounded, and absence-validated', [
+      [
+        /must first confirm independently that no invocation or coordinator supervisor remains for that key/,
+        /Manual removal then targets only that bounded pair/,
+        /post-clean load and claim preflight must prove both artifacts absent before a fresh exclusive claim/,
+        /Partial cleanup, a changed artifact, reappearance, operation failure, or failed absence validation is a hard stop/,
+      ],
+    ]],
+  ]);
+  assert.deepEqual(failures, [], `${ADAPTER_OWNER} ${ADAPTER_LIFECYCLE_SECTION}: checkpoint lifecycle contract`);
+});
+
+test('T003 the coordinator carries one terse adapter pointer and no adapter detail', () => {
+  assert.deepEqual(ADAPTER_POINTER_SURFACES, [...ADAPTER_POINTER_SURFACES].sort());
+  assert.equal(ADAPTER_POINTER_SURFACES.includes(ADAPTER_OWNER), false);
+
+  const work = markdownSection(read('src/agents/dude.agent.md'), '## Work');
+  const pointers = work.split(/\n\s*\n/).filter((paragraph) => /host adapter/i.test(paragraph));
+  assert.equal(pointers.length, 1, 'src/agents/dude.agent.md ## Work: exactly one adapter pointer');
+  assert.ok(
+    Buffer.byteLength(pointers[0], 'utf8') <= 620,
+    `adapter pointer is ${Buffer.byteLength(pointers[0], 'utf8')} bytes (limit 620)`,
+  );
+
+  // The pointer names the bridge by role only.
+  for (const [label, pattern, sample] of ADAPTER_POINTER_FORBIDDEN) {
+    assert.match(sample, pattern, `${label}: the pattern must be live`);
+    assert.equal(pattern.test(pointers[0]), false, `the adapter pointer names ${label}`);
+  }
+
+  assert.deepEqual(
+    missingParagraphRequirements(pointers[0], [
+      ['adapter-only runtime routing', [
+        /Ordinary Work drives the runtime only through the single `dude-work` host adapter boundary/,
+        /the coordinator never selects a low-level completion, capture\/finalize, learning, or transition route itself/,
+      ]],
+      ['the autonomous lane bridge is the adapter permit path', [
+        /Autonomous lane mutation uses only the adapter's permit path/,
+      ]],
+      ['supervisor-owned identity with a loss hard stop', [
+        /The active coordinator turn is the invocation supervisor/,
+        /creates and retains the invocation identity before any adapter worker launches/,
+        /losing that supervisor, its context, or that identity is a hard stop/,
+      ]],
+      ['nonterminal refusal and deferral to the owner', [
+        /A qualifying unchanged-state refusal is nonterminal and never terminates Work, the shell, or a worker/,
+        /`dude-work` owns the detailed rules/,
+      ]],
+    ]),
+    [],
+    'src/agents/dude.agent.md ## Work: adapter pointer contract',
+  );
+
+  // Every adapter heading and every detail marker belongs to the Work owner alone.
+  for (const heading of ADAPTER_OWNER_SECTIONS) {
+    const headingOwners = [ADAPTER_OWNER, ...ADAPTER_POINTER_SURFACES]
+      .filter((relative) => visibleMarkdown(read(relative)).split('\n')
+        .some((line) => line.trim() === heading));
+    assert.deepEqual(headingOwners, [ADAPTER_OWNER], heading);
+  }
+
+  const ownerSections = ADAPTER_OWNER_SECTIONS.map((heading) => adapterOwnerSection(heading)).join('\n\n');
+  for (const [label, pattern] of ADAPTER_DETAIL_MARKERS) {
+    assert.match(ownerSections, pattern, `the Work owner must state ${label}`);
+  }
+  assert.deepEqual(
+    [...ADAPTER_POINTER_SURFACES, ...PUBLIC_DOC_FILES]
+      .flatMap((relative) => ADAPTER_DETAIL_MARKERS
+        .filter(([, pattern]) => pattern.test(visibleMarkdown(read(relative))))
+        .map(([label]) => `${relative} duplicates ${label}`)),
+    [],
+  );
+});
+
+test('T003 the adapter boundary adds no command, grammar, or governance surface', () => {
+  const ownerSections = ADAPTER_OWNER_SECTIONS.map((heading) => adapterOwnerSection(heading));
+  const docSections = ADAPTER_DOC_SECTIONS.map(([relative, heading]) => (
+    markdownSection(read(relative), heading)
+      .split(/\n\s*\n/)
+      .filter((paragraph) => /host adapter|ownership claim/i.test(paragraph))
+      .join('\n\n')
+  ));
+
+  for (const section of ownerSections) {
+    assert.deepEqual([...section.matchAll(/--[a-z][a-z-]*/g)].map((entry) => entry[0]), [], 'no new Work flag');
+  }
+  for (const section of [...ownerSections, ...docSections]) {
+    for (const forbidden of REDEFINITION_FORBIDDEN_COMMANDS) {
+      assert.equal(section.includes(forbidden), false, `the adapter boundary presents ${forbidden}`);
+    }
+    assert.deepEqual(concurrencyGrants(section), [], 'the adapter boundary grants no concurrency');
+    assert.deepEqual(staleRecoveryPhrases(section), []);
+    assert.deepEqual(
+      GOVERNANCE_DETAIL_MARKERS.filter(([, pattern]) => pattern.test(section)).map(([label]) => label),
+      [],
+      'the adapter boundary restates learning-governance detail',
+    );
+  }
+  for (const section of docSections) {
+    for (const [label, pattern, sample] of ADAPTER_POINTER_FORBIDDEN) {
+      assert.match(sample, pattern, `${label}: the pattern must be live`);
+      assert.equal(pattern.test(section), false, `the documented bridge names ${label}`);
+    }
+  }
+
+  // Governance now routes through the adapter, and its permit order is unchanged.
+  assert.deepEqual(
+    missingParagraphRequirements(markdownSection(read(ADAPTER_OWNER), '## Autonomous Learning Governance'), [
+      ['the governed permit order is adapter-routed but otherwise unchanged', [
+        [
+          /Permit order is fixed and acyclic, and no route returns to an earlier phase/,
+          /ordinary Work reaches those routes only through the host adapter's semantic operations, which changes who names the route and never this order or any obligation here/,
+          /Phase `projected` issues no permit and no controlled end/,
+        ],
+      ]],
+    ]),
+    [],
+    `${ADAPTER_OWNER} ## Autonomous Learning Governance: adapter-routed permit order`,
+  );
+
+  // The runtime keeps its existing public commands and Work grammar unchanged.
+  assert.deepEqual(runtimeStringList(read('src/skills/dude-work/recovery.mjs'), 'public commands'), GOVERNANCE_PUBLIC_COMMANDS);
+  assert.deepEqual(
+    read(ADAPTER_OWNER).split('\n').filter((line) => line.startsWith('@dude work [')),
+    [WORK_GRAMMAR_LINE],
+  );
+});
+
+test('T003 docs state the accepted recovery boundary and the manual cleanup protocol', () => {
+  for (const [relative, heading] of ADAPTER_DOC_SECTIONS) {
+    const section = markdownSection(read(relative), heading);
+    const failures = missingParagraphRequirements(section, [
+      ['the accepted supervisor and worker recovery boundary', [
+        [
+          /persistent-shell death and replaceable adapter-worker death/i,
+          /coordinator turn supervising the invocation/i,
+          /independently retained invocation identity/i,
+          /hard stop/i,
+        ],
+      ]],
+      ['out-of-scope resumes and no age-authorized takeover', [
+        [
+          /Cross-conversation,\s+VS Code restart, machine restart, and cross-machine resume are out of scope/i,
+          /age of a claim or checkpoint never authorizes takeover/i,
+        ],
+      ]],
+      ['confirmed bounded-pair cleanup with a post-clean absence proof', [
+        [
+          /bounded ownership-claim and checkpoint pair/i,
+          /no invocation remains for that\s+key/i,
+          /remove only that pair/i,
+          /prove both\s+artifacts absent before a fresh claim/i,
+        ],
+      ]],
+      ['cleanup fails closed and keeps blocking replacement work', [
+        [
+          /Partial cleanup, a changed artifact,\s+reappearance, or failed absence validation is a hard stop/i,
+          /blocking\s+replacement work/i,
+        ],
+      ]],
+      ['the adapter-composed lane effect and its read-only audit', [
+        [
+          /composes the lane effect/i,
+          /applies exactly one permit-bound\s+mutation through the lane's own owner/i,
+          /derives a\s+read-only run audit/i,
+          /No board command line and no direct file edit/i,
+        ],
+      ]],
+      ['one narrow accepted-completion bridge that changes nothing else', [
+        [
+          /single narrow exception/i,
+          /one\s+ordinary accepted\s+completion/i,
+          /every other permit, close, and governance boundary\s+is unchanged/i,
+        ],
+      ]],
+      ['the typed one-shot recovery notice', [
+        [
+          /one\s+typed inline notice/i,
+          /the incident class, the preserved accepted state,\s+and the/i,
+          /resumed\s+operation/i,
+          /That notice renders exactly once, on the first\s+successful\s+corrected or resumed\s+outcome/i,
+          /a run whose first\s+successful\s+outcome is an end\s+omits it/i,
+        ],
+      ]],
+    ]);
+    assert.deepEqual(failures, [], `${relative} ${heading}: adapter recovery documentation`);
+  }
+});
+
+test('T003 the adapter and its prompt surfaces are generated, never hand-authored', () => {
+  assert.ok(ACTIVE_SOURCE_FILES.includes(ADAPTER_SOURCE), 'the adapter is inventoried as an active source');
+  assert.equal(
+    new Set(ADAPTER_GENERATED_PAIRS.map(([, generated]) => generated)).size,
+    ADAPTER_GENERATED_PAIRS.length,
+  );
+  for (const [source, generated] of ADAPTER_GENERATED_PAIRS) {
+    assert.equal(fs.statSync(path.join(ROOT, source)).isFile(), true, source);
+    assert.equal(fs.statSync(path.join(ROOT, generated)).isFile(), true, generated);
+    assert.deepEqual(
+      fs.readFileSync(path.join(ROOT, generated)),
+      fs.readFileSync(path.join(ROOT, source)),
+      `${generated} must be a byte-identical projection of ${source}`,
+    );
+  }
+
+  // Tests stay out of the built bundle, and the adapter still delegates to the
+  // preserved low-level runtime instead of replacing it.
+  assert.equal(fs.existsSync(path.join(ROOT, '.github/skills/dude-work/host-adapter.test.mjs')), false);
+  assert.match(read(ADAPTER_SOURCE), /from '\.\/recovery\.mjs'/);
 });

@@ -544,6 +544,13 @@ const LANE_TASKS_FIXTURE = `# Tasks: Lane
 
 - 2026-07-24T00:00:00Z - baseline
 `;
+const LANE_TASKS_WITHOUT_HISTORY_FIXTURE = `# Tasks: Lane
+
+## Phase 1
+
+- [ ] ${LANE_TASK_KEY} [US3] Implement the lane boundary
+- [ ] ${LANE_OTHER_KEY} [US3] Another canonical unit
+`;
 
 function laneIdeaLedger(specPath = LANE_SPEC) {
   return `---\nstatus: defined\nspec_path: ${specPath}\n---\n\n## Idea\n\nLane boundary.\n\n## Coordinator Log\n\n- Existing entry.\n`;
@@ -574,10 +581,11 @@ function laneDescriptor(value) {
   return { sha256: capture.sha256, byteLength: capture.byteLength };
 }
 
-function scaffoldLane() {
+/** @param {string} [tasks] */
+function scaffoldLane(tasks = LANE_TASKS_FIXTURE) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dude-lane-')));
   writeLaneFile(root, LANE_SPEC, '# Spec Lane\n');
-  writeLaneFile(root, LANE_TASKS, LANE_TASKS_FIXTURE);
+  writeLaneFile(root, LANE_TASKS, tasks);
   writeLaneFile(root, LANE_IDEA, laneIdeaLedger());
   writeLaneFile(root, LANE_SNAPSHOT, `${JSON.stringify({
     [LANE_TASKS]: { glyphs: { [LANE_TASK_KEY]: ' ', [LANE_OTHER_KEY]: ' ' }, updated_at: '2026-07-24T00:00:00.000Z' },
@@ -859,6 +867,125 @@ test('T006 lightweight work-project appends the exact event and reports an uncha
     assertLaneRefusal(root, replay, 'permit-replayed', 'replayed projection');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T006 lightweight work-project bootstraps canonical history without changing the target task', () => {
+  const refusalFixtures = [
+    {
+      label: 'malformed canonical task',
+      tasks: LANE_TASKS_WITHOUT_HISTORY_FIXTURE.replace(
+        `- [ ] ${LANE_TASK_KEY} [US3] Implement the lane boundary`,
+        `- [?] ${LANE_TASK_KEY} [US3] Implement the lane boundary`,
+      ),
+      reason: 'mapping-missing',
+    },
+    {
+      label: 'missing terminal LF',
+      tasks: LANE_TASKS_WITHOUT_HISTORY_FIXTURE.slice(0, -1),
+      reason: 'lane-prestate-mismatch',
+    },
+    {
+      label: 'noncanonical history lookalike',
+      tasks: `${LANE_TASKS_WITHOUT_HISTORY_FIXTURE}\n## Lightweight Execution History:\n`,
+      reason: 'lane-prestate-mismatch',
+    },
+  ];
+  for (const fixture of refusalFixtures) {
+    const refusalRoot = scaffoldLane(fixture.tasks);
+    try {
+      const mutation = laneProjectionMutation();
+      assertLaneRefusal(
+        refusalRoot,
+        laneRequest(refusalRoot, { operation: 'work-project', mutation }),
+        fixture.reason,
+        fixture.label,
+      );
+    } finally {
+      fs.rmSync(refusalRoot, { recursive: true, force: true });
+    }
+  }
+
+  const root = scaffoldLane(LANE_TASKS_WITHOUT_HISTORY_FIXTURE);
+  try {
+    const mutation = laneProjectionMutation();
+    const request = laneRequest(root, { operation: 'work-project', mutation });
+    const before = laneSurfaces(root);
+    const result = applyLightweightWorkRequest(request);
+
+    assert.equal(result.ok, true, `history bootstrap must commit: ${JSON.stringify(result)}`);
+    assert.equal(result.phase, 'committed');
+    assert.equal(result.receipt.targetStateChanged, false, 'projection keeps the target state unchanged');
+    const after = laneSurfaces(root);
+    const eventLine = mutation.eventLines.lines[0].exactLine;
+    assert.equal(
+      after.tasks.toString('utf8'),
+      `${before.tasks.toString('utf8')}\n## Lightweight Execution History\n\n${eventLine}\n`,
+      'bootstrap adds one blank-line-separated canonical heading and exact LF event',
+    );
+    const parsed = parseTasks(after.tasks.toString('utf8'));
+    assert.equal(parsed.byId.get(LANE_TASK_KEY)?.glyph, ' ', 'target glyph stays unchanged');
+    assert.equal(parsed.byId.get(LANE_TASK_KEY)?.blockedBy, null, 'target blocker stays unchanged');
+    const snapshot = JSON.parse(after.taskState.toString('utf8'));
+    assert.deepEqual(snapshot[LANE_TASKS].glyphs, {
+      [LANE_TASK_KEY]: ' ',
+      [LANE_OTHER_KEY]: ' ',
+    }, 'snapshot retains both canonical glyphs');
+    assert.equal(snapshot[LANE_TASKS].updated_at, '2026-07-25T12:00:00.000Z');
+    assert.ok(before.owner.equals(after.owner), 'ownerLog none leaves owner bytes unchanged');
+    assert.equal(result.receipt.tasksPoststateHash, sha256(after.tasks));
+    assert.equal(result.receipt.taskStatePoststateHash, sha256(after.taskState));
+    assert.equal(result.receipt.ownerPoststateHash, sha256(after.owner));
+    assert.equal(result.receipt.permitHash, request.permit.permitHash);
+    assert.equal(result.receipt.mutationIdentity, request.permit.mutationIdentity);
+    const { receiptHash, ...receiptBody } = result.receipt;
+    assert.equal(receiptHash, sha256(canonicalJson(receiptBody)), 'receipt hash binds the actual poststate receipt');
+
+    const replay = laneRequest(root, { operation: 'work-project', mutation });
+    assertLaneRefusal(root, replay, 'permit-replayed', 'replayed bootstrapped projection');
+    const replayedTasks = laneBytes(root, LANE_TASKS).toString('utf8');
+    assert.equal(replayedTasks.split('## Lightweight Execution History').length - 1, 1, 'history heading is not duplicated');
+    assert.equal(replayedTasks.split(eventLine).length - 1, 1, 'exact event is not duplicated');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+
+  const failureRoot = scaffoldLane(LANE_TASKS_WITHOUT_HISTORY_FIXTURE);
+  const realWriteFileSync = fs.writeFileSync;
+  const tasksAbsolute = path.join(failureRoot, ...LANE_TASKS.split('/'));
+  try {
+    const mutation = laneProjectionMutation();
+    const request = laneRequest(failureRoot, { operation: 'work-project', mutation });
+    const before = laneSurfaces(failureRoot);
+    let injected = 0;
+    // @ts-ignore -- deliberate mid-write failure injection
+    fs.writeFileSync = (file, data, ...rest) => {
+      if (injected === 0 && file === tasksAbsolute) {
+        injected += 1;
+        realWriteFileSync(file, '');
+        const error = new Error('ENOSPC: no space left on device, write');
+        // @ts-ignore -- errno codes are not on the Error type
+        error.code = 'ENOSPC';
+        throw error;
+      }
+      return realWriteFileSync(file, data, ...rest);
+    };
+    const result = applyLightweightWorkRequest(request);
+    fs.writeFileSync = realWriteFileSync;
+    const after = laneSurfaces(failureRoot);
+
+    assert.equal(injected, 1, 'bootstrap reached the injected tasks write');
+    assert.equal(result.ok, false);
+    assert.equal(result.phase, 'refused');
+    assert.equal(result.reason, 'atomic-apply-failed');
+    assert.equal(result.receipt, undefined);
+    for (const surface of /** @type {const} */ (['tasks', 'taskState', 'owner'])) {
+      assert.ok(before[surface].equals(after[surface]), `${surface} must be restored byte-for-byte`);
+    }
+    assert.equal(result.unchangedPrestateHash, laneObservationHash(failureRoot));
+  } finally {
+    fs.writeFileSync = realWriteFileSync;
+    fs.rmSync(failureRoot, { recursive: true, force: true });
   }
 });
 

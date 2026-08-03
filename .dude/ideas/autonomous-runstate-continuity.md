@@ -1,0 +1,203 @@
+---
+title: Autonomous RunState Continuity
+slug: autonomous-runstate-continuity
+status: defined
+spec_path: .dude/specs/018-autonomous-runstate-continuity/spec.md
+---
+
+# Idea: Autonomous RunState Continuity
+
+## Idea
+
+The abrupt stop is unacceptable. I explicitly invoked autonomous Work with `--recover-on-block` precisely so reviewer rejection, recoverable blocking, and learning governance would continue without requiring another user turn. I forked the conversation so Feature 017 implementation could continue elsewhere; this brainstorm branch exists only to fix the autonomous stop defect.
+
+### Incident Evidence
+
+Invocation:
+
+`@dude work ship-command --policy autonomous --recover-on-block`
+
+Observed valid initial state:
+
+- Policy normalized to `overall: 3`, `recovery: 1`, `recover: true`, `untilBlocked: false`, `mode: autonomous`.
+- Feature 017 was selected in Lightweight Execution with the exact owner.
+- T001@73686970 was atomically claimed `[~]`.
+- Iteration 1/3 was charged.
+- Implementation verification passed.
+- The first review rejected; a revision was applied and reverified.
+- Tester then passed, but a second Code Reviewer rejected on remaining regression-test gaps.
+- T001 remained `[~]`; no false close or block was written.
+
+Observed failure chain:
+
+1. The coordinator used the wrong completion adapter: it submitted a review-rejected `execute-task` result through legacy `completeAttempt`, whose action envelope permits only its exact expected check set. The runtime returned the closed refusal `action-mismatch` with the complete prior RunState unchanged.
+2. The shell wrapper converted that ordinary closed refusal into a thrown error and then executed `exit` in the persistent shell.
+3. The only retained RunState lived in the shell environment (`DUDE_RUN_STATE`), so terminating the shell destroyed it.
+4. The next check showed empty state. Current `dude-work` correctly says "Missing or lost transient run state stops," because inventing counters, pending permits, or governance state would be unsafe.
+5. Therefore the final hard stop was safe, but reaching the lost-state condition was an orchestration defect. Autonomous policy had not exhausted its budget, and learning governance never received the second rejection.
+
+### Central Requirement
+
+A recoverable runtime refusal, adapter mistake, tool failure, or host-shell failure must not be able to destroy the authority state required for autonomous recovery. The safe policy must actually get a chance to run. A closed refusal that returns unchanged state is not a task failure and must not end the invocation.
+
+### Root Cause Model
+
+The incident has two defects, not only the final lost-state symptom:
+
+- Routing defect: the host chose `completeAttempt` rather than the trusted completion and review route, `captureCompletionV2` and its retention and projection flow, for a review-rejected task result.
+- Continuity defect: the host treated a closed unchanged-state refusal as fatal and kept the sole accepted RunState in a destructible shell environment.
+
+### V1 Design Principles
+
+The user-approved v1 direction settles the host boundary, continuity guarantee, recovery classification, and reporting behavior. The exact storage API and checkpoint schema remain plan details; no TTL is selected.
+
+1. **Transactional state handoff.** Every Work host operation receives one validated prestate and returns either a validated successor or a closed refusal carrying the same prestate. The caller replaces its current state only after validating a successful successor. A refusal never consumes or erases state.
+2. **Closed refusals are data, not process failure.** `action-mismatch`, evidence drift, stale permit, and similar closed refusals return through a typed orchestration path. They never trigger `exit`, terminate the shared terminal, overwrite state with empty output, or count as a task attempt or recovery charge when accepted state is byte-identical and no authoritative side effect occurred.
+3. **Single Work host adapter.** One deterministic high-level Work host adapter is the sole coordinator integration point. It selects the correct runtime route from authoritative evidence and owns immutable last-accepted state, successor validation, checkpointing, and typed results; low-level completion and transition APIs remain internal implementation surfaces.
+4. **Invocation-scoped session-local checkpoint.** Before every external or tool call, retain the exact last accepted state in a size-bounded, invocation-scoped session-local checkpoint outside the project tree until a successor validates or an allowed lifecycle cleanup boundary is reached. It is not `.dude/state/`, portable project state, a second ledger, or a TTL-governed record.
+5. **Surviving-supervisor child-process recovery.** Persistent-shell or replaceable adapter-worker process death within the same Work invocation resumes only while the active coordinator supervisor and its independently retained invocation identity survive, and only from an exact validated checkpoint plus a fresh Inspection proving target, owner, lane, RunState bytes, and authoritative prestate still match. Loss of the supervisor, coordinator context, or independently retained identity remains deferred and is a hard stop; cross-conversation, VS Code, and machine resume are deferred.
+6. **Budget semantics.** Correcting a malformed adapter request after a closed unchanged-state refusal should consume no task attempt or recovery cycle; no work was attempted and runtime state did not advance. A genuine task failure or review rejection still follows current recovery and learning-governance budgets.
+7. **Learning integrity.** Adapter and tool-contract failures must not be misrecorded as implementation approaches or reviewer findings. The actual rejected review must reach trusted completion capture and learning governance with its real evidence and chronology.
+8. **No shell-env sole authority.** A shell environment variable may be a transport convenience but cannot be the only copy of accepted invocation authority. Persistent-shell termination must never be ordinary refusal handling.
+9. **One-way state swap.** Preserve immutable prestate, execute, parse, and validate, then atomically swap to the successor. On error or malformed output, keep prestate and classify the host incident; never reconstruct state from counters or lane glyphs alone.
+10. **Fail closed remains.** If neither an exact accepted predecessor nor a validated successor or checkpoint exists, stopping remains mandatory. The feature prevents avoidable state loss; it does not authorize state invention.
+11. **Single-target invocation.** V1 allows one active invocation per exact workspace and canonical target. Collision fails closed; schedulers, lock services, multi-session merging, and cross-target concurrency are out of scope.
+12. **Explicit lifecycle and transparent recovery.** Keep the checkpoint through recoverable incidents, clear it only after the applicable settlement or terminal audit is safely reflected, and emit one concise inline notice when automatic recovery resumes. A stale orphan ownership claim/checkpoint pair never expires: age is diagnostic only, the pair refuses until the user or operator confirms no invocation remains and manually removes that bounded pair, and post-clean validation must prove both artifacts absent before a fresh exclusive claim. Partial removal, reappearance, or failed validation remains a hard stop.
+
+### Accepted V1 Shape
+
+V1 presents one deterministic high-level Work host adapter as the sole coordinator integration point. It owns runtime route selection, immutable last-accepted state, successor validation, checkpointing, and typed results. A size-bounded, invocation-scoped session-local checkpoint outside the project tree, with no TTL, preserves exact accepted authority across required same-invocation failures; fresh Inspection and byte/prestate validation govern resume. Closed unchanged-state refusals and eligible pre-acceptance host errors preserve state and permit at most one immediate same-class correction without budget charge; genuine attempt failures and hard stops retain current governance. One workspace-plus-target invocation is allowed, cleanup follows explicit lifecycle and confirmed stale-orphan rules, and successful automatic recovery emits one inline nonterminal notice.
+
+### Alternatives And Trades
+
+- **Rejected: prompt-only handling.** A rule such as "do not exit; keep state" is insufficiently enforceable given this exact model-orchestration failure.
+- **Rejected: shell-memory-only handling.** Shell environment or long-lived driver memory still loses authority on process death and cannot be the sole accepted-state copy.
+- **Selected conceptually: session-local checkpoint.** A size-bounded, invocation-scoped checkpoint outside the project tree provides required same-invocation survival without becoming project workflow state; its exact host API and schema belong to plan, and no TTL is selected.
+- **Deferred, not selected for v1: project persistence and broader resume.** `.dude/state/` or another project persistence surface and cross-conversation, VS Code, machine, or cross-machine resume carry broader lifecycle and portability concerns.
+- **Rejected: state reconstruction.** Reconstructing RunState from `tasks.md`, Coordinator Log, or lane history is unsafe because pending permits, counters, and governance state are intentionally not derivable from those surfaces.
+
+### Accepted V1 Direction
+
+The user approves the single Work host adapter, size-bounded session-local checkpoint with no TTL, same-invocation persistent-shell and replaceable adapter-worker recovery under a surviving coordinator supervisor and independently retained invocation identity, zero-charge closed-refusal correction, fresh resume validation, explicit lifecycle and confirmed stale-orphan cleanup, one active workspace-plus-target invocation, and inline recovery notice as v1 outcomes. Supervisor, coordinator-context, or invocation-identity loss and cross-conversation, VS Code, machine, and cross-machine resume remain deferred hard stops; the exact storage API and schema belong to plan.
+
+### Relationships And Non-Overlap
+
+- Feature 005 (`autonomous-work-modes`) says recoverable tool failures and review rejection may continue under autonomous policy, but it still requires exact state and authority.
+- Feature 009 (`autonomous-learning-governance`) owns repeat evidence and materially different alternatives after repeated rejection. It did not run because the second rejection never reached trusted completion and the state was destroyed.
+- Feature 014 (`autonomous-review-escalation-precedence`) removed unnecessary user escalation under autonomous review rejection. This incident is below that policy: the host failed before governance could decide.
+- Feature 013 (`unattended-work-continuity`) prevents discretionary or unnameable halts and decouples reporting from stopping while valid RunState exists. Its plan explicitly assumes existing transient RunState and no new durable store. This new idea owns preserving the accepted RunState across orchestration, refusal, and host boundaries so Feature 013 can operate. It does not reopen or modify Feature 013.
+- Feature 017 (`ship-command`) is only where the defect was dogfooded. This idea is not Ship-specific; the fix belongs to generic Work host and runtime integration.
+
+## Open Questions
+
+1. Must v1 survive only closed runtime refusals and tool-command failures within the same Work invocation, or also shell or process death, VS Code restart, context compaction, and conversation or session restart?
+   Answer: V1 must survive closed runtime refusals, malformed or empty adapter output, nonzero tool-command failures, and persistent-shell or replaceable adapter-worker process death within the same Work invocation, but only while the active coordinator supervisor and its independently retained invocation identity survive. Loss of the coordinator supervisor, coordinator context, or independently retained invocation identity remains deferred and is a hard stop. Resume across context compaction when invocation identity cannot be preserved, conversation or session restart, VS Code restart, machine restart, and cross-machine transfer is deferred.
+2. Is a new bounded checkpoint surface acceptable? If yes, should it be project-local `.dude/state/`, VS Code or session-local, or OS-temp invocation state?
+   Answer: Yes. V1 requires a size-bounded, invocation-scoped, session-local checkpoint outside the project tree with no TTL; it is not `.dude/state/`, portable project state, or a second ledger. The exact VS Code/session storage API and schema are deferred to plan and implementation.
+3. Should the simplest enforceable fix be one deterministic host adapter that owns all Work runtime calls and completion-route selection, eliminating direct coordinator use of low-level APIs?
+   Answer: Yes. One deterministic high-level Work host adapter is the sole coordinator integration boundary and owns runtime route selection, immutable last-accepted state, successor validation, checkpointing, and typed results. Low-level completion and transition APIs remain internal implementation surfaces and are never manually selected by the coordinator during ordinary Work orchestration.
+4. Which closed refusals are correctable without consuming attempt or recovery budget, and which must remain ordinary recovery or hard stops?
+   Answer: Zero attempt/recovery charge applies only when the runtime returns a closed refusal with byte-identical accepted state and no authoritative side effect: wrong adapter or action mismatch; a malformed request caught before mutation; evidence drift or a stale permit requiring reacquisition; or malformed, empty, or nonzero host-command output before runtime successor acceptance. Genuine implementation, test, or review failure after an authorized attempt uses the ordinary recovery budget. Lost state without a valid checkpoint; ownership or lane ambiguity; safety, security, destructive-action, credential, spending, or external-authorization boundaries; corrupt or conflicting checkpoints; unverifiable side effects; exhausted budgets; changed or ambiguous intent; and existing irreducible stops remain hard stops. There are no blanket retries: allow at most one immediate correction of the same host-request class before fresh Inspection and reclassification, with the exact anti-loop mechanism deferred to plan.
+5. How should stale checkpoint detection bind target, owner, lane, RunState hash, task or lane prestate, and invocation identity before resume?
+   Answer: The checkpoint must bind invocation identity, canonical target, exact owner/spec identity, lane, validated RunState hash and bytes, task/lane prestate descriptors, and checkpoint revision. Resume always performs fresh Inspection and compares those bindings, the exact RunState bytes/hash, and authoritative prestate; any mismatch invalidates resume and stops safely without reconstruction.
+6. When should checkpoints be cleared: task settlement, natural Work stop, controlled end, user cancellation, expiry, or successful feature close?
+   Answer: Keep the checkpoint on a closed refusal, correctable adapter error, tool error eligible for recovery, review rejection, or host crash. Clear it only on successful task settlement after the successor lane receipt is committed; any ordinary natural or controlled Work end; explicit user cancellation; or an irreducible hard stop after its audit/result is safely recorded. There is no automatic expiry cleanup: stale orphan ownership-claim/checkpoint age is diagnostic only, and the bounded pair refuses until the user or operator confirms no invocation remains and manually removes it. Post-clean validation must prove both artifacts absent before a fresh exclusive claim; partial removal, reappearance, or failed validation remains a hard stop.
+7. Must multiple simultaneous Dude or Work sessions be supported, or should v1 enforce one active invocation per workspace or target?
+   Answer: V1 permits one active invocation per exact workspace plus canonical target. A collision on that pair fails closed. V1 adds no scheduler, lock service, multi-session merge, or cross-target concurrency; different targets remain out of scope unless a later feature proves them safe.
+8. What user-visible report is required after automatic host recovery so continuation is transparent without becoming another stop?
+   Answer: After automatic recovery, emit one concise inline, nonterminal notice naming or classifying the host incident, stating that the last accepted state was preserved, and naming the resumed route or action. It is progress reporting, not a stop, question, or new report or ledger; the existing final audit remains authoritative, and a user question appears only for a real hard stop.
+
+## Assumptions
+
+These assumptions supplement the user-approved v1 direction and may be refined during definition without changing its settled boundary.
+
+- The exact incident evidence above is trustworthy from this session.
+- No safety, verification, review, owner, lane, permit, counter, or learning-governance check may be bypassed.
+- Closed refusal correction is not task retry because accepted RunState and task artifacts are unchanged.
+- True state loss without a valid checkpoint remains a hard stop.
+- The accepted design prefers one enforced high-level adapter over duplicated prompt warnings or coordinator selection among low-level APIs.
+- The session-local checkpoint is transient invocation authority, not portable project workflow state or a second ledger.
+- The exact storage API and checkpoint schema are plan and implementation details; no time-based takeover, cleanup, or TTL is selected.
+
+<!-- dude:managed:start -->
+## Normalized Intent
+
+- Preserve the exact last accepted RunState across qualifying closed refusals, proven no-effect host incidents, malformed or empty adapter output, nonzero tool-command failures, and persistent-shell or replaceable adapter-worker death while the active coordinator turn survives.
+- Make every qualifying unchanged-state refusal observably nonterminal: return typed continuation or correction data, preserve accepted authority, invoke no Work, shell, or worker termination, and proceed deterministically to the one permitted correction or fresh Inspection unless a distinct existing hard stop applies.
+- Use one deterministic high-level Work host adapter as the sole ordinary coordinator boundary for runtime route selection, immutable last-accepted state, successor validation, checkpointing, and typed outcomes; keep low-level routes internal.
+- Authorize exactly one replay-sealed autonomous Lightweight ordinary accepted-completion permit and receipt exception only after finalized dual-retained trusted completion, exact fresh authority, no conflicting pending, governance, projection, or evaluation state, one final accepted occurrence matching one final completion tuple with no repeat, and exact lane-owner mutation and receipt before settlement.
+- Require the adapter to compose projection preparation, lane-permit issuance, lane-owner application, lane-receipt commitment, and read-only audit internally; ordinary callers never choose low-level routes, while incident correction remains exceptional internal behavior.
+- Carry typed one-shot recovery notice data containing the incident classification, `state-preserved=true`, and the resumed action only on the first successful corrected or resumed outcome; atomically consume and render it once, then omit it without creating a ledger, event, or report.
+- Preserve every existing authority boundary except the named ordinary accepted-completion exception; do not create a generic ungoverned permit, caller close authority, fabricated governance, ordinary lane CLI mutation, or direct edit.
+- Treat the active coordinator turn as the invocation supervisor. It creates and retains a random invocation identity before launching a worker, supplies that identity explicitly to every replacement, and never accepts checkpoint bytes as proof of caller identity.
+- Cover persistent-shell and replaceable adapter-worker death only while the supervisor and its invocation identity survive. Loss of supervisor context or identity remains a hard stop outside v1.
+- Enforce one exclusive ownership claim per exact workspace and canonical target. The supervisor serializes exactly one worker token and generation and hands authority to one replacement only after observing the exact prior worker exit; no timeout, process guessing, automatic takeover, or concurrent writer is authorized.
+- Separate accepted-state revision from host revision. Accepted-state revision advances only for different validated accepted RunState bytes; host revision records in-flight operations, incidents, correction consumption, worker handoff, and cleanup metadata.
+- Preserve RunState bytes and hash, accepted-state revision, and attempt and recovery counters on a qualifying closed refusal; host revision may advance without creating another correction opportunity.
+- Bind correction identity to accepted state and revision, semantic operation, incident class, fresh Inspection identity, host revision, and worker generation so metadata changes cannot reset the one-correction cap.
+- Keep genuine authorized implementation, test, and review failures on ordinary recovery and learning budgets and never silently retry them; only qualifying closed no-effect host incidents use the nonterminal host-correction path.
+- Keep one size-bounded, invocation-scoped checkpoint outside the project tree with a portable supported-platform minimum, visible safe refusal when an operation fails, no TTL, and no project-local second ledger.
+- Retain checkpoint ownership through recoverable incidents. Clear it only after successful settlement, a natural or controlled end, cancellation, or a safely recorded hard stop; stale orphan state refuses lazily and requires confirmed manual cleanup, with age diagnostic only and never takeover authority.
+- Keep the actual review rejection, verification evidence, chronology, and budget semantics intact so trusted completion and learning governance receive the real event.
+- Emit one concise inline nonterminal recovery notice while keeping the existing final audit authoritative.
+- Preserve fail-closed behavior when exact accepted authority, exclusive ownership, fresh Inspection, or independently retained invocation identity cannot be proven, and defer broader resume.
+- Apply the eventual outcome to generic Work host and runtime integration, with Feature 017 serving only as incident evidence.
+
+## Constraints
+
+- Do not mutate Features 005, 009, 013, 014, or 017.
+- Do not create a project-local second ledger or reconstruct RunState from a lane glyph, Coordinator Log, lane history, counters, or permits.
+- Do not weaken review, verification, ownership, lane, permit, counter, safety, or learning-governance checks.
+- Do not add blanket retries, hidden attempts, recovery charges, or policy-budget bypasses; the one immediate correction remains limited to a qualifying same-class no-effect host incident.
+- Do not permit an unchanged-state refusal itself to terminate Work, the shared shell, or an adapter worker; require deterministic correction-or-Inspection continuation unless a separate existing hard stop applies.
+- Enforce one active invocation and one serialized worker generation per exact workspace and canonical target; do not introduce an identity service, process monitor, timeout takeover, lock stealing, scheduler, distributed lock service, multi-session merge, or concurrency framework.
+- Do not use revision comparison as writer synchronization; the exclusive ownership claim and supervisor-controlled worker handoff provide serialization, while revisions detect stale or incorrect writes.
+- Do not authorize cleanup or takeover by checkpoint age. Stale orphan cleanup remains an explicit manual action only after the user or operator confirms no invocation survives.
+- Keep cross-conversation, VS Code restart, machine restart, and cross-machine resume out of v1.
+- Do not make Ship-specific behavior; the ownership boundary is generic Work host and runtime integration.
+- Keep platform-specific hardening honest: supported hosts share a portable minimum, while nonuniform ownership, mode, and directory-synchronization guarantees remain residual risk and visible safe refusal rather than identical promises.
+- Do not introduce another persistent state surface, cleanup command, daemon, editor service, database, migration, schema file, checklist, or supporting artifact.
+
+## Definition Checklist
+
+- [x] Exact incident evidence and interpretation are distinguished.
+- [x] Routing and continuity defects are both captured.
+- [x] Existing-feature ownership and non-overlap are recorded.
+- [x] V1 failure and restart boundary is resolved.
+- [x] Checkpoint authority and conceptual location are resolved; exact API and schema are plan details.
+- [x] The sole coordinator adapter boundary is resolved.
+- [x] Refusal, recovery-budget, and hard-stop classifications are resolved.
+- [x] Resume binding and fresh-validation behavior are resolved.
+- [x] Checkpoint cleanup and stale-orphan refusal semantics are resolved.
+- [x] V1 collision and concurrency behavior is resolved.
+- [x] Surviving-supervisor identity and exact worker handoff are resolved.
+- [x] Exclusive single-writer ownership and dual revisions are resolved.
+- [x] Qualifying unchanged-state refusals are explicitly nonterminal.
+- [x] Automatic recovery reporting is resolved.
+- [x] The named ordinary accepted-completion exception, complete adapter composition, typed one-shot notice, and pure helper coverage are resolved.
+- [x] No outcome-changing ambiguity remains before explicit definition.
+
+## Coordinator Log
+
+- 2026-08-01 UTC - brainstorm captured: autonomous RunState continuity after closed-refusal adapter failure and persistent-shell state loss
+- 2026-08-01 UTC - brainstorm refreshed: accepted v1 single Work host adapter, session-local checkpoint, same-invocation shell/process recovery, zero-charge closed-refusal correction, fresh resume validation, bounded cleanup, single-target invocation, and inline recovery notice
+- 2026-08-01 UTC - defined -> .dude/specs/018-autonomous-runstate-continuity/spec.md
+- 2026-08-01 UTC - definition review revision: made unchanged-state refusals explicitly nonterminal; bound same-invocation recovery to a surviving coordinator supervisor and replaceable adapter workers; replaced false CAS with exclusive single-writer handoff and separate accepted/host revisions; narrowed portable filesystem guarantees; removed arbitrary TTL and automatic expiry takeover
+- 2026-08-01 UTC - definition clarification accepted: V1 process recovery covers persistent-shell and replaceable adapter-worker death only while the coordinator supervisor and invocation identity survive; stale checkpoints never expire into cleanup or takeover and require confirmed manual cleanup plus post-clean absence validation
+- 2026-08-02 UTC - re-defined: authorized one replay-sealed ordinary accepted-completion permit and receipt exception; completed adapter lane-effect and audit composition; made recovery notices typed and one-shot; reconciled all four tasks open after unauthorized close provenance
+<!-- dude:managed:end -->
+- 2026-08-01T21:19:44Z - Work iteration 1/3 started T001@61646170: implement the high-level Work adapter core and nonterminal refusal contract.
+- 2026-08-02T18:11:29Z - Work closed T001@61646170: port-admitted adapter core (trusted supervisor admission + no-effect authority); prior review findings on admission replay and returned-malformed classification independently refuted; consumed-invocation-identity guard added. Evidence: adapter+recovery 458/458, build+contracts 80/80, src/generated parity, Tester PASS, Code Reviewer APPROVE.
+- 2026-08-02T18:11:50Z - Work started T002@63686b70: supervisor-owned checkpoint interface, exclusive workspace-target ownership, serialized worker generations and exact-exit handoff, dependency-free OS-temp backend.
+- 2026-08-02T19:43:42Z - Work closed T002@63686b70: injected five-op checkpoint interface, OS-temp backend, exclusive workspace-target claim, exact-exit handoff, six-class resume. Review rejection fixed: resume receipt identity is now derived and persisted at in-flight registration and compared before promotion (forged/zeroed/foreign receipts hard-stop). Evidence: adapter 51/51, recovery 427/427, build+contracts 80/80, full sweep 2104 pass 0 fail, Tester PASS, Code Reviewer APPROVE.
+- 2026-08-02T19:43:42Z - Work started T003@696e7467: make the adapter the sole ordinary Work runtime boundary in prompts, static contracts, and docs.
+- 2026-08-02T20:44:09Z - Work closed T003@696e7467: adapter pinned as the sole ordinary Work runtime boundary across dude-work SKILL.md, a terse dude.agent.md pointer, static contracts, and docs. Review rejection fixed: FR-007 acceptance gate and FR-013 trusted-rejection routing now stated, Stops/incident conflict and checkpoint-name collision resolved. Evidence: contracts+build 88/88, adapter+recovery 478/478, parity x3, lint 0/0, mutation sweep 53/53 detected, Tester PASS, Reviewer APPROVE.
+- 2026-08-02T20:44:09Z - Work started T004@76616c69: full acceptance across focused, full-suite, lint, compose, and pristine release gates with independent Tester and Code Reviewer evidence.
+- 2026-08-02T21:19:25Z - Work blocked T004@76616c69 (contract-mismatch). Tester FAIL, Code Reviewer REJECT. (1) recovery.mjs requiredLanePermitPhaseV2 was changed to grant an ungoverned task-completed permit that previously always refused, creating new close authority beyond T001 "preserve recovery.mjs semantics" and contradicting FR-026/SC-014. (2) SKILL.md claims all transition routes reach recovery.mjs only through the adapter, but prepare-projection, issue-lane-permit, commit-lane-receipt, incident-correction and audit are unreachable through it, and the same file still orders the coordinator to run those routes directly. (3) FR-025/SC-011 recovery notice has no implementation or recorded disposition. (4) deriveGovernanceRuntimeRequestV1 lacks the mandated compatibility coverage in recovery.test.mjs. Resolution requires explicit define; Work performed no definition writes.
+- 2026-08-02T22:56:12Z - execution reconciliation after explicit redefinition: changed T001@61646170 -> T001@62726964; reopened T002@63686b70, T003@696e7467, and T004@76616c69; prior implementation and review evidence retained as history only; unauthorized autonomous CLI close glyphs removed without backfilled permits or receipts; regenerated the Lightweight board and snapshot with all four tasks open.
+- 2026-08-03T02:19:31Z - Work closed T001@62726964 through a legal permit-backed lane sequence (initial-claim, occurrence projection, FR-028..030 ordinary accepted-completion bridge); no board CLI mutation and no direct edit. Terminal receipt dc1c3680722a21124e5004ec0564ad160cbc7a98e5c14dd4d453f275f41e8329. Implementation: adapter lane-effect and audit composition (10 semantic operations), typed one-shot incidentClassification notice, FR-030 tracked-lane gate, direct helper coverage. Review rejection fixed: tracked gate pinned by three red-to-green fixtures, notice field renamed, repeat/notice mutations closed. Evidence: focused 494/494, build+contracts 88/88, full suite 2128 pass 0 fail, parity, lint 0/0, Tester PASS, Code Reviewer APPROVE.
+- 2026-08-03T13:38:25Z - Work closed T002@63686b70 through the permit-backed ordinary completion bridge. Checkpoint/worker continuity reverified against the corrected adapter; unchanged-prestate resume escape and correction-cap reset fixed; apply-lane-effect in-flight expectations and five-operation checkpoint coverage added; Lightweight retention partitioned by exact target after full validation so sibling history no longer deadlocks authorization. Evidence: adapter 69/69, recovery 439/439, build+contracts 88/88, full suite 2142 pass 0 fail, target-partition mutations 5/5 killed, parity, lint 0/0, Tester PASS, Code Reviewer APPROVE.
+- 2026-08-03T14:52:40Z - Work closed T003@696e7467 through the permit-backed ordinary completion bridge; no board CLI mutation and no direct edit. Reconciled the pre-redefinition prompt, static-contract, and doc surfaces to the shipped adapter: ten closed semantic operations including read-only run audit, adapter-composed lane effects with no reachable board command line or direct edit, the replay seal, the single narrow accepted-completion exception with every other boundary unchanged, and the typed one-shot recovery notice. Resolved the governance-ordering contradiction by routing the named transition phases through the adapter without altering the permit order or any obligation, and recorded the notice-omission-at-controlled-end disposition as accepted behavior. Eight existing T003 contract tests reconciled in place with runtime bindings and pointer negatives; no src/**/*.mjs change and Feature 017 Ship regions byte-unchanged. Evidence: contracts+build 88/88, adapter+recovery 508/508, full suite 2146 tests 2142 pass 0 fail, parity 7/7 plus clean-tree rebuild, lint 0/0, mutation sweep 43/43 killed with 4/4 negatives non-collateral, two fresh notice-on-end probes, Tester PASS, Reviewer APPROVE.
+- 2026-08-03T14:52:40Z - Work started T004@76616c69: full acceptance across focused, full-suite, lint, compose, and pristine release gates with independent Tester and Code Reviewer evidence, including fresh legal close provenance for T001 through T003 without backfill.
+- 2026-08-03T16:10:05Z - Work closed T004@76616c69 through the permit-backed ordinary completion bridge; feature acceptance complete. Exhaustive bridge acceptance proven on the positive path (prestate binding, one permit-bound mutation through the lane owner, receipt poststate hashes, replay refusal) and across every reachable refusal branch, including seven effect-unsettled guard sites and the lane-owner threw/malformed/indeterminate cases. Two unreachable refusal branches were deleted after reproduction proved them dead: lane-permit-ledger-exhausted (dominated by the probe ceiling on the same constant) and the permit-stale entry in the authorize-lane-effect incident map; both fall through to hardStop, which is strictly more conservative. Reviewer finding A6 discharged with named regression evidence across five non-bridge retention call sites, decisively by restoring the pre-change body and observing exactly the four boundary tests fail. Close provenance for T001 through T004 is permit-backed with no backfilled permit, receipt, or forged record. Evidence: adapter+recovery 520/520, contracts+build+release 105/105, full suite 2158 tests 2154 pass 0 fail, parity, lint 0/0, pristine release 56 files with no test files shipped, compose 16/16, board fresh, Tester PASS, Code Reviewer APPROVE.
+- 2026-08-03T16:10:05Z - Recorded non-blocking follow-ups from acceptance: (F3) the target-blind chronology position key now relies on an undocumented single-target precondition; (F4) the lightweight-only retention filter would need revisiting if tracked projections ever batch sibling issues; (F5) incidentBranchEvidenceV2 has no sibling-history fixture of its own; (A1) apply-lane-effect workspace root is caller-chosen and unbound, failing closed at settlement; (A2) resume establishment is an attestation rather than proof and the wording overstates it; (A3) an applied-but-uncommitted mutation stops with an unhelpful reason; (A4) process-lifetime identity ceilings surface as a raw TypeError.

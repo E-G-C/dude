@@ -242,6 +242,36 @@ authority. See the [Work command reference](commands.md#dude-work) for usage
 and the [Work skill](../.github/skills/dude-work/SKILL.md) for the owning
 protocol.
 
+Ordinary Work reaches its runtime through one host adapter boundary. Recovery is
+accepted only for persistent-shell death and replaceable adapter-worker death,
+and only while the active coordinator turn supervising the invocation and its
+independently retained invocation identity both survive; losing that supervisor,
+its coordinator context, or that identity is a hard stop. Cross-conversation,
+VS Code restart, machine restart, and cross-machine resume are out of scope, and
+the age of a claim or checkpoint never authorizes takeover.
+
+For autonomous Lightweight work the host adapter also composes the lane effect:
+it prepares the projection, issues the permit, applies exactly one permit-bound
+mutation through the lane's own owner, commits the receipt, and derives a
+read-only run audit. No board command line and no direct file edit is reachable
+from that path. The bridge is the single narrow exception and carries one
+ordinary accepted completion; every other permit, close, and governance boundary
+is unchanged.
+
+When the host adapter corrects a host incident automatically it reports one
+typed inline notice: the incident class, the preserved accepted state, and the
+resumed operation. That notice renders exactly once, on the first successful
+corrected or resumed outcome, and a run whose first successful outcome is an end
+omits it.
+
+Stale ownership claims and checkpoints are cleaned up by hand. The refusal names
+the bounded ownership-claim and checkpoint pair for its canonical
+workspace-target key. Confirm independently that no invocation remains for that
+key, remove only that pair, and let the next load and claim preflight prove both
+artifacts absent before a fresh claim. Partial cleanup, a changed artifact,
+reappearance, or failed absence validation is a hard stop that keeps blocking
+replacement work.
+
 Under `autonomous`, a deterministically repeated result or approach on one task
 requires learning before that task may be retried, escalated, blocked, closed,
 or called no progress. The requirement binds that task alone: existing hard

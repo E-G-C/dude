@@ -196,5 +196,22 @@
       "T003@61636370": "x"
     },
     "updated_at": "2026-08-01T05:23:41.000Z"
+  },
+  ".dude/specs/017-ship-command/tasks.md": {
+    "glyphs": {
+      "T001@73686970": "~",
+      "T002@646f6373": " ",
+      "T003@76616c69": " "
+    },
+    "updated_at": "2026-08-01T15:18:20.000Z"
+  },
+  ".dude/specs/018-autonomous-runstate-continuity/tasks.md": {
+    "glyphs": {
+      "T001@62726964": "x",
+      "T002@63686b70": "x",
+      "T003@696e7467": "x",
+      "T004@76616c69": "x"
+    },
+    "updated_at": "2026-08-03T18:20:48.128Z"
   }
 }

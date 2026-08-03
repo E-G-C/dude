@@ -18,5 +18,6 @@ description: "Universal Dude authority, safety, and execution rules."
 11. Destructive rule: if the required persisted or fresh preview/plan, expected current state, or literal exact confirmation is missing or mismatched, refuse before any write. Never claim an unobserved review or confirmation.
 12. New Dude project state uses `.dude/`; project-local agents and skills use `dude-local-`; `.dude/metadata/bundle-manifest.md` is the sole bundle manifest.
 13. During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition, escalation, and user notification to `dude-work` learning governance; guarded and non-Work behavior remains unchanged.
+14. Do not over-engineer solutions. Be pragmatic. Prefer simplification over complication.
 
 Load detailed procedures only when their mode applies: `dude-feature-definition`, `dude-lightweight-execution`, installed tracked execution, `dude-work`, `dude-parallel-dispatch`, `dude-verification-before-completion`, and the review skills. The only exception is Work-authorized unchanged-intent derived-artifact repair in an existing Lightweight package through `dude-work`; tracked definition recovery refuses before writes.

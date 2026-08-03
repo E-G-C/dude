@@ -11,6 +11,8 @@ import {
   parseSpecIdentity,
   resolveSpecIdentity,
 } from '../dude-engine/lib/feature-identity.mjs';
+import { resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
+import { parseTaskState } from '../dude-engine/lib/task-state.mjs';
 import { parseTasks, parseVisibleTasks } from '../dude-engine/lib/tasks.mjs';
 import { resolveWorkspacePath } from '../dude-engine/lib/workspace-paths.mjs';
 
@@ -112,6 +114,8 @@ const MAX_ERROR_JSON_BYTES = 8_192;
 const MAX_PACKET_ITEMS = 16;
 const MAX_PACKET_BYTES = 65_536;
 const MAX_REGISTRY_ENTRIES = 64;
+const MAX_RUNTIME_RESULT_DEPTH = 32;
+const MAX_RUNTIME_RESULT_ENTRIES = 4096;
 const MAX_LEARNING_GOVERNANCE_BYTES = 32_768;
 const MAX_DEFINITION_REVISION_PROPOSAL_BYTES = 32_768;
 const MAX_DEFINITION_REVISION_COMPONENT_BYTES = 131_072;
@@ -218,6 +222,69 @@ function assertProxyFreeDataGraph(value, label, ancestors = new Set()) {
   } finally {
     ancestors.delete(value);
   }
+}
+
+/** Detach one bounded JSON data graph without invoking caller code. @param {unknown} value @param {string} label */
+function detachRuntimeData(value, label) {
+  const active = new WeakSet();
+  let entries = 0;
+  let scalarBytes = 0;
+  /** @param {string} text */
+  const charge = (text) => {
+    scalarBytes += Buffer.byteLength(text);
+    if (scalarBytes > MAX_CLI_REQUEST_BYTES) {
+      invalid(label, `exceeds the resource limit of ${MAX_CLI_REQUEST_BYTES} bytes`);
+    }
+  };
+  /** @param {unknown} current @param {number} depth @param {string} path */
+  const visit = (current, depth, path) => {
+    if (depth > MAX_RUNTIME_RESULT_DEPTH) {
+      invalid(label, `exceeds the maximum depth of ${MAX_RUNTIME_RESULT_DEPTH}`);
+    }
+    if (current === null || typeof current === 'boolean') return current;
+    if (typeof current === 'string') {
+      assertUnicodeScalarString(current, path);
+      charge(current);
+      return current;
+    }
+    if (typeof current === 'number') {
+      if (!Number.isFinite(current) || Object.is(current, -0)) invalid(path, 'must be a finite JSON number');
+      return current;
+    }
+    if (typeof current !== 'object') invalid(path, 'must contain only JSON data');
+    if (utilTypes.isProxy(current)) invalid(path, 'must not contain a Proxy');
+    if (active.has(current)) invalid(path, 'must not contain a cycle');
+    active.add(current);
+    if (Array.isArray(current)) {
+      const rows = assertDenseDataArray(current, path);
+      entries += rows.length;
+      if (entries > MAX_RUNTIME_RESULT_ENTRIES) {
+        invalid(label, `exceeds the maximum entry count of ${MAX_RUNTIME_RESULT_ENTRIES}`);
+      }
+      const detached = rows.map((row, index) => visit(row, depth + 1, `${path}[${index}]`));
+      active.delete(current);
+      return detached;
+    }
+    const source = assertRecord(current, path);
+    const keys = Object.keys(source);
+    entries += keys.length;
+    if (entries > MAX_RUNTIME_RESULT_ENTRIES) {
+      invalid(label, `exceeds the maximum entry count of ${MAX_RUNTIME_RESULT_ENTRIES}`);
+    }
+    const detached = {};
+    for (const key of keys) {
+      charge(key);
+      detached[key] = visit(source[key], depth + 1, `${path}.${key}`);
+    }
+    active.delete(current);
+    return detached;
+  };
+  const detached = visit(value, 0, label);
+  const bytes = canonicalJson(detached);
+  if (Buffer.byteLength(bytes) > MAX_CLI_REQUEST_BYTES) {
+    invalid(label, `exceeds the resource limit of ${MAX_CLI_REQUEST_BYTES} bytes`);
+  }
+  return JSON.parse(bytes);
 }
 
 /**
@@ -2376,6 +2443,7 @@ function acquireInspection(
     ...(Object.hasOwn(acquiredInput, 'session') ? { session: acquiredInput.session } : {}),
   };
   return {
+    root: /** @type {string} */ (input.root),
     target,
     inspection: buildInspection(target, collectEvidenceInternal(target, rawInputs, dependencies, {
       ownerDiagnostics: capturedIdeas.diagnostics,
@@ -7631,7 +7699,17 @@ function validateOccurrenceSurfaceV2(events, surface) {
 /** @param {Record<string, unknown>} inspection */
 function dualRetainedOccurrenceEventsV2(inspection) {
   const currentRun = currentRunEventsV2(inspection);
-  const lane = laneHistoryEventsV2(inspection);
+  let lane = laneHistoryEventsV2(inspection);
+  const inspectionTargetKey = targetKey(inspection.target);
+  for (const event of currentRun) {
+    if (laneEventDeclaration(event.type)?.relevance === 'retention-relevant'
+      && targetKey(event.target) !== inspectionTargetKey) {
+      invalid('occurrence retention', 'contains a wrong-target event');
+    }
+  }
+  if (inspection.target.lane === 'lightweight') {
+    lane = lane.filter((event) => targetKey(event.target) === inspectionTargetKey);
+  }
   const currentSurface = validateOccurrenceSurfaceV2(currentRun, 'current-run');
   const laneSurface = validateOccurrenceSurfaceV2(lane, 'lane-history');
   const currentByHash = currentSurface.byHash;
@@ -7643,9 +7721,6 @@ function dualRetainedOccurrenceEventsV2(inspection) {
     if (!laneEvent) invalid('occurrence retention', 'is incomplete on lane-history');
     if (canonicalJson(currentEvent) !== canonicalJson(laneEvent)) {
       invalid('occurrence retention', 'contains conflicting current-run and lane event bytes');
-    }
-    if (targetKey(currentEvent.target) !== targetKey(inspection.target)) {
-      invalid('occurrence retention', 'contains a wrong-target event');
     }
     retained.push(currentEvent);
   }
@@ -13057,7 +13132,7 @@ export function issueLanePermitV2(stateValue, inputValue, mutationValue, lanePre
     validateProjectionPermitV1(permit);
     return respond({ issued: true, reason: 'lane-permit-issued', state, permit });
   }
-  const gate = requiredLanePermitPhaseV2(mutation, governed, inspection);
+  const gate = requiredLanePermitPhaseV2(state, mutation, governed, inspection);
   if (gate.reason) return respond({ issued: false, reason: gate.reason, state });
   const permit = v2PermitWithHash({
     version: 1,
@@ -13129,18 +13204,157 @@ function lanePermitBranchAuthorityV2(reason, governance, rebound, retained) {
 }
 
 /**
+ * Reconstruct the sole ordinary accepted completion that can close the exact
+ * target without learning governance. The bridge is Lightweight only: no
+ * tracked target ever reaches this ungoverned authority.
+ * @param {Record<string, unknown>} state @param {Record<string, unknown>} inspection
+ * @param {Record<string, unknown>} target
+ */
+function ordinaryAcceptedCompletionAuthorityV2(state, inspection, target) {
+  if (target.lane !== 'lightweight') return null;
+  if (/** @type {Record<string, unknown>[]} */ (state.pending).length !== 0
+    || Object.hasOwn(state, 'pendingCompletion')
+    || Object.hasOwn(state, 'learningGovernance')
+    || /** @type {unknown[]} */ (inspection.blockers).length !== 0
+    || targetKey(inspection.target) !== targetKey(target)) return null;
+  for (const purpose of ['occurrence-retention', 'governance-required', 'learning-result']) {
+    if (activeProjectionCommitmentV2(state, purpose)) return null;
+  }
+  const evaluationSequences = /** @type {Record<string, unknown>[]} */ (state.evaluationSequences || []);
+  if (evaluationSequences.some((row) => targetKey(row.target) === targetKey(target))) return null;
+  let retained;
+  try {
+    retained = dualRetainedOccurrenceEventsV2(inspection);
+    validateRetainedOccurrenceAuthorityV2(
+      retained.retained,
+      trustedEnvelopeIndexFromInspectionV2(inspection),
+    );
+  } catch {
+    return null;
+  }
+  if (retained.retained.some((event) => retained.currentCounts.get(/** @type {string} */ (event.eventHash)) !== 1
+    || retained.laneCounts.get(/** @type {string} */ (event.eventHash)) !== 1)) return null;
+  if (deriveEarliestRepeatRelationshipV1(retained.retained)) return null;
+  const finalAttemptOrdinal = /** @type {number} */ (state.overallUsed);
+  const accepted = retained.retained.filter((event) => event.type === 'approach-occurrence'
+    && targetKey(event.target) === targetKey(target)
+    && eventChronologyV2(event).attemptOrdinal === finalAttemptOrdinal
+    && /** @type {Record<string, unknown>} */ (event.occurrence).disposition === 'accepted');
+  if (accepted.length !== 1) return null;
+  const event = accepted[0];
+  const eventHash = /** @type {string} */ (event.eventHash);
+  if (retained.currentCounts.get(eventHash) !== 1 || retained.laneCounts.get(eventHash) !== 1) return null;
+  const occurrence = /** @type {Record<string, unknown>} */ (event.occurrence);
+  const basis = /** @type {Record<string, unknown>} */ (event.basis);
+  const mechanismIdentities = /** @type {string[]} */ (basis.mechanismIdentities);
+  if (basis.action === 'reconcile-derived-definition' && mechanismIdentities.length !== 1) return null;
+  const approachHashValue = basis.action === 'reconcile-derived-definition'
+    ? mechanismIdentities[0]
+    : approachHash({ action: basis.action, materialInputs: basis.materialInputs });
+  const completedTuple = {
+    evidenceHash: occurrence.authorizationEvidenceHash,
+    approachHash: approachHashValue,
+    resultHash: occurrence.resultIdentity,
+  };
+  const completed = /** @type {Record<string, unknown>[]} */ (state.completed);
+  const matches = completed.filter((entry) => canonicalJson(entry) === canonicalJson(completedTuple));
+  if (matches.length !== 1
+    || completed.length !== finalAttemptOrdinal
+    || canonicalJson(completed[completed.length - 1]) !== canonicalJson(completedTuple)) return null;
+  return /** @type {string} */ (occurrence.attemptIdentity);
+}
+
+/**
+ * Bind an ordinary Lightweight completion receipt to the exact canonical lane
+ * bytes left by the completed wrapper transaction.
+ * @param {string} root @param {Record<string, unknown>} target
+ * @param {Record<string, unknown>} receipt
+ */
+function ordinaryLightweightReceiptPoststateV2(root, target, receipt) {
+  let ownerPath;
+  try {
+    const resolved = resolveFeatureOwner({
+      root,
+      specPath: /** @type {string} */ (target.specPath),
+    });
+    if (resolved.diagnostics.length !== 0 || resolved.owner === null) return 'inspection-stale';
+    ownerPath = resolved.owner.ideaPath;
+  } catch {
+    return 'inspection-stale';
+  }
+  const tasksPath = `${/** @type {string} */ (target.specPath).slice(0, -'spec.md'.length)}tasks.md`;
+  const expected = [
+    [tasksPath, receipt.tasksPoststateHash],
+    [TASK_STATE_PATH, receipt.taskStatePoststateHash],
+    [ownerPath, receipt.ownerPoststateHash],
+  ];
+  const budget = createBodyBudget();
+  /** @type {Map<string, Buffer>} */
+  const poststateBytes = new Map();
+  for (const [relativePath, expectedHash] of expected) {
+    let bytes;
+    try {
+      bytes = readWorkspaceFile(root, /** @type {string} */ (relativePath), budget);
+    } catch {
+      return 'inspection-stale';
+    }
+    if (sha256(bytes) !== expectedHash) return 'lane-receipt-mismatch';
+    poststateBytes.set(/** @type {string} */ (relativePath), bytes);
+  }
+  try {
+    const visible = parseVisibleTasks(/** @type {Buffer} */ (poststateBytes.get(tasksPath)), {
+      path: tasksPath,
+      state: 'ordinary completion poststate',
+    });
+    const parsed = visible.parsed;
+    if (parsed.boardIssue || parsed.warnings.length !== 0 || parsed.tasks.length !== parsed.byId.size) {
+      return 'lane-receipt-mismatch';
+    }
+    const matches = parsed.tasks.filter((task) => task.id === target.taskKey);
+    if (matches.length !== 1
+      || matches[0].glyph !== 'x'
+      || matches[0].state !== 'done'
+      || matches[0].blockedBy !== null) {
+      return 'lane-receipt-mismatch';
+    }
+    const snapshot = parseTaskState(
+      /** @type {Buffer} */ (poststateBytes.get(TASK_STATE_PATH)).toString('utf8'),
+    );
+    if (snapshot.status !== 'ok'
+      || !Object.hasOwn(snapshot.state, tasksPath)
+      || snapshot.state[tasksPath].glyphs[/** @type {string} */ (target.taskKey)] !== 'x') {
+      return 'lane-receipt-mismatch';
+    }
+  } catch {
+    return 'lane-receipt-mismatch';
+  }
+  return null;
+}
+
+/**
  * Bind one lane state mutation reason to the exact governance phase that may
  * authorize it. Everything else fails closed.
- * @param {Record<string, unknown>} mutation @param {Record<string, unknown>|null} governance @param {Record<string, unknown>} inspection
+ * @param {Record<string, unknown>} state @param {Record<string, unknown>} mutation
+ * @param {Record<string, unknown>|null} governance @param {Record<string, unknown>} inspection
  */
-function requiredLanePermitPhaseV2(mutation, governance, inspection) {
+function requiredLanePermitPhaseV2(state, mutation, governance, inspection) {
   const ungoverned = { governanceIdentity: null, governancePhase: null, attemptIdentity: null };
   const reason = /** @type {string} */ (mutation.reason);
   if (reason === 'incident-supersession' || reason === 'initial-claim'
     || reason === 'resume-claim' || reason === 'task-blocked') {
     return governance ? { reason: 'learning-phase-mismatch' } : ungoverned;
   }
-  if (!governance) return { reason: 'governance-unresolved' };
+  if (!governance) {
+    if (reason === 'task-completed') {
+      const attemptIdentity = ordinaryAcceptedCompletionAuthorityV2(
+        state,
+        inspection,
+        /** @type {Record<string, unknown>} */ (mutation.target),
+      );
+      if (attemptIdentity) return { ...ungoverned, attemptIdentity };
+    }
+    return { reason: 'governance-unresolved' };
+  }
   const expected = {
     'post-learning-claim': 'alternative-authorized-pending-lane',
     'task-completed': 'alternative-verified',
@@ -13253,9 +13467,38 @@ export function commitLaneReceiptV2(stateValue, inputValue, permitValue, receipt
   if (permit.governanceIdentity === null) {
     // An ungoverned claim, block, or incident permit discharges no obligation:
     // it commits only while no governed case owns the exact permit target.
-    return governed
-      ? respond({ committed: false, reason: 'governance-unresolved', state })
-      : respond({ committed: true, reason: 'lane-receipt-committed', state, receipt });
+    if (governed) return respond({ committed: false, reason: 'governance-unresolved', state });
+    if (permit.attemptIdentity === null) {
+      return respond({ committed: true, reason: 'lane-receipt-committed', state, receipt });
+    }
+    const attemptIdentity = ordinaryAcceptedCompletionAuthorityV2(
+      state,
+      inspection,
+      /** @type {Record<string, unknown>} */ (permit.target),
+    );
+    if (attemptIdentity !== permit.attemptIdentity) {
+      return respond({ committed: false, reason: 'governance-unresolved', state });
+    }
+    if (permit.lane === 'lightweight') {
+      if (receipt.targetStateChanged !== true) {
+        return respond({ committed: false, reason: 'lane-receipt-mismatch', state });
+      }
+      const poststateReason = ordinaryLightweightReceiptPoststateV2(
+        /** @type {string} */ (acquired.root),
+        /** @type {Record<string, unknown>} */ (permit.target),
+        receipt,
+      );
+      if (poststateReason) {
+        return respond({ committed: false, reason: poststateReason, state });
+      }
+    }
+    return respond({
+      committed: true,
+      reason: 'lane-receipt-committed',
+      state,
+      receipt,
+      terminalEvidenceIdentity: receipt.receiptHash,
+    });
   }
   if (!governed
     || permit.governanceIdentity !== governed.governanceIdentity
@@ -13920,6 +14163,73 @@ export function runCommand(commandValue, requestValue, dependencies) {
   }
   const request = assertExactRecord(requestValue, ['state', 'input'], [], 'complete request');
   return { completion: completeAttempt(request.state, request.input) };
+}
+
+/**
+ * Derive one closed low-level recovery request from a typed governance intent.
+ * This pure dispatcher validates data and grants no effect or successor authority.
+ * @param {unknown} stateValue @param {unknown} intentValue
+ */
+export function deriveGovernanceRuntimeRequestV1(stateValue, intentValue) {
+  const state = /** @type {Record<string, unknown>} */ (
+    validateRunState(detachRuntimeData(stateValue, 'GovernanceRuntimeRequestV1.state'))
+  );
+  const intent = detachRuntimeData(intentValue, 'GovernanceRuntimeRequestV1.intent');
+  const action = assertRecord(intent, 'GovernanceRuntimeRequestV1.intent').action;
+  assertEnum(action, [
+    'review-learning', 'bind-alternative', 'verify-no-progress', 'controlled-end',
+    'resume-learning', 'halt', 'suspend-target',
+  ], 'GovernanceRuntimeRequestV1.intent.action');
+  if (action === 'review-learning') {
+    const governed = assertExactRecord(intent, ['action', 'input', 'review'], [], 'GovernanceRuntimeRequestV1.intent');
+    return detachRuntimeData({
+      command: 'learn',
+      request: { state, input: governed.input, review: governed.review },
+      resultKey: 'learning',
+      successFlag: 'reviewed',
+    }, 'GovernanceRuntimeRequestV1');
+  }
+  const governed = action === 'halt'
+    ? assertExactRecord(intent, ['action', 'input', 'halt'], [], 'GovernanceRuntimeRequestV1.intent')
+    : action === 'suspend-target'
+      ? assertExactRecord(intent, ['action', 'input', 'scheduling'], ['halt'], 'GovernanceRuntimeRequestV1.intent')
+      : assertExactRecord(intent, ['action', 'input'], [], 'GovernanceRuntimeRequestV1.intent');
+  const routes = {
+    'bind-alternative': ['bind-post-learning-inspection', 'bound'],
+    'verify-no-progress': ['verify-no-progress', 'verified'],
+    'controlled-end': ['controlled-end', 'ended'],
+    'resume-learning': ['resume-governance', 'resumed'],
+    halt: ['halt', 'halted'],
+    'suspend-target': ['suspend-target', 'suspended'],
+  };
+  const [mode, successFlag] = routes[/** @type {keyof typeof routes} */ (action)];
+  const request = { mode, state, input: governed.input };
+  if (action === 'halt') request.halt = governed.halt;
+  if (action === 'suspend-target') {
+    request.scheduling = governed.scheduling;
+    if (Object.hasOwn(governed, 'halt')) request.halt = governed.halt;
+  }
+  return detachRuntimeData({
+    command: 'transition', request, resultKey: 'transition', successFlag,
+  }, 'GovernanceRuntimeRequestV1');
+}
+
+/**
+ * Reacquire and recompute one recovery result from its exact closed request.
+ * This validation-only operation grants no effect, permit, or adapter authority.
+ * @param {unknown} commandValue @param {unknown} requestValue @param {unknown} resultValue
+ */
+export function validateRecoveryRuntimeResultV1(commandValue, requestValue, resultValue) {
+  const request = detachRuntimeData(requestValue, 'RecoveryRuntimeResultV1.request');
+  const supplied = detachRuntimeData(resultValue, 'RecoveryRuntimeResultV1.result');
+  const expected = detachRuntimeData(
+    runCommand(commandValue, request),
+    'RecoveryRuntimeResultV1.expected',
+  );
+  if (canonicalJson(supplied) !== canonicalJson(expected)) {
+    invalid('RecoveryRuntimeResultV1.result', 'must equal the recovery-owned result for the exact request');
+  }
+  return true;
 }
 
 /**

@@ -865,9 +865,30 @@ function lightweightTasksPostimage(visible, bytes, task, mutation, blocker, appe
   }
 
   if (appendRecords.length > 0) {
-    if (visible.historyOffset === null) refuse('lane-prestate-mismatch');
     if (bytes.length === 0 || bytes[bytes.length - 1] !== 0x0a) refuse('lane-prestate-mismatch');
-    edits.push({ start: bytes.length, end: bytes.length, text: Buffer.from(appendRecords.join('')) });
+    let prefix = '';
+    if (visible.historyOffset === null) {
+      const unsafeHistoryHeading = visible.lines.some(({ text }) => {
+        const heading = /^ {0,3}##[ \t]+(.+?)[ \t]*#*[ \t]*$/.exec(text);
+        return heading !== null
+          && heading[1].replace(/[^A-Za-z0-9]+/g, ' ').trim().toLowerCase()
+            === 'lightweight execution history';
+      });
+      if (mutation.kind !== 'append-event'
+        || parsed.tasks.length === 0
+        || parsed.warnings.length > 0
+        || parsed.byId.size !== parsed.tasks.length
+        || unsafeHistoryHeading) {
+        refuse('lane-prestate-mismatch');
+      }
+      const trailingLfCount = /\n+$/.exec(bytes.toString('utf8'))?.[0].length ?? 0;
+      prefix = `${'\n'.repeat(Math.max(0, 2 - trailingLfCount))}## Lightweight Execution History\n\n`;
+    }
+    edits.push({
+      start: bytes.length,
+      end: bytes.length,
+      text: Buffer.from(`${prefix}${appendRecords.join('')}`),
+    });
   }
 
   edits.sort((left, right) => left.start - right.start);

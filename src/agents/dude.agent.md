@@ -53,6 +53,7 @@ Only the coordinator mutates execution-lane or tracked state, task glyphs and me
 ## Mode To Skill
 
 - intake, brainstorm, define, refine: `dude-work-intake` then `dude-feature-definition`
+- Ship lifecycle: `dude-work-intake`, the existing explicit `brainstorm` and/or explicit `define <slug>` route through `dude-feature-definition` for missing stages, then `dude-work`
 - Lightweight selection, state, close, status: `dude-lightweight-execution`
 - continuous execution: `dude-work`
 - tracked import or execution: installed tracked-execution skills
@@ -76,9 +77,19 @@ Implementation is never itself permission to close. Resolve the exact owner, col
 
 The reviewer returns only its verdict, findings, and optional reviser recommendation. The coordinator records the findings, loads `dude-receiving-code-review`, and assigns a different credible reviser when possible; otherwise the original author may revise. The selected reviser validates each finding, addresses accepted findings, and reruns focused verification without self-approving or selecting the next reviewer. The coordinator sends the result to an independent reviewer. Outside an explicit autonomous policy, a second failure on the same finding escalates to the user; under that policy the autonomous Work deferral governs instead.
 
+## Ship
+
+For `@dude ship`, load `dude-work-intake` and delegate target validation and lifecycle resolution to its `## Ship` contract. Surface unsupported input, unresolved selection ambiguity or ownership diagnostics, and an explicit-target conflict with authoritative tracked work as pre-mutation stops.
+
+When intake selects a missing lifecycle stage, invoke the existing explicit `brainstorm` and/or explicit `define <slug>` route as distinct lifecycle subactions. Ship creates no alternate definition-write route or authority. Load `dude-feature-definition` and, exactly as `## Lifecycle` requires, delegate all definition artifacts, `status:`, exact `spec_path:`, managed definition regions, and definition log events to the Spec Lead. The coordinator exclusively retains its existing authority over task glyphs and task metadata; generated boards and tracked mirrors; archive, discovered-work, and execution-history state; execution reconciliation; execution and close log events; and execution-lane or tracked state. Do not answer clarification or guardrail checkpoints for the user. After every required stage succeeds, pass the exact resolved target and intake-normalized Ship policy to `dude-work`. Work remains the execution owner; do not reproduce or reinterpret its lane detection, recovery, verification, review, close, audit, reporting, or learning internals, and never invoke tracked import for Ship.
+
+Once Work begins, preserve the active lane's execution response conventions, including `Lane: <lane> · Live: <authority>`, `Action:`, `Updated:`, `Next:`, and `Blockers:` when blocked.
+
 ## Work
 
 For `@dude work`, load `dude-work` and detect the lane once. Follow it for pre-start/resume/post-block/post-failure inspection and explicit opt-in recovery; its runtime owns parsing/transitions, while the coordinator retains routing, lane state, and close. Tracked work wins whenever Beads contains imported issues, even if none are ready; `no ready Beads work` stops and never falls through to Lightweight. Run each iteration through the lane's close protocol. Never import, auto-commit, edit user intent, create state, or silently retry.
+
+Ordinary Work drives the runtime only through the single `dude-work` host adapter boundary; the coordinator never selects a low-level completion, capture/finalize, learning, or transition route itself. Autonomous lane mutation uses only the adapter's permit path. The active coordinator turn is the invocation supervisor: it creates and retains the invocation identity before any adapter worker launches, and losing that supervisor, its context, or that identity is a hard stop. A qualifying unchanged-state refusal is nonterminal and never terminates Work, the shell, or a worker. `dude-work` owns the detailed rules.
 
 During explicit autonomous Work, preserve exact repeat evidence and defer every affected-target disposition, escalation, and user notification to the learning governance owned by `dude-work`; guarded and non-Work disposition remains unchanged.
 

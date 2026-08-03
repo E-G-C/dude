@@ -16,8 +16,12 @@ import {
   commitDefinitionRecoveryV1,
   prepareDefinitionRecoveryV1,
 } from '../dude-feature-definition/atomic-file-batch.mjs';
-import { executeLightweightDefinitionRecoveryV1 } from '../dude-lightweight-execution/board.mjs';
+import {
+  applyLightweightWorkRequest,
+  executeLightweightDefinitionRecoveryV1,
+} from '../dude-lightweight-execution/board.mjs';
 import * as recoveryRuntime from './recovery.mjs';
+import { createHostAdapter } from './host-adapter.mjs';
 
 import {
   approachHash,
@@ -11337,6 +11341,8 @@ function t002EnvelopeFixture(overrides = {}) {
 function t002PendingFixture(overrides = {}) {
   const target = clone(overrides.target || TARGET);
   const attemptOrdinal = overrides.attemptOrdinal || 1;
+  const action = overrides.action || 'retry-task';
+  const mode = overrides.mode || 'recovery';
   const materialInputs = clone(overrides.materialInputs || {
     targets: ['src/t002-result.mjs'],
     operations: ['retry-task'],
@@ -11345,10 +11351,10 @@ function t002PendingFixture(overrides = {}) {
   const pending = {
     target,
     evidenceHash: overrides.evidenceHash || t002Hash(`authorization-${attemptOrdinal}`),
-    approachHash: approachHash({ action: 'retry-task', materialInputs }),
-    action: 'retry-task',
+    approachHash: approachHash({ action, materialInputs }),
+    action,
     materialInputs,
-    mode: 'recovery',
+    mode,
   };
   const approachBasis = {
     version: 1,
@@ -11375,11 +11381,11 @@ function t002PendingFixture(overrides = {}) {
   const state = {
     ...autonomousState(),
     overallUsed: attemptOrdinal,
-    recoveryUsed: [{
+    recoveryUsed: mode === 'recovery' ? [{
       targetKey: targetKey(target),
       targetHash: targetHash(target),
       count: attemptOrdinal,
-    }],
+    }] : [],
     pending: [pending],
     completed: priorCompleted,
   };
@@ -11467,10 +11473,10 @@ function t002V2EventLine(event) {
   return `- dude-run-event: ${canonicalJson(event)}`;
 }
 
-/** @param {string[]} records Complete event-line records including their chosen terminators. */
-function t002HistoryTasksRecordBytes(records) {
+/** @param {string[]} records Complete event-line records including their chosen terminators. @param {{id:string,glyph?:string}[]} [tasks] */
+function t002HistoryTasksRecordBytes(records, tasks = [{ id: TASK_KEY, glyph: '~' }]) {
   const prefix = [
-    transitionTasksBytes([{ id: TASK_KEY, glyph: '~' }]).toString('utf8').trimEnd(),
+    transitionTasksBytes(tasks).toString('utf8').trimEnd(),
     '',
     '## Lightweight Execution History',
     '',
@@ -11483,13 +11489,14 @@ function t002HistoryTasksBytes(events) {
   return t002HistoryTasksRecordBytes(events.map((event) => `${t002V2EventLine(event)}\n`));
 }
 
-/** @param {string} root @param {Record<string, unknown>[]} currentEvents @param {Buffer} taskHistoryBytes @param {ReturnType<typeof t002PendingFixture>[]} trustedFixtures */
-function t002RetentionInputWithTaskHistory(root, currentEvents, taskHistoryBytes, trustedFixtures) {
+/** @param {string} root @param {Record<string, unknown>[]} currentEvents @param {Buffer} taskHistoryBytes @param {ReturnType<typeof t002PendingFixture>[]} trustedFixtures @param {Record<string, unknown>} [target] */
+function t002RetentionInputWithTaskHistory(root, currentEvents, taskHistoryBytes, trustedFixtures, target = TARGET) {
   fs.writeFileSync(path.join(root, TASKS_PATH), taskHistoryBytes);
   return autonomousInspectInput(root, {
+    target,
     currentRun: currentEvents.length === 0
       ? []
-      : [capture(TARGET, 'failed', currentEvents.map((event) => ({ event })))],
+      : [capture(target, 'failed', currentEvents.map((event) => ({ event })))],
     ...t002TrustedStreams(trustedFixtures),
   });
 }
@@ -12114,6 +12121,394 @@ test('T002 trusted occurrence contracts refuse partial duplicate conflicting sta
       );
       assert.equal(canonicalJson(captured.state), stateBytes, label);
     }
+  });
+});
+
+test('T002 Lightweight retention partitions validated package history without discarding audit evidence', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const siblingEvent = t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 't001-history' });
+    const changedSiblingEvent = t002ApproachEvent({ attemptOrdinal: 2, basisLabel: 't001-history-changed' });
+    const tasks = [{ id: TASK_KEY, glyph: 'x' }, { id: SECOND_TASK_KEY, glyph: '~' }];
+    const inputFor = (event) => t002RetentionInputWithTaskHistory(
+      root,
+      [],
+      t002HistoryTasksRecordBytes([`${t002V2EventLine(event)}\n`], tasks),
+      [],
+      SECOND_TARGET,
+    );
+    const firstInput = inputFor(siblingEvent);
+    const firstInspection = inspect(firstInput);
+    const history = JSON.parse(
+      firstInspection.items.find((item) => item.source === 'task-history')?.text || '{}',
+    ).history;
+
+    // Act
+    const authorization = runtimeFunction('runCommand')('authorize', {
+      trigger: 'post-failure',
+      state: autonomousState(),
+      input: firstInput,
+      assessment: {
+        ...transitionAssessment('retry-task'),
+        evidenceHash: firstInspection.evidenceHash,
+      },
+      mode: 'recovery',
+    }).authorization;
+    const changedInspection = inspect(inputFor(changedSiblingEvent));
+
+    // Assert
+    assert.equal(authorization.authorized, true);
+    assert.equal(authorization.reason, 'authorized');
+    assert.equal(history.includes(`${t002V2EventLine(siblingEvent)}\n`), true);
+    assert.notEqual(changedInspection.evidenceHash, firstInspection.evidenceHash);
+  });
+});
+
+test('T002 Lightweight retention keeps same-target completeness and wrong-target current-run precedence strict', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const tasks = [{ id: TASK_KEY, glyph: 'x' }, { id: SECOND_TASK_KEY, glyph: '~' }];
+    const ownEvent = t002ApproachEvent({
+      target: SECOND_TARGET,
+      attemptOrdinal: 1,
+      basisLabel: 't002-own-lane-only',
+    });
+    const laneOnlyInput = t002RetentionInputWithTaskHistory(
+      root,
+      [],
+      t002HistoryTasksRecordBytes([`${t002V2EventLine(ownEvent)}\n`], tasks),
+      [],
+      SECOND_TARGET,
+    );
+    const laneOnlyInspection = inspect(laneOnlyInput);
+    const laneOnly = runtimeFunction('runCommand')('authorize', {
+      trigger: 'post-failure',
+      state: autonomousState(),
+      input: laneOnlyInput,
+      assessment: {
+        ...transitionAssessment('retry-task'),
+        evidenceHash: laneOnlyInspection.evidenceHash,
+      },
+      mode: 'recovery',
+    }).authorization;
+
+    fs.writeFileSync(path.join(root, TASKS_PATH), t002HistoryTasksRecordBytes([], tasks));
+    const fixture = t002PendingFixture({
+      target: SECOND_TARGET,
+      verdict: 'accepted',
+      checkOutcome: 'passed',
+    });
+    const captured = recoveryRuntime.captureCompletionV2(
+      fixture.state,
+      autonomousInspectInput(root, { target: SECOND_TARGET, ...t002TrustedStreams([fixture]) }),
+      fixture.completion,
+    );
+    const wrongTarget = t002ApproachEvent({
+      target: TARGET,
+      attemptOrdinal: 2,
+      basisLabel: 't001-current-run-wrong-target',
+    });
+    const wrongTargetInput = t002RetentionInputWithTaskHistory(
+      root,
+      [wrongTarget],
+      t002HistoryTasksRecordBytes([`${t002V2EventLine(wrongTarget)}\n`], tasks),
+      [fixture],
+      SECOND_TARGET,
+    );
+
+    // Act
+    const wrongTargetResult = recoveryRuntime.finalizeCompletionV2(
+      captured.state,
+      wrongTargetInput,
+      captured.occurrenceEvents,
+    );
+
+    // Assert
+    assert.equal(laneOnly.authorized, false);
+    assert.equal(laneOnly.reason, 'evidence-incomplete');
+    assert.equal(laneOnly.blocker.subject, 'occurrence-retention');
+    assert.equal(wrongTargetResult.finalized, false);
+    assert.equal(wrongTargetResult.reason, 'occurrence-retention-conflict');
+  });
+});
+
+test('T002 Lightweight retention validates every sibling lane record before target partitioning', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const siblingEvent = t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 't001-validation' });
+    const invalidHashEvent = { ...siblingEvent, eventHash: '0'.repeat(64) };
+    const tasks = [{ id: TASK_KEY, glyph: 'x' }, { id: SECOND_TASK_KEY, glyph: '~' }];
+    const records = [
+      ['malformed JSON', '- dude-run-event: {"type":"approach-occurrence"\n'],
+      ['invalid canonical hash', `${t002V2EventLine(invalidHashEvent)}\n`],
+    ];
+
+    // Act and Assert
+    for (const [label, record] of records) {
+      const input = t002RetentionInputWithTaskHistory(
+        root,
+        [],
+        t002HistoryTasksRecordBytes([record], tasks),
+        [],
+        SECOND_TARGET,
+      );
+      const inspection = inspect(input);
+      const authorization = runtimeFunction('runCommand')('authorize', {
+        trigger: 'post-failure',
+        state: autonomousState(),
+        input,
+        assessment: {
+          ...transitionAssessment('retry-task'),
+          evidenceHash: inspection.evidenceHash,
+        },
+        mode: 'recovery',
+      }).authorization;
+      assert.equal(authorization.authorized, false, label);
+      assert.equal(authorization.reason, 'evidence-incomplete', label);
+      assert.equal(authorization.blocker.subject, 'occurrence-retention', label);
+    }
+  });
+});
+
+test('T002 Lightweight retention isolates sibling chronology and repeat evidence after validation', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const tasks = [{ id: TASK_KEY, glyph: '~' }, { id: SECOND_TASK_KEY, glyph: '~' }];
+    const authorize = (target, events) => {
+      const input = t002RetentionInputWithTaskHistory(
+        root,
+        [],
+        t002HistoryTasksRecordBytes(
+          events.map((event) => `${t002V2EventLine(event)}\n`),
+          tasks,
+        ),
+        [],
+        target,
+      );
+      const inspection = inspect(input);
+      return runtimeFunction('runCommand')('authorize', {
+        trigger: 'post-failure',
+        state: autonomousState(),
+        input,
+        assessment: {
+          ...transitionAssessment('retry-task'),
+          evidenceHash: inspection.evidenceHash,
+        },
+        mode: 'recovery',
+      }).authorization;
+    };
+    const chronologyConflict = [
+      t002ApproachEvent({ attemptOrdinal: 4, basisLabel: 't001-chronology-a' }),
+      t002ApproachEvent({ attemptOrdinal: 4, basisLabel: 't001-chronology-b' }),
+    ];
+    const siblingRepeat = [
+      t002ApproachEvent({ attemptOrdinal: 5, basisLabel: 't001-repeat' }),
+      t002ApproachEvent({ attemptOrdinal: 6, basisLabel: 't001-repeat' }),
+    ];
+
+    // Act
+    const t002Chronology = authorize(SECOND_TARGET, chronologyConflict);
+    const t001Chronology = authorize(TARGET, chronologyConflict);
+    const t002Repeat = authorize(SECOND_TARGET, siblingRepeat);
+
+    // Assert
+    assert.equal(t002Chronology.authorized, true);
+    assert.equal(t001Chronology.authorized, false);
+    assert.equal(t001Chronology.reason, 'evidence-incomplete');
+    assert.equal(t001Chronology.blocker.subject, 'occurrence-retention');
+    assert.equal(t002Repeat.authorized, true);
+  });
+});
+
+test('T002 tracked retention leaves foreign-target events as issue contamination', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const fixture = t002PendingFixture({ target: TRACKED, verdict: 'accepted', checkOutcome: 'passed' });
+    const captureValue = trackedCapture(TRACKED.issueId, TASK_KEY);
+    const input = {
+      root,
+      specPath: SPEC_PATH,
+      target: TRACKED,
+      lane: trackedRawInputs([captureValue]).lane,
+      currentRun: [],
+      ...t002TrustedStreams([fixture]),
+      lint: [],
+      policyMode: 'autonomous',
+    };
+    const foreignTarget = { ...TRACKED, issueId: 'dude-foreign' };
+    const foreignEvent = t002ApproachEvent({
+      target: foreignTarget,
+      attemptOrdinal: 1,
+      basisLabel: 'tracked-foreign-target',
+    });
+    const projection = clone(trackedProjection(TRACKED, [captureValue]));
+    projection.records[0].detail.notes = `${t002V2EventLine(foreignEvent)}\n`;
+    const dependencies = { normalizeTrackedEvidence: () => projection };
+    const inspection = inspect(input, dependencies);
+
+    // Act
+    const authorization = runtimeFunction('runCommand')('authorize', {
+      trigger: 'post-failure',
+      state: autonomousState(),
+      input,
+      assessment: {
+        ...transitionAssessment('retry-task'),
+        evidenceHash: inspection.evidenceHash,
+      },
+      mode: 'recovery',
+    }, dependencies).authorization;
+
+    // Assert
+    assert.equal(authorization.authorized, false);
+    assert.equal(authorization.reason, 'evidence-incomplete');
+    assert.equal(authorization.blocker.subject, 'occurrence-retention');
+  });
+});
+
+test('T002 Lightweight retention: sibling package history leaves finalize, projection, resume, and learning unchanged', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    // One shared `tasks.md` history carries every task in the package. The
+    // sibling also collides on chronology position `approach:1`, which is the
+    // exact shape a second task in the same package writes.
+    const sibling = t002ApproachEvent({
+      target: SECOND_TARGET,
+      attemptOrdinal: 1,
+      basisLabel: 't002-sibling-package-history',
+    });
+    /** @param {Record<string, unknown>[]} events */
+    const siblingInput = (events) => cliInput(t002RetentionInputWithTaskHistory(
+      root,
+      events,
+      t002HistoryTasksRecordBytes(
+        [...events, sibling].map((event) => `${t002V2EventLine(event)}\n`),
+        [{ id: TASK_KEY, glyph: '~' }, { id: SECOND_TASK_KEY, glyph: '~' }],
+      ),
+      flow.fixtures,
+    ));
+    const governance = flow.governanceVerified.transition.state.learningGovernance;
+    const forgotten = clone(flow.governanceVerified.transition.state);
+    delete forgotten.learningGovernance;
+    validateRunState(forgotten);
+
+    // Act
+    const finalized = t003Invoke('complete', {
+      mode: 'finalize',
+      state: flow.secondCapture.completion.state,
+      input: siblingInput(flow.occurrenceEvents),
+      projectionBatch: flow.secondCapture.completion.projectionBatch,
+    });
+    const verified = t003Invoke('transition', {
+      mode: 'verify-projection',
+      state: flow.secondFinalize.completion.state,
+      input: siblingInput(flow.governedEvents),
+      projectionBatch: flow.secondFinalize.completion.projectionBatch,
+    });
+    const resumed = t003Invoke('transition', {
+      mode: 'resume-governance',
+      state: forgotten,
+      input: siblingInput(flow.governedEvents),
+    });
+    const learned = t003Invoke('learn', {
+      state: flow.governanceVerified.transition.state,
+      input: siblingInput(flow.governedEvents),
+      review: {
+        version: 2,
+        target: TARGET,
+        assumptionIdentities: [t003Hash('assumption')],
+        findings: [t003LearningFinding('finding')],
+        alternatives: t003SortAlternatives([flow.credible, flow.rejected]),
+        outcome: 'selected-alternative',
+        selectedAlternativeIdentity: flow.credible.alternativeIdentity,
+      },
+    });
+
+    // Assert
+    assert.equal(finalized.completion.finalized, true);
+    assert.equal(
+      canonicalJson(finalized.completion),
+      canonicalJson(flow.secondFinalize.completion),
+    );
+    assert.equal(verified.transition.verified, true);
+    assert.equal(
+      canonicalJson(verified.transition.state),
+      canonicalJson(flow.governanceVerified.transition.state),
+    );
+    assert.equal(resumed.transition.reason, 'governance-resumed');
+    assert.equal(resumed.transition.resumedFrom, 'retained-occurrences');
+    assert.deepEqual(resumed.transition.trigger, governance.trigger);
+    assert.deepEqual(resumed.transition.failedApproachSet, governance.failedApproachSet);
+    assert.equal(learned.learning.reviewed, true);
+    assert.equal(
+      canonicalJson(learned.learning.state.learningGovernance.trigger),
+      canonicalJson(governance.trigger),
+    );
+    assert.equal(
+      canonicalJson(learned.learning.state.learningGovernance.failedApproachSet),
+      canonicalJson(governance.failedApproachSet),
+    );
+  });
+});
+
+test('T002 Lightweight retention: a wrong-target current-run event precedes lane-history completeness', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const tasks = [{ id: TASK_KEY, glyph: 'x' }, { id: SECOND_TASK_KEY, glyph: '~' }];
+    fs.writeFileSync(path.join(root, TASKS_PATH), t002HistoryTasksRecordBytes([], tasks));
+    const fixture = t002PendingFixture({
+      target: SECOND_TARGET,
+      verdict: 'accepted',
+      checkOutcome: 'passed',
+    });
+    const captured = recoveryRuntime.captureCompletionV2(
+      fixture.state,
+      autonomousInspectInput(root, { target: SECOND_TARGET, ...t002TrustedStreams([fixture]) }),
+      fixture.completion,
+    );
+    const wrongTarget = t002ApproachEvent({
+      target: TARGET,
+      attemptOrdinal: 2,
+      basisLabel: 't001-current-run-only-wrong-target',
+    });
+    const auditOnly = t001AuditOnlyEvent();
+
+    // Act: the wrong-target event is on current-run only, so lane-history
+    // completeness would otherwise answer first with a different reason.
+    const wrongTargetOnly = recoveryRuntime.finalizeCompletionV2(
+      captured.state,
+      t002RetentionInputWithTaskHistory(
+        root,
+        [wrongTarget],
+        t002HistoryTasksRecordBytes([], tasks),
+        [fixture],
+        SECOND_TARGET,
+      ),
+      captured.occurrenceEvents,
+    );
+    // A declared audit-only record carries a foreign target and stays outside
+    // the guard, exactly as it did before the guard moved ahead of retention.
+    const foreignAudit = recoveryRuntime.finalizeCompletionV2(
+      captured.state,
+      t002RetentionInputWithTaskHistory(
+        root,
+        [...captured.occurrenceEvents, auditOnly],
+        t002HistoryTasksRecordBytes(
+          captured.occurrenceEvents.map((event) => `${t002V2EventLine(event)}\n`),
+          tasks,
+        ),
+        [fixture],
+        SECOND_TARGET,
+      ),
+      captured.occurrenceEvents,
+    );
+
+    // Assert
+    assert.equal(wrongTargetOnly.finalized, false);
+    assert.equal(wrongTargetOnly.reason, 'occurrence-retention-conflict');
+    assert.equal(canonicalJson(wrongTargetOnly.state), canonicalJson(captured.state));
+    assert.equal(foreignAudit.finalized, true);
+    assert.equal(foreignAudit.completed, true);
   });
 });
 
@@ -18876,14 +19271,21 @@ test('T003 public learning and exact projection batches: capture carries the exa
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     const fixture = t002PendingFixture({ checkOutcome: 'passed' });
-
-    // Act
-    const captured = t003Invoke('complete', {
+    const captureRequest = {
       mode: 'capture',
       state: fixture.state,
       input: cliInput(autonomousInspectInput(root, t002TrustedStreams([fixture]))),
       completion: fixture.completion,
-    });
+    };
+    assert.equal(Object.hasOwn(recoveryRuntime, 'validateCompletionRequestV2'), false);
+
+    // Act
+    const captured = t003Invoke('complete', captureRequest);
+    const validated = recoveryRuntime.validateRecoveryRuntimeResultV1(
+      'complete',
+      captureRequest,
+      captured,
+    );
     const inProcess = recoveryRuntime.captureCompletionV2(
       fixture.state,
       autonomousInspectInput(root, t002TrustedStreams([fixture])),
@@ -18891,6 +19293,7 @@ test('T003 public learning and exact projection batches: capture carries the exa
     );
 
     // Assert
+    assert.equal(validated, true);
     assert.deepEqual(Object.keys(captured).sort(), ['completion', 'inspection']);
     const batch = captured.completion.projectionBatch;
     // The declared public Success shape carries the exact batch and no second
@@ -19108,10 +19511,32 @@ test('T003 public learning and exact projection batches: projection preparation 
       autonomousInspectInput(root, t002TrustedStreams([fixture])),
       batch,
     );
+    const verifyRequest = {
+      mode: 'verify-projection',
+      state: captured.state,
+      input: cliInput(retained()),
+      projectionBatch: batch,
+    };
+    const publicVerified = t003Invoke('transition', verifyRequest);
 
     // Assert
     assert.equal(verified.transition.reason, 'projection-verified');
     recoveryRuntime.validateProjectionRefV1(verified.transition.projectionRef);
+    assert.equal(Object.hasOwn(recoveryRuntime, 'validateProjectionReceiptV1'), false);
+    assert.equal(
+      recoveryRuntime.validateRecoveryRuntimeResultV1(
+        'transition',
+        verifyRequest,
+        publicVerified,
+      ),
+      true,
+    );
+    const wrongReceipt = clone(publicVerified);
+    wrongReceipt.transition.projectionRef.currentRunProjectionIdentity = t003Hash('wrong-current-projection');
+    assert.throws(
+      () => recoveryRuntime.validateRecoveryRuntimeResultV1('transition', verifyRequest, wrongReceipt),
+      /must equal the recovery-owned result/,
+    );
     assert.deepEqual(
       verified.transition.projectionRef.eventHashes,
       events.map((event) => event.eventHash),
@@ -19144,6 +19569,907 @@ test('T003 public learning and exact projection batches: projection preparation 
       );
     }
     assert.doesNotMatch(canonicalJson(captured.state), /"basis":/);
+  });
+});
+
+test('T001 recovery-owned runtime result validation is detached, bounded, exact, and grants no effect authority', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const request = {
+      trigger: 'explicit-inspection',
+      input: cliInput(autonomousInspectInput(root)),
+    };
+    const result = recoveryRuntime.runCommand('inspect', request);
+    const requestBytes = canonicalJson(request);
+    const resultBytes = canonicalJson(result);
+    const tasksBefore = fs.readFileSync(path.join(root, TASKS_PATH));
+
+    const validated = recoveryRuntime.validateRecoveryRuntimeResultV1('inspect', request, result);
+    assert.equal(validated, true);
+    assert.equal(canonicalJson(request), requestBytes);
+    assert.equal(canonicalJson(result), resultBytes);
+    assert.deepEqual(fs.readFileSync(path.join(root, TASKS_PATH)), tasksBefore);
+
+    const crossTarget = clone(result);
+    crossTarget.inspection.target = canonicalTarget(SECOND_TARGET);
+    const accessor = clone(result);
+    Object.defineProperty(accessor.inspection, 'evidenceHash', {
+      enumerable: true,
+      get() { throw new Error('accessor must not run'); },
+    });
+    const sparse = clone(result);
+    sparse.inspection.items = new Array(1);
+    const exotic = clone(result);
+    exotic.inspection.blockers = new Date();
+    const oversized = clone(result);
+    oversized.inspection.evidenceHash = 'x'.repeat(6_291_457);
+    const proxy = new Proxy(result, {
+      get() { throw new Error('proxy trap must not run'); },
+    });
+    const requestProxy = new Proxy(request, {
+      get() { throw new Error('request proxy trap must not run'); },
+    });
+    for (const [label, candidate] of [
+      ['cross-target', crossTarget],
+      ['accessor', accessor],
+      ['sparse', sparse],
+      ['exotic', exotic],
+      ['oversized', oversized],
+      ['proxy', proxy],
+    ]) {
+      assert.throws(
+        () => recoveryRuntime.validateRecoveryRuntimeResultV1('inspect', request, candidate),
+        TypeError,
+        /** @type {string} */ (label),
+      );
+    }
+    assert.throws(
+      () => recoveryRuntime.validateRecoveryRuntimeResultV1('inspect', requestProxy, result),
+      TypeError,
+    );
+    assert.equal(canonicalJson(request), requestBytes);
+    assert.equal(canonicalJson(result), resultBytes);
+    assert.deepEqual(fs.readFileSync(path.join(root, TASKS_PATH)), tasksBefore);
+  });
+});
+
+test('T001 the governance runtime dispatcher derives one closed request per action and grants no effect authority', () => {
+  // Arrange
+  const state = autonomousState();
+  const stateBytes = canonicalJson(state);
+  const input = { root: '/nowhere', captured: true };
+  const review = { verdict: 'reviewed' };
+  const halt = { kind: 'safety', detail: 'stop' };
+  const scheduling = { kind: 'sequential-disjoint' };
+  const table = [
+    ['review-learning', { action: 'review-learning', input, review }, 'learn', null, 'learning', 'reviewed', ['state', 'input', 'review']],
+    ['bind-alternative', { action: 'bind-alternative', input }, 'transition', 'bind-post-learning-inspection', 'transition', 'bound', ['mode', 'state', 'input']],
+    ['verify-no-progress', { action: 'verify-no-progress', input }, 'transition', 'verify-no-progress', 'transition', 'verified', ['mode', 'state', 'input']],
+    ['controlled-end', { action: 'controlled-end', input }, 'transition', 'controlled-end', 'transition', 'ended', ['mode', 'state', 'input']],
+    ['resume-learning', { action: 'resume-learning', input }, 'transition', 'resume-governance', 'transition', 'resumed', ['mode', 'state', 'input']],
+    ['halt', { action: 'halt', input, halt }, 'transition', 'halt', 'transition', 'halted', ['mode', 'state', 'input', 'halt']],
+    ['suspend-target', { action: 'suspend-target', input, scheduling }, 'transition', 'suspend-target', 'transition', 'suspended', ['mode', 'state', 'input', 'scheduling']],
+    ['halted suspend-target', { action: 'suspend-target', input, scheduling, halt }, 'transition', 'suspend-target', 'transition', 'suspended', ['mode', 'state', 'input', 'scheduling', 'halt']],
+  ];
+
+  // Act and Assert
+  for (const [label, intent, command, mode, resultKey, successFlag, requestKeys] of table) {
+    const derived = recoveryRuntime.deriveGovernanceRuntimeRequestV1(state, intent);
+    assert.deepEqual(Object.keys(derived).sort(), ['command', 'request', 'resultKey', 'successFlag'], label);
+    assert.equal(derived.command, command, label);
+    assert.equal(derived.resultKey, resultKey, label);
+    assert.equal(derived.successFlag, successFlag, label);
+    assert.deepEqual(
+      Object.keys(derived.request).sort(),
+      [.../** @type {string[]} */ (requestKeys)].sort(),
+      label,
+    );
+    assert.equal(derived.request.mode, mode === null ? undefined : mode, label);
+    assert.equal(canonicalJson(derived.request.state), stateBytes, label);
+    // The dispatcher is pure data: it carries no permit, receipt, or successor.
+    for (const authority of ['permit', 'receipt', 'projectionBatch', 'completion', 'attemptPermit']) {
+      assert.equal(Object.hasOwn(derived.request, authority), false, `${label}: ${authority}`);
+    }
+    // Its result is detached, so mutating it cannot reach the caller's state.
+    derived.request.state.overallUsed = 99;
+    assert.equal(canonicalJson(state), stateBytes, label);
+  }
+
+  const proxyState = new Proxy(state, { get() { throw new Error('state proxy trap must not run'); } });
+  const proxyIntent = new Proxy(
+    { action: 'controlled-end', input },
+    { get() { throw new Error('intent proxy trap must not run'); } },
+  );
+  const rejected = [
+    ['unknown action', state, { action: 'close-task', input }],
+    ['low-level transition route', state, { action: 'transition', input }],
+    ['low-level completion route', state, { action: 'complete', input }],
+    ['low-level lane route', state, { action: 'issue-lane-permit', input }],
+    ['legacy learn route', state, { action: 'learn', input }],
+    ['missing review', state, { action: 'review-learning', input }],
+    ['missing halt', state, { action: 'halt', input }],
+    ['missing scheduling', state, { action: 'suspend-target', input }],
+    ['missing input', state, { action: 'controlled-end' }],
+    ['unknown intent field', state, { action: 'controlled-end', input, permit: {} }],
+    ['halt on an unhalted action', state, { action: 'bind-alternative', input, halt }],
+    ['non-record intent', state, 'controlled-end'],
+    ['invalid RunState', { policy: {} }, { action: 'controlled-end', input }],
+    ['proxy state', proxyState, { action: 'controlled-end', input }],
+    ['proxy intent', state, proxyIntent],
+  ];
+  for (const [label, badState, badIntent] of rejected) {
+    assert.throws(
+      () => recoveryRuntime.deriveGovernanceRuntimeRequestV1(badState, badIntent),
+      TypeError,
+      /** @type {string} */ (label),
+    );
+  }
+  assert.equal(canonicalJson(state), stateBytes);
+});
+
+test('T001 ordinary completion close bridge: a tracked completion mutation issues no ungoverned permit', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const terminal = t001OrdinaryCompletionFixture(root);
+    const trackedTarget = canonicalTarget(TRACKED);
+    const trackedMutation = {
+      version: 1,
+      lane: 'tracked',
+      kind: 'task-completed',
+      reason: 'task-completed',
+      target: trackedTarget,
+      fromStatus: 'in_progress',
+      toStatus: 'closed',
+      blocker: { kind: 'unchanged', before: null, after: null },
+      eventLines: { kind: 'none' },
+      ownerLog: { kind: 'none' },
+    };
+    const state = terminal.finalized.completion.state;
+    const stateBytes = canonicalJson(state);
+
+    // Act
+    const issued = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state,
+      input: terminal.input(terminal.events),
+      mutation: trackedMutation,
+      lanePrestate: terminal.binding.lanePrestate,
+      targetMapping: terminal.binding.targetMapping,
+    });
+
+    // Assert
+    // A tracked mutation paired with the Lightweight inspection never reaches
+    // the bridge at all: the affected-target key already disagrees. The
+    // Lightweight-only bridge gate itself is proven separately against a
+    // matching tracked inspection.
+    assert.equal(issued.transition.issued, false);
+    assert.equal(issued.transition.reason, 'target-mismatch');
+    assert.equal(Object.hasOwn(issued.transition, 'permit'), false);
+    assert.equal(canonicalJson(issued.transition.state), stateBytes);
+    assert.match(fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'), new RegExp(`- \\[~\\] ${TASK_KEY}`));
+  });
+});
+
+// --- Feature 018 T001: adapter-composed ordinary Lightweight close ----------
+
+/** @param {string} label */
+function t018Hash(label) {
+  return sha256(`F018:${label}`);
+}
+
+let t018PortOrdinal = 0;
+
+/** One sealed supervisor and no-effect port pair per adapter worker. */
+function t018Ports() {
+  const ordinal = t018PortOrdinal += 1;
+  const supervisorIdentity = t018Hash(`supervisor:${ordinal}`);
+  const noEffectIdentity = t018Hash(`no-effect:${ordinal}`);
+  const captures = new Map();
+  return {
+    supervisorSession: {
+      identity: supervisorIdentity,
+      admit(request) {
+        const body = {
+          version: 1,
+          requestIdentity: request.requestIdentity,
+          invocationIdentity: t018Hash(`invocation:${ordinal}`),
+          workerToken: t018Hash(`worker:${ordinal}`),
+          workerGeneration: 1,
+          supervisorAuthorityIdentity: supervisorIdentity,
+        };
+        return { ...body, admissionIdentity: sha256(canonicalJson({ request, response: body })) };
+      },
+    },
+    noEffectAuthority: {
+      identity: noEffectIdentity,
+      capture(request) {
+        const body = {
+          version: 1,
+          requestIdentity: request.requestIdentity,
+          operationIdentity: request.operationIdentity,
+          authorityIdentity: noEffectIdentity,
+          authoritativePreIdentity: sha256(`pre:${request.operationIdentity}`),
+        };
+        const probe = { ...body, probeIdentity: sha256(canonicalJson({ request, response: body })) };
+        captures.set(probe.probeIdentity, probe);
+        return probe;
+      },
+      classify(request) {
+        const capture = captures.get(request.probeIdentity);
+        const body = {
+          version: 1,
+          probeIdentity: request.probeIdentity,
+          operationIdentity: request.operationIdentity,
+          authorityIdentity: noEffectIdentity,
+          incidentIdentity: request.incidentIdentity,
+          classification: 'no-effect',
+          authoritativePreIdentity: capture.authoritativePreIdentity,
+          authoritativePostIdentity: capture.authoritativePreIdentity,
+          effectIdentity: null,
+        };
+        return { ...body, resultIdentity: sha256(canonicalJson({ request, response: body })) };
+      },
+    },
+  };
+}
+
+/** @param {ReturnType<typeof createHostAdapter>} adapter @param {string} operation @param {Record<string, unknown>} payload */
+function t018Request(adapter, operation, payload) {
+  const current = adapter.snapshot();
+  return {
+    version: 1,
+    operation,
+    expectedSessionIdentity: current.sessionIdentity,
+    expectedAcceptedRevision: current.acceptedRevision,
+    expectedHostRevision: current.hostRevision,
+    ...payload,
+  };
+}
+
+/** Hash every workspace file so an unauthorized edit anywhere is observable. @param {string} root */
+function t018WorkspaceSnapshot(root) {
+  /** @type {Map<string, string>} */
+  const files = new Map();
+  /** @param {string} directory */
+  const walk = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) walk(absolute);
+      else if (entry.isFile()) files.set(path.relative(root, absolute), sha256(fs.readFileSync(absolute)));
+    }
+  };
+  walk(root);
+  return files;
+}
+
+/** @param {Map<string, string>} before @param {Map<string, string>} after */
+function t018ChangedPaths(before, after) {
+  const changed = new Set();
+  for (const [file, digest] of after) if (before.get(file) !== digest) changed.add(file);
+  for (const file of before.keys()) if (!after.has(file)) changed.add(file);
+  return [...changed].sort();
+}
+
+test('T001 adapter composition: the host adapter closes one ordinary Lightweight task through its semantic operations', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const taskStateFile = Buffer.from(`${JSON.stringify({
+      [TASKS_PATH]: { glyphs: { [TASK_KEY]: '~' }, updated_at: '2025-12-31T00:00:00.000Z' },
+    }, null, 2)}\n`);
+    fs.mkdirSync(path.join(root, '.dude/state'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.dude/state/task-state.json'), taskStateFile);
+    const terminal = t001OrdinaryCompletionFixture(root, { taskStateFile });
+    const state = terminal.finalized.completion.state;
+    const adapter = createHostAdapter(
+      { state, target: clone(TARGET), inspectionIdentity: t018Hash('inspection') },
+      t018Ports(),
+    );
+    const laneApplication = {
+      root: fs.realpathSync(root),
+      owner: {
+        ideaPath: IDEA_PATH,
+        specPath: SPEC_PATH,
+        ownerCapture: recoveryRuntime.capturedBytesV1(terminal.binding.ideaFile),
+        ownerBindingHash: terminal.binding.targetMapping.ownerBindingHash,
+      },
+      mapping: terminal.binding.targetMapping,
+      expected: {
+        tasksPath: TASKS_PATH,
+        tasks: recoveryRuntime.capturedBytesV1(terminal.binding.tasksFile),
+        taskStatePath: '.dude/state/task-state.json',
+        taskState: recoveryRuntime.capturedBytesV1(taskStateFile),
+      },
+      mutation: terminal.mutation,
+    };
+
+    // Act
+    const audited = adapter.run(t018Request(adapter, 'audit-run', {
+      audit: { input: terminal.input(terminal.events) },
+    }));
+    const issued = adapter.run(t018Request(adapter, 'authorize-lane-effect', {
+      laneEffect: {
+        input: terminal.input(terminal.events),
+        mutation: terminal.mutation,
+        lanePrestate: terminal.binding.lanePrestate,
+        targetMapping: terminal.binding.targetMapping,
+      },
+    }));
+    const permit = issued.product.permit;
+    const before = t018WorkspaceSnapshot(root);
+    const applied = adapter.run(t018Request(adapter, 'apply-lane-effect', {
+      laneApplication: { ...laneApplication, permit },
+    }));
+    const after = t018WorkspaceSnapshot(root);
+    const receipt = applied.product.receipt;
+    const poststateInput = cliInput(t002RetentionInputWithTaskHistory(
+      root,
+      terminal.events,
+      fs.readFileSync(path.join(root, TASKS_PATH)),
+      [terminal.fixture],
+    ));
+    const settled = adapter.run(t018Request(adapter, 'commit-lane-receipt', {
+      laneReceipt: { input: poststateInput, permit, receipt },
+    }));
+    const replayed = adapter.run(t018Request(adapter, 'commit-lane-receipt', {
+      laneReceipt: { input: poststateInput, permit, receipt },
+    }));
+    const foreign = createHostAdapter(
+      { state, target: clone(TARGET), inspectionIdentity: t018Hash('inspection') },
+      t018Ports(),
+    );
+    const unauthorized = foreign.run(t018Request(foreign, 'apply-lane-effect', {
+      laneApplication: { ...laneApplication, permit },
+    }));
+
+    // Assert
+    // The read-only audit answers from the accepted state and changes nothing.
+    assert.equal(audited.outcome, 'accepted');
+    assert.equal(audited.reason, 'run-audited');
+    assert.equal(audited.product.kind, 'run-audit');
+    assert.equal(audited.product.derived, false);
+    assert.equal(audited.session.acceptedRevision, 0);
+    assert.equal(canonicalJson(audited.session.acceptedState), canonicalJson(state));
+
+    // One bound permit, one lane-owner mutation, one matching receipt, and one settlement.
+    assert.equal(issued.outcome, 'accepted');
+    assert.equal(issued.reason, 'lane-permit-issued');
+    assert.equal(issued.product.kind, 'lane-permit');
+    assert.equal(permit.lane, 'lightweight');
+    assert.equal(permit.operation, 'work-set');
+    assert.equal(permit.governanceIdentity, null);
+    assert.equal(permit.attemptIdentity, terminal.fixture.attemptIdentity);
+    assert.equal(permit.subjectRunStateHash, sha256(canonicalJson(state)));
+    assert.equal(permit.mutationIdentity, sha256(canonicalJson(terminal.mutation)));
+
+    assert.equal(applied.outcome, 'accepted');
+    assert.equal(applied.reason, 'lane-mutation-applied');
+    assert.equal(applied.product.kind, 'lane-receipt');
+    assert.equal(receipt.permitHash, permit.permitHash);
+    assert.equal(receipt.targetStateChanged, true);
+    // The lane owner alone touched the workspace, and only its own surfaces.
+    const changed = t018ChangedPaths(before, after);
+    const laneSurfaces = new Set([TASKS_PATH, '.dude/state/task-state.json', IDEA_PATH]);
+    assert.equal(changed.every((file) => laneSurfaces.has(file)), true, changed.join(','));
+    assert.equal(changed.includes(TASKS_PATH), true);
+    assert.equal(changed.includes('.dude/state/task-state.json'), true);
+    assert.equal(receipt.tasksPoststateHash, sha256(fs.readFileSync(path.join(root, TASKS_PATH))));
+    assert.equal(
+      receipt.taskStatePoststateHash,
+      sha256(fs.readFileSync(path.join(root, '.dude/state/task-state.json'))),
+    );
+    assert.equal(receipt.ownerPoststateHash, sha256(fs.readFileSync(path.join(root, IDEA_PATH))));
+    assert.match(fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'), new RegExp(`- \\[x\\] ${TASK_KEY}`));
+    assert.equal(
+      JSON.parse(fs.readFileSync(path.join(root, '.dude/state/task-state.json'), 'utf8'))[TASKS_PATH]
+        .glyphs[TASK_KEY],
+      'x',
+    );
+
+    assert.equal(settled.outcome, 'accepted');
+    assert.equal(settled.reason, 'lane-receipt-committed');
+    assert.equal(settled.product.kind, 'lane-settlement');
+    assert.equal(settled.product.terminalEvidenceIdentity, receipt.receiptHash);
+    assert.equal(canonicalJson(settled.session.acceptedState), canonicalJson(state));
+    assert.equal(settled.session.acceptedRevision, 0);
+    assert.equal(Object.hasOwn(settled, 'recoveryNotice'), false);
+    validateRunState(settled.session.acceptedState);
+
+    // Replay of the settled permit and receipt refuses in the same worker and
+    // in any other worker that never issued it.
+    assert.equal(replayed.outcome, 'hard-stop');
+    assert.equal(replayed.reason, 'lane-receipt-replayed');
+    assert.equal(unauthorized.outcome, 'hard-stop');
+    assert.equal(unauthorized.reason, 'lane-permit-not-authorized');
+    assert.deepEqual(t018ChangedPaths(after, t018WorkspaceSnapshot(root)), []);
+  });
+});
+
+test('T001 adapter composition: only the lane owner mutates, and drifted or replayed bindings refuse without settlement', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    fs.mkdirSync(path.join(root, '.dude/state'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.dude/state/task-state.json'), T005_TASK_STATE);
+    const terminal = t001OrdinaryCompletionFixture(root);
+    const state = terminal.finalized.completion.state;
+    const laneApplication = {
+      root: fs.realpathSync(root),
+      owner: {
+        ideaPath: IDEA_PATH,
+        specPath: SPEC_PATH,
+        ownerCapture: recoveryRuntime.capturedBytesV1(terminal.binding.ideaFile),
+        ownerBindingHash: terminal.binding.targetMapping.ownerBindingHash,
+      },
+      mapping: terminal.binding.targetMapping,
+      expected: {
+        tasksPath: TASKS_PATH,
+        tasks: recoveryRuntime.capturedBytesV1(terminal.binding.tasksFile),
+        taskStatePath: '.dude/state/task-state.json',
+        taskState: recoveryRuntime.capturedBytesV1(T005_TASK_STATE),
+      },
+      mutation: terminal.mutation,
+    };
+    /** @param {(request:Record<string, unknown>)=>unknown} apply */
+    const issueWith = (apply) => {
+      const calls = [];
+      const adapter = createHostAdapter(
+        { state, target: clone(TARGET), inspectionIdentity: t018Hash('inspection') },
+        {
+          ...t018Ports(),
+          laneOwner: {
+            identity: t018Hash('lane-owner'),
+            apply(request) {
+              calls.push(clone(request));
+              return apply(request);
+            },
+          },
+        },
+      );
+      const issued = adapter.run(t018Request(adapter, 'authorize-lane-effect', {
+        laneEffect: {
+          input: terminal.input(terminal.events),
+          mutation: terminal.mutation,
+          lanePrestate: terminal.binding.lanePrestate,
+          targetMapping: terminal.binding.targetMapping,
+        },
+      }));
+      assert.equal(issued.outcome, 'accepted');
+      return { adapter, calls, permit: issued.product.permit };
+    };
+    /** @param {Record<string, unknown>} permit @param {Record<string, unknown>} overrides */
+    const drifted = (permit, overrides) => {
+      const { receiptHash: _receiptHash, ...body } = t005AtomicReceipt(permit, terminal.binding, true);
+      return t005Receipt({ ...body, ...overrides });
+    };
+    const before = t018WorkspaceSnapshot(root);
+    const cases = [
+      ['indeterminate lane outcome', () => ({
+        ok: false,
+        phase: 'indeterminate',
+        reason: 'lightweight-rollback-incomplete',
+        observedEvidenceHash: t018Hash('observed'),
+      }), 'hard-stop', 'lane-effect-indeterminate'],
+      ['closed lane refusal', () => ({
+        ok: false,
+        phase: 'refused',
+        reason: 'expected-capture-mismatch',
+        unchangedPrestateHash: t018Hash('unchanged'),
+      }), 'closed-refusal', 'expected-capture-mismatch'],
+      ['missing receipt', () => ({ ok: true, phase: 'committed' }), 'hard-stop', 'lane-receipt-binding-mismatch'],
+      ['foreign permit in receipt', (request) => ({
+        ok: true,
+        phase: 'committed',
+        receipt: drifted(request.permit, { permitHash: t018Hash('foreign-permit') }),
+      }), 'hard-stop', 'lane-receipt-binding-mismatch'],
+      ['drifted lane prestate in receipt', (request) => ({
+        ok: true,
+        phase: 'committed',
+        receipt: drifted(request.permit, { lanePrestateHash: t018Hash('foreign-prestate') }),
+      }), 'hard-stop', 'lane-receipt-binding-mismatch'],
+    ];
+
+    // Act and Assert
+    for (const [label, apply, outcome, reason] of cases) {
+      const issued = issueWith(/** @type {(request:Record<string, unknown>)=>unknown} */ (apply));
+      const result = issued.adapter.run(t018Request(issued.adapter, 'apply-lane-effect', {
+        laneApplication: { ...laneApplication, permit: issued.permit },
+      }));
+      assert.equal(result.outcome, outcome, /** @type {string} */ (label));
+      assert.equal(result.reason, reason, /** @type {string} */ (label));
+      assert.equal(Object.hasOwn(result, 'product'), false, /** @type {string} */ (label));
+      assert.equal(canonicalJson(result.session.acceptedState), canonicalJson(state), /** @type {string} */ (label));
+      assert.equal(issued.calls.length, 1, /** @type {string} */ (label));
+      assert.equal(issued.calls[0].operation, 'work-set', /** @type {string} */ (label));
+    }
+
+    // One issued permit applies at most once, and no replay reaches the owner.
+    const once = issueWith((request) => ({
+      ok: true,
+      phase: 'committed',
+      receipt: t005AtomicReceipt(
+        /** @type {Record<string, unknown>} */ (request.permit),
+        terminal.binding,
+        true,
+      ),
+    }));
+    const applied = once.adapter.run(t018Request(once.adapter, 'apply-lane-effect', {
+      laneApplication: { ...laneApplication, permit: once.permit },
+    }));
+    assert.equal(applied.outcome, 'accepted');
+    assert.equal(applied.product.kind, 'lane-receipt');
+    const replayed = once.adapter.run(t018Request(once.adapter, 'apply-lane-effect', {
+      laneApplication: { ...laneApplication, permit: once.permit },
+    }));
+    assert.equal(replayed.outcome, 'hard-stop');
+    assert.equal(replayed.reason, 'lane-permit-replayed');
+    assert.equal(once.calls.length, 1);
+
+    // A receipt for a mutation the lane owner never performed settles nothing:
+    // fresh poststate verification refuses before any settlement.
+    const settle = createHostAdapter(
+      { state, target: clone(TARGET), inspectionIdentity: t018Hash('inspection') },
+      t018Ports(),
+    );
+    const unsettled = settle.run(t018Request(settle, 'commit-lane-receipt', {
+      laneReceipt: {
+        input: terminal.input(terminal.events),
+        permit: once.permit,
+        receipt: applied.product.receipt,
+      },
+    }));
+    assert.equal(unsettled.outcome, 'hard-stop');
+    assert.equal(unsettled.reason, 'lane-permit-not-authorized');
+
+    // Nothing in the workspace moved: the glyph is untouched and unclaimed.
+    assert.deepEqual(t018ChangedPaths(before, t018WorkspaceSnapshot(root)), []);
+    assert.match(fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'), new RegExp(`- \\[~\\] ${TASK_KEY}`));
+  });
+});
+
+// --- Feature 018 T001: the ordinary bridge is Lightweight only --------------
+
+/**
+ * One tracked capture whose detail notes carry the exact v2 lane event lines.
+ * @param {Record<string, unknown>[]} events
+ */
+function t018TrackedCapture(events) {
+  const notes = events.map((event) => `- dude-run-event: ${canonicalJson(event)}\n`).join('');
+  const issue = {
+    id: TRACKED.issueId,
+    title: `${TASK_KEY} ${TRACKED.issueId}`,
+    description: `spec: ${SPEC_PATH}\nTask: ${TASK_KEY}`,
+    status: 'open',
+    priority: 2,
+    issue_type: 'task',
+  };
+  const detail = {
+    ...issue,
+    design: 'Observed design',
+    acceptance_criteria: 'Observed acceptance',
+    notes,
+    owner: 'tester',
+    created_at: '2026-07-19T00:00:00Z',
+    created_by: 'fixture',
+    updated_at: '2026-07-19T00:02:00Z',
+  };
+  const projectedIssue = {
+    issueId: issue.id,
+    status: issue.status,
+    type: 'task',
+    title: issue.title,
+    description: issue.description,
+    taskKey: TASK_KEY,
+    detail: {
+      design: detail.design,
+      acceptance_criteria: detail.acceptance_criteria,
+      notes: detail.notes,
+      priority: detail.priority,
+      owner: detail.owner,
+      created_at: detail.created_at,
+      created_by: detail.created_by,
+      updated_at: detail.updated_at,
+    },
+  };
+  return {
+    issue,
+    detailBytes: Buffer.from(canonicalJson([detail])),
+    historyBytes: Buffer.from(canonicalJson([{
+      CommitHash: `${issue.id}-event`,
+      Committer: 'tester',
+      CommitDate: '2026-07-19T00:02:00Z',
+      Issue: detail,
+    }])),
+    normalizedRecord: {
+      ...projectedIssue,
+      history: [{ commitDate: '2026-07-19T00:02:00Z', issue: projectedIssue }],
+    },
+  };
+}
+
+/**
+ * Drive one tracked ordinary accepted completion to its finalized RunState so
+ * only the Lightweight-only bridge gate separates it from a permit.
+ * @param {string} root @param {Record<string, unknown>} [overrides]
+ */
+function t018TrackedOrdinaryCompletion(root, overrides = {}) {
+  const fixture = t002PendingFixture({
+    target: TRACKED,
+    attemptOrdinal: 1,
+    action: 'execute-task',
+    mode: 'ordinary',
+    materialInputs: {
+      targets: ['src/t018-tracked-ordinary.mjs'],
+      operations: ['execute-task'],
+      checks: ['verification'],
+    },
+    checkOutcome: 'passed',
+    verdict: 'accepted',
+    ...overrides,
+  });
+  /** @param {Record<string, unknown>[]} events */
+  const dependencies = (events) => ({
+    normalizeTrackedEvidence: () => trackedProjection(TRACKED, [t018TrackedCapture(events)]),
+  });
+  /** @param {Record<string, unknown>[]} currentEvents @param {Record<string, unknown>[]} laneEvents */
+  const input = (currentEvents, laneEvents = currentEvents) => ({
+    root,
+    specPath: SPEC_PATH,
+    target: clone(TRACKED),
+    lane: trackedRawInputs([t018TrackedCapture(laneEvents)]).lane,
+    currentRun: currentEvents.length === 0
+      ? []
+      : [capture(TRACKED, 'failed', currentEvents.map((event) => ({ event })))],
+    lint: [],
+    ...t002TrustedStreams([fixture]),
+    policyMode: 'autonomous',
+  });
+  const captured = recoveryRuntime.captureCompletionV2(
+    fixture.state,
+    input([], []),
+    fixture.completion,
+    dependencies([]),
+  );
+  const events = captured.projectionBatch.events;
+  const verified = recoveryRuntime.verifyProjectionV2(
+    captured.state,
+    input(events),
+    captured.projectionBatch,
+    dependencies(events),
+  );
+  const finalized = recoveryRuntime.finalizeCompletionV2(
+    captured.state,
+    input(events),
+    captured.projectionBatch,
+    dependencies(events),
+  );
+  return { fixture, captured, verified, finalized, events, input, dependencies };
+}
+
+/** The exact fresh tracked mapping and prestate for one closed tracked mutation. */
+function t018TrackedBinding() {
+  const descriptor = (label) => ({ sha256: t018Hash(label), byteLength: 64 });
+  const targetMapping = {
+    version: 1,
+    lane: 'tracked',
+    target: canonicalTarget(TRACKED),
+    ownerBindingHash: t018Hash('tracked-owner-binding'),
+    taskKey: TASK_KEY,
+    listDescriptor: descriptor('tracked-list'),
+    detailDescriptor: descriptor('tracked-detail'),
+    historyDescriptor: descriptor('tracked-history'),
+  };
+  const lanePrestate = {
+    version: 1,
+    lane: 'tracked',
+    target: canonicalTarget(TRACKED),
+    taskKey: TASK_KEY,
+    status: 'in_progress',
+    blocker: null,
+    listDescriptor: clone(targetMapping.listDescriptor),
+    detailDescriptor: clone(targetMapping.detailDescriptor),
+    historyDescriptor: clone(targetMapping.historyDescriptor),
+    ownerDescriptor: descriptor('tracked-owner'),
+  };
+  return {
+    targetMapping,
+    lanePrestate,
+    targetMappingHash: sha256(canonicalJson(targetMapping)),
+    lanePrestateHash: sha256(canonicalJson(lanePrestate)),
+  };
+}
+
+/** The closed tracked completion mutation the bridge must never authorize. */
+function t018TrackedMutation() {
+  return {
+    version: 1,
+    lane: 'tracked',
+    kind: 'task-completed',
+    reason: 'task-completed',
+    target: canonicalTarget(TRACKED),
+    fromStatus: 'in_progress',
+    toStatus: 'closed',
+    blocker: { kind: 'unchanged', before: null, after: null },
+    eventLines: { kind: 'none' },
+    ownerLog: { kind: 'none' },
+  };
+}
+
+test('T001 ordinary completion close bridge: a complete tracked accepted completion still issues no ungoverned permit', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const tracked = t018TrackedOrdinaryCompletion(root);
+    const state = tracked.finalized.state;
+    const stateBytes = canonicalJson(state);
+    const binding = t018TrackedBinding();
+    const mutation = t018TrackedMutation();
+
+    // Act
+    // Inspection target, mutation target, and permit target are the same tracked
+    // target, so `target-mismatch` cannot mask the Lightweight-only gate.
+    const issued = recoveryRuntime.issueLanePermitV2(
+      state,
+      tracked.input(tracked.events),
+      mutation,
+      binding.lanePrestate,
+      binding.targetMapping,
+      tracked.dependencies(tracked.events),
+    );
+
+    // Assert
+    assert.equal(tracked.verified.transition.verified, true);
+    assert.equal(tracked.finalized.finalized, true);
+    assert.equal(tracked.finalized.completed, true);
+    assert.equal(targetKey(issued.inspection.target), targetKey(canonicalTarget(TRACKED)));
+    assert.deepEqual(issued.inspection.blockers, []);
+    assert.equal(issued.transition.issued, false);
+    assert.equal(issued.transition.reason, 'governance-unresolved');
+    assert.equal(Object.hasOwn(issued.transition, 'permit'), false);
+    assert.equal(canonicalJson(issued.transition.state), stateBytes);
+
+    // The identical Lightweight predicate set does issue, so the refusal above
+    // is the lane gate alone and not an unrelated missing predicate.
+    const light = t001OrdinaryCompletionFixture(root);
+    const lightIssued = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state: light.finalized.completion.state,
+      input: light.input(light.events),
+      mutation: light.mutation,
+      lanePrestate: light.binding.lanePrestate,
+      targetMapping: light.binding.targetMapping,
+    });
+    assert.equal(lightIssued.transition.issued, true);
+  });
+});
+
+test('T001 ordinary completion close bridge: a tracked lane-mutation permit commits no ungoverned terminal receipt', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const tracked = t018TrackedOrdinaryCompletion(root);
+    const state = tracked.finalized.state;
+    const stateBytes = canonicalJson(state);
+    const binding = t018TrackedBinding();
+    const mutation = t018TrackedMutation();
+    const mutationIdentity = sha256(canonicalJson(mutation));
+    // The exact permit shape a tracked bridge would have minted: ungoverned,
+    // carrying the accepted attempt as its only authority.
+    const permit = t005Permit({
+      version: 1,
+      kind: 'lane-mutation',
+      origin: 'dude-work',
+      lane: 'tracked',
+      operation: 'work-transition',
+      target: canonicalTarget(TRACKED),
+      subjectRunStateHash: sha256(stateBytes),
+      governanceIdentity: null,
+      governancePhase: null,
+      attemptIdentity: tracked.fixture.attemptIdentity,
+      targetMappingHash: binding.targetMappingHash,
+      lanePrestateHash: binding.lanePrestateHash,
+      mutationIdentity,
+    });
+    const receipt = t005Receipt({
+      version: 1,
+      lane: 'tracked',
+      mutationIdentity,
+      laneReceiptHash: t018Hash('tracked-lane-receipt'),
+      ownerLogReceiptHash: t018Hash('tracked-owner-log-receipt'),
+    });
+
+    // Act
+    const committed = recoveryRuntime.commitLaneReceiptV2(
+      state,
+      tracked.input(tracked.events),
+      permit,
+      receipt,
+      tracked.dependencies(tracked.events),
+    );
+
+    // Assert
+    // A tracked composite receipt proves no `targetStateChanged` and no lane
+    // poststate, so the ungoverned arm must refuse before any terminal evidence.
+    recoveryRuntime.validateLaneMutationPermitV1(permit);
+    recoveryRuntime.validateTrackedCompositeReceiptV1(receipt);
+    assert.equal(committed.transition.committed, false);
+    assert.equal(committed.transition.reason, 'governance-unresolved');
+    assert.equal(Object.hasOwn(committed.transition, 'terminalEvidenceIdentity'), false);
+    assert.equal(Object.hasOwn(committed.transition, 'receipt'), false);
+    assert.equal(canonicalJson(committed.transition.state), stateBytes);
+  });
+});
+
+test('T001 ordinary completion close bridge: retained repeat evidence refuses the ungoverned permit', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    // Two earlier rejected attempts share one byte-identical approach basis, so
+    // the fresh retained evidence carries a real repeat relationship that the
+    // finalized RunState alone never records.
+    const repeated = {
+      targets: ['src/t018-repeat.mjs'],
+      operations: ['execute-task'],
+      checks: ['verification'],
+    };
+    /** @param {number} count */
+    const priorTuples = (count) => Array.from({ length: count }, (_, index) => ({
+      evidenceHash: t018Hash(`repeat-prior-evidence-${index + 1}`),
+      approachHash: t018Hash(`repeat-prior-approach-${index + 1}`),
+      resultHash: t018Hash(`repeat-prior-result-${index + 1}`),
+    }));
+    const firstRepeat = t001OrdinaryCompletionFixture(root, {
+      attemptOrdinal: 1,
+      materialInputs: repeated,
+      evidenceHash: t018Hash('repeat-first-evidence'),
+      verdict: 'rejected',
+    });
+    const secondRepeat = t001OrdinaryCompletionFixture(root, {
+      attemptOrdinal: 2,
+      priorCompleted: priorTuples(1),
+      materialInputs: repeated,
+      evidenceHash: t018Hash('repeat-second-evidence'),
+      verdict: 'rejected',
+    });
+    const terminal = t001OrdinaryCompletionFixture(root, {
+      attemptOrdinal: 3,
+      priorCompleted: priorTuples(2),
+      materialInputs: {
+        targets: ['src/t018-repeat-accepted.mjs'],
+        operations: ['execute-task'],
+        checks: ['verification'],
+      },
+      evidenceHash: t018Hash('repeat-accepted-evidence'),
+    });
+    const state = terminal.finalized.completion.state;
+    const stateBytes = canonicalJson(state);
+    const fixtures = [firstRepeat.fixture, secondRepeat.fixture, terminal.fixture];
+    const events = [...firstRepeat.events, ...secondRepeat.events, ...terminal.events];
+    const repeatInput = terminal.input(events, events, fixtures);
+
+    // Act
+    const issued = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state,
+      input: repeatInput,
+      mutation: terminal.mutation,
+      lanePrestate: terminal.binding.lanePrestate,
+      targetMapping: terminal.binding.targetMapping,
+    });
+
+    // Assert
+    // The repeat relationship is real and the final accepted occurrence is
+    // unambiguous, so the FR-028 no-repeat predicate is the one that refuses.
+    const repeat = recoveryRuntime.deriveEarliestRepeatRelationshipV1(events);
+    assert.notEqual(repeat, null);
+    assert.equal(
+      firstRepeat.events[0].occurrence.basisIdentity,
+      secondRepeat.events[0].occurrence.basisIdentity,
+    );
+    assert.notEqual(
+      terminal.events[0].occurrence.basisIdentity,
+      firstRepeat.events[0].occurrence.basisIdentity,
+    );
+    assert.equal(terminal.events[0].occurrence.disposition, 'accepted');
+    assert.equal(issued.transition.issued, false);
+    assert.equal(issued.transition.reason, 'governance-unresolved');
+    assert.equal(Object.hasOwn(issued.transition, 'permit'), false);
+    assert.equal(canonicalJson(issued.transition.state), stateBytes);
+    assert.match(fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'), new RegExp(`- \\[~\\] ${TASK_KEY}`));
   });
 });
 
@@ -20909,9 +22235,9 @@ function t005Descriptor(bytes) {
 
 /**
  * Build the exact fresh Lightweight mapping and prestate from workspace bytes.
- * @param {string} root @param {Record<string, unknown>} target @param {string} ideaPath @param {string} glyph @param {string|null} blockedBy
+ * @param {string} root @param {Record<string, unknown>} target @param {string} ideaPath @param {string} glyph @param {string|null} blockedBy @param {Buffer} [taskStateFile]
  */
-function t005LightweightBinding(root, target, ideaPath, glyph, blockedBy) {
+function t005LightweightBinding(root, target, ideaPath, glyph, blockedBy, taskStateFile = T005_TASK_STATE) {
   const tasksPath = `${/** @type {string} */ (target.specPath).slice(0, -'spec.md'.length)}tasks.md`;
   const ideaFile = fs.readFileSync(path.join(root, ideaPath));
   const tasksFile = fs.readFileSync(path.join(root, tasksPath));
@@ -20927,7 +22253,7 @@ function t005LightweightBinding(root, target, ideaPath, glyph, blockedBy) {
     tasksPath,
     tasksDescriptor: t005Descriptor(tasksFile),
     taskStatePath: '.dude/state/task-state.json',
-    taskStateDescriptor: t005Descriptor(T005_TASK_STATE),
+    taskStateDescriptor: t005Descriptor(taskStateFile),
     taskKey: target.taskKey,
   };
   const lanePrestate = {
@@ -22827,6 +24153,643 @@ test('T005 acyclic permits: an ungoverned lane permit reaches its terminal recei
     assert.equal(canonicalJson(committed.transition.state), canonicalJson(state));
     assert.equal(Object.hasOwn(committed.transition.state, 'learningGovernance'), false);
     assert.equal(Object.hasOwn(committed.transition, 'terminalEvidenceIdentity'), false);
+  });
+});
+
+test('T001 ordinary completion close bridge: a first accepted V2 attempt reaches its exact terminal receipt', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const taskStateFile = Buffer.from(`${JSON.stringify({
+      [TASKS_PATH]: {
+        glyphs: { [TASK_KEY]: '~' },
+        updated_at: '2025-12-31T00:00:00.000Z',
+      },
+    }, null, 2)}\n`);
+    fs.mkdirSync(path.join(root, '.dude/state'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.dude/state/task-state.json'), taskStateFile);
+    const initialState = autonomousState();
+    const emptyInput = () => cliInput(t002RetentionInput(root, [], [], []));
+    const inspected = t003Invoke('inspect', {
+      trigger: 'explicit-inspection',
+      input: emptyInput(),
+    });
+    const authorized = t003Invoke('authorize', {
+      trigger: 'start',
+      state: initialState,
+      input: emptyInput(),
+      assessment: {
+        ...transitionAssessment('execute-task', { targets: ['src/t001-ordinary.mjs'] }),
+        evidenceHash: inspected.inspection.evidenceHash,
+      },
+      mode: 'ordinary',
+    });
+    const fixture = t002PendingFixture({
+      target: TARGET,
+      attemptOrdinal: 1,
+      action: 'execute-task',
+      mode: 'ordinary',
+      evidenceHash: inspected.inspection.evidenceHash,
+      materialInputs: {
+        targets: ['src/t001-ordinary.mjs'],
+        operations: ['execute-task'],
+        checks: ['verification'],
+      },
+      checkOutcome: 'passed',
+      verdict: 'accepted',
+    });
+    const attemptIdentity = fixture.attemptIdentity;
+    const envelopes = fixture;
+    /** @param {Record<string, unknown>[]} currentEvents @param {Record<string, unknown>[]} laneEvents */
+    const retained = (currentEvents, laneEvents = currentEvents) => cliInput(
+      t002RetentionInput(root, currentEvents, laneEvents, [fixture]),
+    );
+    const completion = {
+      version: 2,
+      target: TARGET,
+      attemptIdentity,
+      route: 'lightweight-task',
+      outcome: 'succeeded',
+      operations: ['execute-task'],
+      changedTargets: ['src/t001-ordinary.mjs'],
+      resultIdentity: envelopes.verification.resultIdentity,
+      verificationEnvelopeIdentity: envelopes.verification.envelopeIdentity,
+      reviewEnvelopeIdentity: envelopes.review.envelopeIdentity,
+      findingIdentities: [],
+    };
+    const mutation = {
+      version: 1,
+      lane: 'lightweight',
+      kind: 'task-completed',
+      reason: 'task-completed',
+      target: canonicalTarget(TARGET),
+      fromGlyph: '~',
+      toGlyph: 'x',
+      blocker: { kind: 'unchanged', before: null, after: null },
+      eventLines: { kind: 'none' },
+      ownerLog: { kind: 'none' },
+      snapshotUpdatedAt: T005_TIME,
+    };
+
+    // Act
+    const captured = t003Invoke('complete', {
+      mode: 'capture',
+      state: authorized.authorization.state,
+      input: retained([], []),
+      completion,
+    });
+    const occurrenceEvents = captured.completion.projectionBatch.events;
+    const verified = t003Invoke('transition', {
+      mode: 'verify-projection',
+      state: captured.completion.state,
+      input: retained(occurrenceEvents),
+      projectionBatch: captured.completion.projectionBatch,
+    });
+    const finalized = t003Invoke('complete', {
+      mode: 'finalize',
+      state: captured.completion.state,
+      input: retained(occurrenceEvents),
+      projectionBatch: captured.completion.projectionBatch,
+    });
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null, taskStateFile);
+    const issued = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state: finalized.completion.state,
+      input: retained(occurrenceEvents),
+      mutation,
+      lanePrestate: binding.lanePrestate,
+      targetMapping: binding.targetMapping,
+    });
+    const permit = issued.transition.permit;
+    const ownerCapture = recoveryRuntime.capturedBytesV1(binding.ideaFile);
+    const laneResult = applyLightweightWorkRequest({
+      version: 1,
+      operation: 'work-set',
+      root: fs.realpathSync(root),
+      owner: {
+        ideaPath: IDEA_PATH,
+        specPath: SPEC_PATH,
+        ownerCapture,
+        ownerBindingHash: binding.targetMapping.ownerBindingHash,
+      },
+      target: clone(TARGET),
+      state: finalized.completion.state,
+      permit,
+      mapping: binding.targetMapping,
+      expected: {
+        tasksPath: TASKS_PATH,
+        tasks: recoveryRuntime.capturedBytesV1(binding.tasksFile),
+        taskStatePath: '.dude/state/task-state.json',
+        taskState: recoveryRuntime.capturedBytesV1(taskStateFile),
+      },
+      mutation,
+    });
+    assert.equal(laneResult.ok, true, JSON.stringify(laneResult));
+    const receipt = laneResult.receipt;
+    const poststateTasks = fs.readFileSync(path.join(root, TASKS_PATH));
+    const poststateInput = cliInput(t002RetentionInputWithTaskHistory(
+      root,
+      occurrenceEvents,
+      poststateTasks,
+      [fixture],
+    ));
+    const committed = t003Invoke('transition', {
+      mode: 'commit-lane-receipt',
+      state: finalized.completion.state,
+      input: poststateInput,
+      permit,
+      receipt,
+    });
+
+    // Assert
+    assert.equal(authorized.authorization.authorized, true);
+    assert.equal(canonicalJson(authorized.authorization.state), canonicalJson(fixture.state));
+    assert.equal(verified.transition.verified, true);
+    assert.equal(finalized.completion.finalized, true);
+    assert.equal(finalized.completion.completed, true);
+    assert.equal(Object.hasOwn(finalized.completion.state, 'learningGovernance'), false);
+    assert.equal(issued.transition.issued, true);
+    assert.equal(permit.governanceIdentity, null);
+    assert.equal(permit.governancePhase, null);
+    assert.equal(permit.attemptIdentity, attemptIdentity);
+    assert.equal(permit.subjectRunStateHash, sha256(canonicalJson(finalized.completion.state)));
+    assert.equal(permit.mutationIdentity, sha256(canonicalJson(mutation)));
+    assert.equal(permit.targetMappingHash, binding.targetMappingHash);
+    assert.equal(permit.lanePrestateHash, binding.lanePrestateHash);
+    assert.match(fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'), new RegExp(`- \\[x\\] ${TASK_KEY}`));
+    assert.equal(receipt.tasksPoststateHash, sha256(fs.readFileSync(path.join(root, TASKS_PATH))));
+    assert.equal(receipt.taskStatePoststateHash, sha256(fs.readFileSync(path.join(root, '.dude/state/task-state.json'))));
+    assert.equal(receipt.ownerPoststateHash, sha256(fs.readFileSync(path.join(root, IDEA_PATH))));
+    assert.equal(committed.transition.committed, true);
+    assert.equal(committed.transition.reason, 'lane-receipt-committed');
+    assert.equal(committed.transition.terminalEvidenceIdentity, receipt.receiptHash);
+    assert.equal(canonicalJson(committed.transition.state), canonicalJson(finalized.completion.state));
+    validateRunState(committed.transition.state);
+  });
+});
+
+/** @param {string} root @param {Record<string, unknown>} [overrides] */
+function t001OrdinaryCompletionFixture(root, overrides = {}) {
+  const attemptOrdinal = overrides.attemptOrdinal || 1;
+  const materialInputs = clone(overrides.materialInputs || {
+    targets: [`src/t001-ordinary-${attemptOrdinal}.mjs`],
+    operations: ['execute-task'],
+    checks: ['verification'],
+  });
+  const fixture = t002PendingFixture({
+    attemptOrdinal,
+    action: 'execute-task',
+    mode: 'ordinary',
+    materialInputs,
+    priorCompleted: clone(overrides.priorCompleted || []),
+    checkOutcome: overrides.checkOutcome || 'passed',
+    verdict: overrides.verdict || 'accepted',
+    ...(overrides.evidenceHash ? { evidenceHash: overrides.evidenceHash } : {}),
+  });
+  /** @param {Record<string, unknown>[]} currentEvents @param {Record<string, unknown>[]} laneEvents @param {ReturnType<typeof t002PendingFixture>[]} trustedFixtures */
+  const input = (currentEvents, laneEvents = currentEvents, trustedFixtures = [fixture]) => cliInput(
+    t002RetentionInput(root, currentEvents, laneEvents, trustedFixtures),
+  );
+  const captured = t003Invoke('complete', {
+    mode: 'capture',
+    state: fixture.state,
+    input: input([], []),
+    completion: fixture.completion,
+  });
+  const events = captured.completion.projectionBatch.events;
+  const verified = t003Invoke('transition', {
+    mode: 'verify-projection',
+    state: captured.completion.state,
+    input: input(events),
+    projectionBatch: captured.completion.projectionBatch,
+  });
+  const finalized = t003Invoke('complete', {
+    mode: 'finalize',
+    state: captured.completion.state,
+    input: input(events),
+    projectionBatch: captured.completion.projectionBatch,
+  });
+  const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null, overrides.taskStateFile);
+  const mutation = {
+    version: 1,
+    lane: 'lightweight',
+    kind: 'task-completed',
+    reason: 'task-completed',
+    target: canonicalTarget(TARGET),
+    fromGlyph: '~',
+    toGlyph: 'x',
+    blocker: { kind: 'unchanged', before: null, after: null },
+    eventLines: { kind: 'none' },
+    ownerLog: { kind: 'none' },
+    snapshotUpdatedAt: T005_TIME,
+  };
+  return { fixture, captured, events, verified, finalized, binding, mutation, input };
+}
+
+test('T001 ordinary completion close bridge: issuance refuses every incomplete, stale, conflicting, or ambiguous authority', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const terminal = t001OrdinaryCompletionFixture(root);
+    const finalState = terminal.finalized.completion.state;
+    const alternate = t001OrdinaryCompletionFixture(root, {
+      evidenceHash: t005Hash('ordinary-alternate-evidence'),
+      materialInputs: {
+        targets: ['src/t001-ordinary-alternate.mjs'],
+        operations: ['execute-task'],
+        checks: ['verification'],
+      },
+    });
+    const failed = t001OrdinaryCompletionFixture(root, { checkOutcome: 'failed' });
+    const rejected = t001OrdinaryCompletionFixture(root, { verdict: 'rejected' });
+    const second = t001OrdinaryCompletionFixture(root, {
+      attemptOrdinal: 2,
+      priorCompleted: finalState.completed,
+      materialInputs: {
+        targets: ['src/t001-ordinary-second.mjs'],
+        operations: ['execute-task'],
+        checks: ['verification'],
+      },
+    });
+    const secondState = second.finalized.completion.state;
+    const firstTuple = clone(finalState.completed[0]);
+    const secondTuple = clone(secondState.completed[1]);
+    const missingVerification = t002RetentionInput(
+      root,
+      terminal.events,
+      terminal.events,
+      [terminal.fixture],
+    );
+    missingVerification.verification = [];
+    const missingReview = t002RetentionInput(
+      root,
+      terminal.events,
+      terminal.events,
+      [terminal.fixture],
+    );
+    missingReview.review = [];
+    const staleTrusted = t001OrdinaryCompletionFixture(root, {
+      evidenceHash: t005Hash('ordinary-stale-trusted-evidence'),
+      materialInputs: {
+        targets: ['src/t001-ordinary-stale-trusted.mjs'],
+        operations: ['execute-task'],
+        checks: ['verification'],
+      },
+    });
+    const governed = {
+      ...clone(finalState),
+      learningGovernance: t002RequiredGovernance([
+        t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 'ordinary-active-governance' }),
+        t002ApproachEvent({ attemptOrdinal: 2, basisLabel: 'ordinary-active-governance' }),
+      ]),
+    };
+    const projectionFlow = t003PublicFlow(root, 'finding', 'selected-alternative');
+    const projected = projectionFlow.learned.learning.state;
+    const projectedInput = cliInput(t002RetentionInput(
+      root,
+      projectionFlow.governedEvents,
+      projectionFlow.governedEvents,
+      projectionFlow.fixtures,
+    ));
+    const evaluation = {
+      ...clone(finalState),
+      evaluationSequences: [createEvaluationSequence(
+        TARGET,
+        objectivePlanBody(numericContract()),
+        numericContract(),
+        candidateWriteSet(),
+        fileDescriptors({ 'src/a.mjs': 'v1', 'src/a.test.mjs': 'guard' }),
+      )],
+    };
+    const forgedTuple = clone(finalState);
+    forgedTuple.completed[0].resultHash = t005Hash('ordinary-forged-completed-result');
+    const missingTuple = { ...clone(finalState), completed: [] };
+    const duplicatedTuple = {
+      ...clone(secondState),
+      completed: [clone(secondTuple), clone(secondTuple)],
+    };
+    const nonFinalTuple = clone(secondState);
+    assert.deepEqual(nonFinalTuple.completed[0], firstTuple);
+    const duplicateEvents = [...terminal.events, ...terminal.events];
+    const ambiguousEvents = [...terminal.events, ...alternate.events];
+    const wrongTargetMutation = {
+      ...clone(terminal.mutation),
+      target: canonicalTarget({ ...TARGET, taskKey: SECOND_TASK_KEY }),
+    };
+    const cases = [
+      {
+        label: 'pending attempt',
+        state: terminal.fixture.state,
+        input: terminal.input([], []),
+      },
+      {
+        label: 'pending completion',
+        state: terminal.captured.completion.state,
+        input: terminal.input(terminal.events),
+      },
+      {
+        label: 'active governance obligation',
+        state: governed,
+        input: terminal.input(terminal.events),
+      },
+      {
+        label: 'active projection obligation',
+        state: projected,
+        input: projectedInput,
+      },
+      {
+        label: 'active evaluation obligation',
+        state: evaluation,
+        input: terminal.input(terminal.events),
+      },
+      {
+        label: 'wrong target',
+        state: finalState,
+        input: terminal.input(terminal.events),
+        mutation: wrongTargetMutation,
+      },
+      {
+        label: 'missing trusted verification capture',
+        state: finalState,
+        input: cliInput(missingVerification),
+      },
+      {
+        label: 'missing trusted review capture',
+        state: finalState,
+        input: cliInput(missingReview),
+      },
+      {
+        label: 'stale trusted captures',
+        state: finalState,
+        input: terminal.input(terminal.events, terminal.events, [staleTrusted.fixture]),
+      },
+      {
+        label: 'current-run-only retention',
+        state: finalState,
+        input: terminal.input(terminal.events, []),
+      },
+      {
+        label: 'lane-only retention',
+        state: finalState,
+        input: terminal.input([], terminal.events),
+      },
+      {
+        label: 'duplicate retained occurrence',
+        state: finalState,
+        input: terminal.input(duplicateEvents, duplicateEvents),
+      },
+      {
+        label: 'conflicting retained occurrence',
+        state: finalState,
+        input: terminal.input(
+          terminal.events,
+          alternate.events,
+          [terminal.fixture, alternate.fixture],
+        ),
+      },
+      {
+        label: 'verification-failed disposition',
+        state: failed.finalized.completion.state,
+        input: failed.input(failed.events),
+      },
+      {
+        label: 'review-rejected disposition',
+        state: rejected.finalized.completion.state,
+        input: rejected.input(rejected.events),
+      },
+      {
+        label: 'forged completed tuple',
+        state: forgedTuple,
+        input: terminal.input(terminal.events),
+      },
+      {
+        label: 'duplicated final completed tuple',
+        state: duplicatedTuple,
+        input: second.input(second.events),
+      },
+      {
+        label: 'accepted tuple is not final',
+        state: nonFinalTuple,
+        input: terminal.input(terminal.events),
+      },
+      {
+        label: 'multiple accepted occurrences at final ordinal',
+        state: finalState,
+        input: terminal.input(
+          ambiguousEvents,
+          ambiguousEvents,
+          [terminal.fixture, alternate.fixture],
+        ),
+      },
+    ];
+
+    // Act and Assert
+    for (const row of cases) {
+      validateRunState(row.state);
+      const stateBytes = canonicalJson(row.state);
+      const result = t003Invoke('transition', {
+        mode: 'issue-lane-permit',
+        state: row.state,
+        input: row.input,
+        mutation: row.mutation || terminal.mutation,
+        lanePrestate: terminal.binding.lanePrestate,
+        targetMapping: terminal.binding.targetMapping,
+      });
+      assert.equal(result.transition.issued, false, row.label);
+      assert.equal(Object.hasOwn(result.transition, 'permit'), false, row.label);
+      assert.equal(canonicalJson(result.transition.state), stateBytes, row.label);
+    }
+
+    // A missing tuple cannot pass RunState validation: overallUsed must equal
+    // pending plus completed attempts. Exercise the nearest public boundary and
+    // prove request validation grants no permit or mutation authority.
+    const missingRequest = {
+      mode: 'issue-lane-permit',
+      state: missingTuple,
+      input: terminal.input(terminal.events),
+      mutation: terminal.mutation,
+      lanePrestate: terminal.binding.lanePrestate,
+      targetMapping: terminal.binding.targetMapping,
+    };
+    const missingBytes = canonicalJson(missingRequest);
+    assert.throws(
+      () => validateRunState(missingTuple),
+      /overallUsed must equal pending plus completed attempts/,
+    );
+    const missingResult = runRecoveryCli('transition', missingRequest);
+    assert.notEqual(missingResult.status, 0);
+    assert.equal(JSON.parse(missingResult.stderr).error.code, 'recovery-invalid-request');
+    assert.equal(missingResult.stdout, '');
+    assert.equal(canonicalJson(missingRequest), missingBytes);
+  });
+});
+
+test('T001 ordinary completion close bridge: commit refuses stale, transferred, forged, mismatched, or replayed authority', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    fs.mkdirSync(path.join(root, '.dude/state'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.dude/state/task-state.json'), T005_TASK_STATE);
+    const terminal = t001OrdinaryCompletionFixture(root);
+    const state = terminal.finalized.completion.state;
+    const issued = t003Invoke('transition', {
+      mode: 'issue-lane-permit',
+      state,
+      input: terminal.input(terminal.events),
+      mutation: terminal.mutation,
+      lanePrestate: terminal.binding.lanePrestate,
+      targetMapping: terminal.binding.targetMapping,
+    });
+    const permit = issued.transition.permit;
+    const receipt = t005AtomicReceipt(permit, terminal.binding, true);
+    const unchangedPoststateReceipt = t005Receipt({
+      version: 1,
+      lane: 'lightweight',
+      permitHash: permit.permitHash,
+      mutationIdentity: permit.mutationIdentity,
+      target: clone(permit.target),
+      targetMappingHash: terminal.binding.targetMappingHash,
+      lanePrestateHash: terminal.binding.lanePrestateHash,
+      tasksPoststateHash: sha256(fs.readFileSync(path.join(root, TASKS_PATH))),
+      taskStatePoststateHash: sha256(fs.readFileSync(path.join(root, '.dude/state/task-state.json'))),
+      ownerPoststateHash: sha256(fs.readFileSync(path.join(root, IDEA_PATH))),
+      targetStateChanged: true,
+    });
+    const changedState = clone(state);
+    changedState.policy.overall = 2;
+    const wrongTargetInput = () => {
+      const input = terminal.input(terminal.events);
+      input.target = canonicalTarget({ ...TARGET, taskKey: SECOND_TASK_KEY });
+      return input;
+    };
+    const forgedAttemptBody = {
+      ...permit,
+      attemptIdentity: t005Hash('ordinary-forged-permit-attempt'),
+    };
+    delete forgedAttemptBody.permitHash;
+    const forgedAttempt = t005Permit(forgedAttemptBody);
+    const { receiptHash: _receiptHash, ...receiptBody } = receipt;
+    const mismatchedPermitReceipt = t005Receipt({
+      ...receiptBody,
+      permitHash: t005Hash('ordinary-foreign-permit'),
+    });
+    const mismatchedMappingReceipt = t005Receipt({
+      ...receiptBody,
+      targetMappingHash: t005Hash('ordinary-foreign-mapping'),
+    });
+    const mismatchedMutationReceipt = t005Receipt({
+      ...receiptBody,
+      mutationIdentity: t005Hash('ordinary-foreign-mutation'),
+    });
+    const replayInput = () => {
+      const prefix = [
+        transitionTasksBytes([{ id: TASK_KEY, glyph: 'x' }]).toString('utf8').trimEnd(),
+        '',
+        '## Lightweight Execution History',
+        '',
+      ].join('\n');
+      const taskHistory = Buffer.concat([
+        Buffer.from(prefix),
+        ...terminal.events.map((event) => Buffer.from(`${t002V2EventLine(event)}\n`)),
+      ]);
+      return cliInput(t002RetentionInputWithTaskHistory(
+        root,
+        terminal.events,
+        taskHistory,
+        [terminal.fixture],
+      ));
+    };
+    const cases = [
+      {
+        label: 'changed RunState makes permit stale',
+        state: changedState,
+        input: () => terminal.input(terminal.events),
+        permit,
+        receipt,
+        reason: 'permit-stale',
+      },
+      {
+        label: 'changed retained evidence after issuance',
+        state,
+        input: () => terminal.input(terminal.events, []),
+        permit,
+        receipt,
+        reason: 'governance-unresolved',
+      },
+      {
+        label: 'wrong target Inspection',
+        state,
+        input: wrongTargetInput,
+        permit,
+        receipt,
+        reason: 'permit-target-mismatch',
+      },
+      {
+        label: 'forged attempt identity in self-consistent permit',
+        state,
+        input: () => terminal.input(terminal.events),
+        permit: forgedAttempt,
+        receipt: t005AtomicReceipt(forgedAttempt, terminal.binding, true),
+        reason: 'governance-unresolved',
+      },
+      {
+        label: 'mismatched receipt permit',
+        state,
+        input: () => terminal.input(terminal.events),
+        permit,
+        receipt: mismatchedPermitReceipt,
+        reason: 'lane-receipt-mismatch',
+      },
+      {
+        label: 'mismatched receipt mapping',
+        state,
+        input: () => terminal.input(terminal.events),
+        permit,
+        receipt: mismatchedMappingReceipt,
+        reason: 'lane-receipt-mismatch',
+      },
+      {
+        label: 'mismatched receipt mutation',
+        state,
+        input: () => terminal.input(terminal.events),
+        permit,
+        receipt: mismatchedMutationReceipt,
+        reason: 'lane-receipt-mismatch',
+      },
+      {
+        label: 'lane prestate changed after issuance',
+        state,
+        input: replayInput,
+        permit,
+        receipt,
+        reason: 'lane-receipt-mismatch',
+      },
+      {
+        label: 'unchanged lane poststate forged as changed',
+        state,
+        input: () => terminal.input(terminal.events),
+        permit,
+        receipt: unchangedPoststateReceipt,
+        reason: 'lane-receipt-mismatch',
+      },
+    ];
+
+    // Act and Assert
+    assert.equal(issued.transition.issued, true);
+    assert.match(fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'), new RegExp(`- \\[~\\] ${TASK_KEY}`));
+    recoveryRuntime.validateLightweightAtomicReceiptV1(unchangedPoststateReceipt);
+    for (const row of cases) {
+      validateRunState(row.state);
+      const stateBytes = canonicalJson(row.state);
+      const result = t003Invoke('transition', {
+        mode: 'commit-lane-receipt',
+        state: row.state,
+        input: row.input(),
+        permit: row.permit,
+        receipt: row.receipt,
+      });
+      assert.equal(result.transition.committed, false, row.label);
+      assert.equal(result.transition.reason, row.reason, row.label);
+      assert.equal(Object.hasOwn(result.transition, 'terminalEvidenceIdentity'), false, row.label);
+      assert.equal(canonicalJson(result.transition.state), stateBytes, row.label);
+    }
   });
 });
 
