@@ -15,10 +15,13 @@ import {
   capturedBytesV1,
   contentDescriptor,
   inspect,
+  normalizeIndependentReviewEnvelopeV2,
+  normalizeVerificationEnvelopeV2,
   runCommand,
   sha256,
   validateRunState,
 } from './recovery.mjs';
+import { buildSpecialistAttestation } from './specialist-attestation.mjs';
 import * as hostAdapterModule from './host-adapter.mjs';
 
 const {
@@ -83,40 +86,32 @@ function guardedResult(overrides = {}) {
   };
 }
 
-/** @param {Record<string, unknown>} state */
-function attemptIdentity(state) {
-  const pending = /** @type {Record<string, unknown>[]} */ (state.pending)[0];
-  const basis = {
-    version: 1,
-    target: clone(pending.target),
-    action: pending.action,
-    materialInputs: clone(pending.materialInputs),
-    mechanismIdentities: [],
-    assumptionIdentities: [],
-    evidenceAcquisitionIdentities: [],
-    validationPlanIdentities: [],
-  };
-  return sha256(canonicalJson({
-    version: 2,
-    target: clone(pending.target),
-    attemptOrdinal: state.overallUsed,
-    authorizationEvidenceHash: pending.evidenceHash,
-    approachBasisIdentity: sha256(canonicalJson(basis)),
-  }));
-}
-
-/** @param {Record<string, unknown>} state @param {Record<string, unknown>} [overrides] */
-function trustedResult(state, overrides = {}) {
+/**
+ * The sole structured Tester and Reviewer results an ordinary autonomous request
+ * carries. It names no identity, dispatch fact, capture, or route.
+ * @param {string} label @param {'accepted'|'rejected'} [verdict]
+ */
+function specialistResult(label, verdict = 'rejected') {
+  const definition = `focused check:${label}`;
   return {
-    attemptIdentity: attemptIdentity(state),
-    outcome: 'blocked',
+    outcome: verdict === 'accepted' ? 'succeeded' : 'blocked',
     operations: ['execute-task'],
     changedTargets: [],
-    resultIdentity: sha256('result'),
-    verificationEnvelopeIdentity: sha256('verification-envelope'),
-    reviewEnvelopeIdentity: sha256('review-envelope'),
-    findingIdentities: [],
-    ...overrides,
+    verification: {
+      checks: [{ definition, outcome: 'passed', evidence: `check evidence:${label}` }],
+    },
+    review: {
+      verdict,
+      findings: verdict === 'accepted' ? [] : [{
+        basis: {
+          expectation: { kind: 'governing-rule', reference: `governing rule:${label}` },
+          subjects: [TARGET.taskKey],
+          failureClass: 'review-rejection',
+          checkDefinition: definition,
+        },
+        observation: { kind: 'observed-evidence', evidence: `observed evidence:${label}` },
+      }],
+    },
   };
 }
 
@@ -327,7 +322,7 @@ nodeTest('the closed semantic operation set composes every ordinary runtime rout
         },
       },
     }],
-    ['record-attempt-result', { attemptResult: { input: {}, result: trustedResult(pendingState('autonomous')) } }],
+    ['record-attempt-result', { attemptResult: { input: {}, result: specialistResult('closed-operations') } }],
     ['settle-effect', { input: {} }],
     ['advance-governance', { governance: { action: 'halt', input: {}, halt: { kind: 'safety' } } }],
     ['prepare-authoritative-projection', { projection: { input: {} } }],
@@ -1539,6 +1534,19 @@ function sealedInspectionInput(root, overrides = {}) {
   };
 }
 
+/**
+ * The ordinary autonomous completion input. It names no trusted capture stream:
+ * host integration injects the ones its builder produced.
+ * @param {string} root @param {Record<string, unknown>} [overrides]
+ */
+function sealedRecordInput(root, overrides = {}) {
+  const { verification, review, ...rest } = sealedInspectionInput(root, {
+    policyMode: 'autonomous',
+    ...overrides,
+  });
+  return sealedTransportInput(rest);
+}
+
 /** @param {(root:string)=>void} run */
 function withSealedWorkspace(run) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dude-host-adapter-')));
@@ -1738,102 +1746,91 @@ nodeTest('authorize-attempt deterministically issues and consumes the real auton
   });
 });
 
-/** @param {Record<string, unknown>} state @param {string} label @param {'accepted'|'rejected'} [verdict] */
+/**
+ * Reproduce the exact captures host integration derives and injects, so later
+ * inspections carry the same trusted source stream the adapter already produced.
+ * @param {Record<string, unknown>} state @param {string} label @param {'accepted'|'rejected'} [verdict]
+ */
 function sealedTrustedFixture(state, label, verdict = 'rejected') {
-  const accepted = verdict === 'accepted';
-  const semantic = trustedResult(state, {
-    outcome: accepted ? 'succeeded' : 'blocked',
-    resultIdentity: sha256(`trusted-result:${label}`),
-    verificationEnvelopeIdentity: sha256(`verification-envelope:${label}`),
-    reviewEnvelopeIdentity: sha256(`review-envelope:${label}`),
-    findingIdentities: [sha256(`finding:${label}`)],
+  const semantic = specialistResult(label, verdict);
+  const pending = /** @type {Record<string, unknown>[]} */ (state.pending)[0];
+  const target = clone(pending.target);
+  const attemptOrdinal = state.overallUsed;
+  const inspectedEvidenceHash = pending.evidenceHash;
+  const context = {
+    target,
+    attempt: {
+      ordinal: attemptOrdinal,
+      authorizationEvidenceHash: inspectedEvidenceHash,
+      approachBasis: {
+        version: 1,
+        target: clone(target),
+        action: pending.action,
+        materialInputs: clone(pending.materialInputs),
+        mechanismIdentities: [],
+        assumptionIdentities: [],
+        evidenceAcquisitionIdentities: [],
+        validationPlanIdentities: [],
+      },
+    },
+    sourceRevision: inspectedEvidenceHash,
+    inspectedEvidenceHash,
+    resultMaterial: canonicalJson({
+      version: 1,
+      target,
+      attemptOrdinal,
+      authorizationEvidenceHash: inspectedEvidenceHash,
+      outcome: semantic.outcome,
+      operations: semantic.operations,
+      changedTargets: semantic.changedTargets,
+    }),
+  };
+  const binding = {
+    target: clone(target),
+    attemptOrdinal,
+    sourceRevision: context.sourceRevision,
+    inspectedEvidenceHash,
+    resultMaterial: context.resultMaterial,
+  };
+  const testerDispatch = { role: 'Tester', occurrence: 1 };
+  const reviewerDispatch = { role: 'Reviewer', occurrence: 1 };
+  const verificationCapture = buildSpecialistAttestation({
+    kind: 'verification',
+    context: { ...clone(context), dispatch: { ...testerDispatch } },
+    result: { ...clone(binding), dispatch: { ...testerDispatch }, checks: clone(semantic.verification.checks) },
   });
-  const sourceRevisionIdentity = sha256(`source-revision:${label}`);
-  const definitionIdentity = sha256(`verification-definition:${label}`);
-  const checkBody = {
-    definitionIdentity,
-    outcome: 'passed',
-    evidenceIdentity: sha256(`verification-evidence:${label}`),
-  };
-  const check = { checkIdentity: sha256(canonicalJson(checkBody)), ...checkBody };
-  const verificationBody = {
-    type: 'verification-envelope',
-    version: 2,
-    target: clone(TARGET),
-    attemptIdentity: semantic.attemptIdentity,
-    sourceRevisionIdentity,
-    inspectedEvidenceHash: state.pending[0].evidenceHash,
-    resultIdentity: semantic.resultIdentity,
-    checks: [check],
-  };
-  const verification = {
-    ...verificationBody,
-    envelopeIdentity: sha256(canonicalJson(verificationBody)),
-  };
-  const basis = {
-    version: 1,
-    target: clone(TARGET),
-    expectation: { kind: 'governing-rule', identity: sha256(`review-expectation:${label}`) },
-    subjects: [TARGET.taskKey],
-    failureClass: 'review-rejection',
-    checkDefinitionIdentity: definitionIdentity,
-  };
-  const basisIdentity = sha256(canonicalJson(basis));
-  const observation = { kind: 'observed-evidence', identity: sha256(`review-observation:${label}`) };
-  const finding = {
-    version: 2,
-    findingIdentity: sha256(canonicalJson({ version: 2, basisIdentity, observation })),
-    basis,
-    basisIdentity,
-    observation,
-  };
-  const reviewBody = {
-    type: 'independent-review-envelope',
-    version: 2,
-    target: clone(TARGET),
-    attemptIdentity: semantic.attemptIdentity,
-    attemptOrdinal: state.overallUsed,
-    reviewOrdinal: 1,
-    reviewerAuthorityIdentity: sha256(`reviewer-authority:${label}`),
-    reviewInvocationIdentity: sha256(`review-invocation:${label}`),
-    sourceRevisionIdentity,
-    inspectedEvidenceHash: state.pending[0].evidenceHash,
-    resultIdentity: semantic.resultIdentity,
-    verificationEnvelopeIdentity: verification.envelopeIdentity,
-    verdict,
-    findings: accepted ? [] : [finding],
-  };
-  const review = { ...reviewBody, envelopeIdentity: sha256(canonicalJson(reviewBody)) };
-  semantic.verificationEnvelopeIdentity = verification.envelopeIdentity;
-  semantic.reviewEnvelopeIdentity = review.envelopeIdentity;
-  semantic.findingIdentities = accepted ? [] : [finding.findingIdentity];
-  const trustedCapture = (body, kind, authorityIdentity, invocationIdentity) => {
-    const bytes = Buffer.from(canonicalJson(body));
-    return {
-      target: clone(TARGET),
-      state: 'complete',
-      outcomeHash: sha256(bytes),
-      authority: { kind, authorityIdentity, invocationIdentity },
-      bytes: capturedBytesV1(bytes),
-    };
-  };
+  const reviewCapture = buildSpecialistAttestation({
+    kind: 'independent-review',
+    context: {
+      ...clone(context),
+      dispatch: { ...reviewerDispatch },
+      reviewOrdinal: 1,
+      verification: { capture: clone(verificationCapture), dispatch: { ...testerDispatch } },
+    },
+    result: {
+      ...clone(binding),
+      reviewOrdinal: 1,
+      dispatch: { ...reviewerDispatch },
+      verdict: semantic.review.verdict,
+      findings: clone(semantic.review.findings),
+    },
+  });
+  const verification = normalizeVerificationEnvelopeV2(verificationCapture);
+  const review = normalizeIndependentReviewEnvelopeV2(reviewCapture, verification);
   return {
     semantic,
     verification,
     review,
+    identities: {
+      attemptIdentity: verification.attemptIdentity,
+      resultIdentity: verification.resultIdentity,
+      verificationEnvelopeIdentity: verification.envelopeIdentity,
+      reviewEnvelopeIdentity: review.envelopeIdentity,
+      findingIdentities: review.findings.map((/** @type {Record<string, unknown>} */ finding) => finding.findingIdentity),
+    },
     streams: {
-      verification: [sealedCapture(TARGET, 'passed', [trustedCapture(
-        verification,
-        'verification',
-        sha256(`verification-authority:${label}`),
-        sha256(`verification-invocation:${label}`),
-      )])],
-      review: [sealedCapture(TARGET, verdict, [trustedCapture(
-        review,
-        'independent-review',
-        review.reviewerAuthorityIdentity,
-        review.reviewInvocationIdentity,
-      )])],
+      verification: [sealedCapture(target, 'passed', [verificationCapture])],
+      review: [sealedCapture(target, verdict, [reviewCapture])],
     },
   };
 }
@@ -1862,13 +1859,9 @@ function sealedRetentionInput(root, currentEvents, laneEvents, streams) {
 
 /** @param {Record<string, unknown>} state @param {Record<string, unknown>} fixture @param {string} root */
 function captureAdapter(state, fixture, root) {
-  const input = sealedTransportInput(sealedInspectionInput(root, {
-    policyMode: 'autonomous',
-    ...fixture.streams,
-  }));
   const adapter = createHostAdapter(sealedInitial({ state }));
   const captured = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
-    attemptResult: { input, result: fixture.semantic },
+    attemptResult: { input: sealedRecordInput(root), result: fixture.semantic },
   }));
   return { adapter, captured };
 }
@@ -1884,11 +1877,11 @@ nodeTest('real recovery trusted review rejection capture binds predecessor and e
     assert.equal(captured.session.acceptedRevision, 0);
     assert.equal(
       captured.session.pendingEffect.provisionalState.pendingCompletion.resultIdentity,
-      fixture.semantic.resultIdentity,
+      fixture.identities.resultIdentity,
     );
     assert.equal(
       captured.session.pendingEffect.provisionalState.pendingCompletion.reviewEnvelopeIdentity,
-      fixture.semantic.reviewEnvelopeIdentity,
+      fixture.identities.reviewEnvelopeIdentity,
     );
   });
 });
@@ -1912,10 +1905,7 @@ nodeTest('real recovery capture and finalize reject wrong result identity and pr
         }
         return { status: 'returned', value: response };
       }));
-      const input = sealedTransportInput(sealedInspectionInput(root, {
-        policyMode: 'autonomous',
-        ...fixture.streams,
-      }));
+      const input = sealedRecordInput(root);
       const result = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
         attemptResult: { input, result: fixture.semantic },
       }));
@@ -1978,7 +1968,7 @@ nodeTest('real recovery review rejection finalizes only with exact result identi
     assert.equal(settled.outcome, 'accepted');
     assert.equal(settled.reason, 'review-rejected');
     assert.equal(settled.session.acceptedRevision, 1);
-    assert.equal(settled.session.acceptedState.completed.at(-1).resultHash, fixture.semantic.resultIdentity);
+    assert.equal(settled.session.acceptedState.completed.at(-1).resultHash, fixture.identities.resultIdentity);
 
     for (const contradiction of ['result-identity', 'arbitrary-state', 'completed-flag']) {
       const contradictory = createHostAdapter(sealedInitial({ state }), sealedPorts((command, lowLevelRequest) => {
@@ -1994,12 +1984,8 @@ nodeTest('real recovery review rejection finalizes only with exact result identi
         }
         return { status: 'returned', value: response };
       }));
-      const captureInput = sealedTransportInput(sealedInspectionInput(root, {
-        policyMode: 'autonomous',
-        ...fixture.streams,
-      }));
       const contradictionCapture = contradictory.run(sealedRequest(contradictory, 'record-attempt-result', {
-        attemptResult: { input: captureInput, result: fixture.semantic },
+        attemptResult: { input: sealedRecordInput(root), result: fixture.semantic },
       }));
       const wrong = contradictory.run(sealedRequest(contradictory, 'settle-effect', {
         input: sealedRetentionInput(
@@ -2057,10 +2043,7 @@ function repeatedReviewProjectionFlow(root, mutate) {
       },
     },
   });
-  const captureInput = sealedTransportInput(sealedInspectionInput(root, {
-    policyMode: 'autonomous',
-    ...secondFixture.streams,
-  }));
+  const captureInput = sealedRecordInput(root);
   const secondCaptured = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
     attemptResult: { input: captureInput, result: secondFixture.semantic },
   }));
@@ -3242,14 +3225,10 @@ nodeTest('an outstanding real effect binds its derived receipt so only that rece
     const key = derivedCheckpointKey();
     const state = pendingState('autonomous');
     const fixture = sealedTrustedFixture(state, 'receipt-derivation');
-    const input = sealedTransportInput(sealedInspectionInput(root, {
-      policyMode: 'autonomous',
-      ...fixture.streams,
-    }));
     const store = createTemporaryCheckpointStore({ root });
     const worker = createHostAdapter(checkpointInitial({ state }), { checkpoint: store });
     const captured = worker.run(sealedRequest(worker, 'record-attempt-result', {
-      attemptResult: { input, result: fixture.semantic },
+      attemptResult: { input: sealedRecordInput(root), result: fixture.semantic },
     }));
     assert.equal(captured.outcome, 'effect-required');
     assert.equal(captured.effect.kind, 'completion-retention');
@@ -3257,7 +3236,7 @@ nodeTest('an outstanding real effect binds its derived receipt so only that rece
     const pending = captured.session.pendingEffect;
     const stored = readCheckpointRecord(root, key);
     assert.equal(stored.inFlight.expectedEffectIdentity, pending.effectIdentity);
-    assert.equal(stored.inFlight.expectedReceiptIdentity, fixture.semantic.resultIdentity);
+    assert.equal(stored.inFlight.expectedReceiptIdentity, fixture.identities.resultIdentity);
     assert.equal(stored.acceptedStateBytes, canonicalJson(state));
     assert.equal(stored.acceptedRevision, 0);
 
@@ -3287,7 +3266,7 @@ nodeTest('an outstanding real effect binds its derived receipt so only that rece
       assert.equal(held.acceptedRevision, 0, label);
     }
 
-    const resumed = resumeWithReceipt(fixture.semantic.resultIdentity);
+    const resumed = resumeWithReceipt(fixture.identities.resultIdentity);
     assert.equal(resumed.outcome, 'resumed');
     const snapshot = resumed.adapter.snapshot();
     assert.equal(snapshot.acceptedStateBytes, canonicalJson(pending.provisionalState));
@@ -3710,10 +3689,7 @@ function sealedAcceptedCompletion(root, make) {
   const adapter = make(sealedInitial({ state }));
   const captured = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
     attemptResult: {
-      input: sealedTransportInput(sealedInspectionInput(root, {
-        policyMode: 'autonomous',
-        ...fixture.streams,
-      })),
+      input: sealedRecordInput(root),
       result: fixture.semantic,
     },
   }));
@@ -3778,6 +3754,383 @@ nodeTest('the closed lane routes carry one Lightweight completion from permit th
     assert.equal(committed.product.kind, 'lane-settlement');
     assert.equal(committed.product.terminalEvidenceIdentity, receipt.receiptHash);
     assert.equal(canonicalJson(committed.session.acceptedState), canonicalJson(acceptedState));
+  });
+});
+
+/** @param {Record<string, unknown>} entry */
+function sealedStreamCapture(entry) {
+  return JSON.parse(Buffer.from(entry.bytes).toString('utf8')).records[0].substantive;
+}
+
+nodeTest('one autonomous close runs from actual specialist results through the production builder', () => {
+  withSealedWorkspace((root) => {
+    writeSealedTaskState(root);
+    const state = pendingState('autonomous');
+    // The request carries only what the dispatched Tester and Reviewer returned.
+    const result = specialistResult('production-close', 'accepted');
+    /** @type {Record<string, unknown>|null} */
+    let injected = null;
+    const adapter = createHostAdapter(sealedInitial({ state }), sealedPorts((command, lowLevelRequest) => {
+      if (lowLevelRequest.mode === 'capture') {
+        injected = {
+          verification: lowLevelRequest.input.verification
+            .map((/** @type {Record<string, unknown>} */ entry) => ({
+              ...clone(entry),
+              bytes: Buffer.from(entry.bytes.base64, 'base64'),
+            })),
+          review: lowLevelRequest.input.review.map((/** @type {Record<string, unknown>} */ entry) => ({
+            ...clone(entry),
+            bytes: Buffer.from(entry.bytes.base64, 'base64'),
+          })),
+        };
+      }
+      return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+    }));
+    const captured = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
+      attemptResult: { input: sealedRecordInput(root), result },
+    }));
+    assert.equal(captured.outcome, 'effect-required', captured.reason);
+    assert.ok(injected, 'host integration supplied its own trusted capture stream');
+
+    // Every trusted identity the flow consumed is the builder's own output, and
+    // review is bound to the exact verification capture the builder returned.
+    const verification = normalizeVerificationEnvelopeV2(sealedStreamCapture(injected.verification[0]));
+    const review = normalizeIndependentReviewEnvelopeV2(
+      sealedStreamCapture(injected.review[0]),
+      verification,
+    );
+    const pendingCompletion = captured.session.pendingEffect.provisionalState.pendingCompletion;
+    assert.equal(review.verificationEnvelopeIdentity, verification.envelopeIdentity);
+    assert.equal(pendingCompletion.verificationEnvelopeIdentity, verification.envelopeIdentity);
+    assert.equal(pendingCompletion.reviewEnvelopeIdentity, review.envelopeIdentity);
+    assert.equal(pendingCompletion.attemptIdentity, verification.attemptIdentity);
+    assert.equal(pendingCompletion.resultIdentity, verification.resultIdentity);
+    assert.equal(review.verdict, 'accepted');
+    assert.deepEqual(review.findings, []);
+    assert.equal(verification.checks.length, 1);
+    assert.equal(verification.checks[0].outcome, 'passed');
+    assert.equal(verification.inspectedEvidenceHash, state.pending[0].evidenceHash);
+    assert.equal(review.attemptOrdinal, state.overallUsed);
+
+    const events = captured.effect.projectionBatch.events;
+    const settled = adapter.run(sealedRequest(adapter, 'settle-effect', {
+      input: sealedRetentionInput(root, events, events, injected),
+    }));
+    assert.equal(settled.outcome, 'accepted', settled.reason);
+    assert.equal(settled.reason, 'completed');
+    const acceptedState = settled.session.acceptedState;
+    assert.equal(acceptedState.completed.at(-1).resultHash, verification.resultIdentity);
+
+    const binding = sealedLaneBinding(root);
+    const laneInput = () => sealedTransportInput(sealedInspectionInput(root, {
+      policyMode: 'autonomous',
+      currentRun: [sealedCapture(TARGET, 'failed', events.map((/** @type {Record<string, unknown>} */ event) => ({ event })))],
+      .../** @type {Record<string, unknown>} */ (injected),
+    }));
+    const audited = adapter.run(sealedRequest(adapter, 'audit-run', { audit: { input: laneInput() } }));
+    assert.equal(audited.outcome, 'accepted', audited.reason);
+    const issued = adapter.run(sealedRequest(adapter, 'authorize-lane-effect', {
+      laneEffect: {
+        input: laneInput(),
+        mutation: clone(LANE_MUTATION),
+        lanePrestate: binding.lanePrestate,
+        targetMapping: binding.targetMapping,
+      },
+    }));
+    assert.equal(issued.outcome, 'accepted', issued.reason);
+    const applied = adapter.run(sealedRequest(adapter, 'apply-lane-effect', {
+      laneApplication: { ...binding.application, permit: clone(issued.product.permit) },
+    }));
+    assert.equal(applied.outcome, 'accepted', applied.reason);
+    const committed = adapter.run(sealedRequest(adapter, 'commit-lane-receipt', {
+      laneReceipt: {
+        input: laneInput(),
+        permit: clone(issued.product.permit),
+        receipt: clone(applied.product.receipt),
+      },
+    }));
+    assert.equal(committed.outcome, 'accepted', committed.reason);
+    assert.equal(committed.reason, 'lane-receipt-committed');
+    assert.match(fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'), new RegExp(`- \\[x\\] ${TARGET.taskKey}`));
+  });
+});
+
+nodeTest('an ordinary autonomous request cannot select, author, or override the trusted attestation', () => {
+  withSealedWorkspace((root) => {
+    const state = pendingState('autonomous');
+    const fixture = sealedTrustedFixture(state, 'no-caller-authority', 'accepted');
+    const semantic = /** @type {Record<string, unknown>} */ (fixture.semantic);
+    const verification = /** @type {Record<string, unknown>} */ (semantic.verification);
+    const review = /** @type {Record<string, unknown>} */ (semantic.review);
+    /** @param {Record<string, unknown>[]} entries */
+    const transportStream = (entries) => entries.map((entry) => ({
+      target: clone(entry.target),
+      state: entry.state,
+      outcomeHash: entry.outcomeHash,
+      bytes: { base64: Buffer.from(/** @type {Buffer} */ (entry.bytes)).toString('base64') },
+    }));
+
+    /** @type {[string, Record<string, unknown>, RegExp][]} */
+    const refusals = [
+      // No verification-capture choice: neither trusted stream is an admitted request field.
+      ['selects a verification capture', {
+        input: { ...sealedRecordInput(root), verification: transportStream(fixture.streams.verification) },
+        result: semantic,
+      }, /must not select the 'verification' trusted capture/],
+      ['selects a review capture', {
+        input: { ...sealedRecordInput(root), review: transportStream(fixture.streams.review) },
+        result: semantic,
+      }, /must not select the 'review' trusted capture/],
+      // No caller-precomputed trusted identity.
+      ['authors an attempt identity', {
+        input: sealedRecordInput(root),
+        result: { ...semantic, attemptIdentity: fixture.identities.attemptIdentity },
+      }, /contains unknown field 'attemptIdentity'/],
+      ['authors a result identity', {
+        input: sealedRecordInput(root),
+        result: { ...semantic, resultIdentity: fixture.identities.resultIdentity },
+      }, /contains unknown field 'resultIdentity'/],
+      ['authors a verification envelope identity', {
+        input: sealedRecordInput(root),
+        result: { ...semantic, verificationEnvelopeIdentity: fixture.identities.verificationEnvelopeIdentity },
+      }, /contains unknown field 'verificationEnvelopeIdentity'/],
+      ['authors a review envelope identity', {
+        input: sealedRecordInput(root),
+        result: { ...semantic, reviewEnvelopeIdentity: fixture.identities.reviewEnvelopeIdentity },
+      }, /contains unknown field 'reviewEnvelopeIdentity'/],
+      ['authors finding identities', {
+        input: sealedRecordInput(root),
+        result: { ...semantic, findingIdentities: [] },
+      }, /contains unknown field 'findingIdentities'/],
+      // No caller-supplied dispatch, chronology, or source-revision context.
+      ['authors Tester dispatch context', {
+        input: sealedRecordInput(root),
+        result: { ...semantic, verification: { ...verification, dispatch: { role: 'Tester', occurrence: 1 } } },
+      }, /contains unknown field 'dispatch'/],
+      ['authors a source revision', {
+        input: sealedRecordInput(root),
+        result: { ...semantic, verification: { ...verification, sourceRevision: 'git:forged' } },
+      }, /contains unknown field 'sourceRevision'/],
+      ['authors a review ordinal', {
+        input: sealedRecordInput(root),
+        result: { ...semantic, review: { ...review, reviewOrdinal: 1 } },
+      }, /contains unknown field 'reviewOrdinal'/],
+      // No separate semantic override beside the sole specialist result.
+      ['overrides the verification outcome', {
+        input: sealedRecordInput(root),
+        result: { ...semantic, checks: { verification: 'passed', lint: 'none', review: 'none' } },
+      }, /contains unknown field 'verification'/],
+    ];
+
+    for (const [label, attemptResult, message] of refusals) {
+      let runtimeInvocations = 0;
+      const adapter = createHostAdapter(sealedInitial({ state }), sealedPorts((command, lowLevelRequest) => {
+        runtimeInvocations += 1;
+        return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+      }));
+      const request = sealedRequest(adapter, 'record-attempt-result', { attemptResult });
+      assert.throws(() => validateHostAdapterRequest(request, state), message, label);
+      const refused = adapter.run(request);
+      assert.equal(refused.outcome, 'closed-refusal', label);
+      assert.equal(refused.incidentClass, 'malformed-request', label);
+      assert.equal(refused.session.acceptedStateBytes, canonicalJson(state), label);
+      assert.equal(refused.session.acceptedRevision, 0, label);
+      // No trusted capture, completion, or effect was authorized.
+      assert.equal(refused.session.pendingEffect, null, label);
+      assert.equal(runtimeInvocations, 0, label);
+    }
+  });
+});
+
+nodeTest('an ordinary autonomous request cannot choose a low-level capture or finalize route', () => {
+  withSealedWorkspace((root) => {
+    const state = pendingState('autonomous');
+    /** @param {ReturnType<typeof createHostAdapter>} adapter */
+    const ordinaryRequest = (adapter) => sealedRequest(adapter, 'record-attempt-result', {
+      attemptResult: { input: sealedRecordInput(root), result: specialistResult('no-low-level-route') },
+    });
+    for (const reserved of ['route', 'mode', 'command', 'transition']) {
+      const adapter = createHostAdapter(sealedInitial({ state }));
+      const request = { ...ordinaryRequest(adapter), [reserved]: 'capture' };
+      assert.throws(
+        () => validateHostAdapterRequest(request, state),
+        new RegExp(`must not select the low-level '${reserved}'`),
+      );
+      const refused = adapter.run(request);
+      assert.equal(refused.outcome, 'closed-refusal', reserved);
+      assert.equal(refused.incidentClass, 'malformed-request', reserved);
+      assert.equal(refused.session.acceptedStateBytes, canonicalJson(state), reserved);
+    }
+    const adapter = createHostAdapter(sealedInitial({ state }));
+    for (const lowLevel of ['complete', 'complete.capture', 'complete.finalize']) {
+      assert.throws(
+        () => validateHostAdapterRequest({ ...ordinaryRequest(adapter), operation: lowLevel }, state),
+        /HostAdapterRequest.operation must be one of/,
+        lowLevel,
+      );
+    }
+  });
+});
+
+nodeTest('a sole specialist result the builder refuses stops before any trusted capture', () => {
+  withSealedWorkspace((root) => {
+    const state = pendingState('autonomous');
+    const base = specialistResult('builder-refusal', 'accepted');
+    const definition = 'focused check:builder-refusal';
+    /** @param {Record<string, unknown>} row */
+    const finding = (checkDefinition, observation) => ({
+      basis: {
+        expectation: { kind: 'governing-rule', reference: 'governing rule:builder-refusal' },
+        subjects: [TARGET.taskKey],
+        failureClass: 'review-rejection',
+        checkDefinition,
+      },
+      observation,
+    });
+    const passing = { definition, outcome: 'passed', evidence: 'check evidence:builder-refusal' };
+
+    /** @type {[string, Record<string, unknown>][]} */
+    const refusals = [
+      ['byte-identical duplicate checks', { ...base, verification: { checks: [passing, { ...passing }] } }],
+      ['conflicting duplicate checks', { ...base, verification: { checks: [passing, { ...passing, outcome: 'failed' }] } }],
+      ['malformed check outcome', { ...base, verification: { checks: [{ ...passing, outcome: 'maybe' }] } }],
+      ['incomplete check set', { ...base, verification: { checks: [] } }],
+      ['accepted verdict carrying findings', {
+        ...base,
+        review: { verdict: 'accepted', findings: [finding(definition, { kind: 'observed-evidence', evidence: 'o' })] },
+      }],
+      ['rejected verdict without findings', { ...base, review: { verdict: 'rejected', findings: [] } }],
+      ['finding bound to an absent check', {
+        ...base,
+        review: { verdict: 'rejected', findings: [finding('absent check', { kind: 'check-result' })] },
+      }],
+    ];
+
+    for (const [label, result] of refusals) {
+      let runtimeInvocations = 0;
+      const adapter = createHostAdapter(sealedInitial({ state }), sealedPorts((command, lowLevelRequest) => {
+        runtimeInvocations += 1;
+        return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+      }));
+      const refused = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
+        attemptResult: { input: sealedRecordInput(root), result },
+      }));
+      assert.equal(refused.outcome, 'hard-stop', label);
+      assert.equal(refused.reason, 'attempt-result-contract-mismatch', label);
+      // The refusal precedes the low-level route, so no capture, completion,
+      // effect, permit, receipt, or close authority can exist.
+      assert.equal(runtimeInvocations, 0, label);
+      assert.equal(refused.session.pendingEffect, null, label);
+      assert.equal(refused.session.acceptedStateBytes, canonicalJson(state), label);
+      assert.equal(refused.session.acceptedRevision, 0, label);
+    }
+  });
+});
+
+nodeTest('a pending definition reconciliation refuses autonomous attestation with its own truthful reason', () => {
+  withSealedWorkspace((root) => {
+    const packageRoot = TARGET.specPath.slice(0, -'spec.md'.length);
+    const canonicalKey = canonicalJson(canonicalTarget(TARGET));
+    const state = {
+      policy: { overall: 3, recovery: 1, recover: true, untilBlocked: false, mode: 'autonomous' },
+      overallUsed: 1,
+      recoveryUsed: [{ targetKey: canonicalKey, targetHash: sha256(canonicalKey), count: 1 }],
+      pending: [{
+        target: clone(TARGET),
+        evidenceHash: sha256('authorization-evidence'),
+        // The proposal-bound approach this action authorizes against.
+        approachHash: sha256('definition-revision-proposal'),
+        action: 'reconcile-derived-definition',
+        materialInputs: {
+          targets: [
+            '.dude/ideas/autonomous-runstate-continuity.md',
+            `${packageRoot}plan.md`,
+            `${packageRoot}spec.md`,
+            `${packageRoot}tasks.md`,
+          ],
+          operations: ['reconcile-derived-definition'],
+          checks: ['lint', 'review', 'verification'],
+        },
+        mode: 'recovery',
+      }],
+      completed: [],
+    };
+    validateRunState(state);
+
+    let runtimeInvocations = 0;
+    const adapter = createHostAdapter(sealedInitial({ state }), sealedPorts((command, lowLevelRequest) => {
+      runtimeInvocations += 1;
+      return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+    }));
+    const refused = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
+      attemptResult: {
+        input: sealedRecordInput(root),
+        result: specialistResult('definition-reconciliation', 'accepted'),
+      },
+    }));
+
+    assert.equal(refused.outcome, 'hard-stop');
+    // The reason names the actual condition, not a learning governance conflict.
+    assert.equal(refused.reason, 'definition-reconciliation-attestation-unsupported');
+    assert.equal(refused.session.disposition, 'definition-reconciliation-attestation-unsupported');
+    assert.equal(runtimeInvocations, 0);
+    assert.equal(refused.session.pendingEffect, null);
+    assert.equal(refused.session.acceptedStateBytes, canonicalJson(state));
+    assert.equal(refused.session.acceptedRevision, 0);
+  });
+});
+
+nodeTest('a failed Tester check reaches the production path as a failed verification source state', () => {
+  withSealedWorkspace((root) => {
+    const state = pendingState('autonomous');
+    const base = specialistResult('failed-verification', 'accepted');
+    const result = {
+      ...base,
+      outcome: 'failed',
+      verification: {
+        checks: [{
+          definition: 'focused check:failed-verification',
+          outcome: 'failed',
+          evidence: 'check evidence:failed-verification',
+        }],
+      },
+    };
+    /** @type {Record<string, unknown>|null} */
+    let injected = null;
+    const adapter = createHostAdapter(sealedInitial({ state }), sealedPorts((command, lowLevelRequest) => {
+      if (lowLevelRequest.mode === 'capture') injected = clone(lowLevelRequest.input);
+      return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+    }));
+    const captured = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
+      attemptResult: { input: sealedRecordInput(root), result },
+    }));
+
+    assert.equal(captured.outcome, 'effect-required', captured.reason);
+    assert.ok(injected, 'host integration supplied its own trusted capture stream');
+    // The failed disposition of the sole Tester check drives the stream state.
+    assert.equal(/** @type {Record<string, unknown>} */ (injected).verification[0].state, 'failed');
+    assert.equal(/** @type {Record<string, unknown>} */ (injected).review[0].state, 'accepted');
+    const approach = captured.effect.projectionBatch.events[0];
+    assert.equal(approach.occurrence.disposition, 'verification-failed');
+
+    const events = captured.effect.projectionBatch.events;
+    const streams = {
+      verification: /** @type {Record<string, unknown>} */ (injected).verification
+        .map((/** @type {Record<string, unknown>} */ entry) => ({
+          ...clone(entry),
+          bytes: Buffer.from(entry.bytes.base64, 'base64'),
+        })),
+      review: /** @type {Record<string, unknown>} */ (injected).review
+        .map((/** @type {Record<string, unknown>} */ entry) => ({
+          ...clone(entry),
+          bytes: Buffer.from(entry.bytes.base64, 'base64'),
+        })),
+    };
+    const settled = adapter.run(sealedRequest(adapter, 'settle-effect', {
+      input: sealedRetentionInput(root, events, events, streams),
+    }));
+    assert.equal(settled.outcome, 'accepted', settled.reason);
+    assert.equal(settled.reason, 'verification-failed');
   });
 });
 
@@ -4774,7 +5127,7 @@ nodeTest('every semantic operation reaches its documented owner and only apply r
       ...fixture.streams,
     }));
     const captured = route(laneAdapter, 'record-attempt-result', {
-      attemptResult: { input: captureInput(), result: fixture.semantic },
+      attemptResult: { input: sealedRecordInput(root), result: fixture.semantic },
     });
     assert.equal(captured.outcome, 'effect-required', captured.reason);
     const events = captured.effect.projectionBatch.events;
@@ -4908,10 +5261,7 @@ nodeTest('one unsettled effect blocks every operation that requires settled auth
     });
     const captured = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
       attemptResult: {
-        input: sealedTransportInput(sealedInspectionInput(root, {
-          policyMode: 'autonomous',
-          ...fixture.streams,
-        })),
+        input: sealedRecordInput(root),
         result: fixture.semantic,
       },
     }));
@@ -5094,10 +5444,7 @@ nodeTest('every governance action, both settlement branches, and an unpermitted 
     const adapter = createHostAdapter(sealedInitial({ state }), recordingRuntime('completion'));
     const captured = route(adapter, 'record-attempt-result', 'record-attempt-result', {
       attemptResult: {
-        input: sealedTransportInput(sealedInspectionInput(root, {
-          policyMode: 'autonomous',
-          ...fixture.streams,
-        })),
+        input: sealedRecordInput(root),
         result: fixture.semantic,
       },
     });

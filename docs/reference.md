@@ -258,6 +258,14 @@ from that path. The bridge is the single narrow exception and carries one
 ordinary accepted completion; every other permit, close, and governance boundary
 is unchanged.
 
+Autonomous attestation is cooperative, not cryptographic. The adapter builds
+both trusted captures from the sole Tester and Reviewer results returned by
+their actual dispatches, using target, attempt, source-revision, dispatch, and
+chronology facts it derives from accepted state. A request cannot supply a
+trusted identity, a semantic override, a dispatch fact, a verification capture,
+or a low-level route. What that records is a cooperative assertion: nothing
+detects a change made to a result before it reaches the boundary.
+
 When the host adapter corrects a host incident automatically it reports one
 typed inline notice: the incident class, the preserved accepted state, and the
 resumed operation. That notice renders exactly once, on the first successful

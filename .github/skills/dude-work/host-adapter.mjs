@@ -14,6 +14,8 @@ import {
   completeAttempt,
   buildGovernanceEventV1,
   deriveGovernanceRuntimeRequestV1,
+  normalizeIndependentReviewEnvelopeV2,
+  normalizeVerificationEnvelopeV2,
   runCommand as runRecoveryCommand,
   sha256,
   validateAssessment,
@@ -28,6 +30,7 @@ import {
   validateTarget,
   targetKey,
 } from './recovery.mjs';
+import { buildSpecialistAttestation } from './specialist-attestation.mjs';
 
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 // Closed semantic operations. Ordinary callers never name a low-level route or
@@ -322,24 +325,15 @@ function validateAttemptResult(value, label) {
     enumeration(checks.review, ['none', 'accepted', 'rejected'], `${label}.checks.review`);
     return 'guarded';
   }
-  const result = exactRecord(value, [
-    'attemptIdentity', 'outcome', 'operations', 'changedTargets', 'resultIdentity',
-    'verificationEnvelopeIdentity', 'reviewEnvelopeIdentity', 'findingIdentities',
-  ], [], label);
-  for (const field of ['attemptIdentity', 'resultIdentity', 'verificationEnvelopeIdentity', 'reviewEnvelopeIdentity']) {
-    hash(result[field], `${label}.${field}`);
-  }
+  // The autonomous request carries the sole structured Tester and Reviewer
+  // results only. Every trusted identity, dispatch fact, and capture is derived
+  // by host integration from accepted state, so naming one here is unknown.
+  const result = exactRecord(value, ['outcome', 'operations', 'changedTargets', 'verification', 'review'], [], label);
   enumeration(result.outcome, OUTCOMES, `${label}.outcome`);
   sortedStrings(result.operations, `${label}.operations`, false);
   sortedStrings(result.changedTargets, `${label}.changedTargets`);
-  const findings = denseArray(result.findingIdentities, `${label}.findingIdentities`);
-  if (findings.length > 16) invalid(`${label}.findingIdentities`, 'must contain at most 16 rows');
-  let previous = null;
-  findings.forEach((identity, index) => {
-    hash(identity, `${label}.findingIdentities[${index}]`);
-    if (previous !== null && previous >= identity) invalid(`${label}.findingIdentities`, 'must be sorted and duplicate-free');
-    previous = /** @type {string} */ (identity);
-  });
+  exactRecord(result.verification, ['checks'], [], `${label}.verification`);
+  exactRecord(result.review, ['verdict', 'findings'], [], `${label}.review`);
   return 'trusted';
 }
 
@@ -612,7 +606,14 @@ export function validateHostAdapterRequest(value, stateValue) {
     }
   } else if (request.operation === 'record-attempt-result') {
     const attempt = exactRecord(request.attemptResult, ['input', 'result'], [], 'HostAdapterRequest.attemptResult');
-    validateAttemptResult(attempt.result, 'HostAdapterRequest.attemptResult.result');
+    if (validateAttemptResult(attempt.result, 'HostAdapterRequest.attemptResult.result') === 'trusted') {
+      const input = record(attempt.input, 'HostAdapterRequest.attemptResult.input');
+      for (const stream of ['verification', 'review']) {
+        if (Object.hasOwn(input, stream)) {
+          invalid('HostAdapterRequest.attemptResult.input', `must not select the '${stream}' trusted capture`);
+        }
+      }
+    }
   } else if (request.operation === 'advance-governance') {
     if (stateValue === undefined) invalid('HostAdapterRequest.governance', 'requires the current accepted RunState');
     deriveGovernanceRuntimeRequestV1(stateValue, request.governance);
@@ -1198,8 +1199,8 @@ function handleLegacyCompletion(session, response, completionInput) {
   return acceptState(session, successor.state, /** @type {string} */ (completion.reason));
 }
 
-/** @param {Record<string, unknown>} session @param {Record<string, unknown>} semanticResult @param {unknown} response */
-function handleTrustedCapture(session, semanticResult, response) {
+/** @param {Record<string, unknown>} session @param {Record<string, unknown>} trusted @param {unknown} response */
+function handleTrustedCapture(session, trusted, response) {
   const top = exactRecord(response, ['inspection', 'completion'], [], 'recovery trusted capture response');
   const inspection = requireSessionInspection(
     /** @type {Record<string, unknown>} */ (top.inspection),
@@ -1228,11 +1229,11 @@ function handleTrustedCapture(session, semanticResult, response) {
   delete predecessor.pendingCompletion;
   if (canonicalJson(predecessor) !== session.acceptedStateBytes
     || canonicalJson(pendingCompletion.target) !== canonicalJson(session.target)
-    || pendingCompletion.attemptIdentity !== semanticResult.attemptIdentity
-    || pendingCompletion.resultIdentity !== semanticResult.resultIdentity
-    || pendingCompletion.verificationEnvelopeIdentity !== semanticResult.verificationEnvelopeIdentity
-    || pendingCompletion.reviewEnvelopeIdentity !== semanticResult.reviewEnvelopeIdentity
-    || canonicalJson(pendingCompletion.findingIdentities) !== canonicalJson(semanticResult.findingIdentities)
+    || pendingCompletion.attemptIdentity !== trusted.attemptIdentity
+    || pendingCompletion.resultIdentity !== trusted.resultIdentity
+    || pendingCompletion.verificationEnvelopeIdentity !== trusted.verificationEnvelopeIdentity
+    || pendingCompletion.reviewEnvelopeIdentity !== trusted.reviewEnvelopeIdentity
+    || canonicalJson(pendingCompletion.findingIdentities) !== canonicalJson(trusted.findingIdentities)
     || pendingCompletion.capturedInspectionIdentity !== sha256(canonicalJson(inspection))) {
     return hardStop(session, 'trusted-capture-binding-mismatch');
   }
@@ -1254,22 +1255,22 @@ function handleTrustedCapture(session, semanticResult, response) {
         record(event, `recovery trusted capture response finding event[${index}]`).occurrence,
         `recovery trusted capture response finding occurrence[${index}]`,
       );
-      if (findingOccurrence.reviewEnvelopeIdentity !== semanticResult.reviewEnvelopeIdentity) {
+      if (findingOccurrence.reviewEnvelopeIdentity !== trusted.reviewEnvelopeIdentity) {
         invalid('recovery trusted capture response finding event', 'must bind the exact review envelope');
       }
       return findingOccurrence.findingIdentity;
     });
-    if (occurrence.attemptIdentity !== semanticResult.attemptIdentity
-      || occurrence.resultIdentity !== semanticResult.resultIdentity
+    if (occurrence.attemptIdentity !== trusted.attemptIdentity
+      || occurrence.resultIdentity !== trusted.resultIdentity
       || occurrence.authorizationEvidenceHash !== pending.evidenceHash
       || chronology.attemptOrdinal !== session.acceptedState.overallUsed
       || canonicalJson(approach.target) !== canonicalJson(session.target)
       || canonicalJson(basis.target) !== canonicalJson(session.target)
       || basis.action !== pending.action
       || canonicalJson(basis.materialInputs) !== canonicalJson(pending.materialInputs)
-      || approach.verificationEnvelopeIdentity !== semanticResult.verificationEnvelopeIdentity
-      || approach.reviewEnvelopeIdentity !== semanticResult.reviewEnvelopeIdentity
-      || canonicalJson(findings) !== canonicalJson(semanticResult.findingIdentities)) {
+      || approach.verificationEnvelopeIdentity !== trusted.verificationEnvelopeIdentity
+      || approach.reviewEnvelopeIdentity !== trusted.reviewEnvelopeIdentity
+      || canonicalJson(findings) !== canonicalJson(trusted.findingIdentities)) {
       invalid('recovery trusted capture response projectionBatch', 'must bind the exact trusted result identities');
     }
     effect = pendingEffect(session, successor.state, batch, 'completion-retention', 'record-attempt-result');
@@ -1277,6 +1278,124 @@ function handleTrustedCapture(session, semanticResult, response) {
     return hardStop(session, 'effect-contract-mismatch');
   }
   return effectRequired({ ...session, pendingEffect: effect }, 'occurrence-retention-required');
+}
+
+/**
+ * Present one builder-produced capture as the trusted source stream the
+ * unchanged recovery routes read. The caller never names or selects it.
+ * @param {Record<string, unknown>} target @param {string} state @param {Record<string, unknown>} capture
+ */
+function trustedCaptureStream(target, state, capture) {
+  const records = [capture];
+  const body = canonicalJson({ target, state, records: records.map((substantive) => ({ substantive })) });
+  return [{
+    target: clone(target),
+    state,
+    outcomeHash: sha256(canonicalJson({ target, state, records })),
+    bytes: { base64: Buffer.from(body).toString('base64') },
+  }];
+}
+
+/**
+ * Build both cooperative specialist attestations for one recorded attempt. Every
+ * authoritative fact — target, attempt, source revision, dispatch, and chronology
+ * — comes from accepted host state, and the exact verification capture this
+ * boundary just produced is what review construction receives.
+ * @param {Record<string, unknown>} state @param {Record<string, unknown>} pending
+ * @param {Record<string, unknown>} semanticResult
+ */
+function specialistAttestation(state, pending, semanticResult) {
+  const target = clone(canonicalTarget(pending.target));
+  const attemptOrdinal = /** @type {number} */ (state.overallUsed);
+  // The authorizing Inspection evidence is the host-owned identity of the source
+  // revision both specialists were dispatched against.
+  const inspectedEvidenceHash = /** @type {string} */ (pending.evidenceHash);
+  const context = {
+    target,
+    attempt: {
+      ordinal: attemptOrdinal,
+      authorizationEvidenceHash: inspectedEvidenceHash,
+      approachBasis: {
+        version: 1,
+        target: clone(target),
+        action: pending.action,
+        materialInputs: clone(pending.materialInputs),
+        mechanismIdentities: [],
+        assumptionIdentities: [],
+        evidenceAcquisitionIdentities: [],
+        validationPlanIdentities: [],
+      },
+    },
+    sourceRevision: inspectedEvidenceHash,
+    inspectedEvidenceHash,
+    resultMaterial: canonicalJson({
+      version: 1,
+      target,
+      attemptOrdinal,
+      authorizationEvidenceHash: inspectedEvidenceHash,
+      outcome: semanticResult.outcome,
+      operations: semanticResult.operations,
+      changedTargets: semanticResult.changedTargets,
+    }),
+  };
+  const binding = {
+    target: clone(target),
+    attemptOrdinal,
+    sourceRevision: context.sourceRevision,
+    inspectedEvidenceHash,
+    resultMaterial: context.resultMaterial,
+  };
+  const testerDispatch = { role: 'Tester', occurrence: 1 };
+  const reviewerDispatch = { role: 'Reviewer', occurrence: 1 };
+  const reviewOrdinal = 1;
+  const verification = /** @type {Record<string, unknown>} */ (semanticResult.verification);
+  const review = /** @type {Record<string, unknown>} */ (semanticResult.review);
+  const verificationCapture = /** @type {Record<string, unknown>} */ (buildSpecialistAttestation({
+    kind: 'verification',
+    context: { ...clone(context), dispatch: { ...testerDispatch } },
+    result: { ...clone(binding), dispatch: { ...testerDispatch }, checks: verification.checks },
+  }));
+  const reviewCapture = buildSpecialistAttestation({
+    kind: 'independent-review',
+    context: {
+      ...clone(context),
+      dispatch: { ...reviewerDispatch },
+      reviewOrdinal,
+      verification: { capture: verificationCapture, dispatch: { ...testerDispatch } },
+    },
+    result: {
+      ...clone(binding),
+      reviewOrdinal,
+      dispatch: { ...reviewerDispatch },
+      verdict: review.verdict,
+      findings: review.findings,
+    },
+  });
+  const verificationEnvelope = /** @type {Record<string, unknown>} */ (
+    normalizeVerificationEnvelopeV2(verificationCapture)
+  );
+  const reviewEnvelope = /** @type {Record<string, unknown>} */ (
+    normalizeIndependentReviewEnvelopeV2(reviewCapture, verificationEnvelope)
+  );
+  const checks = /** @type {Record<string, unknown>[]} */ (verificationEnvelope.checks);
+  return {
+    trusted: {
+      attemptIdentity: verificationEnvelope.attemptIdentity,
+      resultIdentity: verificationEnvelope.resultIdentity,
+      verificationEnvelopeIdentity: verificationEnvelope.envelopeIdentity,
+      reviewEnvelopeIdentity: reviewEnvelope.envelopeIdentity,
+      findingIdentities: /** @type {Record<string, unknown>[]} */ (reviewEnvelope.findings)
+        .map((finding) => finding.findingIdentity),
+    },
+    streams: {
+      verification: trustedCaptureStream(
+        target,
+        checks.some((check) => check.outcome === 'failed') ? 'failed' : 'passed',
+        verificationCapture,
+      ),
+      review: trustedCaptureStream(target, /** @type {string} */ (reviewEnvelope.verdict), reviewCapture),
+    },
+  };
 }
 
 /** @param {Record<string, unknown>} session @param {Record<string, unknown>} request @param {(command:string, request:unknown)=>unknown} invoke */
@@ -1296,11 +1415,30 @@ function recordAttemptResult(session, request, invoke) {
   const target = clone(pending.target);
   const route = completionRoute(pending);
   if (policy.mode === 'autonomous') {
-    const completion = { version: 2, target, route, ...clone(semanticResult) };
-    return handleTrustedCapture(session, semanticResult, invoke('complete', {
+    // Autonomous attestation derives only the plain ordinary approach basis, so
+    // it cannot reach this action's proposal-bound basis. Refuse before capture.
+    if (pending.action === 'reconcile-derived-definition') {
+      return hardStop(session, 'definition-reconciliation-attestation-unsupported');
+    }
+    let attestation;
+    try {
+      attestation = specialistAttestation(state, pending, semanticResult);
+    } catch {
+      return hardStop(session, 'attempt-result-contract-mismatch');
+    }
+    const completion = {
+      version: 2,
+      target,
+      route,
+      outcome: semanticResult.outcome,
+      operations: clone(semanticResult.operations),
+      changedTargets: clone(semanticResult.changedTargets),
+      ...attestation.trusted,
+    };
+    return handleTrustedCapture(session, attestation.trusted, invoke('complete', {
         mode: 'capture',
         state: JSON.parse(/** @type {string} */ (session.acceptedStateBytes)),
-        input: attempt.input,
+        input: { .../** @type {Record<string, unknown>} */ (attempt.input), ...attestation.streams },
         completion,
     }));
   }

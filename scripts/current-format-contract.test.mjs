@@ -3675,6 +3675,7 @@ test('T005 automatic redefinition adds no action, command, or persistence surfac
 
 const ADAPTER_OWNER = 'src/skills/dude-work/SKILL.md';
 const ADAPTER_SOURCE = 'src/skills/dude-work/host-adapter.mjs';
+const ATTESTATION_SOURCE = 'src/skills/dude-work/specialist-attestation.mjs';
 const ADAPTER_BOUNDARY_SECTION = '## Host Adapter Runtime Boundary';
 const ADAPTER_CONTINUITY_SECTION = '## Supervisor And Worker Continuity';
 const ADAPTER_INCIDENT_SECTION = '## Host Incidents And Recovery Notice';
@@ -3705,6 +3706,7 @@ const ADAPTER_DETAIL_MARKERS = [
   ['checkpoint prestate lifetime', /prestate descriptors are fixed/i],
   ['typed recovery notice fields', /`incidentClassification`|`statePreserved`|`resumedAction`/],
   ['adapter-worker replay seal', /replay seal/i],
+  ['cooperative attestation limit', /context-matched sole result/i],
 ];
 
 // The lane bridge is described by role. A non-owner surface never names the
@@ -3725,6 +3727,7 @@ const ADAPTER_GENERATED_PAIRS = [
   ['src/agents/dude.agent.md', '.github/agents/dude.agent.md'],
   ['src/skills/dude-work/SKILL.md', '.github/skills/dude-work/SKILL.md'],
   [ADAPTER_SOURCE, '.github/skills/dude-work/host-adapter.mjs'],
+  [ATTESTATION_SOURCE, '.github/skills/dude-work/specialist-attestation.mjs'],
 ];
 
 /** @param {string} heading */
@@ -3797,12 +3800,31 @@ test('T003 the adapter owns every ordinary Work runtime route', () => {
     ['the boundary adds no user-visible surface', [
       [/adds no command, grammar, lane, board, or project state surface/, /never a second board, ledger, or event store/],
     ]],
+    ['autonomous attestation is cooperative and host-derived', [
+      [
+        /Autonomous attestation is cooperative, not cryptographic/,
+        /acquires the sole structured Tester and independent Reviewer results from their actual dispatches/,
+        /derives the authoritative target, attempt, source revision, dispatch, and chronology from accepted host state/,
+        /passes the exact verification capture it just produced into review construction/,
+        /a precomputed trusted identity, a separate semantic override, a dispatch fact, a selected verification capture, and a low-level route are all inadmissible request fields/,
+        /existing capture, envelope, projection, permit, receipt, and close validators stay the final authority/,
+        /nothing here detects a rewrite made before the boundary or protects against a malicious coordinator/,
+      ],
+    ]],
   ]);
   assert.deepEqual(failures, [], `${ADAPTER_OWNER} ${ADAPTER_BOUNDARY_SECTION}: adapter ownership contract`);
 
   // The documented count is bound to the runtime's closed operation list, so a
   // widened or narrowed adapter surface cannot leave the prose behind.
   assert.equal(frozenRuntimeList(read(ADAPTER_SOURCE), 'OPERATIONS').length, 10);
+
+  // The one production boundary the prose names is the one the adapter imports,
+  // and no ordinary request may name a trusted capture stream.
+  assert.match(read(ADAPTER_SOURCE), /import \{ buildSpecialistAttestation \} from '\.\/specialist-attestation\.mjs';/);
+  assert.match(read(ADAPTER_SOURCE), /must not select the '\$\{stream\}' trusted capture/);
+  assert.deepEqual([...read(ATTESTATION_SOURCE).matchAll(/^export function (\w+)/gm)].map((entry) => entry[1]), [
+    'buildSpecialistAttestation',
+  ]);
 });
 
 test('T003 the supervisor owns invocation identity and exactly one writing worker', () => {
@@ -3974,8 +3996,8 @@ test('T003 the coordinator carries one terse adapter pointer and no adapter deta
   const pointers = work.split(/\n\s*\n/).filter((paragraph) => /host adapter/i.test(paragraph));
   assert.equal(pointers.length, 1, 'src/agents/dude.agent.md ## Work: exactly one adapter pointer');
   assert.ok(
-    Buffer.byteLength(pointers[0], 'utf8') <= 620,
-    `adapter pointer is ${Buffer.byteLength(pointers[0], 'utf8')} bytes (limit 620)`,
+    Buffer.byteLength(pointers[0], 'utf8') <= 800,
+    `adapter pointer is ${Buffer.byteLength(pointers[0], 'utf8')} bytes (limit 800)`,
   );
 
   // The pointer names the bridge by role only.
@@ -4001,6 +4023,10 @@ test('T003 the coordinator carries one terse adapter pointer and no adapter deta
       ['nonterminal refusal and deferral to the owner', [
         /A qualifying unchanged-state refusal is nonterminal and never terminates Work, the shell, or a worker/,
         /`dude-work` owns the detailed rules/,
+      ]],
+      ['cooperative attestation named without its detail', [
+        /Autonomous attestation is cooperative/,
+        /detects no pre-boundary rewrite/,
       ]],
     ]),
     [],
@@ -4141,6 +4167,22 @@ test('T003 docs state the accepted recovery boundary and the manual cleanup prot
     ]);
     assert.deepEqual(failures, [], `${relative} ${heading}: adapter recovery documentation`);
   }
+
+  // The public reference states the cooperative trust boundary and its limit.
+  assert.deepEqual(
+    missingParagraphRequirements(markdownSection(read('docs/reference.md'), '## Execution Workflow'), [
+      ['cooperative, host-derived autonomous attestation', [
+        [
+          /Autonomous attestation is cooperative, not cryptographic/,
+          /sole Tester and Reviewer results returned by\s+their actual dispatches/,
+          /cannot supply a\s+trusted identity, a semantic override, a dispatch fact, a verification capture,\s+or a low-level route/,
+          /nothing\s+detects a change made to a result before it reaches the boundary/,
+        ],
+      ]],
+    ]),
+    [],
+    'docs/reference.md ## Execution Workflow: cooperative attestation boundary',
+  );
 });
 
 test('T003 the adapter and its prompt surfaces are generated, never hand-authored', () => {

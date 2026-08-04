@@ -8,13 +8,12 @@
 - (none)
 
 ### Blocked
-- (none)
+- T004@76616c69 [Shared] Prove positive and exhaustive bridge acceptance, including every predicate, binding, prestate, lane mutation, receipt, poststate, and replay refusal; establish fresh legal permit-backed close provenance for T001 through T003 without backfill; verify complete adapter routing and one-shot notice timing; run focused tests, build, full repository gates, lint, compose and pristine-release checks; and obtain independent Tester and Code Reviewer evidence with no regression outside FR-028 through FR-030 (US1 through US6; FR-001 through FR-030; SC-001 through SC-016).
 
 ### Done
 - T001@62726964 [Shared] Implement the replay-sealed ordinary accepted autonomous Lightweight completion bridge; complete adapter-owned completion, governance, projection preparation and verification, lane-permit issuance, lane-owner application through `applyLightweightWorkRequest`, lane-receipt settlement, and read-only audit; keep `incident-correction` exceptional and internal; implement the typed one-shot recovery notice; and directly cover `deriveGovernanceRuntimeRequestV1` and `validateRecoveryRuntimeResultV1`. Add focused tests and run the build. Permit no generic or fallback permit, ordinary board CLI mutation, direct edit, fabricated governance, caller close authority, tracked-lane expansion, or replay (FR-001, FR-002, FR-025 through FR-030; SC-011, SC-014 through SC-016).
 - T002@63686b70 [Shared] Preserve and reverify the existing supervisor-owned checkpoint, exclusive workspace-target ownership, serialized worker-generation handoff, fresh resume validation, lifecycle cleanup, and portable storage implementation against the corrected adapter and bridge contract (FR-003 through FR-024, FR-027; SC-004 through SC-010, SC-012, SC-013).
 - T003@696e7467 [Shared] Complete prompt, static-contract, generated-projection, and concise documentation integration for the adapter's ordinary semantic completion, governance, projection preparation and verification, lane-permit issuance, lane-owner application, lane-receipt commitment, and read-only audit surface; ordinary callers submit no low-level route or transition mode; `incident-correction` remains an exceptional Feature-009/internal path, not an ordinary adapter operation; and the typed recovery notice renders exactly once on the first successful corrected or resumed outcome (FR-001, FR-002, FR-025 through FR-030; SC-011, SC-014 through SC-016).
-- T004@76616c69 [Shared] Prove positive and exhaustive bridge acceptance, including every predicate, binding, prestate, lane mutation, receipt, poststate, and replay refusal; establish fresh legal permit-backed close provenance for T001 through T003 without backfill; verify complete adapter routing and one-shot notice timing; run focused tests, build, full repository gates, lint, compose and pristine-release checks; and obtain independent Tester and Code Reviewer evidence with no regression outside FR-028 through FR-030 (US1 through US6; FR-001 through FR-030; SC-001 through SC-016).
 
 <!-- dude:board:end -->
 
@@ -42,7 +41,8 @@ Execution may read this package but must not write it. Any normative mismatch st
 
 ## Phase 4: Full Acceptance And Independent Review
 
-- [x] T004@76616c69 [Shared] Prove positive and exhaustive bridge acceptance, including every predicate, binding, prestate, lane mutation, receipt, poststate, and replay refusal; establish fresh legal permit-backed close provenance for T001 through T003 without backfill; verify complete adapter routing and one-shot notice timing; run focused tests, build, full repository gates, lint, compose and pristine-release checks; and obtain independent Tester and Code Reviewer evidence with no regression outside FR-028 through FR-030 (US1 through US6; FR-001 through FR-030; SC-001 through SC-016).
+- [!] T004@76616c69 [Shared] Prove positive and exhaustive bridge acceptance, including every predicate, binding, prestate, lane mutation, receipt, poststate, and replay refusal; establish fresh legal permit-backed close provenance for T001 through T003 without backfill; verify complete adapter routing and one-shot notice timing; run focused tests, build, full repository gates, lint, compose and pristine-release checks; and obtain independent Tester and Code Reviewer evidence with no regression outside FR-028 through FR-030 (US1 through US6; FR-001 through FR-030; SC-001 through SC-016).
+    blocked-by: contract-mismatch: Feature 009 lacks production actual-source capture acquisition; T004 no-backfill provenance is unmet and existing unbound occurrences have no supported generic append-only supersession
     deps: T003@696e7467
 
 ## Lightweight Execution History
