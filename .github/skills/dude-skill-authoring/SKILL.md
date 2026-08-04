@@ -51,6 +51,8 @@ writes the pack skill and inserts the id into that pack's `pack.md`
 - Do NOT summarize the full workflow in the description.
 - Keep descriptions in third person and concrete enough for discovery.
 - Include likely search terms or synonyms when useful.
+- For an imported skill, keep the upstream description as written and append a `Use when` clause in this project's vocabulary; wording from the origin system may never match a task phrased here.
+- Do not rewrite the upstream sentence. Preserving it keeps the original meaning and makes the local addition visible on a later re-import.
 
 Good:
 

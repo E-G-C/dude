@@ -559,6 +559,82 @@ test('lint preserves namespaced skill name equality after frontmatter parsing', 
   }
 });
 
+test('lint rejects skill frontmatter with a missing or empty description', () => {
+  const cases = [
+    {
+      name: 'no description key',
+      content: '---\nname: dude-local-undescribed\n---\nBody.\n',
+    },
+    {
+      name: 'empty description value before the frontmatter terminator',
+      content: '---\nname: dude-local-undescribed\ndescription:\n---\nBody.\n',
+    },
+    {
+      name: 'whitespace-only description value',
+      content: '---\nname: dude-local-undescribed\ndescription: "   "\n---\nBody.\n',
+    },
+    {
+      name: 'empty description value followed by another key',
+      content: '---\ndescription:\nname: dude-local-undescribed\n---\nBody.\n',
+    },
+    {
+      name: 'empty description value followed by a nested key',
+      content: '---\nname: dude-local-undescribed\ndescription:\n  short: nested\n---\nBody.\n',
+    },
+  ];
+
+  for (const fixture of cases) {
+    const root = rootWithManifest();
+    try {
+      // Arrange
+      write(root, '.github/skills/dude-local-undescribed/SKILL.md', fixture.content);
+
+      // Act
+      const result = lint(root);
+
+      // Assert
+      assert.equal(result.code, 1, `${fixture.name}\n${result.output}`);
+      assert.match(
+        result.output,
+        /\.github\/skills\/dude-local-undescribed\/SKILL\.md {2}frontmatter is missing 'description:'/,
+        fixture.name,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('lint accepts a skill description written as a multi-line plain scalar', () => {
+  const root = rootWithManifest();
+  try {
+    // Arrange
+    write(
+      root,
+      '.github/skills/dude-local-multiline/SKILL.md',
+      [
+        '---',
+        'name: dude-local-multiline',
+        'description:',
+        '  Apply the local convention to internal pages. USE WHEN the user says',
+        '  "apply the local convention". DO NOT USE FOR external material.',
+        '---',
+        'Body.',
+        '',
+      ].join('\n'),
+    );
+
+    // Act
+    const result = lint(root);
+
+    // Assert
+    assert.equal(result.code, 0, result.output);
+    assert.doesNotMatch(result.output, /frontmatter is missing 'description:'/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('lint accepts quoted canonical scalars and CRLF frontmatter consistently', () => {
   const root = rootWithManifest();
   try {

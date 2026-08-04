@@ -1,6 +1,6 @@
 ---
 name: "dude-generic-routing"
-description: "Use when matching a user request, subtask, or task to the right specialist agent in the active roster."
+description: "Use when matching a user request, subtask, or task to the right specialist agent in the active roster, and when naming the installed skills that apply to a task at dispatch."
 ---
 
 # Generic Routing
@@ -15,6 +15,17 @@ Route work to the smallest credible specialist set. Routing is based on the curr
 4. **Match by scope specificity**: otherwise compare the task with each candidate's `description` and `## Scope`; prefer the narrowest credible owner.
 5. **Resolve the identity**: before dispatch, the emitted identity must resolve uniquely to one discovered entry and be copied from its canonical file stem or declared frontmatter `name`; never synthesize an identity.
 6. **Fail closed**: zero matches or ambiguous top matches must be reported, escalated, or clarified. Do not dispatch or invent a specialist identity.
+
+## Applicable Skills
+
+After the agent resolves, select the installed `.github/skills/*/SKILL.md` entries whose frontmatter `description` matches the task's stated outcome and target artifacts. Read the current installation at dispatch time, never a remembered or recorded set.
+
+- Name the selected skills in the dispatch by their installed identity, and carry the same names into acceptance for that task.
+- Applicability never changes agent routing: the roster stays closed, a skill neither manufactures nor implies an agent, and no skill needs a dedicated agent to be reachable.
+- A description match alone does not activate an opt-in discipline, a destructive procedure, or an authority-bearing procedure; those require explicit user intent or an explicit contract.
+- When nothing matches, emit nothing: no section, no placeholder, no added step.
+
+A task that authors or revises human-facing documentation prose carries `dude-pack-writing-avoid-ai-tropes` and `dude-pack-writing-style` while they are installed.
 
 ## Tie Breakers
 

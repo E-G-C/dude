@@ -205,6 +205,26 @@ function unquoteScalar(value) {
 }
 
 /**
+ * Read `description:`, accepting the multi-line plain scalar form where the
+ * value starts on an indented continuation line instead of the key's own line.
+ * @param {string[]} lines
+ * @returns {string}
+ */
+function readDescriptionScalar(lines) {
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = /^([A-Za-z_][A-Za-z0-9_-]*)[ \t]*:[ \t]*(.*)$/.exec(lines[i]);
+    if (!m || m[1] !== 'description') continue;
+    const inline = unquoteScalar(m[2].trim()).trim();
+    if (inline) return inline;
+    const next = lines[i + 1] ?? '';
+    if (!/^[ \t]+\S/.test(next)) return '';
+    if (/^[ \t]*[A-Za-z_][A-Za-z0-9_-]*[ \t]*:([ \t]|$)/.test(next)) return '';
+    return unquoteScalar(next.trim()).trim();
+  }
+  return '';
+}
+
+/**
  * Walk a file's lines in order; report fence-ordering defects.
  * @param {string[]} lines
  * @param {RegExp} startRe
@@ -724,6 +744,11 @@ for (const dir of listDirs(path.join(ROOT, '.github/skills'))) {
   const name = unquoteScalar(readFrontmatter(frontmatter, 'name'));
   if (!name) fail(`${rel}  frontmatter is missing 'name:'`);
   else if (name !== base) fail(`${rel}  frontmatter name '${name}' must match directory '${base}'`);
+  // Applicability matching globs SKILL.md and matches on description; an empty
+  // one makes the skill silently unreachable.
+  if (!readDescriptionScalar(frontmatter)) {
+    fail(`${rel}  frontmatter is missing 'description:'`);
+  }
 }
 
 for (const file of listFiles(path.join(ROOT, '.github/agents'), '.agent.md')) {

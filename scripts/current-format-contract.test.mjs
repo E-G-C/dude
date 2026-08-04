@@ -729,7 +729,7 @@ test('specialist dispatch is closed over the direct roster and limits exact arti
   assert.match(coordinator, /artifact-owner precedence applies only when[^\n]*unique literal artifact type or suffix match[^\n]*requested output[^\n]*explicit create, author, refine, or review target/i);
   assert.match(coordinator, /incidental mentions[^\n]*test subjects[^\n]*examples[^\n]*inputs[^\n]*references[^\n]*primary requested outcome and scope/i);
   assert.match(coordinator, /zero or ambiguous[^\n]*stop[^\n]*never invent/i);
-  assert.match(coordinator, /`## Routing Algorithm` and `## Task Matching`/i);
+  assert.match(coordinator, /`## Routing Algorithm`[^\n]*`## Task Matching`/i);
   assert.doesNotMatch(coordinator, /## Beads Issue Matching/i);
 
   const roster = installedAgentRoster();
@@ -784,6 +784,126 @@ test('specialist dispatch is closed over the direct roster and limits exact arti
     )),
     false,
     `${inventedIdentity} is not an installed identity`,
+  );
+});
+
+test('generated dispatch guidance scopes applicable skills and the verdict covers them', () => {
+  const routingRelative = '.github/skills/dude-generic-routing/SKILL.md';
+  const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(read(routingRelative));
+  assert.ok(frontmatter, `${routingRelative} has frontmatter`);
+  assert.match(
+    frontmatter[1],
+    /^description:[^\n]*\bnam\w*[^\n]*\bskills\b[^\n]*\bdispatch\b/im,
+    `${routingRelative}: description covers naming applicable skills at dispatch`,
+  );
+
+  // markdownSection also asserts exactly one visible `## Applicable Skills` heading.
+  assertSectionMatchesAll(routingRelative, '## Applicable Skills', [
+    /installed[^\n]*\.github\/skills[^\n]*description[^\n]*match/i,
+    /\bnam\w*[^\n]*selected skills[^\n]*dispatch/i,
+    /nothing matches[^\n]*emit nothing/i,
+    /\bplaceholder\b/i,
+    /applicabilit\w*[^\n]*(?:never|does not|doesn't)[^\n]*chang\w*[^\n]*routing/i,
+    /(?:manufactur|invent|synthesiz)\w*[^\n]*agent/i,
+    /match alone[^\n]*(?:does not|never)[^\n]*activat/i,
+    /\bopt-in\b/i,
+    /\bdestructive\b/i,
+    /\bauthority-bearing\b/i,
+    /human-facing[^\n]*prose[^\n]*`dude-pack-writing-avoid-ai-tropes`/i,
+    /human-facing[^\n]*prose[^\n]*`dude-pack-writing-style`/i,
+    /`dude-pack-writing-[^\n]*\binstalled\b/i,
+  ]);
+
+  // A pack rename must not leave a dangling skill id in core prose.
+  const applicableSkills = markdownSection(read(routingRelative), '## Applicable Skills');
+  for (const id of ['dude-pack-writing-avoid-ai-tropes', 'dude-pack-writing-style']) {
+    assert.match(applicableSkills, new RegExp(`\`${id}\``), `${routingRelative} names ${id}`);
+    const packSkill = `library/packs/writing/skills/${id}/SKILL.md`;
+    assert.equal(fs.existsSync(path.join(ROOT, packSkill)), true, `${id} resolves to ${packSkill}`);
+    assert.match(
+      /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(read(packSkill))?.[1] ?? '',
+      new RegExp(`^name:[ \\t]*"?${id}"?[ \\t]*$`, 'm'),
+      `${packSkill}: frontmatter name is ${id}`,
+    );
+  }
+
+  // Punctuation-agnostic: the coordinator must point at the applicability section.
+  assertSectionMatchesAll('.github/agents/dude.agent.md', '## Routing', [
+    /`dude-generic-routing`[^\n]*`## Routing Algorithm`/,
+    /`dude-generic-routing`[^\n]*`## Applicable Skills`/,
+    /`dude-generic-routing`[^\n]*`## Task Matching`/,
+  ]);
+
+  // Paragraph-scoped and order-agnostic: the verdict rule carries a forward
+  // reference to the rejection procedure that must stay free to move.
+  const reviewerRelative = '.github/skills/dude-reviewer-protocol/SKILL.md';
+  assert.deepEqual(
+    missingParagraphRequirements(visibleMarkdown(read(reviewerRelative)), [
+      ['verdict covers dispatch-named skills and judges human-facing prose', [
+        /\bverdicts?\b/i,
+        /\bskills\b[^.]*\bdispatch\b|\bdispatch\w*\b[^.]*\bskills\b/i,
+        /prose-quality|quality of[^.]*\bprose\b/i,
+        /human-facing prose/i,
+      ]],
+      ['either judgment alone is a sufficient basis to reject', [
+        /\breject\b[^.]*\beither\b[^.]*\balone\b/i,
+        /rejection procedure/i,
+      ]],
+    ]),
+    [],
+    `${reviewerRelative}: verdict rule`,
+  );
+});
+
+const REPETITION_SKILL = '.github/skills/dude-pack-writing-avoid-ai-tropes/SKILL.md';
+const REPETITION_TOOL = '.github/skills/dude-pack-writing-avoid-ai-tropes/repetition.mjs';
+const REPETITION_SECTION = '## Cross-file repetition check';
+const REPETITION_READ_ONLY_FS_CALLS = ['readFileSync', 'realpathSync', 'statSync'];
+
+// Each probe proves its own pattern is live before the tool is asserted clean of it.
+const REPETITION_FORBIDDEN_SURFACES = [
+  ['registry', /\bregistr(?:y|ies)\b/i, 'const registry = loadSkillRegistry();'],
+  ['tag set', /\btags?\b/i, 'entry.tags.push("prose");'],
+  ['score', /\bscor(?:e|es|ed|ing)\b/i, 'finding.score = weight * files.length;'],
+  ['activation tier', /\btiers?\b/i, 'if (skill.tier === "opt-in") return;'],
+  ['persisted state', /\b(?:persist\w*|cache\w*|sqlite|database)\b/i, 'persistFindings(cachePath);'],
+];
+
+test('the installed repetition report is documented by installed path, reports only, and stores nothing', () => {
+  assert.equal(
+    fs.existsSync(path.join(ROOT, REPETITION_TOOL)),
+    true,
+    `${REPETITION_TOOL} is present in the installed projection`,
+  );
+
+  // markdownSection also asserts exactly one visible `## Cross-file repetition check` heading.
+  const section = markdownSection(read(REPETITION_SKILL), REPETITION_SECTION);
+  assert.match(
+    section,
+    new RegExp(`node ${REPETITION_TOOL.replace(/\./g, '\\.')}[^\\n]*<file>`),
+    `${REPETITION_SKILL} ${REPETITION_SECTION}: documents the full installed command path`,
+  );
+
+  // Paragraph-scoped, so the reporting-only posture survives an unrelated rewrite of the section.
+  assertShipParagraphRequirements(section, [
+    ['the report is evidence for a reviewer, not a verdict', [
+      /\breports?\b/i,
+      /\b(?:does not|never|not)\b[^.]*\b(?:decide|adjudicate|verdict)\b/i,
+      /\breviewer\b/i,
+    ]],
+  ], `${REPETITION_SKILL} ${REPETITION_SECTION}`);
+
+  const toolSource = read(REPETITION_TOOL);
+  for (const [label, pattern, probe] of REPETITION_FORBIDDEN_SURFACES) {
+    assert.match(probe, pattern, `${label}: probe proves the pattern is live`);
+    assert.doesNotMatch(toolSource, pattern, `${REPETITION_TOOL}: no ${label} surface`);
+  }
+
+  // A write API would be the persisted-state surface FR-011 rejects.
+  assert.deepEqual(
+    [...new Set([...toolSource.matchAll(/\bfs\.([A-Za-z]+)\(/g)].map((call) => call[1]))].sort(),
+    REPETITION_READ_ONLY_FS_CALLS,
+    `${REPETITION_TOOL}: only read-only fs calls`,
   );
 });
 
@@ -1717,6 +1837,31 @@ test('upgrade recovery guidance is current-only in source and generated copies',
     assert.match(content, /locally controlled workspace without concurrent hostile mutation/);
   }
   assert.equal(generated, source);
+});
+
+test('imported descriptions gain an appended trigger clause and are never rewritten', () => {
+  const importRelative = '.github/skills/dude-bundle-import/SKILL.md';
+
+  // markdownSection also asserts exactly one visible heading per section.
+  assertSectionMatchesAll(importRelative, '### Step 2 — Adaptation report (preview, no writes)', [
+    /description[^\n]*matchab/i,
+    /`description:`[^\n]*vocabular/i,
+    /broad[^\n]*match[^\n]*any task/i,
+    /append\w*[^\n]*`Use when`[^\n]*claus/i,
+    /(?:never|not)[^\n]*(?:rewrite|replace)[^\n]*upstream/i,
+    /not auto-applied/i,
+  ]);
+
+  assertSectionMatchesAll(importRelative, '### Step 4 — Adapt', [
+    /append\w*[^\n]*`Use when`[^\n]*\bonly\b[^\n]*confirm/i,
+    /append\w*[^\n]*upstream[^\n]*intact/i,
+  ]);
+
+  assertSectionMatchesAll('.github/skills/dude-skill-authoring/SKILL.md', '## Description Rules', [
+    /import\w*[^\n]*upstream[^\n]*append\w*[^\n]*`Use when`/i,
+    /`Use when`[^\n]*vocabular/i,
+    /(?:do not|don't|never)[^\n]*rewrite[^\n]*upstream/i,
+  ]);
 });
 
 const OPTIONAL_PACK_ACTIVE_SOURCE_FILES = [

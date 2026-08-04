@@ -257,6 +257,19 @@ the ending, these fill it with air. End on a real point, or just stop.
 to reach out", "Happy to help", "Let me know if you need anything". Fine in a real message to a person;
 noise in docs, READMEs, and PR descriptions. Cut them unless you are actually writing to someone.
 
+## Cross-file repetition check
+
+`repetition.mjs`, shipped with this skill, catches the cross-file form of content duplication: prose
+that appears word for word in several files at once. Run it from the repository root as
+`node .github/skills/dude-pack-writing-avoid-ai-tropes/repetition.mjs <file> <file> [...] [--min-words 8] [--min-files 3]`.
+It reads only the paths you name, and it ignores fenced code blocks and inline code spans.
+`--min-words` sets the shortest phrase worth reporting, default 8; `--min-files` sets how many files a
+phrase must appear in, default 3. It exits 1 when it has findings, 0 when the set is clean, and 2 on a
+usage or read error.
+
+The command reports; it does not decide. Repeated wording is often deliberate contract language that
+should stay identical, so a reviewer judges each finding on its own.
+
 ## Remember
 
 Any one of these can be fine in isolation. The failure mode is several together, or one on repeat.

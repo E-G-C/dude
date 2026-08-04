@@ -221,5 +221,13 @@
       "T003@76616c69": "x"
     },
     "updated_at": "2026-08-04T02:22:19.238Z"
+  },
+  ".dude/specs/020-task-scoped-skill-resolution/tasks.md": {
+    "glyphs": {
+      "T001@62696e64": "x",
+      "T002@6368656b": "x",
+      "T003@61637074": "x"
+    },
+    "updated_at": "2026-08-04T22:00:36.671Z"
   }
 }

@@ -261,6 +261,7 @@ Produce a single structured report with these sections. Surface every item; do n
 9. **Overlap warnings** — list any local agent/skill whose `description:` shares ≥30% token overlap with the imported artifact, or whose scope/purpose section overlaps semantically.
 10. **Coordinator-only block** — for agents that are not coordinator-equivalents, note that the canonical `**Coordinator-only artifacts:**` block will be inserted during Step 4.
 11. **Persona drift** — flag chatty Claude-style asides ("I am Claude," first-person tutorials, "Anthropic recommends," emphatic ALL-CAPS exhortations, etc.). Do not auto-rewrite.
+12. **Description matchability** — check whether the imported `description:` uses this project's vocabulary or its origin system's, and whether a Dude task would plausibly phrase itself that way. Flag the opposite failure too: a description broad enough to match nearly any task dilutes dispatch. When either applies, propose **appending** a `Use when` trigger clause written in local vocabulary and leave the upstream sentence unchanged. Never rewrite or replace the upstream description. Report the proposal here; it is not auto-applied.
 
 ### Step 3 — User confirmation gate
 
@@ -290,6 +291,7 @@ Apply only the confirmed adaptations to the in-memory copy:
 - apply confirmed referenced-skill path changes, including rewriting bare `skills/<name>` references to `.github/skills/<name>/` when the dependency exists or is being imported, or stripping the reference when the dependency is intentionally skipped
 - normalize line endings to the destination repo's convention
 - leave persona drift untouched unless the user explicitly confirmed that category
+- append the proposed `Use when` trigger clause to the imported `description:`, keeping the upstream sentence intact, **only** when that category was confirmed
 
 ### Step 5 — Preflight the complete write set, then write the primary file
 

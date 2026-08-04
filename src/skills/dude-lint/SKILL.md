@@ -86,6 +86,7 @@ node --test .github/skills/dude-engine/lib/ownership.test.mjs
    - Fail when a skill directory is missing `SKILL.md`.
    - Fail when skill frontmatter is missing or malformed.
    - Fail when `name:` does not exactly match the containing skill directory name, including the `dude-` prefix for shipped skills.
+   - Fail when `description:` is missing or empty; applicability matching reads it, so a skill without one is silently unreachable. A multi-line plain scalar counts as present.
 
 6. **Bundle manifest** (`.dude/metadata/bundle-manifest.md`)
    - Fail when the seeded manifest is missing.

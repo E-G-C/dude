@@ -20,6 +20,7 @@ agent and skill descriptions, UI copy, and email.
   tells and how to remove them. Triggers on requests like "make this sound less
   like AI", "remove the AI tropes", "de-slop this", "too many em dashes", or
   "why does this read like ChatGPT".
+  Ships `repetition.mjs`, a deterministic cross-file repetition check.
 - `dude-pack-writing-style` — positive guidance for professional voice,
   document structure, readable explanations, and action-oriented task output.
   Triggers on requests like "improve the writing style", "make this more

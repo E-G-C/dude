@@ -5,7 +5,7 @@ description: "Use for independent verdicts, rejection routing, revision ownershi
 
 # Reviewer Protocol
 
-The reviewer stays independent from implementation, revision, testing, and close. A verdict is `APPROVE`, `REJECT`, or `ESCALATE`; rejection includes concrete findings and approval means materially ready.
+The reviewer stays independent from implementation, revision, testing, and close. A verdict is `APPROVE`, `REJECT`, or `ESCALATE`; rejection includes concrete findings and approval means materially ready. Every verdict judges the work against the skills named in the dispatch and states an explicit prose-quality judgment when the artifacts under review are human-facing prose; the reviewer may reject on either judgment alone through the rejection procedure below.
 
 For explicit autonomous Work, supply the grounded finding and occurrence evidence and defer every repeat-triggered disposition, escalation, and user notification to `dude-work` learning governance. Guarded and non-Work disposition remains unchanged.
 
