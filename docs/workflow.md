@@ -43,8 +43,23 @@ Key rules:
 - While the tracked board is live, `tasks.md` may be kept as a one-way mirror for portability, but it is not used to choose ready work or decide completion.
 - `@dude status` is always read-only.
 - `@dude work` is an optional accelerator (not a new lane in the diagram above): it repeats iterations inside whichever execution lane is already live and stops on the first natural boundary. See [Optional Continuous Work](#optional-continuous-work).
+- `@dude ship` is the usual one-verb path across this lifecycle, and it is an accelerator rather than a fourth lane. See [Ship: one verb across the lifecycle](#ship-one-verb-across-the-lifecycle).
 - Empty or missing `.dude/ideas/` and `.dude/specs/` directories are valid;
   Dude creates them when brainstorm or definition starts.
+
+### Ship: one verb across the lifecycle
+
+`@dude ship [<target>]` accepts exactly one optional target and no flags. It
+resolves only the lifecycle stages its target is still missing, then advances
+inside whichever execution lane is already live until the work is done or an
+existing Work stop fires. It adds no lane, board, or state of its own.
+
+Imported tracked work keeps precedence over local candidates: Ship never invokes
+`track`, imports work, or falls back from tracked work to Lightweight Execution.
+Ambiguous selection stops before any mutation with exactly one disambiguation
+question, and ownership or resolver diagnostics stay hard refusals. `@dude work`
+is the advanced form when you need to set the budgets or policy yourself, and the
+[command reference](commands.md#dude-ship) owns the full contract.
 
 ## Who Owns What
 

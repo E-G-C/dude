@@ -6,9 +6,10 @@
 
 Examples below use preferred invocation forms. The short rule is: `brainstorm`
 creates one flat idea file without creating a spec package, `define` turns that
-idea into a reusable package, `work` runs the next few ready tasks in whichever
-execution lane is already live, `status` reports the current lane and live
-artifact, and `flag` routes execution-time gaps back into definition. The
+idea into a reusable package, `ship` runs only the lifecycle stages a target is
+still missing and then advances it, `work` runs the next few ready tasks in
+whichever execution lane is already live, `status` reports the current lane and
+live artifact, and `flag` routes execution-time gaps back into definition. The
 lifecycle is `brainstorm -> idea -> define -> spec -> work`. Tracked execution (`track`,
 `sync Beads to tasks.md`) is provided by the optional **beads pack** — install
 it with `@dude add pack beads`.
@@ -19,6 +20,7 @@ it with `@dude add pack beads`.
 | ------- | ----------- |
 | `@dude brainstorm <idea>` | Create or refresh one flat `.dude/ideas/<slug>.md` collaboration file without creating a spec package. |
 | `@dude define <slug>` | Turn the matching idea into a reusable package under `.dude/specs/<feature>/`. |
+| `@dude ship [<target>]` | Advance one target through only the lifecycle stages it still needs, until it is done or an existing Work stop fires. Exactly one optional target and no flags. |
 | `@dude status` | Read-only report of the current lane, live artifact, next step, and blockers. |
 | `@dude work [<feature>] [--max <N\|unlimited>] [--until blocked] [--recover-on-block] [--recovery-cycles <N\|unlimited>] [--policy guarded\|autonomous]` | Run the next few ready tasks back-to-back inside whichever execution lane is already live, with optional Work-authorized recovery and an optional autonomous policy. Not a new lane. |
 | `@dude list packs` | Read-only list of available and installed optional packs. |
@@ -35,7 +37,7 @@ it with `@dude add pack beads`.
 | `@dude upgrade [--dry-run|--rollback|--ref <ref>]` | Refresh the installed Dude bundle from upstream while preserving project memory and active work. |
 | `@dude import tasks from .dude/specs/<feature>/ into Beads` | Manually import a defined package into Beads when you do not want the normal automatic handoff. Requires the `beads` pack. |
 
-Preferred workflow verbs are `brainstorm`, `define`, `status`, `track`, `work`, `flag`, `diff`, and `self-check`. `hire`, `remember`, `upgrade`, `sync Beads to tasks.md`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
+Preferred workflow verbs are `brainstorm`, `define`, `ship`, `status`, `track`, `work`, `flag`, `diff`, and `self-check`. `hire`, `remember`, `upgrade`, `sync Beads to tasks.md`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
 
 ### `@dude brainstorm`
 
@@ -141,6 +143,93 @@ That exact path is the feature's canonical identity. If intent changes later,
 edit the user-controlled `## Idea` and any relevant answers or assumptions,
 then rerun `@dude define <slug>`; do not treat generated `spec.md` or `plan.md`
 as the intent source.
+
+### `@dude ship`
+
+Use this when you want one verb to carry a target through whatever lifecycle
+stages it still needs. Ship is the usual convenience path over `brainstorm`,
+`define`, and execution.
+
+Preferred forms:
+
+```text
+@dude ship
+@dude ship expense-entry
+```
+
+Grammar:
+
+```text
+@dude ship [<target>]
+```
+
+Meaning: run only the lifecycle stages the target is still missing, then advance
+it until it is done or an existing Work stop fires. Ship accepts exactly one
+optional target and no flags, the complete invocation is validated before any
+mutation, and it never promises unconditional completion.
+
+Ship resolves the target this way:
+
+- an unmatched raw idea runs the existing `brainstorm`, then the existing
+  `define`, then Work
+- an existing draft ledger runs the existing `define`, then Work
+- an existing defined package goes to Work as-is
+- bare `@dude ship` continues exactly one unambiguous live target
+
+Nothing is written until selection is settled. Any flag rejects the invocation
+and points you to `@dude work` for custom controls. Several live candidates
+produce exactly one disambiguation question that lists the exact candidates,
+performs no mutation, and restarts resolution from your answer without saving a
+default. An ownership or resolver diagnostic that target selection cannot repair
+stays a hard refusal.
+
+Imported tracked work takes precedence over local candidates, and an explicit
+target that conflicts with it stops before mutation. Ship never invokes `track`,
+imports work, or falls back from tracked work to Lightweight Execution.
+
+Existing clarification and guardrail-ratification checkpoints are unchanged, and
+Ship never answers one for you. They pause and wait for your reply exactly as
+they do without Ship.
+
+A package is never refreshed behind your back. Ship performs no proactive
+redefinition, staleness check, drift check, or intent merge. Changed intent needs
+an explicit `@dude brainstorm`, and a deliberate package refresh needs an
+explicit `@dude define`.
+
+Ship performs no automatic Git or release action: no branch, worktree, commit,
+push, reset, or publish. Ship carries lifecycle advancement, not release
+publication, so a future release action is free to use its own verb.
+
+Ship runs autonomously with an unlimited budget: at recoverable checkpoints it
+authorizes the next attempt itself instead of handing the decision back to you.
+`@dude work` stays guarded by default and remains the advanced form for custom
+limits, recovery, and policy. Autonomy relaxes no stop, verification, review,
+ownership, close, or reporting rule that Work already enforces.
+
+Illustrative result — an already defined package:
+
+```text
+Lane: Lightweight Execution · Live: .dude/specs/001-expense-entry/tasks.md
+Action: ship
+Updated:
+- Resolved expense-entry: package already defined, no lifecycle stage was needed
+- T003@a1b2c3d4 implemented, verified, marked [x]
+- T004@e4f5g6h7 implemented, verified, marked [x]
+- T005@91ac4e2f reviewer rejected, revised, re-verified, re-reviewed, marked [x]
+- 3 Coordinator Log entries appended to .dude/ideas/expense-entry.md
+- dude-lint: ok after each close
+Blockers:
+- Stopped on T006@2f7b81ce: learning review found no credible alternative
+Next:
+- Run @dude status for a read-only snapshot
+```
+
+Illustrative result — pre-mutation disambiguation:
+
+```text
+Action: ship
+Next: Several live targets match. Reply with exactly one of expense-entry, expense-report, or expense-approval. Nothing has changed; resolution restarts from your answer.
+```
 
 ### `@dude track`
 

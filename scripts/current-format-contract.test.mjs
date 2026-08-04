@@ -2928,6 +2928,329 @@ test('Ship has no runtime, parser, skill, configuration, or state artifacts', ()
   }
 });
 
+// --- Ship guidance in the primary user documentation --------------------------
+
+const SHIP_DOC_SURFACES = [
+  'README.md',
+  'docs/commands.md',
+  'docs/reference.md',
+  'docs/setup.md',
+  'docs/walkthrough.md',
+  'docs/workflow.md',
+];
+const SHIP_DOC_EXAMPLE_SURFACES = ['README.md', 'docs/commands.md', 'docs/walkthrough.md'];
+const SHIP_AUTONOMY_SURFACES = ['README.md', 'docs/commands.md'];
+const SHIP_COMMAND_DOC = 'docs/commands.md';
+const SHIP_COMMAND_DOC_SECTION = '### `@dude ship`';
+const SHIP_WORKFLOW_DOC_SECTION = '### Ship: one verb across the lifecycle';
+const SHIP_SIMPLE_INVOCATION = /^@dude ship(?: [a-z0-9][a-z0-9-]*)?$/;
+const SHIP_DOC_TABLE_ROW = '| `@dude ship [<target>]` |';
+
+// Every guide states the same shape, the same qualified meaning, and keeps Work
+// as the advanced escape hatch. Only the obligation is pinned; each guide phrases
+// it for its own reader. Line wrapping is removed before matching.
+const SHIP_DOC_REQUIREMENTS = [
+  ['one optional target and no flags', /(?:exactly )?one optional target[^.]*no flags/i],
+  ['advance until done or an existing Work stop', /until[^.]*\bdone\b[^.]*existing Work stop/i],
+  ['Work retained as the advanced form', /`@dude work`[^.]*advanced form[^.]*\b(?:limits|budgets|recovery|policy|controls)\b/i],
+];
+
+// Claims no guide may make about Ship. A unit counts only when it names Ship and
+// carries no denial or contrast, so honest "performs no automatic Git or release
+// action" prose stays legal.
+const SHIP_OVERCLAIMS = [
+  ['release publication', /\b(?:publish(?:es|ed|ing)?|releases?|releasing|deploys?|deploying)\b/i],
+  ['guaranteed completion', /\b(?:guarantee[sd]?|guaranteeing|unconditional|always (?:finishes|completes)|every task)\b/i],
+];
+const SHIP_CLAIM_SUBJECT = /@dude ship\b|\bShip\b/;
+const SHIP_CLAIM_DENIAL = /\b(?:no|not|never|none|nothing|zero|without|neither|nor|instead of|rather than|refuses?|rejects?|forbids?|prohibits?|cannot|can't|doesn't|free to use)\b/i;
+
+/**
+ * Split visible Markdown into independent claim units. Table rows, list items,
+ * and headings each start their own unit so a denial in one row cannot exonerate
+ * a claim in another, while wrapped prose lines stay joined.
+ * @param {string} source
+ */
+function claimUnits(source) {
+  /** @type {string[]} */
+  const units = [];
+  for (const block of visibleMarkdown(source).split(/\n\s*\n/)) {
+    let fresh = true;
+    for (const line of block.split('\n')) {
+      if (line.trim() === '') {
+        fresh = true;
+        continue;
+      }
+      if (fresh || /^\s*(?:[|>]|[-*+] |\d+[.)] |#{1,6} )/.test(line)) {
+        units.push(line.trim());
+        fresh = false;
+      } else {
+        units[units.length - 1] += ` ${line.trim()}`;
+      }
+    }
+  }
+  return units
+    .flatMap((unit) => sentences(unit))
+    .map((unit) => unit.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+/** @param {string} source */
+function shipOverclaims(source) {
+  return claimUnits(source)
+    .filter((unit) => SHIP_CLAIM_SUBJECT.test(unit) && !SHIP_CLAIM_DENIAL.test(unit))
+    .flatMap((unit) => SHIP_OVERCLAIMS
+      .filter(([, pattern]) => pattern.test(unit))
+      .map(([label]) => label));
+}
+
+/** @param {string} text */
+function shipGuidanceGaps(text) {
+  return SHIP_DOC_REQUIREMENTS
+    .filter(([, pattern]) => !pattern.test(text))
+    .map(([label]) => label);
+}
+
+/** @param {string} source */
+function shipInvocationLines(source) {
+  return source.split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('@dude ship'));
+}
+
+/** Unwrap soft line breaks so section patterns survive re-wrapped prose. @param {string} section */
+function unwrappedParagraphs(section) {
+  return section.split(/\n\s*\n/)
+    .map((paragraph) => paragraph.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+test('Ship documentation pins one flag-free command shape and leaves Work grammar intact', () => {
+  assert.deepEqual(SHIP_DOC_SURFACES, [...SHIP_DOC_SURFACES].sort());
+  assert.equal(new Set(SHIP_DOC_SURFACES).size, SHIP_DOC_SURFACES.length);
+  for (const relative of SHIP_DOC_SURFACES) {
+    assert.equal(fs.statSync(path.join(ROOT, relative)).isFile(), true, relative);
+  }
+
+  const commands = read(SHIP_COMMAND_DOC);
+  assert.deepEqual(
+    commands.split('\n').filter((line) => line.trim() === SHIP_GRAMMAR_LINE),
+    [SHIP_GRAMMAR_LINE],
+    'one exact Ship grammar line in the command reference',
+  );
+  assert.deepEqual(
+    commands.split('\n').filter((line) => line.startsWith('@dude work [')),
+    [WORK_GRAMMAR_LINE],
+    'Ship documentation leaves the advanced Work grammar unchanged',
+  );
+
+  for (const relative of SHIP_DOC_SURFACES) {
+    const invocations = shipInvocationLines(read(relative));
+    const runnable = invocations.filter((line) => line !== SHIP_GRAMMAR_LINE);
+    assert.deepEqual(
+      runnable.filter((line) => !SHIP_SIMPLE_INVOCATION.test(line)),
+      [],
+      `${relative}: every runnable Ship example is flag-free`,
+    );
+    if (invocations.length > 0) {
+      assert.match(invocations[0], SHIP_SIMPLE_INVOCATION, `${relative} leads with a simple Ship form`);
+    }
+  }
+  for (const relative of SHIP_DOC_EXAMPLE_SURFACES) {
+    assert.ok(shipInvocationLines(read(relative)).length > 0, `${relative} shows a runnable Ship example`);
+  }
+
+  for (const flagged of [
+    '@dude ship --max unlimited',
+    '@dude ship expense-entry --policy autonomous',
+    '@dude ship --recover-on-block',
+    '@dude ship expense-entry expense-report',
+  ]) {
+    assert.doesNotMatch(flagged, SHIP_SIMPLE_INVOCATION, `rejects ${flagged}`);
+  }
+
+  for (const relative of ['README.md', SHIP_COMMAND_DOC]) {
+    assert.equal(
+      read(relative).split(SHIP_DOC_TABLE_ROW).length - 1,
+      1,
+      `${relative} lists Ship exactly once in its command table`,
+    );
+  }
+});
+
+// Ship's fixed preset is recover:true / recovery:'unlimited' / mode:'autonomous', so a reviewer
+// rejection and a failed verification are recoverable rather than terminal. An illustrative result
+// that ends the run on one of those teaches the guarded Work model Ship exists to replace.
+// visibleMarkdown() strips fenced blocks, so the prose contracts below never inspect example
+// bodies; this guard covers that gap. Hard blockers and a proven repeat that learning governance
+// escalates stay terminal, so narrow this deliberately rather than loosening it for such a case.
+const SHIP_RECOVERABLE_STOP = /^-?\s*Stopped\b.*\b(?:reviewer rejected|reviewer rejection|verification failed)\b/i;
+
+/**
+ * Extract the fenced example bodies from the Ship reference section.
+ * markdownSection() cannot be reused here because visibleMarkdown() strips the fences this inspects.
+ * The fence language is intentionally unpinned so a language change cannot silently vacate the check.
+ * @param {string} source markdown source of the command reference
+ * @returns {string[]} fence bodies in document order
+ */
+function shipReferenceFences(source) {
+  const heading = SHIP_COMMAND_DOC_SECTION.replace(/^#+[ \t]+/, '');
+  const section = (source.split(/^### /m).find((part) => part.startsWith(heading)) ?? '').split(/^## /m)[0];
+  return [...section.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((match) => match[1]);
+}
+
+test('Ship illustrative results never stop on a checkpoint the fixed preset recovers from', () => {
+  const fences = shipReferenceFences(read(SHIP_COMMAND_DOC));
+  assert.ok(fences.length > 0, 'the Ship reference shows at least one illustrative result');
+
+  assert.deepEqual(
+    fences.flatMap((fence) => fence.split('\n')).filter((line) => SHIP_RECOVERABLE_STOP.test(line.trim())),
+    [],
+    'Ship illustrative stops are reachable under its own preset',
+  );
+
+  assert.match(
+    '- Stopped on T005@91ac4e2f: the reviewer rejected the change',
+    SHIP_RECOVERABLE_STOP,
+    'the guard detects a reviewer-rejection stop',
+  );
+  assert.doesNotMatch(
+    '- T005@91ac4e2f reviewer rejected, revised, re-verified, re-reviewed, marked [x]',
+    SHIP_RECOVERABLE_STOP,
+    'the guard allows a recovered rejection reported as progress',
+  );
+  assert.doesNotMatch(
+    '- Stopped on T006@2f7b81ce: learning review found no credible alternative',
+    SHIP_RECOVERABLE_STOP,
+    'the guard allows a no-progress stop',
+  );
+});
+
+test('Ship documentation states one qualified meaning and claims no release or guaranteed completion', () => {
+  for (const relative of SHIP_DOC_SURFACES) {
+    const visible = visibleMarkdown(read(relative)).replace(/[ \t]*\n[ \t]*/g, ' ');
+    assert.ok(visible.includes('@dude ship'), `${relative} documents Ship outside code fences`);
+    assert.deepEqual(shipGuidanceGaps(visible), [], `${relative}: consistent Ship guidance`);
+    assert.deepEqual(shipOverclaims(read(relative)), [], `${relative}: Ship overclaims`);
+  }
+
+  for (const relative of SHIP_AUTONOMY_SURFACES) {
+    const visible = visibleMarkdown(read(relative)).replace(/[ \t]*\n[ \t]*/g, ' ');
+    assert.match(visible, /Ship runs autonomously with an unlimited budget/, `${relative}: Ship autonomy`);
+    assert.match(visible, /`@dude work` stays guarded by default/, `${relative}: guarded Work default`);
+  }
+
+  assert.deepEqual(
+    shipGuidanceGaps([
+      '`@dude ship [<target>]` takes exactly one optional target and no flags.',
+      'It advances until the work is done or an existing Work stop fires.',
+      '`@dude work` remains the advanced form for custom limits, recovery, and policy.',
+    ].join(' ')),
+    [],
+  );
+  assert.deepEqual(
+    shipGuidanceGaps('`@dude ship` accepts flags and runs until the feature is complete.'),
+    SHIP_DOC_REQUIREMENTS.map(([label]) => label),
+  );
+
+  const commands = read(SHIP_COMMAND_DOC);
+  for (const overclaim of [
+    'Ship publishes the release once the last task closes.',
+    'Ship guarantees completion.',
+    'Ship always finishes the feature.',
+    'Ship closes every task it starts.',
+  ]) {
+    assert.notDeepEqual(shipOverclaims(`${commands}\n\n${overclaim}\n`), [], `rejects ${overclaim}`);
+  }
+  for (const allowed of [
+    'Ship performs no automatic Git or release action.',
+    'Ship carries lifecycle advancement, not release publication.',
+    'Ship never promises unconditional completion.',
+  ]) {
+    assert.deepEqual(shipOverclaims(`${commands}\n\n${allowed}\n`), [], `allows ${allowed}`);
+  }
+});
+
+test('Ship command reference pins the lifecycle matrix, pre-mutation stops, and preserved checkpoints', () => {
+  const section = unwrappedParagraphs(markdownSection(read(SHIP_COMMAND_DOC), SHIP_COMMAND_DOC_SECTION));
+  const context = `${SHIP_COMMAND_DOC} ${SHIP_COMMAND_DOC_SECTION}`;
+
+  assertShipParagraphRequirements(section, [
+    ['flag-free command shape validated before mutation', [
+      [/exactly one optional target and no flags/i, /validated before any mutation/i],
+    ]],
+    ['qualified advance meaning', [
+      [/until it is done or an existing Work stop fires/i, /never promises unconditional completion/i],
+    ]],
+    ['exact lifecycle matrix', [
+      [/unmatched raw idea/i, /existing `brainstorm`/i, /existing `define`/i],
+      [/existing draft ledger/i, /defined package goes to Work as-is/i],
+      [/bare `@dude ship`/i, /exactly one unambiguous live target/i],
+    ]],
+    ['pre-mutation flag rejection and one disambiguation question', [
+      [/flag rejects the invocation/i, /`@dude work`/],
+      [/exactly one disambiguation question/i, /exact candidates/i, /performs no mutation/i, /without saving a default/i],
+      [/ownership or resolver diagnostic/i, /hard refusal/i],
+    ]],
+    ['tracked precedence without import or fallback', [
+      [/Imported tracked work takes precedence/i, /stops before mutation/i],
+      [/never invokes `track`/i, /imports work/i, /falls back/i, /Lightweight Execution/],
+    ]],
+    ['unchanged clarification and guardrail checkpoints', [
+      [/clarification and guardrail-ratification checkpoints are unchanged/i, /never answers one for you/i],
+    ]],
+    ['no proactive refresh or intent merge', [
+      [/no proactive redefinition/i, /staleness check/i, /drift check/i, /intent\s*merge/i],
+      [/changed intent/i, /explicit `@dude brainstorm`/i, /package refresh/i, /explicit `@dude define`/i],
+    ]],
+    ['no automatic Git or release action', [
+      [/no automatic Git or release action/i, /not release publication/i],
+    ]],
+    ['autonomous Ship versus guarded Work', [
+      [/Ship runs autonomously with an unlimited budget/i, /`@dude work` stays guarded by default/i],
+      [/advanced form for custom limits, recovery, and policy/i],
+      [/relaxes no stop, verification, review, ownership, close, or reporting rule/i],
+    ]],
+  ], context);
+
+  assertShipAuthorityDenials(section, context);
+  assertShipAuthorityMutations(section, context);
+});
+
+test('Ship lane guidance keeps tracked precedence and delegates execution to the Work owner', () => {
+  const workflow = unwrappedParagraphs(markdownSection(read('docs/workflow.md'), SHIP_WORKFLOW_DOC_SECTION));
+  assertShipParagraphRequirements(workflow, [
+    ['accelerator that adds no lane, board, or state', [
+      [/exactly one optional target and no flags/i, /lifecycle stages its target is still missing/i, /adds no lane, board, or state of its own/i],
+    ]],
+    ['tracked precedence and pre-mutation ambiguity', [
+      [/tracked work keeps precedence/i, /never invokes `track`/i, /falls back/i],
+      [/before any mutation/i, /exactly one disambiguation question/i, /hard refusals/i],
+    ]],
+  ], `docs/workflow.md ${SHIP_WORKFLOW_DOC_SECTION}`);
+
+  assertShipParagraphRequirements(
+    unwrappedParagraphs(markdownSection(read('docs/reference.md'), '## Feature Definition Workflow')),
+    [['Ship reuses existing lifecycle routes without new definition authority', [
+      [/`@dude ship \[<target>\]`/, /exactly one optional target and no flags/i, /existing `brainstorm`/i, /`define` routes/i],
+      [/no definition authority of its own/i, /`@dude-spec-lead`/, /`status:`/, /exact `spec_path:`/i, /definition log events/i],
+      [/explicit `@dude brainstorm`/i, /explicit `@dude define`/i, /changed intent/i, /package refresh/i],
+    ]]],
+    'docs/reference.md ## Feature Definition Workflow',
+  );
+
+  assertShipParagraphRequirements(
+    unwrappedParagraphs(markdownSection(read('docs/reference.md'), '## Execution Workflow')),
+    [['Ship delegates execution to the documented Work owner', [
+      [/`@dude ship` reaches execution through this same owner/i],
+      [/fixed autonomous, numerically unlimited policy/i, /tracked work keeps precedence/i, /lane detection still runs once/i],
+      [/adds no lane, board, state file, or second execution policy/i, /`@dude work`[^.]*advanced form/i],
+    ]]],
+    'docs/reference.md ## Execution Workflow',
+  );
+});
+
 test('T002 Work guidance leads with simple sequential forms', () => {
   const owner = read(GOVERNANCE_POLICY_OWNER);
   const ownerInvocations = owner.split('\n')

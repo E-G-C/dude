@@ -38,6 +38,15 @@ The minimum useful setup is:
 The lifecycle is `brainstorm -> idea -> define -> spec -> work`. Brainstorm and
 define are distinct; definition never starts implicitly during intake.
 
+`@dude ship [<target>]` is the usual shortcut over that same lifecycle. It takes
+one optional target and no flags, runs only the stages the target is still
+missing, and advances until the work is done or an existing Work stop fires.
+Every clarification and guardrail-ratification checkpoint described below still
+happens, and Ship never answers one for you. Explicit `@dude brainstorm` and
+`@dude define` remain the only ways to change intent or deliberately refresh a
+package. Reach for `@dude work` instead when you want the advanced form with your
+own recovery settings.
+
 New installs already seed an inventory-backed empty profile and do not need any
 profile conversion. Current bundles use
 `.dude/metadata/bundle-manifest.md` as the sole manifest and record installed

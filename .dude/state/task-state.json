@@ -199,11 +199,11 @@
   },
   ".dude/specs/017-ship-command/tasks.md": {
     "glyphs": {
-      "T001@73686970": "~",
-      "T002@646f6373": " ",
-      "T003@76616c69": " "
+      "T001@73686970": "x",
+      "T002@646f6373": "x",
+      "T003@76616c69": "x"
     },
-    "updated_at": "2026-08-03T18:32:50.936Z"
+    "updated_at": "2026-08-04T17:50:38.101Z"
   },
   ".dude/specs/018-autonomous-runstate-continuity/tasks.md": {
     "glyphs": {

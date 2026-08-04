@@ -12,6 +12,15 @@ package under `.dude/specs/<feature>/`. This is the
 [Workflow modes and lifecycle](workflow.md) for the first-run lane choice, file
 lifecycle, and rerun expectations; this page is the deeper reference.
 
+`@dude ship [<target>]` is a convenience verb over that same lifecycle. It takes
+exactly one optional target and no flags, invokes only the existing `brainstorm`
+and `define` routes its target is still missing, and then advances until the work
+is done or an existing Work stop fires. It creates no definition authority of its
+own: `@dude-spec-lead` still owns every definition artifact, `status:`, the exact
+`spec_path:`, managed regions, and definition log events. Changed intent goes
+back through an explicit `@dude brainstorm`, and a deliberate package refresh
+goes through an explicit `@dude define`.
+
 ```mermaid
 flowchart TD
   A["User idea or PRD"] --> BS["@dude brainstorm"]
@@ -217,6 +226,15 @@ Work is sequential and processes one task at a time. Users do not configure
 concurrency. Outside `@dude work`, internal coordinator dispatch may fan out
 only when existing dependency, blocker, and known-disjoint-write checks prove
 it safe.
+
+`@dude ship` reaches execution through this same owner. After lifecycle
+resolution it hands the resolved target to Work under a fixed autonomous,
+numerically unlimited policy, so imported tracked work keeps precedence, lane
+detection still runs once, and every stop, verification, review, ownership,
+reconciliation, close, audit, and reporting rule documented here is the one that
+applies. Ship adds no lane, board, state file, or second execution policy, and
+`@dude work` is still the advanced form whenever you need to set those limits
+yourself.
 
 Overall `--max` and exact-target recovery `--recovery-cycles` budgets are
 independent; each may be finite or `unlimited`, and `unlimited` never bypasses

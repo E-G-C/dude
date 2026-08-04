@@ -158,8 +158,24 @@ rerun define rather than treating generated spec files as the source of intent.
 
 ## 4. Continue without Beads
 
-If you want to keep moving without installing Beads, stay in Lightweight
-Execution:
+The shortest path from here is one verb:
+
+```text
+@dude ship authentication
+```
+
+`@dude ship [<target>]` takes exactly one optional target and no flags. Because
+`authentication` is already defined, Ship skips brainstorm and define, enters the
+live execution lane as-is, and advances until the work is done or an existing
+Work stop fires. Ship runs autonomously with an unlimited budget, so it
+authorizes its own retries at recoverable checkpoints such as a reviewer
+rejection. On a raw idea it would have run the existing `brainstorm` and
+`define` routes first, pausing at the same checkpoints shown above. If you want
+to cap iterations or choose the policy yourself, `@dude work` is the advanced
+form for those controls.
+
+Both verbs stay in Lightweight Execution, so neither one installs Beads. To drive
+the same lane step by step instead:
 
 ```text
 @dude status

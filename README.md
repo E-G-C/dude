@@ -87,6 +87,26 @@ Minimal example:
 @dude work expense-entry
 ```
 
+The usual one-verb path across that same lifecycle is:
+
+```text
+@dude ship
+@dude ship expense-entry
+```
+
+`@dude ship [<target>]` takes exactly one optional target and no flags. It runs
+only the lifecycle stages its target is still missing, so a raw idea gets
+brainstorm and define first while an already defined package goes straight to the
+execution lane. From there it advances until the work is done or an existing Work
+stop fires. Completion is never promised unconditionally, nothing is tracked or
+imported for you, and no Git or release action happens automatically.
+Clarification and guardrail checkpoints still stop and wait for your answer.
+
+Ship runs autonomously with an unlimited budget, so at recoverable checkpoints it
+authorizes the next attempt itself. `@dude work` stays guarded by default and is
+the advanced form when you want explicit budgets or a different policy. The full
+contract is in [docs/commands.md](docs/commands.md#dude-ship).
+
 If you only want a plan, use this instead:
 
 ```text
@@ -139,6 +159,7 @@ spec artifacts as the source of intent.
 |---|---|
 | `@dude brainstorm <idea-or-file.md>` | Create or refresh one flat idea file without creating a spec package |
 | `@dude define <slug>` | Turn the matching idea into spec, plan, and tasks |
+| `@dude ship [<target>]` | Advance one target through only the lifecycle stages it still needs, until it is done or an existing Work stop |
 | `@dude status` | See where you are and what is live |
 | `@dude work [<feature>]` | Keep going: run the next few ready tasks in whichever lane is already live |
 | `@dude list packs` | See available and installed optional packs |
