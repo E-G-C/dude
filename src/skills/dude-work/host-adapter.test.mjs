@@ -1,11 +1,12 @@
 // @ts-check
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test as nodeTest } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { applyLightweightWorkRequest } from '../dude-lightweight-execution/board.mjs';
 import {
@@ -23,6 +24,7 @@ import {
 } from './recovery.mjs';
 import { buildSpecialistAttestation } from './specialist-attestation.mjs';
 import * as hostAdapterModule from './host-adapter.mjs';
+import { runHostAdapter } from './host-adapter-runner.mjs';
 
 const {
   createHostAdapter: createAuthorizedHostAdapter,
@@ -1547,7 +1549,7 @@ function sealedRecordInput(root, overrides = {}) {
   return sealedTransportInput(rest);
 }
 
-/** @param {(root:string)=>void} run */
+/** @param {(root:string)=>unknown} run */
 function withSealedWorkspace(run) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dude-host-adapter-')));
   const ideaPath = '.dude/ideas/autonomous-runstate-continuity.md';
@@ -1582,9 +1584,15 @@ function withSealedWorkspace(run) {
       '## Lightweight Execution History',
       '',
     ].join('\n'));
-    run(root);
-  } finally {
+    const result = run(root);
+    if (result instanceof Promise) {
+      return result.finally(() => fs.rmSync(root, { recursive: true, force: true }));
+    }
     fs.rmSync(root, { recursive: true, force: true });
+    return result;
+  } catch (error) {
+    fs.rmSync(root, { recursive: true, force: true });
+    throw error;
   }
 }
 
@@ -3220,7 +3228,7 @@ nodeTest('worker death around a provisional effect resumes only on an exact rece
   });
 });
 
-nodeTest('an outstanding real effect binds its derived receipt so only that receipt promotes', () => {
+nodeTest('an outstanding real projection effect cannot promote from its derived receipt alone', () => {
   withSealedWorkspace((root) => {
     const key = derivedCheckpointKey();
     const state = pendingState('autonomous');
@@ -3266,13 +3274,13 @@ nodeTest('an outstanding real effect binds its derived receipt so only that rece
       assert.equal(held.acceptedRevision, 0, label);
     }
 
-    const resumed = resumeWithReceipt(fixture.identities.resultIdentity);
-    assert.equal(resumed.outcome, 'resumed');
-    const snapshot = resumed.adapter.snapshot();
-    assert.equal(snapshot.acceptedStateBytes, canonicalJson(pending.provisionalState));
-    assert.equal(snapshot.acceptedRevision, 1);
-    assert.equal(readCheckpointRecord(root, key).inFlight, null);
-    resumed.adapter.end('task-settled');
+    const unverified = resumeWithReceipt(fixture.identities.resultIdentity);
+    assert.equal(unverified.outcome, 'hard-stop');
+    assert.equal(unverified.reason, 'effect-unverified');
+    const held = readCheckpointRecord(root, key);
+    assert.equal(held.acceptedStateBytes, canonicalJson(state));
+    assert.equal(held.acceptedRevision, 0);
+    assert.deepEqual(held.inFlight, stored.inFlight);
   });
 });
 
@@ -5540,4 +5548,1112 @@ nodeTest('every governance action, both settlement branches, and an unpermitted 
     'advance-governance:halt': ['transition:halt'],
     'advance-governance:suspend-target': ['transition:suspend-target'],
   });
+});
+
+/** @param {string} root @param {Record<string, unknown>} [overrides] */
+function focusedRunnerRequest(root, overrides = {}) {
+  const input = sealedInspectionInput(root, { policyMode: 'autonomous' });
+  const assessment = {
+    evidenceHash: inspect(input).evidenceHash,
+    intent: 'unchanged',
+    action: 'execute-task',
+    materialInputs: clone(MATERIAL_INPUTS),
+    equivalence: 'distinct',
+    retention: 'transient',
+    summary: 'Exercise the bounded host adapter runner.',
+  };
+  return {
+    version: 1,
+    root,
+    target: clone(TARGET),
+    owner: {
+      ideaPath: IDEA_PATH,
+      specPath: TARGET.specPath,
+    },
+    state: emptyState('autonomous'),
+    assessment,
+    specialistResult: specialistResult('focused-runner', 'accepted'),
+    ...overrides,
+  };
+}
+
+/** @param {Record<string, unknown>} challenge @param {Record<string, unknown>} [overrides] */
+function focusedChallengeAssessment(challenge, overrides = {}) {
+  const inspection = /** @type {Record<string, unknown>} */ (challenge.inspection);
+  return {
+    evidenceHash: inspection.evidenceHash,
+    intent: 'unchanged',
+    action: 'execute-task',
+    materialInputs: clone(MATERIAL_INPUTS),
+    equivalence: 'distinct',
+    retention: 'transient',
+    summary: 'Respond to the exact fresh runner Inspection.',
+    ...overrides,
+  };
+}
+
+/** @param {Record<string, unknown>} assessment @param {string} label @param {'accepted'|'rejected'} [verdict] */
+function focusedSpecialistPair(assessment, label, verdict = 'accepted') {
+  const definition = `focused runner check:${label}`;
+  return {
+    outcome: verdict === 'accepted' ? 'succeeded' : 'blocked',
+    operations: clone(assessment.materialInputs.operations),
+    changedTargets: [],
+    verification: {
+      checks: [{ definition, outcome: 'passed', evidence: `focused runner evidence:${label}` }],
+    },
+    review: {
+      verdict,
+      findings: verdict === 'accepted' ? [] : [{
+        basis: {
+          expectation: { kind: 'governing-rule', reference: `focused runner rule:${label}` },
+          subjects: [TARGET.taskKey],
+          failureClass: 'review-rejection',
+          checkDefinition: definition,
+        },
+        observation: { kind: 'observed-evidence', evidence: `focused runner observation:${label}` },
+      }],
+    },
+  };
+}
+
+/** @param {Record<string, unknown>} challenge @param {string} field @param {unknown} value */
+function focusedChallengeResponse(challenge, field, value) {
+  return {
+    version: 1,
+    type: 'challenge-response',
+    challengeIdentity: challenge.challengeIdentity,
+    kind: challenge.kind,
+    [field]: clone(value),
+  };
+}
+
+/** @param {Record<string, unknown>} challenge */
+function focusedCancelResponse(challenge) {
+  return {
+    version: 1,
+    type: 'cancel',
+    challengeIdentity: challenge.challengeIdentity,
+    kind: challenge.kind,
+  };
+}
+
+/**
+ * @param {Record<string, unknown>} request
+ * @param {(challenge:Record<string, unknown>)=>Record<string, unknown>|null} respond
+ * @param {{env?:Record<string,string>,endAfterRequest?:boolean}} [options]
+ */
+function runFocusedRunnerCli(request, respond, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      fileURLToPath(new URL('./host-adapter-runner.mjs', import.meta.url)),
+    ], {
+      env: { ...process.env, ...options.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const rows = [];
+    let stdout = '';
+    let stderr = '';
+    let failed = false;
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      while (stdout.includes('\n')) {
+        const index = stdout.indexOf('\n');
+        const line = stdout.slice(0, index);
+        stdout = stdout.slice(index + 1);
+        if (line.length === 0) continue;
+        try {
+          const row = JSON.parse(line);
+          rows.push(row);
+          if (row.type === 'input-required') {
+            const response = respond(row);
+            if (response === null) child.stdin.end();
+            else child.stdin.write(`${canonicalJson(response)}\n`);
+          } else if (row.type === 'result' && !child.stdin.destroyed) {
+            child.stdin.end();
+          }
+        } catch (error) {
+          failed = true;
+          child.kill();
+          reject(error);
+        }
+      }
+    });
+    child.on('error', (error) => {
+      failed = true;
+      reject(error);
+    });
+    child.on('close', (code) => {
+      if (failed) return;
+      if (stdout.length > 0) {
+        try {
+          rows.push(JSON.parse(stdout));
+        } catch (error) {
+          reject(error);
+          return;
+        }
+      }
+      resolve({ code, rows, stderr });
+    });
+    child.stdin.write(`${canonicalJson(request)}\n`);
+    if (options.endAfterRequest) child.stdin.end();
+  });
+}
+
+nodeTest('focused table A: sequential challenge protocol and foreground CLI', async () => {
+  const cases = [
+    {
+      label: 'exact bound projection settles the task',
+      expectedOutcome: 'ended',
+      expectedReason: 'task-settled',
+      expectedGlyph: 'x',
+      dependencies: () => ({}),
+      request: (value) => value,
+    },
+    {
+      label: 'authoritative work-project refusal preserves the task',
+      expectedOutcome: 'hard-stop',
+      expectedReason: 'inspection-incomplete',
+      expectedGlyph: '~',
+      expectedSteps: [':correction', ':reinspect'],
+      checkpointPresent: true,
+      dependencies: () => ({
+        laneOwner: {
+          identity: sha256('focused-runner-refusing-lane-owner'),
+          apply(request) {
+            if (request.operation === 'work-project') {
+              return {
+                ok: false,
+                phase: 'refused',
+                reason: 'expected-capture-mismatch',
+                unchangedPrestateHash: sha256('focused-runner-unchanged-prestate'),
+              };
+            }
+            return applyLightweightWorkRequest(request);
+          },
+        },
+      }),
+      request: (value) => value,
+    },
+    {
+      label: 'stale initial Assessment requires an exchange capability',
+      expectedOutcome: 'hard-stop',
+      expectedReason: 'exchange-unavailable',
+      expectedGlyph: '~',
+      checkpointPresent: true,
+      dependencies: () => ({}),
+      request: (value) => ({
+        ...value,
+        assessment: { ...value.assessment, evidenceHash: sha256('focused-stale-assessment') },
+      }),
+    },
+  ];
+
+  for (const row of cases) {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      const checkpoint = memoryCheckpointStore();
+      const request = row.request(focusedRunnerRequest(root));
+      const result = await runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        ...row.dependencies(),
+      });
+      assert.equal(result.outcome, row.expectedOutcome, row.label);
+      assert.equal(result.reason, row.expectedReason, row.label);
+      assert.match(result.stateBase64, /^[A-Za-z0-9+/]+={0,2}$/, row.label);
+      assert.match(result.stateHash, /^[0-9a-f]{64}$/, row.label);
+      for (const suffix of row.expectedSteps || []) {
+        assert.ok(result.steps.some((step) => step.step.endsWith(suffix)), `${row.label}:${suffix}`);
+      }
+      assert.equal(checkpoint.pair.checkpoint !== null, row.checkpointPresent === true, row.label);
+      const tasks = fs.readFileSync(path.join(root, TASKS_PATH), 'utf8');
+      assert.match(tasks, new RegExp(`- \\[${row.expectedGlyph}\\] ${TARGET.taskKey}`), row.label);
+    });
+  }
+
+  const protocolCases = [
+    {
+      label: 'foreign challenge identity refuses without adapter progress',
+      reason: 'challenge-response-foreign',
+      exchange(challenge) {
+        return {
+          ...focusedChallengeResponse(
+            challenge,
+            'assessment',
+            focusedChallengeAssessment(challenge),
+          ),
+          challengeIdentity: sha256('foreign-runner-challenge'),
+        };
+      },
+    },
+    {
+      label: 'out-of-order challenge kind refuses without adapter progress',
+      reason: 'challenge-response-out-of-order',
+      exchange(challenge) {
+        return {
+          version: 1,
+          type: 'challenge-response',
+          challengeIdentity: challenge.challengeIdentity,
+          kind: 'specialist-pair',
+          specialistResult: specialistResult('out-of-order', 'accepted'),
+        };
+      },
+    },
+    {
+      label: 'stale bound Assessment refuses without authorization',
+      reason: 'challenge-response-stale',
+      exchange(challenge) {
+        return focusedChallengeResponse(challenge, 'assessment', {
+          ...focusedChallengeAssessment(challenge),
+          evidenceHash: sha256('stale-challenge-assessment'),
+        });
+      },
+    },
+    {
+      label: 'replayed consumed response refuses the later challenge',
+      reason: 'challenge-response-replayed',
+      exchange: (() => {
+        let firstIdentity = null;
+        return (challenge) => {
+          if (challenge.kind === 'assessment') {
+            firstIdentity = challenge.challengeIdentity;
+            return focusedChallengeResponse(
+              challenge,
+              'assessment',
+              focusedChallengeAssessment(challenge),
+            );
+          }
+          return {
+            ...focusedChallengeResponse(
+              challenge,
+              'specialistResult',
+              specialistResult('replayed-response', 'accepted'),
+            ),
+            challengeIdentity: firstIdentity,
+          };
+        };
+      })(),
+    },
+    {
+      label: 'cancel is accepted from an Assessment challenge',
+      reason: 'cancelled',
+      outcome: 'ended',
+      checkpointPresent: false,
+      exchange: focusedCancelResponse,
+    },
+    {
+      label: 'cancel is accepted from a specialist-pair challenge',
+      reason: 'cancelled',
+      outcome: 'ended',
+      checkpointPresent: false,
+      exchange(challenge) {
+        if (challenge.kind === 'assessment') {
+          return focusedChallengeResponse(
+            challenge,
+            'assessment',
+            focusedChallengeAssessment(challenge),
+          );
+        }
+        return focusedCancelResponse(challenge);
+      },
+    },
+    {
+      label: 'cancel is accepted from a learning-review challenge',
+      reason: 'cancelled',
+      outcome: 'ended',
+      checkpointPresent: false,
+      initialVerdict: 'rejected',
+      exchange: (() => {
+        let assessmentOrdinal = 0;
+        let assessment;
+        return (challenge) => {
+          if (challenge.kind === 'assessment') {
+            assessmentOrdinal += 1;
+            assessment = focusedChallengeAssessment(challenge, assessmentOrdinal === 1 ? {} : {
+              action: 'retry-task',
+              materialInputs: {
+                targets: ['src/skills/dude-work/host-adapter.mjs'],
+                operations: ['retry-task'],
+                checks: ['verification'],
+              },
+              summary: 'Retry after the retained rejected review.',
+            });
+            return focusedChallengeResponse(challenge, 'assessment', assessment);
+          }
+          if (challenge.kind === 'specialist-pair') {
+            return focusedChallengeResponse(
+              challenge,
+              'specialistResult',
+              focusedSpecialistPair(assessment, 'repeated-rejection', 'rejected'),
+            );
+          }
+          return focusedCancelResponse(challenge);
+        };
+      })(),
+    },
+    {
+      label: 'sequential Assessment and specialist-pair challenges never overlap',
+      reason: 'task-settled',
+      outcome: 'ended',
+      checkpointPresent: false,
+      kinds: ['assessment', 'specialist-pair'],
+      omitInitial: true,
+      exchange: (() => {
+        let assessment;
+        let active = 0;
+        return (challenge) => {
+          active += 1;
+          assert.equal(active, 1);
+          let response;
+          if (challenge.kind === 'assessment') {
+            assessment = focusedChallengeAssessment(challenge);
+            response = focusedChallengeResponse(challenge, 'assessment', assessment);
+          } else {
+            response = focusedChallengeResponse(
+              challenge,
+              'specialistResult',
+              focusedSpecialistPair(assessment, 'sequential'),
+            );
+          }
+          active -= 1;
+          return response;
+        };
+      })(),
+    },
+  ];
+
+  for (const row of protocolCases) {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      const request = focusedRunnerRequest(root, {
+        assessment: {
+          ...focusedRunnerRequest(root).assessment,
+          evidenceHash: sha256('force-assessment-challenge'),
+        },
+        ...(row.initialVerdict
+          ? { specialistResult: specialistResult('initial-rejection', row.initialVerdict) }
+          : {}),
+      });
+      if (row.omitInitial) {
+        delete request.assessment;
+        delete request.specialistResult;
+      }
+      const checkpoint = memoryCheckpointStore();
+      const kinds = [];
+      const result = await runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        exchange(challenge) {
+          kinds.push(challenge.kind);
+          assert.equal(challenge.type, 'input-required', row.label);
+          assert.deepEqual(challenge.target, TARGET, row.label);
+          assert.match(challenge.challengeIdentity, /^[0-9a-f]{64}$/, row.label);
+          assert.match(challenge.attemptIdentity, /^[0-9a-f]{64}$/, row.label);
+          return row.exchange(challenge);
+        },
+      });
+      assert.equal(
+        result.reason,
+        row.reason,
+        `${row.label}:${kinds.join(',')}:${result.steps.map((step) => `${step.step}=${step.reason}`).join(',')}`,
+      );
+      assert.equal(result.outcome, row.outcome || 'hard-stop', row.label);
+      assert.equal(result.outcome === 'active', false, row.label);
+      assert.equal(
+        checkpoint.pair.checkpoint !== null,
+        row.checkpointPresent !== false,
+        row.label,
+      );
+      if (row.kinds) assert.deepEqual(kinds, row.kinds, row.label);
+      assert.ok(
+        fs.readFileSync(path.join(root, TASKS_PATH), 'utf8').includes(
+          `- [${result.reason === 'task-settled' ? 'x' : '~'}] ${TARGET.taskKey}`,
+        ),
+        row.label,
+      );
+    });
+  }
+
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const checkpoint = memoryCheckpointStore();
+    const planPath = path.join(root, TARGET.specPath.slice(0, -'spec.md'.length), 'plan.md');
+    let authorizeCalls = 0;
+    let assessment;
+    const challenges = [];
+    const result = await runHostAdapter(focusedRunnerRequest(root), {
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('focused-continuation-runtime'),
+        invoke(command, lowLevelRequest) {
+          if (command === 'authorize' && authorizeCalls < 2) {
+            authorizeCalls += 1;
+            fs.appendFileSync(planPath, `\ncontinuation revision ${authorizeCalls}\n`);
+          }
+          return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+        },
+      },
+      exchange(challenge) {
+        challenges.push(challenge.kind);
+        if (challenge.kind === 'assessment') {
+          assessment = focusedChallengeAssessment(challenge);
+          return focusedChallengeResponse(challenge, 'assessment', assessment);
+        }
+        return focusedChallengeResponse(
+          challenge,
+          'specialistResult',
+          focusedSpecialistPair(assessment, 'continued-after-refusal'),
+        );
+      },
+    });
+    assert.equal(result.outcome, 'ended', result.reason);
+    assert.equal(result.reason, 'task-settled');
+    assert.deepEqual(challenges, ['assessment', 'specialist-pair']);
+    assert.equal(authorizeCalls, 2);
+    assert.equal(checkpoint.calls.filter((call) => call === 'claim').length, 1);
+    assert.equal(result.steps.filter((step) => step.reason === 'evidence-drift').length, 2);
+    assert.ok(result.steps.some((step) => step.step.endsWith(':reinspect')));
+    assert.equal(
+      result.steps.some((step) => step.reason === 'checkpoint-ownership-unavailable'),
+      false,
+    );
+    assert.equal(checkpoint.pair.checkpoint, null);
+  });
+
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const outside = path.join(root, 'outside-tasks.md');
+    fs.writeFileSync(outside, fs.readFileSync(path.join(root, TASKS_PATH)));
+    fs.rmSync(path.join(root, TASKS_PATH));
+    fs.symlinkSync(outside, path.join(root, TASKS_PATH));
+    const result = await runHostAdapter(focusedRunnerRequest(root), {
+      checkpoint: memoryCheckpointStore().port,
+    });
+    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(result.reason, 'runner-refused');
+    assert.match(result.detail, /symbolic link|symlink/i);
+  });
+
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const temp = path.join(root, 'tmp');
+    fs.mkdirSync(temp);
+    const env = { TMPDIR: temp };
+    const stale = focusedRunnerRequest(root, {
+      assessment: {
+        ...focusedRunnerRequest(root).assessment,
+        evidenceHash: sha256('focused-cli-stale-assessment'),
+      },
+    });
+    let assessment;
+    const completed = /** @type {Record<string, unknown>} */ (await runFocusedRunnerCli(
+      stale,
+      (challenge) => {
+        if (challenge.kind === 'assessment') {
+          assessment = focusedChallengeAssessment(challenge);
+          return focusedChallengeResponse(challenge, 'assessment', assessment);
+        }
+        return focusedChallengeResponse(
+          challenge,
+          'specialistResult',
+          focusedSpecialistPair(assessment, 'cli'),
+        );
+      },
+      { env },
+    ));
+    assert.equal(completed.code, 0);
+    assert.deepEqual(
+      completed.rows.map((row) => row.type === 'input-required' ? row.kind : row.type),
+      ['assessment', 'specialist-pair', 'result'],
+    );
+    assert.equal(completed.rows.at(-1).outcome, 'ended');
+
+    fs.writeFileSync(path.join(root, TASKS_PATH), [
+      '# Tasks',
+      '',
+      `- [~] ${TARGET.taskKey} [Shared] Adapter core`,
+      '',
+      '## Lightweight Execution History',
+      '',
+    ].join('\n'));
+    writeSealedTaskState(root);
+    const eof = /** @type {Record<string, unknown>} */ (await runFocusedRunnerCli(
+      stale,
+      () => null,
+      { env, endAfterRequest: true },
+    ));
+    assert.equal(eof.code, 1);
+    assert.deepEqual(
+      eof.rows.map((row) => row.type === 'input-required' ? row.kind : row.type),
+      ['assessment', 'result'],
+    );
+    assert.equal(eof.rows.at(-1).outcome, 'hard-stop');
+    assert.equal(eof.rows.at(-1).reason, 'supervisor-context-lost');
+    assert.equal(eof.rows.at(-1).orphan, true);
+    assert.equal(eof.rows.at(-1).cleanup, 'not-attempted');
+
+    const collision = /** @type {Record<string, unknown>} */ (await runFocusedRunnerCli(
+      stale,
+      () => null,
+      { env, endAfterRequest: true },
+    ));
+    assert.equal(collision.code, 1);
+    assert.deepEqual(collision.rows.map((row) => row.type), ['result']);
+    assert.equal(collision.rows[0].reason, 'checkpoint-ownership-unavailable');
+  });
+});
+
+nodeTest('focused table B: rejected review settles before learning and later attempt', async () => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const request = focusedRunnerRequest(root);
+    request.state.policy.recovery = 2;
+    request.specialistResult = focusedSpecialistPair(
+      request.assessment,
+      'repeated-learning-rejection',
+      'rejected',
+    );
+    const challenges = [];
+    let assessment;
+    let selectedAlternative = null;
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port,
+      exchange(challenge) {
+        challenges.push(clone(challenge));
+        for (const forbidden of ['route', 'mode', 'command', 'transition']) {
+          assert.equal(Object.hasOwn(challenge, forbidden), false, `${challenge.kind}:${forbidden}`);
+        }
+        if (challenge.kind === 'learning-review') {
+          const governedState = JSON.parse(Buffer.from(challenge.stateBase64, 'base64').toString('utf8'));
+          assert.equal(governedState.learningGovernance.governanceIdentity, challenge.governanceIdentity);
+          const governed = governanceReview(governedState, 'selected-alternative');
+          selectedAlternative = governed.credible;
+          return focusedChallengeResponse(challenge, 'review', governed.review);
+        }
+        if (challenge.kind === 'assessment') {
+          const materialInputs = selectedAlternative === null
+            ? {
+              targets: ['src/skills/dude-work/host-adapter.mjs'],
+              operations: ['retry-task'],
+              checks: ['verification'],
+            }
+            : clone(selectedAlternative.approachBasis.materialInputs);
+          assessment = focusedChallengeAssessment(challenge, {
+            action: 'retry-task',
+            materialInputs,
+            summary: selectedAlternative === null
+              ? 'Retry after the first retained rejected review.'
+              : 'Run the selected materially different learning alternative.',
+          });
+          return focusedChallengeResponse(challenge, 'assessment', assessment);
+        }
+        return focusedChallengeResponse(
+          challenge,
+          'specialistResult',
+          focusedSpecialistPair(
+            assessment,
+            selectedAlternative === null ? 'repeated-learning-rejection' : 'selected-alternative',
+            selectedAlternative === null ? 'rejected' : 'accepted',
+          ),
+        );
+      },
+    });
+    assert.equal(
+      result.outcome,
+      'ended',
+      `${result.reason}:${result.steps.map((step) => `${step.step}=${step.reason}`).join(',')}`,
+    );
+    assert.equal(result.reason, 'task-settled');
+    assert.deepEqual(
+      challenges.map((challenge) => challenge.kind),
+      ['assessment', 'specialist-pair', 'learning-review', 'assessment', 'specialist-pair'],
+    );
+    assert.equal(new Set(challenges.map((challenge) => challenge.challengeIdentity)).size, challenges.length);
+    assert.equal(new Set(challenges.map((challenge) => challenge.bindingIdentity)).size, challenges.length);
+    assert.notEqual(challenges[0].inspection.evidenceHash, challenges[3].inspection.evidenceHash);
+    assert.notEqual(challenges[0].attemptIdentity, challenges[3].attemptIdentity);
+    assert.ok(challenges[0].modelPacket);
+    assert.ok(challenges[2].modelPacket);
+
+    const stepIndex = (prefix) => result.steps.findIndex((step) => step.step.startsWith(prefix));
+    assert.ok(stepIndex('attempt:2:completion:apply-projection') >= 0);
+    assert.ok(stepIndex('attempt:2:settle-completion') > stepIndex('attempt:2:completion:commit-projection'));
+    assert.ok(stepIndex('attempt:2:governance:apply-projection') > stepIndex('attempt:2:settle-completion'));
+    assert.ok(stepIndex('attempt:2:settle-governance') > stepIndex('attempt:2:governance:commit-projection'));
+    assert.ok(stepIndex('advance-governance:review-learning') > stepIndex('attempt:2:settle-governance'));
+    assert.ok(stepIndex('learning-result:apply-projection') > stepIndex('advance-governance:review-learning'));
+    assert.ok(stepIndex('learning-result:settle-effect') > stepIndex('learning-result:commit-projection'));
+    assert.ok(stepIndex('advance-governance:bind-alternative') > stepIndex('learning-result:settle-effect'));
+    assert.ok(stepIndex('attempt:3:authorize-attempt') > stepIndex('advance-governance:bind-alternative'));
+
+    const tasks = fs.readFileSync(path.join(root, TASKS_PATH), 'utf8');
+    assert.ok(tasks.includes(`- [x] ${TARGET.taskKey}`));
+    assert.ok((tasks.match(/"disposition":"review-rejected"/g) || []).length >= 2);
+    assert.ok(tasks.includes('"type":"learning-review"'));
+    assert.ok(tasks.includes('"type":"learning-governance"'));
+  });
+
+  const cases = [
+    ['settlement', 'settle', 'accepted', 'completed'],
+    ['application replay', 'replay-apply', 'hard-stop', 'lane-permit-replayed'],
+    ['receipt replay', 'replay-commit', 'hard-stop', 'lane-receipt-replayed'],
+  ];
+
+  for (const [label, action, expectedOutcome, expectedReason] of cases) {
+    withSealedWorkspace((root) => {
+      writeSealedTaskState(root);
+      const state = pendingState('autonomous');
+      const fixture = sealedTrustedFixture(state, `focused-projection:${label}`, 'accepted');
+      const applications = [];
+      const adapter = createHostAdapter(sealedInitial({ state }), {
+        laneOwner: {
+          identity: sha256(`focused-projection-lane-owner:${label}`),
+          apply(request) {
+            applications.push(clone(request));
+            return applyLightweightWorkRequest(request);
+          },
+        },
+      });
+      const captured = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
+        attemptResult: { input: sealedRecordInput(root), result: fixture.semantic },
+      }));
+      assert.equal(captured.outcome, 'effect-required', label);
+      const events = captured.effect.projectionBatch.events;
+      assert.equal(events.length, 1, label);
+
+      const binding = sealedLaneBinding(root);
+      const prepared = adapter.run(sealedRequest(adapter, 'prepare-authoritative-projection', {
+        projection: {
+          input: sealedTransportInput(sealedInspectionInput(root, {
+            policyMode: 'autonomous',
+            ...fixture.streams,
+          })),
+          laneBinding: {
+            lanePrestate: binding.lanePrestate,
+            targetMapping: binding.targetMapping,
+            operationTime: LANE_MUTATION.snapshotUpdatedAt,
+          },
+        },
+      }));
+      assert.equal(prepared.outcome, 'effect-required', label);
+      assert.equal(prepared.reason, 'projection-prepared', label);
+      const item = prepared.product.plan.items[0];
+      const applied = adapter.run(sealedRequest(adapter, 'apply-lane-effect', {
+        laneApplication: {
+          ...binding.application,
+          permit: clone(item.projectionPermit),
+          mutation: clone(item.mutation),
+        },
+      }));
+      assert.equal(applied.outcome, 'effect-required', label);
+      assert.equal(applied.reason, 'lane-projection-applied', label);
+      assert.equal(applications.length, 1, label);
+      assert.equal(applications[0].operation, 'work-project', label);
+
+      if (action === 'replay-apply') {
+        const replayed = adapter.run(sealedRequest(adapter, 'apply-lane-effect', {
+          laneApplication: {
+            ...binding.application,
+            permit: clone(item.projectionPermit),
+            mutation: clone(item.mutation),
+          },
+        }));
+        assert.equal(replayed.outcome, expectedOutcome, label);
+        assert.equal(replayed.reason, expectedReason, label);
+        assert.equal(applications.length, 1, label);
+        return;
+      }
+
+      const projectedInput = sealedTransportInput(sealedInspectionInput(root, {
+        policyMode: 'autonomous',
+        currentRun: [sealedCapture(TARGET, 'failed', events.map((event) => ({ event })))],
+        ...fixture.streams,
+      }));
+      const committed = adapter.run(sealedRequest(adapter, 'commit-lane-receipt', {
+        laneReceipt: {
+          input: projectedInput,
+          permit: clone(item.projectionPermit),
+          receipt: clone(applied.product.receipt),
+        },
+      }));
+      assert.equal(committed.outcome, 'effect-required', label);
+      assert.equal(committed.reason, 'lane-receipt-committed', label);
+
+      const result = action === 'replay-commit'
+        ? adapter.run(sealedRequest(adapter, 'commit-lane-receipt', {
+          laneReceipt: {
+            input: projectedInput,
+            permit: clone(item.projectionPermit),
+            receipt: clone(applied.product.receipt),
+          },
+        }))
+        : adapter.run(sealedRequest(adapter, 'settle-effect', { input: projectedInput }));
+      assert.equal(result.outcome, expectedOutcome, label);
+      assert.equal(result.reason, expectedReason, label);
+    });
+  }
+});
+
+nodeTest('focused table C: projection receipts and replacement-worker resume stay exact', async () => {
+  withSealedWorkspace((root) => {
+    writeSealedTaskState(root);
+    const state = pendingState('autonomous');
+    const fixture = sealedTrustedFixture(state, 'focused-c-projection', 'accepted');
+    const adapter = createHostAdapter(sealedInitial({ state }));
+    const captured = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
+      attemptResult: { input: sealedRecordInput(root), result: fixture.semantic },
+    }));
+    assert.equal(captured.outcome, 'effect-required');
+    const events = captured.effect.projectionBatch.events;
+    const binding = sealedLaneBinding(root);
+    const prepared = adapter.run(sealedRequest(adapter, 'prepare-authoritative-projection', {
+      projection: {
+        input: sealedTransportInput(sealedInspectionInput(root, {
+          policyMode: 'autonomous',
+          ...fixture.streams,
+        })),
+        laneBinding: {
+          lanePrestate: binding.lanePrestate,
+          targetMapping: binding.targetMapping,
+          operationTime: LANE_MUTATION.snapshotUpdatedAt,
+        },
+      },
+    }));
+    const item = prepared.product.plan.items[0];
+    const applied = adapter.run(sealedRequest(adapter, 'apply-lane-effect', {
+      laneApplication: {
+        ...binding.application,
+        permit: clone(item.projectionPermit),
+        mutation: clone(item.mutation),
+      },
+    }));
+    assert.equal(applied.outcome, 'effect-required');
+    const projectedInput = sealedTransportInput(sealedInspectionInput(root, {
+      policyMode: 'autonomous',
+      currentRun: [sealedCapture(TARGET, 'failed', events.map((event) => ({ event })))],
+      ...fixture.streams,
+    }));
+    const committed = adapter.run(sealedRequest(adapter, 'commit-lane-receipt', {
+      laneReceipt: {
+        input: projectedInput,
+        permit: clone(item.projectionPermit),
+        receipt: clone(applied.product.receipt),
+      },
+    }));
+    assert.equal(committed.outcome, 'effect-required');
+    assert.equal(committed.session.acceptedStateBytes, canonicalJson(state));
+    const settled = adapter.run(sealedRequest(adapter, 'settle-effect', { input: projectedInput }));
+    assert.equal(settled.outcome, 'accepted');
+    assert.equal(settled.reason, 'completed');
+  });
+
+  const cases = [
+    ['ordinary receipt compatibility', 'ordinary', 'accepted', 'lane-receipt-committed'],
+    ['receipt absence', 'missing', 'lane-receipt-binding-mismatch'],
+    ['mismatched receipt', 'mismatched', 'hard-stop', 'lane-receipt-binding-mismatch'],
+    ['stale receipt', 'stale', 'hard-stop', 'lane-receipt-binding-mismatch'],
+    ['duplicate receipt', 'duplicate', 'hard-stop', 'lane-receipt-replayed'],
+    ['replayed receipt', 'replay', 'hard-stop', 'lane-receipt-replayed'],
+    ['final poststate drift', 'drift', 'lane-receipt-mismatch'],
+  ].map((row) => row.length === 3
+    ? [row[0], row[1], 'hard-stop', row[2]]
+    : row);
+
+  for (const [label, fault, expectedOutcome, expectedReason] of cases) {
+    withSealedWorkspace((root) => {
+      writeSealedTaskState(root);
+      const closure = sealedAcceptedCompletion(root, (initial) => createHostAdapter(initial, {
+        laneOwner: {
+          identity: sha256(`focused-post-apply-lane-owner:${label}`),
+          apply(request) {
+            const outcome = applyLightweightWorkRequest(request);
+            if (outcome.ok !== true
+              || fault === 'ordinary'
+              || fault === 'stale'
+              || fault === 'duplicate'
+              || fault === 'replay'
+              || fault === 'drift') return outcome;
+            if (fault === 'missing') {
+              const { receipt: _receipt, ...withoutReceipt } = outcome;
+              return withoutReceipt;
+            }
+            const { receiptHash: _receiptHash, ...body } = outcome.receipt;
+            const mismatched = { ...body, permitHash: sha256('focused-mismatched-receipt') };
+            return {
+              ...outcome,
+              receipt: { ...mismatched, receiptHash: sha256(canonicalJson(mismatched)) },
+            };
+          },
+        },
+      }));
+      const binding = sealedLaneBinding(root);
+      const issued = closure.adapter.run(sealedRequest(closure.adapter, 'authorize-lane-effect', {
+        laneEffect: {
+          input: closure.laneInput(),
+          mutation: clone(LANE_MUTATION),
+          lanePrestate: binding.lanePrestate,
+          targetMapping: binding.targetMapping,
+        },
+      }));
+      assert.equal(issued.outcome, 'accepted', label);
+      const permit = issued.product.permit;
+      const applied = closure.adapter.run(sealedRequest(closure.adapter, 'apply-lane-effect', {
+        laneApplication: { ...binding.application, permit: clone(permit) },
+      }));
+
+      if (fault === 'missing' || fault === 'mismatched') {
+        assert.equal(applied.outcome, 'hard-stop', label);
+        assert.equal(applied.reason, expectedReason, label);
+        assert.match(fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'), new RegExp(`- \\[x\\] ${TARGET.taskKey}`));
+        return;
+      }
+
+      assert.equal(applied.outcome, 'accepted', label);
+      if (fault === 'drift') {
+        fs.appendFileSync(path.join(root, TASKS_PATH), '\n<!-- focused final-poststate drift -->\n');
+      }
+      const suppliedReceipt = clone(applied.product.receipt);
+      if (fault === 'stale') suppliedReceipt.receiptHash = sha256('focused-stale-receipt');
+      const committed = closure.adapter.run(sealedRequest(closure.adapter, 'commit-lane-receipt', {
+        laneReceipt: {
+          input: closure.laneInput(),
+          permit: clone(permit),
+          receipt: suppliedReceipt,
+        },
+      }));
+      if (fault === 'drift' || fault === 'stale') {
+        assert.equal(committed.outcome, 'hard-stop', label);
+        assert.equal(committed.reason, expectedReason, label);
+        return;
+      }
+      assert.equal(committed.outcome, 'accepted', label);
+      if (fault === 'ordinary') {
+        assert.equal(committed.reason, expectedReason, label);
+        assert.equal(committed.session.acceptedStateBytes, closure.adapter.snapshot().acceptedStateBytes, label);
+        return;
+      }
+      const replayed = closure.adapter.run(sealedRequest(closure.adapter, 'commit-lane-receipt', {
+        laneReceipt: {
+          input: closure.laneInput(),
+          permit: clone(permit),
+          receipt: clone(applied.product.receipt),
+        },
+      }));
+      assert.equal(replayed.outcome, expectedOutcome, label);
+      assert.equal(replayed.reason, expectedReason, label);
+    });
+  }
+
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const checkpointRoot = path.join(root, 'checkpoint');
+    fs.mkdirSync(checkpointRoot);
+    const observedCurrentRun = [];
+    const result = await runHostAdapter(focusedRunnerRequest(root), {
+      checkpoint: createTemporaryCheckpointStore({ root: checkpointRoot }),
+      runtime: {
+        identity: sha256('focused-c-runner-order-runtime'),
+        invoke(command, lowLevelRequest) {
+          if (command === 'inspect') {
+            observedCurrentRun.push(lowLevelRequest.input.currentRun.length);
+          }
+          return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+        },
+      },
+      laneOwner: {
+        identity: sha256('focused-c-runner-order-lane-owner'),
+        apply(request) {
+          if (request.operation !== 'work-project') return applyLightweightWorkRequest(request);
+          return {
+            version: 1,
+            ok: false,
+            phase: 'refused',
+            reason: 'expected-capture-mismatch',
+            unchangedPrestateHash: sha256('focused-c-runner-order-unchanged'),
+          };
+        },
+      },
+    });
+    assert.equal(result.outcome, 'hard-stop');
+    assert.ok(
+      observedCurrentRun.includes(1),
+      'runner fresh Inspection must retain current-run before a refused lane projection',
+    );
+  });
+
+  const boundaries = [
+    ['before current-run append', false, false, false],
+    ['after current-run append before lane apply', true, false, false],
+    ['after lane apply before receipt commit', true, true, false],
+    ['after receipt commit before projection settle', true, true, true],
+  ];
+
+  for (const [label, appendCurrentRun, applyLane, commitReceipt] of boundaries) {
+    withTemporaryRoot((checkpointRoot) => {
+      withSealedWorkspace((root) => {
+        writeSealedTaskState(root);
+        const state = pendingState('autonomous');
+        const fixture = sealedTrustedFixture(state, `focused-c-checkpoint:${label}`, 'accepted');
+        const store = createTemporaryCheckpointStore({ root: checkpointRoot });
+        const key = derivedCheckpointKey();
+        let exactApplication = null;
+        const adapter = createHostAdapter(
+          { ...sealedInitial({ state }), workspace: { ...WORKSPACE } },
+          {
+            checkpoint: store,
+            laneOwner: {
+              identity: sha256(`focused-c-checkpoint-lane-owner:${label}`),
+              apply(request) {
+                exactApplication = clone(readCheckpointRecord(checkpointRoot, key).inFlight);
+                return applyLightweightWorkRequest(request);
+              },
+            },
+          },
+        );
+        const captured = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
+          attemptResult: { input: sealedRecordInput(root), result: fixture.semantic },
+        }));
+        assert.equal(captured.outcome, 'effect-required', label);
+        const pending = clone(captured.session.pendingEffect);
+        const events = captured.effect.projectionBatch.events;
+        const binding = sealedLaneBinding(root);
+        const prepared = adapter.run(sealedRequest(adapter, 'prepare-authoritative-projection', {
+          projection: {
+            input: sealedTransportInput(sealedInspectionInput(root, {
+              policyMode: 'autonomous',
+              ...fixture.streams,
+            })),
+            laneBinding: {
+              lanePrestate: binding.lanePrestate,
+              targetMapping: binding.targetMapping,
+              operationTime: LANE_MUTATION.snapshotUpdatedAt,
+            },
+          },
+        }));
+        assert.equal(prepared.outcome, 'effect-required', label);
+        assert.equal(prepared.reason, 'projection-prepared', label);
+        const item = prepared.product.plan.items[0];
+        const currentRun = appendCurrentRun
+          ? [sealedCapture(TARGET, 'failed', events.map((event) => ({ event })))]
+          : [];
+        const projectionInput = sealedTransportInput(sealedInspectionInput(root, {
+          policyMode: 'autonomous',
+          currentRun,
+          ...fixture.streams,
+        }));
+        let applied = null;
+        if (applyLane) {
+          applied = adapter.run(sealedRequest(adapter, 'apply-lane-effect', {
+            laneApplication: {
+              ...binding.application,
+              permit: clone(item.projectionPermit),
+              mutation: clone(item.mutation),
+            },
+          }));
+          assert.equal(applied.outcome, 'effect-required', label);
+          assert.equal(applied.reason, 'lane-projection-applied', label);
+        }
+        if (commitReceipt) {
+          const committed = adapter.run(sealedRequest(adapter, 'commit-lane-receipt', {
+            laneReceipt: {
+              input: projectionInput,
+              permit: clone(item.projectionPermit),
+              receipt: clone(applied.product.receipt),
+            },
+          }));
+          assert.equal(committed.outcome, 'effect-required', label);
+          assert.equal(committed.reason, 'lane-receipt-committed', label);
+        }
+
+        const active = adapter.snapshot();
+        const held = readCheckpointRecord(checkpointRoot, key);
+        const handed = handoffHostWorker(
+          handoffInput(active.invocationIdentity, active),
+          supervisorPorts(store),
+        );
+        assert.equal(handed.outcome, 'handed-off', label);
+        const ports = () => resumePorts(store, sealedPorts((command, lowLevelRequest) => ({
+          status: 'returned',
+          value: runCommand(command, lowLevelRequest),
+        })));
+        const resume = (effect) => resumeHostAdapter(
+          resumeInput(handed.receipt, { effect }),
+          ports(),
+        );
+        const generic = resume({
+          status: 'established',
+          effectIdentity: held.inFlight.expectedEffectIdentity,
+          receiptIdentity: held.inFlight.expectedReceiptIdentity,
+          provisionalState: clone(pending.provisionalState),
+        });
+        assert.equal(generic.outcome, 'hard-stop', `${label}: generic pending evidence`);
+        assert.equal(generic.reason, 'effect-unverified', `${label}: generic pending evidence`);
+        assert.equal(
+          readCheckpointRecord(checkpointRoot, key).acceptedStateBytes,
+          canonicalJson(state),
+          `${label}: predecessor retained`,
+        );
+
+        if (!applyLane) return;
+        assert.deepEqual(held.inFlight, exactApplication, `${label}: exact apply descriptor retained`);
+        const receipt = clone(applied.product.receipt);
+        const { receiptHash: _receiptHash, ...receiptBody } = receipt;
+        const wrongReceiptBody = {
+          ...receiptBody,
+          permitHash: sha256(`focused-c-wrong-resume-receipt:${label}`),
+        };
+        const exactEffect = (input, suppliedReceipt = receipt) => ({
+          status: 'established',
+          effectIdentity: exactApplication.expectedEffectIdentity,
+          receiptIdentity: exactApplication.expectedReceiptIdentity,
+          provisionalState: clone(pending.provisionalState),
+          projection: {
+            input,
+            projectionBatch: clone(pending.projectionBatch),
+            permit: clone(item.projectionPermit),
+            receipt: clone(suppliedReceipt),
+          },
+        });
+        const wrongReceipt = resume(exactEffect(projectionInput, {
+          ...wrongReceiptBody,
+          receiptHash: sha256(canonicalJson(wrongReceiptBody)),
+        }));
+        assert.equal(wrongReceipt.outcome, 'hard-stop', `${label}: wrong exact receipt`);
+        assert.equal(
+          readCheckpointRecord(checkpointRoot, key).acceptedStateBytes,
+          canonicalJson(state),
+          `${label}: wrong receipt retains predecessor`,
+        );
+
+        const missingCurrentRunInput = sealedTransportInput(sealedInspectionInput(root, {
+          policyMode: 'autonomous',
+          ...fixture.streams,
+        }));
+        const oneSided = resume(exactEffect(missingCurrentRunInput));
+        assert.equal(oneSided.outcome, 'hard-stop', `${label}: one-sided projection`);
+        assert.match(
+          oneSided.reason,
+          /^(occurrence-retention-incomplete|projection-missing-current-run)$/,
+          `${label}: one-sided projection`,
+        );
+        assert.equal(
+          readCheckpointRecord(checkpointRoot, key).acceptedStateBytes,
+          canonicalJson(state),
+          `${label}: one-sided projection retains predecessor`,
+        );
+
+        const resumed = resume(exactEffect(projectionInput));
+        assert.equal(resumed.outcome, 'resumed', `${label}: exact dual projection`);
+        assert.equal(resumed.reason, 'checkpoint-resumed', `${label}: exact dual projection`);
+        assert.notEqual(
+          resumed.adapter.snapshot().acceptedStateBytes,
+          canonicalJson(state),
+          `${label}: exact dual projection advances predecessor`,
+        );
+        resumed.adapter.end('controlled-end');
+      });
+    });
+  }
 });

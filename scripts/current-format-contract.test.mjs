@@ -27,6 +27,7 @@ const ACTIVE_SOURCE_FILES = [
   'src/skills/dude-team-expansion/scaffold-agent.mjs',
   'src/skills/dude-work-intake/SKILL.md',
   'src/skills/dude-work/SKILL.md',
+  'src/skills/dude-work/host-adapter-runner.mjs',
   'src/skills/dude-work/host-adapter.mjs',
 ];
 
@@ -667,7 +668,7 @@ function installedAgentRoster() {
 test('current-format contract scans an explicit deterministic active-source inventory', () => {
   assert.deepEqual(ACTIVE_SOURCE_FILES, [...ACTIVE_SOURCE_FILES].sort());
   assert.equal(new Set(ACTIVE_SOURCE_FILES).size, ACTIVE_SOURCE_FILES.length);
-  assert.equal(ACTIVE_SOURCE_FILES.length, 18);
+  assert.equal(ACTIVE_SOURCE_FILES.length, 19);
   for (const relative of ACTIVE_SOURCE_FILES) {
     assert.equal(fs.statSync(path.join(ROOT, relative)).isFile(), true, relative);
   }
@@ -3675,6 +3676,7 @@ test('T005 automatic redefinition adds no action, command, or persistence surfac
 
 const ADAPTER_OWNER = 'src/skills/dude-work/SKILL.md';
 const ADAPTER_SOURCE = 'src/skills/dude-work/host-adapter.mjs';
+const ADAPTER_RUNNER_SOURCE = 'src/skills/dude-work/host-adapter-runner.mjs';
 const ATTESTATION_SOURCE = 'src/skills/dude-work/specialist-attestation.mjs';
 const ADAPTER_BOUNDARY_SECTION = '## Host Adapter Runtime Boundary';
 const ADAPTER_CONTINUITY_SECTION = '## Supervisor And Worker Continuity';
@@ -3726,6 +3728,7 @@ const ADAPTER_DOC_SECTIONS = [
 const ADAPTER_GENERATED_PAIRS = [
   ['src/agents/dude.agent.md', '.github/agents/dude.agent.md'],
   ['src/skills/dude-work/SKILL.md', '.github/skills/dude-work/SKILL.md'],
+  [ADAPTER_RUNNER_SOURCE, '.github/skills/dude-work/host-adapter-runner.mjs'],
   [ADAPTER_SOURCE, '.github/skills/dude-work/host-adapter.mjs'],
   [ATTESTATION_SOURCE, '.github/skills/dude-work/specialist-attestation.mjs'],
 ];
@@ -3800,6 +3803,28 @@ test('T003 the adapter owns every ordinary Work runtime route', () => {
     ['the boundary adds no user-visible surface', [
       [/adds no command, grammar, lane, board, or project state surface/, /never a second board, ledger, or event store/],
     ]],
+    ['the foreground runner is async, serialized, and terminal-only', [
+      [
+        /exposes only async `runHostAdapter`/,
+        /same live supervisor, adapter, current run, captures, pending effects, and replay ledger/,
+        /returns only `ended` or a genuine hard-stop orphan/,
+        /optional `dependencies\.exchange\(challenge\)` capability/,
+        /exactly one bound `assessment`, `specialist-pair`, or `learning-review` challenge and response at a time/,
+      ],
+    ]],
+    ['the CLI is foreground NDJSON and supervisor loss never cleans up', [
+      [
+        /reads one initial closed JSON line/,
+        /emits an `input-required` NDJSON challenge/,
+        /reads exactly one response line for each sequential challenge/,
+        /EOF or exchange-context loss returns an unclean hard-stop orphan/,
+        /leaves ownership for manual stale-orphan cleanup/,
+        /exits nonzero/,
+      ],
+    ]],
+    ['the runner adds no model or resident process surface', [
+      [/makes no model call/, /adds no service, REPL, daemon, registry, route or mode control, or checkpoint state/],
+    ]],
     ['autonomous attestation is cooperative and host-derived', [
       [
         /Autonomous attestation is cooperative, not cryptographic/,
@@ -3861,6 +3886,14 @@ test('T003 the supervisor owns invocation identity and exactly one writing worke
         /performs a fresh Inspection through the adapter before any route runs/,
         /authorities carried on the handoff receipt are provenance/,
         /capability comes only from the trusted ports injected into that replacement worker/,
+      ],
+    ]],
+    ['an established projection requires exact evidence and fresh dual-surface settlement', [
+      [
+        /established projection resume additionally supplies the exact projection batch, permit, atomic lane receipt, and fresh runtime input/,
+        /validates those values against the permit-bound lane-application descriptor/,
+        /runs the existing dual-surface settlement route before accepting any provisional successor/,
+        /generic pending-effect evidence or either missing projection surface preserves the predecessor and hard-stops/,
       ],
     ]],
     ['prestate descriptors are fixed when the claim is created', [
@@ -4187,6 +4220,7 @@ test('T003 docs state the accepted recovery boundary and the manual cleanup prot
 
 test('T003 the adapter and its prompt surfaces are generated, never hand-authored', () => {
   assert.ok(ACTIVE_SOURCE_FILES.includes(ADAPTER_SOURCE), 'the adapter is inventoried as an active source');
+  assert.ok(ACTIVE_SOURCE_FILES.includes(ADAPTER_RUNNER_SOURCE), 'the runner is inventoried as an active source');
   assert.equal(
     new Set(ADAPTER_GENERATED_PAIRS.map(([, generated]) => generated)).size,
     ADAPTER_GENERATED_PAIRS.length,
@@ -4205,4 +4239,23 @@ test('T003 the adapter and its prompt surfaces are generated, never hand-authore
   // preserved low-level runtime instead of replacing it.
   assert.equal(fs.existsSync(path.join(ROOT, '.github/skills/dude-work/host-adapter.test.mjs')), false);
   assert.match(read(ADAPTER_SOURCE), /from '\.\/recovery\.mjs'/);
+  assert.deepEqual(
+    [...read(ADAPTER_RUNNER_SOURCE).matchAll(/^export (?:async )?function (\w+)/gm)].map((entry) => entry[1]),
+    ['runHostAdapter'],
+  );
+  const runner = read(ADAPTER_RUNNER_SOURCE);
+  assert.match(runner, /^export async function runHostAdapter/m);
+  assert.match(runner, /dependencies\.exchange/);
+  assert.match(runner, /type: 'input-required'/);
+  assert.match(runner, /runner attempted to return a nonterminal result/);
+  assert.match(runner, /createInterface\(\{ input: process\.stdin/);
+  assert.match(runner, /supervisor-context-lost/);
+  assert.match(runner, /stateBase64/);
+  assert.match(runner, /stateHash/);
+  for (const forbidden of [
+    'createServer(', '.listen(', 'setInterval(', 'worker_threads', 'invokeModel(',
+    'fetch(', 'openai', 'anthropic',
+  ]) {
+    assert.equal(runner.includes(forbidden), false, `runner adds forbidden resident/model surface ${forbidden}`);
+  }
 });

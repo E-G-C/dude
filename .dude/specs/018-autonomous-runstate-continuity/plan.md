@@ -10,6 +10,8 @@ The active coordinator turn is the surviving invocation supervisor. It creates a
 
 The same module defines a narrow injected checkpoint interface and a dependency-free default backed by a bounded operating-system temporary location outside the workspace. One exclusive per-workspace-target ownership claim provides single-writer serialization; separate `acceptedRevision` and `hostRevision` values detect stale or incorrect updates but do not provide synchronization. This avoids an editor storage service, identity service, process monitor, database, daemon, project-state path, or second ledger. `src/` remains authoritative; `node scripts/build-dev.mjs` projects the new module and prompt changes into `.github/`.
 
+Definition reconciliation keeps completed T001@62726964, T002@63686b70, and T003@696e7467 with unchanged meanings and durable keys, archives blocked T004@76616c69 after its confirmed durable-key reconciliation defect, and introduces fresh T004@72756e72. The fresh task adds one adjacent `host-adapter-runner.mjs` to supply the bounded foreground challenge sequence missing from the shipped adapter without moving or copying adapter semantics.
+
 This feature has no progress objective and no active ObjectiveRegistry region.
 
 ## Technical Context
@@ -37,7 +39,7 @@ The specification passed its definition-time document gate before this plan was 
 
 - Compose the strict existing runtime instead of duplicating completion, learning, transition, budget, or governance semantics.
 - Keep deterministic route selection, state identity, worker generation, accepted and host revisions, collision, correction count, and cleanup decisions in code; model reasoning remains outside the authority boundary.
-- Add one source module and one focused test module because the host lifecycle and storage responsibility are distinct from low-level recovery semantics but too small to justify a framework.
+- Keep the existing adapter as the semantic owner; add one adjacent foreground runner with exactly three table-driven groups in the existing test module, bounded by existing budgets and with no framework, model call, service, REPL, or checkpoint expansion.
 - Keep the checkpoint outside the project tree and out of existing audit/history surfaces.
 - Keep prompt changes concise: `dude-work` owns the detailed adapter contract and `dude.agent.md` carries only the ordinary-use pointer.
 
@@ -50,16 +52,24 @@ No new durable guardrail is proposed. Existing deterministic and smallest-design
 - Feature 013 continues to own unattended stop discipline and actionable named halt reporting. This feature adds only the narrower inline recovery notice after successful host recovery.
 - Feature 014 continues to own repeated-review escalation wording and precedence.
 - Feature 017 remains incident evidence only. No Ship-specific route, test condition, or package mutation is introduced.
-- Feature 019 owns the production specialist attestation producer that turns actual Tester and Reviewer results into trusted captures. This feature builds none of it and mutates no Feature 019 package; T004 only closes through that shipped producer-backed path, with no backfill, forged permit, or supersession of the four retracted T001 through T004 occurrence rows, which remain append-only records of host processing rather than valid trusted-source provenance.
+- Feature 019 remains the sole owner of the production specialist-attestation producer that turns actual Tester and Code Reviewer results into trusted captures. The adjacent runner invokes that shipped producer-backed path and passes its capture streams unchanged into the existing adapter; it does not recreate producer, capture, or trust semantics and mutates no Feature 019 package. Fresh T004@72756e72 closes through that path while naming its new valid `occurrenceIdentity`, with no throwaway driver, backfill, forged permit, deletion, re-mint, or supersession of the four preserved prior T001 through T004 occurrence rows.
 - The existing low-level runtime remains the owner of RunState validation and state-transition semantics except for the FR-028 through FR-030 ordinary accepted-completion bridge; the adapter owns host composition, continuity, and that narrowly bound lane-effect transaction.
 
 ## Architecture
 
-### 1. One adjacent host adapter
+### 1. Existing host adapter and one adjacent coordinator runner
 
-Create `src/skills/dude-work/host-adapter.mjs` with a public module function and CLI. It imports existing recovery exports and does not copy their validators, route implementations, check sets, budgets, or governance rules. All recovery semantics remain unchanged except the ordinary accepted-completion bridge defined by FR-028 through FR-030. The only added recovery exports are the pure `deriveGovernanceRuntimeRequestV1` and `validateRecoveryRuntimeResultV1`, and each receives direct compatibility coverage; no ordinary-completion authority helper is exported.
+Keep `src/skills/dude-work/host-adapter.mjs` as the existing semantic owner and add adjacent `src/skills/dude-work/host-adapter-runner.mjs` as the bounded foreground coordinator host. The runner exposes one public module function, `runHostAdapter`, plus a CLI and invokes the existing adapter rather than copying its validators, route implementations, check sets, budgets, governance rules, runtime, lane owner, checkpoint store, or Feature 019 producer-backed specialist-attestation path. It adds no exposed route or mode, model call, daemon, service, REPL, registry, editor integration, database, framework, new persistent state, checkpoint field, or second ledger.
 
-The active coordinator turn calls the adapter as the invocation supervisor; no daemon or editor service is introduced. Before the first worker launch, the supervisor generates a cryptographically random invocation identity and a fresh worker token and generation, retains both outside checkpoint bytes, and passes them explicitly to the worker. A persistent shell or adapter worker may be replaced while the supervisor survives. The checkpoint binds the supplied identity but is never allowed to tell a caller who it is.
+The runner establishes supervisor admission, invocation identity, and worker token; derives conservative no-effect authority; acquires fresh Inspection and bound typed inputs; passes adapter-produced capture streams through exactly; maintains dual current-run and lane projections; reestablishes fresh lane binding; optionally integrates the existing checkpoint without expanding it; and emits the accepted RunState as base64 plus hash. It continues under the same live supervisor until an allowed terminal outcome and fails closed on supervisor loss, with no blind retry, fallback, direct board CLI, direct edit, hand-minted capture, or copied semantics.
+
+The active coordinator turn calls the runner as the invocation supervisor. Before the first worker launch, the supervisor generates a cryptographically random invocation identity and a fresh worker token and generation, retains both outside checkpoint bytes, and passes them explicitly to the worker. A persistent shell or adapter worker may be replaced while the supervisor survives. The checkpoint binds the supplied identity but is never allowed to tell a caller who it is.
+
+#### Foreground challenge sequence
+
+The runner alone selects a bounded foreground sequence of exactly three challenge kinds: `assessment`, `specialist-pair`, and `learning-review`. An `assessment` challenge binds one fresh Inspection and the current accepted RunState and revisions; a `specialist-pair` challenge binds the authorized attempt and its accepted Assessment and requires one actual Tester result plus one actual Code Reviewer result from the Feature 019 producer; a `learning-review` challenge binds the settled rejected result, its projection receipt, one fresh Inspection, and the exact governance request. Every response repeats the outstanding challenge identity and bindings. A foreign, mismatched, duplicate, or replayed response is rejected before adapter progress.
+
+The sequence is bounded by the existing overall and recovery budgets in accepted RunState. Exactly one challenge may be outstanding and exactly one bound response may be accepted at a time. `cancel` is valid while any challenge is outstanding and follows the existing explicit-cancellation cleanup boundary. The runner exposes no route or transition mode, performs no model call, and creates no queue, timeout, background listener, daemon, service, REPL, registry, or checkpoint expansion.
 
 The adapter accepts semantic Work operations rather than low-level route names. Its closed operation set is:
 
@@ -84,7 +94,7 @@ Route selection is deterministic:
 
 1. Guarded compatibility completion uses the existing legacy completion route.
 2. Autonomous completion with trusted verification or review evidence uses trusted capture, required authoritative projection preparation, and trusted finalize. An ordinary accepted Lightweight completion may then use only the FR-028 through FR-030 bridge.
-3. A review rejection is therefore captured as the real rejected result and can reach existing learning governance; it is never forced into the legacy action envelope.
+3. A rejected `specialist-pair` is captured and finalized as its real rejected result, and its required projection is prepared, applied, receipted, and settled before fresh Inspection establishes the binding for a `learning-review` challenge. Accepted learning governance may select a materially different alternative before a new `assessment` and `specialist-pair`. The runner never reclassifies the rejection as a host incident or requests a later attempt before rejection settlement.
 4. Governance, projection, lane-effect, receipt, and audit operations derive their low-level transition from the validated current phase, semantic request, exact authority, and receipt type. A caller-supplied low-level route token or transition mode is rejected before invocation.
 
 ### 2. Closed adapter outcomes
@@ -186,7 +196,7 @@ The zero-charge class is closed:
 | Genuine implementation, test, or review failure | Authorized attempt and trusted evidence | Admit through existing recovery/learning budgets; no silent retry |
 | Unknown or unverifiable side effect | No exact receipt or unchanged-prestate proof | Existing irreducible hard stop |
 
-The first qualifying incident may select one immediate deterministic correction. If that correction is not selected, has already been consumed, fails, or returns another qualifying refusal, the mandatory next action is fresh Inspection and reclassification. The adapter never returns a qualifying closed refusal as the final observable outcome of the invocation. A distinct existing hard stop still wins and is reported separately.
+On `closed-refusal`, the runner executes the exact `next.correction` at most once when present. If correction is absent, consumed, fails, or returns another qualifying refusal, it performs fresh Inspection and selects only the next challenge justified by the newly bound state. It never returns a nonterminal refusal, retries blindly, or asks for unbound input. A distinct existing hard stop still wins and is reported separately.
 
 Host incidents remain transient adapter diagnostics plus the one inline recovery notice. They do not enter trusted verification, review, approach, finding, or learning records. Existing final audit continues to describe genuine task and governance outcomes.
 
@@ -200,6 +210,8 @@ Keep the checkpoint and claim across closed refusals, eligible host/tool inciden
 - ordinary natural or controlled Work end;
 - explicit cancellation; or
 - an irreducible hard stop whose required result or audit is safely recorded.
+
+Parent EOF or exchange-context loss before an allowed terminal outcome is supervisor loss, not cancellation. The runner fails closed, performs no opportunistic clear, and leaves the ownership-claim/checkpoint pair for the existing stale-orphan manual-cleanup protocol. An explicit `cancel` response remains an allowed cleanup boundary from every outstanding challenge.
 
 A failed clear never returns `ended`; it reports a cleanup hard stop, leaves the ownership collision visible, and blocks replacement work. Starting another task after successful settlement creates a fresh ownership claim rather than carrying prior authority forward.
 
@@ -234,11 +246,17 @@ Extend `scripts/current-format-contract.test.mjs` to pin:
 
 Add concise continuity details, the accepted supervisor/worker recovery boundary, and the manual stale-orphan cleanup protocol to `docs/workflow.md` and `docs/reference.md`. No command grammar changes, so `docs/commands.md` and the README do not need feature prose.
 
-Run `node scripts/build-dev.mjs` after every `src/` edit. The expected new generated file is `.github/skills/dude-work/host-adapter.mjs`; prompt projection updates `.github/skills/dude-work/SKILL.md` and `.github/agents/dude.agent.md`. `scripts/build-dev.mjs` itself needs no change because it already discovers and projects non-test core source files. Generated files are never edited directly.
+Run `node scripts/build-dev.mjs` after every `src/` edit. The generated files include `.github/skills/dude-work/host-adapter.mjs` and the new `.github/skills/dude-work/host-adapter-runner.mjs`; prompt projection updates `.github/skills/dude-work/SKILL.md` and `.github/agents/dude.agent.md`. `scripts/build-dev.mjs` itself needs no change because it already discovers and projects non-test core source files. Generated files are never edited directly.
 
 ## Failure-Injection Coverage
 
-Focused adapter tests must cover:
+Add exactly three focused table-driven adapter groups to the existing `src/skills/dude-work/host-adapter.test.mjs`:
+
+- **Table A - Sequential challenge protocol**: runner-selected challenge ordering, exactly one outstanding challenge and one bound response, foreign or replayed responses, parent EOF or exchange-context loss, and explicit cancellation from every challenge.
+- **Table B - Rejection and learning review**: typed `learning-review` challenges and responses, real rejected `specialist-pair` capture and finalization, projection and receipt settlement before fresh Inspection and learning review, and accepted governance before any later assessment or specialist pair.
+- **Table C - Projection receipt and resume**: authoritative projection preparation, exact projection receipt and settlement, provisional-successor retention, same-supervisor worker resume, and stale, mismatched, duplicated, replayed, or drifted receipt and poststate refusal.
+
+Preserve the existing focused coverage below as regression coverage:
 
 - exact `action-mismatch` followed by attempted host exit, proving no exit, Work termination, shell termination, or worker termination is invoked and the required correction or fresh Inspection follows;
 - wrong action and route mismatch returning exact predecessor plus typed nonterminal next-action data;
@@ -283,7 +301,13 @@ Use child-process fixtures only for the process-loss boundary. All storage and r
 
 ## Source Layout
 
-### New authoritative source
+### New minimal coordinator runner
+
+```text
+src/skills/dude-work/host-adapter-runner.mjs
+```
+
+### Existing authoritative adapter and test module
 
 ```text
 src/skills/dude-work/host-adapter.mjs
@@ -313,6 +337,7 @@ docs/reference.md
 
 ```text
 .github/skills/dude-work/host-adapter.mjs
+.github/skills/dude-work/host-adapter-runner.mjs
 .github/skills/dude-work/SKILL.md
 .github/agents/dude.agent.md
 ```
@@ -328,7 +353,7 @@ Only `spec.md`, `plan.md`, and `tasks.md` are needed. The adapter contract is sm
 - **Phase 1 - Adapter core, bridge, and route composition (T001@62726964)**: implement explicit nonterminal outcomes, deterministic complete adapter composition, immutable accepted-state handoff, dual-revision and correction semantics, trusted rejection routing, the replay-sealed FR-028 through FR-030 bridge, typed one-shot notice behavior, direct coverage of both pure recovery helpers, and focused no-budget/no-evidence-pollution tests.
 - **Phase 2 - Supervisor identity, exclusive checkpoint, and worker continuity (T002@63686b70)**: implement supervisor-supplied invocation identity, the injected checkpoint interface, exclusive ownership, serialized worker generations and exact-exit handoff, portable bounded temp backend, fresh resume validation, lifecycle cleanup, safe stale-orphan diagnostics, confirmed bounded-pair manual cleanup, post-clean absence validation, and storage/security fault tests.
 - **Phase 3 - Ordinary Work integration and parity (T003@696e7467)**: make the adapter the sole ordinary prompt boundary for the complete semantic operation set, pin the accepted supervisor/worker boundary, bridge prohibitions, exactly-once notice rendering, nonterminal handling, and manual stale-orphan cleanup protocol in static contracts and concise docs, rebuild generated core, and preserve internal low-level compatibility.
-- **Phase 4 - Full acceptance and independent evidence (T004@76616c69)**: reproduce the motivating nontermination incident, surviving-supervisor worker recovery, the positive bridge and exhaustive refusal matrix, closing T004 itself through Feature 019's shipped producer-backed path with no backfill, forged permit, or supersession of the four retracted T001 through T004 occurrence rows, complete adapter routing, and notice timing; include partial stale cleanup, reappearance, post-clean absence, and no automatic expiry or takeover, run all focused and repository gates, and obtain independent Tester and Code Reviewer evidence with no regression outside FR-028 through FR-030.
+- **Phase 4 - Bounded foreground runner, full acceptance, and independent evidence (T004@72756e72)**: Ship the minimal foreground `runHostAdapter` module/CLI and generated projection, reusing the existing adapter, runtime, lane owner, checkpoint store, and Feature 019 producer without copied semantics or new state. Continue under one live supervisor through a bounded sequence of runner-selected `assessment`, `specialist-pair`, and `learning-review` challenges, exactly one outstanding and one bound response at a time, with no exposed route/mode, model call, service/REPL, or checkpoint expansion; emit accepted RunState base64/hash and fail closed on supervisor loss. Add exactly three table groups: A for sequential ordering, foreign/replay responses, EOF, and cancel; B for typed learning review and rejection ordering; C for projection receipt and resume. Reprove the positive bridge, complete routing, one-shot notice timing, focused/full/build/lint/compose/pristine-release/parity/whitespace gates, and no regression outside FR-028 through FR-030; obtain actual independent Tester and Code Reviewer results; then self-close through this runner and Feature 019 with a new valid `occurrenceIdentity`, preserving all prior history without a throwaway driver, backfill, forged permit, deletion, re-mint, or supersession (US1 through US6; FR-001 through FR-030; SC-001 through SC-016).
 
 ## Traceability
 
@@ -337,7 +362,7 @@ Only `spec.md`, `plan.md`, and `tasks.md` are needed. The adapter contract is sm
 | T001@62726964 | US1, US2, US5, US6 | FR-001, FR-002, FR-007 through FR-013, FR-016, FR-019, FR-025 through FR-030 | Complete adapter route matrix, nonterminal action-mismatch fixture, immutable handoff and dual-revision tests, replay-sealed bridge matrix, typed one-shot notice, direct helper compatibility, correction fault injection, trusted rejection fixture |
 | T002@63686b70 | US3, US4, US6 | FR-003 through FR-006, FR-014 through FR-024, FR-027 | In-memory and temp backend tests, exclusive claim, child-process handoff, dual revisions, portable behavior, drift/corruption/collision/cleanup, safe stale-pair diagnostics, and post-clean absence fixtures |
 | T003@696e7467 | US1, US2, US5, US6 | FR-001 through FR-013, FR-025 through FR-030 | Prompt contracts, complete semantic adapter routing, exactly-once notice rendering, supervisor/worker and manual-cleanup docs assertions, generated source parity, low-level compatibility checks |
-| T004@76616c69 | US1 through US6 | FR-001 through FR-030 | Positive and exhaustive bridge acceptance, close of T004 itself through Feature 019's shipped producer-backed path with no backfill, forged permit, or supersession of the four retracted T001 through T004 occurrence rows, nontermination reproduction, surviving-supervisor worker recovery, notice timing, partial cleanup/reappearance/post-clean absence acceptance, full suite, lint, compose/release parity, independent Tester and Code Reviewer evidence |
+| T004@72756e72 | US1 through US6 | FR-001 through FR-030 | Bounded foreground `runHostAdapter` module/CLI and generated projection; one live supervisor; runner-selected `assessment`, `specialist-pair`, and `learning-review` challenges with one outstanding bound response; Tables A through C for sequential protocol, rejection and learning-review ordering, and projection receipt and resume; accepted RunState base64/hash; positive bridge, complete routing, notice timing, focused/full/build/lint/compose/pristine-release/parity/whitespace gates, actual independent Tester and Code Reviewer results, and producer-backed self-close naming a new valid `occurrenceIdentity` without changing prior history |
 
 ## Validation Strategy
 
@@ -379,7 +404,7 @@ Every task that edits `src/` runs `node scripts/build-dev.mjs` before parity-sen
 ## Risks
 
 - **Provisional side effect outlives the host**: retain predecessor plus expected effect identity and accept a successor only after a fresh exact receipt; unknown effects hard-stop.
-- **Supervisor loss cannot recover**: this is deliberate; only persistent-shell and adapter-worker death are recoverable while the coordinator turn and independently retained identity survive.
+- **Supervisor loss cannot recover**: this is deliberate; parent EOF or exchange-context loss fails closed as supervisor loss with no opportunistic cleanup, and only persistent-shell and adapter-worker death are recoverable while the coordinator turn and independently retained identity survive.
 - **Temp storage is less portable than project state**: this is deliberate; supervisor identity, exclusive ownership, and fresh authority bind same-invocation resume, while editor, machine, and cross-session restart remain out of scope.
 - **Filesystem behavior varies by platform**: enforce the portable Node built-in minimum, use inherited ACLs on Windows, make stronger platform checks only where supported, and fail closed on observed operation failure without claiming identical POSIX guarantees.
 - **A stale orphan blocks future work**: report the safe bounded-pair identity and require confirmed manual cleanup of only that pair; age never enables automatic takeover or removal, and partial cleanup, changed or reappeared artifacts, or failed post-clean absence validation hard-stop.

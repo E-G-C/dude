@@ -1744,8 +1744,8 @@ function laneEffectPermit(value, label) {
   );
 }
 
-/** @param {Record<string, unknown>} session @param {Record<string, unknown>} request @param {(command:string, request:unknown)=>unknown} invoke */
-function prepareAuthoritativeProjection(session, request, invoke) {
+/** @param {Record<string, unknown>} session @param {Record<string, unknown>} request @param {(command:string, request:unknown)=>unknown} invoke @param {ReturnType<typeof createLaneLedger>} ledger */
+function prepareAuthoritativeProjection(session, request, invoke, ledger) {
   if (session.pendingEffect === null) return hardStop(session, 'pending-effect-missing');
   const effect = /** @type {Record<string, unknown>} */ (session.pendingEffect);
   const projection = /** @type {Record<string, unknown>} */ (request.projection);
@@ -1797,6 +1797,40 @@ function prepareAuthoritativeProjection(session, request, invoke) {
   if (plan.batchIdentity !== batch.batchIdentity
     || canonicalJson(plan.target) !== canonicalJson(session.target)) {
     return hardStop(session, 'projection-preparation-binding-mismatch');
+  }
+  if (binding !== null) {
+    try {
+      const items = denseArray(plan.items, 'recovery projection preparation response.transition.plan.items');
+      const events = /** @type {Record<string, unknown>[]} */ (batch.events);
+      if (items.length !== events.length) invalid('projection plan', 'must cover the exact pending batch');
+      for (let index = 0; index < items.length; index += 1) {
+        const item = record(items[index], `projection plan item[${index}]`);
+        const permit = laneEffectPermit(item.projectionPermit, `projection plan item[${index}].projectionPermit`);
+        if (permit.kind !== 'lane-projection'
+          || canonicalJson(permit.target) !== canonicalJson(session.target)
+          || permit.subjectRunStateHash !== effect.provisionalStateHash
+          || permit.batchIdentity !== batch.batchIdentity
+          || permit.eventHash !== events[index].eventHash
+          || permit.eventHash !== item.eventHash
+          || permit.mutationIdentity !== item.mutationIdentity
+          || permit.mutationIdentity !== sha256(canonicalJson(item.mutation))) {
+          invalid('projection plan item', 'must bind the exact provisional state, event, and mutation');
+        }
+        const prior = ledger.permits.get(/** @type {string} */ (permit.permitHash));
+        if (prior && canonicalJson(prior.permit) !== canonicalJson(permit)) {
+          invalid('projection plan item', 'must not conflict with an admitted permit');
+        }
+        if (!prior) {
+          ledger.permits.set(/** @type {string} */ (permit.permitHash), {
+            stage: 'issued',
+            permit: clone(permit),
+            receipt: null,
+          });
+        }
+      }
+    } catch {
+      return hardStop(session, 'projection-preparation-binding-mismatch');
+    }
   }
   return effectRequired(session, 'projection-prepared', { kind: 'projection-plan', plan: clone(plan) });
 }
@@ -1875,11 +1909,17 @@ function authorizeLaneEffect(session, request, invoke, ledger) {
  * @param {ReturnType<typeof trustedPorts>} ports @param {ReturnType<typeof createLaneLedger>} ledger
  */
 function applyLaneEffect(session, request, ports, ledger) {
-  if (session.pendingEffect !== null) return effectRequired(session, 'effect-unsettled');
   if (/** @type {Record<string, unknown>} */ (session.target).lane !== 'lightweight') {
     return hardStop(session, 'lane-owner-unavailable');
   }
   const application = /** @type {Record<string, unknown>} */ (request.laneApplication);
+  if (session.pendingEffect !== null
+    && (application.permit === null
+      || typeof application.permit !== 'object'
+      || Array.isArray(application.permit)
+      || /** @type {Record<string, unknown>} */ (application.permit).kind !== 'lane-projection')) {
+    return effectRequired(session, 'effect-unsettled');
+  }
   let permit;
   try {
     permit = laneEffectPermit(application.permit, 'HostAdapterRequest.laneApplication.permit');
@@ -1889,8 +1929,27 @@ function applyLaneEffect(session, request, ports, ledger) {
   const entry = ledger.permits.get(/** @type {string} */ (permit.permitHash));
   if (!entry) return hardStop(session, 'lane-permit-not-authorized');
   if (entry.stage !== 'issued') return hardStop(session, 'lane-permit-replayed');
+  const projection = permit.kind === 'lane-projection';
+  const pending = session.pendingEffect === null
+    ? null
+    : /** @type {Record<string, unknown>} */ (session.pendingEffect);
+  if (projection) {
+    if (pending === null
+      || permit.subjectRunStateHash !== pending.provisionalStateHash
+      || permit.batchIdentity !== /** @type {Record<string, unknown>} */ (pending.projectionBatch).batchIdentity) {
+      return hardStop(session, 'lane-permit-binding-mismatch');
+    }
+  } else if (pending !== null) {
+    return effectRequired(session, 'effect-unsettled');
+  }
+  const subjectState = projection
+    ? /** @type {Record<string, unknown>} */ (pending).provisionalState
+    : session.acceptedState;
+  const subjectStateHash = projection
+    ? /** @type {Record<string, unknown>} */ (pending).provisionalStateHash
+    : session.acceptedStateHash;
   if (canonicalJson(entry.permit) !== canonicalJson(permit)
-    || permit.subjectRunStateHash !== session.acceptedStateHash
+    || permit.subjectRunStateHash !== subjectStateHash
     || permit.mutationIdentity !== sha256(canonicalJson(application.mutation))) {
     return hardStop(session, 'lane-permit-binding-mismatch');
   }
@@ -1900,7 +1959,7 @@ function applyLaneEffect(session, request, ports, ledger) {
     root: application.root,
     owner: clone(application.owner),
     target: clone(session.target),
-    state: JSON.parse(/** @type {string} */ (session.acceptedStateBytes)),
+    state: clone(subjectState),
     permit: clone(permit),
     mapping: clone(application.mapping),
     expected: clone(application.expected),
@@ -1944,6 +2003,13 @@ function applyLaneEffect(session, request, ports, ledger) {
   }
   entry.stage = 'applied';
   entry.receipt = clone(receipt);
+  if (projection) {
+    return effectRequired(
+      session,
+      'lane-projection-applied',
+      { kind: 'lane-receipt', receipt: clone(receipt) },
+    );
+  }
   return acceptState(
     session,
     JSON.parse(/** @type {string} */ (session.acceptedStateBytes)),
@@ -1953,10 +2019,33 @@ function applyLaneEffect(session, request, ports, ledger) {
   );
 }
 
+/** @param {Record<string, unknown>} subject @param {Record<string, unknown>} successor @param {Record<string, unknown>} receipt */
+function laneReceiptSuccessorMatches(subject, successor, receipt) {
+  if (!Object.hasOwn(subject, 'learningGovernance')) {
+    return canonicalJson(successor) === canonicalJson(subject);
+  }
+  const expected = clone(subject);
+  const governance = /** @type {Record<string, unknown>} */ (expected.learningGovernance);
+  if (governance.phase === 'alternative-authorized-pending-lane') {
+    governance.phase = 'alternative-authorized';
+    governance.laneClaimReceiptIdentity = receipt.receiptHash;
+  } else if (governance.phase === 'alternative-verified'
+    || governance.phase === 'no-progress-verified') {
+    delete expected.learningGovernance;
+  }
+  return canonicalJson(successor) === canonicalJson(expected);
+}
+
 /** @param {Record<string, unknown>} session @param {Record<string, unknown>} request @param {(command:string, request:unknown)=>unknown} invoke @param {ReturnType<typeof createLaneLedger>} ledger */
 function commitLaneReceipt(session, request, invoke, ledger) {
-  if (session.pendingEffect !== null) return effectRequired(session, 'effect-unsettled');
   const laneReceipt = /** @type {Record<string, unknown>} */ (request.laneReceipt);
+  if (session.pendingEffect !== null
+    && (laneReceipt.permit === null
+      || typeof laneReceipt.permit !== 'object'
+      || Array.isArray(laneReceipt.permit)
+      || /** @type {Record<string, unknown>} */ (laneReceipt.permit).kind !== 'lane-projection')) {
+    return effectRequired(session, 'effect-unsettled');
+  }
   let permit;
   try {
     permit = laneEffectPermit(laneReceipt.permit, 'HostAdapterRequest.laneReceipt.permit');
@@ -1967,14 +2056,33 @@ function commitLaneReceipt(session, request, invoke, ledger) {
   if (!entry) return hardStop(session, 'lane-permit-not-authorized');
   if (entry.stage === 'committed') return hardStop(session, 'lane-receipt-replayed');
   if (entry.stage !== 'applied') return hardStop(session, 'lane-effect-unapplied');
+  const projection = permit.kind === 'lane-projection';
+  const pending = session.pendingEffect === null
+    ? null
+    : /** @type {Record<string, unknown>} */ (session.pendingEffect);
+  if (projection) {
+    if (pending === null
+      || permit.subjectRunStateHash !== pending.provisionalStateHash
+      || permit.batchIdentity !== /** @type {Record<string, unknown>} */ (pending.projectionBatch).batchIdentity) {
+      return hardStop(session, 'lane-permit-binding-mismatch');
+    }
+  } else if (pending !== null) {
+    return effectRequired(session, 'effect-unsettled');
+  }
+  const subjectState = projection
+    ? /** @type {Record<string, unknown>} */ (pending).provisionalState
+    : session.acceptedState;
+  const subjectStateBytes = projection
+    ? /** @type {Record<string, unknown>} */ (pending).provisionalStateBytes
+    : session.acceptedStateBytes;
   if (canonicalJson(entry.permit) !== canonicalJson(permit)
     || canonicalJson(entry.receipt) !== canonicalJson(laneReceipt.receipt)
-    || permit.subjectRunStateHash !== session.acceptedStateHash) {
+    || permit.subjectRunStateHash !== sha256(/** @type {string} */ (subjectStateBytes))) {
     return hardStop(session, 'lane-receipt-binding-mismatch');
   }
   const top = exactRecord(invoke('transition', {
     mode: 'commit-lane-receipt',
-    state: JSON.parse(/** @type {string} */ (session.acceptedStateBytes)),
+    state: clone(subjectState),
     input: laneReceipt.input,
     permit: clone(entry.permit),
     receipt: clone(entry.receipt),
@@ -1993,9 +2101,14 @@ function commitLaneReceipt(session, request, invoke, ledger) {
   if (typeof transition.committed !== 'boolean') return hardStop(session, 'runtime-result-malformed');
   text(transition.reason, 'recovery lane receipt response.transition.reason');
   const successor = stateEnvelope(transition.state);
-  if (!successor) return hardStop(session, 'successor-malformed');
+  if (!successor) {
+    return hardStop(session, projection ? 'lane-receipt-state-mismatch' : 'successor-malformed');
+  }
   if (transition.committed !== true) {
-    if (successor.bytes !== session.acceptedStateBytes) return hardStop(session, 'refused-successor-mismatch');
+    if (successor.bytes !== subjectStateBytes) {
+      return hardStop(session, projection ? 'lane-receipt-state-mismatch' : 'refused-successor-mismatch');
+    }
+    if (projection) return hardStop(session, /** @type {string} */ (transition.reason));
     const incidentClass = {
       'inspection-stale': 'evidence-drift',
       'permit-stale': 'stale-permit',
@@ -2006,12 +2119,28 @@ function commitLaneReceipt(session, request, invoke, ledger) {
       ? closedIncident(session, 'commit-lane-receipt', incidentClass, /** @type {string} */ (transition.reason))
       : hardStop(session, /** @type {string} */ (transition.reason));
   }
+  if (projection
+    ? successor.bytes !== subjectStateBytes
+    : !laneReceiptSuccessorMatches(
+      /** @type {Record<string, unknown>} */ (subjectState),
+      /** @type {Record<string, unknown>} */ (successor.state),
+      /** @type {Record<string, unknown>} */ (entry.receipt),
+    )) {
+    return hardStop(session, 'lane-receipt-state-mismatch');
+  }
   if (transition.reason !== 'lane-receipt-committed'
     || !Object.hasOwn(transition, 'receipt')
     || canonicalJson(transition.receipt) !== canonicalJson(entry.receipt)) {
     return hardStop(session, 'lane-receipt-binding-mismatch');
   }
   entry.stage = 'committed';
+  if (projection) {
+    return effectRequired(session, 'lane-receipt-committed', {
+      kind: 'lane-settlement',
+      receipt: clone(entry.receipt),
+      terminalEvidenceIdentity: null,
+    });
+  }
   return acceptState(session, successor.state, 'lane-receipt-committed', false, {
     kind: 'lane-settlement',
     receipt: clone(entry.receipt),
@@ -2657,47 +2786,76 @@ function receiptExpectation(pending) {
   return typeof derived === 'string' && HASH_PATTERN.test(derived) ? derived : null;
 }
 
-/**
- * The lane apply route is the only operation that drives an authoritative external mutator, and it
- * carries no pending effect, so its expectation is bound to the exact permit the lane owner will be
- * handed. Every path that returns null here provably refuses before the lane owner is reached, so no
- * unbound descriptor can cover an applied mutation.
- * @param {Record<string, unknown>} session @param {Record<string, unknown>} request
- */
-function laneApplicationExpectation(session, request) {
-  let permit;
-  try {
-    const application = record(request.laneApplication, 'HostAdapterRequest.laneApplication');
-    permit = laneEffectPermit(application.permit, 'HostAdapterRequest.laneApplication.permit');
-    if (permit.subjectRunStateHash !== session.acceptedStateHash
-      || permit.mutationIdentity !== sha256(canonicalJson(application.mutation))) return null;
-  } catch {
-    return null;
-  }
+/** @param {Record<string, unknown>} target @param {string} subjectRunStateHash @param {Record<string, unknown>} permit */
+function permitApplicationExpectation(target, subjectRunStateHash, permit) {
+  const projection = permit.kind === 'lane-projection';
+  const projectionBinding = projection ? {
+    targetMappingHash: permit.targetMappingHash,
+    lanePrestateHash: permit.lanePrestateHash,
+    batchIdentity: permit.batchIdentity,
+  } : {};
   return {
     expectedEffectIdentity: sha256(canonicalJson({
       version: 1,
       kind: 'lane-application',
       semanticOperation: 'apply-lane-effect',
-      target: clone(session.target),
-      subjectRunStateHash: session.acceptedStateHash,
+      target: clone(target),
+      subjectRunStateHash,
       permitHash: permit.permitHash,
       mutationIdentity: permit.mutationIdentity,
+      ...projectionBinding,
     })),
-    // The lane owner's poststate hashes are unknowable before it runs, so the receipt expectation
-    // binds exactly the permit-bound receipt fields the owner must reproduce.
     expectedReceiptIdentity: sha256(canonicalJson({
       version: 1,
       kind: 'lane-application-receipt',
       lane: 'lightweight',
-      target: clone(session.target),
+      target: clone(target),
       permitHash: permit.permitHash,
       mutationIdentity: permit.mutationIdentity,
       targetMappingHash: permit.targetMappingHash,
       lanePrestateHash: permit.lanePrestateHash,
+      ...(projection ? { batchIdentity: permit.batchIdentity } : {}),
     })),
-    // The apply route never advances accepted authority, so the resumed poststate is the predecessor.
-    provisionalStateHash: session.acceptedStateHash,
+  };
+}
+
+/**
+ * The lane apply route is the only operation that drives an authoritative external mutator, so its
+ * expectation is bound to the exact permit the lane owner will be handed. Projection permits act on
+ * the pending provisional state and additionally bind the pending batch.
+ * @param {Record<string, unknown>} session @param {Record<string, unknown>} request
+ */
+function laneApplicationExpectation(session, request) {
+  const pending = /** @type {Record<string, unknown>|null} */ (session.pendingEffect);
+  let permit;
+  let application;
+  try {
+    application = record(request.laneApplication, 'HostAdapterRequest.laneApplication');
+    permit = laneEffectPermit(application.permit, 'HostAdapterRequest.laneApplication.permit');
+  } catch {
+    return null;
+  }
+  const projection = permit.kind === 'lane-projection';
+  if (projection && (pending === null
+    || permit.subjectRunStateHash !== pending.provisionalStateHash
+    || permit.batchIdentity !== /** @type {Record<string, unknown>} */ (pending.projectionBatch).batchIdentity)) {
+    return null;
+  }
+  if (!projection && pending !== null) return null;
+  const subjectRunStateHash = projection
+    ? /** @type {string} */ (pending.provisionalStateHash)
+    : /** @type {string} */ (session.acceptedStateHash);
+  if (permit.subjectRunStateHash !== subjectRunStateHash
+    || permit.mutationIdentity !== sha256(canonicalJson(application.mutation))) return null;
+  return {
+    ...permitApplicationExpectation(
+      /** @type {Record<string, unknown>} */ (session.target),
+      subjectRunStateHash,
+      permit,
+    ),
+    provisionalStateHash: projection
+      ? /** @type {string} */ (pending.provisionalStateHash)
+      : /** @type {string} */ (session.acceptedStateHash),
   };
 }
 
@@ -2712,10 +2870,17 @@ function inFlightDescriptor(session, operation, request) {
       provisionalStateHash: pending.provisionalStateHash,
     };
   }
-  const laneApplication = operation === 'apply-lane-effect' && pending === null && request !== undefined
-    ? laneApplicationExpectation(session, request)
-    : null;
-  if (laneApplication !== null) return { semanticOperation: operation, ...laneApplication };
+  if (operation === 'apply-lane-effect' && request !== undefined) {
+    const laneApplication = laneApplicationExpectation(session, request);
+    return laneApplication === null
+      ? {
+        semanticOperation: operation,
+        expectedEffectIdentity: null,
+        expectedReceiptIdentity: null,
+        provisionalStateHash: null,
+      }
+      : { semanticOperation: operation, ...laneApplication };
+  }
   return {
     semanticOperation: operation,
     expectedEffectIdentity: pending === null ? null : pending.effectIdentity,
@@ -2733,6 +2898,7 @@ function inFlightDescriptor(session, operation, request) {
 function createCheckpointHost(store, binding, prestate, createdAt, claimed) {
   const checkpointKey = checkpointKeyOf(binding);
   let last = claimed;
+  let projectionApplication = null;
   const host = {
     checkpointKey,
     /** @param {Record<string, unknown>} session */
@@ -2786,14 +2952,30 @@ function createCheckpointHost(store, binding, prestate, createdAt, claimed) {
       const drift = host.verify(session);
       if (drift) return { reason: drift };
       const advanced = /** @type {Record<string, unknown>} */ (advanceHost(session));
-      const failure = host.commit(advanced, inFlightDescriptor(advanced, operation, request));
+      const descriptor = inFlightDescriptor(advanced, operation, request);
+      const pending = /** @type {Record<string, unknown>|null} */ (advanced.pendingEffect);
+      if (operation === 'apply-lane-effect' && pending !== null
+        && descriptor.expectedEffectIdentity !== null) {
+        projectionApplication = clone(descriptor);
+      }
+      const failure = host.commit(
+        advanced,
+        pending !== null && projectionApplication !== null
+          ? projectionApplication
+          : descriptor,
+      );
       return failure ? { reason: failure } : { session: advanced };
     },
     /** @param {Record<string, unknown>} session */
     settle(session) {
+      const pending = /** @type {Record<string, unknown>|null} */ (session.pendingEffect);
+      const descriptor = pending !== null && projectionApplication !== null
+        ? projectionApplication
+        : inFlightDescriptor(session);
+      if (pending === null) projectionApplication = null;
       return /** @type {number} */ (session.hostRevision) <= /** @type {number} */ (last.hostRevision)
         ? null
-        : host.commit(session, inFlightDescriptor(session));
+        : host.commit(session, descriptor);
     },
     /** @param {Record<string, unknown>} session @param {string} reason */
     clear(session, reason) {
@@ -3589,7 +3771,7 @@ function runOperation(session, requestValue, ports, host = null, ledger = create
     if (request.operation === 'settle-effect') return settleEffect(workingSession, request, invoke);
     if (request.operation === 'advance-governance') return advanceGovernance(workingSession, request, invoke);
     if (request.operation === 'prepare-authoritative-projection') {
-      return prepareAuthoritativeProjection(workingSession, request, invoke);
+      return prepareAuthoritativeProjection(workingSession, request, invoke, ledger);
     }
     if (request.operation === 'authorize-lane-effect') {
       return authorizeLaneEffect(workingSession, request, invoke, ledger);
@@ -4072,7 +4254,31 @@ export function resumeHostAdapter(inputValue, dependencies) {
   } catch {
     return stop(checkpointKey, 'checkpoint-corrupt');
   }
-  const settled = settleResumedEffect(checkpoint, input, acceptedBytes);
+  const authorities = {
+    runtimeIdentity: ports.runtimeIdentity,
+    supervisorAuthorityIdentity: receipt.supervisorAuthorityIdentity,
+    admissionIdentity: receipt.admissionIdentity,
+    noEffectAuthorityIdentity: ports.noEffectAuthority.identity,
+  };
+  const correction = restoredCorrection(checkpoint);
+  let predecessorSession;
+  try {
+    predecessorSession = /** @type {Record<string, unknown>} */ (createHostAdapterSession({
+      state: JSON.parse(acceptedBytes),
+      target: clone(target),
+      invocationIdentity: input.invocationIdentity,
+      workerToken: worker.workerToken,
+      workerGeneration: worker.workerGeneration,
+      inspectionIdentity: checkpoint.inspectionIdentity,
+      acceptedRevision: checkpoint.acceptedRevision,
+      hostRevision: checkpoint.hostRevision,
+      authorities,
+      ...(correction === null ? {} : { correction }),
+    }));
+  } catch {
+    return stop(checkpointKey, 'checkpoint-corrupt');
+  }
+  const settled = settleResumedEffect(checkpoint, input, acceptedBytes, predecessorSession, ports);
   if (settled.reason) return stop(checkpointKey, settled.reason);
   let resumed;
   try {
@@ -4085,12 +4291,7 @@ export function resumeHostAdapter(inputValue, dependencies) {
       inspectionIdentity: checkpoint.inspectionIdentity,
       acceptedRevision: settled.acceptedRevision,
       hostRevision: checkpoint.hostRevision,
-      authorities: {
-        runtimeIdentity: ports.runtimeIdentity,
-        supervisorAuthorityIdentity: receipt.supervisorAuthorityIdentity,
-        admissionIdentity: receipt.admissionIdentity,
-        noEffectAuthorityIdentity: ports.noEffectAuthority.identity,
-      },
+      authorities,
       ...(settled.correction === null ? {} : { correction: settled.correction }),
     }));
   } catch {
@@ -4130,8 +4331,9 @@ export function resumeHostAdapter(inputValue, dependencies) {
  * Comparison class six: an unchanged prestate resumes the predecessor, and an established
  * effect resumes only against its exact receipt and freshly supplied poststate.
  * @param {Record<string, unknown>} checkpoint @param {Record<string, unknown>} input @param {string} acceptedBytes
+ * @param {Record<string, unknown>} predecessorSession @param {ReturnType<typeof trustedPorts>} ports
  */
-function settleResumedEffect(checkpoint, input, acceptedBytes) {
+function settleResumedEffect(checkpoint, input, acceptedBytes, predecessorSession, ports) {
   const inFlight = /** @type {Record<string, unknown>|null} */ (checkpoint.inFlight);
   const expected = inFlight === null ? null : inFlight.expectedEffectIdentity;
   const supplied = Object.hasOwn(input, 'effect') ? input.effect : null;
@@ -4149,7 +4351,12 @@ function settleResumedEffect(checkpoint, input, acceptedBytes) {
     if (effect.status === 'unchanged-prestate') {
       exactRecord(effect, ['status', 'taskPrestateIdentity', 'lanePrestateIdentity'], [], 'host adapter resume input.effect');
     } else if (effect.status === 'established') {
-      exactRecord(effect, ['status', 'effectIdentity', 'receiptIdentity', 'provisionalState'], [], 'host adapter resume input.effect');
+      exactRecord(
+        effect,
+        ['status', 'effectIdentity', 'receiptIdentity', 'provisionalState'],
+        ['projection'],
+        'host adapter resume input.effect',
+      );
       hash(effect.effectIdentity, 'host adapter resume input.effect.effectIdentity');
       hash(effect.receiptIdentity, 'host adapter resume input.effect.receiptIdentity');
     } else {
@@ -4175,15 +4382,34 @@ function settleResumedEffect(checkpoint, input, acceptedBytes) {
   const expectedReceipt = /** @type {Record<string, unknown>} */ (inFlight).expectedReceiptIdentity;
   if (expectedReceipt === null || expectedReceipt === undefined) return { reason: 'effect-unverified' };
   if (effect.receiptIdentity !== expectedReceipt) return { reason: 'unknown-effect' };
+  let provisional;
   let provisionalBytes;
   try {
-    provisionalBytes = canonicalJson(validateRunState(effect.provisionalState));
+    provisional = /** @type {Record<string, unknown>} */ (validateRunState(effect.provisionalState));
+    provisionalBytes = canonicalJson(provisional);
   } catch {
     return { reason: 'effect-poststate-mismatch' };
   }
   if (sha256(provisionalBytes) !== /** @type {Record<string, unknown>} */ (inFlight).provisionalStateHash) {
     return { reason: 'effect-poststate-mismatch' };
   }
+  const governance = Object.hasOwn(provisional, 'learningGovernance')
+    ? /** @type {Record<string, unknown>} */ (provisional.learningGovernance)
+    : null;
+  const projectionRequired = Object.hasOwn(provisional, 'pendingCompletion')
+    || (governance !== null && Object.hasOwn(governance, 'projectionCommitment'));
+  if (projectionRequired) {
+    if (!Object.hasOwn(effect, 'projection')) return { reason: 'effect-unverified' };
+    return settleResumedProjection(
+      checkpoint,
+      /** @type {Record<string, unknown>} */ (inFlight),
+      effect,
+      provisional,
+      predecessorSession,
+      ports,
+    );
+  }
+  if (Object.hasOwn(effect, 'projection')) return { reason: 'unknown-effect' };
   return {
     acceptedStateBytes: provisionalBytes,
     acceptedRevision: /** @type {number} */ (checkpoint.acceptedRevision)
@@ -4192,5 +4418,134 @@ function settleResumedEffect(checkpoint, input, acceptedBytes) {
     // handoff carries it verbatim exactly as an unchanged prestate does. Only genuinely different
     // accepted bytes retire it.
     correction: provisionalBytes === acceptedBytes ? predecessor.correction : null,
+  };
+}
+
+/**
+ * Projection replacement is eligible only from the exact permit-bound lane application. The
+ * supplied receipt proves that application, while the existing verifier freshly proves both
+ * current-run and lane surfaces before any provisional bytes become accepted authority.
+ * @param {Record<string, unknown>} checkpoint @param {Record<string, unknown>} inFlight
+ * @param {Record<string, unknown>} effect @param {Record<string, unknown>} provisional
+ * @param {Record<string, unknown>} predecessorSession @param {ReturnType<typeof trustedPorts>} ports
+ */
+function settleResumedProjection(checkpoint, inFlight, effect, provisional, predecessorSession, ports) {
+  let projection;
+  let batch;
+  let permit;
+  let receipt;
+  try {
+    projection = exactRecord(
+      effect.projection,
+      ['input', 'projectionBatch', 'permit', 'receipt'],
+      [],
+      'host adapter resume input.effect.projection',
+    );
+    batch = /** @type {Record<string, unknown>} */ (
+      validateProjectionBatchV1(
+        projection.projectionBatch,
+        'host adapter resume input.effect.projection.projectionBatch',
+      )
+    );
+    permit = laneEffectPermit(
+      projection.permit,
+      'host adapter resume input.effect.projection.permit',
+    );
+    receipt = /** @type {Record<string, unknown>} */ (
+      validateLightweightAtomicReceiptV1(
+        projection.receipt,
+        'host adapter resume input.effect.projection.receipt',
+      )
+    );
+  } catch {
+    return { reason: 'unknown-effect' };
+  }
+  const provisionalStateHash = sha256(canonicalJson(provisional));
+  if (inFlight.semanticOperation !== 'apply-lane-effect'
+    || permit.kind !== 'lane-projection'
+    || canonicalJson(permit.target) !== canonicalJson(checkpoint.target)
+    || permit.subjectRunStateHash !== provisionalStateHash
+    || permit.batchIdentity !== batch.batchIdentity
+    || receipt.permitHash !== permit.permitHash
+    || receipt.mutationIdentity !== permit.mutationIdentity
+    || receipt.targetMappingHash !== permit.targetMappingHash
+    || receipt.lanePrestateHash !== permit.lanePrestateHash
+    || canonicalJson(receipt.target) !== canonicalJson(checkpoint.target)) {
+    return { reason: 'unknown-effect' };
+  }
+  const expectation = {
+    semanticOperation: 'apply-lane-effect',
+    ...permitApplicationExpectation(
+      /** @type {Record<string, unknown>} */ (checkpoint.target),
+      provisionalStateHash,
+      permit,
+    ),
+    provisionalStateHash,
+  };
+  if (canonicalJson(inFlight) !== canonicalJson(expectation)
+    || effect.effectIdentity !== expectation.expectedEffectIdentity
+    || effect.receiptIdentity !== expectation.expectedReceiptIdentity) {
+    return { reason: 'unknown-effect' };
+  }
+
+  let verified;
+  try {
+    const effectKind = Object.hasOwn(provisional, 'pendingCompletion')
+      ? 'completion-retention'
+      : 'projection';
+    const verificationEffect = pendingEffect(
+      predecessorSession,
+      provisional,
+      batch,
+      effectKind,
+      'apply-lane-effect',
+    );
+    const verificationSession = /** @type {Record<string, unknown>} */ (
+      advanceHost(predecessorSession, { pendingEffect: verificationEffect })
+    );
+    if (effectKind === 'completion-retention') {
+      const response = invokeRuntime(
+        ports,
+        verificationSession,
+        'settle-effect',
+        'complete',
+        {
+          mode: 'finalize',
+          state: clone(provisional),
+          input: projection.input,
+          projectionBatch: clone(batch),
+        },
+      );
+      verified = /** @type {Record<string, unknown>} */ (
+        handleCompletionSettlement(verificationSession, response)
+      );
+    } else {
+      const response = invokeRuntime(
+        ports,
+        verificationSession,
+        'settle-effect',
+        'transition',
+        {
+          mode: 'verify-projection',
+          state: clone(provisional),
+          input: projection.input,
+          projectionBatch: clone(batch),
+        },
+      );
+      verified = /** @type {Record<string, unknown>} */ (
+        handleProjectionSettlement(verificationSession, response)
+      );
+    }
+  } catch (error) {
+    return {
+      reason: error instanceof RuntimeIncident ? error.message : 'runtime-output-malformed',
+    };
+  }
+  if (verified.outcome !== 'accepted') return { reason: verified.reason };
+  const session = /** @type {Record<string, unknown>} */ (verified.session);
+  return {
+    acceptedStateBytes: session.acceptedStateBytes,
+    acceptedRevision: session.acceptedRevision,
+    correction: session.correction,
   };
 }
