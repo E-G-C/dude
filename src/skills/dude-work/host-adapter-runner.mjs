@@ -875,6 +875,9 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
 
   try {
     const initialBinding = freshLaneBinding(root, target, owner);
+    if (initialBinding.task.glyph !== '~' || initialBinding.task.blockedBy !== null) {
+      throw new TypeError('lane-prestate-mismatch');
+    }
     const initialInspectionInput = rawInput();
     const initialInspection = /** @type {Record<string, unknown>} */ (inspect(initialInspectionInput));
     currentInspection = clone(initialInspection);

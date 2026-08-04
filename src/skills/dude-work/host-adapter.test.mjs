@@ -5703,6 +5703,53 @@ function runFocusedRunnerCli(request, respond, options = {}) {
   });
 }
 
+nodeTest('runner preflight refuses a blank lightweight task before exchange or persistence', async () => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const tasksPath = path.join(root, TASKS_PATH);
+    const taskStatePath = path.join(root, TASK_STATE_PATH);
+    fs.writeFileSync(
+      tasksPath,
+      fs.readFileSync(tasksPath, 'utf8').replace(
+        `- [~] ${TARGET.taskKey}`,
+        `- [ ] ${TARGET.taskKey}`,
+      ),
+    );
+    const taskState = JSON.parse(fs.readFileSync(taskStatePath, 'utf8'));
+    taskState[TASKS_PATH].glyphs[TARGET.taskKey] = ' ';
+    fs.writeFileSync(taskStatePath, `${JSON.stringify(taskState, null, 2)}\n`);
+    const tasksBefore = fs.readFileSync(tasksPath);
+    const taskStateBefore = fs.readFileSync(taskStatePath);
+    const checkpoint = memoryCheckpointStore();
+    let exchangeCalls = 0;
+
+    const result = await runHostAdapter(focusedRunnerRequest(root), {
+      checkpoint: checkpoint.port,
+      exchange() {
+        exchangeCalls += 1;
+        throw new Error('blank task reached specialist exchange');
+      },
+    });
+
+    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(result.reason, 'runner-refused');
+    assert.equal(result.detail, 'lane-prestate-mismatch');
+    assert.equal(exchangeCalls, 0);
+    const tasksAfter = fs.readFileSync(tasksPath);
+    assert.deepEqual(tasksAfter, tasksBefore);
+    assert.match(tasksAfter.toString('utf8'), new RegExp(`- \\[ \\] ${TARGET.taskKey}`));
+    const taskStateAfter = fs.readFileSync(taskStatePath);
+    assert.deepEqual(taskStateAfter, taskStateBefore);
+    assert.equal(
+      JSON.parse(taskStateAfter.toString('utf8'))[TASKS_PATH].glyphs[TARGET.taskKey],
+      ' ',
+    );
+    assert.equal(tasksAfter.includes('dude-run-event'), false);
+    assert.equal(checkpoint.calls.filter((call) => call === 'claim').length, 0);
+    assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+  });
+});
+
 nodeTest('focused table A: sequential challenge protocol and foreground CLI', async () => {
   const cases = [
     {
