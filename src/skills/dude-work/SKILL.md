@@ -161,6 +161,8 @@ For Lightweight, use `dude-lightweight-execution` to select, claim, block, close
 
 ## Stops
 
+**Unattended (autonomous) policy discipline:** Under the `autonomous` policy the loop keeps working through ready work and ends *only* when one of the closed-set stop conditions below applies. A progress report or milestone notice is never a stop and does not end the loop. No new stop reason is introduced; the closed set is fixed.
+
 Stop on the first natural boundary and report partial results, exact reason, and next action:
 
 - `no ready task`

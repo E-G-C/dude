@@ -9297,6 +9297,65 @@ export function classifyOutcomeReason(reason) {
 }
 
 /**
+ * Loop-level halt predicate for the autonomous/unattended policy.
+ *
+ * Returns `true` when the current turn ends the work loop; returns `false` when
+ * the loop may keep working. Fail-closed and non-throwing: any malformed or
+ * unvalidatable outcome returns `true` (halt). Side-effect-free.
+ *
+ * Semantics:
+ * - If the outcome's `state.policy.mode` is not `'autonomous'`, return `true`:
+ *   this predicate does not authorize continuation under any other policy.
+ *   Guarded code paths are unchanged; this predicate is simply not what drives them.
+ * - Under `'autonomous'`:
+ *   - A turn with no closed-set stop reason — `reason === 'authorized'`,
+ *     `reason === 'completed'`, or no reason at all (e.g. a progress/milestone
+ *     notice) — is NOT a halt: return `false`.
+ *   - A turn whose reason is a member of the closed stop set
+ *     (`classifyOutcomeReason(reason)` is one of the five stop categories) IS a
+ *     halt: return `true`.
+ *   - Any unrecognized reason outside the known non-halt set halts (fail-closed).
+ *
+ * Progress-report/milestone turns that carry no stop reason are explicitly
+ * non-terminal: they are treated identically to the `'authorized'` / `'completed'`
+ * non-stop outcomes, and they do not consume any stop reason.
+ *
+ * @param {unknown} outcome
+ * @returns {boolean}
+ */
+export function endsUnattendedLoop(outcome) {
+  let state;
+  try {
+    state = /** @type {Record<string, unknown>} */ (
+      validateRunState(/** @type {Record<string, unknown>} */ (
+        /** @type {Record<string, unknown>} */ (outcome).state
+      ))
+    );
+  } catch {
+    return true; // fail closed
+  }
+  const policy = /** @type {Record<string, unknown>} */ (state.policy);
+  if (policy.mode !== 'autonomous') return true;
+
+  const reason = /** @type {Record<string, unknown>} */ (outcome).reason;
+
+  // No reason (progress/milestone notice, or any non-stop turn): not a halt.
+  if (reason === undefined || reason === null) return false;
+
+  // Known authorized-continue or success reasons: not a halt.
+  if (reason === 'authorized' || reason === 'completed') return false;
+
+  // Anything in the closed stop set: halt.
+  if (typeof reason === 'string' && Object.hasOwn(OUTCOME_REASON_CLASSES, reason)) {
+    // 'authorized' is already caught above; everything else in the map is a stop category.
+    return true;
+  }
+
+  // Unknown / unrecognized reason outside the known non-halt set: fail closed.
+  return true;
+}
+
+/**
  * Sequential post-stop scheduling license for autonomous work.
  *
  * Fail-closed and non-throwing (exactly like `mayContinueAutonomously`): any

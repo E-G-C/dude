@@ -31,6 +31,7 @@ import {
   canonicalJson,
   canonicalTarget,
   classifyOutcomeReason,
+  endsUnattendedLoop,
   collectEvidence,
   completeAttempt,
   contentDescriptor,
@@ -25632,4 +25633,73 @@ test('T003 round-trip invariant fails for either divergence direction and invali
       /audit must declare exactly one valid relevance/,
     );
   }
+});
+
+// --- Feature 013 (T001): endsUnattendedLoop — Unattended Work Continuity ---
+
+test('Feature 013 T001 A: autonomous — authorized and completed turns do NOT end the loop (FR-001)', () => {
+  const state = autonomousState();
+
+  // authorized-continue turn
+  const authorized = authorizeAttempt(state, TARGET, transitionRaw(TARGET), transitionAssessment('execute-task'), 'ordinary');
+  assert.equal(authorized.reason, 'authorized');
+  assert.equal(endsUnattendedLoop(authorized), false, 'authorized turn must not end loop');
+
+  // completed turn
+  const auth = authorizeAttempt(state, TARGET, transitionRaw(TARGET), transitionAssessment('execute-task'), 'ordinary');
+  const completed = completeAttempt(auth.state, completionInput(auth.state.pending[0]));
+  assert.equal(completed.reason, 'completed');
+  assert.equal(endsUnattendedLoop(completed), false, 'completed turn must not end loop');
+});
+
+test('Feature 013 T001 B: autonomous — progress/milestone turn (no stop reason) does NOT end the loop (FR-002)', () => {
+  const state = autonomousState();
+  // No reason property: progress-report / milestone notice
+  assert.equal(endsUnattendedLoop({ state }), false, 'no-reason outcome must not end loop');
+  // Explicitly null reason
+  assert.equal(endsUnattendedLoop({ state, reason: null }), false, 'null-reason outcome must not end loop');
+  // Confirm no reason consumed
+  const notice = { state };
+  assert.equal(!Object.hasOwn(notice, 'reason'), true, 'progress notice carries no reason key');
+});
+
+test('Feature 013 T001 C: autonomous — each closed-set stop category ends the loop (FR-001 end-condition)', () => {
+  const state = autonomousState();
+  const stopReasons = Object.entries(OUTCOME_REASON_CLASSES).filter(([, cat]) => cat !== 'authorized');
+  for (const [reason, category] of stopReasons) {
+    assert.equal(
+      endsUnattendedLoop({ state, reason }),
+      true,
+      `reason '${reason}' (${category}) must end the loop`,
+    );
+  }
+});
+
+test('Feature 013 T001 D: no new stop reason — loop-ending reasons are exactly the non-authorized OUTCOME_REASON_CLASSES keys (SC-007)', () => {
+  const state = autonomousState();
+  const closedSet = Object.entries(OUTCOME_REASON_CLASSES)
+    .filter(([, cat]) => cat !== 'authorized')
+    .map(([reason]) => reason);
+  for (const reason of closedSet) {
+    assert.equal(endsUnattendedLoop({ state, reason }), true, `expected halt for '${reason}'`);
+  }
+  assert.equal(endsUnattendedLoop({ state, reason: 'authorized' }), false, 'authorized must not halt');
+  assert.equal(endsUnattendedLoop({ state, reason: 'completed' }), false, 'completed must not halt');
+});
+
+test('Feature 013 T001 E: guarded/default — predicate does not enable unattended continuation (SC-006)', () => {
+  const gs = guardedContinuationState();
+  assert.equal(endsUnattendedLoop({ state: gs, reason: 'authorized' }), true, 'guarded authorized must halt');
+  assert.equal(endsUnattendedLoop({ state: gs, reason: 'completed' }), true, 'guarded completed must halt');
+  assert.equal(endsUnattendedLoop({ state: gs }), true, 'guarded no-reason must halt');
+});
+
+test('Feature 013 T001 F: fail-closed — malformed outcome halts and does not throw', () => {
+  assert.doesNotThrow(() => assert.equal(endsUnattendedLoop({}), true));
+  assert.doesNotThrow(() => assert.equal(endsUnattendedLoop(null), true));
+  assert.doesNotThrow(() => assert.equal(endsUnattendedLoop(undefined), true));
+  assert.doesNotThrow(() => assert.equal(endsUnattendedLoop({ state: 'bad' }), true));
+  assert.doesNotThrow(() => assert.equal(endsUnattendedLoop({ state: {}, reason: 'authorized' }), true));
+  const state = autonomousState();
+  assert.doesNotThrow(() => assert.equal(endsUnattendedLoop({ state, reason: 'completely-unknown' }), true));
 });

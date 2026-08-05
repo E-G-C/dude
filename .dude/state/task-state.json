@@ -170,6 +170,16 @@
     },
     "updated_at": "2026-07-29T17:14:23.117Z"
   },
+  ".dude/specs/013-unattended-work-continuity/tasks.md": {
+    "glyphs": {
+      "T001@6b656570": "x",
+      "T002@6e616d65": " ",
+      "T003@73616665": " ",
+      "T004@646f6373": " ",
+      "T005@72657677": " "
+    },
+    "updated_at": "2026-08-05T16:09:37.271Z"
+  },
   ".dude/specs/014-autonomous-review-escalation-precedence/tasks.md": {
     "glyphs": {
       "T001@64656672": "x",
