@@ -9,7 +9,24 @@ Dude always starts the same way:
 distinct: `@dude brainstorm <idea>` creates or refreshes one flat
 `.dude/ideas/<slug>.md` file and does not create a spec package.
 
-After `@dude define`, choose one of three paths:
+### Ship: one verb across the lifecycle
+
+`@dude ship [<target>]` accepts exactly one optional target and no flags. It
+resolves only the lifecycle stages its target is still missing, then advances
+inside whichever execution lane is already live until the work is done or an
+existing Work stop fires. It adds no lane, board, or state of its own.
+
+Imported tracked work keeps precedence over local candidates: Ship never invokes
+`track`, imports work, or falls back from tracked work to Lightweight Execution.
+Ambiguous selection stops before any mutation with exactly one disambiguation
+question, and ownership or resolver diagnostics stay hard refusals. `@dude work`
+is the advanced form when you need to set the budgets or policy yourself, and the
+[command reference](commands.md#dude-ship) owns the full contract.
+
+### Driving the stages yourself
+
+Ship runs the same stages you can run one at a time. After `@dude define`,
+choose one of three paths:
 
 | Path | Use it when | Live place |
 |---|---|---|
@@ -22,14 +39,14 @@ graph LR
   INPUT["Idea"] --> BRAINSTORM["@dude brainstorm"]
   BRAINSTORM --> IDEA[".dude/ideas/<slug>.md"]
   IDEA --> DEFINE["@dude define <slug>"]
-    DEFINE --> PACKAGE[".dude/specs/<feature>/"]
-    PACKAGE --> STOP["Definition Only"]
-    PACKAGE --> TASKS["tasks.md"]
-    TASKS --> DONE["Feature done"]
-    PACKAGE -.->|optional: beads pack| TRACK["@dude track"]
-    TASKS -.->|optional: beads pack| TRACK
-    TRACK -.-> BOARD["Tracked board"]
-    BOARD -.-> DONE
+  DEFINE --> PACKAGE[".dude/specs/<feature>/"]
+  PACKAGE --> STOP["Definition Only"]
+  PACKAGE --> TASKS["tasks.md"]
+  TASKS --> DONE["Feature done"]
+  PACKAGE -.->|optional: beads pack| TRACK["@dude track"]
+  TASKS -.->|optional: beads pack| TRACK
+  TRACK -.-> BOARD["Tracked board"]
+  BOARD -.-> DONE
 ```
 
 Key rules:
@@ -46,20 +63,6 @@ Key rules:
 - `@dude ship` is the usual one-verb path across this lifecycle, and it is an accelerator rather than a fourth lane. See [Ship: one verb across the lifecycle](#ship-one-verb-across-the-lifecycle).
 - Empty or missing `.dude/ideas/` and `.dude/specs/` directories are valid;
   Dude creates them when brainstorm or definition starts.
-
-### Ship: one verb across the lifecycle
-
-`@dude ship [<target>]` accepts exactly one optional target and no flags. It
-resolves only the lifecycle stages its target is still missing, then advances
-inside whichever execution lane is already live until the work is done or an
-existing Work stop fires. It adds no lane, board, or state of its own.
-
-Imported tracked work keeps precedence over local candidates: Ship never invokes
-`track`, imports work, or falls back from tracked work to Lightweight Execution.
-Ambiguous selection stops before any mutation with exactly one disambiguation
-question, and ownership or resolver diagnostics stay hard refusals. `@dude work`
-is the advanced form when you need to set the budgets or policy yourself, and the
-[command reference](commands.md#dude-ship) owns the full contract.
 
 ## Who Owns What
 

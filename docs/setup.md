@@ -28,24 +28,18 @@ The minimum useful setup is:
 - unpack the released bundle at the repository root so `.github/` engine files and seeded `.dude/metadata/` both land in place (and copy `library/` only when you vendor the optional pack catalog)
 - optionally install packs you need with `@dude add pack <name>`
 - optionally remember one to three durable constraints
-- start with `@dude brainstorm <idea>`; it writes one flat
-  `.dude/ideas/<slug>.md` file and no spec package
-- run `@dude define <slug>` when the idea is ready, then use
-  `@dude work <feature>` to run the next few ready tasks in whichever execution
-  lane is live and stop on the first natural boundary (see
-  [Optional Continuous Work](workflow.md#optional-continuous-work))
 
-The lifecycle is `brainstorm -> idea -> define -> spec -> work`. Brainstorm and
-define are distinct; definition never starts implicitly during intake.
+Then start your first feature with one verb:
 
-`@dude ship [<target>]` is the usual shortcut over that same lifecycle. It takes
-one optional target and no flags, runs only the stages the target is still
-missing, and advances until the work is done or an existing Work stop fires.
-Every clarification and guardrail-ratification checkpoint described below still
-happens, and Ship never answers one for you. Explicit `@dude brainstorm` and
-`@dude define` remain the only ways to change intent or deliberately refresh a
-package. Reach for `@dude work` instead when you want the advanced form with your
-own recovery settings.
+```text
+@dude ship expense-entry
+```
+
+`@dude ship [<target>]` takes one optional target and no flags, runs only the
+stages the target is still missing, and advances until the work is done or an
+existing Work stop fires. It runs the same brainstorm and define stages you
+would run by hand, and every clarification and guardrail-ratification checkpoint
+described below still happens. Ship never answers one for you.
 
 New installs already seed an inventory-backed empty profile and do not need any
 profile conversion. Current bundles use
@@ -57,6 +51,22 @@ In Definition Only it points you back to the current idea file or
 generated package; in Lightweight Execution it points to `tasks.md` and the
 generated board view there; after tracked execution starts, it also reports
 Beads state.
+
+### Driving the stages yourself
+
+The lifecycle is `brainstorm -> idea -> define -> spec -> work`. Brainstorm and
+define are distinct; definition never starts implicitly during intake.
+
+```text
+@dude brainstorm expense-entry
+@dude define expense-entry
+@dude work expense-entry
+```
+
+Run them separately when you want to read and correct the idea file before any
+spec exists. Explicit `@dude brainstorm` and `@dude define` also remain the only
+ways to change intent or deliberately refresh a package. Reach for `@dude work`
+instead when you want the advanced form with your own recovery settings.
 
 ### Editing rule of thumb
 

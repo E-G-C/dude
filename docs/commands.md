@@ -4,13 +4,14 @@
 
 ## Command Reference
 
-Examples below use preferred invocation forms. The short rule is: `brainstorm`
-creates one flat idea file without creating a spec package, `define` turns that
-idea into a reusable package, `ship` runs only the lifecycle stages a target is
-still missing and then advances it, `work` runs the next few ready tasks in
-whichever execution lane is already live, `status` reports the current lane and
-live artifact, and `flag` routes execution-time gaps back into definition. The
-lifecycle is `brainstorm -> idea -> define -> spec -> work`. Tracked execution (`track`,
+Examples below use preferred invocation forms. The short rule is that `ship`
+runs only the lifecycle stages a target is still missing and then advances it.
+The other verbs drive those same stages one at a time: `brainstorm` creates one
+flat idea file without creating a spec package, `define` turns that idea into a
+reusable package, `work` runs the next few ready tasks in whichever execution
+lane is already live, `status` reports the current lane and live artifact, and
+`flag` routes execution-time gaps back into definition. The lifecycle is
+`brainstorm -> idea -> define -> spec -> work`. Tracked execution (`track`,
 `sync Beads to tasks.md`) is provided by the optional **beads pack** — install
 it with `@dude add pack beads`.
 
@@ -18,26 +19,114 @@ it with `@dude add pack beads`.
 
 | Command | Description |
 | ------- | ----------- |
-| `@dude brainstorm <idea>` | Create or refresh one flat `.dude/ideas/<slug>.md` collaboration file without creating a spec package. |
-| `@dude define <slug>` | Turn the matching idea into a reusable package under `.dude/specs/<feature>/`. |
 | `@dude ship [<target>]` | Advance one target through only the lifecycle stages it still needs, until it is done or an existing Work stop fires. Exactly one optional target and no flags. |
 | `@dude status` | Read-only report of the current lane, live artifact, next step, and blockers. |
+| `@dude brainstorm <idea>` | Create or refresh one flat `.dude/ideas/<slug>.md` collaboration file without creating a spec package. |
+| `@dude define <slug>` | Turn the matching idea into a reusable package under `.dude/specs/<feature>/`. |
 | `@dude work [<feature>] [--max <N\|unlimited>] [--until blocked] [--recover-on-block] [--recovery-cycles <N\|unlimited>] [--policy guarded\|autonomous]` | Run the next few ready tasks back-to-back inside whichever execution lane is already live, with optional Work-authorized recovery and an optional autonomous policy. Not a new lane. |
+| `@dude flag [<type>:] <details>` | Route a real blocker or mismatch back to the right owner. Typed prefixes are preferred, but plain language is accepted. |
+| `@dude diff` | Read-only summary of coordinator-owned writes since your previous message. |
+| `@dude self-check` | Read-only verification that Dude followed its own rules (banner, fences, log, no silent `[x]` drift). |
 | `@dude list packs` | Read-only list of available and installed optional packs. |
 | `@dude add pack <name>` / `@dude remove pack <name>` | Install or uninstall an optional capability pack (e.g. `beads`, `release`, `web`, `practices`). |
 | `@dude track` | Import or resume tracked execution on a tracked board. Requires the `beads` pack. |
 | `@dude sync Beads to tasks.md` | Refresh the non-authoritative markdown mirror from the tracked board (beads pack). |
-| `@dude flag [<type>:] <details>` | Route a real blocker or mismatch back to the right owner. Typed prefixes are preferred, but plain language is accepted. |
-| `@dude diff` | Read-only summary of coordinator-owned writes since your previous message. |
-| `@dude self-check` | Read-only verification that Dude followed its own rules (banner, fences, log, no silent `[x]` drift). |
+| `@dude remember: <fact>` | Save a durable constraint, decision, or project fact. |
 | `@dude hire a <role>` | Add a new specialist to the active roster (creates `.github/agents/dude-local-<slug>.agent.md` for project-local agents). |
 | `@dude list the team` / `@dude show roster` | Read-only summary of the current specialists and their scopes. |
 | `@dude remove <role>` / `@dude modify <role>` | Remove or adjust an existing specialist. |
-| `@dude remember: <fact>` | Save a durable constraint, decision, or project fact. |
 | `@dude upgrade [--dry-run|--rollback|--ref <ref>]` | Refresh the installed Dude bundle from upstream while preserving project memory and active work. |
 | `@dude import tasks from .dude/specs/<feature>/ into Beads` | Manually import a defined package into Beads when you do not want the normal automatic handoff. Requires the `beads` pack. |
 
 Preferred workflow verbs are `brainstorm`, `define`, `ship`, `status`, `track`, `work`, `flag`, `diff`, and `self-check`. `hire`, `remember`, `upgrade`, `sync Beads to tasks.md`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
+
+### `@dude ship`
+
+Use this when you want one verb to carry a target through whatever lifecycle
+stages it still needs. Ship is the usual convenience path over `brainstorm`,
+`define`, and execution. It runs those stages instead of skipping them, and only
+the ones its target is still missing.
+
+Preferred forms:
+
+```text
+@dude ship
+@dude ship expense-entry
+```
+
+Grammar:
+
+```text
+@dude ship [<target>]
+```
+
+Meaning: run only the lifecycle stages the target is still missing, then advance
+it until it is done or an existing Work stop fires. Ship accepts exactly one
+optional target and no flags, the complete invocation is validated before any
+mutation, and it never promises unconditional completion.
+
+Ship resolves the target this way:
+
+- an unmatched raw idea runs the existing `brainstorm`, then the existing
+  `define`, then Work
+- an existing draft ledger runs the existing `define`, then Work
+- an existing defined package goes to Work as-is
+- bare `@dude ship` continues exactly one unambiguous live target
+
+Nothing is written until selection is settled. Any flag rejects the invocation
+and points you to `@dude work` for custom controls. Several live candidates
+produce exactly one disambiguation question that lists the exact candidates,
+performs no mutation, and restarts resolution from your answer without saving a
+default. An ownership or resolver diagnostic that target selection cannot repair
+stays a hard refusal.
+
+Imported tracked work takes precedence over local candidates, and an explicit
+target that conflicts with it stops before mutation. Ship never invokes `track`,
+imports work, or falls back from tracked work to Lightweight Execution.
+
+Existing clarification and guardrail-ratification checkpoints are unchanged, and
+Ship never answers one for you. They pause and wait for your reply exactly as
+they do without Ship.
+
+A package is never refreshed behind your back. Ship performs no proactive
+redefinition, staleness check, drift check, or intent merge. Changed intent needs
+an explicit `@dude brainstorm`, and a deliberate package refresh needs an
+explicit `@dude define`.
+
+Ship performs no automatic Git or release action: no branch, worktree, commit,
+push, reset, or publish. Ship carries lifecycle advancement, not release
+publication, so a future release action is free to use its own verb.
+
+Ship runs autonomously with an unlimited budget: at recoverable checkpoints it
+authorizes the next attempt itself instead of handing the decision back to you.
+`@dude work` stays guarded by default and remains the advanced form for custom
+limits, recovery, and policy. Autonomy relaxes no stop, verification, review,
+ownership, close, or reporting rule that Work already enforces.
+
+Illustrative result — an already defined package:
+
+```text
+Lane: Lightweight Execution · Live: .dude/specs/001-expense-entry/tasks.md
+Action: ship
+Updated:
+- Resolved expense-entry: package already defined, no lifecycle stage was needed
+- T003@a1b2c3d4 implemented, verified, marked [x]
+- T004@e4f5g6h7 implemented, verified, marked [x]
+- T005@91ac4e2f reviewer rejected, revised, re-verified, re-reviewed, marked [x]
+- 3 Coordinator Log entries appended to .dude/ideas/expense-entry.md
+- dude-lint: ok after each close
+Blockers:
+- Stopped on T006@2f7b81ce: learning review found no credible alternative
+Next:
+- Run @dude status for a read-only snapshot
+```
+
+Illustrative result — pre-mutation disambiguation:
+
+```text
+Action: ship
+Next: Several live targets match. Reply with exactly one of expense-entry, expense-report, or expense-approval. Nothing has changed; resolution restarts from your answer.
+```
 
 ### `@dude brainstorm`
 
@@ -143,126 +232,6 @@ That exact path is the feature's canonical identity. If intent changes later,
 edit the user-controlled `## Idea` and any relevant answers or assumptions,
 then rerun `@dude define <slug>`; do not treat generated `spec.md` or `plan.md`
 as the intent source.
-
-### `@dude ship`
-
-Use this when you want one verb to carry a target through whatever lifecycle
-stages it still needs. Ship is the usual convenience path over `brainstorm`,
-`define`, and execution.
-
-Preferred forms:
-
-```text
-@dude ship
-@dude ship expense-entry
-```
-
-Grammar:
-
-```text
-@dude ship [<target>]
-```
-
-Meaning: run only the lifecycle stages the target is still missing, then advance
-it until it is done or an existing Work stop fires. Ship accepts exactly one
-optional target and no flags, the complete invocation is validated before any
-mutation, and it never promises unconditional completion.
-
-Ship resolves the target this way:
-
-- an unmatched raw idea runs the existing `brainstorm`, then the existing
-  `define`, then Work
-- an existing draft ledger runs the existing `define`, then Work
-- an existing defined package goes to Work as-is
-- bare `@dude ship` continues exactly one unambiguous live target
-
-Nothing is written until selection is settled. Any flag rejects the invocation
-and points you to `@dude work` for custom controls. Several live candidates
-produce exactly one disambiguation question that lists the exact candidates,
-performs no mutation, and restarts resolution from your answer without saving a
-default. An ownership or resolver diagnostic that target selection cannot repair
-stays a hard refusal.
-
-Imported tracked work takes precedence over local candidates, and an explicit
-target that conflicts with it stops before mutation. Ship never invokes `track`,
-imports work, or falls back from tracked work to Lightweight Execution.
-
-Existing clarification and guardrail-ratification checkpoints are unchanged, and
-Ship never answers one for you. They pause and wait for your reply exactly as
-they do without Ship.
-
-A package is never refreshed behind your back. Ship performs no proactive
-redefinition, staleness check, drift check, or intent merge. Changed intent needs
-an explicit `@dude brainstorm`, and a deliberate package refresh needs an
-explicit `@dude define`.
-
-Ship performs no automatic Git or release action: no branch, worktree, commit,
-push, reset, or publish. Ship carries lifecycle advancement, not release
-publication, so a future release action is free to use its own verb.
-
-Ship runs autonomously with an unlimited budget: at recoverable checkpoints it
-authorizes the next attempt itself instead of handing the decision back to you.
-`@dude work` stays guarded by default and remains the advanced form for custom
-limits, recovery, and policy. Autonomy relaxes no stop, verification, review,
-ownership, close, or reporting rule that Work already enforces.
-
-Illustrative result — an already defined package:
-
-```text
-Lane: Lightweight Execution · Live: .dude/specs/001-expense-entry/tasks.md
-Action: ship
-Updated:
-- Resolved expense-entry: package already defined, no lifecycle stage was needed
-- T003@a1b2c3d4 implemented, verified, marked [x]
-- T004@e4f5g6h7 implemented, verified, marked [x]
-- T005@91ac4e2f reviewer rejected, revised, re-verified, re-reviewed, marked [x]
-- 3 Coordinator Log entries appended to .dude/ideas/expense-entry.md
-- dude-lint: ok after each close
-Blockers:
-- Stopped on T006@2f7b81ce: learning review found no credible alternative
-Next:
-- Run @dude status for a read-only snapshot
-```
-
-Illustrative result — pre-mutation disambiguation:
-
-```text
-Action: ship
-Next: Several live targets match. Reply with exactly one of expense-entry, expense-report, or expense-approval. Nothing has changed; resolution restarts from your answer.
-```
-
-### `@dude track`
-
-Use this when you want tracked execution on a Beads board. It requires the
-**beads pack** — if it is not installed yet, run `@dude add pack beads` first.
-After import, Beads becomes the only live board and source of truth for task
-state. `tasks.md` may still be updated as a one-way portability mirror from
-Beads.
-
-Preferred form:
-
-```text
-@dude track
-```
-
-Meaning: resume or import tracked execution work in Beads; it does not compile
-the application.
-
-If Beads is unavailable or you intentionally do not want it yet, stay in
-Lightweight Execution instead of using `@dude track`.
-
-Illustrative result:
-
-```text
-Action: track
-Updated:
-- Imported .dude/specs/001-authentication/spec.md into Beads
-- Beads is now authoritative; tasks.md will mirror successful Dude-owned closes
-- Selected ready task T001@a1b2c3d4 for implementation
-Next:
-- Let Dude continue the routed work
-- Or run @dude status for a read-only snapshot
-```
 
 ### `@dude work`
 
@@ -486,55 +455,6 @@ Stop conditions (uniform across both lanes):
 [docs/workflow.md](workflow.md). The full skill lives at
 [.github/skills/dude-work/SKILL.md](../.github/skills/dude-work/SKILL.md).
 
-### `@dude sync Beads to tasks.md`
-
-Use this when Beads is active but you want to refresh the markdown mirror, such
-as before switching machines, falling back to Lightweight Execution, or after a
-manual Beads change.
-
-**Automatic mirror (no command needed):** when Dude itself closes or updates a
-Beads issue, it mirrors the new status glyph back into the matching task row in
-`tasks.md` and regenerates the derived board region. You only need the explicit
-command below when the auto-mirror cannot run or has fallen behind.
-
-**Run this command manually when:**
-
-- Beads was changed outside Dude (for example a direct `bd update` or `bd close`).
-- A discovered Beads issue was created mid-flight; close-time auto-mirror never
-  appends new task headers and reports the mirror as skipped until you sync.
-- You are about to switch machines, fall back to Lightweight Execution, or hand
-  the feature off.
-- `@dude status` reports `Mirror: stale — run @dude sync Beads to tasks.md`.
-
-Preferred form:
-
-```text
-@dude sync Beads to tasks.md
-```
-
-Meaning: read Beads as the source of truth, map issue state back to canonical
-task units by durable task key, update `tasks.md` as a non-authoritative
-mirror, refresh the derived board region, record Coordinator Log entries, and
-run the Dude linter. This command is mutating and is never implied by
-`@dude status`.
-
-Illustrative result:
-
-```text
-Lane: Tracked Execution · Live: Beads
-Action: sync Beads to tasks.md
-Updated:
-- Mirrored 8 Beads tasks into .dude/specs/001-authentication/tasks.md
-- Appended 1 discovered Beads issue under ## Discovered During Execution as T9001@4f2a91c0 [Shared] ... (Beads: dude-abc)
-- Refreshed the derived board region
-- Appended Coordinator Log entries for mirrored state changes
-Skipped:
-- 1 Beads issue lacked a matching durable task key and was closed (not appended)
-Next:
-- Continue with @dude track while Beads is available
-- Or resume Lightweight Execution from tasks.md if you are intentionally falling back
-```
-
 ### `@dude status`
 
 Use this when you want a read-only snapshot of the current workflow state
@@ -690,6 +610,88 @@ Reports `OK` or `Drift: <one-line>` for each of:
 
 ```text
 @dude self-check
+```
+
+### `@dude track`
+
+Use this when you want tracked execution on a Beads board. It requires the
+**beads pack** — if it is not installed yet, run `@dude add pack beads` first.
+After import, Beads becomes the only live board and source of truth for task
+state. `tasks.md` may still be updated as a one-way portability mirror from
+Beads.
+
+Preferred form:
+
+```text
+@dude track
+```
+
+Meaning: resume or import tracked execution work in Beads; it does not compile
+the application.
+
+If Beads is unavailable or you intentionally do not want it yet, stay in
+Lightweight Execution instead of using `@dude track`.
+
+Illustrative result:
+
+```text
+Action: track
+Updated:
+- Imported .dude/specs/001-authentication/spec.md into Beads
+- Beads is now authoritative; tasks.md will mirror successful Dude-owned closes
+- Selected ready task T001@a1b2c3d4 for implementation
+Next:
+- Let Dude continue the routed work
+- Or run @dude status for a read-only snapshot
+```
+
+### `@dude sync Beads to tasks.md`
+
+Use this when Beads is active but you want to refresh the markdown mirror, such
+as before switching machines, falling back to Lightweight Execution, or after a
+manual Beads change.
+
+**Automatic mirror (no command needed):** when Dude itself closes or updates a
+Beads issue, it mirrors the new status glyph back into the matching task row in
+`tasks.md` and regenerates the derived board region. You only need the explicit
+command below when the auto-mirror cannot run or has fallen behind.
+
+**Run this command manually when:**
+
+- Beads was changed outside Dude (for example a direct `bd update` or `bd close`).
+- A discovered Beads issue was created mid-flight; close-time auto-mirror never
+  appends new task headers and reports the mirror as skipped until you sync.
+- You are about to switch machines, fall back to Lightweight Execution, or hand
+  the feature off.
+- `@dude status` reports `Mirror: stale — run @dude sync Beads to tasks.md`.
+
+Preferred form:
+
+```text
+@dude sync Beads to tasks.md
+```
+
+Meaning: read Beads as the source of truth, map issue state back to canonical
+task units by durable task key, update `tasks.md` as a non-authoritative
+mirror, refresh the derived board region, record Coordinator Log entries, and
+run the Dude linter. This command is mutating and is never implied by
+`@dude status`.
+
+Illustrative result:
+
+```text
+Lane: Tracked Execution · Live: Beads
+Action: sync Beads to tasks.md
+Updated:
+- Mirrored 8 Beads tasks into .dude/specs/001-authentication/tasks.md
+- Appended 1 discovered Beads issue under ## Discovered During Execution as T9001@4f2a91c0 [Shared] ... (Beads: dude-abc)
+- Refreshed the derived board region
+- Appended Coordinator Log entries for mirrored state changes
+Skipped:
+- 1 Beads issue lacked a matching durable task key and was closed (not appended)
+Next:
+- Continue with @dude track while Beads is available
+- Or resume Lightweight Execution from tasks.md if you are intentionally falling back
 ```
 
 ### Validating bundle hygiene

@@ -7,6 +7,17 @@ files. The feature is common on most product teams: email/password
 authentication for a web app. The lifecycle is
 `brainstorm -> idea -> define -> spec -> work`.
 
+## The fast path
+
+One verb runs every stage the feature still needs:
+
+```text
+@dude ship authentication
+```
+
+The numbered sections below run that same lifecycle one stage at a time, so you
+can see what each stage produces and where you get to intervene.
+
 ## 1. Add a little project context
 
 Give Dude a small amount of real context to plan with:
@@ -165,10 +176,10 @@ The shortest path from here is one verb:
 ```
 
 `@dude ship [<target>]` takes exactly one optional target and no flags. Because
-`authentication` is already defined, Ship skips brainstorm and define, enters the
-live execution lane as-is, and advances until the work is done or an existing
-Work stop fires. Ship runs autonomously with an unlimited budget, so it
-authorizes its own retries at recoverable checkpoints such as a reviewer
+`authentication` is already brainstormed and defined, those stages are done, so
+Ship enters the live execution lane as-is and advances until the work is done or
+an existing Work stop fires. Ship runs autonomously with an unlimited budget, so
+it authorizes its own retries at recoverable checkpoints such as a reviewer
 rejection. On a raw idea it would have run the existing `brainstorm` and
 `define` routes first, pausing at the same checkpoints shown above. If you want
 to cap iterations or choose the policy yourself, `@dude work` is the advanced
