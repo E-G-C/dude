@@ -29,9 +29,10 @@ The minimum useful setup is:
 - optionally install packs you need with `@dude add pack <name>`
 - optionally remember one to three durable constraints
 
-Then start your first feature with one verb:
+Then start your first feature by writing the idea down and handing it over:
 
 ```text
+@dude brainstorm expense entry with receipt upload and manager approval
 @dude ship expense-entry
 ```
 
@@ -40,6 +41,10 @@ stages the target is still missing, and advances until the work is done or an
 existing Work stop fires. It runs the same brainstorm and define stages you
 would run by hand, and every clarification and guardrail-ratification checkpoint
 described below still happens. Ship never answers one for you.
+
+Shipping a bare name with no idea file behind it also works, but the name then
+becomes the entire idea, so Dude has to interview you before it can define
+anything.
 
 New installs already seed an inventory-backed empty profile and do not need any
 profile conversion. Current bundles use

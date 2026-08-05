@@ -42,10 +42,10 @@ Preferred workflow verbs are `brainstorm`, `define`, `ship`, `status`, `track`, 
 
 ### `@dude ship`
 
-Use this when you want one verb to carry a target through whatever lifecycle
-stages it still needs. Ship is the usual convenience path over `brainstorm`,
-`define`, and execution. It runs those stages instead of skipping them, and only
-the ones its target is still missing.
+Ship carries one target through whatever lifecycle stages it still needs, and is
+the usual convenience path over `brainstorm`, `define`, and execution. It runs
+those stages instead of skipping them, and only the ones its target is still
+missing.
 
 Preferred forms:
 
@@ -53,6 +53,10 @@ Preferred forms:
 @dude ship
 @dude ship expense-entry
 ```
+
+Brainstorm the idea first when you are starting a feature. A bare name with no
+idea file behind it becomes the entire idea, so Dude has to interview you before
+define can run.
 
 Grammar:
 
@@ -130,10 +134,10 @@ Next: Several live targets match. Reply with exactly one of expense-entry, expen
 
 ### `@dude brainstorm`
 
-Use this when you have a raw feature idea, a PRD, or incomplete requirements.
-Dude captures that input in exactly one flat idea file that you can edit
-directly. Brainstorming and defining are separate actions: this command never
-creates or refreshes `.dude/specs/`.
+Brainstorm takes a raw feature idea, a PRD, or incomplete requirements and
+captures it in exactly one flat idea file that you can edit directly.
+Brainstorming and defining are separate actions: this command never creates or
+refreshes `.dude/specs/`.
 
 Preferred form:
 
@@ -181,9 +185,9 @@ continue.
 
 ### `@dude define`
 
-Use this when one idea captures a bounded feature. Define consumes the idea by
-slug, refreshes the reusable package under `.dude/specs/<feature>/`, and may
-pause once for guardrail approval before planning continues.
+Define consumes one idea by slug once that idea captures a bounded feature. It
+refreshes the reusable package under `.dude/specs/<feature>/`, and may pause once
+for guardrail approval before planning continues.
 
 Preferred form:
 
@@ -235,8 +239,8 @@ as the intent source.
 
 ### `@dude work`
 
-Use this when you want Dude to run the next few ready tasks back-to-back
-without re-issuing one verb per task. It is **not a new workflow lane**. It
+Work runs the next few ready tasks back-to-back instead of making you re-issue
+one verb per task. It is **not a new workflow lane**. It
 iterates inside whichever execution lane is already live (Lightweight from
 `.dude/specs/<feature>/tasks.md` or Tracked from Beads) and stops on the first
 natural boundary.
@@ -457,8 +461,8 @@ Stop conditions (uniform across both lanes):
 
 ### `@dude status`
 
-Use this when you want a read-only snapshot of the current workflow state
-without changing anything.
+Status takes a read-only snapshot of the current workflow state and changes
+nothing.
 
 Preferred form:
 
@@ -540,9 +544,9 @@ Dude will route it to that prompt's vocabulary first.
 
 ### `@dude flag`
 
-Use this when execution finds a real gap, mismatch, or external blocker that
-should route back through Dude. The wording can be plain language; Dude handles
-the internal routing.
+Flag reports a real gap, mismatch, or external blocker that execution found and
+that should route back through Dude. The wording can be plain language; Dude
+handles the internal routing.
 
 Preferred predictable form:
 
@@ -585,8 +589,8 @@ the plan changes.
 
 ### `@dude diff`
 
-Use this when you want a read-only summary of what Dude changed since your
-previous message. Dude reads `## Coordinator Log` and reports a compact bulleted
+Diff summarizes what Dude changed since your previous message. Dude reads
+`## Coordinator Log` and reports a compact bulleted
 list grouped by file (state changes, board regenerations, reconciliations,
 reverted human edits). Nothing is mutated.
 
@@ -598,8 +602,8 @@ reverted human edits). Nothing is mutated.
 
 ### `@dude self-check`
 
-Use this when you want to verify Dude is following its own rules. Read-only.
-Reports `OK` or `Drift: <one-line>` for each of:
+Self-check verifies that Dude is following its own rules. It is read-only and
+reports `OK` or `Drift: <one-line>` for each of:
 
 - lane banner present on the last 3 routing replies
 - no human-applied `[x]` drift sitting unreverted and unrecorded
@@ -614,7 +618,7 @@ Reports `OK` or `Drift: <one-line>` for each of:
 
 ### `@dude track`
 
-Use this when you want tracked execution on a Beads board. It requires the
+Track moves execution onto a Beads board. It requires the
 **beads pack** — if it is not installed yet, run `@dude add pack beads` first.
 After import, Beads becomes the only live board and source of truth for task
 state. `tasks.md` may still be updated as a one-way portability mirror from
@@ -647,9 +651,9 @@ Next:
 
 ### `@dude sync Beads to tasks.md`
 
-Use this when Beads is active but you want to refresh the markdown mirror, such
-as before switching machines, falling back to Lightweight Execution, or after a
-manual Beads change.
+This command refreshes the markdown mirror while Beads is active, such as before
+switching machines, falling back to Lightweight Execution, or after a manual
+Beads change.
 
 **Automatic mirror (no command needed):** when Dude itself closes or updates a
 Beads issue, it mirrors the new status glyph back into the matching task row in

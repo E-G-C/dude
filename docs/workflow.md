@@ -121,8 +121,8 @@ maintain them so define and track stay consistent. Valid status values are
 
 ### Definition Only
 
-Use this lane when you want an idea and a reusable definition package, but
-you do not want Beads execution tracking yet.
+This lane produces an idea and a reusable definition package without Beads
+execution tracking.
 
 1. Unpack the release bundle so `.github/` and seeded `.dude/metadata/` both land in the target repository.
 
@@ -218,8 +218,8 @@ until you choose Lightweight Execution or `@dude track`.
 
 ### Lightweight Execution
 
-Use this lane when you want implementation to continue from the defined package,
-but Beads is unavailable or you do not want it yet.
+This lane continues implementation from the defined package when Beads is
+unavailable or you do not want it yet.
 
 1. Complete the Definition Only lane first.
 2. Treat `.dude/specs/<feature>/tasks.md` as the live markdown execution board.
@@ -292,10 +292,10 @@ skipped as Lightweight Execution history.
 
 `@dude work` is an optional accelerator that runs the next few ready tasks
 back-to-back inside whichever execution lane is already live. It is **not a new
-lane** — it does not replace Lightweight or Tracked Execution, it iterates
+lane**: it does not replace Lightweight or Tracked Execution, it iterates
 inside one of them and stops on the first natural boundary.
 
-Use it when you want Dude to keep going without re-issuing one verb per task:
+It keeps going without making you re-issue one verb per task:
 
 ```text
 @dude work
@@ -436,8 +436,7 @@ for definition gaps and `@dude track` to enable Beads. The
 
 ### Tracked Execution
 
-Use this lane when you want Dude to import defined features into Beads and track
-implementation there.
+This lane imports defined features into Beads and tracks implementation there.
 
 This lane is optional. Definition Only and Lightweight Execution work without
 Beads or Dolt.

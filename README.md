@@ -1,157 +1,182 @@
 # Dude
 
-Dude is a markdown bundle for building one feature at a time with GitHub
-Copilot. You describe what you want; Dude captures the idea, turns it into a
-spec and a task list, then works through that list with you.
+Dude is a set of markdown files that GitHub Copilot discovers in your
+repository: a coordinator agent, a small set of specialist agents, and the
+skills and instructions they follow. Together they give Copilot one workflow for
+building a feature: record the idea, turn it into a spec, plan, and task list,
+then implement the tasks and verify each one before marking it done.
 
-## Start Here
+Everything Dude produces is markdown committed next to your code. The core needs
+no service, database, or build step. Dude requires GitHub Copilot in VS Code or
+the Copilot CLI; Node.js 20 or later is needed only by the bundle's own
+maintenance scripts.
 
-Name the feature you want:
+## Install
+
+A release bundle contains `.github/` and a seeded `.dude/metadata/`. Unpack it,
+then copy both directories into the repository you want to work in:
+
+```bash
+# from the unpacked release bundle
+cp -r .github .dude my-project/
+```
+
+Add `library/` from this repository if you also want the optional pack catalog.
+Reload VS Code afterwards so Copilot picks up the new agents and skills.
+[docs/setup.md](docs/setup.md) covers prerequisites and first-run details.
+
+## Your First Feature
+
+Start with the idea, in whatever words you have. `@dude brainstorm` records it in
+one file, and every later stage reads from what you wrote:
 
 ```text
-@dude ship expense-entry
+@dude brainstorm expense entry with receipt upload and manager approval
 ```
 
-That is the whole first run. Ship skips no stage: it brainstorms your input into
-`.dude/ideas/expense-entry.md`, defines the spec, plan, and tasks from it, then
-works through those tasks. It pauses whenever it needs an answer from you.
-
-```mermaid
-flowchart LR
-  YOU["Your idea"]
-  subgraph SHIP["@dude ship"]
-    direction LR
-    BRAINSTORM["brainstorm<br/>idea file"] --> DEFINE["define<br/>spec, plan, tasks"] --> WORK["work<br/>build and verify"]
-  end
-  DONE["Feature done"]
-  YOU --> BRAINSTORM
-  WORK --> DONE
-```
-
-Only the missing stages run, so pointing Ship at an idea you already brainstormed
-starts at define, and pointing it at a defined feature goes straight to building.
-
-`@dude ship [<target>]` takes exactly one optional target and no flags, and it
-advances until the work is done or an existing Work stop fires. Ship performs no
-automatic Git or release action, and it never promises unconditional completion.
-Questions about the feature, and approval of project rules Dude wants to keep
-respecting, still pause and wait for your reply.
-
-### Review the idea before the spec
-
-Ship pauses for open questions, but it does not wait for you to read the whole
-idea file before it writes the spec. Run brainstorm yourself when you want that
-review, or when you would rather write your input down than type it into chat:
+Dude writes `.dude/ideas/expense-entry.md`, restates the idea under `## Idea`,
+and lists the questions it still needs answered. Read the restatement, correct it
+if it drifted, and answer what you can in the `**Your answer:**` slots. Rough
+input is fine: first capture fixes obvious spelling, grammar, and transcription
+errors and leaves your meaning, tone, and uncertainty alone. When the notes are
+already written down, hand over the file instead:
 
 ```text
 @dude brainstorm notes/expense-entry.md
 ```
 
-That writes one flat `.dude/ideas/expense-entry.md` collaboration file and
-nothing else. Read the `## Idea` section first, correct anything Dude misread,
-and answer the questions below it in the visible `**Your answer:**` slots.
-Informal, typo-heavy, or dictated input is welcome: on first capture Dude may
-clean up clear spelling, grammar, and transcription errors without changing your
-meaning, tone, uncertainty, or intent.
+Brainstorm stops there and creates no spec package, so nothing is generated from
+an idea you have not read yet.
 
-When the idea reads right, hand it back:
+Once the idea file reads correctly, one verb carries it the rest of the way:
 
 ```text
 @dude ship expense-entry
 ```
 
-The idea is already captured, so Ship picks up at define. The better the idea
-file, the better the spec, plan, and tasks.
+`expense-entry` is the slug Dude derived from your idea, and it names every file
+the feature writes from now on.
 
-### Check where you are
+```mermaid
+flowchart LR
+  IDEA["Your idea"]
+  subgraph SHIP["@dude ship: only the missing stages run"]
+    direction LR
+    BRAINSTORM["brainstorm<br/>idea file"] --> DEFINE["define<br/>spec, plan, tasks"] --> WORK["work<br/>implement and verify"]
+  end
+  DONE["Feature done"]
+  IDEA --> BRAINSTORM
+  WORK --> DONE
+```
+
+The idea already exists, so this run starts at define. Dude stops and waits when
+it needs something from you: a question about what the feature has to do, or
+approval of a project rule it proposes to follow from then on. Answer in chat and
+it continues.
+
+`@dude ship [<target>]` takes exactly one optional target and no flags, and it
+advances until the work is done or an existing Work stop fires. Ship performs no
+automatic Git or release action, and it never promises unconditional completion.
+
+Ship also runs in a repository with nothing on disk. There is no idea file to
+read then, so the name becomes the whole idea, and Dude has to interview you
+before it can define anything. Two lines of your own words get you further. Use a
+bare name to resume a feature that already has an idea or a spec package rather
+than to start one.
+
+## What Dude Writes
+
+Once the first two stages finish, the feature looks like this on disk:
+
+```text
+.dude/ideas/expense-entry.md          # the idea in your words, plus Dude's questions
+.dude/specs/001-expense-entry/
+  spec.md                             # what the feature must do
+  plan.md                             # how this project will build it
+  tasks.md                            # the ordered task list Dude implements from
+```
+
+The split decides which file to edit when something needs to change:
+
+- You own the idea file: `## Idea`, your answers to open questions, your
+  assumptions, and anything you defer. Change what the feature means there.
+- Dude owns the spec package and the workflow metadata: `## Normalized Intent`,
+  `status: draft|defined`, the exact `spec_path:` to `spec.md`, task checkboxes,
+  generated board sections, and the append-only `## Coordinator Log`.
+
+After editing the idea, run `@dude define expense-entry` to rebuild the package
+rather than editing `spec.md` or `plan.md` by hand.
+
+## How Much To Drive It
+
+Ship is a shortcut over three verbs. Run them separately to read the spec before
+any code exists, or to set your own budgets:
+
+```text
+@dude brainstorm expense-entry
+@dude define expense-entry
+@dude work expense-entry
+```
+
+| | `@dude ship <slug>` | `@dude define` then `@dude work` |
+|---|---|---|
+| Stages per command | every stage still missing | one |
+| Task budget | unlimited | three by default |
+| Pauses between stages | no | yes |
+
+`@dude work` implements but never defines. Given only an idea file, it finds no
+live execution lane, refuses, and points you at `@dude define`. The manual path
+is three verbs, not two. Neither verb adds a lane of its own; both run inside
+whichever execution lane is already live.
+
+Ship runs autonomously with an unlimited budget, authorizing the next attempt
+itself at recoverable checkpoints. `@dude work` stays guarded by default and is
+the advanced form when you want to set budgets, recovery, or policy yourself.
+
+Brainstorm and define are also the only way to change intent, since Ship never
+refreshes a package behind your back.
+
+## Orientation And Blockers
 
 ```text
 @dude status
 ```
 
-`@dude status`, `@dude diff`, and `@dude self-check` are read-only. Run them any
-time you are unsure what is live.
+`@dude status` reports the current lane, the live artifact, and the next step.
+`@dude diff` summarizes what Dude changed since your last message, and
+`@dude self-check` verifies that Dude followed its own rules. All three are
+read-only.
 
-## What Dude Creates
-
-For a feature named `expense-entry`, Dude creates files like this:
-
-```text
-.dude/ideas/expense-entry.md
-.dude/specs/001-expense-entry/
-  spec.md
-  plan.md
-  tasks.md
-```
-
-In plain English:
-
-- `.dude/ideas/...` is the pre-spec collaboration file between you and Dude.
-- `spec.md` says what the feature must do.
-- `plan.md` says how the project should build it.
-- `tasks.md` is the work list Dude implements from.
-
-You control `## Idea`, open-question answers, assumptions, and deferred
-questions. Dude maintains `## Normalized Intent`, `status: draft|defined`, the
-exact `spec_path:` to `spec.md`, generated board sections, task checkboxes, and
-the append-only `## Coordinator Log`. When the feature should do something
-different, edit `## Idea` and rerun define instead of editing the generated spec
-files.
-
-## When You Want More Control
-
-Ship is a shortcut over three verbs you can run yourself:
-
-```text
-# Capture or refresh the idea file, and create no spec package
-@dude brainstorm expense-entry
-# Turn that idea into spec.md, plan.md, and tasks.md
-@dude define expense-entry
-# Run the next few ready tasks
-@dude work expense-entry
-```
-
-Run them separately when you want to review the idea before any spec exists,
-refresh a package after the intent changed, or stop at the plan and implement
-nothing. Explicit `brainstorm` and `define` are also the only way to change
-intent, because Ship never refreshes a package behind your back.
-
-Ship runs autonomously with an unlimited budget, so at recoverable checkpoints it
-authorizes the next attempt itself. `@dude work` stays guarded by default and is
-the advanced form when you want explicit budgets, recovery settings, or a
-different policy. Both run inside whichever execution lane is already live, and
-neither adds a lane of its own.
-
-When implementation hits a bad assumption or a missing decision, send it back to
-the right owner instead of patching the spec by hand:
+When implementation runs into a wrong assumption or a missing decision, report
+it instead of patching the spec by hand:
 
 ```text
 @dude flag the spec does not say which currencies are allowed
 ```
 
+Dude classifies the blocker and routes it to whoever owns that decision.
+
 ## Commands
 
-| Command | Use it when |
+| Command | Purpose |
 |---|---|
-| `@dude ship [<target>]` | One verb: run the stages your target still needs, then build it |
-| `@dude status` | See where you are and what is live |
-| `@dude brainstorm <idea-or-file.md>` | Create or refresh one flat idea file without creating a spec package |
-| `@dude define <slug>` | Turn the matching idea into spec, plan, and tasks |
-| `@dude work [<feature>]` | Run the next few ready tasks with your own budgets and policy |
-| `@dude flag <problem>` | Send a blocker or bad assumption back to the right place |
-| `@dude remember: <fact>` | Save a durable project rule, constraint, or decision |
-| `@dude list packs` | See available and installed optional packs |
-| `@dude add pack <name>` | Install an optional capability (e.g. `beads`, `release`, `web`, `practices`) |
+| `@dude ship [<target>]` | Run the lifecycle stages a feature still needs, then implement it |
+| `@dude brainstorm <name-or-file.md>` | Create or refresh the idea file, without creating a spec package |
+| `@dude define <slug>` | Build or refresh the spec package from the matching idea |
+| `@dude work [<feature>]` | Implement ready tasks with your own budgets and policy |
+| `@dude status` | Report the current lane, live artifact, and next step |
+| `@dude flag <problem>` | Route a blocker or wrong assumption to its owner |
+| `@dude remember: <fact>` | Record a durable project rule, decision, or constraint |
+| `@dude list packs` / `@dude add pack <name>` | List or install optional capability packs |
 
 Full grammar, illustrative results, and the maintenance verbs are in
 [docs/commands.md](docs/commands.md).
 
 ## Packs (Optional Expansions)
 
-The core covers the whole feature workflow on its own. Anything domain- or
-workflow-specific lives in the catalog at
-[library/packs/](library/packs/README.md) and loads only after you install it,
-so nothing you did not ask for is in the way.
+The core covers the feature workflow. Domain- and workflow-specific material
+lives in the catalog at [library/packs/](library/packs/README.md) and loads only
+after you install it.
 
 | Pack | Adds | Install when |
 |---|---|---|
@@ -166,15 +191,15 @@ so nothing you did not ask for is in the way.
 @dude remove pack beads
 ```
 
-Sixteen packs are available. Installed packs use the reserved `dude-pack-*`
-namespace and survive `@dude upgrade`, so a core refresh never deletes what you
+The catalog holds 16 packs. Installed packs use the reserved `dude-pack-*`
+namespace and survive `@dude upgrade`, so a core refresh never removes what you
 installed.
 
-### When to add a tracked board
+### When To Add A Tracked Board
 
-Dude implements straight from `tasks.md` by default, which is enough to finish a
-feature. Add the `beads` pack when you want issue-level tracking, richer
-multi-user history, or long-running work that deserves a dedicated board:
+Dude implements straight from `tasks.md`, which is enough to finish a feature.
+Add the `beads` pack when you want issue-level tracking, richer multi-user
+history, or long-running work that deserves a dedicated board:
 
 ```text
 @dude add pack beads
@@ -182,7 +207,7 @@ multi-user history, or long-running work that deserves a dedicated board:
 @dude sync Beads to tasks.md
 ```
 
-Only one place is authoritative at a time. Before `@dude track`, `tasks.md`
+Exactly one place is authoritative at a time. Before `@dude track`, `tasks.md`
 decides what is ready and done. After it, the tracked board decides and
 `tasks.md` becomes a one-way mirror you can refresh before switching machines.
 `@dude status` reports whether that mirror is current but never syncs it for you.
@@ -195,7 +220,7 @@ decides what is ready and done. After it, the tracked board decides and
 ├── .dude/     # project work, memory, state, and bundle metadata
 ├── library/   # optional pack catalog (install with @dude add pack)
 ├── docs/      # detailed guides and reference material
-└── README.md  # short entrypoint and the ship path
+└── README.md  # this file
 ```
 
 The sole bundle manifest is `.dude/metadata/bundle-manifest.md`. Current source
@@ -206,10 +231,9 @@ dogfood and release bundles do not generate a manifest under `.github/`.
 - `library/packs/` is the catalog of optional packs you install on demand.
 - `docs/` is the repo-local documentation set for deeper workflow details.
 
-## Updating Dude Later
+## Updating Dude
 
-You can update the Dude bundle without touching your product code or active
-feature work.
+Updating the bundle leaves your product code and active feature work in place.
 
 ```text
 @dude upgrade --dry-run
@@ -217,13 +241,13 @@ feature work.
 @dude upgrade --rollback
 ```
 
-The safe path is preview, apply, rollback only if needed. Details like
-manifest metadata and the namespace convention for base ownership live in
+Preview first, then apply, and roll back only if you need to. Manifest metadata
+and the namespace convention for base ownership are described in
 [docs/upgrading.md](docs/upgrading.md).
 
 ## Detailed Docs
 
-Read these when you need more than the path above:
+Read these when you need more than the first-feature path:
 
 - [Docs index](docs/README.md) — where to go next.
 - [Setup and first feature](docs/setup.md) — first-time install, guardrails, and roster customization.

@@ -2,21 +2,23 @@
 
 [Back to root README](../README.md) | [Docs index](README.md) | [Workflow modes](workflow.md)
 
-Use this built-in example to learn the normal workflow without any external
-files. The feature is common on most product teams: email/password
-authentication for a web app. The lifecycle is
-`brainstorm -> idea -> define -> spec -> work`.
+This built-in example runs the normal workflow without any external files. The
+feature is common on most product teams: email/password authentication for a web
+app. The lifecycle is `brainstorm -> idea -> define -> spec -> work`.
 
 ## The fast path
 
-One verb runs every stage the feature still needs:
+Describe the feature once, then let one verb carry it the rest of the way:
 
 ```text
+@dude brainstorm email/password authentication with sign-in, sign-out, and password reset for a web app
 @dude ship authentication
 ```
 
-The numbered sections below run that same lifecycle one stage at a time, so you
-can see what each stage produces and where you get to intervene.
+`@dude ship authentication` alone also works, but with no idea file to read it
+has to interview you before it can define anything. The numbered sections below
+run the same lifecycle one stage at a time, so you can see what each stage
+produces and where you can intervene.
 
 ## 1. Add a little project context
 
