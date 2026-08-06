@@ -14,10 +14,12 @@ import {
   canonicalJson,
   canonicalTarget,
   capturedBytesV1,
+  classifyOutcomeReason,
   contentDescriptor,
   inspect,
   normalizeIndependentReviewEnvelopeV2,
   normalizeVerificationEnvelopeV2,
+  OUTCOME_REASON_CLASSES,
   runCommand,
   sha256,
   validateRunState,
@@ -6703,4 +6705,421 @@ nodeTest('focused table C: projection receipts and replacement-worker resume sta
       });
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Feature 013 T006: the deterministic autonomous runner attaches the
+// resolved-or-explicitly-unresolved halt report at its single terminal
+// chokepoint `finish(row)`. Every fixture drives the real `runHostAdapter` end
+// to end and asserts the `haltReport` the runner returns. The runtime — never
+// the model — establishes the stop, its named-reason attribution, and the
+// resolved-versus-unresolved decision (FR-010): the exchange only answers
+// challenges; the report is computed in `finish` from the run's own terminal
+// row (`stateBase64` + `reason`) and its last fresh Inspection.
+//
+// Reachability note (honest, per project lesson "an unreachable guard cannot be
+// honestly covered"): through `runHostAdapter` the only current-run captures a
+// run produces are completion dispositions, and `completionDispositionV2` emits
+// exactly `accepted` / `verification-failed` / `review-rejected` — never a
+// safety capture — so the five *named* safety-floor category reasons
+// (`approval-required`, `safety-or-authority`, `external-dependency`,
+// `ambiguous-state`) are not reachable as runner terminals here: three need a
+// real work-session safety capture, and `ambiguous-state` (ownership ambiguity)
+// is preempted by the runner's own `owner-resolution-failed` guard before any
+// Inspection. Their exhaustive reporter-level coverage lives in
+// recovery.test.mjs (Feature 013 T003 A–H). The reachable safety-relevant
+// wiring behavior — a closed-set hard stop that still halts and requests human
+// input carrying its named report, and an unattributable hard stop that still
+// halts and reports explicitly unresolved (never continuable) — is covered by
+// fixture E below.
+// ---------------------------------------------------------------------------
+
+/** The next owner action each closed-set stop class carries (mirrors recovery HALT_NEXT_ACTIONS). */
+const F013_T006_NEXT_ACTIONS = Object.freeze({
+  'hard-stop': 'request-human-input',
+  'recoverable-checkpoint': 'inspect-and-recover',
+  'budget-stop': 'raise-budget-or-end-run',
+  'learning-stop': 'resolve-learning-governance',
+  'guard-stop': 'correct-request-and-reinspect',
+});
+
+/** Rewrite the sealed lightweight task from `~` to a blank glyph so preflight orphans the run. */
+function f013BlankSealedTask(root) {
+  const tasksPath = path.join(root, TASKS_PATH);
+  fs.writeFileSync(
+    tasksPath,
+    fs.readFileSync(tasksPath, 'utf8').replace(`- [~] ${TARGET.taskKey}`, `- [ ] ${TARGET.taskKey}`),
+  );
+  const taskStatePath = path.join(root, TASK_STATE_PATH);
+  const taskState = JSON.parse(fs.readFileSync(taskStatePath, 'utf8'));
+  taskState[TASKS_PATH].glyphs[TARGET.taskKey] = ' ';
+  fs.writeFileSync(taskStatePath, `${JSON.stringify(taskState, null, 2)}\n`);
+}
+
+/** A sequential exchange that authorizes and settles the focused runner task. */
+function f013SettlingExchange() {
+  let assessment;
+  return (challenge) => {
+    if (challenge.kind === 'assessment') {
+      assessment = focusedChallengeAssessment(challenge);
+      return focusedChallengeResponse(challenge, 'assessment', assessment);
+    }
+    return focusedChallengeResponse(
+      challenge,
+      'specialistResult',
+      focusedSpecialistPair(assessment, 'f013-t006'),
+    );
+  };
+}
+
+nodeTest('Feature 013 T006 A: an out-of-set disposition and an orphan terminal each report explicitly unresolved with no reason, target, or subject (FR-003, FR-004, FR-006)', async () => {
+  // (a) Orphan terminal: the blank-task preflight refuses before any Inspection,
+  //     so nothing — reason, target, or subject — can be established.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    f013BlankSealedTask(root);
+    const result = await runHostAdapter(focusedRunnerRequest(root), {
+      checkpoint: memoryCheckpointStore().port,
+      exchange() { throw new Error('an orphaned preflight must not reach the exchange'); },
+    });
+    assert.equal(result.outcome, 'hard-stop', 'an orphan preflight halts');
+    assert.equal(result.reason, 'runner-refused');
+    // The runner reason is not a member of the closed stop set, so it is never
+    // presented as one: the report names it nowhere.
+    assert.equal(Object.hasOwn(OUTCOME_REASON_CLASSES, result.reason), false, 'runner-refused is out of the closed set');
+    assert.deepEqual(result.haltReport, { halted: true, resolved: false, unresolved: ['reason', 'target', 'subject'] });
+    for (const field of ['reason', 'stopClass', 'target', 'subject', 'nextAction', 'evidenceHash']) {
+      assert.equal(Object.hasOwn(result.haltReport, field), false, `an unresolved report carries no ${field}`);
+    }
+  });
+
+  // (a) Out-of-set disposition: a stale Assessment with no exchange capability
+  //     halts on an out-of-set diagnostic. The last Inspection is present (so the
+  //     target could bind), but the reason is out of the closed set and no
+  //     subject is established, so the report is unresolved and names no reason.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const request = focusedRunnerRequest(root, {
+      assessment: { ...focusedRunnerRequest(root).assessment, evidenceHash: sha256('f013-t006-stale') },
+    });
+    const result = await runHostAdapter(request, { checkpoint: memoryCheckpointStore().port });
+    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(result.reason, 'exchange-unavailable');
+    assert.equal(Object.hasOwn(OUTCOME_REASON_CLASSES, result.reason), false, 'exchange-unavailable is out of the closed set');
+    assert.equal(result.haltReport.halted, true);
+    assert.equal(result.haltReport.resolved, false);
+    assert.ok(Array.isArray(result.haltReport.unresolved) && result.haltReport.unresolved.length > 0);
+    assert.ok(result.haltReport.unresolved.includes('reason'), 'the out-of-set reason is named unresolved');
+    assert.ok(result.haltReport.unresolved.includes('subject'), 'the unestablished subject is named unresolved');
+    assert.ok(
+      result.haltReport.unresolved.every((field) => ['reason', 'target', 'subject'].includes(field)),
+      'unresolved names only the halt report fields',
+    );
+    for (const field of ['reason', 'stopClass', 'subject', 'nextAction']) {
+      assert.equal(Object.hasOwn(result.haltReport, field), false, `an unresolved report carries no ${field}`);
+    }
+  });
+});
+
+nodeTest('Feature 013 T006 B: a closed-set hard stop whose Inspection binds a deterministic probe reports resolved with the affected target, causing subject, and next owner action (FR-003, FR-004, FR-005, FR-010)', async () => {
+  const expectedTarget = canonicalTarget(clone(TARGET));
+
+  const assertResolved = (result, expected, label) => {
+    assert.equal(result.outcome, 'hard-stop', label);
+    assert.equal(result.reason, expected.reason, label);
+    const report = result.haltReport;
+    assert.deepEqual(Object.keys(report).sort(), [
+      'evidenceHash', 'halted', 'nextAction', 'reason', 'resolved', 'stopClass', 'subject', 'target',
+    ], `${label}: a resolved report carries exactly the eight named fields`);
+    assert.equal(report.halted, true, label);
+    assert.equal(report.resolved, true, label);
+    // FR-004: the named reason is exactly the runner's own terminal reason and a
+    // member of the frozen closed stop set — no new reason is introduced.
+    assert.equal(report.reason, result.reason, label);
+    assert.equal(Object.hasOwn(OUTCOME_REASON_CLASSES, report.reason), true, `${label}: reason is in the closed set`);
+    assert.notEqual(classifyOutcomeReason(report.reason), 'authorized', label);
+    assert.equal(report.stopClass, classifyOutcomeReason(report.reason), label);
+    assert.equal(report.stopClass, expected.stopClass, label);
+    // FR-005: the affected target, the specific causing subject, and the next
+    // owner action are all present and actionable without reading the runtime.
+    assert.deepEqual(report.target, expectedTarget, label);
+    assert.equal(report.subject, expected.subject, label);
+    assert.notEqual(report.subject, report.reason, `${label}: the subject never merely echoes the reason`);
+    assert.equal(report.nextAction, F013_T006_NEXT_ACTIONS[report.stopClass], label);
+    assert.match(report.evidenceHash, /^[0-9a-f]{64}$/, label);
+  };
+
+  // A pending authorization already in the accepted state makes the next attempt
+  // not dispatchable; the deterministic RunState probe localizes it.
+  let firstNotDispatchable = null;
+  for (let run = 0; run < 2; run += 1) {
+    await withSealedWorkspace(async (root) => {
+      writeSealedTaskState(root);
+      const result = await runHostAdapter(
+        focusedRunnerRequest(root, { state: pendingState('autonomous') }),
+        { checkpoint: memoryCheckpointStore().port, exchange: f013SettlingExchange() },
+      );
+      assertResolved(result, {
+        reason: 'not-dispatchable',
+        stopClass: 'guard-stop',
+        subject: `pending-authorization:${canonicalJson(expectedTarget)}`,
+      }, 'not-dispatchable');
+      // FR-010: the runtime, not the model, owns the report. The report is
+      // byte-identical across independent runs of the same deterministic stop,
+      // and the exchange supplied none of its fields.
+      if (firstNotDispatchable === null) firstNotDispatchable = canonicalJson(result.haltReport);
+      else assert.equal(canonicalJson(result.haltReport), firstNotDispatchable, 'the resolved report is deterministic');
+    });
+  }
+
+  // A recovery-mode attempt under a policy that disables recovery is a guard stop
+  // the recovery-policy probe localizes — a second, distinct closed-set reason.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const state = emptyState('autonomous');
+    state.policy.recover = false;
+    const request = focusedRunnerRequest(root, { state });
+    delete request.assessment;
+    delete request.specialistResult;
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port,
+      exchange(challenge) {
+        const assessment = focusedChallengeAssessment(challenge, {
+          action: 'retry-task',
+          materialInputs: { targets: ['src/skills/dude-work/host-adapter.mjs'], operations: ['retry-task'], checks: ['verification'] },
+          summary: 'Recover under a policy that disables recovery.',
+        });
+        return focusedChallengeResponse(challenge, 'assessment', assessment);
+      },
+    });
+    assertResolved(result, {
+      reason: 'recovery-disabled',
+      stopClass: 'guard-stop',
+      subject: 'policy-recover:false',
+    }, 'recovery-disabled');
+  });
+});
+
+nodeTest('Feature 013 T006 C: a clean task-settled, cancelled, or controlled end is not a halt and carries haltReport null (FR-001)', async () => {
+  // task-settled: the bound projection completes the task.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const result = await runHostAdapter(focusedRunnerRequest(root), { checkpoint: memoryCheckpointStore().port });
+    assert.equal(result.outcome, 'ended');
+    assert.equal(result.reason, 'task-settled');
+    assert.equal(Object.hasOwn(result, 'haltReport'), true, 'the field is always present');
+    assert.equal(result.haltReport, null, 'a clean settlement carries no halt report');
+  });
+
+  // cancelled: a cancel from the first Assessment challenge ends the run cleanly.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const request = focusedRunnerRequest(root, {
+      assessment: { ...focusedRunnerRequest(root).assessment, evidenceHash: sha256('f013-t006-force-cancel') },
+    });
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port,
+      exchange: (challenge) => focusedCancelResponse(challenge),
+    });
+    assert.equal(result.outcome, 'ended');
+    assert.equal(result.reason, 'cancelled');
+    assert.equal(result.haltReport, null, 'a cancelled run carries no halt report');
+  });
+
+  // controlled-end: a no-progress governance settlement ends the loop cleanly and
+  // is deliberately not reclassified as a named halt.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const request = focusedRunnerRequest(root);
+    request.state.policy.recovery = 2;
+    request.specialistResult = focusedSpecialistPair(request.assessment, 'f013-t006-c-reject', 'rejected');
+    let assessment;
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port,
+      exchange(challenge) {
+        if (challenge.kind === 'learning-review') {
+          const governedState = JSON.parse(Buffer.from(challenge.stateBase64, 'base64').toString('utf8'));
+          return focusedChallengeResponse(challenge, 'review', governanceReview(governedState, 'no-progress').review);
+        }
+        if (challenge.kind === 'assessment') {
+          assessment = focusedChallengeAssessment(challenge, {
+            action: 'retry-task',
+            materialInputs: { targets: ['src/skills/dude-work/host-adapter.mjs'], operations: ['retry-task'], checks: ['verification'] },
+            summary: 'Retry after a retained rejected review.',
+          });
+          return focusedChallengeResponse(challenge, 'assessment', assessment);
+        }
+        return focusedChallengeResponse(
+          challenge,
+          'specialistResult',
+          focusedSpecialistPair(assessment, 'f013-t006-c-reject', 'rejected'),
+        );
+      },
+    });
+    assert.equal(result.outcome, 'ended');
+    assert.equal(result.reason, 'controlled-unresolved-end');
+    assert.equal(result.haltReport, null, 'a governance-controlled end carries no halt report');
+  });
+});
+
+nodeTest('Feature 013 T006 D: a multi-attempt run surfaces progress and keeps working with no premature halt; only the terminal row carries the report (FR-001, FR-002)', async () => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const request = focusedRunnerRequest(root);
+    request.state.policy.recovery = 2;
+    request.specialistResult = focusedSpecialistPair(request.assessment, 'f013-t006-d-reject', 'rejected');
+    const challengeKinds = [];
+    let assessment;
+    let selectedAlternative = null;
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port,
+      exchange(challenge) {
+        challengeKinds.push(challenge.kind);
+        if (challenge.kind === 'learning-review') {
+          const governedState = JSON.parse(Buffer.from(challenge.stateBase64, 'base64').toString('utf8'));
+          const governed = governanceReview(governedState, 'selected-alternative');
+          selectedAlternative = governed.credible;
+          return focusedChallengeResponse(challenge, 'review', governed.review);
+        }
+        if (challenge.kind === 'assessment') {
+          const materialInputs = selectedAlternative === null
+            ? { targets: ['src/skills/dude-work/host-adapter.mjs'], operations: ['retry-task'], checks: ['verification'] }
+            : clone(selectedAlternative.approachBasis.materialInputs);
+          assessment = focusedChallengeAssessment(challenge, { action: 'retry-task', materialInputs, summary: 'Continue after progress.' });
+          return focusedChallengeResponse(challenge, 'assessment', assessment);
+        }
+        return focusedChallengeResponse(
+          challenge,
+          'specialistResult',
+          focusedSpecialistPair(
+            assessment,
+            selectedAlternative === null ? 'f013-t006-d-reject' : 'f013-t006-d-alt',
+            selectedAlternative === null ? 'rejected' : 'accepted',
+          ),
+        );
+      },
+    });
+    // The rejected first attempt did not stop the loop: it drove learning and a
+    // second attempt, and the run settled only on the genuine completion.
+    assert.equal(result.outcome, 'ended', `${result.reason}`);
+    assert.equal(result.reason, 'task-settled');
+    assert.equal(result.haltReport, null, 'no premature halt: the settled loop carries no report');
+    assert.deepEqual(challengeKinds, ['assessment', 'specialist-pair', 'learning-review', 'assessment', 'specialist-pair'],
+      'the loop kept working across attempts rather than halting to report');
+    // A recoverable interim refusal (evidence-drift) was reported inline but never
+    // ended the loop — progress reporting is decoupled from stopping.
+    assert.ok(result.steps.some((step) => step.reason === 'review-rejected'), 'an interim rejection was surfaced');
+    assert.ok(result.steps.length > 20, 'the run proceeded through many steps');
+    // Only the terminal result carries `haltReport`; no intermediate step does.
+    assert.ok(result.steps.every((step) => !Object.hasOwn(step, 'haltReport')),
+      'a non-terminal step never carries a halt report');
+  });
+});
+
+nodeTest('Feature 013 T006 E: a hard stop still halts and requests human input carrying its report; an unattributable hard stop still halts and reports explicitly unresolved; a persistent rejection is never approval (FR-007, FR-008)', async () => {
+  const planPath = `${TARGET.specPath.slice(0, -'spec.md'.length)}plan.md`;
+
+  // FR-007: a closed-set hard stop (the definition plan the autonomous policy
+  // requires is missing) still halts and requests human input, carrying its
+  // named report. `request-human-input` is exactly the `hard-stop` class action.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    fs.rmSync(path.join(root, planPath));
+    const result = await runHostAdapter(focusedRunnerRequest(root), {
+      checkpoint: memoryCheckpointStore().port,
+      exchange: f013SettlingExchange(),
+    });
+    assert.equal(result.outcome, 'hard-stop', 'the safety-floor hard stop still halts');
+    assert.equal(result.reason, 'evidence-incomplete');
+    assert.equal(result.haltReport.resolved, true);
+    assert.equal(result.haltReport.stopClass, 'hard-stop', 'it stays a hard stop, not reclassified');
+    assert.equal(result.haltReport.nextAction, 'request-human-input', 'it requests human input');
+    assert.equal(Object.hasOwn(OUTCOME_REASON_CLASSES, result.haltReport.reason), true);
+    assert.equal(result.haltReport.subject, 'definition-plan', 'the report names the affected subject');
+  });
+
+  // Amended FR-007: a hard stop whose attribution cannot be bound still halts and
+  // reports explicitly unresolved — never continuable, never a masqueraded named
+  // halt. (A safety-floor *category* reason cannot be driven to unresolved
+  // through the runner because it binds every surfaced blocker to the same fresh
+  // Inspection; see the reachability note above. This reachable unattributable
+  // hard stop demonstrates the identical wiring behavior.)
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const request = focusedRunnerRequest(root, {
+      assessment: { ...focusedRunnerRequest(root).assessment, evidenceHash: sha256('f013-t006-e-unbound') },
+    });
+    const result = await runHostAdapter(request, { checkpoint: memoryCheckpointStore().port });
+    assert.equal(result.outcome, 'hard-stop', 'an unattributable stop still halts');
+    assert.equal(result.type, 'result', 'the run is terminal — never continued');
+    assert.equal(result.haltReport.resolved, false, 'it reports explicitly unresolved');
+    assert.ok(result.haltReport.unresolved.length > 0, 'it names the fields it could not establish');
+    assert.equal(Object.hasOwn(result.haltReport, 'reason'), false, 'it names no closed-set reason it cannot substantiate');
+  });
+
+  // FR-008: a persistently rejected review is never treated as approval. It ends
+  // on a governance-controlled end, not on `task-settled`/`completed`.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const request = focusedRunnerRequest(root);
+    request.state.policy.recovery = 2;
+    request.specialistResult = focusedSpecialistPair(request.assessment, 'f013-t006-e-reject', 'rejected');
+    let assessment;
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port,
+      exchange(challenge) {
+        if (challenge.kind === 'learning-review') {
+          const governedState = JSON.parse(Buffer.from(challenge.stateBase64, 'base64').toString('utf8'));
+          return focusedChallengeResponse(challenge, 'review', governanceReview(governedState, 'no-progress').review);
+        }
+        if (challenge.kind === 'assessment') {
+          assessment = focusedChallengeAssessment(challenge, {
+            action: 'retry-task',
+            materialInputs: { targets: ['src/skills/dude-work/host-adapter.mjs'], operations: ['retry-task'], checks: ['verification'] },
+            summary: 'Retry after a retained rejected review.',
+          });
+          return focusedChallengeResponse(challenge, 'assessment', assessment);
+        }
+        return focusedChallengeResponse(
+          challenge,
+          'specialistResult',
+          focusedSpecialistPair(assessment, 'f013-t006-e-reject', 'rejected'),
+        );
+      },
+    });
+    assert.equal(result.outcome, 'ended');
+    assert.notEqual(result.reason, 'task-settled', 'a rejected review is never approved into a settlement');
+    assert.notEqual(result.reason, 'completed', 'a rejected review is never approved');
+    assert.equal(result.reason, 'controlled-unresolved-end');
+    assert.equal(result.haltReport, null);
+  });
+});
+
+nodeTest('Feature 013 T006 F: mutation sentinel — the finish attach binds hard-stop→report and ended→null, so deleting the attach or flipping the branch fails here', async () => {
+  // A hard-stop terminal MUST carry a present, non-null report object.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const result = await runHostAdapter(
+      focusedRunnerRequest(root, { state: pendingState('autonomous') }),
+      { checkpoint: memoryCheckpointStore().port, exchange: f013SettlingExchange() },
+    );
+    assert.equal(result.outcome, 'hard-stop');
+    // Deleting the `finish` attach makes this `undefined`; flipping the branch
+    // (hard-stop → null) makes this `null`. Both fail here.
+    assert.notEqual(result.haltReport, undefined, 'the finish attach must be present on a hard stop');
+    assert.notEqual(result.haltReport, null, 'a hard stop must carry a report, not null');
+    assert.equal(typeof result.haltReport, 'object');
+    assert.equal(result.haltReport.halted, true);
+  });
+
+  // An `ended` terminal MUST carry the field present and exactly null.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const result = await runHostAdapter(focusedRunnerRequest(root), { checkpoint: memoryCheckpointStore().port });
+    assert.equal(result.outcome, 'ended');
+    // Deleting the attach makes `haltReport` absent (hasOwn false); flipping the
+    // branch (ended → report) makes it a non-null object. Both fail here.
+    assert.equal(Object.hasOwn(result, 'haltReport'), true, 'the finish attach must be present on an ended run');
+    assert.equal(result.haltReport, null, 'an ended run must carry exactly null');
+  });
 });

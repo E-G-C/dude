@@ -372,6 +372,13 @@ post-failure, and post-review checkpoints. Every settled hard stop, both numeric
 budgets, fresh verification, and independent review still apply; scheduling
 stays sequential, with no concurrency or fan-out.
 
+An unattended `autonomous` run never ends just to summarize. Progress is
+surfaced inline and the loop moves straight on to the next ready task. When the
+run does end, the report gives the one stop condition behind it, the affected
+work item, the cause, and the owner's next move; if evidence for any of those is
+missing, it says so and marks the halt unresolved. Nothing here changes
+`guarded`.
+
 Repeated failure under `autonomous` requires learning before anything else
 happens to that task. A proven repeat, meaning the same normalized result twice
 or the same approach twice, seals retry, escalation, block, close, and

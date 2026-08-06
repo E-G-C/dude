@@ -15,6 +15,7 @@ import {
   canonicalTarget,
   capturedBytesV1,
   contentDescriptor,
+  describeUnattendedHalt,
   inspect,
   modelPacket,
   runCommand,
@@ -376,10 +377,35 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     ? 75
     : Math.max(1, /** @type {number} */ (policy.overall) * 3 + 1);
 
-  /** @param {Record<string, unknown>} row */
+  /**
+   * The single terminal chokepoint: every terminal result of the deterministic
+   * unattended run flows through here, so the halt report is attached here and
+   * nowhere else. A `hard-stop` row carries the resolved-or-explicitly-unresolved
+   * report the landed `describeUnattendedHalt` primitive returns for this run's
+   * own halt outcome; an `ended` row (task-settled, controlled-end, cancelled) is
+   * a clean settlement and carries `haltReport: null`. The runner — not the model
+   * — establishes the stop and its attribution, so the report is deterministic.
+   * The computation is wrapped so `finish` can never throw: a state that cannot be
+   * decoded, or an absent/undescribable Inspection, fails closed to the exact
+   * unresolved report shape `describeUnattendedHalt` itself returns.
+   * @param {Record<string, unknown>} row
+   */
   const finish = (row) => {
     if (!['ended', 'hard-stop'].includes(/** @type {string} */ (row.outcome))) {
       throw new TypeError('runner attempted to return a nonterminal result');
+    }
+    let haltReport = null;
+    if (row.outcome === 'hard-stop') {
+      haltReport = { halted: true, resolved: false, unresolved: ['reason', 'subject'] };
+      try {
+        const haltState = JSON.parse(
+          Buffer.from(/** @type {string} */ (row.stateBase64), 'base64').toString('utf8'),
+        );
+        const report = describeUnattendedHalt({ state: haltState, reason: row.reason }, currentInspection);
+        if (report !== null) haltReport = report;
+      } catch {
+        // Fail closed: keep the unresolved report; `finish` must never throw.
+      }
     }
     return {
       ...row,
@@ -387,6 +413,7 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
       step: 'result',
       occurrenceIdentity,
       steps,
+      haltReport,
     };
   };
 

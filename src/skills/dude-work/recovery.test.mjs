@@ -31,9 +31,11 @@ import {
   canonicalJson,
   canonicalTarget,
   classifyOutcomeReason,
+  endsUnattendedLoop,
   collectEvidence,
   completeAttempt,
   contentDescriptor,
+  describeUnattendedHalt,
   descriptor,
   evidenceHash,
   inspect,
@@ -25632,4 +25634,1293 @@ test('T003 round-trip invariant fails for either divergence direction and invali
       /audit must declare exactly one valid relevance/,
     );
   }
+});
+
+// --- Feature 013 (T001): endsUnattendedLoop — Unattended Work Continuity ---
+
+test('Feature 013 T001 A: autonomous — authorized and completed turns do NOT end the loop (FR-001)', () => {
+  const state = autonomousState();
+
+  // authorized-continue turn
+  const authorized = authorizeAttempt(state, TARGET, transitionRaw(TARGET), transitionAssessment('execute-task'), 'ordinary');
+  assert.equal(authorized.reason, 'authorized');
+  assert.equal(endsUnattendedLoop(authorized), false, 'authorized turn must not end loop');
+
+  // completed turn
+  const auth = authorizeAttempt(state, TARGET, transitionRaw(TARGET), transitionAssessment('execute-task'), 'ordinary');
+  const completed = completeAttempt(auth.state, completionInput(auth.state.pending[0]));
+  assert.equal(completed.reason, 'completed');
+  assert.equal(endsUnattendedLoop(completed), false, 'completed turn must not end loop');
+});
+
+test('Feature 013 T001 B: autonomous — progress/milestone turn (no stop reason) does NOT end the loop (FR-002)', () => {
+  const state = autonomousState();
+  // No reason property: progress-report / milestone notice
+  assert.equal(endsUnattendedLoop({ state }), false, 'no-reason outcome must not end loop');
+  // Explicitly null reason
+  assert.equal(endsUnattendedLoop({ state, reason: null }), false, 'null-reason outcome must not end loop');
+  // Confirm no reason consumed
+  const notice = { state };
+  assert.equal(!Object.hasOwn(notice, 'reason'), true, 'progress notice carries no reason key');
+});
+
+test('Feature 013 T001 C: autonomous — each closed-set stop category ends the loop (FR-001 end-condition)', () => {
+  const state = autonomousState();
+  const stopReasons = Object.entries(OUTCOME_REASON_CLASSES).filter(([, cat]) => cat !== 'authorized');
+  for (const [reason, category] of stopReasons) {
+    assert.equal(
+      endsUnattendedLoop({ state, reason }),
+      true,
+      `reason '${reason}' (${category}) must end the loop`,
+    );
+  }
+});
+
+test('Feature 013 T001 D: no new stop reason — loop-ending reasons are exactly the non-authorized OUTCOME_REASON_CLASSES keys (SC-007)', () => {
+  const state = autonomousState();
+  const closedSet = Object.entries(OUTCOME_REASON_CLASSES)
+    .filter(([, cat]) => cat !== 'authorized')
+    .map(([reason]) => reason);
+  for (const reason of closedSet) {
+    assert.equal(endsUnattendedLoop({ state, reason }), true, `expected halt for '${reason}'`);
+  }
+  assert.equal(endsUnattendedLoop({ state, reason: 'authorized' }), false, 'authorized must not halt');
+  assert.equal(endsUnattendedLoop({ state, reason: 'completed' }), false, 'completed must not halt');
+});
+
+test('Feature 013 T001 E: guarded/default — predicate does not enable unattended continuation (SC-006)', () => {
+  const gs = guardedContinuationState();
+  assert.equal(endsUnattendedLoop({ state: gs, reason: 'authorized' }), true, 'guarded authorized must halt');
+  assert.equal(endsUnattendedLoop({ state: gs, reason: 'completed' }), true, 'guarded completed must halt');
+  assert.equal(endsUnattendedLoop({ state: gs }), true, 'guarded no-reason must halt');
+});
+
+test('Feature 013 T001 F: fail-closed — malformed outcome halts and does not throw', () => {
+  assert.doesNotThrow(() => assert.equal(endsUnattendedLoop({}), true));
+  assert.doesNotThrow(() => assert.equal(endsUnattendedLoop(null), true));
+  assert.doesNotThrow(() => assert.equal(endsUnattendedLoop(undefined), true));
+  assert.doesNotThrow(() => assert.equal(endsUnattendedLoop({ state: 'bad' }), true));
+  assert.doesNotThrow(() => assert.equal(endsUnattendedLoop({ state: {}, reason: 'authorized' }), true));
+  const state = autonomousState();
+  assert.doesNotThrow(() => assert.equal(endsUnattendedLoop({ state, reason: 'completely-unknown' }), true));
+});
+
+// --- Feature 013 (T002): describeUnattendedHalt — named, actionable halts ---
+
+const FEATURE013_NEXT_ACTIONS = Object.freeze({
+  'hard-stop': 'request-human-input',
+  'recoverable-checkpoint': 'inspect-and-recover',
+  'budget-stop': 'raise-budget-or-end-run',
+  'learning-stop': 'resolve-learning-governance',
+  'guard-stop': 'correct-request-and-reinspect',
+});
+
+/**
+ * Rebuild the exact Inspection an autonomous halt was decided against.
+ * @param {Record<string, unknown>} target @param {Record<string, unknown>} raw @param {unknown} [dependencies]
+ */
+function haltInspection(target, raw, dependencies) {
+  return buildInspection(
+    target,
+    collectEvidence(target, withPolicyPlan(target, raw, 'autonomous'), dependencies, 'autonomous'),
+  );
+}
+
+/** One real autonomous halt per closed-set stop class, with its bound Inspection. */
+function buildFeature013HaltFixtures() {
+  const hardRaw = transitionRaw(TARGET, { currentRun: [capture(TARGET, 'approval-required', [{ i: 1 }])] });
+  const hardStop = authorizeAttempt(autonomousState(), TARGET, hardRaw, transitionAssessment('retry-task'), 'recovery');
+
+  const checkRaw = transitionRaw(TARGET);
+  const checkAuth = authorizeAttempt(autonomousState(), TARGET, checkRaw, transitionAssessment('retry-task', { targets: ['src/feature013-check.mjs'] }), 'recovery');
+  const checkStop = completeAttempt(checkAuth.state, completionInput(checkAuth.state.pending[0], { checks: { verification: 'failed' } }));
+
+  const overallState = { ...autonomousState({ overall: 1 }), overallUsed: 1, completed: [{ ...EXHAUSTED_COMPLETION }] };
+  const overallRaw = transitionRaw(TARGET);
+  const overallStop = authorizeAttempt(overallState, TARGET, overallRaw, transitionAssessment('execute-task'), 'ordinary');
+
+  const recoveryState = {
+    ...autonomousState({ recovery: 1 }),
+    overallUsed: 1,
+    recoveryUsed: [{ targetKey: targetKey(TARGET), targetHash: targetHash(TARGET), count: 1 }],
+    completed: [{ ...EXHAUSTED_COMPLETION }],
+  };
+  const recoveryRaw = transitionRaw(TARGET);
+  const recoveryStop = authorizeAttempt(recoveryState, TARGET, recoveryRaw, transitionAssessment('retry-task'), 'recovery');
+
+  const learnRaw = transitionRaw(TARGET);
+  const learnFirst = authorizeAttempt(autonomousState(), TARGET, learnRaw, transitionAssessment('retry-task', { targets: ['src/feature013-learn.mjs'] }), 'recovery');
+  const learnState = completeAttempt(learnFirst.state, completionInput(learnFirst.state.pending[0])).state;
+  const learnStop = authorizeAttempt(learnState, TARGET, learnRaw, transitionAssessment('retry-task', { targets: ['src/feature013-learn.mjs'] }), 'recovery');
+
+  const disabledState = emptyState({ mode: 'autonomous', overall: 'unlimited', recovery: 'unlimited' });
+  const disabledRaw = transitionRaw(TARGET);
+  const disabledStop = authorizeAttempt(disabledState, TARGET, disabledRaw, transitionAssessment('retry-task'), 'recovery');
+
+  const secondTarget = { ...TARGET, taskKey: SECOND_TASK_KEY };
+  const pairBytes = transitionTasksBytes([{ id: TASK_KEY, glyph: '~' }, { id: SECOND_TASK_KEY }]);
+  const firstRaw = transitionRaw(TARGET, { tasks: { path: TASKS_PATH, bytes: pairBytes } });
+  const secondRaw = transitionRaw(secondTarget, { tasks: { path: TASKS_PATH, bytes: pairBytes } });
+  const claimed = authorizeAttempt(autonomousState(), TARGET, firstRaw, transitionAssessment('retry-task', { targets: ['src/feature013-first.mjs'] }), 'recovery');
+  const busyStop = authorizeAttempt(claimed.state, secondTarget, secondRaw, transitionAssessment('retry-task', { targets: ['src/feature013-second.mjs'] }), 'recovery');
+
+  const featureTarget = { specPath: SPEC_PATH, lane: 'lightweight' };
+  const featureRaw = transitionRaw(featureTarget);
+  const featureStop = authorizeAttempt(autonomousState(), featureTarget, featureRaw, transitionAssessment('retry-task'), 'recovery');
+
+  return [
+    {
+      name: 'hard stop on a captured approval requirement',
+      reason: 'approval-required',
+      stopClass: 'hard-stop',
+      subject: 'current-run:approval-required',
+      outcome: hardStop,
+      inspection: haltInspection(TARGET, hardRaw),
+    },
+    {
+      name: 'recoverable checkpoint on failed verification',
+      reason: 'verification-failed',
+      stopClass: 'recoverable-checkpoint',
+      subject: 'verification',
+      outcome: checkStop,
+      inspection: haltInspection(TARGET, checkRaw),
+    },
+    {
+      name: 'budget stop on the overall attempt budget',
+      reason: 'overall-exhausted',
+      stopClass: 'budget-stop',
+      subject: 'overall-attempts:1/1',
+      outcome: overallStop,
+      inspection: haltInspection(TARGET, overallRaw),
+    },
+    {
+      name: 'budget stop on the exact-target recovery budget',
+      reason: 'recovery-exhausted',
+      stopClass: 'budget-stop',
+      subject: 'recovery-attempts:1/1',
+      outcome: recoveryStop,
+      inspection: haltInspection(TARGET, recoveryRaw),
+    },
+    {
+      name: 'learning stop on unresolved governance',
+      reason: 'learning-required',
+      stopClass: 'learning-stop',
+      subject: `learning-governance:required:${learnStop.state.learningGovernance.triggerEvidenceHash}`,
+      outcome: learnStop,
+      inspection: haltInspection(TARGET, learnRaw),
+    },
+    {
+      name: 'guard stop on disabled recovery',
+      reason: 'recovery-disabled',
+      stopClass: 'guard-stop',
+      subject: 'policy-recover:false',
+      outcome: disabledStop,
+      inspection: haltInspection(TARGET, disabledRaw),
+    },
+    {
+      name: 'guard stop on an already pending authorization',
+      reason: 'not-dispatchable',
+      stopClass: 'guard-stop',
+      subject: `pending-authorization:${targetKey(TARGET)}`,
+      outcome: busyStop,
+      inspection: haltInspection(secondTarget, secondRaw),
+    },
+    {
+      name: 'guard stop on a feature-only target',
+      reason: 'feature-only',
+      stopClass: 'guard-stop',
+      subject: `feature-only-target:${SPEC_PATH}`,
+      outcome: featureStop,
+      inspection: haltInspection(featureTarget, featureRaw),
+    },
+  ];
+}
+
+/** @type {ReturnType<typeof buildFeature013HaltFixtures> | null} */
+let feature013HaltFixtureCache = null;
+
+function feature013HaltFixtures() {
+  if (!feature013HaltFixtureCache) feature013HaltFixtureCache = buildFeature013HaltFixtures();
+  return feature013HaltFixtureCache;
+}
+
+test('Feature 013 T002 A: every closed-set stop class echoes exactly one reason from the existing closed set (SC-002, FR-003)', () => {
+  const fixtures = feature013HaltFixtures();
+  assert.deepEqual(
+    [...new Set(fixtures.map((fixture) => fixture.stopClass))].sort(),
+    ['budget-stop', 'guard-stop', 'hard-stop', 'learning-stop', 'recoverable-checkpoint'],
+    'every closed-set stop class is exercised',
+  );
+  for (const fixture of fixtures) {
+    assert.equal(fixture.outcome.reason, fixture.reason, fixture.name);
+    assert.equal(endsUnattendedLoop(fixture.outcome), true, fixture.name);
+    const report = describeUnattendedHalt(fixture.outcome, fixture.inspection);
+    assert.equal(report.halted, true, fixture.name);
+    assert.equal(report.resolved, true, `${fixture.name}: ${canonicalJson(report)}`);
+    assert.equal(report.reason, fixture.reason, fixture.name);
+    assert.equal(Object.hasOwn(OUTCOME_REASON_CLASSES, report.reason), true, fixture.name);
+    assert.notEqual(OUTCOME_REASON_CLASSES[report.reason], 'authorized', fixture.name);
+    assert.equal(report.stopClass, classifyOutcomeReason(report.reason), fixture.name);
+    assert.equal(report.stopClass, fixture.stopClass, fixture.name);
+  }
+});
+
+test('Feature 013 T002 B: every named halt carries the affected target, the specific causing subject, and the next owner action (SC-003, FR-005)', () => {
+  for (const fixture of feature013HaltFixtures()) {
+    const report = describeUnattendedHalt(fixture.outcome, fixture.inspection);
+    assert.deepEqual(Object.keys(report).sort(), [
+      'evidenceHash', 'halted', 'nextAction', 'reason', 'resolved', 'stopClass', 'subject', 'target',
+    ], fixture.name);
+    assert.deepEqual(report.target, canonicalTarget(fixture.inspection.target), fixture.name);
+    assert.equal(report.evidenceHash, fixture.inspection.evidenceHash, fixture.name);
+    assert.equal(report.subject, fixture.subject, fixture.name);
+    assert.notEqual(report.subject, report.reason, 'the subject never merely echoes the reason name');
+    // The emitted subject stays inside the canonical Blocker subject bound.
+    assert.doesNotThrow(
+      () => validateBlocker({ code: 'evidence-incomplete', subject: report.subject, evidenceHash: report.evidenceHash }),
+      fixture.name,
+    );
+    assert.equal(report.nextAction, FEATURE013_NEXT_ACTIONS[report.stopClass], fixture.name);
+  }
+});
+
+test('Feature 013 T002 C: a halt whose actionable detail cannot be established fails closed instead of naming an opaque halt (FR-006, US3 scenario 3)', () => {
+  const cleanRaw = transitionRaw(TARGET);
+  const cleanInspection = haltInspection(TARGET, cleanRaw);
+  const failedClosed = { halted: true, resolved: false, unresolved: ['subject'] };
+
+  // A real closed-set guard stop that carries no Blocker and no settled condition.
+  const invalidMode = authorizeAttempt(autonomousState(), TARGET, cleanRaw, transitionAssessment('execute-task'), 'other');
+  assert.equal(invalidMode.reason, 'invalid-mode');
+  assert.equal(classifyOutcomeReason(invalidMode.reason), 'guard-stop');
+  const opaque = describeUnattendedHalt(invalidMode, cleanInspection);
+  assert.deepEqual(opaque, failedClosed);
+  assert.equal(Object.hasOwn(opaque, 'reason'), false, 'a fail-closed result names no reason');
+  assert.equal(Object.hasOwn(opaque, 'subject'), false, 'a fail-closed result carries no subject');
+  assert.equal(Object.hasOwn(opaque, 'target'), false, 'a fail-closed result carries no target');
+
+  // Evidence that does not bind the halt cannot supply its cause.
+  const hardRaw = transitionRaw(TARGET, { currentRun: [capture(TARGET, 'approval-required', [{ i: 1 }])] });
+  const hardStop = authorizeAttempt(autonomousState(), TARGET, hardRaw, transitionAssessment('retry-task'), 'recovery');
+  const hardInspection = haltInspection(TARGET, hardRaw);
+  assert.equal(hardStop.reason, 'approval-required');
+  assert.notEqual(hardStop.blocker.evidenceHash, cleanInspection.evidenceHash);
+  assert.deepEqual(describeUnattendedHalt(hardStop, cleanInspection), failedClosed);
+  assert.equal(describeUnattendedHalt(hardStop, hardInspection).resolved, true);
+
+  // The Inspection's rederived blocker outranks the blocker an outcome carries.
+  const rewritten = { ...hardStop, blocker: { ...hardStop.blocker, subject: 'caller-chosen-subject' } };
+  assert.equal(hardInspection.blockers[0].subject, 'current-run:approval-required');
+  assert.equal(describeUnattendedHalt(rewritten, hardInspection).subject, 'current-run:approval-required');
+
+  // A subject that only echoes the reason name localizes nothing.
+  const echoed = {
+    authorized: false,
+    reason: 'approval-required',
+    blocker: { code: 'approval-required', subject: 'approval-required', evidenceHash: cleanInspection.evidenceHash },
+    state: autonomousState(),
+  };
+  assert.deepEqual(describeUnattendedHalt(echoed, cleanInspection), failedClosed);
+  const localized = { ...echoed, blocker: { ...echoed.blocker, subject: 'owner-log' } };
+  assert.equal(describeUnattendedHalt(localized, cleanInspection).subject, 'owner-log');
+
+  // A stop whose state condition establishes nothing concrete stays unresolved.
+  const emptyQueue = { authorized: false, reason: 'not-dispatchable', state: autonomousState() };
+  assert.equal(emptyQueue.state.pending.length, 0);
+  assert.deepEqual(describeUnattendedHalt(emptyQueue, cleanInspection), failedClosed);
+
+  // A condition the runtime cannot emit inside the canonical subject bound fails closed.
+  const longSpecPath = `.dude/specs/004-${`a${'-b'.repeat(520)}`}/spec.md`;
+  const longTarget = { specPath: longSpecPath, lane: 'lightweight' };
+  const longRaw = transitionRaw(longTarget);
+  const longStop = authorizeAttempt(autonomousState(), longTarget, longRaw, transitionAssessment('retry-task'), 'recovery');
+  assert.equal(longStop.reason, 'feature-only');
+  assert.equal(Buffer.byteLength(`feature-only-target:${longSpecPath}`) > 1024, true);
+  assert.deepEqual(describeUnattendedHalt(longStop, haltInspection(longTarget, longRaw)), failedClosed);
+});
+
+test('Feature 013 T002 D: a non-halt turn produces no halt report at all (FR-003, US2 scenario 2)', () => {
+  const state = autonomousState();
+  const raw = transitionRaw(TARGET);
+  const inspection = haltInspection(TARGET, raw);
+  const authorized = authorizeAttempt(state, TARGET, raw, transitionAssessment('execute-task'), 'ordinary');
+  const completed = completeAttempt(authorized.state, completionInput(authorized.state.pending[0]));
+
+  assert.equal(authorized.reason, 'authorized');
+  assert.equal(completed.reason, 'completed');
+  assert.equal(describeUnattendedHalt(authorized, inspection), null, 'authorized turn');
+  assert.equal(describeUnattendedHalt(completed, inspection), null, 'completed turn');
+  assert.equal(describeUnattendedHalt({ state }, inspection), null, 'progress/milestone notice');
+  assert.equal(describeUnattendedHalt({ state, reason: null }, inspection), null, 'null-reason turn');
+  for (const outcome of [authorized, completed, { state }, { state, reason: null }]) {
+    assert.equal(endsUnattendedLoop(outcome), false);
+  }
+});
+
+test('Feature 013 T002 E: malformed, unbound, or fabricated input fails closed and never throws (FR-006, FR-010)', () => {
+  const state = autonomousState();
+  const cleanInspection = haltInspection(TARGET, transitionRaw(TARGET));
+  const hardRaw = transitionRaw(TARGET, { currentRun: [capture(TARGET, 'approval-required', [{ i: 1 }])] });
+  const hardStop = authorizeAttempt(autonomousState(), TARGET, hardRaw, transitionAssessment('retry-task'), 'recovery');
+  const hardInspection = haltInspection(TARGET, hardRaw);
+  assert.equal(describeUnattendedHalt(hardStop, hardInspection).resolved, true, 'the bound halt itself resolves');
+
+  const cases = [
+    ['no inspection', hardStop, undefined, ['target', 'subject']],
+    ['malformed inspection', hardStop, { target: TARGET }, ['target', 'subject']],
+    ['fabricated inspection blocker', hardStop, {
+      ...hardInspection,
+      blockers: [{ ...hardInspection.blockers[0], subject: 'invented-subject' }],
+    }, ['target', 'subject']],
+    ['reason outside the closed set', { state, reason: 'pending-not-found' }, cleanInspection, ['reason', 'subject']],
+    ['authorized is no closed-set stop reason', { state: guardedContinuationState(), reason: 'authorized' }, cleanInspection, ['reason', 'subject']],
+    ['no reason at all under guarded', { state: guardedContinuationState() }, cleanInspection, ['reason', 'subject']],
+    ['null outcome', null, cleanInspection, ['reason', 'subject']],
+    ['array outcome', [], cleanInspection, ['reason', 'subject']],
+    ['outcome without state', { reason: 'approval-required' }, cleanInspection, ['subject']],
+    ['unvalidatable state behind a probe', {
+      authorized: false,
+      reason: 'overall-exhausted',
+      state: { policy: { overall: 1, recovery: 1, recover: false, untilBlocked: false, mode: 'autonomous' }, overallUsed: 1 },
+    }, cleanInspection, ['subject']],
+    ['blocker the Blocker validator refuses', {
+      authorized: false,
+      reason: 'approval-required',
+      blocker: { code: 'approval-required', subject: 'owner\u0001log', evidenceHash: cleanInspection.evidenceHash },
+      state,
+    }, cleanInspection, ['subject']],
+    ['nothing establishable', null, undefined, ['reason', 'target', 'subject']],
+  ];
+  for (const [name, outcome, inspection, unresolved] of cases) {
+    assert.doesNotThrow(() => describeUnattendedHalt(outcome, inspection), /** @type {string} */ (name));
+    assert.deepEqual(
+      describeUnattendedHalt(outcome, inspection),
+      { halted: true, resolved: false, unresolved },
+      /** @type {string} */ (name),
+    );
+  }
+});
+
+test('Feature 013 T002 F: no new stop reason — the closed stop set is unchanged and bounds every reported reason (FR-004, SC-007)', () => {
+  assert.equal(canonicalJson(OUTCOME_REASON_CLASSES), canonicalJson(EXPECTED_OUTCOME_CATEGORIES));
+  assert.equal(Object.isFrozen(OUTCOME_REASON_CLASSES), true);
+  const closedSet = new Set(Object.keys(OUTCOME_REASON_CLASSES));
+  for (const fixture of feature013HaltFixtures()) {
+    const report = describeUnattendedHalt(fixture.outcome, fixture.inspection);
+    assert.equal(closedSet.has(report.reason), true, fixture.name);
+    assert.equal(report.stopClass, OUTCOME_REASON_CLASSES[report.reason], fixture.name);
+    assert.equal(closedSet.has(report.nextAction), false, 'a next action is never a stop reason');
+    assert.equal(closedSet.has(report.subject), false, 'a subject is never a stop reason');
+  }
+});
+
+test('Feature 013 T002 G: failed verification and reviewer rejection stay named halts and are never approval (FR-008)', () => {
+  const verificationRaw = transitionRaw(TARGET);
+  const verificationAuth = authorizeAttempt(autonomousState(), TARGET, verificationRaw, transitionAssessment('retry-task', { targets: ['src/feature013-verify.mjs'] }), 'recovery');
+  const verificationFailed = completeAttempt(
+    verificationAuth.state,
+    completionInput(verificationAuth.state.pending[0], { checks: { verification: 'failed' } }),
+  );
+
+  const reviewRaw = transitionRaw(TARGET, { review: [capture(TARGET, 'rejected', [{ historical: true }])] });
+  const reviewAuth = authorizeAttempt(autonomousState(), TARGET, reviewRaw, transitionAssessment('address-review', {
+    targets: ['src/feature013-review.mjs'],
+    checks: ['review', 'verification'],
+  }), 'recovery');
+  const reviewRejected = completeAttempt(
+    reviewAuth.state,
+    completionInput(reviewAuth.state.pending[0], { checks: { review: 'rejected' } }),
+  );
+
+  const cases = [
+    ['verification-failed', 'verification', verificationFailed, haltInspection(TARGET, verificationRaw)],
+    ['review-rejected', 'review', reviewRejected, haltInspection(TARGET, reviewRaw)],
+  ];
+  for (const [reason, subject, outcome, inspection] of cases) {
+    assert.equal(outcome.reason, reason, /** @type {string} */ (reason));
+    assert.equal(outcome.completed, false, /** @type {string} */ (reason));
+    assert.notEqual(outcome.authorized, true, /** @type {string} */ (reason));
+    assert.equal(endsUnattendedLoop(outcome), true, /** @type {string} */ (reason));
+    assert.equal(mayContinueAutonomously(outcome), false, /** @type {string} */ (reason));
+    const report = describeUnattendedHalt(outcome, inspection);
+    assert.equal(report.resolved, true, /** @type {string} */ (reason));
+    assert.equal(report.reason, reason, /** @type {string} */ (reason));
+    assert.equal(report.stopClass, 'recoverable-checkpoint', /** @type {string} */ (reason));
+    assert.notEqual(OUTCOME_REASON_CLASSES[report.reason], 'authorized', /** @type {string} */ (reason));
+    assert.equal(report.subject, subject, /** @type {string} */ (reason));
+    assert.equal(report.nextAction, 'inspect-and-recover', /** @type {string} */ (reason));
+  }
+
+  // A halt carrying several blockers reports the subject of its own named reason.
+  const bothRaw = transitionRaw(TARGET, { review: [capture(TARGET, 'rejected', [{ historical: true }])] });
+  const bothAuth = authorizeAttempt(autonomousState(), TARGET, bothRaw, transitionAssessment('address-review', {
+    targets: ['src/feature013-both.mjs'],
+    checks: ['review', 'verification'],
+  }), 'recovery');
+  const both = completeAttempt(bothAuth.state, completionInput(bothAuth.state.pending[0], {
+    checks: { verification: 'failed', review: 'rejected' },
+  }));
+  assert.equal(both.reason, 'verification-failed');
+  assert.deepEqual(
+    both.result.blockers.map((/** @type {Record<string, unknown>} */ blocker) => blocker.code),
+    ['review-rejected', 'verification-failed'],
+  );
+  const bothReport = describeUnattendedHalt(both, haltInspection(TARGET, bothRaw));
+  assert.equal(bothReport.reason, 'verification-failed');
+  assert.equal(bothReport.subject, 'verification');
+});
+
+// --- Feature 013 (T003): preserved safety floor, gates, and stop classification ---
+
+/**
+ * The closed stop set exactly as Feature 005 and Feature 009 settled it, sorted
+ * and written out. FR-007 forbids adding, removing, or reclassifying a member,
+ * so this literal — never a value recomputed from the runtime — is the guard.
+ */
+const FEATURE013_SETTLED_STOP_SET = Object.freeze([
+  'ambiguous-state',
+  'approval-required',
+  'authorized',
+  'clarification-required',
+  'evidence-drift',
+  'evidence-incomplete',
+  'external-dependency',
+  'feature-only',
+  'invalid-action',
+  'invalid-mode',
+  'learning-governance-capacity',
+  'learning-required',
+  'no-action',
+  'no-progress',
+  'not-dispatchable',
+  'objective-source-conflict',
+  'overall-exhausted',
+  'prior-no-progress',
+  'recovery-disabled',
+  'recovery-exhausted',
+  'review-rejected',
+  'safety-or-authority',
+  'tracked-definition-recovery-unsupported',
+  'verification-failed',
+]);
+
+/** Every hard stop in the settled set, sorted and written out. */
+const FEATURE013_HARD_STOPS = Object.freeze([
+  'ambiguous-state',
+  'approval-required',
+  'clarification-required',
+  'evidence-incomplete',
+  'external-dependency',
+  'objective-source-conflict',
+  'safety-or-authority',
+  'tracked-definition-recovery-unsupported',
+]);
+
+/**
+ * The only turn markers an unattended loop may continue past: the settled set's
+ * single non-stop member, plus the completion marker `completeAttempt` returns.
+ * An absent reason (a progress or milestone notice) is covered separately.
+ */
+const FEATURE013_NON_HALT_TURNS = Object.freeze(['authorized', 'completed']);
+
+/**
+ * Closed-set reasons that carry neither a `BLOCKER_CODES` membership nor a
+ * settled `RunState` probe, so no evidence surface can localize them.
+ */
+const FEATURE013_UNPROBED_REASONS = Object.freeze([
+  'evidence-drift',
+  'invalid-action',
+  'invalid-mode',
+  'no-action',
+  'no-progress',
+  'prior-no-progress',
+]);
+
+/** Real runtime refusal reasons the settled stop set does not name. */
+const FEATURE013_UNNAMED_REASONS = Object.freeze([
+  'action-mismatch',
+  'blocked',
+  'failed',
+  'interrupted',
+  'learning-governance-conflict',
+  'no-change',
+  'occurrence-retention-conflict',
+  'pending-not-found',
+]);
+
+/**
+ * Each spec safety-floor category and the closed-set reason(s) the runtime
+ * actually names for it. The mapping is many-to-one on purpose: FR-004 forbids
+ * a new stop reason, so distinct categories share one carrier.
+ */
+const FEATURE013_SAFETY_FLOOR_MAP = Object.freeze({
+  'destructive-operations': Object.freeze(['approval-required', 'safety-or-authority']),
+  spending: Object.freeze(['approval-required']),
+  credentials: Object.freeze(['safety-or-authority']),
+  'external-authorization': Object.freeze(['external-dependency']),
+  'ownership-ambiguity': Object.freeze(['ambiguous-state']),
+});
+
+const FEATURE013_SECOND_IDEA_PATH = '.dude/ideas/second-owner.md';
+
+/** One real autonomous hard stop per safety-floor category and per closed-set hard stop. */
+function buildFeature013HardStopFixtures() {
+  /** @param {string} runState @param {Record<string, unknown>[]} records */
+  const currentRunStop = (runState, records) => {
+    const raw = transitionRaw(TARGET, { currentRun: [capture(TARGET, runState, records)] });
+    return {
+      outcome: authorizeAttempt(autonomousState(), TARGET, raw, transitionAssessment('retry-task'), 'recovery'),
+      inspection: haltInspection(TARGET, raw),
+    };
+  };
+
+  // Ownership ambiguity, lightweight lane: two idea owners claim the same spec
+  // package, so the required owner-log conflicts. The same two owners also make
+  // the definition plan's ownership ambiguous, so this Inspection legitimately
+  // carries two blockers and the halt must still name the ownership one.
+  const twoOwnersRaw = {
+    ...transitionRaw(TARGET),
+    directIdeas: [
+      { path: IDEA_PATH, bytes: ideaBytes(SPEC_PATH) },
+      { path: FEATURE013_SECOND_IDEA_PATH, bytes: ideaBytes(SPEC_PATH) },
+    ],
+  };
+
+  // Ownership ambiguity, tracked lane: the projected mapping names a different issue.
+  const mappedCapture = trackedCapture(TRACKED.issueId, TASK_KEY);
+  const foreignDependencies = {
+    normalizeTrackedEvidence: () => trackedProjection({ ...TRACKED, issueId: 'dude-other' }, [mappedCapture]),
+  };
+  const foreignRaw = trackedRawInputs([mappedCapture]);
+
+  const mappedDependencies = {
+    normalizeTrackedEvidence: () => trackedProjection(TRACKED, [mappedCapture]),
+  };
+  const trackedDefinitionRaw = trackedRawInputs([mappedCapture]);
+
+  const clarificationRaw = transitionRaw(TARGET);
+
+  const incompleteRaw = transitionRaw(TARGET);
+  delete incompleteRaw.verification;
+
+  const foreignRegistryRaw = withDefinitionPlan(transitionRaw(TARGET), {
+    path: PLAN_PATH,
+    bytes: planWithRegistry(objectiveRegistry(
+      [registryEntry(TASK_KEY)],
+      { ideaPath: IDEA_PATH, specPath: OTHER_SPEC_PATH },
+    )),
+  });
+
+  return [
+    {
+      name: 'destructive operation awaiting confirmation',
+      category: 'destructive-operations',
+      reason: 'approval-required',
+      subject: 'current-run:approval-required',
+      ...currentRunStop('approval-required', [{ operation: 'delete-release-branch', confirmation: 'pending' }]),
+    },
+    {
+      name: 'destructive operation without authority',
+      category: 'destructive-operations',
+      reason: 'safety-or-authority',
+      subject: 'current-run:safety-or-authority',
+      ...currentRunStop('safety-or-authority', [{ operation: 'force-push-main', authority: 'absent' }]),
+    },
+    {
+      name: 'spending awaiting approval',
+      category: 'spending',
+      reason: 'approval-required',
+      subject: 'current-run:approval-required',
+      ...currentRunStop('approval-required', [{ operation: 'purchase-build-minutes', amount: 'USD 40' }]),
+    },
+    {
+      name: 'credential access refused',
+      category: 'credentials',
+      reason: 'safety-or-authority',
+      subject: 'current-run:safety-or-authority',
+      ...currentRunStop('safety-or-authority', [{ operation: 'read-deploy-token', scope: 'production' }]),
+    },
+    {
+      name: 'external authorization not granted',
+      category: 'external-authorization',
+      reason: 'external-dependency',
+      subject: 'current-run:external-dependency',
+      ...currentRunStop('external-dependency', [{ operation: 'await-vendor-grant', waitingOn: 'saas-admin' }]),
+    },
+    {
+      name: 'ownership ambiguity across two lightweight owners',
+      category: 'ownership-ambiguity',
+      reason: 'ambiguous-state',
+      subject: 'owner-log',
+      outcome: authorizeAttempt(autonomousState(), TARGET, twoOwnersRaw, transitionAssessment('retry-task'), 'recovery'),
+      inspection: haltInspection(TARGET, twoOwnersRaw),
+    },
+    {
+      name: 'ownership ambiguity across a foreign tracked mapping',
+      category: 'ownership-ambiguity',
+      reason: 'ambiguous-state',
+      subject: 'lane-history',
+      target: TRACKED,
+      outcome: authorizeAttempt(autonomousState(), TRACKED, foreignRaw, transitionAssessment('retry-task'), 'recovery', foreignDependencies),
+      inspection: haltInspection(TRACKED, foreignRaw, foreignDependencies),
+    },
+    {
+      name: 'ambiguous assessment intent',
+      category: null,
+      reason: 'clarification-required',
+      subject: 'assessment:ambiguous',
+      outcome: authorizeAttempt(autonomousState(), TARGET, clarificationRaw, transitionAssessment('retry-task', { intent: 'ambiguous' }), 'recovery'),
+      inspection: haltInspection(TARGET, clarificationRaw),
+    },
+    {
+      name: 'missing required verification evidence',
+      category: null,
+      reason: 'evidence-incomplete',
+      subject: 'verification',
+      outcome: authorizeAttempt(autonomousState(), TARGET, incompleteRaw, transitionAssessment('retry-task'), 'recovery'),
+      inspection: haltInspection(TARGET, incompleteRaw),
+    },
+    {
+      name: 'definition recovery on a tracked target',
+      category: null,
+      reason: 'tracked-definition-recovery-unsupported',
+      subject: canonicalJson(canonicalTarget(TRACKED)),
+      target: TRACKED,
+      outcome: authorizeAttempt(
+        autonomousState(),
+        TRACKED,
+        trackedDefinitionRaw,
+        transitionAssessment('reconcile-derived-definition', {
+          targets: definitionTargets(),
+          checks: ['lint', 'review', 'verification'],
+        }),
+        'recovery',
+        mappedDependencies,
+      ),
+      inspection: haltInspection(TRACKED, trackedDefinitionRaw, mappedDependencies),
+    },
+    {
+      name: 'objective registry owned by another spec package',
+      category: null,
+      reason: 'objective-source-conflict',
+      subject: 'definition-plan',
+      outcome: authorizeAttempt(autonomousState(), TARGET, foreignRegistryRaw, transitionAssessment('retry-task'), 'recovery'),
+      inspection: haltInspection(TARGET, foreignRegistryRaw),
+    },
+  ];
+}
+
+/** Real autonomous failed-verification and rejected-review halts. */
+function buildFeature013CheckpointFixtures() {
+  const verificationRaw = transitionRaw(TARGET);
+  const verificationAuth = authorizeAttempt(autonomousState(), TARGET, verificationRaw, transitionAssessment('retry-task', { targets: ['src/f013-t003-verify.mjs'] }), 'recovery');
+  const verificationFailed = completeAttempt(
+    verificationAuth.state,
+    completionInput(verificationAuth.state.pending[0], { checks: { verification: 'failed' } }),
+  );
+
+  const lintRaw = transitionRaw(TARGET, { verification: [capture(TARGET, 'failed', [{ historical: true }])] });
+  const lintAuth = authorizeAttempt(autonomousState(), TARGET, lintRaw, transitionAssessment('address-test', {
+    targets: ['src/f013-t003-lint.mjs'],
+    checks: ['lint', 'verification'],
+  }), 'recovery');
+  const lintFailed = completeAttempt(lintAuth.state, completionInput(lintAuth.state.pending[0], { checks: { lint: 'failed' } }));
+
+  const reviewRaw = transitionRaw(TARGET, { review: [capture(TARGET, 'rejected', [{ historical: true }])] });
+  const reviewAuth = authorizeAttempt(autonomousState(), TARGET, reviewRaw, transitionAssessment('address-review', {
+    targets: ['src/f013-t003-review.mjs'],
+    checks: ['review', 'verification'],
+  }), 'recovery');
+  const reviewRejected = completeAttempt(reviewAuth.state, completionInput(reviewAuth.state.pending[0], { checks: { review: 'rejected' } }));
+
+  return [
+    {
+      name: 'failed verification',
+      reason: 'verification-failed',
+      subject: 'verification',
+      changeSet: ['src/f013-t003-verify.mjs'],
+      outcome: verificationFailed,
+      inspection: haltInspection(TARGET, verificationRaw),
+    },
+    {
+      name: 'failed lint inside the verification gate',
+      reason: 'verification-failed',
+      subject: 'lint',
+      changeSet: ['src/f013-t003-lint.mjs'],
+      outcome: lintFailed,
+      inspection: haltInspection(TARGET, lintRaw),
+    },
+    {
+      name: 'rejected independent review',
+      reason: 'review-rejected',
+      subject: 'review',
+      changeSet: ['src/f013-t003-review.mjs'],
+      outcome: reviewRejected,
+      inspection: haltInspection(TARGET, reviewRaw),
+    },
+  ];
+}
+
+/** One real refusal per closed-set reason that carries no blocker and no state probe. */
+function buildFeature013UnprobedFixtures() {
+  const cleanRaw = transitionRaw(TARGET);
+
+  const driftBaseline = buildInspection(TARGET, collectEvidence(TARGET, cleanRaw));
+  const driftedRaw = {
+    ...transitionRaw(TARGET, { currentRun: [capture(TARGET, 'failed', [{ changed: true }])] }),
+    definitionPlan: defaultNoRegistryPlan(TARGET),
+  };
+
+  // `no-progress` and `prior-no-progress` are reachable only under a
+  // non-autonomous policy: the autonomous branches of the same conditions
+  // establish learning governance and refuse with `learning-required` instead.
+  const repeatRaw = transitionRaw(TARGET);
+  const repeatFirst = authorizeAttempt(guardedContinuationState(), TARGET, repeatRaw, transitionAssessment('retry-task', { targets: ['src/f013-t003-repeat.mjs'] }), 'recovery');
+  const repeatState = completeAttempt(repeatFirst.state, completionInput(repeatFirst.state.pending[0])).state;
+
+  const priorRaw = transitionRaw(TARGET);
+  const priorFirst = authorizeAttempt(guardedContinuationState(), TARGET, priorRaw, transitionAssessment('retry-task', { targets: ['src/f013-t003-prior.mjs'], checks: ['verification'] }), 'recovery');
+  const priorState = completeAttempt(priorFirst.state, completionInput(priorFirst.state.pending[0])).state;
+  const priorSecond = authorizeAttempt(priorState, TARGET, priorRaw, transitionAssessment('retry-task', {
+    targets: ['src/f013-t003-prior-support.mjs', 'src/f013-t003-prior.mjs'],
+    checks: ['verification'],
+    summary: 'A materially different target set.',
+  }), 'recovery');
+  const priorRepeated = completeAttempt(priorSecond.state, completionInput(priorSecond.state.pending[0], { changedTargets: ['src/f013-t003-prior.mjs'] }));
+
+  return [
+    {
+      name: 'stale assessment evidence',
+      reason: 'evidence-drift',
+      policyMode: 'autonomous',
+      outcome: authorizeRuntimeAttempt(
+        autonomousState(),
+        TARGET,
+        driftedRaw,
+        transitionAssessment('retry-task', { evidenceHash: driftBaseline.evidenceHash }),
+        'recovery',
+      ),
+      inspection: buildInspection(TARGET, collectEvidence(TARGET, driftedRaw, undefined, 'autonomous')),
+    },
+    {
+      name: 'an action the mode does not admit',
+      reason: 'invalid-action',
+      policyMode: 'autonomous',
+      outcome: authorizeAttempt(autonomousState(), TARGET, cleanRaw, transitionAssessment('retry-task'), 'ordinary'),
+      inspection: haltInspection(TARGET, cleanRaw),
+    },
+    {
+      name: 'an unknown attempt mode',
+      reason: 'invalid-mode',
+      policyMode: 'autonomous',
+      outcome: authorizeAttempt(autonomousState(), TARGET, cleanRaw, transitionAssessment('execute-task'), 'other'),
+      inspection: haltInspection(TARGET, cleanRaw),
+    },
+    {
+      name: 'an assessment that proposes no action',
+      reason: 'no-action',
+      policyMode: 'autonomous',
+      outcome: authorizeAttempt(autonomousState(), TARGET, cleanRaw, transitionAssessment('none', { targets: [] }), 'recovery'),
+      inspection: haltInspection(TARGET, cleanRaw),
+    },
+    {
+      name: 'a repeated approach under a guarded policy',
+      reason: 'no-progress',
+      policyMode: 'guarded',
+      outcome: authorizeAttempt(repeatState, TARGET, repeatRaw, transitionAssessment('retry-task', { targets: ['src/f013-t003-repeat.mjs'] }), 'recovery'),
+      inspection: buildInspection(TARGET, collectEvidence(TARGET, repeatRaw)),
+    },
+    {
+      name: 'a repeated prior result under a guarded policy',
+      reason: 'prior-no-progress',
+      policyMode: 'guarded',
+      outcome: authorizeAttempt(priorRepeated.state, TARGET, priorRaw, transitionAssessment('retry-task', { targets: ['src/f013-t003-later.mjs'], checks: ['verification'] }), 'recovery'),
+      inspection: buildInspection(TARGET, collectEvidence(TARGET, priorRaw)),
+    },
+  ];
+}
+
+/** @type {{hardStops: ReturnType<typeof buildFeature013HardStopFixtures>, checkpoints: ReturnType<typeof buildFeature013CheckpointFixtures>, unprobed: ReturnType<typeof buildFeature013UnprobedFixtures>} | null} */
+let feature013T003FixtureCache = null;
+
+function feature013T003Fixtures() {
+  if (!feature013T003FixtureCache) {
+    feature013T003FixtureCache = {
+      hardStops: buildFeature013HardStopFixtures(),
+      checkpoints: buildFeature013CheckpointFixtures(),
+      unprobed: buildFeature013UnprobedFixtures(),
+    };
+  }
+  return feature013T003FixtureCache;
+}
+
+test('Feature 013 T003 A: every safety-floor category still halts under the unattended policy, names its reason, and requests human input (US5 scenario 1, FR-007, SC-005)', () => {
+  const fixtures = feature013T003Fixtures().hardStops.filter((fixture) => fixture.category !== null);
+
+  // Every category the spec names is exercised, and the carrier reasons it
+  // resolves to are exactly the mapping — recorded, not recomputed.
+  /** @type {Record<string, string[]>} */
+  const observed = {};
+  for (const fixture of fixtures) {
+    const category = /** @type {string} */ (fixture.category);
+    observed[category] = [...new Set([...(observed[category] ?? []), fixture.outcome.reason])].sort();
+  }
+  assert.deepEqual(observed, {
+    'destructive-operations': ['approval-required', 'safety-or-authority'],
+    spending: ['approval-required'],
+    credentials: ['safety-or-authority'],
+    'external-authorization': ['external-dependency'],
+    'ownership-ambiguity': ['ambiguous-state'],
+  }, 'a safety-floor category changed the closed-set reason it halts on');
+  assert.deepEqual(observed, FEATURE013_SAFETY_FLOOR_MAP);
+
+  for (const fixture of fixtures) {
+    assert.equal(fixture.outcome.state.policy.mode, 'autonomous', fixture.name);
+    assert.equal(fixture.outcome.authorized, false, fixture.name);
+    assert.equal(fixture.outcome.reason, fixture.reason, fixture.name);
+    assert.equal(classifyOutcomeReason(fixture.outcome.reason), 'hard-stop', fixture.name);
+    assert.equal(endsUnattendedLoop(fixture.outcome), true, `${fixture.name} must halt`);
+    assert.equal(mayContinueAutonomously(fixture.outcome), false, `${fixture.name} must never continue`);
+
+    const report = describeUnattendedHalt(fixture.outcome, fixture.inspection);
+    assert.equal(report.resolved, true, `${fixture.name}: ${canonicalJson(report)}`);
+    assert.equal(report.reason, fixture.reason, fixture.name);
+    assert.equal(report.stopClass, 'hard-stop', fixture.name);
+    assert.equal(report.subject, fixture.subject, fixture.name);
+    assert.deepEqual(report.target, canonicalTarget(fixture.target ?? TARGET), fixture.name);
+    assert.equal(report.nextAction, 'request-human-input', `${fixture.name} must request human input`);
+  }
+
+  // The lightweight ownership conflict really is an ownership conflict, and the
+  // halt names it even though the same two owners also blocked the plan source.
+  const ownership = /** @type {Record<string, unknown>} */ (
+    fixtures.find((fixture) => fixture.name === 'ownership ambiguity across two lightweight owners')
+  );
+  assert.deepEqual(
+    /** @type {Record<string, unknown>[]} */ (/** @type {Record<string, unknown>} */ (ownership.inspection).blockers)
+      .map((blocker) => [blocker.code, blocker.subject]),
+    [['ambiguous-state', 'owner-log'], ['objective-source-conflict', 'definition-plan']],
+  );
+
+  // Two distinct categories share one carrier reason: FR-004 admits no new one.
+  const approvals = fixtures.filter((fixture) => fixture.reason === 'approval-required');
+  assert.deepEqual(approvals.map((fixture) => fixture.category), ['destructive-operations', 'spending']);
+  assert.equal(new Set(approvals.map((fixture) => fixture.subject)).size, 1, 'one carrier subject serves both categories');
+});
+
+test('Feature 013 T003 B: every hard stop in the settled set still halts under the unattended policy and asks for human input (US5 scenario 1, FR-007)', () => {
+  const fixtures = feature013T003Fixtures().hardStops;
+
+  assert.deepEqual(
+    Object.keys(OUTCOME_REASON_CLASSES).filter((reason) => OUTCOME_REASON_CLASSES[reason] === 'hard-stop').sort(),
+    [...FEATURE013_HARD_STOPS],
+    'the hard-stop membership of the settled set changed',
+  );
+  assert.deepEqual(
+    [...new Set(fixtures.map((fixture) => fixture.reason))].sort(),
+    [...FEATURE013_HARD_STOPS],
+    'a real autonomous fixture must exist for every hard stop in the settled set',
+  );
+
+  for (const fixture of fixtures) {
+    assert.equal(fixture.outcome.authorized, false, fixture.name);
+    assert.equal(fixture.outcome.reason, fixture.reason, fixture.name);
+    assert.equal(OUTCOME_REASON_CLASSES[fixture.reason], 'hard-stop', fixture.name);
+    assert.equal(endsUnattendedLoop(fixture.outcome), true, fixture.name);
+    assert.equal(mayContinueAutonomously(fixture.outcome), false, fixture.name);
+    assert.equal(describeUnattendedHalt(fixture.outcome, fixture.inspection).nextAction, 'request-human-input', fixture.name);
+  }
+});
+
+test('Feature 013 T003 C: a failed verification or a rejected review halts under the unattended policy and is never approval (US5 scenario 2, FR-008)', () => {
+  const fixtures = feature013T003Fixtures().checkpoints;
+  const candidate = {
+    target: { ...TARGET, taskKey: SECOND_TASK_KEY },
+    changeSet: ['src/f013-t003-independent.mjs'],
+    deps: [],
+  };
+
+  assert.deepEqual(
+    [...new Set(fixtures.map((fixture) => fixture.reason))].sort(),
+    ['review-rejected', 'verification-failed'],
+  );
+  assert.equal(OUTCOME_REASON_CLASSES['verification-failed'], 'recoverable-checkpoint');
+  assert.equal(OUTCOME_REASON_CLASSES['review-rejected'], 'recoverable-checkpoint');
+
+  for (const fixture of fixtures) {
+    const outcome = fixture.outcome;
+    assert.equal(outcome.state.policy.mode, 'autonomous', fixture.name);
+    assert.equal(outcome.reason, fixture.reason, fixture.name);
+
+    // It stays a halt.
+    assert.equal(endsUnattendedLoop(outcome), true, `${fixture.name} must halt`);
+
+    // It is never approval: no approval field, no completion, no continuation
+    // license, and no post-stop scheduling license.
+    assert.equal(outcome.completed, false, fixture.name);
+    assert.equal(Object.hasOwn(outcome, 'authorized'), false, fixture.name);
+    assert.notEqual(outcome.reason, 'authorized', fixture.name);
+    assert.notEqual(classifyOutcomeReason(outcome.reason), 'authorized', fixture.name);
+    assert.equal(mayContinueAutonomously(outcome), false, fixture.name);
+    assert.equal(
+      mayScheduleAfterStop({ outcome, target: TARGET, changeSet: fixture.changeSet }, candidate),
+      false,
+      `${fixture.name} licenses no post-stop scheduling`,
+    );
+
+    const report = describeUnattendedHalt(outcome, fixture.inspection);
+    assert.equal(report.resolved, true, `${fixture.name}: ${canonicalJson(report)}`);
+    assert.equal(report.reason, fixture.reason, fixture.name);
+    assert.notEqual(report.reason, 'authorized', fixture.name);
+    assert.equal(report.stopClass, 'recoverable-checkpoint', fixture.name);
+    assert.notEqual(report.stopClass, 'authorized', fixture.name);
+    assert.equal(report.subject, fixture.subject, fixture.name);
+    assert.equal(report.nextAction, 'inspect-and-recover', fixture.name);
+  }
+
+  // A continued loop is not an approved loop: authorizing further work after the
+  // halt neither rewrites the halt nor turns its reason into an approval.
+  const failed = fixtures[0];
+  const resumed = authorizeAttempt(
+    failed.outcome.state,
+    TARGET,
+    transitionRaw(TARGET),
+    transitionAssessment('retry-task', { targets: ['src/f013-t003-resume.mjs'] }),
+    'recovery',
+  );
+  assert.equal(resumed.authorized, true, 'the loop may still take a fresh, materially different attempt');
+  assert.equal(resumed.reason, 'authorized');
+  assert.equal(failed.outcome.reason, 'verification-failed', 'the halt outcome is unchanged');
+  assert.equal(failed.outcome.completed, false);
+  assert.equal(describeUnattendedHalt(failed.outcome, failed.inspection).reason, 'verification-failed');
+});
+
+test('Feature 013 T003 D: no stop became continuable — the whole settled set is enumerated and only the sanctioned non-stop turns continue (US5 scenario 3, FR-007, SC-005)', () => {
+  const state = autonomousState();
+
+  // 1. The settled membership itself is unchanged.
+  assert.deepEqual(
+    Object.keys(OUTCOME_REASON_CLASSES).sort(),
+    [...FEATURE013_SETTLED_STOP_SET],
+    'the closed stop set gained, lost, or renamed a member: FR-007 forbids reclassifying any stop, so re-rule this feature before accepting the change',
+  );
+  assert.equal(FEATURE013_SETTLED_STOP_SET.length, 24);
+  assert.equal(Object.isFrozen(OUTCOME_REASON_CLASSES), true);
+  assert.deepEqual(
+    [...FEATURE013_SETTLED_STOP_SET],
+    Object.keys(EXPECTED_OUTCOME_CATEGORIES).sort(),
+    'the two settled-set literals in this suite disagree',
+  );
+
+  // 2. Total enumeration over the settled set: the only member the unattended
+  //    loop continues past is `authorized`. Any member that stops halting names
+  //    itself here, so a future reclassification cannot pass silently.
+  const continuable = FEATURE013_SETTLED_STOP_SET
+    .filter((reason) => !endsUnattendedLoop({ state, reason }));
+  assert.deepEqual(
+    continuable,
+    ['authorized'],
+    `these settled stop reasons no longer halt under the unattended policy: ${continuable.join(', ') || '(none)'} — FR-007 forbids making any stop continuable`,
+  );
+  assert.equal(
+    FEATURE013_SETTLED_STOP_SET.filter((reason) => endsUnattendedLoop({ state, reason })).length,
+    23,
+    'exactly 23 of the 24 settled reasons must halt',
+  );
+
+  // 3. Every member keeps its settled stop class, so no member is reclassified
+  //    into the non-stop `authorized` class either.
+  for (const reason of FEATURE013_SETTLED_STOP_SET) {
+    assert.equal(Object.hasOwn(OUTCOME_REASON_CLASSES, reason), true, reason);
+    assert.equal(OUTCOME_REASON_CLASSES[reason], EXPECTED_OUTCOME_CATEGORIES[reason], `${reason} changed stop class`);
+    assert.equal(classifyOutcomeReason(reason), EXPECTED_OUTCOME_CATEGORIES[reason], reason);
+  }
+  assert.deepEqual(
+    FEATURE013_SETTLED_STOP_SET.filter((reason) => OUTCOME_REASON_CLASSES[reason] === 'authorized'),
+    ['authorized'],
+    'a stop reason was reclassified into the non-stop authorized class',
+  );
+
+  // 4. The non-halting turns are exactly the sanctioned ones and nothing else.
+  const probes = [...FEATURE013_SETTLED_STOP_SET, ...FEATURE013_NON_HALT_TURNS, ...FEATURE013_UNNAMED_REASONS, 'ready', 'progress', 'milestone', ''];
+  assert.deepEqual(
+    [...new Set(probes.filter((reason) => !endsUnattendedLoop({ state, reason })))].sort(),
+    [...FEATURE013_NON_HALT_TURNS],
+    'a reason outside authorized/completed became continuable under the unattended policy',
+  );
+  assert.equal(endsUnattendedLoop({ state }), false, 'an absent reason is a progress notice, not a halt');
+  assert.equal(endsUnattendedLoop({ state, reason: null }), false);
+  assert.equal(endsUnattendedLoop({ state, reason: undefined }), false);
+
+  // 5. Reasons the settled set does not name are not continuable either.
+  for (const reason of FEATURE013_UNNAMED_REASONS) {
+    assert.equal(Object.hasOwn(OUTCOME_REASON_CLASSES, reason), false, `${reason} entered the settled set`);
+    assert.equal(endsUnattendedLoop({ state, reason }), true, `${reason} must fail closed`);
+  }
+
+  // 6. Every real halt this section builds agrees with the enumeration.
+  const fixtures = feature013T003Fixtures();
+  for (const fixture of [...fixtures.hardStops, ...fixtures.checkpoints, ...fixtures.unprobed]) {
+    assert.equal(endsUnattendedLoop(fixture.outcome), true, fixture.name);
+    assert.equal(FEATURE013_SETTLED_STOP_SET.includes(fixture.outcome.reason), true, fixture.name);
+    assert.equal(mayContinueAutonomously(fixture.outcome), false, fixture.name);
+  }
+});
+
+test('Feature 013 T003 E: default and explicit guarded policy keeps every existing gate and licenses no unattended continuation (US5 scenario 3, SC-006)', () => {
+  assert.equal(emptyState().policy.mode, 'guarded', 'the default policy mode is guarded');
+  assert.throws(
+    () => validateRunState({ ...emptyState(), policy: { ...emptyState().policy, mode: 'unattended' } }),
+    TypeError,
+    'autonomous and guarded are the only admitted policy modes',
+  );
+
+  // `endsUnattendedLoop` licenses no continuation under any non-autonomous mode.
+  for (const [label, guarded] of [['default', emptyState()], ['explicit guarded', guardedContinuationState()]]) {
+    for (const reason of [...FEATURE013_SETTLED_STOP_SET, ...FEATURE013_NON_HALT_TURNS, ...FEATURE013_UNNAMED_REASONS]) {
+      assert.equal(endsUnattendedLoop({ state: guarded, reason }), true, `${label}/${reason}`);
+    }
+    assert.equal(endsUnattendedLoop({ state: guarded }), true, `${label}/no reason`);
+    assert.equal(endsUnattendedLoop({ state: guarded, reason: null }), true, `${label}/null reason`);
+  }
+
+  // `mayContinueAutonomously` keeps its exact existing gate.
+  const raw = transitionRaw(TARGET);
+  const guardedAuth = authorizeAttempt(guardedContinuationState(), TARGET, raw, transitionAssessment('retry-task'), 'recovery');
+  const autonomousAuth = authorizeAttempt(autonomousState(), TARGET, raw, transitionAssessment('retry-task'), 'recovery');
+  assert.equal(guardedAuth.authorized, true);
+  assert.equal(guardedAuth.reason, 'authorized');
+  assert.deepEqual(Object.keys(guardedAuth), ['authorized', 'reason', 'state'], 'a guarded outcome carries no new field');
+  assert.equal(mayContinueAutonomously(guardedAuth), false, 'guarded never continues autonomously');
+  assert.equal(mayContinueAutonomously(autonomousAuth), true, 'the autonomous recovery gate itself is unchanged');
+  const guardedOrdinary = authorizeAttempt(guardedContinuationState(), TARGET, raw, transitionAssessment('execute-task'), 'ordinary');
+  assert.equal(mayContinueAutonomously(guardedOrdinary), false);
+
+  // `mayScheduleAfterStop` keeps its exact existing gates.
+  const hardRaw = transitionRaw(TARGET, { currentRun: [capture(TARGET, 'approval-required', [{ i: 1 }])] });
+  const guardedStop = authorizeAttempt(guardedContinuationState(), TARGET, hardRaw, transitionAssessment('retry-task'), 'recovery');
+  const autonomousStop = authorizeAttempt(autonomousState(), TARGET, hardRaw, transitionAssessment('retry-task'), 'recovery');
+  const stoppedChangeSet = ['src/f013-t003-stopped.mjs'];
+  const candidate = { target: { ...TARGET, taskKey: SECOND_TASK_KEY }, changeSet: ['src/f013-t003-next.mjs'], deps: [] };
+  assert.equal(guardedStop.reason, 'approval-required');
+  assert.equal(autonomousStop.reason, 'approval-required');
+  assert.equal(
+    mayScheduleAfterStop({ outcome: guardedStop, target: TARGET, changeSet: stoppedChangeSet }, candidate),
+    false,
+    'a guarded hard stop schedules nothing',
+  );
+  assert.equal(
+    mayScheduleAfterStop({ outcome: autonomousStop, target: TARGET, changeSet: stoppedChangeSet }, candidate),
+    true,
+    'the autonomous post-stop scheduling gate itself is unchanged',
+  );
+  assert.equal(
+    mayScheduleAfterStop({ outcome: autonomousStop, target: TARGET, changeSet: stoppedChangeSet }, { ...candidate, deps: [TASK_KEY] }),
+    false,
+    'a dependent candidate is still refused',
+  );
+});
+
+test('Feature 013 T003 F: the settled reasons with no blocker code and no state probe always fail closed and are never suppressed (FR-006, SC-003)', () => {
+  const fixtures = feature013T003Fixtures().unprobed;
+  const failedClosed = { halted: true, resolved: false, unresolved: ['subject'] };
+  const cleanRaw = transitionRaw(TARGET);
+  const cleanInspection = haltInspection(TARGET, cleanRaw);
+
+  assert.deepEqual(
+    fixtures.map((fixture) => fixture.reason).sort(),
+    [...FEATURE013_UNPROBED_REASONS],
+    'the set of reasons with no localizable cause changed',
+  );
+
+  for (const fixture of fixtures) {
+    assert.equal(fixture.outcome.authorized, false, fixture.name);
+    assert.equal(fixture.outcome.reason, fixture.reason, fixture.name);
+    assert.equal(fixture.outcome.state.policy.mode, fixture.policyMode, fixture.name);
+    assert.equal(FEATURE013_SETTLED_STOP_SET.includes(fixture.reason), true, fixture.name);
+
+    // The halt is never suppressed, and it never names a reason it cannot localize.
+    assert.equal(endsUnattendedLoop(fixture.outcome), true, `${fixture.name} must halt`);
+    assert.deepEqual(describeUnattendedHalt(fixture.outcome, fixture.inspection), failedClosed, fixture.name);
+  }
+
+  // Two of the six are unreachable under the unattended policy at all: the
+  // autonomous branch of each condition establishes learning governance and
+  // refuses with `learning-required`, which does resolve a subject.
+  const repeatRaw = transitionRaw(TARGET);
+  const repeatFirst = authorizeAttempt(autonomousState(), TARGET, repeatRaw, transitionAssessment('retry-task', { targets: ['src/f013-t003-auto-repeat.mjs'] }), 'recovery');
+  const repeatState = completeAttempt(repeatFirst.state, completionInput(repeatFirst.state.pending[0])).state;
+  const autonomousRepeat = authorizeAttempt(repeatState, TARGET, repeatRaw, transitionAssessment('retry-task', { targets: ['src/f013-t003-auto-repeat.mjs'] }), 'recovery');
+  assert.equal(autonomousRepeat.reason, 'learning-required', 'autonomous routes a repeated approach to learning governance');
+  const learningReport = describeUnattendedHalt(autonomousRepeat, haltInspection(TARGET, repeatRaw));
+  assert.equal(learningReport.resolved, true);
+  assert.equal(
+    learningReport.subject,
+    `learning-governance:required:${autonomousRepeat.state.learningGovernance.triggerEvidenceHash}`,
+  );
+
+  // Structural cause, part one: none of the six is a Blocker code, so no
+  // Blocker — however well formed — can ever bind one of them.
+  for (const reason of FEATURE013_UNPROBED_REASONS) {
+    assert.equal(BLOCKER_CODES.includes(reason), false, reason);
+    assert.throws(
+      () => validateBlocker({ code: reason, subject: 'a-localized-subject', evidenceHash: cleanInspection.evidenceHash }),
+      TypeError,
+      reason,
+    );
+  }
+
+  // Structural cause, part two: no settled RunState supplies a condition for
+  // them either, including states that satisfy every other reason's probe.
+  const budgetState = {
+    ...autonomousState({ overall: 1, recovery: 1 }),
+    overallUsed: 1,
+    recoveryUsed: [{ targetKey: targetKey(TARGET), targetHash: targetHash(TARGET), count: 1 }],
+    completed: [{ ...EXHAUSTED_COMPLETION }],
+  };
+  const disabledState = emptyState({ mode: 'autonomous', overall: 'unlimited', recovery: 'unlimited' });
+  const occupiedState = authorizeAttempt(autonomousState(), TARGET, cleanRaw, transitionAssessment('retry-task', { targets: ['src/f013-t003-occupied.mjs'] }), 'recovery').state;
+  const governedState = autonomousRepeat.state;
+  const richStates = [
+    ['exhausted budgets', budgetState],
+    ['recovery disabled', disabledState],
+    ['an occupied pending queue', occupiedState],
+    ['unresolved learning governance', governedState],
+  ];
+  for (const [label, richState] of richStates) {
+    assert.doesNotThrow(() => validateRunState(richState), /** @type {string} */ (label));
+    for (const reason of FEATURE013_UNPROBED_REASONS) {
+      assert.deepEqual(
+        describeUnattendedHalt({
+          authorized: false,
+          reason,
+          blocker: { code: 'approval-required', subject: 'a-localized-subject', evidenceHash: cleanInspection.evidenceHash },
+          result: { blockers: [{ code: 'evidence-incomplete', subject: 'another-subject', evidenceHash: cleanInspection.evidenceHash }] },
+          state: richState,
+        }, cleanInspection),
+        failedClosed,
+        `${label} / ${reason}`,
+      );
+    }
+  }
+
+  // Failing closed emits no reason, target, or subject at all.
+  const opaque = /** @type {Record<string, unknown>} */ (
+    describeUnattendedHalt(fixtures[0].outcome, fixtures[0].inspection)
+  );
+  assert.deepEqual(Object.keys(opaque).sort(), ['halted', 'resolved', 'unresolved']);
+  for (const field of ['reason', 'stopClass', 'target', 'subject', 'nextAction', 'evidenceHash']) {
+    assert.equal(Object.hasOwn(opaque, field), false, field);
+  }
+});
+
+test('Feature 013 T003 G: describeUnattendedHalt is called only from the autonomous-only runner and never from the shared recovery runtime, so guarded behavior is unchanged (SC-006)', () => {
+  // 1. The shared recovery runtime never calls it: the identifier occurs exactly
+  //    once in recovery.mjs — its own export. Its sole runtime call site is the
+  //    deterministic autonomous-only runner (host-adapter-runner.mjs, Feature 013
+  //    T006), which a guarded or default run never executes, so guarded behavior
+  //    stays byte-for-byte unchanged.
+  const source = fs.readFileSync(RECOVERY_SCRIPT, 'utf8');
+  assert.equal(
+    source.split('describeUnattendedHalt').length - 1,
+    1,
+    'describeUnattendedHalt gained a reference inside recovery.mjs: re-rule SC-006 before wiring the unattended report into any runtime path',
+  );
+  assert.match(source, /\nexport function describeUnattendedHalt\(outcome, inspection\) \{\n/);
+
+  // 2. It is nonetheless not confined to the autonomous policy. A guarded halt
+  //    carrying a settled reason and a bound Inspection reports as resolved.
+  //    Pinned exactly so this loose contract cannot drift unnoticed.
+  const hardRaw = transitionRaw(TARGET, { currentRun: [capture(TARGET, 'approval-required', [{ i: 1 }])] });
+  const guardedStop = authorizeAttempt(guardedContinuationState(), TARGET, hardRaw, transitionAssessment('retry-task'), 'recovery');
+  const guardedInspection = buildInspection(TARGET, collectEvidence(TARGET, hardRaw, undefined, 'guarded'));
+  assert.equal(guardedStop.state.policy.mode, 'guarded');
+  assert.deepEqual(describeUnattendedHalt(guardedStop, guardedInspection), {
+    halted: true,
+    resolved: true,
+    reason: 'approval-required',
+    stopClass: 'hard-stop',
+    target: { specPath: SPEC_PATH, lane: 'lightweight', taskKey: TASK_KEY },
+    subject: 'current-run:approval-required',
+    nextAction: 'request-human-input',
+    evidenceHash: guardedInspection.evidenceHash,
+  });
+
+  // 3. The report grants no authority: the guarded outcome still halts, still
+  //    licenses no continuation, and still schedules nothing.
+  assert.equal(endsUnattendedLoop(guardedStop), true);
+  assert.equal(mayContinueAutonomously(guardedStop), false);
+  assert.equal(
+    mayScheduleAfterStop(
+      { outcome: guardedStop, target: TARGET, changeSet: ['src/f013-t003-guarded.mjs'] },
+      { target: { ...TARGET, taskKey: SECOND_TASK_KEY }, changeSet: ['src/f013-t003-other.mjs'], deps: [] },
+    ),
+    false,
+  );
+
+  // 4. It is side-effect-free: describing a guarded halt mutates neither
+  //    argument and leaves the guarded outcome byte-identical to a fresh one.
+  const outcomeBefore = canonicalJson(guardedStop);
+  const inspectionBefore = canonicalJson(guardedInspection);
+  describeUnattendedHalt(guardedStop, guardedInspection);
+  describeUnattendedHalt(guardedStop, guardedInspection);
+  assert.equal(canonicalJson(guardedStop), outcomeBefore, 'the outcome is not mutated');
+  assert.equal(canonicalJson(guardedInspection), inspectionBefore, 'the Inspection is not mutated');
+  assert.equal(
+    canonicalJson(authorizeAttempt(guardedContinuationState(), TARGET, hardRaw, transitionAssessment('retry-task'), 'recovery')),
+    outcomeBefore,
+    'a guarded refusal is identical whether or not the report was produced',
+  );
+});
+
+test('Feature 013 T003 H: a refusal reason the settled set does not name still halts and never continues (FR-007, FR-003)', () => {
+  const state = autonomousState();
+  const cleanRaw = transitionRaw(TARGET);
+  const cleanInspection = haltInspection(TARGET, cleanRaw);
+  const unnameable = { halted: true, resolved: false, unresolved: ['reason', 'subject'] };
+
+  for (const reason of FEATURE013_UNNAMED_REASONS) {
+    assert.equal(Object.hasOwn(OUTCOME_REASON_CLASSES, reason), false, `${reason} entered the settled set`);
+    assert.throws(() => classifyOutcomeReason(reason), TypeError, reason);
+    assert.equal(endsUnattendedLoop({ state, reason }), true, `${reason} must fail closed`);
+    assert.deepEqual(describeUnattendedHalt({ state, reason }, cleanInspection), unnameable, reason);
+  }
+
+  // The same reasons, produced by the runtime itself under the unattended policy.
+  /** @type {[string, string][]} */
+  const produced = [];
+  for (const outcome of ['interrupted', 'no-change', 'blocked', 'failed']) {
+    const authorized = authorizeAttempt(
+      autonomousState(),
+      TARGET,
+      cleanRaw,
+      transitionAssessment('retry-task', { targets: [`src/f013-t003-${outcome}.mjs`] }),
+      'recovery',
+    );
+    const halted = completeAttempt(authorized.state, completionInput(authorized.state.pending[0], { outcome }));
+    produced.push([outcome, halted.reason]);
+    assert.equal(halted.completed, false, outcome);
+    assert.equal(Object.hasOwn(OUTCOME_REASON_CLASSES, halted.reason), false, outcome);
+    assert.equal(endsUnattendedLoop(halted), true, `${outcome} must fail closed`);
+    assert.equal(mayContinueAutonomously(halted), false, outcome);
+    assert.deepEqual(describeUnattendedHalt(halted, cleanInspection), unnameable, outcome);
+  }
+  assert.deepEqual(produced, [
+    ['interrupted', 'interrupted'],
+    ['no-change', 'no-change'],
+    ['blocked', 'blocked'],
+    ['failed', 'failed'],
+  ]);
+
+  const orphan = completeAttempt(autonomousState(), completionInput({
+    target: TARGET,
+    evidenceHash: cleanInspection.evidenceHash,
+    approachHash: assessmentApproach(transitionAssessment('retry-task')),
+    action: 'retry-task',
+    materialInputs: transitionAssessment('retry-task').materialInputs,
+    mode: 'recovery',
+  }));
+  assert.equal(orphan.reason, 'pending-not-found');
+  assert.equal(endsUnattendedLoop(orphan), true);
+  assert.deepEqual(describeUnattendedHalt(orphan, cleanInspection), unnameable);
 });
