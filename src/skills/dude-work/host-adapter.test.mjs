@@ -7123,3 +7123,80 @@ nodeTest('Feature 013 T006 F: mutation sentinel — the finish attach binds hard
     assert.equal(result.haltReport, null, 'an ended run must carry exactly null');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Feature 022 T002: the runner owns the stop and its attribution at the host-
+// exchange boundary. Both tests drive the real production entry point
+// `runHostAdapter(request, { exchange })`. A stale initial Assessment forces the
+// runner to re-request through the host exchange, so a throwing exchange drives
+// the genuine `exchange -> orphan -> finish` fallback path — the same single
+// terminal safety writer Feature 013 T006 asserts against. The host exchange is
+// caller-supplied and therefore untrusted for attribution.
+// ---------------------------------------------------------------------------
+
+/** The closed set of exchange-failure reason codes the runner itself may attribute. */
+const F022_RUNNER_OWNED_EXCHANGE_REASONS = new Set([
+  'supervisor-context-lost',
+  'challenge-response-invalid',
+  'exchange-context-lost',
+]);
+
+/** A focused runner request whose initial Assessment is stale, forcing an exchange re-request. */
+function f022StaleExchangeRequest(root) {
+  return focusedRunnerRequest(root, {
+    assessment: {
+      ...focusedRunnerRequest(root).assessment,
+      evidenceHash: sha256('feature-022-stale-assessment'),
+    },
+  });
+}
+
+nodeTest('Feature 022 T002 regression: an exchange failure is attributed only with a runner-owned reason code, never a caller-supplied foreign code (FR-001, FR-002)', async () => {
+  // (a) An arbitrary, non-runner-owned code the untrusted exchange raises must
+  //     fall back to the runner-owned default and never become the halt reason.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const result = await runHostAdapter(f022StaleExchangeRequest(root), {
+      checkpoint: memoryCheckpointStore().port,
+      exchange() { throw Object.assign(new Error('boom'), { code: 'totally-arbitrary-code' }); },
+    });
+    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(result.reason, 'exchange-context-lost', 'a foreign code falls back to the runner-owned default');
+    assert.notEqual(result.reason, 'totally-arbitrary-code', 'the caller-supplied code never becomes the halt reason');
+  });
+
+  // (b) A legitimate runner-owned exchange-failure code is carried through unchanged.
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const result = await runHostAdapter(f022StaleExchangeRequest(root), {
+      checkpoint: memoryCheckpointStore().port,
+      exchange() { throw Object.assign(new Error('lost while a challenge was outstanding'), { code: 'supervisor-context-lost' }); },
+    });
+    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(result.reason, 'supervisor-context-lost', 'a runner-owned code passes through unchanged');
+  });
+});
+
+nodeTest('Feature 022 T002 integration: a fallback terminal from the real safety writer carries the orphaned target and a runner-owned reason while the halt report gains no top-level target (FR-003, FR-005, FR-006)', async () => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const request = f022StaleExchangeRequest(root);
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port,
+      exchange() { throw Object.assign(new Error('exchange context lost'), { code: 'exchange-context-lost' }); },
+    });
+    assert.equal(result.outcome, 'hard-stop');
+    // The fallback terminal carries a runner-owned reason...
+    assert.ok(
+      F022_RUNNER_OWNED_EXCHANGE_REASONS.has(result.reason),
+      `the fallback carries a runner-owned reason, got ${result.reason}`,
+    );
+    // ...and identifies the target it orphaned (the new fallback-row field).
+    assert.deepEqual(result.target, request.target, 'the fallback terminal names the orphaned target');
+    // The evidence-derived halt report is unchanged (Feature 013 T006 A
+    // semantics): still explicitly unresolved and carrying no top-level target.
+    assert.equal(result.haltReport.halted, true);
+    assert.equal(result.haltReport.resolved, false);
+    assert.equal(Object.hasOwn(result.haltReport, 'target'), false, 'the halt report gains no top-level target');
+  });
+});

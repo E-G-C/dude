@@ -248,5 +248,13 @@
       "T003@61636365": "x"
     },
     "updated_at": "2026-08-06T21:20:27.219Z"
+  },
+  ".dude/specs/022-runner-reason-code-coverage-fix/tasks.md": {
+    "glyphs": {
+      "T001@636f6465": "x",
+      "T002@74657374": "x",
+      "T003@67617465": "x"
+    },
+    "updated_at": "2026-08-06T22:07:29.465Z"
   }
 }

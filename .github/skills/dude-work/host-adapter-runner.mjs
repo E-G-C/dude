@@ -49,6 +49,18 @@ function clone(value) {
   return JSON.parse(canonicalJson(value));
 }
 
+// The closed set of exchange-failure reason codes the runner itself may attribute:
+// `supervisor-context-lost` on standard-input EOF while a challenge is outstanding,
+// `challenge-response-invalid` on a malformed or over-length response, and
+// `exchange-context-lost` as the runner-owned default. The host `exchange` is a
+// caller-supplied, untrusted dependency, so any other `code` it raises must fall
+// back to the default rather than masquerade as the runner's own attribution.
+const RUNNER_OWNED_EXCHANGE_REASONS = new Set([
+  'supervisor-context-lost',
+  'challenge-response-invalid',
+  'exchange-context-lost',
+]);
+
 /** @param {string} specPath */
 function tasksPathForSpec(specPath) {
   if (!specPath.endsWith('/spec.md')) throw new TypeError('target specPath must end in /spec.md');
@@ -441,11 +453,11 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     const row = adapter === null
       ? initialStateResult(state, {
         type: 'step', step: 'runner', outcome: 'hard-stop', reason, detail,
-        orphan: true, cleanup: 'not-attempted',
+        orphan: true, cleanup: 'not-attempted', target: clone(target),
       })
       : stateResult(adapter.snapshot(), {
         type: 'step', step: 'runner', outcome: 'hard-stop', reason, detail,
-        orphan: true, cleanup: 'not-attempted',
+        orphan: true, cleanup: 'not-attempted', target: clone(target),
         ...(adapter.ownership() === null ? {} : { ownership: adapter.ownership() }),
       });
     steps.push(row);
@@ -595,7 +607,7 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
         : null;
       return {
         terminal: orphan(
-          typeof code === 'string' ? code : 'exchange-context-lost',
+          typeof code === 'string' && RUNNER_OWNED_EXCHANGE_REASONS.has(code) ? code : 'exchange-context-lost',
           error instanceof Error ? error.message : String(error),
         ),
       };
