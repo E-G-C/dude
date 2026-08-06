@@ -1031,6 +1031,34 @@ test('T008 completion requires fresh evidence and independent revision ownership
   assert.doesNotMatch(combined, /close after implementation/i);
 });
 
+test('T021 topology-first reset guidance lives in dude-receiving-code-review', () => {
+  assertSectionMatchesAll('src/skills/dude-receiving-code-review/SKILL.md', '## Topology-First Reset', [
+    /same control-boundary concern survives two review cycles/i,
+    /new gate, store, checkpoint, or cross-session state/i,
+    /enforcement expands across modules or workflow boundaries/i,
+    /production entry point and actual call path/i,
+    /which actor controls each operation and input/i,
+    /concrete reachable failure being prevented/i,
+    /narrowest existing enforcement point/i,
+    /focused check that could disprove the topology assumption/i,
+    /why each proposed stateful mechanism covers a reachable path/i,
+    /lets the revision proceed on that evidence/i,
+    /ordinary local fixes[^\n]*exempt/i,
+    /weakens no existing safety, verification, or independent-review/i,
+  ]);
+});
+
+test('T021 reviewer protocol evaluates the revised design against topology evidence', () => {
+  assertSectionMatchesAll('src/skills/dude-reviewer-protocol/SKILL.md', '## Topology Evidence Evaluation', [
+    /judge the revised design against the topology evidence/i,
+    /verify every topology claim against the current source and call sites/i,
+    /new gate, store, checkpoint, or cross-session state/i,
+    /demonstrated reachable failure and a covering acceptance test/i,
+    /contradicts the current source[^\n]*not approved/i,
+    /existing rejection procedure[^\n]*no[^\n]*relaxed existing gate/i,
+  ]);
+});
+
 test('T008 definition authority, rerun safety, guardrails, gates, and reconciliation are section-bound', () => {
   const contracts = [
     {

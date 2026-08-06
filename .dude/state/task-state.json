@@ -240,5 +240,13 @@
       "T003@61637074": "x"
     },
     "updated_at": "2026-08-04T22:00:36.671Z"
+  },
+  ".dude/specs/021-topology-first-enforcement-reset/tasks.md": {
+    "glyphs": {
+      "T001@74726967": "x",
+      "T002@6576616c": "x",
+      "T003@61636365": "x"
+    },
+    "updated_at": "2026-08-06T21:20:27.219Z"
   }
 }
