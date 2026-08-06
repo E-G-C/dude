@@ -18,3 +18,7 @@ For explicit autonomous Work, supply the grounded finding and occurrence evidenc
 5. Outside an explicit autonomous policy, a second failure on the same finding escalates to the user, and under that policy the autonomous Work deferral governs instead; do not repeat the loop or fake certainty.
 
 Also escalate unresolved product authority, insufficient evidence, or an artifact boundary too unclear for fair judgment.
+
+## Topology Evidence Evaluation
+
+When a topology-first reset is active (see `dude-receiving-code-review`), the verdict must judge the revised design against the topology evidence and must verify every topology claim against the current source and call sites before approval. New enforcement machinery — a new gate, store, checkpoint, or cross-session state — is admitted only with a demonstrated reachable failure and a covering acceptance test; a topology claim that contradicts the current source is not approved until it is corrected or withdrawn. Route any rejection through the existing rejection procedure with no new path and no relaxed existing gate.

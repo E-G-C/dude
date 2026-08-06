@@ -20,3 +20,11 @@ For explicit autonomous Work, preserve the exact finding and attempt evidence an
 Escalate conflicts with user direction or planning authority. Do not blindly implement speculation, perform agreement, reopen unrelated scope, self-approve, assign revision ownership, or select the next reviewer.
 
 Report accepted, clarified, and challenged findings plus fresh verification status.
+
+## Topology-First Reset
+
+Repeated review revisions can accumulate enforcement machinery around an assumed control point. Before producing another revision, apply a topology-first reset when any one trigger holds: the same control-boundary concern survives two review cycles; a revision introduces a new gate, store, checkpoint, or cross-session state; or enforcement expands across modules or workflow boundaries.
+
+When a trigger holds, the planning authority must establish the topology evidence before the next revision: the production entry point and actual call path; which actor controls each operation and input; the concrete reachable failure being prevented; the narrowest existing enforcement point already covering that failure; a focused check that could disprove the topology assumption; and why each proposed stateful mechanism covers a reachable path.
+
+Evidence that a mechanism covers a reachable path the narrowest existing point does not lets the revision proceed on that evidence; an existing chokepoint that already covers the failure means the added machinery is not carried forward. Ordinary local fixes that introduce none of that machinery are exempt even across two cycles. The reset adds this evidence obligation and weakens no existing safety, verification, or independent-review requirement.
