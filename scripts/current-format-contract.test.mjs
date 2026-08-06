@@ -4727,3 +4727,226 @@ test('T003 the adapter and its prompt surfaces are generated, never hand-authore
     assert.equal(runner.includes(forbidden), false, `runner adds forbidden resident/model surface ${forbidden}`);
   }
 });
+
+// --- T004: one detailed unattended-continuity owner ---------------------------
+
+const CONTINUITY_OWNER = 'src/skills/dude-work/SKILL.md';
+const CONTINUITY_SECTION = '## Stops';
+
+// Prompt surfaces that may point at the Work owner but never restate its detail.
+const CONTINUITY_POINTER_SURFACES = [
+  'src/agents/dude.agent.md',
+  'src/instructions/dude.instructions.md',
+  'src/skills/dude-lightweight-execution/SKILL.md',
+  'src/skills/dude-receiving-code-review/SKILL.md',
+  'src/skills/dude-reviewer-protocol/SKILL.md',
+];
+
+const CONTINUITY_DOC_SECTIONS = [
+  ['docs/commands.md', '### `@dude work`'],
+  ['docs/reference.md', '## Execution Workflow'],
+  ['docs/workflow.md', '### Optional Continuous Work'],
+];
+
+// Detail only the Work owner may state. Each marker is separately proven against
+// the owner section, so none of them can pass vacuously.
+const CONTINUITY_DETAIL_MARKERS = [
+  ['closed-set fixity', /the closed set is fixed/i],
+  ['evidence surfaces behind the cause', /existing Inspection and evidence surfaces/i],
+  ['fail-closed halt shape', /named-but-opaque or unnameable halt/i],
+  ['model-phrasing boundary', /model reasoning only phrases them/i],
+  ['runtime ownership of the halt fields', /owns the reason and those fields/i],
+];
+
+// The closed stop set this feature names against and may not extend.
+const CONTINUITY_STOP_REASONS = [
+  'no ready task',
+  'no ready Beads work',
+  'task blocked: <classification>',
+  'verification failed on <task-id>',
+  'reviewer rejected <task-id>',
+  'clarification required: <detail>',
+  'two failed attempts on <task-id>',
+  'ambiguous state: <detail>',
+  'tool error: <detail>',
+  'iteration limit reached (<N>)',
+];
+
+// Each public surface states the discipline in its own words, so the pointer is
+// countable and the wording is not copied between documents.
+const CONTINUITY_DOC_REQUIREMENTS = {
+  'docs/commands.md': [
+    ['the unattended run ends only on a listed stop condition', [
+      [/the run keeps going through ready work and ends only when one of those conditions fires/],
+    ]],
+    ['reporting a milestone is not a stop', [[/reporting a milestone is not one of them/]]],
+    ['each halt names its condition, target, cause, and next action', [
+      [/Each halt names the one condition that ended it, the target it stopped on, what specifically caused it, and what you can do next/],
+    ]],
+    ['an unbacked halt is reported unresolved', [
+      [/A halt that cannot be backed by evidence is reported unresolved/],
+    ]],
+    ['guarded behaviour is unchanged', [[/`guarded` runs stop exactly as they do today/]]],
+  ],
+  'docs/reference.md': [
+    ['the unattended run ends only on a referenced stop condition', [
+      [/An `autonomous` run ends only on a stop condition from the list in the \[Work command reference\]\(commands\.md#dude-work\)/],
+    ]],
+    ['reporting progress is not a stop', [
+      [/Surfacing progress is not one, so the loop continues through remaining ready work/],
+    ]],
+    ['each halt names its reason, target, cause, and next action', [
+      [/A halt carries one named reason plus the affected target, the specific condition behind it, and the action left to the owner/],
+    ]],
+    ['an unbacked halt is reported unresolved', [
+      [/where any of that detail cannot be established from evidence, the halt is reported unresolved instead/],
+    ]],
+    ['guarded behaviour is unchanged', [[/Guarded runs are unaffected/]]],
+  ],
+  'docs/workflow.md': [
+    ['the unattended run never ends merely to report', [
+      [/An unattended `autonomous` run never ends just to summarize/],
+    ]],
+    ['progress is surfaced inline while the loop continues', [
+      [/Progress is surfaced inline and the loop moves straight on to the next ready task/],
+    ]],
+    ['each end names its condition, target, cause, and next action', [
+      [/the report gives the one stop condition behind it, the affected work item, the cause, and the owner's next move/],
+    ]],
+    ['an unbacked halt is reported unresolved', [
+      [/if evidence for any of those is missing, it says so and marks the halt unresolved/],
+    ]],
+    ['guarded behaviour is unchanged', [[/Nothing here changes `guarded`/]]],
+  ],
+};
+
+/** @param {string} relative @param {string} heading */
+function continuityDocPointer(relative, heading) {
+  const paragraphs = markdownSection(read(relative), heading)
+    .split(/\n\s*\n/)
+    .filter((paragraph) => /\bhalts?\b/i.test(paragraph));
+  assert.equal(paragraphs.length, 1, `${relative} ${heading}: exactly one halt paragraph`);
+  return unwrappedParagraphs(paragraphs[0]);
+}
+
+test('T004 the unattended continuity discipline lives only in the Work owner', () => {
+  for (const relative of [CONTINUITY_OWNER, ...CONTINUITY_POINTER_SURFACES]) {
+    assert.equal(fs.statSync(path.join(ROOT, relative)).isFile(), true, relative);
+  }
+  assert.deepEqual(CONTINUITY_POINTER_SURFACES, [...CONTINUITY_POINTER_SURFACES].sort());
+  assert.equal(CONTINUITY_POINTER_SURFACES.includes(CONTINUITY_OWNER), false);
+
+  const owner = markdownSection(read(CONTINUITY_OWNER), CONTINUITY_SECTION);
+
+  // Each duplication marker must be real discipline the owner actually states.
+  for (const [label, pattern] of CONTINUITY_DETAIL_MARKERS) {
+    assert.match(owner, pattern, `owner must state ${label}`);
+  }
+
+  const scanned = [
+    ...CONTINUITY_POINTER_SURFACES.map((relative) => [relative, visibleMarkdown(read(relative))]),
+    ...CONTINUITY_DOC_SECTIONS.map(([relative, heading]) => (
+      [`${relative} ${heading}`, markdownSection(read(relative), heading)]
+    )),
+  ];
+  for (const [label, content] of scanned) {
+    for (const [marker, pattern] of CONTINUITY_DETAIL_MARKERS) {
+      assert.doesNotMatch(content, pattern, `${label} duplicates ${marker}`);
+    }
+  }
+
+  // The owner keeps the only Stops section among the prompt surfaces.
+  const headingOwners = [CONTINUITY_OWNER, ...CONTINUITY_POINTER_SURFACES]
+    .filter((relative) => visibleMarkdown(read(relative)).split('\n')
+      .some((line) => line.trim() === CONTINUITY_SECTION));
+  assert.deepEqual(headingOwners, [CONTINUITY_OWNER]);
+});
+
+test('T004 the Work owner states keep-working, the named-reason echo, and actionable halt detail', () => {
+  const owner = markdownSection(read(CONTINUITY_OWNER), CONTINUITY_SECTION);
+  const failures = missingParagraphRequirements(owner, [
+    ['unattended work continues and only a closed-set condition ends the loop', [
+      [
+        /Under the `autonomous` policy the loop keeps working through ready work/,
+        /ends \*only\* when one of the closed-set stop conditions below applies/,
+      ],
+    ]],
+    ['a progress report never ends the loop', [
+      [/A progress report or milestone notice is never a stop and does not end the loop/],
+    ]],
+    ['the closed stop set gains no member', [
+      [/No new stop reason is introduced; the closed set is fixed/],
+    ]],
+    ['every halt echoes exactly one closed-set reason', [
+      [/Every unattended halt echoes exactly one closed-set reason/],
+    ]],
+    ['the halt carries target, causing subject, and next owner action', [
+      [
+        /the affected target/,
+        /the specific causing subject or condition/,
+        /the next owner action/,
+        /enough to act without reading runtime internals/,
+      ],
+    ]],
+    ['the runtime owns the fields and fails closed on missing detail', [
+      [
+        /`recovery\.mjs` owns the reason and those fields/,
+        /model reasoning only phrases them and establishes no stop, reason, or approval/,
+        /Fail closed and report the halt as unresolved/,
+      ],
+    ]],
+    ['the deterministic runner attaches the halt report once at its terminal chokepoint', [
+      [
+        /The deterministic autonomous runner attaches this report once, at its single terminal chokepoint `finish\(row\)` in `host-adapter-runner\.mjs`/,
+        /the runtime, not the model, owns whether and how a halt is reported/,
+      ],
+    ]],
+  ]);
+  assert.deepEqual(failures, [], `${CONTINUITY_OWNER} ${CONTINUITY_SECTION}: unattended continuity contract`);
+});
+
+test('T004 the public documentation states the discipline once and points at its owner', () => {
+  for (const [relative, heading] of CONTINUITY_DOC_SECTIONS) {
+    const pointer = continuityDocPointer(relative, heading);
+    assert.ok(
+      Buffer.byteLength(pointer, 'utf8') <= 480,
+      `${relative}: pointer is ${Buffer.byteLength(pointer, 'utf8')} bytes (limit 480)`,
+    );
+    assert.deepEqual(
+      missingParagraphRequirements(pointer, CONTINUITY_DOC_REQUIREMENTS[relative]),
+      [],
+      `${relative} ${heading}: unattended continuity pointer`,
+    );
+    assert.match(
+      markdownSection(read(relative), heading),
+      /\]\(\.\.\/\.github\/skills\/dude-work\/SKILL\.md\)/,
+      `${relative} ${heading}: links to the Work owner`,
+    );
+  }
+});
+
+test('T004 unattended continuity adds no stop reason, command, flag, or concurrency', () => {
+  const owner = markdownSection(read(CONTINUITY_OWNER), CONTINUITY_SECTION);
+  assert.deepEqual(
+    [...owner.matchAll(/^- `([^`]+)`/gm)].map((entry) => entry[1]),
+    CONTINUITY_STOP_REASONS,
+    `${CONTINUITY_OWNER} ${CONTINUITY_SECTION}: the closed stop set is unchanged`,
+  );
+
+  const scanned = [
+    [`${CONTINUITY_OWNER} ${CONTINUITY_SECTION}`, owner],
+    ...CONTINUITY_DOC_SECTIONS.map(([relative, heading]) => (
+      [`${relative} ${heading}`, continuityDocPointer(relative, heading)]
+    )),
+  ];
+  for (const [label, content] of scanned) {
+    for (const forbidden of FORBIDDEN_USER_COMMANDS) {
+      assert.equal(content.includes(forbidden), false, `${label} presents ${forbidden}`);
+    }
+    for (const flag of [...content.matchAll(/--[a-z][a-z-]*/g)].map((entry) => entry[0])) {
+      assert.ok(WORK_GRAMMAR_LINE.includes(flag), `${label} presents undeclared flag ${flag}`);
+    }
+    assert.deepEqual(concurrencyGrants(content), [], `${label} grants concurrency`);
+    assert.deepEqual(staleRecoveryPhrases(content), [], label);
+  }
+});

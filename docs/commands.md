@@ -455,6 +455,13 @@ Stop conditions (uniform across both lanes):
 - tool error during an iteration
 - `--max` reached
 
+Under `--policy autonomous` the run keeps going through ready work and ends only
+when one of those conditions fires; reporting a milestone is not one of them.
+Each halt names the one condition that ended it, the target it stopped on, what
+specifically caused it, and what you can do next. A halt that cannot be backed
+by evidence is reported unresolved rather than given a name it cannot support.
+`guarded` runs stop exactly as they do today.
+
 `@dude work` is the optional accelerator described in
 [docs/workflow.md](workflow.md). The full skill lives at
 [.github/skills/dude-work/SKILL.md](../.github/skills/dude-work/SKILL.md).
