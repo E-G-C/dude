@@ -10,6 +10,7 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
   "enabled_packs": [
     "authoring",
     "coding",
+    "release",
     "writing"
   ],
   "installed": {
@@ -151,6 +152,56 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
           }
         ],
         "digest": "380f344df3a675fe322a005235cb66410ea89a58f6adef17d9be83a984704d1e"
+      }
+    },
+    "release": {
+      "files": [
+        ".github/agents/dude-pack-release-manager.agent.md",
+        ".github/skills/dude-pack-release-pipeline-parity",
+        ".github/skills/dude-pack-release-tag-driven-versioning",
+        ".github/skills/dude-pack-release-writeback-via-pr"
+      ],
+      "installed_at": "2026-08-06T01:33:55.905Z",
+      "inventory": {
+        "version": 1,
+        "pack": "release",
+        "source": {
+          "type": "library",
+          "location": "/Users/eg/work/AI/dude/library/packs",
+          "ref": ""
+        },
+        "manifest_sha256": "c0e8d176fa57743b32e0ef094e2354eab83cab8e75e313480077e8656dfbc465",
+        "artifacts": [
+          {
+            "path": ".github/agents/dude-pack-release-manager.agent.md",
+            "kind": "agents",
+            "source": "agents/dude-pack-release-manager.agent.md",
+            "source_sha256": "10d50fdbfa2816a36308a767583cff3696eeceac3bc0d726932203018b141099",
+            "installed_sha256": "10d50fdbfa2816a36308a767583cff3696eeceac3bc0d726932203018b141099"
+          },
+          {
+            "path": ".github/skills/dude-pack-release-pipeline-parity",
+            "kind": "skills",
+            "source": "skills/dude-pack-release-pipeline-parity",
+            "source_sha256": "53d1d9d01c7094471f310ffaa6cdefa418185f11d7718ba66d368108b5b8f334",
+            "installed_sha256": "53d1d9d01c7094471f310ffaa6cdefa418185f11d7718ba66d368108b5b8f334"
+          },
+          {
+            "path": ".github/skills/dude-pack-release-tag-driven-versioning",
+            "kind": "skills",
+            "source": "skills/dude-pack-release-tag-driven-versioning",
+            "source_sha256": "1b0c6c85efe8cf175fbcdf333d5147851386bce930be164256612537d424c6cf",
+            "installed_sha256": "1b0c6c85efe8cf175fbcdf333d5147851386bce930be164256612537d424c6cf"
+          },
+          {
+            "path": ".github/skills/dude-pack-release-writeback-via-pr",
+            "kind": "skills",
+            "source": "skills/dude-pack-release-writeback-via-pr",
+            "source_sha256": "83063673153b78d98cce6b137f6bf12140616baf7aa0b9f44d9b10796f89e028",
+            "installed_sha256": "83063673153b78d98cce6b137f6bf12140616baf7aa0b9f44d9b10796f89e028"
+          }
+        ],
+        "digest": "63d3028f7069d7ee214ec03557f97bc4f4634509d53f9fffff8832a154938c5a"
       }
     },
     "writing": {
