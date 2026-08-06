@@ -161,6 +161,10 @@ For Lightweight, use `dude-lightweight-execution` to select, claim, block, close
 
 ## Stops
 
+**Unattended (autonomous) policy discipline:** Under the `autonomous` policy the loop keeps working through ready work and ends *only* when one of the closed-set stop conditions below applies. A progress report or milestone notice is never a stop and does not end the loop. No new stop reason is introduced; the closed set is fixed.
+
+**Named, actionable halt:** Every unattended halt echoes exactly one closed-set reason and carries the affected target, the specific causing subject or condition from existing Inspection and evidence surfaces, and the next owner action — enough to act without reading runtime internals. `recovery.mjs` owns the reason and those fields; model reasoning only phrases them and establishes no stop, reason, or approval. Fail closed and report the halt as unresolved when a closed-set reason or any of that detail cannot be established from real evidence, rather than emitting a named-but-opaque or unnameable halt. The deterministic autonomous runner attaches this report once, at its single terminal chokepoint `finish(row)` in `host-adapter-runner.mjs` — a hard-stop terminal carries the resolved-or-explicitly-unresolved report, and a clean settlement (task settled, controlled end, or cancelled) carries none — so the runtime, not the model, owns whether and how a halt is reported.
+
 Stop on the first natural boundary and report partial results, exact reason, and next action:
 
 - `no ready task`

@@ -9356,6 +9356,196 @@ export function endsUnattendedLoop(outcome) {
 }
 
 /**
+ * Next owner action for each closed-set stop class. Total over the five stop
+ * classes; `'authorized'` is not a stop and never reaches this table.
+ * @type {Readonly<Record<string, string>>}
+ */
+const HALT_NEXT_ACTIONS = Object.freeze({
+  'hard-stop': 'request-human-input',
+  'recoverable-checkpoint': 'inspect-and-recover',
+  'budget-stop': 'raise-budget-or-end-run',
+  'learning-stop': 'resolve-learning-governance',
+  'guard-stop': 'correct-request-and-reinspect',
+});
+
+/** @param {Record<string, unknown>} state */
+function learningGovernanceCondition(state) {
+  if (!Object.hasOwn(state, 'learningGovernance')) return null;
+  const governance = /** @type {Record<string, unknown>} */ (state.learningGovernance);
+  return `learning-governance:${governance.phase}:${governance.triggerEvidenceHash}`;
+}
+
+/**
+ * Deterministic causing-condition probes for the closed-set reasons the runtime
+ * refuses with no Blocker. Each reads only settled `RunState` and the bound
+ * Inspection target, and returns `null` when the concrete condition is not
+ * established, which fails the halt closed. Reasons absent from this table
+ * (`evidence-drift`, `invalid-mode`, `invalid-action`, `no-action`,
+ * `no-progress`, `prior-no-progress`) carry no such surface on the halt itself
+ * and always fail closed. Every probe prefixes its own condition vocabulary,
+ * so no condition can echo the reason name it is keyed by.
+ * @type {Readonly<Record<string, (state: Record<string, unknown>, target: Record<string, unknown>) => string | null>>}
+ */
+const HALT_STATE_CONDITIONS = Object.freeze({
+  'overall-exhausted': (state) => (
+    `overall-attempts:${state.overallUsed}/${/** @type {Record<string, unknown>} */ (state.policy).overall}`
+  ),
+  'recovery-exhausted': (state, target) => {
+    const key = targetKey(target);
+    const row = /** @type {Record<string, unknown>[]} */ (state.recoveryUsed)
+      .find((entry) => entry.targetKey === key);
+    if (!row) return null;
+    return `recovery-attempts:${row.count}/${/** @type {Record<string, unknown>} */ (state.policy).recovery}`;
+  },
+  'recovery-disabled': (state) => (
+    /** @type {Record<string, unknown>} */ (state.policy).recover === false ? 'policy-recover:false' : null
+  ),
+  'not-dispatchable': (state) => {
+    const pending = /** @type {Record<string, unknown>[]} */ (state.pending);
+    return pending.length > 0 ? `pending-authorization:${targetKey(pending[0].target)}` : null;
+  },
+  'feature-only': (state, target) => (
+    isFeatureTarget(target) ? `feature-only-target:${target.specPath}` : null
+  ),
+  'learning-required': learningGovernanceCondition,
+  'learning-governance-capacity': learningGovernanceCondition,
+});
+
+/**
+ * Resolve the specific subject or condition that caused one named halt.
+ *
+ * Blocker candidates are read in authority order — the Inspection's own
+ * rederived blockers first, then the blockers the halt outcome carries — and a
+ * candidate is admitted only when `validateBlocker` accepts it, its code is the
+ * halt's named reason, and it binds the bound Inspection's `evidenceHash`. A
+ * subject that merely echoes the reason name localizes nothing and is refused.
+ * A settled `RunState` condition is consulted only when no admissible Blocker
+ * was found and the reason has such a probe. Returns `null` when nothing
+ * concrete is established, which fails the halt closed.
+ *
+ * @param {string} reason @param {Record<string, unknown>} halt
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>} target
+ * @returns {string | null}
+ */
+function unattendedHaltSubject(reason, halt, inspection, target) {
+  const result = halt.result;
+  const carried = result !== null && typeof result === 'object'
+    && Array.isArray(/** @type {Record<string, unknown>} */ (result).blockers)
+    ? /** @type {unknown[]} */ (/** @type {Record<string, unknown>} */ (result).blockers)
+    : [];
+  for (const candidate of [.../** @type {unknown[]} */ (inspection.blockers), halt.blocker, ...carried]) {
+    let blocker;
+    try {
+      blocker = /** @type {Record<string, unknown>} */ (validateBlocker(candidate));
+    } catch {
+      continue;
+    }
+    if (blocker.code !== reason || blocker.evidenceHash !== inspection.evidenceHash) continue;
+    const subject = /** @type {string} */ (blocker.subject);
+    if (subject !== reason) return subject;
+  }
+  if (!Object.hasOwn(HALT_STATE_CONDITIONS, reason)) return null;
+  try {
+    const condition = HALT_STATE_CONDITIONS[reason](
+      /** @type {Record<string, unknown>} */ (validateRunState(halt.state)),
+      target,
+    );
+    // `assertSubject` is the sole condition validator: it refuses a probe's
+    // `null` (nothing established) and any condition outside the canonical
+    // Blocker subject bound alike, and both fail the halt closed.
+    assertSubject(condition, 'UnattendedHalt.subject');
+    return condition;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Named, actionable report for one unattended halt.
+ *
+ * Deterministic, side-effect-free, and non-throwing. `endsUnattendedLoop`
+ * stays the sole halt predicate: a turn it does not end has no report at all
+ * and returns `null`, so a turn carrying no closed-set reason is never a halt.
+ *
+ * A halt reports as `resolved` only when the runtime establishes, from the
+ * frozen closed stop set and real evidence, every field the owner needs to act
+ * without reading this runtime: the single named `reason` and its `stopClass`
+ * (both from `classifyOutcomeReason` over `OUTCOME_REASON_CLASSES`), the
+ * affected `target` (the bound Inspection's canonical target), the specific
+ * causing `subject` (a bound Blocker subject or a settled `RunState`
+ * condition), and the `nextAction` its stop class carries. Otherwise it fails
+ * closed as `{halted: true, resolved: false, unresolved}`, naming which of
+ * `'reason'`, `'target'`, `'subject'` could not be established and emitting no
+ * reason, target, or subject: a named-but-opaque or unnameable halt is never
+ * produced, and a halt is never suppressed.
+ *
+ * The runtime owns every field. The named reason is admitted only as a frozen
+ * closed-set member of the runtime's own outcome, a Blocker only when
+ * `validateBlocker` accepts it and it binds both that reason and the
+ * Inspection's `evidenceHash`, and the Inspection only when `validateInspection`
+ * accepts it — which rederives its blocker list, so a fabricated blocker is
+ * rejected. There is no parameter through which a caller or model can supply a
+ * reason, an approval, or a verdict, or override the fail-closed decision;
+ * model reasoning may only phrase these fields as narrative afterwards.
+ *
+ * @param {unknown} outcome An authorization or completion outcome.
+ * @param {unknown} inspection The Inspection the halt was decided against.
+ * @returns {null
+ *   | {halted: true, resolved: false, unresolved: string[]}
+ *   | {halted: true, resolved: true, reason: string, stopClass: string,
+ *      target: Record<string, unknown>, subject: string, nextAction: string, evidenceHash: string}}
+ */
+export function describeUnattendedHalt(outcome, inspection) {
+  if (!endsUnattendedLoop(outcome)) return null;
+  const halt = outcome !== null && typeof outcome === 'object' && !Array.isArray(outcome)
+    ? /** @type {Record<string, unknown>} */ (outcome)
+    : {};
+
+  /** @type {string | null} */
+  let stopClass = null;
+  try {
+    const classified = classifyOutcomeReason(halt.reason);
+    if (classified !== 'authorized') stopClass = classified;
+  } catch {
+    // Unnameable halt: no member of the closed stop set applies.
+  }
+
+  /** @type {Record<string, unknown> | null} */
+  let evidence = null;
+  /** @type {Record<string, unknown> | null} */
+  let target = null;
+  try {
+    evidence = /** @type {Record<string, unknown>} */ (validateInspection(inspection));
+    target = canonicalTarget(evidence.target);
+  } catch {
+    evidence = null;
+    target = null;
+  }
+
+  const subject = stopClass && evidence && target
+    ? unattendedHaltSubject(/** @type {string} */ (halt.reason), halt, evidence, target)
+    : null;
+
+  /** @type {string[]} */
+  const unresolved = [];
+  if (!stopClass) unresolved.push('reason');
+  if (!target) unresolved.push('target');
+  if (!subject) unresolved.push('subject');
+  if (unresolved.length > 0) return { halted: true, resolved: false, unresolved };
+
+  return {
+    halted: true,
+    resolved: true,
+    reason: /** @type {string} */ (halt.reason),
+    stopClass: /** @type {string} */ (stopClass),
+    target: /** @type {Record<string, unknown>} */ (target),
+    subject: /** @type {string} */ (subject),
+    nextAction: HALT_NEXT_ACTIONS[/** @type {string} */ (stopClass)],
+    evidenceHash: /** @type {string} */ (/** @type {Record<string, unknown>} */ (evidence).evidenceHash),
+  };
+}
+
+/**
  * Sequential post-stop scheduling license for autonomous work.
  *
  * Fail-closed and non-throwing (exactly like `mayContinueAutonomously`): any

@@ -298,6 +298,13 @@ artifacts absent before a fresh claim. Partial cleanup, a changed artifact,
 reappearance, or failed absence validation is a hard stop that keeps blocking
 replacement work.
 
+An `autonomous` run ends only on a stop condition from the list in the
+[Work command reference](commands.md#dude-work). Surfacing progress is not one,
+so the loop continues through remaining ready work. A halt carries one named
+reason plus the affected target, the specific condition behind it, and the
+action left to the owner; where any of that detail cannot be established from
+evidence, the halt is reported unresolved instead. Guarded runs are unaffected.
+
 Under `autonomous`, a deterministically repeated result or approach on one task
 requires learning before that task may be retried, escalated, blocked, closed,
 or called no progress. The requirement binds that task alone: existing hard
