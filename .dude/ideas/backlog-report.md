@@ -52,7 +52,7 @@ A throwaway prototype was built outside the repository and run against real repo
 5. Which report sections ship first, given the prototype's four candidates: summary counts, the lane board with per-feature task progress, sample task-order chains, and recent activity?
    Answer: All four prototype sections ship first: summary counts, the lane board with per-feature task progress, task-order chains, and recent activity. They are already proven in the prototype and cost nothing more.
 6. Is `Shipped` added as a sixth bucket to the shipped text view as well? That changes Feature 024's five-bucket contract, so it would need an explicit redefinition of 024 rather than a silent change here.
-   Answer: Yes. `Shipped` is added as a sixth bucket to the text view as well, through an explicit `define feature-focus-order` re-definition of Feature 024 rather than a silent change here.
+   Answer: Yes. `Shipped` is added as a sixth bucket to the text view as well. Resolved during definition as feature 025, which supersedes Feature 024's five-bucket contract for this surface without reopening or editing the closed 024 package.
 7. Does the `Later` bucket still earn its place once `Backlog` and `Shipped` exist?
    Answer: Keep `Later`. It is already shipped and tested; removing it is a separate decision.
 8. Are the generated artifacts committed to the repository, or ignored?
@@ -82,7 +82,7 @@ These are the coordinator's working assumptions, not user decisions. Correct any
 - Fill a committed HTML/CSS skeleton template with placeholder slots at generation time (option C), so the markup stays editable and reviewable as HTML.
 - Generate both artifacts deterministically from a script, spending no model tokens on markup.
 - Give lanes a bounded height with a scrollable area so they do not grow unbounded down the page.
-- Carry the prototype's `Shipped` lane, which collapses the crowded pool and also resolves the done-feature-named-as-a-dependency wrinkle, and change Feature 024's five-bucket contract through an explicit re-definition of 024 rather than silently here.
+- Carry the prototype's `Shipped` lane, which collapses the crowded pool and also resolves the done-feature-named-as-a-dependency wrinkle, and supersede Feature 024's five-bucket contract for this surface as feature 025, without reopening or editing the closed 024 package.
 - Treat the write path as a deliberate change to Feature 024's pinned read-only guarantee, defined rather than edited in incidentally.
 - Write both artifacts to `.dude/backlog.md` and `.dude/backlog.html`, commit them, and regenerate them at every coordinator state change alongside the existing task board re-render.
 - Ship all four prototype report sections: summary counts, the lane board with per-feature task progress, task-order chains, and recent activity.
@@ -102,7 +102,7 @@ These are the coordinator's working assumptions, not user decisions. Correct any
 - Keep the HTML report fully self-contained offline: no external references, no vendored Mermaid, no browser JavaScript.
 - Keep Mermaid in the markdown only, where GitHub renders it without a bundled dependency.
 - Do not rename `.dude/specs/024-feature-focus-order/` or `.dude/ideas/feature-focus-order.md`.
-- Do not change Feature 024's five-bucket contract silently. Adding `Shipped` to the shipped text view requires an explicit redefinition of 024.
+- Do not change Feature 024's five-bucket contract silently. Adding `Shipped` to the shipped text view is done as feature 025, which supersedes 024 for this surface without reopening its closed package.
 - Keep generated artifacts derived and never authoritative. Idea frontmatter stays authoritative for lifecycle, `tasks.md` for execution, and `depends-on:` plus the tie-break file for order.
 - Add no second board, no second store, and no execution authority.
 - Do not weaken the read-only guarantee on the existing text and Mermaid surfaces. Define the write path as a distinct generation step instead.
