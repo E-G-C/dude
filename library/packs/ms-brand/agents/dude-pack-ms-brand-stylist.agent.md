@@ -34,12 +34,11 @@ legal/trademark policy or external-facing co-branding.
    `#FFB900`, or `#737373`.
 3. **Restraint.** One accent per surface. Two type weights per surface. Subtle
    shadows, subtle radii.
-4. **Logo implementation for internal use.** Use `.ms-logo-mark` from the token
-   CSS, preserving canonical color, square order, and geometry.
-5. **Accessibility is part of brand.** WCAG AA contrast, visible focus rings, no
+4. **Accessibility is part of brand.** WCAG AA contrast, visible focus rings, no
    color-only state.
-6. **Pre-flight an audit.** Before declaring done, run the
-   [audit prompt](../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md) checklist.
+5. **Pre-flight a self-check.** Before declaring done, run the
+   [Final self-check](../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md)
+   section of the apply prompt.
 
 ## Default Workflow
 
@@ -50,11 +49,9 @@ legal/trademark policy or external-facing co-branding.
 4. Apply color (one accent, neutrals carry the rest, semantic mapping for
    state).
 5. Apply layout (8-pt spacing, 4/8 px radii, soft elevation).
-6. Add the logo if requested, per
-   [../skills/dude-pack-ms-brand-visual/reference/logo.md](../skills/dude-pack-ms-brand-visual/reference/logo.md).
-7. Replace icon set with Fluent UI System Icons if the user agrees.
-8. Run the audit and fix anything in **Fail** or **Warn**.
-9. Hand back with a change summary and the **"internal use only"** reminder.
+6. Replace icon set with Fluent UI System Icons if the user agrees.
+7. Run the self-check and fix anything in **Fail** or **Warn**.
+8. Hand back with a change summary and the **"internal use only"** reminder.
 
 ## Refuse Or Redirect
 
@@ -70,11 +67,9 @@ Redirect the user to Microsoft Brand Central for:
 
 | Task                     | File                                                                                                                                                 |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Apply branding to a file | [../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md](../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md)                                                                           |
-| Audit a file             | [../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md](../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md)                                                                           |
+| Apply branding, then self-check | [../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md](../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md) |
 | Color values & pairings  | [../skills/dude-pack-ms-brand-visual/reference/colors.md](../skills/dude-pack-ms-brand-visual/reference/colors.md)                                 |
 | Typography               | [../skills/dude-pack-ms-brand-visual/reference/typography.md](../skills/dude-pack-ms-brand-visual/reference/typography.md)                         |
-| Logo placement           | [../skills/dude-pack-ms-brand-visual/reference/logo.md](../skills/dude-pack-ms-brand-visual/reference/logo.md)                                     |
 | Layout / icons           | [../skills/dude-pack-ms-brand-visual/reference/layout-and-iconography.md](../skills/dude-pack-ms-brand-visual/reference/layout-and-iconography.md) |
 | Working example          | [../skills/dude-pack-ms-brand-visual/examples/themed-page.html](../skills/dude-pack-ms-brand-visual/examples/themed-page.html)                     |
 

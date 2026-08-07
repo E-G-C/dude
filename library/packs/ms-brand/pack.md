@@ -7,12 +7,9 @@ provides:
   skills:
     - dude-pack-ms-brand-visual
   instructions:
-    - dude-pack-ms-brand-ms-logo-usage.instructions.md
-    - dude-pack-ms-brand-ms-typography.instructions.md
-    - dude-pack-ms-brand-ms-visual-brand.instructions.md
+    - dude-pack-ms-brand-ms-visual-system.instructions.md
   prompts:
     - dude-pack-ms-brand-apply-ms-brand.prompt.md
-    - dude-pack-ms-brand-audit-ms-brand.prompt.md
 ---
 
 # Microsoft Brand Pack
@@ -25,7 +22,7 @@ but can layer on any HTML/CSS surface.
 
 ### Agent
 
-- `dude-pack-ms-brand-stylist` — owns brand application and brand-audit work
+- `dude-pack-ms-brand-stylist` — owns brand application and self-check work
   on rendered HTML/CSS surfaces.
 
 ### Skill
@@ -38,14 +35,14 @@ but can layer on any HTML/CSS surface.
 
 ### Instructions
 
-- `dude-pack-ms-brand-ms-logo-usage.instructions.md`
-- `dude-pack-ms-brand-ms-typography.instructions.md`
-- `dude-pack-ms-brand-ms-visual-brand.instructions.md`
+- `dude-pack-ms-brand-ms-visual-system.instructions.md` — colors, typography,
+  spacing, radius, elevation, motion, and accessibility rules for matching
+  source files.
 
 ### Prompts
 
-- `dude-pack-ms-brand-apply-ms-brand.prompt.md` — apply the Microsoft brand to a rendered surface.
-- `dude-pack-ms-brand-audit-ms-brand.prompt.md` — audit a surface against the brand rules.
+- `dude-pack-ms-brand-apply-ms-brand.prompt.md` — apply the brand to a rendered
+  surface, then run the built-in self-check.
 
 ## Install / remove
 

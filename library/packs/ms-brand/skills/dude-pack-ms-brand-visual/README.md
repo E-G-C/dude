@@ -22,9 +22,7 @@ You can:
 
 1. **Style a new page** → run
    [../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md)
-2. **Check an existing page** → run
-   [../../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md)
-3. **Import the design tokens** → drop in
+2. **Import the design tokens** → drop in
    [tokens/ms-brand.css](tokens/ms-brand.css) or
    [tokens/tailwind.preset.js](tokens/tailwind.preset.js)
 
@@ -37,9 +35,9 @@ sits at `.github/skills/dude-pack-ms-brand-visual/`, and `../../` is the
 | Path                                                                                                       | What's in it                                                          |
 | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | [`../../instructions/`](../../instructions/)                                                               | `.instructions.md` files auto-applied by file type                    |
-| [`../../prompts/`](../../prompts/)                                                                         | `.prompt.md` workflows — apply branding, audit a page                 |
+| [`../../prompts/`](../../prompts/)                                                                         | `.prompt.md` workflows — apply branding and self-check                |
 | [`../../agents/dude-pack-ms-brand-stylist.agent.md`](../../agents/dude-pack-ms-brand-stylist.agent.md)   | The `MS Brand Stylist` custom agent                                   |
-| [`reference/`](reference/)                                                                                 | The visual brand explained: colors, typography, logo, layout, sources |
+| [`reference/`](reference/)                                                                                 | The visual brand explained: colors, typography, layout, sources       |
 | [`tokens/`](tokens/)                                                                                       | Ready-to-use design tokens (CSS, SCSS, JSON, Tailwind preset)         |
 | [`scripts/`](scripts/)                                                                                     | Smoke checks for brand-token drift                                    |
 | [`examples/`](examples/)                                                                                   | Working HTML snippets (themed page, header/footer, buttons)           |
@@ -70,7 +68,7 @@ module.exports = { presets: [msBrand], content: ['./**/*.{html,jsx,tsx}'] };
 > Apply the Microsoft visual brand bundle to `index.html`.
 
 Copilot will follow
-[../../instructions/dude-pack-ms-brand-ms-visual-brand.instructions.md](../../instructions/dude-pack-ms-brand-ms-visual-brand.instructions.md)
+[../../instructions/dude-pack-ms-brand-ms-visual-system.instructions.md](../../instructions/dude-pack-ms-brand-ms-visual-system.instructions.md)
 and the prompt in
 [../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md).
 
@@ -91,12 +89,7 @@ Full details in [reference/colors.md](reference/colors.md) and
 
 ## Heads-up (the short version)
 
-- **Don't recolor, rotate, or restyle the four-square logo.** Use
-  `.ms-logo-mark` for internal surfaces.
-- **Don't put the logo on a busy background.** Keep clear space around it.
 - **Don't use the Microsoft name as a verb, noun, or part of your product
   name.**
 - **Internal use only.** Anything that ships outside Microsoft needs the
   official guidelines.
-
-See [reference/logo.md](reference/logo.md) for the visual-only summary.

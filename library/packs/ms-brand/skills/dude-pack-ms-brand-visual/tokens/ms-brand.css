@@ -406,27 +406,6 @@
   box-shadow: var(--ms-elev-1);
 }
 
-/* ============================================================
- * Logo mark (internal standard)
- *
- * Uses the Microsoft four-square geometry: 10x10 squares in a 21x21
- * field with a 1-unit gap. The layered backgrounds avoid data-URI
- * images, so the mark works under stricter internal app CSPs.
- * ============================================================ */
-
-.ms-logo-mark {
-  --ms-logo-square-size: 47.619047619%; /* 10 / 21 */
-  display: inline-block;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 auto;
-  vertical-align: middle;
-  background:
-    linear-gradient(var(--ms-red), var(--ms-red)) 0 0 / var(--ms-logo-square-size) var(--ms-logo-square-size) no-repeat,
-    linear-gradient(var(--ms-green), var(--ms-green)) 100% 0 / var(--ms-logo-square-size) var(--ms-logo-square-size) no-repeat,
-    linear-gradient(var(--ms-blue), var(--ms-blue)) 0 100% / var(--ms-logo-square-size) var(--ms-logo-square-size) no-repeat,
-    linear-gradient(var(--ms-yellow), var(--ms-yellow)) 100% 100% / var(--ms-logo-square-size) var(--ms-logo-square-size) no-repeat;
-}
 
 /* ============================================================
  * Reduced motion

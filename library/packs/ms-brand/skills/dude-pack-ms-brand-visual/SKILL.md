@@ -43,7 +43,6 @@ Do **not** use it for:
 2. **Read the reference you need:**
    - Colors → [reference/colors.md](reference/colors.md)
    - Typography → [reference/typography.md](reference/typography.md)
-   - Logo (visual rules) → [reference/logo.md](reference/logo.md)
    - Layout / iconography →
      [reference/layout-and-iconography.md](reference/layout-and-iconography.md)
 3. **Pull tokens, don't hardcode hex.** Import
@@ -60,8 +59,8 @@ Do **not** use it for:
    content, templates, or SCSS:
    `pwsh .github/skills/dude-pack-ms-brand-visual/scripts/brand-check.ps1` or
    `bash .github/skills/dude-pack-ms-brand-visual/scripts/brand-check.sh`.
-6. **Run the audit** in
-   [../../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md)
+6. **Run the Final self-check** in
+   [../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md)
    before declaring done.
 
 ## Quick decision table
@@ -69,10 +68,8 @@ Do **not** use it for:
 | User intent                     | Go to                                                                            |
 | ------------------------------- | -------------------------------------------------------------------------------- |
 | Theme a new page/component      | [../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md) |
-| Check an existing page          | [../../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-audit-ms-brand.prompt.md) |
 | Pick the right color            | [reference/colors.md](reference/colors.md)                                       |
 | Pick the right font weight/size | [reference/typography.md](reference/typography.md)                               |
-| Place the logo                  | [reference/logo.md](reference/logo.md)                                           |
 | See it working                  | [examples/themed-page.html](examples/themed-page.html)                           |
 
 ## Visual cheat sheet
@@ -92,11 +89,6 @@ Typography
   Caption: 400 / 12-14px / 1.4
   Docs:    .ms-docs, wide content wrapper, 688px prose, 40/52 title, 16/28 body
 
-Logo
-  Use .ms-logo-mark from the token CSS for internal surfaces
-  Clear space = height of one square on all sides
-  Min size = 16 px tall on screen
-  Never recolor, rotate, distort, animate
 ```
 
 ## Hand-off
