@@ -1,6 +1,6 @@
 # Backlog
 
-_Generated 2026-08-07 19:44 UTC, source aad8e72. A derived projection, never authoritative._
+_Generated 2026-08-07 21:04 UTC, source c2c1fb9. A derived projection, never authoritative._
 
 ## Active
 
@@ -24,6 +24,7 @@ _(none)_
 - core-dogfood-preview
 - good-enough-delivery
 - multi-dude-work-coordination
+- remove-unused-authority-surfaces
 
 ## Shipped
 
@@ -66,6 +67,7 @@ kanban
     core-dogfood-preview[core-dogfood-preview]
     good-enough-delivery[good-enough-delivery]
     multi-dude-work-coordination[multi-dude-work-coordination]
+    remove-unused-authority-surfaces[remove-unused-authority-surfaces]
   shipped[Shipped]
     automatic-core-dogfood-promotion[automatic-core-dogfood-promotion spec-008]
     automatic-unchanged-intent-redefinition[automatic-unchanged-intent-redefinition spec-015]
