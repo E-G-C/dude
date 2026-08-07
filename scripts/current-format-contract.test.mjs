@@ -1391,20 +1391,20 @@ test('T008 coordinator Status, Diff, Self-Check, and Flag procedures are section
   assert.match(lightweightStatus, /When Lightweight Execution is the active lane, report lane/i);
 });
 
-test('T004 cross-idea focus status surface binds the focus script, dependency field, ordering file, and footgun', () => {
+test('T004 cross-idea backlog status surface binds the backlog script, dependency field, ordering file, and footgun', () => {
   const relative = 'src/skills/dude-lightweight-execution/SKILL.md';
   const heading = '## Status And Handoff';
 
   assertSectionIncludesAll(relative, heading, [
-    // Exact focus script identity plus the three read-only CLI command forms.
-    'node .github/skills/dude-lightweight-execution/focus.mjs --root .',
-    'node .github/skills/dude-lightweight-execution/focus.mjs kanban --root .',
-    'node .github/skills/dude-lightweight-execution/focus.mjs flowchart <idea-slug> --root .',
+    // Exact backlog script identity plus the three read-only CLI command forms.
+    'node .github/skills/dude-lightweight-execution/backlog.mjs --root .',
+    'node .github/skills/dude-lightweight-execution/backlog.mjs kanban --root .',
+    'node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <idea-slug> --root .',
     // `depends-on:` idea-frontmatter field as the declared feature-level dependency source.
     "`depends-on:` in an idea ledger's frontmatter",
     'declares hard feature-level ordering',
-    // Optional `.dude/state/focus-order.md` tie-break ordering.
-    '`.dude/state/focus-order.md`',
+    // Optional `.dude/state/backlog-order.md` tie-break ordering.
+    '`.dude/state/backlog-order.md`',
     'breaking ties among unblocked, non-active items',
   ]);
 
@@ -1414,12 +1414,79 @@ test('T004 cross-idea focus status surface binds the focus script, dependency fi
   assertSectionRuleRejectsMutations(
     relative,
     heading,
-    '`@dude status` invokes the generated `focus.mjs` read-only in three forms. Each is read-only, renders on demand in the reply, and writes no file:',
+    '`@dude status` invokes the generated `backlog.mjs` read-only in three forms. Each is read-only, renders on demand in the reply, and writes no file:',
   );
   assertSectionRuleRejectsMutations(
     relative,
     heading,
     "Non-goal, not guarded: a task `deps:` key that names another feature's task resolves as permanently unsatisfied, because dependency resolution is confined to a single file. Keep cross-feature ordering in `depends-on:`, never in a task `deps:`.",
+  );
+});
+
+test('T002 cross-idea backlog binds the six buckets and Feature 024 five-bucket supersession', () => {
+  const relative = 'src/skills/dude-lightweight-execution/SKILL.md';
+  const heading = '## Status And Handoff';
+
+  assertSectionIncludesAll(relative, heading, [
+    // The six buckets, in the fixed render order, with Shipped evaluated first.
+    'Active, Next, Blocked, Later, Backlog, Shipped',
+    'evaluating Shipped (a defined idea whose package has every task done) first',
+    'setting Shipped aside reproduces the prior five-bucket membership',
+    // The former Unordered bucket is renamed Backlog, membership rule unchanged.
+    'the former Unordered bucket is renamed Backlog with its membership rule unchanged',
+    // The deliberate supersession of Feature 024's five-bucket contract.
+    "supersedes Feature 024's five-bucket contract (FR-003, SC-004)",
+  ]);
+
+  // The six-bucket derivation rule and the 024-supersession rule are each an
+  // exact, globally unique line, so deletion, fence-hiding, comment-hiding, or
+  // relocation out of `## Status And Handoff` fails its owning assertion.
+  assertSectionRuleRejectsMutations(
+    relative,
+    heading,
+    'The single derivation places every in-flight idea in exactly one of six buckets — Active, Next, Blocked, Later, Backlog, Shipped — evaluating Shipped (a defined idea whose package has every task done) first, ahead of every ordering bucket, so that setting Shipped aside reproduces the prior five-bucket membership.',
+  );
+  assertSectionRuleRejectsMutations(
+    relative,
+    heading,
+    "This deliberately supersedes Feature 024's five-bucket contract (FR-003, SC-004): the former Unordered bucket is renamed Backlog with its membership rule unchanged, and a completed idea reads as Shipped even when another idea names it as a dependency.",
+  );
+});
+
+test('T006 cross-idea backlog binds the regeneration hook, the staleness stamp, and the two-artifact write path', () => {
+  const relative = 'src/skills/dude-lightweight-execution/SKILL.md';
+  const heading = '## Status And Handoff';
+
+  assertSectionIncludesAll(relative, heading, [
+    // The regeneration hook fires at the same moment as the board re-render.
+    '`board.mjs render --write`',
+    'node .github/skills/dude-lightweight-execution/backlog.mjs generate --root . --write',
+    'spending no model tokens on markup',
+    "the surface's only write path",
+    // The write path is confined to exactly the two committed artifacts.
+    'commits `.dude/backlog.md` and `.dude/backlog.html`',
+    'confined to exactly the two artifacts `.dude/backlog.md` and `.dude/backlog.html`',
+    // The staleness stamp, degrading to a plain `unknown`.
+    'stamped with the generation time and a short source revision',
+    'recording a plain `unknown` when no revision is available',
+    // Derived, never authoritative, superseding 024's read-only guarantee.
+    'Both artifacts are derived projections and never authoritative',
+    "supersedes Feature 024's read-only guarantee (FR-010, SC-006)",
+  ]);
+
+  // The regeneration-hook + write-path rule and the never-authoritative +
+  // supersession rule are each an exact, globally unique line, so deletion,
+  // fence-hiding, comment-hiding, or relocation out of `## Status And Handoff`
+  // fails its owning assertion.
+  assertSectionRuleRejectsMutations(
+    relative,
+    heading,
+    'At every coordinator state change — the same moment the coordinator re-renders the task board with `board.mjs render --write` — the coordinator also runs the deterministic `node .github/skills/dude-lightweight-execution/backlog.mjs generate --root . --write` to rewrite both committed artifacts and commits `.dude/backlog.md` and `.dude/backlog.html`, spending no model tokens on markup; that `generate --write` is the surface\'s only write path and touches exactly those two artifacts.',
+  );
+  assertSectionRuleRejectsMutations(
+    relative,
+    heading,
+    'Both artifacts are derived projections and never authoritative — idea frontmatter is the source of lifecycle, `tasks.md` of execution, and `depends-on:` plus `.dude/state/backlog-order.md` of order — so this supersedes Feature 024\'s read-only guarantee (FR-010, SC-006) with the write path confined to exactly the two artifacts `.dude/backlog.md` and `.dude/backlog.html`.',
   );
 });
 

@@ -76,20 +76,30 @@ Implementation alone never closes a task. If evidence, review, ownership, render
 
 If Beads is enabled later, hand off through `@dude track`; after import, never continue Lightweight. To return from tracked execution, first sync Beads to the one-way markdown mirror. If Beads is unavailable, disclose that the mirror may be stale and require the user's choice before treating that snapshot as live again.
 
-### Cross-Idea Focus
+### Cross-Idea Backlog
 
-Separate from the lane-specific status above, `@dude status` also renders a cross-idea orientation over every in-flight idea rather than one active feature. The focus buckets span ideas across lifecycle states, both draft and defined, so this view is not gated to Lightweight Execution; `@dude status` may render it read-only regardless of any single feature's lane.
+Separate from the lane-specific status above, `@dude status` also renders a cross-idea orientation over every in-flight idea rather than one active feature. The backlog buckets span ideas across lifecycle states, both draft and defined, so this view is not gated to Lightweight Execution; `@dude status` may render it read-only regardless of any single feature's lane.
 
-`@dude status` invokes the generated `focus.mjs` read-only in three forms. Each is read-only, renders on demand in the reply, and writes no file:
+The single derivation places every in-flight idea in exactly one of six buckets — Active, Next, Blocked, Later, Backlog, Shipped — evaluating Shipped (a defined idea whose package has every task done) first, ahead of every ordering bucket, so that setting Shipped aside reproduces the prior five-bucket membership.
 
-- `node .github/skills/dude-lightweight-execution/focus.mjs --root .` (text focus buckets: Active, Next, Later, Blocked, Unordered)
-- `node .github/skills/dude-lightweight-execution/focus.mjs kanban --root .` (Mermaid kanban of the same buckets, on request)
-- `node .github/skills/dude-lightweight-execution/focus.mjs flowchart <idea-slug> --root .` (Mermaid flowchart of one feature's task `deps:`, on request)
+This deliberately supersedes Feature 024's five-bucket contract (FR-003, SC-004): the former Unordered bucket is renamed Backlog with its membership rule unchanged, and a completed idea reads as Shipped even when another idea names it as a dependency.
+
+`@dude status` invokes the generated `backlog.mjs` read-only in three forms. Each is read-only, renders on demand in the reply, and writes no file:
+
+- `node .github/skills/dude-lightweight-execution/backlog.mjs --root .` (text backlog buckets: Active, Next, Blocked, Later, Backlog, Shipped)
+- `node .github/skills/dude-lightweight-execution/backlog.mjs kanban --root .` (Mermaid kanban of the same buckets, on request)
+- `node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <idea-slug> --root .` (Mermaid flowchart of one feature's task `deps:`, on request)
+
+At every coordinator state change — the same moment the coordinator re-renders the task board with `board.mjs render --write` — the coordinator also runs the deterministic `node .github/skills/dude-lightweight-execution/backlog.mjs generate --root . --write` to rewrite both committed artifacts and commits `.dude/backlog.md` and `.dude/backlog.html`, spending no model tokens on markup; that `generate --write` is the surface's only write path and touches exactly those two artifacts.
+
+Each artifact is stamped with the generation time and a short source revision, recording a plain `unknown` when no revision is available.
+
+Both artifacts are derived projections and never authoritative — idea frontmatter is the source of lifecycle, `tasks.md` of execution, and `depends-on:` plus `.dude/state/backlog-order.md` of order — so this supersedes Feature 024's read-only guarantee (FR-010, SC-006) with the write path confined to exactly the two artifacts `.dude/backlog.md` and `.dude/backlog.html`.
 
 Two hand-maintained inputs feed the buckets:
 
 - `depends-on:` in an idea ledger's frontmatter is a plain space- or comma-separated scalar of idea slugs that declares hard feature-level ordering. Blocked, Next, and Later derive from it together with existing `[!]`/`blocked-by:` evidence; it is never a second board.
-- `.dude/state/focus-order.md` is an optional, hand-maintained ordered slug list whose only role is breaking ties among unblocked, non-active items. Its absence changes nothing, and the tool never writes it.
+- `.dude/state/backlog-order.md` is an optional, hand-maintained ordered slug list whose only role is breaking ties among unblocked, non-active items. Its absence changes nothing, and the tool never writes it.
 
 Non-goal, not guarded: a task `deps:` key that names another feature's task resolves as permanently unsatisfied, because dependency resolution is confined to a single file. Keep cross-feature ordering in `depends-on:`, never in a task `deps:`.
 
