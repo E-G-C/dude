@@ -387,14 +387,11 @@ transfer lane-state or close authority away from the coordinator.
 Under `--policy autonomous`, Work requires learning before a task is retried,
 escalated, blocked, closed, or reported as no progress once it has
 deterministically proved a repeat: the same normalized result twice, or the same
-approach twice. Work keeps the exact repeat evidence, records the learning result
-in the existing run and lane history, and needs either a materially different
-alternative or a complete no-alternative proof before it moves on. Hard stops
-and exhausted budgets still win immediately at their own scope: a task-scoped
-stop leaves that task unresolved and may let Work continue with one
-proven-independent task, while a run-wide stop ends the invocation. Work stays
-sequential throughout, adds no command, lane, board, or store, and `guarded`
-runs are unaffected.
+approach twice. Work keeps the exact repeat evidence, records the learning
+result in existing run and lane history, and needs either a materially different
+alternative or a complete no-alternative proof before it moves on. A terminal
+stop returns through the runner result and creates no post-stop scheduler. Work stays sequential throughout, adds no command, lane, board, or
+store, and guarded runs are unaffected.
 
 Inspection findings remain transient by default. Project-reusable knowledge is
 proposed through the existing memory workflow; broader recurring knowledge is

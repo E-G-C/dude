@@ -647,7 +647,7 @@ export function validateHostAdapterRequest(value, stateValue) {
   } else if (request.operation === 'commit-lane-receipt') {
     exactRecord(request.laneReceipt, ['input', 'permit', 'receipt'], [], 'HostAdapterRequest.laneReceipt');
   } else if (request.operation === 'audit-run') {
-    exactRecord(request.audit, ['input'], ['halt'], 'HostAdapterRequest.audit');
+    exactRecord(request.audit, ['input'], [], 'HostAdapterRequest.audit');
   }
   return request;
 }
@@ -1657,8 +1657,6 @@ function handleGovernance(session, governance, response, key, flag) {
       'resumedFrom', 'governanceIdentity', 'revision', 'phase', 'trigger',
       'failedApproachSet', 'projectionRef',
     ],
-    halt: ['scope', 'schedulingPreserved', 'outcome'],
-    'suspend-target': ['scope', 'suspension', 'projectionDisposition', 'projectionEvidence'],
   }[/** @type {string} */ (governance.action)];
   const body = exactRecord(
     top[key],
@@ -1670,11 +1668,6 @@ function handleGovernance(session, governance, response, key, flag) {
   text(body.reason, `recovery ${governance.action} response.${key}.reason`);
   const successor = stateEnvelope(body.state);
   if (!successor) return hardStop(session, 'successor-malformed');
-  if (governance.action === 'halt' && body[flag] === true) {
-    return successor.bytes === session.acceptedStateBytes
-      ? hardStop(session, /** @type {string} */ (body.reason))
-      : hardStop(session, 'hard-stop-state-mismatch');
-  }
   if (body[flag] !== true) {
     if (successor.bytes !== session.acceptedStateBytes) return hardStop(session, 'refused-successor-mismatch');
     const incidentClass = {
@@ -1695,8 +1688,6 @@ function handleGovernance(session, governance, response, key, flag) {
     'verify-no-progress': ['verification'],
     'controlled-end': ['controlledEnd'],
     'resume-learning': ['resumedFrom', 'governanceIdentity', 'revision', 'phase', 'trigger', 'failedApproachSet'],
-    halt: ['scope', 'schedulingPreserved'],
-    'suspend-target': ['suspension', 'projectionDisposition', 'projectionEvidence'],
   }[/** @type {string} */ (governance.action)];
   if (successFields.some((field) => !Object.hasOwn(body, field))) {
     return hardStop(session, 'runtime-result-malformed');
@@ -2157,7 +2148,6 @@ function auditRun(session, request, invoke) {
   const top = exactRecord(invoke('audit', {
     state: JSON.parse(/** @type {string} */ (session.acceptedStateBytes)),
     input: audit.input,
-    ...(Object.hasOwn(audit, 'halt') ? { halt: audit.halt } : {}),
   }), ['inspection', 'audit'], [], 'recovery audit response');
   requireSessionInspection(
     /** @type {Record<string, unknown>} */ (top.inspection),
@@ -2560,7 +2550,7 @@ function checkpointKeyOf(binding) {
 }
 
 /** @param {unknown} value @param {string} label */
-function validateCheckpointRecord(value, label) {
+function validateHostCheckpointRecord(value, label) {
   const checkpoint = exactRecord(detachedData(value, label), [
     'version', 'checkpointKey', 'invocationIdentity', 'workspaceIdentity', 'target', 'ownerIdentity',
     'lane', 'acceptedStateBytes', 'acceptedStateHash', 'taskPrestateIdentity', 'lanePrestateIdentity',
@@ -2733,7 +2723,7 @@ function validateCheckpointResult(value, operation, checkpointKey) {
   if (result.checkpointKey !== checkpointKey) {
     invalid(`${label}.checkpointKey`, 'must bind the derived workspace-target key');
   }
-  if (extra[0] === 'record') validateCheckpointRecord(result.record, `${label}.record`);
+  if (extra[0] === 'record') validateHostCheckpointRecord(result.record, `${label}.record`);
   if (extra[0] === 'reason') text(result.reason, `${label}.reason`);
   if (extra[0] === 'diagnostic') validateCheckpointDiagnostic(result.diagnostic, `${label}.diagnostic`);
   return result;
@@ -3167,7 +3157,7 @@ export function createTemporaryCheckpointStore(optionsValue) {
   /** @param {string} serialized */
   function parseCheckpoint(serialized) {
     const parsed = JSON.parse(serialized);
-    const checkpoint = validateCheckpointRecord(parsed, 'checkpoint record');
+    const checkpoint = validateHostCheckpointRecord(parsed, 'checkpoint record');
     if (canonicalJson(checkpoint) !== serialized) {
       invalid('checkpoint record', 'must be canonical bytes without trailing data');
     }
@@ -3266,7 +3256,7 @@ export function createTemporaryCheckpointStore(optionsValue) {
       let key = null;
       try {
         key = derivedKey(bindingValue, 'checkpoint store claim binding');
-        const next = validateCheckpointRecord(initialCheckpoint, 'checkpoint store claim record');
+        const next = validateHostCheckpointRecord(initialCheckpoint, 'checkpoint store claim record');
         if (next.checkpointKey !== key) invalid('checkpoint store claim record', 'must bind the derived key');
         const { root, claimPath, checkpointPath } = artifactPaths(key);
         // Post-clean preflight: both controlled artifacts must be absent before a fresh claim.
@@ -3370,7 +3360,7 @@ export function createTemporaryCheckpointStore(optionsValue) {
         hash(active.workerToken, 'checkpoint store update worker.workerToken');
         integer(active.workerGeneration, 'checkpoint store update worker.workerGeneration', true);
         const revisions = exactRecord(expected, ['acceptedRevision', 'hostRevision'], [], 'checkpoint store update revisions');
-        const next = validateCheckpointRecord(nextCheckpoint, 'checkpoint store update record');
+        const next = validateHostCheckpointRecord(nextCheckpoint, 'checkpoint store update record');
         const pair = readPair(key);
         const stale = ownershipFailure(key, pair, /** @type {Record<string, unknown>} */ (worker), revisions);
         if (stale) return stale;
@@ -3397,7 +3387,7 @@ export function createTemporaryCheckpointStore(optionsValue) {
         const prior = validateWorker(priorWorker, 'checkpoint store handoff prior worker');
         const replacement = validateWorker(replacementWorker, 'checkpoint store handoff replacement worker');
         const revisions = exactRecord(expected, ['acceptedRevision', 'hostRevision'], [], 'checkpoint store handoff revisions');
-        const next = validateCheckpointRecord(nextCheckpoint, 'checkpoint store handoff record');
+        const next = validateHostCheckpointRecord(nextCheckpoint, 'checkpoint store handoff record');
         const pair = readPair(key);
         const stale = ownershipFailure(key, pair, {
           invocationIdentity: next.invocationIdentity,

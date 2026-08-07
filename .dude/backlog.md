@@ -1,6 +1,6 @@
 # Backlog
 
-_Generated 2026-08-07 21:10 UTC, source b84a24c. A derived projection, never authoritative._
+_Generated 2026-08-07 22:11 UTC, source d50e057. A derived projection, never authoritative._
 
 ## Active
 
@@ -24,7 +24,6 @@ _(none)_
 - core-dogfood-preview
 - good-enough-delivery
 - multi-dude-work-coordination
-- remove-unused-authority-surfaces (spec-026)
 
 ## Shipped
 
@@ -44,6 +43,7 @@ _(none)_
 - historical-core-dogfood-fixture-repair (spec-011)
 - pre-work-log-learning (spec-004)
 - remove-legacy-compatibility (spec-002)
+- remove-unused-authority-surfaces (spec-026)
 - runner-reason-code-coverage-fix (spec-022)
 - ship-command (spec-017)
 - simplify-context-footprint-audit (spec-006)
@@ -67,7 +67,6 @@ kanban
     core-dogfood-preview[core-dogfood-preview]
     good-enough-delivery[good-enough-delivery]
     multi-dude-work-coordination[multi-dude-work-coordination]
-    remove-unused-authority-surfaces[remove-unused-authority-surfaces spec-026]
   shipped[Shipped]
     automatic-core-dogfood-promotion[automatic-core-dogfood-promotion spec-008]
     automatic-unchanged-intent-redefinition[automatic-unchanged-intent-redefinition spec-015]
@@ -85,6 +84,7 @@ kanban
     historical-core-dogfood-fixture-repair[historical-core-dogfood-fixture-repair spec-011]
     pre-work-log-learning[pre-work-log-learning spec-004]
     remove-legacy-compatibility[remove-legacy-compatibility spec-002]
+    remove-unused-authority-surfaces[remove-unused-authority-surfaces spec-026]
     runner-reason-code-coverage-fix[runner-reason-code-coverage-fix spec-022]
     ship-command[ship-command spec-017]
     simplify-context-footprint-audit[simplify-context-footprint-audit spec-006]

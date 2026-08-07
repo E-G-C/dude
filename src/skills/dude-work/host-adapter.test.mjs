@@ -328,7 +328,7 @@ nodeTest('the closed semantic operation set composes every ordinary runtime rout
     }],
     ['record-attempt-result', { attemptResult: { input: {}, result: specialistResult('closed-operations') } }],
     ['settle-effect', { input: {} }],
-    ['advance-governance', { governance: { action: 'halt', input: {}, halt: { kind: 'safety' } } }],
+    ['advance-governance', { governance: { action: 'controlled-end', input: {} } }],
     ['prepare-authoritative-projection', { projection: { input: {} } }],
     ['authorize-lane-effect', { laneEffect: { input: {}, mutation: {}, lanePrestate: {}, targetMapping: {} } }],
     ['apply-lane-effect', {
@@ -2318,17 +2318,6 @@ nodeTest('every governance intent uses real recovery routes and rejects changed 
     const selected = projectedGovernanceBranch(root, required, 'selected-alternative');
     const noProgress = projectedGovernanceBranch(root, required, 'no-progress');
     const inspected = inspectedGovernanceBranch(root, selected, required);
-    const targetHalt = {
-      scope: 'target',
-      kind: 'unavailable-dependency',
-      reason: 'target-dependency-unavailable',
-      evidenceIdentity: governanceHash('target-halt'),
-      target: clone(TARGET),
-    };
-    const scheduling = {
-      stopped: { reason: 'external-dependency', changeSet: ['src/governed-target.mjs'] },
-      candidate: { target: clone(SECOND_TARGET), changeSet: ['src/disjoint-target.mjs'], deps: [] },
-    };
     const rows = [
       {
         name: 'review-learning',
@@ -2380,30 +2369,6 @@ nodeTest('every governance intent uses real recovery routes and rejects changed 
           input: sealedRetentionInput(root, required.governedEvents, required.governedEvents, required.streams),
         }),
         auxiliary(body) { body.governanceIdentity = governanceHash('wrong-governance'); },
-      },
-      {
-        name: 'halt',
-        state: required.state,
-        expected: 'hard-stop',
-        reason: 'target-halted',
-        governance: () => ({
-          action: 'halt',
-          input: sealedRetentionInput(root, required.governedEvents, required.governedEvents, required.streams),
-          halt: targetHalt,
-        }),
-        auxiliary(body) { body.scope = 'run'; },
-      },
-      {
-        name: 'suspend-target',
-        state: selected.state,
-        expected: 'accepted',
-        governance: () => ({
-          action: 'suspend-target',
-          input: sealedRetentionInput(root, selected.learnedEvents, selected.learnedEvents, required.streams),
-          scheduling,
-          halt: targetHalt,
-        }),
-        auxiliary(body) { body.suspension.schedulingEvidenceIdentity = governanceHash('wrong-suspension'); },
       },
     ];
 
@@ -5472,17 +5437,6 @@ nodeTest('every governance action, both settlement branches, and an unpermitted 
     const selected = projectedGovernanceBranch(root, required, 'selected-alternative');
     const noProgress = projectedGovernanceBranch(root, required, 'no-progress');
     const inspected = inspectedGovernanceBranch(root, selected, required);
-    const targetHalt = {
-      scope: 'target',
-      kind: 'unavailable-dependency',
-      reason: 'target-dependency-unavailable',
-      evidenceIdentity: governanceHash('routing-target-halt'),
-      target: clone(TARGET),
-    };
-    const scheduling = {
-      stopped: { reason: 'external-dependency', changeSet: ['src/governed-target.mjs'] },
-      candidate: { target: clone(SECOND_TARGET), changeSet: ['src/disjoint-target.mjs'], deps: [] },
-    };
     /** @type {[string, Record<string, unknown>, ()=>Record<string, unknown>, string][]} */
     const actions = [
       ['review-learning', required.state, () => ({
@@ -5505,17 +5459,6 @@ nodeTest('every governance action, both settlement branches, and an unpermitted 
       ['resume-learning', required.state, () => ({
         action: 'resume-learning',
         input: sealedRetentionInput(root, required.governedEvents, required.governedEvents, required.streams),
-      }), 'accepted'],
-      ['halt', required.state, () => ({
-        action: 'halt',
-        input: sealedRetentionInput(root, required.governedEvents, required.governedEvents, required.streams),
-        halt: targetHalt,
-      }), 'hard-stop'],
-      ['suspend-target', selected.state, () => ({
-        action: 'suspend-target',
-        input: sealedRetentionInput(root, selected.learnedEvents, selected.learnedEvents, required.streams),
-        scheduling,
-        halt: targetHalt,
       }), 'accepted'],
     ];
     for (const [action, governedState, governance, expected] of actions) {
@@ -5547,8 +5490,6 @@ nodeTest('every governance action, both settlement branches, and an unpermitted 
     'advance-governance:verify-no-progress': ['transition:verify-no-progress'],
     'advance-governance:controlled-end': ['transition:controlled-end'],
     'advance-governance:resume-learning': ['transition:resume-governance'],
-    'advance-governance:halt': ['transition:halt'],
-    'advance-governance:suspend-target': ['transition:suspend-target'],
   });
 });
 

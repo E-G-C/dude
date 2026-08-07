@@ -276,6 +276,11 @@ from that path. The bridge is the single narrow exception and carries one
 ordinary accepted completion; every other permit, close, and governance boundary
 is unchanged.
 
+The adapter exposes exactly ten semantic operations, and the production runner
+constructs only the four learning-governance actions `review-learning`,
+`bind-alternative`, `verify-no-progress`, and `controlled-end`. Completion and
+hard stops still return through the runner terminal result path.
+
 Autonomous attestation is cooperative, not cryptographic. The adapter builds
 both trusted captures from the sole Tester and Reviewer results returned by
 their actual dispatches, using target, attempt, source-revision, dispatch, and
@@ -307,13 +312,11 @@ evidence, the halt is reported unresolved instead. Guarded runs are unaffected.
 
 Under `autonomous`, a deterministically repeated result or approach on one task
 requires learning before that task may be retried, escalated, blocked, closed,
-or called no progress. The requirement binds that task alone: existing hard
-stops and budgets keep immediate precedence at their own scope, a task-scoped
-stop may leave the task unresolved while one proven-independent task continues,
-and a run-wide stop ends the invocation. Learning evidence, its retention, and
-the run audit reuse the existing current-run and lane-history surfaces, so no
-second ledger, lane, or command appears. Work stays sequential, and guarded and
-non-Work behavior is unchanged.
+or called no progress. Learning evidence, its retention, and the run audit reuse
+the existing current-run and lane-history surfaces, so no second ledger, lane,
+command, or post-stop scheduler appears. A terminal hard stop is reported
+through the runner with its named reason or an explicit unresolved report. Work
+stays sequential, and guarded and non-Work behavior is unchanged.
 
 ```mermaid
 flowchart TD
@@ -371,19 +374,15 @@ flowchart TD
 - Do not use `tasks.md` as the live board after import; it is only a
   non-authoritative Beads mirror when updated in this lane.
 
-### Autonomous Objective Evaluation
-
-`autonomous` Work can carry an optional Progress Objective, but it changes no
-authority: objective records are evidence only and never establish ownership,
-authorize effects, mutate task state, or satisfy a lane close.
+### Objective Registry Inspection Evidence
 
 The objective registry is definition-compiled and plan-owned. It is embedded in
-the feature's `plan.md`, keyed by durable task keys, and consumed by runtime
-only through the `definition-plan` evidence item, never inferred from prose. Its
-markers are documented with placeholders only; the assembled active start/end
-pair is described in the schema and is never written on a standalone line in
-these docs. Feature 005's own plan carries no active marker pair, so it compiles
-no objective.
+the feature `plan.md`, keyed by durable task keys, and read only through the
+autonomous `definition-plan` evidence item. Inspection validates the registry
+and its evaluation contracts; runtime prose never supplies or infers them.
+
+The marker spellings are shown as placeholders only, so these docs never
+activate a registry:
 
 ```text
 <OBJECTIVE_REGISTRY_START>
@@ -391,34 +390,17 @@ no objective.
 <OBJECTIVE_REGISTRY_END>
 ```
 
-When an objective is present, each attempt produces a candidate that a
-checkpoint captures, and exactly five authoritative retention gates run in fixed
-order: `authorization`, `checkpoint`, `hard-constraints`, `comparison`, and
-`independent-review`. There is no sixth, optional, alias, or caller-selected
-gate. A mandatory `candidate-bound-completion` verification is always part of
-`hard-constraints`, even when the registry declares zero objective checks.
+Registry acquisition is inspection evidence, not an execution engine. Production
+Work does not execute objective candidates, checkpoint them, run retention gates
+or comparisons, settle sequences, or create an evaluation sequence. A missing
+registry yields `registryHash: null` and follows the same ordinary autonomous
+route.
 
-Comparators are kind-specific: a numeric threshold, ordinal levels, or a
-unanimous rubric. Equivalent defaults to non-keep and qualifies only under a
-predeclared independent-review tie rule whose distinct tie record prefers the
-candidate. Any binding drift makes the comparison incomparable, restores the
-exact prestate, and stops; a legal rebaseline after explicit re-definition also
-stops the old sequence and restores its proven incumbent first. Keep requires a
-qualifying relation and all five gates passing, and every non-keep outcome
-restores first.
-
-Objective comparison, learning-review, and sequence-closed events project into
-both existing surfaces — the current-run capture and lane history — before any
-bounded objective state is released. The Lightweight lane line is exactly the
-`- dude-run-event: ` prefix followed by the canonical event JSON, and no second
-ledger is created.
-
-The optional run audit is a concise `AuditSummary` renderer over freshly
-acquired current-run and lane history; it writes no file. Each closed
-`objectiveSequences` row carries exactly one outcome — `kept`, `discarded`,
-`blocked`, or `unsettled`. A task with no objective contributes no
-`objectiveSequences` row, and a whole run with no objective yields an empty
-`objectiveSequences` array.
+Existing optional evaluation-sequence and learning-review references in
+`RunState` remain validated and carried. Learning governance may bind one
+already-valid uniquely matching sequence but does not create one. Ordinary
+versioned audit, learning-review projection, lane effects, and terminal stop
+reporting remain unchanged.
 
 ## Responsibility Map
 

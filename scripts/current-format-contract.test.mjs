@@ -2359,113 +2359,43 @@ test('T007 feature-005 policy selection and autonomous definition-plan evidence 
   assert.match(section, /`guarded` opens no plan path and reads no\s+plan/);
 });
 
-test('T007 feature-005 objective evaluation is documented in reference without an active registry marker', () => {
-  const raw = read('docs/reference.md');
-  const section = markdownSection(raw, '## Execution Workflow');
-
-  // Objective registry: definition-compiled, plan-owned, durable task keys, placeholder-only markers.
+test("T004 Objective Registry acquisition is documented as inspection evidence only", () => {
+  const raw = read("docs/reference.md");
+  const section = markdownSection(raw, "## Execution Workflow");
+  assert.match(section, /### Objective Registry Inspection Evidence/);
   assert.match(section, /objective registry is definition-compiled and plan-owned/i);
-  assert.match(section, /keyed by durable task keys/i);
-  assert.match(
-    section,
-    /consumed by runtime\s+only through the `definition-plan` evidence item, never inferred/i,
-  );
-  assert.match(section, /markers are documented with placeholders only/i);
-  assert.match(section, /Feature 005's own plan carries no active marker pair/i);
+  assert.match(section, /read only through the\s+autonomous `definition-plan` evidence item/i);
+  assert.match(section, /Inspection validates the registry\s+and its evaluation contracts/i);
+  assert.match(section, /inspection evidence, not an execution engine/i);
+  assert.match(section, /does not execute objective candidates[\s\S]*?retention gates[\s\S]*?create an evaluation sequence/i);
+  assert.match(section, /optional evaluation-sequence and learning-review references[\s\S]*?remain validated and carried/i);
+  assert.doesNotMatch(section, /each attempt produces a candidate|five authoritative retention gates|sequence-closed events project|`AuditSummary` renderer/i);
   assert.match(raw, /<OBJECTIVE_REGISTRY_START>/);
   assert.match(raw, /<OBJECTIVE_REGISTRY_END>/);
-
-  // Exactly five retention gates in fixed order with no sixth/optional/caller-selected gate, plus
-  // the always-present candidate-bound-completion verification.
-  assert.match(
-    section,
-    /`authorization`,\s*`checkpoint`,\s*`hard-constraints`,\s*`comparison`,\s*and\s*`independent-review`/,
-  );
-  assert.match(section, /no sixth, optional, alias, or caller-selected\s+gate/i);
-  assert.match(section, /`candidate-bound-completion`[\s\S]*?always[\s\S]*?zero objective checks/i);
-
-  // Comparators, equivalent-tie handling, keep-or-restore, and drift/rebaseline.
-  assert.match(section, /numeric threshold, ordinal levels, or a\s+unanimous rubric/i);
-  assert.match(section, /Equivalent defaults to non-keep/i);
-  assert.match(section, /binding drift makes the comparison incomparable, restores[\s\S]*?stops/i);
-  assert.match(
-    section,
-    /rebaseline after explicit re-definition also\s+stops the old sequence and restores/i,
-  );
-  assert.match(section, /every non-keep outcome\s+restores first/i);
-
-  // Events, dual projection into current-run and lane-history, the lane line, and no second ledger.
-  assert.match(
-    section,
-    /comparison, learning-review, and sequence-closed events project into\s+both existing surfaces/i,
-  );
-  assert.match(section, /current-run capture and lane history/i);
-  assert.match(section, /`- dude-run-event: `/);
-  assert.match(section, /no second\s+ledger is created/i);
-
-  // AuditSummary with exactly the four outcomes; no-objective yields no row / an empty array;
-  // the audit renderer writes no file and the `no-objective` token is never listed as an outcome.
-  assert.match(section, /`AuditSummary` renderer[\s\S]*?writes no file/i);
-  assert.match(section, /`kept`,\s*`discarded`,\s*`blocked`,\s*or\s*`unsettled`/);
-  assert.match(section, /task with no objective contributes no\s+`objectiveSequences` row/i);
-  assert.match(section, /whole run with no objective yields an empty\s+`objectiveSequences` array/i);
-  assert.doesNotMatch(section, /no-objective/);
-
-  // No assembled active start/end marker occupies a standalone line in any of the three docs.
-  const activeStart = '<' + '!-- dude:objective-registry:start --' + '>';
-  const activeEnd = '<' + '!-- dude:objective-registry:end --' + '>';
+  const activeStart = "<" + "!-- dude:objective-registry:start --" + ">";
+  const activeEnd = "<" + "!-- dude:objective-registry:end --" + ">";
   for (const [relative] of RECOVERY_DOC_SECTIONS) {
-    const lines = read(relative).split('\n');
+    const docLines = read(relative).split("\n");
     assert.equal(
-      lines.some((line) => line.trim() === activeStart || line.trim() === activeEnd),
+      docLines.some((line) => line.trim() === activeStart || line.trim() === activeEnd),
       false,
       `${relative}: no active objective-registry marker on a standalone line`,
     );
   }
 });
 
-test('T007 feature-005 autonomous modes and objective lifecycle are documented in workflow', () => {
-  const section = markdownSection(read('docs/workflow.md'), '### Optional Continuous Work');
-
-  // Autonomous work modes: guarded default vs autonomous auto-authorizing; sequential; no fan-out.
-  assert.match(
-    section,
-    /Autonomous work modes: `guarded` is the default; `autonomous` is an explicit\s+opt-in/i,
-  );
-  assert.match(
-    section,
-    /auto-authorizes the next guarded attempt at recoverable post-block,\s+post-failure, and post-review checkpoints/i,
-  );
-  assert.match(
-    section,
-    /Every settled hard stop, both numeric\s+budgets, fresh verification, and independent review still apply/i,
-  );
+test("T004 workflow documents registry inspection without objective execution", () => {
+  const section = markdownSection(read("docs/workflow.md"), "### Optional Continuous Work");
+  assert.match(section, /`guarded` is the default; `autonomous` is an explicit\s+opt-in/i);
+  assert.match(section, /Every settled hard stop, both numeric\s+budgets, fresh verification, and independent review still apply/i);
   assert.match(section, /scheduling\s+stays sequential, with no concurrency or fan-out/i);
-
-  // Objective lifecycle at a glance: definition-compiled, never inferred, consumed via definition-plan;
-  // candidate -> checkpoint -> five gates -> keep-or-restore; non-keep restores; drift/rebaseline stops.
-  assert.match(section, /Progress Objective is compiled only during\s+definition and never inferred at runtime/i);
-  assert.match(section, /consumed only through the\s+`definition-plan` evidence item/i);
-  assert.match(
-    section,
-    /candidate that a\s+checkpoint captures, then five retention gates decide keep-or-restore/i,
-  );
-  assert.match(section, /non-keep outcome restores the exact prestate first/i);
-  assert.match(section, /drift or an\s+explicit rebaseline stops the sequence and restores/i);
-
-  // Projection and audit line.
-  assert.match(
-    section,
-    /comparison, learning-review, and sequence-closed events project into\s+the existing current-run and lane-history surfaces/i,
-  );
-  assert.match(section, /run audit is a concise renderer[\s\S]*?writes no file and creates no second ledger/i);
-
-  // No-objective behavior: present definition-plan, registryHash null, no sequence, ordinary path.
-  assert.match(
-    section,
-    /With no compiled objective, `autonomous` still yields a present\s+`definition-plan` evidence item with `registryHash: null`/i,
-  );
-  assert.match(section, /creates no evaluation\s+sequence, and follows the ordinary autonomous path/i);
+  assert.match(section, /Objective Registry acquisition at a glance/i);
+  assert.match(section, /reads the\s+plan-owned registry only through the `definition-plan` evidence item/i);
+  assert.match(section, /This is inspection evidence only/i);
+  assert.match(section, /does not start candidate execution[\s\S]*?sequence settlement/i);
+  assert.match(section, /With no registry[\s\S]*?`registryHash: null`[\s\S]*?ordinary autonomous path/i);
+  assert.match(section, /optional evaluation-sequence and learning-review references[\s\S]*?remain validated and carried/i);
+  assert.doesNotMatch(section, /five retention gates decide keep-or-restore|sequence-closed events project|run audit is a concise renderer/i);
 });
 
 for (const [relative, heading] of RECOVERY_DOC_SECTIONS) {
@@ -2822,7 +2752,6 @@ const GOVERNANCE_DETAIL_MARKERS = [
   ['runtime transition routes', /`transition (?:prepare-projection|verify-projection|bind-post-learning-inspection|verify-no-progress|issue-attempt-permit|issue-lane-permit|commit-lane-receipt|controlled-end|resume-governance)`/],
   ['projection batch bounds', /\b17 events\b|\bexactly one approach event\b/],
   ['equivalence and comparison bases', /\bnormalized basis\b|\bfailed-approach set\b/],
-  ['end-form authority', /\bcontrolled-end authority\b|\bimmediate halt end\b/i],
 ];
 
 // One acyclic permit order. Nodes are the literal backticked route tokens the
@@ -3852,37 +3781,24 @@ test('T007 the Work owner states every governed ordering, scope, and evidence ru
         [/never mutates a lane/i, /ordinary CLI/i, /direct edit/i],
         [/Lightweight and tracked/i, /ambiguous tracked mapping/i, /fails closed/i],
       ]],
-      ['scoped halts and budgets', [
-        [/target-scoped hard stop/i, /per-target recovery budget/i, /that target alone/i, /no unrelated scheduling authority/i],
-        [/run-wide/i, /overall budget/i, /stops the invocation/i],
-        [/no halt/i, /clears/i, /controlled-end authority/i],
-      ]],
-      ['sequential disjoint scheduling without concurrency', [
-        [/scheduling stays sequential/i],
-        [/suspended unchanged/i, /dependency and change-set rules/i, /disjoint and independent/i],
-        [/scheduler action/i, /not a target disposition/i],
-        [/no concurrent/i, /one at a time/i],
-        [/never revisited/i, /new distinguishing evidence/i, /materially different alternative/i],
-      ]],
-      ['controlled unresolved end eligibility', [
+      ["controlled unresolved end eligibility", [
         [/`transition controlled-end`/, /`alternative-inspected`/, /before attempt-permit issuance/i],
         [/`no-progress-verified`/, /before the lane no-progress disposition/i],
         [/branch for audit/i, /pending and unchanged/i, /authorizes no attempt/i],
-        [/immediate halt end/i, /no controlled-end permit, mutation, record, or receipt/i],
       ]],
       ['resume restores or re-derives before any transition', [
         [/`transition resume-governance`/, /(?:restores|re-derives)/i, /before any normal transition/i],
         [/exact captured basis/i, /chronology/i, /existing history/i],
         [/neither safely retained nor deterministically re-derivable/i, /stop/i],
       ]],
-      ['conditional audit over existing history', [
+      ["ordinary audit over existing history", [
         [/`audit`/, /current-run/i, /lane history/i, /never a second store/i],
-        [/always reports/i, /affected target/i, /governance status/i, /invocation outcome/i],
-        [/conditional/i, /resolved alternative/i, /resolved no-progress/i, /immediate halt end/i, /controlled end/i],
-        [/no audit claims/i, /target completion/i],
+        [/in-progress or controlled-end learning governance/i, /freshly reacquired evidence/i],
+        [/Named hard-stop reporting remains separate/i, /runner terminal chokepoint/i],
+        [/No audit claims/i, /target completion/i],
       ]],
-      ['objective independence', [
-        [/objective/i, /no objective/i, /never invents an objective/i],
+      ["Objective Registry inspection only", [
+        [/Objective Registry evidence/i, /Inspection may validate/i, /neither executes objective candidates nor creates an evaluation sequence/i],
       ]],
     ]),
     ...staleRecoveryPhrases(owner),
@@ -4467,6 +4383,35 @@ test('T003 the adapter owns every ordinary Work runtime route', () => {
   ]);
 });
 
+test("T004 production Work topology keeps exactly ten operations and four governance actions", () => {
+  const adapter = read(ADAPTER_SOURCE);
+  const runner = read(ADAPTER_RUNNER_SOURCE);
+  const operationBlock = adapter.match(/const OPERATIONS = Object\.freeze\(\[([\s\S]*?)\]\);/);
+  assert.ok(operationBlock, "adapter operation declaration");
+  const operations = [...operationBlock[1].matchAll(/\x27([^\x27]+)\x27/g)].map((match) => match[1]);
+  assert.deepEqual(operations, [
+    "fresh-inspection",
+    "authorize-attempt",
+    "record-attempt-result",
+    "settle-effect",
+    "advance-governance",
+    "prepare-authoritative-projection",
+    "authorize-lane-effect",
+    "apply-lane-effect",
+    "commit-lane-receipt",
+    "audit-run",
+  ]);
+  const actions = [...new Set(
+    [...runner.matchAll(/action: \x27([^\x27]+)\x27/g)].map((match) => match[1]),
+  )].sort();
+  assert.deepEqual(actions, ["bind-alternative", "controlled-end", "review-learning", "verify-no-progress"]);
+  assert.match(runner, /export async function runHostAdapter/);
+  assert.match(runner, /adapter = createHostAdapter\(/);
+  assert.match(runner, /runCommand\(command, lowLevelRequest\)/);
+  assert.match(runner, /return finish\(endedRow\);/);
+  assert.match(runner, /describeUnattendedHalt/);
+});
+
 test('T003 the supervisor owns invocation identity and exactly one writing worker', () => {
   const continuity = adapterOwnerSection(ADAPTER_CONTINUITY_SECTION);
   const failures = missingParagraphRequirements(continuity, [
@@ -4601,7 +4546,7 @@ test('T003 checkpoint lifecycle keeps one exclusive claim and confirmed bounded-
   const failures = missingParagraphRequirements(lifecycle, [
     ['one exclusive claim per key lives outside the workspace', [
       [
-        /This section governs the host continuity checkpoint, not the objective candidate checkpoint host/,
+        /This section governs only the host continuity checkpoint used by the adapter runner/,
         /One exclusive ownership claim exists per canonical workspace-target key, created before any worker write/,
         /below the operating system temporary directory and never in the workspace/,
         /never project file payloads/,

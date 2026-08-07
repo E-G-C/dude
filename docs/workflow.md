@@ -382,29 +382,23 @@ missing, it says so and marks the halt unresolved. Nothing here changes
 Repeated failure under `autonomous` requires learning before anything else
 happens to that task. A proven repeat, meaning the same normalized result twice
 or the same approach twice, seals retry, escalation, block, close, and
-no-progress on that task until Work has recorded a learning result in the
-existing run and lane history and has either selected a materially different
-alternative or proved that none exists. A task-scoped stop can leave that task
-unresolved while Work continues with one proven-independent task; a run-wide
-stop ends the run. Nothing in this path is concurrent, and `guarded` runs never
-enter it.
+no-progress until Work records a learning result in existing run and lane
+history and either selects a materially different alternative or proves none
+exists. A terminal stop returns through the runner result; no post-stop
+suspension or scheduling route is created. Nothing in this path is concurrent,
+and guarded runs never enter it.
 
-Objective evaluation at a glance: a Progress Objective is compiled only during
-definition and never inferred at runtime, and it is consumed only through the
-`definition-plan` evidence item. Each attempt forms a candidate that a
-checkpoint captures, then five retention gates decide keep-or-restore. Any
-non-keep outcome restores the exact prestate first, and objective drift or an
-explicit rebaseline stops the sequence and restores its proven incumbent before
-continuing.
+Objective Registry acquisition at a glance: an autonomous Inspection reads the
+plan-owned registry only through the `definition-plan` evidence item and
+validates its evaluation contracts. This is inspection evidence only. Production
+Work does not start candidate execution, checkpoints, retention gates,
+comparisons, evaluation sequences, or sequence settlement.
 
-Objective comparison, learning-review, and sequence-closed events project into
-the existing current-run and lane-history surfaces before any bounded objective
-state is released. The optional run audit is a concise renderer over that
-history; it writes no file and creates no second ledger.
-
-With no compiled objective, `autonomous` still yields a present
-`definition-plan` evidence item with `registryHash: null`, creates no evaluation
-sequence, and follows the ordinary autonomous path.
+With no registry, `autonomous` still yields a present `definition-plan` evidence
+item with `registryHash: null` and follows the ordinary autonomous path.
+Existing optional evaluation-sequence and learning-review references in
+`RunState` remain validated and carried, while ordinary audit and
+learning-review projection continue on their live paths.
 
 Work reaches its runtime through one host adapter boundary. Recovery is accepted
 only for persistent-shell death and replaceable adapter-worker death, and only
@@ -420,6 +414,11 @@ mutation through the lane's own owner, commits the receipt, and derives a
 read-only run audit. No board command line and no direct file edit sits on that
 path. It is the single narrow exception, and it carries one ordinary accepted
 completion; every other permit, close, and governance boundary is unchanged.
+
+The adapter keeps exactly ten semantic operations. Its production runner
+constructs only `review-learning`, `bind-alternative`, `verify-no-progress`, and
+`controlled-end`, then returns completion or a named hard stop through the
+terminal result path.
 
 When the host adapter corrects a host incident automatically, it reports one
 typed inline notice covering the incident class, the preserved accepted state,
