@@ -1,8 +1,8 @@
 ---
 title: Backlog Report
 slug: backlog-report
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/025-backlog-report/spec.md
 ---
 
 # Idea: Backlog Report
@@ -87,6 +87,12 @@ These are the coordinator's working assumptions, not user decisions. Correct any
 - Write both artifacts to `.dude/backlog.md` and `.dude/backlog.html`, commit them, and regenerate them at every coordinator state change alongside the existing task board re-render.
 - Ship all four prototype report sections: summary counts, the lane board with per-feature task progress, task-order chains, and recent activity.
 - Stamp the generation time and the source revision into both artifacts so a reader can see staleness on the page.
+- Present six buckets (Active, Next, Blocked, Later, Backlog, Shipped) with Shipped evaluated first, keeping the derivation faithful to the shipped five-bucket logic and resolving the done-idea-named-as-a-dependency wrinkle.
+- Colour each lane by a consistent traffic-light meaning: Shipped reads as done, Blocked as blocked, Later as deferred, Active as in progress, Next as upcoming, and Backlog as unprioritized, so done and next never share a colour.
+- Render both artifacts from one bucket derivation through two renderers, keeping the portfolio rollup, work-item cards, state pills, task-order chains, and recent activity, all carrying real derived data.
+- Make the report self-contained by baking a validated copy of the chosen visual language into the committed template and reading no installed pack at generation time, so it renders identically whether or not that pack is installed.
+- Present one look in the report and only honest chrome (title, snapshot stamp, and factual counts), dropping any navigation or switch that cannot function in a static offline file.
+- Supersede Feature 024's five-bucket contract (FR-003, SC-004) and read-only guarantee (FR-010, SC-006) for this surface only, without reopening or editing the closed Feature 024 package.
 
 ## Constraints
 
@@ -102,6 +108,9 @@ These are the coordinator's working assumptions, not user decisions. Correct any
 - Do not weaken the read-only guarantee on the existing text and Mermaid surfaces. Define the write path as a distinct generation step instead.
 - Do not remove the `Later` bucket in this feature. It is already shipped and tested, so removing it is a separate decision.
 - Do not carry the Copilot app canvas extension here. It lives in the `backlog-canvas` idea and depends on this feature's HTML renderer.
+- Do not couple the report to an optional visual pack at generation time: bake validated token values and component styling into the committed template and update them deliberately if that pack changes.
+- Do not present a palette or theme switcher, embed more than one palette, or render any non-functioning chrome such as navigation that leads nowhere in a static offline file.
+- Confine the write path to exactly `.dude/backlog.md` and `.dude/backlog.html`, adding no other persistent state, second board, or execution authority, and superseding Feature 024's guarantees for this surface only without editing its closed package.
 
 ## Definition Checklist
 
@@ -122,4 +131,5 @@ These are the coordinator's working assumptions, not user decisions. Correct any
 - 2026-08-07 UTC - brainstorm captured
 - 2026-08-07 UTC - brainstorm rerun: Copilot app canvas extension as a third surface
 - 2026-08-07 UTC - brainstorm rerun: canvas surface split out to backlog-canvas; questions 1-9 answered
+- 2026-08-07 UTC - defined as feature 025 (.dude/specs/025-backlog-report/spec.md): spec/plan/tasks staged; focus->backlog rename, sixth Shipped bucket and Backlog rename superseding Feature 024 FR-003/SC-004, write path superseding FR-010/SC-006, two committed self-contained artifacts
 <!-- dude:managed:end -->
