@@ -121,7 +121,7 @@ it before publishing a pack or in CI. Exit code `2` if any pack lints with a
 failure or leaves artifacts behind.
 
 Expected sibling-pack **warnings** (not failures) when a pack references another
-pack not installed alongside it: `hugo` -> docsy/ms-brand, `design` -> ms-brand,
+pack not installed alongside it: `hugo` -> docsy/ms-brand, `design` -> strata,
 `fluent-ui` -> web. Warnings are fine; only failures block.
 
 ## Rules

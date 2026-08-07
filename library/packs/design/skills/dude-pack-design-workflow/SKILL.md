@@ -210,12 +210,12 @@ When an implementation task applies an approved design, close it only after fres
 
 1. Render or build the relevant surface (for this repo, prefer the existing Hugo/Docsy build/server command).
 2. Capture or inspect the rendered surface at the relevant breakpoints.
-3. Run the Microsoft visual-brand drift guard when the task touches rendered Hugo/Docsy surfaces:
-   - `pwsh .github/skills/dude-pack-ms-brand-visual/scripts/brand-check.ps1`
-   - or `bash .github/skills/dude-pack-ms-brand-visual/scripts/brand-check.sh`
+3. Run the Strata visual-system validator when the task touches a styled visual surface:
+   - `pwsh .github/skills/dude-pack-strata-visual/scripts/strata-check.ps1`
+   - or `bash .github/skills/dude-pack-strata-visual/scripts/strata-check.sh`
 4. Confirm every displayed field traces to real page content, front matter, or site config, and every actionable element (link, button, form, share / submit control) resolves to a real destination or client-side behavior — no invented sample values and no fake or server-dependent affordances. See **Functional Realism**.
 5. Compare the result to the approved preview in `spec.md`.
-6. Route visual quality judgment to `@dude-pack-ms-brand-stylist` when brand or visual identity is material.
+6. Route visual quality judgment to `@dude-pack-strata-stylist` when visual identity is material.
 7. Classify the result using the Post-Implementation Refinement Loop below.
 8. Have the coordinator append the close classification and any routing decision to the uniquely owning companion idea's `## Coordinator Log`.
 9. Only when the result matches the approved spec and works in the real rendered context may the coordinator close the task through the active lane: in Lightweight Execution mark the task `[x]` in `tasks.md`; in tracked execution close the Beads issue (`bd close`) and mirror the result one-way to `tasks.md` per `dude-pack-beads-workflow`.
@@ -259,7 +259,7 @@ Use `design-gap` when reporting or flagging this blocker. A design-gap is a desi
 - For every route concerning an existing design package, first resolve its uniquely owning companion idea by exact `spec_path`; the coordinator appends the routed handoff and reason to that idea's `## Coordinator Log`.
 - Use `@dude-spec-lead` for maintaining idea metadata and the design-shaped `spec.md` package during definition.
 - Use the owning Hugo/Docsy specialist for site-specific implementation or template decisions.
-- Use `@dude-pack-ms-brand-stylist` as visual quality authority for internal Microsoft-branded surfaces.
+- Use `@dude-pack-strata-stylist` as visual quality authority for surfaces using the Strata visual system.
 - Use `@dude-reviewer` only when an independent readiness judgment is needed.
 
 ## Avoid

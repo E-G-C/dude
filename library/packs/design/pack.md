@@ -31,19 +31,19 @@ This lane stands on its own. Its only required handoffs are to **core**
 independent readiness call), so it works in any project — including a hand-
 authored Hugo site with no other packs installed.
 
-Its brand steps are **optional and conditional**:
+Its visual-system steps are **optional and conditional**:
 
-- When the `ms-brand` pack is also installed, the workflow runs the visual-brand
-  drift guard (`dude-pack-ms-brand-visual` scripts) and routes visual-quality
-  judgment to `@dude-pack-ms-brand-stylist` *when brand or visual identity is
+- When the `strata` pack is also installed, the workflow runs the visual-system
+  validator (`dude-pack-strata-visual` scripts) and routes visual-quality
+  judgment to `@dude-pack-strata-stylist` *when visual identity is
   material*.
-- When `ms-brand` is absent, those references are inert (lint surfaces them as
-  warnings, not failures) and the lane simply runs without the brand-specific
+- When `strata` is absent, those references are inert (lint surfaces them as
+  warnings, not failures) and the lane simply runs without the visual-system
   step.
 
 So: in a UI-only project you can install **`design` alone** and get the full
-propose/approve/apply loop; add `ms-brand` (and/or `hugo` / `docsy`) only if you
-want the brand guard and theme specialists wired in.
+propose/approve/apply loop; add `strata` (and/or `hugo` / `docsy`) only if you
+want the visual-system validator and theme specialists wired in.
 
 ## Install / remove
 
@@ -54,6 +54,6 @@ want the brand guard and theme specialists wired in.
 
 ## Related packs
 
-- `ms-brand` — adds the brand drift-guard and visual-quality authority this lane
+- `strata` — adds the visual-system validator and visual-quality authority this lane
   will use when present.
 - `hugo` / `docsy` — the surfaces a design spec is typically applied to.
