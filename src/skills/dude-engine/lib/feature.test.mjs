@@ -342,3 +342,138 @@ test('resolve still returns an owner for canonical ledgers that quote scalar val
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Feature 024 (T001@6b657973): `depends-on` is a canonical idea-frontmatter key.
+// Exercising the production CANONICAL_IDEA_KEYS set through the inventory and
+// resolve paths, a plain space- or comma-separated scalar of idea slugs must
+// validate as a clean defined owner, a structured flow or block-list value must
+// still be rejected as malformed, an idea without the field must be unaffected,
+// and status/spec_path resolution must be unchanged. No consumer of the declared
+// dependency exists yet, so only recognition and rejection are asserted.
+
+test('inventory validates plain space- and comma-separated depends-on scalars as clean defined owners', () => {
+  const root = temporaryRoot();
+  try {
+    // Arrange: two defined owners declaring depends-on as a plain scalar.
+    // Case 1 — space-separated slugs.
+    write(root, '.dude/specs/space/spec.md', '# space\n');
+    write(
+      root,
+      '.dude/ideas/space.md',
+      '---\nstatus: defined\nspec_path: .dude/specs/space/spec.md\ndepends-on: alpha beta\n---\n\n## Idea\n\nBody.\n',
+    );
+    // Case 2 — comma-separated slugs.
+    write(root, '.dude/specs/comma/spec.md', '# comma\n');
+    write(
+      root,
+      '.dude/ideas/comma.md',
+      '---\nstatus: defined\nspec_path: .dude/specs/comma/spec.md\ndepends-on: alpha, beta\n---\n\n## Idea\n\nBody.\n',
+    );
+
+    // Act.
+    const result = inventoryDefinedFeatures({ root });
+
+    // Assert: both ideas inventory as clean defined owners with no diagnostics.
+    assert.deepEqual(result.features, [
+      { ideaPath: '.dude/ideas/comma.md', specPath: '.dude/specs/comma/spec.md' },
+      { ideaPath: '.dude/ideas/space.md', specPath: '.dude/specs/space/spec.md' },
+    ]);
+    assert.deepEqual(result.diagnostics, []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('inventory rejects structured flow and block-list depends-on values as malformed', () => {
+  const root = temporaryRoot();
+  try {
+    // Arrange: a clean owner to retain, plus two structured depends-on values
+    // strict canonical validation must still reject.
+    define(root, 'keep', 'keep');
+    // Case 3 — YAML flow sequence value.
+    write(root, '.dude/specs/flow/spec.md', '# flow\n');
+    write(
+      root,
+      '.dude/ideas/flow.md',
+      '---\nstatus: defined\nspec_path: .dude/specs/flow/spec.md\ndepends-on: [alpha, beta]\n---\n\n## Idea\n\nBody.\n',
+    );
+    // Case 4 — YAML block-list value.
+    write(root, '.dude/specs/block/spec.md', '# block\n');
+    write(
+      root,
+      '.dude/ideas/block.md',
+      '---\nstatus: defined\nspec_path: .dude/specs/block/spec.md\ndepends-on:\n  - alpha\n  - beta\n---\n\n## Idea\n\nBody.\n',
+    );
+
+    // Act.
+    const result = inventoryDefinedFeatures({ root });
+
+    // Assert: neither structured ledger inventories; only the clean owner
+    // survives, and each malformed ledger yields one malformed-frontmatter error.
+    assert.deepEqual(result.features, [
+      { ideaPath: '.dude/ideas/keep.md', specPath: '.dude/specs/keep/spec.md' },
+    ]);
+    assert.deepEqual(
+      result.diagnostics.map((item) => [item.path, item.code, item.severity]),
+      [
+        ['.dude/ideas/block.md', 'FEATURE_FRONTMATTER_MALFORMED', 'error'],
+        ['.dude/ideas/flow.md', 'FEATURE_FRONTMATTER_MALFORMED', 'error'],
+      ],
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('inventory leaves an idea without a depends-on field unaffected', () => {
+  const root = temporaryRoot();
+  try {
+    // Arrange: a defined owner with no depends-on (case 5), alongside one that
+    // declares it, so the widened canonical key set runs over both in one pass.
+    define(root, 'plain', 'plain');
+    write(root, '.dude/specs/declared/spec.md', '# declared\n');
+    write(
+      root,
+      '.dude/ideas/declared.md',
+      '---\nstatus: defined\nspec_path: .dude/specs/declared/spec.md\ndepends-on: plain\n---\n\n## Idea\n\nBody.\n',
+    );
+
+    // Act.
+    const result = inventoryDefinedFeatures({ root });
+
+    // Assert: the depends-on-free idea validates exactly as before, and both
+    // ideas inventory cleanly with no diagnostics.
+    assert.deepEqual(result.features, [
+      { ideaPath: '.dude/ideas/declared.md', specPath: '.dude/specs/declared/spec.md' },
+      { ideaPath: '.dude/ideas/plain.md', specPath: '.dude/specs/plain/spec.md' },
+    ]);
+    assert.deepEqual(result.diagnostics, []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('resolve returns the owner by exact spec_path when depends-on is present', () => {
+  const root = temporaryRoot();
+  try {
+    // Arrange: one defined owner that also declares depends-on (case 6).
+    write(root, '.dude/specs/dep/spec.md', '# dep\n');
+    write(
+      root,
+      '.dude/ideas/dep.md',
+      '---\nstatus: defined\nspec_path: .dude/specs/dep/spec.md\ndepends-on: alpha beta\n---\n\n## Idea\n\nBody.\n',
+    );
+
+    // Act.
+    const resolved = resolveFeatureOwner({ root, specPath: '.dude/specs/dep/spec.md' });
+
+    // Assert: status/spec_path resolution is unchanged; the owner resolves by
+    // exact spec_path with no diagnostics.
+    assert.deepEqual(resolved, {
+      owner: { ideaPath: '.dude/ideas/dep.md', specPath: '.dude/specs/dep/spec.md' },
+      diagnostics: [],
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

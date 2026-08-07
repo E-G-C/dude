@@ -1,8 +1,8 @@
 ---
 title: Feature Focus Order
 slug: feature-focus-order
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/024-feature-focus-order/spec.md
 ---
 
 # Idea: Feature Focus Order
@@ -169,4 +169,16 @@ These are the coordinator's working assumptions, not user decisions. Correct any
 - 2026-08-07 UTC - brainstorm captured
 - 2026-08-07 UTC - brainstorm rerun: task and feature dependency order
 - 2026-08-07 UTC - brainstorm rerun: open questions answered, feature-level dependencies accepted
+- 2026-08-07 UTC - defined as feature 024 (via ship)
+- 2026-08-07 UTC - work(024): claimed T001 [~]
+- 2026-08-07 UTC - work(024): closed T001 [x] (depends-on canonical key; 13 tests; Code Reviewer clean)
+- 2026-08-07 UTC - work(024): claimed T002 [~]
+- 2026-08-07 UTC - work(024): closed T002 [x] (focus.mjs bucket derivation + optional reader; 9 tests; blocked-by-on-done ratified; Code Reviewer clean)
+- 2026-08-07 UTC - work(024): claimed T003 [~]
+- 2026-08-07 UTC - work(024): closed T003 [x] (kanban + flowchart renderers; 15 tests incl. NB-2 annotation pin; Code Reviewer APPROVE)
+- 2026-08-07 UTC - work(024): claimed T004 [~]
+- 2026-08-07 UTC - work(024): closed T004 [x] (status wiring + depends-on/footgun docs + section contract; build-dev projection; 91/91 contract; T007 materialization cleared; Code Reviewer clean)
+- 2026-08-07 UTC - work(024): claimed T005 [~] (acceptance)
+- 2026-08-07 UTC - work(024): closed T005 [x] (full suite 2303/0, lint 0/0 incl. depends-on idea, read-only proven, pristine release, Reviewer APPROVE)
+- 2026-08-07 UTC - ship(024): all tasks complete; natural stop: no ready task
 <!-- dude:managed:end -->

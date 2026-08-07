@@ -75,3 +75,22 @@ Implementation alone never closes a task. If evidence, review, ownership, render
 `@dude status` is read-only. The coordinator first determines the active lane per its Status precedence; this detailed status applies only once that active lane is Lightweight Execution. A single defined package whose tasks are all `[ ]` with no execution evidence stays `Definition Only`, so do not report `tasks.md` counts for it. When Lightweight Execution is the active lane, report lane, live `tasks.md`, exact companion or `Ownership: ambiguous`, state counts, in-progress work, ready set, blockers, completion, tracked-not-started state, and unverified manual `[x]` drift. It may recompute a view in the response but must not set/render, log, snapshot, reconcile, or mutate.
 
 If Beads is enabled later, hand off through `@dude track`; after import, never continue Lightweight. To return from tracked execution, first sync Beads to the one-way markdown mirror. If Beads is unavailable, disclose that the mirror may be stale and require the user's choice before treating that snapshot as live again.
+
+### Cross-Idea Focus
+
+Separate from the lane-specific status above, `@dude status` also renders a cross-idea orientation over every in-flight idea rather than one active feature. The focus buckets span ideas across lifecycle states, both draft and defined, so this view is not gated to Lightweight Execution; `@dude status` may render it read-only regardless of any single feature's lane.
+
+`@dude status` invokes the generated `focus.mjs` read-only in three forms. Each is read-only, renders on demand in the reply, and writes no file:
+
+- `node .github/skills/dude-lightweight-execution/focus.mjs --root .` (text focus buckets: Active, Next, Later, Blocked, Unordered)
+- `node .github/skills/dude-lightweight-execution/focus.mjs kanban --root .` (Mermaid kanban of the same buckets, on request)
+- `node .github/skills/dude-lightweight-execution/focus.mjs flowchart <idea-slug> --root .` (Mermaid flowchart of one feature's task `deps:`, on request)
+
+Two hand-maintained inputs feed the buckets:
+
+- `depends-on:` in an idea ledger's frontmatter is a plain space- or comma-separated scalar of idea slugs that declares hard feature-level ordering. Blocked, Next, and Later derive from it together with existing `[!]`/`blocked-by:` evidence; it is never a second board.
+- `.dude/state/focus-order.md` is an optional, hand-maintained ordered slug list whose only role is breaking ties among unblocked, non-active items. Its absence changes nothing, and the tool never writes it.
+
+Non-goal, not guarded: a task `deps:` key that names another feature's task resolves as permanently unsatisfied, because dependency resolution is confined to a single file. Keep cross-feature ordering in `depends-on:`, never in a task `deps:`.
+
+Authoring caveat: lint accepts `depends-on:` on any idea, but `publish-first-definition.mjs` currently validates only the four owner keys (`title`, `slug`, `status`, `spec_path`), so add `depends-on:` after an idea clears first definition, or declare it on a draft only while dropping it for the first-definition publish and adding it back afterward; this is a documented current limitation, not fixed here.

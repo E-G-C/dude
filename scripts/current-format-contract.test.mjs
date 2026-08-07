@@ -1391,6 +1391,38 @@ test('T008 coordinator Status, Diff, Self-Check, and Flag procedures are section
   assert.match(lightweightStatus, /When Lightweight Execution is the active lane, report lane/i);
 });
 
+test('T004 cross-idea focus status surface binds the focus script, dependency field, ordering file, and footgun', () => {
+  const relative = 'src/skills/dude-lightweight-execution/SKILL.md';
+  const heading = '## Status And Handoff';
+
+  assertSectionIncludesAll(relative, heading, [
+    // Exact focus script identity plus the three read-only CLI command forms.
+    'node .github/skills/dude-lightweight-execution/focus.mjs --root .',
+    'node .github/skills/dude-lightweight-execution/focus.mjs kanban --root .',
+    'node .github/skills/dude-lightweight-execution/focus.mjs flowchart <idea-slug> --root .',
+    // `depends-on:` idea-frontmatter field as the declared feature-level dependency source.
+    "`depends-on:` in an idea ledger's frontmatter",
+    'declares hard feature-level ordering',
+    // Optional `.dude/state/focus-order.md` tie-break ordering.
+    '`.dude/state/focus-order.md`',
+    'breaking ties among unblocked, non-active items',
+  ]);
+
+  // The script + read-only invocation line and the foreign-key-in-`deps:` footgun
+  // non-goal line are each exact and globally unique, so deletion, fence-hiding,
+  // comment-hiding, or relocation out of `## Status And Handoff` fails.
+  assertSectionRuleRejectsMutations(
+    relative,
+    heading,
+    '`@dude status` invokes the generated `focus.mjs` read-only in three forms. Each is read-only, renders on demand in the reply, and writes no file:',
+  );
+  assertSectionRuleRejectsMutations(
+    relative,
+    heading,
+    "Non-goal, not guarded: a task `deps:` key that names another feature's task resolves as permanently unsatisfied, because dependency resolution is confined to a single file. Keep cross-feature ordering in `depends-on:`, never in a task `deps:`.",
+  );
+});
+
 test('T008 Status precedence fixtures distinguish tracked, Lightweight, Definition Only, and ambiguity', () => {
   const fixtures = [
     { name: 'tracked wins with no ready issue', input: { trackedIssues: 1, lightweightChoice: true, taskStates: ['~'], candidates: 2 }, lane: 'Tracked Execution', counts: false },
