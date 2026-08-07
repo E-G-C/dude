@@ -1,365 +1,429 @@
 /* ============================================================
- * Microsoft Visual Brand — Design Tokens (CSS Custom Properties)
- * Internal use only. See ../reference/provenance-and-licensing.md for canonical refs.
+ * Strata — Design Tokens
+ *
+ * ONE structural system, TWO colour palettes.
+ *   data-strata-palette = pigment (default) | spectrum
+ *   data-strata-theme   = light (default)   | dark
+ *   -> four validated surfaces.
+ *
+ * Token ids are ROLE-BASED. "Azurite" and "blue" are two values
+ * for --strata-series-1, not two token names. Both palettes
+ * expose an identical id set; strata-check asserts it.
+ *
+ * Commitments:
+ *   1. Stratification, not shadow — NO box-shadow in this file.
+ *   2. 4px radius default, 8px maximum.
+ *   3. Type-led at working UI scale; monospace = metadata only.
+ *   4. Meaning-bearing fills carry a 1px border.
+ *
+ * Unaffiliated with any company, product, or design system.
+ * Provenance, licensing, and measured contrast:
+ *   ../reference/provenance-and-licensing.md
  * ============================================================ */
 
+/* ------------------------------------------------------------
+ * 1. STRUCTURE — palette-independent, declared once.
+ * ---------------------------------------------------------- */
 :root {
-  /* --- Core brand colors (the four squares + wordmark) --- */
-  --strata-red:    #F25022;
-  --strata-green:  #7FBA00;
-  --strata-blue:   #00A4EF;
-  --strata-yellow: #FFB900;
-  --strata-gray:   #737373; /* wordmark gray on light backgrounds */
+  /* Local-only. No font files ship; no @font-face; no remote import. */
+  --strata-font-sans: "Atkinson Hyperlegible", "Noto Sans", system-ui, -apple-system,
+                      BlinkMacSystemFont, sans-serif;
+  --strata-font-mono: "Noto Sans Mono", "Liberation Mono", ui-monospace, SFMono-Regular,
+                      Menlo, Consolas, monospace;
 
-  /* --- Neutrals (internal pairing palette) --- */
-  --strata-bg:           #FFFFFF;
-  --strata-bg-subtle:    #F3F2F1;
-  --strata-bg-dark:      #1B1A19;
-  --strata-border:       #E1DFDD;
-  --strata-text:         #201F1E;
-  --strata-text-muted:   #605E5C;
-  --strata-text-on-dark: #FFFFFF;
+  /* Working UI scale. `display` exists for a rare genuine title;
+   * it is NOT the default page opener. No editorial hero. */
+  --strata-fs-display: 48px;
+  --strata-fs-h1:      36px;
+  --strata-fs-h2:      28px;
+  --strata-fs-h3:      22px;
+  --strata-fs-h4:      18px;
+  --strata-fs-body-lg: 18px;
+  --strata-fs-body:    16px;
+  --strata-fs-caption: 13px;
+  --strata-fs-micro:   11px;
 
-  /* --- Semantic mappings --- */
-  --strata-color-primary:     var(--strata-blue);
-  --strata-color-success:     var(--strata-green);
-  --strata-color-warning:     var(--strata-yellow);
-  --strata-color-danger:      var(--strata-red);
-  --strata-color-accent:      var(--strata-blue);
-  --strata-color-focus-ring:  var(--strata-blue);
+  --strata-fw-regular:  400;
+  --strata-fw-semibold: 600;
+  --strata-fw-bold:     700;
 
-  /* --- Typography --- */
-  --strata-font-body:    "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI",
-                     system-ui, -apple-system, BlinkMacSystemFont,
-                     "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --strata-font-heading: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI",
-                     system-ui, -apple-system, BlinkMacSystemFont,
-                     "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --strata-font-mono:    "Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace;
-  --strata-font-docs:    "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI",
-                     system-ui, -apple-system, BlinkMacSystemFont,
-                     "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --strata-font-docs-mono: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace;
+  --strata-lh-display: 1.15;
+  --strata-lh-h1:      1.2;
+  --strata-lh-h2:      1.25;
+  --strata-lh-h3:      1.3;
+  --strata-lh-h4:      1.35;
+  --strata-lh-body:    1.5;
+  --strata-lh-caption: 1.4;
+  --strata-lh-micro:   1.3;
+  --strata-lh-tight:   var(--strata-lh-h1);
+  --strata-lh-normal:  var(--strata-lh-body);
 
-  --strata-fs-display:    48px;
-  --strata-fs-h1:         36px;
-  --strata-fs-h2:         28px;
-  --strata-fs-h3:         22px;
-  --strata-fs-h4:         18px;
-  --strata-fs-body-lg:    18px;
-  --strata-fs-body:       16px;
-  --strata-fs-caption:    13px;
-  --strata-fs-micro:      11px;
+  /* Metadata only — labels, column heads, identifiers, ticks.
+   * Not a display voice. */
+  --strata-meta-tracking:  0.06em;
+  --strata-meta-transform: uppercase;
 
-  --strata-fw-regular:    400;
-  --strata-fw-semibold:   600;
-  --strata-fw-bold:       700;
+  /* Long-form reading surface. Usable by ANY product: an article view, a
+   * changelog, a report, a help panel, release notes, onboarding. Not a
+   * documentation-site theme. */
+  --strata-reading-width:      100%;
+  --strata-reading-measure:    688px;
+  --strata-reading-wide:       100%;
+  --strata-reading-fs-title:   40px;
+  --strata-reading-fs-h2:      32px;
+  --strata-reading-fs-h3:      28px;
+  --strata-reading-fs-body:    16px;
+  --strata-reading-fs-compact: 14px;
+  --strata-reading-fs-code:    14px;
+  --strata-reading-lh-title:   52px;
+  --strata-reading-lh-h2:      1.3;
+  --strata-reading-lh-h3:      1.3;
+  --strata-reading-lh-body:    28px;
+  --strata-reading-lh-list:    1.8;
+  --strata-reading-lh-compact: 1.5;
+  --strata-reading-lh-code:    19px;
 
-  --strata-lh-display:    1.15;
-  --strata-lh-h1:         1.2;
-  --strata-lh-h2:         1.25;
-  --strata-lh-h3:         1.3;
-  --strata-lh-h4:         1.35;
-  --strata-lh-body:       1.5;
-  --strata-lh-caption:    1.4;
-  --strata-lh-micro:      1.3;
-  --strata-lh-tight:      var(--strata-lh-h1);
-  --strata-lh-normal:     var(--strata-lh-body);
+  /* Spacing (4/8) */
+  --strata-space-0: 0px;
+  --strata-space-1: 4px;
+  --strata-space-2: 8px;
+  --strata-space-3: 12px;
+  --strata-space-4: 16px;
+  --strata-space-5: 24px;
+  --strata-space-6: 32px;
+  --strata-space-7: 48px;
+  --strata-space-8: 64px;
 
-  /* --- Documentation surfaces (inspired by Microsoft Learn article pages) --- */
-  --strata-docs-content-width: 100%;
-  --strata-docs-readable-width: 688px;
-  --strata-docs-wide-width: 100%;
-  --strata-docs-fs-title:      40px;
-  --strata-docs-fs-h2:         32px;
-  --strata-docs-fs-h3:         28px;
-  --strata-docs-fs-body:       16px;
-  --strata-docs-fs-compact:    14px;
-  --strata-docs-fs-code:       14px;
-  --strata-docs-lh-title:      52px;
-  --strata-docs-lh-h2:         1.3;
-  --strata-docs-lh-h3:         1.3;
-  --strata-docs-lh-body:       28px;
-  --strata-docs-lh-list:       1.8;
-  --strata-docs-lh-compact:    1.5;
-  --strata-docs-lh-code:       19px;
-  --strata-docs-link:          #0065B3;
-  --strata-docs-code-bg:       var(--strata-bg-subtle);
-  --strata-docs-tip-bg:        #DFF6DD;
-  --strata-docs-tip-border:    #107C10;
-  --strata-docs-tip-text:      var(--strata-text);
+  /* Radii: 4px is the interactive default, 8px the maximum. */
+  --strata-radius-sm:   2px;    /* small inline marks, code spans      */
+  --strata-radius-md:   4px;    /* DEFAULT: buttons, inputs, chips,
+                                 * panels, cards, bars                 */
+  --strata-radius-lg:   8px;    /* ceiling: large containers           */
+  --strata-radius-pill: 9999px; /* discouraged                         */
 
-  /* --- Spacing (8-pt base) --- */
-  --strata-space-0:  0px;
-  --strata-space-1:  4px;
-  --strata-space-2:  8px;
-  --strata-space-3:  12px;
-  --strata-space-4:  16px;
-  --strata-space-5:  24px;
-  --strata-space-6:  32px;
-  --strata-space-7:  48px;
-  --strata-space-8:  64px;
+  --strata-rule-width:    1px;
+  --strata-rule-hairline: var(--strata-rule-width) solid var(--strata-rule);
 
-  /* --- Radii --- */
-  --strata-radius-sm:   2px;
-  --strata-radius-md:   4px;
-  --strata-radius-lg:   8px;
-  --strata-radius-pill: 9999px;
-
-  /* --- Elevation --- */
-  --strata-elev-1: 0 1px 2px rgba(0,0,0,0.08);
-  --strata-elev-2: 0 2px 6px rgba(0,0,0,0.10);
-  --strata-elev-3: 0 4px 12px rgba(0,0,0,0.12);
-
-  /* --- Motion --- */
+  /* Motion. Both easings are explicit cubic-bezier(). CSS keywords are
+   * BANNED as token values: `ease-out` silently means
+   * cubic-bezier(0, 0, 0.58, 1), which is how a cross-format
+   * disagreement stayed invisible in this pack for a long time. */
   --strata-dur-micro:    150ms;
   --strata-dur-standard: 250ms;
   --strata-dur-entrance: 400ms;
-  /* Easings are declared as explicit cubic-bezier(). A CSS keyword hides its
-   * numeric definition: `ease-out` means exactly cubic-bezier(0, 0, 0.58, 1),
-   * which is why this token silently disagreed with the JSON value for so
-   * long. Never use a keyword as a token value. */
-  --strata-ease-enter:   cubic-bezier(0.1, 0.9, 0.2, 1);
-  --strata-ease-exit:    cubic-bezier(0, 0, 0.58, 1);
+  --strata-ease-enter: cubic-bezier(0.2, 0, 0, 1);
+  --strata-ease-exit:  cubic-bezier(0.2, 0, 0, 1);
+
+  /* Code surface is dark in BOTH themes and shared by both palettes. */
+  --strata-code-bg:    #101215;
+  --strata-code-text:  #EDEFF3;  /* 16.30:1 on code-bg */
+  --strata-code-muted: #A2A9B4;  /* 7.92:1  on code-bg */
 }
 
-/* Optional dark surface: scope to a container or use a media query. */
-.strata-theme-dark,
-[data-strata-theme="dark"] {
-  --strata-bg:         var(--strata-bg-dark);
-  --strata-bg-subtle:  #2B2A29;
-  --strata-border:     #3B3A39;
-  --strata-text:       var(--strata-text-on-dark);
-  --strata-text-muted: #C8C6C4;
-  --strata-docs-link:       #75B6E7;
-  --strata-docs-code-bg:    #404040;
-  --strata-docs-tip-bg:     #054B16;
-  --strata-docs-tip-border: #DFF6DD;
-  --strata-docs-tip-text:   #DFF6DD;
+/* ------------------------------------------------------------
+ * 2a. PALETTE: pigment — LIGHT (the default; no attribute needed)
+ *
+ * Mineral pigments: azurite, verdigris, malachite, orpiment,
+ * cinnabar, amethyst, rhodochrosite.
+ * ---------------------------------------------------------- */
+:root,
+[data-strata-palette="pigment"] {
+  --strata-canvas:  #FFFFFF;
+  --strata-surface: #FFFFFF;
+  --strata-soft:    #F4F6F8;
+  --strata-sunken:  #EDEFF3;
+
+  --strata-ink:         #14161A;  /* 18.11:1 on canvas */
+  --strata-muted:       #565C66;  /*  6.73:1 on canvas */
+  --strata-on-accent:   #FFFFFF;
+  --strata-on-warning:  #14161A;  /* amber needs dark text: 10.16:1 */
+
+  /* Shared across themes. 3.53 / 3.26 / 3.06 here. The light plane scale
+   * spans only ~1.15:1, so this rule carries ALL of the layering: a plane
+   * without a rule is not perceivable. */
+  --strata-rule: #828994;
+
+  /* DECORATIVE ONLY — 1.25:1 on canvas. Never a control boundary, never a
+   * plane edge, never a field border. Use --strata-rule for anything a
+   * user must perceive. */
+  --strata-hair: #E3E6EA;
+
+  /* series-N is the id; the mineral name is documentation.
+   *   vivid = fills, chart marks, badge accents. NEVER text on a light plane.
+   *   deep  = text on a light plane, AND the fill under white text. */
+  --strata-series-1: #1348E8;  --strata-series-1-deep: #0E37B8;  /* azurite       */
+  --strata-series-2: #0098B8;  --strata-series-2-deep: #00757D;  /* verdigris     */
+  --strata-series-3: #00B36B;  --strata-series-3-deep: #00794A;  /* malachite     */
+  --strata-series-4: #FFB400;  --strata-series-4-deep: #7F5800;  /* orpiment      */
+  --strata-series-5: #E63A1F;  --strata-series-5-deep: #CE2E14;  /* cinnabar      */
+  --strata-series-6: #7A2FE0;  --strata-series-6-deep: #5A1FB0;  /* amethyst      */
+  --strata-series-7: #D1176B;  --strata-series-7-deep: #C41364;  /* rhodochrosite */
+
+  /* The ink is BOTH the text and the border. A bare tint field is ~1.1:1
+   * against every plane, and two bare tints can be 1.00:1 against each
+   * other, so the border is what makes a badge a perceivable object. */
+  --strata-series-1-tint: #E7EEFF; --strata-series-1-tint-ink: #0E37B8;
+  --strata-series-2-tint: #DEF4F7; --strata-series-2-tint-ink: #005C63;
+  --strata-series-3-tint: #DFF6EA; --strata-series-3-tint-ink: #00603A;
+  --strata-series-4-tint: #FFF3D6; --strata-series-4-tint-ink: #6B4A00;
+  --strata-series-5-tint: #FFE8E3; --strata-series-5-tint-ink: #A32410;
+  --strata-series-6-tint: #F0E7FF; --strata-series-6-tint-ink: #5A1FB0;
+  --strata-series-7-tint: #FFE6F0; --strata-series-7-tint-ink: #9C0F50;
+}
+
+/* ------------------------------------------------------------
+ * 2b. PALETTE: spectrum — LIGHT
+ *
+ * Cooler ground, broader spectral spread: blue, teal, green,
+ * amber, red, violet, magenta.
+ * ---------------------------------------------------------- */
+[data-strata-palette="spectrum"] {
+  --strata-canvas:  #FAFBFF;
+  --strata-surface: #FFFFFF;
+  --strata-soft:    #EDF1FC;
+  --strata-sunken:  #E4E9F7;
+
+  --strata-ink:         #101A33;  /* 16.68:1 on canvas */
+  --strata-muted:       #4C5B7A;  /*  6.58:1 on canvas */
+  --strata-on-accent:   #FFFFFF;
+  --strata-on-warning:  #101A33;
+
+  --strata-rule: #79859F;  /* 3.58 / 3.71 / 3.28 / 3.05 */
+  --strata-hair: #DFE5F2;  /* decorative only */
+
+  --strata-series-1: #1552E0;  --strata-series-1-deep: #0F3FB5;  /* blue    */
+  --strata-series-2: #00A0A8;  --strata-series-2-deep: #00757D;  /* teal    */
+  --strata-series-3: #12B76A;  --strata-series-3-deep: #097340;  /* green   */
+  --strata-series-4: #F5A700;  --strata-series-4-deep: #7A5200;  /* amber   */
+  --strata-series-5: #D71E3C;  --strata-series-5-deep: #B01730;  /* red     */
+  --strata-series-6: #6D28D9;  --strata-series-6-deep: #5B21B6;  /* violet  */
+  --strata-series-7: #B0009B;  --strata-series-7-deep: #8A0079;  /* magenta */
+
+  --strata-series-1-tint: #E3EDFF; --strata-series-1-tint-ink: #0B3FA8;
+  --strata-series-2-tint: #DEF4F7; --strata-series-2-tint-ink: #00595F;
+  --strata-series-3-tint: #DFF7EA; --strata-series-3-tint-ink: #06623B;
+  --strata-series-4-tint: #FFF2D1; --strata-series-4-tint-ink: #7A4E00;
+  --strata-series-5-tint: #FFE4E8; --strata-series-5-tint-ink: #A3122C;
+  --strata-series-6-tint: #EFE6FE; --strata-series-6-tint-ink: #5B21B6;
+  --strata-series-7-tint: #FCE3FA; --strata-series-7-tint-ink: #8A0079;
+}
+
+/* ------------------------------------------------------------
+ * 2c. PALETTE: pigment — DARK
+ * ---------------------------------------------------------- */
+[data-strata-theme="dark"],
+[data-strata-palette="pigment"][data-strata-theme="dark"],
+.strata-theme-dark {
+  --strata-canvas:  #101215;
+  --strata-surface: #181B20;
+  --strata-soft:    #1E2228;
+  --strata-sunken:  #141719;
+
+  --strata-ink:         #EDEFF3;
+  --strata-muted:       #A2A9B4;
+  --strata-on-accent:   #101215;
+  --strata-on-warning:  #101215;
+
+  /* NOT overridden by design: #828994 measures 3.06:1 at its worst in light
+   * and 4.53:1 at its worst here, so one shared rule clears the 3:1
+   * non-text floor on every plane in both themes. No rule-strong split. */
+  --strata-rule: #828994;
+  --strata-hair: #2A2F36;
+
+  /* All seven pass as text on every dark plane (5.89-11.62), so -deep is a
+   * hover/emphasis variant here rather than a correction. A developer who
+   * learns the system in dark mode will write light-mode contrast bugs. */
+  --strata-series-1: #6A9BFF;  --strata-series-1-deep: #9BBCFF;
+  --strata-series-2: #2FC9D4;  --strata-series-2-deep: #7FDDE6;
+  --strata-series-3: #2FCB86;  --strata-series-3-deep: #7DE0B0;
+  --strata-series-4: #FFC22E;  --strata-series-4-deep: #FFD97A;
+  --strata-series-5: #FF7355;  --strata-series-5-deep: #FFAE99;
+  --strata-series-6: #B98CFF;  --strata-series-6-deep: #CBAAFF;
+  --strata-series-7: #FF7FB5;  --strata-series-7-deep: #FFB3D2;
+
+  --strata-series-1-tint: #141F3D; --strata-series-1-tint-ink: #A8C4FF;
+  --strata-series-2-tint: #0A2A2E; --strata-series-2-tint-ink: #7FDDE6;
+  --strata-series-3-tint: #0C2E20; --strata-series-3-tint-ink: #7DE0B0;
+  --strata-series-4-tint: #33260A; --strata-series-4-tint-ink: #FFD97A;
+  --strata-series-5-tint: #361510; --strata-series-5-tint-ink: #FFAE99;
+  --strata-series-6-tint: #231640; --strata-series-6-tint-ink: #CBAAFF;
+  --strata-series-7-tint: #3B1228; --strata-series-7-tint-ink: #FFB3D2;
+}
+
+/* ------------------------------------------------------------
+ * 2d. PALETTE: spectrum — DARK
+ * ---------------------------------------------------------- */
+[data-strata-palette="spectrum"][data-strata-theme="dark"] {
+  --strata-canvas:  #0B1020;
+  --strata-surface: #131A2E;
+  --strata-soft:    #1C2540;
+  --strata-sunken:  #0E1526;
+
+  --strata-ink:         #EAEFFA;
+  --strata-muted:       #A3B0CC;
+  --strata-on-accent:   #06090F;
+  --strata-on-warning:  #06090F;
+
+  --strata-rule: #79859F;  /* shared with spectrum light */
+  --strata-hair: #232D4A;
+
+  --strata-series-1: #5B9DFF;  --strata-series-1-deep: #A9CBFF;
+  --strata-series-2: #3FD6E6;  --strata-series-2-deep: #7FE0EA;
+  --strata-series-3: #34D98B;  --strata-series-3-deep: #7FE9B8;
+  --strata-series-4: #FFC542;  --strata-series-4-deep: #FFD98A;
+  --strata-series-5: #FF6B85;  --strata-series-5-deep: #FFA8B6;
+  --strata-series-6: #A98BFF;  --strata-series-6-deep: #CBAAFF;
+  --strata-series-7: #EE7BFF;  --strata-series-7-deep: #F5AEFF;
+
+  --strata-series-1-tint: #16294D; --strata-series-1-tint-ink: #A9CBFF;
+  --strata-series-2-tint: #0A2E33; --strata-series-2-tint-ink: #7FE0EA;
+  --strata-series-3-tint: #0E3326; --strata-series-3-tint-ink: #7FE9B8;
+  --strata-series-4-tint: #3A2A08; --strata-series-4-tint-ink: #FFD98A;
+  --strata-series-5-tint: #3D141C; --strata-series-5-tint-ink: #FFA8B6;
+  --strata-series-6-tint: #241A47; --strata-series-6-tint-ink: #CBAAFF;
+  --strata-series-7-tint: #331240; --strata-series-7-tint-ink: #F5AEFF;
+}
+
+/* ------------------------------------------------------------
+ * 3. SEMANTIC ROLES — palette-independent aliases onto series-N.
+ *
+ * Declared ONCE. This is what makes a component identical across
+ * palettes: .strata-btn-primary never names a colour, so a
+ * palette switch rebinds it with no component change.
+ * ---------------------------------------------------------- */
+:root {
+  /* Plane aliases are palette-independent indirection, not palette values,
+   * so they live here with the semantic roles. Keeping them out of the
+   * palette blocks is what lets cross-palette id parity hold. */
+  --strata-plane-base:   var(--strata-canvas);
+  --strata-plane-raised: var(--strata-surface);
+  --strata-plane-inset:  var(--strata-soft);
+  --strata-plane-sunken: var(--strata-sunken);
+
+  --strata-primary:      var(--strata-series-1);
+  --strata-primary-deep: var(--strata-series-1-deep);
+  --strata-hover:        var(--strata-series-1-deep);
+  --strata-info:         var(--strata-series-2);
+  --strata-info-text:    var(--strata-series-2-deep);
+  --strata-success:      var(--strata-series-3);
+  --strata-success-text: var(--strata-series-3-deep);
+  --strata-warning:      var(--strata-series-4);
+  --strata-warning-text: var(--strata-series-4-deep);
+  --strata-danger:       var(--strata-series-5);
+  --strata-danger-text:  var(--strata-series-5-deep);
+  --strata-focus:        var(--strata-series-6);
 }
 
 /* ============================================================
- * Base resets (opt-in: apply class .strata to a root element)
+ * Base (opt-in: apply .strata to a root element)
  * ============================================================ */
 
 .strata {
-  font-family: var(--strata-font-body);
-  font-optical-sizing: auto;
+  font-family: var(--strata-font-sans);
   font-size: var(--strata-fs-body);
   line-height: var(--strata-lh-normal);
-  letter-spacing: 0;
-  color: var(--strata-text);
-  background: var(--strata-bg);
+  color: var(--strata-ink);
+  background: var(--strata-canvas);
 }
 
 .strata h1, .strata .strata-h1 {
-  font-family: var(--strata-font-heading);
-  font-size: var(--strata-fs-h1);
-  font-weight: var(--strata-fw-semibold);
-  line-height: var(--strata-lh-h1);
-  margin: 0 0 var(--strata-space-4);
+  font-size: var(--strata-fs-h1); font-weight: var(--strata-fw-semibold);
+  line-height: var(--strata-lh-h1); margin: 0 0 var(--strata-space-4);
 }
 .strata h2, .strata .strata-h2 {
-  font-family: var(--strata-font-heading);
-  font-size: var(--strata-fs-h2);
-  font-weight: var(--strata-fw-semibold);
-  line-height: var(--strata-lh-h2);
-  margin: var(--strata-space-6) 0 var(--strata-space-3);
+  font-size: var(--strata-fs-h2); font-weight: var(--strata-fw-semibold);
+  line-height: var(--strata-lh-h2); margin: var(--strata-space-6) 0 var(--strata-space-3);
 }
 .strata h3, .strata .strata-h3 {
-  font-family: var(--strata-font-heading);
-  font-size: var(--strata-fs-h3);
-  font-weight: var(--strata-fw-semibold);
-  line-height: var(--strata-lh-h3);
-  margin: var(--strata-space-5) 0 var(--strata-space-2);
+  font-size: var(--strata-fs-h3); font-weight: var(--strata-fw-semibold);
+  line-height: var(--strata-lh-h3); margin: var(--strata-space-5) 0 var(--strata-space-2);
 }
 .strata h4, .strata .strata-h4 {
-  font-family: var(--strata-font-heading);
-  font-size: var(--strata-fs-h4);
-  font-weight: var(--strata-fw-semibold);
-  line-height: var(--strata-lh-h4);
-  margin: var(--strata-space-4) 0 var(--strata-space-2);
+  font-size: var(--strata-fs-h4); font-weight: var(--strata-fw-semibold);
+  line-height: var(--strata-lh-h4); margin: var(--strata-space-4) 0 var(--strata-space-2);
 }
 
 .strata code, .strata pre { font-family: var(--strata-font-mono); }
 
+/* Metadata: small, functional, never a display voice. */
+.strata-meta {
+  font-family: var(--strata-font-mono);
+  font-size: var(--strata-fs-micro);
+  line-height: var(--strata-lh-micro);
+  letter-spacing: var(--strata-meta-tracking);
+  text-transform: var(--strata-meta-transform);
+  color: var(--strata-muted);
+}
+
 /* ============================================================
- * Documentation surfaces (Microsoft Learn-inspired)
+ * Planes — tone + edge. No shadow.
+ *
+ * On a white or near-white ground the light plane scale spans only
+ * ~1.15:1 (and canvas/surface are identical in pigment), so the rule
+ * is not decoration: without it a raised panel is invisible.
  * ============================================================ */
 
-.strata-docs {
-  font-family: var(--strata-font-docs);
-  font-optical-sizing: auto;
-  font-size: var(--strata-docs-fs-body);
-  line-height: var(--strata-docs-lh-body);
-  letter-spacing: 0;
-  color: var(--strata-text);
-  background: var(--strata-bg);
-}
-
-.strata-docs-content,
-.strata-docs .content {
-  width: 100%;
-  max-width: var(--strata-docs-content-width);
-}
-
-.strata-docs-readable,
-.strata-docs-content > :where(h1, h2, h3, h4, p, ul, ol, dl, blockquote, .lead, .strata-docs-alert, .strata-docs-tip),
-.strata-docs .content > :where(h1, h2, h3, h4, p, ul, ol, dl, blockquote, .lead, .strata-docs-alert, .strata-docs-tip),
-.strata-docs .td-content > :where(h1, h2, h3, h4, p, ul, ol, dl, blockquote, .lead, .strata-docs-alert, .strata-docs-tip) {
-  max-width: var(--strata-docs-readable-width);
-}
-
-.strata-docs-wide,
-.strata-docs-content > :where(table, pre, .td-table, .table-responsive),
-.strata-docs .content > :where(table, pre, .td-table, .table-responsive),
-.strata-docs .td-content > :where(table, pre, .td-table, .table-responsive) {
-  width: 100%;
-  max-width: var(--strata-docs-wide-width);
-}
-
-.strata-docs h1,
-.strata-docs .strata-docs-title {
-  font-family: var(--strata-font-docs);
-  font-size: var(--strata-docs-fs-title);
-  font-weight: var(--strata-fw-semibold);
-  line-height: var(--strata-docs-lh-title);
-  margin: var(--strata-space-5) 0 var(--strata-space-4);
-}
-
-.strata-docs h2,
-.strata-docs .strata-docs-h2 {
-  font-family: var(--strata-font-docs);
-  font-size: var(--strata-docs-fs-h2);
-  font-weight: var(--strata-fw-semibold);
-  line-height: var(--strata-docs-lh-h2);
-  margin: var(--strata-space-5) 0 var(--strata-space-4);
-}
-
-.strata-docs h3,
-.strata-docs .strata-docs-h3 {
-  font-family: var(--strata-font-docs);
-  font-size: var(--strata-docs-fs-h3);
-  font-weight: var(--strata-fw-semibold);
-  line-height: var(--strata-docs-lh-h3);
-  margin: var(--strata-space-5) 0 var(--strata-space-4);
-}
-
-.strata-docs p {
-  margin: var(--strata-space-4) 0;
-}
-
-.strata-docs a {
-  color: var(--strata-docs-link);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.strata-docs ul,
-.strata-docs ol {
-  margin: var(--strata-space-4) 0;
-  padding-left: var(--strata-space-5);
-  line-height: var(--strata-docs-lh-list);
-}
-
-.strata-docs table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: var(--strata-space-4) 0;
-  border: 1px solid var(--strata-border);
-  font-size: var(--strata-docs-fs-compact);
-  line-height: var(--strata-docs-lh-compact);
-}
-
-.strata-docs th,
-.strata-docs td {
-  padding: var(--strata-space-2);
-  border: 1px solid var(--strata-border);
-  text-align: left;
-  vertical-align: top;
-}
-
-.strata-docs th {
-  font-weight: var(--strata-fw-bold);
-}
-
-.strata-docs pre,
-.strata-docs code {
-  font-family: var(--strata-font-docs-mono);
-}
-
-.strata-docs pre {
-  overflow: auto;
-  margin: var(--strata-space-4) 0;
-  padding: var(--strata-space-3);
-  background: var(--strata-bg-dark);
-  color: var(--strata-text-on-dark);
+.strata-panel {
+  background: var(--strata-plane-raised);
+  border: var(--strata-rule-hairline);
   border-radius: var(--strata-radius-md);
-  font-size: var(--strata-docs-fs-code);
-  line-height: var(--strata-docs-lh-code);
+  padding: var(--strata-space-5);
+}
+.strata-panel-inset {
+  background: var(--strata-plane-inset);
+  border: var(--strata-rule-hairline);
+  border-radius: var(--strata-radius-md);
+  padding: var(--strata-space-5);
+}
+.strata-panel-sunken {
+  background: var(--strata-plane-sunken);
+  border: var(--strata-rule-hairline);
+  border-radius: var(--strata-radius-md);
+  padding: var(--strata-space-5);
 }
 
-.strata-docs :not(pre) > code {
-  padding: 0.1em 0.2em;
-  border-radius: var(--strata-radius-sm);
-  background: var(--strata-docs-code-bg);
-  font-size: 0.85em;
-}
+/* Stratified stack: sibling planes separated by a single shared edge. */
+.strata-stack > * + * { border-top: var(--strata-rule-hairline); }
 
-.strata-docs-tabs,
-.strata-docs [role="tablist"] {
-  display: flex;
-  gap: 0;
-  margin: var(--strata-space-4) 0 0;
-  padding-top: var(--strata-space-1);
-  border-bottom: 1px solid var(--strata-border);
-}
-
-.strata-docs-tab,
-.strata-docs [role="tab"] {
-  appearance: none;
-  margin: 0 -1px 0 0;
-  padding: var(--strata-space-1) var(--strata-space-3);
-  border: 1px solid transparent;
-  border-bottom: 0;
-  background: transparent;
-  color: var(--strata-text);
-  font: inherit;
-  font-size: var(--strata-docs-fs-compact);
-  line-height: var(--strata-docs-lh-compact);
-  cursor: pointer;
-}
-
-.strata-docs-tab[aria-selected="true"],
-.strata-docs [role="tab"][aria-selected="true"] {
-  border-color: var(--strata-border);
-  border-radius: var(--strata-radius-md) var(--strata-radius-md) 0 0;
-  background: var(--strata-bg);
-  font-weight: var(--strata-fw-semibold);
-}
-
-.strata-docs-alert,
-.strata-docs-tip {
-  margin: var(--strata-space-4) 0;
-  padding: var(--strata-space-4);
-  border: 1px solid var(--strata-docs-tip-border);
-  border-radius: var(--strata-radius-lg);
-  background: var(--strata-docs-tip-bg);
-  color: var(--strata-docs-tip-text);
-}
-
-.strata-docs-alert > :first-child,
-.strata-docs-tip > :first-child {
-  margin-top: 0;
-}
-
-.strata-docs-alert > :last-child,
-.strata-docs-tip > :last-child {
-  margin-bottom: 0;
-}
+/* Decorative only. Deliberately below 3:1 — see --strata-hair. */
+.strata-hairline { border-top: var(--strata-rule-width) solid var(--strata-hair); }
 
 /* ============================================================
- * Buttons
+ * Fields with edges
+ *
+ * Several vivid slots measure under the 3:1 non-text floor against
+ * their own plane (orpiment 1.78, amber 1.95, malachite 2.74), and
+ * every tint is ~1.1:1 against every plane. A 1px border makes the
+ * OBJECT BOUNDARY perceivable, which is what SC 1.4.11 requires.
+ * ============================================================ */
+
+.strata-fill {
+  border: var(--strata-rule-hairline);
+  border-radius: var(--strata-radius-md);
+}
+
+.strata-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--strata-space-1);
+  padding: var(--strata-space-1) var(--strata-space-2);
+  border: var(--strata-rule-width) solid currentColor;
+  border-radius: var(--strata-radius-md);
+  font-family: var(--strata-font-mono);
+  font-size: var(--strata-fs-micro);
+  line-height: var(--strata-lh-micro);
+  letter-spacing: var(--strata-meta-tracking);
+  text-transform: var(--strata-meta-transform);
+}
+.strata-badge-accent  { background: var(--strata-series-1-tint); color: var(--strata-series-1-tint-ink); }
+.strata-badge-info    { background: var(--strata-series-2-tint); color: var(--strata-series-2-tint-ink); }
+.strata-badge-success { background: var(--strata-series-3-tint); color: var(--strata-series-3-tint-ink); }
+.strata-badge-warning { background: var(--strata-series-4-tint); color: var(--strata-series-4-tint-ink); }
+.strata-badge-danger  { background: var(--strata-series-5-tint); color: var(--strata-series-5-tint-ink); }
+.strata-badge-neutral { background: var(--strata-series-6-tint); color: var(--strata-series-6-tint-ink); }
+
+/* ============================================================
+ * Controls + the focus ring
  * ============================================================ */
 
 .strata-btn {
@@ -369,51 +433,242 @@
   height: 40px;
   padding: 0 var(--strata-space-4);
   border-radius: var(--strata-radius-md);
-  border: 1px solid transparent;
-  font-family: var(--strata-font-body);
-  font-optical-sizing: auto;
+  border: var(--strata-rule-width) solid transparent;
+  font-family: var(--strata-font-sans);
   font-size: var(--strata-fs-body);
   font-weight: var(--strata-fw-semibold);
   line-height: 1;
-  letter-spacing: 0;
   cursor: pointer;
   transition: background var(--strata-dur-micro) var(--strata-ease-exit),
-              box-shadow var(--strata-dur-micro) var(--strata-ease-exit);
+              border-color var(--strata-dur-micro) var(--strata-ease-exit);
 }
+
+/* Pure outline — no box-shadow.
+ *
+ * `outline` paints OUTSIDE the border box, so `outline-offset` leaves a
+ * gap showing the PARENT plane. The ring is therefore flanked by plane
+ * colour on both sides and its visibility never depends on the fill:
+ * it measures 5.51-7.38:1 against every plane on all four surfaces.
+ *
+ * The offset is load-bearing, not cosmetic. At offset 0 the ring sits
+ * directly on the fill and fails below 3:1 on 26 of the 28 fills across
+ * the four surfaces. Never reduce it below 2px. */
+.strata :is(a, button, input, select, textarea, summary, [tabindex]):focus-visible,
 .strata-btn:focus-visible {
-  outline: 2px solid var(--strata-color-focus-ring);
+  outline: 2px solid var(--strata-focus);
   outline-offset: 2px;
 }
 
-.strata-btn-primary     { background: var(--strata-color-primary); color: #fff; }
-.strata-btn-primary:hover     { filter: brightness(0.95); }
-.strata-btn-secondary   { background: transparent; color: var(--strata-text); border-color: var(--strata-border); }
-.strata-btn-secondary:hover   { background: var(--strata-bg-subtle); }
-.strata-btn-subtle      { background: var(--strata-bg-subtle); color: var(--strata-text); }
-.strata-btn-subtle:hover      { background: var(--strata-border); }
-.strata-btn-destructive { background: var(--strata-color-danger); color: #fff; }
-.strata-btn-destructive:hover { filter: brightness(0.95); }
+.strata-btn-primary       { background: var(--strata-primary); color: var(--strata-on-accent); }
+.strata-btn-primary:hover { background: var(--strata-hover); }
+.strata-btn-secondary     { background: transparent; color: var(--strata-ink);
+                            border-color: var(--strata-rule); }
+.strata-btn-secondary:hover { background: var(--strata-soft); }
+.strata-btn-subtle        { background: var(--strata-soft); color: var(--strata-ink);
+                            border-color: var(--strata-rule); }
+.strata-btn-subtle:hover  { background: var(--strata-canvas); }
 
-/* ============================================================
- * Cards
- * ============================================================ */
+/* Destructive fills with danger-TEXT, not the vivid danger slot: white on
+ * pigment's vivid cinnabar measures only 4.21:1 and fails AA normal. Using
+ * the deep form in BOTH palettes keeps this one rule correct after a
+ * palette switch. */
+.strata-btn-destructive   { background: var(--strata-danger-text); color: var(--strata-on-accent); }
 
-.strata-panel {
-  background: var(--strata-bg);
-  border: 1px solid var(--strata-border);
-  border-radius: var(--strata-radius-lg);
-  padding: var(--strata-space-5);
-  box-shadow: var(--strata-elev-1);
+.strata-input {
+  height: 40px;
+  padding: 0 var(--strata-space-3);
+  border: var(--strata-rule-hairline);
+  border-radius: var(--strata-radius-md);
+  background: var(--strata-surface);
+  color: var(--strata-ink);
+  font-family: var(--strata-font-sans);
+  font-size: var(--strata-fs-body);
 }
 
+/* ============================================================
+ * Reading surface — a long-form measure any product can use.
+ * Ships no theme-specific selectors: a general visual system
+ * cannot depend on one theme's DOM.
+ * ============================================================ */
+
+.strata-reading {
+  font-family: var(--strata-font-sans);
+  font-size: var(--strata-reading-fs-body);
+  line-height: var(--strata-reading-lh-body);
+  color: var(--strata-ink);
+  background: var(--strata-canvas);
+}
+
+.strata-reading-content {
+  width: 100%;
+  max-width: var(--strata-reading-width);
+}
+.strata-reading-content > :where(h1, h2, h3, h4, p, ul, ol, dl, blockquote) {
+  max-width: var(--strata-reading-measure);
+}
+.strata-reading-content > :where(table, pre, figure) {
+  width: 100%;
+  max-width: var(--strata-reading-wide);
+}
+
+.strata-reading h1 {
+  font-size: var(--strata-reading-fs-title);
+  line-height: var(--strata-reading-lh-title);
+  font-weight: var(--strata-fw-semibold);
+  margin: var(--strata-space-5) 0 var(--strata-space-4);
+}
+.strata-reading h2 {
+  font-size: var(--strata-reading-fs-h2);
+  line-height: var(--strata-reading-lh-h2);
+  font-weight: var(--strata-fw-semibold);
+  margin: var(--strata-space-5) 0 var(--strata-space-4);
+  padding-bottom: var(--strata-space-2);
+  border-bottom: var(--strata-rule-hairline);
+}
+.strata-reading h3 {
+  font-size: var(--strata-reading-fs-h3);
+  line-height: var(--strata-reading-lh-h3);
+  font-weight: var(--strata-fw-semibold);
+  margin: var(--strata-space-5) 0 var(--strata-space-4);
+}
+
+.strata-reading p  { margin: var(--strata-space-4) 0; }
+.strata-reading ul,
+.strata-reading ol { margin: var(--strata-space-4) 0; padding-left: var(--strata-space-5);
+                     line-height: var(--strata-reading-lh-list); }
+
+.strata-reading a {
+  color: var(--strata-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.strata-reading table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: var(--strata-space-4) 0;
+  border: var(--strata-rule-hairline);
+  font-size: var(--strata-reading-fs-compact);
+  line-height: var(--strata-reading-lh-compact);
+}
+.strata-reading th,
+.strata-reading td {
+  padding: var(--strata-space-2);
+  border: var(--strata-rule-hairline);
+  text-align: left;
+  vertical-align: top;
+}
+.strata-reading th {
+  font-family: var(--strata-font-mono);
+  font-size: var(--strata-fs-micro);
+  letter-spacing: var(--strata-meta-tracking);
+  text-transform: var(--strata-meta-transform);
+  font-weight: var(--strata-fw-bold);
+}
+
+.strata-reading pre {
+  overflow: auto;
+  margin: var(--strata-space-4) 0;
+  padding: var(--strata-space-3);
+  background: var(--strata-code-bg);
+  color: var(--strata-code-text);
+  border-radius: var(--strata-radius-md);
+  font-size: var(--strata-reading-fs-code);
+  line-height: var(--strata-reading-lh-code);
+}
+.strata-reading pre .comment { color: var(--strata-code-muted); }
+
+.strata-reading :not(pre) > code {
+  padding: 0.1em 0.2em;
+  border: var(--strata-rule-width) solid var(--strata-hair);
+  border-radius: var(--strata-radius-sm);
+  background: var(--strata-soft);
+  font-size: 0.85em;
+}
+
+.strata-reading-tabs {
+  display: flex;
+  margin: var(--strata-space-4) 0 0;
+  border-bottom: var(--strata-rule-hairline);
+}
+.strata-reading-tab {
+  padding: var(--strata-space-1) var(--strata-space-3);
+  border: var(--strata-rule-width) solid transparent;
+  border-bottom: 0;
+  background: transparent;
+  color: var(--strata-ink);
+  font-family: var(--strata-font-mono);
+  font-size: var(--strata-fs-micro);
+  line-height: var(--strata-reading-lh-compact);
+  letter-spacing: var(--strata-meta-tracking);
+  text-transform: var(--strata-meta-transform);
+  cursor: pointer;
+}
+.strata-reading-tab[aria-selected="true"] {
+  border-color: var(--strata-rule);
+  border-radius: var(--strata-radius-md) var(--strata-radius-md) 0 0;
+  background: var(--strata-surface);
+  font-weight: var(--strata-fw-semibold);
+}
+
+/* Emphasis carried by a rule, not a tint wash. */
+.strata-reading-note {
+  margin: var(--strata-space-4) 0;
+  padding: var(--strata-space-4);
+  border: var(--strata-rule-hairline);
+  border-left: var(--strata-space-1) solid var(--strata-info);
+  border-radius: var(--strata-radius-md);
+  background: var(--strata-soft);
+}
+.strata-reading-note-warning { border-left-color: var(--strata-warning); }
+.strata-reading-note-danger  { border-left-color: var(--strata-danger); }
+
+.strata-reading-note > :first-child { margin-top: 0; }
+.strata-reading-note > :last-child  { margin-bottom: 0; }
+
+/* ============================================================
+ * Data visualization
+ *
+ * The ramp is hue-differentiated, NOT luminance-differentiated:
+ * adjacent series reach only ~2.11:1 at best in light and ~1.29:1
+ * in dark, so more than two series REQUIRES a non-colour encoding.
+ * Categorical only — never sequential or diverging.
+ * ============================================================ */
+
+.strata-series-1 { color: var(--strata-series-1); fill: var(--strata-series-1); }
+.strata-series-2 { color: var(--strata-series-2); fill: var(--strata-series-2); }
+.strata-series-3 { color: var(--strata-series-3); fill: var(--strata-series-3); }
+.strata-series-4 { color: var(--strata-series-4); fill: var(--strata-series-4); }
+.strata-series-5 { color: var(--strata-series-5); fill: var(--strata-series-5); }
+.strata-series-6 { color: var(--strata-series-6); fill: var(--strata-series-6); }
+.strata-series-7 { color: var(--strata-series-7); fill: var(--strata-series-7); }
+
+/* Mandatory on every meaning-bearing mark. Without this stroke an orpiment
+ * bar measures 1.78:1 against a white page and has no perceivable edge. */
+.strata-mark {
+  stroke: var(--strata-rule);
+  stroke-width: var(--strata-rule-width);
+}
+
+.strata-chart-axis,
+.strata-chart-label {
+  font-family: var(--strata-font-mono);
+  font-size: var(--strata-fs-micro);
+  letter-spacing: var(--strata-meta-tracking);
+  text-transform: var(--strata-meta-transform);
+  fill: var(--strata-muted);
+  color: var(--strata-muted);
+}
+.strata-chart-gridline {
+  stroke: var(--strata-hair);
+  stroke-width: var(--strata-rule-width);
+}
 
 /* ============================================================
  * Reduced motion
  *
- * The bundle ships motion tokens and applies transitions, so it
- * must honour the user preference. Durations collapse to 1ms
- * rather than 0s so transitionend / animationend listeners still
- * fire and script that waits on them does not hang.
+ * 1ms rather than 0s so transitionend / animationend listeners
+ * still fire and script that waits on them does not hang.
  * ============================================================ */
 
 @media (prefers-reduced-motion: reduce) {
@@ -426,9 +681,9 @@
   .strata *,
   .strata *::before,
   .strata *::after,
-  .strata-docs *,
-  .strata-docs *::before,
-  .strata-docs *::after {
+  .strata-reading *,
+  .strata-reading *::before,
+  .strata-reading *::after {
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;

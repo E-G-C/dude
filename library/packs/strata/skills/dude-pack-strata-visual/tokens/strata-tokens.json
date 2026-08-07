@@ -1,129 +1,1013 @@
 {
   "$schema": "https://design-tokens.github.io/community-group/format/",
-  "$description": "Microsoft Visual Brand tokens — internal use. See ../reference/provenance-and-licensing.md.",
-  "color": {
-    "brand": {
-      "red":    { "$value": "#F25022", "$type": "color", "$description": "Top-left logo square" },
-      "green":  { "$value": "#7FBA00", "$type": "color", "$description": "Top-right logo square" },
-      "blue":   { "$value": "#00A4EF", "$type": "color", "$description": "Bottom-left logo square; default primary accent" },
-      "yellow": { "$value": "#FFB900", "$type": "color", "$description": "Bottom-right logo square" },
-      "gray":   { "$value": "#737373", "$type": "color", "$description": "Wordmark gray on light backgrounds" }
+  "$description": "Strata design tokens. One structural system, two colour palettes (pigment, spectrum) x two themes. Token ids are role-based: series-N and the semantic roles are the ids; mineral and spectral names are documentation only. All four palette/theme branches expose an identical id set, which strata-check asserts. Framework-agnostic and unaffiliated with any company, product, or design system. See ../reference/provenance-and-licensing.md.",
+  "space": {
+    "0": {
+      "$value": "0px",
+      "$type": "dimension"
     },
-    "neutral": {
-      "bg":         { "$value": "#FFFFFF", "$type": "color" },
-      "bg-subtle":  { "$value": "#F3F2F1", "$type": "color" },
-      "bg-dark":    { "$value": "#1B1A19", "$type": "color" },
-      "border":     { "$value": "#E1DFDD", "$type": "color" },
-      "text":       { "$value": "#201F1E", "$type": "color" },
-      "text-muted": { "$value": "#605E5C", "$type": "color" },
-      "text-on-dark": { "$value": "#FFFFFF", "$type": "color" }
+    "1": {
+      "$value": "4px",
+      "$type": "dimension"
     },
-    "semantic": {
-      "primary": { "$value": "{color.brand.blue}",   "$type": "color" },
-      "success": { "$value": "{color.brand.green}",  "$type": "color" },
-      "warning": { "$value": "{color.brand.yellow}", "$type": "color" },
-      "danger":  { "$value": "{color.brand.red}",    "$type": "color" }
+    "2": {
+      "$value": "8px",
+      "$type": "dimension"
+    },
+    "3": {
+      "$value": "12px",
+      "$type": "dimension"
+    },
+    "4": {
+      "$value": "16px",
+      "$type": "dimension"
+    },
+    "5": {
+      "$value": "24px",
+      "$type": "dimension"
+    },
+    "6": {
+      "$value": "32px",
+      "$type": "dimension"
+    },
+    "7": {
+      "$value": "48px",
+      "$type": "dimension"
+    },
+    "8": {
+      "$value": "64px",
+      "$type": "dimension"
+    }
+  },
+  "radius": {
+    "$description": "4px is the interactive default; 8px the maximum for large containers; pill is retained and discouraged.",
+    "sm": {
+      "$value": "2px",
+      "$type": "dimension"
+    },
+    "md": {
+      "$value": "4px",
+      "$type": "dimension"
+    },
+    "lg": {
+      "$value": "8px",
+      "$type": "dimension"
+    },
+    "pill": {
+      "$value": "9999px",
+      "$type": "dimension"
     }
   },
   "font": {
     "family": {
-      "body":    { "$value": "\"Segoe UI Variable Text\", \"Segoe UI Variable\", \"Segoe UI\", system-ui, -apple-system, BlinkMacSystemFont, \"Helvetica Neue\", Helvetica, Arial, sans-serif", "$type": "fontFamily" },
-      "heading": { "$value": "\"Segoe UI Variable Text\", \"Segoe UI Variable\", \"Segoe UI\", system-ui, -apple-system, BlinkMacSystemFont, \"Helvetica Neue\", Helvetica, Arial, sans-serif", "$type": "fontFamily" },
-      "mono":    { "$value": "\"Cascadia Code\", \"Cascadia Mono\", Consolas, \"Courier New\", monospace", "$type": "fontFamily" },
-      "docs":    { "$value": "\"Segoe UI Variable Text\", \"Segoe UI Variable\", \"Segoe UI\", system-ui, -apple-system, BlinkMacSystemFont, \"Helvetica Neue\", Helvetica, Arial, sans-serif", "$type": "fontFamily" },
-      "docs-mono": { "$value": "SFMono-Regular, Consolas, \"Liberation Mono\", Menlo, Courier, monospace", "$type": "fontFamily" }
+      "sans": {
+        "$value": "\"Atkinson Hyperlegible\", \"Noto Sans\", system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+        "$type": "fontFamily",
+        "$description": "Local-only. No font files ship; no @font-face; no remote import."
+      },
+      "mono": {
+        "$value": "\"Noto Sans Mono\", \"Liberation Mono\", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+        "$type": "fontFamily",
+        "$description": "Local-only. Also the metadata face: small labels, column heads, identifiers, axis ticks. Not a display voice."
+      }
     },
     "weight": {
-      "regular":  { "$value": 400, "$type": "fontWeight" },
-      "semibold": { "$value": 600, "$type": "fontWeight" },
-      "bold":     { "$value": 700, "$type": "fontWeight" }
+      "regular": {
+        "$value": 400,
+        "$type": "fontWeight"
+      },
+      "semibold": {
+        "$value": 600,
+        "$type": "fontWeight"
+      },
+      "bold": {
+        "$value": 700,
+        "$type": "fontWeight"
+      }
     },
     "size": {
-      "display":  { "$value": "48px", "$type": "dimension" },
-      "h1":       { "$value": "36px", "$type": "dimension" },
-      "h2":       { "$value": "28px", "$type": "dimension" },
-      "h3":       { "$value": "22px", "$type": "dimension" },
-      "h4":       { "$value": "18px", "$type": "dimension" },
-      "body-lg":  { "$value": "18px", "$type": "dimension" },
-      "body":     { "$value": "16px", "$type": "dimension" },
-      "caption":  { "$value": "13px", "$type": "dimension" },
-      "micro":    { "$value": "11px", "$type": "dimension" }
+      "display": {
+        "$value": "48px",
+        "$type": "dimension",
+        "$description": "Rare genuine title only - not the default page opener."
+      },
+      "h1": {
+        "$value": "36px",
+        "$type": "dimension"
+      },
+      "h2": {
+        "$value": "28px",
+        "$type": "dimension"
+      },
+      "h3": {
+        "$value": "22px",
+        "$type": "dimension"
+      },
+      "h4": {
+        "$value": "18px",
+        "$type": "dimension"
+      },
+      "body-lg": {
+        "$value": "18px",
+        "$type": "dimension"
+      },
+      "body": {
+        "$value": "16px",
+        "$type": "dimension"
+      },
+      "caption": {
+        "$value": "13px",
+        "$type": "dimension"
+      },
+      "micro": {
+        "$value": "11px",
+        "$type": "dimension"
+      }
     },
     "lineHeight": {
-      "display": { "$value": 1.15, "$type": "number" },
-      "h1":      { "$value": 1.2, "$type": "number" },
-      "h2":      { "$value": 1.25, "$type": "number" },
-      "h3":      { "$value": 1.3, "$type": "number" },
-      "h4":      { "$value": 1.35, "$type": "number" },
-      "body":    { "$value": 1.5, "$type": "number" },
-      "caption": { "$value": 1.4, "$type": "number" },
-      "micro":   { "$value": 1.3, "$type": "number" },
-      "tight":   { "$value": "{font.lineHeight.h1}", "$type": "number" },
-      "normal":  { "$value": "{font.lineHeight.body}", "$type": "number" }
+      "display": {
+        "$value": 1.15,
+        "$type": "number"
+      },
+      "h1": {
+        "$value": 1.2,
+        "$type": "number"
+      },
+      "h2": {
+        "$value": 1.25,
+        "$type": "number"
+      },
+      "h3": {
+        "$value": 1.3,
+        "$type": "number"
+      },
+      "h4": {
+        "$value": 1.35,
+        "$type": "number"
+      },
+      "body": {
+        "$value": 1.5,
+        "$type": "number"
+      },
+      "caption": {
+        "$value": 1.4,
+        "$type": "number"
+      },
+      "micro": {
+        "$value": 1.3,
+        "$type": "number"
+      },
+      "tight": {
+        "$value": "{font.lineHeight.h1}",
+        "$type": "number"
+      },
+      "normal": {
+        "$value": "{font.lineHeight.body}",
+        "$type": "number"
+      }
     }
   },
-  "docs": {
-    "contentWidth": { "$value": "100%", "$type": "dimension", "$description": "Full available documentation content area; constrain prose separately." },
-    "readableWidth": { "$value": "688px", "$type": "dimension", "$description": "Microsoft Learn-inspired prose measure for paragraphs, headings, and lists." },
-    "wideWidth": { "$value": "100%", "$type": "dimension", "$description": "Wide documentation elements such as tables and code blocks." },
-    "fontSize": {
-      "title":   { "$value": "40px", "$type": "dimension" },
-      "h2":      { "$value": "32px", "$type": "dimension" },
-      "h3":      { "$value": "28px", "$type": "dimension" },
-      "body":    { "$value": "16px", "$type": "dimension" },
-      "compact": { "$value": "14px", "$type": "dimension" },
-      "code":    { "$value": "14px", "$type": "dimension" }
+  "reading": {
+    "$description": "A long-form reading measure any product surface can use: an article view, a changelog, a report, a help panel, release notes, onboarding.",
+    "measure": {
+      "$value": "688px",
+      "$type": "dimension"
     },
-    "lineHeight": {
-      "title":   { "$value": "52px", "$type": "dimension" },
-      "h2":      { "$value": 1.3, "$type": "number" },
-      "h3":      { "$value": 1.3, "$type": "number" },
-      "body":    { "$value": "28px", "$type": "dimension" },
-      "list":    { "$value": 1.8, "$type": "number" },
-      "compact": { "$value": 1.5, "$type": "number" },
-      "code":    { "$value": "19px", "$type": "dimension" }
+    "width": {
+      "$value": "100%",
+      "$type": "dimension"
     },
-    "color": {
-      "link":          { "$value": "#0065B3", "$type": "color" },
-      "link-on-dark":  { "$value": "#75B6E7", "$type": "color" },
-      "code-bg":       { "$value": "{color.neutral.bg-subtle}", "$type": "color" },
-      "code-bg-dark":  { "$value": "#404040", "$type": "color" },
-      "tip-bg":        { "$value": "#DFF6DD", "$type": "color" },
-      "tip-border":    { "$value": "#107C10", "$type": "color" },
-      "tip-bg-dark":   { "$value": "#054B16", "$type": "color" },
-      "tip-text-dark": { "$value": "#DFF6DD", "$type": "color" }
+    "wide": {
+      "$value": "100%",
+      "$type": "dimension"
+    },
+    "fs-title": {
+      "$value": "40px",
+      "$type": "dimension"
+    },
+    "lh-title": {
+      "$value": "52px",
+      "$type": "dimension"
+    },
+    "fs-h2": {
+      "$value": "32px",
+      "$type": "dimension"
+    },
+    "lh-h2": {
+      "$value": 1.3,
+      "$type": "number"
+    },
+    "fs-h3": {
+      "$value": "28px",
+      "$type": "dimension"
+    },
+    "lh-h3": {
+      "$value": 1.3,
+      "$type": "number"
+    },
+    "fs-body": {
+      "$value": "16px",
+      "$type": "dimension"
+    },
+    "lh-body": {
+      "$value": "28px",
+      "$type": "dimension"
+    },
+    "fs-compact": {
+      "$value": "14px",
+      "$type": "dimension"
+    },
+    "lh-compact": {
+      "$value": 1.5,
+      "$type": "number"
+    },
+    "fs-code": {
+      "$value": "14px",
+      "$type": "dimension"
+    },
+    "lh-code": {
+      "$value": "19px",
+      "$type": "dimension"
+    },
+    "lh-list": {
+      "$value": 1.8,
+      "$type": "number"
     }
-  },
-  "space": {
-    "1": { "$value": "4px",  "$type": "dimension" },
-    "2": { "$value": "8px",  "$type": "dimension" },
-    "3": { "$value": "12px", "$type": "dimension" },
-    "4": { "$value": "16px", "$type": "dimension" },
-    "5": { "$value": "24px", "$type": "dimension" },
-    "6": { "$value": "32px", "$type": "dimension" },
-    "7": { "$value": "48px", "$type": "dimension" },
-    "8": { "$value": "64px", "$type": "dimension" }
-  },
-  "radius": {
-    "sm":   { "$value": "2px",    "$type": "dimension" },
-    "md":   { "$value": "4px",    "$type": "dimension" },
-    "lg":   { "$value": "8px",    "$type": "dimension" },
-    "pill": { "$value": "9999px", "$type": "dimension" }
-  },
-  "elevation": {
-    "1": { "$value": "0 1px 2px rgba(0,0,0,0.08)",  "$type": "shadow" },
-    "2": { "$value": "0 2px 6px rgba(0,0,0,0.10)",  "$type": "shadow" },
-    "3": { "$value": "0 4px 12px rgba(0,0,0,0.12)", "$type": "shadow" }
   },
   "motion": {
-    "duration": {
-      "micro":    { "$value": "150ms", "$type": "duration" },
-      "standard": { "$value": "250ms", "$type": "duration" },
-      "entrance": { "$value": "400ms", "$type": "duration" }
+    "dur": {
+      "micro": {
+        "$value": "150ms",
+        "$type": "duration"
+      },
+      "standard": {
+        "$value": "250ms",
+        "$type": "duration"
+      },
+      "entrance": {
+        "$value": "400ms",
+        "$type": "duration"
+      }
     },
     "easing": {
-      "enter": { "$value": "cubic-bezier(0.1, 0.9, 0.2, 1)", "$type": "cubicBezier" },
-      "exit":  { "$value": "cubic-bezier(0, 0, 0.58, 1)", "$type": "cubicBezier" }
+      "enter": {
+        "$value": "cubic-bezier(0.2, 0, 0, 1)",
+        "$type": "cubicBezier"
+      },
+      "exit": {
+        "$value": "cubic-bezier(0.2, 0, 0, 1)",
+        "$type": "cubicBezier",
+        "$description": "Declared as an explicit cubic-bezier. A CSS keyword must never be used as a token value: `ease-out` means exactly cubic-bezier(0, 0, 0.58, 1), and the keyword hides that from cross-format comparison."
+      }
+    }
+  },
+  "code": {
+    "bg": {
+      "$value": "#101215",
+      "$type": "color",
+      "$description": "Dark in BOTH themes and shared by both palettes."
+    },
+    "text": {
+      "$value": "#EDEFF3",
+      "$type": "color",
+      "$description": "16.30:1 on code.bg"
+    },
+    "muted": {
+      "$value": "#A2A9B4",
+      "$type": "color",
+      "$description": "7.92:1 on code.bg. Never use the plane muted token on the code surface."
+    }
+  },
+  "plane": {
+    "$description": "Replaces the old three-step blur-shadow elevation ramp. A plane is legible from its tone and its 1px edge - and on a white or near-white ground the tone contributes almost nothing, so the edge is mandatory. There is no shadow token because there is no shadow.",
+    "base": {
+      "$value": "{palette.pigment.light.plane.canvas}",
+      "$type": "color"
+    },
+    "raised": {
+      "$value": "{palette.pigment.light.plane.surface}",
+      "$type": "color"
+    },
+    "inset": {
+      "$value": "{palette.pigment.light.plane.soft}",
+      "$type": "color"
+    },
+    "sunken": {
+      "$value": "{palette.pigment.light.plane.sunken}",
+      "$type": "color"
+    }
+  },
+  "palette": {
+    "$description": "Two value sets over ONE id space. Every leaf under pigment.light exists under spectrum.light, pigment.dark, and spectrum.dark. strata-check asserts this in all six pairwise directions, because an id present in one branch and missing from another is a silent runtime failure after a palette switch.",
+    "pigment": {
+      "$description": "Default palette. Mineral pigments: azurite, verdigris, malachite, orpiment, cinnabar, amethyst, rhodochrosite.",
+      "light": {
+        "plane": {
+          "canvas": {
+            "$value": "#FFFFFF",
+            "$type": "color"
+          },
+          "surface": {
+            "$value": "#FFFFFF",
+            "$type": "color"
+          },
+          "soft": {
+            "$value": "#F4F6F8",
+            "$type": "color"
+          },
+          "sunken": {
+            "$value": "#EDEFF3",
+            "$type": "color"
+          }
+        },
+        "ink": {
+          "ink": {
+            "$value": "#14161A",
+            "$type": "color"
+          },
+          "muted": {
+            "$value": "#565C66",
+            "$type": "color"
+          },
+          "on-accent": {
+            "$value": "#FFFFFF",
+            "$type": "color"
+          },
+          "on-warning": {
+            "$value": "#14161A",
+            "$type": "color"
+          }
+        },
+        "rule": {
+          "rule": {
+            "$value": "#828994",
+            "$type": "color"
+          },
+          "hair": {
+            "$value": "#E3E6EA",
+            "$type": "color"
+          }
+        },
+        "series": {
+          "1": {
+            "$value": "#1348E8",
+            "$type": "color"
+          },
+          "1-deep": {
+            "$value": "#0E37B8",
+            "$type": "color"
+          },
+          "2": {
+            "$value": "#0098B8",
+            "$type": "color",
+            "$description": "verdigris. Shifted from #00A0A8: at 27 degrees from series-3 the two were indistinguishable as adjacent categorical series."
+          },
+          "2-deep": {
+            "$value": "#00757D",
+            "$type": "color"
+          },
+          "3": {
+            "$value": "#00B36B",
+            "$type": "color"
+          },
+          "3-deep": {
+            "$value": "#00794A",
+            "$type": "color"
+          },
+          "4": {
+            "$value": "#FFB400",
+            "$type": "color",
+            "$description": "orpiment. FILL ONLY - 1.78:1 as text and as a fill boundary, so a rule border is mandatory."
+          },
+          "4-deep": {
+            "$value": "#7F5800",
+            "$type": "color"
+          },
+          "5": {
+            "$value": "#E63A1F",
+            "$type": "color",
+            "$description": "cinnabar. FILL ONLY - 4.21:1 as text, and white on it is also 4.21:1."
+          },
+          "5-deep": {
+            "$value": "#CE2E14",
+            "$type": "color"
+          },
+          "6": {
+            "$value": "#7A2FE0",
+            "$type": "color"
+          },
+          "6-deep": {
+            "$value": "#5A1FB0",
+            "$type": "color"
+          },
+          "7": {
+            "$value": "#D1176B",
+            "$type": "color"
+          },
+          "7-deep": {
+            "$value": "#C41364",
+            "$type": "color"
+          },
+          "1-tint": {
+            "$value": "#E7EEFF",
+            "$type": "color"
+          },
+          "1-tint-ink": {
+            "$value": "#0E37B8",
+            "$type": "color"
+          },
+          "2-tint": {
+            "$value": "#DEF4F7",
+            "$type": "color"
+          },
+          "2-tint-ink": {
+            "$value": "#005C63",
+            "$type": "color"
+          },
+          "3-tint": {
+            "$value": "#DFF6EA",
+            "$type": "color"
+          },
+          "3-tint-ink": {
+            "$value": "#00603A",
+            "$type": "color"
+          },
+          "4-tint": {
+            "$value": "#FFF3D6",
+            "$type": "color"
+          },
+          "4-tint-ink": {
+            "$value": "#6B4A00",
+            "$type": "color"
+          },
+          "5-tint": {
+            "$value": "#FFE8E3",
+            "$type": "color"
+          },
+          "5-tint-ink": {
+            "$value": "#A32410",
+            "$type": "color"
+          },
+          "6-tint": {
+            "$value": "#F0E7FF",
+            "$type": "color"
+          },
+          "6-tint-ink": {
+            "$value": "#5A1FB0",
+            "$type": "color"
+          },
+          "7-tint": {
+            "$value": "#FFE6F0",
+            "$type": "color"
+          },
+          "7-tint-ink": {
+            "$value": "#9C0F50",
+            "$type": "color"
+          }
+        }
+      },
+      "dark": {
+        "plane": {
+          "canvas": {
+            "$value": "#101215",
+            "$type": "color"
+          },
+          "surface": {
+            "$value": "#181B20",
+            "$type": "color"
+          },
+          "soft": {
+            "$value": "#1E2228",
+            "$type": "color"
+          },
+          "sunken": {
+            "$value": "#141719",
+            "$type": "color"
+          }
+        },
+        "ink": {
+          "ink": {
+            "$value": "#EDEFF3",
+            "$type": "color"
+          },
+          "muted": {
+            "$value": "#A2A9B4",
+            "$type": "color"
+          },
+          "on-accent": {
+            "$value": "#101215",
+            "$type": "color"
+          },
+          "on-warning": {
+            "$value": "#101215",
+            "$type": "color"
+          }
+        },
+        "rule": {
+          "rule": {
+            "$value": "#828994",
+            "$type": "color"
+          },
+          "hair": {
+            "$value": "#2A2F36",
+            "$type": "color"
+          }
+        },
+        "series": {
+          "1": {
+            "$value": "#6A9BFF",
+            "$type": "color"
+          },
+          "1-deep": {
+            "$value": "#9BBCFF",
+            "$type": "color"
+          },
+          "2": {
+            "$value": "#2FC9D4",
+            "$type": "color"
+          },
+          "2-deep": {
+            "$value": "#7FDDE6",
+            "$type": "color"
+          },
+          "3": {
+            "$value": "#2FCB86",
+            "$type": "color"
+          },
+          "3-deep": {
+            "$value": "#7DE0B0",
+            "$type": "color"
+          },
+          "4": {
+            "$value": "#FFC22E",
+            "$type": "color"
+          },
+          "4-deep": {
+            "$value": "#FFD97A",
+            "$type": "color"
+          },
+          "5": {
+            "$value": "#FF7355",
+            "$type": "color"
+          },
+          "5-deep": {
+            "$value": "#FFAE99",
+            "$type": "color"
+          },
+          "6": {
+            "$value": "#B98CFF",
+            "$type": "color"
+          },
+          "6-deep": {
+            "$value": "#CBAAFF",
+            "$type": "color"
+          },
+          "7": {
+            "$value": "#FF7FB5",
+            "$type": "color"
+          },
+          "7-deep": {
+            "$value": "#FFB3D2",
+            "$type": "color"
+          },
+          "1-tint": {
+            "$value": "#141F3D",
+            "$type": "color"
+          },
+          "1-tint-ink": {
+            "$value": "#A8C4FF",
+            "$type": "color"
+          },
+          "2-tint": {
+            "$value": "#0A2A2E",
+            "$type": "color"
+          },
+          "2-tint-ink": {
+            "$value": "#7FDDE6",
+            "$type": "color"
+          },
+          "3-tint": {
+            "$value": "#0C2E20",
+            "$type": "color"
+          },
+          "3-tint-ink": {
+            "$value": "#7DE0B0",
+            "$type": "color"
+          },
+          "4-tint": {
+            "$value": "#33260A",
+            "$type": "color"
+          },
+          "4-tint-ink": {
+            "$value": "#FFD97A",
+            "$type": "color"
+          },
+          "5-tint": {
+            "$value": "#361510",
+            "$type": "color"
+          },
+          "5-tint-ink": {
+            "$value": "#FFAE99",
+            "$type": "color"
+          },
+          "6-tint": {
+            "$value": "#231640",
+            "$type": "color"
+          },
+          "6-tint-ink": {
+            "$value": "#CBAAFF",
+            "$type": "color"
+          },
+          "7-tint": {
+            "$value": "#3B1228",
+            "$type": "color"
+          },
+          "7-tint-ink": {
+            "$value": "#FFB3D2",
+            "$type": "color"
+          }
+        }
+      }
+    },
+    "spectrum": {
+      "$description": "Cooler ground, broader spectral spread: blue, teal, green, amber, red, violet, magenta.",
+      "light": {
+        "plane": {
+          "canvas": {
+            "$value": "#FAFBFF",
+            "$type": "color"
+          },
+          "surface": {
+            "$value": "#FFFFFF",
+            "$type": "color"
+          },
+          "soft": {
+            "$value": "#EDF1FC",
+            "$type": "color"
+          },
+          "sunken": {
+            "$value": "#E4E9F7",
+            "$type": "color"
+          }
+        },
+        "ink": {
+          "ink": {
+            "$value": "#101A33",
+            "$type": "color"
+          },
+          "muted": {
+            "$value": "#4C5B7A",
+            "$type": "color"
+          },
+          "on-accent": {
+            "$value": "#FFFFFF",
+            "$type": "color"
+          },
+          "on-warning": {
+            "$value": "#101A33",
+            "$type": "color"
+          }
+        },
+        "rule": {
+          "rule": {
+            "$value": "#79859F",
+            "$type": "color"
+          },
+          "hair": {
+            "$value": "#DFE5F2",
+            "$type": "color"
+          }
+        },
+        "series": {
+          "1": {
+            "$value": "#1552E0",
+            "$type": "color"
+          },
+          "1-deep": {
+            "$value": "#0F3FB5",
+            "$type": "color"
+          },
+          "2": {
+            "$value": "#00A0A8",
+            "$type": "color"
+          },
+          "2-deep": {
+            "$value": "#00757D",
+            "$type": "color",
+            "$description": "Corrected from #00808C, which measured 4.16:1 on the soft plane and failed AA normal."
+          },
+          "3": {
+            "$value": "#12B76A",
+            "$type": "color"
+          },
+          "3-deep": {
+            "$value": "#097340",
+            "$type": "color",
+            "$description": "Darkened from #0A7A43, which measured 4.46:1 on the sunken plane and missed AA normal by 0.04."
+          },
+          "4": {
+            "$value": "#F5A700",
+            "$type": "color",
+            "$description": "amber. FILL ONLY - 1.95:1 as text."
+          },
+          "4-deep": {
+            "$value": "#7A5200",
+            "$type": "color"
+          },
+          "5": {
+            "$value": "#D71E3C",
+            "$type": "color"
+          },
+          "5-deep": {
+            "$value": "#B01730",
+            "$type": "color"
+          },
+          "6": {
+            "$value": "#6D28D9",
+            "$type": "color"
+          },
+          "6-deep": {
+            "$value": "#5B21B6",
+            "$type": "color"
+          },
+          "7": {
+            "$value": "#B0009B",
+            "$type": "color",
+            "$description": "magenta. Shifted from #D6006E, which was 1.01:1 luminance and 21 degrees from series-5 - indistinguishable in both themes."
+          },
+          "7-deep": {
+            "$value": "#8A0079",
+            "$type": "color"
+          },
+          "1-tint": {
+            "$value": "#E3EDFF",
+            "$type": "color"
+          },
+          "1-tint-ink": {
+            "$value": "#0B3FA8",
+            "$type": "color"
+          },
+          "2-tint": {
+            "$value": "#DEF4F7",
+            "$type": "color"
+          },
+          "2-tint-ink": {
+            "$value": "#00595F",
+            "$type": "color"
+          },
+          "3-tint": {
+            "$value": "#DFF7EA",
+            "$type": "color"
+          },
+          "3-tint-ink": {
+            "$value": "#06623B",
+            "$type": "color"
+          },
+          "4-tint": {
+            "$value": "#FFF2D1",
+            "$type": "color"
+          },
+          "4-tint-ink": {
+            "$value": "#7A4E00",
+            "$type": "color"
+          },
+          "5-tint": {
+            "$value": "#FFE4E8",
+            "$type": "color"
+          },
+          "5-tint-ink": {
+            "$value": "#A3122C",
+            "$type": "color"
+          },
+          "6-tint": {
+            "$value": "#EFE6FE",
+            "$type": "color"
+          },
+          "6-tint-ink": {
+            "$value": "#5B21B6",
+            "$type": "color"
+          },
+          "7-tint": {
+            "$value": "#FCE3FA",
+            "$type": "color"
+          },
+          "7-tint-ink": {
+            "$value": "#8A0079",
+            "$type": "color"
+          }
+        }
+      },
+      "dark": {
+        "plane": {
+          "canvas": {
+            "$value": "#0B1020",
+            "$type": "color"
+          },
+          "surface": {
+            "$value": "#131A2E",
+            "$type": "color"
+          },
+          "soft": {
+            "$value": "#1C2540",
+            "$type": "color"
+          },
+          "sunken": {
+            "$value": "#0E1526",
+            "$type": "color"
+          }
+        },
+        "ink": {
+          "ink": {
+            "$value": "#EAEFFA",
+            "$type": "color"
+          },
+          "muted": {
+            "$value": "#A3B0CC",
+            "$type": "color"
+          },
+          "on-accent": {
+            "$value": "#06090F",
+            "$type": "color"
+          },
+          "on-warning": {
+            "$value": "#06090F",
+            "$type": "color"
+          }
+        },
+        "rule": {
+          "rule": {
+            "$value": "#79859F",
+            "$type": "color"
+          },
+          "hair": {
+            "$value": "#232D4A",
+            "$type": "color"
+          }
+        },
+        "series": {
+          "1": {
+            "$value": "#5B9DFF",
+            "$type": "color"
+          },
+          "1-deep": {
+            "$value": "#A9CBFF",
+            "$type": "color"
+          },
+          "2": {
+            "$value": "#3FD6E6",
+            "$type": "color"
+          },
+          "2-deep": {
+            "$value": "#7FE0EA",
+            "$type": "color"
+          },
+          "3": {
+            "$value": "#34D98B",
+            "$type": "color"
+          },
+          "3-deep": {
+            "$value": "#7FE9B8",
+            "$type": "color"
+          },
+          "4": {
+            "$value": "#FFC542",
+            "$type": "color"
+          },
+          "4-deep": {
+            "$value": "#FFD98A",
+            "$type": "color"
+          },
+          "5": {
+            "$value": "#FF6B85",
+            "$type": "color"
+          },
+          "5-deep": {
+            "$value": "#FFA8B6",
+            "$type": "color"
+          },
+          "6": {
+            "$value": "#A98BFF",
+            "$type": "color"
+          },
+          "6-deep": {
+            "$value": "#CBAAFF",
+            "$type": "color"
+          },
+          "7": {
+            "$value": "#EE7BFF",
+            "$type": "color"
+          },
+          "7-deep": {
+            "$value": "#F5AEFF",
+            "$type": "color"
+          },
+          "1-tint": {
+            "$value": "#16294D",
+            "$type": "color"
+          },
+          "1-tint-ink": {
+            "$value": "#A9CBFF",
+            "$type": "color"
+          },
+          "2-tint": {
+            "$value": "#0A2E33",
+            "$type": "color"
+          },
+          "2-tint-ink": {
+            "$value": "#7FE0EA",
+            "$type": "color"
+          },
+          "3-tint": {
+            "$value": "#0E3326",
+            "$type": "color"
+          },
+          "3-tint-ink": {
+            "$value": "#7FE9B8",
+            "$type": "color"
+          },
+          "4-tint": {
+            "$value": "#3A2A08",
+            "$type": "color"
+          },
+          "4-tint-ink": {
+            "$value": "#FFD98A",
+            "$type": "color"
+          },
+          "5-tint": {
+            "$value": "#3D141C",
+            "$type": "color"
+          },
+          "5-tint-ink": {
+            "$value": "#FFA8B6",
+            "$type": "color"
+          },
+          "6-tint": {
+            "$value": "#241A47",
+            "$type": "color"
+          },
+          "6-tint-ink": {
+            "$value": "#CBAAFF",
+            "$type": "color"
+          },
+          "7-tint": {
+            "$value": "#331240",
+            "$type": "color"
+          },
+          "7-tint-ink": {
+            "$value": "#F5AEFF",
+            "$type": "color"
+          }
+        }
+      }
+    }
+  },
+  "role": {
+    "$description": "Palette-independent aliases onto series slots. Components reference these, never a series slot and never a colour name. DTCG has no runtime-selected branch, so each reference below names the default palette; a consumer resolves the same leaf under whichever palette.<name>.<theme> branch is active.",
+    "primary": {
+      "$value": "{palette.pigment.light.series.1}",
+      "$type": "color"
+    },
+    "hover": {
+      "$value": "{palette.pigment.light.series.1-deep}",
+      "$type": "color"
+    },
+    "info": {
+      "$value": "{palette.pigment.light.series.2}",
+      "$type": "color"
+    },
+    "info-text": {
+      "$value": "{palette.pigment.light.series.2-deep}",
+      "$type": "color"
+    },
+    "success": {
+      "$value": "{palette.pigment.light.series.3}",
+      "$type": "color"
+    },
+    "success-text": {
+      "$value": "{palette.pigment.light.series.3-deep}",
+      "$type": "color"
+    },
+    "warning": {
+      "$value": "{palette.pigment.light.series.4}",
+      "$type": "color"
+    },
+    "warning-text": {
+      "$value": "{palette.pigment.light.series.4-deep}",
+      "$type": "color"
+    },
+    "danger": {
+      "$value": "{palette.pigment.light.series.5}",
+      "$type": "color"
+    },
+    "danger-text": {
+      "$value": "{palette.pigment.light.series.5-deep}",
+      "$type": "color",
+      "$description": "The destructive fill. White on the vivid danger slot measures only 4.21:1 in pigment, so components fill with the deep form in both palettes."
+    },
+    "focus": {
+      "$value": "{palette.pigment.light.series.6}",
+      "$type": "color",
+      "$description": "Carries no semantic state role, which is what keeps a focused danger control readable."
     }
   }
 }

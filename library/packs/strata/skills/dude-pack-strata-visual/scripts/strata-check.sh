@@ -1,72 +1,197 @@
 #!/usr/bin/env bash
-# Microsoft visual-brand smoke check (internal use only).
+# Strata token validator.
 #
-# Fails when raw Microsoft brand hex codes leak into authored content,
-# templates, or SCSS, or when the SCSS token import is missing. This is a
-# fast drift guard, not a full brand audit - pair it with the
-# `@dude-pack-strata-stylist` agent for visual review.
+# Validates THIS pack folder. It does not inspect, assume, or require a
+# consuming project, and it knows nothing about any site generator or build
+# tool. (The predecessor resolved a root four levels up and checked Hugo
+# paths, so it could never validate the tokens it shipped alongside.)
 #
-# Usage:  bash .github/skills/dude-pack-strata-visual/scripts/strata-check.sh
-# Exit:   0 = clean, 1 = brand drift found.
+# Checks:
+#   1. No raw colour literal outside tokens/ - hex AND rgb()/rgba()/hsl().
+#   2. Spacing on the 4/8 scale; no radius above the 8px ceiling.
+#   3. No box-shadow, backdrop-filter, or filter: blur() anywhere.
+#   4. No CSS easing keyword used as a token value.
+#   5. prefers-reduced-motion present.
+#   6. Cross-palette id parity across all four palette/theme blocks.
+#   7. No structural token inside a palette block.
+#   8. Components reference role tokens, not series slots.
+#   9. No @font-face and no remote font import.
+#
+# Usage: bash scripts/strata-check.sh
+# Exit:  0 = clean, 1 = problems found.
 
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-cd "$repo_root"
+skill_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$skill_root"
 
-# Microsoft four-square + neutral brand hex codes that must come from tokens.
-# Matched in hex form and in the rgb()/rgba() functional forms, which are the
-# same colours written in a notation a hex-only guard cannot see.
-brand_hex='#F25022|#7FBA00|#00A4EF|#FFB900|#737373'
-brand_rgb='rgba?\(\s*242\s*,\s*80\s*,\s*34|rgba?\(\s*127\s*,\s*186\s*,\s*0|rgba?\(\s*0\s*,\s*164\s*,\s*239|rgba?\(\s*255\s*,\s*185\s*,\s*0|rgba?\(\s*115\s*,\s*115\s*,\s*115'
-brand_any="$brand_hex|$brand_rgb"
-
-# Authored surfaces Hugo renders. The token files themselves are the one
-# legitimate home for the raw hex, so they are excluded.
-search_globs=(
-  'content'
-  'layouts'
-  'assets/scss'
-)
-
-token_file='assets/scss/_variables_project.scss'
-token_import='dude-pack-strata-visual/tokens/strata.scss'
+css='tokens/strata.css'
+scss='tokens/strata.scss'
+json='tokens/strata-tokens.json'
+twp='tokens/tailwind.preset.js'
 
 fail=0
 
-echo "== Microsoft brand smoke check =="
+echo "== strata token check (folder-local: $skill_root) =="
 
-# 1) No raw brand hex in authored content/templates/SCSS.
-hits=""
-for glob in "${search_globs[@]}"; do
-  [ -e "$glob" ] || continue
-  if matches="$(grep -RInEi "$brand_any" "$glob" 2>/dev/null \
-      | grep -viE 'dude-pack-strata-visual/tokens/' || true)"; then
-    if [ -n "$matches" ]; then
-      hits+="$matches"$'\n'
-    fi
-  fi
+for f in "$css" "$scss" "$json" "$twp"; do
+  [ -f "$f" ] || { echo "FAIL: missing token file $f"; fail=1; }
 done
 
-if [ -n "$hits" ]; then
-  echo "FAIL: raw Microsoft brand hex found. Use the token (var(--strata-*) / \$strata-*) instead:"
-  echo "$hits" | sed '/^$/d'
+# --- 1. Raw colour literals outside tokens/ ------------------------------
+# reference/colors.md and reference/provenance-and-licensing.md document the
+# values, so they are the one legitimate home for literals outside tokens/.
+colour_re='#[0-9A-Fa-f]{3,8}\b|rgba?\(|hsla?\('
+raw="$(grep -RInE "$colour_re" examples reference 2>/dev/null \
+       | grep -vE 'reference/(colors|provenance-and-licensing)\.md' || true)"
+if [ -n "$raw" ]; then
+  echo "FAIL: raw colour literal outside tokens/ (use a --strata-* token):"
+  echo "$raw" | sed 's/^/  /'
   fail=1
 else
-  echo "OK: no raw brand hex in content/, layouts/, assets/scss/."
+  echo "OK: no raw colour literals in examples/ or reference/ prose."
 fi
 
-# 2) SCSS token import is intact so every rendered page inherits the brand.
-if [ -f "$token_file" ] && grep -qF "$token_import" "$token_file"; then
-  echo "OK: $token_file imports the brand tokens."
-else
-  echo "FAIL: $token_file is missing the '$token_import' import; pages will not inherit the brand."
+# --- 2. Spacing scale and the 8px radius ceiling -------------------------
+offscale="$(grep -RInE '(padding|margin|gap)[^;]*[^0-9]([0-9]+)px' "$css" "$scss" examples 2>/dev/null \
+           | grep -vE '[^0-9](0|4|8|12|16|24|32|48|64)px' || true)"
+if [ -n "$offscale" ]; then
+  echo "FAIL: off-scale spacing literal (scale is 0/4/8/12/16/24/32/48/64):"
+  echo "$offscale" | sed 's/^/  /'
   fail=1
+else
+  echo "OK: spacing literals are on-scale."
+fi
+
+badradius="$(grep -RInE 'border-radius:\s*[0-9]+px' "$css" "$scss" examples 2>/dev/null \
+            | grep -vE 'border-radius:\s*(0|1|2|4|8)px' || true)"
+if [ -n "$badradius" ]; then
+  echo "FAIL: raw border-radius above the 8px ceiling:"
+  echo "$badradius" | sed 's/^/  /'
+  fail=1
+else
+  echo "OK: no raw radius above the 8px ceiling."
+fi
+
+# --- 3. Stratification: no shadow, no blur, no glass ---------------------
+shadowy="$(grep -RInE '(box-shadow|backdrop-filter)[[:space:]]*:|filter[[:space:]]*:[[:space:]]*blur' "$css" "$scss" "$twp" examples 2>/dev/null \
+          | grep -vE ':[[:space:]]*(//|\*|/\*|#)' || true)"
+if [ -n "$shadowy" ]; then
+  echo "FAIL: box-shadow / backdrop-filter / blur found. Strata uses planes and 1px rules:"
+  echo "$shadowy" | sed 's/^/  /'
+  fail=1
+else
+  echo "OK: no shadows, blurs, or glass effects."
+fi
+
+# --- 4. Easing keyword used as a token value -----------------------------
+# `ease-out` silently means cubic-bezier(0, 0, 0.58, 1). Expressing an easing
+# token as a keyword is how a cross-format disagreement hid in plain sight.
+if grep -nE '(--strata-ease-[a-z]+|\$strata-ease-[a-z]+)\s*:\s*(ease|ease-in|ease-out|ease-in-out|linear)\s*;' \
+     "$css" "$scss" >/dev/null 2>&1; then
+  echo "FAIL: an easing token is defined with a CSS keyword. Use explicit cubic-bezier()."
+  grep -nE '[-$]strata-ease' "$css" "$scss" | sed 's/^/  /'
+  fail=1
+else
+  echo "OK: all easing tokens are explicit cubic-bezier()."
+fi
+
+# --- 5. Reduced motion ---------------------------------------------------
+if grep -q 'prefers-reduced-motion' "$css"; then
+  echo "OK: prefers-reduced-motion block present."
+else
+  echo "FAIL: $css has no prefers-reduced-motion block."
+  fail=1
+fi
+
+# --- 6/7. Cross-palette id parity, and no structure in a palette block ---
+# An id present in one palette/theme block and missing from another is a
+# SILENT runtime failure: the custom property simply stops resolving after a
+# palette switch, with no error anywhere. Assert it mechanically.
+parity="$(node - "$css" <<'NODE'
+const fs = require('fs');
+const css = fs.readFileSync(process.argv[2], 'utf8');
+
+function block(sel) {
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let m;
+  while ((m = re.exec(css)) !== null) {
+    if (m[1].includes(sel) && m[2].includes('--strata-')) {
+      // Not line-anchored: several declarations share a line.
+      return new Map([...m[2].matchAll(/--strata-([a-z0-9-]+)\s*:\s*([^;]+);/g)]
+        .map((d) => [d[1], d[2].trim()]));
+    }
+  }
+  return new Map();
+}
+
+const blocks = {};
+for (const p of ['pigment', 'spectrum']) {
+  blocks[`${p}-light`] = block(`[data-strata-palette="${p}"]`);
+  blocks[`${p}-dark`] = block(`[data-strata-palette="${p}"][data-strata-theme="dark"]`);
+}
+
+const problems = [];
+for (const [name, b] of Object.entries(blocks)) {
+  if (b.size === 0) problems.push(`palette block ${name} is empty or unparseable`);
+}
+
+const names = Object.keys(blocks);
+for (let i = 0; i < names.length; i += 1) {
+  for (let j = i + 1; j < names.length; j += 1) {
+    const a = names[i]; const b = names[j];
+    const A = new Set(blocks[a].keys()); const B = new Set(blocks[b].keys());
+    const onlyA = [...A].filter((k) => !B.has(k));
+    const onlyB = [...B].filter((k) => !A.has(k));
+    if (onlyA.length || onlyB.length) {
+      problems.push(`id parity ${a} vs ${b}: only-${a}=[${onlyA}] only-${b}=[${onlyB}]`);
+    }
+  }
+}
+
+// A palette block carries colour only. Structure is single-sourced; letting a
+// spacing or radius value in is how two palettes drift into two design systems.
+const structural = /^(space|radius|fs|lh|dur|ease|fw|reading|meta|font|plane|rule-width)-?/;
+for (const [name, b] of Object.entries(blocks)) {
+  const stray = [...b.keys()].filter((k) => structural.test(k));
+  if (stray.length) problems.push(`structural token inside palette block ${name}: [${stray}]`);
+}
+
+if (problems.length) { console.log(problems.join('\n')); process.exit(1); }
+console.log(`${Object.keys(blocks).length} palette blocks, ${blocks['pigment-light'].size} ids each`);
+NODE
+)" || { echo "FAIL: cross-palette parity"; echo "$parity" | sed 's/^/  /'; fail=1; parity=""; }
+if [ -n "$parity" ]; then
+  echo "OK: cross-palette id parity ($parity)."
+  echo "OK: palette blocks carry colour only."
+fi
+
+# --- 8. Components must use role tokens, not series slots ----------------
+# A component bound to series-1 still works, but it has silently bound itself
+# to a slot rather than to the primary role.
+leak="$(grep -nE '^\.strata-(btn|panel|input|reading|stack|fill)[^{]*\{[^}]*var\(--strata-series-' "$css" || true)"
+if [ -n "$leak" ]; then
+  echo "FAIL: a component rule references a series slot where a role token exists:"
+  echo "$leak" | sed 's/^/  /'
+  fail=1
+else
+  echo "OK: components reference role tokens only."
+fi
+
+# --- 9. Fonts are local-only --------------------------------------------
+fontleak="$(grep -RInE '@font-face[[:space:]]*\{|@import[^;]*(https?://|//fonts\.)|href="https?://[^"]*font' \
+             tokens reference examples 2>/dev/null || true)"
+if [ -n "$fontleak" ]; then
+  echo "FAIL: font file or remote font import found. Strata is local-only:"
+  echo "$fontleak" | sed 's/^/  /'
+  fail=1
+else
+  echo "OK: no @font-face and no remote font import."
 fi
 
 if [ "$fail" -ne 0 ]; then
-  echo "== brand check FAILED =="
+  echo "== strata token check FAILED =="
   exit 1
 fi
 
-echo "== brand check passed =="
+echo "== strata token check passed =="

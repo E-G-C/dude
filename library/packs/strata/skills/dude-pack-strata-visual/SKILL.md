@@ -1,102 +1,126 @@
 ---
 name: dude-pack-strata-visual
 description:
-  Apply Microsoft visual brand (colors, Segoe UI typography, four-square logo
-  placement, layout patterns) to internal HTML/CSS/React/Markdown/slides. USE
-  WHEN the user says "make this Microsoft-branded", "apply MS brand", "use
-  Microsoft colors", "add the Microsoft logo", "Segoe UI", "style this like
-  Microsoft", or wants an internal page/deck/component to follow Microsoft's
-  visual identity. DO NOT USE FOR external/customer-facing material — point the
-  user to the official Microsoft Brand Central instead.
+  Apply the Strata layered visual system to any visual surface — applications,
+  web pages, components, SVG and graphics, data visualization, and long-form
+  documents. One structural language with two interchangeable colour palettes
+  (pigment, spectrum) across light and dark, plane-and-rule elevation with no
+  drop shadows, a square 4px shape language, a working UI type scale, 4/8
+  spacing, motion tokens, a seven-slot categorical chart ramp, and measured WCAG
+  contrast across all four surfaces, in CSS, SCSS, JSON, and Tailwind. USE WHEN
+  the user says "apply Strata", "use the Strata tokens", "wire up --strata-*",
+  "switch to the spectrum palette", "use the pigment palette", "theme this app",
+  "theme this component", "style this chart", "pick colours for these data
+  series", "give this a dark theme", "put this on the spacing scale", "fix the
+  contrast", "fix the focus rings", "make this less rounded", or "get rid of
+  these drop shadows". Includes folder-local validators (strata-check.sh /
+  strata-check.ps1) that check cross-format and cross-palette token parity, the
+  no-shadow rule, and the radius ceiling. DO NOT USE FOR applying a real
+  company's brand identity, logos, wordmarks, product marks, or trademark
+  guidance — Strata is unaffiliated and ships no logo.
 ---
 
-# Microsoft Visual Brand Skill (Internal)
+# Strata Visual System
 
-This skill applies Microsoft's **visual identity** to internal code and content.
-It covers colors, typography, the four-square logo, and basic layout. It does
-**not** cover legal/trademark policy — for anything external, defer to official
-Microsoft Brand Central.
+Strata applies a layered visual system to code and content: planes read by their
+edges, a role-based colour model with two interchangeable palettes, a type-led
+hierarchy, and measured accessibility.
+
+It is unaffiliated with any company, product, or design system, and ships no
+logo, wordmark, or icon. It does not cover trademark or brand policy.
 
 ## When to use this skill
 
 Use it when the user asks to:
 
-- "Make this look like Microsoft" / "apply MS brand" / "use Microsoft colors"
-- Theme a React/HTML/Markdown/slide artifact for an internal demo, dashboard, or
-  doc
-- Add the four-square Microsoft logo or wordmark to an internal page
-- Pick a Microsoft brand color for a chart, button, badge, or accent
-- Audit an existing page against the Microsoft visual identity
+- Apply Strata, or wire up the `--strata-*` tokens, in any build system
+- Theme an application, page, component, chart, slide, or report
+- Switch between the `pigment` and `spectrum` palettes, or add a dark theme
+- Choose colours for data series
+- Fix contrast, focus rings, drop shadows, or off-scale spacing and radii
+- Bring an arbitrary surface onto the spacing, type, and motion scales
 
-Do **not** use it for:
-
-- Customer-facing marketing, partner co-branding, packaging, swag, app icons, or
-  anything published outside Microsoft → redirect to
-  [reference/provenance-and-licensing.md](reference/provenance-and-licensing.md).
-- Renaming a product, writing a tagline, or anything involving the Microsoft
-  trademark in product naming.
+Do **not** use it for applying a real company's brand identity, generating a
+logo or product mark, or trademark guidance. Point the user at that company's
+own current guidelines and review process instead.
 
 ## Workflow
 
-1. **Confirm scope is internal.** If the artifact will leave Microsoft, stop and
-   tell the user to use Brand Central guidance and approvals.
+1. **Identify the surface kind** — application chrome, page, graphic, data
+   surface, or reading surface — and the build system.
 2. **Read the reference you need:**
-   - Colors → [reference/colors.md](reference/colors.md)
+   - Colour, palettes, the three-form model → [reference/colors.md](reference/colors.md)
    - Typography → [reference/typography.md](reference/typography.md)
-   - Layout / iconography →
+   - Layout, elevation, icons, accessibility →
      [reference/layout-and-iconography.md](reference/layout-and-iconography.md)
-3. **Pull tokens, don't hardcode hex.** Import
+   - Provenance, licensing, measured contrast →
+     [reference/provenance-and-licensing.md](reference/provenance-and-licensing.md)
+3. **Pull tokens, don't hardcode.** Import
    [tokens/strata.css](tokens/strata.css),
    [tokens/strata.scss](tokens/strata.scss),
    [tokens/strata-tokens.json](tokens/strata-tokens.json), or
    [tokens/tailwind.preset.js](tokens/tailwind.preset.js).
-4. **Apply the visual rules:**
-   - Headings + UI in Segoe UI (with the documented fallback stack)
-   - Use one accent color per surface; never recolor the four-square mark
-   - Maintain clear space around the logo equal to the height of one square
-   - Wordmark uses `--strata-gray` (#737373) on light backgrounds, white on dark
-5. **Run the smoke check** from this skill when the artifact touches Hugo
-   content, templates, or SCSS:
-   `pwsh .github/skills/dude-pack-strata-visual/scripts/strata-check.ps1` or
-   `bash .github/skills/dude-pack-strata-visual/scripts/strata-check.sh`.
-6. **Run the Final self-check** in
+4. **Apply the system:**
+   - Reference role tokens, never a colour name — that is what makes a component
+     survive a palette switch
+   - Replace every `box-shadow` with a plane change plus a 1px rule
+   - 4px radius on anything interactive, 8px ceiling
+   - Give every meaning-bearing fill and every badge an edge
+   - Monospace for metadata only
+5. **Run the validator** from this skill:
+   `bash skills/dude-pack-strata-visual/scripts/strata-check.sh`
+   (or `pwsh …/scripts/strata-check.ps1`). It checks cross-format and
+   cross-palette token parity, the no-shadow rule, the radius ceiling, keyword
+   easings, reduced motion, and local-only fonts.
+6. **Run the self-check** in
    [../../prompts/dude-pack-strata-apply-visual-system.prompt.md](../../prompts/dude-pack-strata-apply-visual-system.prompt.md)
-   before declaring done.
+   before declaring done, including a check that the surface renders correctly
+   under all four palette/theme combinations.
 
 ## Quick decision table
 
-| User intent                     | Go to                                                                            |
-| ------------------------------- | -------------------------------------------------------------------------------- |
-| Theme a new page/component      | [../../prompts/dude-pack-strata-apply-visual-system.prompt.md](../../prompts/dude-pack-strata-apply-visual-system.prompt.md) |
-| Pick the right color            | [reference/colors.md](reference/colors.md)                                       |
-| Pick the right font weight/size | [reference/typography.md](reference/typography.md)                               |
-| See it working                  | [examples/reading-surface.html](examples/reading-surface.html)                           |
+| User intent | Go to |
+| --- | --- |
+| Apply the system to a surface | [../../prompts/dude-pack-strata-apply-visual-system.prompt.md](../../prompts/dude-pack-strata-apply-visual-system.prompt.md) |
+| Pick the right colour or palette | [reference/colors.md](reference/colors.md) |
+| Pick the right size or weight | [reference/typography.md](reference/typography.md) |
+| Spacing, elevation, focus, icons | [reference/layout-and-iconography.md](reference/layout-and-iconography.md) |
+| See application chrome working | [examples/controls.html](examples/controls.html) |
+| See a data surface working | [examples/data-surface.html](examples/data-surface.html) |
+| See a reading surface working | [examples/reading-surface.html](examples/reading-surface.html) |
 
-## Visual cheat sheet
+## Cheat sheet
 
 ```text
-Colors (the four squares + wordmark)
-  Red    #F25022   --strata-red
-  Green  #7FBA00   --strata-green
-  Blue   #00A4EF   --strata-blue
-  Yellow #FFB900   --strata-yellow
-  Gray   #737373   --strata-gray   ← wordmark on light bg
+Palette and theme
+  <html data-strata-palette="pigment|spectrum" data-strata-theme="light|dark">
+  pigment + light is the default; omit the attributes to get it
 
-Typography
-  Family: Segoe UI Variable Text, Segoe UI Variable, Segoe UI, with system fallback
-  Body:    400 / 16px / 1.5
-  Heading: 600 / 24-48px / 1.2
-  Caption: 400 / 12-14px / 1.4
-  Docs:    .strata-docs, wide content wrapper, 688px prose, 40/52 title, 16/28 body
+Colour — role-based ids, never a colour name
+  --strata-primary / -deep / --strata-hover
+  --strata-info / -text     --strata-success / -text
+  --strata-warning / -text  --strata-danger / -text
+  --strata-focus
+  --strata-series-1..7      vivid: fills and chart marks
+  --strata-series-N-deep    text on a light plane, and the fill under white text
+  --strata-series-N-tint / -tint-ink   badge field + its text and border
 
+Planes            canvas -> surface -> soft -> sunken
+Rules             --strata-rule (perceivable)  --strata-hair (decorative only)
+Elevation         a plane change plus a 1px rule. No box-shadow, ever.
+Shape             4px default, 8px ceiling, pills discouraged
+Type              --strata-font-sans / -mono; working scale, no display hero
+Metadata          .strata-meta — mono, letterspaced, uppercase, small only
+Spacing           --strata-space-0..8  (0/4/8/12/16/24/32/48/64)
+Motion            --strata-dur-* / --strata-ease-*, plus prefers-reduced-motion
+Focus             outline 2px + outline-offset 2px — the offset is load-bearing
 ```
 
 ## Hand-off
 
-When you finish applying the brand:
+When you finish:
 
-- State which tokens file you imported
-- List the elements you changed (font, primary color, logo placement)
-- Point the user to [examples/reading-surface.html](examples/reading-surface.html) as
-  the reference look
-- Remind: **internal use only** — external use requires Brand Central review
+- State which tokens file you imported and which palette the surface uses
+- List what changed (planes, shape, colour roles, spacing, motion)
+- Confirm the validator passed and the self-check table has no Fail or Warn
+- Point the user at the example closest to their surface kind

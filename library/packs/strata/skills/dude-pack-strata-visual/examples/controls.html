@@ -1,36 +1,114 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-strata-palette="pigment" data-strata-theme="light">
 <head>
   <meta charset="UTF-8" />
-  <title>MS Brand — Buttons</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Strata — Application chrome</title>
   <link rel="stylesheet" href="../tokens/strata.css" />
   <style>
+    /* Page scaffolding only. Every visual value comes from a token. */
     body { margin: 0; padding: var(--strata-space-6); }
-    .group { display: flex; gap: var(--strata-space-3); flex-wrap: wrap; margin-bottom: var(--strata-space-5); }
-    h2 { margin-bottom: var(--strata-space-2); }
+    .row { display: flex; gap: var(--strata-space-3); flex-wrap: wrap;
+           align-items: center; margin-bottom: var(--strata-space-5); }
+    .toolbar {
+      display: flex; gap: var(--strata-space-2); align-items: center;
+      padding: var(--strata-space-2);
+      background: var(--strata-plane-raised);
+      border: var(--strata-rule-hairline);
+      border-radius: var(--strata-radius-md);
+    }
+    .spacer { flex: 1; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: var(--strata-space-2); border: var(--strata-rule-hairline);
+             text-align: left; }
   </style>
 </head>
 <body class="strata">
 
-  <h2 class="strata-h2">Buttons — default</h2>
-  <div class="group">
+  <h1 class="strata-h1">Application chrome</h1>
+  <p style="color: var(--strata-muted); max-width: 60ch;">
+    Controls, fields, and metadata at working UI scale. Every surface here is a
+    flat plane with a 1px rule — there is no shadow anywhere in this system.
+    Switch <code>data-strata-palette</code> to <code>spectrum</code> or
+    <code>data-strata-theme</code> to <code>dark</code> on the
+    <code>&lt;html&gt;</code> element; nothing on this page changes.
+  </p>
+
+  <h2 class="strata-h2">Buttons</h2>
+  <div class="row">
     <button class="strata-btn strata-btn-primary">Primary</button>
     <button class="strata-btn strata-btn-secondary">Secondary</button>
     <button class="strata-btn strata-btn-subtle">Subtle</button>
-    <button class="strata-btn strata-btn-destructive">Destructive</button>
+    <button class="strata-btn strata-btn-destructive">Delete</button>
+  </div>
+  <p class="strata-meta">Tab through the row to see the focus ring</p>
+  <p style="color: var(--strata-muted); max-width: 60ch;">
+    The ring is <code>outline</code> plus <code>outline-offset: 2px</code>, never
+    a shadow. The offset is load-bearing: it keeps the ring off the fill so its
+    contrast never depends on which button it lands on.
+  </p>
+
+  <h2 class="strata-h2">Fields</h2>
+  <div class="row">
+    <label class="strata-meta" for="q">Query</label>
+    <input class="strata-input" id="q" type="text" value="deposit rate" />
+    <label class="strata-meta" for="unit">Unit</label>
+    <select class="strata-input" id="unit">
+      <option>mm / year</option>
+      <option>cm / century</option>
+    </select>
   </div>
 
-  <h2 class="strata-h2">Buttons — focus state</h2>
-  <p style="color: var(--strata-text-muted);">Tab into each button to see the focus ring.</p>
-  <div class="group">
-    <button class="strata-btn strata-btn-primary">Primary</button>
-    <button class="strata-btn strata-btn-secondary">Secondary</button>
+  <h2 class="strata-h2">Status badges</h2>
+  <p style="color: var(--strata-muted); max-width: 60ch;">
+    Each badge is bordered in its own ink. A bare tint field measures around
+    1.1:1 against the page and two bare tints can be identical in luminance, so
+    the border is what makes the badge a perceivable object rather than
+    differently coloured text.
+  </p>
+  <div class="row">
+    <span class="strata-badge strata-badge-success">Stable</span>
+    <span class="strata-badge strata-badge-info">Surveyed</span>
+    <span class="strata-badge strata-badge-warning">Eroding</span>
+    <span class="strata-badge strata-badge-danger">Unstable</span>
+    <span class="strata-badge strata-badge-accent">Indexed</span>
+    <span class="strata-badge strata-badge-neutral">Archived</span>
   </div>
 
-  <h2 class="strata-h2">Compact (32 px)</h2>
-  <div class="group">
-    <button class="strata-btn strata-btn-primary" style="height:32px;">Save</button>
-    <button class="strata-btn strata-btn-secondary" style="height:32px;">Cancel</button>
+  <h2 class="strata-h2">Toolbar</h2>
+  <div class="toolbar">
+    <button class="strata-btn strata-btn-subtle" style="height: 32px;">Filter</button>
+    <button class="strata-btn strata-btn-subtle" style="height: 32px;">Group</button>
+    <span class="spacer"></span>
+    <span class="strata-meta">14 of 226 samples</span>
+  </div>
+
+  <h2 class="strata-h2">Table</h2>
+  <table>
+    <thead>
+      <tr>
+        <th class="strata-meta">Layer</th>
+        <th class="strata-meta">Depth</th>
+        <th class="strata-meta">State</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Surface wash</td><td>0–4 cm</td><td><span class="strata-badge strata-badge-success">Stable</span></td></tr>
+      <tr><td>Fine silt</td><td>4–19 cm</td><td><span class="strata-badge strata-badge-warning">Eroding</span></td></tr>
+      <tr><td>Coarse bed</td><td>19–52 cm</td><td><span class="strata-badge strata-badge-info">Surveyed</span></td></tr>
+    </tbody>
+  </table>
+
+  <h2 class="strata-h2">Planes</h2>
+  <div class="strata-panel" style="margin-bottom: var(--strata-space-4);">
+    <strong>Raised plane.</strong> On a white ground this is the same colour as
+    the page, so the rule is not decoration — without it the panel is invisible.
+  </div>
+  <div class="strata-panel-inset" style="margin-bottom: var(--strata-space-4);">
+    <strong>Inset plane.</strong> A tonal step down, still edged.
+  </div>
+  <div class="strata-panel-sunken">
+    <strong>Sunken plane.</strong> The deepest layer in the scale.
   </div>
 
 </body>
