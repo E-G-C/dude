@@ -1,0 +1,138 @@
+/**
+ * Microsoft Visual Brand — Tailwind preset (internal use).
+ * Usage:
+ *   // tailwind.config.js
+ *   const strata = require('./.github/skills/dude-pack-strata-visual/tokens/tailwind.preset.js');
+ *   module.exports = { presets: [strata], content: [...] };
+ */
+module.exports = {
+  theme: {
+    extend: {
+      colors: {
+        ms: {
+          red: '#F25022',
+          green: '#7FBA00',
+          blue: '#00A4EF',
+          yellow: '#FFB900',
+          gray: '#737373',
+          bg: '#FFFFFF',
+          'bg-subtle': '#F3F2F1',
+          'bg-dark': '#1B1A19',
+          border: '#E1DFDD',
+          text: '#201F1E',
+          'text-muted': '#605E5C',
+          'text-on-dark': '#FFFFFF',
+          primary: '#00A4EF',
+          success: '#7FBA00',
+          warning: '#FFB900',
+          danger: '#F25022',
+        },
+      },
+      fontFamily: {
+        'strata-body': [
+          'Segoe UI Variable Text',
+          'Segoe UI Variable',
+          'Segoe UI',
+          'system-ui',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'Helvetica Neue',
+          'Helvetica',
+          'Arial',
+          'sans-serif',
+        ],
+        'strata-heading': [
+          'Segoe UI Variable Text',
+          'Segoe UI Variable',
+          'Segoe UI',
+          'system-ui',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'Helvetica Neue',
+          'Helvetica',
+          'Arial',
+          'sans-serif',
+        ],
+        'strata-docs': [
+          'Segoe UI Variable Text',
+          'Segoe UI Variable',
+          'Segoe UI',
+          'system-ui',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'Helvetica Neue',
+          'Helvetica',
+          'Arial',
+          'sans-serif',
+        ],
+        'strata-mono': [
+          'Cascadia Code',
+          'Cascadia Mono',
+          'Consolas',
+          'Courier New',
+          'monospace',
+        ],
+        'strata-docs-mono': [
+          'SFMono-Regular',
+          'Consolas',
+          'Liberation Mono',
+          'Menlo',
+          'Courier',
+          'monospace',
+        ],
+      },
+      fontSize: {
+        'strata-display': ['48px', { lineHeight: '1.15', fontWeight: '600' }],
+        'strata-h1': ['36px', { lineHeight: '1.2', fontWeight: '600' }],
+        'strata-h2': ['28px', { lineHeight: '1.25', fontWeight: '600' }],
+        'strata-h3': ['22px', { lineHeight: '1.3', fontWeight: '600' }],
+        'strata-h4': ['18px', { lineHeight: '1.35', fontWeight: '600' }],
+        'strata-body-lg': ['18px', { lineHeight: '1.5' }],
+        'strata-body': ['16px', { lineHeight: '1.5' }],
+        'strata-caption': ['13px', { lineHeight: '1.4' }],
+        'strata-micro': ['11px', { lineHeight: '1.3' }],
+        'strata-docs-title': ['40px', { lineHeight: '52px', fontWeight: '600' }],
+        'strata-docs-h2': ['32px', { lineHeight: '1.3', fontWeight: '600' }],
+        'strata-docs-h3': ['28px', { lineHeight: '1.3', fontWeight: '600' }],
+        'strata-docs-body': ['16px', { lineHeight: '28px' }],
+        'strata-docs-compact': ['14px', { lineHeight: '1.5' }],
+        'strata-docs-code': ['14px', { lineHeight: '19px' }],
+      },
+      maxWidth: {
+        'strata-docs': '100%',
+        'strata-docs-readable': '688px',
+        'strata-docs-wide': '100%',
+      },
+      spacing: {
+        'strata-1': '4px',
+        'strata-2': '8px',
+        'strata-3': '12px',
+        'strata-4': '16px',
+        'strata-5': '24px',
+        'strata-6': '32px',
+        'strata-7': '48px',
+        'strata-8': '64px',
+      },
+      borderRadius: {
+        'strata-sm': '2px',
+        'strata-md': '4px',
+        'strata-lg': '8px',
+        'strata-pill': '9999px',
+      },
+      boxShadow: {
+        'strata-1': '0 1px 2px rgba(0,0,0,0.08)',
+        'strata-2': '0 2px 6px rgba(0,0,0,0.10)',
+        'strata-3': '0 4px 12px rgba(0,0,0,0.12)',
+      },
+      transitionDuration: {
+        'strata-micro': '150ms',
+        'strata-standard': '250ms',
+        'strata-entrance': '400ms',
+      },
+      transitionTimingFunction: {
+        'strata-enter': 'cubic-bezier(0.1, 0.9, 0.2, 1)',
+        'strata-exit': 'cubic-bezier(0, 0, 0.58, 1)',
+      },
+    },
+  },
+};

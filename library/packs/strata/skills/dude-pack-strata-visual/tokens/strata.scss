@@ -1,0 +1,130 @@
+// ============================================================
+// Microsoft Visual Brand — Design Tokens (SCSS)
+// Internal use only. See ../reference/provenance-and-licensing.md.
+// ============================================================
+
+// --- Core brand colors ---
+$strata-red:    #F25022;
+$strata-green:  #7FBA00;
+$strata-blue:   #00A4EF;
+$strata-yellow: #FFB900;
+$strata-gray:   #737373;
+
+// --- Neutrals ---
+$strata-bg:           #FFFFFF;
+$strata-bg-subtle:    #F3F2F1;
+$strata-bg-dark:      #1B1A19;
+$strata-border:       #E1DFDD;
+$strata-text:         #201F1E;
+$strata-text-muted:   #605E5C;
+$strata-text-on-dark: #FFFFFF;
+
+// --- Semantic ---
+$strata-color-primary: $strata-blue;
+$strata-color-success: $strata-green;
+$strata-color-warning: $strata-yellow;
+$strata-color-danger:  $strata-red;
+
+// --- Typography ---
+$strata-font-body:    "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system,
+                  BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+$strata-font-heading: $strata-font-body;
+$strata-font-mono:    "Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace;
+$strata-font-docs:    $strata-font-body;
+$strata-font-docs-mono: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace;
+
+$strata-fs-display: 48px;
+$strata-fs-h1:      36px;
+$strata-fs-h2:      28px;
+$strata-fs-h3:      22px;
+$strata-fs-h4:      18px;
+$strata-fs-body-lg: 18px;
+$strata-fs-body:    16px;
+$strata-fs-caption: 13px;
+$strata-fs-micro:   11px;
+
+$strata-fw-regular:  400;
+$strata-fw-semibold: 600;
+$strata-fw-bold:     700;
+
+$strata-lh-display:  1.15;
+$strata-lh-h1:       1.2;
+$strata-lh-h2:       1.25;
+$strata-lh-h3:       1.3;
+$strata-lh-h4:       1.35;
+$strata-lh-body:     1.5;
+$strata-lh-caption:  1.4;
+$strata-lh-micro:    1.3;
+$strata-lh-tight:    $strata-lh-h1;
+$strata-lh-normal:   $strata-lh-body;
+
+// --- Documentation surfaces (Microsoft Learn-inspired) ---
+$strata-docs-content-width: 100%;
+$strata-docs-readable-width: 688px;
+$strata-docs-wide-width: 100%;
+$strata-docs-fs-title:      40px;
+$strata-docs-fs-h2:         32px;
+$strata-docs-fs-h3:         28px;
+$strata-docs-fs-body:       16px;
+$strata-docs-fs-compact:    14px;
+$strata-docs-fs-code:       14px;
+$strata-docs-lh-title:      52px;
+$strata-docs-lh-h2:         1.3;
+$strata-docs-lh-h3:         1.3;
+$strata-docs-lh-body:       28px;
+$strata-docs-lh-list:       1.8;
+$strata-docs-lh-compact:    1.5;
+$strata-docs-lh-code:       19px;
+$strata-docs-link:          #0065B3;
+$strata-docs-link-dark:     #75B6E7;
+$strata-docs-code-bg:       $strata-bg-subtle;
+$strata-docs-code-bg-dark:  #404040;
+$strata-docs-tip-bg:        #DFF6DD;
+$strata-docs-tip-border:    #107C10;
+$strata-docs-tip-bg-dark:   #054B16;
+$strata-docs-tip-text-dark: #DFF6DD;
+
+// --- Spacing (8-pt) ---
+$strata-space-1: 4px;
+$strata-space-2: 8px;
+$strata-space-3: 12px;
+$strata-space-4: 16px;
+$strata-space-5: 24px;
+$strata-space-6: 32px;
+$strata-space-7: 48px;
+$strata-space-8: 64px;
+
+// --- Radii ---
+$strata-radius-sm:   2px;
+$strata-radius-md:   4px;
+$strata-radius-lg:   8px;
+$strata-radius-pill: 9999px;
+
+// --- Elevation ---
+$strata-elev-1: 0 1px 2px rgba(0,0,0,0.08);
+$strata-elev-2: 0 2px 6px rgba(0,0,0,0.10);
+$strata-elev-3: 0 4px 12px rgba(0,0,0,0.12);
+
+// --- Motion ---
+$strata-dur-micro:    150ms;
+$strata-dur-standard: 250ms;
+$strata-dur-entrance: 400ms;
+$strata-ease-enter:   cubic-bezier(0.1, 0.9, 0.2, 1);
+// Explicit cubic-bezier(), never a CSS keyword: `ease-out` means exactly
+// cubic-bezier(0, 0, 0.58, 1), and expressing it as a keyword is how this
+// token drifted out of step with the other formats.
+$strata-ease-exit:    cubic-bezier(0, 0, 0.58, 1);
+
+// --- Maps for iteration ---
+$strata-colors: (
+  "red":    $strata-red,
+  "green":  $strata-green,
+  "blue":   $strata-blue,
+  "yellow": $strata-yellow,
+  "gray":   $strata-gray,
+);
+
+@mixin strata-focus-ring {
+  outline: 2px solid $strata-color-primary;
+  outline-offset: 2px;
+}

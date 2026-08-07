@@ -4,9 +4,9 @@
 # Fails when raw Microsoft brand hex codes leak into authored content,
 # templates, or SCSS, or when the SCSS token import is missing. This is a
 # fast drift guard, not a full brand audit -- pair it with the
-# `@dude-pack-ms-brand-stylist` agent for visual review.
+# `@dude-pack-strata-stylist` agent for visual review.
 #
-# Usage:  pwsh .github/skills/dude-pack-ms-brand-visual/scripts/brand-check.ps1
+# Usage:  pwsh .github/skills/dude-pack-strata-visual/scripts/strata-check.ps1
 # Exit:   0 = clean, 1 = brand drift found.
 
 $ErrorActionPreference = 'Stop'
@@ -26,7 +26,7 @@ $brandAny = "$brandHex|$brandRgb"
 $searchGlobs = @('content', 'layouts', 'assets/scss')
 
 $tokenFile = 'assets/scss/_variables_project.scss'
-$tokenImport = 'dude-pack-ms-brand-visual/tokens/ms-brand.scss'
+$tokenImport = 'dude-pack-strata-visual/tokens/strata.scss'
 
 $fail = $false
 
@@ -38,12 +38,12 @@ foreach ($glob in $searchGlobs) {
     if (-not (Test-Path $glob)) { continue }
     $found = Get-ChildItem -Path $glob -Recurse -File -ErrorAction SilentlyContinue |
         Select-String -Pattern $brandAny -CaseSensitive:$false |
-        Where-Object { $_.Path -notmatch 'dude-pack-ms-brand-visual[\/]+tokens[\/]+' }
+        Where-Object { $_.Path -notmatch 'dude-pack-strata-visual[\/]+tokens[\/]+' }
     if ($found) { $hits += $found }
 }
 
 if ($hits.Count -gt 0) {
-    Write-Host 'FAIL: raw Microsoft brand hex found. Use the token (var(--ms-*) / $ms-*) instead:'
+    Write-Host 'FAIL: raw Microsoft brand hex found. Use the token (var(--strata-*) / $strata-*) instead:'
     foreach ($m in $hits) {
         Write-Host ("  {0}:{1}: {2}" -f $m.Path, $m.LineNumber, $m.Line.Trim())
     }

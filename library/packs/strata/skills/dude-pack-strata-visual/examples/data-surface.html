@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MS Brand — Header & Footer patterns</title>
+  <link rel="stylesheet" href="../tokens/strata.css" />
+  <style>
+    body { margin: 0; }
+    section { padding: var(--strata-space-6) var(--strata-space-5); }
+    section + section { border-top: 1px solid var(--strata-border); }
+    .row { display: flex; align-items: center; gap: var(--strata-space-3); }
+    .spacer { flex: 1; }
+    .strata-link { color: var(--strata-color-primary); text-decoration: none; font-weight: var(--strata-fw-semibold); }
+    .strata-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body class="strata">
+
+  <!-- 1. Light header -->
+  <section>
+    <div class="row">
+      <strong style="color: var(--strata-gray);">Microsoft</strong>
+      <span class="spacer"></span>
+      <a class="strata-link" href="#">Docs</a>
+      <a class="strata-link" href="#">Sign in</a>
+    </div>
+  </section>
+
+  <!-- 2. Dark header -->
+  <section data-strata-theme="dark" style="background: var(--strata-bg-dark); color: var(--strata-text-on-dark);">
+    <div class="row">
+      <strong style="color: #fff;">Microsoft</strong>
+      <span class="spacer"></span>
+      <a class="strata-link" href="#" style="color: var(--strata-blue);">Docs</a>
+      <a class="strata-link" href="#" style="color: #fff;">Sign in</a>
+    </div>
+  </section>
+
+  <!-- 3. Compact footer -->
+  <section style="color: var(--strata-text-muted); font-size: var(--strata-fs-caption);">
+    <div class="row">
+      <span>© 2026 Microsoft Corporation — Internal</span>
+      <span class="spacer"></span>
+      <a class="strata-link" href="#" style="font-size: var(--strata-fs-caption);">Privacy</a>
+      <a class="strata-link" href="#" style="font-size: var(--strata-fs-caption);">Accessibility</a>
+    </div>
+  </section>
+
+</body>
+</html>

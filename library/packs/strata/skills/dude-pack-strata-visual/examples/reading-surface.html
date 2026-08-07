@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MS Brand — Themed Page (Internal)</title>
+  <link rel="stylesheet" href="../tokens/strata.css" />
+  <style>
+    /* Page-specific layout; brand styling comes from tokens. */
+    body { margin: 0; }
+    .container { max-width: 1080px; margin: 0 auto; padding: var(--strata-space-7) var(--strata-space-5); }
+    header.site, footer.site {
+      padding: var(--strata-space-4) var(--strata-space-5);
+      display: flex; align-items: center; gap: var(--strata-space-3);
+    }
+    header.site { border-bottom: 1px solid var(--strata-border); }
+    footer.site {
+      border-top: 1px solid var(--strata-border);
+      color: var(--strata-text-muted);
+      font-size: var(--strata-fs-caption);
+      justify-content: space-between;
+    }
+    .hero {
+      background: var(--strata-bg-subtle);
+      padding: var(--strata-space-8) var(--strata-space-5);
+      border-radius: var(--strata-radius-lg);
+    }
+    .hero h1 { margin: 0 0 var(--strata-space-4); }
+    .hero p  { max-width: 60ch; color: var(--strata-text-muted); }
+    .actions { margin-top: var(--strata-space-5); display: flex; gap: var(--strata-space-3); }
+    .grid {
+      margin-top: var(--strata-space-7);
+      display: grid; gap: var(--strata-space-5);
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+    .strata-badge {
+      display: inline-flex; align-items: center;
+      padding: var(--strata-space-1) var(--strata-space-2);
+      border-radius: var(--strata-radius-pill);
+      background: var(--strata-bg-subtle);
+      color: var(--strata-text-muted);
+      font-size: var(--strata-fs-caption);
+    }
+    .strata-badge.success { background: rgba(127,186,0,0.12); color: #4a6d00; }
+    .strata-badge.warning { background: rgba(255,185,0,0.18); color: #7a5800; }
+    .strata-badge.danger  { background: rgba(242,80,34,0.12); color: #8a2410; }
+  </style>
+</head>
+<body class="strata">
+
+  <header class="site">
+    <span style="color: var(--strata-gray); font-weight: var(--strata-fw-semibold);">Microsoft</span>
+    <span style="margin-left:auto; color: var(--strata-text-muted); font-size: var(--strata-fs-caption);">
+      Internal demo — not for external use
+    </span>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <span class="strata-badge">Internal demo</span>
+      <h1 class="strata-h1">Welcome to the MS Brand Stylist</h1>
+      <p>
+        This page is built entirely from the bundle's design tokens — Segoe UI typography,
+        the four-square palette as accents, neutrals for the work, and an 8-pt spacing grid.
+      </p>
+      <div class="actions">
+        <button class="strata-btn strata-btn-primary">Get started</button>
+        <button class="strata-btn strata-btn-secondary">Learn more</button>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="strata-panel">
+        <h3 class="strata-h3">Colors</h3>
+        <p>Four-square accents plus a calm neutral system. Use one accent per surface.</p>
+        <span class="strata-badge success">Success</span>
+        <span class="strata-badge warning">Warning</span>
+        <span class="strata-badge danger">Danger</span>
+      </article>
+      <article class="strata-panel">
+        <h3 class="strata-h3">Typography</h3>
+        <p>Segoe UI for body and headings, Cascadia Code for code blocks. Sane fallback stack.</p>
+        <code>npm install</code>
+      </article>
+      <article class="strata-panel">
+        <h3 class="strata-h3">Layout</h3>
+        <p>8-pt spacing, 4 / 8 px radii, soft elevation. Buttons and cards driven by tokens.</p>
+        <button class="strata-btn strata-btn-subtle">Subtle</button>
+      </article>
+    </section>
+  </main>
+
+  <footer class="site">
+    <div style="display:flex; align-items:center; gap: var(--strata-space-2);">
+      <span>Microsoft Confidential — Internal</span>
+    </div>
+    <div>© 2026 Microsoft Corporation</div>
+  </footer>
+
+</body>
+</html>

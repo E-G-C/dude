@@ -1,6 +1,6 @@
 {
   "$schema": "https://design-tokens.github.io/community-group/format/",
-  "$description": "Microsoft Visual Brand tokens — internal use. See ../reference/sources.md.",
+  "$description": "Microsoft Visual Brand tokens — internal use. See ../reference/provenance-and-licensing.md.",
   "color": {
     "brand": {
       "red":    { "$value": "#F25022", "$type": "color", "$description": "Top-left logo square" },

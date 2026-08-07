@@ -22,48 +22,48 @@ Microsoft Brand Central instead. This prompt is for internal artifacts.
 ## Steps
 
 1. **Read the references** you'll need:
-   - [../skills/dude-pack-ms-brand-visual/reference/colors.md](../skills/dude-pack-ms-brand-visual/reference/colors.md)
-   - [../skills/dude-pack-ms-brand-visual/reference/typography.md](../skills/dude-pack-ms-brand-visual/reference/typography.md)
-   - [../skills/dude-pack-ms-brand-visual/reference/layout-and-iconography.md](../skills/dude-pack-ms-brand-visual/reference/layout-and-iconography.md)
+   - [../skills/dude-pack-strata-visual/reference/colors.md](../skills/dude-pack-strata-visual/reference/colors.md)
+   - [../skills/dude-pack-strata-visual/reference/typography.md](../skills/dude-pack-strata-visual/reference/typography.md)
+   - [../skills/dude-pack-strata-visual/reference/layout-and-iconography.md](../skills/dude-pack-strata-visual/reference/layout-and-iconography.md)
 
 2. **Wire up tokens** matching the build system:
    - Plain CSS / HTML → add
-     `<link rel="stylesheet" href=".github/skills/dude-pack-ms-brand-visual/tokens/ms-brand.css">`
-     (adjust path as needed from the target file) and a `class="ms-brand"` root.
-     For documentation pages, add `ms-docs` to the article surface and wrap the
-     main article in `.ms-docs-content`.
+     `<link rel="stylesheet" href=".github/skills/dude-pack-strata-visual/tokens/strata.css">`
+     (adjust path as needed from the target file) and a `class="strata"` root.
+     For documentation pages, add `strata-docs` to the article surface and wrap the
+     main article in `.strata-docs-content`.
    - SCSS →
-     `@use ".github/skills/dude-pack-ms-brand-visual/tokens/ms-brand.scss" as ms;`
-     (adjust path as needed from the target file) and reference `ms.$ms-blue`,
+     `@use ".github/skills/dude-pack-strata-visual/tokens/strata.scss" as strata;`
+     (adjust path as needed from the target file) and reference `strata.$strata-blue`,
      etc.
    - Tailwind → import the preset in `tailwind.config.js`.
    - Other / design tokens → consume
-     [../skills/dude-pack-ms-brand-visual/tokens/ms-brand-tokens.json](../skills/dude-pack-ms-brand-visual/tokens/ms-brand-tokens.json).
+     [../skills/dude-pack-strata-visual/tokens/strata-tokens.json](../skills/dude-pack-strata-visual/tokens/strata-tokens.json).
 
 3. **Apply typography**:
-   - Set `font-family: var(--ms-font-body)` on body / root.
-   - Headings: Segoe UI Semibold with the role-specific `--ms-lh-*` line-height
+   - Set `font-family: var(--strata-font-body)` on body / root.
+   - Headings: Segoe UI Semibold with the role-specific `--strata-lh-*` line-height
      tokens.
-   - Documentation pages: prefer `.ms-docs` so titles, body, tables, tabs,
+   - Documentation pages: prefer `.strata-docs` so titles, body, tables, tabs,
      alerts, and code blocks follow the Microsoft Learn-inspired rhythm.
-   - Code blocks: `var(--ms-font-mono)` for app surfaces; `.ms-docs` uses
-     `var(--ms-font-docs-mono)`.
+   - Code blocks: `var(--strata-font-mono)` for app surfaces; `.strata-docs` uses
+     `var(--strata-font-docs-mono)`.
 
 4. **Apply color**:
-   - One accent per surface. Default to `--ms-blue` unless the user specifies a
+   - One accent per surface. Default to `--strata-blue` unless the user specifies a
      state-driven palette (success/warning/danger).
-   - Neutrals do the heavy lifting (`--ms-bg`, `--ms-bg-subtle`, `--ms-text`,
-     `--ms-text-muted`, `--ms-border`).
-   - On a dark surface, add `data-ms-theme="dark"` to the container.
+   - Neutrals do the heavy lifting (`--strata-bg`, `--strata-bg-subtle`, `--strata-text`,
+     `--strata-text-muted`, `--strata-border`).
+   - On a dark surface, add `data-strata-theme="dark"` to the container.
 
 5. **Apply layout**:
-   - Switch arbitrary paddings/margins to the 8-pt scale (`--ms-space-*`).
-   - Buttons: `class="ms-btn ms-btn-primary"` / `ms-btn-secondary` /
-     `ms-btn-subtle` / `ms-btn-destructive`.
-   - Cards: `.ms-card` (or equivalent).
+   - Switch arbitrary paddings/margins to the 8-pt scale (`--strata-space-*`).
+   - Buttons: `class="strata-btn strata-btn-primary"` / `strata-btn-secondary` /
+     `strata-btn-subtle` / `strata-btn-destructive`.
+   - Cards: `.strata-panel` (or equivalent).
 
 6. **Apply motion**:
-   - Durations and easings come from `--ms-dur-*` and `--ms-ease-*`.
+   - Durations and easings come from `--strata-dur-*` and `--strata-ease-*`.
    - Anything you animate must be covered by
      `@media (prefers-reduced-motion: reduce)`.
 
@@ -90,14 +90,14 @@ per item, with file:line references.
 
 ### Typography
 
-- [ ] Body / heading font stack references `--ms-font-body` /
-      `--ms-font-heading`, or lists `"Segoe UI Variable Text"` /
+- [ ] Body / heading font stack references `--strata-font-body` /
+      `--strata-font-heading`, or lists `"Segoe UI Variable Text"` /
       `"Segoe UI Variable"` before `"Segoe UI"`.
 - [ ] `font-optical-sizing: auto` is present when custom typography CSS bypasses
-      `.ms-brand`.
-- [ ] Documentation pages use `.ms-docs`; prose is constrained to
-      `--ms-docs-readable-width`, while tables/code/reference blocks can use
-      `--ms-docs-wide-width`.
+      `.strata`.
+- [ ] Documentation pages use `.strata-docs`; prose is constrained to
+      `--strata-docs-readable-width`, while tables/code/reference blocks can use
+      `--strata-docs-wide-width`.
 - [ ] No Google-Font / CDN imports of Roboto, Open Sans, Inter, Calibri, etc. as
       a Microsoft substitute.
 - [ ] Headings use Semibold (600) with tight line-height (≤ 1.3).
@@ -106,12 +106,12 @@ per item, with file:line references.
 
 ### Layout
 
-- [ ] Paddings / margins map to the `--ms-space-*` 8-pt scale (no random 7px,
+- [ ] Paddings / margins map to the `--strata-space-*` 8-pt scale (no random 7px,
       13px, 19px).
 - [ ] Radius values come from the radius scale (no `border-radius: 6px` etc.).
-- [ ] Shadows use `--ms-elev-*` (no `0 10px 40px rgba(…)`-style dramatic
+- [ ] Shadows use `--strata-elev-*` (no `0 10px 40px rgba(…)`-style dramatic
       shadows).
-- [ ] Buttons use `.ms-btn*` (or the equivalent token-driven styles).
+- [ ] Buttons use `.strata-btn*` (or the equivalent token-driven styles).
 
 ### Motion
 
@@ -137,9 +137,9 @@ per item, with file:line references.
 ```
 | Area | Item | Status | Location | Notes |
 |---|---|---|---|---|
-| Colors | Hardcoded #00A4EF in primary button | Fail | src/Header.tsx:42 | Replace with var(--ms-blue) |
+| Colors | Hardcoded #00A4EF in primary button | Fail | src/Header.tsx:42 | Replace with var(--strata-blue) |
 | Typography | Roboto loaded from Google Fonts | Fail | index.html:8 | Remove; use Segoe UI stack |
-| Layout | border-radius: 6px on card | Warn | styles.css:120 | Use --ms-radius-lg (8px) or --ms-radius-md (4px) |
+| Layout | border-radius: 6px on card | Warn | styles.css:120 | Use --strata-radius-lg (8px) or --strata-radius-md (4px) |
 ```
 
 After the table, offer the user **"Want me to fix the Fail and Warn items?"**

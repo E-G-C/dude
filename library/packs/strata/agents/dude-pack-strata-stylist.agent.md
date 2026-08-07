@@ -27,9 +27,9 @@ legal/trademark policy or external-facing co-branding.
 1. **Scope guard first.** If the artifact is or could become external
    (customer-facing site, partner co-marketing, ad, packaging, app icon, social
    handle), stop and redirect to Microsoft Brand Central
-   ([../skills/dude-pack-ms-brand-visual/reference/sources.md](../skills/dude-pack-ms-brand-visual/reference/sources.md)).
+   ([../skills/dude-pack-strata-visual/reference/provenance-and-licensing.md](../skills/dude-pack-strata-visual/reference/provenance-and-licensing.md)).
 2. **Tokens beat hex.** Always wire in the bundle's tokens
-   ([../skills/dude-pack-ms-brand-visual/tokens/](../skills/dude-pack-ms-brand-visual/tokens/))
+   ([../skills/dude-pack-strata-visual/tokens/](../skills/dude-pack-strata-visual/tokens/))
    and reference them. Never hardcode `#F25022`, `#7FBA00`, `#00A4EF`,
    `#FFB900`, or `#737373`.
 3. **Restraint.** One accent per surface. Two type weights per surface. Subtle
@@ -37,7 +37,7 @@ legal/trademark policy or external-facing co-branding.
 4. **Accessibility is part of brand.** WCAG AA contrast, visible focus rings, no
    color-only state.
 5. **Pre-flight a self-check.** Before declaring done, run the
-   [Final self-check](../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md)
+   [Final self-check](../prompts/dude-pack-strata-apply-visual-system.prompt.md)
    section of the apply prompt.
 
 ## Default Workflow
@@ -67,11 +67,11 @@ Redirect the user to Microsoft Brand Central for:
 
 | Task                     | File                                                                                                                                                 |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Apply branding, then self-check | [../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md](../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md) |
-| Color values & pairings  | [../skills/dude-pack-ms-brand-visual/reference/colors.md](../skills/dude-pack-ms-brand-visual/reference/colors.md)                                 |
-| Typography               | [../skills/dude-pack-ms-brand-visual/reference/typography.md](../skills/dude-pack-ms-brand-visual/reference/typography.md)                         |
-| Layout / icons           | [../skills/dude-pack-ms-brand-visual/reference/layout-and-iconography.md](../skills/dude-pack-ms-brand-visual/reference/layout-and-iconography.md) |
-| Working example          | [../skills/dude-pack-ms-brand-visual/examples/themed-page.html](../skills/dude-pack-ms-brand-visual/examples/themed-page.html)                     |
+| Apply branding, then self-check | [../prompts/dude-pack-strata-apply-visual-system.prompt.md](../prompts/dude-pack-strata-apply-visual-system.prompt.md) |
+| Color values & pairings  | [../skills/dude-pack-strata-visual/reference/colors.md](../skills/dude-pack-strata-visual/reference/colors.md)                                 |
+| Typography               | [../skills/dude-pack-strata-visual/reference/typography.md](../skills/dude-pack-strata-visual/reference/typography.md)                         |
+| Layout / icons           | [../skills/dude-pack-strata-visual/reference/layout-and-iconography.md](../skills/dude-pack-strata-visual/reference/layout-and-iconography.md) |
+| Working example          | [../skills/dude-pack-strata-visual/examples/reading-surface.html](../skills/dude-pack-strata-visual/examples/reading-surface.html)                     |
 
 **Coordinator-only artifacts:** do not edit `## Coordinator Log`, task-state
 glyphs in `tasks.md`, fenced regions (`<!-- dude:managed:* -->`,

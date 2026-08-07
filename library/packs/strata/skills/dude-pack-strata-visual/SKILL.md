@@ -1,5 +1,5 @@
 ---
-name: dude-pack-ms-brand-visual
+name: dude-pack-strata-visual
 description:
   Apply Microsoft visual brand (colors, Segoe UI typography, four-square logo
   placement, layout patterns) to internal HTML/CSS/React/Markdown/slides. USE
@@ -32,7 +32,7 @@ Do **not** use it for:
 
 - Customer-facing marketing, partner co-branding, packaging, swag, app icons, or
   anything published outside Microsoft → redirect to
-  [reference/sources.md](reference/sources.md).
+  [reference/provenance-and-licensing.md](reference/provenance-and-licensing.md).
 - Renaming a product, writing a tagline, or anything involving the Microsoft
   trademark in product naming.
 
@@ -46,48 +46,48 @@ Do **not** use it for:
    - Layout / iconography →
      [reference/layout-and-iconography.md](reference/layout-and-iconography.md)
 3. **Pull tokens, don't hardcode hex.** Import
-   [tokens/ms-brand.css](tokens/ms-brand.css),
-   [tokens/ms-brand.scss](tokens/ms-brand.scss),
-   [tokens/ms-brand-tokens.json](tokens/ms-brand-tokens.json), or
+   [tokens/strata.css](tokens/strata.css),
+   [tokens/strata.scss](tokens/strata.scss),
+   [tokens/strata-tokens.json](tokens/strata-tokens.json), or
    [tokens/tailwind.preset.js](tokens/tailwind.preset.js).
 4. **Apply the visual rules:**
    - Headings + UI in Segoe UI (with the documented fallback stack)
    - Use one accent color per surface; never recolor the four-square mark
    - Maintain clear space around the logo equal to the height of one square
-   - Wordmark uses `--ms-gray` (#737373) on light backgrounds, white on dark
+   - Wordmark uses `--strata-gray` (#737373) on light backgrounds, white on dark
 5. **Run the smoke check** from this skill when the artifact touches Hugo
    content, templates, or SCSS:
-   `pwsh .github/skills/dude-pack-ms-brand-visual/scripts/brand-check.ps1` or
-   `bash .github/skills/dude-pack-ms-brand-visual/scripts/brand-check.sh`.
+   `pwsh .github/skills/dude-pack-strata-visual/scripts/strata-check.ps1` or
+   `bash .github/skills/dude-pack-strata-visual/scripts/strata-check.sh`.
 6. **Run the Final self-check** in
-   [../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md)
+   [../../prompts/dude-pack-strata-apply-visual-system.prompt.md](../../prompts/dude-pack-strata-apply-visual-system.prompt.md)
    before declaring done.
 
 ## Quick decision table
 
 | User intent                     | Go to                                                                            |
 | ------------------------------- | -------------------------------------------------------------------------------- |
-| Theme a new page/component      | [../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md](../../prompts/dude-pack-ms-brand-apply-ms-brand.prompt.md) |
+| Theme a new page/component      | [../../prompts/dude-pack-strata-apply-visual-system.prompt.md](../../prompts/dude-pack-strata-apply-visual-system.prompt.md) |
 | Pick the right color            | [reference/colors.md](reference/colors.md)                                       |
 | Pick the right font weight/size | [reference/typography.md](reference/typography.md)                               |
-| See it working                  | [examples/themed-page.html](examples/themed-page.html)                           |
+| See it working                  | [examples/reading-surface.html](examples/reading-surface.html)                           |
 
 ## Visual cheat sheet
 
 ```text
 Colors (the four squares + wordmark)
-  Red    #F25022   --ms-red
-  Green  #7FBA00   --ms-green
-  Blue   #00A4EF   --ms-blue
-  Yellow #FFB900   --ms-yellow
-  Gray   #737373   --ms-gray   ← wordmark on light bg
+  Red    #F25022   --strata-red
+  Green  #7FBA00   --strata-green
+  Blue   #00A4EF   --strata-blue
+  Yellow #FFB900   --strata-yellow
+  Gray   #737373   --strata-gray   ← wordmark on light bg
 
 Typography
   Family: Segoe UI Variable Text, Segoe UI Variable, Segoe UI, with system fallback
   Body:    400 / 16px / 1.5
   Heading: 600 / 24-48px / 1.2
   Caption: 400 / 12-14px / 1.4
-  Docs:    .ms-docs, wide content wrapper, 688px prose, 40/52 title, 16/28 body
+  Docs:    .strata-docs, wide content wrapper, 688px prose, 40/52 title, 16/28 body
 
 ```
 
@@ -97,6 +97,6 @@ When you finish applying the brand:
 
 - State which tokens file you imported
 - List the elements you changed (font, primary color, logo placement)
-- Point the user to [examples/themed-page.html](examples/themed-page.html) as
+- Point the user to [examples/reading-surface.html](examples/reading-surface.html) as
   the reference look
 - Remind: **internal use only** — external use requires Brand Central review

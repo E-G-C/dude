@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MS Brand — Buttons</title>
+  <link rel="stylesheet" href="../tokens/strata.css" />
+  <style>
+    body { margin: 0; padding: var(--strata-space-6); }
+    .group { display: flex; gap: var(--strata-space-3); flex-wrap: wrap; margin-bottom: var(--strata-space-5); }
+    h2 { margin-bottom: var(--strata-space-2); }
+  </style>
+</head>
+<body class="strata">
+
+  <h2 class="strata-h2">Buttons — default</h2>
+  <div class="group">
+    <button class="strata-btn strata-btn-primary">Primary</button>
+    <button class="strata-btn strata-btn-secondary">Secondary</button>
+    <button class="strata-btn strata-btn-subtle">Subtle</button>
+    <button class="strata-btn strata-btn-destructive">Destructive</button>
+  </div>
+
+  <h2 class="strata-h2">Buttons — focus state</h2>
+  <p style="color: var(--strata-text-muted);">Tab into each button to see the focus ring.</p>
+  <div class="group">
+    <button class="strata-btn strata-btn-primary">Primary</button>
+    <button class="strata-btn strata-btn-secondary">Secondary</button>
+  </div>
+
+  <h2 class="strata-h2">Compact (32 px)</h2>
+  <div class="group">
+    <button class="strata-btn strata-btn-primary" style="height:32px;">Save</button>
+    <button class="strata-btn strata-btn-secondary" style="height:32px;">Cancel</button>
+  </div>
+
+</body>
+</html>

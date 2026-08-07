@@ -4,9 +4,9 @@
 # Fails when raw Microsoft brand hex codes leak into authored content,
 # templates, or SCSS, or when the SCSS token import is missing. This is a
 # fast drift guard, not a full brand audit - pair it with the
-# `@dude-pack-ms-brand-stylist` agent for visual review.
+# `@dude-pack-strata-stylist` agent for visual review.
 #
-# Usage:  bash .github/skills/dude-pack-ms-brand-visual/scripts/brand-check.sh
+# Usage:  bash .github/skills/dude-pack-strata-visual/scripts/strata-check.sh
 # Exit:   0 = clean, 1 = brand drift found.
 
 set -euo pipefail
@@ -30,7 +30,7 @@ search_globs=(
 )
 
 token_file='assets/scss/_variables_project.scss'
-token_import='dude-pack-ms-brand-visual/tokens/ms-brand.scss'
+token_import='dude-pack-strata-visual/tokens/strata.scss'
 
 fail=0
 
@@ -41,7 +41,7 @@ hits=""
 for glob in "${search_globs[@]}"; do
   [ -e "$glob" ] || continue
   if matches="$(grep -RInEi "$brand_any" "$glob" 2>/dev/null \
-      | grep -viE 'dude-pack-ms-brand-visual/tokens/' || true)"; then
+      | grep -viE 'dude-pack-strata-visual/tokens/' || true)"; then
     if [ -n "$matches" ]; then
       hits+="$matches"$'\n'
     fi
@@ -49,7 +49,7 @@ for glob in "${search_globs[@]}"; do
 done
 
 if [ -n "$hits" ]; then
-  echo "FAIL: raw Microsoft brand hex found. Use the token (var(--ms-*) / \$ms-*) instead:"
+  echo "FAIL: raw Microsoft brand hex found. Use the token (var(--strata-*) / \$strata-*) instead:"
   echo "$hits" | sed '/^$/d'
   fail=1
 else
