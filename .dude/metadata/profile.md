@@ -10,6 +10,7 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
   "enabled_packs": [
     "authoring",
     "coding",
+    "design",
     "release",
     "writing"
   ],
@@ -152,6 +153,32 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
           }
         ],
         "digest": "c9a4ba8a7985b5dc6debec60a013277c25b3b95c2aaec6a4b70568a4b46f785e"
+      }
+    },
+    "design": {
+      "files": [
+        ".github/skills/dude-pack-design-workflow"
+      ],
+      "installed_at": "2026-08-07T11:53:08.315Z",
+      "inventory": {
+        "version": 1,
+        "pack": "design",
+        "source": {
+          "type": "library",
+          "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-issue-3-add-a-topology-first-reset-when-review-r-891391/library/packs",
+          "ref": ""
+        },
+        "manifest_sha256": "2163bb44a22a8dcb0c6aa9360be9c954ed5c098e168c401302517e0e44545ac1",
+        "artifacts": [
+          {
+            "path": ".github/skills/dude-pack-design-workflow",
+            "kind": "skills",
+            "source": "skills/dude-pack-design-workflow",
+            "source_sha256": "0c6760ad02dbb5f587c1a58d775d2324cc45a17548c2ffcb68b82022f4ec9781",
+            "installed_sha256": "0c6760ad02dbb5f587c1a58d775d2324cc45a17548c2ffcb68b82022f4ec9781"
+          }
+        ],
+        "digest": "4c93766a9af7ce46546832777bbbbdcef15d336157b4fc8d2babb6caf2684722"
       }
     },
     "release": {
