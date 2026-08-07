@@ -131,6 +131,7 @@ module.exports = {
       },
       transitionTimingFunction: {
         'ms-enter': 'cubic-bezier(0.1, 0.9, 0.2, 1)',
+        'ms-exit': 'cubic-bezier(0, 0, 0.58, 1)',
       },
     },
   },

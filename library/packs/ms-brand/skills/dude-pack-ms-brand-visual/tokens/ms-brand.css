@@ -115,8 +115,12 @@
   --ms-dur-micro:    150ms;
   --ms-dur-standard: 250ms;
   --ms-dur-entrance: 400ms;
+  /* Easings are declared as explicit cubic-bezier(). A CSS keyword hides its
+   * numeric definition: `ease-out` means exactly cubic-bezier(0, 0, 0.58, 1),
+   * which is why this token silently disagreed with the JSON value for so
+   * long. Never use a keyword as a token value. */
   --ms-ease-enter:   cubic-bezier(0.1, 0.9, 0.2, 1);
-  --ms-ease-exit:    ease-out;
+  --ms-ease-exit:    cubic-bezier(0, 0, 0.58, 1);
 }
 
 /* Optional dark surface: scope to a container or use a media query. */
@@ -220,7 +224,7 @@
   font-size: var(--ms-docs-fs-title);
   font-weight: var(--ms-fw-semibold);
   line-height: var(--ms-docs-lh-title);
-  margin: 20px 0;
+  margin: var(--ms-space-5) 0 var(--ms-space-4);
 }
 
 .ms-docs h2,
@@ -229,7 +233,7 @@
   font-size: var(--ms-docs-fs-h2);
   font-weight: var(--ms-fw-semibold);
   line-height: var(--ms-docs-lh-h2);
-  margin: 20px 0;
+  margin: var(--ms-space-5) 0 var(--ms-space-4);
 }
 
 .ms-docs h3,
@@ -238,7 +242,7 @@
   font-size: var(--ms-docs-fs-h3);
   font-weight: var(--ms-fw-semibold);
   line-height: var(--ms-docs-lh-h3);
-  margin: 20px 0;
+  margin: var(--ms-space-5) 0 var(--ms-space-4);
 }
 
 .ms-docs p {
@@ -297,7 +301,7 @@
 
 .ms-docs :not(pre) > code {
   padding: 0.1em 0.2em;
-  border-radius: 3px;
+  border-radius: var(--ms-radius-sm);
   background: var(--ms-docs-code-bg);
   font-size: 0.85em;
 }
@@ -315,14 +319,14 @@
 .ms-docs [role="tab"] {
   appearance: none;
   margin: 0 -1px 0 0;
-  padding: var(--ms-space-1) 14px;
+  padding: var(--ms-space-1) var(--ms-space-3);
   border: 1px solid transparent;
   border-bottom: 0;
   background: transparent;
   color: var(--ms-text);
   font: inherit;
   font-size: var(--ms-docs-fs-compact);
-  line-height: 1.75;
+  line-height: var(--ms-docs-lh-compact);
   cursor: pointer;
 }
 
@@ -339,7 +343,7 @@
   margin: var(--ms-space-4) 0;
   padding: var(--ms-space-4);
   border: 1px solid var(--ms-docs-tip-border);
-  border-radius: 6px;
+  border-radius: var(--ms-radius-lg);
   background: var(--ms-docs-tip-bg);
   color: var(--ms-docs-tip-text);
 }
@@ -422,4 +426,33 @@
     linear-gradient(var(--ms-green), var(--ms-green)) 100% 0 / var(--ms-logo-square-size) var(--ms-logo-square-size) no-repeat,
     linear-gradient(var(--ms-blue), var(--ms-blue)) 0 100% / var(--ms-logo-square-size) var(--ms-logo-square-size) no-repeat,
     linear-gradient(var(--ms-yellow), var(--ms-yellow)) 100% 100% / var(--ms-logo-square-size) var(--ms-logo-square-size) no-repeat;
+}
+
+/* ============================================================
+ * Reduced motion
+ *
+ * The bundle ships motion tokens and applies transitions, so it
+ * must honour the user preference. Durations collapse to 1ms
+ * rather than 0s so transitionend / animationend listeners still
+ * fire and script that waits on them does not hang.
+ * ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ms-dur-micro:    1ms;
+    --ms-dur-standard: 1ms;
+    --ms-dur-entrance: 1ms;
+  }
+
+  .ms-brand *,
+  .ms-brand *::before,
+  .ms-brand *::after,
+  .ms-docs *,
+  .ms-docs *::before,
+  .ms-docs *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
 }

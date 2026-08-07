@@ -110,6 +110,10 @@ $ms-dur-micro:    150ms;
 $ms-dur-standard: 250ms;
 $ms-dur-entrance: 400ms;
 $ms-ease-enter:   cubic-bezier(0.1, 0.9, 0.2, 1);
+// Explicit cubic-bezier(), never a CSS keyword: `ease-out` means exactly
+// cubic-bezier(0, 0, 0.58, 1), and expressing it as a keyword is how this
+// token drifted out of step with the other formats.
+$ms-ease-exit:    cubic-bezier(0, 0, 0.58, 1);
 
 // --- Maps for iteration ---
 $ms-colors: (

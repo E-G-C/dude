@@ -15,7 +15,11 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..' '..')
 Set-Location $repoRoot
 
 # Microsoft four-square + neutral brand hex codes that must come from tokens.
+# Matched in hex form and in the rgb()/rgba() functional forms, which are the
+# same colours written in a notation a hex-only guard cannot see.
 $brandHex = '#F25022|#7FBA00|#00A4EF|#FFB900|#737373'
+$brandRgb = 'rgba?\(\s*242\s*,\s*80\s*,\s*34|rgba?\(\s*127\s*,\s*186\s*,\s*0|rgba?\(\s*0\s*,\s*164\s*,\s*239|rgba?\(\s*255\s*,\s*185\s*,\s*0|rgba?\(\s*115\s*,\s*115\s*,\s*115'
+$brandAny = "$brandHex|$brandRgb"
 
 # Authored surfaces Hugo renders. Token files are the one legitimate home
 # for the raw hex, so matches under them are excluded.
@@ -32,10 +36,10 @@ Write-Host '== Microsoft brand smoke check =='
 $hits = @()
 foreach ($glob in $searchGlobs) {
     if (-not (Test-Path $glob)) { continue }
-    $matches = Get-ChildItem -Path $glob -Recurse -File -ErrorAction SilentlyContinue |
-        Select-String -Pattern $brandHex -CaseSensitive:$false |
+    $found = Get-ChildItem -Path $glob -Recurse -File -ErrorAction SilentlyContinue |
+        Select-String -Pattern $brandAny -CaseSensitive:$false |
         Where-Object { $_.Path -notmatch 'dude-pack-ms-brand-visual[\/]+tokens[\/]+' }
-    if ($matches) { $hits += $matches }
+    if ($found) { $hits += $found }
 }
 
 if ($hits.Count -gt 0) {

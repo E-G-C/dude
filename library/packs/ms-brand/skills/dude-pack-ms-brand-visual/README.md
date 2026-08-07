@@ -30,19 +30,18 @@ You can:
 
 ## Bundle map
 
-This bundle lives at the workspace root under [`.github/`](../../). The skill
-assets are in this folder (`.github/skills/dude-pack-ms-brand-visual/`); the
-customizations VS Code auto-loads are nearby under `.github/`.
+Paths below are relative to this folder. In an installed workspace this folder
+sits at `.github/skills/dude-pack-ms-brand-visual/`, and `../../` is the
+`.github/` root that VS Code auto-loads customizations from.
 
 | Path                                                                                                       | What's in it                                                          |
 | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [`.github/copilot-instructions.md`](../../copilot-instructions.md)                                         | Workspace-wide hint Copilot loads first                               |
-| [`.github/instructions/`](../../instructions/)                                                             | `.instructions.md` files auto-applied by file type                    |
-| [`.github/prompts/`](../../prompts/)                                                                       | `.prompt.md` workflows — apply branding, audit a page                 |
-| [`.github/agents/dude-pack-ms-brand-stylist.agent.md`](../../agents/dude-pack-ms-brand-stylist.agent.md) | The `MS Brand Stylist` custom agent                                   |
+| [`../../instructions/`](../../instructions/)                                                               | `.instructions.md` files auto-applied by file type                    |
+| [`../../prompts/`](../../prompts/)                                                                         | `.prompt.md` workflows — apply branding, audit a page                 |
+| [`../../agents/dude-pack-ms-brand-stylist.agent.md`](../../agents/dude-pack-ms-brand-stylist.agent.md)   | The `MS Brand Stylist` custom agent                                   |
 | [`reference/`](reference/)                                                                                 | The visual brand explained: colors, typography, logo, layout, sources |
 | [`tokens/`](tokens/)                                                                                       | Ready-to-use design tokens (CSS, SCSS, JSON, Tailwind preset)         |
-| [`scripts/`](scripts/)                                                                                     | Brand smoke checks for token drift in Hugo-authored surfaces          |
+| [`scripts/`](scripts/)                                                                                     | Smoke checks for brand-token drift                                    |
 | [`examples/`](examples/)                                                                                   | Working HTML snippets (themed page, header/footer, buttons)           |
 | [`SKILL.md`](SKILL.md)                                                                                     | The main skill entry — start here                                     |
 

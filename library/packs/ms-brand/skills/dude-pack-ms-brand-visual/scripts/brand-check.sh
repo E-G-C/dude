@@ -15,7 +15,11 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$repo_root"
 
 # Microsoft four-square + neutral brand hex codes that must come from tokens.
+# Matched in hex form and in the rgb()/rgba() functional forms, which are the
+# same colours written in a notation a hex-only guard cannot see.
 brand_hex='#F25022|#7FBA00|#00A4EF|#FFB900|#737373'
+brand_rgb='rgba?\(\s*242\s*,\s*80\s*,\s*34|rgba?\(\s*127\s*,\s*186\s*,\s*0|rgba?\(\s*0\s*,\s*164\s*,\s*239|rgba?\(\s*255\s*,\s*185\s*,\s*0|rgba?\(\s*115\s*,\s*115\s*,\s*115'
+brand_any="$brand_hex|$brand_rgb"
 
 # Authored surfaces Hugo renders. The token files themselves are the one
 # legitimate home for the raw hex, so they are excluded.
@@ -36,7 +40,7 @@ echo "== Microsoft brand smoke check =="
 hits=""
 for glob in "${search_globs[@]}"; do
   [ -e "$glob" ] || continue
-  if matches="$(grep -RInEi "$brand_hex" "$glob" 2>/dev/null \
+  if matches="$(grep -RInEi "$brand_any" "$glob" 2>/dev/null \
       | grep -viE 'dude-pack-ms-brand-visual/tokens/' || true)"; then
     if [ -n "$matches" ]; then
       hits+="$matches"$'\n'
