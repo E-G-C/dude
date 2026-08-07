@@ -104,14 +104,14 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
         ".github/agents/dude-pack-coding-tester.agent.md",
         ".github/skills/dude-pack-coding-spec-artifacts"
       ],
-      "installed_at": "2026-07-10T04:38:32.873Z",
+      "installed_at": "2026-08-07T00:16:34.862Z",
       "inventory": {
         "version": 1,
         "pack": "coding",
         "source": {
-          "type": "source",
-          "location": "https://github.com/E-G-C/dude",
-          "ref": "main"
+          "type": "library",
+          "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-issue-3-add-a-topology-first-reset-when-review-r-891391/library/packs",
+          "ref": ""
         },
         "manifest_sha256": "b189e86cb0c9d537c6da28b38fae9c2db95a6af0ad932b501ae4f5007ee64247",
         "artifacts": [
@@ -119,22 +119,22 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
             "path": ".github/agents/dude-pack-coding-architect.agent.md",
             "kind": "agents",
             "source": "agents/dude-pack-coding-architect.agent.md",
-            "source_sha256": "0b643bdf44d33890dc370e3aef9c06e9cfba08640e464d93245f3c46bc06fe3a",
-            "installed_sha256": "0b643bdf44d33890dc370e3aef9c06e9cfba08640e464d93245f3c46bc06fe3a"
+            "source_sha256": "3da2479a152b89d9c76ce5cc5f65961be65405015a45f9833be04d4c39de9171",
+            "installed_sha256": "3da2479a152b89d9c76ce5cc5f65961be65405015a45f9833be04d4c39de9171"
           },
           {
             "path": ".github/agents/dude-pack-coding-coder.agent.md",
             "kind": "agents",
             "source": "agents/dude-pack-coding-coder.agent.md",
-            "source_sha256": "c9ea505bb615c5bccced146703f2fab4aa38516db349f19b906575e9204bac99",
-            "installed_sha256": "c9ea505bb615c5bccced146703f2fab4aa38516db349f19b906575e9204bac99"
+            "source_sha256": "58fe8d3e501088cd4f9b2f01ba558f90a68f36b3faf1c27e77732b555f0fbafc",
+            "installed_sha256": "58fe8d3e501088cd4f9b2f01ba558f90a68f36b3faf1c27e77732b555f0fbafc"
           },
           {
             "path": ".github/agents/dude-pack-coding-reviewer.agent.md",
             "kind": "agents",
             "source": "agents/dude-pack-coding-reviewer.agent.md",
-            "source_sha256": "b491d3a848b9c6566d62681ba6bb65721c5a5e39a7c6c1c549f40d1ae45662bf",
-            "installed_sha256": "b491d3a848b9c6566d62681ba6bb65721c5a5e39a7c6c1c549f40d1ae45662bf"
+            "source_sha256": "e62a452dbe538e16d70be43e85e7910007c15f0e04368286a43691e14a16c820",
+            "installed_sha256": "e62a452dbe538e16d70be43e85e7910007c15f0e04368286a43691e14a16c820"
           },
           {
             "path": ".github/agents/dude-pack-coding-tester.agent.md",
@@ -151,7 +151,7 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
             "installed_sha256": "c295e92781817c92cf17b63e158f6f2031d1010480a54f5fdfcfb80066fb75b5"
           }
         ],
-        "digest": "380f344df3a675fe322a005235cb66410ea89a58f6adef17d9be83a984704d1e"
+        "digest": "c9a4ba8a7985b5dc6debec60a013277c25b3b95c2aaec6a4b70568a4b46f785e"
       }
     },
     "release": {
