@@ -239,7 +239,7 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
         ".github/prompts/dude-pack-strata-apply-visual-system.prompt.md",
         ".github/skills/dude-pack-strata-visual"
       ],
-      "installed_at": "2026-08-07T15:36:54.388Z",
+      "installed_at": "2026-08-07T19:12:22.284Z",
       "inventory": {
         "version": 1,
         "pack": "strata",
@@ -254,8 +254,8 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
             "path": ".github/agents/dude-pack-strata-stylist.agent.md",
             "kind": "agents",
             "source": "agents/dude-pack-strata-stylist.agent.md",
-            "source_sha256": "9e4fb788447a979d5c2e3bb0f2e0921b3ee346d2f9d59114fcad40321292c27a",
-            "installed_sha256": "9e4fb788447a979d5c2e3bb0f2e0921b3ee346d2f9d59114fcad40321292c27a"
+            "source_sha256": "d1c90a6aa830445437d985d0656b11f927c7fd609cd7270a86bf01c89953d02a",
+            "installed_sha256": "d1c90a6aa830445437d985d0656b11f927c7fd609cd7270a86bf01c89953d02a"
           },
           {
             "path": ".github/instructions/dude-pack-strata-visual-system.instructions.md",
@@ -279,7 +279,7 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
             "installed_sha256": "16c8d4c3b4bbc6192221254f1cd8112d2325ccc001a0f9d6eac4681792ef66b9"
           }
         ],
-        "digest": "96b296e3ab06b9d2529ce8118e2da9607bc7f1ad12bd48a11b8de0f63496bd61"
+        "digest": "9d7fdd2d33cbe74972f5883dd9b3eedc0a75d6bebbea5e2fd1ef845b8b70e178"
       }
     },
     "writing": {
