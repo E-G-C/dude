@@ -1,6 +1,6 @@
 ---
 name: "dude-lightweight-execution"
-description: "Use to select, mutate, close, and report execution directly from a defined feature's tasks.md while Beads is not active."
+description: "Use to select, mutate, close, and report execution directly from a defined feature's tasks.md while Beads is not active. Do NOT use once tracked import has made Beads authoritative, or to create or refresh definition artifacts (dude-feature-definition)."
 ---
 
 # Lightweight Execution

@@ -1,6 +1,6 @@
 ---
 name: "dude-reviewer-protocol"
-description: "Use for independent verdicts, rejection routing, revision ownership, and repeated-failure escalation."
+description: "Use for independent verdicts, rejection routing, revision ownership, and repeated-failure escalation. Do NOT use when acting on findings you received as the author (dude-receiving-code-review)."
 ---
 
 # Reviewer Protocol

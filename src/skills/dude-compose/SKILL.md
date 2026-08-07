@@ -1,6 +1,6 @@
 ---
 name: dude-compose
-description: "Use when installing, removing, or listing optional Dude packs. Triggers: @dude add pack <name>, @dude remove pack <name>, @dude list packs, install pack, enable pack, uninstall pack, which packs are available, compose the bundle, add tracked execution, add release tooling, add web specialists, add TDD."
+description: "Use when installing, removing, or listing optional Dude packs. Triggers: @dude add pack <name>, @dude remove pack <name>, @dude list packs, install pack, enable pack, uninstall pack, which packs are available, compose the bundle, add tracked execution, add release tooling, add web specialists, add TDD. Do NOT use for upgrading the bundle itself (dude-bundle-upgrade) or importing an agent or skill from an external repository (dude-bundle-import)."
 ---
 
 # Pack Compose

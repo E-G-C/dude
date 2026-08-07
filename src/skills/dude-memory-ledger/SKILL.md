@@ -1,6 +1,6 @@
 ---
 name: "dude-memory-ledger"
-description: "Use when the user wants Dude to remember a decision, guardrail, preference, project fact, or durable lesson in `.dude/memory/`."
+description: "Use when the user wants Dude to remember a decision, guardrail, preference, project fact, or durable lesson in `.dude/memory/`. Do NOT use to promote a lesson into a reusable skill (dude-learning-promotion)."
 ---
 
 ## Purpose

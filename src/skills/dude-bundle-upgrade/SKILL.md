@@ -1,6 +1,6 @@
 ---
 name: "dude-bundle-upgrade"
-description: "Use when the user wants to upgrade the Dude bundle itself, pull the newest base bundle from its source repo, refresh shipped agents/skills/instructions while preserving project memory and active work, or roll back a recent upgrade. Triggers: @dude upgrade, @dude upgrade --dry-run, @dude upgrade --rollback, upgrade dude, update dude bundle, pull latest dude."
+description: "Use when the user wants to upgrade the Dude bundle itself, pull the newest base bundle from its source repo, refresh shipped agents/skills/instructions while preserving project memory and active work, or roll back a recent upgrade. Triggers: @dude upgrade, @dude upgrade --dry-run, @dude upgrade --rollback, upgrade dude, update dude bundle, pull latest dude. Do NOT use for installing or removing optional packs (dude-compose) or importing a single external agent or skill (dude-bundle-import)."
 ---
 
 # Bundle Upgrade

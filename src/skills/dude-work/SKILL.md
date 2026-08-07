@@ -1,6 +1,6 @@
 ---
 name: "dude-work"
-description: "Use for @dude work continuous execution inside the active Lightweight or Tracked lane until a named natural stop."
+description: "Use for @dude work continuous execution inside the active Lightweight or Tracked lane until a named natural stop. Do NOT use for a single task state change (dude-lightweight-execution), for read-only status or diff, or to import tracked work."
 ---
 
 # Continuous Work

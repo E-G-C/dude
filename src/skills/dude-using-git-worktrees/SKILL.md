@@ -1,6 +1,6 @@
 ---
 name: "dude-using-git-worktrees"
-description: "Use when the user explicitly asks for a git worktree, isolated branch workspace, parallel checkout, or branch-safe implementation area for risky or independent work, or when the coordinator should suggest that option because isolation would materially reduce risk or working-tree contention for a risky or truly independent change."
+description: "Use when the user explicitly asks for a git worktree, isolated branch workspace, parallel checkout, or branch-safe implementation area for risky or independent work, or when the coordinator should suggest that option because isolation would materially reduce risk or working-tree contention for a risky or truly independent change. Do NOT use for ordinary branch, commit, or pull request work in the current checkout."
 ---
 
 # Using Git Worktrees

@@ -1,6 +1,6 @@
 ---
 name: "dude-feature-definition"
-description: "Use for brainstorm idea capture, explicit feature definition, spec and plan gates, task derivation, reconciliation, and definition lint."
+description: "Use for brainstorm idea capture, explicit feature definition, spec and plan gates, task derivation, reconciliation, and definition lint. Do NOT use to select, execute, close, or report tasks (dude-lightweight-execution or the installed tracked-execution skill)."
 ---
 
 # Feature Definition

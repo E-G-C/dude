@@ -1,6 +1,6 @@
 ---
 name: "dude-bundle-import"
-description: "Use when importing an agent, skill, or bounded clean artifact directory from an external repository or local source. Triggers: import this agent, import this skill, import this directory, analyze directory, fetch agent from <url>, copy skill from <repo>, install agent from <url>, bring in <name> agent, bring in <name> skill."
+description: "Use when importing an agent, skill, or bounded clean artifact directory from an external repository or local source. Triggers: import this agent, import this skill, import this directory, analyze directory, fetch agent from <url>, copy skill from <repo>, install agent from <url>, bring in <name> agent, bring in <name> skill. Do NOT use for installing catalog packs (dude-compose), upgrading the bundle itself (dude-bundle-upgrade), or moving a whole bundle between repositories (dude-portability)."
 ---
 
 # Bundle Import

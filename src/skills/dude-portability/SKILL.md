@@ -1,6 +1,6 @@
 ---
 name: "dude-portability"
-description: "Use when saving, exporting, importing, or deploying a Dude bundle across repositories or directories."
+description: "Use when saving, exporting, importing, or deploying a Dude bundle across repositories or directories. Do NOT use for installing optional packs (dude-compose), upgrading the bundle (dude-bundle-upgrade), or importing a single external agent or skill (dude-bundle-import)."
 ---
 
 ## Purpose

@@ -1,6 +1,6 @@
 ---
 name: "dude-learning-promotion"
-description: "Use when Dude overcomes a non-trivial challenge, discovers a reusable pattern, or should promote a solved problem into a reusable skill to avoid the same issue in the future."
+description: "Use when Dude overcomes a non-trivial challenge, discovers a reusable pattern, or should promote a solved problem into a reusable skill to avoid the same issue in the future. Do NOT use to record a plain decision, preference, or project fact (dude-memory-ledger), or to author the skill file itself (dude-skill-authoring)."
 ---
 
 ## Purpose
