@@ -1,8 +1,8 @@
 ---
 title: Remove Unused Authority Surfaces
 slug: remove-unused-authority-surfaces
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/026-remove-unused-authority-surfaces/spec.md
 ---
 
 # Idea: Remove Unused Authority Surfaces
@@ -92,9 +92,10 @@ No real open questions remain. The topology audits and coordinator conflict reso
 - [x] Two-pass topology evidence establishes the scope gate
 - [x] Symbol-level KEEP carve-outs are explicit
 - [x] No scope-changing open questions remain
-- [ ] Definition requires explicit `define remove-unused-authority-surfaces`
+- [x] Definition requires explicit `define remove-unused-authority-surfaces`
 
 ## Coordinator Log
 
 - 2026-08-07 21:00 UTC - brainstorm captured from explicit ship brainstorm subaction; definition deferred
+- 2026-08-07 21:05 UTC - first definition staged for .dude/specs/026-remove-unused-authority-surfaces/spec.md
 <!-- dude:managed:end -->
