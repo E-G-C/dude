@@ -15,6 +15,7 @@ const ACTIVE_SOURCE_FILES = [
   'src/instructions/dude.instructions.md',
   'src/skills/dude-bundle-import/import.mjs',
   'src/skills/dude-feature-definition/SKILL.md',
+  'src/skills/dude-feature-definition/publish-first-definition.mjs',
   'src/skills/dude-generic-routing/SKILL.md',
   'src/skills/dude-lightweight-execution/SKILL.md',
   'src/skills/dude-lightweight-execution/board.mjs',
@@ -668,7 +669,7 @@ function installedAgentRoster() {
 test('current-format contract scans an explicit deterministic active-source inventory', () => {
   assert.deepEqual(ACTIVE_SOURCE_FILES, [...ACTIVE_SOURCE_FILES].sort());
   assert.equal(new Set(ACTIVE_SOURCE_FILES).size, ACTIVE_SOURCE_FILES.length);
-  assert.equal(ACTIVE_SOURCE_FILES.length, 19);
+  assert.equal(ACTIVE_SOURCE_FILES.length, 20);
   for (const relative of ACTIVE_SOURCE_FILES) {
     assert.equal(fs.statSync(path.join(ROOT, relative)).isFile(), true, relative);
   }
@@ -1214,12 +1215,14 @@ test('T008 definition authority, rerun safety, guardrails, gates, and reconcilia
       heading: '## First Definition Transaction',
       needles: [
         'prospective owner because no defined owner exists yet',
-        'Return the complete stage to the coordinator',
-        'as one delegated atomic transaction',
-        'the coordinator restores every pre-write byte and removes every newly created path',
-        'neither package nor owner transition may survive alone',
+        'containing exactly `current-idea.md`, `staged-idea.md`, `spec.md`, `plan.md`, and `tasks.md`',
+        'applies only the selected owner plus the core trio',
+        'runs fixed `dude-lint` inside its rollback boundary',
+        'deletes the temporary directory on success or failure',
+        'restores every pre-write byte and removes every newly created path',
+        'no publication-success or definition-readiness claim unless the command succeeds',
       ],
-      ruleLine: "4. Return the complete stage to the coordinator. After it verifies the prospective owner and snapshots every affected path, commit the staged package artifacts, that same idea's `status: defined` plus exact `spec_path:`, and the definition event as one delegated atomic transaction. If any write or validation fails, the coordinator restores every pre-write byte and removes every newly created path; neither package nor owner transition may survive alone, and never report a half-transition as defined.",
+      ruleLine: '   The command applies only the selected owner plus the core trio through the existing `applyAtomicFileBatch` transaction and runs fixed `dude-lint` inside its rollback boundary; on failure, it restores every pre-write byte and removes every newly created path.',
     },
     {
       relative: 'src/skills/dude-feature-definition/SKILL.md',
@@ -1265,6 +1268,23 @@ test('T008 definition authority, rerun safety, guardrails, gates, and reconcilia
       ruleLine: 'No definition readiness claim is allowed until the coordinator reports zero failures. Before tracked import, `tasks.md` may be the sole Lightweight live board. After import, Beads is authoritative and markdown updates are only a one-way non-authoritative mirror. Return changed artifacts, exact `spec_path`, clarification or reconciliation state, readiness, and risks to the coordinator.',
     },
   ];
+
+  const definitionSource = read('src/skills/dude-feature-definition/SKILL.md');
+  const firstDefinitionStart = definitionSource.indexOf('\n## First Definition Transaction\n');
+  const firstDefinitionEnd = definitionSource.indexOf('\n## Re-definition\n', firstDefinitionStart);
+  assert.ok(firstDefinitionStart >= 0 && firstDefinitionEnd > firstDefinitionStart);
+  const firstDefinitionRaw = definitionSource.slice(firstDefinitionStart, firstDefinitionEnd);
+  const publishExecutable = '.github/skills/dude-feature-definition/publish-first-definition.mjs';
+  assert.equal(
+    firstDefinitionRaw.split(publishExecutable).length - 1,
+    1,
+    'First Definition Transaction owns the exact publish-first-definition executable',
+  );
+  assertSectionRuleRejectsMutations(
+    'src/skills/dude-feature-definition/SKILL.md',
+    '## First Definition Transaction',
+    '   Invoke exactly: `node .github/skills/dude-feature-definition/publish-first-definition.mjs --root . --idea .dude/ideas/<slug>.md --spec .dude/specs/<NNN>-<package>/spec.md --stage <absolute-temporary-directory>`',
+  );
 
   for (const contract of contracts) {
     assertSectionIncludesAll(contract.relative, contract.heading, contract.needles);
