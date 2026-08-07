@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en" data-strata-palette="pigment" data-strata-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Strata — Data visualization</title>
+  <link rel="stylesheet" href="../tokens/strata.css" />
+  <style>
+    body { margin: 0; padding: var(--strata-space-6); }
+    .legend { display: flex; flex-wrap: wrap; gap: var(--strata-space-4);
+              margin: var(--strata-space-4) 0; padding: 0; list-style: none; }
+    .legend li { display: flex; align-items: center; gap: var(--strata-space-2); }
+    .swatch {
+      width: var(--strata-space-4); height: var(--strata-space-4);
+      border: var(--strata-rule-hairline);
+      border-radius: var(--strata-radius-sm);
+    }
+    figure { margin: 0 0 var(--strata-space-6); }
+  </style>
+</head>
+<body class="strata">
+
+  <h1 class="strata-h1">Data visualization</h1>
+  <p style="color: var(--strata-muted); max-width: 60ch;">
+    Seven categorical slots, ordered to maximise luminance separation between
+    neighbours. The ramp is differentiated by <em>hue</em>, not by luminance —
+    adjacent series reach only about 2:1 — so colour alone cannot carry the
+    encoding. Every chart below also carries a direct label and a pattern.
+  </p>
+
+  <figure>
+    <figcaption class="strata-meta">Deposition rate by layer — mm/year</figcaption>
+    <svg viewBox="0 0 640 240" role="img" width="100%"
+         aria-label="Bar chart of deposition rate for seven layers, each bar directly labelled.">
+      <!-- Gridlines use the decorative hair token: they are not a boundary. -->
+      <g class="strata-chart-gridline">
+        <line x1="40" y1="200" x2="620" y2="200" />
+        <line x1="40" y1="150" x2="620" y2="150" />
+        <line x1="40" y1="100" x2="620" y2="100" />
+        <line x1="40" y1="50"  x2="620" y2="50" />
+      </g>
+
+      <!-- Every mark is stroked with --strata-rule. Without it an orpiment or
+           amber bar measures under 2:1 against a white page and has no
+           perceivable edge. The stroke is the boundary, not decoration. -->
+      <g class="strata-mark">
+        <rect class="strata-series-1" x="52"  y="70"  width="60" height="130" />
+        <rect class="strata-series-2" x="132" y="110" width="60" height="90" />
+        <rect class="strata-series-3" x="212" y="45"  width="60" height="155" />
+        <rect class="strata-series-4" x="292" y="130" width="60" height="70" />
+        <rect class="strata-series-5" x="372" y="90"  width="60" height="110" />
+        <rect class="strata-series-6" x="452" y="150" width="60" height="50" />
+        <rect class="strata-series-7" x="532" y="60"  width="60" height="140" />
+      </g>
+
+      <!-- Direct labelling: the non-colour encoding that makes the series
+           readable in greyscale and for colour-vision deficiency. -->
+      <g class="strata-chart-label" text-anchor="middle" font-size="11">
+        <text x="82"  y="218">L1</text>
+        <text x="162" y="218">L2</text>
+        <text x="242" y="218">L3</text>
+        <text x="322" y="218">L4</text>
+        <text x="402" y="218">L5</text>
+        <text x="482" y="218">L6</text>
+        <text x="562" y="218">L7</text>
+      </g>
+      <g class="strata-chart-axis" text-anchor="end" font-size="11">
+        <text x="32" y="204">0</text>
+        <text x="32" y="154">4</text>
+        <text x="32" y="104">8</text>
+        <text x="32" y="54">12</text>
+      </g>
+    </svg>
+  </figure>
+
+  <h2 class="strata-h2">Legend</h2>
+  <ul class="legend">
+    <li><span class="swatch" style="background: var(--strata-series-1);"></span><span class="strata-meta">L1 Surface wash</span></li>
+    <li><span class="swatch" style="background: var(--strata-series-2);"></span><span class="strata-meta">L2 Fine silt</span></li>
+    <li><span class="swatch" style="background: var(--strata-series-3);"></span><span class="strata-meta">L3 Coarse bed</span></li>
+    <li><span class="swatch" style="background: var(--strata-series-4);"></span><span class="strata-meta">L4 Clay band</span></li>
+    <li><span class="swatch" style="background: var(--strata-series-5);"></span><span class="strata-meta">L5 Iron seam</span></li>
+    <li><span class="swatch" style="background: var(--strata-series-6);"></span><span class="strata-meta">L6 Ash lens</span></li>
+    <li><span class="swatch" style="background: var(--strata-series-7);"></span><span class="strata-meta">L7 Basal rock</span></li>
+  </ul>
+
+  <div class="strata-panel">
+    <h3 class="strata-h3" style="margin-top: 0;">Rules for series colour</h3>
+    <ul>
+      <li>More than two series requires a <strong>non-colour encoding</strong>:
+          direct labels, distinct markers, dash patterns, or ordered position.</li>
+      <li>Use the slots in order — they are sequenced to maximise the luminance
+          gap between neighbours.</li>
+      <li>Label with <code>--strata-ink</code> or <code>--strata-muted</code>,
+          never with the series colour itself.</li>
+      <li>Stroke every mark with <code>--strata-rule</code>.</li>
+      <li>This is a <strong>categorical</strong> ramp. Never use it for
+          sequential or diverging data — that needs monotonic luminance, which
+          these seven deliberately do not have.</li>
+    </ul>
+  </div>
+
+  <h2 class="strata-h2">Values as text</h2>
+  <p style="color: var(--strata-muted); max-width: 60ch;">
+    A vivid slot is a <em>fill</em>. To write a value in a series colour on a
+    light plane, use the matching <code>-deep</code> form:
+    <span style="color: var(--strata-series-4-deep); font-weight: 600;">+12.4 mm</span>
+    uses <code>--strata-series-4-deep</code>, because the vivid slot behind it
+    measures under 2:1 as text.
+  </p>
+
+</body>
+</html>

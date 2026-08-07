@@ -1,0 +1,215 @@
+// ============================================================
+// Strata — Design Tokens (SCSS)
+//
+// SCSS has no cascade, so the two palettes are exposed as prefixed
+// value sets plus maps. Structure is declared once and is shared.
+// For runtime palette/theme switching use tokens/strata.css, which
+// is the canonical source this file is projected from.
+//
+// Unaffiliated with any company, product, or design system.
+// See ../reference/provenance-and-licensing.md
+// ============================================================
+
+// --- Typography: two families, local-only ---
+// No font files ship. No @font-face. No remote import.
+$strata-font-sans: "Atkinson Hyperlegible", "Noto Sans", system-ui, -apple-system,
+                   BlinkMacSystemFont, sans-serif;
+$strata-font-mono: "Noto Sans Mono", "Liberation Mono", ui-monospace, SFMono-Regular,
+                   Menlo, Consolas, monospace;
+
+$strata-fs-display: 48px;
+$strata-fs-h1:      36px;
+$strata-fs-h2:      28px;
+$strata-fs-h3:      22px;
+$strata-fs-h4:      18px;
+$strata-fs-body-lg: 18px;
+$strata-fs-body:    16px;
+$strata-fs-caption: 13px;
+$strata-fs-micro:   11px;
+
+$strata-fw-regular:  400;
+$strata-fw-semibold: 600;
+$strata-fw-bold:     700;
+
+$strata-lh-display: 1.15;
+$strata-lh-h1:      1.2;
+$strata-lh-h2:      1.25;
+$strata-lh-h3:      1.3;
+$strata-lh-h4:      1.35;
+$strata-lh-body:    1.5;
+$strata-lh-caption: 1.4;
+$strata-lh-micro:   1.3;
+$strata-lh-tight:   $strata-lh-h1;
+$strata-lh-normal:  $strata-lh-body;
+
+// --- Spacing (4/8) ---
+$strata-space-0: 0px;
+$strata-space-1: 4px;
+$strata-space-2: 8px;
+$strata-space-3: 12px;
+$strata-space-4: 16px;
+$strata-space-5: 24px;
+$strata-space-6: 32px;
+$strata-space-7: 48px;
+$strata-space-8: 64px;
+
+// --- Radii: 4px default, 8px maximum ---
+$strata-radius-sm:   2px;
+$strata-radius-md:   4px;    // DEFAULT for everything interactive
+$strata-radius-lg:   8px;    // ceiling
+$strata-radius-pill: 9999px; // discouraged
+
+$strata-rule-width: 1px;
+
+// --- Motion ---
+// Explicit cubic-bezier() only. A CSS keyword hides its own numeric
+// definition: `ease-out` means exactly cubic-bezier(0, 0, 0.58, 1),
+// which is how a cross-format disagreement stayed invisible here.
+$strata-dur-micro:    150ms;
+$strata-dur-standard: 250ms;
+$strata-dur-entrance: 400ms;
+$strata-ease-enter: cubic-bezier(0.2, 0, 0, 1);
+$strata-ease-exit:  cubic-bezier(0.2, 0, 0, 1);
+
+// --- Code surface: dark in BOTH themes, shared by both palettes ---
+$strata-code-bg:    #101215;
+$strata-code-text:  #EDEFF3;
+$strata-code-muted: #A2A9B4;
+
+// ============================================================
+// Palette: pigment (default)
+// azurite, verdigris, malachite, orpiment, cinnabar, amethyst,
+// rhodochrosite.
+// ============================================================
+
+$strata-pigment-light: (
+  "canvas": #FFFFFF, "surface": #FFFFFF, "soft": #F4F6F8, "sunken": #EDEFF3,
+  "ink": #14161A, "muted": #565C66, "on-accent": #FFFFFF, "on-warning": #14161A,
+  "rule": #828994, "hair": #E3E6EA,
+  "series-1": #1348E8, "series-1-deep": #0E37B8,
+  "series-2": #0098B8, "series-2-deep": #00757D,
+  "series-3": #00B36B, "series-3-deep": #00794A,
+  "series-4": #FFB400, "series-4-deep": #7F5800,
+  "series-5": #E63A1F, "series-5-deep": #CE2E14,
+  "series-6": #7A2FE0, "series-6-deep": #5A1FB0,
+  "series-7": #D1176B, "series-7-deep": #C41364
+);
+
+$strata-pigment-dark: (
+  "canvas": #101215, "surface": #181B20, "soft": #1E2228, "sunken": #141719,
+  "ink": #EDEFF3, "muted": #A2A9B4, "on-accent": #101215, "on-warning": #101215,
+  "rule": #828994, "hair": #2A2F36,
+  "series-1": #6A9BFF, "series-1-deep": #9BBCFF,
+  "series-2": #2FC9D4, "series-2-deep": #7FDDE6,
+  "series-3": #2FCB86, "series-3-deep": #7DE0B0,
+  "series-4": #FFC22E, "series-4-deep": #FFD97A,
+  "series-5": #FF7355, "series-5-deep": #FFAE99,
+  "series-6": #B98CFF, "series-6-deep": #CBAAFF,
+  "series-7": #FF7FB5, "series-7-deep": #FFB3D2
+);
+
+// ============================================================
+// Palette: spectrum
+// blue, teal, green, amber, red, violet, magenta.
+// ============================================================
+
+$strata-spectrum-light: (
+  "canvas": #FAFBFF, "surface": #FFFFFF, "soft": #EDF1FC, "sunken": #E4E9F7,
+  "ink": #101A33, "muted": #4C5B7A, "on-accent": #FFFFFF, "on-warning": #101A33,
+  "rule": #79859F, "hair": #DFE5F2,
+  "series-1": #1552E0, "series-1-deep": #0F3FB5,
+  "series-2": #00A0A8, "series-2-deep": #00757D,
+  "series-3": #12B76A, "series-3-deep": #097340,
+  "series-4": #F5A700, "series-4-deep": #7A5200,
+  "series-5": #D71E3C, "series-5-deep": #B01730,
+  "series-6": #6D28D9, "series-6-deep": #5B21B6,
+  "series-7": #B0009B, "series-7-deep": #8A0079
+);
+
+$strata-spectrum-dark: (
+  "canvas": #0B1020, "surface": #131A2E, "soft": #1C2540, "sunken": #0E1526,
+  "ink": #EAEFFA, "muted": #A3B0CC, "on-accent": #06090F, "on-warning": #06090F,
+  "rule": #79859F, "hair": #232D4A,
+  "series-1": #5B9DFF, "series-1-deep": #A9CBFF,
+  "series-2": #3FD6E6, "series-2-deep": #7FE0EA,
+  "series-3": #34D98B, "series-3-deep": #7FE9B8,
+  "series-4": #FFC542, "series-4-deep": #FFD98A,
+  "series-5": #FF6B85, "series-5-deep": #FFA8B6,
+  "series-6": #A98BFF, "series-6-deep": #CBAAFF,
+  "series-7": #EE7BFF, "series-7-deep": #F5AEFF
+);
+
+// Every palette map exposes an identical key set. strata-check asserts
+// this across all four, because a key present in one and missing from
+// another is a silent runtime failure after a palette switch.
+$strata-palettes: (
+  "pigment-light":  $strata-pigment-light,
+  "pigment-dark":   $strata-pigment-dark,
+  "spectrum-light": $strata-spectrum-light,
+  "spectrum-dark":  $strata-spectrum-dark
+);
+
+// The active palette. Override before importing to switch.
+$strata-palette: $strata-pigment-light !default;
+
+@function strata-color($key) {
+  @if not map-has-key($strata-palette, $key) {
+    @error "strata-color: unknown key '#{$key}'.";
+  }
+  @return map-get($strata-palette, $key);
+}
+
+// --- Semantic roles: palette-independent aliases onto series slots ---
+// Reference these in component code, never a colour name and never a
+// series slot directly.
+@function strata-role($role) {
+  $map: (
+    "primary": "series-1", "primary-deep": "series-1-deep", "hover": "series-1-deep",
+    "info": "series-2", "info-text": "series-2-deep",
+    "success": "series-3", "success-text": "series-3-deep",
+    "warning": "series-4", "warning-text": "series-4-deep",
+    "danger": "series-5", "danger-text": "series-5-deep",
+    "focus": "series-6"
+  );
+  @if not map-has-key($map, $role) {
+    @error "strata-role: unknown role '#{$role}'.";
+  }
+  @return strata-color(map-get($map, $role));
+}
+
+// --- Mixins ---
+
+// Stratification: a plane is legible from its tone and its 1px edge.
+// There is no shadow mixin because there is no shadow.
+@mixin strata-rule($side: null) {
+  @if $side { border-#{$side}: $strata-rule-width solid strata-color("rule"); }
+  @else     { border: $strata-rule-width solid strata-color("rule"); }
+}
+
+// Meaning-bearing fills need a perceivable boundary: several vivid slots
+// measure under the 3:1 non-text floor against their own plane.
+@mixin strata-field($fill) {
+  background: $fill;
+  @include strata-rule;
+  border-radius: $strata-radius-md;
+}
+
+// Pure outline. box-shadow is banned, and the offset is load-bearing:
+// at offset 0 the ring fails below 3:1 on 26 of 28 fills across the
+// four validated surfaces.
+@mixin strata-focus-ring($offset: 2px) {
+  @if $offset < 2px {
+    @error "strata-focus-ring: outline-offset must be >= 2px (got #{$offset}).";
+  }
+  outline: 2px solid strata-role("focus");
+  outline-offset: $offset;
+}
+
+@mixin strata-meta {
+  font-family: $strata-font-mono;
+  font-size: $strata-fs-micro;
+  line-height: $strata-lh-micro;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: strata-color("muted");
+}

@@ -12,6 +12,7 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
     "coding",
     "design",
     "release",
+    "strata",
     "writing"
   ],
   "installed": {
@@ -229,6 +230,56 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
           }
         ],
         "digest": "63d3028f7069d7ee214ec03557f97bc4f4634509d53f9fffff8832a154938c5a"
+      }
+    },
+    "strata": {
+      "files": [
+        ".github/agents/dude-pack-strata-stylist.agent.md",
+        ".github/instructions/dude-pack-strata-visual-system.instructions.md",
+        ".github/prompts/dude-pack-strata-apply-visual-system.prompt.md",
+        ".github/skills/dude-pack-strata-visual"
+      ],
+      "installed_at": "2026-08-07T15:36:54.388Z",
+      "inventory": {
+        "version": 1,
+        "pack": "strata",
+        "source": {
+          "type": "library",
+          "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-issue-3-add-a-topology-first-reset-when-review-r-891391/library/packs",
+          "ref": ""
+        },
+        "manifest_sha256": "dd12136218d4203160480e056f207ab28dfaff6b0f8cb6642ec06633d06ff150",
+        "artifacts": [
+          {
+            "path": ".github/agents/dude-pack-strata-stylist.agent.md",
+            "kind": "agents",
+            "source": "agents/dude-pack-strata-stylist.agent.md",
+            "source_sha256": "9e4fb788447a979d5c2e3bb0f2e0921b3ee346d2f9d59114fcad40321292c27a",
+            "installed_sha256": "9e4fb788447a979d5c2e3bb0f2e0921b3ee346d2f9d59114fcad40321292c27a"
+          },
+          {
+            "path": ".github/instructions/dude-pack-strata-visual-system.instructions.md",
+            "kind": "instructions",
+            "source": "instructions/dude-pack-strata-visual-system.instructions.md",
+            "source_sha256": "3fc8e9a31aae4ced9b903c0502d59b2810c2a43849dab780094af6afa888fa1d",
+            "installed_sha256": "3fc8e9a31aae4ced9b903c0502d59b2810c2a43849dab780094af6afa888fa1d"
+          },
+          {
+            "path": ".github/prompts/dude-pack-strata-apply-visual-system.prompt.md",
+            "kind": "prompts",
+            "source": "prompts/dude-pack-strata-apply-visual-system.prompt.md",
+            "source_sha256": "919187eef87a88462a475a37f7d71f16d02ad716e2a161a0d4b09306568601e8",
+            "installed_sha256": "919187eef87a88462a475a37f7d71f16d02ad716e2a161a0d4b09306568601e8"
+          },
+          {
+            "path": ".github/skills/dude-pack-strata-visual",
+            "kind": "skills",
+            "source": "skills/dude-pack-strata-visual",
+            "source_sha256": "16c8d4c3b4bbc6192221254f1cd8112d2325ccc001a0f9d6eac4681792ef66b9",
+            "installed_sha256": "16c8d4c3b4bbc6192221254f1cd8112d2325ccc001a0f9d6eac4681792ef66b9"
+          }
+        ],
+        "digest": "96b296e3ab06b9d2529ce8118e2da9607bc7f1ad12bd48a11b8de0f63496bd61"
       }
     },
     "writing": {
