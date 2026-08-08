@@ -158,7 +158,7 @@ As a reader or maintainer, I want artifact bytes to depend only on authoritative
 - A task has multiple `deps:` entries or a dangling dependency. Literal task metadata is shown without inventing a resolvable edge.
 - Coordinator Log entries have the same date, include a time after the date, or lack a valid date prefix. Valid dates are grouped by calendar date; invalid entries are excluded from dated activity rather than assigned a fake date.
 - Idea titles or excerpts contain HTML-sensitive characters. They render as text and cannot introduce markup or external references.
-- The direct idea count differs from the current repository's 30-idea evidence. Layout and inventory correctness do not depend on a fixed count.
+- The live direct-idea count differs from the approved preview's historical 30-idea evidence. Layout and inventory correctness use the live inventory and do not depend on a fixed count.
 - The committed artifacts are absent. Freshness check fails without creating them.
 - The repository is not a Git checkout. Generation is unaffected because Git metadata is not an input.
 - The approved preview and runtime template differ. The preview remains design evidence; independent visual review determines whether implementation matches the approved direction.
@@ -209,7 +209,7 @@ As a reader or maintainer, I want artifact bytes to depend only on authoritative
 
 ## Success Criteria
 
-- **SC-001:** The current 30-idea repository fixture has exactly 30 drillable inventory entries, each appearing once in Current, Planned, or Completed; synthetic fixtures with zero, one, and arbitrary larger counts also have no duplicate or missing entry.
+- **SC-001:** Every current direct idea has exactly one drillable inventory entry appearing once in Current, Planned, or Completed; synthetic fixtures with zero, one, and arbitrary larger counts also have no duplicate or missing entry.
 - **SC-002:** For representative mixed-state fixtures, all five where-are-we counts equal independently computed expected counts, empty Current subsection bodies are absent while zero counts remain visible, and no all-history percentage is present.
 - **SC-003:** Delivery-map fixtures prove declared relationships use the authoritative treatment, recognizable body statements use the provisional treatment, missing signals draw no edge, provisional evidence changes no lifecycle classification, and absence of order emits the required message.
 - **SC-004:** Draft, active, blocked, ordered, and completed drill-down fixtures expose every applicable real field from FR-011 through FR-013, while drafts contain the exact no-tasks message and no fabricated package detail.

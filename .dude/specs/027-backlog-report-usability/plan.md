@@ -174,7 +174,7 @@ Add a committed-artifact freshness test to the existing backlog/current-contract
 
 Focused tests cover:
 
-- one-to-one classification over the current 30-idea fixture and synthetic arbitrary counts;
+- one-to-one classification over the current repository fixture and synthetic arbitrary counts;
 - zero-count summary behavior and suppressed empty Current subsections;
 - conditional prioritized-later behavior;
 - declared, provisional, and missing relationship treatments;

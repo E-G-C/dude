@@ -149,4 +149,5 @@ These are coordinator working assumptions, not user decisions. Correct any that 
 - 2026-08-08 UTC - brainstorm captured as a separate follow-up to closed Feature 025
 - 2026-08-08 UTC - Lifecycle Explorer direction recorded as user-approved; external scratch evidence SHA-256 `fdfa1b3f517bc721898d3bfd16d75075c75181f84b88d914f89765861bc40573`
 - 2026-08-08 UTC - first definition staged for .dude/specs/027-backlog-report-usability/spec.md; approved Lifecycle Explorer direction carried forward without a new approval checkpoint
+- 2026-08-08 UTC - definition corrected: approved preview remains historical 30-idea evidence; live acceptance is count-agnostic
 <!-- dude:managed:end -->
