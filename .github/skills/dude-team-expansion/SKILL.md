@@ -1,6 +1,6 @@
 ---
 name: "dude-team-expansion"
-description: "Use when the user wants to hire a new agent, add a specialist, change the active roster, or create a new `.github/agents/*.agent.md` file."
+description: "Use when the user wants to hire a new agent, add a specialist, change the active roster, or create a new `.github/agents/*.agent.md` file. Do NOT use to create a skill (dude-skill-authoring) or to route work to an existing agent (dude-generic-routing)."
 ---
 
 ## Purpose

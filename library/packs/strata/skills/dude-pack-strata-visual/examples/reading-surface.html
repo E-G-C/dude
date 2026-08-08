@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en" data-strata-palette="spectrum" data-strata-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Strata — Reading surface</title>
+  <link rel="stylesheet" href="../tokens/strata.css" />
+  <style>
+    body { margin: 0; }
+    .wrap { max-width: 960px; margin: 0 auto; padding: var(--strata-space-7) var(--strata-space-5); }
+  </style>
+</head>
+<!-- This example runs on the spectrum palette to show that a surface built
+     from role tokens needs no change to switch. Flip data-strata-palette to
+     "pigment" or data-strata-theme to "dark" and nothing below is edited. -->
+<body class="strata strata-reading">
+
+  <div class="wrap strata-reading-content">
+
+    <p class="strata-meta">Field note &middot; revision 4 &middot; 2026-08-07</p>
+
+    <h1>Reading a stratified section</h1>
+
+    <p>
+      A long-form reading surface is not a documentation-site theme. It is any
+      place a product asks someone to read for more than a few seconds: an
+      article view, a changelog, a release note, an in-app help panel, a
+      generated report, an onboarding walkthrough.
+    </p>
+
+    <p>
+      Prose is constrained to <code>--strata-reading-measure</code> (688px)
+      while tables, figures, and code blocks are free to use the full width.
+      That is the whole layout rule. Body text sits at 16/28, a deliberately
+      looser measure than the 16/1.5 used for application chrome, because
+      sustained reading and dense UI want different rhythms.
+    </p>
+
+    <h2>Layers are read by their edges</h2>
+
+    <p>
+      The section below is separated from this one by a rule, not by a shadow
+      and not by a card. On a near-white ground the tonal difference between
+      planes is around 1.15:1 — close to nothing — so the 1px rule is carrying
+      the structure by itself. That is the trade the system makes deliberately:
+      no depth effects, and an edge that always has to be there.
+    </p>
+
+    <ul>
+      <li>Flat planes, separated by hairline rules.</li>
+      <li>4px radius on anything interactive, 8px at the very most.</li>
+      <li>Type-led hierarchy — size, weight, and rules, never boxes.</li>
+      <li>Monospace for metadata only, never as a display voice.</li>
+    </ul>
+
+    <div class="strata-reading-note">
+      <p>
+        <strong>Note.</strong> Emphasis here comes from a 4px left rule in the
+        semantic colour, over the standard inset plane. There is no tinted
+        callout background, because a tint field is nearly invisible against
+        the page on its own.
+      </p>
+    </div>
+
+    <h2>Measured values</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Layer</th>
+          <th>Depth</th>
+          <th>Rate</th>
+          <th>State</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Surface wash</td><td>0–4 cm</td><td>11.2 mm/yr</td><td><span class="strata-badge strata-badge-success">Stable</span></td></tr>
+        <tr><td>Fine silt</td><td>4–19 cm</td><td>7.4 mm/yr</td><td><span class="strata-badge strata-badge-warning">Eroding</span></td></tr>
+        <tr><td>Coarse bed</td><td>19–52 cm</td><td>13.1 mm/yr</td><td><span class="strata-badge strata-badge-info">Surveyed</span></td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      Table headers use the metadata treatment — monospace, letterspaced,
+      uppercase, at the smallest size in the scale. That is what monospace is
+      for in this system: marking data, not making a statement.
+    </p>
+
+    <div class="strata-reading-note strata-reading-note-warning">
+      <p>
+        <strong>Careful.</strong> A vivid series slot is a fill. To write in a
+        series colour on a light plane, use the matching <code>-deep</code>
+        form — several vivid slots measure under 2:1 as text and are unreadable.
+      </p>
+    </div>
+
+    <h2>Code</h2>
+
+    <p>
+      The code surface is dark in both themes and shared by both palettes, so a
+      snippet looks the same wherever it appears:
+    </p>
+
+    <pre><code>@use "../tokens/strata.scss" as strata;
+
+.panel {
+  background: strata.strata-color("surface");
+  <span class="comment">// a plane is legible from its tone and its edge</span>
+  @include strata.strata-rule;
+  border-radius: strata.$strata-radius-md;
+}</code></pre>
+
+    <p>
+      Inline code such as <code>--strata-reading-measure</code> is marked by its
+      font and a light background, with only a decorative hairline around it.
+    </p>
+
+    <h2>Tabs</h2>
+
+    <div class="strata-reading-tabs" role="tablist">
+      <button class="strata-reading-tab" role="tab" aria-selected="true">Summary</button>
+      <button class="strata-reading-tab" role="tab" aria-selected="false">Method</button>
+      <button class="strata-reading-tab" role="tab" aria-selected="false">Raw data</button>
+    </div>
+
+    <p style="margin-top: var(--strata-space-4);">
+      Tab labels are metadata too. The selected tab is marked by a rule and a
+      weight change — the same two devices the rest of the system uses.
+    </p>
+
+    <hr class="strata-hairline" style="border-top-style: solid; margin: var(--strata-space-7) 0;" />
+
+    <p class="strata-meta">End of section</p>
+
+  </div>
+
+</body>
+</html>

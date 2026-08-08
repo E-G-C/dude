@@ -1,6 +1,6 @@
 ---
 name: "dude-skill-authoring"
-description: "Use when the user wants Dude to create a reusable skill, codify a team convention, save recurring workflow knowledge, or add a new `.github/skills/dude-local-<name>/SKILL.md` file."
+description: "Use when the user wants Dude to create a reusable skill, codify a team convention, save recurring workflow knowledge, or add a new `.github/skills/dude-local-<name>/SKILL.md` file. Do NOT use to add an agent (dude-team-expansion) or to record a decision or fact (dude-memory-ledger)."
 ---
 
 ## Purpose
@@ -51,6 +51,7 @@ writes the pack skill and inserts the id into that pack's `pack.md`
 - Do NOT summarize the full workflow in the description.
 - Keep descriptions in third person and concrete enough for discovery.
 - Include likely search terms or synonyms when useful.
+- When another skill is genuinely confusable with this one, end the description with a short `Do NOT use for` clause naming that sibling, so a misfire redirects instead of just failing. Skip it when no such sibling exists, and never write one that lets a safety gate be bypassed.
 - For an imported skill, keep the upstream description as written and append a `Use when` clause in this project's vocabulary; wording from the origin system may never match a task phrased here.
 - Do not rewrite the upstream sentence. Preserving it keeps the original meaning and makes the local addition visible on a later re-import.
 

@@ -1,6 +1,6 @@
 ---
 name: "dude-lightweight-execution"
-description: "Use to select, mutate, close, and report execution directly from a defined feature's tasks.md while Beads is not active."
+description: "Use to select, mutate, close, and report execution directly from a defined feature's tasks.md while Beads is not active. Do NOT use once tracked import has made Beads authoritative, or to create or refresh definition artifacts (dude-feature-definition)."
 ---
 
 # Lightweight Execution
@@ -75,3 +75,36 @@ Implementation alone never closes a task. If evidence, review, ownership, render
 `@dude status` is read-only. The coordinator first determines the active lane per its Status precedence; this detailed status applies only once that active lane is Lightweight Execution. A single defined package whose tasks are all `[ ]` with no execution evidence stays `Definition Only`, so do not report `tasks.md` counts for it. When Lightweight Execution is the active lane, report lane, live `tasks.md`, exact companion or `Ownership: ambiguous`, state counts, in-progress work, ready set, blockers, completion, tracked-not-started state, and unverified manual `[x]` drift. It may recompute a view in the response but must not set/render, log, snapshot, reconcile, or mutate.
 
 If Beads is enabled later, hand off through `@dude track`; after import, never continue Lightweight. To return from tracked execution, first sync Beads to the one-way markdown mirror. If Beads is unavailable, disclose that the mirror may be stale and require the user's choice before treating that snapshot as live again.
+
+### Cross-Idea Backlog
+
+Separate from lane-specific status, `@dude status` renders one read-only cross-idea orientation over every safe direct `.dude/ideas/*.md` ledger. One lifecycle inventory places each idea exactly once:
+
+- **Current** presents Blocked, Active, and Next in that order. Empty subsection bodies are omitted, while summary counts remain visible.
+- **Planned** presents ideas awaiting definition, defined features awaiting work, and Prioritized for later only when authoritative order actually places work later.
+- **Completed** is one compact collapsed library, not a peer execution lane.
+
+The where-are-we summary reports Current work (active plus blocked), Ready / Next, Ideas awaiting definition, Defined awaiting work, and Completed. It reports no all-history completion percentage.
+
+`@dude status` invokes the generated `backlog.mjs` read-only in three forms. Each renders on demand in the reply and writes no file:
+
+- `node .github/skills/dude-lightweight-execution/backlog.mjs --root .` (text Current / Planned / Completed orientation)
+- `node .github/skills/dude-lightweight-execution/backlog.mjs kanban --root .` (Mermaid for current work only)
+- `node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <idea-slug> --root .` (one defined package task `deps:` graph)
+
+The committed Markdown and self-contained HTML projections remain fixed at `.dude/backlog.md` and `.dude/backlog.html`. Freshness is mechanical:
+
+- `node .github/skills/dude-lightweight-execution/backlog.mjs check --root .` renders both expected artifacts in memory, compares exact bytes, fails separately for a missing or stale path, rejects `--write`, and writes nothing.
+- `node .github/skills/dude-lightweight-execution/backlog.mjs generate --root . --write` is the only artifact mutation path and writes exactly `.dude/backlog.md` and `.dude/backlog.html`.
+
+At every coordinator state change, after the same authoritative inputs change and the task board is re-rendered with `board.mjs render --write`, the coordinator regenerates the two projections. The existing test and CI path runs the exact-byte check, so freshness does not depend on that procedure alone. Generation emits no wall-clock time, checkout name, or Git revision; unchanged authoritative input bytes render byte-identically in differently named roots.
+
+Both artifacts are derived projections and never authoritative. Idea frontmatter provides lifecycle and declared `depends-on:` relationships, canonical `tasks.md` provides execution, and optional `.dude/state/backlog-order.md` provides explicit order. A literal `depends-on: <slug>` marker written in the user-controlled `## Idea` body is displayed separately as provisional and non-authoritative; it never blocks, prioritizes, or orders work. When explicit order is absent, the report says `No explicit feature order declared`.
+
+Activity is labeled **Coordinator activity**. It contains only dated idea Coordinator Log entries grouped by calendar date, with stable same-date ordering by idea identity and append order. Git history, ad-hoc work outside Coordinator Logs, and other execution history sources are excluded.
+
+This current lifecycle, provenance, activity-labeling, and freshness contract supersedes only the affected current behavior delivered by Feature 025. Feature 025 history remains unchanged.
+
+Non-goal, not guarded: a task `deps:` key that names another feature task resolves as permanently unsatisfied because task dependency resolution is confined to one file. Keep cross-feature ordering in `depends-on:`, never in task `deps:`.
+
+Authoring caveat: lint accepts `depends-on:` on an idea, but `publish-first-definition.mjs` currently validates only the four owner keys (`title`, `slug`, `status`, `spec_path`). Add `depends-on:` after first definition, or declare it on a draft only while dropping it for first-definition publication and adding it back afterward. This current limitation is not changed here.

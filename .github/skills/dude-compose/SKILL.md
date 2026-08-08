@@ -1,6 +1,6 @@
 ---
 name: dude-compose
-description: "Use when installing, removing, or listing optional Dude packs. Triggers: @dude add pack <name>, @dude remove pack <name>, @dude list packs, install pack, enable pack, uninstall pack, which packs are available, compose the bundle, add tracked execution, add release tooling, add web specialists, add TDD."
+description: "Use when installing, removing, or listing optional Dude packs. Triggers: @dude add pack <name>, @dude remove pack <name>, @dude list packs, install pack, enable pack, uninstall pack, which packs are available, compose the bundle, add tracked execution, add release tooling, add web specialists, add TDD. Do NOT use for upgrading the bundle itself (dude-bundle-upgrade) or importing an agent or skill from an external repository (dude-bundle-import)."
 ---
 
 # Pack Compose
@@ -121,7 +121,7 @@ it before publishing a pack or in CI. Exit code `2` if any pack lints with a
 failure or leaves artifacts behind.
 
 Expected sibling-pack **warnings** (not failures) when a pack references another
-pack not installed alongside it: `hugo` -> docsy/ms-brand, `design` -> ms-brand,
+pack not installed alongside it: `hugo` -> docsy/ms-brand, `design` -> strata,
 `fluent-ui` -> web. Warnings are fine; only failures block.
 
 ## Rules

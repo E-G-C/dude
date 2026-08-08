@@ -1,6 +1,6 @@
 ---
 name: "dude-feature-definition"
-description: "Use for brainstorm idea capture, explicit feature definition, spec and plan gates, task derivation, reconciliation, and definition lint."
+description: "Use for brainstorm idea capture, explicit feature definition, spec and plan gates, task derivation, reconciliation, and definition lint. Do NOT use to select, execute, close, or report tasks (dude-lightweight-execution or the installed tracked-execution skill)."
 ---
 
 # Feature Definition
@@ -32,13 +32,17 @@ The spec gate requires complete sections, testable requirements, measurable tech
 
 ## First Definition Transaction
 
-Initial definition has a prospective owner because no defined owner exists yet:
+Initial definition has a prospective owner because no defined owner exists yet. This transaction is first-definition only; supporting artifacts, re-definition, and tracked recovery do not route through it:
 
 1. Select exactly one explicit direct draft idea by the requested slug or idea path; never use a same-name, recursive, or retired-path fallback.
 2. Derive the next monotonic package number and future exact `spec_path:`. Preflight all direct ideas; identity collisions or ambiguous prospective selection stop before writes.
-3. Stage the complete package, exact task audit breadcrumb, owner transition, and definition log event without mutating.
-4. Return the complete stage to the coordinator. After it verifies the prospective owner and snapshots every affected path, commit the staged package artifacts, that same idea's `status: defined` plus exact `spec_path:`, and the definition event as one delegated atomic transaction. If any write or validation fails, the coordinator restores every pre-write byte and removes every newly created path; neither package nor owner transition may survive alone, and never report a half-transition as defined.
-5. The coordinator runs `node .github/skills/dude-lint/lint.mjs .`; definition readiness requires its reported zero failures.
+3. The Spec Lead stages and approves the core trio, exact task audit breadcrumb, owner transition, and definition log event without writing, then returns those exact bytes to the coordinator. The Spec Lead retains staging authority; the coordinator retains execution and lane authority.
+4. After rechecking the prospective selection, the coordinator creates one operating-system temporary directory containing exactly `current-idea.md`, `staged-idea.md`, `spec.md`, `plan.md`, and `tasks.md`. `current-idea.md` is the exact selected draft preimage; the other four files are the Spec Lead-approved stage.
+
+   Invoke exactly: `node .github/skills/dude-feature-definition/publish-first-definition.mjs --root . --idea .dude/ideas/<slug>.md --spec .dude/specs/<NNN>-<package>/spec.md --stage <absolute-temporary-directory>`
+
+   The command applies only the selected owner plus the core trio through the existing `applyAtomicFileBatch` transaction and runs fixed `dude-lint` inside its rollback boundary; on failure, it restores every pre-write byte and removes every newly created path.
+5. The coordinator deletes the temporary directory on success or failure. It makes no publication-success or definition-readiness claim unless the command succeeds and the reported lint result is zero failures.
 
 ## Re-definition
 

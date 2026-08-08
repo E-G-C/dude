@@ -41,7 +41,6 @@ import {
   inspect,
   limits,
   mayContinueAutonomously,
-  mayScheduleAfterStop,
   modelPacket,
   OUTCOME_REASON_CLASSES,
   parseInvocation,
@@ -57,40 +56,15 @@ import {
   validateInspection,
   validateObjectiveRegistry,
   validateRunState,
+  validateSuspensionV1,
   validateTarget,
-  acquireCheckpoint,
-  buildGateSet,
-  captureCandidate,
-  createEvaluationSequence,
-  deriveBindingIdentity,
-  deriveCandidateIdentity,
-  deriveCheckpointIdentity,
-  deriveComparisonDecision,
   deriveSequenceIdentity,
-  keepCheckpoint,
-  normalizeAuthorizationGate,
-  normalizeCheckpointGate,
-  normalizeComparisonGate,
-  normalizeHardConstraintsGate,
-  normalizeIndependentReviewGate,
-  qualifiesForKeep,
-  releaseCheckpoint,
-  restoreCheckpoint,
-  settleCandidate,
   stateIdentity,
   validateCandidateWriteSet,
-  validateCheckpointHost,
-  validateCheckpointRecord,
   validateEvaluationSequences,
-  validateEvaluatorJudgment,
   validateFileStateDescriptors,
   validateLearningReviewRefs,
-  validateObjectiveObservation,
   writeSetIdentity,
-  buildObjectiveComparisonEvent,
-  validateObjectiveComparisonEvent,
-  buildEvaluationSequenceClosedEvent,
-  validateEvaluationSequenceClosedEvent,
   buildLearningReviewEvent,
   validateLearningReviewEvent,
   validateProjectionOwner,
@@ -99,12 +73,7 @@ import {
   projectEvent,
   verifyProjection,
   reacquireProjection,
-  admitComparisonReference,
   admitLearningReviewReference,
-  resolveComparison,
-  closeEvaluationSequence,
-  settleTaskBoundary,
-  renderAuditSummary,
 } from './recovery.mjs';
 
 const SPEC_PATH = '.dude/specs/004-pre-work-log-learning/spec.md';
@@ -6453,248 +6422,9 @@ test('T002 F: an autonomous authorized recovery still cannot complete on a faile
   }
 });
 
-// --- T003: sequential post-stop scheduling license ---------------------------
 
 const SECOND_TARGET = Object.freeze({ ...TARGET, taskKey: SECOND_TASK_KEY });
 const THIRD_TARGET = Object.freeze({ ...TARGET, taskKey: THIRD_TASK_KEY });
-
-/**
- * Build a real autonomous hard stop (approval-required) with an empty pending
- * queue, so the current authorized bounded attempt has already finished.
- */
-function autonomousHardStop() {
-  const outcome = authorizeAttempt(autonomousState(), TARGET, transitionRaw(TARGET, {
-    currentRun: [capture(TARGET, 'approval-required', [{ i: 1 }])],
-  }), transitionAssessment('retry-task'), 'recovery');
-  assert.equal(outcome.authorized, false);
-  assert.equal(outcome.reason, 'approval-required');
-  assert.equal(classifyOutcomeReason(outcome.reason), 'hard-stop');
-  assert.equal(outcome.state.pending.length, 0);
-  return outcome;
-}
-
-test('T003 A: a hard stop with one pending authorization stays sequential and mutates nothing', () => {
-  const pending1 = authorizeAttempt(autonomousState(), TARGET, transitionRaw(TARGET), transitionAssessment('execute-task'), 'ordinary');
-  assert.equal(pending1.authorized, true);
-  assert.equal(pending1.state.pending.length, 1);
-
-  const stopped = {
-    outcome: { authorized: false, reason: 'approval-required', state: pending1.state },
-    target: TARGET,
-    changeSet: ['src/a.mjs'],
-  };
-  const candidate = { target: SECOND_TARGET, changeSet: ['src/b.mjs'], deps: [] };
-  const stateSnapshot = clone(pending1.state);
-
-  assert.equal(mayScheduleAfterStop(stopped, candidate), false);
-  assert.deepEqual(pending1.state, stateSnapshot);
-});
-
-test('T003 B: an autonomous hard stop licenses one disjoint dependency-free candidate', () => {
-  const outcome = autonomousHardStop();
-  const stopped = { outcome, target: TARGET, changeSet: ['src/a.mjs'] };
-  const candidate = { target: SECOND_TARGET, changeSet: ['src/b.mjs'], deps: [] };
-
-  assert.equal(mayScheduleAfterStop(stopped, candidate), true);
-  assert.equal(typeof mayScheduleAfterStop(stopped, candidate), 'boolean');
-  assert.equal(outcome.state.pending.length, 0);
-});
-
-test('T003 C: overlapping change sets refuse scheduling', () => {
-  const outcome = autonomousHardStop();
-
-  assert.equal(mayScheduleAfterStop(
-    { outcome, target: TARGET, changeSet: ['src/shared.mjs'] },
-    { target: SECOND_TARGET, changeSet: ['src/shared.mjs'], deps: [] },
-  ), false);
-
-  assert.equal(mayScheduleAfterStop(
-    { outcome, target: TARGET, changeSet: ['src/a.mjs', 'src/shared.mjs'] },
-    { target: SECOND_TARGET, changeSet: ['src/b.mjs', 'src/shared.mjs'], deps: [] },
-  ), false);
-});
-
-test('T003 D: a candidate that directly depends on the stopped target refuses scheduling', () => {
-  const outcome = autonomousHardStop();
-
-  assert.equal(mayScheduleAfterStop(
-    { outcome, target: TARGET, changeSet: ['src/a.mjs'] },
-    { target: SECOND_TARGET, changeSet: ['src/b.mjs'], deps: [TASK_KEY] },
-  ), false);
-
-  // an unrelated dependency does not block an otherwise independent candidate
-  assert.equal(mayScheduleAfterStop(
-    { outcome, target: TARGET, changeSet: ['src/a.mjs'] },
-    { target: SECOND_TARGET, changeSet: ['src/b.mjs'], deps: [THIRD_TASK_KEY] },
-  ), true);
-});
-
-test('T003 E: only autonomous policy licenses scheduling; guarded refuses the same scenario', () => {
-  const outcome = autonomousHardStop();
-  const stopped = { outcome, target: TARGET, changeSet: ['src/a.mjs'] };
-  const candidate = { target: SECOND_TARGET, changeSet: ['src/b.mjs'], deps: [] };
-
-  assert.equal(mayScheduleAfterStop(stopped, candidate), true);
-
-  const guardedStopped = { ...stopped, outcome: { ...outcome, state: withMode(outcome.state, 'guarded') } };
-  assert.equal(mayScheduleAfterStop(guardedStopped, candidate), false);
-
-  // mode is the only differing input: flipping it back recovers the identical state
-  assert.deepEqual(withMode(guardedStopped.outcome.state, 'autonomous'), outcome.state);
-});
-
-test('T003 F: revisiting the stopped task needs new evidence or a different approach, never scheduling', () => {
-  const revisitRaw = transitionRaw(TARGET);
-  const revisitFirst = authorizeAttempt(autonomousState(), TARGET, revisitRaw, transitionAssessment('retry-task', { targets: ['src/revisit.mjs'] }), 'recovery');
-  const revisitState = completeAttempt(revisitFirst.state, completionInput(revisitFirst.state.pending[0])).state;
-
-  // (i) same evidence and same approach => learning-required
-  const sameEvidenceApproach = authorizeAttempt(revisitState, TARGET, revisitRaw, transitionAssessment('retry-task', { targets: ['src/revisit.mjs'] }), 'recovery');
-  assert.equal(sameEvidenceApproach.authorized, false);
-  assert.equal(sameEvidenceApproach.reason, 'learning-required');
-
-  // (i) a repeated completed result under the same evidence => learning-required
-  const priorRaw = transitionRaw(TARGET);
-  const priorFirst = authorizeAttempt(autonomousState(), TARGET, priorRaw, transitionAssessment('retry-task', { targets: ['src/prior.mjs'], checks: ['verification'] }), 'recovery');
-  const priorState = completeAttempt(priorFirst.state, completionInput(priorFirst.state.pending[0])).state;
-  const priorSecond = authorizeAttempt(priorState, TARGET, priorRaw, transitionAssessment('retry-task', {
-    targets: ['src/prior-support.mjs', 'src/prior.mjs'],
-    checks: ['verification'],
-    summary: 'A materially different target set.',
-  }), 'recovery');
-  const priorRepeated = completeAttempt(priorSecond.state, completionInput(priorSecond.state.pending[0], { changedTargets: ['src/prior.mjs'] }));
-  assert.equal(priorRepeated.reason, 'learning-required');
-  const priorNoProgress = authorizeAttempt(priorRepeated.state, TARGET, priorRaw, transitionAssessment('retry-task', { targets: ['src/prior-later.mjs'], checks: ['verification'] }), 'recovery');
-  assert.equal(priorNoProgress.authorized, false);
-  assert.equal(priorNoProgress.reason, 'learning-required');
-
-  // (ii) stale evidence ⇒ evidence-drift
-  const driftInspection = buildInspection(TARGET, collectEvidence(TARGET, transitionRaw(TARGET)));
-  const staleAssessment = transitionAssessment('retry-task', { evidenceHash: driftInspection.evidenceHash });
-  const staleRaw = { ...transitionRaw(TARGET, { currentRun: [capture(TARGET, 'failed', [{ changed: true }])] }), definitionPlan: defaultNoRegistryPlan(TARGET) };
-  const evidenceDrift = authorizeRuntimeAttempt(autonomousState(), TARGET, staleRaw, staleAssessment, 'recovery');
-  assert.equal(evidenceDrift.authorized, false);
-  assert.equal(evidenceDrift.reason, 'evidence-drift');
-
-  // (iii) fresh evidence and a materially different approach ⇒ authorized
-  const freshRaw = transitionRaw(TARGET, { currentRun: [capture(TARGET, 'failed', [{ attempt: 'second' }])] });
-  const freshRevisit = authorizeAttempt(revisitState, TARGET, freshRaw, transitionAssessment('retry-task', { targets: ['src/revisit-different.mjs'] }), 'recovery');
-  assert.equal(freshRevisit.authorized, true);
-  assert.equal(freshRevisit.reason, 'authorized');
-
-  // scheduling never revisits the stopped task itself, even with disjoint work
-  const outcome = autonomousHardStop();
-  assert.equal(mayScheduleAfterStop(
-    { outcome, target: TARGET, changeSet: ['src/a.mjs'] },
-    { target: clone(TARGET), changeSet: ['src/b.mjs'], deps: [] },
-  ), false);
-});
-
-test('T003 G: scheduling authorizes nothing; sequential dispatch still stops at one pending', () => {
-  const outcome = autonomousHardStop();
-  const stopped = { outcome, target: TARGET, changeSet: ['src/a.mjs'] };
-  const candidate = { target: SECOND_TARGET, changeSet: ['src/b.mjs'], deps: [] };
-
-  assert.equal(mayScheduleAfterStop(stopped, candidate), true);
-  assert.equal(outcome.state.pending.length, 0);
-
-  // dispatch still flows through authorizeAttempt, which takes the one pending slot
-  const dispatched = authorizeAttempt(outcome.state, SECOND_TARGET, transitionRaw(SECOND_TARGET), transitionAssessment('retry-task', { targets: ['src/b.mjs'] }), 'recovery');
-  assert.equal(dispatched.authorized, true);
-  assert.equal(dispatched.state.pending.length, 1);
-
-  // a third target cannot be dispatched concurrently
-  const third = authorizeAttempt(dispatched.state, THIRD_TARGET, transitionRaw(THIRD_TARGET), transitionAssessment('retry-task', { targets: ['src/c.mjs'] }), 'recovery');
-  assert.equal(third.authorized, false);
-  assert.equal(third.reason, 'not-dispatchable');
-
-  // the predicate itself mutated no state
-  assert.equal(outcome.state.pending.length, 0);
-});
-
-test('T003 H: mayScheduleAfterStop is fail-closed and non-throwing on every malformed input', () => {
-  const outcome = autonomousHardStop();
-  const validStopped = { outcome, target: TARGET, changeSet: ['src/a.mjs'] };
-  const validCandidate = { target: SECOND_TARGET, changeSet: ['src/b.mjs'], deps: [] };
-  const okState = outcome.state;
-  assert.equal(mayScheduleAfterStop(validStopped, validCandidate), true);
-
-  /** @type {Array<[string, unknown, unknown]>} */
-  const cases = [
-    ['stopped undefined', undefined, validCandidate],
-    ['stopped null', null, validCandidate],
-    ['stopped 0', 0, validCandidate],
-    ["stopped ''", '', validCandidate],
-    ['stopped {}', {}, validCandidate],
-    ['stopped []', [], validCandidate],
-    ['candidate undefined', validStopped, undefined],
-    ['candidate null', validStopped, null],
-    ['candidate 0', validStopped, 0],
-    ["candidate ''", validStopped, ''],
-    ['candidate {}', validStopped, {}],
-    ['candidate []', validStopped, []],
-    ['stopped missing outcome', { target: TARGET, changeSet: ['src/a.mjs'] }, validCandidate],
-    ['stopped missing target', { outcome, changeSet: ['src/a.mjs'] }, validCandidate],
-    ['stopped missing changeSet', { outcome, target: TARGET }, validCandidate],
-    ['stopped extra field', { ...validStopped, extra: 1 }, validCandidate],
-    ['candidate missing target', validStopped, { changeSet: ['src/b.mjs'], deps: [] }],
-    ['candidate missing changeSet', validStopped, { target: SECOND_TARGET, deps: [] }],
-    ['candidate missing deps', validStopped, { target: SECOND_TARGET, changeSet: ['src/b.mjs'] }],
-    ['candidate extra field', validStopped, { ...validCandidate, extra: 1 }],
-    ['outcome string', { ...validStopped, outcome: 'x' }, validCandidate],
-    ['outcome number', { ...validStopped, outcome: 0 }, validCandidate],
-    ['outcome null', { ...validStopped, outcome: null }, validCandidate],
-    ['outcome array', { ...validStopped, outcome: [] }, validCandidate],
-    ['outcome missing reason', { ...validStopped, outcome: { authorized: false, state: okState } }, validCandidate],
-    ['outcome missing state', { ...validStopped, outcome: { authorized: false, reason: 'approval-required' } }, validCandidate],
-    ['outcome non-string reason', { ...validStopped, outcome: { reason: 5, state: okState } }, validCandidate],
-    ['invalid run state', { ...validStopped, outcome: { reason: 'approval-required', state: { not: 'valid' } } }, validCandidate],
-    ['guarded run state', { ...validStopped, outcome: { reason: 'approval-required', state: withMode(okState, 'guarded') } }, validCandidate],
-    ['reason authorized', { ...validStopped, outcome: { reason: 'authorized', state: okState } }, validCandidate],
-    ['reason verification-failed', { ...validStopped, outcome: { reason: 'verification-failed', state: okState } }, validCandidate],
-    ['reason no-progress', { ...validStopped, outcome: { reason: 'no-progress', state: okState } }, validCandidate],
-    ['reason not-dispatchable', { ...validStopped, outcome: { reason: 'not-dispatchable', state: okState } }, validCandidate],
-    ['reason unknown', { ...validStopped, outcome: { reason: 'nope', state: okState } }, validCandidate],
-    ['stopped feature target', { ...validStopped, target: { specPath: SPEC_PATH, lane: 'lightweight' } }, validCandidate],
-    ['candidate feature target', validStopped, { ...validCandidate, target: { specPath: SPEC_PATH, lane: 'lightweight' } }],
-    ['stopped changeSet unsorted', { ...validStopped, changeSet: ['src/b.mjs', 'src/a.mjs'] }, validCandidate],
-    ['stopped changeSet duplicate', { ...validStopped, changeSet: ['src/a.mjs', 'src/a.mjs'] }, validCandidate],
-    ['stopped changeSet non-material', { ...validStopped, changeSet: ['../escape.mjs'] }, validCandidate],
-    ['stopped changeSet empty entry', { ...validStopped, changeSet: [''] }, validCandidate],
-    ['stopped changeSet not array', { ...validStopped, changeSet: 'src/a.mjs' }, validCandidate],
-    ['candidate changeSet unsorted', validStopped, { ...validCandidate, changeSet: ['src/z.mjs', 'src/b.mjs'] }],
-    ['candidate changeSet non-material', validStopped, { ...validCandidate, changeSet: ['a\\b.mjs'] }],
-    ['candidate deps not array', validStopped, { ...validCandidate, deps: 'T001@8f31c2a7' }],
-    ['candidate deps non-string', validStopped, { ...validCandidate, deps: [5] }],
-    ['candidate deps object', validStopped, { ...validCandidate, deps: {} }],
-    ['candidate deps sparse', validStopped, { ...validCandidate, deps: Array(2) }],
-  ];
-  for (const [label, s, c] of cases) {
-    assert.doesNotThrow(() => mayScheduleAfterStop(s, c), label);
-    assert.equal(mayScheduleAfterStop(s, c), false, label);
-  }
-});
-
-test('T003 I: gate 9 resolves a tracked stopped target durable id from its canonical issueId', () => {
-  const outcome = autonomousHardStop();
-  // A non-canonical tracked stopped target carrying BOTH taskKey and issueId;
-  // canonicalization drops the taskKey, so the durable id is the issueId.
-  const trackedStopped = { ...TRACKED, taskKey: TASK_KEY };
-  assert.deepEqual(canonicalTarget(trackedStopped), canonicalTarget(TRACKED));
-
-  // a candidate that depends on the stopped target's canonical issueId refuses scheduling
-  assert.equal(mayScheduleAfterStop(
-    { outcome, target: trackedStopped, changeSet: ['src/a.mjs'] },
-    { target: SECOND_TARGET, changeSet: ['src/b.mjs'], deps: [TRACKED.issueId] },
-  ), false);
-
-  // the dropped non-canonical taskKey is not the tracked target's durable id, so
-  // a dependency on it does not block an otherwise independent candidate
-  assert.equal(mayScheduleAfterStop(
-    { outcome, target: trackedStopped, changeSet: ['src/a.mjs'] },
-    { target: SECOND_TARGET, changeSet: ['src/b.mjs'], deps: [TASK_KEY] },
-  ), true);
-});
 
 // --- T004: definition-plan objective source ----------------------------------
 
@@ -7209,7 +6939,7 @@ test('T004: feature 005 plan.md keeps zero active objective-registry regions', (
   assert.deepEqual(scanObjectiveRegistry(fs.readFileSync(planPath, 'utf8')), { status: 'none' });
 });
 
-// --- T005: bounded objective evaluation machinery ----------------------------
+// --- Retained definition-recovery and RunState validation -------------------
 
 /** @param {Record<string, unknown>} [overrides] */
 function candidateWriteSet(overrides = {}) {
@@ -7225,191 +6955,16 @@ function fileDescriptors(states) {
     .sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
 }
 
-/** @param {Record<string, unknown>} [contract] @param {string} [taskKey] */
-function objectivePlanBody(contract = numericContract(), taskKey = TASK_KEY) {
-  const registry = objectiveRegistry([registryEntry(taskKey, contract)]);
-  return {
-    path: PLAN_PATH,
-    planDescriptor: contentDescriptor(planWithRegistry(registry)),
-    ownerBindingHash: sha256(canonicalJson({ ideaPath: IDEA_PATH, specPath: SPEC_PATH, planPath: PLAN_PATH })),
-    registryHash: sha256(canonicalJson(registry)),
-    selectedEntry: registryEntry(taskKey, contract),
-    contractHash: sha256(canonicalJson(contract)),
-  };
-}
-
-/**
- * In-memory checkpoint host over `Map<path, {state}|{state,bytes}>` with fault
- * injection (classify/failCapture/failRestore/failRelease) and the shared
- * 1,048,576-byte per-file and 4,194,304-byte aggregate caps. It exercises
- * preflight/capture/restore/release entirely without touching the filesystem.
- * @param {Record<string, string|null>} [initialFiles]
- * @param {Record<string, unknown>} [faults]
- */
-function checkpointHostFake(initialFiles = {}, faults = {}) {
-  /** @type {Map<string, {state:'missing'}|{state:'file',bytes:Buffer}>} */
-  const files = new Map();
-  for (const [path, content] of Object.entries(initialFiles)) {
-    files.set(path, content === null ? { state: 'missing' } : { state: 'file', bytes: Buffer.from(content) });
-  }
-  /** @type {Map<string, Record<string, unknown>>} */
-  const map = new Map();
-  /** @type {Record<string, unknown>|null} */
-  let pending = null;
-  const union = (writeSet) => [...writeSet.candidatePaths, ...writeSet.protectedPaths]
-    .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
-  const readCapture = (writeSet) => {
-    let aggregate = 0;
-    const descriptors = [];
-    const bytesByPath = new Map();
-    for (const path of union(writeSet)) {
-      const entry = files.get(path) || { state: 'missing' };
-      if (entry.state === 'missing') {
-        descriptors.push({ path, state: 'missing' });
-      } else {
-        if (entry.bytes.byteLength > 1_048_576) throw new Error('file exceeds 1,048,576 bytes');
-        aggregate += entry.bytes.byteLength;
-        if (aggregate > 4_194_304) throw new Error('capture exceeds 4,194,304 aggregate bytes');
-        descriptors.push({ path, state: 'file', sha256: sha256(entry.bytes), byteLength: entry.bytes.byteLength });
-        bytesByPath.set(path, Buffer.from(entry.bytes));
-      }
-    }
-    return { descriptors, bytesByPath };
-  };
-  return {
-    preflight(writeSet) {
-      for (const path of union(writeSet)) {
-        const classification = typeof faults.classify === 'function' ? faults.classify(path) : null;
-        if (classification) throw new TypeError(`checkpoint preflight refuses ${classification} path ${path}`);
-      }
-    },
-    open(writeSet) {
-      if (faults.failCapture) throw new Error('prestate capture failed');
-      const captured = readCapture(writeSet);
-      pending = { ...captured, writeSet };
-      return captured.descriptors;
-    },
-    probe(id) {
-      if (faults.failCapture) throw new Error('probe capture failed');
-      const context = map.get(id);
-      if (!context) throw new Error('probe requires an open context');
-      return readCapture(context.writeSet).descriptors;
-    },
-    get(id) {
-      const context = map.get(id);
-      if (!context) return undefined;
-      const view = { phase: context.phase, prestate: context.prestate.descriptors };
-      if (Object.hasOwn(context, 'poststateIdentity')) view.poststateIdentity = context.poststateIdentity;
-      if (Object.hasOwn(context, 'candidateIdentity')) view.candidateIdentity = context.candidateIdentity;
-      return view;
-    },
-    setPhase(id, phase) {
-      const context = map.get(id);
-      if (context) { context.phase = phase; return; }
-      if (!pending) throw new Error('setPhase requires an open capture to commit');
-      map.set(id, { phase, prestate: pending, writeSet: pending.writeSet });
-      pending = null;
-    },
-    markPoststate(id, poststateIdentity, candidateIdentity) {
-      const context = map.get(id);
-      if (!context) throw new Error('markPoststate requires a context');
-      context.poststateIdentity = poststateIdentity;
-      context.candidateIdentity = candidateIdentity;
-    },
-    restore(id) {
-      if (faults.failRestore) throw new Error('restore failed');
-      const context = map.get(id);
-      if (!context) throw new Error('restore requires a context');
-      for (const descriptor of context.prestate.descriptors) {
-        if (descriptor.state === 'missing') files.set(descriptor.path, { state: 'missing' });
-        else files.set(descriptor.path, { state: 'file', bytes: Buffer.from(context.prestate.bytesByPath.get(descriptor.path)) });
-      }
-    },
-    release(id) {
-      if (faults.failRelease) throw new Error('release failed');
-      map.delete(id);
-    },
-    _setFile(path, content) {
-      files.set(path, content === null ? { state: 'missing' } : { state: 'file', bytes: Buffer.from(content) });
-    },
-    _files: files,
-    _map: map,
-    faults,
-  };
-}
-
-/**
- * Run a full acquire→mutate→capture cycle and return the captured, candidate,
- * and host artifacts for downstream assertions.
- * @param {Record<string, unknown>} [options]
- */
-function acquiredCandidate(options = {}) {
-  const writeSet = options.writeSet || candidateWriteSet();
-  const sequenceIdentity = options.sequenceIdentity || '1'.repeat(64);
-  const contractHash = options.contractHash || '2'.repeat(64);
-  const host = options.host || checkpointHostFake({ 'src/a.mjs': 'prestate', 'src/a.test.mjs': 'guard' });
-  const captured = acquireCheckpoint(host, { target: TARGET, sequenceIdentity, contractHash, candidateWriteSet: writeSet });
-  host._setFile('src/a.mjs', options.candidateContent || 'poststate');
-  const candidate = captureCandidate(host, captured, writeSet);
-  return { host, writeSet, captured, candidate, sequenceIdentity, contractHash };
-}
-
-test('T005a: identity derivations are deterministic and acyclically ordered', () => {
+test('T005a: retained write-set, state, and sequence identities are deterministic', () => {
   const writeSet = candidateWriteSet();
   const wsId = writeSetIdentity(writeSet);
   assert.equal(wsId, writeSetIdentity(candidateWriteSet()));
-
   const initial = fileDescriptors({ 'src/a.mjs': 'v1', 'src/a.test.mjs': 't' });
   const bootstrap = stateIdentity(wsId, initial);
   assert.equal(bootstrap, stateIdentity(wsId, fileDescriptors({ 'src/a.mjs': 'v1', 'src/a.test.mjs': 't' })));
   assert.equal(bootstrap, sha256(canonicalJson({ writeSetIdentity: wsId, files: initial })));
-
-  const contract = numericContract();
-  const contractHash = sha256(canonicalJson(contract));
-  const body = objectivePlanBody(contract);
-  const bindingIdentity = deriveBindingIdentity({
-    ownerBindingHash: body.ownerBindingHash, planDescriptor: body.planDescriptor, registryHash: body.registryHash, contract,
-  });
-  const sequenceArgs = {
-    target: TARGET, taskKey: TASK_KEY, ownerBindingHash: body.ownerBindingHash, planDescriptor: body.planDescriptor,
-    registryHash: body.registryHash, contractHash, bindingIdentity, baselineCandidateIdentity: bootstrap,
-  };
-  const sequenceIdentity = deriveSequenceIdentity(sequenceArgs);
-  assert.equal(sequenceIdentity, deriveSequenceIdentity(sequenceArgs));
-
-  const checkpointIdentity = deriveCheckpointIdentity({
-    target: TARGET, sequenceIdentity, contractHash, writeSetIdentity: wsId, prestateIdentity: bootstrap,
-  });
-  assert.equal(checkpointIdentity, deriveCheckpointIdentity({
-    target: TARGET, sequenceIdentity, contractHash, writeSetIdentity: wsId, prestateIdentity: bootstrap,
-  }));
-
-  const post1 = stateIdentity(wsId, fileDescriptors({ 'src/a.mjs': 'v2', 'src/a.test.mjs': 't' }));
-  const post2 = stateIdentity(wsId, fileDescriptors({ 'src/a.mjs': 'v3', 'src/a.test.mjs': 't' }));
-  const candidate1 = deriveCandidateIdentity(checkpointIdentity, post1);
-  const candidate2 = deriveCandidateIdentity(checkpointIdentity, post2);
-  assert.notEqual(candidate1, candidate2);
-  assert.equal(candidate1, sha256(canonicalJson({ checkpointIdentity, poststateIdentity: post1 })));
-  // Distinct candidate poststates never perturb the earlier checkpoint or sequence identity.
-  assert.equal(deriveCheckpointIdentity({ target: TARGET, sequenceIdentity, contractHash, writeSetIdentity: wsId, prestateIdentity: bootstrap }), checkpointIdentity);
-  assert.equal(deriveSequenceIdentity(sequenceArgs), sequenceIdentity);
-});
-
-test('T005a: rubricHash follows A1 for rubric-bearing and rubric-free contracts', () => {
-  const numericBinding = deriveBindingIdentity({
-    ownerBindingHash: '3'.repeat(64), planDescriptor: contentDescriptor('plan'), registryHash: '4'.repeat(64), contract: numericContract(),
-  });
-  // A rubric on the tie rule must change the derived binding identity.
-  const tieRubric = numericContract({
-    tieRule: { mode: 'independent-review', purpose: 'simplicity', rubric: { id: 'r', criteria: [{ id: 'c1', text: 'simpler' }] } },
-  });
-  const tieBinding = deriveBindingIdentity({
-    ownerBindingHash: '3'.repeat(64), planDescriptor: contentDescriptor('plan'), registryHash: '4'.repeat(64), contract: tieRubric,
-  });
-  assert.notEqual(numericBinding, tieBinding);
-  assert.equal(numericBinding, deriveBindingIdentity({
-    ownerBindingHash: '3'.repeat(64), planDescriptor: contentDescriptor('plan'), registryHash: '4'.repeat(64), contract: numericContract(),
-  }));
+  const row = evaluationSequenceRow('identity', { baselineCandidateIdentity: bootstrap, incumbentCandidateIdentity: bootstrap });
+  assert.equal(row.sequenceIdentity, deriveSequenceIdentity(row));
 });
 
 test('T005a: validateCandidateWriteSet enforces disjoint sorted-unique bounded paths', () => {
@@ -7448,71 +7003,107 @@ test('T005a: validateFileStateDescriptors covers the union exactly with bounded 
   assert.throws(() => validateFileStateDescriptors(bigDescriptors, bigWriteSet), /aggregate/);
 });
 
-test('T005b: createEvaluationSequence opens a self-consistent baseline row', () => {
-  const writeSet = candidateWriteSet();
-  const contract = numericContract();
-  const initial = fileDescriptors({ 'src/a.mjs': 'v1', 'src/a.test.mjs': 't' });
-  const row = createEvaluationSequence(TARGET, objectivePlanBody(contract), contract, writeSet, initial);
-  assert.equal(row.state, 'open');
-  assert.deepEqual(row.recentComparisons, []);
-  assert.equal(row.baselineCandidateIdentity, row.incumbentCandidateIdentity);
-  assert.equal(row.baselineCandidateIdentity, stateIdentity(writeSetIdentity(writeSet), initial));
-  assert.ok(!Object.hasOwn(row, 'activeCheckpointIdentity'));
-  assert.ok(!Object.hasOwn(row, 'activeCandidateIdentity'));
-  assert.doesNotThrow(() => validateEvaluationSequences([row]));
-  assert.doesNotThrow(() => validateRunState({ ...emptyState(), evaluationSequences: [row] }));
-  // A different contract yields a distinct sequence and binding but the same
-  // fixed evaluated-state bootstrap baseline (baseline is state-derived, not
-  // contract-derived, and references no prior sequence).
-  const otherContract = numericContract({ id: 'obj-other' });
-  const otherRow = createEvaluationSequence(TARGET, objectivePlanBody(otherContract), otherContract, writeSet, initial);
-  assert.notEqual(otherRow.sequenceIdentity, row.sequenceIdentity);
-  assert.notEqual(otherRow.contractHash, row.contractHash);
-  assert.equal(otherRow.baselineCandidateIdentity, row.baselineCandidateIdentity);
-  // The body must carry a selected entry whose contract matches the frozen one.
-  assert.throws(() => createEvaluationSequence(TARGET, { path: PLAN_PATH, planDescriptor: contentDescriptor('p'), ownerBindingHash: '1'.repeat(64), registryHash: '2'.repeat(64) }, contract, writeSet, initial), /selected entry and contract hash/);
-});
-
 test('T005b: validateEvaluationSequences enforces bounds, sorting, and self-consistency', () => {
-  const writeSet = candidateWriteSet();
-  const contract = numericContract();
-  const initial = fileDescriptors({ 'src/a.mjs': 'v1', 'src/a.test.mjs': 't' });
-  const row = createEvaluationSequence(TARGET, objectivePlanBody(contract), contract, writeSet, initial);
+  const row = evaluationSequenceRow();
   assert.doesNotThrow(() => validateEvaluationSequences([row]));
-  // Absent optional arrays resolve to empty.
   assert.doesNotThrow(() => validateRunState(emptyState()));
   assert.throws(() => validateEvaluationSequences([{ ...row, sequenceIdentity: '0'.repeat(64) }]), /recomputed sequence identity/);
   assert.throws(() => validateEvaluationSequences([row, row]), /sorted and unique/);
   assert.throws(() => validateEvaluationSequences(Array.from({ length: 17 }, () => row)), /at most 16 rows/);
   assert.throws(() => validateEvaluationSequences([{ ...row, unknown: true }]), /unknown field/);
-  // Active checkpoint/candidate identities: both-or-neither, closing forbids, unsettled requires.
   assert.throws(() => validateEvaluationSequences([{ ...row, activeCheckpointIdentity: '5'.repeat(64) }]), /both be absent or both present/);
   assert.throws(() => validateEvaluationSequences([{ ...row, state: 'closing', activeCheckpointIdentity: '5'.repeat(64), activeCandidateIdentity: '6'.repeat(64) }]), /closing sequence forbids/);
   assert.throws(() => validateEvaluationSequences([{ ...row, state: 'unsettled' }]), /unsettled sequence requires/);
   assert.doesNotThrow(() => validateEvaluationSequences([{ ...row, state: 'unsettled', activeCheckpointIdentity: '5'.repeat(64), activeCandidateIdentity: '6'.repeat(64) }]));
 });
 
+test('T005b KEEP guard: authorization refuses active and unsettled retained evaluation sequences', () => {
+  // Arrange
+  const activeIdentities = {
+    activeCheckpointIdentity: sha256('retained-active-checkpoint'),
+    activeCandidateIdentity: sha256('retained-active-candidate'),
+  };
+  const rows = [
+    ['active', evaluationSequenceRow('authorization-active', activeIdentities)],
+    ['unsettled', evaluationSequenceRow('authorization-unsettled', { state: 'unsettled', ...activeIdentities })],
+  ];
+  const raw = transitionRaw(TARGET);
+  const candidate = transitionAssessment('execute-task', { targets: ['src/retained-sequence-guard.mjs'] });
+
+  for (const [label, sequence] of rows) {
+    const state = { ...emptyState(), evaluationSequences: [sequence] };
+    validateRunState(state);
+
+    // Act
+    const result = authorizeAttempt(state, TARGET, raw, candidate, 'ordinary');
+
+    // Assert
+    assert.equal(result.authorized, false, label);
+    assert.equal(result.reason, 'not-dispatchable', label);
+    assert.strictEqual(result.state, state, label);
+    assert.equal(state.overallUsed, 0, label);
+    assert.deepEqual(state.pending, [], label);
+  }
+});
+
+test('T004 KEEP compatibility: suspension validation accepts RunState carry and rejects identity drift', () => {
+  // Arrange
+  const suspensionBody = {
+    version: 1,
+    reason: 'unresolved-learning',
+    affectedTarget: canonicalTarget(TARGET),
+    affectedChangeSetHash: sha256('retained-suspension-affected'),
+    selectedTarget: canonicalTarget(OTHER_TARGET),
+    selectedChangeSetHash: sha256('retained-suspension-selected'),
+    readinessEvidenceHash: sha256('retained-suspension-readiness'),
+    dependencyProofHash: sha256('retained-suspension-dependency'),
+    disjointnessProofHash: sha256('retained-suspension-disjointness'),
+  };
+  const suspension = {
+    ...suspensionBody,
+    schedulingEvidenceIdentity: sha256(canonicalJson(suspensionBody)),
+  };
+  const governanceEvents = [
+    t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 'retained-suspension-carry' }),
+    t002ApproachEvent({ attemptOrdinal: 2, basisLabel: 'retained-suspension-carry' }),
+  ];
+  const carriedState = {
+    ...autonomousState(),
+    learningGovernance: t002RequiredGovernance(governanceEvents),
+  };
+  carriedState.learningGovernance.suspension = suspension;
+  const malformed = { ...suspension, schedulingEvidenceIdentity: '0'.repeat(64) };
+
+  // Act
+  const accepted = validateSuspensionV1(suspension);
+  const carried = validateRunState(carriedState);
+
+  // Assert
+  assert.strictEqual(accepted, suspension);
+  assert.strictEqual(carried, carriedState);
+  assert.deepEqual(carriedState.learningGovernance.suspension, suspension);
+  assert.throws(
+    () => validateSuspensionV1(malformed),
+    /must equal the recomputed complete scheduling evidence identity/,
+  );
+});
+
 test('T005b: recentComparisons ordinals strictly increase and totals stay bounded', () => {
-  const writeSet = candidateWriteSet();
-  const contract = numericContract();
-  const initial = fileDescriptors({ 'src/a.mjs': 'v1', 'src/a.test.mjs': 't' });
-  const base = createEvaluationSequence(TARGET, objectivePlanBody(contract), contract, writeSet, initial);
+  const base = evaluationSequenceRow('comparisons');
   const projRef = (ordinal) => ({
     ordinal,
-    comparisonIdentity: sha256(`c${ordinal}`),
-    eventHash: sha256(`e${ordinal}`),
-    currentRunProjectionIdentity: sha256(`r${ordinal}`),
-    laneProjectionIdentity: sha256(`l${ordinal}`),
+    comparisonIdentity: sha256('c' + ordinal),
+    eventHash: sha256('e' + ordinal),
+    currentRunProjectionIdentity: sha256('r' + ordinal),
+    laneProjectionIdentity: sha256('l' + ordinal),
   });
   assert.doesNotThrow(() => validateEvaluationSequences([{ ...base, recentComparisons: [projRef(1), projRef(2)] }]));
   assert.throws(() => validateEvaluationSequences([{ ...base, recentComparisons: [projRef(2), projRef(2)] }]), /strictly increase/);
   assert.throws(() => validateEvaluationSequences([{ ...base, recentComparisons: Array.from({ length: 9 }, (_, index) => projRef(index + 1)) }]), /at most 8 rows/);
-  // Nine sequences of eight refs each exceed the 64 total-comparison budget.
-  const overBudget = Array.from({ length: 9 }, (_, index) => {
-    const contractN = numericContract({ id: `obj-${index}` });
-    const sequence = createEvaluationSequence(TARGET, objectivePlanBody(contractN), contractN, writeSet, initial);
-    return { ...sequence, recentComparisons: Array.from({ length: 8 }, (_, refIndex) => projRef(refIndex + 1)) };
-  }).sort((left, right) => Buffer.compare(Buffer.from(left.sequenceIdentity), Buffer.from(right.sequenceIdentity)));
+  const overBudget = Array.from({ length: 9 }, (_, index) => evaluationSequenceRow(
+    'comparison-budget-' + index,
+    { recentComparisons: Array.from({ length: 8 }, (_, refIndex) => projRef(refIndex + 1)) },
+  )).sort((left, right) => Buffer.compare(Buffer.from(left.sequenceIdentity), Buffer.from(right.sequenceIdentity)));
   assert.throws(() => validateEvaluationSequences(overBudget), /at most 64 comparison references/);
 });
 
@@ -7532,524 +7123,7 @@ test('T005b: validateLearningReviewRefs enforces bounds, sorting, and canonical 
   assert.throws(() => validateLearningReviewRefs([{ ...ref, target: { ...canonicalTarget(TARGET), lane: 'tracked' } }]), /Target|canonical target identity/);
 });
 
-test('T005c: validateCheckpointHost requires every host method to be a function', () => {
-  const host = checkpointHostFake();
-  assert.doesNotThrow(() => validateCheckpointHost(host));
-  for (const method of ['preflight', 'open', 'probe', 'get', 'setPhase', 'markPoststate', 'restore', 'release']) {
-    assert.throws(() => validateCheckpointHost({ ...host, [method]: 'nope' }), new RegExp(`${method} must be a function`));
-  }
-});
-
-test('T005c: acquireCheckpoint refuses unsupported effects before any capture or mutation', () => {
-  const host = checkpointHostFake(
-    { 'src/a.mjs': 'prestate', 'src/a.test.mjs': 'guard' },
-    { classify: (path) => (path === 'src/a.mjs' ? 'directory' : null) },
-  );
-  assert.throws(
-    () => acquireCheckpoint(host, { target: TARGET, sequenceIdentity: '1'.repeat(64), contractHash: '2'.repeat(64), candidateWriteSet: candidateWriteSet() }),
-    /preflight refuses directory/,
-  );
-  assert.equal(host._map.size, 0);
-  assert.equal(host._files.get('src/a.mjs').bytes.toString(), 'prestate');
-});
-
-test('T005c: a prestate capture failure inserts no complete context', () => {
-  const host = checkpointHostFake({ 'src/a.mjs': 'prestate', 'src/a.test.mjs': 'guard' }, { failCapture: true });
-  assert.throws(
-    () => acquireCheckpoint(host, { target: TARGET, sequenceIdentity: '1'.repeat(64), contractHash: '2'.repeat(64), candidateWriteSet: candidateWriteSet() }),
-    /prestate capture failed/,
-  );
-  assert.equal(host._map.size, 0);
-});
-
-test('T005c: acquire and capture derive captured then candidate records', () => {
-  const { host, captured, candidate, sequenceIdentity, contractHash, writeSet } = acquiredCandidate();
-  const wsId = writeSetIdentity(writeSet);
-  assert.equal(captured.phase, 'captured');
-  assert.equal(captured.writeSetIdentity, wsId);
-  assert.equal(captured.sequenceIdentity, sequenceIdentity);
-  assert.equal(captured.contractHash, contractHash);
-  assert.equal(captured.checkpointIdentity, deriveCheckpointIdentity({ target: TARGET, sequenceIdentity, contractHash, writeSetIdentity: wsId, prestateIdentity: captured.prestateIdentity }));
-  assert.ok(!Object.hasOwn(captured, 'poststateIdentity'));
-  assert.equal(host.get(captured.checkpointIdentity).phase, 'candidate');
-  assert.equal(candidate.phase, 'candidate');
-  assert.equal(candidate.candidateIdentity, deriveCandidateIdentity(captured.checkpointIdentity, candidate.poststateIdentity));
-  assert.notEqual(candidate.poststateIdentity, captured.prestateIdentity);
-});
-
-test('T005c: validateCheckpointRecord binds value identities to the phase', () => {
-  const { captured, candidate } = acquiredCandidate();
-  assert.doesNotThrow(() => validateCheckpointRecord(captured));
-  assert.doesNotThrow(() => validateCheckpointRecord(candidate));
-  assert.throws(() => validateCheckpointRecord({ ...captured, poststateIdentity: '9'.repeat(64), candidateIdentity: '8'.repeat(64) }), /unknown field/);
-  assert.throws(() => validateCheckpointRecord({ ...candidate, poststateIdentity: undefined }), /poststateIdentity/);
-  assert.throws(() => validateCheckpointRecord({ ...captured, phase: 'bogus' }), /phase must be one of/);
-});
-
-test('T005d: releaseCheckpoint is gated on the host phase', () => {
-  const writeSet = candidateWriteSet();
-  {
-    const host = checkpointHostFake({ 'src/a.mjs': 'prestate', 'src/a.test.mjs': 'guard' });
-    const captured = acquireCheckpoint(host, { target: TARGET, sequenceIdentity: '1'.repeat(64), contractHash: '2'.repeat(64), candidateWriteSet: writeSet });
-    assert.equal(releaseCheckpoint(host, captured, writeSet).phase, 'captured');
-    assert.equal(host._map.size, 0);
-  }
-  {
-    const host = checkpointHostFake({ 'src/a.mjs': 'prestate', 'src/a.test.mjs': 'guard' });
-    const captured = acquireCheckpoint(host, { target: TARGET, sequenceIdentity: '1'.repeat(64), contractHash: '2'.repeat(64), candidateWriteSet: writeSet });
-    host._setFile('src/a.mjs', 'changed');
-    assert.throws(() => releaseCheckpoint(host, captured, writeSet), /must be restored before release/);
-    assert.equal(host._map.size, 1);
-  }
-  {
-    const { host, candidate, writeSet: ws } = acquiredCandidate();
-    assert.throws(() => releaseCheckpoint(host, candidate, ws), /pending or unsettled context is never released/);
-  }
-  {
-    const { host, candidate, writeSet: ws } = acquiredCandidate();
-    host.setPhase(candidate.checkpointIdentity, 'restoring');
-    assert.throws(() => releaseCheckpoint(host, candidate, ws), /pending or unsettled context is never released/);
-  }
-  {
-    const { host, candidate, writeSet: ws } = acquiredCandidate();
-    const kept = keepCheckpoint(host, candidate, ws);
-    assert.equal(kept.phase, 'kept');
-    assert.equal(releaseCheckpoint(host, kept, ws).phase, 'kept');
-    assert.equal(host._map.size, 0);
-  }
-  {
-    const { host, candidate, writeSet: ws } = acquiredCandidate();
-    const restored = restoreCheckpoint(host, candidate, ws);
-    assert.equal(restored.phase, 'restored');
-    assert.equal(releaseCheckpoint(host, restored, ws).phase, 'restored');
-    assert.equal(host._map.size, 0);
-  }
-});
-
-test('T005d: restoreCheckpoint proves the exact prestate and marks restored', () => {
-  const { host, candidate, writeSet } = acquiredCandidate();
-  assert.equal(host._files.get('src/a.mjs').bytes.toString(), 'poststate');
-  const restored = restoreCheckpoint(host, candidate, writeSet);
-  assert.equal(restored.phase, 'restored');
-  assert.equal(host._files.get('src/a.mjs').bytes.toString(), 'prestate');
-  assert.ok(!Object.hasOwn(restored, 'poststateIdentity'));
-  assert.equal(host.get(candidate.checkpointIdentity).phase, 'restored');
-});
-
-test('T005d: restore, keep, and release faults retain the context as unsettled', () => {
-  {
-    const { host, candidate, writeSet } = acquiredCandidate();
-    host.faults.failRestore = true;
-    const settled = restoreCheckpoint(host, candidate, writeSet);
-    assert.equal(settled.phase, 'unsettled');
-    assert.equal(host.get(candidate.checkpointIdentity).phase, 'unsettled');
-    assert.equal(host._map.size, 1);
-  }
-  {
-    const { host, candidate, writeSet } = acquiredCandidate();
-    host._setFile('src/a.mjs', 'drifted');
-    const settled = keepCheckpoint(host, candidate, writeSet);
-    assert.equal(settled.phase, 'unsettled');
-    assert.equal(host.get(candidate.checkpointIdentity).phase, 'unsettled');
-  }
-  {
-    const { host, candidate, writeSet } = acquiredCandidate();
-    const kept = keepCheckpoint(host, candidate, writeSet);
-    host.faults.failRelease = true;
-    assert.throws(() => releaseCheckpoint(host, kept, writeSet), /retained as unsettled/);
-    assert.equal(host.get(kept.checkpointIdentity).phase, 'unsettled');
-    assert.equal(host._map.size, 1);
-  }
-});
-
-/** @param {string} role @param {string[]} samples @param {Record<string, unknown>} [overrides] */
-function numericObservation(role, samples, overrides = {}) {
-  const merged = {
-    role,
-    target: canonicalTarget(TARGET),
-    candidateIdentity: sha256(`cand-${role}`),
-    contractHash: sha256(canonicalJson(numericContract())),
-    kind: 'numeric',
-    status: 'ok',
-    evaluatorIdentity: '1'.repeat(64),
-    inputIdentity: '2'.repeat(64),
-    environmentIdentity: '3'.repeat(64),
-    conditionIdentity: '4'.repeat(64),
-    rubricHash: '5'.repeat(64),
-    budgetIdentity: '6'.repeat(64),
-    value: { mode: 'numeric', samples },
-    ...overrides,
-  };
-  if (merged.status !== 'ok') delete merged.value;
-  return merged;
-}
-
-test('T005e: numeric comparator derives threshold relations with exact scaled integers', () => {
-  const contract = numericContract();
-  const seqId = '1'.repeat(64);
-  const cpId = '2'.repeat(64);
-  const binding = '7'.repeat(64);
-  const decide = (incumbentSamples, candidateSamples, overrides = {}) => deriveComparisonDecision({
-    observations: [
-      numericObservation('baseline', incumbentSamples),
-      numericObservation('incumbent', incumbentSamples),
-      numericObservation('candidate', candidateSamples, overrides.candidate),
-    ],
-    contract,
-    sequenceIdentity: seqId,
-    checkpointIdentity: cpId,
-    activeBindingIdentity: binding,
-    freshBindingIdentity: overrides.fresh || binding,
-  });
-  // minimize: a lower candidate median is better.
-  assert.equal(decide(['10', '10', '10', '10', '10'], ['8', '8', '8', '8', '8']).relation, 'better');
-  assert.equal(decide(['10', '10', '10', '10', '10'], ['12', '12', '12', '12', '12']).relation, 'worse');
-  assert.equal(decide(['10', '10', '10', '10', '10'], ['10.3', '10.3', '10.3', '10.3', '10.3']).relation, 'equivalent');
-  assert.equal(decide(['10', '10', '10', '10', '10'], ['9.2', '9.2', '9.2', '9.2', '9.2']).relation, 'incomparable');
-  // boundaries: exactly tolerance ⇒ equivalent; exactly meaningfulThreshold ⇒ better.
-  assert.equal(decide(['10', '10', '10', '10', '10'], ['9.5', '9.5', '9.5', '9.5', '9.5']).relation, 'equivalent');
-  assert.equal(decide(['10', '10', '10', '10', '10'], ['8.5', '8.5', '8.5', '8.5', '8.5']).relation, 'better');
-  // 18-fractional-digit precision beyond IEEE-754 safety stays exact.
-  const precise = decide(
-    Array(5).fill('1.000000000000000002'),
-    Array(5).fill('1.000000000000000001'),
-  );
-  assert.equal(precise.relation, 'equivalent');
-  assert.equal(precise.reason, 'numeric-threshold');
-  assert.deepEqual(precise.judgmentIdentities, []);
-  // median is the middle of the sorted samples, ignoring an outlier.
-  assert.equal(decide(['10', '10', '10', '10', '10'], ['20', '8', '8', '8', '8']).relation, 'better');
-  // maximize: a higher candidate median is better.
-  const maximize = numericContract({ comparator: { mode: 'numeric', unit: 'ms', direction: 'maximize', sampleCount: 5, aggregation: 'median', tolerance: '0.5', meaningfulThreshold: '1.5' } });
-  const maxHash = sha256(canonicalJson(maximize));
-  const maxObs = (role, samples) => ({ ...numericObservation(role, samples), contractHash: maxHash });
-  assert.equal(deriveComparisonDecision({
-    observations: [maxObs('baseline', ['10', '10', '10', '10', '10']), maxObs('incumbent', ['10', '10', '10', '10', '10']), maxObs('candidate', ['12', '12', '12', '12', '12'])],
-    contract: maximize, sequenceIdentity: seqId, checkpointIdentity: cpId, activeBindingIdentity: binding, freshBindingIdentity: binding,
-  }).relation, 'better');
-});
-
-test('T005e: comparison is incomparable for a not-ok observation or binding drift', () => {
-  const contract = numericContract();
-  const binding = '7'.repeat(64);
-  const base = (overrides) => deriveComparisonDecision({
-    observations: [
-      numericObservation('baseline', ['10', '10', '10', '10', '10']),
-      numericObservation('incumbent', ['10', '10', '10', '10', '10']),
-      numericObservation('candidate', ['8', '8', '8', '8', '8'], overrides.candidate),
-    ],
-    contract,
-    sequenceIdentity: '1'.repeat(64),
-    checkpointIdentity: '2'.repeat(64),
-    activeBindingIdentity: binding,
-    freshBindingIdentity: overrides.fresh || binding,
-  });
-  const notOk = base({ candidate: { status: 'crash' } });
-  assert.equal(notOk.relation, 'incomparable');
-  assert.equal(notOk.reason, 'observation-not-ok');
-  const drift = base({ fresh: '9'.repeat(64) });
-  assert.equal(drift.relation, 'incomparable');
-  assert.equal(drift.reason, 'binding-drift');
-  const componentDrift = base({ candidate: { evaluatorIdentity: 'a'.repeat(64) } });
-  assert.equal(componentDrift.reason, 'binding-drift');
-});
-
-test('T005e: ordinal-levels comparator derives relations from index moves', () => {
-  const contract = numericContract({ kind: 'ordinal', comparator: { mode: 'ordinal-levels', levels: ['bad', 'ok', 'good', 'great'], meaningfulSteps: 2 } });
-  const contractHash = sha256(canonicalJson(contract));
-  const ordinalObservation = (role, level) => ({
-    role, target: canonicalTarget(TARGET), candidateIdentity: sha256(`o-${role}`), contractHash,
-    kind: 'ordinal', status: 'ok', evaluatorIdentity: '1'.repeat(64), inputIdentity: '2'.repeat(64),
-    environmentIdentity: '3'.repeat(64), conditionIdentity: '4'.repeat(64), rubricHash: '5'.repeat(64),
-    budgetIdentity: '6'.repeat(64), value: { mode: 'ordinal-level', level },
-  });
-  const decide = (incLevel, candLevel) => deriveComparisonDecision({
-    observations: [ordinalObservation('baseline', incLevel), ordinalObservation('incumbent', incLevel), ordinalObservation('candidate', candLevel)],
-    contract, sequenceIdentity: '1'.repeat(64), checkpointIdentity: '2'.repeat(64), activeBindingIdentity: '7'.repeat(64), freshBindingIdentity: '7'.repeat(64),
-  });
-  assert.equal(decide('ok', 'great').relation, 'better');
-  assert.equal(decide('great', 'ok').relation, 'worse');
-  assert.equal(decide('ok', 'ok').relation, 'equivalent');
-  assert.equal(decide('ok', 'good').relation, 'incomparable');
-  assert.equal(decide('ok', 'great').reason, 'ordinal-levels');
-});
-
-test('T005e: pairwise and subjective comparators require unanimous sorted judgments', () => {
-  const contract = numericContract({
-    kind: 'subjective',
-    evaluators: [{ id: 'ann', version: 'v1' }, { id: 'bob', version: 'v1' }],
-    comparator: { mode: 'subjective', rubric: { id: 'r', criteria: [{ id: 'c1', text: 'clarity' }] } },
-  });
-  const contractHash = sha256(canonicalJson(contract));
-  const artifactObs = (role) => ({
-    role, target: canonicalTarget(TARGET), candidateIdentity: sha256(`s-${role}`), contractHash,
-    kind: 'subjective', status: 'ok', evaluatorIdentity: '1'.repeat(64), inputIdentity: '2'.repeat(64),
-    environmentIdentity: '3'.repeat(64), conditionIdentity: '4'.repeat(64), rubricHash: '5'.repeat(64),
-    budgetIdentity: '6'.repeat(64), value: { mode: 'artifact', artifactHash: sha256(`art-${role}`) },
-  });
-  const judgment = (id, relation) => ({
-    evaluator: { id, version: 'v1' }, target: canonicalTarget(TARGET), contractHash,
-    baselineObservationIdentity: '1'.repeat(64), incumbentObservationIdentity: '2'.repeat(64),
-    candidateObservationIdentity: '3'.repeat(64), relation,
-  });
-  const decide = (relAnn, relBob) => deriveComparisonDecision({
-    observations: [artifactObs('baseline'), artifactObs('incumbent'), artifactObs('candidate')],
-    contract,
-    judgments: [judgment('ann', relAnn), judgment('bob', relBob)]
-      .sort((left, right) => Buffer.compare(Buffer.from(sha256(canonicalJson(left.evaluator))), Buffer.from(sha256(canonicalJson(right.evaluator))))),
-    sequenceIdentity: '1'.repeat(64), checkpointIdentity: '2'.repeat(64), activeBindingIdentity: '7'.repeat(64), freshBindingIdentity: '7'.repeat(64),
-  });
-  assert.equal(decide('better', 'better').relation, 'better');
-  assert.equal(decide('better', 'better').reason, 'unanimous-rubric');
-  assert.equal(decide('better', 'worse').relation, 'incomparable');
-  assert.equal(decide('better', 'worse').reason, 'evaluator-disagreement');
-  assert.equal(decide('equivalent', 'incomparable').relation, 'incomparable');
-  assert.equal(decide('better', 'better').judgmentIdentities.length, 2);
-});
-
-test('T005e: observation and judgment validators bind values and evaluators to the contract', () => {
-  const contract = numericContract();
-  assert.doesNotThrow(() => validateObjectiveObservation(numericObservation('candidate', ['1', '1', '1', '1', '1']), contract));
-  const okNoValue = numericObservation('candidate', ['1', '1', '1', '1', '1']);
-  delete okNoValue.value;
-  assert.throws(() => validateObjectiveObservation(okNoValue, contract), /value is required/);
-  assert.throws(() => validateObjectiveObservation(numericObservation('candidate', ['1', '1', '1']), contract), /frozen sample count/);
-  assert.throws(() => validateObjectiveObservation({ ...numericObservation('candidate', ['1', '1', '1', '1', '1']), kind: 'ordinal' }, contract), /match the contract kind/);
-  const notOkWithValue = { ...numericObservation('candidate', ['1', '1', '1', '1', '1']), status: 'crash' };
-  assert.throws(() => validateObjectiveObservation(notOkWithValue, contract), /forbidden unless status is ok/);
-  const pairwise = numericContract({
-    kind: 'ordinal',
-    evaluators: [{ id: 'ann', version: 'v1' }, { id: 'bob', version: 'v1' }],
-    comparator: { mode: 'ordinal-pairwise', rubric: { id: 'r', criteria: [{ id: 'c1', text: 'clarity' }] } },
-  });
-  const goodJudgment = {
-    evaluator: { id: 'ann', version: 'v1' }, target: canonicalTarget(TARGET), contractHash: sha256(canonicalJson(pairwise)),
-    baselineObservationIdentity: '1'.repeat(64), incumbentObservationIdentity: '2'.repeat(64), candidateObservationIdentity: '3'.repeat(64), relation: 'better',
-  };
-  assert.doesNotThrow(() => validateEvaluatorJudgment(goodJudgment, pairwise));
-  assert.throws(() => validateEvaluatorJudgment({ ...goodJudgment, evaluator: { id: 'zed', version: 'v1' } }, pairwise), /frozen contract evaluator/);
-});
-
-/** @param {Record<string, unknown>} [overrides] */
-function authorizationRecord(overrides = {}) {
-  return {
-    kind: 'authorization', target: canonicalTarget(TARGET), policyMode: 'autonomous',
-    evidenceHash: '1'.repeat(64), ownerBindingHash: '2'.repeat(64), planDescriptor: contentDescriptor('plan'),
-    registryHash: '3'.repeat(64), contractHash: '4'.repeat(64), authorityIdentity: '5'.repeat(64),
-    ...overrides,
-  };
-}
-
-/** @param {Record<string, unknown>} candidate */
-function checkpointGateRecord(candidate) {
-  return {
-    kind: 'checkpoint', target: candidate.target, checkpointIdentity: candidate.checkpointIdentity,
-    candidateIdentity: candidate.candidateIdentity, writeSetIdentity: candidate.writeSetIdentity,
-    prestateIdentity: candidate.prestateIdentity, poststateIdentity: candidate.poststateIdentity,
-  };
-}
-
-test('T005f: normalizeAuthorizationGate wraps the authorize path and never accepts caller status', () => {
-  const record = authorizationRecord();
-  assert.equal(normalizeAuthorizationGate({ record, authorization: { authorized: true, reason: 'authorized' } }).result, 'pass');
-  assert.equal(normalizeAuthorizationGate({ record, authorization: { authorized: false, reason: 'overall-exhausted' } }).result, 'fail');
-  for (const injected of [{ result: 'pass' }, { status: 'pass' }, { name: 'authorization' }, { outcome: 'authorized' }]) {
-    assert.throws(() => normalizeAuthorizationGate({ record: { ...record, ...injected }, authorization: { authorized: true } }), /unknown field/);
-  }
-  assert.throws(() => normalizeAuthorizationGate({ record: { ...record, policyMode: 'guarded' }, authorization: { authorized: true } }), /must be autonomous/);
-  assert.equal(
-    normalizeAuthorizationGate({ record, authorization: { authorized: true } }).evidenceIdentity,
-    normalizeAuthorizationGate({ record, authorization: { authorized: true } }).evidenceIdentity,
-  );
-});
-
-test('T005f: normalizeCheckpointGate derives readiness from the host, not the caller', () => {
-  const { host, candidate, writeSet } = acquiredCandidate();
-  const record = checkpointGateRecord(candidate);
-  assert.equal(normalizeCheckpointGate({ record, host, candidateWriteSet: writeSet }).result, 'pass');
-  host._setFile('src/a.mjs', 'drifted');
-  assert.equal(normalizeCheckpointGate({ record, host, candidateWriteSet: writeSet }).result, 'incomplete');
-  host._setFile('src/a.mjs', 'poststate');
-  host.setPhase(candidate.checkpointIdentity, 'unsettled');
-  assert.equal(normalizeCheckpointGate({ record, host, candidateWriteSet: writeSet }).result, 'fail');
-  assert.throws(() => normalizeCheckpointGate({ record: { ...record, outcome: 'ready' }, host, candidateWriteSet: writeSet }), /unknown field/);
-});
-
-test('T005f: normalizeHardConstraintsGate always requires the mandatory candidate-bound check', () => {
-  const contract = numericContract();
-  const contractHash = sha256(canonicalJson(contract));
-  const checkpointIdentity = '2'.repeat(64);
-  const candidateIdentity = '3'.repeat(64);
-  const args = { contract, target: TARGET, checkpointIdentity, candidateIdentity, contractHash };
-  const mandatory = { kind: 'hard-constraint', constraintKind: 'verification', checkId: 'candidate-bound-completion', target: targetKey(canonicalTarget(TARGET)), checkpointIdentity, candidateIdentity, contractHash, evidenceHash: '5'.repeat(64), outcome: 'passed' };
-  const declared = { kind: 'hard-constraint', constraintKind: 'verification', checkId: 'unit', target: 'src/a.test.mjs', checkpointIdentity, candidateIdentity, contractHash, evidenceHash: '6'.repeat(64), outcome: 'passed' };
-  assert.equal(normalizeHardConstraintsGate({ ...args, records: [mandatory, declared] }).result, 'pass');
-  assert.equal(normalizeHardConstraintsGate({ ...args, records: [declared] }).result, 'incomplete');
-  assert.equal(normalizeHardConstraintsGate({ ...args, records: [mandatory, { ...declared, outcome: 'failed' }] }).result, 'fail');
-  // A declared record cannot reuse the reserved id (duplicate of the mandatory key).
-  assert.equal(normalizeHardConstraintsGate({ ...args, records: [mandatory, { ...declared, checkId: 'candidate-bound-completion', target: targetKey(canonicalTarget(TARGET)) }] }).result, 'incomplete');
-  // Zero declared constraints: mandatory still required.
-  const noConstraintContract = numericContract({ hardConstraints: [] });
-  const noHash = sha256(canonicalJson(noConstraintContract));
-  assert.equal(normalizeHardConstraintsGate({ contract: noConstraintContract, target: TARGET, checkpointIdentity, candidateIdentity, contractHash: noHash, records: [{ ...mandatory, contractHash: noHash }] }).result, 'pass');
-  assert.equal(normalizeHardConstraintsGate({ contract: noConstraintContract, target: TARGET, checkpointIdentity, candidateIdentity, contractHash: noHash, records: [] }).result, 'incomplete');
-  // A bound mismatch (wrong checkpoint) is never complete.
-  assert.equal(normalizeHardConstraintsGate({ ...args, records: [{ ...mandatory, checkpointIdentity: 'f'.repeat(64) }, declared] }).result, 'incomplete');
-});
-
-test('T005f: normalizeComparisonGate passes for a valid decision regardless of relation', () => {
-  const contract = numericContract();
-  const binding = '7'.repeat(64);
-  const okObservations = [numericObservation('baseline', ['10', '10', '10', '10', '10']), numericObservation('incumbent', ['10', '10', '10', '10', '10']), numericObservation('candidate', ['8', '8', '8', '8', '8'])];
-  const decision = deriveComparisonDecision({ observations: okObservations, contract, sequenceIdentity: '1'.repeat(64), checkpointIdentity: '2'.repeat(64), activeBindingIdentity: binding, freshBindingIdentity: binding });
-  assert.equal(decision.relation, 'better');
-  assert.equal(normalizeComparisonGate({ decision, observations: okObservations, contract }).result, 'pass');
-  const inBetweenObservations = [numericObservation('baseline', ['10', '10', '10', '10', '10']), numericObservation('incumbent', ['10', '10', '10', '10', '10']), numericObservation('candidate', ['9.2', '9.2', '9.2', '9.2', '9.2'])];
-  const inBetween = deriveComparisonDecision({ observations: inBetweenObservations, contract, sequenceIdentity: '1'.repeat(64), checkpointIdentity: '2'.repeat(64), activeBindingIdentity: binding, freshBindingIdentity: binding });
-  assert.equal(inBetween.relation, 'incomparable');
-  assert.equal(normalizeComparisonGate({ decision: inBetween, observations: inBetweenObservations, contract }).result, 'pass');
-  // Genuine derived decisions carry the reasons; the gate cross-checks their identities.
-  const notOkObservations = [numericObservation('baseline', ['10', '10', '10', '10', '10']), numericObservation('incumbent', ['10', '10', '10', '10', '10']), numericObservation('candidate', ['8', '8', '8', '8', '8'], { status: 'crash' })];
-  const notOk = deriveComparisonDecision({ observations: notOkObservations, contract, sequenceIdentity: '1'.repeat(64), checkpointIdentity: '2'.repeat(64), activeBindingIdentity: binding, freshBindingIdentity: binding });
-  assert.equal(notOk.reason, 'observation-not-ok');
-  assert.equal(normalizeComparisonGate({ decision: notOk, observations: notOkObservations, contract }).result, 'incomplete');
-  const driftDecision = deriveComparisonDecision({ observations: okObservations, contract, sequenceIdentity: '1'.repeat(64), checkpointIdentity: '2'.repeat(64), activeBindingIdentity: binding, freshBindingIdentity: '9'.repeat(64) });
-  assert.equal(driftDecision.reason, 'binding-drift');
-  assert.equal(normalizeComparisonGate({ decision: driftDecision, observations: okObservations, contract }).result, 'fail');
-  // A decision whose observation identities do not match the supplied observations is rejected.
-  assert.throws(() => normalizeComparisonGate({ decision: { ...decision, baselineObservationIdentity: 'a'.repeat(64) }, observations: okObservations, contract }), /must match the supplied observations/);
-  assert.throws(() => normalizeComparisonGate({ decision: { ...decision, reason: 'binding-drift' }, observations: okObservations, contract }), /must match the supplied observations/);
-  assert.throws(() => normalizeComparisonGate({ decision: { ...decision, result: 'pass' }, observations: okObservations, contract }), /unknown field/);
-});
-
-test('T005f: normalizeIndependentReviewGate requires readiness and an optional candidate tie', () => {
-  const readiness = (outcome) => ({ kind: 'readiness-review', reviewIdentity: '1'.repeat(64), target: canonicalTarget(TARGET), checkpointIdentity: '2'.repeat(64), candidateIdentity: '3'.repeat(64), contractHash: '4'.repeat(64), evidenceHash: '5'.repeat(64), outcome });
-  const tie = (outcome) => ({ kind: 'tie-review', reviewIdentity: '9'.repeat(64), purpose: 'simplicity', rubricHash: '8'.repeat(64), target: canonicalTarget(TARGET), checkpointIdentity: '2'.repeat(64), incumbentCandidateIdentity: '7'.repeat(64), candidateIdentity: '3'.repeat(64), contractHash: '4'.repeat(64), evidenceHash: '6'.repeat(64), outcome });
-  assert.equal(normalizeIndependentReviewGate({ readinessReview: readiness('accepted') }).result, 'pass');
-  assert.equal(normalizeIndependentReviewGate({ readinessReview: readiness('rejected') }).result, 'fail');
-  assert.equal(normalizeIndependentReviewGate({ readinessReview: readiness('timeout') }).result, 'incomplete');
-  assert.equal(normalizeIndependentReviewGate({ readinessReview: readiness('accepted'), tieReview: tie('candidate') }).result, 'pass');
-  assert.equal(normalizeIndependentReviewGate({ readinessReview: readiness('accepted'), tieReview: tie('incumbent') }).result, 'fail');
-  assert.throws(() => normalizeIndependentReviewGate({ readinessReview: readiness('accepted'), tieReview: { ...tie('candidate'), reviewIdentity: '1'.repeat(64) } }), /distinct from the readiness review/);
-});
-
-test('T005f: buildGateSet enforces the exact five-gate order and derives its identity', () => {
-  const gates = [
-    { name: 'authorization', evidenceIdentity: '1'.repeat(64), result: 'pass' },
-    { name: 'checkpoint', evidenceIdentity: '2'.repeat(64), result: 'pass' },
-    { name: 'hard-constraints', evidenceIdentity: '3'.repeat(64), result: 'pass' },
-    { name: 'comparison', evidenceIdentity: '4'.repeat(64), result: 'pass' },
-    { name: 'independent-review', evidenceIdentity: '5'.repeat(64), result: 'pass' },
-  ];
-  const args = { target: TARGET, checkpointIdentity: '6'.repeat(64), candidateIdentity: '7'.repeat(64), contractHash: '8'.repeat(64) };
-  const gateSet = buildGateSet({ ...args, gates });
-  assert.equal(gateSet.gates.length, 5);
-  assert.equal(gateSet.gateSetIdentity, sha256(canonicalJson({ target: canonicalTarget(TARGET), checkpointIdentity: '6'.repeat(64), candidateIdentity: '7'.repeat(64), contractHash: '8'.repeat(64), gates })));
-  assert.throws(() => buildGateSet({ ...args, gates: [gates[1], gates[0], gates[2], gates[3], gates[4]] }), /must be authorization/);
-  assert.throws(() => buildGateSet({ ...args, gates: gates.slice(0, 4) }), /exactly five gate results/);
-  assert.throws(() => buildGateSet({ ...args, gates: [...gates, { name: 'authorization', evidenceIdentity: '9'.repeat(64), result: 'pass' }] }), /exactly five gate results/);
-  assert.throws(() => buildGateSet({ ...args, gates: [{ ...gates[0], verdict: 'pass' }, gates[1], gates[2], gates[3], gates[4]] }), /unknown field/);
-});
-
-test('T005g: qualifiesForKeep requires all gates pass and a qualifying relation', () => {
-  const passing = [
-    { name: 'authorization', evidenceIdentity: '1'.repeat(64), result: 'pass' },
-    { name: 'checkpoint', evidenceIdentity: '2'.repeat(64), result: 'pass' },
-    { name: 'hard-constraints', evidenceIdentity: '3'.repeat(64), result: 'pass' },
-    { name: 'comparison', evidenceIdentity: '4'.repeat(64), result: 'pass' },
-    { name: 'independent-review', evidenceIdentity: '5'.repeat(64), result: 'pass' },
-  ];
-  const args = { target: TARGET, checkpointIdentity: '6'.repeat(64), candidateIdentity: '7'.repeat(64), contractHash: '8'.repeat(64) };
-  const passingSet = buildGateSet({ ...args, gates: passing });
-  assert.equal(qualifiesForKeep(passingSet, 'better'), true);
-  assert.equal(qualifiesForKeep(passingSet, 'equivalent'), false);
-  assert.equal(qualifiesForKeep(passingSet, 'equivalent', 'candidate'), true);
-  assert.equal(qualifiesForKeep(passingSet, 'equivalent', 'incumbent'), false);
-  assert.equal(qualifiesForKeep(passingSet, 'worse'), false);
-  assert.equal(qualifiesForKeep(passingSet, 'incomparable'), false);
-  const failingSet = buildGateSet({ ...args, gates: [{ ...passing[0], result: 'fail' }, ...passing.slice(1)] });
-  assert.equal(qualifiesForKeep(failingSet, 'better'), false);
-});
-
-test('T005g: settleCandidate drives keep or restore without releasing or advancing', () => {
-  {
-    const { host, candidate, writeSet } = acquiredCandidate();
-    const settled = settleCandidate(host, candidate, writeSet, { keep: true });
-    assert.equal(settled.phase, 'kept');
-    assert.equal(host._map.size, 1);
-    assert.equal(host._files.get('src/a.mjs').bytes.toString(), 'poststate');
-  }
-  {
-    const { host, candidate, writeSet } = acquiredCandidate();
-    const settled = settleCandidate(host, candidate, writeSet, { keep: false });
-    assert.equal(settled.phase, 'restored');
-    assert.equal(host._map.size, 1);
-    assert.equal(host._files.get('src/a.mjs').bytes.toString(), 'prestate');
-  }
-  const { host, candidate, writeSet } = acquiredCandidate();
-  assert.throws(() => settleCandidate(host, candidate, writeSet, { keep: 'yes' }), /must be a boolean/);
-});
-
-/** @param {Record<string, string>} [overrides] */
-function passingGateRows(overrides = {}) {
-  return ['authorization', 'checkpoint', 'hard-constraints', 'comparison', 'independent-review']
-    .map((name, index) => ({ name, evidenceIdentity: String(index + 1).repeat(64), result: overrides[name] || 'pass' }));
-}
-
-test('T005h: an incomparable relation settles as a restore-first non-keep', () => {
-  const { host, candidate, writeSet } = acquiredCandidate();
-  const gateSet = buildGateSet({
-    target: TARGET, checkpointIdentity: candidate.checkpointIdentity, candidateIdentity: candidate.candidateIdentity,
-    contractHash: candidate.contractHash, gates: passingGateRows(),
-  });
-  const keep = qualifiesForKeep(gateSet, 'incomparable');
-  assert.equal(keep, false);
-  const settled = settleCandidate(host, candidate, writeSet, { keep });
-  assert.equal(settled.phase, 'restored');
-  assert.equal(host._files.get('src/a.mjs').bytes.toString(), 'prestate');
-});
-
-test('T005h: a cross-contract comparison refuses as binding drift', () => {
-  const contract = numericContract();
-  const otherHash = sha256(canonicalJson(numericContract({ id: 'obj-other' })));
-  const binding = '7'.repeat(64);
-  const decision = deriveComparisonDecision({
-    observations: [
-      numericObservation('baseline', ['10', '10', '10', '10', '10']),
-      numericObservation('incumbent', ['10', '10', '10', '10', '10']),
-      { ...numericObservation('candidate', ['8', '8', '8', '8', '8']), contractHash: otherHash },
-    ],
-    contract, sequenceIdentity: '1'.repeat(64), checkpointIdentity: '2'.repeat(64), activeBindingIdentity: binding, freshBindingIdentity: binding,
-  });
-  assert.equal(decision.relation, 'incomparable');
-  assert.equal(decision.reason, 'binding-drift');
-});
-
-test('T005h: a rebaseline sequence derives an independent baseline under a new contract', () => {
-  const writeSet = candidateWriteSet();
-  const originalContract = numericContract();
-  const initial = fileDescriptors({ 'src/a.mjs': 'v1', 'src/a.test.mjs': 't' });
-  const original = createEvaluationSequence(TARGET, objectivePlanBody(originalContract), originalContract, writeSet, initial);
-  const newContract = numericContract({ id: 'obj-rebaseline', subject: 'New objective' });
-  const retained = fileDescriptors({ 'src/a.mjs': 'kept-incumbent', 'src/a.test.mjs': 't' });
-  const rebaseline = createEvaluationSequence(TARGET, objectivePlanBody(newContract), newContract, writeSet, retained);
-  assert.notEqual(rebaseline.sequenceIdentity, original.sequenceIdentity);
-  assert.notEqual(rebaseline.baselineCandidateIdentity, original.baselineCandidateIdentity);
-  assert.equal(rebaseline.baselineCandidateIdentity, stateIdentity(writeSetIdentity(writeSet), retained));
-  assert.equal(rebaseline.baselineCandidateIdentity, rebaseline.incumbentCandidateIdentity);
-});
-
-test('T005h: the checkpoint host is never threaded through dependencies', () => {
-  const host = checkpointHostFake();
-  assert.throws(
-    () => authorizeRuntimeAttempt(emptyState({ recover: true }), TARGET, transitionRaw(TARGET), transitionAssessment('retry-task'), 'recovery', { checkpointHost: host }),
-    /unknown field/,
-  );
-  // The evidence path itself needs no host and admits only the tracked normalizer.
-  assert.doesNotThrow(() => collectEvidence(TARGET, transitionRaw(TARGET), {}, 'guarded'));
-});
-
-test('T005h: the guarded no-objective authorize and complete path is byte-invariant', () => {
+test('T005h: the guarded authorize and complete path is byte-invariant', () => {
   const state = emptyState({ recover: true });
   const raw = transitionRaw(TARGET);
   const guardedEvidence = collectEvidence(TARGET, raw, {}, 'guarded');
@@ -8072,7 +7146,7 @@ test('T005h: the guarded no-objective authorize and complete path is byte-invari
   assert.ok(!Object.hasOwn(finished.state, 'learningReviewRefs'));
 });
 
-// --- T006: bounded events, dual projection, references, and audit ------------
+// --- Retained learning events, dual projection, and references -------------
 
 const OTHER_TARGET = Object.freeze({ specPath: SPEC_PATH, lane: 'lightweight', taskKey: SECOND_TASK_KEY });
 
@@ -8119,43 +7193,6 @@ function projectionOwnerFake(faults = {}) {
 }
 
 /** @param {Record<string, unknown>} [overrides] */
-function comparisonEventInput(overrides = {}) {
-  return {
-    target: TARGET,
-    taskKey: TASK_KEY,
-    sequenceIdentity: '1'.repeat(64),
-    comparisonIdentity: '2'.repeat(64),
-    checkpointIdentity: '3'.repeat(64),
-    contractHash: '4'.repeat(64),
-    baselineCandidateIdentity: '5'.repeat(64),
-    incumbentBeforeIdentity: '6'.repeat(64),
-    candidateIdentity: '7'.repeat(64),
-    observationIdentities: { baseline: 'a'.repeat(64), incumbent: 'b'.repeat(64), candidate: 'c'.repeat(64) },
-    relation: 'better',
-    gateSetIdentity: '8'.repeat(64),
-    gateResults: passingGateRows(),
-    decision: 'keep',
-    ...overrides,
-  };
-}
-
-/** @param {Record<string, unknown>} [overrides] */
-function closedEventInput(overrides = {}) {
-  return {
-    target: TARGET,
-    taskKey: TASK_KEY,
-    sequenceIdentity: '1'.repeat(64),
-    contractHash: '2'.repeat(64),
-    baselineCandidateIdentity: '3'.repeat(64),
-    finalIncumbentIdentity: '4'.repeat(64),
-    reason: 'task-completed',
-    comparisonEventHashes: [],
-    learningReviewEventHashes: [],
-    ...overrides,
-  };
-}
-
-/** @param {Record<string, unknown>} [overrides] */
 function learningEventInput(overrides = {}) {
   return {
     target: TARGET,
@@ -8169,67 +7206,23 @@ function learningEventInput(overrides = {}) {
   };
 }
 
-/**
- * Build a self-consistent open sequence in a RunState plus a live candidate
- * checkpoint context, ready to settle. Faults are forwarded to the host fake.
- * @param {Record<string, unknown>} [options]
- */
-function objectiveSequenceFixture(options = {}) {
-  const writeSet = candidateWriteSet();
-  const contract = numericContract();
-  const contractHash = sha256(canonicalJson(contract));
-  const initial = fileDescriptors({ 'src/a.mjs': 'prestate', 'src/a.test.mjs': 'guard' });
-  const sequence = createEvaluationSequence(TARGET, objectivePlanBody(contract), contract, writeSet, initial);
-  const host = checkpointHostFake({ 'src/a.mjs': 'prestate', 'src/a.test.mjs': 'guard' }, options.faults || {});
-  const captured = acquireCheckpoint(host, { target: TARGET, sequenceIdentity: sequence.sequenceIdentity, contractHash, candidateWriteSet: writeSet });
-  host._setFile('src/a.mjs', options.candidateContent || 'poststate');
-  const candidate = captureCandidate(host, captured, writeSet);
-  const state = { ...emptyState(), evaluationSequences: [sequence] };
-  return { writeSet, contract, contractHash, sequence, host, captured, candidate, state };
-}
-
-/** @param {ReturnType<typeof objectiveSequenceFixture>} fixture @param {string[]} candidateSamples */
-function fixtureDecision(fixture, candidateSamples, overrides = {}) {
-  return deriveComparisonDecision({
-    observations: [
-      numericObservation('baseline', ['10', '10', '10', '10', '10']),
-      numericObservation('incumbent', ['10', '10', '10', '10', '10']),
-      numericObservation('candidate', candidateSamples),
-    ],
-    contract: fixture.contract,
-    sequenceIdentity: fixture.sequence.sequenceIdentity,
-    checkpointIdentity: fixture.candidate.checkpointIdentity,
-    activeBindingIdentity: '7'.repeat(64),
-    freshBindingIdentity: overrides.fresh || '7'.repeat(64),
-  });
-}
-
-/** @param {ReturnType<typeof objectiveSequenceFixture>} fixture @param {Record<string, string>} [gateOverrides] */
-function fixtureGateSet(fixture, gateOverrides = {}) {
-  return buildGateSet({
-    target: TARGET,
-    checkpointIdentity: fixture.candidate.checkpointIdentity,
-    candidateIdentity: fixture.candidate.candidateIdentity,
-    contractHash: fixture.contractHash,
-    gates: passingGateRows(gateOverrides),
-  });
-}
-
-/** @param {Record<string, unknown>} state @param {string} sequenceIdentity @param {ReturnType<typeof projectionOwnerFake>} owner @param {number} seed */
-function projectComparisonRef(state, sequenceIdentity, owner, seed) {
-  const event = buildObjectiveComparisonEvent(comparisonEventInput({
-    sequenceIdentity,
-    comparisonIdentity: sha256(`cmp-${seed}`),
-    candidateIdentity: sha256(`cand-${seed}`),
-  }));
-  const projection = projectEvent(owner, event);
-  const next = admitComparisonReference(state, sequenceIdentity, {
-    comparisonIdentity: event.comparisonIdentity,
-    eventHash: event.eventHash,
-    currentRunProjectionIdentity: projection.currentRunProjectionIdentity,
-    laneProjectionIdentity: projection.laneProjectionIdentity,
-  }, owner);
-  return { state: next, event };
+/** Build one self-consistent retained evaluation-sequence row for validator and guard coverage. */
+function evaluationSequenceRow(seed = 'base', overrides = {}) {
+  const body = {
+    target: canonicalTarget(TARGET),
+    taskKey: TASK_KEY,
+    ownerBindingHash: sha256('evaluation-owner-' + seed),
+    planDescriptor: contentDescriptor('retained evaluation plan ' + seed),
+    registryHash: sha256('evaluation-registry-' + seed),
+    contractHash: sha256('evaluation-contract-' + seed),
+    bindingIdentity: sha256('evaluation-binding-' + seed),
+    baselineCandidateIdentity: sha256('evaluation-baseline-' + seed),
+    incumbentCandidateIdentity: sha256('evaluation-incumbent-' + seed),
+    state: 'open',
+    recentComparisons: [],
+    ...overrides,
+  };
+  return { ...body, sequenceIdentity: deriveSequenceIdentity(body) };
 }
 
 /** @param {Record<string, unknown>} state @param {ReturnType<typeof projectionOwnerFake>} owner @param {number} seed */
@@ -8249,89 +7242,6 @@ function projectLearningRef(state, owner, seed) {
   }, owner);
   return { state: next, event };
 }
-
-test('T006a: restoreCheckpoint hard stops on a captured-context restoration fault', () => {
-  const writeSet = candidateWriteSet();
-  const host = checkpointHostFake({ 'src/a.mjs': 'prestate', 'src/a.test.mjs': 'guard' }, { failRestore: true });
-  const captured = acquireCheckpoint(host, { target: TARGET, sequenceIdentity: '1'.repeat(64), contractHash: '2'.repeat(64), candidateWriteSet: writeSet });
-  assert.throws(() => restoreCheckpoint(host, captured, writeSet), /captured context restoration could not be proven/);
-  assert.equal(host.get(captured.checkpointIdentity).phase, 'unsettled');
-  assert.equal(host._map.size, 1);
-  // A candidate-context restore fault still RETURNS an unsettled record (T005d parity).
-  const { host: host2, candidate, writeSet: ws2 } = acquiredCandidate();
-  host2.faults.failRestore = true;
-  assert.equal(restoreCheckpoint(host2, candidate, ws2).phase, 'unsettled');
-});
-
-test('T006a: normalizeCheckpointGate forbids ready when a protected path changed during the candidate', () => {
-  const writeSet = candidateWriteSet();
-  const host = checkpointHostFake({ 'src/a.mjs': 'prestate', 'src/a.test.mjs': 'guard' });
-  const captured = acquireCheckpoint(host, { target: TARGET, sequenceIdentity: '1'.repeat(64), contractHash: '2'.repeat(64), candidateWriteSet: writeSet });
-  host._setFile('src/a.mjs', 'poststate');
-  host._setFile('src/a.test.mjs', 'guard-tampered'); // protected path mutated during the candidate
-  const candidate = captureCandidate(host, captured, writeSet);
-  const record = {
-    kind: 'checkpoint', target: candidate.target, checkpointIdentity: candidate.checkpointIdentity,
-    candidateIdentity: candidate.candidateIdentity, writeSetIdentity: candidate.writeSetIdentity,
-    prestateIdentity: candidate.prestateIdentity, poststateIdentity: candidate.poststateIdentity,
-  };
-  // Poststate and candidate identities match, but the protected subset differs from the prestate.
-  assert.equal(normalizeCheckpointGate({ record, host, candidateWriteSet: writeSet }).result, 'incomplete');
-});
-
-test('T006a: normalizeComparisonGate rejects a decision that does not match the observations', () => {
-  const contract = numericContract();
-  const binding = '7'.repeat(64);
-  const observations = [numericObservation('baseline', ['10', '10', '10', '10', '10']), numericObservation('incumbent', ['10', '10', '10', '10', '10']), numericObservation('candidate', ['8', '8', '8', '8', '8'])];
-  const decision = deriveComparisonDecision({ observations, contract, sequenceIdentity: '1'.repeat(64), checkpointIdentity: '2'.repeat(64), activeBindingIdentity: binding, freshBindingIdentity: binding });
-  assert.equal(normalizeComparisonGate({ decision, observations, contract }).result, 'pass');
-  assert.throws(() => normalizeComparisonGate({ decision: { ...decision, candidateObservationIdentity: '0'.repeat(64) }, observations, contract }), /must match the supplied observations/);
-});
-
-test('T006b: ObjectiveComparisonEvent builder and validator enforce the decision field rules', () => {
-  const keep = buildObjectiveComparisonEvent(comparisonEventInput());
-  assert.equal(keep.type, 'objective-comparison');
-  assert.equal(keep.version, 1);
-  assert.equal(keep.decision, 'keep');
-  assert.equal(keep.incumbentAfterIdentity, keep.candidateIdentity);
-  assert.ok(!Object.hasOwn(keep, 'restorationIdentity'));
-  assert.equal(keep.eventHash, sha256(canonicalJson(without(keep, 'eventHash'))));
-  assert.doesNotThrow(() => validateObjectiveComparisonEvent(keep));
-  assert.throws(() => buildObjectiveComparisonEvent(comparisonEventInput({ restorationIdentity: 'd'.repeat(64) })), /forbidden for a keep/);
-
-  const discard = buildObjectiveComparisonEvent(comparisonEventInput({ decision: 'discard', relation: 'worse', restorationIdentity: 'd'.repeat(64) }));
-  assert.equal(discard.incumbentAfterIdentity, discard.incumbentBeforeIdentity);
-  assert.equal(discard.restorationIdentity, 'd'.repeat(64));
-  assert.doesNotThrow(() => validateObjectiveComparisonEvent(discard));
-  assert.throws(() => buildObjectiveComparisonEvent(comparisonEventInput({ decision: 'discard', relation: 'worse' })), /restorationIdentity/);
-
-  const stop = buildObjectiveComparisonEvent(comparisonEventInput({ decision: 'stop-unsettled', relation: 'incomparable' }));
-  assert.equal(stop.incumbentAfterIdentity, null);
-  assert.doesNotThrow(() => validateObjectiveComparisonEvent(stop));
-  assert.throws(() => buildObjectiveComparisonEvent(comparisonEventInput({ decision: 'stop-unsettled', restorationIdentity: 'd'.repeat(64) })), /forbidden for a stop-unsettled/);
-
-  assert.throws(() => validateObjectiveComparisonEvent({ ...keep, relation: 'worse' }), /recomputed event hash/);
-  assert.throws(() => validateObjectiveComparisonEvent({ ...keep, incumbentAfterIdentity: '0'.repeat(64) }), /must equal the candidate identity/);
-  assert.throws(() => validateObjectiveComparisonEvent({ ...discard, incumbentAfterIdentity: '0'.repeat(64) }), /must equal the prior incumbent/);
-  assert.throws(() => validateObjectiveComparisonEvent({ ...stop, incumbentAfterIdentity: '0'.repeat(64) }), /must be null/);
-  assert.throws(() => validateObjectiveComparisonEvent({ ...keep, extra: 1 }), /unknown field/);
-});
-
-test('T006b: EvaluationSequenceClosedEvent enforces reason, hash bounds, and settled incumbent', () => {
-  const closed = buildEvaluationSequenceClosedEvent(closedEventInput());
-  assert.equal(closed.type, 'evaluation-sequence-closed');
-  assert.doesNotThrow(() => validateEvaluationSequenceClosedEvent(closed));
-  assert.equal(closed.eventHash, sha256(canonicalJson(without(closed, 'eventHash'))));
-  for (const reason of ['rebaseline', 'drift', 'task-completed', 'task-blocked', 'no-progress', 'hard-stop', 'controlled-end']) {
-    assert.doesNotThrow(() => buildEvaluationSequenceClosedEvent(closedEventInput({ reason })));
-  }
-  assert.throws(() => buildEvaluationSequenceClosedEvent(closedEventInput({ reason: 'nope' })), /must be one of/);
-  assert.throws(() => buildEvaluationSequenceClosedEvent(closedEventInput({ comparisonEventHashes: Array.from({ length: 65 }, () => '1'.repeat(64)) })), /at most 64 hashes/);
-  assert.throws(() => buildEvaluationSequenceClosedEvent(closedEventInput({ learningReviewEventHashes: Array.from({ length: 17 }, () => '1'.repeat(64)) })), /at most 16 hashes/);
-  assert.throws(() => buildEvaluationSequenceClosedEvent(closedEventInput({ finalIncumbentIdentity: 'not-a-hash' })), /lowercase SHA-256/);
-  assert.throws(() => validateEvaluationSequenceClosedEvent({ ...closed, reason: 'drift' }), /recomputed event hash/);
-  assert.throws(() => validateEvaluationSequenceClosedEvent({ ...closed, extra: 1 }), /unknown field/);
-});
 
 test('T006b: LearningReviewEvent enforces findings, alternatives, outcomes, and identities', () => {
   const noProgress = buildLearningReviewEvent(learningEventInput());
@@ -8373,7 +7283,7 @@ test('T006b: a maximal learning event still serializes within the 16,384-byte bo
 });
 
 test('T006c: projection record and lane line carry the exact {event} payload', () => {
-  const event = buildObjectiveComparisonEvent(comparisonEventInput());
+  const event = buildLearningReviewEvent(learningEventInput());
   assert.deepEqual(buildProjectionRecord(event), { substantive: { event } });
   assert.equal(buildLaneEventLine(event), `- dude-run-event: ${canonicalJson({ event })}`);
 });
@@ -8388,7 +7298,7 @@ test('T006c: validateProjectionOwner requires the four surface functions', () =>
 
 test('T006c: projectEvent appends both surfaces and verifies exactly one byte-equivalent event', () => {
   const owner = projectionOwnerFake();
-  const event = buildObjectiveComparisonEvent(comparisonEventInput());
+  const event = buildLearningReviewEvent(learningEventInput());
   const projection = projectEvent(owner, event);
   assert.equal(owner._currentRun.length, 1);
   assert.equal(owner._lane.length, 1);
@@ -8399,7 +7309,7 @@ test('T006c: projectEvent appends both surfaces and verifies exactly one byte-eq
 });
 
 test('T006c: every projection tamper blocks reacquisition and verification', () => {
-  const event = buildObjectiveComparisonEvent(comparisonEventInput());
+  const event = buildLearningReviewEvent(learningEventInput());
   const project = (faults) => () => projectEvent(projectionOwnerFake(faults), event);
   assert.throws(project({ missing: true }), /projection is missing/);
   assert.throws(project({ duplicate: true }), /duplicate-conflicting/);
@@ -8414,38 +7324,6 @@ test('T006c: every projection tamper blocks reacquisition and verification', () 
   projectEvent(malformed, event);
   malformed._lane.push('- dude-run-event: {not json');
   assert.throws(() => reacquireProjection(malformed, event.eventHash, TARGET), /malformed/);
-});
-
-test('T006d: admitComparisonReference assigns increasing ordinals and evicts the oldest verified ref under pressure', () => {
-  const fixture = objectiveSequenceFixture();
-  const owner = projectionOwnerFake();
-  const seqId = /** @type {string} */ (fixture.sequence.sequenceIdentity);
-  let state = { ...emptyState(), evaluationSequences: [fixture.sequence] };
-  for (let seed = 1; seed <= 8; seed += 1) state = projectComparisonRef(state, seqId, owner, seed).state;
-  const row = state.evaluationSequences[0];
-  assert.equal(row.recentComparisons.length, 8);
-  assert.deepEqual(row.recentComparisons.map((entry) => entry.ordinal), [1, 2, 3, 4, 5, 6, 7, 8]);
-
-  const ninth = projectComparisonRef(state, seqId, owner, 9);
-  const row9 = ninth.state.evaluationSequences[0];
-  assert.equal(row9.recentComparisons.length, 8);
-  assert.deepEqual(row9.recentComparisons.map((entry) => entry.ordinal), [2, 3, 4, 5, 6, 7, 8, 9]);
-  assert.doesNotThrow(() => validateRunState(ninth.state));
-});
-
-test('T006d: a tampered projection blocks eviction and never drops an unprojected ref', () => {
-  const fixture = objectiveSequenceFixture();
-  const owner = projectionOwnerFake();
-  const seqId = /** @type {string} */ (fixture.sequence.sequenceIdentity);
-  let state = { ...emptyState(), evaluationSequences: [fixture.sequence] };
-  for (let seed = 1; seed <= 8; seed += 1) state = projectComparisonRef(state, seqId, owner, seed).state;
-  owner._faults.mutate = true; // the oldest ref can no longer re-verify
-  assert.throws(() => admitComparisonReference(state, seqId, {
-    comparisonIdentity: sha256('cmp-9'),
-    eventHash: sha256('evt-9'),
-    currentRunProjectionIdentity: sha256('cr-9'),
-    laneProjectionIdentity: sha256('lane-9'),
-  }, owner), /hash mismatch/);
 });
 
 test('T006d: admitLearningReviewReference stays sorted, bounded at 16, and evicts the lowest verified identity', () => {
@@ -8466,271 +7344,18 @@ test('T006d: admitLearningReviewReference stays sorted, bounded at 16, and evict
   assert.throws(() => admitLearningReviewReference(state, { ...first }, owner), /must not duplicate/);
 });
 
-test('T006e: resolveComparison keeps a better candidate, advances the incumbent, and releases', () => {
-  const fixture = objectiveSequenceFixture();
-  const owner = projectionOwnerFake();
-  const decision = fixtureDecision(fixture, ['8', '8', '8', '8', '8']);
-  assert.equal(decision.relation, 'better');
-  const result = resolveComparison(fixture.state, fixture.sequence, {
-    host: fixture.host, owner, decision, gateSet: fixtureGateSet(fixture),
-    candidateIdentity: fixture.candidate.candidateIdentity, candidateWriteSet: fixture.writeSet,
-  });
-  assert.equal(result.outcome, 'keep');
-  assert.equal(result.stopped, false);
-  assert.equal(result.event.decision, 'keep');
-  assert.equal(result.event.incumbentAfterIdentity, fixture.candidate.candidateIdentity);
-  const row = result.state.evaluationSequences[0];
-  assert.equal(row.incumbentCandidateIdentity, fixture.candidate.candidateIdentity);
-  assert.equal(row.state, 'open');
-  assert.ok(!Object.hasOwn(row, 'activeCheckpointIdentity'));
-  assert.equal(row.recentComparisons.length, 1);
-  assert.equal(fixture.host._map.size, 0); // released
-  assert.equal(fixture.host._files.get('src/a.mjs').bytes.toString(), 'poststate');
-  assert.doesNotThrow(() => reacquireProjection(owner, result.event.eventHash, TARGET));
-  // Objective evidence never completes a task: no completed tuple was recorded.
-  assert.equal(result.state.completed.length, 0);
-  assert.equal(result.state.pending.length, 0);
-});
-
-test('T006e: resolveComparison discards a worse candidate, restores, and leaves the incumbent', () => {
-  const fixture = objectiveSequenceFixture();
-  const owner = projectionOwnerFake();
-  const decision = fixtureDecision(fixture, ['12', '12', '12', '12', '12']);
-  assert.equal(decision.relation, 'worse');
-  const result = resolveComparison(fixture.state, fixture.sequence, {
-    host: fixture.host, owner, decision, gateSet: fixtureGateSet(fixture),
-    candidateIdentity: fixture.candidate.candidateIdentity, candidateWriteSet: fixture.writeSet,
-  });
-  assert.equal(result.outcome, 'discard');
-  assert.equal(result.event.decision, 'discard');
-  assert.equal(result.event.incumbentAfterIdentity, fixture.sequence.incumbentCandidateIdentity);
-  assert.ok(Object.hasOwn(result.event, 'restorationIdentity'));
-  const row = result.state.evaluationSequences[0];
-  assert.equal(row.incumbentCandidateIdentity, fixture.sequence.incumbentCandidateIdentity);
-  assert.equal(row.state, 'open');
-  assert.equal(fixture.host._files.get('src/a.mjs').bytes.toString(), 'prestate'); // restored
-  assert.equal(fixture.host._map.size, 0);
-});
-
-test('T006e: a restore fault records stop-unsettled, retains the context, and stops without release', () => {
-  const fixture = objectiveSequenceFixture({ faults: { failRestore: true } });
-  const owner = projectionOwnerFake();
-  const decision = fixtureDecision(fixture, ['12', '12', '12', '12', '12']);
-  const result = resolveComparison(fixture.state, fixture.sequence, {
-    host: fixture.host, owner, decision, gateSet: fixtureGateSet(fixture),
-    candidateIdentity: fixture.candidate.candidateIdentity, candidateWriteSet: fixture.writeSet,
-  });
-  assert.equal(result.outcome, 'stop-unsettled');
-  assert.equal(result.stopped, true);
-  assert.equal(result.event.decision, 'stop-unsettled');
-  assert.equal(result.event.incumbentAfterIdentity, null);
-  const row = result.state.evaluationSequences[0];
-  assert.equal(row.state, 'unsettled');
-  assert.equal(row.activeCheckpointIdentity, fixture.candidate.checkpointIdentity);
-  assert.equal(row.activeCandidateIdentity, fixture.candidate.candidateIdentity);
-  assert.equal(fixture.host._map.size, 1); // context retained, not released
-  assert.doesNotThrow(() => reacquireProjection(owner, result.event.eventHash, TARGET));
-});
-
-test('T006e: an equivalent candidate keeps only under a passing predeclared tie review', () => {
-  const fixture = objectiveSequenceFixture();
-  const owner = projectionOwnerFake();
-  const decision = fixtureDecision(fixture, ['10.3', '10.3', '10.3', '10.3', '10.3']);
-  assert.equal(decision.relation, 'equivalent');
-  const discard = resolveComparison(fixture.state, fixture.sequence, {
-    host: fixture.host, owner, decision, gateSet: fixtureGateSet(fixture),
-    candidateIdentity: fixture.candidate.candidateIdentity, candidateWriteSet: fixture.writeSet,
-  });
-  assert.equal(discard.outcome, 'discard'); // no tie review ⇒ non-keep
-
-  const fixture2 = objectiveSequenceFixture();
-  const owner2 = projectionOwnerFake();
-  const decision2 = fixtureDecision(fixture2, ['10.3', '10.3', '10.3', '10.3', '10.3']);
-  const keep = resolveComparison(fixture2.state, fixture2.sequence, {
-    host: fixture2.host, owner: owner2, decision: decision2, gateSet: fixtureGateSet(fixture2),
-    candidateIdentity: fixture2.candidate.candidateIdentity, candidateWriteSet: fixture2.writeSet,
-    tieReviewOutcome: 'candidate',
-  });
-  assert.equal(keep.outcome, 'keep');
-});
-
-test('T006f: closeEvaluationSequence projects a settled close and removes the row', () => {
-  const fixture = objectiveSequenceFixture();
-  const owner = projectionOwnerFake();
-  const kept = resolveComparison(fixture.state, fixture.sequence, {
-    host: fixture.host, owner, decision: fixtureDecision(fixture, ['8', '8', '8', '8', '8']),
-    gateSet: fixtureGateSet(fixture), candidateIdentity: fixture.candidate.candidateIdentity, candidateWriteSet: fixture.writeSet,
-  });
-  const closed = closeEvaluationSequence(kept.state, /** @type {string} */ (fixture.sequence.sequenceIdentity), {
-    owner, reason: 'task-completed', comparisonEventHashes: [kept.event.eventHash], learningReviewEventHashes: [],
-  });
-  assert.equal(closed.event.type, 'evaluation-sequence-closed');
-  assert.equal(closed.event.reason, 'task-completed');
-  assert.equal(closed.event.finalIncumbentIdentity, fixture.candidate.candidateIdentity);
-  assert.equal(closed.state.evaluationSequences.length, 0);
-  assert.doesNotThrow(() => reacquireProjection(owner, closed.event.eventHash, TARGET));
-});
-
-test('T006f: an unsettled restoration blocks sequence close', () => {
-  const fixture = objectiveSequenceFixture({ faults: { failRestore: true } });
-  const owner = projectionOwnerFake();
-  const stopped = resolveComparison(fixture.state, fixture.sequence, {
-    host: fixture.host, owner, decision: fixtureDecision(fixture, ['12', '12', '12', '12', '12']),
-    gateSet: fixtureGateSet(fixture), candidateIdentity: fixture.candidate.candidateIdentity, candidateWriteSet: fixture.writeSet,
-  });
-  assert.throws(() => closeEvaluationSequence(stopped.state, /** @type {string} */ (fixture.sequence.sequenceIdentity), {
-    owner, reason: 'task-completed', comparisonEventHashes: [], learningReviewEventHashes: [],
-  }), /unsettled restoration blocks/);
-});
-
-test('T006f: drift restores then closes, and rebaseline opens an independent baseline', () => {
-  const fixture = objectiveSequenceFixture();
-  const owner = projectionOwnerFake();
-  const drift = fixtureDecision(fixture, ['8', '8', '8', '8', '8'], { fresh: '9'.repeat(64) });
-  assert.equal(drift.reason, 'binding-drift');
-  assert.equal(drift.relation, 'incomparable');
-  const settled = resolveComparison(fixture.state, fixture.sequence, {
-    host: fixture.host, owner, decision: drift, gateSet: fixtureGateSet(fixture),
-    candidateIdentity: fixture.candidate.candidateIdentity, candidateWriteSet: fixture.writeSet,
-  });
-  assert.equal(settled.outcome, 'discard'); // incomparable ⇒ restore first
-  assert.equal(fixture.host._files.get('src/a.mjs').bytes.toString(), 'prestate');
-  const closedDrift = closeEvaluationSequence(settled.state, /** @type {string} */ (fixture.sequence.sequenceIdentity), {
-    owner, reason: 'drift', comparisonEventHashes: [settled.event.eventHash], learningReviewEventHashes: [],
-  });
-  assert.equal(closedDrift.event.reason, 'drift');
-
-  // Rebaseline: close with reason rebaseline then open a fresh baseline over the retained incumbent.
-  const fixture2 = objectiveSequenceFixture();
-  const owner2 = projectionOwnerFake();
-  const kept = resolveComparison(fixture2.state, fixture2.sequence, {
-    host: fixture2.host, owner: owner2, decision: fixtureDecision(fixture2, ['8', '8', '8', '8', '8']),
-    gateSet: fixtureGateSet(fixture2), candidateIdentity: fixture2.candidate.candidateIdentity, candidateWriteSet: fixture2.writeSet,
-  });
-  const closedRebaseline = closeEvaluationSequence(kept.state, /** @type {string} */ (fixture2.sequence.sequenceIdentity), {
-    owner: owner2, reason: 'rebaseline', comparisonEventHashes: [kept.event.eventHash], learningReviewEventHashes: [],
-  });
-  assert.equal(closedRebaseline.event.reason, 'rebaseline');
-  assert.equal(closedRebaseline.state.evaluationSequences.length, 0);
-  const newContract = numericContract({ id: 'obj-rebaseline', subject: 'New objective' });
-  const retained = fileDescriptors({ 'src/a.mjs': 'poststate', 'src/a.test.mjs': 'guard' });
-  const rebaseline = createEvaluationSequence(TARGET, objectivePlanBody(newContract), newContract, candidateWriteSet(), retained);
-  assert.notEqual(rebaseline.sequenceIdentity, fixture2.sequence.sequenceIdentity);
-  assert.equal(rebaseline.baselineCandidateIdentity, stateIdentity(writeSetIdentity(candidateWriteSet()), retained));
-});
-
-test('T006g: settleTaskBoundary closes a settled sequence and readies the lane without mutating it', () => {
-  const fixture = objectiveSequenceFixture();
-  const owner = projectionOwnerFake();
-  const kept = resolveComparison(fixture.state, fixture.sequence, {
-    host: fixture.host, owner, decision: fixtureDecision(fixture, ['8', '8', '8', '8', '8']),
-    gateSet: fixtureGateSet(fixture), candidateIdentity: fixture.candidate.candidateIdentity, candidateWriteSet: fixture.writeSet,
-  });
-  const boundary = settleTaskBoundary(kept.state, {
-    host: fixture.host, owner, target: TARGET, taskKey: TASK_KEY, reason: 'task-completed',
-    comparisonEventHashes: [kept.event.eventHash], learningReviewEventHashes: [],
-  });
-  assert.equal(boundary.readyForLaneTransition, true);
-  assert.equal(boundary.stopped, false);
-  assert.equal(boundary.close.event.reason, 'task-completed');
-  assert.equal(boundary.state.evaluationSequences.length, 0); // row removed — no post-task optimization
-  assert.equal(boundary.state.completed.length, 0); // no lane transition or task completion invoked
-  assert.equal(boundary.state.pending.length, 0);
-});
-
-test('T006g: settleTaskBoundary settles a live candidate before closing on a block', () => {
-  const fixture = objectiveSequenceFixture();
-  const owner = projectionOwnerFake();
-  const boundary = settleTaskBoundary(fixture.state, {
-    host: fixture.host, owner, target: TARGET, taskKey: TASK_KEY, reason: 'task-blocked',
-    comparisonEventHashes: [], learningReviewEventHashes: [],
-    settle: {
-      decision: fixtureDecision(fixture, ['12', '12', '12', '12', '12']),
-      gateSet: fixtureGateSet(fixture),
-      candidateIdentity: fixture.candidate.candidateIdentity,
-      candidateWriteSet: fixture.writeSet,
-    },
-  });
-  assert.equal(boundary.readyForLaneTransition, true);
-  assert.equal(boundary.comparison.outcome, 'discard');
-  assert.equal(boundary.close.event.reason, 'task-blocked');
-  assert.equal(boundary.state.evaluationSequences.length, 0);
-  assert.equal(fixture.host._files.get('src/a.mjs').bytes.toString(), 'prestate');
-  assert.equal(fixture.host._map.size, 0);
-});
-
-test('T006h: renderAuditSummary emits the exact shape and reads cycle reasons from the surface', () => {
-  const fixture = objectiveSequenceFixture();
-  const owner = projectionOwnerFake();
-  const kept = resolveComparison(fixture.state, fixture.sequence, {
-    host: fixture.host, owner, decision: fixtureDecision(fixture, ['8', '8', '8', '8', '8']),
-    gateSet: fixtureGateSet(fixture), candidateIdentity: fixture.candidate.candidateIdentity, candidateWriteSet: fixture.writeSet,
-  });
-  const closed = closeEvaluationSequence(kept.state, /** @type {string} */ (fixture.sequence.sequenceIdentity), {
-    owner, reason: 'task-completed', comparisonEventHashes: [kept.event.eventHash], learningReviewEventHashes: [],
-  });
-  const history = { currentRunRecords: owner.acquireCurrentRunRecords(), laneEventLines: owner.acquireLaneEventLines() };
-  const summary = renderAuditSummary(closed.state, history, {
-    tasksAttempted: [SECOND_TASK_KEY, TASK_KEY],
-    tasksCompleted: [TASK_KEY],
-    tasksSkipped: [],
-    tasksBlocked: [],
-    cycles: [
-      { target: canonicalTarget(TARGET), kind: 'objective', eventHash: kept.event.eventHash },
-      { target: canonicalTarget(TARGET), kind: 'objective', eventHash: closed.event.eventHash },
-      { target: canonicalTarget(TARGET), kind: 'recovery', reason: 'Recovered after a failed attempt.' },
-    ],
-    objectiveSequences: [
-      { target: canonicalTarget(TARGET), taskKey: TASK_KEY, sequenceIdentity: fixture.sequence.sequenceIdentity, contractHash: fixture.contractHash, outcome: 'kept', closeEventHash: closed.event.eventHash },
-    ],
-    filesChanged: ['src/a.mjs'],
-    verificationOutcomes: ['candidate-bound-completion passed'],
-    autonomousDecisions: ['Kept a materially better candidate.'],
-    remainingRisks: [],
-  });
-  assert.deepEqual(Object.keys(summary).sort(), [
-    'autonomousDecisions', 'cycles', 'filesChanged', 'objectiveSequences', 'remainingRisks',
-    'tasksAttempted', 'tasksBlocked', 'tasksCompleted', 'tasksSkipped', 'verificationOutcomes',
-  ]);
-  assert.deepEqual(summary.tasksAttempted, [TASK_KEY, SECOND_TASK_KEY].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))));
-  assert.equal(summary.cycles.find((cycle) => cycle.eventHash === kept.event.eventHash).reason, 'keep');
-  assert.equal(summary.cycles.find((cycle) => cycle.eventHash === closed.event.eventHash).reason, 'task-completed');
-  const recoveryCycle = summary.cycles.find((cycle) => cycle.kind === 'recovery');
-  assert.ok(!Object.hasOwn(recoveryCycle, 'eventHash'));
-  assert.equal(summary.objectiveSequences[0].outcome, 'kept');
-  assert.equal(summary.objectiveSequences[0].closeEventHash, closed.event.eventHash);
-});
-
-test('T006h: audit enforces cycle eventHash rules and a guarded empty objectiveSequences array', () => {
-  const base = {
-    tasksAttempted: [], tasksCompleted: [], tasksSkipped: [], tasksBlocked: [],
-    cycles: [], objectiveSequences: [], filesChanged: [], verificationOutcomes: [], autonomousDecisions: [], remainingRisks: [],
-  };
-  const empty = { currentRunRecords: [], laneEventLines: [] };
-  const summary = renderAuditSummary(emptyState(), empty, base);
-  assert.deepEqual(summary.objectiveSequences, []);
-  assert.deepEqual(summary.cycles, []);
-  // A recovery cycle cannot carry an eventHash.
-  assert.throws(() => renderAuditSummary(emptyState(), empty, { ...base, cycles: [{ target: canonicalTarget(TARGET), kind: 'recovery', reason: 'x', eventHash: '1'.repeat(64) }] }), /unknown field/);
-  // An objective cycle requires an eventHash present on the surface.
-  assert.throws(() => renderAuditSummary(emptyState(), empty, { ...base, cycles: [{ target: canonicalTarget(TARGET), kind: 'objective', reason: 'x' }] }), /unknown field|missing field/);
-  assert.throws(() => renderAuditSummary(emptyState(), empty, { ...base, cycles: [{ target: canonicalTarget(TARGET), kind: 'objective', eventHash: '1'.repeat(64) }] }), /must match a freshly reacquired/);
-  // The reserved no-objective outcome is not admitted.
-  assert.throws(() => renderAuditSummary(emptyState(), empty, { ...base, objectiveSequences: [{ target: canonicalTarget(TARGET), taskKey: TASK_KEY, sequenceIdentity: '1'.repeat(64), contractHash: '2'.repeat(64), outcome: 'no-objective' }] }), /must be one of/);
-});
-
-test('T006i: authorize carries objective arrays forward unchanged and leaves guarded output absent', () => {
-  const fixture = objectiveSequenceFixture();
-  const seqState = { ...emptyState({ recover: true }), evaluationSequences: [fixture.sequence] };
+test('T006i: authorize carries optional evaluation and learning-reference state unchanged', () => {
+  const sequence = evaluationSequenceRow('optional-carry');
+  const seqState = { ...emptyState({ recover: true }), evaluationSequences: [sequence] };
   const raw = transitionRaw(TARGET);
   const inspection = buildInspection(TARGET, collectEvidence(TARGET, raw, {}, 'guarded'));
   const assessment = transitionAssessment('retry-task', { evidenceHash: inspection.evidenceHash });
   const authorized = authorizeRuntimeAttempt(seqState, TARGET, raw, assessment, 'recovery');
   assert.equal(authorized.authorized, true);
-  assert.deepEqual(authorized.state.evaluationSequences, [fixture.sequence]);
+  assert.deepEqual(authorized.state.evaluationSequences, [sequence]);
   assert.ok(!Object.hasOwn(authorized.state, 'learningReviewRefs'));
 
-  // Guarded no-objective input stays byte-identical: both optional arrays absent, no sequence/event/projection.
+  // Guarded input stays byte-identical with both optional arrays absent.
   const bare = authorizeRuntimeAttempt(emptyState({ recover: true }), TARGET, raw, assessment, 'recovery');
   assert.ok(!Object.hasOwn(bare.state, 'evaluationSequences'));
   assert.ok(!Object.hasOwn(bare.state, 'learningReviewRefs'));
@@ -8883,56 +7508,6 @@ test('T001 Phase 1: exact-approach repetition seals only its target and free-for
     assert.strictEqual(result.state, initial);
     assert.ok(!Object.hasOwn(result.state, 'learningGovernance'));
   }
-});
-
-test('T001 Phase 1: required learning seals no-progress, block, close, resolving status, controlled end, and another attempt', () => {
-  // Arrange
-  const fixture = exactApproachSealFixture();
-  const objective = objectiveSequenceFixture();
-  const owner = projectionOwnerFake();
-  const state = { ...fixture.sealed.state, evaluationSequences: [objective.sequence] };
-  validateRunState(state);
-  const priorPending = fixture.authorized.state.pending[0];
-
-  // Act and Assert
-  const anotherAttempt = authorizeAttempt(
-    state,
-    TARGET,
-    fixture.raw,
-    transitionAssessment('retry-task', { targets: ['src/another-attempt.mjs'] }),
-    'recovery',
-  );
-  assert.equal(anotherAttempt.authorized, false);
-  assert.equal(anotherAttempt.reason, 'learning-required');
-  assert.strictEqual(anotherAttempt.state, state);
-
-  for (const outcome of ['succeeded', 'blocked', 'no-change', 'interrupted']) {
-    const disposition = completeAttempt(state, completionInput(priorPending, { outcome }));
-    assert.equal(disposition.completed, false, outcome);
-    assert.equal(disposition.reason, 'pending-not-found', outcome);
-    assert.strictEqual(disposition.state, state, outcome);
-  }
-  for (const reason of ['no-progress', 'task-completed', 'task-blocked', 'controlled-end']) {
-    assert.throws(() => closeEvaluationSequence(
-      state,
-      /** @type {string} */ (objective.sequence.sequenceIdentity),
-      { owner, reason, comparisonEventHashes: [], learningReviewEventHashes: [] },
-    ), /sealed: learning-required/, reason);
-  }
-  for (const reason of ['task-completed', 'task-blocked']) {
-    assert.throws(() => settleTaskBoundary(state, {
-      host: objective.host,
-      owner,
-      target: TARGET,
-      taskKey: TASK_KEY,
-      reason,
-      comparisonEventHashes: [],
-      learningReviewEventHashes: [],
-    }), /sealed: learning-required/, reason);
-  }
-  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
-  assert.deepEqual(owner.acquireLaneEventLines(), []);
-  assert.deepEqual(state, { ...fixture.sealed.state, evaluationSequences: [objective.sequence] });
 });
 
 test('T001 Phase 1: a second governance case refuses at capacity without consuming or overwriting state', () => {
@@ -9234,886 +7809,25 @@ test('T001 cycle 1 regression: authorization-time exact-approach repeat on B pre
   assert.ok(!Object.hasOwn(retentionRefused.state, 'learningGovernance'));
 });
 
-test('T001 cycle 1 regression: governed resolveComparison restores before release and accepts nothing', () => {
-  // Arrange
-  const objective = objectiveSequenceFixture();
-  const governed = exactApproachSealFixture().sealed.state;
-  const state = { ...governed, evaluationSequences: [objective.sequence] };
-  validateRunState(state);
-  const owner = projectionOwnerFake();
-  const decision = fixtureDecision(objective, ['8', '8', '8', '8', '8']);
-  const calls = [];
-  const restore = objective.host.restore.bind(objective.host);
-  const release = objective.host.release.bind(objective.host);
-  objective.host.restore = (checkpointIdentity) => {
-    calls.push('restore');
-    return restore(checkpointIdentity);
-  };
-  objective.host.release = (checkpointIdentity) => {
-    const file = objective.host._files.get('src/a.mjs');
-    calls.push(file?.state === 'file' ? `release:${file.bytes.toString()}` : 'release:missing');
-    return release(checkpointIdentity);
-  };
-  const before = clone(state);
-  const canonicalBefore = canonicalJson(state);
-  const incumbentBefore = state.evaluationSequences[0].incumbentCandidateIdentity;
-  assert.equal(objective.host._files.get('src/a.mjs')?.bytes.toString(), 'poststate');
-  assert.equal(decision.relation, 'better');
-
-  // Act
-  const resolve = () => resolveComparison(state, objective.sequence, {
-    host: objective.host,
-    owner,
-    decision,
-    gateSet: fixtureGateSet(objective),
-    candidateIdentity: objective.candidate.candidateIdentity,
-    candidateWriteSet: objective.writeSet,
-  });
-
-  // Assert
-  assert.throws(resolve, /sealed: learning-required/);
-  assert.deepEqual(calls, ['restore', 'release:prestate']);
-  assert.equal(objective.host._files.get('src/a.mjs')?.bytes.toString(), 'prestate');
-  assert.equal(objective.host._map.size, 0);
-  assert.equal(objective.host.get(objective.candidate.checkpointIdentity), undefined);
-  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
-  assert.deepEqual(owner.acquireLaneEventLines(), []);
-  assert.equal(canonicalJson(state), canonicalBefore);
-  assert.deepEqual(state, before);
-  assert.equal(state.evaluationSequences[0].incumbentCandidateIdentity, incumbentBefore);
-  assert.deepEqual(state.learningGovernance.target, canonicalTarget(TARGET));
-});
-
-test('T001 owner-returned fault outcome: governed restoration fault returns paired unsettled retention', () => {
-  // Arrange
-  const objective = objectiveSequenceFixture({ faults: { failRestore: true } });
-  const governed = exactApproachSealFixture().sealed.state;
-  const state = { ...governed, evaluationSequences: [objective.sequence] };
-  validateRunState(state);
-  const owner = projectionOwnerFake();
-  const decision = fixtureDecision(objective, ['8', '8', '8', '8', '8']);
-  const release = objective.host.release.bind(objective.host);
-  let releaseCalls = 0;
-  objective.host.release = (checkpointIdentity) => {
-    releaseCalls += 1;
-    return release(checkpointIdentity);
-  };
-  const before = clone(state);
-  const canonicalBefore = canonicalJson(state);
-  const incumbentBefore = state.evaluationSequences[0].incumbentCandidateIdentity;
-
-  // Act
-  const result = resolveComparison(state, objective.sequence, {
-    host: objective.host,
-    owner,
-    decision,
-    gateSet: fixtureGateSet(objective),
-    candidateIdentity: objective.candidate.candidateIdentity,
-    candidateWriteSet: objective.writeSet,
-  });
-
-  // Assert
-  const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === objective.sequence.sequenceIdentity);
-  assert.equal(result.outcome, 'stop-unsettled');
-  assert.equal(result.stopped, true);
-  assert.ok(nextRow);
-  assert.equal(nextRow.state, 'unsettled');
-  assert.equal(nextRow.activeCheckpointIdentity, objective.candidate.checkpointIdentity);
-  assert.equal(nextRow.activeCandidateIdentity, objective.candidate.candidateIdentity);
-  assert.equal(nextRow.incumbentCandidateIdentity, incumbentBefore);
-  assert.equal(Object.hasOwn(result, 'event'), false);
-  assert.equal(Object.hasOwn(result, 'projection'), false);
-  assert.equal(releaseCalls, 0);
-  assert.equal(objective.host._files.get('src/a.mjs')?.bytes.toString(), 'poststate');
-  assert.equal(objective.host._map.size, 1);
-  assert.equal(objective.host.get(objective.candidate.checkpointIdentity).phase, 'unsettled');
-  assert.equal(objective.host.get(objective.candidate.checkpointIdentity).candidateIdentity, objective.candidate.candidateIdentity);
-  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
-  assert.deepEqual(owner.acquireLaneEventLines(), []);
-  assert.equal(canonicalJson(state), canonicalBefore);
-  assert.deepEqual(state, before);
-  assert.equal(state.evaluationSequences[0].incumbentCandidateIdentity, incumbentBefore);
-  assert.deepEqual(state.learningGovernance.target, canonicalTarget(TARGET));
-  assert.throws(() => closeEvaluationSequence(result.state, objective.sequence.sequenceIdentity, {
-    owner,
-    reason: 'hard-stop',
-    comparisonEventHashes: [],
-    learningReviewEventHashes: [],
-  }), TypeError);
-  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
-  assert.deepEqual(owner.acquireLaneEventLines(), []);
-});
-
-/** Build two independently bound live candidates over one host for identity-substitution checks. @param {Record<string, unknown>} [options] */
-function cycle2BoundContexts(options = {}) {
-  const writeSetA = options.writeSetA || candidateWriteSet();
-  const writeSetB = { candidatePaths: ['src/b.mjs'], protectedPaths: ['src/b.test.mjs'] };
-  const contractA = numericContract();
-  const contractB = numericContract({ id: 'obj-cycle-2-b', subject: 'Second bound objective' });
-  const initialFilesA = options.initialFilesA || { 'src/a.mjs': 'a-prestate', 'src/a.test.mjs': 'guard' };
-  const candidatePathA = options.candidatePathA || writeSetA.candidatePaths[0];
-  const candidateContentA = options.candidateContentA || 'a-candidate';
-  const initialA = fileDescriptors(initialFilesA);
-  const initialB = fileDescriptors({ 'src/b.mjs': 'b-prestate', 'src/b.test.mjs': 'b-guard' });
-  const sequenceA = createEvaluationSequence(TARGET, objectivePlanBody(contractA), contractA, writeSetA, initialA);
-  const sequenceB = createEvaluationSequence(SECOND_TARGET, objectivePlanBody(contractB, SECOND_TASK_KEY), contractB, writeSetB, initialB);
-  const host = checkpointHostFake({
-    ...initialFilesA,
-    'src/b.mjs': 'b-prestate',
-    'src/b.test.mjs': 'b-guard',
-  });
-  const capturedA = acquireCheckpoint(host, {
-    target: TARGET,
-    sequenceIdentity: sequenceA.sequenceIdentity,
-    contractHash: sequenceA.contractHash,
-    candidateWriteSet: writeSetA,
-  });
-  host._setFile(candidatePathA, candidateContentA);
-  const candidateA = captureCandidate(host, capturedA, writeSetA);
-  const capturedB = acquireCheckpoint(host, {
-    target: SECOND_TARGET,
-    sequenceIdentity: sequenceB.sequenceIdentity,
-    contractHash: sequenceB.contractHash,
-    candidateWriteSet: writeSetB,
-  });
-  host._setFile('src/b.mjs', 'b-candidate');
-  const candidateB = captureCandidate(host, capturedB, writeSetB);
-  const governed = exactApproachSealFixture().sealed.state;
-  const state = {
-    ...governed,
-    evaluationSequences: [sequenceA, sequenceB].sort((left, right) => Buffer.compare(
-      Buffer.from(left.sequenceIdentity),
-      Buffer.from(right.sequenceIdentity),
-    )),
-  };
-  validateRunState(state);
-  return {
-    host,
-    state,
-    a: {
-      target: TARGET,
-      writeSet: writeSetA,
-      contract: contractA,
-      sequence: sequenceA,
-      candidate: candidateA,
-      candidatePath: candidatePathA,
-    },
-    b: { target: SECOND_TARGET, writeSet: writeSetB, contract: contractB, sequence: sequenceB, candidate: candidateB },
-  };
-}
-
-/** @param {ReturnType<typeof cycle2BoundContexts>['a']} context @param {Record<string, unknown>} [overrides] */
-function cycle2Decision(context, overrides = {}) {
-  const target = overrides.target || context.target;
-  const contract = overrides.contract || context.contract;
-  const contractHash = sha256(canonicalJson(contract));
-  const observation = (role, samples) => numericObservation(role, samples, { target, contractHash });
-  return deriveComparisonDecision({
-    observations: [
-      observation('baseline', ['10', '10', '10', '10', '10']),
-      observation('incumbent', ['10', '10', '10', '10', '10']),
-      observation('candidate', ['8', '8', '8', '8', '8']),
-    ],
-    contract,
-    sequenceIdentity: overrides.sequenceIdentity || context.sequence.sequenceIdentity,
-    checkpointIdentity: overrides.checkpointIdentity || context.candidate.checkpointIdentity,
-    activeBindingIdentity: '7'.repeat(64),
-    freshBindingIdentity: '7'.repeat(64),
-  });
-}
-
-/** @param {ReturnType<typeof cycle2BoundContexts>['a']} context @param {Record<string, unknown>} [overrides] */
-function cycle2GateSet(context, overrides = {}) {
-  return buildGateSet({
-    target: overrides.target || context.target,
-    checkpointIdentity: overrides.checkpointIdentity || context.candidate.checkpointIdentity,
-    candidateIdentity: overrides.candidateIdentity || context.candidate.candidateIdentity,
-    contractHash: overrides.contractHash || context.sequence.contractHash,
-    gates: passingGateRows(),
-  });
-}
-
-/** Capture every file and live checkpoint byte represented by the in-memory host. */
-function cycle2HostSnapshot(host) {
-  const files = [...host._files.entries()].map(([filePath, entry]) => ({
-    path: filePath,
-    state: entry.state,
-    ...(entry.state === 'file' ? { bytes: entry.bytes.toString('base64') } : {}),
-  }));
-  const contexts = [...host._map.entries()].map(([checkpointIdentity, context]) => ({
-    checkpointIdentity,
-    phase: context.phase,
-    writeSet: context.writeSet,
-    prestate: context.prestate.descriptors,
-    prestateBytes: [...context.prestate.bytesByPath.entries()].map(([filePath, bytes]) => ({
-      path: filePath,
-      bytes: bytes.toString('base64'),
-    })),
-    ...(Object.hasOwn(context, 'poststateIdentity') ? { poststateIdentity: context.poststateIdentity } : {}),
-    ...(Object.hasOwn(context, 'candidateIdentity') ? { candidateIdentity: context.candidateIdentity } : {}),
-  }));
-  return canonicalJson({ files, contexts });
-}
-
-/** Snapshot one stored checkpoint context, optionally normalizing its expected phase. */
-function cycle2ContextSnapshot(host, checkpointIdentity, phase) {
-  const context = host._map.get(checkpointIdentity);
-  assert.ok(context, `missing checkpoint context ${checkpointIdentity}`);
-  return canonicalJson({
-    phase: phase || context.phase,
-    writeSet: context.writeSet,
-    prestate: context.prestate.descriptors,
-    prestateBytes: [...context.prestate.bytesByPath.entries()].map(([filePath, bytes]) => ({
-      path: filePath,
-      bytes: bytes.toString('base64'),
-    })),
-    poststateIdentity: context.poststateIdentity,
-    candidateIdentity: context.candidateIdentity,
-  });
-}
-
-/** Snapshot one host file without invoking a checkpoint owner method. */
-function cycle2FileSnapshot(host, filePath) {
-  const entry = host._files.get(filePath);
-  if (!entry) return canonicalJson({ state: 'absent' });
-  return canonicalJson({
-    state: entry.state,
-    ...(entry.state === 'file' ? { bytes: entry.bytes.toString('base64') } : {}),
-  });
-}
-
-/** @param {ReturnType<typeof checkpointHostFake>} host */
-function cycle2CheckpointEffects(host) {
-  const calls = [];
-  for (const method of ['preflight', 'open', 'probe', 'get', 'setPhase', 'markPoststate', 'restore', 'release']) {
-    const original = host[method].bind(host);
-    host[method] = (...args) => {
-      calls.push(method);
-      return original(...args);
-    };
-  }
-  return calls;
-}
-
-/** Wrap a checkpoint-owner value and count any JavaScript Proxy trap. */
-function checkpointProxy(value) {
-  let trapCalls = 0;
-  const trap = () => {
-    trapCalls += 1;
-    throw new Error('checkpoint Proxy trap must not execute');
-  };
-  return {
-    value: new Proxy(value, {
-      defineProperty: trap,
-      deleteProperty: trap,
-      get: trap,
-      getOwnPropertyDescriptor: trap,
-      getPrototypeOf: trap,
-      has: trap,
-      isExtensible: trap,
-      ownKeys: trap,
-      preventExtensions: trap,
-      set: trap,
-      setPrototypeOf: trap,
-    }),
-    trapCalls: () => trapCalls,
-  };
-}
-
-/** Proxy the outer checkpoint view, its prestate array, or its first descriptor row. */
-function checkpointViewProxy(context, location) {
-  if (location === 'outer') return checkpointProxy(context);
-  if (location === 'array') {
-    const observed = checkpointProxy(context.prestate);
-    return { value: { ...context, prestate: observed.value }, trapCalls: observed.trapCalls };
-  }
-  const observed = checkpointProxy(context.prestate[0]);
-  return {
-    value: { ...context, prestate: [observed.value, ...context.prestate.slice(1)] },
-    trapCalls: observed.trapCalls,
-  };
-}
-
-/** Assert the common fail-closed successor contract for one first-read owner outcome. */
-function assertCycle2Unresolved({
-  fixture,
-  owner,
-  result,
-  outcome,
-  activeCheckpointIdentity,
-  activeCandidateIdentity,
-  stateBefore,
-  hostBefore,
-  otherContextBefore,
-  otherFileBefore,
-  expectedSelectedContext,
-  effects,
-  label,
-}) {
-  const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity);
-  const unrelatedRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.b.sequence.sequenceIdentity);
-  assert.equal(result.outcome, outcome, label);
-  assert.equal(result.stopped, true, label);
-  assert.ok(nextRow, label);
-  assert.equal(nextRow.state, outcome === 'stop-unsettled' ? 'unsettled' : 'open', label);
-  assert.equal(nextRow.activeCheckpointIdentity, activeCheckpointIdentity, label);
-  assert.equal(nextRow.activeCandidateIdentity, activeCandidateIdentity, label);
-  assert.equal(nextRow.incumbentCandidateIdentity, fixture.a.sequence.incumbentCandidateIdentity, label);
-  assert.deepEqual(unrelatedRow, fixture.b.sequence, label);
-  assert.equal(Object.hasOwn(result, 'event'), false, label);
-  assert.equal(Object.hasOwn(result, 'projection'), false, label);
-  assert.equal(effects.includes('restore'), false, label);
-  assert.equal(effects.includes('probe'), false, label);
-  assert.equal(effects.includes('release'), false, label);
-  assert.equal(canonicalJson(fixture.state), stateBefore, label);
-  assert.equal(cycle2ContextSnapshot(fixture.host, fixture.b.candidate.checkpointIdentity), otherContextBefore, label);
-  assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'), otherFileBefore, label);
-  assert.deepEqual(owner._currentRun, [], label);
-  assert.deepEqual(owner._lane, [], label);
-  if (outcome === 'contract-mismatch') {
-    assert.equal(cycle2HostSnapshot(fixture.host), hostBefore, label);
-  } else {
-    assert.equal(
-      cycle2ContextSnapshot(fixture.host, activeCheckpointIdentity),
-      expectedSelectedContext,
-      label,
-    );
-  }
-  validateRunState(result.state);
-  const successorBeforeClose = canonicalJson(result.state);
-  assert.throws(() => closeEvaluationSequence(result.state, fixture.a.sequence.sequenceIdentity, {
-    owner,
-    reason: 'hard-stop',
-    comparisonEventHashes: [],
-    learningReviewEventHashes: [],
-  }), TypeError, label);
-  assert.equal(canonicalJson(result.state), successorBeforeClose, label);
-  assert.deepEqual(owner._currentRun, [], label);
-  assert.deepEqual(owner._lane, [], label);
-}
-
-test('T001 pre-read owner envelope: static mismatches throw before host reads or effects', () => {
-  // Arrange
-  const fixture = cycle2BoundContexts();
-  const owner = projectionOwnerFake();
-  const decisionA = cycle2Decision(fixture.a);
-  const decisionB = cycle2Decision(fixture.b);
-  const gateSetA = cycle2GateSet(fixture.a);
-  const gateSetB = cycle2GateSet(fixture.b);
-  const decisionFor = (overrides) => cycle2Decision(fixture.a, overrides);
-  const gateSetFor = (overrides) => cycle2GateSet(fixture.a, overrides);
-  const cases = [
-    ['target', {
-      decision: decisionFor({ target: fixture.b.target }),
-      gateSet: gateSetFor({ target: fixture.b.target }),
-    }],
-    ['sequence identity', { decision: decisionFor({ sequenceIdentity: fixture.b.sequence.sequenceIdentity }) }],
-    ['contract hash', {
-      decision: decisionFor({ contract: fixture.b.contract }),
-      gateSet: gateSetFor({ contractHash: fixture.b.sequence.contractHash }),
-    }],
-    ['decision identity', { decision: { ...decisionA, comparisonIdentity: decisionB.comparisonIdentity } }],
-    ['GateSet identity', { gateSet: { ...gateSetA, gateSetIdentity: gateSetB.gateSetIdentity } }],
-    ['GateSet order', {
-      gateSet: { ...gateSetA, gates: [gateSetA.gates[1], gateSetA.gates[0], ...gateSetA.gates.slice(2)] },
-    }],
-    ['checkpoint request', {
-      decision: decisionFor({ checkpointIdentity: fixture.b.candidate.checkpointIdentity }),
-    }],
-    ['candidate request', {
-      candidateIdentity: fixture.b.candidate.candidateIdentity,
-    }],
-    ['stale selected sequence row', {
-      sequence: { ...fixture.a.sequence, incumbentCandidateIdentity: fixture.b.sequence.incumbentCandidateIdentity },
-    }],
-    ['mismatched selected RunState row', {
-      state: {
-        ...fixture.state,
-        evaluationSequences: fixture.state.evaluationSequences.map((row) => (
-          row.sequenceIdentity === fixture.a.sequence.sequenceIdentity
-            ? { ...row, incumbentCandidateIdentity: fixture.b.sequence.incumbentCandidateIdentity }
-            : row
-        )),
-      },
-    }],
-  ];
-  const effects = cycle2CheckpointEffects(fixture.host);
-  const stateBefore = canonicalJson(fixture.state);
-  const hostBefore = cycle2HostSnapshot(fixture.host);
-
-  for (const [label, substitutions] of cases) {
-    // Arrange
-    effects.length = 0;
-    const selectedState = substitutions.state || fixture.state;
-    const selectedStateBefore = canonicalJson(selectedState);
-
-    // Act
-    const resolve = () => resolveComparison(selectedState, substitutions.sequence || fixture.a.sequence, {
-      host: fixture.host,
-      owner,
-      decision: substitutions.decision || decisionA,
-      gateSet: substitutions.gateSet || gateSetA,
-      candidateIdentity: substitutions.candidateIdentity || fixture.a.candidate.candidateIdentity,
-      candidateWriteSet: substitutions.candidateWriteSet || fixture.a.writeSet,
-    });
-
-    // Assert
-    assert.throws(resolve, TypeError, label);
-    assert.deepEqual(effects, [], label);
-    assert.equal(cycle2HostSnapshot(fixture.host), hostBefore, label);
-    assert.equal(canonicalJson(selectedState), selectedStateBefore, label);
-    assert.equal(canonicalJson(fixture.state), stateBefore, label);
-    assert.deepEqual(owner._currentRun, [], label);
-    assert.deepEqual(owner._lane, [], label);
-  }
-});
-
-test('T001 pre-read owner envelope: first-read faults return quarantine or proven paired unsettled', () => {
-  /** Replace the selected checkpoint view without changing the stored context. */
-  const overrideSelectedGet = (transform) => (fixture) => {
-    const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-    const get = fixture.host.get.bind(fixture.host);
-    fixture.host.get = (id) => {
-      const context = get(id);
-      if (id !== checkpointIdentity || !context) return context;
-      return transform(/** @type {Record<string, any>} */ (context), fixture, get);
-    };
-  };
-  const withoutField = (field) => overrideSelectedGet((context) => {
-    const next = { ...context };
-    delete next[field];
-    return next;
-  });
-  const withField = (field, value) => overrideSelectedGet((context) => ({ ...context, [field]: value }));
-  const withFirstDescriptor = (transform) => overrideSelectedGet((context) => ({
-    ...context,
-    prestate: [transform({ ...context.prestate[0] }), ...context.prestate.slice(1)],
-  }));
-  const cases = [
-    {
-      label: 'missing context',
-      arrange: (fixture) => fixture.host._map.delete(fixture.a.candidate.checkpointIdentity),
-    },
-    {
-      label: 'get throw',
-      arrange: (fixture) => {
-        const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-        const get = fixture.host.get.bind(fixture.host);
-        fixture.host.get = (id) => {
-          if (id === checkpointIdentity) throw new Error('first context acquisition failed');
-          return get(id);
-        };
-      },
-    },
-    {
-      label: 'phase accessor throw',
-      arrange: overrideSelectedGet((context) => ({
-        ...context,
-        get phase() { throw new Error('first phase acquisition failed'); },
-      })),
-    },
-    { label: 'missing prestate descriptors', arrange: withoutField('prestate') },
-    { label: 'malformed prestate descriptors', arrange: withField('prestate', { path: 'src/a.mjs' }) },
-    {
-      label: 'missing descriptor identity',
-      arrange: withFirstDescriptor((descriptor) => {
-        delete descriptor.sha256;
-        return descriptor;
-      }),
-    },
-    {
-      label: 'malformed descriptor identity',
-      arrange: withFirstDescriptor((descriptor) => ({ ...descriptor, sha256: 'not-a-hash' })),
-    },
-    {
-      label: 'oversized descriptor',
-      arrange: withFirstDescriptor((descriptor) => ({ ...descriptor, byteLength: 1_048_577 })),
-    },
-    { label: 'missing poststate identity', arrange: withoutField('poststateIdentity') },
-    { label: 'malformed poststate identity', arrange: withField('poststateIdentity', 'not-a-hash') },
-    { label: 'oversized poststate identity', arrange: withField('poststateIdentity', 'f'.repeat(65)) },
-    { label: 'missing candidate identity', arrange: withoutField('candidateIdentity') },
-    { label: 'malformed candidate identity', arrange: withField('candidateIdentity', 'not-a-hash') },
-    { label: 'oversized candidate identity', arrange: withField('candidateIdentity', 'f'.repeat(65)) },
-    {
-      label: 'valid foreign prestate descriptors',
-      arrange: overrideSelectedGet((context, fixture, get) => ({
-        ...context,
-        prestate: get(fixture.b.candidate.checkpointIdentity).prestate,
-      })),
-    },
-    {
-      label: 'valid misbound prestate identity',
-      arrange: withField('prestate', fileDescriptors({
-        'src/a.mjs': 'foreign-prestate',
-        'src/a.test.mjs': 'guard',
-      })),
-    },
-    {
-      label: 'valid misbound poststate identity',
-      arrange: overrideSelectedGet((context, fixture, get) => {
-        const foreignPoststateIdentity = get(fixture.b.candidate.checkpointIdentity).poststateIdentity;
-        return {
-          ...context,
-          poststateIdentity: foreignPoststateIdentity,
-          candidateIdentity: deriveCandidateIdentity(fixture.a.candidate.checkpointIdentity, foreignPoststateIdentity),
-        };
-      }),
-    },
-    {
-      label: 'valid foreign candidate identity',
-      arrange: overrideSelectedGet((context, fixture, get) => ({
-        ...context,
-        candidateIdentity: get(fixture.b.candidate.checkpointIdentity).candidateIdentity,
-      })),
-    },
-    {
-      label: 'checkpoint substitution',
-      request: (fixture) => ({
-        decision: cycle2Decision(fixture.a, { checkpointIdentity: fixture.b.candidate.checkpointIdentity }),
-        gateSet: cycle2GateSet(fixture.a, { checkpointIdentity: fixture.b.candidate.checkpointIdentity }),
-      }),
-    },
-    { label: 'write-set substitution', request: (fixture) => ({ candidateWriteSet: fixture.b.writeSet }) },
-    {
-      label: 'candidate substitution',
-      request: (fixture) => ({
-        gateSet: cycle2GateSet(fixture.a, { candidateIdentity: fixture.b.candidate.candidateIdentity }),
-        candidateIdentity: fixture.b.candidate.candidateIdentity,
-      }),
-    },
-    {
-      label: 'foreign context substitution',
-      arrange: (fixture) => {
-        const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-        const get = fixture.host.get.bind(fixture.host);
-        fixture.host.get = (id) => get(id === checkpointIdentity ? fixture.b.candidate.checkpointIdentity : id);
-      },
-    },
-    {
-      label: 'retained restoring context',
-      outcome: 'stop-unsettled',
-      effects: ['get', 'get', 'setPhase', 'get'],
-      arrange: (fixture) => {
-        fixture.host._map.get(fixture.a.candidate.checkpointIdentity).phase = 'restoring';
-      },
-    },
-    {
-      label: 'unsettled retention proof get throw',
-      effects: ['get', 'get', 'setPhase', 'get'],
-      arrange: (fixture) => {
-        const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-        fixture.host._map.get(checkpointIdentity).phase = 'unsettled';
-        const get = fixture.host.get.bind(fixture.host);
-        let selectedGets = 0;
-        fixture.host.get = (id) => {
-          if (id === checkpointIdentity && ++selectedGets === 3) {
-            throw new Error('retention proof acquisition failed');
-          }
-          return get(id);
-        };
-      },
-    },
-    {
-      label: 'retained unsettled context',
-      outcome: 'stop-unsettled',
-      effects: ['get', 'get', 'setPhase', 'get'],
-      arrange: (fixture) => {
-        fixture.host._map.get(fixture.a.candidate.checkpointIdentity).phase = 'unsettled';
-      },
-    },
-  ];
-
-  for (const row of cases) {
-    // Arrange
-    const fixture = cycle2BoundContexts();
-    const owner = projectionOwnerFake();
-    if (row.arrange) row.arrange(fixture);
-    const request = {
-      decision: cycle2Decision(fixture.a),
-      gateSet: cycle2GateSet(fixture.a),
-      candidateIdentity: fixture.a.candidate.candidateIdentity,
-      candidateWriteSet: fixture.a.writeSet,
-      ...(row.request ? row.request(fixture) : {}),
-    };
-    const outcome = row.outcome || 'contract-mismatch';
-    const expectedEffects = row.effects || ['get'];
-    const activeCheckpointIdentity = request.gateSet.checkpointIdentity;
-    const activeCandidateIdentity = request.candidateIdentity;
-    const stateBefore = canonicalJson(fixture.state);
-    const hostBefore = cycle2HostSnapshot(fixture.host);
-    const otherContextBefore = cycle2ContextSnapshot(fixture.host, fixture.b.candidate.checkpointIdentity);
-    const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
-    const expectedSelectedContext = outcome === 'stop-unsettled'
-      ? cycle2ContextSnapshot(fixture.host, activeCheckpointIdentity, 'unsettled')
-      : undefined;
-    const effects = cycle2CheckpointEffects(fixture.host);
-
-    // Act
-    const result = resolveComparison(fixture.state, fixture.a.sequence, {
-      host: fixture.host,
-      owner,
-      ...request,
-    });
-
-    // Assert
-    assert.deepEqual(effects, expectedEffects, row.label);
-    assertCycle2Unresolved({
-      fixture,
-      owner,
-      result,
-      outcome,
-      activeCheckpointIdentity,
-      activeCandidateIdentity,
-      stateBefore,
-      hostBefore,
-      otherContextBefore,
-      otherFileBefore,
-      expectedSelectedContext,
-      effects,
-      label: row.label,
-    });
-  }
-});
-
-test('T001 pragmatic proxy snapshot and active seal: resolve reads reject native proxies before traps or effects', () => {
-  const cases = [
-    { label: 'live candidate outer', attackRead: 1, phase: 'candidate', location: 'outer', effects: ['get'] },
-    { label: 'live candidate nested row', attackRead: 1, phase: 'candidate', location: 'row', effects: ['get'] },
-    { label: 'retention precheck outer', attackRead: 2, phase: 'unsettled', location: 'outer', effects: ['get', 'get'] },
-    { label: 'retention precheck nested array', attackRead: 2, phase: 'unsettled', location: 'array', effects: ['get', 'get'] },
-    { label: 'retention proof outer', attackRead: 3, phase: 'unsettled', location: 'outer', effects: ['get', 'get', 'setPhase', 'get'] },
-    { label: 'retention proof nested row', attackRead: 3, phase: 'unsettled', location: 'row', effects: ['get', 'get', 'setPhase', 'get'] },
-  ];
-
-  for (const row of cases) {
-    // Arrange
-    const fixture = cycle2BoundContexts();
-    const owner = projectionOwnerFake();
-    const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-    fixture.host._map.get(checkpointIdentity).phase = row.phase;
-    const stateBefore = canonicalJson(fixture.state);
-    const hostBefore = cycle2HostSnapshot(fixture.host);
-    const get = fixture.host.get.bind(fixture.host);
-    let selectedReads = 0;
-    let observedProxy;
-    fixture.host.get = (id) => {
-      const context = get(id);
-      if (id !== checkpointIdentity || !context || ++selectedReads !== row.attackRead) return context;
-      observedProxy = checkpointViewProxy(context, row.location);
-      return observedProxy.value;
-    };
-    const effects = cycle2CheckpointEffects(fixture.host);
-
-    // Act
-    const result = resolveComparison(fixture.state, fixture.a.sequence, {
-      host: fixture.host,
-      owner,
-      decision: cycle2Decision(fixture.a),
-      gateSet: cycle2GateSet(fixture.a),
-      candidateIdentity: fixture.a.candidate.candidateIdentity,
-      candidateWriteSet: fixture.a.writeSet,
-    });
-
-    // Assert
-    assert.ok(observedProxy, row.label);
-    assert.equal(observedProxy.trapCalls(), 0, row.label);
-    assert.equal(result.outcome, 'contract-mismatch', row.label);
-    assert.equal(result.stopped, true, row.label);
-    assert.deepEqual(effects, row.effects, row.label);
-    assert.equal(cycle2HostSnapshot(fixture.host), hostBefore, row.label);
-    assert.equal(canonicalJson(fixture.state), stateBefore, row.label);
-    assert.deepEqual(owner._currentRun, [], row.label);
-    assert.deepEqual(owner._lane, [], row.label);
-    assert.equal(effects.includes('probe'), false, row.label);
-    assert.equal(effects.includes('restore'), false, row.label);
-    assert.equal(effects.includes('release'), false, row.label);
-  }
-});
-
-test('T001 pragmatic proxy snapshot and active seal: direct checkpoint reads reject native proxies before effects', () => {
-  const cases = [
-    { boundary: 'captureCandidate', location: 'outer' },
-    { boundary: 'captureCandidate', location: 'array' },
-    { boundary: 'releaseCheckpoint', location: 'outer' },
-    { boundary: 'releaseCheckpoint', location: 'row' },
-    { boundary: 'normalizeCheckpointGate', location: 'outer' },
-    { boundary: 'normalizeCheckpointGate', location: 'array' },
-  ];
-
-  for (const row of cases) {
-    // Arrange
-    const writeSet = candidateWriteSet();
-    const host = checkpointHostFake({ 'src/a.mjs': 'prestate', 'src/a.test.mjs': 'guard' });
-    const captured = acquireCheckpoint(host, {
-      target: TARGET,
-      sequenceIdentity: '1'.repeat(64),
-      contractHash: '2'.repeat(64),
-      candidateWriteSet: writeSet,
-    });
-    host._setFile('src/a.mjs', 'poststate');
-    let recordUnderTest = captured;
-    if (row.boundary !== 'captureCandidate') {
-      const candidate = captureCandidate(host, captured, writeSet);
-      recordUnderTest = row.boundary === 'releaseCheckpoint'
-        ? keepCheckpoint(host, candidate, writeSet)
-        : candidate;
-    }
-    const hostBefore = cycle2HostSnapshot(host);
-    const get = host.get.bind(host);
-    const observedProxies = [];
-    host.get = (id) => {
-      const context = get(id);
-      if (id !== captured.checkpointIdentity || !context) return context;
-      const observed = checkpointViewProxy(context, row.location);
-      observedProxies.push(observed);
-      return observed.value;
-    };
-    const effects = cycle2CheckpointEffects(host);
-    const label = `${row.boundary}: ${row.location}`;
-
-    // Act
-    const invoke = () => {
-      if (row.boundary === 'captureCandidate') return captureCandidate(host, recordUnderTest, writeSet);
-      if (row.boundary === 'releaseCheckpoint') return releaseCheckpoint(host, recordUnderTest, writeSet);
-      return normalizeCheckpointGate({
-        record: checkpointGateRecord(recordUnderTest),
-        host,
-        candidateWriteSet: writeSet,
-      });
-    };
-
-    // Assert
-    assert.throws(invoke, TypeError, label);
-    assert.ok(observedProxies.length > 0, label);
-    for (const observed of observedProxies) assert.equal(observed.trapCalls(), 0, label);
-    assert.equal(cycle2HostSnapshot(host), hostBefore, label);
-    assert.equal(effects.includes('probe'), false, label);
-    assert.equal(effects.includes('markPoststate'), false, label);
-    assert.equal(effects.includes('setPhase'), false, label);
-    assert.equal(effects.includes('restore'), false, label);
-    assert.equal(effects.includes('release'), false, label);
-    assert.deepEqual(
-      effects,
-      row.boundary === 'releaseCheckpoint' ? ['get', 'get'] : ['get'],
-      label,
-    );
-  }
-});
-
-test('T001 pragmatic proxy snapshot and active seal: release phase accessor is inert and reports retained fault', () => {
-  // Arrange
-  const { host, candidate, writeSet } = acquiredCandidate();
-  const kept = keepCheckpoint(host, candidate, writeSet);
-  const checkpointIdentity = kept.checkpointIdentity;
-  const get = host.get.bind(host);
-  const destructiveRelease = host.release.bind(host);
-  let selectedReads = 0;
-  let accessorCalls = 0;
-  host.get = (id) => {
-    const context = get(id);
-    if (id !== checkpointIdentity || !context || ++selectedReads !== 1) return context;
-    const returned = { ...context };
-    Object.defineProperty(returned, 'phase', {
-      configurable: true,
-      enumerable: true,
-      get() {
-        accessorCalls += 1;
-        destructiveRelease(checkpointIdentity);
-        return 'kept';
-      },
-    });
-    return returned;
-  };
-  const effects = cycle2CheckpointEffects(host);
-
-  // Act and Assert
-  assert.throws(
-    () => releaseCheckpoint(host, kept, writeSet),
-    /release phase acquisition failed and was retained as unsettled/,
-  );
-  assert.equal(accessorCalls, 0);
-  assert.deepEqual(effects, ['get', 'get', 'setPhase', 'get']);
-  assert.equal(effects.includes('release'), false);
-  assert.equal(host._map.has(checkpointIdentity), true);
-  assert.equal(get(checkpointIdentity).phase, 'unsettled');
-});
-
-test('T001 pragmatic proxy snapshot and active seal: admitted prestate rows are deeply detached', () => {
-  const expectedFixture = acquiredCandidate();
-  const expectedGate = normalizeCheckpointGate({
-    record: checkpointGateRecord(expectedFixture.candidate),
-    host: expectedFixture.host,
-    candidateWriteSet: expectedFixture.writeSet,
-  });
-  const cases = ['array', 'row'];
-
-  for (const mutation of cases) {
-    // Arrange
-    const { host, candidate, writeSet } = acquiredCandidate();
-    const checkpointIdentity = candidate.checkpointIdentity;
-    const get = host.get.bind(host);
-    const returnedContext = get(checkpointIdentity);
-    const originalPrestate = returnedContext.prestate;
-    const originalRowIndex = originalPrestate.findIndex((entry) => entry.path === 'src/a.test.mjs');
-    assert.notEqual(originalRowIndex, -1, mutation);
-    const originalRow = originalPrestate[originalRowIndex];
-    const probe = host.probe.bind(host);
-    let mutationHooks = 0;
-    let observedProxy;
-    host.get = (id) => (id === checkpointIdentity ? returnedContext : get(id));
-    host.probe = (id) => {
-      if (id === checkpointIdentity) {
-        mutationHooks += 1;
-        if (mutation === 'array') {
-          observedProxy = checkpointProxy({ ...originalRow, path: 'src/proxy-poison.mjs' });
-          originalPrestate[originalRowIndex] = observedProxy.value;
-        } else {
-          originalRow.path = 'src/row-alias-poison.mjs';
-        }
-      }
-      return probe(id);
-    };
-
-    // Act
-    const gate = normalizeCheckpointGate({
-      record: checkpointGateRecord(candidate),
-      host,
-      candidateWriteSet: writeSet,
-    });
-
-    // Assert
-    assert.equal(mutationHooks, 1, mutation);
-    assert.deepEqual(gate, expectedGate, mutation);
-    assert.equal(gate.result, 'pass', mutation);
-    if (mutation === 'array') {
-      assert.equal(originalPrestate[originalRowIndex], observedProxy.value, mutation);
-      assert.equal(observedProxy.trapCalls(), 0, mutation);
-    } else {
-      assert.equal(originalRow.path, 'src/row-alias-poison.mjs', mutation);
-    }
-  }
-});
-
 test('T001 pragmatic proxy snapshot and active seal: active or unsettled rows block authorization before mutation', () => {
   // Arrange
-  const fixture = objectiveSequenceFixture();
+  const sequence = evaluationSequenceRow('authorization-guard');
   const raw = transitionRaw(TARGET);
   const candidate = transitionAssessment('execute-task', { targets: ['src/authorized-task.mjs'] });
   const activeIdentities = {
-    activeCheckpointIdentity: fixture.candidate.checkpointIdentity,
-    activeCandidateIdentity: fixture.candidate.candidateIdentity,
+    activeCheckpointIdentity: sha256('active-checkpoint'),
+    activeCandidateIdentity: sha256('active-candidate'),
   };
   const states = [
     {
       label: 'open active row',
-      state: { ...emptyState(), evaluationSequences: [{ ...fixture.sequence, ...activeIdentities }] },
+      state: { ...emptyState(), evaluationSequences: [{ ...sequence, ...activeIdentities }] },
     },
     {
       label: 'unsettled row',
       state: {
         ...emptyState(),
-        evaluationSequences: [{ ...fixture.sequence, state: 'unsettled', ...activeIdentities }],
+        evaluationSequences: [{ ...sequence, state: 'unsettled', ...activeIdentities }],
       },
     },
   ];
@@ -10136,7 +7850,7 @@ test('T001 pragmatic proxy snapshot and active seal: active or unsettled rows bl
     assert.deepEqual(row.state.pending, [], row.label);
   }
 
-  const openState = { ...emptyState(), evaluationSequences: [fixture.sequence] };
+  const openState = { ...emptyState(), evaluationSequences: [sequence] };
   validateRunState(openState);
 
   // Act
@@ -10149,1016 +7863,6 @@ test('T001 pragmatic proxy snapshot and active seal: active or unsettled rows bl
   assert.deepEqual(openState.pending, []);
   assert.equal(authorized.state.overallUsed, 1);
   assert.equal(authorized.state.pending.length, 1);
-});
-
-test('T001 closed descriptor snapshot: context accessors never execute at classification or retention reads', () => {
-  const fields = ['phase', 'prestate', 'poststateIdentity', 'candidateIdentity'];
-  const stages = [
-    { label: 'initial classification', attackRead: 1, phase: 'candidate', expectedEffects: ['get'] },
-    { label: 'retention precheck', attackRead: 2, phase: 'unsettled', expectedEffects: ['get', 'get'] },
-    { label: 'retention proof', attackRead: 3, phase: 'unsettled', expectedEffects: ['get', 'get', 'setPhase', 'get'] },
-  ];
-
-  for (const stage of stages) {
-    for (const field of fields) {
-      // Arrange
-      const label = `${stage.label}: ${field}`;
-      const fixture = cycle2BoundContexts();
-      const owner = projectionOwnerFake();
-      const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-      const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
-      fixture.host._map.get(checkpointIdentity).phase = stage.phase;
-      const stateBefore = canonicalJson(fixture.state);
-      const hostBefore = cycle2HostSnapshot(fixture.host);
-      const selectedContextBefore = cycle2ContextSnapshot(fixture.host, checkpointIdentity);
-      const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
-      const selectedFileBefore = cycle2FileSnapshot(fixture.host, fixture.a.candidatePath);
-      const otherFileBefore = cycle2FileSnapshot(fixture.host, 'src/b.mjs');
-      const get = fixture.host.get.bind(fixture.host);
-      let selectedReads = 0;
-      let getterCalls = 0;
-      fixture.host.get = (id) => {
-        const context = get(id);
-        if (id !== checkpointIdentity || !context || ++selectedReads !== stage.attackRead) return context;
-        const returned = { ...context };
-        Object.defineProperty(returned, field, {
-          configurable: true,
-          enumerable: true,
-          get() {
-            getterCalls += 1;
-            const selected = fixture.host._map.get(checkpointIdentity);
-            const unrelated = fixture.host._map.get(otherCheckpointIdentity);
-            if (selected) {
-              delete selected.poststateIdentity;
-              selected.phase = 'restored';
-            }
-            if (unrelated) unrelated.phase = 'restored';
-            fixture.host._setFile(fixture.a.candidatePath, 'selected-accessor-mutation');
-            fixture.host._setFile('src/b.mjs', 'unrelated-accessor-mutation');
-            throw new Error(`forbidden ${field} accessor execution`);
-          },
-        });
-        return returned;
-      };
-      const effects = cycle2CheckpointEffects(fixture.host);
-
-      // Act
-      const result = resolveComparison(fixture.state, fixture.a.sequence, {
-        host: fixture.host,
-        owner,
-        decision: cycle2Decision(fixture.a),
-        gateSet: cycle2GateSet(fixture.a),
-        candidateIdentity: fixture.a.candidate.candidateIdentity,
-        candidateWriteSet: fixture.a.writeSet,
-      });
-
-      // Assert
-      assert.equal(getterCalls, 0, label);
-      assert.deepEqual(effects, stage.expectedEffects, label);
-      assert.equal(cycle2ContextSnapshot(fixture.host, checkpointIdentity), selectedContextBefore, label);
-      assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore, label);
-      assert.equal(cycle2FileSnapshot(fixture.host, fixture.a.candidatePath), selectedFileBefore, label);
-      assert.equal(cycle2FileSnapshot(fixture.host, 'src/b.mjs'), otherFileBefore, label);
-      assert.equal(effects.includes('probe'), false, label);
-      assert.equal(effects.includes('restore'), false, label);
-      assert.equal(effects.includes('release'), false, label);
-      assertCycle2Unresolved({
-        fixture,
-        owner,
-        result,
-        outcome: 'contract-mismatch',
-        activeCheckpointIdentity: checkpointIdentity,
-        activeCandidateIdentity: fixture.a.candidate.candidateIdentity,
-        stateBefore,
-        hostBefore,
-        otherContextBefore,
-        otherFileBefore: fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'),
-        expectedSelectedContext: undefined,
-        effects,
-        label,
-      });
-    }
-  }
-});
-
-test('T001 closed descriptor snapshot: only exact own enumerable data records are admitted', () => {
-  const stages = [
-    { label: 'initial classification', attackRead: 1, phase: 'candidate', expectedEffects: ['get'] },
-    { label: 'retention precheck', attackRead: 2, phase: 'unsettled', expectedEffects: ['get', 'get'] },
-    { label: 'retention proof', attackRead: 3, phase: 'unsettled', expectedEffects: ['get', 'get', 'setPhase', 'get'] },
-  ];
-  const rules = [
-    ['symbol field', (context) => {
-      const next = { ...context };
-      next[Symbol('unexpected')] = true;
-      return next;
-    }],
-    ['unknown field', (context) => ({ ...context, unexpected: true })],
-    ['missing field', (context) => {
-      const next = { ...context };
-      delete next.candidateIdentity;
-      return next;
-    }],
-    ['non-enumerable field', (context) => {
-      const next = { ...context };
-      Object.defineProperty(next, 'phase', {
-        configurable: true,
-        enumerable: false,
-        value: context.phase,
-        writable: true,
-      });
-      return next;
-    }],
-    ['inherited prototype field', (context) => Object.assign(
-      Object.create({ phase: context.phase, polluted: true }),
-      {
-        prestate: context.prestate,
-        poststateIdentity: context.poststateIdentity,
-        candidateIdentity: context.candidateIdentity,
-      },
-    )],
-    ['accessor field', (context, accessorInvoked) => {
-      const next = { ...context };
-      Object.defineProperty(next, 'phase', {
-        configurable: true,
-        enumerable: true,
-        get() {
-          accessorInvoked();
-          throw new Error('forbidden exact-record accessor execution');
-        },
-      });
-      return next;
-    }],
-    ['non-data descriptor', (context) => {
-      const next = { ...context };
-      delete next.phase;
-      Object.defineProperty(next, 'phase', {
-        configurable: true,
-        enumerable: true,
-        get: undefined,
-        set: undefined,
-      });
-      return next;
-    }],
-  ];
-
-  for (const stage of stages) {
-    for (const [ruleLabel, makeInvalid] of rules) {
-      // Arrange
-      const label = `${stage.label}: ${ruleLabel}`;
-      const fixture = cycle2BoundContexts();
-      const owner = projectionOwnerFake();
-      const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-      const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
-      fixture.host._map.get(checkpointIdentity).phase = stage.phase;
-      const stateBefore = canonicalJson(fixture.state);
-      const hostBefore = cycle2HostSnapshot(fixture.host);
-      const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
-      const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
-      const get = fixture.host.get.bind(fixture.host);
-      let selectedReads = 0;
-      let accessorCalls = 0;
-      fixture.host.get = (id) => {
-        const context = get(id);
-        if (id !== checkpointIdentity || !context || ++selectedReads !== stage.attackRead) return context;
-        return makeInvalid(context, () => { accessorCalls += 1; });
-      };
-      const effects = cycle2CheckpointEffects(fixture.host);
-
-      // Act
-      const result = resolveComparison(fixture.state, fixture.a.sequence, {
-        host: fixture.host,
-        owner,
-        decision: cycle2Decision(fixture.a),
-        gateSet: cycle2GateSet(fixture.a),
-        candidateIdentity: fixture.a.candidate.candidateIdentity,
-        candidateWriteSet: fixture.a.writeSet,
-      });
-
-      // Assert
-      assert.equal(accessorCalls, 0, label);
-      assert.deepEqual(effects, stage.expectedEffects, label);
-      assertCycle2Unresolved({
-        fixture,
-        owner,
-        result,
-        outcome: 'contract-mismatch',
-        activeCheckpointIdentity: checkpointIdentity,
-        activeCandidateIdentity: fixture.a.candidate.candidateIdentity,
-        stateBefore,
-        hostBefore,
-        otherContextBefore,
-        otherFileBefore,
-        expectedSelectedContext: undefined,
-        effects,
-        label,
-      });
-    }
-  }
-});
-
-test('T001 closed descriptor snapshot: admitted values detach from later outer-record descriptor mutation', () => {
-  // Arrange
-  const fixture = cycle2BoundContexts();
-  const owner = projectionOwnerFake();
-  const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-  const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
-  const get = fixture.host.get.bind(fixture.host);
-  const foreignContext = get(otherCheckpointIdentity);
-  const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
-  const otherFileBefore = cycle2FileSnapshot(fixture.host, 'src/b.mjs');
-  const stateBefore = canonicalJson(fixture.state);
-  let admittedOuter;
-  fixture.host.get = (id) => {
-    const context = get(id);
-    if (id === checkpointIdentity && context && !admittedOuter) {
-      admittedOuter = context;
-      return admittedOuter;
-    }
-    return context;
-  };
-  const setPhase = fixture.host.setPhase.bind(fixture.host);
-  let mutationHooks = 0;
-  fixture.host.setPhase = (id, phase) => {
-    if (id === checkpointIdentity && phase === 'restoring') {
-      mutationHooks += 1;
-      Object.defineProperties(admittedOuter, {
-        phase: { configurable: true, enumerable: true, value: 'unsettled', writable: true },
-        prestate: { configurable: true, enumerable: true, value: foreignContext.prestate, writable: true },
-        poststateIdentity: {
-          configurable: true,
-          enumerable: true,
-          value: foreignContext.poststateIdentity,
-          writable: true,
-        },
-        candidateIdentity: {
-          configurable: true,
-          enumerable: true,
-          value: foreignContext.candidateIdentity,
-          writable: true,
-        },
-      });
-    }
-    return setPhase(id, phase);
-  };
-
-  // Act
-  const resolve = () => resolveComparison(fixture.state, fixture.a.sequence, {
-    host: fixture.host,
-    owner,
-    decision: cycle2Decision(fixture.a),
-    gateSet: cycle2GateSet(fixture.a),
-    candidateIdentity: fixture.a.candidate.candidateIdentity,
-    candidateWriteSet: fixture.a.writeSet,
-  });
-
-  // Assert
-  assert.throws(resolve, /sealed: learning-required/);
-  assert.equal(mutationHooks, 1);
-  assert.equal(admittedOuter.phase, 'unsettled');
-  assert.equal(admittedOuter.candidateIdentity, fixture.b.candidate.candidateIdentity);
-  assert.equal(fixture.host._map.has(checkpointIdentity), false);
-  assert.equal(cycle2FileSnapshot(fixture.host, fixture.a.candidatePath), cycle2FileSnapshot(
-    checkpointHostFake({ [fixture.a.candidatePath]: 'a-prestate' }),
-    fixture.a.candidatePath,
-  ));
-  assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore);
-  assert.equal(cycle2FileSnapshot(fixture.host, 'src/b.mjs'), otherFileBefore);
-  assert.equal(canonicalJson(fixture.state), stateBefore);
-  assert.deepEqual(owner._currentRun, []);
-  assert.deepEqual(owner._lane, []);
-});
-
-test('T001 closed descriptor snapshot: valid candidate and candidate-derived lineages retain prior outcomes', () => {
-  // Arrange
-  const governedCandidate = cycle2BoundContexts();
-  const governedOwner = projectionOwnerFake();
-
-  // Act
-  const resolveGovernedCandidate = () => resolveComparison(
-    governedCandidate.state,
-    governedCandidate.a.sequence,
-    {
-      host: governedCandidate.host,
-      owner: governedOwner,
-      decision: cycle2Decision(governedCandidate.a),
-      gateSet: cycle2GateSet(governedCandidate.a),
-      candidateIdentity: governedCandidate.a.candidate.candidateIdentity,
-      candidateWriteSet: governedCandidate.a.writeSet,
-    },
-  );
-
-  // Assert
-  assert.throws(resolveGovernedCandidate, /sealed: learning-required/);
-  assert.equal(governedCandidate.host._map.has(governedCandidate.a.candidate.checkpointIdentity), false);
-  assert.equal(cycle2FileSnapshot(governedCandidate.host, governedCandidate.a.candidatePath), cycle2FileSnapshot(
-    checkpointHostFake({ [governedCandidate.a.candidatePath]: 'a-prestate' }),
-    governedCandidate.a.candidatePath,
-  ));
-  assert.deepEqual(governedOwner._currentRun, []);
-  assert.deepEqual(governedOwner._lane, []);
-
-  for (const phase of ['restoring', 'unsettled']) {
-    // Arrange
-    const fixture = cycle2BoundContexts();
-    const owner = projectionOwnerFake();
-    const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-    const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
-    fixture.host._map.get(checkpointIdentity).phase = phase;
-    const stateBefore = canonicalJson(fixture.state);
-    const hostBefore = cycle2HostSnapshot(fixture.host);
-    const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
-    const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
-    const expectedSelectedContext = cycle2ContextSnapshot(fixture.host, checkpointIdentity, 'unsettled');
-    const effects = cycle2CheckpointEffects(fixture.host);
-
-    // Act
-    const result = resolveComparison(fixture.state, fixture.a.sequence, {
-      host: fixture.host,
-      owner,
-      decision: cycle2Decision(fixture.a),
-      gateSet: cycle2GateSet(fixture.a),
-      candidateIdentity: fixture.a.candidate.candidateIdentity,
-      candidateWriteSet: fixture.a.writeSet,
-    });
-
-    // Assert
-    assert.deepEqual(effects, ['get', 'get', 'setPhase', 'get'], phase);
-    assertCycle2Unresolved({
-      fixture,
-      owner,
-      result,
-      outcome: 'stop-unsettled',
-      activeCheckpointIdentity: checkpointIdentity,
-      activeCandidateIdentity: fixture.a.candidate.candidateIdentity,
-      stateBefore,
-      hostBefore,
-      otherContextBefore,
-      otherFileBefore,
-      expectedSelectedContext,
-      effects,
-      label: phase,
-    });
-  }
-
-  // Arrange
-  const ungoverned = objectiveSequenceFixture();
-  const ungovernedOwner = projectionOwnerFake();
-
-  // Act
-  const kept = resolveComparison(ungoverned.state, ungoverned.sequence, {
-    host: ungoverned.host,
-    owner: ungovernedOwner,
-    decision: fixtureDecision(ungoverned, ['8', '8', '8', '8', '8']),
-    gateSet: fixtureGateSet(ungoverned),
-    candidateIdentity: ungoverned.candidate.candidateIdentity,
-    candidateWriteSet: ungoverned.writeSet,
-  });
-
-  // Assert
-  assert.equal(kept.outcome, 'keep');
-  assert.equal(kept.stopped, false);
-  assert.equal(ungoverned.host._map.size, 0);
-  assert.equal(ungoverned.host._files.get('src/a.mjs')?.bytes?.toString(), 'poststate');
-  assert.equal(ungovernedOwner._currentRun.length, 1);
-  assert.equal(ungovernedOwner._lane.length, 1);
-});
-
-test('T001 pre-read owner envelope: correctly bound governed candidate settles normally before refusal', () => {
-  // Arrange
-  const fixture = cycle2BoundContexts();
-  const owner = projectionOwnerFake();
-  const decision = cycle2Decision(fixture.a);
-  const gateSet = cycle2GateSet(fixture.a);
-  const calls = [];
-  const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-  const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
-  const otherContextBefore = canonicalJson(fixture.host.get(otherCheckpointIdentity));
-  const stateBefore = canonicalJson(fixture.state);
-  const incumbentBefore = fixture.a.sequence.incumbentCandidateIdentity;
-  const get = fixture.host.get.bind(fixture.host);
-  const setPhase = fixture.host.setPhase.bind(fixture.host);
-  const restore = fixture.host.restore.bind(fixture.host);
-  const probe = fixture.host.probe.bind(fixture.host);
-  const release = fixture.host.release.bind(fixture.host);
-  fixture.host.get = (id) => {
-    const context = get(id);
-    calls.push(`get:${id}:${context?.phase}`);
-    return context;
-  };
-  fixture.host.setPhase = (id, phase) => {
-    calls.push(`setPhase:${id}:${phase}`);
-    return setPhase(id, phase);
-  };
-  fixture.host.restore = (id) => {
-    const result = restore(id);
-    calls.push(`restore:${id}:${fixture.host._files.get('src/a.mjs')?.bytes?.toString()}`);
-    return result;
-  };
-  fixture.host.probe = (id) => {
-    const result = probe(id);
-    calls.push(`probe:${id}:${fixture.host._map.get(id)?.phase}:${fixture.host._files.get('src/a.mjs')?.bytes?.toString()}`);
-    return result;
-  };
-  fixture.host.release = (id) => {
-    calls.push(`release:${id}:${fixture.host._map.get(id)?.phase}:${fixture.host._files.get('src/a.mjs')?.bytes?.toString()}`);
-    return release(id);
-  };
-
-  // Act
-  const resolve = () => resolveComparison(fixture.state, fixture.a.sequence, {
-    host: fixture.host,
-    owner,
-    decision,
-    gateSet,
-    candidateIdentity: fixture.a.candidate.candidateIdentity,
-    candidateWriteSet: fixture.a.writeSet,
-  });
-
-  // Assert
-  assert.throws(resolve, /learning-required/);
-  assert.deepEqual(calls, [
-    `get:${checkpointIdentity}:candidate`,
-    `setPhase:${checkpointIdentity}:restoring`,
-    `restore:${checkpointIdentity}:a-prestate`,
-    `probe:${checkpointIdentity}:restoring:a-prestate`,
-    `setPhase:${checkpointIdentity}:restored`,
-    `get:${checkpointIdentity}:restored`,
-    `probe:${checkpointIdentity}:restored:a-prestate`,
-    `release:${checkpointIdentity}:restored:a-prestate`,
-  ]);
-  assert.equal(fixture.host._map.has(checkpointIdentity), false);
-  assert.equal(canonicalJson(get(otherCheckpointIdentity)), otherContextBefore);
-  assert.equal(fixture.host._map.get(otherCheckpointIdentity)?.phase, 'candidate');
-  assert.equal(fixture.host._files.get('src/a.mjs')?.bytes?.toString(), 'a-prestate');
-  assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString(), 'b-candidate');
-  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
-  assert.deepEqual(owner.acquireLaneEventLines(), []);
-  assert.equal(canonicalJson(fixture.state), stateBefore);
-  assert.equal(
-    fixture.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity)?.incumbentCandidateIdentity,
-    incumbentBefore,
-  );
-});
-
-test('T001 owner-returned fault outcome: every restoration proof fault returns exact A unsettled', () => {
-  // Arrange
-  const aggregateWriteSet = {
-    candidatePaths: ['src/f0.mjs', 'src/f1.mjs', 'src/f2.mjs', 'src/f3.mjs', 'src/f4.mjs'],
-    protectedPaths: [],
-  };
-  const aggregateInitialFiles = Object.fromEntries(aggregateWriteSet.candidatePaths.map((filePath) => [filePath, 'prestate']));
-  const defaultFixture = () => cycle2BoundContexts();
-  const cases = [
-    ['restore throw', defaultFixture, (fixture) => {
-      fixture.host.faults.failRestore = true;
-    }],
-    ['probe throw', defaultFixture, (fixture) => {
-      const probe = fixture.host.probe.bind(fixture.host);
-      fixture.host.probe = (checkpointIdentity) => {
-        if (checkpointIdentity === fixture.a.candidate.checkpointIdentity) throw new Error('probe failed');
-        return probe(checkpointIdentity);
-      };
-    }],
-    ['descriptor accessor throw', defaultFixture, (fixture) => {
-      const probe = fixture.host.probe.bind(fixture.host);
-      fixture.host.probe = (checkpointIdentity) => {
-        const descriptors = probe(checkpointIdentity);
-        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity) return descriptors;
-        const first = { ...descriptors[0] };
-        Object.defineProperty(first, 'state', {
-          enumerable: true,
-          get() { throw new Error('descriptor state accessor failed'); },
-        });
-        return [first, ...descriptors.slice(1)];
-      };
-    }],
-    ['missing descriptor field', defaultFixture, (fixture) => {
-      const probe = fixture.host.probe.bind(fixture.host);
-      fixture.host.probe = (checkpointIdentity) => {
-        const descriptors = probe(checkpointIdentity);
-        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity) return descriptors;
-        const first = { ...descriptors[0] };
-        delete first.sha256;
-        return [first, ...descriptors.slice(1)];
-      };
-    }],
-    ['malformed descriptor field', defaultFixture, (fixture) => {
-      const probe = fixture.host.probe.bind(fixture.host);
-      fixture.host.probe = (checkpointIdentity) => {
-        const descriptors = probe(checkpointIdentity);
-        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity) return descriptors;
-        return [{ ...descriptors[0], sha256: 'not-a-hash' }, ...descriptors.slice(1)];
-      };
-    }],
-    ['oversized descriptor', defaultFixture, (fixture) => {
-      const probe = fixture.host.probe.bind(fixture.host);
-      fixture.host.probe = (checkpointIdentity) => {
-        const descriptors = probe(checkpointIdentity);
-        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity) return descriptors;
-        return [{ ...descriptors[0], byteLength: 1_048_577 }, ...descriptors.slice(1)];
-      };
-    }],
-    ['oversized captured body', defaultFixture, (fixture) => {
-      const restore = fixture.host.restore.bind(fixture.host);
-      fixture.host.restore = (checkpointIdentity) => {
-        restore(checkpointIdentity);
-        if (checkpointIdentity === fixture.a.candidate.checkpointIdentity) {
-          fixture.host._setFile(fixture.a.candidatePath, Buffer.alloc(1_048_577));
-        }
-      };
-    }],
-    ['oversized aggregate body', () => cycle2BoundContexts({
-      writeSetA: aggregateWriteSet,
-      initialFilesA: aggregateInitialFiles,
-      candidatePathA: 'src/f0.mjs',
-    }), (fixture) => {
-      const restore = fixture.host.restore.bind(fixture.host);
-      fixture.host.restore = (checkpointIdentity) => {
-        restore(checkpointIdentity);
-        if (checkpointIdentity === fixture.a.candidate.checkpointIdentity) {
-          for (const filePath of aggregateWriteSet.candidatePaths) {
-            fixture.host._setFile(filePath, Buffer.alloc(1_048_576));
-          }
-        }
-      };
-    }],
-    ['prestate identity mismatch', defaultFixture, (fixture) => {
-      const restore = fixture.host.restore.bind(fixture.host);
-      fixture.host.restore = (checkpointIdentity) => {
-        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity) restore(checkpointIdentity);
-      };
-    }],
-  ];
-
-  for (const [label, createFixture, injectFault] of cases) {
-    // Arrange
-    const fixture = createFixture();
-    const owner = projectionOwnerFake();
-    injectFault(fixture);
-    const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-    const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
-    const expectedUnsettledContext = cycle2ContextSnapshot(fixture.host, checkpointIdentity, 'unsettled');
-    const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
-    const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
-    const stateBefore = canonicalJson(fixture.state);
-    const incumbentBefore = fixture.a.sequence.incumbentCandidateIdentity;
-    const release = fixture.host.release.bind(fixture.host);
-    let releaseCalls = 0;
-    fixture.host.release = (id) => {
-      releaseCalls += 1;
-      return release(id);
-    };
-
-    // Act
-    const result = resolveComparison(fixture.state, fixture.a.sequence, {
-      host: fixture.host,
-      owner,
-      decision: cycle2Decision(fixture.a),
-      gateSet: cycle2GateSet(fixture.a),
-      candidateIdentity: fixture.a.candidate.candidateIdentity,
-      candidateWriteSet: fixture.a.writeSet,
-    });
-
-    // Assert
-    const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity);
-    const unrelatedRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.b.sequence.sequenceIdentity);
-    assert.equal(result.outcome, 'stop-unsettled', label);
-    assert.equal(result.stopped, true, label);
-    assert.ok(nextRow, label);
-    assert.equal(nextRow.state, 'unsettled', label);
-    assert.equal(nextRow.activeCheckpointIdentity, checkpointIdentity, label);
-    assert.equal(nextRow.activeCandidateIdentity, fixture.a.candidate.candidateIdentity, label);
-    assert.equal(nextRow.incumbentCandidateIdentity, incumbentBefore, label);
-    assert.deepEqual(unrelatedRow, fixture.b.sequence, label);
-    assert.equal(Object.hasOwn(result, 'event'), false, label);
-    assert.equal(Object.hasOwn(result, 'projection'), false, label);
-    assert.equal(cycle2ContextSnapshot(fixture.host, checkpointIdentity), expectedUnsettledContext, label);
-    assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore, label);
-    assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'), otherFileBefore, label);
-    assert.equal(releaseCalls, 0, label);
-    assert.deepEqual(owner.acquireCurrentRunRecords(), [], label);
-    assert.deepEqual(owner.acquireLaneEventLines(), [], label);
-    assert.equal(canonicalJson(fixture.state), stateBefore, label);
-    assert.equal(
-      fixture.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity)?.incumbentCandidateIdentity,
-      incumbentBefore,
-      label,
-    );
-    assert.throws(() => closeEvaluationSequence(result.state, fixture.a.sequence.sequenceIdentity, {
-      owner,
-      reason: 'hard-stop',
-      comparisonEventHashes: [],
-      learningReviewEventHashes: [],
-    }), TypeError, label);
-    assert.deepEqual(owner.acquireCurrentRunRecords(), [], label);
-    assert.deepEqual(owner.acquireLaneEventLines(), [], label);
-  }
-});
-
-test('T001 owner-returned fault outcome: every governed release proof fault returns exact A unsettled', () => {
-  // Arrange
-  const cases = [
-    ['context get throws', (fixture) => {
-      const get = fixture.host.get.bind(fixture.host);
-      let selectedGets = 0;
-      fixture.host.get = (checkpointIdentity) => {
-        if (checkpointIdentity === fixture.a.candidate.checkpointIdentity && ++selectedGets === 2) {
-          throw new Error('release context acquisition failed');
-        }
-        return get(checkpointIdentity);
-      };
-    }],
-    ['phase accessor throws', (fixture) => {
-      const get = fixture.host.get.bind(fixture.host);
-      let selectedGets = 0;
-      fixture.host.get = (checkpointIdentity) => {
-        const context = get(checkpointIdentity);
-        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity || ++selectedGets !== 2) return context;
-        return {
-          get phase() { throw new Error('release phase acquisition failed'); },
-          prestate: context.prestate,
-          poststateIdentity: context.poststateIdentity,
-          candidateIdentity: context.candidateIdentity,
-        };
-      };
-    }],
-    ['probe throws', (fixture) => {
-      const probe = fixture.host.probe.bind(fixture.host);
-      let selectedProbes = 0;
-      fixture.host.probe = (checkpointIdentity) => {
-        if (checkpointIdentity === fixture.a.candidate.checkpointIdentity && ++selectedProbes === 2) {
-          throw new Error('release probe failed');
-        }
-        return probe(checkpointIdentity);
-      };
-    }],
-    ['malformed descriptor', (fixture) => {
-      const probe = fixture.host.probe.bind(fixture.host);
-      let selectedProbes = 0;
-      fixture.host.probe = (checkpointIdentity) => {
-        const descriptors = probe(checkpointIdentity);
-        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity || ++selectedProbes !== 2) return descriptors;
-        return [{ ...descriptors[0], sha256: 'not-a-hash' }, ...descriptors.slice(1)];
-      };
-    }],
-    ['oversized descriptor', (fixture) => {
-      const probe = fixture.host.probe.bind(fixture.host);
-      let selectedProbes = 0;
-      fixture.host.probe = (checkpointIdentity) => {
-        const descriptors = probe(checkpointIdentity);
-        if (checkpointIdentity !== fixture.a.candidate.checkpointIdentity || ++selectedProbes !== 2) return descriptors;
-        return [{ ...descriptors[0], byteLength: 1_048_577 }, ...descriptors.slice(1)];
-      };
-    }],
-    ['restored state mismatch', (fixture) => {
-      const setPhase = fixture.host.setPhase.bind(fixture.host);
-      fixture.host.setPhase = (checkpointIdentity, phase) => {
-        const result = setPhase(checkpointIdentity, phase);
-        if (checkpointIdentity === fixture.a.candidate.checkpointIdentity && phase === 'restored') {
-          fixture.host._setFile(fixture.a.candidatePath, 'release-proof-drift');
-        }
-        return result;
-      };
-    }],
-    ['release throws', (fixture) => {
-      fixture.host.faults.failRelease = true;
-    }],
-  ];
-
-  for (const [label, injectFault] of cases) {
-    // Arrange
-    const fixture = cycle2BoundContexts();
-    const owner = projectionOwnerFake();
-    injectFault(fixture);
-    const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-    const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
-    const expectedUnsettledContext = cycle2ContextSnapshot(fixture.host, checkpointIdentity, 'unsettled');
-    const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
-    const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
-    const stateBefore = canonicalJson(fixture.state);
-    const incumbentBefore = fixture.a.sequence.incumbentCandidateIdentity;
-    const release = fixture.host.release.bind(fixture.host);
-    let successfulReleases = 0;
-    fixture.host.release = (id) => {
-      const result = release(id);
-      successfulReleases += 1;
-      return result;
-    };
-
-    // Act
-    const result = resolveComparison(fixture.state, fixture.a.sequence, {
-      host: fixture.host,
-      owner,
-      decision: cycle2Decision(fixture.a),
-      gateSet: cycle2GateSet(fixture.a),
-      candidateIdentity: fixture.a.candidate.candidateIdentity,
-      candidateWriteSet: fixture.a.writeSet,
-    });
-
-    // Assert
-    const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity);
-    const unrelatedRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.b.sequence.sequenceIdentity);
-    assert.equal(result.outcome, 'stop-unsettled', label);
-    assert.equal(result.stopped, true, label);
-    assert.ok(nextRow, label);
-    assert.equal(nextRow.state, 'unsettled', label);
-    assert.equal(nextRow.activeCheckpointIdentity, checkpointIdentity, label);
-    assert.equal(nextRow.activeCandidateIdentity, fixture.a.candidate.candidateIdentity, label);
-    assert.equal(nextRow.incumbentCandidateIdentity, incumbentBefore, label);
-    assert.deepEqual(unrelatedRow, fixture.b.sequence, label);
-    assert.equal(Object.hasOwn(result, 'event'), false, label);
-    assert.equal(Object.hasOwn(result, 'projection'), false, label);
-    assert.equal(cycle2ContextSnapshot(fixture.host, checkpointIdentity), expectedUnsettledContext, label);
-    assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore, label);
-    assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'), otherFileBefore, label);
-    assert.equal(successfulReleases, 0, label);
-    assert.deepEqual(owner.acquireCurrentRunRecords(), [], label);
-    assert.deepEqual(owner.acquireLaneEventLines(), [], label);
-    assert.equal(canonicalJson(fixture.state), stateBefore, label);
-    assert.equal(
-      fixture.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity)?.incumbentCandidateIdentity,
-      incumbentBefore,
-      label,
-    );
-    assert.throws(() => closeEvaluationSequence(result.state, fixture.a.sequence.sequenceIdentity, {
-      owner,
-      reason: 'hard-stop',
-      comparisonEventHashes: [],
-      learningReviewEventHashes: [],
-    }), TypeError, label);
-    assert.deepEqual(owner.acquireCurrentRunRecords(), [], label);
-    assert.deepEqual(owner.acquireLaneEventLines(), [], label);
-  }
-});
-
-test('T001 owner-returned fault outcome: genuine second-read context loss returns open active quarantine', () => {
-  // Arrange
-  const fixture = cycle2BoundContexts();
-  const owner = projectionOwnerFake();
-  const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-  const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
-  const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
-  const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
-  const stateBefore = canonicalJson(fixture.state);
-  const incumbentBefore = fixture.a.sequence.incumbentCandidateIdentity;
-  const get = fixture.host.get.bind(fixture.host);
-  let selectedGets = 0;
-  fixture.host.get = (id) => {
-    if (id === checkpointIdentity && ++selectedGets === 2) {
-      fixture.host._map.delete(id);
-      return undefined;
-    }
-    return get(id);
-  };
-  const release = fixture.host.release.bind(fixture.host);
-  let releaseCalls = 0;
-  fixture.host.release = (id) => {
-    releaseCalls += 1;
-    return release(id);
-  };
-
-  // Act
-  const result = resolveComparison(fixture.state, fixture.a.sequence, {
-    host: fixture.host,
-    owner,
-    decision: cycle2Decision(fixture.a),
-    gateSet: cycle2GateSet(fixture.a),
-    candidateIdentity: fixture.a.candidate.candidateIdentity,
-    candidateWriteSet: fixture.a.writeSet,
-  });
-
-  // Assert
-  const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity);
-  const unrelatedRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.b.sequence.sequenceIdentity);
-  assert.equal(result.outcome, 'contract-mismatch');
-  assert.equal(result.stopped, true);
-  assert.ok(nextRow);
-  assert.equal(nextRow.state, 'open');
-  assert.equal(nextRow.activeCheckpointIdentity, checkpointIdentity);
-  assert.equal(nextRow.activeCandidateIdentity, fixture.a.candidate.candidateIdentity);
-  assert.equal(nextRow.incumbentCandidateIdentity, incumbentBefore);
-  assert.deepEqual(unrelatedRow, fixture.b.sequence);
-  assert.equal(Object.hasOwn(result, 'event'), false);
-  assert.equal(Object.hasOwn(result, 'projection'), false);
-  assert.equal(fixture.host._map.has(checkpointIdentity), false);
-  assert.equal(fixture.host._files.get('src/a.mjs')?.bytes?.toString(), 'a-prestate');
-  assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore);
-  assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'), otherFileBefore);
-  assert.equal(releaseCalls, 0);
-  assert.equal(canonicalJson(fixture.state), stateBefore);
-  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
-  assert.deepEqual(owner.acquireLaneEventLines(), []);
-  const successorBeforeClose = canonicalJson(result.state);
-  assert.throws(() => closeEvaluationSequence(result.state, fixture.a.sequence.sequenceIdentity, {
-    owner,
-    reason: 'hard-stop',
-    comparisonEventHashes: [],
-    learningReviewEventHashes: [],
-  }), TypeError);
-  assert.equal(canonicalJson(result.state), successorBeforeClose);
-  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
-  assert.deepEqual(owner.acquireLaneEventLines(), []);
-});
-
-test('T001 owner-returned fault outcome: concrete second-read phase drift returns paired unsettled retention', () => {
-  const phases = ['candidate', 'restoring', 'unsettled'];
-
-  for (const phase of phases) {
-    // Arrange
-    const fixture = cycle2BoundContexts();
-    const owner = projectionOwnerFake();
-    const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-    const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
-    const expectedUnsettledContext = cycle2ContextSnapshot(fixture.host, checkpointIdentity, 'unsettled');
-    const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
-    const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
-    const stateBefore = canonicalJson(fixture.state);
-    const incumbentBefore = fixture.a.sequence.incumbentCandidateIdentity;
-    const get = fixture.host.get.bind(fixture.host);
-    let selectedGets = 0;
-    fixture.host.get = (id) => {
-      if (id === checkpointIdentity && ++selectedGets === 2) {
-        fixture.host._map.get(id).phase = phase;
-      }
-      return get(id);
-    };
-    const release = fixture.host.release.bind(fixture.host);
-    let releaseCalls = 0;
-    fixture.host.release = (id) => {
-      releaseCalls += 1;
-      return release(id);
-    };
-
-    // Act
-    const result = resolveComparison(fixture.state, fixture.a.sequence, {
-      host: fixture.host,
-      owner,
-      decision: cycle2Decision(fixture.a),
-      gateSet: cycle2GateSet(fixture.a),
-      candidateIdentity: fixture.a.candidate.candidateIdentity,
-      candidateWriteSet: fixture.a.writeSet,
-    });
-
-    // Assert
-    const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity);
-    const unrelatedRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.b.sequence.sequenceIdentity);
-    assert.equal(result.outcome, 'stop-unsettled', phase);
-    assert.equal(result.stopped, true, phase);
-    assert.ok(nextRow, phase);
-    assert.equal(nextRow.state, 'unsettled', phase);
-    assert.equal(nextRow.activeCheckpointIdentity, checkpointIdentity, phase);
-    assert.equal(nextRow.activeCandidateIdentity, fixture.a.candidate.candidateIdentity, phase);
-    assert.equal(nextRow.incumbentCandidateIdentity, incumbentBefore, phase);
-    assert.deepEqual(unrelatedRow, fixture.b.sequence, phase);
-    assert.equal(Object.hasOwn(result, 'event'), false, phase);
-    assert.equal(Object.hasOwn(result, 'projection'), false, phase);
-    assert.equal(cycle2ContextSnapshot(fixture.host, checkpointIdentity), expectedUnsettledContext, phase);
-    assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore, phase);
-    assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'), otherFileBefore, phase);
-    assert.equal(releaseCalls, 0, phase);
-    assert.equal(canonicalJson(fixture.state), stateBefore, phase);
-    assert.deepEqual(owner.acquireCurrentRunRecords(), [], phase);
-    assert.deepEqual(owner.acquireLaneEventLines(), [], phase);
-    const successorBeforeClose = canonicalJson(result.state);
-    assert.throws(() => closeEvaluationSequence(result.state, fixture.a.sequence.sequenceIdentity, {
-      owner,
-      reason: 'hard-stop',
-      comparisonEventHashes: [],
-      learningReviewEventHashes: [],
-    }), TypeError, phase);
-    assert.equal(canonicalJson(result.state), successorBeforeClose, phase);
-    assert.deepEqual(owner.acquireCurrentRunRecords(), [], phase);
-    assert.deepEqual(owner.acquireLaneEventLines(), [], phase);
-  }
-});
-
-test('T001 owner-returned fault outcome: retention setPhase failure cannot report stop-unsettled', () => {
-  // Arrange
-  const fixture = cycle2BoundContexts();
-  const owner = projectionOwnerFake();
-  const checkpointIdentity = fixture.a.candidate.checkpointIdentity;
-  const otherCheckpointIdentity = fixture.b.candidate.checkpointIdentity;
-  const expectedQuarantinedContext = cycle2ContextSnapshot(fixture.host, checkpointIdentity, 'restoring');
-  const otherContextBefore = cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity);
-  const otherFileBefore = fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64');
-  const stateBefore = canonicalJson(fixture.state);
-  const incumbentBefore = fixture.a.sequence.incumbentCandidateIdentity;
-  fixture.host.faults.failRestore = true;
-  const setPhase = fixture.host.setPhase.bind(fixture.host);
-  let retentionFailures = 0;
-  fixture.host.setPhase = (id, phase) => {
-    if (id === checkpointIdentity && phase === 'unsettled') {
-      retentionFailures += 1;
-      throw new Error('unsettled retention failed');
-    }
-    return setPhase(id, phase);
-  };
-  const release = fixture.host.release.bind(fixture.host);
-  let releaseCalls = 0;
-  fixture.host.release = (id) => {
-    releaseCalls += 1;
-    return release(id);
-  };
-
-  // Act
-  const result = resolveComparison(fixture.state, fixture.a.sequence, {
-    host: fixture.host,
-    owner,
-    decision: cycle2Decision(fixture.a),
-    gateSet: cycle2GateSet(fixture.a),
-    candidateIdentity: fixture.a.candidate.candidateIdentity,
-    candidateWriteSet: fixture.a.writeSet,
-  });
-
-  // Assert
-  const nextRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.a.sequence.sequenceIdentity);
-  const unrelatedRow = result.state.evaluationSequences.find((row) => row.sequenceIdentity === fixture.b.sequence.sequenceIdentity);
-  assert.equal(result.outcome, 'contract-mismatch');
-  assert.notEqual(result.outcome, 'stop-unsettled');
-  assert.equal(result.stopped, true);
-  assert.ok(nextRow);
-  assert.equal(nextRow.state, 'open');
-  assert.equal(nextRow.activeCheckpointIdentity, checkpointIdentity);
-  assert.equal(nextRow.activeCandidateIdentity, fixture.a.candidate.candidateIdentity);
-  assert.equal(nextRow.incumbentCandidateIdentity, incumbentBefore);
-  assert.deepEqual(unrelatedRow, fixture.b.sequence);
-  assert.equal(Object.hasOwn(result, 'event'), false);
-  assert.equal(Object.hasOwn(result, 'projection'), false);
-  assert.ok(retentionFailures > 0);
-  assert.equal(cycle2ContextSnapshot(fixture.host, checkpointIdentity), expectedQuarantinedContext);
-  assert.equal(cycle2ContextSnapshot(fixture.host, otherCheckpointIdentity), otherContextBefore);
-  assert.equal(fixture.host._files.get('src/b.mjs')?.bytes?.toString('base64'), otherFileBefore);
-  assert.equal(releaseCalls, 0);
-  assert.equal(canonicalJson(fixture.state), stateBefore);
-  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
-  assert.deepEqual(owner.acquireLaneEventLines(), []);
-  const successorBeforeClose = canonicalJson(result.state);
-  assert.throws(() => closeEvaluationSequence(result.state, fixture.a.sequence.sequenceIdentity, {
-    owner,
-    reason: 'hard-stop',
-    comparisonEventHashes: [],
-    learningReviewEventHashes: [],
-  }), TypeError);
-  assert.equal(canonicalJson(result.state), successorBeforeClose);
-  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
-  assert.deepEqual(owner.acquireLaneEventLines(), []);
-});
-
-test('T001 cycle 2 regression: kept-state release mismatch retains the exact context unsettled without a release claim', () => {
-  // Arrange
-  const fixture = objectiveSequenceFixture();
-  const owner = projectionOwnerFake();
-  const stateBefore = canonicalJson(fixture.state);
-  const checkpointIdentity = fixture.candidate.checkpointIdentity;
-  const expectedUnsettledContext = cycle2ContextSnapshot(fixture.host, checkpointIdentity, 'unsettled');
-  const kept = keepCheckpoint(fixture.host, fixture.candidate, fixture.writeSet);
-  fixture.host._setFile('src/a.mjs', 'kept-release-proof-drift');
-  const release = fixture.host.release.bind(fixture.host);
-  let successfulReleases = 0;
-  fixture.host.release = (id) => {
-    const result = release(id);
-    successfulReleases += 1;
-    return result;
-  };
-
-  // Act
-  const releaseKept = () => releaseCheckpoint(fixture.host, kept, fixture.writeSet);
-
-  // Assert
-  assert.throws(releaseKept, TypeError);
-  assert.equal(cycle2ContextSnapshot(fixture.host, checkpointIdentity), expectedUnsettledContext);
-  assert.equal(successfulReleases, 0);
-  assert.equal(canonicalJson(fixture.state), stateBefore);
-  assert.equal(fixture.state.evaluationSequences[0].incumbentCandidateIdentity, fixture.sequence.incumbentCandidateIdentity);
-  assert.deepEqual(owner.acquireCurrentRunRecords(), []);
-  assert.deepEqual(owner.acquireLaneEventLines(), []);
-});
-
-test('T001 pre-read owner envelope: ungoverned valid comparison still keeps and projects unchanged', () => {
-  // Arrange
-  const fixture = objectiveSequenceFixture();
-  const owner = projectionOwnerFake();
-  const decision = fixtureDecision(fixture, ['8', '8', '8', '8', '8']);
-
-  // Act
-  const result = resolveComparison(fixture.state, fixture.sequence, {
-    host: fixture.host,
-    owner,
-    decision,
-    gateSet: fixtureGateSet(fixture),
-    candidateIdentity: fixture.candidate.candidateIdentity,
-    candidateWriteSet: fixture.writeSet,
-  });
-
-  // Assert
-  assert.equal(result.outcome, 'keep');
-  assert.equal(result.stopped, false);
-  assert.equal(result.state.evaluationSequences[0].incumbentCandidateIdentity, fixture.candidate.candidateIdentity);
-  assert.equal(fixture.host._map.size, 0);
-  assert.equal(fixture.host._files.get('src/a.mjs')?.bytes?.toString(), 'poststate');
-  assert.equal(owner.acquireCurrentRunRecords().length, 1);
-  assert.equal(owner.acquireLaneEventLines().length, 1);
 });
 
 test('T001 cycle 1 regression: review-bearing repeat transport seals exact approach; T002 owns semantic grounded-finding equivalence', () => {
@@ -19640,17 +16344,12 @@ test('T001 the governance runtime dispatcher derives one closed request per acti
   const stateBytes = canonicalJson(state);
   const input = { root: '/nowhere', captured: true };
   const review = { verdict: 'reviewed' };
-  const halt = { kind: 'safety', detail: 'stop' };
-  const scheduling = { kind: 'sequential-disjoint' };
   const table = [
     ['review-learning', { action: 'review-learning', input, review }, 'learn', null, 'learning', 'reviewed', ['state', 'input', 'review']],
     ['bind-alternative', { action: 'bind-alternative', input }, 'transition', 'bind-post-learning-inspection', 'transition', 'bound', ['mode', 'state', 'input']],
     ['verify-no-progress', { action: 'verify-no-progress', input }, 'transition', 'verify-no-progress', 'transition', 'verified', ['mode', 'state', 'input']],
     ['controlled-end', { action: 'controlled-end', input }, 'transition', 'controlled-end', 'transition', 'ended', ['mode', 'state', 'input']],
     ['resume-learning', { action: 'resume-learning', input }, 'transition', 'resume-governance', 'transition', 'resumed', ['mode', 'state', 'input']],
-    ['halt', { action: 'halt', input, halt }, 'transition', 'halt', 'transition', 'halted', ['mode', 'state', 'input', 'halt']],
-    ['suspend-target', { action: 'suspend-target', input, scheduling }, 'transition', 'suspend-target', 'transition', 'suspended', ['mode', 'state', 'input', 'scheduling']],
-    ['halted suspend-target', { action: 'suspend-target', input, scheduling, halt }, 'transition', 'suspend-target', 'transition', 'suspended', ['mode', 'state', 'input', 'scheduling', 'halt']],
   ];
 
   // Act and Assert
@@ -19688,11 +16387,8 @@ test('T001 the governance runtime dispatcher derives one closed request per acti
     ['low-level lane route', state, { action: 'issue-lane-permit', input }],
     ['legacy learn route', state, { action: 'learn', input }],
     ['missing review', state, { action: 'review-learning', input }],
-    ['missing halt', state, { action: 'halt', input }],
-    ['missing scheduling', state, { action: 'suspend-target', input }],
     ['missing input', state, { action: 'controlled-end' }],
     ['unknown intent field', state, { action: 'controlled-end', input, permit: {} }],
-    ['halt on an unhalted action', state, { action: 'bind-alternative', input, halt }],
     ['non-record intent', state, 'controlled-end'],
     ['invalid RunState', { policy: {} }, { action: 'controlled-end', input }],
     ['proxy state', proxyState, { action: 'controlled-end', input }],
@@ -20527,7 +17223,7 @@ test('T003 public learning and exact projection batches: credible alternatives m
   });
 });
 
-test('T003 public learning and exact projection batches: learning operates with no objective and never invents one', () => {
+test('T003 public learning binds only an already-valid retained evaluation sequence', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
@@ -20542,15 +17238,8 @@ test('T003 public learning and exact projection batches: learning operates with 
       selectedAlternativeIdentity: flow.credible.alternativeIdentity,
     };
 
-    // An already-valid uniquely matched objective may carry evidence.
-    const contract = numericContract();
-    const sequence = createEvaluationSequence(
-      TARGET,
-      objectivePlanBody(contract),
-      contract,
-      candidateWriteSet(),
-      fileDescriptors({ 'src/a.mjs': 'v1', 'src/a.test.mjs': 't' }),
-    );
+    // An already-valid uniquely matched retained sequence may carry evidence.
+    const sequence = evaluationSequenceRow('learning-binding');
     const objectiveState = { ...clone(governedState), evaluationSequences: [sequence] };
     validateRunState(objectiveState);
 
@@ -21069,7 +17758,6 @@ test('T003 public learning and exact projection batches: invented objectives ref
   });
 });
 
-// --- Feature 009 T004: scoped halts, re-derivation, scheduling, and audit ---
 
 /** @param {string} label */
 function t004Hash(label) {
@@ -21077,37 +17765,8 @@ function t004Hash(label) {
 }
 
 /** Caller-observed target-scoped halt facts. @param {Record<string, unknown>} [overrides] */
-function t004TargetHalt(overrides = {}) {
-  return {
-    scope: 'target',
-    kind: 'unavailable-dependency',
-    reason: 'target-dependency-unavailable',
-    evidenceIdentity: t004Hash('target-halt-evidence'),
-    target: canonicalTarget(TARGET),
-    ...overrides,
-  };
-}
-
 /** Caller-observed run-wide halt facts. @param {Record<string, unknown>} [overrides] */
-function t004RunHalt(overrides = {}) {
-  return {
-    scope: 'run',
-    kind: 'security',
-    reason: 'run-wide-security-stop',
-    evidenceIdentity: t004Hash('run-halt-evidence'),
-    ...overrides,
-  };
-}
-
 /** One eligible disjoint Feature 005 scheduling request. @param {Record<string, unknown>} [overrides] */
-function t004Scheduling(overrides = {}) {
-  return {
-    stopped: { reason: 'external-dependency', changeSet: ['src/t004-affected.mjs'] },
-    candidate: { target: canonicalTarget(SECOND_TARGET), changeSet: ['src/t004-disjoint.mjs'], deps: [] },
-    ...overrides,
-  };
-}
-
 /** @param {string} root @param {ReturnType<typeof t003PublicFlow>} flow @param {Record<string, unknown>[]} events */
 function t004Input(root, flow, events) {
   return cliInput(t002RetentionInput(root, events, events, flow.fixtures));
@@ -21118,256 +17777,7 @@ function t004SplitInput(root, flow, current, lane) {
   return cliInput(t002RetentionInput(root, current, lane, flow.fixtures));
 }
 
-test('T004 scoped halts, re-derivation, scheduling, and audit: a target-scoped stop preserves eligible sequential disjoint scheduling', () => {
-  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
-    // Arrange
-    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
-    const projectedState = flow.learningVerified.transition.state;
-    const projectedBytes = canonicalJson(projectedState);
-
-    // Act
-    const halted = t003Invoke('transition', {
-      mode: 'halt',
-      state: projectedState,
-      input: t004Input(root, flow, flow.learnedEvents),
-      halt: t004TargetHalt(),
-    });
-    const suspended = t003Invoke('transition', {
-      mode: 'suspend-target',
-      state: projectedState,
-      input: t004Input(root, flow, flow.learnedEvents),
-      scheduling: t004Scheduling(),
-      halt: t004TargetHalt(),
-    });
-    const budgetSuspended = t003Invoke('transition', {
-      mode: 'suspend-target',
-      state: projectedState,
-      input: t004Input(root, flow, flow.learnedEvents),
-      scheduling: t004Scheduling({
-        stopped: { reason: 'evidence-incomplete', changeSet: ['src/t004-affected.mjs'] },
-      }),
-      halt: t004TargetHalt({ kind: 'per-target-budget', reason: 'per-target-recovery-exhausted' }),
-    });
-
-    // Assert
-    assert.equal(halted.transition.reason, 'target-halted');
-    assert.equal(halted.transition.scope, 'target');
-    assert.equal(halted.transition.schedulingPreserved, true);
-    recoveryRuntime.validateImmediateHaltOutcomeV1(halted.transition.outcome);
-    assert.equal(halted.transition.outcome.targetDisposition, 'unchanged');
-    // The halt creates no controlled-end permit, mutation, record, or receipt.
-    assert.equal(canonicalJson(halted.transition.state), projectedBytes);
-
-    assert.equal(suspended.transition.reason, 'target-suspended');
-    recoveryRuntime.validateSuspensionV1(suspended.transition.suspension);
-    assert.equal(suspended.transition.suspension.reason, 'target-hard-stop');
-    assert.deepEqual(suspended.transition.suspension.affectedTarget, canonicalTarget(TARGET));
-    assert.deepEqual(suspended.transition.suspension.selectedTarget, canonicalTarget(SECOND_TARGET));
-    const suspendedGovernance = suspended.transition.state.learningGovernance;
-    // The governed target stays unresolved, unchanged, and unauthorized.
-    assert.equal(suspendedGovernance.phase, 'projected');
-    assert.deepEqual(suspendedGovernance.target, canonicalTarget(TARGET));
-    assert.deepEqual(suspended.transition.state.pending, []);
-    assert.equal(Object.hasOwn(suspendedGovernance, 'controlledEnd'), false);
-    validateRunState(suspended.transition.state);
-    const withoutSuspension = clone(suspended.transition.state);
-    delete withoutSuspension.learningGovernance.suspension;
-    assert.equal(canonicalJson(withoutSuspension), projectedBytes);
-    assert.equal(budgetSuspended.transition.suspension.reason, 'per-target-budget');
-    // Feature 005's own decision is reused unchanged: a budget stop still
-    // licenses nothing, and no scheduler or concurrent start is added here.
-    assert.equal(mayScheduleAfterStop(
-      { outcome: { reason: 'recovery-exhausted', state: projectedState }, target: TARGET, changeSet: ['src/t004-affected.mjs'] },
-      { target: SECOND_TARGET, changeSet: ['src/t004-disjoint.mjs'], deps: [] },
-    ), false);
-  });
-});
-
-test('T004 scoped halts, re-derivation, scheduling, and audit: a run-wide stop ends the invocation and starts no other target', () => {
-  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
-    // Arrange
-    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
-    const projectedState = flow.learningVerified.transition.state;
-    const projectedBytes = canonicalJson(projectedState);
-
-    // Act
-    const halted = t003Invoke('transition', {
-      mode: 'halt',
-      state: projectedState,
-      input: t004Input(root, flow, flow.learnedEvents),
-      halt: t004RunHalt(),
-    });
-    const refusedSuspension = t003Invoke('transition', {
-      mode: 'suspend-target',
-      state: projectedState,
-      input: t004Input(root, flow, flow.learnedEvents),
-      scheduling: t004Scheduling(),
-      halt: t004RunHalt({ kind: 'ownership-ambiguity', reason: 'ambiguous-owner-authority' }),
-    });
-
-    // Assert
-    assert.equal(halted.transition.reason, 'run-halted');
-    assert.equal(halted.transition.scope, 'run');
-    assert.equal(halted.transition.schedulingPreserved, false);
-    assert.equal(halted.transition.outcome.halt.scope, 'run');
-    assert.equal(Object.hasOwn(halted.transition.outcome.halt, 'target'), false);
-    assert.equal(halted.transition.outcome.invocationOutcome, 'immediate-halt-end');
-    assert.equal(canonicalJson(halted.transition.state), projectedBytes);
-    assert.equal(refusedSuspension.transition.suspended, false);
-    assert.equal(refusedSuspension.transition.reason, 'run-halted');
-    assert.equal(canonicalJson(refusedSuspension.transition.state), projectedBytes);
-  });
-});
-
-test('T004 scoped halts, re-derivation, scheduling, and audit: missing or conflicting halt scope is run-wide ambiguity', () => {
-  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
-    // Arrange
-    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
-    const projectedState = flow.learningVerified.transition.state;
-    const missingScope = t004TargetHalt();
-    delete missingScope.scope;
-    const missingTarget = t004TargetHalt();
-    delete missingTarget.target;
-    const runKindWithTarget = { ...t004RunHalt(), target: canonicalTarget(TARGET) };
-
-    // Act and Assert
-    for (const [label, halt] of [
-      ['missing scope', missingScope],
-      ['missing target', missingTarget],
-      ['target kind declared run-wide', t004TargetHalt({ scope: 'run' })],
-      ['run kind bound to a target', runKindWithTarget],
-      ['target kind bound to another target', t004TargetHalt({ target: canonicalTarget(SECOND_TARGET) })],
-    ]) {
-      const ambiguous = t003Invoke('transition', {
-        mode: 'halt',
-        state: projectedState,
-        input: t004Input(root, flow, flow.learnedEvents),
-        halt,
-      });
-      assert.equal(ambiguous.transition.reason, 'halt-scope-ambiguous', /** @type {string} */ (label));
-      assert.equal(ambiguous.transition.scope, 'run', /** @type {string} */ (label));
-      assert.equal(ambiguous.transition.schedulingPreserved, false, /** @type {string} */ (label));
-      // Ambiguity claims no resolved disposition at all.
-      assert.equal(Object.hasOwn(ambiguous.transition, 'outcome'), false, /** @type {string} */ (label));
-    }
-  });
-});
-
-test('T004 scoped halts, re-derivation, scheduling, and audit: every closed halt kind keeps its authoritative scope', () => {
-  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
-    // Arrange
-    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
-    const projectedState = flow.learningVerified.transition.state;
-
-    // Act and Assert
-    for (const kind of [
-      'security', 'safety', 'authority', 'credential', 'destructive-confirmation',
-      'spending', 'external-authorization', 'lane-ambiguity', 'ownership-ambiguity',
-      'overall-budget', 'unrecoverable-governance-evidence',
-    ]) {
-      const halted = t003Invoke('transition', {
-        mode: 'halt',
-        state: projectedState,
-        input: t004Input(root, flow, flow.learnedEvents),
-        halt: t004RunHalt({ kind, reason: `run-${kind}` }),
-      });
-      // Every run-wide kind stops the invocation and starts no other target.
-      assert.equal(halted.transition.reason, 'run-halted', kind);
-      assert.equal(halted.transition.scope, 'run', kind);
-      assert.equal(halted.transition.schedulingPreserved, false, kind);
-      assert.equal(halted.transition.outcome.halt.scope, 'run', kind);
-      assert.equal(Object.hasOwn(halted.transition.outcome.halt, 'target'), false, kind);
-    }
-    for (const kind of [
-      'unavailable-dependency', 'unavailable-input', 'per-target-budget',
-      'target-hard-stop', 'learning-evidence-incomplete',
-    ]) {
-      const halted = t003Invoke('transition', {
-        mode: 'halt',
-        state: projectedState,
-        input: t004Input(root, flow, flow.learnedEvents),
-        halt: t004TargetHalt({ kind, reason: `target-${kind}` }),
-      });
-      // Every target-scoped kind restricts only its target.
-      assert.equal(halted.transition.reason, 'target-halted', kind);
-      assert.equal(halted.transition.scope, 'target', kind);
-      assert.equal(halted.transition.schedulingPreserved, true, kind);
-      assert.deepEqual(halted.transition.outcome.halt.target, canonicalTarget(TARGET), kind);
-    }
-  });
-});
-
-test('T004 scoped halts, re-derivation, scheduling, and audit: Immediate Halt End binds three-way evidence with exact disposition equality', () => {
-  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
-    // Arrange
-    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
-    const projectedState = flow.learningVerified.transition.state;
-    const preProjectionState = flow.secondFinalize.completion.state;
-
-    // Act
-    const afterProjection = t003Invoke('transition', {
-      mode: 'halt',
-      state: projectedState,
-      input: t004Input(root, flow, flow.learnedEvents),
-      halt: t004TargetHalt(),
-    });
-    const beforeProjection = t003Invoke('transition', {
-      mode: 'halt',
-      state: preProjectionState,
-      input: t004Input(root, flow, flow.occurrenceEvents),
-      halt: t004TargetHalt(),
-    });
-    const unavailable = t003Invoke('transition', {
-      mode: 'halt',
-      state: projectedState,
-      input: t004Input(root, flow, flow.learnedEvents),
-      halt: t004RunHalt({
-        kind: 'unrecoverable-governance-evidence',
-        reason: 'governance-evidence-unrecoverable',
-      }),
-    });
-
-    // Assert
-    for (const [label, halted, disposition] of [
-      ['after verified projection', afterProjection, 'verified'],
-      ['before projection', beforeProjection, 'rederive-required'],
-      ['unrecoverable evidence', unavailable, 'unavailable'],
-    ]) {
-      const outcome = halted.transition.outcome;
-      recoveryRuntime.validateImmediateHaltOutcomeV1(outcome);
-      assert.equal(outcome.projectionDisposition, disposition, /** @type {string} */ (label));
-      assert.equal(outcome.halt.projectionDisposition, disposition, /** @type {string} */ (label));
-      assert.equal(outcome.projectionEvidence.disposition, disposition, /** @type {string} */ (label));
-      assert.equal(outcome.targetDisposition, 'unchanged', /** @type {string} */ (label));
-      assert.equal(outcome.ok, false, /** @type {string} */ (label));
-    }
-    const verified = afterProjection.transition.outcome.projectionEvidence;
-    recoveryRuntime.validateProjectionRefV1(verified.projectionRef);
-    assert.equal(verified.governanceRevision, 1);
-    assert.ok(verified.projectionRef.eventHashes.includes(verified.governanceEventHash));
-    const proof = beforeProjection.transition.outcome.projectionEvidence.rederivationProof;
-    recoveryRuntime.validateGovernanceRederivationProofV1(proof);
-    assert.deepEqual(
-      proof.retainedOccurrences.map((row) => row.occurrenceIdentity),
-      flow.secondFinalize.completion.repeat.occurrenceIdentities,
-    );
-    assert.deepEqual(proof.repeat, flow.secondFinalize.completion.repeat);
-    assert.equal(
-      unavailable.transition.outcome.projectionEvidence.unrecoverableEvidenceIdentity,
-      unavailable.transition.outcome.halt.evidenceIdentity,
-    );
-    assert.equal(unavailable.transition.outcome.halt.scope, 'run');
-    // A mismatched or cross-branch disposition can never be assembled.
-    const mismatched = clone(afterProjection.transition.outcome);
-    mismatched.projectionDisposition = 'rederive-required';
-    assert.throws(() => recoveryRuntime.validateImmediateHaltOutcomeV1(mismatched), TypeError);
-    const crossBranch = clone(unavailable.transition.outcome);
-    crossBranch.halt.kind = 'safety';
-    assert.throws(() => recoveryRuntime.validateImmediateHaltOutcomeV1(crossBranch), TypeError);
-  });
-});
-
-test('T004 scoped halts, re-derivation, scheduling, and audit: Controlled Unresolved End is branch-gated and never disposes the target', () => {
+test('T004 learning governance: Controlled Unresolved End is branch-gated and never disposes the target', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
@@ -21436,7 +17846,7 @@ test('T004 scoped halts, re-derivation, scheduling, and audit: Controlled Unreso
   });
 });
 
-test('T004 scoped halts, re-derivation, scheduling, and audit: the no-progress branch ends through a verification identity, not an Inspection binding', () => {
+test('T004 learning governance: the no-progress branch ends through a verification identity, not an Inspection binding', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     const flow = t003PublicFlow(root, 'approach', 'no-progress');
@@ -21481,7 +17891,7 @@ test('T004 scoped halts, re-derivation, scheduling, and audit: the no-progress b
   });
 });
 
-test('T004 scoped halts, re-derivation, scheduling, and audit: resume re-derives governance from the dual-retained occurrence events', () => {
+test('T004 learning governance resume re-derives from the dual-retained occurrence events', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
@@ -21569,7 +17979,7 @@ test('T004 scoped halts, re-derivation, scheduling, and audit: resume re-derives
   });
 });
 
-test('T004 scoped halts, re-derivation, scheduling, and audit: AuditSummary v2 reads the byte-equivalent intersection, never the union', () => {
+test('T004 ordinary audit reads the byte-equivalent intersection, never the union', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
@@ -21585,16 +17995,6 @@ test('T004 scoped halts, re-derivation, scheduling, and audit: AuditSummary v2 r
     const oneSided = t003Invoke('audit', {
       state: projectedState,
       input: t004SplitInput(root, flow, flow.learnedEvents, laneEvents),
-    });
-    const halted = t003Invoke('audit', {
-      state: projectedState,
-      input: t004Input(root, flow, flow.learnedEvents),
-      halt: t004TargetHalt(),
-    });
-    const runHalted = t003Invoke('audit', {
-      state: projectedState,
-      input: t004Input(root, flow, flow.learnedEvents),
-      halt: t004RunHalt(),
     });
     const replayed = t003Invoke('audit', {
       state: projectedState,
@@ -21621,15 +18021,6 @@ test('T004 scoped halts, re-derivation, scheduling, and audit: AuditSummary v2 r
     assert.equal(oneSided.audit.summary.evidenceEventHashes.includes(oneSidedEvent.eventHash), false);
     assert.equal(oneSided.audit.summary.projectionDisposition, 'rederive-required');
     assert.equal(oneSided.audit.summary.targetDisposition, 'unchanged');
-    assert.equal(halted.audit.summary.invocationOutcome, 'immediate-halt-end');
-    assert.equal(halted.audit.summary.scope, 'target');
-    assert.equal(halted.audit.summary.unresolvedReason, 'unavailable-dependency');
-    recoveryRuntime.validateImmediateHaltOutcomeV1(halted.audit.summary.immediateHaltEnd);
-    // A run-wide halt row stops the invocation instead of scheduling.
-    assert.equal(runHalted.audit.summary.scope, 'run');
-    assert.equal(runHalted.audit.summary.schedulingOutcome, 'invocation-stopped');
-    assert.equal(runHalted.audit.summary.unresolvedReason, 'security');
-    assert.equal(runHalted.audit.summary.targetDisposition, 'unchanged');
     // A replayed event is no byte-equivalent single-instance intersection row.
     assert.equal(replayed.audit.summary.evidenceEventHashes.includes(oneSidedEvent.eventHash), false);
     assert.equal(replayed.audit.summary.projectionDisposition, 'rederive-required');
@@ -21637,179 +18028,7 @@ test('T004 scoped halts, re-derivation, scheduling, and audit: AuditSummary v2 r
   });
 });
 
-test('T004 scoped halts, re-derivation, scheduling, and audit: suspension and controlled-end audits report unresolved outcomes without a target disposition', () => {
-  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
-    // Arrange
-    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
-    const suspended = t003Invoke('transition', {
-      mode: 'suspend-target',
-      state: flow.learningVerified.transition.state,
-      input: t004Input(root, flow, flow.learnedEvents),
-      scheduling: t004Scheduling(),
-      halt: t004TargetHalt(),
-    });
-    const ended = t003Invoke('transition', {
-      mode: 'controlled-end',
-      state: flow.branchTransition.transition.state,
-      input: t004Input(root, flow, flow.learnedEvents),
-    });
-
-    // Act
-    const suspensionAudit = t003Invoke('audit', {
-      state: suspended.transition.state,
-      input: t004Input(root, flow, flow.learnedEvents),
-    });
-    const controlledEndAudit = t003Invoke('audit', {
-      state: ended.transition.state,
-      input: t004Input(root, flow, flow.learnedEvents),
-    });
-
-    // Assert
-    recoveryRuntime.validateAuditSummaryV2(suspensionAudit.audit.summary);
-    assert.equal(suspensionAudit.audit.summary.schedulingOutcome, 'sequential-disjoint-continuation');
-    assert.equal(suspensionAudit.audit.summary.unresolvedReason, 'target-hard-stop');
-    assert.equal(suspensionAudit.audit.summary.learningRequirement, 'unresolved');
-    assert.deepEqual(
-      suspensionAudit.audit.summary.suspension,
-      suspended.transition.suspension,
-    );
-    assert.equal(suspensionAudit.audit.summary.targetDisposition, 'unchanged');
-    recoveryRuntime.validateAuditSummaryV2(controlledEndAudit.audit.summary);
-    assert.equal(controlledEndAudit.audit.summary.invocationOutcome, 'controlled-unresolved-end');
-    assert.equal(controlledEndAudit.audit.summary.learningRequirement, 'resolved');
-    assert.equal(controlledEndAudit.audit.summary.targetDisposition, 'unchanged');
-    assert.deepEqual(
-      controlledEndAudit.audit.summary.controlledEnd,
-      ended.transition.controlledEnd,
-    );
-    // The resolved governance branch never becomes a target disposition row.
-    assert.equal(Object.hasOwn(controlledEndAudit.audit.summary, 'branchEvidence'), false);
-  });
-});
-
-test('T004 scoped halts, re-derivation, scheduling, and audit: scheduling stays sequential, transfers no authority, and refuses concurrency', () => {
-  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
-    // Arrange
-    const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
-    const projectedState = flow.learningVerified.transition.state;
-    const projectedBytes = canonicalJson(projectedState);
-    const dispatched = authorizeAttempt(
-      projectedState,
-      SECOND_TARGET,
-      transitionRaw(SECOND_TARGET),
-      transitionAssessment('retry-task', { targets: ['src/t004-disjoint.mjs'] }),
-      'recovery',
-    );
-
-    // Act
-    const concurrent = t003Invoke('transition', {
-      mode: 'suspend-target',
-      state: dispatched.state,
-      input: t004Input(root, flow, flow.learnedEvents),
-      scheduling: t004Scheduling(),
-      halt: t004TargetHalt(),
-    });
-    const overlapping = t003Invoke('transition', {
-      mode: 'suspend-target',
-      state: projectedState,
-      input: t004Input(root, flow, flow.learnedEvents),
-      scheduling: t004Scheduling({
-        candidate: {
-          target: canonicalTarget(SECOND_TARGET),
-          changeSet: ['src/t004-affected.mjs'],
-          deps: [],
-        },
-      }),
-      halt: t004TargetHalt(),
-    });
-    const dependent = t003Invoke('transition', {
-      mode: 'suspend-target',
-      state: projectedState,
-      input: t004Input(root, flow, flow.learnedEvents),
-      scheduling: t004Scheduling({
-        candidate: {
-          target: canonicalTarget(SECOND_TARGET),
-          changeSet: ['src/t004-disjoint.mjs'],
-          deps: [TASK_KEY],
-        },
-      }),
-      halt: t004TargetHalt(),
-    });
-    const sameTarget = t003Invoke('transition', {
-      mode: 'suspend-target',
-      state: projectedState,
-      input: t004Input(root, flow, flow.learnedEvents),
-      scheduling: t004Scheduling({
-        candidate: {
-          target: canonicalTarget(TARGET),
-          changeSet: ['src/t004-disjoint.mjs'],
-          deps: [],
-        },
-      }),
-      halt: t004TargetHalt(),
-    });
-    const unprojected = t003Invoke('transition', {
-      mode: 'suspend-target',
-      state: flow.secondFinalize.completion.state,
-      input: t004Input(root, flow, flow.occurrenceEvents),
-      scheduling: t004Scheduling(),
-    });
-    const haltedUnprojected = t003Invoke('transition', {
-      mode: 'suspend-target',
-      state: flow.secondFinalize.completion.state,
-      input: t004Input(root, flow, flow.occurrenceEvents),
-      scheduling: t004Scheduling(),
-      halt: t004TargetHalt(),
-    });
-    const softStopped = t003Invoke('transition', {
-      mode: 'suspend-target',
-      state: projectedState,
-      input: t004Input(root, flow, flow.learnedEvents),
-      scheduling: t004Scheduling({
-        stopped: { reason: 'recovery-exhausted', changeSet: ['src/t004-affected.mjs'] },
-      }),
-      halt: t004TargetHalt(),
-    });
-
-    // Assert
-    assert.equal(dispatched.authorized, true);
-    assert.equal(concurrent.transition.suspended, false);
-    assert.equal(concurrent.transition.reason, 'concurrency-forbidden');
-    assert.equal(canonicalJson(concurrent.transition.state), canonicalJson(dispatched.state));
-    for (const [label, refused] of [
-      ['overlapping change set', overlapping],
-      ['direct dependency on the stopped target', dependent],
-      ['the governed target itself', sameTarget],
-    ]) {
-      assert.equal(refused.transition.suspended, false, /** @type {string} */ (label));
-      assert.equal(refused.transition.reason, 'scheduling-ineligible', /** @type {string} */ (label));
-      assert.equal(canonicalJson(refused.transition.state), projectedBytes, /** @type {string} */ (label));
-    }
-    // Without an immediate-halt exception, suspension waits for the projection.
-    assert.equal(unprojected.transition.suspended, false);
-    assert.equal(unprojected.transition.reason, 'governance-unresolved');
-    assert.equal(
-      canonicalJson(unprojected.transition.state),
-      canonicalJson(flow.secondFinalize.completion.state),
-    );
-    // The immediate-halt exception is the only route to unchanged suspension
-    // before the bounded unresolved event is projected and retained.
-    assert.equal(haltedUnprojected.transition.suspended, true);
-    assert.equal(haltedUnprojected.transition.projectionDisposition, 'rederive-required');
-    assert.equal(haltedUnprojected.transition.suspension.reason, 'target-hard-stop');
-    recoveryRuntime.validateGovernanceRederivationProofV1(
-      haltedUnprojected.transition.projectionEvidence.rederivationProof,
-    );
-    assert.equal(haltedUnprojected.transition.state.learningGovernance.phase, 'required');
-    // Feature 005 alone decides eligibility, including the stopped reason class.
-    assert.notEqual(classifyOutcomeReason('recovery-exhausted'), 'hard-stop');
-    assert.equal(softStopped.transition.suspended, false);
-    assert.equal(softStopped.transition.reason, 'scheduling-ineligible');
-    assert.equal(canonicalJson(softStopped.transition.state), projectedBytes);
-  });
-});
-
-test('T004 scoped halts, re-derivation, scheduling, and audit: every scoped route requires the exact affected-target mapping', () => {
+test('T004 ordinary audit and governance routes require the exact affected-target mapping', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
@@ -21834,12 +18053,6 @@ test('T004 scoped halts, re-derivation, scheduling, and audit: every scoped rout
     });
 
     // Act
-    const governed = t003Invoke('transition', {
-      mode: 'halt',
-      state: projectedState,
-      input: dualInput(TARGET),
-      halt: t004TargetHalt(),
-    });
     const foreignControlledEnd = t003Invoke('transition', {
       mode: 'controlled-end',
       state: flow.branchTransition.transition.state,
@@ -21852,23 +18065,7 @@ test('T004 scoped halts, re-derivation, scheduling, and audit: every scoped rout
     });
 
     // Assert
-    // The control proves the two-task workspace itself resolves cleanly.
-    assert.equal(governed.transition.reason, 'target-halted');
-    assert.equal(governed.transition.outcome.projectionDisposition, 'verified');
     for (const [label, command, request] of [
-      ['halt', 'transition', {
-        mode: 'halt',
-        state: projectedState,
-        input: dualInput(SECOND_TARGET),
-        halt: t004TargetHalt(),
-      }],
-      ['suspend-target', 'transition', {
-        mode: 'suspend-target',
-        state: projectedState,
-        input: dualInput(SECOND_TARGET),
-        scheduling: t004Scheduling(),
-        halt: t004TargetHalt(),
-      }],
       ['audit', 'audit', { state: projectedState, input: dualInput(SECOND_TARGET) }],
     ]) {
       const refused = runRecoveryCli(/** @type {string} */ (command), request);
@@ -21889,25 +18086,16 @@ test('T004 scoped halts, re-derivation, scheduling, and audit: every scoped rout
   });
 });
 
-test('T004 scoped halts, re-derivation, scheduling, and audit: the scoped routes stay autonomous-only and closed at the public boundary', () => {
+test('T004 ordinary governance and audit routes stay autonomous-only and closed at the public boundary', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
     const projectedState = flow.learningVerified.transition.state;
     const guardedInput = () => cliInput(publicInspectionInput(root));
     const expectedError = { error: { code: 'recovery-invalid-request', message: 'Recovery request is invalid.' } };
-    const unknownFieldError = {
-      error: { code: 'recovery-invalid-request', message: 'Recovery request contains an unknown field.' },
-    };
 
     // Act and Assert
     for (const [label, command, request, expected] of [
-      ['guarded halt', 'transition', {
-        mode: 'halt', state: emptyState(), input: guardedInput(), halt: t004TargetHalt(),
-      }, expectedError],
-      ['guarded suspend-target', 'transition', {
-        mode: 'suspend-target', state: emptyState(), input: guardedInput(), scheduling: t004Scheduling(),
-      }, expectedError],
       ['guarded controlled-end', 'transition', {
         mode: 'controlled-end', state: emptyState(), input: guardedInput(),
       }, expectedError],
@@ -21915,34 +18103,13 @@ test('T004 scoped halts, re-derivation, scheduling, and audit: the scoped routes
         mode: 'resume-governance', state: emptyState(), input: guardedInput(),
       }, expectedError],
       ['guarded audit', 'audit', { state: emptyState(), input: guardedInput() }, expectedError],
-      ['halt without facts', 'transition', {
-        mode: 'halt', state: projectedState, input: t004Input(root, flow, flow.learnedEvents),
-      }, expectedError],
-      ['halt with an unknown kind', 'transition', {
-        mode: 'halt',
-        state: projectedState,
-        input: t004Input(root, flow, flow.learnedEvents),
-        halt: t004TargetHalt({ kind: 'budget' }),
-      }, expectedError],
-      ['suspend-target with an unknown field', 'transition', {
-        mode: 'suspend-target',
-        state: projectedState,
-        input: t004Input(root, flow, flow.learnedEvents),
-        scheduling: t004Scheduling(),
-        suspension: { reason: 'unresolved-learning' },
-      }, unknownFieldError],
-      ['audit with a submitted outcome', 'audit', {
-        state: projectedState,
-        input: t004Input(root, flow, flow.learnedEvents),
-        immediateHaltEnd: { ok: false, invocationOutcome: 'immediate-halt-end' },
-      }, unknownFieldError],
     ]) {
       const refused = runRecoveryCli(/** @type {string} */ (command), request);
       assert.equal(refused.status, 1, /** @type {string} */ (label));
       assert.equal(refused.stdout, '', /** @type {string} */ (label));
       assert.deepEqual(JSON.parse(refused.stderr), expected, /** @type {string} */ (label));
     }
-    for (const route of ['haltGovernanceV2', 'suspendTargetV2', 'controlledEndV2', 'resumeGovernanceV2', 'auditGovernanceV2']) {
+    for (const route of ['controlledEndV2', 'resumeGovernanceV2', 'auditGovernanceV2']) {
       assert.throws(
         () => recoveryRuntime[route](emptyState(), {}, {}, undefined, false),
         /requires autonomous policy/,
@@ -21952,7 +18119,7 @@ test('T004 scoped halts, re-derivation, scheduling, and audit: the scoped routes
   });
 });
 
-test('T004 scoped halts, re-derivation, scheduling, and audit: resume refuses an occupied foreign-target governance singleton', () => {
+test('T004 learning governance resume refuses an occupied foreign-target singleton', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
@@ -22024,65 +18191,7 @@ test('T004 scoped halts, re-derivation, scheduling, and audit: resume refuses an
   });
 });
 
-test('T004 scoped halts, re-derivation, scheduling, and audit: unchanged suspension stays available and closed at both unresolved branch phases', () => {
-  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
-    // Arrange
-    const alternativeFlow = t003PublicFlow(root, 'finding', 'selected-alternative');
-    const inspectedState = alternativeFlow.branchTransition.transition.state;
-    const noProgressFlow = t003PublicFlow(root, 'approach', 'no-progress');
-    const verifiedState = noProgressFlow.branchTransition.transition.state;
-
-    // Act
-    const inspectedSuspended = t003Invoke('transition', {
-      mode: 'suspend-target',
-      state: inspectedState,
-      input: t004Input(root, alternativeFlow, alternativeFlow.learnedEvents),
-      scheduling: t004Scheduling(),
-      halt: t004TargetHalt({ kind: 'per-target-budget', reason: 'per-target-recovery-exhausted' }),
-    });
-    const verifiedSuspended = t003Invoke('transition', {
-      mode: 'suspend-target',
-      state: verifiedState,
-      input: t004Input(root, noProgressFlow, noProgressFlow.learnedEvents),
-      scheduling: t004Scheduling(),
-      halt: t004TargetHalt(),
-    });
-    const endedAfterSuspension = t003Invoke('transition', {
-      mode: 'controlled-end',
-      state: inspectedSuspended.transition.state,
-      input: t004Input(root, alternativeFlow, alternativeFlow.learnedEvents),
-    });
-
-    // Assert
-    // FR-024 keeps per-target budget exhaustion and a target-scoped stop from
-    // consuming the authority to suspend the target unchanged after an
-    // alternative is selected or no-progress is verified.
-    for (const [label, suspended, phase, reason] of [
-      ['alternative-inspected', inspectedSuspended, 'alternative-inspected', 'per-target-budget'],
-      ['no-progress-verified', verifiedSuspended, 'no-progress-verified', 'target-hard-stop'],
-    ]) {
-      assert.equal(suspended.transition.suspended, true, /** @type {string} */ (label));
-      assert.equal(suspended.transition.reason, 'target-suspended', /** @type {string} */ (label));
-      assert.equal(suspended.transition.suspension.reason, reason, /** @type {string} */ (label));
-      const governance = suspended.transition.state.learningGovernance;
-      // FR-013 retains the suspension while the requirement stays unresolved.
-      assert.deepEqual(governance.suspension, suspended.transition.suspension);
-      assert.equal(governance.phase, phase, /** @type {string} */ (label));
-      assert.deepEqual(governance.target, canonicalTarget(TARGET), /** @type {string} */ (label));
-      assert.equal(Object.hasOwn(governance, 'controlledEnd'), false, /** @type {string} */ (label));
-      validateRunState(suspended.transition.state);
-    }
-    // Retaining the suspension never blocks the ordinary Controlled Unresolved End.
-    assert.equal(endedAfterSuspension.transition.ended, true);
-    assert.deepEqual(
-      endedAfterSuspension.transition.state.learningGovernance.suspension,
-      inspectedSuspended.transition.suspension,
-    );
-    assert.equal(endedAfterSuspension.transition.state.learningGovernance.phase, 'alternative-inspected');
-  });
-});
-
-test('T004 scoped halts, re-derivation, scheduling, and audit: Controlled Unresolved End rebinds the post-learning identity and refuses drift', () => {
+test('T004 learning governance Controlled Unresolved End rebinds the post-learning identity and refuses drift', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     const alternativeFlow = t003PublicFlow(root, 'finding', 'selected-alternative');
@@ -22137,7 +18246,7 @@ test('T004 scoped halts, re-derivation, scheduling, and audit: Controlled Unreso
   });
 });
 
-test('T004 scoped halts, re-derivation, scheduling, and audit: every audit branch and controlled-end row requires intersection backing', () => {
+test('T004 every audit branch and controlled-end row requires intersection backing', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
@@ -24387,6 +20496,46 @@ function t001OrdinaryCompletionFixture(root, overrides = {}) {
   return { fixture, captured, events, verified, finalized, binding, mutation, input };
 }
 
+test('T001 ordinary completion close bridge KEEP guard: active and unsettled retained evaluation sequences refuse task close', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const terminal = t001OrdinaryCompletionFixture(root);
+    const activeIdentities = {
+      activeCheckpointIdentity: sha256('retained-close-checkpoint'),
+      activeCandidateIdentity: sha256('retained-close-candidate'),
+    };
+    const rows = [
+      ['active', evaluationSequenceRow('close-active', activeIdentities)],
+      ['unsettled', evaluationSequenceRow('close-unsettled', { state: 'unsettled', ...activeIdentities })],
+    ];
+
+    for (const [label, sequence] of rows) {
+      const state = {
+        ...clone(terminal.finalized.completion.state),
+        evaluationSequences: [sequence],
+      };
+      validateRunState(state);
+      const before = canonicalJson(state);
+
+      // Act
+      const issued = t003Invoke('transition', {
+        mode: 'issue-lane-permit',
+        state,
+        input: terminal.input(terminal.events),
+        mutation: terminal.mutation,
+        lanePrestate: terminal.binding.lanePrestate,
+        targetMapping: terminal.binding.targetMapping,
+      });
+
+      // Assert
+      assert.equal(issued.transition.issued, false, label);
+      assert.equal(issued.transition.reason, 'governance-unresolved', label);
+      assert.equal(Object.hasOwn(issued.transition, 'permit'), false, label);
+      assert.equal(canonicalJson(issued.transition.state), before, label);
+    }
+  });
+});
+
 test('T001 ordinary completion close bridge: issuance refuses every incomplete, stale, conflicting, or ambiguous authority', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
@@ -24453,13 +20602,7 @@ test('T001 ordinary completion close bridge: issuance refuses every incomplete, 
     ));
     const evaluation = {
       ...clone(finalState),
-      evaluationSequences: [createEvaluationSequence(
-        TARGET,
-        objectivePlanBody(numericContract()),
-        numericContract(),
-        candidateWriteSet(),
-        fileDescriptors({ 'src/a.mjs': 'v1', 'src/a.test.mjs': 'guard' }),
-      )],
+      evaluationSequences: [evaluationSequenceRow('ordinary-close-guard')],
     };
     const forgedTuple = clone(finalState);
     forgedTuple.completed[0].resultHash = t005Hash('ordinary-forged-completed-result');
@@ -26534,11 +22677,6 @@ test('Feature 013 T003 B: every hard stop in the settled set still halts under t
 
 test('Feature 013 T003 C: a failed verification or a rejected review halts under the unattended policy and is never approval (US5 scenario 2, FR-008)', () => {
   const fixtures = feature013T003Fixtures().checkpoints;
-  const candidate = {
-    target: { ...TARGET, taskKey: SECOND_TASK_KEY },
-    changeSet: ['src/f013-t003-independent.mjs'],
-    deps: [],
-  };
 
   assert.deepEqual(
     [...new Set(fixtures.map((fixture) => fixture.reason))].sort(),
@@ -26556,17 +22694,12 @@ test('Feature 013 T003 C: a failed verification or a rejected review halts under
     assert.equal(endsUnattendedLoop(outcome), true, `${fixture.name} must halt`);
 
     // It is never approval: no approval field, no completion, no continuation
-    // license, and no post-stop scheduling license.
+    // license.
     assert.equal(outcome.completed, false, fixture.name);
     assert.equal(Object.hasOwn(outcome, 'authorized'), false, fixture.name);
     assert.notEqual(outcome.reason, 'authorized', fixture.name);
     assert.notEqual(classifyOutcomeReason(outcome.reason), 'authorized', fixture.name);
     assert.equal(mayContinueAutonomously(outcome), false, fixture.name);
-    assert.equal(
-      mayScheduleAfterStop({ outcome, target: TARGET, changeSet: fixture.changeSet }, candidate),
-      false,
-      `${fixture.name} licenses no post-stop scheduling`,
-    );
 
     const report = describeUnattendedHalt(outcome, fixture.inspection);
     assert.equal(report.resolved, true, `${fixture.name}: ${canonicalJson(report)}`);
@@ -26696,29 +22829,6 @@ test('Feature 013 T003 E: default and explicit guarded policy keeps every existi
   const guardedOrdinary = authorizeAttempt(guardedContinuationState(), TARGET, raw, transitionAssessment('execute-task'), 'ordinary');
   assert.equal(mayContinueAutonomously(guardedOrdinary), false);
 
-  // `mayScheduleAfterStop` keeps its exact existing gates.
-  const hardRaw = transitionRaw(TARGET, { currentRun: [capture(TARGET, 'approval-required', [{ i: 1 }])] });
-  const guardedStop = authorizeAttempt(guardedContinuationState(), TARGET, hardRaw, transitionAssessment('retry-task'), 'recovery');
-  const autonomousStop = authorizeAttempt(autonomousState(), TARGET, hardRaw, transitionAssessment('retry-task'), 'recovery');
-  const stoppedChangeSet = ['src/f013-t003-stopped.mjs'];
-  const candidate = { target: { ...TARGET, taskKey: SECOND_TASK_KEY }, changeSet: ['src/f013-t003-next.mjs'], deps: [] };
-  assert.equal(guardedStop.reason, 'approval-required');
-  assert.equal(autonomousStop.reason, 'approval-required');
-  assert.equal(
-    mayScheduleAfterStop({ outcome: guardedStop, target: TARGET, changeSet: stoppedChangeSet }, candidate),
-    false,
-    'a guarded hard stop schedules nothing',
-  );
-  assert.equal(
-    mayScheduleAfterStop({ outcome: autonomousStop, target: TARGET, changeSet: stoppedChangeSet }, candidate),
-    true,
-    'the autonomous post-stop scheduling gate itself is unchanged',
-  );
-  assert.equal(
-    mayScheduleAfterStop({ outcome: autonomousStop, target: TARGET, changeSet: stoppedChangeSet }, { ...candidate, deps: [TASK_KEY] }),
-    false,
-    'a dependent candidate is still refused',
-  );
 });
 
 test('Feature 013 T003 F: the settled reasons with no blocker code and no state probe always fail closed and are never suppressed (FR-006, SC-003)', () => {
@@ -26846,17 +22956,9 @@ test('Feature 013 T003 G: describeUnattendedHalt is called only from the autonom
     evidenceHash: guardedInspection.evidenceHash,
   });
 
-  // 3. The report grants no authority: the guarded outcome still halts, still
-  //    licenses no continuation, and still schedules nothing.
+  // 3. The report grants no continuation authority.
   assert.equal(endsUnattendedLoop(guardedStop), true);
   assert.equal(mayContinueAutonomously(guardedStop), false);
-  assert.equal(
-    mayScheduleAfterStop(
-      { outcome: guardedStop, target: TARGET, changeSet: ['src/f013-t003-guarded.mjs'] },
-      { target: { ...TARGET, taskKey: SECOND_TASK_KEY }, changeSet: ['src/f013-t003-other.mjs'], deps: [] },
-    ),
-    false,
-  );
 
   // 4. It is side-effect-free: describing a guarded halt mutates neither
   //    argument and leaves the guarded outcome byte-identical to a fresh one.

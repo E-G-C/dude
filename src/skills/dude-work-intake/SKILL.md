@@ -1,6 +1,6 @@
 ---
 name: "dude-work-intake"
-description: "Use to triage a request, choose direct response or routing, capture an idea, or decide whether explicit definition is ready."
+description: "Use to triage a request, choose direct response or routing, capture an idea, or decide whether explicit definition is ready. Do NOT use to write the definition artifacts themselves (dude-feature-definition) or to run execution (dude-work)."
 ---
 
 # Work Intake

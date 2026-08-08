@@ -1,6 +1,6 @@
 ---
 name: "dude-receiving-code-review"
-description: "Use before accepting, implementing, or disputing review feedback and rejection findings."
+description: "Use before accepting, implementing, or disputing review feedback and rejection findings. Do NOT use when issuing the verdict yourself as the reviewer (dude-reviewer-protocol)."
 ---
 
 # Receiving Code Review

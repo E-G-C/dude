@@ -12,6 +12,15 @@ import {
 import { WORKSPACE_PATHS } from './workspace-paths.mjs';
 
 /**
+ * Canonical scalar keys permitted in an idea ledger's frontmatter, including the
+ * optional `depends-on` feature-level dependency declaration. Passed to
+ * `parseFrontmatterScalars` in strict canonical mode, which still throws on any
+ * non-canonical key, structured flow value (`[...]`), or block-list line.
+ * @type {readonly string[]}
+ */
+const CANONICAL_IDEA_KEYS = Object.freeze(['title', 'slug', 'status', 'spec_path', 'depends-on']);
+
+/**
  * @typedef {{ ideaPath: string, specPath: string }} FeatureRecord
  * @typedef {{ code: string, severity: 'error' | 'warning', path: string, message: string }} FeatureDiagnostic
  * @typedef {{ features: FeatureRecord[], diagnostics: FeatureDiagnostic[] }} FeatureInventory
@@ -213,7 +222,7 @@ export function inventoryDefinedFeatures({ root }) {
     let frontmatter;
     try {
       frontmatter = parseFrontmatterScalars(content, {
-        canonicalKeys: ['title', 'slug', 'status', 'spec_path'],
+        canonicalKeys: CANONICAL_IDEA_KEYS,
       });
     } catch (error) {
       diagnose(

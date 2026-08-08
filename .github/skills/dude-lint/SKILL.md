@@ -1,6 +1,6 @@
 ---
 name: "dude-lint"
-description: "Use when validating Dude workspace and bundle hygiene: checking .dude idea/tasks/state shape, canonical identities, skill frontmatter names, bundle manifest shape, orphan references, memory size, and coordinator-only boundaries."
+description: "Use when validating Dude workspace and bundle hygiene: checking .dude idea/tasks/state shape, canonical identities, skill frontmatter names, bundle manifest shape, orphan references, memory size, and coordinator-only boundaries. Do NOT use to lint or format project source code, which belongs to the project's own linter."
 ---
 
 # Dude Lint
