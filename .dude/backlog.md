@@ -1,6 +1,6 @@
 # Backlog
 
-_Generated 2026-08-08 01:02 UTC, source 51a77b2. A derived projection, never authoritative._
+_Generated 2026-08-08 01:10 UTC, source 9e98f63. A derived projection, never authoritative._
 
 ## Active
 
@@ -21,7 +21,7 @@ _(none)_
 ## Backlog
 
 - backlog-canvas
-- backlog-report-usability
+- backlog-report-usability (spec-027)
 - core-dogfood-preview
 - good-enough-delivery
 - multi-dude-work-coordination
@@ -65,7 +65,7 @@ kanban
   later[Later]
   backlog[Backlog]
     backlog-canvas[backlog-canvas]
-    backlog-report-usability[backlog-report-usability]
+    backlog-report-usability[backlog-report-usability spec-027]
     core-dogfood-preview[core-dogfood-preview]
     good-enough-delivery[good-enough-delivery]
     multi-dude-work-coordination[multi-dude-work-coordination]

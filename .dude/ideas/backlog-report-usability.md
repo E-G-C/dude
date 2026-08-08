@@ -1,8 +1,8 @@
 ---
 title: Backlog Report Usability
 slug: backlog-report-usability
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/027-backlog-report-usability/spec.md
 ---
 
 # Idea: Backlog Report Usability
@@ -86,65 +86,67 @@ These are coordinator working assumptions, not user decisions. Correct any that 
 <!-- dude:managed:start -->
 ## Normalized Intent
 
-- Replace the six-peer-lane backlog presentation with an approved Lifecycle Explorer that answers where work is now, what is next, and what happened previously.
-- Make the complete idea-to-completion lifecycle visual and glanceable while supporting progressive drill-down into real source material, specifications, tasks, status, dependencies, and milestones.
-- Separate Current, Planned, and Completed semantics rather than mixing execution state, prioritization, unprioritized work, and history into equal lanes.
-- Put current work first, ordered as Blocked, Active, and Next, suppressing empty subsections while preserving truthful counts.
-- Present draft and unprioritized ideas compactly, and present prioritized-later work only when authoritative ordering actually exists.
-- Replace the oversized Shipped lane with one collapsed completed-feature library of compact rows and drill-down details.
-- Provide a zoomed-out delivery map that distinguishes declared relationships, provisional body-stated relationships, and absent order signals without inventing a roadmap.
-- Default-open `backlog-canvas` and show its body-stated dependency on `backlog-report` as dashed and explicitly non-authoritative.
-- Give every idea or feature a native details-based drill-down with stable identity, lifecycle ribbon, task-state counts, dependency signal, source idea excerpt and path, coordinator milestones, applicable user stories, and canonical task details.
-- Represent drafts honestly as awaiting definition with no tasks.
-- Keep HTML and Markdown semantically aligned while allowing each format to use the layout appropriate to it.
-- Keep HTML static, self-contained, accessible, responsive, print-safe, and usable through ordinary page scrolling, native details, and in-page anchors.
-- Apply the approved Strata spectrum without shadows or decorative boundary misuse.
-- Remove wall-clock timestamps, checkout basenames, and pre-commit revision stamps.
-- Produce byte-identical output for unchanged authoritative inputs across repeated runs and checkout locations.
-- Use a deterministic source-input fingerprint only if provenance is materially useful.
-- Make freshness mechanically checked through an existing validation or integration point instead of relying on procedural regeneration guidance.
-- Label the minimal activity view “Coordinator activity,” derive it only from idea Coordinator Logs, parse it by date, group same-date entries, preserve stable ordering, and state its scope explicitly.
-- Keep Git-history activity aggregation outside the minimal first version unless the user explicitly expands scope.
-- Preserve Feature 025 unchanged as closed history while this follow-up supersedes its affected presentation and trust requirements.
-- Preserve one-to-one representation of discovered ideas without pinning the design to the prototype's current count of 30.
+- Replace the six-peer-lane backlog presentation with the approved Lifecycle Explorer and shared Current, Planned, and Completed semantics.
+- Make the full idea-to-completion lifecycle glanceable while retaining progressive drill-down into real idea text, specifications, tasks, status, dependencies, order, and coordinator milestones.
+- Show a truthful where-are-we summary for Current work, Ready/Next, Ideas awaiting definition, Defined awaiting work, and Completed, with no all-history completion percentage.
+- Present Current work as Blocked, Active, and Next; suppress empty subsections while preserving zero counts.
+- Present draft and unprioritized work compactly, and show Prioritized for later only when authoritative ordering exists.
+- Replace the Shipped peer lane with one collapsed compact completed library using normal page scrolling and drill-down on demand.
+- Distinguish authoritative declared dependencies or order, provisional body-stated relationships, and missing signals without inventing a roadmap.
+- Default-open `backlog-canvas` and show its exact body-stated dependency on `backlog-report` as provisional and non-authoritative.
+- Give every direct idea one stable, drillable inventory entry with lifecycle stages, task-state counts, dependency signal, source excerpt and path, milestones, applicable user stories, phases, tasks, statuses, and `deps:`.
+- Represent drafts explicitly as awaiting definition with no tasks.
+- Keep Markdown semantically aligned but concise, with Mermaid limited to current work.
+- Keep HTML static, self-contained, accessible, responsive, print-safe, and usable through normal scrolling, native details, and in-page anchors.
+- Apply the approved Strata spectrum using near-white planes, meaningful rules, 4px radii, no shadows, metadata-only monospace, deep text colors, and meaningful contrast boundaries.
+- Remove wall-clock timestamps, checkout basenames, and pre-commit Git revision stamps so unchanged authoritative input bytes produce byte-identical artifacts across checkout locations.
+- Add a read-only mechanical freshness check through the existing test and CI path while preserving `generate --write` as the only two-file write path.
+- Label activity “Coordinator activity,” derive it only from idea Coordinator Logs, parse the date field, group same-date entries, use stable deterministic ordering without invented intra-day chronology, and state the exclusions.
+- Preserve fixed paths, derived-only authority, offline openability, and the absence of a second board, store, service, watcher, or execution authority.
+- Preserve Feature 025 unchanged as closed history while explicitly superseding only its affected presentation, provenance, activity, and freshness contracts.
 
 ## Constraints
 
-- Keep this as brainstorm intake only. Do not create or modify `.dude/specs/` and do not implement anything.
+- Publish only this first-definition owner transition and the core `spec.md`, `plan.md`, and `tasks.md` transaction; implementation is outside definition.
+- Copy the approved preview to `.dude/specs/027-backlog-report-usability/design/preview.html` only after successful core publication, verify SHA-256 `fdfa1b3f517bc721898d3bfd16d75075c75181f84b88d914f89765861bc40573`, and treat it as design evidence rather than runtime input.
 - Do not reopen, rewrite, or mutate Feature 025.
 - Do not invent feature order, dependencies, roadmap relationships, activity, or task state.
-- Add no new service, watcher, daemon, persistent store, second board, or execution authority.
-- Use an existing validation or integration point for mechanical freshness enforcement.
-- Keep generation deterministic and location-independent for unchanged authoritative inputs.
+- Add no service, watcher, daemon, persistent store, second board, schema, API, or execution authority.
+- Use the existing test and CI path for mechanical freshness enforcement.
+- Keep generation deterministic and location-independent for unchanged authoritative input bytes.
 - Do not emit wall-clock generation time, checkout basename, or pre-commit Git revision as provenance.
-- Add Git-history aggregation only after an explicit scope decision.
+- Keep Git-history aggregation deferred.
 - Use no browser JavaScript, network access, server, external references, remote fonts, fake controls, or nested scrolling.
-- Use normal document scrolling and provide visible, keyboard-usable, responsive, and print-safe interaction.
-- Keep Markdown and HTML semantics shared without requiring identical layouts or duplicated detail.
+- Use normal document scrolling and provide visible keyboard focus, responsive stacking, print-safe output, and meaningful accessible boundaries.
+- Keep Markdown and HTML semantics shared without mirroring identical detail.
 - Use Mermaid only for current work in Markdown.
 - Do not show an all-history percentage rollup.
-- Do not show Later or dependency/order relationships without real authoritative data.
-- Treat body-stated relationships as provisional and visibly non-authoritative.
-- Use meaningful accessible boundaries and Strata-compliant contrast; do not use decorative boundaries as structural substitutes.
+- Do not show Prioritized for later or authoritative dependency/order relationships without authoritative data.
+- Treat recognizable body-stated relationships as provisional and visibly non-authoritative.
+- Preserve generation's write boundary at exactly `.dude/backlog.md` and `.dude/backlog.html`.
+- Use meaningful Strata-compliant boundaries and contrast; do not use decorative boundaries as structural substitutes.
 
 ## Definition Checklist
 
-- [x] Outcome is clear enough for brainstorm
-- [x] Scope is coherent as one follow-up idea ledger
-- [x] Speech-to-text correction is preserved
-- [x] Lifecycle Explorer visual direction is approved
-- [x] Current, Planned, and Completed information architecture is recorded
-- [x] Delivery-map authority semantics are recorded
-- [x] Completed-library and feature-drill-down behavior are recorded
-- [x] Markdown adaptation is recorded
-- [x] Determinism, provenance, and freshness direction is recorded
-- [x] Current order and dependency data limitations are recorded
-- [x] Feature 025 historical treatment is recorded
-- [x] Remaining activity-source question is consciously assumed Coordinator-only for the minimal first version
-- [x] Definition can proceed without another user decision
+- [x] User-controlled Idea, Open Questions, and Assumptions are preserved byte-for-byte
+- [x] Exact prospective owner path is `.dude/specs/027-backlog-report-usability/spec.md`
+- [x] Scope is one coherent follow-up feature
+- [x] Lifecycle Explorer direction is already approved
+- [x] No new visual-direction approval checkpoint is required
+- [x] Current, Planned, and Completed semantics are testable
+- [x] Delivery-map authority and provisional-evidence semantics are testable
+- [x] Drill-down, completed-library, Markdown, responsive, print, and accessibility behavior are testable
+- [x] Determinism and cross-checkout SHA equality are measurable
+- [x] Mechanical stale-artifact failure and fresh-artifact pass behavior are selected
+- [x] Coordinator-only activity scope and stable date grouping are selected
+- [x] One-to-one direct-idea inventory is required for current and arbitrary counts
+- [x] Feature 025 supersession is explicit and historical artifacts remain closed
+- [x] Spec quality gate has no unresolved clarification marker
+- [x] Six sequential all-open task units cover every requirement
 
 ## Coordinator Log
 
 - 2026-08-08 UTC - brainstorm captured as a separate follow-up to closed Feature 025
 - 2026-08-08 UTC - Lifecycle Explorer direction recorded as user-approved; external scratch evidence SHA-256 `fdfa1b3f517bc721898d3bfd16d75075c75181f84b88d914f89765861bc40573`
+- 2026-08-08 UTC - first definition staged for .dude/specs/027-backlog-report-usability/spec.md; approved Lifecycle Explorer direction carried forward without a new approval checkpoint
 <!-- dude:managed:end -->
