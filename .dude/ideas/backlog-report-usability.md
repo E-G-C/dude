@@ -150,4 +150,9 @@ These are coordinator working assumptions, not user decisions. Correct any that 
 - 2026-08-08 UTC - Lifecycle Explorer direction recorded as user-approved; external scratch evidence SHA-256 `fdfa1b3f517bc721898d3bfd16d75075c75181f84b88d914f89765861bc40573`
 - 2026-08-08 UTC - first definition staged for .dude/specs/027-backlog-report-usability/spec.md; approved Lifecycle Explorer direction carried forward without a new approval checkpoint
 - 2026-08-08 UTC - definition corrected: approved preview remains historical 30-idea evidence; live acceptance is count-agnostic
+- 2026-08-08 UTC - execution: T001 through T005 implemented over the single existing backlog.mjs pipeline; no parallel generator, board, store, or execution authority added
+- 2026-08-08 UTC - topology-first reset applied after a control-boundary finding survived two review cycles; prose-inference provisional parsing was deleted rather than filtered a fourth time, replaced by one literal `depends-on: <slug>` marker scan
+- 2026-08-08 UTC - review: four revision cycles; dependency authority gated in both directions by canonical frontmatter slug; independent reviewer APPROVE on all eight findings
+- 2026-08-08 UTC - T006 acceptance ACCEPT: 2250 tests / 2246 pass / 0 fail / 4 pre-existing skips, lint 31 ideas 0 warnings 0 failures, byte-identical generation across two differently named roots, freshness check proven failing-then-passing with no writes, Chromium 147 confirmed zero horizontal overflow at 1180px, 800px, and 320px and complete print content
+- 2026-08-08 UTC - close: T001 through T006 closed; Feature 025 history verified byte-unchanged
 <!-- dude:managed:end -->

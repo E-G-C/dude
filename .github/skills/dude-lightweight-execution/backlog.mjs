@@ -1,1187 +1,1284 @@
 #!/usr/bin/env node
 // @ts-check
-/**
- * Feature backlog buckets for in-flight ideas.
- *
- * A production caller is `@dude status`. Given a workspace root, this script
- * derives six backlog buckets — Active, Next, Blocked, Later, Backlog, Shipped —
- * from `depends-on:` declarations plus lifecycle and task state that already
- * exists, with Shipped (every task done) evaluated first ahead of every ordering
- * bucket. It reuses the existing frontmatter, identity, ownership, and tasks
- * engines. The three status forms (text, kanban, flowchart) write no file; the
- * `generate` form renders both committed artifacts from the one derivation and,
- * with `--write`, writes exactly `.dude/backlog.md` and `.dude/backlog.html` — its
- * only write path. See `.dude/specs/025-backlog-report/plan.md` sections 2-9.
- *
- * Design for testability: `deriveBuckets` is a pure function over plain parsed
- * inputs, so it can be unit-tested with in-memory fixtures; `collectFocusInputs`
- * is a thin filesystem collector, so a spawn test can exercise the real root.
- * Importing this module runs nothing; the CLI entry is guarded.
- *
- * Two on-demand Mermaid views share this module (plan sections 5 and 6). The
- * `kanban` subcommand renders the six backlog buckets as a fenced Mermaid
- * `kanban` board whose lanes equal the text buckets; `flowchart <idea-slug>`
- * renders one feature's existing task `deps:` as a fenced Mermaid `flowchart`.
- * Both are pure string renderers (`renderKanban`, `renderFlowchart`) over
- * already-derived data, wrapped by guarded read-only CLI branches that write
- * nothing.
- */
+/** Deterministic lifecycle backlog collector, model, and renderers. */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { execSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import fs from "node:fs";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
-import { inventoryDefinedFeatures, resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
-import { parseFrontmatterScalars, parseSpecIdentity } from '../dude-engine/lib/feature-identity.mjs';
-import { parseTasks } from '../dude-engine/lib/tasks.mjs';
-import { WORKSPACE_PATHS, resolveWorkspacePath, resolveMutationPath } from '../dude-engine/lib/workspace-paths.mjs';
+import { inventoryDefinedFeatures } from "../dude-engine/lib/feature.mjs";
+import { parseFrontmatterScalars, parseSpecIdentity } from "../dude-engine/lib/feature-identity.mjs";
+import { parseTasks } from "../dude-engine/lib/tasks.mjs";
+import { WORKSPACE_PATHS, resolveWorkspacePath, resolveMutationPath } from "../dude-engine/lib/workspace-paths.mjs";
 
-/**
- * Canonical scalar keys read from an idea ledger's frontmatter. Mirrors the
- * private `CANONICAL_IDEA_KEYS` in `dude-engine/lib/feature.mjs` (not exported);
- * used only to read `slug`, `status`, and the optional `depends-on` scalar.
- * @type {readonly string[]}
- */
-const IDEA_KEYS = Object.freeze(['title', 'slug', 'status', 'spec_path', 'depends-on']);
-
-/** Optional hand-maintained tie-break ordering (section 4). */
+const IDEA_KEYS = Object.freeze(["title", "slug", "status", "spec_path", "depends-on"]);
 const BACKLOG_ORDER_PATH = `${WORKSPACE_PATHS.STATE_DIR}/backlog-order.md`;
-
-/**
- * The exact — and only — two artifacts `generate --write` may write (plan
- * section 9). No other generated or persistent output exists. Both are derived
- * projections, never authoritative.
- */
-const BACKLOG_MD_PATH = '.dude/backlog.md';
-const BACKLOG_HTML_PATH = '.dude/backlog.html';
-
-/**
- * @typedef {Object} IdeaRecord
- * @property {string} slug             stable idea identity
- * @property {string[]} dependsOn      declared `depends-on:` slugs
- * @property {boolean} defined         owns a cleanly resolved spec package
- * @property {boolean} packageComplete defined, package parses, >=1 task, all done
- * @property {boolean} hasInProgress   own package carries a `[~]` task
- * @property {boolean} ownBlocked      own package carries current blocking evidence
- * @property {string|null} specPath   resolved `spec_path:` when defined, else null
- *
- * @typedef {Object} FocusInputs
- * @property {IdeaRecord[]} ideas
- * @property {string[]} order          tie-break slug sequence (unknown slugs ignored downstream)
- *
- * @typedef {Object} FocusBuckets
- * @property {string[]} active
- * @property {string[]} next
- * @property {string[]} later
- * @property {string[]} blocked
- * @property {string[]} backlog
- * @property {string[]} shipped
- */
-
-/**
- * The six backlog buckets in canonical lane order, each with its fixed
- * traffic-light tone. In-flight lanes (Active, Next, Blocked) lead the quiet
- * lanes (Later, Backlog, Shipped); Shipped is derived first but rendered last.
- * Tones are role names — Active primary, Next info, Blocked danger, Later
- * warning, Backlog muted, Shipped success — so done (success) and next (info)
- * never share a tone. Reused by every renderer so lane order and membership are
- * identical across the text, Markdown, and report views.
- * @type {ReadonlyArray<{ key: 'active'|'next'|'blocked'|'later'|'backlog'|'shipped', title: string, tone: string }>}
- */
-export const BUCKET_LANES = Object.freeze([
-  { key: 'active', title: 'Active', tone: 'primary' },
-  { key: 'next', title: 'Next', tone: 'info' },
-  { key: 'blocked', title: 'Blocked', tone: 'danger' },
-  { key: 'later', title: 'Later', tone: 'warning' },
-  { key: 'backlog', title: 'Backlog', tone: 'muted' },
-  { key: 'shipped', title: 'Shipped', tone: 'success' },
+const BACKLOG_MD_PATH = ".dude/backlog.md";
+const BACKLOG_HTML_PATH = ".dude/backlog.html";
+const CANONICAL_SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
+const CURRENT_GROUPS = Object.freeze([
+  { key: "blocked", title: "Blocked" },
+  { key: "active", title: "Active" },
+  { key: "next", title: "Next" },
+]);
+const PLANNED_GROUPS = Object.freeze([
+  { key: "awaitingDefinition", title: "Ideas awaiting definition" },
+  { key: "definedAwaitingWork", title: "Defined awaiting work" },
+  { key: "prioritizedLater", title: "Prioritized for later" },
 ]);
 
-/** @param {string} left @param {string} right @returns {number} */
-function compareSlug(left, right) {
+/** @param {string} left @param {string} right */
+function compareIdentity(left, right) {
   if (left < right) return -1;
   if (left > right) return 1;
   return 0;
 }
 
-/**
- * Assign every in-flight idea to exactly one of six backlog buckets (plan
- * section 3): Shipped, Blocked, Active, Backlog, Next, Later. Shipped (a defined
- * idea whose package parses, has >=1 task, and has every task done) is evaluated
- * first, ahead of every ordering bucket, so a completed idea named as another
- * idea's dependency reads as Shipped rather than Next. Setting Shipped aside
- * reproduces the prior five-bucket membership exactly, with the former
- * "Unordered" pool now named "Backlog".
- *
- * Pure: operates only on the supplied records and tie-break order, so a cyclic
- * `depends-on:` graph terminates — each dependency is judged solely on its own
- * named idea's package state and is never followed transitively.
- *
- * @param {FocusInputs} inputs
- * @returns {FocusBuckets}
- */
-export function deriveBuckets(inputs) {
-  const order = Array.isArray(inputs?.order) ? inputs.order : [];
-
-  /** @type {Map<string, IdeaRecord>} */
-  const bySlug = new Map();
-  for (const idea of inputs?.ideas ?? []) {
-    if (idea && typeof idea.slug === 'string' && !bySlug.has(idea.slug)) bySlug.set(idea.slug, idea);
-  }
-
-  // A `depends-on:` slug is met only when it names a defined idea whose package
-  // resolves, parses, has >=1 task, and has every task done. A slug naming no
-  // idea is unmet. Local and non-transitive by construction.
-  /** @param {string} slug */
-  const isMet = (slug) => {
-    const dep = bySlug.get(slug);
-    return Boolean(dep && dep.defined && dep.packageComplete);
-  };
-
-  // Tie-break positions, restricted to known idea slugs and de-duplicated while
-  // preserving first-seen order. An absent file yields an empty map.
-  /** @type {Map<string, number>} */
-  const orderIndex = new Map();
-  for (const slug of order) {
-    if (bySlug.has(slug) && !orderIndex.has(slug)) orderIndex.set(slug, orderIndex.size);
-  }
-
-  // Slugs named as a dependency by any other idea (an ordering signal).
-  /** @type {Set<string>} */
-  const namedAsDep = new Set();
-  for (const idea of bySlug.values()) {
-    for (const dep of idea.dependsOn ?? []) namedAsDep.add(dep);
-  }
-
-  // A defined idea whose package parses, has >=1 task, and has every task done
-  // is finished. Used both to identify the Shipped bucket and to decide, among
-  // ordered items, which prerequisites ahead are already complete.
-  /** @param {IdeaRecord} idea */
-  const isFinished = (idea) => Boolean(idea.defined && idea.packageComplete);
-
-  /** @type {string[]} */ const shipped = [];
-  /** @type {string[]} */ const blocked = [];
-  /** @type {string[]} */ const active = [];
-  /** @type {IdeaRecord[]} */ const pool = []; // unblocked, non-active, unshipped
-
-  for (const idea of bySlug.values()) {
-    if (isFinished(idea)) {
-      shipped.push(idea.slug); // (0) Shipped — evaluated first, ahead of every ordering bucket
-      continue;
-    }
-    const hasUnmetDep = (idea.dependsOn ?? []).some((dep) => !isMet(dep));
-    if (hasUnmetDep || idea.ownBlocked) {
-      blocked.push(idea.slug); // (1) Blocked
-      continue;
-    }
-    if (idea.hasInProgress) {
-      active.push(idea.slug); // (2) Active — no cap
-      continue;
-    }
-    pool.push(idea);
-  }
-
-  // (3) Backlog — no ordering signal at all (formerly "Unordered").
-  /** @param {IdeaRecord} idea */
-  const hasSignal = (idea) => (
-    (idea.dependsOn?.length ?? 0) > 0
-    || orderIndex.has(idea.slug)
-    || namedAsDep.has(idea.slug)
-  );
-
-  /** @type {string[]} */ const backlog = [];
-  /** @type {IdeaRecord[]} */ const ordered = [];
-  for (const idea of pool) {
-    if (hasSignal(idea)) ordered.push(idea);
-    else backlog.push(idea.slug);
-  }
-
-  // Effective order over the unblocked, non-active, unshipped ideas. Declared
-  // prerequisites among them are already satisfied (unmet ones moved to Blocked)
-  // and therefore finished, so only the tie-break order distinguishes Next from
-  // Later: an idea is Later when an unfinished ordered idea sits ahead of it in
-  // the tie-break, and Next otherwise.
-  /** @type {string[]} */ const next = [];
-  /** @type {string[]} */ const later = [];
-  for (const idea of ordered) {
-    const position = orderIndex.get(idea.slug);
-    let unfinishedAhead = false;
-    if (position !== undefined) {
-      for (const other of ordered) {
-        if (other.slug === idea.slug) continue;
-        const otherPosition = orderIndex.get(other.slug);
-        if (otherPosition !== undefined && otherPosition < position && !isFinished(other)) {
-          unfinishedAhead = true;
-          break;
-        }
-      }
-    }
-    if (unfinishedAhead) later.push(idea.slug); // (5) Later
-    else next.push(idea.slug); // (4) Next
-  }
-
-  // Deterministic ordering within each bucket: slug order everywhere, except
-  // Next/Later follow the tie-break sequence (file-listed first) then slug.
-  const byOrderThenSlug = (/** @type {string} */ left, /** @type {string} */ right) => {
-    const leftPosition = orderIndex.has(left) ? /** @type {number} */ (orderIndex.get(left)) : Number.MAX_SAFE_INTEGER;
-    const rightPosition = orderIndex.has(right) ? /** @type {number} */ (orderIndex.get(right)) : Number.MAX_SAFE_INTEGER;
-    if (leftPosition !== rightPosition) return leftPosition - rightPosition;
-    return compareSlug(left, right);
-  };
-
-  shipped.sort(compareSlug);
-  active.sort(compareSlug);
-  blocked.sort(compareSlug);
-  backlog.sort(compareSlug);
-  next.sort(byOrderThenSlug);
-  later.sort(byOrderThenSlug);
-
-  return { active, next, blocked, later, backlog, shipped };
+/** @param {unknown} value */
+function esc(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/\x27/g, "&#39;");
 }
 
-/**
- * Parse the optional tie-break file into an ordered slug sequence (section 4).
- * Each line may carry a leading `-`, `*`, or `N.` list marker; the first
- * lowercase slug token on a line is taken. Blank lines, headings, and other
- * non-slug lines are skipped. Pure.
- * @param {string} content
- * @returns {string[]}
- */
+/** @param {string|Buffer} value */
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+/** @param {string} value */
+function safeMermaidLabel(value) {
+  return String(value)
+    .replace(/[\[\](){}\"#;]/g, " ")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** @param {string} id */
+export function safeMermaidId(id) {
+  return String(id).replace(/[^A-Za-z0-9]/g, "_");
+}
+
+/** Parse the optional explicit order list. */
 export function parseBacklogOrder(content) {
-  /** @type {string[]} */
   const slugs = [];
   for (const line of String(content).split(/\r\n|\n|\r/)) {
-    const match = /^\s*(?:[-*]\s+|\d+\.\s+)?([a-z0-9][a-z0-9-]*)\b/.exec(line);
+    const match = /^\s*(?:[-*]\s+|\d+\.\s+)([a-z0-9][a-z0-9-]*)\s*$/.exec(line);
     if (match) slugs.push(match[1]);
   }
   return slugs;
 }
 
-/**
- * Reduce a defined idea's package to the booleans the derivation needs. Any
- * failure to resolve or parse the package degrades to "no package" so one
- * malformed feature never empties or crashes the whole focus view.
- * @param {string} root
- * @param {string} specPath
- * @returns {{ packageComplete: boolean, hasInProgress: boolean, ownBlocked: boolean }}
- */
-function readPackageFacts(root, specPath) {
-  const empty = { packageComplete: false, hasInProgress: false, ownBlocked: false };
+/** Return visible ATX headings while ignoring fenced code blocks. */
+function visibleHeadings(content) {
+  const lines = String(content).split(/\r\n|\n|\r/);
+  const headings = [];
+  let fence = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1] ?? null;
+    if (marker) {
+      if (!fence) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+      continue;
+    }
+    if (fence) continue;
+    const heading = /^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/.exec(line);
+    if (heading) headings.push({ level: heading[1].length, title: heading[2].trim(), line: index });
+  }
+  return { lines, headings };
+}
+
+/** Extract one visible heading section without interpreting its prose. */
+function extractSection(content, level, title) {
+  const { lines, headings } = visibleHeadings(content);
+  const headingIndex = headings.findIndex((heading) => heading.level === level && heading.title === title);
+  if (headingIndex < 0) return "";
+  const start = headings[headingIndex].line + 1;
+  const next = headings.slice(headingIndex + 1).find((heading) => heading.level <= level);
+  return lines.slice(start, next ? next.line : lines.length).join("\n").trim();
+}
+
+/** Return visible prose lines, excluding fenced examples and HTML comments. */
+function visibleProseLines(content) {
+  const lines = String(content).split(/\r\n|\n|\r/);
+  const visible = [];
+  let fence = null;
+  let inComment = false;
+  for (const rawLine of lines) {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(rawLine)?.[1] ?? null;
+    if (marker) {
+      if (!fence) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+      continue;
+    }
+    if (fence) continue;
+    let output = "";
+    let cursor = 0;
+    while (cursor < rawLine.length) {
+      if (inComment) {
+        const close = rawLine.indexOf("-->", cursor);
+        if (close < 0) {
+          cursor = rawLine.length;
+          break;
+        }
+        cursor = close + 3;
+        inComment = false;
+        continue;
+      }
+      const open = rawLine.indexOf("<!--", cursor);
+      if (open < 0) {
+        output += rawLine.slice(cursor);
+        break;
+      }
+      output += rawLine.slice(cursor, open);
+      cursor = open + 4;
+      inComment = true;
+    }
+    visible.push(output);
+  }
+  return visible;
+}
+
+/** Make a deterministic plain-text excerpt from the user-controlled Idea section. */
+function ideaExcerpt(ideaBody) {
+  const selected = [];
+  for (const rawLine of visibleProseLines(ideaBody)) {
+    const line = rawLine.replace(/^\s*(?:>\s*)+/, "");
+    if (/^###\s+/.test(line) && selected.some((entry) => entry.trim() !== "")) break;
+    if (/^#{1,6}\s+/.test(line)) continue;
+    selected.push(line.replace(/^\s*(?:[-*+]\s+|\d+\.\s+)/, ""));
+  }
+  let text = selected.join(" ")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/[*_~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const limit = 360;
+  if ([...text].length <= limit) return text;
+  text = [...text].slice(0, limit + 1).join("");
+  const boundary = text.lastIndexOf(" ");
+  return `${(boundary > 240 ? text.slice(0, boundary) : text.slice(0, limit)).trimEnd()}…`;
+}
+
+function conciseEvidence(value, limit = 420) {
+  const text = String(value).replace(/\s+/g, " ").trim();
+  if ([...text].length <= limit) return text;
+  const prefix = [...text].slice(0, limit + 1).join("");
+  const boundary = prefix.lastIndexOf(" ");
+  return `${(boundary > Math.floor(limit * .65) ? prefix.slice(0, boundary) : prefix.slice(0, limit)).trimEnd()}…`;
+}
+
+/** Admit only an explicit literal `depends-on: <slug>` marker in visible prose. */
+export function parseProvisionalRelationships(ideaBody) {
+  const relationships = [];
+  const seen = new Set();
+  for (const line of visibleProseLines(ideaBody)) {
+    if (/^\s*>/.test(line)) continue;
+    // The capture is already the canonical slug shape, so no further slug check can fail.
+    for (const match of line.matchAll(/`depends-on:\s*([a-z0-9][a-z0-9-]*)`/g)) {
+      if (seen.has(match[1])) continue;
+      seen.add(match[1]);
+      relationships.push({ targetSlug: match[1], evidence: line.trim() });
+    }
+  }
+  return relationships;
+}
+
+function isCalendarDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= days[month - 1];
+}
+
+/** Parse Coordinator Log bullets and their optional leading calendar date. */
+export function parseCoordinatorLog(content) {
+  const section = extractSection(content, 2, "Coordinator Log");
+  const entries = [];
+  let appendIndex = 0;
+  for (const line of section.split(/\r\n|\n|\r/)) {
+    const match = /^-\s+(.+?\S)\s*$/.exec(line);
+    if (!match) continue;
+    const text = match[1];
+    const dateMatch = /^(\d{4}-\d{2}-\d{2})(?=\s|T|$)/.exec(text);
+    const date = dateMatch && isCalendarDate(dateMatch[1]) ? dateMatch[1] : null;
+    entries.push({ text, date, appendIndex });
+    appendIndex += 1;
+  }
+  return entries;
+}
+
+function milestoneLabel(text) {
+  if (/\bbrainstorm\s+(?:captured|created)\b/i.test(text)) return "Captured";
+  if (/\b(?:first definition|defined as feature)\b|\bdefined\b\s*(?:-|=)?>/i.test(text)) return "Defined";
+  if (/\bfeature(?:\s+\S+){0,3}\s+complete\b|\bfeature complete\b|\ball\s+\d+\s+tasks?\s+\[x\]/i.test(text)) return "Completed";
+  return null;
+}
+
+function selectMilestones(entries) {
+  const candidates = entries
+    .map((entry) => ({ ...entry, label: milestoneLabel(entry.text) }))
+    .filter((entry) => entry.label !== null);
+  const selected = [];
+  const captured = candidates.find((entry) => entry.label === "Captured");
+  const defined = candidates.find((entry) => entry.label === "Defined");
+  const completed = candidates.filter((entry) => entry.label === "Completed").at(-1);
+  if (captured) selected.push(captured);
+  if (defined) selected.push(defined);
+  if (completed) selected.push(completed);
+  return selected.sort((left, right) => left.appendIndex - right.appendIndex);
+}
+
+function readSafeFile(root, relativePath) {
   try {
-    const identity = parseSpecIdentity(specPath);
-    if (!identity) return empty;
-    const tasksPath = `${WORKSPACE_PATHS.SPECS_DIR}/${identity.feature}/tasks.md`;
-    const absolute = resolveWorkspacePath(root, tasksPath);
+    const absolute = resolveWorkspacePath(root, relativePath);
     const stat = fs.lstatSync(absolute);
-    if (stat.isSymbolicLink() || !stat.isFile()) return empty;
-    const { tasks } = parseTasks(fs.readFileSync(absolute, 'utf8'), { path: tasksPath });
-    const packageComplete = tasks.length >= 1 && tasks.every((task) => task.state === 'done');
-    const hasInProgress = tasks.some((task) => task.state === 'in-progress');
-    // Current blocking evidence: a `[!]` task, or a `blocked-by:` line on a task
-    // that is not already done. A `blocked-by:` note left on a `[x]` task is
-    // stale history (real packages carry these) and is not a current block.
-    const ownBlocked = tasks.some((task) => (
-      task.state === 'blocked' || (task.blockedBy != null && task.state !== 'done')
-    ));
-    return { packageComplete, hasInProgress, ownBlocked };
+    if (stat.isSymbolicLink() || !stat.isFile()) return null;
+    return fs.readFileSync(absolute, "utf8");
   } catch {
-    return empty;
+    return null;
   }
 }
 
-/**
- * List direct regular `.dude/ideas/*.md` files (no symbolic links), matching
- * the safety used by the feature inventory. Missing or unsafe roots yield an
- * empty list rather than throwing.
- * @param {string} root
- * @returns {{ name: string, absPath: string, ideaPath: string }[]}
- */
 function listIdeaFiles(root) {
-  let ideasRoot;
+  let directory;
   try {
-    ideasRoot = resolveWorkspacePath(root, WORKSPACE_PATHS.IDEAS_DIR);
+    directory = resolveWorkspacePath(root, WORKSPACE_PATHS.IDEAS_DIR);
+    const stat = fs.lstatSync(directory);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) return [];
   } catch {
     return [];
   }
-  let rootStat;
-  try {
-    rootStat = fs.lstatSync(ideasRoot);
-  } catch {
-    return [];
-  }
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return [];
-
+  const files = [];
   let entries;
   try {
-    entries = fs.readdirSync(ideasRoot, { withFileTypes: true });
+    entries = fs.readdirSync(directory, { withFileTypes: true });
   } catch {
     return [];
   }
-
-  /** @type {{ name: string, absPath: string, ideaPath: string }[]} */
-  const files = [];
   for (const entry of entries) {
-    if (!entry.name.endsWith('.md')) continue;
-    const absPath = path.join(ideasRoot, entry.name);
-    let stat;
+    if (!entry.name.endsWith(".md")) continue;
+    const absolutePath = path.join(directory, entry.name);
     try {
-      stat = fs.lstatSync(absPath);
+      const stat = fs.lstatSync(absolutePath);
+      if (stat.isSymbolicLink() || !stat.isFile()) continue;
     } catch {
       continue;
     }
-    if (stat.isSymbolicLink() || !stat.isFile()) continue;
-    files.push({ name: entry.name, absPath, ideaPath: `${WORKSPACE_PATHS.IDEAS_DIR}/${entry.name}` });
-  }
-  files.sort((left, right) => compareSlug(left.name, right.name));
-  return files;
-}
-
-/**
- * Read the optional tie-break file into an ordered slug sequence. Absent or
- * unsafe files yield an empty sequence.
- * @param {string} root
- * @returns {string[]}
- */
-function readBacklogOrder(root) {
-  try {
-    const absolute = resolveWorkspacePath(root, BACKLOG_ORDER_PATH);
-    const stat = fs.lstatSync(absolute);
-    if (stat.isSymbolicLink() || !stat.isFile()) return [];
-    return parseBacklogOrder(fs.readFileSync(absolute, 'utf8'));
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Collect the plain inputs the derivation needs by reading the workspace once.
- * Inventories defined owners a single time (degrading gracefully around any one
- * malformed idea) and reads each defined idea's package tasks.
- * @param {{ root: string }} options
- * @returns {FocusInputs}
- */
-export function collectFocusInputs({ root }) {
-  const inventory = inventoryDefinedFeatures({ root });
-  /** @type {Map<string, string>} idea path -> resolved spec path */
-  const specByIdeaPath = new Map();
-  for (const feature of inventory.features) specByIdeaPath.set(feature.ideaPath, feature.specPath);
-
-  /** @type {IdeaRecord[]} */
-  const ideas = [];
-  for (const file of listIdeaFiles(root)) {
-    let slug = file.name.replace(/\.md$/, '');
-    /** @type {string[]} */
-    let dependsOn = [];
-    try {
-      const content = fs.readFileSync(file.absPath, 'utf8');
-      const frontmatter = parseFrontmatterScalars(content, { canonicalKeys: IDEA_KEYS });
-      slug = frontmatter.scalars.get('slug')?.value || slug;
-      const declared = frontmatter.scalars.get('depends-on')?.value || '';
-      dependsOn = declared.split(/[\s,]+/).filter(Boolean);
-    } catch {
-      // Malformed frontmatter: fall back to the filename slug and no declared
-      // dependencies. Such an idea is also absent from the inventory, so it is
-      // treated as not-defined below and still appears in the buckets.
-    }
-
-    const specPath = specByIdeaPath.get(file.ideaPath);
-    const defined = Boolean(specPath);
-    const facts = defined
-      ? readPackageFacts(root, /** @type {string} */ (specPath))
-      : { packageComplete: false, hasInProgress: false, ownBlocked: false };
-    ideas.push({ slug, dependsOn, defined, specPath: specPath ?? null, ...facts });
-  }
-
-  return { ideas, order: readBacklogOrder(root) };
-}
-
-/**
- * Collect inputs from the workspace and derive the focus buckets.
- * @param {{ root: string }} options
- * @returns {FocusBuckets}
- */
-export function computeFocus({ root }) {
-  return deriveBuckets(collectFocusInputs({ root }));
-}
-
-/**
- * Render backlog buckets as deterministic plain text.
- * @param {FocusBuckets} buckets
- * @returns {string}
- */
-export function renderBuckets(buckets) {
-  const blocks = BUCKET_LANES.map(({ key, title }) => {
-    const slugs = buckets?.[key] ?? [];
-    const body = slugs.length ? slugs.map((slug) => `  ${slug}`).join('\n') : '  (none)';
-    return `${title}:\n${body}`;
-  });
-  return `${blocks.join('\n\n')}\n`;
-}
-
-// ---------------------------------------------------------------------------
-// Mermaid views (plan sections 5 and 6). Both are pure string renderers over
-// already-derived data, so the CLI shims below stay thin filesystem readers and
-// the renderers unit-test without spawning. Neither writes anything. Output
-// characters are validated against the current Mermaid `kanban` and `flowchart`
-// grammars: a quoted flowchart label rejects only `"`/`[`/`]`, and a kanban card
-// rejects `[`/`]`/parentheses — everything else in this module's inputs is safe.
-// ---------------------------------------------------------------------------
-
-/**
- * Derive a Mermaid-safe node identifier from a durable task key by replacing
- * every non-alphanumeric character (notably `@`) with `_`. Distinct valid task
- * ids (`T\d+@[a-z0-9]{8}`) map to distinct ids because `@` is their only
- * non-alphanumeric character. Exported so tests can predict node ids.
- * @param {string} id
- * @returns {string}
- */
-export function safeMermaidId(id) {
-  return String(id).replace(/[^A-Za-z0-9]/g, '_');
-}
-
-/**
- * Make text safe inside a Mermaid *quoted* node label (`["..."]`) by dropping
- * the only characters that break it — `"`, `[`, `]` — and control characters,
- * then collapsing whitespace.
- * @param {string} text
- * @returns {string}
- */
-function sanitizeLabel(text) {
-  return String(text)
-    .replace(/["[\]]/g, ' ')
-    .replace(/[\u0000-\u001f]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
- * Make text safe inside a Mermaid `kanban` card (`slug[text]`) by dropping the
- * characters that break it — `[`, `]`, and parentheses — plus control
- * characters, then collapsing whitespace. Slugs and the spec-number annotation
- * are already `[a-z0-9-]`; this is defensive.
- * @param {string} text
- * @returns {string}
- */
-function sanitizeCard(text) {
-  return String(text)
-    .replace(/[[\]()]/g, ' ')
-    .replace(/[\u0000-\u001f]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
- * Look up a slug's optional annotation from a Map or plain-object `meta`.
- * @param {Map<string, string> | Record<string, string> | null | undefined} meta
- * @param {string} slug
- * @returns {string}
- */
-function annotationFor(meta, slug) {
-  if (!meta) return '';
-  const value = meta instanceof Map ? meta.get(slug) : meta[slug];
-  return typeof value === 'string' ? value : '';
-}
-
-/**
- * Render the six backlog buckets as a fenced Mermaid `kanban` board (plan
- * section 5). The lanes are exactly the six buckets in `BUCKET_LANES` order —
- * Active, Next, Blocked, Later, Backlog, Shipped — even when empty. Each idea is
- * one card keyed by its slug; when `meta` carries an annotation for that slug
- * (the spec number for a defined idea) it is appended to the card text. Lane
- * membership equals whatever buckets are passed, so callers derive them once and
- * share them with the text view. Pure; writes nothing.
- * @param {FocusBuckets} buckets
- * @param {Map<string, string> | Record<string, string>} [meta]
- * @returns {string}
- */
-export function renderKanban(buckets, meta) {
-  /** @type {string[]} */
-  const body = [];
-  for (const { key, title } of BUCKET_LANES) {
-    body.push(`  ${key}[${title}]`);
-    for (const slug of buckets?.[key] ?? []) {
-      const annotation = annotationFor(meta, slug);
-      const cardText = sanitizeCard(annotation ? `${slug} ${annotation}` : slug);
-      body.push(`    ${slug}[${cardText}]`);
-    }
-  }
-  return ['```mermaid', 'kanban', ...body, '```', ''].join('\n');
-}
-
-/**
- * Render the `.dude/backlog.md` content over the single derivation (plan
- * section 4): the six buckets as headed lists, then a fenced Mermaid `kanban`
- * board the repository host renders inline. Per-idea membership equals the
- * `buckets` argument exactly — the same object also feeds the board — so the
- * Markdown never disagrees with the derivation (FR-009). Each defined idea's
- * card and list item carry the `meta` annotation (its spec number) when present.
- * When a `stamp` is supplied, a single italic staleness line records the
- * generation time and short source revision so the committed Markdown carries
- * the same provenance as the report (FR-014, FR-015); without it the output is
- * unchanged. The diagram is kept in Markdown only. Pure and deterministic: a
- * function of the derived result, the optional annotations, and the optional
- * stamp that writes nothing.
- * @param {FocusBuckets} buckets
- * @param {Map<string, string> | Record<string, string>} [meta]
- * @param {{ generatedAt?: string, sourceRev?: string }} [stamp]
- * @returns {string}
- */
-export function renderMarkdown(buckets, meta, stamp) {
-  /** @type {string[]} */
-  const lines = ['# Backlog', ''];
-  if (stamp && (stamp.generatedAt || stamp.sourceRev)) {
-    lines.push(
-      `_Generated ${stamp.generatedAt ?? 'unknown'}, source ${stamp.sourceRev ?? 'unknown'}. A derived projection, never authoritative._`,
-      '',
-    );
-  }
-  for (const { key, title } of BUCKET_LANES) {
-    const slugs = buckets?.[key] ?? [];
-    lines.push(`## ${title}`, '');
-    if (slugs.length === 0) {
-      lines.push('_(none)_', '');
-      continue;
-    }
-    for (const slug of slugs) {
-      const annotation = annotationFor(meta, slug);
-      lines.push(annotation ? `- ${slug} (${annotation})` : `- ${slug}`);
-    }
-    lines.push('');
-  }
-  lines.push('## Board', '');
-  return `${lines.join('\n')}\n${renderKanban(buckets, meta)}`;
-}
-
-// ---------------------------------------------------------------------------
-// Report view (plan sections 4, 5, 7, 8). The report renderer fills the
-// committed, self-contained template with four views over the single
-// derivation — summary counts, the traffic-light lane board with per-feature
-// task progress, the per-feature task-order chains, and recent activity from
-// idea coordinator logs — plus the portfolio rollup and work-item cards. Lane
-// membership is driven by the derived `buckets` object (the same object the
-// text and Markdown views use), so per-idea membership is identical across all
-// three surfaces (FR-009). Every renderer here is a pure string function; only
-// the guarded `generate` CLI branch reads the template and writes the two
-// artifacts, and only when `--write` is present.
-// ---------------------------------------------------------------------------
-
-/**
- * Escape the five characters that are unsafe in HTML text or double-quoted
- * attribute values, so injected idea text can never introduce markup, an
- * attribute, or an external reference. Pure.
- * @param {unknown} value
- * @returns {string}
- */
-function esc(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-/**
- * Map each defined idea's slug to its `spec-<number>` annotation, exactly as the
- * kanban and Markdown card annotations expect. Drafts (no cleanly resolved
- * package) get no entry. Shared by every renderer so the annotation is built
- * once per generation. Pure over the collected records.
- * @param {IdeaRecord[]} ideas
- * @returns {Map<string, string>} slug -> `spec-<number>`
- */
-export function buildAnnotations(ideas) {
-  /** @type {Map<string, string>} */
-  const meta = new Map();
-  for (const idea of ideas ?? []) {
-    if (!idea.defined || !idea.specPath) continue;
-    const identity = parseSpecIdentity(idea.specPath);
-    if (!identity) continue;
-    const number = /^(\d+)/.exec(identity.feature)?.[1] ?? identity.feature;
-    meta.set(idea.slug, `spec-${number}`);
-  }
-  return meta;
-}
-
-/**
- * Extract the date-prefixed bullet entries under an idea ledger's
- * `## Coordinator Log` heading, newest-relevant text only (the leading `- ` and
- * trailing whitespace removed). Entries outside that section are ignored. Pure.
- * @param {string} content
- * @returns {string[]}
- */
-function parseCoordinatorLog(content) {
-  /** @type {string[]} */
-  const out = [];
-  let inLog = false;
-  for (const line of String(content).split('\n')) {
-    if (/^##\s+/.test(line)) {
-      inLog = /^##\s+Coordinator Log\s*$/.test(line);
-      continue;
-    }
-    if (!inLog) continue;
-    const match = /^-\s+(\d{4}-\d{2}-\d{2}\b.*\S)\s*$/.exec(line);
-    if (match) out.push(match[1]);
-  }
-  return out;
-}
-
-/**
- * Read one defined idea's package tasks with the same no-symlink safety the
- * derivation uses. Any failure degrades to an empty task list so one malformed
- * feature never empties the report. Pure of writes.
- * @param {string} root
- * @param {string} specPath
- * @returns {import('../dude-engine/lib/tasks.mjs').Task[]}
- */
-function readPackageTasks(root, specPath) {
-  try {
-    const identity = parseSpecIdentity(specPath);
-    if (!identity) return [];
-    const tasksPath = `${WORKSPACE_PATHS.SPECS_DIR}/${identity.feature}/tasks.md`;
-    const absolute = resolveWorkspacePath(root, tasksPath);
-    const stat = fs.lstatSync(absolute);
-    if (stat.isSymbolicLink() || !stat.isFile()) return [];
-    return parseTasks(fs.readFileSync(absolute, 'utf8'), { path: tasksPath }).tasks;
-  } catch {
-    return [];
-  }
-}
-
-/**
- * @typedef {Object} WorkItem
- * @property {string} slug
- * @property {string} title              display title (falls back to the slug)
- * @property {boolean} defined           owns a cleanly resolved package
- * @property {string} kind               `F-<number>` for a defined feature, else `IDEA`
- * @property {string[]} dependsOn        declared `depends-on:` slugs
- * @property {number} done               tasks in the `done` state
- * @property {number} total              total tasks in the package
- * @property {import('../dude-engine/lib/tasks.mjs').Task[]} tasks
- * @property {string[]} log              coordinator-log entries
- */
-
-/**
- * Collect per-idea presentation detail (title, coordinator log, package tasks)
- * keyed by slug, joining package tasks by the owner-resolved spec path. Purely
- * additive to the derivation: membership always comes from the buckets, so a
- * missing detail degrades a card gracefully and never moves an idea between
- * lanes. Reads only.
- * @param {string} root
- * @param {Map<string, string>} specBySlug  slug -> owner-resolved spec path
- * @returns {Map<string, WorkItem>}
- */
-function collectPresentation(root, specBySlug) {
-  /** @type {Map<string, WorkItem>} */
-  const map = new Map();
-  for (const file of listIdeaFiles(root)) {
-    let slug = file.name.replace(/\.md$/, '');
-    let title = '';
-    /** @type {string[]} */
-    let log = [];
-    try {
-      const content = fs.readFileSync(file.absPath, 'utf8');
-      const frontmatter = parseFrontmatterScalars(content, { canonicalKeys: IDEA_KEYS });
-      slug = frontmatter.scalars.get('slug')?.value || slug;
-      title = frontmatter.scalars.get('title')?.value || '';
-      log = parseCoordinatorLog(content);
-    } catch {
-      // Malformed ledger: fall back to the filename slug, no title, no log.
-    }
-    const specPath = specBySlug.get(slug) ?? null;
-    const tasks = specPath ? readPackageTasks(root, specPath) : [];
-    const done = tasks.filter((task) => task.state === 'done').length;
-    map.set(slug, {
-      slug,
-      title,
-      defined: Boolean(specPath),
-      kind: 'IDEA',
-      dependsOn: [],
-      done,
-      total: tasks.length,
-      tasks,
-      log,
+    files.push({
+      name: entry.name,
+      ideaPath: `${WORKSPACE_PATHS.IDEAS_DIR}/${entry.name}`,
+      absolutePath,
     });
   }
-  return map;
+  return files.sort((left, right) => compareIdentity(left.ideaPath, right.ideaPath));
 }
 
-/**
- * Read the workspace once and assemble the full report model: the derived
- * buckets (the single source of membership), the shared spec-number
- * annotations, and a per-slug map of work-item detail. The buckets come from
- * the same `deriveBuckets(collectFocusInputs(...))` pipeline as every other
- * view, so the report can never disagree with the text or Markdown buckets.
- * Reads only.
- * @param {{ root: string }} options
- * @returns {{ buckets: FocusBuckets, meta: Map<string, string>, items: Map<string, WorkItem> }}
- */
-function collectReportModel({ root }) {
-  const inputs = collectFocusInputs({ root });
-  const buckets = deriveBuckets(inputs);
-  const meta = buildAnnotations(inputs.ideas);
+function readOrder(root) {
+  const content = readSafeFile(root, BACKLOG_ORDER_PATH);
+  return content === null ? [] : parseBacklogOrder(content);
+}
 
-  /** @type {Map<string, string>} slug -> owner-resolved spec path */
-  const specBySlug = new Map();
-  for (const idea of inputs.ideas) if (idea.specPath) specBySlug.set(idea.slug, idea.specPath);
-  const presentation = collectPresentation(root, specBySlug);
-
-  /** @type {Map<string, WorkItem>} */
-  const items = new Map();
-  for (const idea of inputs.ideas) {
-    const detail = presentation.get(idea.slug);
-    const annotation = meta.get(idea.slug);
-    items.set(idea.slug, {
-      slug: idea.slug,
-      title: detail?.title || idea.slug,
-      defined: idea.defined,
-      kind: annotation ? `F-${annotation.replace(/^spec-/, '')}` : 'IDEA',
-      dependsOn: idea.dependsOn,
-      done: detail?.done ?? 0,
-      total: detail?.total ?? 0,
-      tasks: detail?.tasks ?? [],
-      log: detail?.log ?? [],
-    });
+function taskCounts(tasks) {
+  const counts = { open: 0, active: 0, blocked: 0, done: 0, total: tasks.length };
+  for (const task of tasks) {
+    if (task.state === "done") counts.done += 1;
+    else if (task.state === "in-progress") counts.active += 1;
+    else if (task.state === "blocked") counts.blocked += 1;
+    else counts.open += 1;
   }
-  return { buckets, meta, items };
+  return counts;
 }
 
-/** @param {number} done @param {number} total @returns {number} whole-percent complete */
-function pct(done, total) {
-  return total > 0 ? Math.round((done / total) * 100) : 0;
-}
-
-/** A safe placeholder work item for a slug that has no collected detail. */
-function fallbackItem(slug) {
-  return { slug, title: slug, defined: false, kind: 'IDEA', dependsOn: [], done: 0, total: 0, tasks: [], log: [] };
-}
-
-/**
- * Render one work-item card. Carries `data-bucket` and `data-slug` so the lane
- * membership is machine-readable, and `data-tone` for the traffic-light stripe.
- * All idea text is escaped. Pure.
- * @param {{ key: string, title: string, tone: string }} lane
- * @param {WorkItem} item
- * @returns {string}
- */
-function renderCard(lane, item) {
-  const chip = `<span class="idchip idchip-${item.defined ? 'feature' : 'idea'}">${esc(item.kind)}</span>`;
-  const pill = `<span class="pill" data-tone="${lane.tone}">${esc(lane.title)}</span>`;
-  const head = `<div class="cardtop">${chip}${pill}</div><div class="cardtitle">${esc(item.title)}</div>`;
-  let body;
-  if (item.total > 0) {
-    const percent = pct(item.done, item.total);
-    body = `<div class="bar"><span style="width:${percent}%"></span></div>`
-      + `<div class="cardmeta"><span>${item.done}/${item.total} tasks</span><span>${percent}%</span></div>`;
-  } else {
-    body = `<div class="cardmeta"><span>${item.defined ? 'no tasks yet' : 'draft'}</span><span>no package</span></div>`;
-  }
-  /** @type {string[]} */
-  const tags = [];
-  if (item.total > 0) tags.push(`<span class="tag">${item.total} tasks</span>`);
-  for (const dep of item.dependsOn) tags.push(`<span class="tag tag-dep">&#8627; ${esc(dep)}</span>`);
-  const tagRow = tags.length ? `<div class="tags">${tags.join('')}</div>` : '';
-  return `<article class="card" data-bucket="${lane.key}" data-slug="${esc(item.slug)}" data-tone="${lane.tone}">`
-    + `${head}${body}${tagRow}</article>`;
-}
-
-/**
- * Render the six traffic-light lanes in `BUCKET_LANES` order. Each lane lists a
- * card for every slug in `buckets[key]` — so lane membership equals the
- * derivation exactly — and an empty lane renders a compact placeholder. Pure.
- * @param {FocusBuckets} buckets
- * @param {Map<string, WorkItem>} items
- * @returns {string}
- */
-function renderBoard(buckets, items) {
-  return BUCKET_LANES.map((lane) => {
-    const slugs = buckets?.[lane.key] ?? [];
-    const body = slugs.length
-      ? slugs.map((slug) => renderCard(lane, items.get(slug) ?? fallbackItem(slug))).join('')
-      : '<p class="lane-empty">No items</p>';
-    return `<section class="lane" data-bucket="${lane.key}" data-tone="${lane.tone}">`
-      + '<header class="lanehead"><div class="lanetitle"><span class="lanedot"></span>'
-      + `<h3>${esc(lane.title)}</h3><span class="lanecount">${slugs.length}</span></div></header>`
-      + `<div class="lanebody">${body}</div></section>`;
-  }).join('');
-}
-
-/**
- * Render the summary stat tiles: in-flight count, idea totals, task completion,
- * and the shipped / blocked counts. Counts are read from the derived buckets and
- * the collected items. Pure.
- * @param {FocusBuckets} buckets
- * @param {Map<string, WorkItem>} items
- * @returns {string}
- */
-function renderStats(buckets, items) {
-  const all = [...items.values()];
-  const total = all.length;
-  const defined = all.filter((item) => item.defined).length;
-  const tasksTotal = all.reduce((sum, item) => sum + item.total, 0);
-  const tasksDone = all.reduce((sum, item) => sum + item.done, 0);
-  const inFlight = (buckets.active?.length ?? 0) + (buckets.next?.length ?? 0) + (buckets.blocked?.length ?? 0);
-  const stat = (label, value, sub) =>
-    `<div class="stat"><span class="statval">${value}</span>`
-    + `<span class="statlabel">${esc(label)}</span>`
-    + `<span class="statsub">${esc(sub)}</span></div>`;
-  return [
-    stat('In flight', inFlight, 'active, next or blocked'),
-    stat('Ideas', total, `${defined} defined, ${total - defined} draft`),
-    stat('Tasks done', `${tasksDone}/${tasksTotal}`, `${pct(tasksDone, tasksTotal)}% of all tasks`),
-    stat('Shipped', buckets.shipped?.length ?? 0, 'every task complete'),
-    stat('Blocked', buckets.blocked?.length ?? 0, 'waiting on something'),
-  ].join('');
-}
-
-/**
- * Render the portfolio rollup: a single stacked track of every idea by bucket
- * with a counted legend. Segment widths are a deterministic function of the
- * bucket counts. Pure.
- * @param {FocusBuckets} buckets
- * @param {Map<string, WorkItem>} items
- * @returns {string}
- */
-function renderRollup(buckets, items) {
-  const total = items.size || 1;
-  const segments = BUCKET_LANES
-    .filter((lane) => (buckets[lane.key]?.length ?? 0) > 0)
-    .map((lane) => {
-      const count = buckets[lane.key].length;
-      const width = ((count / total) * 100).toFixed(3);
-      return `<span class="seg" data-tone="${lane.tone}" style="width:${width}%" title="${esc(lane.title)}: ${count}"></span>`;
-    })
-    .join('');
-  const legend = BUCKET_LANES
-    .map((lane) => `<span class="lg"><span class="sw" data-tone="${lane.tone}"></span>${esc(lane.title)}<b>${buckets[lane.key]?.length ?? 0}</b></span>`)
-    .join('');
-  return `<p class="sectionlabel" style="margin-top:0">Portfolio &middot; ${items.size} items</p>`
-    + `<div class="track">${segments}</div><div class="legend">${legend}</div>`;
-}
-
-/**
- * Render a per-feature task-order chain for every defined package that carries
- * tasks, ordered by slug for determinism. Each task is a list item coded by its
- * state (done / in-progress / blocked / other) via the `-deep`/`-text` code
- * colours. Pure.
- * @param {Map<string, WorkItem>} items
- * @returns {string}
- */
-function renderChains(items) {
-  const withTasks = [...items.values()]
-    .filter((item) => item.tasks.length > 0)
-    .sort((left, right) => compareSlug(left.slug, right.slug));
-  if (!withTasks.length) return '<p class="lane-empty">No task packages yet</p>';
-  return withTasks.map((item) => {
-    const nodes = item.tasks.map((task) => {
-      const cls = task.state === 'done' ? 'ok'
-        : task.state === 'in-progress' ? 'wip'
-          : task.state === 'blocked' ? 'bad' : 'todo';
-      const id = String(task.id).split('@')[0];
-      const description = String(task.description ?? '');
-      const short = description.length > 76 ? `${description.slice(0, 76)}\u2026` : description;
-      return `<li class="chain-${cls}"><code>${esc(id)}</code> ${esc(short)}</li>`;
-    }).join('');
-    return `<section class="chain"><h4>${esc(item.title)}</h4><ol>${nodes}</ol></section>`;
-  }).join('');
-}
-
-/**
- * Render recent activity: the newest coordinator-log entries across every idea,
- * sorted by their date prefix (descending), tie-broken by slug for
- * determinism, capped to the twelve most recent. Pure.
- * @param {Map<string, WorkItem>} items
- * @returns {string}
- */
-function renderActivity(items) {
-  /** @type {{ slug: string, line: string }[]} */
-  const rows = [];
-  for (const item of items.values()) for (const line of item.log) rows.push({ slug: item.slug, line });
-  rows.sort((left, right) => {
-    if (left.line !== right.line) return left.line < right.line ? 1 : -1;
-    return compareSlug(left.slug, right.slug);
-  });
-  const recent = rows.slice(0, 12);
-  if (!recent.length) return '<p class="lane-empty">No recent activity</p>';
-  const list = recent.map((row) => {
-    const cut = row.line.indexOf(' - ');
-    const date = cut >= 0 ? row.line.slice(0, cut) : row.line;
-    const rest = cut >= 0 ? row.line.slice(cut + 3) : '';
-    return `<li><time>${esc(date.replace(' UTC', ''))}</time>`
-      + `<span class="chip">${esc(row.slug)}</span><span class="act">${esc(rest)}</span></li>`;
-  }).join('');
-  return `<ul class="activity">${list}</ul>`;
-}
-
-/**
- * Fill the committed self-contained template with the four views over the single
- * derivation, plus the rollup and the snapshot stamp. A pure, deterministic
- * function of the template string and the model: it substitutes only the
- * `{{SLOT}}` placeholders and adds no network, service, script, or external
- * reference of its own. Lane membership equals `model.buckets` exactly.
- * @param {string} template
- * @param {{ buckets: FocusBuckets, items: Map<string, WorkItem>, title?: string, generatedAt?: string, sourceRev?: string }} model
- * @returns {string}
- */
-export function renderReport(template, model) {
-  const { buckets, items, title = '', generatedAt = 'unknown', sourceRev = 'unknown' } = model;
-  /** @type {Record<string, string>} */
-  const slots = {
-    TITLE: esc(title),
-    GENERATED_AT: esc(generatedAt),
-    SOURCE_REV: esc(sourceRev),
-    ROLLUP: renderRollup(buckets, items),
-    STATS: renderStats(buckets, items),
-    BOARD: renderBoard(buckets, items),
-    CHAINS: renderChains(items),
-    ACTIVITY: renderActivity(items),
+function taskDetail(task) {
+  return {
+    id: task.id,
+    glyph: task.glyph,
+    state: task.state,
+    description: task.description,
+    deps: [...task.deps],
+    blockedBy: task.blockedBy,
   };
-  return String(template).replace(/\{\{([A-Z_]+)\}\}/g, (whole, key) =>
-    (Object.prototype.hasOwnProperty.call(slots, key) ? slots[key] : whole));
 }
 
-/** Read the committed template as a core sibling of this module (never from an installed pack). */
-function readTemplate() {
-  return fs.readFileSync(new URL('./backlog-template.html', import.meta.url), 'utf8');
-}
-
-/**
- * Resolve a short source revision for the staleness stamp, degrading to a plain
- * `unknown` outside a checkout. Read-only.
- * @param {string} root
- * @returns {string}
- */
-function readSourceRev(root) {
-  try {
-    const rev = execSync('git rev-parse --short HEAD', {
-      cwd: root,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).toString().trim();
-    return rev || 'unknown';
-  } catch {
-    return 'unknown';
+function phaseDetails(tasksContent, tasks) {
+  const { headings } = visibleHeadings(tasksContent);
+  const definitions = headings
+    .filter((heading) => heading.level === 2 && /^Phase\b/i.test(heading.title))
+    .map((heading) => ({ title: heading.title, line: heading.line, tasks: [] }));
+  const unphasedTasks = [];
+  for (const task of tasks) {
+    let owning = null;
+    for (const phase of definitions) {
+      if (phase.line < task.headerLine) owning = phase;
+      else break;
+    }
+    const detail = taskDetail(task);
+    if (owning) owning.tasks.push(detail);
+    else unphasedTasks.push(detail);
   }
+  return {
+    phases: definitions.map(({ title, tasks: phaseTasks }) => ({ title, tasks: phaseTasks })),
+    unphasedTasks,
+  };
 }
 
-/**
- * Build a node's readable quoted-label text for a task: the durable id (the
- * FR-011 identity, always kept whole) followed by a short, sanitized slice of
- * its description so a wide feature stays legible. Pure.
- * @param {import('../dude-engine/lib/tasks.mjs').Task} task
- * @returns {string}
- */
-function nodeLabel(task) {
-  const MAX_DESC = 60;
-  const description = sanitizeLabel(task.description ?? '');
-  const short = description.length > MAX_DESC
-    ? `${description.slice(0, MAX_DESC).trimEnd()}...`
-    : description;
-  // `task.id` is already Mermaid-safe inside a quoted label (`@` and hex are
-  // fine); only the free-text description needs sanitizing, done above.
-  return short ? `${task.id} ${short}` : String(task.id);
+function userStoryHeadings(specContent) {
+  return visibleHeadings(specContent).headings
+    .filter((heading) => heading.level === 3 && /^User Story\b/i.test(heading.title))
+    .map((heading) => heading.title);
 }
 
-/**
- * Render one feature's existing task order as a fenced Mermaid `flowchart` (plan
- * section 6). One node per task (id sanitized to a Mermaid-safe id, readable
- * quoted label) and one edge per literal `deps:` entry whose target is a known
- * task in the same set. An edge `from --> to` means `from` depends on `to` (to
- * must finish first), matching the codebase's dependency-edge convention
- * (`tasks.mjs` `deriveDependencies`). A `deps:` target that is not a known task
- * is noted as a `%%` comment rather than drawn, mirroring `parseTasks`, which
- * records a dangling target as a warning and never throws. Pure; operates on
- * already-parsed tasks; writes nothing.
- * @param {import('../dude-engine/lib/tasks.mjs').Task[]} tasks
- * @param {{ slug?: string, feature?: string }} [meta]
- * @returns {string}
- */
-export function renderFlowchart(tasks, meta) {
-  const list = Array.isArray(tasks) ? tasks : [];
-  const known = new Set(list.map((task) => task.id));
+function anchorFor(item, duplicated) {
+  if (!duplicated && CANONICAL_SLUG_RE.test(item.slug)) return `feature-${item.slug}`;
+  return `feature-path-${Buffer.from(item.ideaPath, "utf8").toString("hex")}`;
+}
 
-  /** @type {string[]} */ const nodes = [];
-  /** @type {string[]} */ const edges = [];
-  /** @type {string[]} */ const notes = [];
-
-  for (const task of list) {
-    nodes.push(`  ${safeMermaidId(task.id)}["${nodeLabel(task)}"]`);
+/** Collect every safe direct idea and its exact-owner evidence. */
+export function collectLifecycleItems({ root }) {
+  const inventory = inventoryDefinedFeatures({ root });
+  const diagnosticsByIdea = new Map();
+  for (const diagnostic of inventory.diagnostics) {
+    const list = diagnosticsByIdea.get(diagnostic.path) ?? [];
+    list.push(diagnostic.message);
+    diagnosticsByIdea.set(diagnostic.path, list);
   }
-  for (const task of list) {
-    for (const dep of task.deps ?? []) {
-      if (known.has(dep)) {
-        edges.push(`  ${safeMermaidId(task.id)} --> ${safeMermaidId(dep)}`);
-      } else {
-        notes.push(`  %% note: task ${task.id} depends on unknown id ${dep} (noted, not drawn)`);
+  const ownersBySpec = new Map();
+  for (const feature of inventory.features) {
+    const list = ownersBySpec.get(feature.specPath) ?? [];
+    list.push(feature);
+    ownersBySpec.set(feature.specPath, list);
+  }
+  const ownerByIdea = new Map();
+  for (const candidates of ownersBySpec.values()) {
+    if (candidates.length === 1) ownerByIdea.set(candidates[0].ideaPath, candidates[0].specPath);
+  }
+
+  const items = [];
+  for (const file of listIdeaFiles(root)) {
+    const content = fs.readFileSync(file.absolutePath, "utf8");
+    const fallbackSlug = file.name.slice(0, -3);
+    let title = fallbackSlug;
+    let slug = fallbackSlug;
+    let authoritySlug = null;
+    let status = "unknown";
+    let declaredSpecPath = null;
+    let dependsOn = [];
+    let frontmatterAvailable = true;
+    let lifecycleAvailable = false;
+    let dependencyAvailable = false;
+    const localAuthorityIssues = [];
+    try {
+      const frontmatter = parseFrontmatterScalars(content, { canonicalKeys: IDEA_KEYS });
+      title = frontmatter.scalars.get("title")?.value || fallbackSlug;
+      const parsedSlug = frontmatter.scalars.get("slug")?.value || fallbackSlug;
+      slug = CANONICAL_SLUG_RE.test(parsedSlug) ? parsedSlug : fallbackSlug;
+      // Display identity always resolves; only a canonical frontmatter slug carries authority.
+      authoritySlug = CANONICAL_SLUG_RE.test(parsedSlug) ? parsedSlug : null;
+      if (slug !== parsedSlug) localAuthorityIssues.push("The idea slug is malformed; the file name is used only as a stable display identity.");
+      status = frontmatter.scalars.get("status")?.value || "unknown";
+      lifecycleAvailable = status === "draft" || status === "defined";
+      if (!lifecycleAvailable) localAuthorityIssues.push("Lifecycle status is unavailable because idea metadata has no valid draft or defined status.");
+      const declared = frontmatter.scalars.get("spec_path")?.value || "";
+      declaredSpecPath = parseSpecIdentity(declared)?.path ?? null;
+      const dependencyText = frontmatter.scalars.get("depends-on")?.value || "";
+      const dependencyTokens = dependencyText.split(/[\s,]+/).filter(Boolean);
+      dependencyAvailable = dependencyTokens.every((value) => CANONICAL_SLUG_RE.test(value));
+      if (dependencyAvailable) dependsOn = [...new Set(dependencyTokens)];
+      else localAuthorityIssues.push("Dependency data is unavailable because depends-on metadata is malformed.");
+    } catch (error) {
+      frontmatterAvailable = false;
+      localAuthorityIssues.push(`Idea metadata is unavailable (${error instanceof Error ? error.message : String(error)}).`);
+    }
+
+    const ownerSpecPath = ownerByIdea.get(file.ideaPath) ?? null;
+    const declaredDefined = lifecycleAvailable && status === "defined";
+    const defined = Boolean(ownerSpecPath) || declaredDefined;
+    const specPath = ownerSpecPath;
+    const tasksPath = specPath
+      ? `${specPath.slice(0, -"spec.md".length)}tasks.md`
+      : null;
+    const specContent = specPath ? readSafeFile(root, specPath) : null;
+    const tasksContent = tasksPath ? readSafeFile(root, tasksPath) : null;
+    let parsedTasks = [];
+    let taskWarnings = [];
+    let tasksAvailable = false;
+    if (tasksContent !== null) {
+      try {
+        const parsed = parseTasks(tasksContent, { path: tasksPath ?? undefined });
+        taskWarnings = [...parsed.warnings];
+        const ambiguous = Boolean(parsed.boardIssue) || taskWarnings.some((warning) => (
+          warning.startsWith("duplicate task id ") || warning.startsWith("malformed task line ")
+        ));
+        if (!ambiguous) {
+          parsedTasks = parsed.tasks;
+          tasksAvailable = true;
+        }
+      } catch (error) {
+        taskWarnings = [error instanceof Error ? error.message : String(error)];
       }
     }
+    const counts = taskCounts(parsedTasks);
+    const body = extractSection(content, 2, "Idea");
+    const coordinatorLog = parseCoordinatorLog(content);
+    const phaseModel = tasksAvailable && tasksContent !== null
+      ? phaseDetails(tasksContent, parsedTasks)
+      : { phases: [], unphasedTasks: [] };
+    const packageComplete = Boolean(
+      ownerSpecPath && tasksAvailable && parsedTasks.length > 0 && parsedTasks.every((task) => task.state === "done"),
+    );
+    const ownBlocked = tasksAvailable && parsedTasks.some((task) => (
+      task.state === "blocked" || (task.blockedBy !== null && task.state !== "done")
+    ));
+    const hasInProgress = tasksAvailable && parsedTasks.some((task) => task.state === "in-progress");
+    const authorityIssues = [...new Set([...(diagnosticsByIdea.get(file.ideaPath) ?? []), ...localAuthorityIssues])];
+    let unavailableDetail = null;
+    if (!frontmatterAvailable || !lifecycleAvailable) unavailableDetail = "Lifecycle details are unavailable because idea metadata is ambiguous.";
+    else if (declaredDefined && !ownerSpecPath) unavailableDetail = "The linked feature definition is unavailable or ambiguous.";
+    else if (ownerSpecPath && specContent === null) unavailableDetail = "The linked feature specification is unavailable.";
+    else if (ownerSpecPath && tasksContent === null) unavailableDetail = "The task file is unavailable.";
+    else if (ownerSpecPath && !tasksAvailable) unavailableDetail = "Task state is unavailable because the tasks file is incomplete or ambiguous.";
+
+    items.push({
+      identity: file.ideaPath,
+      ideaPath: file.ideaPath,
+      slug,
+      authoritySlug,
+      title,
+      status,
+      frontmatterAvailable,
+      lifecycleAvailable,
+      dependencyAvailable,
+      authorityIssues,
+      declaredDefined,
+      defined,
+      declaredSpecPath,
+      specPath,
+      tasksPath,
+      excerpt: ideaExcerpt(body),
+      dependsOn,
+      provisionalRelationships: parseProvisionalRelationships(body),
+      coordinatorLog,
+      milestones: selectMilestones(coordinatorLog),
+      userStories: specContent === null ? [] : userStoryHeadings(specContent),
+      tasks: parsedTasks.map(taskDetail),
+      phases: phaseModel.phases,
+      unphasedTasks: phaseModel.unphasedTasks,
+      taskCounts: counts,
+      taskWarnings,
+      tasksAvailable,
+      packageComplete,
+      hasInProgress,
+      ownBlocked,
+      unavailableDetail,
+    });
   }
 
-  /** @type {string[]} */
-  const body = ['```mermaid', 'flowchart TD'];
-  const titleParts = [meta?.slug, meta?.feature].filter((part) => typeof part === 'string' && part !== '');
-  if (titleParts.length) body.push(`  %% ${titleParts.join(' :: ')}`);
-  body.push(...nodes, ...edges, ...notes, '```', '');
-  return body.join('\n');
+  const slugCounts = new Map();
+  for (const item of items) slugCounts.set(item.slug, (slugCounts.get(item.slug) ?? 0) + 1);
+  for (const item of items) item.anchor = anchorFor(item, (slugCounts.get(item.slug) ?? 0) > 1);
+  return items;
 }
 
-const HELP = `backlog — feature backlog buckets, Mermaid views, and the report
-
-Usage:
-  node backlog.mjs [--root <dir>]
-  node backlog.mjs kanban [--root <dir>]
-  node backlog.mjs flowchart <idea-slug> [--root <dir>]
-  node backlog.mjs generate [--root <dir>] [--write]
-
-The default form prints the text backlog buckets (Active, Next, Blocked, Later,
-Backlog, Shipped) for the in-flight ideas under <dir> (default: current directory).
-'kanban' prints a fenced Mermaid kanban of the same buckets; 'flowchart' prints
-a fenced Mermaid flowchart of one feature's existing task deps. Those three forms
-read only and write nothing. 'generate' renders both artifacts from one
-derivation and prints them; with --write it writes exactly .dude/backlog.md and
-.dude/backlog.html (its only write path) through the symlink-refusing helper.
-`;
-
-/**
- * CLI shim for the `kanban` subcommand. Reads the workspace once and derives the
- * buckets with the same pipeline as `computeFocus` (`deriveBuckets` over
- * `collectFocusInputs`), so the board's lane membership is identical to the text
- * view. Maps each defined idea's slug to its spec number for the card
- * annotation. Read-only.
- * @param {string} root
- * @returns {string}
- */
-function runKanban(root) {
-  const inputs = collectFocusInputs({ root });
-  const buckets = deriveBuckets(inputs); // identical to computeFocus({ root })
-  return renderKanban(buckets, buildAnnotations(inputs.ideas));
+function withItemDefaults(item, index) {
+  const identity = typeof item.identity === "string"
+    ? item.identity
+    : typeof item.ideaPath === "string"
+      ? item.ideaPath
+      : `item-${index}`;
+  const slug = typeof item.slug === "string" ? item.slug : identity;
+  const counts = item.taskCounts ?? taskCounts(Array.isArray(item.tasks) ? item.tasks : []);
+  return {
+    identity,
+    ideaPath: item.ideaPath ?? identity,
+    slug,
+    authoritySlug: item.authoritySlug === undefined ? (CANONICAL_SLUG_RE.test(slug) ? slug : null) : item.authoritySlug,
+    title: item.title ?? slug,
+    status: item.status ?? (item.defined ? "defined" : "draft"),
+    frontmatterAvailable: item.frontmatterAvailable ?? true,
+    lifecycleAvailable: item.lifecycleAvailable ?? true,
+    dependencyAvailable: item.dependencyAvailable ?? true,
+    authorityIssues: Array.isArray(item.authorityIssues) ? [...item.authorityIssues] : [],
+    taskWarnings: Array.isArray(item.taskWarnings) ? [...item.taskWarnings] : [],
+    declaredDefined: item.declaredDefined ?? Boolean(item.defined),
+    defined: Boolean(item.defined),
+    declaredSpecPath: item.declaredSpecPath ?? item.specPath ?? null,
+    specPath: item.specPath ?? null,
+    tasksPath: item.tasksPath ?? null,
+    excerpt: item.excerpt ?? "",
+    dependsOn: Array.isArray(item.dependsOn) ? [...item.dependsOn] : [],
+    provisionalRelationships: Array.isArray(item.provisionalRelationships) ? [...item.provisionalRelationships] : [],
+    coordinatorLog: Array.isArray(item.coordinatorLog) ? [...item.coordinatorLog] : [],
+    milestones: Array.isArray(item.milestones) ? [...item.milestones] : [],
+    userStories: Array.isArray(item.userStories) ? [...item.userStories] : [],
+    tasks: Array.isArray(item.tasks) ? [...item.tasks] : [],
+    phases: Array.isArray(item.phases) ? [...item.phases] : [],
+    unphasedTasks: Array.isArray(item.unphasedTasks) ? [...item.unphasedTasks] : [],
+    taskCounts: { ...counts },
+    tasksAvailable: Boolean(item.tasksAvailable),
+    packageComplete: Boolean(item.packageComplete),
+    hasInProgress: Boolean(item.hasInProgress),
+    ownBlocked: Boolean(item.ownBlocked),
+    unavailableDetail: item.unavailableDetail ?? null,
+    anchor: item.anchor ?? anchorFor({ slug, ideaPath: identity }, false),
+  };
 }
 
-/**
- * CLI shim for the `flowchart <idea-slug>` subcommand. Resolves the slug to its
- * defined package's exact owner (`resolveFeatureOwner`), reads that one
- * feature's `tasks.md` (`parseTasks`), and renders the task-order flowchart. A
- * draft or unknown slug (no defined package) is reported plainly and returns
- * non-zero without throwing and without writing. Scope is exactly one feature.
- * @param {string} root
- * @param {string | undefined} slug
- * @returns {number} process exit code
- */
-function runFlowchart(root, slug) {
-  if (typeof slug !== 'string' || slug === '') {
-    process.stderr.write('[FAIL] flowchart requires an idea slug: backlog.mjs flowchart <idea-slug>\n');
-    return 1;
+/** Index items by the slug that carries authority; a malformed slug indexes nothing. */
+function uniqueItemsBySlug(items) {
+  const candidates = new Map();
+  for (const item of items) {
+    if (item.authoritySlug === null) continue;
+    const list = candidates.get(item.authoritySlug) ?? [];
+    list.push(item);
+    candidates.set(item.authoritySlug, list);
   }
-  const idea = collectFocusInputs({ root }).ideas.find((candidate) => candidate.slug === slug);
-  if (!idea || !idea.defined || !idea.specPath) {
-    process.stderr.write(`[FAIL] idea '${slug}' has no defined package to chart\n`);
-    return 1;
+  const unique = new Map();
+  for (const [slug, list] of candidates) if (list.length === 1) unique.set(slug, list[0]);
+  return unique;
+}
+
+/** An item without a valid canonical slug carries no dependency authority in either direction. */
+function authoritativeDependsOn(item) {
+  return item.authoritySlug ? item.dependsOn : [];
+}
+
+function groupActivity(items) {
+  const dated = [];
+  for (const item of items) {
+    for (const entry of item.coordinatorLog) {
+      if (!entry.date) continue;
+      dated.push({ ...entry, ideaPath: item.ideaPath, slug: item.slug, anchor: item.anchor });
+    }
   }
-  const { owner } = resolveFeatureOwner({ root, specPath: idea.specPath });
-  const identity = owner ? parseSpecIdentity(owner.specPath) : null;
-  if (!owner || !identity) {
-    process.stderr.write(`[FAIL] could not resolve a unique owner for idea '${slug}'\n`);
-    return 1;
+  dated.sort((left, right) => (
+    compareIdentity(right.date, left.date)
+    || compareIdentity(left.ideaPath, right.ideaPath)
+    || left.appendIndex - right.appendIndex
+  ));
+  const groups = [];
+  for (const event of dated) {
+    let group = groups[groups.length - 1];
+    if (!group || group.date !== event.date) {
+      group = { date: event.date, events: [] };
+      groups.push(group);
+    }
+    group.events.push(event);
   }
-  const tasksPath = `${WORKSPACE_PATHS.SPECS_DIR}/${identity.feature}/tasks.md`;
-  let content;
+  return groups;
+}
+
+function buildRelationships(items, validOrder, orderIndex) {
+  const unique = uniqueItemsBySlug(items);
+  const declared = [];
+  const provisional = [];
+  for (const item of items) {
+    if (item.authoritySlug === null) continue;
+    for (const targetSlug of item.dependsOn) {
+      declared.push({
+        authority: "declared",
+        type: "dependency",
+        from: unique.get(targetSlug) ?? null,
+        fromSlug: targetSlug,
+        to: item,
+        toSlug: item.slug,
+      });
+    }
+    for (const relation of item.provisionalRelationships) {
+      provisional.push({
+        authority: "provisional",
+        type: "body-stated dependency",
+        from: unique.get(relation.targetSlug) ?? null,
+        fromSlug: relation.targetSlug,
+        to: item,
+        toSlug: item.slug,
+        evidence: relation.evidence,
+      });
+    }
+  }
+  for (let index = 1; index < validOrder.length; index += 1) {
+    const from = unique.get(validOrder[index - 1]);
+    const to = unique.get(validOrder[index]);
+    if (!from || !to) continue;
+    declared.push({
+      authority: "declared",
+      type: "explicit order",
+      from,
+      fromSlug: from.slug,
+      to,
+      toSlug: to.slug,
+    });
+  }
+  const involved = new Set();
+  for (const relation of [...declared, ...provisional]) {
+    if (relation.from) involved.add(relation.from.identity);
+    involved.add(relation.to.identity);
+  }
+  const unavailable = items.filter((item) => !item.dependencyAvailable);
+  const missing = items.filter((item) => (
+    item.dependencyAvailable
+    && item.section !== "completed"
+    && !involved.has(item.identity)
+    && authoritativeDependsOn(item).length === 0
+    && !orderIndex.has(item.authoritySlug)
+    && item.provisionalRelationships.length === 0
+  ));
+  return {
+    declared,
+    provisional,
+    missing,
+    unavailable,
+    hasExplicitOrder: validOrder.length > 0,
+  };
+}
+
+/** Derive the single Current, Planned, and Completed lifecycle model. */
+export function deriveLifecycleModel({ items: sourceItems = [], order = [] }) {
+  const items = sourceItems
+    .map(withItemDefaults)
+    .sort((left, right) => compareIdentity(left.identity, right.identity));
+  const unique = uniqueItemsBySlug(items);
+  const orderIndex = new Map();
+  const validOrder = [];
+  for (const slug of Array.isArray(order) ? order : []) {
+    if (!unique.has(slug) || orderIndex.has(slug)) continue;
+    orderIndex.set(slug, validOrder.length);
+    validOrder.push(slug);
+  }
+  const namedAsDependency = new Set(items.flatMap((item) => authoritativeDependsOn(item)));
+  const dependencyMet = (slug) => {
+    const target = unique.get(slug);
+    return Boolean(target && target.defined && target.packageComplete);
+  };
+
+  const completed = [];
+  const blocked = [];
+  const active = [];
+  const pool = [];
+  for (const item of items) {
+    if (item.defined && item.packageComplete) completed.push(item);
+    else if (item.ownBlocked || authoritativeDependsOn(item).some((slug) => !dependencyMet(slug))) blocked.push(item);
+    else if (item.hasInProgress) active.push(item);
+    else pool.push(item);
+  }
+
+  const awaitingDefinition = [];
+  const definedAwaitingWork = [];
+  const ordered = [];
+  for (const item of pool) {
+    const hasSignal = authoritativeDependsOn(item).length > 0 || namedAsDependency.has(item.authoritySlug) || orderIndex.has(item.authoritySlug);
+    if (hasSignal) ordered.push(item);
+    else if (item.defined) definedAwaitingWork.push(item);
+    else awaitingDefinition.push(item);
+  }
+
+  const next = [];
+  const prioritizedLater = [];
+  for (const item of ordered) {
+    const position = orderIndex.get(item.authoritySlug);
+    const unfinishedAhead = position !== undefined && ordered.some((candidate) => {
+      if (candidate.identity === item.identity) return false;
+      const candidatePosition = orderIndex.get(candidate.authoritySlug);
+      return candidatePosition !== undefined && candidatePosition < position;
+    });
+    if (unfinishedAhead) prioritizedLater.push(item);
+    else next.push(item);
+  }
+
+  const byIdentity = (left, right) => compareIdentity(left.identity, right.identity);
+  const byOrder = (left, right) => (
+    (orderIndex.get(left.authoritySlug) ?? Number.MAX_SAFE_INTEGER)
+    - (orderIndex.get(right.authoritySlug) ?? Number.MAX_SAFE_INTEGER)
+    || byIdentity(left, right)
+  );
+  completed.sort(byIdentity);
+  blocked.sort(byIdentity);
+  active.sort(byIdentity);
+  awaitingDefinition.sort(byIdentity);
+  definedAwaitingWork.sort(byIdentity);
+  next.sort(byOrder);
+  prioritizedLater.sort(byOrder);
+
+  const assign = (rows, section, group) => {
+    for (const item of rows) {
+      item.section = section;
+      item.group = group;
+      item.orderPosition = orderIndex.has(item.authoritySlug) ? orderIndex.get(item.authoritySlug) + 1 : null;
+    }
+  };
+  assign(blocked, "current", "blocked");
+  assign(active, "current", "active");
+  assign(next, "current", "next");
+  assign(awaitingDefinition, "planned", "awaiting-definition");
+  assign(definedAwaitingWork, "planned", "defined-awaiting-work");
+  assign(prioritizedLater, "planned", "prioritized-later");
+  assign(completed, "completed", "completed");
+
+  const model = {
+    summary: {
+      currentWork: blocked.length + active.length,
+      readyNext: next.length,
+      ideasAwaitingDefinition: awaitingDefinition.length + prioritizedLater.filter((item) => !item.defined).length,
+      definedAwaitingWork: definedAwaitingWork.length + prioritizedLater.filter((item) => item.defined).length,
+      completed: completed.length,
+      active: active.length,
+      blocked: blocked.length,
+    },
+    current: { blocked, active, next },
+    planned: { awaitingDefinition, definedAwaitingWork, prioritizedLater },
+    completed,
+    items,
+    order: validOrder,
+    activityByDate: groupActivity(items),
+    relationships: null,
+  };
+  model.relationships = buildRelationships(items, validOrder, orderIndex);
+  return model;
+}
+
+/** Collect and derive the lifecycle model from one workspace root. */
+export function collectLifecycleModel({ root }) {
+  return deriveLifecycleModel({ items: collectLifecycleItems({ root }), order: readOrder(root) });
+}
+
+function featureKind(item) {
+  const source = item.specPath ?? item.declaredSpecPath;
+  const identity = source ? parseSpecIdentity(source) : null;
+  const number = identity ? /^(\d+)/.exec(identity.feature)?.[1] : null;
+  return number ? `F-${number}` : "IDEA";
+}
+
+function lifecycleRibbon(item) {
+  const unknown = !item.lifecycleAvailable;
+  const stages = [
+    { key: "idea", label: "Idea", state: "reached" },
+    { key: "defined", label: "Defined", state: unknown ? "unknown" : item.defined ? "reached" : "pending" },
+    { key: "tasks", label: "Tasks", state: unknown || (item.defined && !item.tasksAvailable) ? "unknown" : item.taskCounts.total > 0 ? "reached" : "pending" },
+    { key: "done", label: "Done", state: unknown || (item.defined && !item.tasksAvailable) ? "unknown" : item.section === "completed" ? "reached" : "pending" },
+  ];
+  const description = stages.map((stage) => `${stage.label} ${stage.state === "unknown" ? "unavailable" : stage.state}`).join(", ");
+  return `<span class="ribbon" aria-label="Lifecycle: ${esc(description)}">${stages.map((stage) => (
+    `<span class="stage stage-${stage.key} ${stage.state}">${stage.label}</span>`
+  )).join("")}</span>`;
+}
+
+function countsMarkup(item) {
+  if (!item.lifecycleAvailable || (item.defined && !item.tasksAvailable)) return `<span class="counts unavailable">Task state unavailable</span>`;
+  if (item.taskCounts.total === 0) return `<span class="counts none">No task package</span>`;
+  const counts = item.taskCounts;
+  return `<span class="counts" aria-label="Task states">`
+    + `<span><strong>${counts.open}</strong> open</span>`
+    + `<span><strong>${counts.active}</strong> active</span>`
+    + `<span><strong>${counts.blocked}</strong> blocked</span>`
+    + `<span><strong>${counts.done}</strong> done</span></span>`;
+}
+
+function dependencySignal(item) {
+  if (!item.dependencyAvailable) return `<span class="dep-signal unavailable"><span aria-hidden="true">?</span> Dependency data unavailable</span>`;
+  if (authoritativeDependsOn(item).length > 0 || item.orderPosition !== null) {
+    return `<span class="dep-signal declared"><span aria-hidden="true">━</span> Declared signal</span>`;
+  }
+  if (item.provisionalRelationships.length > 0) {
+    return `<span class="dep-signal provisional"><span aria-hidden="true">┄</span> Provisional signal</span>`;
+  }
+  return `<span class="dep-signal none"><span aria-hidden="true">—</span> No dependency signal</span>`;
+}
+
+function renderMilestones(item) {
+  if (item.milestones.length === 0) return `<p class="quiet">No Coordinator Log milestones are recorded.</p>`;
+  return `<ol class="milestones">${item.milestones.map((milestone) => (
+    `<li><span class="milestone-label">${esc(milestone.label)}</span><span>${esc(conciseEvidence(milestone.text))}</span></li>`
+  )).join("")}</ol>`;
+}
+
+function internalTargetLink(model, slug) {
+  const matches = model.items.filter((item) => item.authoritySlug === slug);
+  if (matches.length !== 1) return `<code>${esc(slug)}</code>`;
+  return `<a href="#${esc(matches[0].anchor)}"><code>${esc(slug)}</code></a>`;
+}
+
+function renderDependencyFacts(model, item) {
+  const rows = [];
+  if (!item.dependencyAvailable) rows.push(`<li><strong>Declared dependencies:</strong> unavailable because idea metadata could not be read reliably.</li>`);
+  else if (item.authoritySlug === null && item.dependsOn.length > 0) rows.push(`<li><strong>Declared dependencies:</strong> dependency metadata is present but ignored because the idea slug is malformed.</li>`);
+  else if (authoritativeDependsOn(item).length === 0) rows.push(`<li><strong>Declared dependencies:</strong> none in idea frontmatter.</li>`);
+  else for (const slug of authoritativeDependsOn(item)) rows.push(
+    `<li><strong>Declared dependency:</strong> ${internalTargetLink(model, slug)} (authoritative).</li>`,
+  );
+  for (const relation of item.provisionalRelationships) rows.push(
+    `<li><strong>Provisional, non-authoritative:</strong> ${internalTargetLink(model, relation.targetSlug)} — ${esc(relation.evidence)}</li>`,
+  );
+  if (item.orderPosition !== null) rows.push(
+    `<li><strong>Explicit order:</strong> position ${item.orderPosition} in <code>${BACKLOG_ORDER_PATH}</code>.</li>`,
+  );
+  else if (!model.relationships.hasExplicitOrder) rows.push(`<li><strong>Explicit order:</strong> no explicit feature order declared.</li>`);
+  else rows.push(`<li><strong>Explicit order:</strong> this item has no listed position.</li>`);
+  return `<ul class="facts">${rows.join("")}</ul>`;
+}
+
+function taskStateLabel(task) {
+  if (task.state === "done") return "Done";
+  if (task.state === "in-progress") return "Active";
+  if (task.state === "blocked") return "Blocked";
+  return "Open";
+}
+
+function renderTask(task) {
+  const dependencies = task.deps.length > 0
+    ? `<div class="task-meta"><span>deps:</span> ${task.deps.map((dep) => `<code>${esc(dep)}</code>`).join(", ")}</div>`
+    : "";
+  const blocker = task.blockedBy
+    ? `<div class="task-meta blocked-by"><span>blocked-by:</span> ${esc(task.blockedBy)}</div>`
+    : "";
+  return `<li class="task task-${esc(task.state)}"><div class="task-main">`
+    + `<span class="task-status"><span aria-hidden="true">[${esc(task.glyph)}]</span> ${taskStateLabel(task)}</span>`
+    + `<code>${esc(task.id)}</code><span>${esc(task.description)}</span></div>${dependencies}${blocker}</li>`;
+}
+
+function renderTasks(item) {
+  if (!item.lifecycleAvailable) return `<p class="awaiting">Task state is unavailable because lifecycle metadata is ambiguous.</p>`;
+  if (!item.defined) return `<p class="awaiting">Awaiting definition - no tasks exist yet.</p>`;
+  if (!item.tasksAvailable) return `<p class="awaiting">${esc(item.unavailableDetail ?? "Task details are unavailable.")}</p>`;
+  if (item.taskCounts.total === 0) return `<p class="quiet">No tasks are recorded${item.tasksPath ? ` in <code>${esc(item.tasksPath)}</code>` : ""}.</p>`;
+  const sections = [];
+  if (item.unphasedTasks.length > 0) sections.push(`<ol class="task-list unphased">${item.unphasedTasks.map(renderTask).join("")}</ol>`);
+  for (const phase of item.phases) {
+    const body = phase.tasks.length > 0
+      ? `<ol class="task-list">${phase.tasks.map(renderTask).join("")}</ol>`
+      : `<p class="quiet phase-empty">No tasks are recorded in this phase.</p>`;
+    sections.push(`<section class="phase"><h4>${esc(phase.title)}</h4>${body}</section>`);
+  }
+  return sections.join("");
+}
+
+function renderFeatureDefinition(item) {
+  if (!item.lifecycleAvailable) return `<p class="awaiting">Definition status is unavailable because idea metadata is ambiguous.</p>`;
+  if (!item.defined) return `<p class="awaiting">Awaiting definition - no tasks exist yet.</p>`;
+  if (!item.specPath) return `<p class="awaiting">${esc(item.unavailableDetail ?? "The linked feature definition is unavailable or ambiguous.")}</p>`;
+  const stories = item.userStories.length > 0
+    ? `<ul class="story-list">${item.userStories.map((story) => `<li>${esc(story)}</li>`).join("")}</ul>`
+    : `<p class="quiet">No user-story headings are present in the linked feature specification.</p>`;
+  return `<p class="source-path"><span>Spec</span> <code>${esc(item.specPath)}</code></p>${stories}`;
+}
+
+function renderFeatureDetail(model, item) {
+  const compact = item.section === "completed" ? " compact" : "";
+  const open = item.slug === "backlog-canvas" ? " open" : "";
+  const excerpt = item.excerpt
+    ? `<p>${esc(item.excerpt)}</p>`
+    : `<p class="quiet">No readable excerpt is available from the <code>## Idea</code> section.</p>`;
+  const taskPath = item.tasksPath ? `<code>${esc(item.tasksPath)}</code>` : "";
+  const warnings = [...item.authorityIssues, ...item.taskWarnings];
+  const warningMarkup = warnings.length > 0 ? `<aside class="data-warning" aria-label="Unavailable or ambiguous source data"><strong>Some source data is unavailable or ambiguous.</strong><ul>${warnings.map((warning) => `<li>${esc(warning)}</li>`).join("")}</ul></aside>` : "";
+  const kind = featureKind(item);
+  const visibleIdentity = kind === "IDEA" ? `IDEA · ${item.slug}` : kind;
+  return `<details class="feature-detail${compact}" id="${esc(item.anchor)}" data-feature-entry="${esc(item.slug)}" data-idea-path="${esc(item.ideaPath)}" data-section="${esc(item.section)}" data-group="${esc(item.group)}"${open}>`
+    + `<summary><span class="summary-grid"><span class="identity">${esc(visibleIdentity)}</span>`
+    + `<span class="feature-title">${esc(item.title)}</span>${lifecycleRibbon(item)}${countsMarkup(item)}${dependencySignal(item)}</span></summary>`
+    + `<div class="feature-body">${warningMarkup}<div class="detail-grid">`
+    + `<section><h3>Original idea</h3>${excerpt}<p class="source-path"><span>Source</span> <code>${esc(item.ideaPath)}</code></p></section>`
+    + `<section><h3>Coordinator milestones</h3>${renderMilestones(item)}</section>`
+    + `<section><h3>Dependencies and order</h3>${renderDependencyFacts(model, item)}</section>`
+    + `<section><h3>Feature definition</h3>${renderFeatureDefinition(item)}</section></div>`
+    + `<section class="tasks-section"><div class="section-heading"><div><p class="eyebrow">Execution detail</p><h3>Phases and tasks</h3></div>${taskPath}</div>${renderTasks(item)}</section>`
+    + `</div></details>`;
+}
+
+function renderSummary(model) {
+  const summary = model.summary;
+  return `<div class="metric-strip" aria-label="Where are we summary">`
+    + `<div class="metric current"><strong>${summary.currentWork}</strong><span>Current work</span><small>${summary.active} active · ${summary.blocked} blocked</small></div>`
+    + `<div class="metric next"><strong>${summary.readyNext}</strong><span>Ready / Next</span><small>ready from declared dependency or order</small></div>`
+    + `<div class="metric ideas"><strong>${summary.ideasAwaitingDefinition}</strong><span>Ideas awaiting definition</span><small>no task package yet</small></div>`
+    + `<div class="metric defined"><strong>${summary.definedAwaitingWork}</strong><span>Defined awaiting work</span><small>not active or ordered next</small></div>`
+    + `<div class="metric completed"><strong>${summary.completed}</strong><span>Completed features</span><small>compact library below</small></div></div>`
+    + `<p class="at-glance"><strong>Current:</strong> ${summary.currentWork}. <strong>Ready:</strong> ${summary.readyNext}. <strong>Planned:</strong> ${summary.ideasAwaitingDefinition} awaiting definition and ${summary.definedAwaitingWork} defined awaiting work. <strong>Completed:</strong> ${summary.completed}.</p>`;
+}
+
+function mapNode(item, fallbackSlug) {
+  if (!item) return `<span class="map-node unresolved"><span class="map-id">Unresolved</span><strong>${esc(fallbackSlug)}</strong></span>`;
+  return `<a class="map-node" href="#${esc(item.anchor)}"><span class="map-id">${esc(featureKind(item))}</span><strong>${esc(item.title)}</strong><small>${esc(item.slug)}</small></a>`;
+}
+
+function renderRelation(relation) {
+  const provisional = relation.authority === "provisional";
+  const order = relation.type === "explicit order";
+  const label = provisional
+    ? "stated in idea, not authoritative"
+    : order ? "explicit order" : "declared dependency";
+  const direction = order
+    ? `${relation.fromSlug} is listed earlier than ${relation.toSlug}; no dependency is implied`
+    : `${relation.fromSlug} prerequisite to ${relation.toSlug} dependent`;
+  const ends = order ? ["earlier", "later"] : ["prerequisite", "dependent"];
+  return `<div class="map-edge" role="listitem" data-authority="${relation.authority}" aria-label="${esc(direction)}: ${label}">`
+    + `${mapNode(relation.from, relation.fromSlug)}<span class="map-connector ${provisional ? "dashed" : "solid"}"><span class="map-label">${esc(label)} · ${ends[0]} <span aria-hidden="true">→</span> ${ends[1]}</span></span>${mapNode(relation.to, relation.toSlug)}</div>`;
+}
+
+function renderDeliveryMap(model) {
+  const { declared, provisional, missing, unavailable, hasExplicitOrder } = model.relationships;
+  const relationships = [...declared, ...provisional];
+  const rows = relationships.length > 0
+    ? `<div class="map-edges" role="list">${relationships.map(renderRelation).join("")}</div>`
+    : unavailable.length > 0
+      ? `<p class="empty-state"><strong>Relationship lines require readable source data.</strong></p>`
+      : `<p class="empty-state"><strong>No dependency relationships are declared or provisionally evidenced.</strong></p>`;
+  const isolated = missing.length > 0
+    ? `<div class="map-isolated"><strong>No dependency signal:</strong> ${missing.map((item) => `<a href="#${esc(item.anchor)}">${esc(item.slug)}</a>`).join(" · ")}</div>`
+    : "";
+  const unavailableRows = unavailable.length > 0
+    ? `<div class="map-isolated data-unavailable"><strong>Dependency data unavailable:</strong> ${unavailable.map((item) => `<a href="#${esc(item.anchor)}">${esc(item.slug)}</a>`).join(" · ")}</div>`
+    : "";
+  return `<section class="delivery-map" aria-labelledby="delivery-title" aria-describedby="delivery-desc">`
+    + `<div class="section-heading"><div><p class="eyebrow">Zoomed out</p><h2 id="delivery-title">Delivery map</h2></div><p id="delivery-desc">Only declared order and dependency evidence, plus separately marked provisional idea statements. Layout position never creates authority.</p></div>`
+    + `<div class="order-banner${hasExplicitOrder ? " order-present" : ""}">${hasExplicitOrder ? "Explicit feature order is declared in the backlog order input." : "No explicit feature order declared"}</div>`
+    + `${rows}${isolated}${unavailableRows}<div class="map-legend" aria-label="Delivery map legend"><span><i class="legend-line solid" aria-hidden="true"></i> solid = declared</span><span><i class="legend-line dashed" aria-hidden="true"></i> dashed = stated in idea, not authoritative</span><span><i class="legend-none" aria-hidden="true">—</i> no line = no order signal</span></div></section>`;
+}
+
+function renderCurrent(model) {
+  const subsections = [];
+  for (const group of CURRENT_GROUPS) {
+    const rows = model.current[group.key];
+    if (rows.length === 0) continue;
+    subsections.push(`<section class="work-subsection current-${group.key}"><div class="subsection-heading"><h3>${group.title}</h3><span>${rows.length}</span></div>${rows.map((item) => renderFeatureDetail(model, item)).join("")}</section>`);
+  }
+  const body = subsections.length > 0
+    ? subsections.join("")
+    : `<p class="empty-state"><strong>No current execution.</strong> There are no blocked, active, or ready items.</p>`;
+  return `<section class="work-section current-work" aria-labelledby="current-title"><div class="section-heading"><div><p class="eyebrow">Now and next</p><h2 id="current-title">Current work</h2></div><p>Blocked first, then active work, then ready work. Empty subsections stay out of the way.</p></div>${body}</section>`;
+}
+
+function renderPlanned(model) {
+  const subsections = [];
+  for (const group of PLANNED_GROUPS) {
+    const rows = model.planned[group.key];
+    if (rows.length === 0) continue;
+    subsections.push(`<section class="work-subsection planned-${group.key}"><div class="subsection-heading"><h3>${group.title}</h3><span>${rows.length}</span></div>${rows.map((item) => renderFeatureDetail(model, item)).join("")}</section>`);
+  }
+  const body = subsections.length > 0 ? subsections.join("") : `<p class="empty-state"><strong>No planned work.</strong></p>`;
+  return `<section class="work-section planned-work" aria-labelledby="planned-title"><div class="section-heading"><div><p class="eyebrow">Before execution</p><h2 id="planned-title">Planned work</h2></div><p>Undefined and defined-but-unstarted work remains compact until authoritative state moves it into Current.</p></div>${body}</section>`;
+}
+
+function renderCompleted(model) {
+  const body = model.completed.length > 0
+    ? model.completed.map((item) => renderFeatureDetail(model, item)).join("")
+    : `<p class="quiet">No completed features are recorded.</p>`;
+  const printIndex = model.completed.length > 0
+    ? `<ol class="print-completed-index" aria-label="Completed feature print index">${model.completed.map((item) => `<li><span class="identity">${esc(featureKind(item))}</span> ${esc(item.title)}</li>`).join("")}</ol>`
+    : `<p class="print-completed-index quiet">No completed features are recorded.</p>`;
+  return `<section class="work-section completed-work" aria-labelledby="completed-title"><div class="section-heading"><div><p class="eyebrow">What happened</p><h2 id="completed-title">Completed library</h2></div><p>One collapsed library keeps completed history available without making it a peer lane.</p></div>`
+    + `<details class="completed-library"><summary>${model.completed.length} completed feature${model.completed.length === 1 ? "" : "s"} — open compact library</summary><div class="details-body">${body}</div></details>${printIndex}</section>`;
+}
+
+function renderActivity(model) {
+  const total = model.activityByDate.reduce((count, group) => count + group.events.length, 0);
+  const groups = model.activityByDate.length > 0
+    ? model.activityByDate.map((group) => `<section class="activity-day"><h3><time datetime="${group.date}">${group.date}</time></h3><ol>${group.events.map((event) => `<li><a href="#${esc(event.anchor)}"><code>${esc(event.slug)}</code></a><span>${esc(conciseEvidence(event.text, 240))}</span></li>`).join("")}</ol></section>`).join("")
+    : `<p class="empty-state"><strong>No dated Coordinator Log entries are available.</strong></p>`;
+  return `<section class="work-section coordinator-activity" aria-labelledby="activity-title"><div class="section-heading"><div><p class="eyebrow">Recorded scope</p><h2 id="activity-title">Coordinator activity</h2></div><p>Grouped by calendar date, newest first; same-date entries use stable idea identity and append order, not invented intra-day chronology.</p></div>`
+    + `<p class="scope-note">Only dated entries from idea Coordinator Logs are shown. Git history, ad-hoc work outside Coordinator Logs, and other execution history sources are excluded.</p>`
+    + `<details class="activity-library"><summary>${total} dated Coordinator Log entr${total === 1 ? "y" : "ies"} — open activity</summary><div class="activity-body">${groups}</div></details><p class="print-activity-summary">${total} dated Coordinator Log entr${total === 1 ? "y is" : "ies are"} available in the HTML report; the full activity list is omitted from print.</p></section>`;
+}
+
+/** Fill the committed HTML template from one lifecycle model. */
+export function renderReport(template, model) {
+  const slots = {
+    SUMMARY: renderSummary(model),
+    DELIVERY_MAP: renderDeliveryMap(model),
+    CURRENT: renderCurrent(model),
+    PLANNED: renderPlanned(model),
+    COMPLETED: renderCompleted(model),
+    ACTIVITY: renderActivity(model),
+  };
+  const rendered = String(template).replace(/\{\{([A-Z_]+)\}\}/g, (whole, key) => (
+    Object.hasOwn(slots, key) ? slots[key] : whole
+  ));
+  if (/\{\{[A-Z_]+\}\}/.test(rendered)) throw new Error("unfilled backlog template slot");
+  return rendered;
+}
+
+function markdownInline(value) {
+  return String(value ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/([\[\]()*_<>])/g, "\\$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function markdownItem(item) {
+  const unavailable = item.authorityIssues.length > 0 || item.taskWarnings.some((warning) => warning.startsWith("duplicate task id ") || warning.startsWith("malformed task line "));
+  return `- \`${String(item.slug).replace(/`/g, "")}\` — ${markdownInline(item.title)} (\`${String(item.ideaPath).replace(/`/g, "")}\`)${unavailable ? " — source data unavailable or ambiguous" : ""}`;
+}
+
+/** Render a current-work-only Mermaid diagram. */
+export function renderCurrentMermaid(model) {
+  const lines = ["```mermaid", "kanban"];
+  let count = 0;
+  for (const group of CURRENT_GROUPS) {
+    const rows = model.current[group.key];
+    if (rows.length === 0) continue;
+    lines.push(`  ${group.key}[${group.title}]`);
+    for (const item of rows) {
+      count += 1;
+      lines.push(`    work_${count}[${safeMermaidLabel(item.slug)}]`);
+    }
+  }
+  if (count === 0) return "";
+  lines.push("```", "");
+  return lines.join("\n");
+}
+
+/** Render concise Markdown over the shared lifecycle model. */
+export function renderMarkdown(model) {
+  const s = model.summary;
+  const lines = [
+    "# Backlog",
+    "",
+    "A read-only view built from idea files, linked feature files, task records, and declared order.",
+    "",
+    "## Where are we?",
+    "",
+    `- Current work: **${s.currentWork}** (${s.active} active, ${s.blocked} blocked)`,
+    `- Ready / Next: **${s.readyNext}**`,
+    `- Ideas awaiting definition: **${s.ideasAwaitingDefinition}**`,
+    `- Defined awaiting work: **${s.definedAwaitingWork}**`,
+    `- Completed: **${s.completed}**`,
+    "",
+    "## Current",
+    "",
+    `Blocked ${model.current.blocked.length} · Active ${model.current.active.length} · Next ${model.current.next.length}`,
+    "",
+  ];
+  for (const group of CURRENT_GROUPS) {
+    const rows = model.current[group.key];
+    if (rows.length === 0) continue;
+    lines.push(`### ${group.title}`, "", ...rows.map(markdownItem), "");
+  }
+  const mermaid = renderCurrentMermaid(model);
+  if (mermaid) lines.push("### Current work map", "", mermaid);
+  else lines.push("No current work to diagram.", "");
+
+  lines.push("## Planned", "");
+  for (const group of PLANNED_GROUPS) {
+    const rows = model.planned[group.key];
+    if (rows.length === 0) continue;
+    lines.push(`### ${group.title}`, "", ...rows.map(markdownItem), "");
+  }
+  if (PLANNED_GROUPS.every((group) => model.planned[group.key].length === 0)) lines.push("_(none)_", "");
+
+  lines.push("## Completed", "");
+  if (model.completed.length > 0) lines.push(...model.completed.map(markdownItem), "");
+  else lines.push("_(none)_", "");
+
+  lines.push("## Dependency and order notes", "");
+  lines.push(model.relationships.hasExplicitOrder
+    ? `- Explicit feature order is declared in \`${BACKLOG_ORDER_PATH}\`.`
+    : "- No explicit feature order declared.");
+  if (model.relationships.declared.filter((relation) => relation.type === "dependency").length === 0 && model.relationships.unavailable.length === 0) {
+    lines.push("- No declared feature dependencies are present.");
+  } else {
+    for (const relation of model.relationships.declared.filter((entry) => entry.type === "dependency")) {
+      lines.push(`- Declared: \`${relation.toSlug}\` depends on \`${relation.fromSlug}\`.`);
+    }
+  }
+  for (const item of model.relationships.unavailable) lines.push(`- Dependency data is unavailable for \`${item.slug}\`; no negative dependency fact is inferred.`);
+  if (model.relationships.provisional.length === 0) lines.push("- No provisional body-stated dependency evidence was recognized.");
+  else for (const relation of model.relationships.provisional) lines.push(
+    `- Provisional, non-authoritative: \`${relation.toSlug}\` states a relationship to \`${relation.fromSlug}\`. This does not affect lifecycle classification.`,
+  );
+  lines.push(
+    "",
+    "## Coordinator activity",
+    "",
+    "Coordinator activity is sourced only from dated idea Coordinator Log entries. Git history, ad-hoc work outside Coordinator Logs, and other execution history sources are excluded.",
+    "",
+  );
+  return lines.join("\n");
+}
+
+/** Render a compact plain-text status view. */
+export function renderText(model) {
+  const s = model.summary;
+  const lines = [
+    `Where are we: current ${s.currentWork}; ready/next ${s.readyNext}; awaiting definition ${s.ideasAwaitingDefinition}; defined awaiting work ${s.definedAwaitingWork}; completed ${s.completed}`,
+    "",
+  ];
+  const add = (title, rows) => {
+    lines.push(`${title} (${rows.length}):`);
+    if (rows.length === 0) lines.push("  (none)");
+    else for (const item of rows) lines.push(`  ${item.slug}`);
+    lines.push("");
+  };
+  add("Blocked", model.current.blocked);
+  add("Active", model.current.active);
+  add("Next", model.current.next);
+  add("Ideas awaiting definition", model.planned.awaitingDefinition);
+  add("Defined awaiting work", model.planned.definedAwaitingWork);
+  if (model.planned.prioritizedLater.length > 0) add("Prioritized for later", model.planned.prioritizedLater);
+  add("Completed", model.completed);
+  return lines.join("\n");
+}
+
+/** Render one package task dependency flowchart. */
+export function renderFlowchart(tasks, meta = {}) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const known = new Set(list.map((task) => task.id));
+  const lines = ["```mermaid", "flowchart TD"];
+  if (meta.slug) lines.push(`  %% ${safeMermaidLabel(meta.slug)}`);
+  for (const task of list) lines.push(`  ${safeMermaidId(task.id)}[\"${safeMermaidLabel(`${task.id} ${task.description ?? ""}`)}\"]`);
+  for (const task of list) {
+    for (const dependency of task.deps ?? []) {
+      if (known.has(dependency)) lines.push(`  ${safeMermaidId(dependency)} --> ${safeMermaidId(task.id)}`);
+      else lines.push(`  %% task ${task.id} depends on unknown id ${dependency}`);
+    }
+  }
+  lines.push("```", "");
+  return lines.join("\n");
+}
+
+function readTemplate() {
+  return fs.readFileSync(new URL("./backlog-template.html", import.meta.url), "utf8");
+}
+
+/** Render both fixed artifacts in memory through the shared model. */
+export function renderArtifacts({ root }) {
+  const model = collectLifecycleModel({ root });
+  return {
+    model,
+    markdown: renderMarkdown(model),
+    html: renderReport(readTemplate(), model),
+  };
+}
+
+function readCommittedArtifact(root, relativePath) {
   try {
-    const absolute = resolveWorkspacePath(root, tasksPath);
+    const absolute = resolveWorkspacePath(root, relativePath);
     const stat = fs.lstatSync(absolute);
-    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error('not a regular file');
-    content = fs.readFileSync(absolute, 'utf8');
+    if (stat.isSymbolicLink() || !stat.isFile()) return { status: "missing", bytes: null };
+    return { status: "present", bytes: fs.readFileSync(absolute) };
   } catch {
-    process.stderr.write(`[FAIL] no readable tasks file for idea '${slug}'\n`);
-    return 1;
+    return { status: "missing", bytes: null };
   }
-  const { tasks } = parseTasks(content, { path: tasksPath });
-  process.stdout.write(renderFlowchart(tasks, { slug, feature: identity.feature }));
-  return 0;
 }
 
-/**
- * CLI shim for the `generate` subcommand. Reads the workspace once, derives the
- * buckets, and renders BOTH artifacts from that single derivation — the
- * `.dude/backlog.md` Markdown and the `.dude/backlog.html` report — stamped with
- * the generation time and a short source revision (`unknown` outside a
- * checkout). Without `--write` it prints both artifacts and writes nothing. With
- * `--write` it writes exactly the two artifacts through the symlink-refusing
- * mutation-path helper and writes nothing else. This is the module's only write
- * path (plan section 9).
- * @param {string} root
- * @param {{ write: boolean }} options
- * @returns {number} process exit code
- */
+function runCheck(root, { write }) {
+  if (write) {
+    process.stderr.write("[FAIL] check is read-only and rejects --write\n");
+    return 1;
+  }
+  const rendered = renderArtifacts({ root });
+  const expected = [
+    { relativePath: BACKLOG_MD_PATH, content: rendered.markdown },
+    { relativePath: BACKLOG_HTML_PATH, content: rendered.html },
+  ];
+  let failed = false;
+  for (const artifact of expected) {
+    const actual = readCommittedArtifact(root, artifact.relativePath);
+    const bytes = Buffer.from(artifact.content);
+    if (actual.status === "missing") {
+      process.stderr.write(`[MISSING] ${artifact.relativePath}\n`);
+      failed = true;
+      continue;
+    }
+    if (!actual.bytes.equals(bytes)) {
+      process.stderr.write(`[STALE] ${artifact.relativePath}: expected ${bytes.byteLength} bytes (${sha256(bytes)}), found ${actual.bytes.byteLength} bytes (${sha256(actual.bytes)})\n`);
+      failed = true;
+      continue;
+    }
+    process.stdout.write(`[OK] ${artifact.relativePath} is current\n`);
+  }
+  if (failed) process.stderr.write("Run backlog.mjs generate --root . --write to refresh both fixed artifacts.\n");
+  return failed ? 3 : 0;
+}
+
 function runGenerate(root, { write }) {
-  const model = collectReportModel({ root });
-  const generatedAt = `${new Date().toISOString().replace('T', ' ').slice(0, 16)} UTC`;
-  const sourceRev = readSourceRev(root);
-
-  const markdown = renderMarkdown(model.buckets, model.meta, { generatedAt, sourceRev });
-  const html = renderReport(readTemplate(), {
-    buckets: model.buckets,
-    items: model.items,
-    title: path.basename(path.resolve(root)),
-    generatedAt,
-    sourceRev,
-  });
-
+  const rendered = renderArtifacts({ root });
   if (!write) {
-    process.stdout.write(`==> ${BACKLOG_MD_PATH}\n${markdown}\n==> ${BACKLOG_HTML_PATH}\n${html}\n`);
+    process.stdout.write(`==> ${BACKLOG_MD_PATH}\n${rendered.markdown}\n==> ${BACKLOG_HTML_PATH}\n${rendered.html}\n`);
     return 0;
   }
-
-  fs.writeFileSync(resolveMutationPath(root, BACKLOG_MD_PATH), markdown);
-  fs.writeFileSync(resolveMutationPath(root, BACKLOG_HTML_PATH), html);
+  fs.writeFileSync(resolveMutationPath(root, BACKLOG_MD_PATH), rendered.markdown);
+  fs.writeFileSync(resolveMutationPath(root, BACKLOG_HTML_PATH), rendered.html);
   process.stdout.write(`[OK] wrote ${BACKLOG_MD_PATH} and ${BACKLOG_HTML_PATH}\n`);
   return 0;
 }
 
-/**
- * @param {string[]} argv
- * @returns {{ root: string | undefined, command: string | undefined, slug: string | undefined, write: boolean, help: boolean }}
- */
+const HELP = `backlog — deterministic lifecycle orientation\n\nUsage:\n  node backlog.mjs [--root <dir>]\n  node backlog.mjs kanban [--root <dir>]\n  node backlog.mjs flowchart <idea-slug> [--root <dir>]\n  node backlog.mjs check [--root <dir>]\n  node backlog.mjs generate [--root <dir>] [--write]\n\nThe default form prints Current, Planned, and Completed lifecycle groups. kanban\nprints current work only. flowchart prints one defined package task graph. check\nbyte-compares both committed artifacts and writes nothing. Only generate --write\nwrites, and it writes exactly .dude/backlog.md and .dude/backlog.html.\n`;
+
 export function parseArgs(argv) {
-  /** @type {{ root: string | undefined, command: string | undefined, slug: string | undefined, write: boolean, help: boolean }} */
-  const out = { root: process.cwd(), command: undefined, slug: undefined, write: false, help: false };
-  /** @type {string[]} */
+  const output = { root: process.cwd(), command: undefined, slug: undefined, write: false, help: false, invalid: null };
   const positionals = [];
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (token === '--help' || token === '-h') out.help = true;
-    else if (token === '--root') { out.root = argv[index + 1]; index += 1; }
-    else if (token === '--write') out.write = true;
-    else if (token.startsWith('--')) out.help = true;
+    if (token === "--help" || token === "-h") output.help = true;
+    else if (token === "--write") output.write = true;
+    else if (token === "--root") {
+      const root = argv[index + 1];
+      if (!root || root.startsWith("--")) output.invalid = "--root requires a directory";
+      else {
+        output.root = root;
+        index += 1;
+      }
+    } else if (token.startsWith("--")) output.invalid = `unknown option: ${token}`;
     else positionals.push(token);
   }
-  out.command = positionals[0];
-  out.slug = positionals[1];
-  return out;
+  output.command = positionals[0];
+  output.slug = positionals[1];
+  if (positionals.length > 2) output.invalid = "too many positional arguments";
+  return output;
 }
 
-/**
- * @param {ReturnType<typeof parseArgs>} args
- * @returns {number} process exit code
- */
 export function run(args) {
-  if (args.help || typeof args.root !== 'string') {
+  if (args.help) {
     process.stdout.write(HELP);
-    return args.help ? 0 : 1;
+    return 0;
+  }
+  if (args.invalid || typeof args.root !== "string") {
+    process.stderr.write(`[FAIL] ${args.invalid ?? "workspace root is required"}\n`);
+    return 1;
+  }
+  if (args.write && args.command !== "generate" && args.command !== "check") {
+    process.stderr.write("[FAIL] --write is accepted only by generate; check rejects it explicitly\n");
+    return 1;
   }
   try {
     if (args.command === undefined) {
-      process.stdout.write(renderBuckets(computeFocus({ root: args.root })));
+      process.stdout.write(renderText(collectLifecycleModel({ root: args.root })));
       return 0;
     }
-    if (args.command === 'kanban') {
-      process.stdout.write(runKanban(args.root));
+    if (args.command === "kanban") {
+      const output = renderCurrentMermaid(collectLifecycleModel({ root: args.root }));
+      process.stdout.write(output || "No current work to diagram.\n");
       return 0;
     }
-    if (args.command === 'flowchart') {
-      return runFlowchart(args.root, args.slug);
+    if (args.command === "flowchart") {
+      if (!args.slug) {
+        process.stderr.write("[FAIL] flowchart requires an idea slug\n");
+        return 1;
+      }
+      const model = collectLifecycleModel({ root: args.root });
+      const matches = model.items.filter((item) => item.slug === args.slug);
+      if (matches.length !== 1 || !matches[0].defined || !matches[0].tasksAvailable) {
+        process.stderr.write(`[FAIL] idea ${args.slug} has no single readable task package\n`);
+        return 1;
+      }
+      process.stdout.write(renderFlowchart(matches[0].tasks, { slug: args.slug }));
+      return 0;
     }
-    if (args.command === 'generate') {
-      return runGenerate(args.root, { write: args.write });
-    }
+    if (args.command === "check") return runCheck(args.root, { write: args.write });
+    if (args.command === "generate") return runGenerate(args.root, { write: args.write });
     process.stderr.write(`[FAIL] unknown command: ${args.command}\n`);
     return 1;
   } catch (error) {
@@ -1190,17 +1287,13 @@ export function run(args) {
   }
 }
 
-/** @returns {boolean} */
 function isMainModule() {
-  const argv1 = process.argv[1];
-  if (!argv1) return false;
+  if (!process.argv[1]) return false;
   try {
-    return fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(path.resolve(argv1));
+    return fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(path.resolve(process.argv[1]));
   } catch {
     return false;
   }
 }
 
-if (isMainModule()) {
-  process.exit(run(parseArgs(process.argv.slice(2))));
-}
+if (isMainModule()) process.exit(run(parseArgs(process.argv.slice(2))));

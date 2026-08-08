@@ -78,29 +78,33 @@ If Beads is enabled later, hand off through `@dude track`; after import, never c
 
 ### Cross-Idea Backlog
 
-Separate from the lane-specific status above, `@dude status` also renders a cross-idea orientation over every in-flight idea rather than one active feature. The backlog buckets span ideas across lifecycle states, both draft and defined, so this view is not gated to Lightweight Execution; `@dude status` may render it read-only regardless of any single feature's lane.
+Separate from lane-specific status, `@dude status` renders one read-only cross-idea orientation over every safe direct `.dude/ideas/*.md` ledger. One lifecycle inventory places each idea exactly once:
 
-The single derivation places every in-flight idea in exactly one of six buckets — Active, Next, Blocked, Later, Backlog, Shipped — evaluating Shipped (a defined idea whose package has every task done) first, ahead of every ordering bucket, so that setting Shipped aside reproduces the prior five-bucket membership.
+- **Current** presents Blocked, Active, and Next in that order. Empty subsection bodies are omitted, while summary counts remain visible.
+- **Planned** presents ideas awaiting definition, defined features awaiting work, and Prioritized for later only when authoritative order actually places work later.
+- **Completed** is one compact collapsed library, not a peer execution lane.
 
-This deliberately supersedes Feature 024's five-bucket contract (FR-003, SC-004): the former Unordered bucket is renamed Backlog with its membership rule unchanged, and a completed idea reads as Shipped even when another idea names it as a dependency.
+The where-are-we summary reports Current work (active plus blocked), Ready / Next, Ideas awaiting definition, Defined awaiting work, and Completed. It reports no all-history completion percentage.
 
-`@dude status` invokes the generated `backlog.mjs` read-only in three forms. Each is read-only, renders on demand in the reply, and writes no file:
+`@dude status` invokes the generated `backlog.mjs` read-only in three forms. Each renders on demand in the reply and writes no file:
 
-- `node .github/skills/dude-lightweight-execution/backlog.mjs --root .` (text backlog buckets: Active, Next, Blocked, Later, Backlog, Shipped)
-- `node .github/skills/dude-lightweight-execution/backlog.mjs kanban --root .` (Mermaid kanban of the same buckets, on request)
-- `node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <idea-slug> --root .` (Mermaid flowchart of one feature's task `deps:`, on request)
+- `node .github/skills/dude-lightweight-execution/backlog.mjs --root .` (text Current / Planned / Completed orientation)
+- `node .github/skills/dude-lightweight-execution/backlog.mjs kanban --root .` (Mermaid for current work only)
+- `node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <idea-slug> --root .` (one defined package task `deps:` graph)
 
-At every coordinator state change — the same moment the coordinator re-renders the task board with `board.mjs render --write` — the coordinator also runs the deterministic `node .github/skills/dude-lightweight-execution/backlog.mjs generate --root . --write` to rewrite both committed artifacts and commits `.dude/backlog.md` and `.dude/backlog.html`, spending no model tokens on markup; that `generate --write` is the surface's only write path and touches exactly those two artifacts.
+The committed Markdown and self-contained HTML projections remain fixed at `.dude/backlog.md` and `.dude/backlog.html`. Freshness is mechanical:
 
-Each artifact is stamped with the generation time and a short source revision, recording a plain `unknown` when no revision is available.
+- `node .github/skills/dude-lightweight-execution/backlog.mjs check --root .` renders both expected artifacts in memory, compares exact bytes, fails separately for a missing or stale path, rejects `--write`, and writes nothing.
+- `node .github/skills/dude-lightweight-execution/backlog.mjs generate --root . --write` is the only artifact mutation path and writes exactly `.dude/backlog.md` and `.dude/backlog.html`.
 
-Both artifacts are derived projections and never authoritative — idea frontmatter is the source of lifecycle, `tasks.md` of execution, and `depends-on:` plus `.dude/state/backlog-order.md` of order — so this supersedes Feature 024's read-only guarantee (FR-010, SC-006) with the write path confined to exactly the two artifacts `.dude/backlog.md` and `.dude/backlog.html`.
+At every coordinator state change, after the same authoritative inputs change and the task board is re-rendered with `board.mjs render --write`, the coordinator regenerates the two projections. The existing test and CI path runs the exact-byte check, so freshness does not depend on that procedure alone. Generation emits no wall-clock time, checkout name, or Git revision; unchanged authoritative input bytes render byte-identically in differently named roots.
 
-Two hand-maintained inputs feed the buckets:
+Both artifacts are derived projections and never authoritative. Idea frontmatter provides lifecycle and declared `depends-on:` relationships, canonical `tasks.md` provides execution, and optional `.dude/state/backlog-order.md` provides explicit order. A literal `depends-on: <slug>` marker written in the user-controlled `## Idea` body is displayed separately as provisional and non-authoritative; it never blocks, prioritizes, or orders work. When explicit order is absent, the report says `No explicit feature order declared`.
 
-- `depends-on:` in an idea ledger's frontmatter is a plain space- or comma-separated scalar of idea slugs that declares hard feature-level ordering. Blocked, Next, and Later derive from it together with existing `[!]`/`blocked-by:` evidence; it is never a second board.
-- `.dude/state/backlog-order.md` is an optional, hand-maintained ordered slug list whose only role is breaking ties among unblocked, non-active items. Its absence changes nothing, and the tool never writes it.
+Activity is labeled **Coordinator activity**. It contains only dated idea Coordinator Log entries grouped by calendar date, with stable same-date ordering by idea identity and append order. Git history, ad-hoc work outside Coordinator Logs, and other execution history sources are excluded.
 
-Non-goal, not guarded: a task `deps:` key that names another feature's task resolves as permanently unsatisfied, because dependency resolution is confined to a single file. Keep cross-feature ordering in `depends-on:`, never in a task `deps:`.
+This current lifecycle, provenance, activity-labeling, and freshness contract supersedes only the affected current behavior delivered by Feature 025. Feature 025 history remains unchanged.
 
-Authoring caveat: lint accepts `depends-on:` on any idea, but `publish-first-definition.mjs` currently validates only the four owner keys (`title`, `slug`, `status`, `spec_path`), so add `depends-on:` after an idea clears first definition, or declare it on a draft only while dropping it for the first-definition publish and adding it back afterward; this is a documented current limitation, not fixed here.
+Non-goal, not guarded: a task `deps:` key that names another feature task resolves as permanently unsatisfied because task dependency resolution is confined to one file. Keep cross-feature ordering in `depends-on:`, never in task `deps:`.
+
+Authoring caveat: lint accepts `depends-on:` on an idea, but `publish-first-definition.mjs` currently validates only the four owner keys (`title`, `slug`, `status`, `spec_path`). Add `depends-on:` after first definition, or declare it on a draft only while dropping it for first-definition publication and adding it back afterward. This current limitation is not changed here.
