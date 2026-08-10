@@ -168,7 +168,7 @@ function snapshotExpectedState(root, relativePath) {
  * @param {string} label
  * @returns {string[]}
  */
-function scanCoreInventoryPaths(root, label) {
+export function scanCoreInventoryPaths(root, label) {
   /** @type {string[]} */
   const results = [];
   /** @param {string} relativePath */
@@ -1532,6 +1532,43 @@ function verifyLocalEvidence(plan) {
   return { manifestPath, upgradeLogPath, manifestBytes, mutationTargets };
 }
 
+/**
+ * Refuse, before the first write, to create a destination root that the
+ * project's Git-based rollback could not restore.
+ *
+ * A root the safety tag cannot capture — ignored and holding no tracked file —
+ * would survive `git reset --hard` as an unrecoverable partial update. Roots the
+ * project already tracks continue through the existing rollback path unchanged.
+ * @param {Record<string, any>} plan
+ */
+function verifyRestorableDestinations(plan) {
+  /** @type {Set<string>} */
+  const roots = new Set();
+  for (const entry of [...plan.buckets.add, ...plan.buckets.replace]) {
+    const segments = entry.path.split('/');
+    for (let depth = 1; depth < segments.length; depth += 1) {
+      roots.add(segments.slice(0, depth).join('/'));
+    }
+  }
+  // Shallowest first, so the refusal names the outermost unrestorable root.
+  for (const root of [...roots].sort(codeUnitCompare)) {
+    // Every destination root is a directory the plan would create, so it must be
+    // probed as one. `git check-ignore -- <root>` cannot match a directory-only
+    // pattern such as `generated-output/` while the directory is still absent from disk;
+    // the trailing-slash pathname makes git treat it as a directory and match.
+    // Both forms are probed so no previously refused root becomes accepted.
+    const ignored = git(['check-ignore', '--quiet', '--', root]).status === 0
+      || git(['check-ignore', '--quiet', '--', `${root}/`]).status === 0;
+    if (!ignored) continue;
+    const tracked = git(['ls-files', '--', root]);
+    if (tracked.status === 0 && tracked.stdout.trim()) continue;
+    throw new Error(
+      `destination root ${root} is git-ignored and holds no tracked file, so rollback could not restore it; `
+      + `un-ignore ${root} or track a file in it, then re-run 'apply'`,
+    );
+  }
+}
+
 /** @param {Record<string, any>} plan */
 function preflightApply(plan) {
   const expiry = isoToEpoch(plan.ttl_expire_at);
@@ -1553,6 +1590,7 @@ function preflightApply(plan) {
       throw new Error(`reviewed Replace line metadata changed: ${entry.path}; re-run plan`);
     }
   }
+  verifyRestorableDestinations(plan);
   return { ...localEvidence, cacheBytes };
 }
 

@@ -248,9 +248,42 @@ The namespace is the **primary** safety mechanism for keeping project work acros
 
 Unprefixed user-created artifacts (an agent file or top-level skill directory that is neither `dude.agent.md` nor matches `dude-<slug>` / `dude-local-<slug>`) surface as `advisory` entries in the plan and are still preserved. Rename them into `dude-local-` when practical.
 
+## Ownership Boundary For Generated Agent Profiles
+
+Each core agent source has one generated destination:
+`.github/agents/<stem>.agent.md`. The path is base-owned when its stem is
+`dude` or `dude-<slug>`. A `dude-pack-<pack>-<slug>` profile is pack-owned, a
+`dude-local-<slug>` profile is project-owned, and any other stem is preserved as
+project content.
+
+Upgrade copies upstream core bytes. It does not project or repair installed pack
+profiles. A pack source or model mapping change reaches an installed pack only
+through `compose remove <pack>` followed by `compose add <pack>`.
+
+The existing `.github/skills/dude-engine/**` ownership recursively includes
+`.github/skills/dude-engine/config/agent-models.json` and the loader. This lets
+an older installed upgrader bootstrap the current engine without a new
+ownership rule.
+
+The source repository authors that configuration at
+`src/config/agent-models.json`. Development and release builds validate it
+before changing output and package the same bytes under the engine skill.
+
+Before any write, `apply` checks every planned destination for rollback
+restorability. An ignored, untracked destination that Git could not restore is
+refused by its actual path. Track or un-ignore the destination, then create a
+fresh plan.
+
 ## File Classification (reference)
 
-The script classifies every base-owned file into one of the buckets below. Base ownership is derived from the **namespace convention** (see [Manifest Shape](#manifest-shape) for the full pattern list) — the engine enumerates the live tree under each side and treats agents named `dude.agent.md` or `dude-<slug>.agent.md`, skill directories named `dude-<slug>/**`, and the bundle instructions file `dude.instructions.md` as base-owned, with the reserved `dude-local-<slug>` namespace explicitly excluded. There is no manifest `files` array; the manifest is metadata only.
+The script classifies every base-owned file into one of the buckets below. Base
+ownership is derived from the namespace convention (see
+[Manifest Shape](#manifest-shape)): the engine enumerates the local and upstream
+trees directly and treats `.github/agents/dude.agent.md`,
+`.github/agents/dude-<slug>.agent.md`, skill directories named
+`dude-<slug>/**`, and `.github/instructions/dude.instructions.md` as
+base-owned. The reserved `dude-local-<slug>` namespace is excluded. There is no
+manifest `files` array; the manifest is metadata only.
 
 Classification is done by **byte comparison** of local disk content vs the fetched upstream tree.
 
@@ -259,12 +292,13 @@ Classification is done by **byte comparison** of local disk content vs the fetch
 | Replace | Base path on both sides; local on-disk bytes differ from upstream. Overwrite local with upstream. Any local edits are discarded. |
 | Add | Base path only in the upstream tree. Copy upstream in. |
 | Remove | Base path only in the local tree (upstream dropped it). Delete local file (unless `--skip-removals`). |
-| Advisory | Project-owned agent or skill outside both the base and `dude-local-` namespaces. Preserved; flagged for rename. |
+| Advisory | Project-owned agent or skill outside both the base and `dude-local-` namespaces. Preserved; flagged. |
 | Up to date | Base path on both sides; bytes match. Skip silently. |
 
 ## Boundaries
 
 - Never auto-push, auto-merge, or modify remote state. The upgrade branch is the deliverable; merging is a user action.
+- Never project or repair an agent profile. Upgrade copies upstream bytes for core paths; installed pack profiles refresh only through `compose remove` then `compose add`.
 - Never delete or modify `.dude/` project state except the upgrade-owned `.dude/metadata/bundle-manifest.md` and `.dude/metadata/upgrade-log.md`. All project-specific ideas under `.dude/ideas/` are preserved through every upgrade.
 - Never delete or modify `.github/skills/project/`.
 - Never modify `.github/copilot-instructions.md`.
@@ -280,7 +314,7 @@ The script enforces these; the LLM does not need to re-check:
 
 - `git` is installed and the project root is inside a git working tree. The upgrade workflow uses git for safety tags, branches, rollback, and pre-overwrite drift detection; non-git projects must run `git init` before upgrading.
 - `.dude/metadata/bundle-manifest.md` is the sole manifest; it exists locally, parses, and uses the exact metadata shape (`source_repo`, `source_ref`, `installed_ref`).
-- Upstream tree must contain `.github/agents/`, `.github/skills/dude-lint/`, `.github/instructions/dude.instructions.md`, and `.dude/metadata/bundle-manifest.md`. No old-path fallback is accepted.
+- Upstream tree must contain `.github/agents/`, `.github/skills/dude-lint/`, `.github/instructions/dude.instructions.md`, and `.dude/metadata/bundle-manifest.md`.
 - Upstream manifest must use the same exact metadata shape.
 
 For local-path upstream sources, the source directory must carry its own canonical seeded `bundle-manifest.md`, be a git repo, and use an explicit branch or tag. Local `latest` and local sources without canonical seeded metadata are refused.

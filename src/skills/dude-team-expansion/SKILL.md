@@ -35,11 +35,43 @@ lint-clean), use the scaffolder instead of hand-writing the skeleton:
 ```bash
 node .github/skills/dude-team-expansion/scaffold-agent.mjs <slug> [--role "..."] [--desc "..."]
 node .github/skills/dude-team-expansion/scaffold-agent.mjs <slug> --pack <name>   # dude-pack-<name>-<slug> + pack.md provides
+node .github/skills/dude-team-expansion/scaffold-agent.mjs <slug> --pack <name> --model-class reasoning
 ```
 
 Local (default) writes `dude-local-<slug>.agent.md`; `--pack` writes the pack
 artifact and inserts the id into that pack's `pack.md` `provides.agents`. Then
 fill in the scope/boundaries/rules content and update coordinator routing.
+
+A `--pack` skeleton is an authoritative projected source, so it also declares
+`user-invocable: false` and `model-class: balanced`. Pass `--model-class <class>`
+to choose a different class. Before writing a pack scaffold, the scaffolder
+loads the absolute workspace path
+`.github/skills/dude-engine/config/agent-models.json`; a missing or invalid
+packaged configuration stops the scaffold before it creates a file. A local
+skeleton declares neither field: local agents are not projected, so they have
+no class to resolve and no visibility to project, and `--model-class` without
+`--pack` is rejected rather than silently ignored.
+
+## Authoritative Agent Metadata
+
+- Core sources under `src/agents/` and pack sources under
+  `library/packs/*/agents/` are canonical. `src/config/agent-models.json` is
+  the sole authority for concrete models and class effort; its skill-local
+  packaged copy at `.github/skills/dude-engine/config/agent-models.json` is
+  byte-identical output.
+- A projected source declares one logical `model-class`, never a concrete model
+  or effort value. Class effort is validated intent; the one Copilot output
+  does not emit it.
+- `agents` is the sole composite declaration. Omit it for a leaf. When present,
+  it is a non-empty roster of unique stable filename stems. Do not use display
+  names or handles, do not self-delegate, and reserve `["*"]` for `dude` alone;
+  never mix that wildcard with explicit stems.
+- Only Dude is `user-invocable: true`. Specialists are `false` but remain
+  directly invocable and delegatable; selector visibility is not an authority
+  boundary.
+- `.github/agents/*.agent.md` is the only generated agent tree and contains
+  one Copilot profile per source. Claude and SDK are documentation-only future
+  adapter contracts, not output to author, install, own, or lint.
 
 ## Design Rules
 
@@ -57,9 +89,9 @@ When creating a new agent, use this structure:
 
 ```markdown
 ---
-name: "dude-team-expansion"
+name: "<Display Name>"
 description: "<Role> specialist for <one-line scope description>."
-tools: [<appropriate tool list>]
+tools: [<canonical tool selectors>]
 ---
 
 You are the <role> specialist.
@@ -96,15 +128,22 @@ Return:
 If you overcome a non-trivial challenge, tell the coordinator what was learned.
 ```
 
+A pack source adds `user-invocable: false` and `model-class: <class>` to that
+frontmatter. Declare the logical class only; concrete models and effort belong
+only in the canonical configuration.
+
 ## Standard Tool Sets
 
-Pick the right tool configuration for the agent's role:
+Tool selectors are the canonical coarse set — `read`, `edit`, `search`,
+`execute`, `todo`, and `agent`. The Copilot adapter maps these selectors; do
+not invent finer-grained or host-specific spellings in a source. Pick the
+smallest set the role needs:
 
 | Role Type | Tools |
 |-----------|-------|
-| **Read-heavy** (reviewers, analysts) | `["read/readFile", "search/listDirectory", "search/codebase", "search/fileSearch", "search/textSearch", "execute/runInTerminal", "read/problems"]` |
-| **Write-heavy** (implementers) | `["read/readFile", "edit/createFile", "edit/editFiles", "execute/runInTerminal", "search/listDirectory", "search/codebase", "search/fileSearch", "search/textSearch"]` |
-| **Orchestrators** | Write-heavy list plus `"agent"` and `"todo"`, with the full `"execute"` set replacing `"execute/runInTerminal"` so backgrounded command output can be read back |
+| **Read-heavy** (reviewers, analysts) | `["read", "search"]` |
+| **Write-heavy** (implementers) | `["read", "edit", "search", "execute"]` |
+| **Orchestrators** | Write-heavy list plus `"todo"` and `"agent"` |
 
 ## Use A Skill Instead Of An Agent When
 

@@ -831,6 +831,12 @@ The coordinator invokes them; they are not a background service.
 | `dude-memory-ledger/memory.mjs` | `append` a memory entry, refusing near-duplicates |
 | `dude-engine/lib/*.mjs` | shared engine libraries (ownership, tasks, text, text-analysis, pack-manifest) |
 
+Agent model configuration is authored at `src/config/agent-models.json`.
+Development and release builds validate it through an explicit absolute path
+before changing output, then package the same bytes at
+`.github/skills/dude-engine/config/agent-models.json`. Installed compose
+`add`/`verify`, lint, and pack scaffolding use that packaged path.
+
 Installed packs may ship their own scripts too — e.g. the `beads` pack's
 `dude-pack-beads-workflow/beads.mjs` (`plan-import` a `tasks.md` into `bd`
 commands after a complete `bd list --all --limit 0 --json` identity preflight,
@@ -847,13 +853,19 @@ operation error.
 This repository keeps the product **core** in `src/` — the `dude` / `dude-<slug>`
 agents, `dude-<slug>` skills (including the engine libraries and their tests),
 and `dude.instructions.md`. `.github/` holds the **built dev bundle**: the core
-synced from `src/` by `scripts/build-dev.mjs`, plus the installed `authoring`
-pack, so the maintainer's own `@dude` works. Consumers never see `src/`.
+synced from `src/` by `scripts/build-dev.mjs`, plus the six currently installed
+dogfood packs: `authoring`, `coding`, `design`, `release`, `strata`, and
+`writing`. This lets the maintainer's own `@dude` work. Consumers never see
+`src/`.
 
 - `scripts/build-release.mjs` stages a test-free core bundle from `src/` plus
-  only `.dude/metadata/{bundle-manifest.md,profile.md}` as seeded release metadata.
+  only `.dude/metadata/{bundle-manifest.md,profile.md}` as seeded release
+  metadata. It renders one `.github/agents/<stem>.agent.md` profile per core
+  source and packages the canonical model configuration under the engine skill.
 - `scripts/build-dev.mjs` syncs `src/` core into `.github/` (minus tests), while
-  preserving `project`, `.dude/`, `workflows`, and installed packs.
+  preserving `project`, `.dude/`, workflows, and installed packs.
+- Both builds validate configuration and the complete core agent set before
+  cleanup, staging, or writes.
 - Run `scripts/build-dev.mjs` after editing `src/`; CI fails if `.github/` drifts
   out of sync with `src/`.
 
@@ -887,9 +899,12 @@ workflow for each class.
 
   ```bash
   node --test \
-    --test-name-pattern='checked-in dev core is a byte-identical non-mutating projection of authoritative source' \
+    --test-name-pattern='buildDev materializes the complete current core only in a disposable workspace' \
     scripts/build-dev.test.mjs
   ```
+
+  Agent outputs are projection-equivalent to their sources and the canonical
+  configuration. Other generated core files remain byte-identical to source.
 
 5. Reload or restart VS Code agent discovery when an agent, skill, or
   frontmatter change is not visible in the active session.
@@ -935,6 +950,10 @@ generated core output.
   node .github/skills/dude-compose/compose.mjs verify
   ```
 
+   Compose validates each complete incoming pack agent set. Omitted `agents`
+   means leaf; a present value is the sole composite declaration and contains a
+   non-empty roster of unique stable stems.
+
 3. Create a disposable core bundle, then install the local pack with the
   supported argument order:
 
@@ -955,6 +974,11 @@ generated core output.
   attempt. It is temporary validation output and has no acceptance authority.
 5. Run fresh final checks and review, then commit `library/packs/<name>/**`
   source only. Do not run core `build-dev` to promote a pack.
+
+An installed pack does not update when its source or model mapping changes.
+Refresh it with `remove` followed by `add`. `remove`, `list`, and `status` do not
+load model configuration or the renderer; `add` and `verify` use the packaged
+engine copy.
 
 Worked pack example: for a Beads workflow change, run
 `node --test library/packs/beads/skills/dude-pack-beads-workflow/beads.test.mjs`
@@ -1008,6 +1032,8 @@ drift check. `.github/workflows/release.yml` runs on a `v*` tag: it gates on the
 same checks, builds the core bundle with `scripts/build-release.mjs`, and
 publishes a `dude-bundle-<tag>.zip` to a GitHub Release. Unzip it at a repo root
 to drop `.github/` engine files and seeded `.dude/metadata/` into place.
+CI reports drift only. It does not create a branch, commit, push, or pull
+request.
 
 ### Upgrading the bundle
 
@@ -1044,6 +1070,12 @@ replacement. All `.dude/` project state, `.github/skills/project/`, custom agent
 source are preserved. Root files and repository docs are intentionally excluded
 from the upgrade payload. The canonical manifest is required locally and in the
 upstream tree; only that path is accepted.
+
+The existing recursive ownership of `.github/skills/dude-engine/**` includes
+the packaged model configuration and loader, so an installed pre-feature
+upgrader can bootstrap the current engine without a migration rule. Before
+writing, apply refuses any ignored, untracked planned destination that Git
+cannot restore during rollback.
 
 > Base files matching the upstream namespace convention are upstream-owned and
 > are silently overwritten on apply. To customize a default agent or skill,

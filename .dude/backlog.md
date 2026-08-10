@@ -8,7 +8,7 @@ A read-only view built from idea files, linked feature files, task records, and 
 - Ready / Next: **0**
 - Ideas awaiting definition: **4**
 - Defined awaiting work: **0**
-- Completed: **27**
+- Completed: **28**
 
 ## Current
 
@@ -27,6 +27,7 @@ No current work to diagram.
 
 ## Completed
 
+- `agent-orchestration-metadata` — Agent Orchestration Metadata (`.dude/ideas/agent-orchestration-metadata.md`)
 - `automatic-core-dogfood-promotion` — Automatic Core Dogfood Promotion (`.dude/ideas/automatic-core-dogfood-promotion.md`)
 - `automatic-unchanged-intent-redefinition` — Automatic Unchanged-Intent Redefinition (`.dude/ideas/automatic-unchanged-intent-redefinition.md`)
 - `autonomous-learning-governance` — Autonomous Learning Governance (`.dude/ideas/autonomous-learning-governance.md`)

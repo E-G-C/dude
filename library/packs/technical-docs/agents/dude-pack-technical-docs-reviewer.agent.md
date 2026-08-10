@@ -1,7 +1,9 @@
 ---
 name: dude-pack-technical-docs-reviewer
 description: "Subagent of dude-pack-technical-docs-writer that reviews the working technical document section by section: it inserts Mermaid diagrams for genuine non-linear flows, runs the semantic audit, applies the deterministic lint and coverage fixes, and polishes, editing the document in place. Used as a subagent within the writer pipeline, not invoked directly."
-tools: [read, search, edit]
+tools: ["read", "search", "edit"]
+user-invocable: false
+model-class: balanced
 ---
 
 # Technical Docs Reviewer — Diagrams, Semantic Audit, and the Review Report

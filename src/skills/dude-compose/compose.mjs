@@ -10,6 +10,11 @@
  * `dude-pack-*` namespace is preserved across `@dude upgrade`, so installed
  * packs survive core refreshes.
  *
+ * A pack `agents/<stem>.agent.md` source is not copied: it is projected into
+ * one Copilot profile (`.github/agents/<stem>.agent.md`) through the packaged
+ * renderer. Removal deletes exactly the recorded destination without
+ * reprojecting anything.
+ *
  * Dependency-free ESM. Targets Node >= 20. Run `node compose.mjs --help`.
  *
  * Commands:
@@ -39,7 +44,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { belongsToPack } from '../dude-engine/lib/ownership.mjs';
 import { normalizeAgentFrontmatter } from '../dude-engine/lib/agent-frontmatter.mjs';
 import {
@@ -58,8 +63,23 @@ import {
 } from '../dude-engine/lib/workspace-paths.mjs';
 
 const COPY_DIRS = ['agents', 'skills', 'instructions', 'prompts'];
+const AGENT_SOURCE_SUFFIX = '.agent.md';
 const CACHE_ROOT = path.join(os.tmpdir(), 'dude-compose-cache');
 
+/**
+ * Every location a pack can install into. Named once here so `verify` copies
+ * and sweeps the same set the installer writes.
+ * @type {readonly string[]}
+ */
+const PACK_INSTALL_LOCATIONS = Object.freeze([
+  '.github/agents',
+  '.github/skills',
+  '.github/instructions',
+  '.github/prompts',
+]);
+
+/** @typedef {{ kind: string, srcAbs: string, destRel: string, name: string }} PackArtifact */
+/** @typedef {{ artifact: PackArtifact, destRel: string, stagedAbs: string }} StagedArtifact */
 /** @typedef {{ path: string, kind: string, source: string, source_sha256: string, installed_sha256: string }} ProfileArtifact */
 /** @typedef {{ version: number, pack: string, source: { type: string, location: string, ref: string }, manifest_sha256: string, artifacts: ProfileArtifact[], digest: string }} PackInventory */
 /** @typedef {{ files: string[], installed_at: string, inventory?: PackInventory }} ProfileEntry */
@@ -278,10 +298,10 @@ function availablePacks(libraryDir) {
  * Enumerate the top-level source entries a pack ships, mapped to their
  * `.github/` destinations.
  * @param {string} packDir
- * @returns {{ kind: string, srcAbs: string, destRel: string, name: string }[]}
+ * @returns {PackArtifact[]}
  */
 function packArtifacts(packDir) {
-  /** @type {{ kind: string, srcAbs: string, destRel: string, name: string }[]} */
+  /** @type {PackArtifact[]} */
   const out = [];
   for (const sub of COPY_DIRS) {
     const subAbs = path.join(packDir, sub);
@@ -309,11 +329,32 @@ function packArtifacts(packDir) {
 }
 
 /**
- * Hash one regular file or directory tree without following symbolic links.
+ * Hash an installed artifact, tolerating the one host-owned `model:` rewrite in
+ * a generated Copilot profile.
  * @param {string} absolutePath
  * @returns {string}
  */
 function hashArtifact(absolutePath) {
+  return hashArtifactTree(absolutePath, true);
+}
+
+/**
+ * Hash authoritative source evidence exactly as stored. Source bytes are never
+ * normalized, even when the source happens to be an `.agent.md` file.
+ * @param {string} absolutePath
+ * @returns {string}
+ */
+function hashRawArtifact(absolutePath) {
+  return hashArtifactTree(absolutePath, false);
+}
+
+/**
+ * Hash one regular file or directory tree without following symbolic links.
+ * @param {string} absolutePath
+ * @param {boolean} normalizeAgentModel
+ * @returns {string}
+ */
+function hashArtifactTree(absolutePath, normalizeAgentModel) {
   const hash = crypto.createHash('sha256');
   /** @param {string} current @param {string} relative */
   function visit(current, relative) {
@@ -328,7 +369,7 @@ function hashArtifact(absolutePath) {
     }
     if (!stat.isFile()) throw new Error(`pack artifact is not a regular file or directory: ${current}`);
     const bytes = fs.readFileSync(current);
-    const framed = current.endsWith('.agent.md') ? normalizeAgentFrontmatter(bytes) : bytes;
+    const framed = normalizeAgentModel && current.endsWith('.agent.md') ? normalizeAgentFrontmatter(bytes) : bytes;
     hash.update(`file\0${relative}\0`);
     hash.update(framed);
     hash.update('\0');
@@ -339,10 +380,14 @@ function hashArtifact(absolutePath) {
 
 /**
  * Build the exact source/install inventory persisted for one pack.
+ *
+ * One row per installed source and destination. `source_sha256` is always the
+ * digest of the raw authoritative source artifact; `installed_sha256` is the
+ * digest of its installed destination.
  * @param {string} packDir
  * @param {string} packName
  * @param {{ type: string, location: string, ref: string }} source
- * @param {{ artifact: { kind: string, srcAbs: string, destRel: string, name: string }, stagedAbs: string }[]} staged
+ * @param {StagedArtifact[]} staged
  * @returns {PackInventory}
  */
 function buildPackInventory(packDir, packName, source, staged) {
@@ -355,11 +400,11 @@ function buildPackInventory(packDir, packName, source, staged) {
     pack: packName,
     source: { type: source.type, location: source.location, ref: source.ref },
     manifest_sha256: manifestSha,
-    artifacts: staged.map(({ artifact, stagedAbs }) => ({
-      path: artifact.destRel,
+    artifacts: staged.map(({ artifact, destRel, stagedAbs }) => ({
+      path: destRel,
       kind: artifact.kind,
       source: `${artifact.kind}/${artifact.name}`,
-      source_sha256: hashArtifact(artifact.srcAbs),
+      source_sha256: hashRawArtifact(artifact.srcAbs),
       installed_sha256: hashArtifact(stagedAbs),
     })),
     digest: '',
@@ -369,61 +414,34 @@ function buildPackInventory(packDir, packName, source, staged) {
 }
 
 /**
- * Reconcile a persisted inventory with its exact source when that source still
- * exists. A release without a local catalog relies on the persisted hashes.
+ * Compare source bytes only when the recorded source remains available.
+ * Persisted inventory and installed hashes authorize removal; a released bundle
+ * need not retain, fetch, or otherwise recover its source catalog.
  * @param {PackInventory} inventory
  * @param {string} packName
  */
 function verifyAvailableInventorySource(inventory, packName) {
-  const hasLegacyLooseArtifacts = inventory.artifacts.some(
-    (artifact) => (artifact.kind === 'instructions' || artifact.kind === 'prompts')
-      && !belongsToPack(artifact.path, packName),
-  );
   let packDir = '';
-  if (inventory.source.type === 'library' && isDir(inventory.source.location)) {
-    packDir = path.join(inventory.source.location, packName);
-  } else if (inventory.source.type === 'source') {
-    if (isDir(inventory.source.location)) {
-      packDir = path.join(inventory.source.location, 'library', 'packs', packName);
-    } else if (hasLegacyLooseArtifacts) {
-      const resolved = resolveSourceTree(inventory.source.location, inventory.source.ref, true);
-      if ('error' in resolved) {
-        throw new Error(`historical loose artifacts for pack "${packName}" require their exact inventory source: ${resolved.error}`);
-      }
-      packDir = path.join(resolved.tree, 'library', 'packs', packName);
+  if (inventory.source.type === 'library') {
+    const candidate = path.join(inventory.source.location, packName);
+    if (isDir(candidate) && exists(path.join(candidate, 'pack.md'))) packDir = candidate;
+  } else if (inventory.source.type === 'source' && isDir(inventory.source.location)) {
+    const candidate = path.join(inventory.source.location, 'library', 'packs', packName);
+    if (isDir(candidate) && exists(path.join(candidate, 'pack.md'))) packDir = candidate;
+  }
+  if (!packDir) return;
+
+  for (const artifact of inventory.artifacts) {
+    const sourcePath = path.join(packDir, ...artifact.source.split('/'));
+    let sourceSha;
+    try {
+      sourceSha = hashRawArtifact(sourcePath);
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') continue;
+      throw error;
     }
-  }
-  if (!packDir && hasLegacyLooseArtifacts) {
-    throw new Error(`historical loose artifacts are not owned by the dude-pack-${packName}-* namespace and require their exact inventory source for removal`);
-  }
-  if (!packDir) {
-    return;
-  }
-  if (!isDir(packDir) || !exists(path.join(packDir, 'pack.md'))) {
-    if (hasLegacyLooseArtifacts) {
-      throw new Error(`historical loose artifacts for pack "${packName}" require the exact inventory source at ${packDir}`);
-    }
-    throw new Error(`persisted inventory source no longer contains pack "${packName}" at ${packDir}`);
-  }
-  const manifestSha = crypto
-    .createHash('sha256')
-    .update(fs.readFileSync(path.join(packDir, 'pack.md')))
-    .digest('hex');
-  if (manifestSha !== inventory.manifest_sha256) {
-    throw new Error(`persisted inventory manifest for pack "${packName}" no longer matches its exact source`);
-  }
-  const currentArtifacts = packArtifacts(packDir);
-  const inventoryByPath = new Map(inventory.artifacts.map((artifact) => [artifact.path, artifact]));
-  if (currentArtifacts.length !== inventory.artifacts.length) {
-    throw new Error(`persisted inventory for pack "${packName}" no longer matches its exact source artifact set`);
-  }
-  for (const artifact of currentArtifacts) {
-    const record = inventoryByPath.get(artifact.destRel);
-    if (!record
-      || record.kind !== artifact.kind
-      || record.source !== `${artifact.kind}/${artifact.name}`
-      || record.source_sha256 !== hashArtifact(artifact.srcAbs)) {
-      throw new Error(`persisted inventory for pack "${packName}" does not match source artifact '${artifact.destRel}'`);
+    if (sourceSha !== artifact.source_sha256) {
+      throw new Error(`persisted inventory source artifact '${artifact.source}' for pack "${packName}" no longer matches its recorded digest`);
     }
   }
 }
@@ -591,15 +609,62 @@ function profileVerificationDiagnostic(root) {
   }
 }
 
+/**
+ * Import one direct packaged dependency from its current bytes. The content key
+ * prevents an earlier import of that entry module from masking its replacement
+ * at the same path; its static dependencies retain Node's usual cache semantics.
+ * @param {string} modulePath
+ * @param {string} label
+ */
+async function importPackagedModule(modulePath, label) {
+  let bytes;
+  try {
+    bytes = fs.readFileSync(modulePath);
+  } catch (error) {
+    throw new Error(`cannot load packaged ${label} '${modulePath}': ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const key = crypto.createHash('sha256').update(bytes).digest('hex');
+  try {
+    return await import(`${pathToFileURL(modulePath).href}?sha256=${key}`);
+  } catch (error) {
+    throw new Error(`cannot load packaged ${label} '${modulePath}': ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Load rendering dependencies only for commands that create profiles.
+ * @param {string} root
+ */
+async function loadProjectionDependencies(root) {
+  const engineRoot = path.resolve(root, '.github', 'skills', 'dude-engine');
+  const mapPath = path.join(engineRoot, 'lib', 'agent-model-map.mjs');
+  const projectionPath = path.join(engineRoot, 'lib', 'agent-projection.mjs');
+  const modelMap = await importPackagedModule(mapPath, 'agent model loader');
+  if (typeof modelMap.loadAgentModelConfig !== 'function') {
+    throw new Error(`packaged agent model loader '${mapPath}' has no loadAgentModelConfig export`);
+  }
+  const configPath = path.resolve(engineRoot, 'config', 'agent-models.json');
+  const config = modelMap.loadAgentModelConfig(configPath);
+
+  const projection = await importPackagedModule(projectionPath, 'Copilot renderer');
+  for (const name of ['parseAgentSource', 'validateAgentSet', 'copilotAgentPath', 'renderCopilotAgent']) {
+    if (typeof projection[name] !== 'function') {
+      throw new Error(`packaged Copilot renderer '${projectionPath}' has no ${name} export`);
+    }
+  }
+  return { config, ...projection };
+}
+
 /* ----------------------------------------------------------------- commands */
 
 /**
  * @param {{ kind: string, destRel: string, name: string }} artifact
  * @param {string} packName
- * @returns {boolean} true when a copied artifact carries the pack namespace.
+ * @returns {boolean} true when this artifact's direct destination carries the
+ *   pack namespace on its own stem.
  */
 function artifactInNamespace(artifact, packName) {
-  if (artifact.kind === 'agents' && !artifact.name.endsWith('.agent.md')) return false;
+  if (artifact.kind === 'agents' && !artifact.name.endsWith(AGENT_SOURCE_SUFFIX)) return false;
   if (artifact.kind === 'instructions' && !artifact.name.endsWith('.instructions.md')) return false;
   if (artifact.kind === 'prompts' && !artifact.name.endsWith('.prompt.md')) return false;
   return belongsToPack(artifact.destRel, packName);
@@ -607,16 +672,18 @@ function artifactInNamespace(artifact, packName) {
 
 /**
  * @param {{ root: string, library: string, name: string, force: boolean }} args
- * @returns {{ ok: boolean, code: number, result?: any, error?: string }}
+ * @returns {Promise<{ ok: boolean, code: number, result?: any, error?: string }>}
  */
-function cmdAdd({ root, library, name, force, fetch = true, source, ref }) {
+async function cmdAdd({ root, library, name, force, fetch = true, source, ref }) {
+  if (!PACK_NAME_RE.test(name)) {
+    return { ok: false, code: 1, error: `invalid pack name: ${name}` };
+  }
+  let projection;
   try {
+    projection = await loadProjectionDependencies(root);
     resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
   } catch (error) {
     return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
-  }
-  if (!PACK_NAME_RE.test(name)) {
-    return { ok: false, code: 1, error: `invalid pack name: ${name}` };
   }
 
   const loadedProfile = loadProfile(root);
@@ -655,6 +722,21 @@ function cmdAdd({ root, library, name, force, fetch = true, source, ref }) {
     }
   }
 
+  const agentRecords = new Map();
+  try {
+    for (const artifact of artifacts) {
+      if (artifact.kind !== 'agents') continue;
+      const stem = artifact.name.slice(0, -AGENT_SOURCE_SUFFIX.length);
+      agentRecords.set(
+        artifact,
+        projection.parseAgentSource(fs.readFileSync(artifact.srcAbs), { stem, config: projection.config }),
+      );
+    }
+    projection.validateAgentSet([...agentRecords.values()]);
+  } catch (error) {
+    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+  }
+
   const claimedBy = new Map();
   for (const [packName, entry] of Object.entries(profile.installed)) {
     for (const relPath of entry.files) claimedBy.set(relPath, packName);
@@ -662,16 +744,33 @@ function cmdAdd({ root, library, name, force, fetch = true, source, ref }) {
 
   const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), `dude-compose-add-${name}-`));
   const backupRoot = path.join(stageRoot, 'backup');
-  /** @type {{ artifact: { kind: string, srcAbs: string, destRel: string, name: string }, stagedAbs: string }[]} */
+  /** @type {StagedArtifact[]} */
   const staged = [];
   /** @type {{ relPath: string, destination: string, backup: string | null }[]} */
   const applied = [];
   try {
     for (const artifact of artifacts) {
-      const stagedAbs = path.join(stageRoot, 'install', ...artifact.destRel.split('/'));
-      copyRecursive(artifact.srcAbs, stagedAbs);
+      // An `agents` source installs as one rendered Copilot profile; every
+      // other kind is copied one-to-one.
+      const record = artifact.kind === 'agents' ? agentRecords.get(artifact) : null;
+      if (artifact.kind === 'agents' && !record) {
+        throw new Error(`agent source '${artifact.name}' was not parsed before staging`);
+      }
+      const output = record
+        ? {
+          relPath: projection.copilotAgentPath(record.stem),
+          bytes: projection.renderCopilotAgent(record, projection.config),
+        }
+        : { relPath: artifact.destRel, bytes: null };
+      const stagedAbs = path.join(stageRoot, 'install', ...output.relPath.split('/'));
+      if (output.bytes) {
+        ensureDir(path.dirname(stagedAbs));
+        fs.writeFileSync(stagedAbs, output.bytes);
+      } else {
+        copyRecursive(artifact.srcAbs, stagedAbs);
+      }
       if (origin !== 'local') normalizePath(stagedAbs);
-      staged.push({ artifact, stagedAbs });
+      staged.push({ artifact, destRel: output.relPath, stagedAbs });
     }
 
     const inventory = buildPackInventory(packDir, name, sourceIdentity, staged);
@@ -681,24 +780,24 @@ function cmdAdd({ root, library, name, force, fetch = true, source, ref }) {
     /** @type {{ relPath: string, destination: string, stagedAbs: string }[]} */
     const targets = [];
     for (const item of staged) {
-      const { artifact, stagedAbs } = item;
-      const owner = claimedBy.get(artifact.destRel);
+      const { artifact, destRel, stagedAbs } = item;
+      const owner = claimedBy.get(destRel);
       if (owner && owner !== name) {
-        conflicts.push(`${artifact.destRel} (claimed by pack "${owner}")`);
+        conflicts.push(`${destRel} (claimed by pack "${owner}")`);
         continue;
       }
-      const destination = resolveProfileArtifact(root, artifact.destRel, name, inventoryByPath.get(artifact.destRel));
+      const destination = resolveProfileArtifact(root, destRel, name, inventoryByPath.get(destRel));
       if (exists(destination)
         && (!force || artifact.kind === 'instructions' || artifact.kind === 'prompts')) {
-        conflicts.push(`${artifact.destRel} (already exists as a core, project, or foreign artifact)`);
+        conflicts.push(`${destRel} (already exists as a core, project, or foreign artifact)`);
       }
-      targets.push({ relPath: artifact.destRel, destination, stagedAbs });
+      targets.push({ relPath: destRel, destination, stagedAbs });
     }
     if (conflicts.length > 0) {
       return { ok: false, code: 2, error: `destination ownership conflict:\n  ${conflicts.join('\n  ')}` };
     }
 
-    const files = artifacts.map((artifact) => artifact.destRel);
+    const files = staged.map((item) => item.destRel);
     const nextProfile = structuredClone(profile);
     nextProfile.enabled_packs.push(name);
     nextProfile.installed[name] = {
@@ -1005,12 +1104,16 @@ function cmdStatus({ root }) {
  * surfaces issues (stale handles, malformed frontmatter, removal leftovers)
  * that the core linter cannot see while a pack still lives under library/packs/.
  * @param {{ root: string, library: string }} a
- * @returns {{ ok: boolean, code: number, result: any }}
+ * @returns {Promise<{ ok: boolean, code: number, result?: any, error?: string }>}
  */
-function cmdVerify({ root, library }) {
+async function cmdVerify({ root, library }) {
+  try {
+    await loadProjectionDependencies(root);
+  } catch (error) {
+    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+  }
   const lintPath = fileURLToPath(new URL('../dude-lint/lint.mjs', import.meta.url));
   const profile = profileVerificationDiagnostic(root);
-  const coreDirs = ['agents', 'skills', 'instructions', 'prompts'];
   const names = availablePacks(library);
   /** @type {{ name: string, warnings: number, failures: number, leftovers: number, error?: string }[]} */
   const verified = [];
@@ -1018,9 +1121,9 @@ function cmdVerify({ root, library }) {
   for (const name of names) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `dude-verify-${name}-`));
     try {
-      for (const d of coreDirs) {
-        const srcAbs = path.join(root, '.github', d);
-        if (isDir(srcAbs)) copyRecursive(srcAbs, path.join(tmp, '.github', d));
+      for (const location of PACK_INSTALL_LOCATIONS) {
+        const srcAbs = path.join(root, ...location.split('/'));
+        if (isDir(srcAbs)) copyRecursive(srcAbs, path.join(tmp, ...location.split('/')));
       }
       const metadataSource = path.join(root, ...WORKSPACE_PATHS.METADATA_DIR.split('/'));
       if (isDir(metadataSource)) {
@@ -1029,7 +1132,7 @@ function cmdVerify({ root, library }) {
       const libSrc = path.join(root, 'library');
       if (isDir(libSrc)) copyRecursive(libSrc, path.join(tmp, 'library'));
 
-      const add = cmdAdd({ root: tmp, library: path.join(tmp, 'library', 'packs'), name, force: false, fetch: false });
+      const add = await cmdAdd({ root: tmp, library: path.join(tmp, 'library', 'packs'), name, force: false, fetch: false });
       if (!add.ok) {
         verified.push({ name, warnings: 0, failures: 1, leftovers: 0, error: add.error });
         continue;
@@ -1042,11 +1145,11 @@ function cmdVerify({ root, library }) {
 
       const removal = cmdRemove({ root: tmp, name });
       let leftovers = 0;
-      for (const sub of coreDirs) {
-        const subAbs = path.join(tmp, '.github', sub);
+      for (const location of PACK_INSTALL_LOCATIONS) {
+        const subAbs = path.join(tmp, ...location.split('/'));
         if (!isDir(subAbs)) continue;
         for (const e of fs.readdirSync(subAbs)) {
-          if (belongsToPack(rel(path.join('.github', sub, e)), name)) leftovers += 1;
+          if (belongsToPack(`${location}/${e}`, name)) leftovers += 1;
         }
       }
       verified.push({
@@ -1167,7 +1270,7 @@ function report(r, json) {
   }
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help || !args.cmd) {
     process.stdout.write(HELP);
@@ -1189,7 +1292,7 @@ function main() {
       if (!args.name) {
         r = { ok: false, code: 1, error: 'add requires a pack name' };
       } else {
-        r = cmdAdd({ root, library, name: args.name, force: args.force, fetch: args.fetch, source: args.source, ref: args.ref });
+        r = await cmdAdd({ root, library, name: args.name, force: args.force, fetch: args.fetch, source: args.source, ref: args.ref });
       }
       break;
     case 'remove':
@@ -1200,7 +1303,7 @@ function main() {
       }
       break;
     case 'verify':
-      r = cmdVerify({ root, library });
+      r = await cmdVerify({ root, library });
       break;
     default:
       r = { ok: false, code: 1, error: `unknown command: ${args.cmd}` };
@@ -1230,7 +1333,7 @@ function isMainModule(metaUrl, argv1) {
 
 // Run only when invoked directly (allows importing for tests).
 if (isMainModule(import.meta.url, process.argv[1])) {
-  main();
+  void main();
 }
 
 export {

@@ -432,6 +432,104 @@ so this map reflects the current default bundle but is not fixed. See
 [`Routing Algorithm`](../.github/skills/dude-generic-routing/SKILL.md#routing-algorithm)
 closed-roster procedure for how routing adapts.
 
+## Agent Records And Model Classes
+
+Agent sources live in `src/agents/` for the core roster and
+`library/packs/<pack>/agents/` for pack rosters. A source states intent and never
+a concrete model. It carries `name`, `description`, `tools`, and `model-class`,
+plus the optional `agents` delegation roster, `user-invocable`, and
+`argument-hint`. A source that declares `model`, `effort`, or `reasoningEffort`
+is rejected at build time.
+
+### Model Classes
+
+`model-class` is required on every agent source and takes one of four values:
+
+| Class | Intent |
+|---|---|
+| `inherit` | Use whatever model the session already runs. Requests no effort level. |
+| `fast` | Cheap, quick, mechanical work. Lowest effort level. |
+| `balanced` | Ordinary implementation and drafting work. Middle effort level. |
+| `reasoning` | Analysis, review, architecture, and design work. Highest effort level. |
+
+Concrete model identifiers and class effort live only in
+`src/config/agent-models.json`. Builds validate that file through an explicit
+absolute path before changing output, then copy its bytes unchanged to
+`.github/skills/dude-engine/config/agent-models.json`. Installed compose, lint,
+and pack scaffolding receive the absolute packaged path. Agent sources and
+documentation never name a concrete model.
+
+Class effort is validated intent. The current Copilot profile format does not
+emit it.
+
+### Composite Agents
+
+`agents` is the only composite declaration. If it is omitted, the source is a
+leaf. If present, it must be a non-empty list of unique stable filename stems,
+with no display names, self-reference, or unresolved entries. Only the `dude`
+source may use `["*"]`, and that wildcard cannot be mixed with explicit stems.
+
+Validation is deliberately bounded. A build validates the complete core set,
+and compose validates the complete incoming set for one pack. Neither operation
+claims repository-wide delegation across unrelated packs.
+
+### Generated Copilot Profile
+
+Each source produces one generated profile:
+`.github/agents/<stem>.agent.md`. It carries `name`, `description`, `tools`, the
+body prompt, and optional `agents`, `user-invocable`, and `argument-hint`
+fields. The renderer resolves `model-class` to `model`; it emits neither
+`model-class` nor effort.
+
+Generated profiles are output, not authority. Edit core or pack sources and
+regenerate them. For an installed pack, remove and add the pack again.
+
+The narrow profile normalizer tolerates one host-owned replacement of a
+well-formed `model:` line. It leaves duplicate or malformed model lines
+unchanged and never strips `model-class`.
+
+### Documentation-Only Future Adapter Contracts
+
+These documentation-only future contracts define no current output, command,
+linting, ownership, or live effort emission; they are not executable adapter
+behavior. A future implementation would need a production renderer, an explicit
+configuration target, tool and field mappings, destination ownership, tests,
+and build and compose callers.
+
+| Documentation-only future source concept | Documentation-only prospective Claude correspondence | Documentation-only prospective SDK correspondence |
+|---|---|---|
+| identity | A future Claude adapter would use the stable stem as its `name` and would have no separate display-name field. | A future SDK adapter would use the stable stem for `name` and source `name` for the display name. |
+| `description` | A future Claude adapter would map `description` to Claude `description`. | A future SDK adapter would map `description` to SDK `description`. |
+| body | A future Claude adapter would retain the markdown prompt body. | A future SDK adapter would map the body to the SDK prompt string. |
+| `tools` | A future Claude adapter would require an explicit Copilot-to-Claude selector mapping. | A future SDK adapter would require an explicit Copilot-to-SDK selector mapping. |
+| `agents`, `user-invocable`, `argument-hint` | A future Claude adapter would omit these unsupported fields unless a future Claude host contract adds them. | A future SDK adapter would omit these unsupported fields unless a future SDK host contract adds them. |
+| `model-class` | A future Claude adapter would resolve `model-class` to its host model and never emit `model-class`. | A future SDK adapter would resolve `model-class` to its host model and never emit `model-class`. |
+| class effort | A future Claude adapter would map class effort to Claude `effort`; with `inherit`, it would omit the model and `effort`. | A future SDK adapter would map class effort to SDK `reasoningEffort`; with `inherit`, it would omit the model and `reasoningEffort`. |
+
+### Ownership Of Generated Paths
+
+| Tier | Stem under `.github/agents/` | What `@dude upgrade` does |
+|---|---|---|
+| Core | `dude`, `dude-<slug>` | Overwrites it, and removes it when upstream stops shipping it |
+| Pack | `dude-pack-<pack>-<slug>` | Nothing. `dude-compose` adds and removes these. |
+| Local | `dude-local-<slug>` | Nothing. Project-owned. |
+| Project | any other stem | Nothing. Project-owned. |
+
+`dude-lint` warns about a project-tier agent under `.github/agents/` so you can
+rename it before a future upstream artifact claims the same name.
+
+### Specialist Visibility
+
+Only the coordinator `dude` declares `user-invocable: true`. Every specialist
+declares `user-invocable: false`. That is how the bundle asks a host that reads
+the field to keep its agent picker to one entry instead of the whole roster;
+whether a given host honors the request is up to that host.
+
+The flag is a menu preference, not a boundary. Specialists stay fully delegable:
+`@dude` dispatches them as subagents, and you can still address one directly by
+name. The flag grants and removes no authority, permission, or access, and no
+artifact should describe it as a security control.
+
 ## Design Constraints
 
 - Do not introduce a second task system.

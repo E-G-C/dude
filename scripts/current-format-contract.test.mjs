@@ -6,8 +6,33 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadAgentModelConfig } from '../src/skills/dude-engine/lib/agent-model-map.mjs';
+import {
+  copilotAgentPath,
+  parseAgentSource,
+  renderCopilotAgent,
+} from '../src/skills/dude-engine/lib/agent-projection.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
+
+/**
+ * The bytes a generated core path must carry for its authoritative source.
+ *
+ * Agent records are projection-equivalent, not byte-identical: one
+ * `src/agents/<stem>.agent.md` materializes as one Copilot profile. Every other
+ * generated core path stays an exact byte copy of its source.
+ * @param {string} source repo-relative source path
+ * @param {string} generated repo-relative generated path
+ * @returns {Buffer}
+ */
+function materializedSourceBytes(source, generated) {
+  const bytes = fs.readFileSync(path.join(ROOT, source));
+  const stem = /^src\/agents\/([^/]+)\.agent\.md$/.exec(source)?.[1];
+  if (!stem) return bytes;
+  assert.equal(generated, copilotAgentPath(stem), `${generated} is not the Copilot projection of ${source}`);
+  const config = loadAgentModelConfig(path.join(ROOT, 'src', 'config', 'agent-models.json'));
+  return renderCopilotAgent(parseAgentSource(bytes, { stem, config }), config);
+}
 
 const ACTIVE_SOURCE_FILES = [
   'src/agents/dude-spec-lead.agent.md',
@@ -2121,6 +2146,109 @@ test('public docs retain current verbs, lifecycle draft status, canonical manife
   assert.match(upgrading, /does not translate project-state, profile, or manifest\s+formats/);
 });
 
+test('agent configuration, projection, compose, upgrade, and CI docs describe the one-tree contract', () => {
+  const compose = read('src/skills/dude-compose/SKILL.md');
+  const upgrade = read('src/skills/dude-bundle-upgrade/SKILL.md');
+  const reference = read('docs/reference.md');
+  const upgrading = read('docs/upgrading.md');
+  const commands = read('docs/commands.md');
+  const ci = read(CI_WORKFLOW);
+  const prose = [compose, upgrade, reference, upgrading, commands];
+
+  for (const [index, content] of prose.entries()) {
+    assert.doesNotMatch(content, /\.github\/config/, `prose file ${index} has an alternate config path`);
+    assert.doesNotMatch(content, /\.claude\/agents|\.github\/agents-sdk/, `prose file ${index} has a dropped tree`);
+    assert.doesNotMatch(
+      content,
+      /SUPPORT_MATRIX|preexisting_derived_agent|first adoption|inventory `version: 2`/i,
+      `prose file ${index} has retired projection or adoption behavior`,
+    );
+  }
+
+  for (const content of [reference, upgrading, commands]) {
+    assert.match(content, /src\/config\/agent-models\.json/);
+    assert.match(content, /\.github\/skills\/dude-engine\/config\/agent-models\.json/);
+  }
+  assert.match(reference, /`agents` is the only composite declaration/);
+  assert.match(reference, /omitted, the source is a\s+leaf/i);
+  assert.match(reference, /complete core set/);
+  assert.match(reference, /complete incoming set for one pack/);
+  const futureAdapterContract = markdownSection(reference, '### Documentation-Only Future Adapter Contracts');
+  assert.match(
+    futureAdapterContract,
+    /documentation-only future contracts define no current output, command,[\s\S]{0,100}live effort emission; they are not executable adapter\s+behavior/i,
+  );
+  assert.match(
+    futureAdapterContract,
+    /\|\s*Documentation-only future source concept\s*\|\s*Documentation-only prospective Claude correspondence\s*\|\s*Documentation-only prospective SDK correspondence\s*\|/,
+  );
+  for (const [sourceConcept, claude, sdk] of [
+    [
+      'identity',
+      /future Claude adapter would use the stable stem as its `name` and would have no separate display-name field/i,
+      /future SDK adapter would use the stable stem for `name` and source `name` for the display name/i,
+    ],
+    [
+      'description',
+      /future Claude adapter would map `description` to Claude `description`/i,
+      /future SDK adapter would map `description` to SDK `description`/i,
+    ],
+    [
+      'body',
+      /future Claude adapter would retain the markdown prompt body/i,
+      /future SDK adapter would map the body to the SDK prompt string/i,
+    ],
+    [
+      'tools',
+      /future Claude adapter would require an explicit Copilot-to-Claude selector mapping/i,
+      /future SDK adapter would require an explicit Copilot-to-SDK selector mapping/i,
+    ],
+    [
+      'unsupported fields',
+      /future Claude adapter would omit these unsupported fields unless a future Claude host contract adds them/i,
+      /future SDK adapter would omit these unsupported fields unless a future SDK host contract adds them/i,
+    ],
+    [
+      'model class',
+      /future Claude adapter would resolve `model-class` to its host model and never emit `model-class`/i,
+      /future SDK adapter would resolve `model-class` to its host model and never emit `model-class`/i,
+    ],
+    [
+      'class effort',
+      /future Claude adapter would map class effort to Claude `effort`; with `inherit`, it would omit the model and `effort`/i,
+      /future SDK adapter would map class effort to SDK `reasoningEffort`; with `inherit`, it would omit the model and `reasoningEffort`/i,
+    ],
+  ]) {
+    assert.match(futureAdapterContract, claude, `${sourceConcept} Claude future correspondence`);
+    assert.match(futureAdapterContract, sdk, `${sourceConcept} SDK future correspondence`);
+  }
+  assert.match(reference, /never strips `model-class`/);
+
+  assert.match(compose, /command is selected before projection dependencies are loaded/);
+  assert.match(compose, /`remove`, `list`, and\s+`status` do not load that configuration or the renderer/);
+  assert.match(compose, /Current inventories use `version: 1`/);
+  assert.match(
+    markdownSection(commands, '### Repo layout: source vs built bundle'),
+    /six currently installed\s+dogfood packs:\s+`authoring`,\s+`coding`,\s+`design`,\s+`release`,\s+`strata`,\s+and\s+`writing`/,
+  );
+  assert.match(
+    markdownSection(compose, '## Rules'),
+    /dogfood repo, compose may use only its six currently installed profile\s+packs:\s+`authoring`,\s+`coding`,\s+`design`,\s+`release`,\s+`strata`,\s+and\s+`writing`[\s\S]{0,100}other catalog pack in a throwaway root/,
+  );
+  assert.match(upgrade, /existing `.github\/skills\/dude-engine\/\*\*` ownership recursively includes/);
+  assert.match(upgrade, /rollback\s+restorability/i);
+  assert.match(upgrading, /ignored\s+and untracked[\s\S]{0,120}refuses/i);
+
+  assert.equal(ci.includes('.claude'), false);
+  assert.equal(
+    [...ci.matchAll(/git status --porcelain --ignored --untracked-files=all -- src \.github \.dude/g)].length,
+    2,
+  );
+  assert.match(ci, /node scripts\/build-dev\.mjs/);
+  assert.match(ci, /node scripts\/build-release\.mjs --out dist/);
+  assert.doesNotMatch(ci, /\bgit (?:branch|commit|push|switch)\b|\bgh pr\b/);
+});
+
 test('release assertions do not positively require or forbid the transitional migration provider', () => {
   const releaseTest = read('scripts/build-release.test.mjs');
   assert.doesNotMatch(releaseTest, /dude-workspace-migration/);
@@ -3920,7 +4048,7 @@ test('T007 generated core carries no governance content outside a complete mater
   assert.deepEqual(
     governanceInGeneratedCoreIssues(GENERATED_CORE_PAIRS.map(([source, generated]) => ({
       label: generated,
-      source: read(source),
+      source: materializedSourceBytes(source, generated).toString('utf8'),
       generated: read(generated),
     }))),
     [],
@@ -4768,8 +4896,8 @@ test('T003 the adapter and its prompt surfaces are generated, never hand-authore
     assert.equal(fs.statSync(path.join(ROOT, generated)).isFile(), true, generated);
     assert.deepEqual(
       fs.readFileSync(path.join(ROOT, generated)),
-      fs.readFileSync(path.join(ROOT, source)),
-      `${generated} must be a byte-identical projection of ${source}`,
+      materializedSourceBytes(source, generated),
+      `${generated} must be a materialized projection of ${source}`,
     );
   }
 

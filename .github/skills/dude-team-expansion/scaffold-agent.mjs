@@ -7,6 +7,13 @@
  * Pack:            `library/packs/<pack>/agents/dude-pack-<pack>-<slug>.agent.md`
  *                  and the id is added to that pack's `pack.md` provides.agents.
  *
+ * A pack skeleton is an authoritative projected source, so it declares
+ * `model-class` (default `balanced`) and `user-invocable: false`. Local
+ * skeletons declare neither: local agents are not projected, so they have no
+ * class to resolve and no visibility to project. Concrete models and effort
+ * levels live only in the caller-selected agent-model configuration; this
+ * scaffolder writes the logical class and never a model.
+ *
  * The skeleton is guaranteed to satisfy dude-lint on first write: it carries the
  * mandatory `**Coordinator-only artifacts:**` boundary block and LF endings.
  * The author fills in scope/boundaries/rules content afterward.
@@ -14,7 +21,7 @@
  * Usage:
  *   node scaffold-agent.mjs <slug> [--pack <name>] [--role "..."] [--desc "..."]
  *                                  [--name "Display Name"] [--tools "read, edit"]
- *                                  [--root <dir>] [--force]
+ *                                  [--model-class <class>] [--root <dir>] [--force]
  */
 
 import fs from 'node:fs';
@@ -23,8 +30,10 @@ import { fileURLToPath } from 'node:url';
 import { normalizeString } from '../dude-engine/lib/text.mjs';
 import { addProvide } from '../dude-engine/lib/pack-manifest.mjs';
 import { resolveMutationPath } from '../dude-engine/lib/workspace-paths.mjs';
+import { loadAgentModelConfig } from '../dude-engine/lib/agent-model-map.mjs';
 
 const SLUG_RE = /^[a-z][a-z0-9-]*[a-z0-9]$/;
+const DEFAULT_MODEL_CLASS = 'balanced';
 
 /** @param {string} slug @returns {string} Title Case display name */
 function titleCase(slug) {
@@ -41,14 +50,17 @@ const COORD_BLOCK =
   'changes back to `@dude` instead.';
 
 /**
- * @param {{ role: string, name: string, desc: string, tools: string }} a
+ * @param {{ role: string, name: string, desc: string, tools: string, modelClass?: string }} a
  * @returns {string}
  */
-function agentSkeleton({ role, name, desc, tools }) {
+function agentSkeleton({ role, name, desc, tools, modelClass }) {
+  const projected = modelClass
+    ? `\nuser-invocable: false\nmodel-class: ${modelClass}`
+    : '';
   return normalizeString(`---
 name: "${name}"
 description: "${desc}"
-tools: [${tools}]
+tools: [${tools}]${projected}
 ---
 
 You are the ${role} specialist.
@@ -78,17 +90,32 @@ ${COORD_BLOCK}
 }
 
 /**
- * @param {{ slug: string, pack?: string, role?: string, desc?: string, name?: string, tools?: string, root?: string, force?: boolean }} opts
+ * @param {{ slug: string, pack?: string, role?: string, desc?: string, name?: string, tools?: string, modelClass?: string, root?: string, force?: boolean }} opts
  * @returns {{ path: string, packUpdated: boolean }}
  */
 export function scaffoldAgent(opts) {
   const { slug } = opts;
   if (!SLUG_RE.test(slug)) throw new Error(`invalid slug: ${slug}`);
-  const root = opts.root || process.cwd();
+  const root = path.resolve(opts.root || process.cwd());
   const role = opts.role || titleCase(slug);
   const name = opts.name || role;
   const desc = opts.desc || `${role} specialist. Use for <one-line scope>.`;
   const tools = opts.tools || 'read, search, edit';
+  if (opts.modelClass !== undefined && !opts.pack) {
+    throw new Error('--model-class applies to --pack scaffolds only: local agents are not projected');
+  }
+  if (opts.pack) {
+    const configPath = path.resolve(root, '.github', 'skills', 'dude-engine', 'config', 'agent-models.json');
+    const config = loadAgentModelConfig(configPath);
+    const modelClasses = Object.keys(/** @type {Record<string, unknown>} */ (config.classes));
+    if (opts.modelClass !== undefined && !modelClasses.includes(opts.modelClass)) {
+      throw new Error(`invalid model class: ${opts.modelClass} (expected one of ${modelClasses.join(', ')})`);
+    }
+    if (!modelClasses.includes(opts.modelClass || DEFAULT_MODEL_CLASS)) {
+      throw new Error(`default model class '${DEFAULT_MODEL_CLASS}' is not declared by ${configPath}`);
+    }
+  }
+  const modelClass = opts.pack ? opts.modelClass || DEFAULT_MODEL_CLASS : undefined;
 
   let destAbs;
   let packMd;
@@ -114,7 +141,7 @@ export function scaffoldAgent(opts) {
   }
 
   fs.mkdirSync(path.dirname(destAbs), { recursive: true });
-  fs.writeFileSync(destAbs, agentSkeleton({ role, name, desc, tools }));
+  fs.writeFileSync(destAbs, agentSkeleton({ role, name, desc, tools, modelClass }));
 
   let packUpdated = false;
   if (packMd && provideId) {
@@ -137,6 +164,7 @@ export function parseArgs(argv) {
     else if (a === '--desc') out.desc = argv[++i];
     else if (a === '--name') out.name = argv[++i];
     else if (a === '--tools') out.tools = argv[++i];
+    else if (a === '--model-class') out.modelClass = argv[++i];
     else if (a === '--root') out.root = argv[++i];
     else if (a.startsWith('--')) out.help = true;
     else pos.push(a);
@@ -158,7 +186,7 @@ export function isMainModule(metaUrl, argv1) {
 if (isMainModule(import.meta.url, process.argv[1])) {
   const args = parseArgs(process.argv.slice(2));
   if (args.help || !args.slug) {
-    process.stdout.write('usage: node scaffold-agent.mjs <slug> [--pack <name>] [--role "..."] [--desc "..."] [--name "..."] [--tools "..."] [--force]\n');
+    process.stdout.write('usage: node scaffold-agent.mjs <slug> [--pack <name>] [--role "..."] [--desc "..."] [--name "..."] [--tools "..."] [--model-class <class>] [--force]\n');
     process.exit(args.help ? 0 : 1);
   }
   try {

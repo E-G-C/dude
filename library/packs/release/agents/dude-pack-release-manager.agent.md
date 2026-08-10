@@ -4,7 +4,9 @@ description: "Release specialist for tag-driven versioning, GitHub Actions and A
 # NOTE: tools below are advisory — they document intended capabilities but are
 # not enforced by the VS Code Copilot runtime. For platform-enforced tool
 # restrictions, use .chatmode.md files with standard Copilot tool identifiers.
-tools: ["read/readFile", "edit/createFile", "edit/editFiles", "execute/runInTerminal", "search/listDirectory", "search/codebase", "search/fileSearch", "search/textSearch", "read/problems"]
+tools: ["read", "edit", "execute", "search"]
+user-invocable: false
+model-class: reasoning
 ---
 
 You are the release manager.

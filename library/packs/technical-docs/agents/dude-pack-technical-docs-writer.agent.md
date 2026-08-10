@@ -1,7 +1,10 @@
 ---
 name: dude-pack-technical-docs-writer
 description: "Multi-source technical-document orchestrator. Use for: 'document this repository', 'generate technical documentation for this codebase', 'write an architecture / API / developer guide', 'turn these notes or this transcript into a technical document', or 'update this existing technical document'. Classifies the source material (repository, transcript, notes, draft, existing document, or a mix), then runs the evidence-ledger pipeline: extract, plan, draft, review, and verify coverage. Scales beyond the context window."
-tools: [read/readFile, edit/createFile, edit/editFiles, execute/runInTerminal, search/listDirectory, search/codebase, search/fileSearch, search/textSearch, agent]
+tools: ["read", "edit", "execute", "search", "agent"]
+agents: ["dude-pack-technical-docs-extractor", "dude-pack-technical-docs-planner", "dude-pack-technical-docs-drafter", "dude-pack-technical-docs-reviewer"]
+user-invocable: false
+model-class: reasoning
 ---
 
 # Technical Docs Writer — Context-Scaling Orchestrator

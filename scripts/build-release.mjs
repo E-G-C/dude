@@ -10,7 +10,9 @@
  *
  * Ships: core-tier files only (the `dude` / `dude-<slug>` agents, `dude-<slug>`
  * skill directories, and `dude.instructions.md`) MINUS every test file, plus a
- * generic `project` skill stub and seeded canonical metadata.
+ * generic `project` skill stub and seeded canonical metadata. Each agent source
+ * ships as one projected Copilot profile (`.github/agents/`) rather than as a
+ * byte copy.
  * Excluded: `*.test.mjs`, packs (`dude-pack-*`), project-local customizations
  * (`dude-local-*`), and everything outside the core namespace.
  *
@@ -23,7 +25,17 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { isCorePath } from '../src/skills/dude-engine/lib/ownership.mjs';
+import { loadAgentModelConfig } from '../src/skills/dude-engine/lib/agent-model-map.mjs';
+import {
+  copilotAgentPath,
+  parseAgentSource,
+  renderCopilotAgent,
+  validateAgentSet,
+} from '../src/skills/dude-engine/lib/agent-projection.mjs';
 import { WORKSPACE_PATHS } from '../src/skills/dude-engine/lib/workspace-paths.mjs';
+
+const AGENT_MODEL_CONFIG_SOURCE = ['src', 'config', 'agent-models.json'];
+const AGENT_MODEL_CONFIG_DESTINATION = '.github/skills/dude-engine/config/agent-models.json';
 
 /** Generic project-knowledge stub shipped in a fresh bundle. */
 export const PROJECT_STUB = `---
@@ -316,6 +328,68 @@ export function listCoreSourceFiles(repoRoot) {
 }
 
 /**
+ * The source-agent stem for a deployed core path, or `null` for other files.
+ * @param {string} deployRel
+ * @returns {string | null}
+ */
+function agentStem(deployRel) {
+  const match = /^\.github\/agents\/([^/]+)\.agent\.md$/.exec(deployRel);
+  return match ? match[1] : null;
+}
+
+/**
+ * Plan every core output byte for one repository: non-agent core files stay
+ * copies of their source, and each agent source becomes one Copilot profile.
+ * `validateAgentSet` runs over the whole core agent
+ * set before any output is returned, so an identity collision, an unresolved
+ * delegation, or an unmappable tool fails before a partial tree is written.
+ * @param {string} repoRoot
+ * @returns {({ relPath: string, abs: string } | { relPath: string, bytes: Buffer })[]}
+ */
+export function listCoreOutputs(repoRoot) {
+  const configPath = path.resolve(repoRoot, ...AGENT_MODEL_CONFIG_SOURCE);
+  const configBytes = fs.readFileSync(configPath);
+  const config = loadAgentModelConfig(configPath);
+  /** @type {({ relPath: string, abs: string } | { relPath: string, bytes: Buffer })[]} */
+  const outputs = [{ relPath: AGENT_MODEL_CONFIG_DESTINATION, bytes: configBytes }];
+  /** @type {{ stem: string, frontmatter: Record<string, string | boolean | string[]>, body: string }[]} */
+  const records = [];
+
+  for (const { abs, deployRel } of listCoreSourceFiles(repoRoot)) {
+    const stem = agentStem(deployRel);
+    if (!stem) {
+      outputs.push({ relPath: deployRel, abs });
+      continue;
+    }
+    const bytes = fs.readFileSync(abs);
+    records.push(parseAgentSource(bytes, { stem, config }));
+  }
+
+  validateAgentSet(records);
+
+  for (const record of records) {
+    outputs.push({
+      relPath: copilotAgentPath(record.stem),
+      bytes: renderCopilotAgent(record, config),
+    });
+  }
+
+  return outputs.sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
+}
+
+/**
+ * Write one planned core output to a destination root.
+ * @param {string} destRoot
+ * @param {{ relPath: string, abs?: string, bytes?: Buffer }} output
+ */
+export function writeCoreOutput(destRoot, output) {
+  const dest = path.join(destRoot, ...output.relPath.split('/'));
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  if (output.abs) fs.copyFileSync(output.abs, dest);
+  else fs.writeFileSync(dest, /** @type {Buffer} */ (output.bytes));
+}
+
+/**
  * Stage the release bundle into `<outDir>/.github/...` from `src/`.
  * @param {{ repoRoot: string, outDir: string, ref?: string }} opts
  * @returns {{ files: string[], out: string }}
@@ -331,6 +405,7 @@ export function buildRelease({ repoRoot, outDir, ref }) {
   const canonicalManifest = readCanonicalManifest(repoRoot);
   const seeded = seedManifest(canonicalManifest.content, ref);
   parseManifestDocument(seeded, 'seeded bundle-manifest');
+  const outputs = listCoreOutputs(repoRoot);
 
   const outputParent = path.dirname(outDir);
   fs.mkdirSync(outputParent, { recursive: true });
@@ -340,11 +415,9 @@ export function buildRelease({ repoRoot, outDir, ref }) {
   /** @type {string[]} */
   const written = [];
   try {
-    for (const { abs, deployRel } of listCoreSourceFiles(repoRoot)) {
-      const dest = path.join(stagingDir, deployRel);
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.copyFileSync(abs, dest);
-      written.push(deployRel);
+    for (const output of outputs) {
+      writeCoreOutput(stagingDir, output);
+      written.push(output.relPath);
     }
 
     const projRel = '.github/skills/project/SKILL.md';

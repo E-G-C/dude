@@ -19,7 +19,9 @@ import {
   persistUniquePlan,
   planDigest,
   pickLatestReleaseTag,
+  scanCoreInventoryPaths,
 } from './upgrade.mjs';
+import { enumerateCorePaths } from '../dude-engine/lib/ownership.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./upgrade.mjs', import.meta.url));
 const REPLACE_PATH = '.github/agents/dude.agent.md';
@@ -1431,5 +1433,392 @@ test('upgrade status, plan, and apply reject missing canonical metadata with cur
         fs.rmSync(root, { recursive: true, force: true });
       }
     });
+
   }
 });
+
+/**
+     * @param {{
+     *   local?: Record<string, string>,
+     *   upstream?: Record<string, string>,
+     *   gitignore?: string,
+     * }} [spec]
+     */
+    function makeDirectTopologyFixture(spec = {}) {
+      const base = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-up-direct-'));
+      const localRoot = path.join(base, 'local');
+      const upstreamRoot = path.join(base, 'upstream');
+      const tmpRoot = path.join(base, 'tmp');
+      for (const directory of [localRoot, upstreamRoot, tmpRoot]) {
+        fs.mkdirSync(directory, { recursive: true });
+      }
+
+      const source = pathToFileURL(upstreamRoot).href;
+      const localFiles = {
+        [MANIFEST_PATH]: manifest(source, 'v0.0.0'),
+        [UPGRADE_LOG_PATH]: '# Upgrade Log\n',
+        '.github/agents/dude.agent.md': 'local coordinator\n',
+        '.github/instructions/dude.instructions.md': 'unchanged\n',
+        '.github/skills/dude-lint/lint.mjs': 'process.exit(0);\n',
+        ...spec.local,
+      };
+      const upstreamFiles = {
+        [MANIFEST_PATH]: manifest(source, 'main'),
+        '.github/agents/dude.agent.md': 'upstream coordinator\n',
+        '.github/instructions/dude.instructions.md': 'unchanged\n',
+        '.github/skills/dude-lint/lint.mjs': 'process.exit(0);\n',
+        ...spec.upstream,
+      };
+      for (const [relativePath, content] of Object.entries(localFiles)) {
+        write(localRoot, relativePath, content);
+      }
+      if (spec.gitignore) write(localRoot, '.gitignore', spec.gitignore);
+      for (const [relativePath, content] of Object.entries(upstreamFiles)) {
+        write(upstreamRoot, relativePath, content);
+      }
+
+      for (const root of [localRoot, upstreamRoot]) {
+        git(root, ['init', '-q', '-b', 'main']);
+        git(root, ['config', 'user.name', 'Upgrade Test']);
+        git(root, ['config', 'user.email', 'upgrade-test@example.invalid']);
+        git(root, ['add', '.']);
+        git(root, ['commit', '-q', '-m', 'fixture']);
+      }
+
+      return { base, localRoot, upstreamRoot, tmpRoot, source };
+    }
+
+    /**
+     * @param {ReturnType<typeof makeDirectTopologyFixture>} fixture
+     * @param {{ out: string, format?: 'json' | 'text' }} options
+     */
+    function planDirectTopologyFixture(fixture, options) {
+      return spawnSync(process.execPath, [
+        SCRIPT,
+        'plan',
+        '--source',
+        fixture.source,
+        '--ref',
+        'main',
+        '--out',
+        options.out,
+        '--format',
+        options.format || 'json',
+      ], {
+        cwd: fixture.localRoot,
+        encoding: 'utf8',
+        env: { ...process.env, TMPDIR: fixture.tmpRoot },
+      });
+    }
+
+    /**
+     * @param {ReturnType<typeof makeDirectTopologyFixture>} fixture
+     * @param {string} planPath
+     * @param {Record<string, string>} [extraEnv]
+     */
+    function applyDirectTopologyFixture(fixture, planPath, extraEnv = {}) {
+      return spawnSync(process.execPath, [
+        SCRIPT,
+        'apply',
+        '--plan',
+        planPath,
+        '--confirm',
+        'confirm-upgrade',
+        '--format',
+        'json',
+      ], {
+        cwd: fixture.localRoot,
+        encoding: 'utf8',
+        env: { ...process.env, TMPDIR: fixture.tmpRoot, ...extraEnv },
+      });
+    }
+
+    /** @param {ReturnType<typeof makeDirectTopologyFixture>} fixture @param {string} tag */
+    function rollbackDirectTopologyFixture(fixture, tag) {
+      return spawnSync(process.execPath, [
+        SCRIPT,
+        'rollback',
+        '--tag',
+        tag,
+        '--format',
+        'json',
+      ], {
+        cwd: fixture.localRoot,
+        encoding: 'utf8',
+        env: { ...process.env, TMPDIR: fixture.tmpRoot },
+      });
+    }
+
+    /** @param {string} root @param {string} relativePath */
+    function readDirectFile(root, relativePath) {
+      const absolutePath = path.join(root, relativePath);
+      return fs.existsSync(absolutePath) ? fs.readFileSync(absolutePath, 'utf8') : null;
+    }
+
+    /** @param {unknown} value @param {Set<string>} [keys] */
+    function collectObjectKeys(value, keys = new Set()) {
+      if (Array.isArray(value)) {
+        for (const entry of value) collectObjectKeys(entry, keys);
+      } else if (value && typeof value === 'object') {
+        for (const [key, entry] of Object.entries(value)) {
+          keys.add(key);
+          collectObjectKeys(entry, keys);
+        }
+      }
+      return keys;
+    }
+
+    test('core inventory scanning follows the direct tree and includes engine configuration as ordinary content', () => {
+      // Arrange
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-up-direct-scan-'));
+      try {
+        const expected = [
+          '.github/agents/dude-spec-lead.agent.md',
+          '.github/agents/dude.agent.md',
+          '.github/instructions/dude.instructions.md',
+          '.github/skills/dude-engine/SKILL.md',
+          '.github/skills/dude-engine/config/agent-models.json',
+        ];
+        for (const relativePath of [
+          ...expected,
+          '.github/agents/dude-pack-demo-worker.agent.md',
+          '.github/agents/dude-local-worker.agent.md',
+          '.github/agents/project-worker.agent.md',
+          '.github/skills/dude-pack-demo-helper/SKILL.md',
+          '.github/skills/dude-local-helper/SKILL.md',
+        ]) {
+          write(root, relativePath, 'x\n');
+        }
+
+        // Act
+        const scanned = scanCoreInventoryPaths(root, 'fixture workspace');
+        const enumerated = enumerateCorePaths(root);
+
+        // Assert
+        assert.deepEqual(scanned, expected);
+        assert.deepEqual(enumerated, expected);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('direct core inventory scanning still refuses symlinks and incompatible file types', () => {
+      // Arrange + Act + Assert: direct agent files and their root must be real.
+      for (const relativePath of [
+        '.github/agents/dude-spec-lead.agent.md',
+        '.github/agents',
+      ]) {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-up-direct-link-'));
+        try {
+          write(root, 'decoy.txt', 'x\n');
+          const absolutePath = path.join(root, relativePath);
+          fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+          fs.symlinkSync(path.join(root, 'decoy.txt'), absolutePath);
+          assert.throws(
+            () => scanCoreInventoryPaths(root, 'fixture workspace'),
+            /fixture workspace contains symbolic link/,
+            relativePath,
+          );
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+
+      // Arrange
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-up-direct-type-'));
+      try {
+        write(root, '.github/agents/dude.agent.md', 'x\n');
+        fs.mkdirSync(path.join(root, '.github/agents/dude-spec-lead.agent.md'), { recursive: true });
+
+        // Act + Assert
+        assert.throws(
+          () => scanCoreInventoryPaths(root, 'fixture workspace'),
+          /fixture workspace type changed: \.github\/agents\/dude-spec-lead\.agent\.md/,
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('direct topology plans ordinary operations, preserves pack and local tiers, and rolls back', () => {
+      // Arrange
+      const tierFiles = {
+        '.github/agents/dude-pack-demo-worker.agent.md': 'pack agent\n',
+        '.github/agents/dude-local-worker.agent.md': 'local agent\n',
+        '.github/skills/dude-pack-demo-helper/SKILL.md': 'pack skill\n',
+        '.github/skills/dude-local-helper/SKILL.md': 'local skill\n',
+      };
+      const fixture = makeDirectTopologyFixture({
+        local: {
+          '.github/agents/dude-old.agent.md': 'stale core agent\n',
+          '.github/agents/project-worker.agent.md': 'project agent\n',
+          ...tierFiles,
+        },
+        upstream: {
+          '.github/agents/dude-new.agent.md': 'new core agent\n',
+          '.github/skills/dude-engine/config/agent-models.json': '{"models":[]}\n',
+        },
+      });
+      const planPath = path.join(fixture.base, 'direct-plan.json');
+      try {
+        // Act
+        const planned = planDirectTopologyFixture(fixture, { out: planPath, format: 'text' });
+        assert.equal(planned.status, 10, `${planned.stdout}${planned.stderr}`);
+        const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+        const applied = applyDirectTopologyFixture(fixture, planPath);
+
+        // Assert
+        assert.deepEqual(plan.buckets.replace.map((entry) => entry.path), [
+          '.github/agents/dude.agent.md',
+        ]);
+        assert.deepEqual(plan.buckets.add.map((entry) => entry.path), [
+          '.github/agents/dude-new.agent.md',
+          '.github/skills/dude-engine/config/agent-models.json',
+        ]);
+        assert.deepEqual(plan.buckets.remove.map((entry) => entry.path), [
+          '.github/agents/dude-old.agent.md',
+        ]);
+        assert.deepEqual(plan.buckets.advisory, [
+          { path: '.github/agents/project-worker.agent.md', kind: 'unreserved_local_agent' },
+        ]);
+        for (const relativePath of Object.keys(tierFiles)) {
+          assert.equal(JSON.stringify(plan).includes(relativePath), false, relativePath);
+        }
+        assert.equal(applied.status, 0, `${applied.stdout}${applied.stderr}`);
+        assert.equal(readDirectFile(fixture.localRoot, '.github/agents/dude.agent.md'), 'upstream coordinator\n');
+        assert.equal(readDirectFile(fixture.localRoot, '.github/agents/dude-new.agent.md'), 'new core agent\n');
+        assert.equal(readDirectFile(fixture.localRoot, '.github/agents/dude-old.agent.md'), null);
+        assert.equal(
+          readDirectFile(fixture.localRoot, '.github/skills/dude-engine/config/agent-models.json'),
+          '{"models":[]}\n',
+        );
+        for (const [relativePath, content] of Object.entries(tierFiles)) {
+          assert.equal(readDirectFile(fixture.localRoot, relativePath), content, relativePath);
+        }
+
+        const appliedPayload = JSON.parse(applied.stdout);
+        const rollback = rollbackDirectTopologyFixture(fixture, appliedPayload.safety_tag);
+        assert.equal(rollback.status, 0, `${rollback.stdout}${rollback.stderr}`);
+        assert.equal(readDirectFile(fixture.localRoot, '.github/agents/dude.agent.md'), 'local coordinator\n');
+        assert.equal(readDirectFile(fixture.localRoot, '.github/agents/dude-old.agent.md'), 'stale core agent\n');
+        assert.equal(readDirectFile(fixture.localRoot, '.github/agents/dude-new.agent.md'), null);
+        for (const [relativePath, content] of Object.entries(tierFiles)) {
+          assert.equal(readDirectFile(fixture.localRoot, relativePath), content, relativePath);
+        }
+      } finally {
+        fs.rmSync(fixture.base, { recursive: true, force: true });
+      }
+    });
+
+    test('direct plans and text reports have no retired target-adoption state or terminology', () => {
+      // Arrange
+      const fixture = makeDirectTopologyFixture({
+        local: { '.github/agents/dude-old.agent.md': 'stale core agent\n' },
+        upstream: { '.github/agents/dude-new.agent.md': 'new core agent\n' },
+      });
+      const planPath = path.join(fixture.base, 'direct-report.json');
+      try {
+        // Act
+        const result = planDirectTopologyFixture(fixture, { out: planPath, format: 'text' });
+        assert.equal(result.status, 10, `${result.stdout}${result.stderr}`);
+        const serializedPlan = fs.readFileSync(planPath, 'utf8');
+        const plan = JSON.parse(serializedPlan);
+        const implementation = fs.readFileSync(new URL('./upgrade.mjs', import.meta.url), 'utf8');
+
+        // Assert
+        assert.deepEqual(Object.keys(plan.buckets).sort(), [
+          'add',
+          'advisory',
+          'remove',
+          'replace',
+          'up_to_date',
+        ]);
+        for (const key of collectObjectKeys(plan)) {
+          assert.doesNotMatch(key, /derived|adopt|preserv/i, `retired plan field: ${key}`);
+        }
+        for (const artifact of [serializedPlan, result.stdout]) {
+          assert.doesNotMatch(artifact, /\b(?:derived|adoption|claude|sdk)\b/i);
+          assert.doesNotMatch(artifact, /preserv(?:ed|ation)?\s+(?:derived|tree)/i);
+        }
+        assert.doesNotMatch(
+          implementation,
+          /\b(?:PROJECTION_CAPABILITY_PATH|DERIVED_TREE_ROOTS|PRESERVED_DERIVED_KIND|hasProjectionCapability|isDerivedTreePath)\b|\.claude\/|agents-sdk/,
+        );
+      } finally {
+        fs.rmSync(fixture.base, { recursive: true, force: true });
+      }
+    });
+
+    test('an ignored untracked planned destination is rejected before writes and probes both forms', () => {
+      // Arrange
+      const destinationRoot = '.github/skills/dude-temporary-output';
+      const fixture = makeDirectTopologyFixture({
+        gitignore: `${destinationRoot}/\n`,
+        upstream: {
+          [`${destinationRoot}/SKILL.md`]: '# Temporary\n',
+        },
+      });
+      const planPath = path.join(fixture.base, 'ignored-destination.json');
+      const shimDirectory = path.join(fixture.base, 'git-shim');
+      const probeLog = path.join(fixture.base, 'git-probes.ndjson');
+      try {
+        const planned = planDirectTopologyFixture(fixture, { out: planPath });
+        assert.equal(planned.status, 10, `${planned.stdout}${planned.stderr}`);
+
+        const realGit = spawnSync('which', ['git'], { encoding: 'utf8' });
+        assert.equal(realGit.status, 0, realGit.stderr);
+        fs.mkdirSync(shimDirectory, { recursive: true });
+        fs.writeFileSync(
+          path.join(shimDirectory, 'git'),
+          [
+            '#!/usr/bin/env node',
+            "const fs = require('node:fs');",
+            "const { spawnSync } = require('node:child_process');",
+            "fs.appendFileSync(process.env.DUDE_TEST_GIT_PROBE_LOG, `${JSON.stringify(process.argv.slice(2))}\\n`);",
+            "const result = spawnSync(process.env.DUDE_TEST_REAL_GIT, process.argv.slice(2), { stdio: 'inherit' });",
+            'process.exit(result.status ?? 1);',
+            '',
+          ].join('\n'),
+          { mode: 0o755 },
+        );
+        fs.writeFileSync(probeLog, '');
+        const before = snapshotMutationBoundary(fixture.localRoot);
+
+        // Act
+        const applied = applyDirectTopologyFixture(fixture, planPath, {
+          PATH: `${shimDirectory}${path.delimiter}${process.env.PATH || ''}`,
+          DUDE_TEST_REAL_GIT: realGit.stdout.trim(),
+          DUDE_TEST_GIT_PROBE_LOG: probeLog,
+        });
+
+        // Assert
+        const output = `${applied.stdout}${applied.stderr}`;
+        assert.equal(applied.status, 40, output);
+        assert.match(
+          output,
+          /destination root \.github\/skills\/dude-temporary-output is git-ignored and holds no tracked file/,
+        );
+        assert.equal(fs.existsSync(path.join(fixture.localRoot, destinationRoot)), false);
+        assert.deepEqual(snapshotMutationBoundary(fixture.localRoot), before);
+
+        const probes = fs.readFileSync(probeLog, 'utf8')
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => JSON.parse(line));
+        assert.ok(
+          probes.some((args) => JSON.stringify(args) === JSON.stringify([
+            'check-ignore', '--quiet', '--', destinationRoot,
+          ])),
+          'the bare destination root was not probed',
+        );
+        assert.ok(
+          probes.some((args) => JSON.stringify(args) === JSON.stringify([
+            'check-ignore', '--quiet', '--', `${destinationRoot}/`,
+          ])),
+          'the trailing-slash destination root was not probed',
+        );
+      } finally {
+        fs.rmSync(fixture.base, { recursive: true, force: true });
+      }
+    });

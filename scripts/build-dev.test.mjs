@@ -10,36 +10,30 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDev } from './build-dev.mjs';
-import { listCoreSourceFiles } from './build-release.mjs';
+import { listCoreOutputs, listCoreSourceFiles } from './build-release.mjs';
 import {
   enumerateCorePaths,
   isCorePath,
   isLocalPath,
   isPackPath,
 } from '../src/skills/dude-engine/lib/ownership.mjs';
+import { loadAgentModelConfig } from '../src/skills/dude-engine/lib/agent-model-map.mjs';
+import {
+  copilotAgentPath,
+  parseAgentSource,
+  renderCopilotAgent,
+} from '../src/skills/dude-engine/lib/agent-projection.mjs';
 
 /** @param {string} root @param {string} rel @param {string | Uint8Array} content */
 function w(root, rel, content) {
-  const p = path.join(root, rel);
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, content);
+  const absolute = path.join(root, ...rel.split('/'));
+  fs.mkdirSync(path.dirname(absolute), { recursive: true });
+  fs.writeFileSync(absolute, content);
 }
+
 /** @param {string} root @param {string} rel */
 function has(root, rel) {
-  return fs.existsSync(path.join(root, rel));
-}
-
-/** @typedef {{ path: string, type: 'directory' } | { path: string, type: 'symlink', target: string } | { path: string, type: 'file', mode: string, content: Buffer }} TreeRow */
-
-/** @param {fs.Stats} stat @returns {string} */
-function normalizedFileMode(stat) {
-  if (process.platform === 'win32') return 'regular';
-  return (stat.mode & 0o111) === 0 ? '100644' : '100755';
-}
-
-/** @param {string} root @param {string} rel @param {number} mode */
-function setFixtureMode(root, rel, mode) {
-  if (process.platform !== 'win32') fs.chmodSync(path.join(root, rel), mode);
+  return fs.existsSync(path.join(root, ...rel.split('/')));
 }
 
 /** @param {string | Uint8Array} content @returns {string} */
@@ -57,596 +51,379 @@ function assertExactBytes(actual, expected, label) {
   );
 }
 
-/** @param {TreeRow[]} actual @param {TreeRow[]} expected @param {string} label */
-function assertExactTree(actual, expected, label) {
-  assert.equal(
-    actual.length,
-    expected.length,
-    `${label} path count differs (actual=${actual.length}, expected=${expected.length})`,
-  );
-  for (let index = 0; index < expected.length; index += 1) {
-    const actualRow = actual[index];
-    const expectedRow = expected[index];
-    assert.equal(
-      actualRow.path,
-      expectedRow.path,
-      `${label} path differs at index ${index} (actual=${actualRow.path}, expected=${expectedRow.path})`,
-    );
-    assert.equal(
-      actualRow.type,
-      expectedRow.type,
-      `${label} path type differs: ${expectedRow.path} (actual=${actualRow.type}, expected=${expectedRow.type})`,
-    );
-    if (expectedRow.type === 'directory') continue;
-    if (expectedRow.type === 'symlink') {
-      if (actualRow.type !== 'symlink') assert.fail(`${label} is not a symlink: ${expectedRow.path}`);
-      if (actualRow.target !== expectedRow.target) {
-        const actualTarget = Buffer.from(actualRow.target);
-        const expectedTarget = Buffer.from(expectedRow.target);
-        assert.fail(
-          `${label} symlink target differs: ${expectedRow.path} (`
-          + `actual: length=${actualTarget.length}, sha256=${sha256(actualTarget)}; `
-          + `expected: length=${expectedTarget.length}, sha256=${sha256(expectedTarget)})`,
-        );
-      }
-      continue;
-    }
-    if (actualRow.type !== 'file') assert.fail(`${label} is not a regular file: ${expectedRow.path}`);
-    assert.equal(
-      actualRow.mode,
-      expectedRow.mode,
-      `${label} file mode differs: ${expectedRow.path} (actual=${actualRow.mode}, expected=${expectedRow.mode})`,
-    );
-    assertExactBytes(actualRow.content, expectedRow.content, `${label}: ${expectedRow.path}`);
-  }
-}
-
-/** @param {string} root @returns {TreeRow[]} */
+/**
+ * Snapshot files, directories, and links without following links.
+ * @param {string} root
+ * @returns {Array<{ path: string, type: string, bytes?: Buffer, target?: string }>}
+ */
 function snapshotTree(root) {
-  /** @type {TreeRow[]} */
+  /** @type {Array<{ path: string, type: string, bytes?: Buffer, target?: string }>} */
   const rows = [];
-  /** @param {string} dir @param {string} base */
-  const scan = (dir, base) => {
-    const entries = fs.readdirSync(dir, { withFileTypes: true })
-      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    for (const entry of entries) {
-      const abs = path.join(dir, entry.name);
-      const rel = base ? `${base}/${entry.name}` : entry.name;
-      const stat = fs.lstatSync(abs);
+  /** @param {string} directory @param {string} prefix */
+  const scan = (directory, prefix) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name))) {
+      const absolute = path.join(directory, entry.name);
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const stat = fs.lstatSync(absolute);
       if (stat.isSymbolicLink()) {
-        rows.push({ path: rel, type: 'symlink', target: fs.readlinkSync(abs) });
-        continue;
+        rows.push({ path: relative, type: 'symlink', target: fs.readlinkSync(absolute) });
+      } else if (stat.isDirectory()) {
+        rows.push({ path: relative, type: 'directory' });
+        scan(absolute, relative);
+      } else {
+        assert.equal(stat.isFile(), true, `unsupported fixture path type: ${relative}`);
+        rows.push({ path: relative, type: 'file', bytes: fs.readFileSync(absolute) });
       }
-      if (stat.isDirectory()) {
-        rows.push({ path: rel, type: 'directory' });
-        scan(abs, rel);
-        continue;
-      }
-      assert.equal(stat.isFile(), true, `unsupported fixture path type: ${rel}`);
-      rows.push({
-        path: rel,
-        type: 'file',
-        mode: normalizedFileMode(stat),
-        content: fs.readFileSync(abs),
-      });
     }
   };
   if (fs.existsSync(root)) scan(root, '');
   return rows;
 }
 
-/** @param {TreeRow[]} rows @returns {TreeRow[]} */
-function protectedSnapshot(rows) {
-  return rows.filter(({ path: rel }) => (
-    isPackPath(rel)
-    || isLocalPath(rel)
-    || rel === '.github/skills/project'
-    || rel.startsWith('.github/skills/project/')
-    || rel === '.github/workflows'
-    || rel.startsWith('.github/workflows/')
-    || rel === '.dude'
-    || rel.startsWith('.dude/')
-  ));
-}
-
-/**
- * @param {{ abs: string, deployRel: string }[]} sourceFiles
- * @returns {TreeRow[]}
- */
-function expectedCoreSnapshot(sourceFiles) {
-  /** @type {Map<string, TreeRow>} */
-  const rows = new Map();
-  for (const { abs, deployRel } of sourceFiles) {
-    let parent = path.posix.dirname(deployRel);
-    while (parent.startsWith('.github/') && parent !== '.github') {
-      if (isCorePath(parent)) rows.set(parent, { path: parent, type: 'directory' });
-      parent = path.posix.dirname(parent);
-    }
-    const stat = fs.lstatSync(abs);
-    rows.set(deployRel, {
-      path: deployRel,
-      type: 'file',
-      mode: normalizedFileMode(stat),
-      content: fs.readFileSync(abs),
-    });
-  }
-  return [...rows.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+/** @param {string} root @param {string} stem */
+function assertCopilotProjection(root, stem) {
+  const configPath = path.join(root, 'src', 'config', 'agent-models.json');
+  const config = loadAgentModelConfig(configPath);
+  const source = fs.readFileSync(path.join(root, 'src', 'agents', `${stem}.agent.md`));
+  const expected = renderCopilotAgent(parseAgentSource(source, { stem, config }), config);
+  const relPath = copilotAgentPath(stem);
+  assertExactBytes(fs.readFileSync(path.join(root, ...relPath.split('/'))), expected, relPath);
 }
 
 const MANIFEST = '# Bundle Manifest\n\n```json\n{"source_repo":"https://example.invalid/dude","source_ref":"main","installed_ref":"main"}\n```\n';
+const MODEL_CONFIG = Buffer.from([
+  '{',
+  '  "provenance": "Fixture model mapping observed on 2026-08-10.",',
+  '  "classes": {',
+  '    "inherit": {},',
+  '    "balanced": { "effort": "medium" },',
+  '    "reasoning": { "effort": "high" }',
+  '  },',
+  '  "targets": {',
+  '    "copilot": {',
+  '      "emits": ["model"],',
+  '      "models": {',
+  '        "inherit": null,',
+  '        "balanced": "fixture-balanced",',
+  '        "reasoning": "fixture-reasoning"',
+  '      }',
+  '    }',
+  '  }',
+  '}',
+  '',
+].join('\r\n'));
+
+/**
+ * Minimal well-formed agent source. Every fixture has valid parser input so a
+ * failure identifies the build boundary rather than an unrelated fixture gap.
+ * @param {{ stem: string, name: string, modelClass?: string, tools?: string, extra?: string, body?: string }} options
+ * @returns {string}
+ */
+function agentSource({ stem, name, modelClass = 'balanced', tools = '["read", "search"]', extra = '', body }) {
+  return '---\n'
+    + `name: "${name}"\n`
+    + `description: "Fixture agent ${stem}."\n`
+    + `tools: ${tools}\n`
+    + 'user-invocable: false\n'
+    + `model-class: ${modelClass}\n`
+    + `${extra}---\n`
+    + (body ?? `\nFixture body for ${stem}.\n`);
+}
+
+/** @param {string} root @param {Buffer} [bytes] */
+function writeCanonicalConfig(root, bytes = MODEL_CONFIG) {
+  w(root, 'src/config/agent-models.json', bytes);
+}
+
+/** @param {string} root */
+function writeBuildMetadata(root) {
+  w(root, '.dude/metadata/bundle-manifest.md', MANIFEST);
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
 
-test('buildDev syncs core from src, strips tests, and preserves project, pack, and .dude data', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-'));
+test('buildDev renders Copilot profiles, packages exact config bytes, and preserves foreign tiers', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-single-tree-'));
   try {
-    w(root, 'src/agents/dude.agent.md', 'A');
-    w(root, 'src/agents/dude-lead.agent.md', 'B');
+    writeCanonicalConfig(root);
+    writeBuildMetadata(root);
+    w(root, 'src/agents/dude.agent.md', agentSource({
+      stem: 'dude',
+      name: 'Dude',
+      modelClass: 'inherit',
+      extra: 'agents: ["*"]\n',
+    }));
+    w(root, 'src/agents/dude-lead.agent.md', agentSource({ stem: 'dude-lead', name: 'Lead' }));
     w(root, 'src/instructions/dude.instructions.md', 'I');
     w(root, 'src/skills/dude-lint/lint.mjs', 'L');
-    w(root, 'src/skills/dude-lint/lint.test.mjs', 'T'); // excluded from the dev bundle
-    // pre-existing .github: stale core + dev-owned + pack
-    w(root, '.github/skills/dude-stale/SKILL.md', 'STALE'); // stale core -> removed
-    w(root, '.github/skills/dude-lint/old.mjs', 'OLD'); // stale core file -> gone (dir cleaned)
-    w(root, '.github/skills/project/SKILL.md', 'P'); // preserved
-    w(root, '.dude/metadata/bundle-manifest.md', MANIFEST); // preserved
-    w(root, '.dude/memory/context.md', 'C'); // preserved
-    w(root, '.github/agents/dude-pack-authoring-agent-smith.agent.md', 'PACK'); // preserved
+    w(root, 'src/skills/dude-lint/lint.test.mjs', 'T');
+    w(root, '.github/agents/dude-obsolete.agent.md', 'stale core profile\n');
+    w(root, '.github/skills/dude-stale/SKILL.md', 'stale core skill\n');
+    w(root, '.github/skills/dude-lint/old.mjs', 'stale core file\n');
 
-    const r = buildDev({ repoRoot: root });
+    const protectedBytes = new Map([
+      ['.github/agents/dude-pack-fixture.agent.md', Buffer.from('pack profile\n')],
+      ['.github/agents/dude-local-fixture.agent.md', Buffer.from('local profile\n')],
+      ['.github/agents/project-fixture.agent.md', Buffer.from('project profile\n')],
+      ['.github/skills/project/SKILL.md', Buffer.from('project skill\n')],
+      ['.github/workflows/ci.yml', Buffer.from('name: fixture\n')],
+      ['.dude/memory/context.md', Buffer.from('project memory\n')],
+      ['.claude/agents/dude-obsolete.md', Buffer.from('unmanaged retired target\n')],
+      ['.github/agents-sdk/dude-obsolete.agent.json', Buffer.from('{"unmanaged":true}\n')],
+    ]);
+    for (const [rel, bytes] of protectedBytes) w(root, rel, bytes);
 
-    // core synced
-    assert.ok(has(root, '.github/agents/dude.agent.md'));
-    assert.ok(has(root, '.github/agents/dude-lead.agent.md'));
-    assert.ok(has(root, '.github/instructions/dude.instructions.md'));
-    assert.ok(has(root, '.github/skills/dude-lint/lint.mjs'));
-    // tests excluded
-    assert.ok(!has(root, '.github/skills/dude-lint/lint.test.mjs'));
-    // stale core removed
-    assert.ok(!has(root, '.github/skills/dude-stale/SKILL.md'));
-    assert.ok(!has(root, '.github/skills/dude-lint/old.mjs'));
-    // dev-owned + pack preserved
-    assert.ok(has(root, '.github/skills/project/SKILL.md'));
-    assert.ok(has(root, '.dude/metadata/bundle-manifest.md'));
-    assert.ok(has(root, '.dude/memory/context.md'));
-    assert.ok(has(root, '.github/agents/dude-pack-authoring-agent-smith.agent.md'));
+    const result = buildDev({ repoRoot: root });
 
-    assert.ok(r.written.includes('.github/skills/dude-lint/lint.mjs'));
-    assert.ok(r.removed.includes('.github/skills/dude-stale'));
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('buildDev preserves every canonical project-owned byte while syncing core only', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-canonical-'));
-  try {
-    w(root, 'src/agents/dude.agent.md', '# Synced agent\n');
-    w(root, 'src/instructions/dude.instructions.md', '# Synced instructions\n');
-    w(root, 'src/skills/dude-lint/lint.mjs', 'export const synced = true;\n');
-    w(root, 'src/skills/dude-lint/lint.test.mjs', 'throw new Error("must not deploy");\n');
-
-    const projectFiles = {
-      '.dude/ideas/x.md': '---\r\nstatus: draft\r\nspec_path: ""\r\n---\r\n\r\n## Idea\r\nPreserve this idea exactly.\r\n',
-      '.dude/specs/x/spec.md': '# Spec\n\nProject-owned spec bytes.\n',
-      '.dude/specs/x/tasks.md': '<!-- audit log: .dude/ideas/x.md#coordinator-log -->\n\n# Tasks\n',
-      '.dude/memory/decisions.md': '# Decisions\n\nKeep.\n',
-      '.dude/memory/context.md': '# Context\r\n\r\nKeep CRLF too.\r\n',
-      '.dude/state/task-state.json': '{"features":{"x":{"T001@fixture":"~"}}}',
-      '.dude/metadata/bundle-manifest.md': MANIFEST,
-      '.dude/metadata/profile.md': '# Install Profile\n\n```json\n{"enabled_packs":[],"installed":{}}\n```\n',
-      '.github/skills/project/SKILL.md': '---\nname: project\n---\n\n# Local knowledge\n',
-    };
-    for (const [rel, content] of Object.entries(projectFiles)) w(root, rel, content);
-    const before = new Map(
-      Object.keys(projectFiles).map((rel) => [rel, fs.readFileSync(path.join(root, rel))]),
-    );
-
-    buildDev({ repoRoot: root });
-
-    for (const [rel, expected] of before) {
-      assertExactBytes(fs.readFileSync(path.join(root, rel)), expected, rel);
-    }
+    for (const stem of ['dude', 'dude-lead']) assertCopilotProjection(root, stem);
     assertExactBytes(
-      fs.readFileSync(path.join(root, '.github/agents/dude.agent.md')),
-      fs.readFileSync(path.join(root, 'src/agents/dude.agent.md')),
-      '.github/agents/dude.agent.md',
+      fs.readFileSync(path.join(root, '.github/skills/dude-engine/config/agent-models.json')),
+      MODEL_CONFIG,
+      'packaged model config',
     );
-    assertExactBytes(
-      fs.readFileSync(path.join(root, '.github/skills/dude-lint/lint.mjs')),
-      fs.readFileSync(path.join(root, 'src/skills/dude-lint/lint.mjs')),
-      '.github/skills/dude-lint/lint.mjs',
-    );
+    assert.equal(has(root, '.github/config/agent-models.json'), false);
     assert.equal(has(root, '.github/skills/dude-lint/lint.test.mjs'), false);
-    assert.equal(has(root, '.dude/brief'), false);
+    assert.equal(has(root, '.github/agents/dude-obsolete.agent.md'), false);
+    assert.equal(has(root, '.github/skills/dude-stale/SKILL.md'), false);
+    assert.equal(has(root, '.github/skills/dude-lint/old.mjs'), false);
+    assert.ok(result.written.includes('.github/skills/dude-engine/config/agent-models.json'));
+    assert.ok(result.written.includes('.github/agents/dude.agent.md'));
+    assert.ok(!result.written.some((rel) => (
+      rel.startsWith('.claude/')
+      || rel.startsWith('.github/agents-sdk/')
+      || rel.startsWith('.github/config/')
+    )));
+
+    for (const [rel, bytes] of protectedBytes) {
+      assertExactBytes(fs.readFileSync(path.join(root, ...rel.split('/'))), bytes, rel);
+    }
+    assert.equal(isPackPath('.github/agents/dude-pack-fixture.agent.md'), true);
+    assert.equal(isLocalPath('.github/agents/dude-local-fixture.agent.md'), true);
+    assert.equal(isCorePath('.github/agents/project-fixture.agent.md'), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('checked-in dev core is a byte-identical non-mutating projection of authoritative source', () => {
-  const sourceFiles = listCoreSourceFiles(repoRoot);
-  const expectedPaths = sourceFiles.map(({ deployRel }) => deployRel).sort();
-  const expectedSet = new Set(expectedPaths);
-  const generatedPaths = enumerateCorePaths(repoRoot);
-
-  assert.ok(sourceFiles.length > 20, `expected authoritative core files, got ${sourceFiles.length}`);
-  assert.deepEqual(
-    expectedPaths.filter((rel) => /\.test\./.test(rel)),
-    [],
-    'source test files must not have deploy destinations',
-  );
-  for (const { abs, deployRel } of sourceFiles) {
-    assert.equal(fs.existsSync(path.join(repoRoot, deployRel)), true, `missing generated core file: ${deployRel}`);
-    assertExactBytes(
-      fs.readFileSync(path.join(repoRoot, deployRel)),
-      fs.readFileSync(abs),
-      deployRel,
-    );
-  }
-  assert.deepEqual(
-    generatedPaths.filter((rel) => !expectedSet.has(rel)),
-    [],
-    'unexpected generated base-owned files remain',
-  );
-  assert.deepEqual(generatedPaths, expectedPaths, 'generated base-owned inventory differs from source');
-});
-
-test('recovery runtime is an explicit byte-identical dev projection while its test stays source-only', () => {
-  const sourceRel = 'src/skills/dude-work/recovery.mjs';
-  const generatedRel = '.github/skills/dude-work/recovery.mjs';
-  const sourceTestRel = 'src/skills/dude-work/recovery.test.mjs';
-  const generatedTestRel = '.github/skills/dude-work/recovery.test.mjs';
-  const sourceFiles = listCoreSourceFiles(repoRoot);
-
-  assert.equal(fs.statSync(path.join(repoRoot, sourceRel)).isFile(), true, sourceRel);
-  assert.equal(fs.statSync(path.join(repoRoot, sourceTestRel)).isFile(), true, sourceTestRel);
-  assert.equal(
-    sourceFiles.some(({ abs, deployRel }) => (
-      abs === path.join(repoRoot, sourceRel) && deployRel === generatedRel
-    )),
-    true,
-    'recovery runtime has the canonical development destination',
-  );
-  assert.equal(
-    sourceFiles.some(({ abs }) => abs === path.join(repoRoot, sourceTestRel)),
-    false,
-    'recovery.test.mjs is excluded from development source projection',
-  );
-  assert.equal(fs.existsSync(path.join(repoRoot, generatedRel)), true, generatedRel);
-  assertExactBytes(
-    fs.readFileSync(path.join(repoRoot, generatedRel)),
-    fs.readFileSync(path.join(repoRoot, sourceRel)),
-    generatedRel,
-  );
-  assert.equal(fs.existsSync(path.join(repoRoot, generatedTestRel)), false, generatedTestRel);
-});
-
-test('final feature hygiene files have terminal newlines and normalized source pairs stay identical', () => {
-  const sourceGeneratedPairs = [
-    [
-      'src/skills/dude-engine/lib/workspace-paths.mjs',
-      '.github/skills/dude-engine/lib/workspace-paths.mjs',
-    ],
-    [
-      'src/skills/dude-engine/lib/feature-identity.mjs',
-      '.github/skills/dude-engine/lib/feature-identity.mjs',
-    ],
-    [
-      'src/skills/dude-work/recovery.mjs',
-      '.github/skills/dude-work/recovery.mjs',
-    ],
-  ];
-  const finalFeatureHygieneFiles = [
-    ...(fs.existsSync(path.join(repoRoot, '.dude/memory/decisions.md'))
-      ? ['.dude/memory/decisions.md']
-      : []),
-    'scripts/current-format-contract.test.mjs',
-    ...sourceGeneratedPairs.flat(),
-    'library/packs/design/skills/dude-pack-design-workflow/design-workflow.test.mjs',
-    'src/skills/dude-engine/lib/feature-identity.test.mjs',
-    'src/skills/dude-engine/lib/workspace-paths.test.mjs',
-    'src/skills/dude-lint/lint.test.mjs',
-    'src/skills/dude-work/recovery.test.mjs',
-  ];
-  const normalizeTerminalNewline = (content) => {
-    let bodyEnd = content.length;
-    if (content.at(-1) === 0x0a) {
-      bodyEnd -= 1;
-      if (content.at(bodyEnd - 1) === 0x0d) bodyEnd -= 1;
-    } else if (content.at(-1) === 0x0d) {
-      bodyEnd -= 1;
-    }
-    return Buffer.concat([content.subarray(0, bodyEnd), Buffer.from('\n')]);
-  };
-
-  for (const [sourceRel, generatedRel] of sourceGeneratedPairs) {
-    assert.equal(fs.existsSync(path.join(repoRoot, sourceRel)), true, `missing source file: ${sourceRel}`);
-    assert.equal(fs.existsSync(path.join(repoRoot, generatedRel)), true, `missing generated file: ${generatedRel}`);
-    assertExactBytes(
-      normalizeTerminalNewline(fs.readFileSync(path.join(repoRoot, sourceRel))),
-      normalizeTerminalNewline(fs.readFileSync(path.join(repoRoot, generatedRel))),
-      `${sourceRel} and ${generatedRel} differ after terminal-newline normalization`,
-    );
-  }
-
-  const missingTerminalNewline = finalFeatureHygieneFiles.filter((rel) => {
-    const content = fs.readFileSync(path.join(repoRoot, rel));
-    return content.length === 0 || content.at(-1) !== 0x0a;
-  });
-  assert.deepEqual(
-    missingTerminalNewline,
-    [],
-    `files missing terminal newline:\n${missingTerminalNewline.join('\n')}`,
-  );
-});
-
-test('exact byte parity assertions report bounded mismatch diagnostics', () => {
-  const expected = Buffer.alloc(512 * 1024, 0x41);
-  const actual = Buffer.from(expected);
-  actual[actual.length - 1] = 0x42;
-
-  assert.throws(
-    () => assertExactBytes(actual, expected, '.github/skills/dude-engine/lib/large.bin'),
-    (error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      assert.match(message, /\.github\/skills\/dude-engine\/lib\/large\.bin bytes differ/);
-      assert.match(message, /actual: length=524288, sha256=[0-9a-f]{64}/);
-      assert.match(message, /expected: length=524288, sha256=[0-9a-f]{64}/);
-      assert.equal(message.length < 512, true, `diagnostic is not bounded: ${message.length} bytes`);
-      assert.equal(message.includes('AAAAAAAA'), false, 'diagnostic embeds file payload');
-      return true;
-    },
-  );
-});
-
-test('buildDev preserves protected trees and materializes one exact idempotent core projection', () => {
+test('buildDev materializes the complete current core only in a disposable workspace', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-complete-'));
   try {
-    // Arrange
-    const sourceFixtures = [
-      ['src/agents/dude.agent.md', Buffer.from('# Agent\r\n', 'utf8'), 0o644],
-      ['src/agents/dude-reviewer.agent.md', Buffer.from('# Reviewer\n', 'utf8'), 0o644],
-      ['src/instructions/dude.instructions.md', Buffer.from('# Instructions\n', 'utf8'), 0o644],
-      ['src/skills/dude-engine/SKILL.md', Buffer.from('# Engine\n', 'utf8'), 0o644],
-      ['src/skills/dude-engine/lib/data.bin', Buffer.from([0x00, 0xff, 0x0d, 0x0a]), 0o644],
-      ['src/skills/dude-engine/lib/runtime.mjs', Buffer.from('#!/usr/bin/env node\nexport const ready = true;\n', 'utf8'), 0o755],
-      ['src/skills/dude-engine/lib/runtime.test.mjs', Buffer.from('throw new Error("source only");\n', 'utf8'), 0o755],
-      ['src/skills/dude-work/recovery.test.mjs', Buffer.from('throw new Error("source only too");\n', 'utf8'), 0o644],
-    ];
-    for (const [rel, content, mode] of sourceFixtures) {
-      w(root, String(rel), /** @type {Uint8Array} */ (content));
-      setFixtureMode(root, String(rel), Number(mode));
-    }
+    fs.cpSync(path.join(repoRoot, 'src'), path.join(root, 'src'), { recursive: true });
+    w(
+      root,
+      '.dude/metadata/bundle-manifest.md',
+      fs.readFileSync(path.join(repoRoot, '.dude/metadata/bundle-manifest.md')),
+    );
 
-    const protectedFixtures = [
-      ['.github/agents/dude-pack-coding-tester.agent.md', Buffer.from('# Pack agent\n', 'utf8'), 0o644],
-      ['.github/skills/dude-pack-coding-fixtures/SKILL.md', Buffer.from('# Pack skill\r\n', 'utf8'), 0o644],
-      ['.github/skills/dude-pack-coding-fixtures/bin/check.mjs', Buffer.from('#!/usr/bin/env node\n', 'utf8'), 0o755],
-      ['.github/skills/dude-pack-coding-fixtures/data/nested/raw.bin', Buffer.from([0x00, 0x80, 0xff, 0x0a]), 0o644],
-      ['.github/instructions/dude-pack-coding-tests.instructions.md', Buffer.from('# Pack instructions\n', 'utf8'), 0o644],
-      ['.github/prompts/dude-pack-coding-run.prompt.md', Buffer.from('# Pack prompt\r\n', 'utf8'), 0o644],
-      ['.github/skills/project/SKILL.md', Buffer.from('# Project skill\n', 'utf8'), 0o644],
-      ['.github/skills/project/references/nested/context.bin', Buffer.from([0x01, 0x02, 0xfe]), 0o644],
-      ['.github/skills/dude-local-preservation-fixture/SKILL.md', Buffer.from('# Local preservation fixture\n', 'utf8'), 0o644],
-      ['.github/skills/dude-local-preservation-fixture/references/nested/data.bin', Buffer.from([0x00, 0x7f, 0xff]), 0o644],
-      ['.github/workflows/ci.yml', Buffer.from('name: fixture\n', 'utf8'), 0o644],
-      ['.github/workflows/reusable/nested/check.yml', Buffer.from('on: workflow_call\r\n', 'utf8'), 0o644],
-      ['.dude/metadata/bundle-manifest.md', Buffer.from(MANIFEST, 'utf8'), 0o644],
-      ['.dude/metadata/history/install.json', Buffer.from('{"installed":true}\n', 'utf8'), 0o644],
-      ['.dude/memory/context.md', Buffer.from('# Context\r\n', 'utf8'), 0o644],
-      ['.dude/memory/archive/nested/lesson.bin', Buffer.from([0x00, 0x0d, 0xff]), 0o644],
-      ['.dude/ideas/archive/fixture.md', Buffer.from('# Idea\n', 'utf8'), 0o644],
-      ['.dude/specs/008-fixture/contracts/nested/schema.json', Buffer.from('{"type":"object"}\n', 'utf8'), 0o644],
-      ['.dude/state/runs/nested/current.json', Buffer.from('{"state":"open"}\n', 'utf8'), 0o644],
-    ];
-    for (const [rel, content, mode] of protectedFixtures) {
-      w(root, String(rel), /** @type {Uint8Array} */ (content));
-      setFixtureMode(root, String(rel), Number(mode));
-    }
-    const protectedSymlink = process.platform === 'win32'
-      ? null
-      : {
-          path: '.github/skills/dude-local-preservation-fixture/references/current',
-          target: '../SKILL.md',
-        };
-    if (protectedSymlink) {
-      fs.symlinkSync(protectedSymlink.target, path.join(root, protectedSymlink.path));
-    }
-    for (const rel of [
-      '.github/skills/dude-pack-coding-fixtures/data/empty',
-      '.github/skills/project/references/empty',
-      '.github/skills/dude-local-preservation-fixture/references/empty',
-      '.github/workflows/archive/empty',
-      '.dude/state/runs/empty',
-    ]) {
-      fs.mkdirSync(path.join(root, rel), { recursive: true });
-    }
+    const result = buildDev({ repoRoot: root });
+    const outputs = listCoreOutputs(root);
+    const expectedPaths = outputs.map(({ relPath }) => relPath);
 
-    w(root, '.github/agents/dude.agent.md', 'stale agent bytes\n');
-    w(root, '.github/agents/dude-obsolete.agent.md', 'remove stale agent\n');
-    w(root, '.github/instructions/dude.instructions.md', 'stale instruction bytes\n');
-    w(root, '.github/skills/dude-engine/old/deleted.mjs', 'remove stale nested file\n');
-    w(root, '.github/skills/dude-obsolete/nested/stale.mjs', 'remove stale skill\n');
-
-    const expectedDestinations = [
-      '.github/agents/dude-reviewer.agent.md',
-      '.github/agents/dude.agent.md',
-      '.github/instructions/dude.instructions.md',
-      '.github/skills/dude-engine/SKILL.md',
-      '.github/skills/dude-engine/lib/data.bin',
-      '.github/skills/dude-engine/lib/runtime.mjs',
-    ].sort();
-    const sourceTestPaths = [
-      'src/skills/dude-engine/lib/runtime.test.mjs',
-      'src/skills/dude-work/recovery.test.mjs',
-    ];
-    const sourceTestDestinations = sourceTestPaths.map((rel) => rel.replace(/^src\//, '.github/'));
-    const staleDestinations = [
-      '.github/agents/dude-obsolete.agent.md',
-      '.github/skills/dude-engine/old/deleted.mjs',
-      '.github/skills/dude-obsolete/nested/stale.mjs',
-    ];
-    const projectableSources = listCoreSourceFiles(root);
-    const protectedBefore = protectedSnapshot(snapshotTree(root));
-
-    assert.deepEqual(projectableSources.map(({ deployRel }) => deployRel).sort(), expectedDestinations);
+    assert.ok(outputs.length > 20, `expected authoritative core outputs, got ${outputs.length}`);
+    assert.deepEqual(result.written, expectedPaths);
     assert.deepEqual(
-      projectableSources.filter(({ abs }) => sourceTestPaths.some((rel) => abs === path.join(root, rel))),
+      expectedPaths.filter((rel) => (
+        rel.startsWith('.claude/')
+        || rel.startsWith('.github/agents-sdk/')
+        || rel.startsWith('.github/config/')
+      )),
       [],
     );
-    assert.equal(
-      protectedBefore.some((row) => row.path === '.github/skills/dude-local-preservation-fixture/SKILL.md'),
-      true,
-      'project-local preservation fixture is absent from the protected snapshot',
-    );
-    if (protectedSymlink) {
-      const symlinkRow = protectedBefore.find((row) => row.path === protectedSymlink.path);
-      assert.equal(symlinkRow?.type, 'symlink', `${protectedSymlink.path} is not snapshotted as a symlink`);
-      if (symlinkRow?.type === 'symlink') assert.equal(symlinkRow.target, protectedSymlink.target);
+    for (const retiredRoot of ['.claude', '.github/agents-sdk', '.github/config']) {
+      assert.equal(has(root, retiredRoot), false, `${retiredRoot} was created`);
     }
-    assert.equal(
-      protectedBefore.find((row) => row.path === '.github/skills/dude-pack-coding-fixtures/bin/check.mjs')?.type === 'file'
-        ? protectedBefore.find((row) => row.path === '.github/skills/dude-pack-coding-fixtures/bin/check.mjs')?.mode
-        : undefined,
-      process.platform === 'win32' ? 'regular' : '100755',
-    );
-    assert.equal(
-      protectedBefore.find((row) => row.path === '.github/skills/dude-pack-coding-fixtures/data/nested/raw.bin')?.type === 'file'
-        ? protectedBefore.find((row) => row.path === '.github/skills/dude-pack-coding-fixtures/data/nested/raw.bin')?.mode
-        : undefined,
-      process.platform === 'win32' ? 'regular' : '100644',
-    );
-    assert.equal(
-      protectedBefore.find((row) => row.path === '.dude/state/runs/empty')?.type,
-      'directory',
-    );
-
-    // Act
-    const firstResult = buildDev({ repoRoot: root });
-    const firstTree = snapshotTree(root);
-    const protectedAfterFirst = protectedSnapshot(firstTree);
-    const firstCoreSnapshot = firstTree.filter(({ path: rel }) => isCorePath(rel));
-    const secondResult = buildDev({ repoRoot: root });
-    const secondTree = snapshotTree(root);
-
-    // Assert
-    assert.deepEqual(firstResult.written, expectedDestinations);
-    assert.ok(firstResult.removed.includes('.github/agents/dude-obsolete.agent.md'));
-    assert.ok(firstResult.removed.includes('.github/skills/dude-obsolete'));
-    assertExactTree(protectedAfterFirst, protectedBefore, 'protected tree after first materialization');
-    assertExactTree(protectedSnapshot(secondTree), protectedBefore, 'protected tree after second materialization');
-
-    for (const { abs, deployRel } of projectableSources) {
-      const destination = path.join(root, deployRel);
-      assert.equal(fs.lstatSync(destination).isFile(), true, `${deployRel} is not a regular file`);
-      assertExactBytes(fs.readFileSync(destination), fs.readFileSync(abs), deployRel);
-      assert.equal(
-        normalizedFileMode(fs.lstatSync(destination)),
-        normalizedFileMode(fs.lstatSync(abs)),
-        `${deployRel} mode differs`,
+    for (const output of outputs) {
+      const expected = output.abs ? fs.readFileSync(output.abs) : /** @type {Buffer} */ (output.bytes);
+      assertExactBytes(
+        fs.readFileSync(path.join(root, ...output.relPath.split('/'))),
+        expected,
+        output.relPath,
       );
     }
-    for (const rel of sourceTestDestinations) assert.equal(has(root, rel), false, `${rel} was generated`);
-    for (const rel of staleDestinations) assert.equal(has(root, rel), false, `${rel} was not removed`);
-
-    assertExactTree(firstCoreSnapshot, expectedCoreSnapshot(projectableSources), 'generated core projection');
-    assert.deepEqual(enumerateCorePaths(root), expectedDestinations);
-    assert.deepEqual(secondResult.written, expectedDestinations);
-    assertExactTree(secondTree, firstTree, 'complete tree after second materialization');
+    for (const { deployRel } of listCoreSourceFiles(root)) {
+      const stem = /^\.github\/agents\/([^/]+)\.agent\.md$/.exec(deployRel)?.[1];
+      if (stem) assertCopilotProjection(root, stem);
+    }
+    assert.deepEqual(enumerateCorePaths(root), expectedPaths);
+    assertExactBytes(
+      fs.readFileSync(path.join(root, '.github/skills/dude-engine/config/agent-models.json')),
+      fs.readFileSync(path.join(root, 'src/config/agent-models.json')),
+      'complete fixture packaged config',
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('buildDev rejects symlinked mutation destinations before changing any files', async (context) => {
+test('buildDev rejects malformed canonical config before cleanup and leaves prior output byte-identical', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-invalid-config-'));
+  try {
+    writeCanonicalConfig(root);
+    writeBuildMetadata(root);
+    w(root, 'src/agents/dude.agent.md', agentSource({ stem: 'dude', name: 'Dude', modelClass: 'inherit' }));
+    w(root, 'src/skills/dude-lint/lint.mjs', 'export const lint = true;\n');
+    buildDev({ repoRoot: root });
+    w(root, '.github/agents/dude-stale.agent.md', 'must survive invalid config\n');
+    const before = snapshotTree(path.join(root, '.github'));
+
+    writeCanonicalConfig(root, Buffer.from('{ malformed JSON\n'));
+    assert.throws(
+      () => buildDev({ repoRoot: root }),
+      (error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        assert.match(message, /agent model configuration .*malformed JSON/i);
+        assert.ok(
+          message.includes(path.join(root, 'src', 'config', 'agent-models.json')),
+          'the planner must give the loader the absolute canonical config path',
+        );
+        return true;
+      },
+    );
+
+    assert.deepEqual(snapshotTree(path.join(root, '.github')), before);
+    assert.equal(
+      fs.readFileSync(path.join(root, '.github/agents/dude-stale.agent.md'), 'utf8'),
+      'must survive invalid config\n',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('buildDev validates the complete core agent set before cleanup', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-agent-set-'));
+  try {
+    writeCanonicalConfig(root);
+    writeBuildMetadata(root);
+    w(root, 'src/agents/dude.agent.md', agentSource({ stem: 'dude', name: 'Dude', modelClass: 'inherit' }));
+    w(root, 'src/agents/dude-twin.agent.md', agentSource({ stem: 'dude-twin', name: 'Dude' }));
+    w(root, '.github/agents/dude.agent.md', 'prior profile\n');
+    w(root, '.github/agents/dude-stale.agent.md', 'prior stale profile\n');
+    const before = snapshotTree(path.join(root, '.github'));
+
+    assert.throws(() => buildDev({ repoRoot: root }), /duplicates display name 'Dude'/);
+
+    assert.deepEqual(snapshotTree(path.join(root, '.github')), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('buildDev removes stale Copilot profiles without touching pack, local, project, or retired roots', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-stale-'));
+  try {
+    writeCanonicalConfig(root);
+    writeBuildMetadata(root);
+    w(root, 'src/agents/dude-old.agent.md', agentSource({ stem: 'dude-old', name: 'Old' }));
+    w(root, 'src/agents/dude-gone.agent.md', agentSource({ stem: 'dude-gone', name: 'Gone' }));
+    buildDev({ repoRoot: root });
+
+    const untouched = new Map([
+      ['.github/agents/dude-pack-fixture.agent.md', Buffer.from('pack\n')],
+      ['.github/agents/dude-local-fixture.agent.md', Buffer.from('local\n')],
+      ['.github/agents/project-fixture.agent.md', Buffer.from('project\n')],
+      ['.claude/agents/dude-old.md', Buffer.from('retired target\n')],
+      ['.github/agents-sdk/dude-old.agent.json', Buffer.from('retired target\n')],
+    ]);
+    for (const [rel, bytes] of untouched) w(root, rel, bytes);
+
+    fs.renameSync(
+      path.join(root, 'src/agents/dude-old.agent.md'),
+      path.join(root, 'src/agents/dude-new.agent.md'),
+    );
+    w(root, 'src/agents/dude-new.agent.md', agentSource({ stem: 'dude-new', name: 'Old' }));
+    fs.rmSync(path.join(root, 'src/agents/dude-gone.agent.md'));
+
+    const second = buildDev({ repoRoot: root });
+
+    for (const stem of ['dude-old', 'dude-gone']) {
+      const rel = copilotAgentPath(stem);
+      assert.equal(has(root, rel), false, `${rel} lingered after its source disappeared`);
+      assert.ok(second.removed.includes(rel), `${rel} was not reported as removed`);
+    }
+    assertCopilotProjection(root, 'dude-new');
+    for (const [rel, bytes] of untouched) {
+      assertExactBytes(fs.readFileSync(path.join(root, ...rel.split('/'))), bytes, rel);
+      assert.equal(second.removed.includes(rel), false, `${rel} was removed`);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('buildDev keeps every current mutation destination behind symlink preflight', async (context) => {
   if (process.platform === 'win32') return context.skip('symlink semantics differ on Windows');
 
-  const cases = [
-    {
-      name: '.github',
-      linkRel: '.github',
-      targetType: 'dir',
-      targetRel: 'linked-github',
-      outsideArtifactRel: 'linked-github/agents/dude.agent.md',
-      linkedArtifactRel: '.github/agents/dude.agent.md',
-    },
-    {
-      name: 'agents',
-      linkRel: '.github/agents',
-      targetType: 'dir',
-      targetRel: 'linked-agents',
-      outsideArtifactRel: 'linked-agents/dude.agent.md',
-      linkedArtifactRel: '.github/agents/dude.agent.md',
-      stableArtifactRel: '.github/skills/dude-stale/SKILL.md',
-    },
-    {
-      name: 'skills',
-      linkRel: '.github/skills',
-      targetType: 'dir',
-      targetRel: 'linked-skills',
-      outsideArtifactRel: 'linked-skills/dude-stale/SKILL.md',
-      linkedArtifactRel: '.github/skills/dude-stale/SKILL.md',
-      stableArtifactRel: '.github/agents/dude.agent.md',
-    },
-    {
-      name: 'instructions',
-      linkRel: '.github/instructions',
-      targetType: 'dir',
-      targetRel: 'linked-instructions',
-      outsideArtifactRel: 'linked-instructions/dude.instructions.md',
-      linkedArtifactRel: '.github/instructions/dude.instructions.md',
-      stableArtifactRel: '.github/agents/dude.agent.md',
-    },
-  ];
-
-  for (const testCase of cases) {
-    await context.test(testCase.name, () => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-'));
-      const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-outside-'));
+  for (const relPath of ['.github', '.github/agents', '.github/skills', '.github/instructions']) {
+    await context.test(relPath, () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-link-'));
+      const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-link-target-'));
       try {
-        w(root, 'src/agents/dude.agent.md', 'new agent\n');
+        writeCanonicalConfig(root);
+        writeBuildMetadata(root);
+        w(root, 'src/agents/dude.agent.md', agentSource({ stem: 'dude', name: 'Dude', modelClass: 'inherit' }));
         w(root, 'src/instructions/dude.instructions.md', 'new instructions\n');
         w(root, 'src/skills/dude-lint/lint.mjs', 'new skill\n');
-        w(root, '.dude/metadata/bundle-manifest.md', MANIFEST);
         w(outside, 'sentinel.txt', 'outside sentinel\n');
-        w(outside, testCase.outsideArtifactRel, testCase.artifactContent ?? 'outside generated artifact\n');
-        if (testCase.stableArtifactRel) {
-          w(root, testCase.stableArtifactRel, 'preexisting generated artifact\n');
-        }
-
-        const link = path.join(root, testCase.linkRel);
+        const link = path.join(root, ...relPath.split('/'));
         fs.mkdirSync(path.dirname(link), { recursive: true });
-        fs.symlinkSync(
-          path.join(outside, testCase.targetRel),
-          link,
-          /** @type {'file'|'dir'} */ (testCase.targetType),
-        );
+        fs.symlinkSync(path.join(outside, 'destination'), link, 'dir');
 
-        const before = new Map([
-          ['outside sentinel', fs.readFileSync(path.join(outside, 'sentinel.txt'))],
-          ['linked artifact', fs.readFileSync(path.join(root, testCase.linkedArtifactRel))],
-          ...(testCase.stableArtifactRel
-            ? [['stable artifact', fs.readFileSync(path.join(root, testCase.stableArtifactRel))]]
-            : []),
-        ]);
-
+        const beforeRoot = snapshotTree(root);
+        const beforeOutside = snapshotTree(outside);
         assert.throws(
           () => buildDev({ repoRoot: root }),
           /symbolic link|containment|escape|unsafe/i,
         );
-        assert.deepEqual(fs.readFileSync(path.join(outside, 'sentinel.txt')), before.get('outside sentinel'));
-        assert.deepEqual(fs.readFileSync(path.join(root, testCase.linkedArtifactRel)), before.get('linked artifact'));
-        if (testCase.stableArtifactRel) {
-          assert.deepEqual(
-            fs.readFileSync(path.join(root, testCase.stableArtifactRel)),
-            before.get('stable artifact'),
-          );
-        }
+        assert.deepEqual(snapshotTree(root), beforeRoot);
+        assert.deepEqual(snapshotTree(outside), beforeOutside);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
         fs.rmSync(outside, { recursive: true, force: true });
       }
     });
+  }
+});
+
+test('buildDev produces byte-stable outputs on repeated valid runs', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-determinism-'));
+  try {
+    writeCanonicalConfig(root);
+    writeBuildMetadata(root);
+    w(root, 'src/agents/dude.agent.md', agentSource({
+      stem: 'dude',
+      name: 'Dude',
+      modelClass: 'inherit',
+      extra: 'agents: ["*"]\n',
+    }));
+    w(root, 'src/agents/dude-spec-lead.agent.md', agentSource({
+      stem: 'dude-spec-lead',
+      name: 'Spec Lead',
+      modelClass: 'reasoning',
+    }));
+    w(root, 'src/instructions/dude.instructions.md', '# Instructions\n');
+    w(root, 'src/skills/dude-lint/lint.mjs', 'export const lint = true;\n');
+
+    const first = buildDev({ repoRoot: root });
+    const firstTree = snapshotTree(path.join(root, '.github'));
+    const second = buildDev({ repoRoot: root });
+    const secondTree = snapshotTree(path.join(root, '.github'));
+    const third = buildDev({ repoRoot: root });
+    const thirdTree = snapshotTree(path.join(root, '.github'));
+
+    assert.deepEqual(second.written, first.written);
+    assert.deepEqual(third.written, second.written);
+    assert.deepEqual(secondTree, firstTree);
+    assert.deepEqual(thirdTree, firstTree);
+    assert.deepEqual(third.removed, second.removed);
+    assertExactBytes(
+      fs.readFileSync(path.join(root, '.github/skills/dude-engine/config/agent-models.json')),
+      MODEL_CONFIG,
+      'repeated packaged config',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

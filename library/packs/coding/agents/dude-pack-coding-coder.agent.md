@@ -1,7 +1,9 @@
 ---
-name: "Coder"
+name: Coder
 description: "Implements features from tasks.md: writes code, wires modules, and follows project conventions. Use for software implementation work."
-tools: [read/readFile, edit/createFile, edit/editFiles, execute/runInTerminal, search/listDirectory, search/codebase, search/fileSearch, search/textSearch]
+tools: ["read", "edit", "execute", "search"]
+user-invocable: false
+model-class: balanced
 ---
 
 You are the coding implementation specialist.

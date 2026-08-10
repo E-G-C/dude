@@ -1,10 +1,9 @@
 ---
-name: Release Manager
+name: "Release Manager"
 description: "Release specialist for tag-driven versioning, GitHub Actions and Azure Pipelines release workflows, and package version write-back policy."
-# NOTE: tools below are advisory — they document intended capabilities but are
-# not enforced by the VS Code Copilot runtime. For platform-enforced tool
-# restrictions, use .chatmode.md files with standard Copilot tool identifiers.
-tools: ["read/readFile", "edit/createFile", "edit/editFiles", "execute/runInTerminal", "search/listDirectory", "search/codebase", "search/fileSearch", "search/textSearch", "read/problems"]
+tools: ["read", "edit", "execute", "search"]
+user-invocable: false
+model: gpt-5.6-sol
 ---
 
 You are the release manager.

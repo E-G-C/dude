@@ -5,8 +5,9 @@
  * The product core lives in `src/`. For the maintainer's own `@dude` to work
  * (Copilot discovers agents / skills / instructions under `.github/`), this
  * script syncs the core from `src/` into `.github/` (mapping `src/<x>` ->
- * `.github/<x>`, minus test files). `src/` is edited; `.github/` is the built,
- * committed dev bundle.
+ * `.github/<x>`, minus test files). Each `src/agents/*.agent.md` is projected
+ * into one Copilot profile under `.github/agents/` instead of being byte-copied.
+ * `src/` is edited; `.github/` is the built, committed dev bundle.
  *
  * It manages core-tier files and never changes canonical project data:
  * `.github/skills/project/`, `.github/workflows/`, all `.dude/` data, installed
@@ -22,7 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isCorePath } from '../src/skills/dude-engine/lib/ownership.mjs';
-import { listCoreSourceFiles, readCanonicalManifest } from './build-release.mjs';
+import { listCoreOutputs, readCanonicalManifest, writeCoreOutput } from './build-release.mjs';
 import { resolveMutationPath } from '../src/skills/dude-engine/lib/workspace-paths.mjs';
 
 const BUILD_DESTINATION_DIRS = [
@@ -79,24 +80,34 @@ function preflightBuildDestinations(repoRoot, relPaths) {
 
 /**
  * List every core-tier path that cleanup would remove.
+ *
+ * The generated agent tree is filtered by the same namespace classification
+ * every other bundle path uses, so pack-tier (`dude-pack-*`),
+ * local-tier (`dude-local-*`), and project-tier files are left untouched.
  * @param {string} repoRoot
  * @returns {string[]}
  */
 function listCoreRemovalPaths(repoRoot) {
   /** @type {string[]} */
   const removals = [];
-  const gh = path.join(repoRoot, '.github');
 
-  for (const sub of ['agents', 'instructions']) {
-    const dir = path.join(gh, sub);
-    if (!fs.existsSync(dir)) continue;
-    for (const entry of fs.readdirSync(dir)) {
-      const relPath = `.github/${sub}/${entry}`;
+  const agentsDir = path.join(repoRoot, '.github', 'agents');
+  if (fs.existsSync(agentsDir)) {
+    for (const entry of fs.readdirSync(agentsDir)) {
+      const relPath = `.github/agents/${entry}`;
       if (isCorePath(relPath)) removals.push(relPath);
     }
   }
 
-  const skillsDir = path.join(gh, 'skills');
+  const instructionsDir = path.join(repoRoot, '.github/instructions');
+  if (fs.existsSync(instructionsDir)) {
+    for (const entry of fs.readdirSync(instructionsDir)) {
+      const relPath = `.github/instructions/${entry}`;
+      if (isCorePath(relPath)) removals.push(relPath);
+    }
+  }
+
+  const skillsDir = path.join(repoRoot, '.github/skills');
   if (fs.existsSync(skillsDir)) {
     for (const entry of fs.readdirSync(skillsDir)) {
       const relPath = `.github/skills/${entry}`;
@@ -116,20 +127,6 @@ function applyCoreCleanup(repoRoot, removals) {
 }
 
 /**
- * Remove every core-tier file currently under `.github/` so a file removed from
- * `src/` does not linger in the built bundle. Leaves packs, local, project,
- * workflows, and all project workspace data under `.dude/` untouched.
- * @param {string} repoRoot
- * @returns {string[]} removed repo-relative paths
- */
-export function cleanCore(repoRoot) {
-  preflightBuildDirectories(repoRoot);
-  const removals = listCoreRemovalPaths(repoRoot);
-  preflightBuildDestinations(repoRoot, removals);
-  return applyCoreCleanup(repoRoot, removals);
-}
-
-/**
  * Sync the core from `src/` into `.github/`.
  * @param {{ repoRoot: string }} opts
  * @returns {{ written: string[], removed: string[] }}
@@ -139,10 +136,10 @@ export function buildDev({ repoRoot }) {
   if (!fs.existsSync(srcDir)) {
     throw new Error(`no src/ under repo root: ${repoRoot}`);
   }
-  const sourceFiles = listCoreSourceFiles(repoRoot);
+  const outputs = listCoreOutputs(repoRoot);
   preflightBuildDirectories(repoRoot);
   const removals = listCoreRemovalPaths(repoRoot);
-  const generatedDestinations = sourceFiles.map(({ deployRel }) => deployRel);
+  const generatedDestinations = outputs.map(({ relPath }) => relPath);
   preflightBuildDestinations(repoRoot, [...removals, ...generatedDestinations]);
 
   readCanonicalManifest(repoRoot);
@@ -150,11 +147,9 @@ export function buildDev({ repoRoot }) {
 
   /** @type {string[]} */
   const written = [];
-  for (const { abs, deployRel } of sourceFiles) {
-    const dest = path.join(repoRoot, deployRel);
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.copyFileSync(abs, dest);
-    written.push(deployRel);
+  for (const output of outputs) {
+    writeCoreOutput(repoRoot, output);
+    written.push(output.relPath);
   }
 
   return { written: written.sort(), removed };
