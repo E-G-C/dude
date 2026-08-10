@@ -141,3 +141,86 @@ test('enumerateCorePaths does not corrupt paths when root is relative', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('direct Copilot agent paths keep core, pack, local, and project stem ownership', () => {
+  // Arrange
+  const direct = [
+    ['.github/agents/dude-spec-lead.agent.md', TIER.CORE],
+    ['.github/agents/dude-pack-demo-worker.agent.md', TIER.PACK],
+    ['.github/agents/dude-local-worker.agent.md', TIER.LOCAL],
+    ['.github/agents/project-worker.agent.md', TIER.PROJECT],
+  ];
+  const retiredRoots = [
+    '.claude/agents/dude-spec-lead.md',
+    '.claude/agents/dude-pack-demo-worker.md',
+    '.claude/agents/dude-local-worker.md',
+    '.github/agents-sdk/dude-spec-lead.agent.json',
+    '.github/agents-sdk/dude-pack-demo-worker.agent.json',
+    '.github/agents-sdk/dude-local-worker.agent.json',
+  ];
+
+  // Act + Assert
+  for (const [relativePath, expectedTier] of direct) {
+    assert.equal(classifyPath(relativePath), expectedTier, relativePath);
+  }
+  for (const relativePath of retiredRoots) {
+    assert.equal(classifyPath(relativePath), TIER.PROJECT, relativePath);
+  }
+});
+
+test('belongsToPack recognizes only the direct Copilot agent tree', () => {
+  // Arrange
+  const direct = '.github/agents/dude-pack-demo-worker.agent.md';
+  const retiredRoots = [
+    '.claude/agents/dude-pack-demo-worker.md',
+    '.github/agents-sdk/dude-pack-demo-worker.agent.json',
+  ];
+
+  // Act + Assert
+  assert.equal(belongsToPack(direct, 'demo'), true);
+  for (const relativePath of retiredRoots) {
+    assert.equal(belongsToPack(relativePath, 'demo'), false, relativePath);
+  }
+});
+
+test('enumerateCorePaths includes engine configuration as ordinary core-skill content', () => {
+  // Arrange
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-ownership-direct-'));
+  const touch = (relativePath) => {
+    const absolutePath = path.join(root, relativePath);
+    fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+    fs.writeFileSync(absolutePath, '');
+  };
+  try {
+    touch('.github/agents/dude.agent.md');
+    touch('.github/agents/dude-spec-lead.agent.md');
+    touch('.github/agents/dude-pack-demo-worker.agent.md');
+    touch('.github/agents/dude-local-worker.agent.md');
+    touch('.github/agents/project-worker.agent.md');
+    touch('.github/instructions/dude.instructions.md');
+    touch('.github/skills/dude-engine/SKILL.md');
+    touch('.github/skills/dude-engine/config/agent-models.json');
+    touch('.claude/agents/dude-spec-lead.md');
+    touch('.github/agents-sdk/dude-spec-lead.agent.json');
+
+    // Act
+    const enumerated = enumerateCorePaths(root);
+    const implementation = fs.readFileSync(new URL('./ownership.mjs', import.meta.url), 'utf8');
+
+    // Assert
+    assert.deepEqual(enumerated, [
+      '.github/agents/dude-spec-lead.agent.md',
+      '.github/agents/dude.agent.md',
+      '.github/instructions/dude.instructions.md',
+      '.github/skills/dude-engine/SKILL.md',
+      '.github/skills/dude-engine/config/agent-models.json',
+    ]);
+    assert.doesNotMatch(
+      implementation,
+      /\b(?:CORE_TREES|matchCoreTree|agent-models\.json)\b|\.github\/skills\/dude-engine\/config/,
+      'ordinary skill traversal must not gain a topology or configuration-specific rule',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

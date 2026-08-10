@@ -1,8 +1,10 @@
 ---
 name: Event Deep-Fetcher
 description: "Per-event calendar deep-fetch executor. Given an event identity (title + organizer + date), runs the single-event verbatim WorkIQ deep fetch, extracts maximal detail (agenda, every link, meeting ID/passcode, true native time zone), and writes or refreshes the event markdown under content/news/. Use to enrich or correct calendar-sourced Events, or in a loop over a list of events. Loads the dude-pack-newsroom-event-from-calendar skill for the prompt patterns, schema, and gotchas."
-argument-hint: Give the event title, organizer, and date (e.g. "GitHub Copilot Day - Labs, Chris Sfanos, 2026-06-18"). Optionally pass several to deep-fetch in turn.
-tools: [workiq/*, workiq2/*, read/readFile, search/codebase, search/fileSearch, search/textSearch, edit/createFile, edit/editFiles, execute/runInTerminal]
+tools: ["workiq/*", "workiq2/*", "read", "search", "edit", "execute"]
+user-invocable: false
+argument-hint: "Give the event title, organizer, and date (e.g. \"GitHub Copilot Day - Labs, Chris Sfanos, 2026-06-18\"). Optionally pass several to deep-fetch in turn."
+model-class: fast
 ---
 
 # Event Deep-Fetcher Agent

@@ -27,6 +27,12 @@ const MANIFEST_BYTES = Buffer.from(
 const PROFILE_BYTES = Buffer.from(
   "# Install Profile\n\n```json\n{\"enabled_packs\":[],\"installed\":{}}\n```\n",
 );
+const PACKAGED_AGENT_MODEL_CONFIG_BYTES = fs.readFileSync(
+  fileURLToPath(new URL("../../config/agent-models.json", import.meta.url)),
+);
+const ENGINE_SKILL_BYTES = Buffer.from(
+  "---\nname: dude-engine\ndescription: \"Fixture engine skill.\"\n---\n",
+);
 
 /** @typedef {{path:string,type:string,bytes?:string,target?:string}} TreeEntry */
 
@@ -109,6 +115,12 @@ function writeWorkspace(root, currentIdea) {
   write(root, IDEA_PATH, currentIdea);
   write(root, ".dude/metadata/bundle-manifest.md", MANIFEST_BYTES);
   write(root, ".dude/metadata/profile.md", PROFILE_BYTES);
+  write(
+    root,
+    ".github/skills/dude-engine/config/agent-models.json",
+    PACKAGED_AGENT_MODEL_CONFIG_BYTES,
+  );
+  write(root, ".github/skills/dude-engine/SKILL.md", ENGINE_SKILL_BYTES);
   write(root, SENTINEL_PATH, SENTINEL_BYTES);
 }
 

@@ -4,7 +4,9 @@ description: "Frontend specialist for UI, components, interaction behavior, acce
 # NOTE: tools below are advisory — they document intended capabilities but are
 # not enforced by the VS Code Copilot runtime. For platform-enforced tool
 # restrictions, use .chatmode.md files with standard Copilot tool identifiers.
-tools: ["read/readFile", "edit/createFile", "edit/editFiles", "execute/runInTerminal", "search/listDirectory", "search/codebase", "search/fileSearch", "search/textSearch"]
+tools: ["read", "edit", "execute", "search"]
+user-invocable: false
+model-class: balanced
 ---
 
 You are the frontend specialist.

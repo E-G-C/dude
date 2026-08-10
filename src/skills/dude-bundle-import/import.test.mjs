@@ -23,6 +23,10 @@ import { ImportFrontmatterError } from './lib/import-frontmatter.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./import.mjs', import.meta.url));
 const LINT_SCRIPT = fileURLToPath(new URL('../dude-lint/lint.mjs', import.meta.url));
+const PACKAGED_AGENT_MODEL_CONFIG = fs.readFileSync(
+  fileURLToPath(new URL('../../config/agent-models.json', import.meta.url)),
+);
+const ENGINE_SKILL_DOCUMENT = '---\nname: dude-engine\ndescription: "Fixture engine skill."\n---\n';
 const DIRECTORY_COORDINATOR_PARAGRAPH =
   '**Coordinator-only artifacts:** do not edit `## Coordinator Log`, task-state ' +
   'glyphs in `tasks.md`, fenced regions (`<!-- dude:managed:* -->`, ' +
@@ -507,6 +511,15 @@ function tmpRoot() {
 function seedDirectoryLintWorkspace(root) {
   fs.mkdirSync(path.join(root, '.dude', 'ideas'), { recursive: true });
   fs.mkdirSync(path.join(root, '.dude', 'metadata'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.github', 'skills', 'dude-engine', 'config'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.github', 'skills', 'dude-engine', 'SKILL.md'),
+    ENGINE_SKILL_DOCUMENT,
+  );
+  fs.writeFileSync(
+    path.join(root, '.github', 'skills', 'dude-engine', 'config', 'agent-models.json'),
+    PACKAGED_AGENT_MODEL_CONFIG,
+  );
   fs.writeFileSync(
     path.join(root, '.dude', 'metadata', 'bundle-manifest.md'),
     '# Bundle Manifest\n\n```json\n{"source_repo":"x","source_ref":"main","installed_ref":"main"}\n```\n',

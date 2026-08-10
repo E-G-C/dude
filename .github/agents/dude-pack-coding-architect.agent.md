@@ -1,7 +1,9 @@
 ---
 name: "Architect"
 description: "Software architecture: decomposition, tradeoffs, schema and migrations, tech-stack selection, module boundaries, and interface contracts."
-tools: [read/readFile, edit/createFile, edit/editFiles, execute/runInTerminal, search/listDirectory, search/codebase, search/fileSearch, search/textSearch]
+tools: ["read", "edit", "execute", "search"]
+user-invocable: false
+model: gpt-5.6-sol
 ---
 
 You are the software architecture specialist.

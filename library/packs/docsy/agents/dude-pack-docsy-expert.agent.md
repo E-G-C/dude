@@ -1,7 +1,10 @@
 ---
 name: Docsy Expert
-description: Expert assistant for any task involving the Docsy Hugo theme — installation, configuration, content authoring, shortcodes, SCSS customization, search/i18n/versioning, deployment, and troubleshooting. Use whenever the user is building, editing, or debugging a Hugo site that uses (or is considering) Docsy.
-argument-hint: Describe the Docsy task — e.g. "add a tabbed code sample", "set up Algolia search", "deploy to GitHub Pages", "convert site from submodule to module".
+description: "Expert assistant for any task involving the Docsy Hugo theme — installation, configuration, content authoring, shortcodes, SCSS customization, search/i18n/versioning, deployment, and troubleshooting. Use whenever the user is building, editing, or debugging a Hugo site that uses (or is considering) Docsy."
+tools: ["read", "edit", "search", "execute"]
+user-invocable: false
+argument-hint: "Describe the Docsy task — e.g. \"add a tabbed code sample\", \"set up Algolia search\", \"deploy to GitHub Pages\", \"convert site from submodule to module\"."
+model-class: balanced
 ---
 
 # Docsy Expert Agent

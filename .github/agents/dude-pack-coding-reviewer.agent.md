@@ -1,7 +1,9 @@
 ---
 name: "Code Reviewer"
 description: "Code review for correctness, readability, maintainability, security (OWASP Top 10), and performance anti-patterns."
-tools: [read/readFile, search/listDirectory, search/codebase, search/fileSearch, search/textSearch, read/problems]
+tools: ["read", "search"]
+user-invocable: false
+model: gpt-5.6-sol
 ---
 
 You are the code review specialist.

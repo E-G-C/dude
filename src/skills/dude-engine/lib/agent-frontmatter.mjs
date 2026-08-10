@@ -1,21 +1,51 @@
 // @ts-check
 /**
- * Host-editor `model:` frontmatter normalizer for Dude agent files.
+ * Host-owned `model:` frontmatter normalizer for the one Copilot profile.
  *
- * VS Code injects a per-agent `model:` frontmatter line into an installed
- * `.github/agents/*.agent.md` when it dispatches that agent as a subagent. That
- * editor-owned key is not part of the bundle-controlled source, so it breaks
- * `dude-compose` pack parity (recorded vs. installed hashes) and the prompt
- * audit's source/installed comparison. This module is the single source of
- * truth for stripping only that injected key back out for measurement.
+ * `.github/agents/<stem>.agent.md` is the one generated Copilot profile. Its
+ * `model:` line is a BUNDLE-SEEDED DEFAULT resolved from the authoritative
+ * source's `model-class` and configuration, not a value the source declares.
+ * After installation that line becomes HOST-OWNED: VS Code rewrites it per
+ * agent when it dispatches that agent as a subagent. The rewritten value is
+ * still the same single key in the same slot, so `dude-compose` parity
+ * (recorded vs. installed hashes) would otherwise read an ordinary host model
+ * choice as pack drift. This module is the single source of truth for
+ * neutralizing that one key for MEASUREMENT ONLY; it never writes, repairs, or
+ * reseeds a file.
+ *
+ * SCOPE — the Copilot profile form only, and only where parity is MEASURED.
+ * `hashArtifact` in `dude-compose` applies it to `*.agent.md` and to nothing
+ * else.
+ *
+ * DO NOT APPLY IT TO `dude-bundle-upgrade` CLASSIFICATION. `classifyPlan`
+ * compares installed core bytes against upstream bytes to decide what to
+ * overwrite, which is not parity measurement: a class remap that changes only the
+ * `model:` line is exactly the change that must reach the workspace. Normalizing
+ * there would classify that file as up to date and silently strand the old model.
+ * The same reasoning holds for the apply-time Replace line-count recheck, which
+ * must measure the same bytes `classifyPlan` did.
+ *
+ * IT NEVER STRIPS `model-class`. `model-class` is authoritative source metadata,
+ * is projected into no target, and matches neither pattern below (both anchor on
+ * the exact key `model:`). Stripping it would erase the one input the single
+ * class-to-model mapping reads.
+ *
+ * WHY THERE IS NO IN-PLACE CANONICALIZER. The historical canonicalizer is
+ * deleted rather than carried forward or reworked: it had no production caller,
+ * shipped in no release, and its only job — restoring parity after a host edit
+ * — is already done here at measurement time. Rewriting a file with the
+ * normalized bytes now deletes the generated default; reseeding it instead
+ * would re-derive the model outside the canonical configuration, which is
+ * exactly the second resolution surface the ledger forbids. It remains deleted.
  *
  * `normalizeAgentFrontmatter` operates on raw bytes and is deliberately narrow:
  *
  *   - Only the LEADING `---` … `---` frontmatter block is considered; a
  *     `model:` line anywhere in the body is left untouched.
- *   - It neutralizes EXACTLY ONE well-formed host-injected
- *     `model: <constrained model identifier>` key — and only when that key is
- *     also the block's ONLY model-semantic line — stripping it plus at most one
+ *   - It neutralizes EXACTLY ONE well-formed
+ *     `model: <constrained model identifier>` key — seeded by the projection or
+ *     rewritten in place by the host — and only when that key is also the
+ *     block's ONLY model-semantic line, stripping it plus at most one
  *     adjacent blank line (preferring the blank AFTER, else the blank BEFORE).
  *   - Everything else is DRIFT and returned as a strict byte-for-byte no-op
  *     (the original buffer reference), leaving the bytes intact so downstream
@@ -55,9 +85,10 @@ const MODEL_LINE_RE = /^model:[ \t]+[A-Za-z0-9][A-Za-z0-9 ._()\/+-]*[ \t]*$/;
 const MODEL_SEMANTIC_RE = /^(?:model|"model"|'model'):/;
 
 /**
- * Strip the host editor's injected `model:` key from an agent file's leading
- * frontmatter block, returning the canonical model-less bytes. Model-less input
- * is returned as the original buffer (strict no-op).
+ * Strip the single seeded-or-host-rewritten `model:` key from an agent file's
+ * leading frontmatter block, returning the model-less bytes used for parity
+ * measurement. Model-less input is returned as the original buffer (strict
+ * no-op). Nothing is written to disk; `model-class` is never touched.
  * @param {Buffer | string} input raw agent-file bytes (or UTF-8 text)
  * @returns {Buffer} normalized bytes; the original buffer when nothing changed
  */
@@ -71,7 +102,7 @@ export function normalizeAgentFrontmatter(input) {
   const lines = interior.split(/\r?\n/);
 
   // Classify the block's `model` lines. Strip only when there is EXACTLY ONE
-  // well-formed host-injected key that is also the ONLY model-semantic line.
+  // well-formed `model:` key that is also the ONLY model-semantic line.
   // Zero keys is already clean; duplicates, or a well-formed key beside any
   // other model-semantic line, is drift — return the original bytes untouched.
   let wellFormedCount = 0;

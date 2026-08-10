@@ -1,6 +1,6 @@
 ---
 name: "dude-lint"
-description: "Use when validating Dude workspace and bundle hygiene: checking .dude idea/tasks/state shape, canonical identities, skill frontmatter names, bundle manifest shape, orphan references, memory size, and coordinator-only boundaries. Do NOT use to lint or format project source code, which belongs to the project's own linter."
+description: "Use when validating Dude workspace and bundle hygiene: checking .dude idea/tasks/state shape, canonical identities, skill frontmatter names, bundle manifest shape, orphan references, memory size, coordinator-only boundaries, and generated Copilot profiles. Do NOT use to lint or format project source code, which belongs to the project's own linter."
 ---
 
 # Dude Lint
@@ -9,9 +9,22 @@ Static validator for the bundle's structural conventions.
 
 ## Purpose
 
-Catch the structural mistakes that would otherwise surface as runtime drift: malformed ideas, ambiguous feature ownership, invalid task audit breadcrumbs, fence imbalance, stale `spec_path:` pointers, duplicate task IDs, oversized memory files, skill frontmatter/name drift, bundle manifest shape violations, orphaned agent-handle references, and orphaned skill-path references.
+Catch the structural mistakes that would otherwise surface as runtime drift: malformed ideas, ambiguous feature ownership, invalid task audit breadcrumbs, fence imbalance, stale `spec_path:` pointers, duplicate task IDs, oversized memory files, skill frontmatter/name drift, bundle manifest shape violations, orphaned agent-handle references, orphaned skill-path references, and source-only `model-class` leaking into an owned generated Copilot profile.
 
 The linter is **read-only** and dependency-free beyond Node.js itself (Node >= 20 LTS, standard library only). It runs as a single Node script (`lint.mjs`). Node is a documented maintenance-time dependency: it is required only to run bundle tooling such as this linter and `@dude upgrade`, not for normal project work.
+
+## Agent Source And Configuration Boundary
+
+- Core and catalog-pack agent sources are canonical. `src/config/agent-models.json`
+  is the canonical concrete-model and class-effort configuration.
+- Builds package that configuration byte-for-byte at
+  `.github/skills/dude-engine/config/agent-models.json`. Lint loads that exact
+  packaged path after its workspace-root safety gate; it has no default, search,
+  or fallback configuration location.
+- `.github/agents/*.agent.md` is the only generated agent tree. Copilot emits
+  one profile per source; class effort is validated intent and is not emitted.
+- Claude and SDK are documentation-only adapter contracts. They have no generated
+  files, ownership, lint, or drift behavior.
 
 ## When To Run
 
@@ -115,6 +128,14 @@ node --test .github/skills/dude-engine/lib/ownership.test.mjs
    - Fail for any `<name>` that does not match an existing `.github/skills/<name>/` directory.
    - Placeholder examples such as `.github/skills/dude-local-<slug>/` and `.github/skills/dude-pack-<pack>-<slug>/` are ignored after placeholder stripping, but real `.github/skills/dude-local-*/` and `.github/skills/dude-pack-*/` references must resolve to actual skill directories.
    - Path-form is the only trigger; backticked skill names in prose are not flagged here, since the false-positive rate would be too high for a `[FAIL]` check. Wire-up references in agents and skills should always use the full `.github/skills/<name>/` path so this check can validate them.
+
+11. **Generated Copilot profiles** (`.github/agents/*.agent.md`)
+    - Scan direct profile files only. Scope is decided by each file's namespace;
+     core and pack tiers are checked, while local and project tiers are exempt.
+    - Fail when an owned profile declares the source-only `model-class` key. A
+     source class belongs in canonical source, never in its Copilot output.
+    - Do not compare an installed profile's `model:` literal with configuration:
+     the host may rewrite that one value.
 
 ## Output
 

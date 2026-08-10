@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import test, { after, before } from "node:test";
 import { fileURLToPath } from "node:url";
+import { loadAgentModelConfig, resolveCopilotModel } from "../../../../src/skills/dude-engine/lib/agent-model-map.mjs";
+import { copilotAgentPath, parseAgentSource, renderCopilotAgent } from "../../../../src/skills/dude-engine/lib/agent-projection.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 const PACK_NAME = "technical-docs";
@@ -17,9 +19,17 @@ const COMPOSE = join(REPO_ROOT, "src", "skills", "dude-compose", "compose.mjs");
 const SOURCE_LINT = join(REPO_ROOT, "src", "skills", "dude-lint", "lint.mjs");
 const BUILD_RELEASE = join(REPO_ROOT, "scripts", "build-release.mjs");
 const RELEASE_TAG = "v0.0.0";
+const AGENT_MODEL_CONFIG = loadAgentModelConfig(
+  resolve(REPO_ROOT, "src", "config", "agent-models.json")
+);
 
-/** The `.github/` categories compose copies out of a pack. */
+/** The `.github/` categories compose copies or renders out of a pack. */
 const COPY_KINDS = ["agents", "skills", "instructions", "prompts"];
+
+/** The install tree compose writes into. */
+const INSTALL_TREES = [".github/"];
+
+const AGENT_SOURCE_SUFFIX = ".agent.md";
 
 const PROFILE_REL = ".dude/metadata/profile.md";
 const BUNDLED_LINT_REL = ".github/skills/dude-lint/lint.mjs";
@@ -156,9 +166,41 @@ function packSourceInstallMap(packDir) {
   for (const kind of COPY_KINDS) {
     const dir = join(packDir, kind);
     if (!existsSync(dir)) continue;
+    if (kind === "agents") {
+      // An agent source is rendered as one Copilot profile.
+      for (const entry of readdirSync(dir, { withFileTypes: true }).sort(byName)) {
+        assert.ok(
+          entry.isFile() && entry.name.endsWith(AGENT_SOURCE_SUFFIX),
+          `pack agent source must be a regular ${AGENT_SOURCE_SUFFIX} file: ${entry.name}`
+        );
+        const stem = entry.name.slice(0, -AGENT_SOURCE_SUFFIX.length);
+        const source = readFileSync(join(dir, entry.name));
+        out.set(
+          copilotAgentPath(stem),
+          sha256(renderCopilotAgent(
+            parseAgentSource(source, { stem, config: AGENT_MODEL_CONFIG }),
+            AGENT_MODEL_CONFIG
+          ))
+        );
+      }
+      continue;
+    }
     walkSourceFiles(dir, `.github/${kind}`, out);
   }
   return out;
+}
+
+/** The one Copilot destination one declared agent source installs to. */
+function agentDestination(sourceName) {
+  return copilotAgentPath(sourceName.slice(0, -AGENT_SOURCE_SUFFIX.length));
+}
+
+/** The authoritative source bytes and the logical class a declared agent declares for itself. */
+function readAgentSource(sourceName) {
+  const stem = sourceName.slice(0, -AGENT_SOURCE_SUFFIX.length);
+  const bytes = readFileSync(join(PACK_DIR, "agents", sourceName));
+  const { frontmatter } = parseAgentSource(bytes, { stem, config: AGENT_MODEL_CONFIG });
+  return { bytes, modelClass: String(frontmatter["model-class"]) };
 }
 
 function readProfileJson(root) {
@@ -261,7 +303,7 @@ function assertLintsClean(root, label) {
 }
 
 function installedPackFiles(files, token) {
-  return entries(files, (relPath) => relPath.startsWith(".github/") && relPath.includes(token));
+  return entries(files, (relPath) => INSTALL_TREES.some((tree) => relPath.startsWith(tree)) && relPath.includes(token));
 }
 
 /* -------------------------------------------- 1. pristine release separation */
@@ -309,11 +351,37 @@ test("technical-docs installs standalone into a disposable copy and the result l
 
     const profile = readProfileJson(root);
     assert.deepEqual(profile.enabled_packs, [PACK_NAME]);
-    assert.deepEqual(profile.installed[PACK_NAME].files.slice().sort(), [
-      ...EXPECTED_AGENTS.map((name) => `.github/agents/${name}`),
+    const expectedAgentDestinations = EXPECTED_AGENTS.map(agentDestination);
+    assert.equal(
+      expectedAgentDestinations.length,
+      EXPECTED_AGENTS.length,
+      "every declared agent must contribute exactly one Copilot destination"
+    );
+    const expectedProfileFiles = [
+      ...expectedAgentDestinations,
       ...EXPECTED_PROMPTS.map((name) => `.github/prompts/${name}`),
       ...EXPECTED_SKILLS.map((name) => `.github/skills/${name}`),
-    ].sort());
+    ].sort();
+    const expectedProfileSources = [
+      ...EXPECTED_AGENTS.map((name) => `agents/${name}`),
+      ...EXPECTED_PROMPTS.map((name) => `prompts/${name}`),
+      ...EXPECTED_SKILLS.map((name) => `skills/${name}`),
+    ].sort();
+    const profileEntry = profile.installed[PACK_NAME];
+    assert.deepEqual(profileEntry.files.slice().sort(), expectedProfileFiles);
+    assert.equal(profileEntry.inventory.version, 1, "the profile inventory must use version 1");
+    assert.equal(
+      profileEntry.inventory.artifacts.length,
+      expectedProfileSources.length,
+      "the profile inventory must contain one row per source"
+    );
+    assert.deepEqual(
+      profileEntry.inventory.artifacts
+        .map(({ path, source }) => ({ path, source }))
+        .sort((first, second) => first.source.localeCompare(second.source)),
+      expectedProfileSources.map((source) => ({ path: `.github/${source}`, source })),
+      "every profile inventory row must bind its exact source to .github/<source>"
+    );
 
     assertLintsClean(root, "the standalone technical-docs bundle");
   });
@@ -326,9 +394,9 @@ test("the installed surface carries every declared agent, skill, prompt, runtime
     const add = composeAdd(root, PACK_NAME);
     assert.equal(add.status, 0, `install failed${describe(add)}`);
     const { files, directories } = snapshotTree(root);
-
     for (const name of EXPECTED_AGENTS) {
-      assert.ok(files.has(`.github/agents/${name}`), `installed bundle is missing agent ${name}`);
+      const destination = agentDestination(name);
+      assert.ok(files.has(destination), `installed bundle is missing rendered agent ${destination}`);
     }
     for (const name of EXPECTED_SKILLS) {
       assert.ok(files.has(`.github/skills/${name}/SKILL.md`), `installed bundle is missing skill ${name}`);
@@ -346,14 +414,35 @@ test("the installed surface carries every declared agent, skill, prompt, runtime
     assert.equal(installedScripts.length, 11, "the runtime skill must install exactly eleven CLI scripts");
     assert.ok(files.has(RUNTIME_HELPER_REL), "the nested runtime helper scripts/lib/runtime.mjs is missing");
 
-    // Every installed byte must come from the pack source, and nothing else may appear.
+    // Every installed byte must be rendered or copied from the pack source, and nothing else may appear.
     const expected = packSourceInstallMap(PACK_DIR);
     assert.ok(expected.size >= 20, "the derived pack source map is too small to be a meaningful comparison");
     assert.deepEqual(
       installedPackFiles(files, PACK_TOKEN),
       entries(expected),
-      "the installed technical-docs surface is not byte-identical to the pack source"
+      "the installed technical-docs surface is not the rendered or copied pack source"
     );
+
+    // The source-map comparison shares the renderer with compose, so check each
+    // generated Copilot profile's model mapping and generated-only frontmatter.
+    for (const name of EXPECTED_AGENTS) {
+      const { bytes, modelClass } = readAgentSource(name);
+      const copilotRel = agentDestination(name);
+      assert.notEqual(
+        files.get(copilotRel),
+        sha256(bytes),
+        `${copilotRel} is a byte-identical copy of its source, not a rendered profile`
+      );
+      const copilot = readFileSync(join(root, ...copilotRel.split("/")), "utf8");
+      const copilotModel = resolveCopilotModel(AGENT_MODEL_CONFIG, modelClass);
+      assert.equal(
+        copilot.split("\n").includes(`model: ${copilotModel.model}`),
+        Object.hasOwn(copilotModel, "model"),
+        `${copilotRel} does not carry the Copilot model its declared "${modelClass}" class resolves to`
+      );
+      assert.doesNotMatch(copilot, /^model-class:/m, `${copilotRel} must not emit model-class`);
+      assert.doesNotMatch(copilot, /^(?:effort|reasoningEffort):/m, `${copilotRel} must not emit effort`);
+    }
   });
 });
 

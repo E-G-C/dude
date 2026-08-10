@@ -1,7 +1,9 @@
 ---
-name: "Instruction Smith"
+name: Instruction Smith
 description: "Authors .instructions.md files: applyTo globs and scoped rules that apply to matching files. Use when creating or refining instruction files."
-tools: [read, search, edit]
+tools: ["read", "search", "edit"]
+user-invocable: false
+model-class: balanced
 ---
 
 You are the instruction authoring specialist.

@@ -5,10 +5,20 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { inventoryDigest } from '../dude-engine/lib/profile.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./lint.mjs', import.meta.url));
+const PACKAGED_CONFIG_REL = '.github/skills/dude-engine/config/agent-models.json';
+const PACKAGED_CONFIG_BYTES = fs.readFileSync(
+  fileURLToPath(new URL('../../config/agent-models.json', import.meta.url)),
+);
+const ENGINE_SKILL_DOCUMENT = '---\nname: dude-engine\ndescription: "Fixture engine skill."\n---\n';
+const AGENT_SMITH_SOURCE = fileURLToPath(
+  new URL('../../../library/packs/authoring/agents/dude-pack-authoring-agent-smith.agent.md', import.meta.url),
+);
+const APPROVED_AGENT_SMITH_FRONTMATTER_SHA256 = 'd244e430c83596e6a0be64a09350e0ff682494e3072eb560f647921b88dd0a55';
 
 /** @returns {string} */
 function rootWithManifest() {
@@ -20,6 +30,8 @@ function rootWithManifest() {
     '# Bundle Manifest\n\n```json\n{"source_repo":"x","source_ref":"main","installed_ref":"main"}\n```\n',
   );
   write(root, '.dude/metadata/profile.md', profileDocument({ enabled_packs: [], installed: {} }));
+  write(root, '.github/skills/dude-engine/SKILL.md', ENGINE_SKILL_DOCUMENT);
+  write(root, PACKAGED_CONFIG_REL, PACKAGED_CONFIG_BYTES);
   return root;
 }
 
@@ -65,9 +77,9 @@ function write(root, relPath, content) {
   fs.writeFileSync(absolutePath, content);
 }
 
-/** @param {string} root */
-function lint(root) {
-  const result = spawnSync(process.execPath, [SCRIPT, root], { encoding: 'utf8' });
+/** @param {string} root @param {string} [script] */
+function lint(root, script = SCRIPT) {
+  const result = spawnSync(process.execPath, [script, root], { encoding: 'utf8' });
   return { code: result.status, output: `${result.stdout || ''}${result.stderr || ''}` };
 }
 
@@ -1165,6 +1177,7 @@ test('lint rejects symbolic-link workspace root without any downstream traversal
     assert.match(result.output, /Scanned: 0 idea\(s\), 0 task file\(s\), 0 memory file\(s\), 0 agent\(s\)/);
     assert.match(result.output, /Findings: 0 warning\(s\), 1 failure\(s\)/);
     assert.doesNotMatch(result.output, /HALT_SENTINEL/);
+    assert.doesNotMatch(result.output, /agent-models\.json/);
     assert.doesNotMatch(
       result.output,
       /invalid current profile|malformed JSON object|manifest JSON is malformed|profile\.md has malformed JSON/,
@@ -2174,4 +2187,203 @@ test('lint reports strict owner-metadata violations from the feature library and
       fs.rmSync(root, { recursive: true, force: true });
     }
   }
+});
+
+// --- Generated Copilot profiles and packaged configuration -------------------
+
+/** @param {{ name?: string, modelClass?: string, model?: string }} [options] */
+function generatedProfile(options = {}) {
+  const frontmatter = [
+    '---',
+    `name: ${options.name || 'Fixture Agent'}`,
+    'description: "Agent fixture"',
+  ];
+  if (options.modelClass) frontmatter.push(`model-class: ${options.modelClass}`);
+  if (options.model) frontmatter.push(`model: ${options.model}`);
+  frontmatter.push('---');
+  return [
+    ...frontmatter,
+    '',
+    COORDINATOR_PARAGRAPH,
+    '',
+    '## Scope',
+    '',
+    '- Fixture responsibility.',
+    '',
+    '## Boundaries',
+    '',
+    '- Fixture boundary.',
+    '',
+  ].join('\n');
+}
+
+/** @param {string} root @returns {Record<string, string>} */
+function snapshotTree(root) {
+  /** @type {Record<string, string>} */
+  const out = {};
+  /** @param {string} directory */
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      const relative = path.relative(root, absolute).split(path.sep).join('/');
+      if (entry.isDirectory()) visit(absolute);
+      else if (entry.isFile()) {
+        out[relative] = createHash('sha256').update(fs.readFileSync(absolute)).digest('hex');
+      }
+    }
+  };
+  visit(root);
+  return out;
+}
+
+test('lint fails closed when its packaged model configuration is missing, malformed, or invalid', () => {
+  const cases = [
+    {
+      name: 'missing',
+      prepare: (root) => fs.rmSync(path.join(root, ...PACKAGED_CONFIG_REL.split('/'))),
+      expected: /cannot read agent model configuration/,
+    },
+    {
+      name: 'malformed',
+      prepare: (root) => write(root, PACKAGED_CONFIG_REL, '{"classes":'),
+      expected: /has malformed JSON/,
+    },
+    {
+      name: 'invalid',
+      prepare: (root) => write(root, PACKAGED_CONFIG_REL, '{"provenance":"2026-08-09"}\n'),
+      expected: /is invalid: agent model configuration document is missing required field 'classes'/,
+    },
+  ];
+
+  for (const fixture of cases) {
+    const root = rootWithManifest();
+    try {
+      fixture.prepare(root);
+      const before = snapshotTree(root);
+
+      const result = lint(root);
+
+      assert.equal(result.code, 1, `${fixture.name}\n${result.output}`);
+      assert.match(result.output, /\.github\/skills\/dude-engine\/config\/agent-models\.json/, fixture.name);
+      assert.match(result.output, fixture.expected, fixture.name);
+      assert.deepEqual(snapshotTree(root), before, `${fixture.name} remains read-only`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('lint scans direct owned Copilot profiles only and ignores dropped target paths', () => {
+  const root = rootWithManifest();
+  try {
+    write(root, '.github/agents/dude-reviewer.agent.md', generatedProfile({ name: 'dude-reviewer' }));
+    write(
+      root,
+      '.github/agents/dude-pack-demo-auditor.agent.md',
+      generatedProfile({ name: 'dude-pack-demo-auditor' }),
+    );
+    write(
+      root,
+      '.github/agents/nested/dude-reviewer.agent.md',
+      generatedProfile({ name: 'nested', modelClass: 'reasoning' }),
+    );
+    write(root, '.claude/agents/dude-reviewer.md', '---\nmodel-class: reasoning\n---\n');
+    write(root, '.github/agents-sdk/dude-reviewer.agent.json', '{ not JSON\n');
+
+    const result = lint(root);
+
+    assert.equal(result.code, 0, result.output);
+    assert.doesNotMatch(result.output, /agents-sdk|\.claude|nested/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint rejects model-class only in direct core- and pack-tier Copilot profiles', () => {
+  const root = rootWithManifest();
+  try {
+    write(
+      root,
+      '.github/agents/dude-reviewer.agent.md',
+      generatedProfile({ name: 'dude-reviewer', modelClass: 'reasoning' }),
+    );
+    write(
+      root,
+      '.github/agents/dude-pack-demo-auditor.agent.md',
+      generatedProfile({ name: 'dude-pack-demo-auditor', modelClass: 'balanced' }),
+    );
+    write(
+      root,
+      '.github/agents/dude-local-chef.agent.md',
+      generatedProfile({ name: 'dude-local-chef', modelClass: 'balanced' }),
+    );
+
+    const result = lint(root);
+
+    assert.equal(result.code, 1, result.output);
+    assert.match(
+      result.output,
+      /\.github\/agents\/dude-reviewer\.agent\.md {2}core-tier generated agent 'dude-reviewer' carries source-only key 'model-class'/,
+    );
+    assert.match(
+      result.output,
+      /\.github\/agents\/dude-pack-demo-auditor\.agent\.md {2}pack-tier generated agent 'dude-pack-demo-auditor' carries source-only key 'model-class'/,
+    );
+    assert.doesNotMatch(result.output, /dude-local-chef.*carries source-only key/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint does not compare a generated Copilot model literal with configuration', () => {
+  const root = rootWithManifest();
+  try {
+    write(
+      root,
+      '.github/agents/dude-reviewer.agent.md',
+      generatedProfile({ name: 'dude-reviewer', model: 'host-rewritten-choice' }),
+    );
+
+    const result = lint(root);
+
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /0 warning\(s\), 0 failure\(s\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint implementation has no dropped target branch imports or scans', () => {
+  const source = fs.readFileSync(SCRIPT, 'utf8');
+
+  assert.match(
+    source,
+    /listFiles\(path\.join\(ROOT, '\.github', 'agents'\), '\.agent\.md'\)/,
+  );
+  for (const droppedReference of ['CORE_TREES', 'SUPPORT_MATRIX', '.claude', 'agents-sdk']) {
+    assert.doesNotMatch(source, new RegExp(droppedReference.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+});
+
+test('Agent Smith preserves the T005-approved frontmatter bytes across its body rewrite', () => {
+  const bytes = fs.readFileSync(AGENT_SMITH_SOURCE);
+  const delimiter = Buffer.from('\n---\n');
+  const closing = bytes.indexOf(delimiter, Buffer.byteLength('---\n'));
+  assert.ok(closing >= 0, 'Agent Smith has a leading frontmatter block');
+  const frontmatter = bytes.subarray(0, closing + delimiter.length);
+  const body = bytes.subarray(closing + delimiter.length).toString('utf8');
+
+  assert.equal(
+    createHash('sha256').update(frontmatter).digest('hex'),
+    APPROVED_AGENT_SMITH_FRONTMATTER_SHA256,
+  );
+  assert.match(body, /src\/config\/agent-models\.json/);
+  assert.match(body, /omitting it means the source is a leaf/);
+  assert.match(body, /non-empty roster of unique stable stems/);
+  assert.match(body, /\["\*"\].*`dude`/);
+  assert.match(body, /one output profile per source/);
+  assert.match(body, /does not emit effort/);
+  assert.match(body, /stable filename stem/);
+  assert.match(body, /Only Dude is user-visible/);
+  assert.match(body, /documentation-only future adapter contracts/);
 });

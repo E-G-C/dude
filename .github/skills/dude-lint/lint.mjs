@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { classifyPath, TIER } from '../dude-engine/lib/ownership.mjs';
 import { inventoryDefinedFeatures } from '../dude-engine/lib/feature.mjs';
+import { loadAgentModelConfig } from '../dude-engine/lib/agent-model-map.mjs';
 import {
   BOARD_END as TASK_BOARD_END,
   BOARD_NOTICE as TASK_BOARD_NOTICE,
@@ -195,6 +196,20 @@ function readFrontmatter(lines, key) {
     if (m && m[1] === key) return m[2].replace(/[ \t]+$/, '');
   }
   return '';
+}
+
+/**
+ * @param {string[]} lines
+ * @returns {string[]} every frontmatter key in file order
+ */
+function frontmatterKeys(lines) {
+  /** @type {string[]} */
+  const keys = [];
+  for (const line of lines) {
+    const m = /^([A-Za-z_][A-Za-z0-9_-]*)[ \t]*:[ \t]*(.*)$/.exec(line);
+    if (m) keys.push(m[1]);
+  }
+  return keys;
 }
 
 /** @param {string} value @returns {string} */
@@ -433,6 +448,20 @@ else if (!rootStat.isDirectory()) fail(`workspace root is not a directory: ${ROO
 // A missing, symlinked, or non-directory workspace root is unsafe to traverse:
 // halt immediately so no .dude or .github file is read, scanned, or parsed.
 if (!workspaceRootSafe) finishAndExit();
+
+const packagedAgentModelConfig = path.resolve(
+  ROOT,
+  '.github',
+  'skills',
+  'dude-engine',
+  'config',
+  'agent-models.json',
+);
+try {
+  loadAgentModelConfig(packagedAgentModelConfig);
+} catch (error) {
+  fail(`.github/skills/dude-engine/config/agent-models.json  ${error instanceof Error ? error.message : String(error)}`);
+}
 
 const featureInventory = inventoryDefinedFeatures({ root: ROOT });
 for (const diagnostic of featureInventory.diagnostics) {
@@ -964,6 +993,24 @@ for (const name of [...orphanSkills.keys()].sort()) {
   const report = name.startsWith('dude-pack-') ? warn : fail;
   if (count > 1) report(`orphan skill reference .github/skills/${name}/ in ${first} (+${count - 1} more)`);
   else report(`orphan skill reference .github/skills/${name}/ in ${first}`);
+}
+
+// --- Check 7: generated agent representations -------------------------------
+// Ownership is namespace-only: a file is checked when `classifyPath` on that
+// file's own path returns the core or pack tier. Local- and project-tier files
+// are exempt.
+const OWNED_TIERS = new Set([TIER.CORE, TIER.PACK]);
+for (const abs of listFiles(path.join(ROOT, '.github', 'agents'), '.agent.md')) {
+  const rel = relpath(abs);
+  const tier = classifyPath(rel);
+  if (!OWNED_TIERS.has(tier)) continue;
+  const frontmatter = readArtifactFrontmatter(read(abs));
+  if (frontmatter && frontmatterKeys(frontmatter).includes('model-class')) {
+    const stem = path.basename(abs, '.agent.md');
+    fail(
+      `${rel}  ${tier}-tier generated agent '${stem}' carries source-only key 'model-class' (hand edit or stale build)`,
+    );
+  }
 }
 
 // --- Summary -----------------------------------------------------------------

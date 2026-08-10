@@ -1,7 +1,7 @@
 // @ts-check
 /**
- * Tests for src/skills/dude-engine/lib/agent-frontmatter.mjs — the host-editor
- * `model:` frontmatter normalizer used by compose parity.
+ * Tests for src/skills/dude-engine/lib/agent-frontmatter.mjs — the Copilot
+ * profile `model:` normalizer used by compose parity.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -213,4 +213,77 @@ test('treats inconsistent-EOL frontmatter as drift and returns the original byte
   const buf2 = Buffer.from(mixed2, 'utf8');
   const out2 = normalizeAgentFrontmatter(buf2);
   assert.ok(out2.equals(buf2), 'inconsistent-EOL frontmatter (reverse) is returned byte-for-byte unchanged');
+});
+
+// --- T008 (FR-020): model-class is never stripped; a duplicate model: is a no-op ---
+
+test('never strips model-class from any record', () => {
+  // An authoritative source record declares model-class and no model:. The class
+  // is the single input the class-to-model mapping reads, so the normalizer must
+  // leave the record byte-identical — and must not treat `model-class:` as a
+  // model-semantic line.
+  const source = [
+    '---',
+    'name: Reviewer',
+    'description: "Independent read-only reviewer."',
+    'tools: ["read", "search"]',
+    'user-invocable: false',
+    'model-class: reasoning',
+    '---',
+    '',
+    '# Reviewer',
+    '',
+  ].join('\n');
+  const sourceBuf = Buffer.from(source, 'utf8');
+  const sourceOut = normalizeAgentFrontmatter(sourceBuf);
+  assert.equal(sourceOut, sourceBuf, 'source with model-class is a strict no-op');
+  assert.ok(sourceOut.equals(Buffer.from(source, 'utf8')), 'source bytes are unchanged');
+
+  // A record carrying BOTH keys: only `model:` goes, `model-class:` survives.
+  // If `model-class:` were counted as a second model-semantic line this would
+  // wrongly be a no-op, so the assertion pins both halves of the guarantee.
+  const both = '---\nname: Reviewer\nmodel-class: reasoning\nmodel: Seeded Default\n---\n# Reviewer\n';
+  const expected = '---\nname: Reviewer\nmodel-class: reasoning\n---\n# Reviewer\n';
+  const bothOut = normalizeAgentFrontmatter(both);
+  assert.ok(bothOut.equals(Buffer.from(expected, 'utf8')), 'model: stripped, model-class kept');
+  assert.ok(bothOut.includes('model-class: reasoning'), 'model-class survives stripping');
+
+  // CRLF and quoted-key shapes of the class key are equally untouched.
+  for (const record of [
+    '---\r\nname: Reviewer\r\nmodel-class: balanced\r\n---\r\n# Reviewer\r\n',
+    '---\n"model-class": fast\n---\n# Body\n',
+    "---\n'model-class': inherit\n---\n# Body\n",
+  ]) {
+    const buf = Buffer.from(record, 'utf8');
+    const out = normalizeAgentFrontmatter(buf);
+    assert.equal(out, buf, `model-class record is a strict no-op: ${JSON.stringify(record)}`);
+  }
+});
+
+test('a duplicate model: appended beside the seeded default is a strict no-op', () => {
+  // The generated Copilot profile carries a bundle-seeded `model:` default. A
+  // host that REPLACES that single line normalizes to the same model-less bytes,
+  // so parity holds.
+  const seeded = '---\nname: Coder\ndescription: "Implements features."\ntools: ["read"]\nmodel: Seeded Default\n---\n# Coder\n';
+  const hostRewritten = seeded.replace('model: Seeded Default', 'model: Host Choice');
+  assert.ok(
+    normalizeAgentFrontmatter(hostRewritten).equals(normalizeAgentFrontmatter(seeded)),
+    'a replaced model: line cancels out on both sides',
+  );
+
+  // A host that APPENDS a second `model:` instead is drift, not a rewrite. The
+  // normalizer returns the ORIGINAL buffer reference so the extra key stays in
+  // the measured bytes and downstream hashing still reports the drift.
+  const duplicated = seeded.replace(
+    'model: Seeded Default\n',
+    'model: Seeded Default\nmodel: Host Choice\n',
+  );
+  const duplicatedBuf = Buffer.from(duplicated, 'utf8');
+  const duplicatedOut = normalizeAgentFrontmatter(duplicatedBuf);
+  assert.equal(duplicatedOut, duplicatedBuf, 'returns the original buffer reference');
+  assert.ok(duplicatedOut.equals(Buffer.from(duplicated, 'utf8')), 'duplicate model: bytes survive');
+  assert.ok(
+    !duplicatedOut.equals(normalizeAgentFrontmatter(seeded)),
+    'duplicate model: still measures as drift against the seeded default',
+  );
 });

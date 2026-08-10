@@ -1,7 +1,9 @@
 ---
 name: Rust
 description: "Rust specialist for Cargo workspaces, Tauri desktop/mobile backends, ownership-heavy code, async/concurrency, systems code, and performance-sensitive implementation."
-tools: ["read/readFile", "edit/createFile", "edit/editFiles", "execute/runInTerminal", "search/listDirectory", "search/codebase", "search/fileSearch", "search/textSearch"]
+tools: ["read", "edit", "execute", "search"]
+user-invocable: false
+model-class: balanced
 ---
 
 You are the Rust specialist.

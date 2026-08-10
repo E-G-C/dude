@@ -7,9 +7,15 @@ and a built-in upgrade skill so you can pull the latest engine version from
 upstream without losing project memory or in-flight work. That canonical path
 is the sole local, upstream, development-build, and release manifest endpoint.
 
-> ## ⚠️ Base files are upstream-owned
+> ## Base files are upstream-owned
 >
-> Every file matching the upstream namespace convention — `.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md` (slug not starting with `local-` or `pack-`), `.github/skills/dude-<slug>/**` (slug not starting with `local-` or `pack-`), and `.github/instructions/dude.instructions.md` — is owned by upstream and is **silently overwritten** by `@dude upgrade`. Editing a base agent, skill, or the bundle instructions in place is unsupported — your changes will be lost on the next upgrade.
+> Every file matching the upstream namespace convention —
+> `.github/agents/dude.agent.md`,
+> `.github/agents/dude-<slug>.agent.md` (excluding `dude-local-` and
+> `dude-pack-` stems), `.github/skills/dude-<slug>/**`, and
+> `.github/instructions/dude.instructions.md` — is owned by upstream and is
+> silently overwritten by `@dude upgrade`. Editing a base agent, skill, or the
+> bundle instructions in place is unsupported; the next upgrade discards it.
 >
 > Installed **packs** (the reserved `dude-pack-<pack>-<slug>` namespace, managed by `dude-compose`) are their own tier and are **preserved** across upgrades — a core refresh never overwrites or deletes them.
 >
@@ -26,14 +32,25 @@ The upgrader treats every file in your project as one of the following ownership
 
 | Bucket | Examples | What `@dude upgrade` does |
 |---|---|---|
-| **Base-owned** | default agents in `.github/agents/`, default skills in `.github/skills/` except `.github/skills/project/`, `.github/instructions/dude.instructions.md` | Overwritten unconditionally when upstream differs. Local edits to these paths are discarded. |
-| **Pack-owned** | installed packs under `.github/agents/dude-pack-*` and `.github/skills/dude-pack-*/`, plus `.dude/metadata/profile.md` | Never overwritten or deleted by a core upgrade. Added/removed only by `dude-compose` (`@dude add/remove pack`). |
+| **Base-owned** | default agents in `.github/agents/`, default skills in `.github/skills/` except `.github/skills/project/`, `.github/instructions/dude.instructions.md` | Overwritten when upstream differs. Local edits to these paths are discarded. |
+| **Pack-owned** | installed `dude-pack-*` agents, skills, instructions, and prompts under `.github/`, plus `.dude/metadata/profile.md` | Never overwritten or deleted by a core upgrade. Added and removed only by `dude-compose`. |
 | **Upgrade-owned** | `.dude/metadata/bundle-manifest.md`, `.dude/metadata/upgrade-log.md` | Maintained only by the upgrade skill. |
 | **Project-owned engine customization** | `.github/skills/project/`, custom agents, custom skills under `dude-local-*` or other names, `.github/copilot-instructions.md` | Never overwritten. |
 | **Dude project state** | `.dude/ideas/`, `.dude/specs/`, `.dude/memory/`, `.dude/state/` | Never overwritten. |
 | **Repo-local files and external work state** | `README.md`, `docs/`, `.gitattributes`, Beads, your product source | Never touched or brought in by upgrade. |
 
-Base ownership is derived from the **namespace convention** by the upgrader on each run — anything under `.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md`, `.github/skills/dude-<slug>/**`, or `.github/instructions/dude.instructions.md` is base-owned, with the reserved `dude-local-<slug>` and `dude-pack-<pack>-<slug>` namespaces explicitly excluded (project-owned and pack-owned respectively). The local [`.dude/metadata/bundle-manifest.md`](../.dude/metadata/bundle-manifest.md) is **metadata only**: it records the upstream repo and the installed release version (`installed_ref`) for orientation. The upgrader compares your on-disk bytes against the fetched upstream tree directly at `plan` time.
+Base ownership is derived from the namespace convention on each run.
+`.github/agents/<stem>.agent.md` is base-owned when the stem is `dude` or
+`dude-<slug>`, excluding the project-owned `dude-local-<slug>` and pack-owned
+`dude-pack-<pack>-<slug>` namespaces. The same convention covers
+`.github/skills/dude-<slug>/**` and
+`.github/instructions/dude.instructions.md`. Recursive ownership of
+`.github/skills/dude-engine/**` includes the packaged model configuration, so
+an existing upgrader installs the current loader and configuration without a
+new ownership rule. The local
+[`.dude/metadata/bundle-manifest.md`](../.dude/metadata/bundle-manifest.md)
+records the upstream source and installed release for orientation. The upgrader
+compares local bytes with the resolved upstream tree at `plan` time.
 
 The authoritative upgrade trigger is whether the locally recorded `installed_ref` differs from the newest release the source offers. On the `latest` channel `@dude status` resolves the highest stable `vX.Y.Z` tag with `git ls-remote --tags` (remote sources) or `git tag` (local-path sources); a pinned tag or branch ref is compared by name. When the channel is `latest` but no release tag exists yet, status reports `no releases published yet`.
 
@@ -59,9 +76,40 @@ inventories. Unsupported prior formats need external or manual recovery before
 upgrade; the upgrader does not translate project-state, profile, or manifest
 formats.
 
+In the Dude source repository, `src/config/agent-models.json` is the model
+authority. Development and release builds validate it before changing output
+and package the same bytes at
+`.github/skills/dude-engine/config/agent-models.json`. Upgrade copies that file
+as ordinary content of the engine skill.
+
+## Unrestorable planned destinations
+
+`apply` checks every planned destination before writing. If a path is ignored
+and untracked, Git cannot restore it during rollback, so the upgrader refuses
+the plan and names the path. Track or un-ignore that destination, create a fresh
+plan, and apply the new plan.
+
+## Refreshing installed packs
+
+An upgrade refreshes base files only. It never projects an installed pack's
+agents in place. When a bundle or pack-source change affects an installed
+profile, refresh that pack explicitly:
+
+```
+@dude remove pack <name>
+@dude add pack <name>
+```
+
+Current pack inventories use version 1: one source records one direct
+`.github/<source>` destination. Removal authorizes the recorded destinations
+from exact profile and installed-hash evidence. It compares raw source evidence
+when that source is available, but source absence does not block removal. The
+following add reads the current packaged configuration and renders the current
+profile.
+
 ## Workflow
 
-The upgrade surface is small on purpose: **status → dry-run → upgrade → (rollback if needed)**.
+The upgrade surface is small: **status -> dry-run -> upgrade -> rollback if needed**.
 
 1. **Check** — `@dude status` reports whether an upgrade is available against the manifest's configured source. The decision compares the locally recorded `installed_ref` against the newest release tag on the source (for the `latest` channel, the highest stable `vX.Y.Z`).
 2. **Preview** — `@dude upgrade --dry-run` produces an upgrade report listing every file that would be replaced, added, or removed, plus per-file line stats. Nothing is written. Use this to spot any local edits to base files you may want to preserve in `dude-local-<slug>` before proceeding.
@@ -89,7 +137,7 @@ After any `@dude upgrade`, the following files and directories are byte-identica
 
 - everything under `.dude/` except `.dude/metadata/bundle-manifest.md` (rewritten with the new `installed_ref`) and `.dude/metadata/upgrade-log.md` (one new entry appended)
 - everything under `.github/skills/project/`
-- any agent file under `.github/agents/` outside the upstream base namespace (including everything under `dude-local-*`)
+- any agent file under `.github/agents/` outside the upstream base namespace (including everything under `dude-local-*` and `dude-pack-*`)
 - any skill directory under `.github/skills/` outside the upstream base namespace (including everything under `dude-local-*`)
 - `.github/copilot-instructions.md` if it exists
 - project docs and root files such as `README.md` and `.gitattributes`
