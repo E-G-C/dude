@@ -839,7 +839,7 @@ The coordinator invokes them; they are not a background service.
 | Script | Purpose |
 |---|---|
 | `dude-lint/lint.mjs` | structural hygiene of the bundle (read-only) |
-| `dude-compose/compose.mjs` | `list` / `status` / `add` / `remove` / `verify` optional packs and their versioned inventories |
+| `dude-compose/compose.mjs` | `list` / `status` / `add` / `remove` / `refresh` / `verify` optional packs and their versioned inventories |
 | `dude-bundle-upgrade/upgrade.mjs` | refresh core files from the upstream source |
 | `dude-lightweight-execution/board.mjs` | `parse` / `ready` / `next` / `render` / `set` / `apply-states` / `diff` on `tasks.md` |
 | `dude-lightweight-execution/backlog.mjs` | read-only lifecycle views, `check`, and pair-safe `generate --write` for `.dude/backlog.md` and `.dude/backlog.html` |
@@ -853,7 +853,7 @@ Agent model configuration is authored at `src/config/agent-models.json`.
 Development and release builds validate it through an explicit absolute path
 before changing output, then package the same bytes at
 `.github/skills/dude-engine/config/agent-models.json`. Installed compose
-`add`/`verify`, lint, and pack scaffolding use that packaged path.
+`add`/`refresh`/`verify`, lint, and pack scaffolding use that packaged path.
 
 Installed packs may ship their own scripts too — e.g. the `beads` pack's
 `dude-pack-beads-workflow/beads.mjs` (`plan-import` a `tasks.md` into `bd`
@@ -1003,9 +1003,13 @@ generated core output.
   source only. Do not run core `build-dev` to promote a pack.
 
 An installed pack does not update when its source or model mapping changes.
-Refresh it with `remove` followed by `add`. `remove`, `list`, and `status` do not
-load model configuration or the renderer; `add` and `verify` use the packaged
-engine copy.
+Refresh it with `compose refresh <name>`, which re-projects the current source in
+one all-or-restored transaction after proving installed-side authority and
+refusing on drift. Unlike `remove`, refresh expects a changed source, so an
+edited `library/packs/<name>/` refreshes cleanly; on a released bundle without
+the `refresh` subcommand, fall back to `remove` then `add`. `remove`, `list`, and
+`status` do not load model configuration or the renderer; `add`, `refresh`, and
+`verify` use the packaged engine copy.
 
 Worked pack example: for a Beads workflow change, run
 `node --test library/packs/beads/skills/dude-pack-beads-workflow/beads.test.mjs`

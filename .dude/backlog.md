@@ -8,7 +8,7 @@ A read-only view built from idea files, linked feature files, task records, and 
 - Ready / Next: **0**
 - Ideas awaiting definition: **2**
 - Defined awaiting work: **0**
-- Completed: **32**
+- Completed: **33**
 
 ## Current
 
@@ -56,6 +56,7 @@ No current work to diagram.
 - `task-scoped-skill-resolution` — Task-Scoped Skill Resolution (`.dude/ideas/task-scoped-skill-resolution.md`)
 - `technical-docs-pack-remediation` — Technical Docs Pack Remediation (`.dude/ideas/technical-docs-pack-remediation.md`)
 - `topology-first-enforcement-reset` — Add A Topology-First Reset When Review Revisions Expand Enforcement Scope (`.dude/ideas/topology-first-enforcement-reset.md`)
+- `transactional-pack-refresh` — Transactional Pack Refresh (`.dude/ideas/transactional-pack-refresh.md`)
 - `unattended-work-continuity` — Unattended Work Continuity (`.dude/ideas/unattended-work-continuity.md`)
 
 ## Dependency and order notes
