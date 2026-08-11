@@ -16739,10 +16739,15 @@ test('T001 adapter composition: the host adapter closes one ordinary Lightweight
     assert.equal(applied.product.kind, 'lane-receipt');
     assert.equal(receipt.permitHash, permit.permitHash);
     assert.equal(receipt.targetStateChanged, true);
-    // The lane owner alone touched the workspace, and only its own surfaces.
+    // The lane owner commits its canonical surfaces, then its bounded derived
+    // backlog pair; no other workspace surface may move.
     const changed = t018ChangedPaths(before, after);
-    const laneSurfaces = new Set([TASKS_PATH, '.dude/state/task-state.json', IDEA_PATH]);
-    assert.equal(changed.every((file) => laneSurfaces.has(file)), true, changed.join(','));
+    assert.deepEqual(changed, [
+      '.dude/backlog.html',
+      '.dude/backlog.md',
+      TASKS_PATH,
+      '.dude/state/task-state.json',
+    ].sort());
     assert.equal(changed.includes(TASKS_PATH), true);
     assert.equal(changed.includes('.dude/state/task-state.json'), true);
     assert.equal(receipt.tasksPoststateHash, sha256(fs.readFileSync(path.join(root, TASKS_PATH))));
@@ -23587,4 +23592,125 @@ test('Feature 029: equal visible suffixes with different omitted history bind di
   assert.equal(left.prestate.ownerLogTailHash, left.body.fullLogSha256);
   assert.equal(right.prestate.ownerLogTailHash, right.body.fullLogSha256);
   assert.notEqual(left.prestate.ownerLogTailHash, right.prestate.ownerLogTailHash);
+});
+
+// --- Feature 030: resolved idea lifecycle recovery --------------------------
+
+function feature030DefinedOwnerWithDependencyBytes() {
+  return Buffer.from([
+    '---',
+    'title: Owner',
+    'slug: owner',
+    'status: defined',
+    `spec_path: ${SPEC_PATH}`,
+    'depends-on: other',
+    '---',
+    '',
+    '## Idea',
+    '',
+    'Intent.',
+    '',
+    '## Coordinator Log',
+    '',
+    '- 2026-08-10 exact event',
+    '',
+  ].join('\n'));
+}
+
+/** @param {string} [specPath] */
+function feature030ResolvedIdeaBytes(specPath = '') {
+  return Buffer.from([
+    '---',
+    'title: Resolved bystander',
+    'slug: resolved-bystander',
+    'status: resolved',
+    specPath === '' ? 'spec_path:' : `spec_path: ${specPath}`,
+    '---',
+    '',
+    '## Idea',
+    '',
+    'Closed.',
+    '',
+    '## Coordinator Log',
+    '',
+  ].join('\n'));
+}
+
+test('Feature 030: autonomous inspect admits a defined owner carrying depends-on', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    fs.writeFileSync(path.join(root, IDEA_PATH), feature030DefinedOwnerWithDependencyBytes());
+
+    // Act
+    const inspection = inspect(autonomousInspectInput(root));
+    const owner = inspection.items.find((item) => item.source === 'owner-log');
+
+    // Assert
+    assert.equal(owner?.status, 'present');
+    assert.doesNotMatch(canonicalJson(inspection), /FEATURE_FRONTMATTER_MALFORMED/);
+    assert.equal(
+      inspection.blockers.some((blocker) => (
+        blocker.code === 'evidence-incomplete' && blocker.subject === 'owner-log'
+      )),
+      false,
+      'a valid defined owner carrying depends-on must not make owner evidence incomplete',
+    );
+  });
+});
+
+test('Feature 030: autonomous inspect admits a defined owner beside an exact resolved bystander', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const resolvedIdeaPath = '.dude/ideas/resolved-bystander.md';
+    fs.writeFileSync(path.join(root, resolvedIdeaPath), feature030ResolvedIdeaBytes());
+
+    // Act
+    const inspection = inspect(autonomousInspectInput(root));
+    const owner = inspection.items.find((item) => item.source === 'owner-log');
+
+    // Assert
+    assert.equal(owner?.status, 'present');
+    assert.equal(JSON.parse(owner?.text || '{}').ideaPath, IDEA_PATH);
+    assert.doesNotMatch(canonicalJson(inspection), /FEATURE_STATUS_INVALID/);
+    assert.equal(
+      inspection.blockers.some((blocker) => (
+        blocker.code === 'evidence-incomplete' && blocker.subject === 'owner-log'
+      )),
+      false,
+      'a valid resolved bystander must not make owner evidence incomplete',
+    );
+  });
+});
+
+test('Feature 030: autonomous inspect rejects a resolved spec path without adding an owner', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    // Arrange
+    const resolvedIdeaPath = '.dude/ideas/resolved-owner-claim.md';
+    // This deliberately shares the defined owner's path: admission to the owner
+    // set would produce FEATURE_OWNER_DUPLICATE in public inspection evidence.
+    fs.writeFileSync(path.join(root, resolvedIdeaPath), feature030ResolvedIdeaBytes(SPEC_PATH));
+
+    // Act
+    const inspection = inspect(autonomousInspectInput(root));
+    const owner = inspection.items.find((item) => item.source === 'owner-log');
+    const ownerDiagnostics = JSON.parse(owner?.text || '{}').diagnostics;
+
+    // Assert
+    assert.equal(owner?.status, 'malformed');
+    assert.deepEqual(ownerDiagnostics, [{
+      code: 'FEATURE_RESOLVED_SPEC_PATH',
+      path: resolvedIdeaPath,
+    }]);
+    assert.equal(
+      ownerDiagnostics.some((diagnostic) => diagnostic.code === 'FEATURE_OWNER_DUPLICATE'),
+      false,
+      'a resolved ledger with a spec_path must never join the owner set',
+    );
+    assert.equal(
+      inspection.blockers.some((blocker) => (
+        blocker.code === 'evidence-incomplete' && blocker.subject === 'owner-log'
+      )),
+      true,
+    );
+  });
 });

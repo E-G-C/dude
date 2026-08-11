@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   cmdAdd,
   cmdList,
+  cmdRefresh,
   cmdRemove,
   cmdStatus,
   cmdVerify,
@@ -110,10 +111,10 @@ function packAgent(pack, suffix, options = {}) {
  * @param {string} root
  * @param {string} name
  * @param {Array<{ stem: string, name: string, modelClass?: string, agents?: string[], userInvocable?: boolean }>} agents
- * @param {{ skill?: boolean }} [options]
+ * @param {{ skill?: boolean, instruction?: boolean, prompt?: boolean }} [options]
  * @returns {string}
  */
-function writePack(root, name, agents, { skill = true } = {}) {
+function writePack(root, name, agents, { skill = true, instruction = false, prompt = false } = {}) {
   const pack = path.join(root, 'library', 'packs', name);
   fs.mkdirSync(pack, { recursive: true });
   fs.writeFileSync(
@@ -137,6 +138,22 @@ function writePack(root, name, agents, { skill = true } = {}) {
     fs.writeFileSync(
       path.join(directory, 'SKILL.md'),
       `---\nname: ${skillName}\ndescription: "fixture helper"\n---\n# Helper\n`,
+    );
+  }
+  if (instruction) {
+    const directory = path.join(pack, 'instructions');
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(
+      path.join(directory, `dude-pack-${name}-guide.instructions.md`),
+      `# ${name} guide\n`,
+    );
+  }
+  if (prompt) {
+    const directory = path.join(pack, 'prompts');
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(
+      path.join(directory, `dude-pack-${name}-ask.prompt.md`),
+      `# ${name} ask\n`,
     );
   }
   return pack;
@@ -269,6 +286,58 @@ function assertNoSurvivingStageDirectories(directories) {
   for (const directory of directories) {
     assert.equal(exists(directory), false, `stage directory survived: ${directory}`);
   }
+}
+
+/**
+ * Record temporary refresh stage and transaction directories while a test
+ * invokes compose. Both the `dude-compose-refresh-<name>-` stage and the
+ * `dude-compose-refresh-<name>-txn-` transaction share the tracked substring.
+ * @returns {{ directories: string[], restore: () => void }}
+ */
+function trackRefreshDirectories() {
+  const originalMkdtempSync = fs.mkdtempSync;
+  /** @type {string[]} */
+  const directories = [];
+  fs.mkdtempSync = (prefix, ...rest) => {
+    const directory = originalMkdtempSync(prefix, ...rest);
+    if (String(prefix).includes('dude-compose-refresh-')) {
+      directories.push(directory);
+    }
+    return directory;
+  };
+  return {
+    directories,
+    restore() {
+      fs.mkdtempSync = originalMkdtempSync;
+    },
+  };
+}
+
+/** @param {string} root @param {string} name */
+function addPack(root, name) {
+  return cmdAdd({ root, library: path.join(root, 'library', 'packs'), name, force: false });
+}
+
+/** @param {string} root @param {string} name @param {{ fetch?: boolean }} [options] */
+function refreshPack(root, name, options = {}) {
+  return cmdRefresh({ root, library: path.join(root, 'library', 'packs'), name, ...options });
+}
+
+/**
+ * Rewrite the single fenced JSON payload of an install profile in place,
+ * preserving the surrounding document. Used to stage a legacy (inventory-less)
+ * entry that still parses but is not fully current.
+ * @param {string} root
+ * @param {(payload: any) => void} mutate
+ */
+function rewriteProfileJson(root, mutate) {
+  const target = path.join(root, '.dude', 'metadata', 'profile.md');
+  const text = fs.readFileSync(target, 'utf8');
+  const match = text.match(/```json\s*\r?\n([\s\S]*?)\r?\n```/);
+  assert.ok(match, 'profile.md must contain a fenced JSON block');
+  const payload = JSON.parse(match[1]);
+  mutate(payload);
+  fs.writeFileSync(target, text.replace(match[0], `\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``));
 }
 
 /**
@@ -889,4 +958,428 @@ test('compose static import closure excludes projection dependencies', () => {
     false,
     `static closure reaches a projection dependency: ${[...closure].join(', ')}`,
   );
+});
+
+test('refresh rewrites all four artifact kinds and applies add, replace, and remove in one step', async () => {
+  const root = createRoot();
+  const refreshes = trackRefreshDirectories();
+  try {
+    writePack(root, 'mixed', [packAgent('mixed', 'worker', { name: 'Mixed Worker' })], {
+      skill: true,
+      instruction: true,
+      prompt: true,
+    });
+    const packDir = path.join(root, 'library', 'packs', 'mixed');
+    // A second prompt that the edited source later drops (an old-only removal).
+    fs.writeFileSync(path.join(packDir, 'prompts', 'dude-pack-mixed-legacy.prompt.md'), '# mixed legacy\n');
+
+    const added = await addPack(root, 'mixed');
+    assert.equal(added.ok, true, added.error);
+
+    // Edit the source: change every kind's content (four replacements), drop the
+    // legacy prompt (one removal), and add a new instruction (one addition).
+    fs.writeFileSync(
+      path.join(packDir, 'agents', 'dude-pack-mixed-worker.agent.md'),
+      agentSource({ name: 'Mixed Worker' }).replace('You are Mixed Worker.', 'You are Mixed Worker v2.'),
+    );
+    fs.writeFileSync(
+      path.join(packDir, 'skills', 'dude-pack-mixed-helper', 'SKILL.md'),
+      '---\nname: dude-pack-mixed-helper\ndescription: "fixture helper"\n---\n# Helper v2\n',
+    );
+    fs.writeFileSync(path.join(packDir, 'instructions', 'dude-pack-mixed-guide.instructions.md'), '# mixed guide v2\n');
+    fs.writeFileSync(path.join(packDir, 'prompts', 'dude-pack-mixed-ask.prompt.md'), '# mixed ask v2\n');
+    fs.rmSync(path.join(packDir, 'prompts', 'dude-pack-mixed-legacy.prompt.md'));
+    fs.writeFileSync(path.join(packDir, 'instructions', 'dude-pack-mixed-extra.instructions.md'), '# mixed extra\n');
+
+    const result = await refreshPack(root, 'mixed');
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.result?.replaced, [
+      '.github/agents/dude-pack-mixed-worker.agent.md',
+      '.github/instructions/dude-pack-mixed-guide.instructions.md',
+      '.github/prompts/dude-pack-mixed-ask.prompt.md',
+      '.github/skills/dude-pack-mixed-helper',
+    ]);
+    assert.deepEqual(result.result?.added, ['.github/instructions/dude-pack-mixed-extra.instructions.md']);
+    assert.deepEqual(result.result?.removed, ['.github/prompts/dude-pack-mixed-legacy.prompt.md']);
+
+    // New destination exists with its new bytes.
+    const extra = path.join(root, '.github', 'instructions', 'dude-pack-mixed-extra.instructions.md');
+    assert.equal(exists(extra), true, 'addition missing on disk');
+    assert.equal(fs.readFileSync(extra, 'utf8'), '# mixed extra\n');
+
+    // Replaced destinations hold the new projected bytes across all four kinds.
+    assert.match(
+      fs.readFileSync(path.join(root, '.github', 'agents', 'dude-pack-mixed-worker.agent.md'), 'utf8'),
+      /You are Mixed Worker v2\./,
+    );
+    assert.match(
+      fs.readFileSync(path.join(root, '.github', 'skills', 'dude-pack-mixed-helper', 'SKILL.md'), 'utf8'),
+      /# Helper v2/,
+    );
+    assert.match(
+      fs.readFileSync(path.join(root, '.github', 'instructions', 'dude-pack-mixed-guide.instructions.md'), 'utf8'),
+      /mixed guide v2/,
+    );
+    assert.match(
+      fs.readFileSync(path.join(root, '.github', 'prompts', 'dude-pack-mixed-ask.prompt.md'), 'utf8'),
+      /mixed ask v2/,
+    );
+
+    // Falsifier: the old-only destination is absent on disk, not merely dropped
+    // from the record.
+    assert.equal(
+      exists(path.join(root, '.github', 'prompts', 'dude-pack-mixed-legacy.prompt.md')),
+      false,
+      'removed destination still on disk',
+    );
+
+    // The record's files and inventory reflect the new destination set.
+    const entry = readProfile(root).installed.mixed;
+    assert.deepEqual(entry.files.slice().sort(), [
+      '.github/agents/dude-pack-mixed-worker.agent.md',
+      '.github/instructions/dude-pack-mixed-extra.instructions.md',
+      '.github/instructions/dude-pack-mixed-guide.instructions.md',
+      '.github/prompts/dude-pack-mixed-ask.prompt.md',
+      '.github/skills/dude-pack-mixed-helper',
+    ]);
+    assert.equal(entry.files.includes('.github/prompts/dude-pack-mixed-legacy.prompt.md'), false);
+    assert.equal(entry.inventory?.artifacts.length, 5);
+
+    // The stage and transaction directories were created and then cleaned.
+    assert.ok(refreshes.directories.length >= 2, 'refresh must create a stage and a transaction directory');
+    assertNoSurvivingStageDirectories(refreshes.directories);
+  } finally {
+    refreshes.restore();
+    cleanup(root);
+  }
+});
+
+test('refresh reprojects a changed source over the same destination set', async () => {
+  const root = createRoot();
+  try {
+    writePack(root, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
+    const added = await addPack(root, 'demo');
+    assert.equal(added.ok, true, added.error);
+    const before = readProfile(root).installed.demo;
+    const beforeFiles = before.files.slice().sort();
+    const beforeAgentHash = before.inventory?.artifacts
+      .find((artifact) => artifact.path === '.github/agents/dude-pack-demo-worker.agent.md')?.installed_sha256;
+    assert.ok(beforeAgentHash);
+
+    // Content-only change across the same destination set.
+    const packDir = path.join(root, 'library', 'packs', 'demo');
+    fs.writeFileSync(
+      path.join(packDir, 'agents', 'dude-pack-demo-worker.agent.md'),
+      agentSource({ name: 'Demo Worker' }).replace('You are Demo Worker.', 'You are Demo Worker changed.'),
+    );
+    fs.writeFileSync(
+      path.join(packDir, 'skills', 'dude-pack-demo-helper', 'SKILL.md'),
+      '---\nname: dude-pack-demo-helper\ndescription: "fixture helper"\n---\n# Helper changed\n',
+    );
+
+    const result = await refreshPack(root, 'demo');
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.result?.added, []);
+    assert.deepEqual(result.result?.removed, []);
+    assert.deepEqual(result.result?.replaced, beforeFiles);
+
+    const after = readProfile(root).installed.demo;
+    assert.deepEqual(after.files.slice().sort(), beforeFiles, 'file set changed on a content-only refresh');
+    const afterAgentHash = after.inventory?.artifacts
+      .find((artifact) => artifact.path === '.github/agents/dude-pack-demo-worker.agent.md')?.installed_sha256;
+    assert.notEqual(afterAgentHash, beforeAgentHash, 'inventory hash unchanged despite a content change');
+
+    assert.match(
+      fs.readFileSync(path.join(root, '.github', 'agents', 'dude-pack-demo-worker.agent.md'), 'utf8'),
+      /You are Demo Worker changed\./,
+    );
+    assert.match(
+      fs.readFileSync(path.join(root, '.github', 'skills', 'dude-pack-demo-helper', 'SKILL.md'), 'utf8'),
+      /# Helper changed/,
+    );
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('refresh refuses a hand-edited installed artifact and preserves the drift', async () => {
+  const root = createRoot();
+  const refreshes = trackRefreshDirectories();
+  try {
+    writePack(root, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
+    const added = await addPack(root, 'demo');
+    assert.equal(added.ok, true, added.error);
+
+    // Change the source so a refresh would otherwise proceed, then hand-edit the
+    // installed artifact so the installed-side hash no longer matches.
+    const packDir = path.join(root, 'library', 'packs', 'demo');
+    fs.writeFileSync(path.join(packDir, 'skills', 'dude-pack-demo-helper', 'SKILL.md'), '---\nname: dude-pack-demo-helper\ndescription: "fixture helper"\n---\n# Helper changed\n');
+    const installedAgent = path.join(root, '.github', 'agents', 'dude-pack-demo-worker.agent.md');
+    const drifted = `${fs.readFileSync(installedAgent, 'utf8')}\nhand edit\n`;
+    fs.writeFileSync(installedAgent, drifted);
+
+    const before = mutationSnapshot(root);
+    const result = await refreshPack(root, 'demo');
+
+    assert.equal(result.ok, false);
+    assert.match(result.error || '', /installed artifact '.*' no longer matches pack "demo" inventory; refusing refresh/);
+    assertMutationUnchanged(root, before);
+    assert.equal(fs.readFileSync(installedAgent, 'utf8'), drifted, 'drifted bytes were not preserved');
+    // The refusal precedes staging.
+    assertNoSurvivingStageDirectories(refreshes.directories);
+    assert.deepEqual(refreshes.directories, [], 'installed-drift refusal must precede staging');
+  } finally {
+    refreshes.restore();
+    cleanup(root);
+  }
+});
+
+test('refresh refuses an absent pack and a non-current profile without mutating', async () => {
+  const absent = createRoot();
+  const nonCurrent = createRoot();
+  try {
+    // Absent pack: nothing is installed to refresh.
+    writePack(absent, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
+    const absentBefore = mutationSnapshot(absent);
+    const absentResult = await refreshPack(absent, 'demo');
+    assert.equal(absentResult.ok, false);
+    assert.match(absentResult.error || '', /pack "demo" refresh requires a complete current inventory/);
+    assertMutationUnchanged(absent, absentBefore);
+
+    // Non-current profile: a second installed pack carries only a legacy record,
+    // so the whole profile is not fully current even though the target is.
+    writePack(nonCurrent, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
+    writePack(nonCurrent, 'extra', [packAgent('extra', 'aide', { name: 'Extra Aide' })], { skill: false });
+    assert.equal((await addPack(nonCurrent, 'demo')).ok, true);
+    assert.equal((await addPack(nonCurrent, 'extra')).ok, true);
+    rewriteProfileJson(nonCurrent, (payload) => {
+      delete payload.installed.extra.inventory;
+    });
+    const nonCurrentBefore = mutationSnapshot(nonCurrent);
+    const nonCurrentResult = await refreshPack(nonCurrent, 'demo');
+    assert.equal(nonCurrentResult.ok, false);
+    assert.match(
+      nonCurrentResult.error || '',
+      /refusing to refresh pack "demo": the install profile is not fully current/,
+    );
+    assertMutationUnchanged(nonCurrent, nonCurrentBefore);
+  } finally {
+    cleanup(absent);
+    cleanup(nonCurrent);
+  }
+});
+
+test('refresh refuses an unresolvable source without mutating', async () => {
+  const root = createRoot();
+  const refreshes = trackRefreshDirectories();
+  try {
+    writePack(root, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
+    const added = await addPack(root, 'demo');
+    assert.equal(added.ok, true, added.error);
+    fs.rmSync(path.join(root, 'library', 'packs', 'demo'), { recursive: true, force: true });
+
+    const before = mutationSnapshot(root);
+    const result = await refreshPack(root, 'demo', { fetch: false });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error || '', /pack not found in catalog/);
+    assertMutationUnchanged(root, before);
+    assertNoSurvivingStageDirectories(refreshes.directories);
+  } finally {
+    refreshes.restore();
+    cleanup(root);
+  }
+});
+
+test('refresh refuses a new destination occupied by a foreign artifact', async () => {
+  const root = createRoot();
+  const refreshes = trackRefreshDirectories();
+  try {
+    writePack(root, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
+    const added = await addPack(root, 'demo');
+    assert.equal(added.ok, true, added.error);
+
+    // The edited source ships a would-be addition, but a foreign artifact already
+    // occupies its destination.
+    const packDir = path.join(root, 'library', 'packs', 'demo');
+    fs.mkdirSync(path.join(packDir, 'instructions'), { recursive: true });
+    fs.writeFileSync(path.join(packDir, 'instructions', 'dude-pack-demo-guide.instructions.md'), '# demo guide\n');
+    const occupied = path.join(root, '.github', 'instructions', 'dude-pack-demo-guide.instructions.md');
+    fs.writeFileSync(occupied, '# pre-existing foreign artifact\n');
+
+    const before = mutationSnapshot(root);
+    const result = await refreshPack(root, 'demo');
+
+    assert.equal(result.ok, false);
+    assert.match(result.error || '', /already exists as a core, project, or foreign artifact/);
+    assertMutationUnchanged(root, before);
+    assert.equal(fs.readFileSync(occupied, 'utf8'), '# pre-existing foreign artifact\n', 'foreign artifact was altered');
+    assertNoSurvivingStageDirectories(refreshes.directories);
+  } finally {
+    refreshes.restore();
+    cleanup(root);
+  }
+});
+
+test('refresh refuses when the profile changes after authorization', async () => {
+  const root = createRoot();
+  try {
+    writePack(root, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
+    const added = await addPack(root, 'demo');
+    assert.equal(added.ok, true, added.error);
+
+    // A changed source keeps refresh on its success path up to the reread.
+    const packDir = path.join(root, 'library', 'packs', 'demo');
+    fs.writeFileSync(path.join(packDir, 'skills', 'dude-pack-demo-helper', 'SKILL.md'), '---\nname: dude-pack-demo-helper\ndescription: "fixture helper"\n---\n# Helper changed\n');
+
+    const profileAbs = path.join(root, '.dude', 'metadata', 'profile.md');
+    const before = mutationSnapshot(root);
+    const originalReadFileSync = fs.readFileSync;
+    let profileReads = 0;
+    // Return tampered bytes only on the second read of the profile — the reread
+    // that re-establishes authority — without mutating the file on disk.
+    fs.readFileSync = (file, ...rest) => {
+      if (typeof file === 'string' && path.resolve(file) === path.resolve(profileAbs)) {
+        profileReads += 1;
+        if (profileReads === 2) {
+          return Buffer.concat([originalReadFileSync(file), Buffer.from('\n')]);
+        }
+      }
+      return originalReadFileSync(file, ...rest);
+    };
+    let result;
+    try {
+      result = await refreshPack(root, 'demo');
+    } finally {
+      fs.readFileSync = originalReadFileSync;
+    }
+
+    assert.equal(result.ok, false);
+    assert.match(result.error || '', /profile changed after authorizing refresh of pack "demo"; refusing refresh/);
+    assert.equal(profileReads, 2, 'refresh must reread the profile exactly once after authorizing');
+    assertMutationUnchanged(root, before);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('refresh rolls back every mutation and leaves no residue when a phase-2 write fails', async () => {
+  const root = createRoot();
+  const refreshes = trackRefreshDirectories();
+  const originalWriteFileSync = fs.writeFileSync;
+  try {
+    writePack(root, 'mixed', [packAgent('mixed', 'worker', { name: 'Mixed Worker' })], {
+      skill: true,
+      instruction: true,
+      prompt: true,
+    });
+    const packDir = path.join(root, 'library', 'packs', 'mixed');
+    fs.writeFileSync(path.join(packDir, 'prompts', 'dude-pack-mixed-legacy.prompt.md'), '# mixed legacy\n');
+    const added = await addPack(root, 'mixed');
+    assert.equal(added.ok, true, added.error);
+
+    // Edit the source so the transaction applies a replacement, an addition, and
+    // a removal before the profile write fails.
+    fs.writeFileSync(path.join(packDir, 'instructions', 'dude-pack-mixed-guide.instructions.md'), '# mixed guide v2\n');
+    fs.writeFileSync(path.join(packDir, 'prompts', 'dude-pack-mixed-followup.prompt.md'), '# mixed followup\n');
+    fs.rmSync(path.join(packDir, 'prompts', 'dude-pack-mixed-legacy.prompt.md'));
+
+    const before = mutationSnapshot(root);
+    // Fail the atomic profile write (its temp sibling) after every artifact
+    // mutation has been applied, forcing a full rollback.
+    fs.writeFileSync = (file, ...rest) => {
+      if (typeof file === 'string' && path.basename(file).startsWith('profile.md.tmp-')) {
+        throw new Error('injected profile write failure');
+      }
+      return originalWriteFileSync(file, ...rest);
+    };
+
+    const result = await refreshPack(root, 'mixed');
+
+    fs.writeFileSync = originalWriteFileSync;
+    assert.equal(result.ok, false);
+    assert.match(result.error || '', /pack refresh failed and was rolled back: injected profile write failure/);
+
+    // Every artifact and the profile are byte-identical to the pre-refresh state.
+    assertMutationUnchanged(root, before);
+    // No addition remains.
+    assert.equal(
+      exists(path.join(root, '.github', 'prompts', 'dude-pack-mixed-followup.prompt.md')),
+      false,
+      'addition survived rollback',
+    );
+    // No removal is missing.
+    assert.equal(
+      exists(path.join(root, '.github', 'prompts', 'dude-pack-mixed-legacy.prompt.md')),
+      true,
+      'removed destination was not restored',
+    );
+    // No stage or transaction directory survives.
+    assert.ok(refreshes.directories.length >= 2, 'stage and transaction directories were created');
+    assertNoSurvivingStageDirectories(refreshes.directories);
+    // No profile-transaction residue remains.
+    const residue = fs.readdirSync(path.join(root, '.dude', 'metadata'))
+      .filter((entry) => entry.startsWith('profile.md.tmp-') || entry.startsWith('profile.md.backup-'));
+    assert.deepEqual(residue, [], 'profile transaction residue survived');
+  } finally {
+    fs.writeFileSync = originalWriteFileSync;
+    refreshes.restore();
+    cleanup(root);
+  }
+});
+
+test('refresh preserves the remove digest guard and the add --force semantics', async () => {
+  // add --force still overwrites an occupied agent destination.
+  const overwrite = createRoot();
+  // add --force still refuses an occupied instruction destination.
+  const protectedInstruction = createRoot();
+  // remove refuses a changed source that refresh nonetheless accepts (FR-011).
+  const changed = createRoot();
+  try {
+    writePack(overwrite, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
+    const agentDest = path.join(overwrite, '.github', 'agents', 'dude-pack-demo-worker.agent.md');
+    fs.writeFileSync(agentDest, '# foreign agent\n');
+    const denied = await cmdAdd({ root: overwrite, library: path.join(overwrite, 'library', 'packs'), name: 'demo', force: false });
+    assert.equal(denied.ok, false);
+    assert.match(denied.error || '', /already exists as a core, project, or foreign artifact/);
+    const forced = await cmdAdd({ root: overwrite, library: path.join(overwrite, 'library', 'packs'), name: 'demo', force: true });
+    assert.equal(forced.ok, true, forced.error);
+    assert.match(fs.readFileSync(agentDest, 'utf8'), /You are Demo Worker\./);
+
+    writePack(protectedInstruction, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: false, instruction: true });
+    const instructionDest = path.join(protectedInstruction, '.github', 'instructions', 'dude-pack-demo-guide.instructions.md');
+    fs.writeFileSync(instructionDest, '# foreign instruction\n');
+    const forcedInstruction = await cmdAdd({ root: protectedInstruction, library: path.join(protectedInstruction, 'library', 'packs'), name: 'demo', force: true });
+    assert.equal(forcedInstruction.ok, false);
+    assert.match(forcedInstruction.error || '', /already exists as a core, project, or foreign artifact/);
+    assert.equal(fs.readFileSync(instructionDest, 'utf8'), '# foreign instruction\n', 'force must not overwrite an instruction');
+    assert.equal(
+      exists(path.join(protectedInstruction, '.github', 'agents', 'dude-pack-demo-worker.agent.md')),
+      false,
+      'a refused add must not write any artifact',
+    );
+
+    writePack(changed, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
+    assert.equal((await addPack(changed, 'demo')).ok, true);
+    const sourceAgent = path.join(changed, 'library', 'packs', 'demo', 'agents', 'dude-pack-demo-worker.agent.md');
+    fs.writeFileSync(
+      sourceAgent,
+      fs.readFileSync(sourceAgent, 'utf8').replace('You are Demo Worker.', 'You are Demo Worker changed.'),
+    );
+    const removeBefore = mutationSnapshot(changed);
+    const removed = cmdRemove({ root: changed, name: 'demo' });
+    assert.equal(removed.ok, false);
+    assert.match(removed.error || '', /no longer matches its recorded digest/);
+    assertMutationUnchanged(changed, removeBefore);
+    const refreshed = await refreshPack(changed, 'demo');
+    assert.equal(refreshed.ok, true, refreshed.error);
+    assert.match(
+      fs.readFileSync(path.join(changed, '.github', 'agents', 'dude-pack-demo-worker.agent.md'), 'utf8'),
+      /You are Demo Worker changed\./,
+    );
+  } finally {
+    cleanup(overwrite);
+    cleanup(protectedInstruction);
+    cleanup(changed);
+  }
 });

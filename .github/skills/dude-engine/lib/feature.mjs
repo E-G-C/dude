@@ -18,7 +18,7 @@ import { WORKSPACE_PATHS } from './workspace-paths.mjs';
  * non-canonical key, structured flow value (`[...]`), or block-list line.
  * @type {readonly string[]}
  */
-const CANONICAL_IDEA_KEYS = Object.freeze(['title', 'slug', 'status', 'spec_path', 'depends-on']);
+export const CANONICAL_IDEA_KEYS = Object.freeze(['title', 'slug', 'status', 'spec_path', 'depends-on']);
 
 /**
  * @typedef {{ ideaPath: string, specPath: string }} FeatureRecord
@@ -235,8 +235,12 @@ export function inventoryDefinedFeatures({ root }) {
       continue;
     }
 
-    const status = frontmatter.scalars.get('status')?.value || '';
-    const specPath = frontmatter.scalars.get('spec_path')?.value || '';
+    const statusScalar = frontmatter.scalars.get('status');
+    const status = statusScalar?.value || '';
+    const rawStatus = statusScalar?.raw;
+    const rawSpecPath = frontmatter.scalars.get('spec_path')?.value;
+    const specPath = rawSpecPath ?? '';
+    const exactResolvedStatus = status === 'resolved' && rawStatus === 'resolved';
     let statusValid = true;
     if (!status) {
       statusValid = false;
@@ -247,19 +251,29 @@ export function inventoryDefinedFeatures({ root }) {
         ideaPath,
         "frontmatter is missing 'status:'",
       );
-    } else if (status !== 'draft' && status !== 'defined') {
+    } else if (status !== 'draft' && status !== 'defined' && !exactResolvedStatus) {
       statusValid = false;
       diagnose(
         diagnostics,
         'FEATURE_STATUS_INVALID',
         'error',
         ideaPath,
-        `invalid status '${status}' (valid: draft, defined)`,
+        `invalid status '${status}' (valid: draft, defined, resolved)`,
       );
     }
 
     let specPathValid = false;
-    if (!specPath) {
+    if (status === 'resolved') {
+      if (rawSpecPath !== '') {
+        diagnose(
+          diagnostics,
+          'FEATURE_RESOLVED_SPEC_PATH',
+          'error',
+          ideaPath,
+          'status: resolved requires an empty spec_path:',
+        );
+      }
+    } else if (!specPath) {
       if (status === 'defined') {
         diagnose(
           diagnostics,

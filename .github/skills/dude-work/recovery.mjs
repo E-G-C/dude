@@ -11,7 +11,7 @@ import {
   parseSpecIdentity,
   resolveSpecIdentity,
 } from '../dude-engine/lib/feature-identity.mjs';
-import { resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
+import { CANONICAL_IDEA_KEYS, resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
 import { parseTaskState } from '../dude-engine/lib/task-state.mjs';
 import { parseTasks, parseVisibleTasks } from '../dude-engine/lib/tasks.mjs';
 import { resolveWorkspacePath } from '../dude-engine/lib/workspace-paths.mjs';
@@ -1325,11 +1325,16 @@ function normalizeOwnerLog(value, specPath, resolverDiagnostics) {
     }
     try {
       const frontmatter = parseFrontmatterScalars(captured.text, {
-        canonicalKeys: ['title', 'slug', 'status', 'spec_path'],
+        canonicalKeys: CANONICAL_IDEA_KEYS,
       });
-      const status = frontmatter.scalars.get('status')?.value || '';
-      const ideaSpecPath = frontmatter.scalars.get('spec_path')?.value || '';
-      if (!['draft', 'defined'].includes(status)
+      const statusScalar = frontmatter.scalars.get('status');
+      const status = statusScalar?.value || '';
+      const rawStatus = statusScalar?.raw;
+      const rawSpecPath = frontmatter.scalars.get('spec_path')?.value;
+      const ideaSpecPath = rawSpecPath ?? '';
+      const exactResolvedStatus = status === 'resolved' && rawStatus === 'resolved';
+      if ((!['draft', 'defined'].includes(status) && !exactResolvedStatus)
+        || (status === 'resolved' && rawSpecPath !== '')
         || (status === 'defined' && !parseSpecIdentity(ideaSpecPath))
         || (status === 'draft' && ideaSpecPath !== '')) {
         malformedIdeas.push({ path: ideaPath, reason: 'invalid-owner-frontmatter' });
@@ -2360,24 +2365,32 @@ function readDirectIdeas(root, budget, sourceEntryTail, beforeBodyAcquisition) {
     let frontmatter;
     try {
       frontmatter = parseFrontmatterScalars(bytes, {
-        canonicalKeys: ['title', 'slug', 'status', 'spec_path'],
+        canonicalKeys: CANONICAL_IDEA_KEYS,
       });
     } catch {
       diagnostics.push({ code: 'FEATURE_FRONTMATTER_MALFORMED', path: ideaPath });
       continue;
     }
-    const status = frontmatter.scalars.get('status')?.value || '';
-    const specPath = frontmatter.scalars.get('spec_path')?.value || '';
+    const statusScalar = frontmatter.scalars.get('status');
+    const status = statusScalar?.value || '';
+    const rawStatus = statusScalar?.raw;
+    const rawSpecPath = frontmatter.scalars.get('spec_path')?.value;
+    const specPath = rawSpecPath ?? '';
+    const exactResolvedStatus = status === 'resolved' && rawStatus === 'resolved';
     let statusValid = true;
     if (!status) {
       statusValid = false;
       diagnostics.push({ code: 'FEATURE_STATUS_MISSING', path: ideaPath });
-    } else if (!['draft', 'defined'].includes(status)) {
+    } else if (status !== 'draft' && status !== 'defined' && !exactResolvedStatus) {
       statusValid = false;
       diagnostics.push({ code: 'FEATURE_STATUS_INVALID', path: ideaPath });
     }
     let specPathValid = false;
-    if (!specPath) {
+    if (status === 'resolved') {
+      if (rawSpecPath !== '') {
+        diagnostics.push({ code: 'FEATURE_RESOLVED_SPEC_PATH', path: ideaPath });
+      }
+    } else if (!specPath) {
       if (status === 'defined') diagnostics.push({ code: 'FEATURE_SPEC_PATH_MISSING', path: ideaPath });
     } else if (!parseSpecIdentity(specPath)) {
       diagnostics.push({ code: 'FEATURE_SPEC_PATH_INVALID', path: ideaPath });

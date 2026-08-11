@@ -92,12 +92,16 @@ The where-are-we summary reports Current work (active plus blocked), Ready / Nex
 - `node .github/skills/dude-lightweight-execution/backlog.mjs kanban --root .` (Mermaid for current work only)
 - `node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <idea-slug> --root .` (one defined package task `deps:` graph)
 
-The committed Markdown and self-contained HTML projections remain fixed at `.dude/backlog.md` and `.dude/backlog.html`. Freshness is mechanical:
+The committed Markdown and self-contained HTML projections remain fixed at `.dude/backlog.md` and `.dude/backlog.html`. Freshness is mechanical. For direct `backlog.mjs` use:
 
 - `node .github/skills/dude-lightweight-execution/backlog.mjs check --root .` renders both expected artifacts in memory, compares exact bytes, fails separately for a missing or stale path, rejects `--write`, and writes nothing.
 - `node .github/skills/dude-lightweight-execution/backlog.mjs generate --root . --write` is the only artifact mutation path and writes exactly `.dude/backlog.md` and `.dude/backlog.html`.
 
-At every coordinator state change, after the same authoritative inputs change and the task board is re-rendered with `board.mjs render --write`, the coordinator regenerates the two projections. The existing test and CI path runs the exact-byte check, so freshness does not depend on that procedure alone. Generation emits no wall-clock time, checkout name, or Git revision; unchanged authoritative input bytes render byte-identically in differently named roots.
+The pair-safe refresh renders both postimages before either write and restores both preimages if either write fails. It runs after successful guarded `board.mjs set --write`, guarded `apply-states --write`, and successful autonomous `applyLightweightWorkRequest`. It does not run for `render --write`, reads, dry runs, or refused and failed canonical mutations.
+
+If a guarded refresh fails after canonical state commits, the command exits `2`, writes `[FAIL] canonical state committed; backlog refresh failed` to stderr, and does not print its success line. An autonomous refresh failure preserves the exact committed `{ ok, phase, receipt }` result without a warning. `backlog.mjs check` detects the restored stale pair, and the next successful coordinator refresh repairs it.
+
+Coordinator Log-only writes outside the autonomous boundary, brainstorm, definition, resolution, reopen, and backlog-order changes still require procedural `backlog.mjs generate --write`. The existing test and CI path runs the exact-byte check. Generation emits no wall-clock time, checkout name, or Git revision; unchanged authoritative input bytes render byte-identically in differently named roots.
 
 Both artifacts are derived projections and never authoritative. Idea frontmatter provides lifecycle and declared `depends-on:` relationships, canonical `tasks.md` provides execution, and optional `.dude/state/backlog-order.md` provides explicit order. A literal `depends-on: <slug>` marker written in the user-controlled `## Idea` body is displayed separately as provisional and non-authoritative; it never blocks, prioritizes, or orders work. When explicit order is absent, the report says `No explicit feature order declared`.
 

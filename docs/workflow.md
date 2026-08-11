@@ -93,7 +93,19 @@ it also reports Beads state without mutating it.
 
 `spec_path`, `status`, and `## Coordinator Log` are workflow metadata. Let Dude
 maintain them so define and track stay consistent. Valid status values are
-`draft` and `defined`; `draft` is a lifecycle value, not an intake command.
+`draft|defined|resolved`; `draft` is a lifecycle value, not an intake command.
+
+A `resolved` ledger is terminal and package-less: it records an outcome that
+finished without the idea ever owning a `.dude/specs/**` package. Its
+`spec_path:` is empty, and it never resolves as a defined owner. A routine
+`@dude brainstorm` rerun retains exact `status: resolved` and its empty
+`spec_path:`. It stays terminal until an explicit `@dude brainstorm <slug>`
+lifecycle request reopens it to draft. `@dude define` and `@dude ship` refuse
+package creation until it is reopened. The backlog places a valid resolved
+ledger in Completed with no task counts only when its status scalar is exactly
+`resolved`, its unnormalized `spec_path:` is exactly empty, it has no owner
+claim, and it has no owner or metadata diagnostic. Any other resolved-shaped
+ledger is unavailable, not Completed.
 
 ### Ownership and escalation
 
@@ -254,6 +266,14 @@ In this lane:
   pauses and asks you to confirm before discarding that history.
 - one bounded task may still include closely related code, tests, and docs when
   one verification step proves the slice
+
+The derived `.dude/backlog.md` and `.dude/backlog.html` refresh after guarded
+`set --write`, guarded `apply-states --write`, and successful autonomous
+Lightweight applications. They do not refresh for board-only rendering, reads,
+dry runs, or refused mutations. A refresh failure leaves canonical task state
+committed; autonomous work keeps its existing committed receipt, and
+`backlog.mjs check` detects the stale pair. Coordinator Log-only, lifecycle, and
+backlog-order changes remain procedural backlog-generation work.
 
 3. Continue execution from the ready-now task or ready set, or resume any
   existing `[~]` task first. `[P]` is only an independence candidate; it

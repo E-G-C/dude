@@ -20,6 +20,8 @@ description: "Use for brainstorm idea capture, explicit feature definition, spec
 
 On first capture, only clear language or transcription errors may be corrected. On rerun, re-normalize managed content without opportunistically rewriting user text. Keep active questions immediately after `## Idea`, preserve resolved questions, answers, assumptions, and user edits, and add only focused questions introduced by new ambiguity. Set `status: draft` and empty `spec_path:` only for a first or still-undefined draft. A rerun of a defined ledger preserves `status: defined` and its exact `spec_path:`; never demote it or orphan its package.
 
+A rerun of a resolved ledger preserves exact `status: resolved` and its empty `spec_path:`. Only an explicit user request to reopen through `brainstorm <slug>` changes a resolved ledger to draft with an empty path and one appended lifecycle event; never infer reopen from refreshed prose.
+
 If one ledger contains distinct outcomes with separate success tests, ask one narrow split question before definition. Do not create nested or duplicate intake ledgers.
 
 ## Guardrail And Spec Gates
@@ -34,7 +36,7 @@ The spec gate requires complete sections, testable requirements, measurable tech
 
 Initial definition has a prospective owner because no defined owner exists yet. This transaction is first-definition only; supporting artifacts, re-definition, and tracked recovery do not route through it:
 
-1. Select exactly one explicit direct draft idea by the requested slug or idea path; never use a same-name, recursive, or retired-path fallback.
+1. Select exactly one explicit direct draft idea by the requested slug or idea path; never use a same-name, recursive, or retired-path fallback. A resolved ledger is terminal until explicitly reopened through `brainstorm <slug>`; first definition refuses it before any write.
 2. Derive the next monotonic package number and future exact `spec_path:`. Preflight all direct ideas; identity collisions or ambiguous prospective selection stop before writes.
 3. The Spec Lead stages and approves the core trio, exact task audit breadcrumb, owner transition, and definition log event without writing, then returns those exact bytes to the coordinator. The Spec Lead retains staging authority; the coordinator retains execution and lane authority.
 4. After rechecking the prospective selection, the coordinator creates one operating-system temporary directory containing exactly `current-idea.md`, `staged-idea.md`, `spec.md`, `plan.md`, and `tasks.md`. `current-idea.md` is the exact selected draft preimage; the other four files are the Spec Lead-approved stage.
@@ -48,7 +50,7 @@ Initial definition has a prospective owner because no defined owner exists yet. 
 
 Resolve the exact current defined owner before any write. Refresh from user-controlled intent, not from generated spec or plan prose. Preserve `status: defined`, exact `spec_path:`, append-only history, still-applicable supporting artifacts, and preserved task-history sections.
 
-Explicit `brainstorm` is the sole route for user-intent changes, and explicit `define` the sole route for package creation or lifecycle changes; `flag` delegates no definition writes and is no-write for definition artifacts.
+Explicit `brainstorm` is the sole route for user-intent changes and explicit resolved-to-draft reopen; explicit `define` is the sole route for package creation or refresh after a draft exists. `define` and re-definition never turn a resolved ledger into a package owner; `flag` delegates no definition writes and is no-write for definition artifacts.
 
 Work-authorized unchanged-intent derived-artifact repair in an existing Lightweight package is the sole exception to explicit-define-only definition writes. `dude-work` (`## Automatic Unchanged-Intent Redefinition`) owns its eligibility, ordering, rollback-bound lint and verification, and resume; this skill owns the definition half. After the exact-owner gate, the Spec Lead stages only the definition-artifact, metadata, and definition-log half plus its semantic mappings; the coordinator owns the reconciliation and execution-state half and composes the exact final bytes. Before any write, deterministically prove exact ownership, one balanced active managed region, an append-only complete coordinator-log prefix, byte-identical `## Idea`, `## Open Questions`, and `## Assumptions`, valid canonical tasks, and preserved discovered-work and history bytes; that proof never establishes semantic equivalence. Only bytes an independent review has already approved may reach `atomic-file-batch.mjs`, which applies them as one atomic/all-or-restored four-path batch guarding fresh lint and verification. Tracked definition recovery refuses before writes.
 

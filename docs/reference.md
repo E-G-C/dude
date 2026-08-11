@@ -66,8 +66,16 @@ the feature:
 - `.dude/ideas/<slug>.md` is the only pre-spec collaboration ledger. Idea files
   are direct `.md` children; nested idea directories are not part of the model.
 - An idea begins with `# Idea: <title>`. Its frontmatter uses only
-  `status: draft|defined`; `spec_path:` is empty before definition and becomes
-  the exact workspace-relative path to the package's `spec.md` afterward.
+  `status: draft|defined|resolved`. A draft has an empty `spec_path:` before
+  definition; a defined ledger carries the exact workspace-relative path to the
+  package's `spec.md`.
+- A `resolved` ledger is terminal and package-less: it marks an outcome
+  completed with no `.dude/specs/**` package ever owned by the idea. Its
+  `spec_path:` is empty, and it never resolves as a defined owner. The backlog
+  places a valid resolved ledger in Completed with no task counts only when its
+  status scalar is exactly `resolved`, its unnormalized `spec_path:` is exactly
+  empty, it has no owner claim, and it has no owner or metadata diagnostic. Any
+  other resolved-shaped ledger is unavailable, not Completed.
 - `## Idea` is user-controlled. Active `## Open Questions` belong immediately
   after it, followed by user-editable assumptions or deferred questions when
   those sections have content.
@@ -80,6 +88,11 @@ the feature:
   thought, and creative intent.
 - Brainstorm reruns preserve `## Idea`, answered or resolved questions,
   assumptions, and user edits unless the user supplies or requests a revision.
+- A normal `@dude brainstorm` rerun keeps exact `status: resolved` and its
+  empty `spec_path:`; refreshed prose does not reopen it or return it to draft.
+  Only an explicit `@dude brainstorm <slug>` lifecycle request reopens it.
+  Package creation through `@dude define` or `@dude ship` remains refused
+  before reopening.
 - Define consumes an idea by slug, updates that same idea to `status: defined`
   with its exact `spec_path:`, appends the definition event to the Coordinator
   Log, and writes the generated package. Later intent changes return to
@@ -177,6 +190,14 @@ live execution board before Beads import.
 `tasks.md` may also include a generated board region, fenced by HTML comments
 and maintained by Dude. Treat it as a convenience view over the canonical task
 units rather than separate execution state.
+
+The committed `.dude/backlog.md` and `.dude/backlog.html` are another derived
+view. They refresh after guarded `set --write`, guarded `apply-states --write`,
+and a successful autonomous Lightweight application, but not after board
+rendering, reads, dry runs, or refused mutations. A failed refresh keeps the
+canonical task commit; an autonomous result keeps its existing receipt, while
+`backlog.mjs check` reports the stale pair. Log-only, lifecycle, and order
+updates require procedural backlog generation.
 
 Each `tasks.md` points its audit breadcrumb at the uniquely owning flat idea.
 Resolve that companion by requiring exactly one `.dude/ideas/*.md` file with
@@ -486,7 +507,7 @@ fields. The renderer resolves `model-class` to `model`; it emits neither
 `model-class` nor effort.
 
 Generated profiles are output, not authority. Edit core or pack sources and
-regenerate them. For an installed pack, remove and add the pack again.
+regenerate them. For an installed pack, run `compose refresh <pack>`.
 
 The narrow profile normalizer tolerates one host-owned replacement of a
 well-formed `model:` line. It leaves duplicate or malformed model lines

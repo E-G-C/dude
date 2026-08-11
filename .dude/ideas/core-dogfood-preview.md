@@ -1,7 +1,7 @@
 ---
 title: Core Dogfood Preview
 slug: core-dogfood-preview
-status: draft
+status: resolved
 spec_path:
 ---
 
@@ -111,7 +111,7 @@ The following assumptions are preserved verbatim from the earlier brainstorm. Th
 <!-- dude:managed:start -->
 ## Normalized Intent
 
-- Maximize simplification by selecting the existing canonical `build-dev` loop as the complete preview path, with no new product feature or separate definition package.
+- Record the terminal resolution: the existing canonical `build-dev` loop was selected as the complete informational preview path, with no new preview product or separate definition package ever required.
 - Make the exact implementation-time loop visible: edit `src/**`, run focused tests, run `node scripts/build-dev.mjs`, reload or restart when discovery or frontmatter requires it, exercise one named behavior against `.github/`, and iterate.
 - Present focused tests, source/generated parity, and one named behavior against `.github/` as the trustworthy default preview loop while allowing less during iteration.
 - Target under two minutes for a small preview, excluding manual reload and the named behavior's external latency.
@@ -119,11 +119,11 @@ The following assumptions are preserved verbatim from the earlier brainstorm. Th
 - Disclose that preview projects the complete current `src/**` worktree. Unrelated non-`src` work can coexist, while unrelated `src/**` edits are included and cannot be attributed separately.
 - Preserve authoritative `src/**` ownership, generated `.github/` non-authority, byte-parity protection, and rejection of hand-edited generated core.
 - Keep manual disposable isolation optional and avoid any new preview command, helper, manager, evidence form, framework, or workflow system.
-- Assign contributor documentation for ownership classification, pack work, the exact core loop, and later normal final verification to the Core Dogfood Close Simplification retirement feature.
+- Record that Feature 012 (Core Dogfood Close Retirement) consumed this outcome and delivered the contributor documentation for ownership classification, pack work, the exact core loop, and later normal final verification.
 
 ## Constraints
 
-- Decision refresh only. Keep this ledger `status: draft` with an empty `spec_path:` and do not create a preview definition package under `.dude/specs/**`.
+- Terminal resolution only. Keep this ledger `status: resolved` with an exactly empty `spec_path:`; no preview definition package was ever required or created under `.dude/specs/**`.
 - Generated `.github/` core remains non-authoritative and must never be blessed when hand-edited; preview output must remain source-derived.
 - The minimal candidate uses existing `build-dev`; do not assume or invent a preview subsystem, command, helper, worktree manager, evidence form, framework, state store, ledger, or persistent report.
 - Preview must not record a baseline, declaration digest, accepted line, or review envelope; close a terminal; mutate durable task state; or claim final acceptance.
@@ -133,8 +133,8 @@ The following assumptions are preserved verbatim from the earlier brainstorm. Th
 - Final-close verification cannot be mandatory on every preview attempt; observed clean full-suite runs took roughly 463-471 seconds.
 - Keep CI repair, the technical-docs pack and broader technical-docs work, pack-agent Scope conformance, and release tagging out of scope.
 - Pack development must remain on its own author, focused-verify, and disposable-install path; it does not use core promotion.
-- Updating existing contributor documentation with the ownership classification, pack path, exact core `build-dev` loop, normal final verification path, and two worked examples is required, whether owned here or consumed by close-retirement or simplification work.
-- The Core Dogfood Close Simplification retirement feature is the sole owner of that documentation requirement.
+- The delivered contributor documentation covers the ownership classification, pack path, exact core `build-dev` loop, normal final verification path, and two worked examples.
+- Feature 012 (Core Dogfood Close Retirement) consumed this idea's outcome and delivered that documentation requirement.
 
 ## Definition Checklist
 
@@ -143,11 +143,12 @@ The following assumptions are preserved verbatim from the earlier brainstorm. Th
 - [x] Complete-worktree scope, concurrency limits, and non-authoritative boundaries are explicit
 - [x] Required contributor workflow documentation and ownership handoff are captured
 - [x] Five material decisions about sufficiency, optional isolation, checks, timing, and final evidence are answered
-- [x] Full retirement is selected, so preview requires no separate definition package
+- [x] Feature 012 (Core Dogfood Close Retirement) consumed the outcome and delivered its contributor documentation, so this ledger is terminal without a separate definition package
 
 ## Coordinator Log
 
 - 2026-07-29 UTC - brainstorm created by splitting `core-dogfood-promotion-flexibility`
 - 2026-07-29 UTC - brainstorm refreshed; maximum-simplification direction added, with existing build-dev as the minimal preview candidate and full policy retirement as a final-close option
 - 2026-07-29 UTC - brainstorm/decision refreshed; direct canonical build-dev preview selected, all five questions answered, and the retirement feature assigned the developer-documentation requirement
+- 2026-08-11 UTC - idea resolved without a package because Feature 012 (Core Dogfood Close Retirement) consumed and delivered its outcome: direct canonical `node scripts/build-dev.mjs` is the documented informational preview, no preview command or subsystem was created, and Feature 012 delivered the contributor workflow documentation requirement
 <!-- dude:managed:end -->

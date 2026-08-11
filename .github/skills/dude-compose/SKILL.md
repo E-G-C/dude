@@ -1,6 +1,6 @@
 ---
 name: dude-compose
-description: "Use when installing, removing, or listing optional Dude packs. Triggers: @dude add pack <name>, @dude remove pack <name>, @dude list packs, install pack, enable pack, uninstall pack, which packs are available, compose the bundle, add tracked execution, add release tooling, add web specialists, add TDD. Do NOT use for upgrading the bundle itself (dude-bundle-upgrade) or importing an agent or skill from an external repository (dude-bundle-import)."
+description: "Use when installing, removing, refreshing, or listing optional Dude packs. Triggers: @dude add pack <name>, @dude remove pack <name>, @dude list packs, install pack, enable pack, uninstall pack, refresh an installed pack, re-project a pack after editing its source, the pack source or model mapping changed, which packs are available, compose the bundle, add tracked execution, add release tooling, add web specialists, add TDD. Do NOT use for upgrading the bundle itself (dude-bundle-upgrade) or importing an agent or skill from an external repository (dude-bundle-import)."
 ---
 
 # Pack Compose
@@ -25,6 +25,8 @@ carry the `dude-pack-<name>-` prefix.
 
 - `@dude add pack <name>` / `install the <name> pack` / `enable <name>`
 - `@dude remove pack <name>` / `uninstall the <name> pack`
+- `refresh the <name> pack` after editing its source or a model mapping (see
+  Refresh Flow)
 - `@dude list packs` / `which packs are available` / `what packs are installed`
 - Another skill (e.g. `dude-work`, routing) detects the user wants a capability
   that lives in a pack and the pack is not yet installed.
@@ -39,6 +41,7 @@ node .github/skills/dude-compose/compose.mjs list            # catalog (local or
 node .github/skills/dude-compose/compose.mjs status          # installed packs
 node .github/skills/dude-compose/compose.mjs add <name>      # install (local or fetched)
 node .github/skills/dude-compose/compose.mjs remove <name>   # uninstall
+node .github/skills/dude-compose/compose.mjs refresh <name>  # re-project an installed pack from current source
 node .github/skills/dude-compose/compose.mjs verify          # temp-install + lint every pack
 ```
 
@@ -49,9 +52,9 @@ remote `add`/`list`; default the bundle manifest's
 (machine output), `--force` (overwrite existing destinations on add).
 Exit codes: `0` ok, `1` usage, `2` operation error.
 
-The command is selected before projection dependencies are loaded. `add` and
-`verify` load the model configuration and renderer from the installed engine,
-using the absolute path
+The command is selected before projection dependencies are loaded. `add`,
+`refresh`, and `verify` load the model configuration and renderer from the
+installed engine, using the absolute path
 `.github/skills/dude-engine/config/agent-models.json`. `remove`, `list`, and
 `status` do not load that configuration or the renderer.
 
@@ -103,6 +106,36 @@ sweeping stray transaction siblings on rollback. It does not require a separate
 removal-plan artifact or literal confirmation token beyond the coordinator
 preview.
 
+## Refresh Flow (coordinator)
+
+Use refresh after a pack's authoritative source or a model mapping changed, to
+re-project the installed pack in one transaction instead of a manual
+remove-then-add.
+
+1. Run `status --json` to confirm the pack is installed. Refresh updates an
+   installed pack that still carries a complete current inventory; it does not
+   install a new one.
+2. Preview the change. Tell the user the pack will be re-projected from its
+   current source: edited destinations are replaced in place, new source
+   destinations are added, and destinations the source dropped are deleted. Wait
+   for confirmation.
+3. Run `node .github/skills/dude-compose/compose.mjs refresh <name> --json`. The
+   script proves installed-side authority exactly as `remove` does (exact
+   authorized profile bytes, whole-profile currency, exact `files`-to-inventory
+   parity, and every installed artifact matching its recorded hash) and refuses
+   on any drift before touching a file. Unlike `remove`, it expects the source to
+   have changed, so it does not apply the uninstall recorded-source digest guard.
+   It stages the current source through the same pipeline as `add`, computes the
+   old-versus-new destination set, refuses any new destination that is occupied
+   or claimed by another pack, and applies removals, replacements, and additions
+   plus the profile update as one all-or-restored transaction. Any failure
+   restores the prior artifacts and profile bytes.
+4. Run lint and confirm `0 failures`.
+
+Refresh reports `{ refreshed, replaced, added, removed, files }`; the human line
+summarizes the replaced, added, and removed counts. It never takes `--force` and
+never hand-edits the profile.
+
 ## Parity, Refresh, And Inventory
 
 The installed Copilot profile is measured through the narrow `model:`
@@ -114,9 +147,12 @@ so `remove` refuses until the installed profile is restored.
 Concrete model mappings live in `src/config/agent-models.json`; the installed
 engine carries a byte-identical copy at
 `.github/skills/dude-engine/config/agent-models.json`. A mapping or pack-source
-change does not rewrite an installed pack. Refresh it with `compose remove
-<pack>` followed by `compose add <pack>`. Removal uses the persisted inventory
-and does not render the source again.
+change does not rewrite an installed pack. Refresh it with `compose refresh
+<pack>`, which re-projects the current source in one all-or-restored transaction
+after proving installed-side authority (see Refresh Flow). On a released bundle
+without the `refresh` subcommand, fall back to `compose remove <pack>` then
+`compose add <pack>`; that removal uses the persisted inventory and does not
+render the source again.
 
 Current inventories use `version: 1`. Each source artifact has one direct
 destination at `.github/<source>`, and the `files` list must exactly match the
@@ -173,7 +209,8 @@ pack not installed alongside it: `hugo` -> docsy/ms-brand, `design` -> strata,
   unmixed `["*"]` roster.
 - Agent-set validation covers the complete incoming pack only. It does not make
   a cross-pack roster claim.
-- Never hand-edit an installed representation. Refresh with `remove` then `add`.
+- Never hand-edit an installed representation. Refresh with `compose refresh
+  <pack>`; on a released bundle without it, fall back to `remove` then `add`.
 - Pack names must not be hyphen-prefixes of one another (e.g. `hugo` /
   `hugo-docsy`); the composer rejects such collisions because `remove` matches
   on the `dude-pack-<name>-` prefix.

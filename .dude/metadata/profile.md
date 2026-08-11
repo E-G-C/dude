@@ -106,7 +106,7 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
         ".github/agents/dude-pack-coding-tester.agent.md",
         ".github/skills/dude-pack-coding-spec-artifacts"
       ],
-      "installed_at": "2026-08-10T20:13:38.656Z",
+      "installed_at": "2026-08-11T18:28:37.076Z",
       "inventory": {
         "version": 1,
         "pack": "coding",
@@ -142,8 +142,8 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
             "path": ".github/agents/dude-pack-coding-tester.agent.md",
             "kind": "agents",
             "source": "agents/dude-pack-coding-tester.agent.md",
-            "source_sha256": "2d9e0771f8ed50f0db57d4128930e5d2bcafecc4e875d0e30fa0cfee73678879",
-            "installed_sha256": "b009243ed7507aeb5c6d8cab4a4ecefad69544491827545f89354591ef1940df"
+            "source_sha256": "208c083ecb7ff5cc20a6cd5dcc312eb5c1d27e6cc905e8e6fb92a880ca1cd534",
+            "installed_sha256": "b8c8db76bfa5bb8aa1b00bfcf622c1ec05a4b6cba40e25c970dd7d03f69658b0"
           },
           {
             "path": ".github/skills/dude-pack-coding-spec-artifacts",
@@ -153,7 +153,7 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
             "installed_sha256": "c295e92781817c92cf17b63e158f6f2031d1010480a54f5fdfcfb80066fb75b5"
           }
         ],
-        "digest": "6b3f4a4eb7785f5009613c593f708fe0a1b6781fedd0634bd2c8af6022ce03b3"
+        "digest": "9255dfc4000ba14caf4a6e3cd0d3fa8d52dbf4eda69e9e763085ec1463bcf5e3"
       }
     },
     "design": {

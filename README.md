@@ -101,11 +101,27 @@ The split decides which file to edit when something needs to change:
 - You own the idea file: `## Idea`, your answers to open questions, your
   assumptions, and anything you defer. Change what the feature means there.
 - Dude owns the spec package and the workflow metadata: `## Normalized Intent`,
-  `status: draft|defined`, the exact `spec_path:` to `spec.md`, task checkboxes,
+  `status: draft|defined|resolved`, the exact `spec_path:` to `spec.md`, task checkboxes,
   generated board sections, and the append-only `## Coordinator Log`.
+
+A `resolved` idea is terminal and package-less: it records an outcome completed
+without ever owning a `.dude/specs/**` package. Its `spec_path:` is empty, it
+never resolves as a defined owner, and the backlog places a valid resolved idea
+in Completed with no task counts. A routine `@dude brainstorm` refresh leaves
+exact `status: resolved` and an empty `spec_path:` intact; it never returns the
+ledger to draft. Reopening requires an explicit `@dude brainstorm <slug>`
+lifecycle request. Until a reopen request arrives, `@dude define` and
+`@dude ship` refuse to create a package.
 
 After editing the idea, run `@dude define expense-entry` to rebuild the package
 rather than editing `spec.md` or `plan.md` by hand.
+
+The derived backlog pair, `.dude/backlog.md` and `.dude/backlog.html`, refreshes
+after guarded task `set --write`, guarded batch `apply-states --write`, and a
+successful autonomous Lightweight task application. It is not continuously
+synchronized: Coordinator Log-only, lifecycle, and backlog-order changes still
+need a coordinator backlog generation. A failed derived refresh never rolls back
+committed task state; the freshness check detects the stale pair.
 
 ## How Much To Drive It
 
