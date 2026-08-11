@@ -1,7 +1,7 @@
 ---
 title: Good Enough Delivery
 slug: good-enough-delivery
-status: draft
+status: resolved
 spec_path:
 ---
 
@@ -33,25 +33,33 @@ No additional assumptions have been provided.
 <!-- dude:managed:start -->
 ## Normalized Intent
 
-- Explore a generic, agile way to recognize when a product or work product has reached a stable and useful enough point to deliver without waiting for every engineering concern or edge case to be resolved.
-- Treat "good enough" as iterative delivery, not finality: deliver a usable, stable point and improve it in later iterations.
-- For Dude, center real user utility: people should be able to use it without encountering likely or disruptive weird edge cases.
-- Keep open which known edge cases are acceptable versus release blockers, what evidence supports the judgment, how generic the principle should be, and what form it might eventually take.
+- Record the terminal package-less resolution: existing shipped directives already deliver the idea's scope-discipline and good-enough delivery intent.
+- Bundle-wide YAGNI and pragmatism guidance, reinforced by the Spec Lead and coding architect, coder, and reviewer copies, already requires the smallest solution for current production needs rather than speculative hardening.
+- The reviewer protocol's materially-ready standard and repeated-finding escalation, together with the verification skill's partial-claim and residual-gap rules, already provide the delivery-stopping judgment and honest evidence boundaries this idea sought.
+- A separate skill, agent, or bundle would duplicate those existing rules, so no definition package is required.
+- The four open questions remain unanswered. They are moot for delivery purposes because the intended outcome is already covered, not because answers were inferred.
 
 ## Constraints
 
-- Keep this as brainstorm intake only; do not create a definition package or begin implementation.
-- Do not invent fixed quality thresholds, release metrics, or premature requirements.
-- Do not decide whether this belongs in a different bundle, a skill, an agent, or another form during brainstorm.
-- Preserve possible relevance beyond software development while using Dude as the motivating example.
+- Keep this ledger terminal at `status: resolved` with an exactly empty `spec_path:` and no `.dude/specs/**` package.
+- Do not create a separate skill, agent, bundle, threshold, metric, or release framework that duplicates the existing directives.
+- Preserve all four unanswered questions as user-controlled text; do not fill them in, remove them, or claim they were resolved.
+- Treat any consistency work for agents that lack a direct YAGNI/pragmatism copy as separate coordinator-owned follow-up, not unfinished work or a delivery gate for this ledger.
+
+## Known Separate Follow-up
+
+- `library/packs/coding/agents/dude-pack-coding-tester.agent.md` and `src/agents/dude-reviewer.agent.md` do not carry the YAGNI/pragmatism directive present in sibling agents. Aligning them is a separate opportunity for coordinator decision, not unfinished work of this resolved ledger.
 
 ## Definition Checklist
 
-- [x] Outcome is clear enough for brainstorm
-- [x] Scope is coherent as one idea ledger
-- [ ] Open questions are resolved or consciously assumed
+- [x] Existing directives covering YAGNI, pragmatism, and current-need scope discipline are identified
+- [x] Existing directives covering materially-ready delivery, repeated-finding escalation, partial claims, and residual gaps are identified
+- [x] A separate skill, agent, or bundle would duplicate current rules, so no package is required
+- [x] All four open questions remain unanswered and no longer gate anything because the intended outcome is already covered
+- [x] Missing direct agent copies are recorded only as a separate coordinator-owned follow-up opportunity
 
 ## Coordinator Log
 
 - 2026-07-20 UTC - brainstorm captured
+- 2026-08-11 UTC - idea resolved without a package because its intent is already delivered by existing directives: bundle-wide YAGNI and pragmatism guidance plus the Spec Lead and coding architect/coder/reviewer copies cover scope discipline; the reviewer protocol's materially-ready standard and repeated-finding escalation, together with the verification skill's partial-claim and residual-gap rules, cover when work is good enough to deliver; a separate skill, agent, or bundle would duplicate those existing rules
 <!-- dude:managed:end -->

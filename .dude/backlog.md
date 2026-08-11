@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **3**
+- Ideas awaiting definition: **2**
 - Defined awaiting work: **0**
-- Completed: **31**
+- Completed: **32**
 
 ## Current
 
@@ -21,7 +21,6 @@ No current work to diagram.
 ### Ideas awaiting definition
 
 - `backlog-canvas` — Backlog Canvas (`.dude/ideas/backlog-canvas.md`)
-- `good-enough-delivery` — Good Enough Delivery (`.dude/ideas/good-enough-delivery.md`)
 - `multi-dude-work-coordination` — Multi-Dude Work Coordination (`.dude/ideas/multi-dude-work-coordination.md`)
 
 ## Completed
@@ -43,6 +42,7 @@ No current work to diagram.
 - `core-dogfood-preview` — Core Dogfood Preview (`.dude/ideas/core-dogfood-preview.md`)
 - `feature-focus-order` — Feature Focus Order (`.dude/ideas/feature-focus-order.md`)
 - `first-definition-publish` — First-Definition Publish (`.dude/ideas/first-definition-publish.md`)
+- `good-enough-delivery` — Good Enough Delivery (`.dude/ideas/good-enough-delivery.md`)
 - `guarded-directory-artifact-import` — Guarded Directory Artifact Import (`.dude/ideas/guarded-directory-artifact-import.md`)
 - `historical-core-dogfood-fixture-repair` — Historical Core Dogfood Fixture Repair (`.dude/ideas/historical-core-dogfood-fixture-repair.md`)
 - `pre-work-log-learning` — Pre-work Log Learning (`.dude/ideas/pre-work-log-learning.md`)
