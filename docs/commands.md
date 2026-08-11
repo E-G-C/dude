@@ -333,12 +333,16 @@ plan. An explicit feature-only inspection is read-only: it cannot authorize
 work, consume a budget, or mutate workflow state. Optional session history is
 used only when it can be exactly bound; its unavailability alone is not a
 blocker. Inspection admits one bounded complete evidence packet and one
-Assessment bound to that Inspection's `evidenceHash`. Before authorization,
-Work freshly rebuilds the Inspection; substantive drift returns
-`evidence-drift` without changing state, counters, pending authorization, or
-completed attempts. If the available evidence cannot fit, Work reports
-descriptors only, makes no recovery assessment, and refuses recovery rather
-than truncating or splitting the history. At the CLI byte boundary, captures use
+Assessment bound to that Inspection's `evidenceHash`. All non-owner admitted
+evidence remains complete. Owner-log evidence carries exact owner identity, the
+complete log's digest, byte length, and event counts, plus the maximal
+whole-event suffix that fits that fresh packet; omitted owner events are not
+inspected text. Before authorization, Work freshly rebuilds the Inspection;
+substantive drift returns `evidence-drift` without changing state, counters,
+pending authorization, or completed attempts. If the available evidence cannot
+fit, Work reports descriptors only, makes no model call or recovery assessment,
+and refuses recovery; it never splits or batches evidence. At the CLI byte
+boundary, captures use
 canonical base64 with padded RFC 4648 encoding; fixed source-specific envelopes keep
 presentation changes separate from substantive evidence without changing the
 user-facing report format.

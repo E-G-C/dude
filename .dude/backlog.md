@@ -8,7 +8,7 @@ A read-only view built from idea files, linked feature files, task records, and 
 - Ready / Next: **0**
 - Ideas awaiting definition: **4**
 - Defined awaiting work: **0**
-- Completed: **28**
+- Completed: **29**
 
 ## Current
 
@@ -36,6 +36,7 @@ No current work to diagram.
 - `autonomous-work-modes` — Autonomous Work Modes (`.dude/ideas/autonomous-work-modes.md`)
 - `backlog-report-usability` — Backlog Report Usability (`.dude/ideas/backlog-report-usability.md`)
 - `backlog-report` — Backlog Report (`.dude/ideas/backlog-report.md`)
+- `bounded-owner-log-projection` — Bounded Owner Log Projection (`.dude/ideas/bounded-owner-log-projection.md`)
 - `brainstorm-ideas-intake` — Brainstorm ideas intake (`.dude/ideas/brainstorm-ideas-intake.md`)
 - `core-autonomous-event-round-trip` — Core Autonomous Event Round Trip (`.dude/ideas/core-autonomous-event-round-trip.md`)
 - `core-dogfood-close-simplification` — Core Dogfood Close Simplification (`.dude/ideas/core-dogfood-close-simplification.md`)

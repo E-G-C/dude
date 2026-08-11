@@ -291,5 +291,13 @@
       "T010@61637074": "x"
     },
     "updated_at": "2026-08-10T21:57:16.923Z"
+  },
+  ".dude/specs/029-bounded-owner-log-projection/tasks.md": {
+    "glyphs": {
+      "T001@70726f6a": "x",
+      "T002@73657474": "x",
+      "T003@61637074": "x"
+    },
+    "updated_at": "2026-08-11T00:50:52.713Z"
   }
 }
