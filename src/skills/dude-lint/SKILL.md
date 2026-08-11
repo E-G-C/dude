@@ -71,7 +71,9 @@ node --test .github/skills/dude-engine/lib/ownership.test.mjs
 1. **Idea files** (`.dude/ideas/*.md`)
    - Only direct regular `.md` children are supported. A nested directory, non-Markdown file, symbolic link, non-regular entry, or unsafe canonical root/ancestor fails with its path.
    - Strict YAML frontmatter is present, including unique scalar keys and balanced quoted scalars.
-   - `status:` is exactly `draft` or `defined`; any other value fails.
+   - `status:` is exactly `draft`, `defined`, or `resolved`. An exact
+     `resolved` ledger has an exactly empty unnormalized `spec_path:` and no
+     definition owner; any other resolved shape fails canonical ownership validation.
    - When `status: defined`, `spec_path:` is set, structurally matches `.dude/specs/<feature>/spec.md` with forward slashes, and resolves to an existing file (not a directory).
    - `<!-- dude:managed:start -->` / `<!-- dude:managed:end -->` fence pairs are both balanced **and** well-ordered (start, end, start, end, ...). Out-of-order or nested regions fail with the offending line number.
    - Exactly one real `## Idea` and exactly one real `## Coordinator Log` heading exist outside CommonMark backtick and tilde fenced blocks. Missing or duplicate headings fail; a noncanonical `## User Draft` heading is not valid in a canonical idea.

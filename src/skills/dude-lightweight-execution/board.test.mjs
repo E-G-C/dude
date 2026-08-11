@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { run, parseArgs, applyLightweightWorkRequest } from './board.mjs';
+import { renderArtifacts } from './backlog.mjs';
 import { parseTasks } from '../dude-engine/lib/tasks.mjs';
 import { canonicalJson } from '../dude-work/recovery.mjs';
 
@@ -90,6 +91,173 @@ function capture(fn) {
     process.stderr.write = errOrig;
   }
   return { code, out: chunks.join('') };
+}
+
+/** Capture stdout and stderr independently for exact CLI contract assertions. */
+function captureStreams(fn) {
+  const stdout = [];
+  const stderr = [];
+  const outOrig = process.stdout.write.bind(process.stdout);
+  const errOrig = process.stderr.write.bind(process.stderr);
+  // @ts-ignore -- test-only stream capture
+  process.stdout.write = (value) => {
+    stdout.push(String(value));
+    return true;
+  };
+  // @ts-ignore -- test-only stream capture
+  process.stderr.write = (value) => {
+    stderr.push(String(value));
+    return true;
+  };
+  let code;
+  try {
+    code = fn();
+  } finally {
+    process.stdout.write = outOrig;
+    process.stderr.write = errOrig;
+  }
+  return { code, stdout: stdout.join(''), stderr: stderr.join('') };
+}
+
+const BACKLOG_HOOK_FEATURE = 'backlog-hook';
+const BACKLOG_HOOK_TASK = 'T001@6261636b';
+
+/** Build one defined, single-task feature whose artifacts can be classified by the backlog. */
+function scaffoldBacklogHookFeature() {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dude-backlog-hook-')));
+  const featureDirectory = path.join(root, '.dude', 'specs', BACKLOG_HOOK_FEATURE);
+  const file = path.join(featureDirectory, 'tasks.md');
+  fs.mkdirSync(path.join(root, '.dude', 'ideas'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.dude', 'state'), { recursive: true });
+  fs.mkdirSync(featureDirectory, { recursive: true });
+  fs.writeFileSync(path.join(root, '.dude', 'ideas', `${BACKLOG_HOOK_FEATURE}.md`), [
+    '---',
+    'title: Backlog Hook Fixture',
+    `slug: ${BACKLOG_HOOK_FEATURE}`,
+    'status: defined',
+    `spec_path: .dude/specs/${BACKLOG_HOOK_FEATURE}/spec.md`,
+    '---',
+    '',
+    '# Idea: Backlog Hook Fixture',
+    '',
+    '## Idea',
+    '',
+    'Exercise a post-commit backlog projection.',
+    '',
+    '## Coordinator Log',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(featureDirectory, 'spec.md'), [
+    '# Feature Specification: Backlog Hook Fixture',
+    '',
+    '## User Stories & Testing',
+    '',
+    '### User Story 1 - Keep projections current (Priority: P1)',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(file, [
+    '# Tasks: Backlog Hook Fixture',
+    '',
+    '## Phase 1: Delivery',
+    '',
+    `- [ ] ${BACKLOG_HOOK_TASK} Keep the derived pair current`,
+    '',
+  ].join('\n'));
+  return { root, file };
+}
+
+function backlogPaths(root) {
+  return {
+    markdown: path.join(root, '.dude', 'backlog.md'),
+    html: path.join(root, '.dude', 'backlog.html'),
+  };
+}
+
+function writeBacklogPair(root, markdown, html) {
+  const artifacts = backlogPaths(root);
+  fs.writeFileSync(artifacts.markdown, markdown);
+  fs.writeFileSync(artifacts.html, html);
+  return artifacts;
+}
+
+function readBacklogPair(root) {
+  const artifacts = backlogPaths(root);
+  return {
+    markdown: fs.existsSync(artifacts.markdown) ? fs.readFileSync(artifacts.markdown) : null,
+    html: fs.existsSync(artifacts.html) ? fs.readFileSync(artifacts.html) : null,
+  };
+}
+
+function assertFreshBacklogPair(root, label) {
+  const expected = renderArtifacts({ root });
+  const actual = readBacklogPair(root);
+  assert.deepEqual(actual.markdown, Buffer.from(expected.markdown), `${label}: Markdown equals fresh poststate render`);
+  assert.deepEqual(actual.html, Buffer.from(expected.html), `${label}: HTML equals fresh poststate render`);
+}
+
+function markdownGroupForIdea(markdown, ideaPath) {
+  const groups = new Set(['Blocked', 'Active', 'Next', 'Ideas awaiting definition', 'Defined awaiting work', 'Prioritized for later', 'Completed']);
+  let group = null;
+  for (const line of markdown.split('\n')) {
+    const heading = /^#{2,3} (.+)$/.exec(line);
+    if (heading) {
+      group = groups.has(heading[1]) ? heading[1] : null;
+      continue;
+    }
+    if (group && line.includes(`(\`${ideaPath}\`)`)) return group;
+  }
+  return null;
+}
+
+function htmlGroupForIdea(html, ideaPath) {
+  const pattern = /<details class="feature-detail[^"]*"[^>]*data-idea-path="([^"]+)" data-section="([^"]+)" data-group="([^"]+)"/g;
+  let match;
+  while ((match = pattern.exec(html)) !== null) {
+    if (match[1] === ideaPath) return `${match[2]}/${match[3]}`;
+  }
+  return null;
+}
+
+function assertBacklogClassification(root, expected, label, ideaPath = `.dude/ideas/${BACKLOG_HOOK_FEATURE}.md`) {
+  const pair = readBacklogPair(root);
+  const markdownGroup = expected === 'active' ? 'Active' : 'Completed';
+  const htmlGroup = expected === 'active' ? 'current/active' : 'completed/completed';
+  assert.equal(markdownGroupForIdea(pair.markdown.toString('utf8'), ideaPath), markdownGroup, `${label}: Markdown classification`);
+  assert.equal(htmlGroupForIdea(pair.html.toString('utf8'), ideaPath), htmlGroup, `${label}: HTML classification`);
+}
+
+function assertHookCanonicalPoststate(root, file, taskKey, glyph, ownerBefore, label) {
+  assert.match(fs.readFileSync(file, 'utf8'), new RegExp(`- \\[${glyph}\\] ${taskKey}`), `${label}: canonical task committed`);
+  const snapshot = JSON.parse(fs.readFileSync(path.join(root, '.dude', 'state', 'task-state.json'), 'utf8'));
+  const relativeTasks = path.relative(root, file).split(path.sep).join('/');
+  assert.equal(snapshot[relativeTasks].glyphs[taskKey], glyph, `${label}: canonical snapshot committed`);
+  if (ownerBefore) {
+    assert.deepEqual(
+      fs.readFileSync(path.join(root, '.dude', 'ideas', `${BACKLOG_HOOK_FEATURE}.md`)),
+      ownerBefore,
+      `${label}: owner remains canonical and unchanged`,
+    );
+  }
+}
+
+function failOnceOnBacklogHtmlWrite(root, callback) {
+  const htmlPath = backlogPaths(root).html;
+  const realWriteFileSync = fs.writeFileSync;
+  let injected = 0;
+  try {
+    // @ts-ignore -- deliberate O_TRUNC-style writer failure injection
+    fs.writeFileSync = (file, data, ...rest) => {
+      if (injected === 0 && path.resolve(String(file)) === htmlPath) {
+        injected += 1;
+        realWriteFileSync(file, Buffer.from('truncated before injected HTML failure\n'), ...rest);
+        throw new Error('injected backlog HTML write failure');
+      }
+      return realWriteFileSync(file, data, ...rest);
+    };
+    return { value: callback(), injected };
+  } finally {
+    fs.writeFileSync = realWriteFileSync;
+  }
 }
 
 test('parseArgs reads command, file, flags, and root', () => {
@@ -278,6 +446,247 @@ test('apply-states --write batch-updates glyphs, warns unknown, refreshes snapsh
     assert.equal(snap.state['.dude/specs/x/tasks.md'].glyphs['T002@bbbbbbbb'], 'x');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T030 guarded set --write refreshes both artifacts for claim and final close', () => {
+  // Arrange
+  const { root, file } = scaffoldBacklogHookFeature();
+  try {
+    // Act
+    const claimed = captureStreams(() => run({
+      cmd: 'set',
+      file,
+      id: BACKLOG_HOOK_TASK,
+      state: 'in-progress',
+      root,
+      write: true,
+    }));
+
+    // Assert
+    assert.equal(claimed.code, 0, claimed.stderr);
+    assertFreshBacklogPair(root, 'guarded claim');
+    assertBacklogClassification(root, 'active', 'guarded claim');
+    assertHookCanonicalPoststate(root, file, BACKLOG_HOOK_TASK, '~', null, 'guarded claim');
+
+    // Act
+    const closed = captureStreams(() => run({
+      cmd: 'set',
+      file,
+      id: BACKLOG_HOOK_TASK,
+      state: 'done',
+      root,
+      write: true,
+    }));
+
+    // Assert
+    assert.equal(closed.code, 0, closed.stderr);
+    assertFreshBacklogPair(root, 'guarded close');
+    assertBacklogClassification(root, 'completed', 'guarded close');
+    assertHookCanonicalPoststate(root, file, BACKLOG_HOOK_TASK, 'x', null, 'guarded close');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T030 guarded apply-states --write refreshes both artifacts for claim, no-op, and final close', () => {
+  // Arrange
+  const { root, file } = scaffoldBacklogHookFeature();
+  const mapFile = path.join(root, 'state-map.json');
+  try {
+    fs.writeFileSync(mapFile, JSON.stringify({ [BACKLOG_HOOK_TASK]: 'in-progress' }));
+
+    // Act
+    const claimed = captureStreams(() => run({
+      cmd: 'apply-states',
+      file,
+      root,
+      fromPath: mapFile,
+      write: true,
+    }));
+
+    // Assert
+    assert.equal(claimed.code, 0, claimed.stderr);
+    assertFreshBacklogPair(root, 'batch claim');
+    assertBacklogClassification(root, 'active', 'batch claim');
+    assertHookCanonicalPoststate(root, file, BACKLOG_HOOK_TASK, '~', null, 'batch claim');
+
+    // Arrange a stale pair while the canonical state remains in progress.
+    writeBacklogPair(root, 'stale batch Markdown\n', 'stale batch HTML\n');
+    fs.writeFileSync(mapFile, JSON.stringify({}));
+
+    // Act: a successful zero-change batch is still a covered refresh boundary.
+    const noOp = captureStreams(() => run({
+      cmd: 'apply-states',
+      file,
+      root,
+      fromPath: mapFile,
+      write: true,
+    }));
+
+    // Assert
+    assert.equal(noOp.code, 0, noOp.stderr);
+    assert.match(noOp.stdout, /\[OK\] applied 0 state\(s\)/);
+    assertFreshBacklogPair(root, 'batch no-op refresh');
+    assertBacklogClassification(root, 'active', 'batch no-op refresh');
+
+    // Arrange
+    fs.writeFileSync(mapFile, JSON.stringify({ [BACKLOG_HOOK_TASK]: 'done' }));
+
+    // Act
+    const closed = captureStreams(() => run({
+      cmd: 'apply-states',
+      file,
+      root,
+      fromPath: mapFile,
+      write: true,
+    }));
+
+    // Assert
+    assert.equal(closed.code, 0, closed.stderr);
+    assertFreshBacklogPair(root, 'batch close');
+    assertBacklogClassification(root, 'completed', 'batch close');
+    assertHookCanonicalPoststate(root, file, BACKLOG_HOOK_TASK, 'x', null, 'batch close');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T030 excluded board and refused autonomous paths leave committed backlog bytes untouched', () => {
+  // Arrange
+  const { root, file } = scaffoldBacklogHookFeature();
+  const sentinels = {
+    markdown: Buffer.from('excluded-path Markdown sentinel\n'),
+    html: Buffer.from('excluded-path HTML sentinel\n'),
+  };
+  try {
+    writeBacklogPair(root, sentinels.markdown, sentinels.html);
+    const assertSentinels = (label) => {
+      assert.deepEqual(readBacklogPair(root), sentinels, `${label}: no backlog refresh write`);
+    };
+
+    // Act / Assert: board-only write, reads, dry run, and failed guarded mutation are excluded.
+    assert.equal(captureStreams(() => run({ cmd: 'render', file, root, write: true })).code, 0);
+    assertSentinels('render --write');
+    assert.equal(captureStreams(() => run({ cmd: 'next', file, root })).code, 0);
+    assertSentinels('read');
+    assert.equal(captureStreams(() => run({
+      cmd: 'set',
+      file,
+      id: BACKLOG_HOOK_TASK,
+      state: 'in-progress',
+      root,
+    })).code, 0);
+    assertSentinels('dry run');
+    assert.equal(captureStreams(() => run({
+      cmd: 'set',
+      file,
+      id: 'T404@6d697373',
+      state: 'done',
+      root,
+      write: true,
+    })).code, 2);
+    assertSentinels('failed guarded mutation');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+
+  // Arrange
+  const laneRoot = scaffoldLane();
+  const laneSentinels = {
+    markdown: Buffer.from('refused autonomous Markdown sentinel\n'),
+    html: Buffer.from('refused autonomous HTML sentinel\n'),
+  };
+  try {
+    writeBacklogPair(laneRoot, laneSentinels.markdown, laneSentinels.html);
+    const refused = laneRequest(laneRoot);
+    refused.expected = { ...refused.expected, tasks: laneCapture('stale expected tasks\n') };
+
+    // Act
+    const result = applyLightweightWorkRequest(refused);
+
+    // Assert
+    assert.equal(result.ok, false);
+    assert.equal(result.phase, 'refused');
+    assert.equal(result.reason, 'expected-capture-mismatch');
+    assert.deepEqual(readBacklogPair(laneRoot), laneSentinels, 'refused autonomous request does not refresh');
+  } finally {
+    fs.rmSync(laneRoot, { recursive: true, force: true });
+  }
+});
+
+test('T030 guarded refresh failures restore both preimages and retain canonical commits', () => {
+  const commands = [
+    {
+      label: 'set',
+      run(root, file) {
+        return captureStreams(() => run({
+          cmd: 'set',
+          file,
+          id: BACKLOG_HOOK_TASK,
+          state: 'in-progress',
+          root,
+          write: true,
+        }));
+      },
+    },
+    {
+      label: 'apply-states',
+      run(root, file) {
+        const mapFile = path.join(root, 'failing-state-map.json');
+        fs.writeFileSync(mapFile, JSON.stringify({ [BACKLOG_HOOK_TASK]: 'in-progress' }));
+        return captureStreams(() => run({
+          cmd: 'apply-states',
+          file,
+          root,
+          fromPath: mapFile,
+          write: true,
+        }));
+      },
+    },
+  ];
+
+  for (const command of commands) {
+    for (const preimage of ['present', 'missing']) {
+      // Arrange
+      const { root, file } = scaffoldBacklogHookFeature();
+      const before = {
+        markdown: Buffer.from(`${command.label} ${preimage} Markdown preimage\n`),
+        html: Buffer.from(`${command.label} ${preimage} HTML preimage\n`),
+      };
+      const ownerBefore = fs.readFileSync(path.join(root, '.dude', 'ideas', `${BACKLOG_HOOK_FEATURE}.md`));
+      if (preimage === 'present') writeBacklogPair(root, before.markdown, before.html);
+
+      try {
+        // Act
+        const failed = failOnceOnBacklogHtmlWrite(root, () => command.run(root, file));
+
+        // Assert
+        assert.equal(failed.injected, 1, `${command.label}/${preimage}: second write was reached`);
+        assert.equal(failed.value.code, 2, `${command.label}/${preimage}: operation-error exit`);
+        assert.equal(failed.value.stderr, '[FAIL] canonical state committed; backlog refresh failed\n');
+        assert.equal(failed.value.stdout, '', `${command.label}/${preimage}: ordinary success is suppressed`);
+        assertHookCanonicalPoststate(
+          root,
+          file,
+          BACKLOG_HOOK_TASK,
+          '~',
+          ownerBefore,
+          `${command.label}/${preimage}`,
+        );
+        if (preimage === 'present') {
+          assert.deepEqual(readBacklogPair(root), before, `${command.label}/${preimage}: both preimages restored`);
+        } else {
+          assert.deepEqual(
+            readBacklogPair(root),
+            { markdown: null, html: null },
+            `${command.label}/${preimage}: both absent preimages restored`,
+          );
+        }
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
   }
 });
 
@@ -593,6 +1002,16 @@ function scaffoldLane(tasks = LANE_TASKS_FIXTURE) {
   return root;
 }
 
+/** A one-task lane is necessary to exercise the Completed classification after close. */
+function scaffoldSingleTaskLane() {
+  const root = scaffoldLane(LANE_TASKS_FIXTURE.replace(`- [ ] ${LANE_OTHER_KEY} [US3] Another canonical unit\n`, ''));
+  const snapshotPath = path.join(root, ...LANE_SNAPSHOT.split('/'));
+  const snapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
+  delete snapshot[LANE_TASKS].glyphs[LANE_OTHER_KEY];
+  fs.writeFileSync(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+  return root;
+}
+
 /** @param {string} root */
 function laneSurfaces(root) {
   return {
@@ -600,6 +1019,20 @@ function laneSurfaces(root) {
     taskState: laneBytes(root, LANE_SNAPSHOT),
     owner: laneBytes(root, LANE_IDEA),
   };
+}
+
+function assertAutonomousCommittedResult(result, root, label) {
+  assert.deepEqual(Object.keys(result).sort(), ['ok', 'phase', 'receipt'], `${label}: exact result keys`);
+  assert.equal(result.ok, true, `${label}: canonical commit remains successful`);
+  assert.equal(result.phase, 'committed', `${label}: committed phase`);
+  assert.equal(Object.hasOwn(result, 'reason'), false, `${label}: no refusal reason`);
+  assert.equal(Object.hasOwn(result, 'unchangedPrestateHash'), false, `${label}: no unchanged-prestate claim`);
+  const after = laneSurfaces(root);
+  const { receiptHash, ...receiptBody } = result.receipt;
+  assert.equal(receiptHash, sha256(canonicalJson(receiptBody)), `${label}: receipt remains complete and valid`);
+  assert.equal(result.receipt.tasksPoststateHash, sha256(after.tasks), `${label}: receipt keeps canonical tasks poststate`);
+  assert.equal(result.receipt.taskStatePoststateHash, sha256(after.taskState), `${label}: receipt keeps canonical snapshot poststate`);
+  assert.equal(result.receipt.ownerPoststateHash, sha256(after.owner), `${label}: receipt keeps canonical owner poststate`);
 }
 
 /** Recompute the boundary's fresh-observation hash independently. @param {string} root @param {string} [ideaPath] */
@@ -663,6 +1096,18 @@ function laneMutation(overrides = {}) {
     snapshotUpdatedAt: LANE_STAMP,
     ...overrides,
   };
+}
+
+/** @param {Record<string, unknown>} overrides */
+function laneCompletionMutation(overrides = {}) {
+  return laneMutation({
+    kind: 'task-completed',
+    reason: 'task-completed',
+    fromGlyph: '~',
+    toGlyph: 'x',
+    eventLines: laneEventEffect([laneEvent('complete')]),
+    ...overrides,
+  });
 }
 
 /** @param {Record<string, unknown>} overrides */
@@ -840,6 +1285,85 @@ test('T006 lightweight work-set commits an exact claim only after fresh poststat
     assert.equal(snapshot[LANE_TASKS].updated_at, '2026-07-25T12:00:00.000Z', 'snapshot stamp derives from the mutation');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T030 autonomous claim and final close refresh both artifacts without changing the result contract', () => {
+  // Arrange
+  const root = scaffoldSingleTaskLane();
+  try {
+    // Act
+    const claimed = applyLightweightWorkRequest(laneRequest(root));
+
+    // Assert
+    assertAutonomousCommittedResult(claimed, root, 'autonomous claim');
+    assertFreshBacklogPair(root, 'autonomous claim');
+    assertBacklogClassification(root, 'active', 'autonomous claim', LANE_IDEA);
+    assert.match(
+      laneBytes(root, LANE_TASKS).toString('utf8'),
+      new RegExp(`- \\[~\\] ${LANE_TASK_KEY}`),
+      'autonomous claim commits the canonical task',
+    );
+
+    // Arrange
+    const completion = laneCompletionMutation();
+    const closeRequest = laneRequest(root, { mutation: completion, glyph: '~' });
+
+    // Act
+    const closed = applyLightweightWorkRequest(closeRequest);
+
+    // Assert
+    assertAutonomousCommittedResult(closed, root, 'autonomous close');
+    assertFreshBacklogPair(root, 'autonomous close');
+    assertBacklogClassification(root, 'completed', 'autonomous close', LANE_IDEA);
+    assert.match(
+      laneBytes(root, LANE_TASKS).toString('utf8'),
+      new RegExp(`- \\[x\\] ${LANE_TASK_KEY}`),
+      'autonomous close commits the final canonical task',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T030 autonomous refresh failure restores the pair but returns the original committed receipt', () => {
+  for (const preimage of ['present', 'missing']) {
+    // Arrange
+    const root = scaffoldSingleTaskLane();
+    const before = {
+      markdown: Buffer.from(`autonomous ${preimage} Markdown preimage\n`),
+      html: Buffer.from(`autonomous ${preimage} HTML preimage\n`),
+    };
+    const canonicalBefore = laneSurfaces(root);
+    if (preimage === 'present') writeBacklogPair(root, before.markdown, before.html);
+
+    try {
+      // Act
+      const failed = failOnceOnBacklogHtmlWrite(root, () => applyLightweightWorkRequest(laneRequest(root)));
+
+      // Assert
+      assert.equal(failed.injected, 1, `${preimage}: second backlog write was reached`);
+      assertAutonomousCommittedResult(failed.value, root, `${preimage}: autonomous failure`);
+      const after = laneSurfaces(root);
+      assert.match(after.tasks.toString('utf8'), new RegExp(`- \\[~\\] ${LANE_TASK_KEY}`), `${preimage}: task stayed committed`);
+      assert.equal(
+        JSON.parse(after.taskState.toString('utf8'))[LANE_TASKS].glyphs[LANE_TASK_KEY],
+        '~',
+        `${preimage}: snapshot stayed committed`,
+      );
+      assert.deepEqual(after.owner, canonicalBefore.owner, `${preimage}: owner was not rolled back or rewritten`);
+      if (preimage === 'present') {
+        assert.deepEqual(readBacklogPair(root), before, `${preimage}: both prior artifact bytes restored`);
+      } else {
+        assert.deepEqual(
+          readBacklogPair(root),
+          { markdown: null, html: null },
+          `${preimage}: both prior absent artifacts restored`,
+        );
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 

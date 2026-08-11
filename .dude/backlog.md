@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **4**
+- Ideas awaiting definition: **3**
 - Defined awaiting work: **0**
-- Completed: **29**
+- Completed: **31**
 
 ## Current
 
@@ -21,7 +21,6 @@ No current work to diagram.
 ### Ideas awaiting definition
 
 - `backlog-canvas` — Backlog Canvas (`.dude/ideas/backlog-canvas.md`)
-- `core-dogfood-preview` — Core Dogfood Preview (`.dude/ideas/core-dogfood-preview.md`)
 - `good-enough-delivery` — Good Enough Delivery (`.dude/ideas/good-enough-delivery.md`)
 - `multi-dude-work-coordination` — Multi-Dude Work Coordination (`.dude/ideas/multi-dude-work-coordination.md`)
 
@@ -34,12 +33,14 @@ No current work to diagram.
 - `autonomous-review-escalation-precedence` — Autonomous Review Escalation Precedence (`.dude/ideas/autonomous-review-escalation-precedence.md`)
 - `autonomous-runstate-continuity` — Autonomous RunState Continuity (`.dude/ideas/autonomous-runstate-continuity.md`)
 - `autonomous-work-modes` — Autonomous Work Modes (`.dude/ideas/autonomous-work-modes.md`)
+- `backlog-lifecycle-sync` — Backlog Lifecycle Sync (`.dude/ideas/backlog-lifecycle-sync.md`)
 - `backlog-report-usability` — Backlog Report Usability (`.dude/ideas/backlog-report-usability.md`)
 - `backlog-report` — Backlog Report (`.dude/ideas/backlog-report.md`)
 - `bounded-owner-log-projection` — Bounded Owner Log Projection (`.dude/ideas/bounded-owner-log-projection.md`)
 - `brainstorm-ideas-intake` — Brainstorm ideas intake (`.dude/ideas/brainstorm-ideas-intake.md`)
 - `core-autonomous-event-round-trip` — Core Autonomous Event Round Trip (`.dude/ideas/core-autonomous-event-round-trip.md`)
 - `core-dogfood-close-simplification` — Core Dogfood Close Simplification (`.dude/ideas/core-dogfood-close-simplification.md`)
+- `core-dogfood-preview` — Core Dogfood Preview (`.dude/ideas/core-dogfood-preview.md`)
 - `feature-focus-order` — Feature Focus Order (`.dude/ideas/feature-focus-order.md`)
 - `first-definition-publish` — First-Definition Publish (`.dude/ideas/first-definition-publish.md`)
 - `guarded-directory-artifact-import` — Guarded Directory Artifact Import (`.dude/ideas/guarded-directory-artifact-import.md`)

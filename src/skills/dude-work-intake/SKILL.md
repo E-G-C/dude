@@ -18,13 +18,14 @@ For a fresh project, establish: one feature or several outcomes, implement now o
 - Keep user intent in `## Idea`, followed by active `## Open Questions` and answer slots, then `## Assumptions`.
 - Preserve meaning, tone, uncertainty, incomplete thought, creative intent, answered questions, assumptions, and user edits. Initial cleanup may fix only clear language or transcription errors.
 - Set `status: draft` with an empty `spec_path:` only for a first or still-undefined draft. A brainstorm rerun of a ledger already at `status: defined` preserves that status and its exact `spec_path:`; never demote it or orphan its package.
+- A normal refresh of an exact `status: resolved` ledger preserves its empty path. Reopen it only when the user explicitly asks to reopen through `brainstorm <slug>`; then return it to draft with an empty path and append one lifecycle event.
 - If the input contains separate bounded outcomes, ask one split question or propose separate idea ledgers.
 
 The user controls `## Idea`, open-question answers, and `## Assumptions`; during explicit brainstorm the delegated Spec Lead preserves them and maintains definition metadata, managed sections, and definition log events.
 
 ## Definition Gate
 
-Route explicit `define <slug>` to the Spec Lead and load `dude-feature-definition` when the outcome is clear, unresolved questions are answered or consciously assumed, and one package can contain the scope. Otherwise add or ask one focused clarification.
+Route explicit `define <slug>` to the Spec Lead and load `dude-feature-definition` when the outcome is clear, unresolved questions are answered or consciously assumed, and one package can contain the scope. A resolved ledger must first be explicitly reopened through `brainstorm <slug>`; definition does not infer reopen or create its package. Otherwise add or ask one focused clarification.
 
 Direct facts stay direct. Implementation, verification, planning, artifact authoring, and review route through the closed-roster algorithm in `dude-generic-routing`.
 
@@ -38,7 +39,8 @@ Resolve the lifecycle target by invoking only existing explicit lifecycle routes
 2. An unmatched raw idea invokes the existing explicit `brainstorm <idea>` route as one lifecycle subaction to create exactly one ledger, then invokes the existing explicit `define <slug>` route as a distinct lifecycle subaction, then Work.
 3. An existing draft ledger invokes the existing explicit `define <slug>` route as a lifecycle subaction, then Work.
 4. An existing defined package goes to Work as-is. Do not proactively redefine it, check staleness or drift, or merge invocation text into its intent. New or changed intent requires explicit `brainstorm`; deliberate package refresh requires explicit `define`.
-5. Bare Ship without tracked work proceeds only for exactly one unambiguous live lifecycle target.
+5. An existing resolved ledger is terminal and is not a live package candidate. Stop before definition or Work and point to explicit `brainstorm <slug>` reopen; Ship never infers reopen.
+6. Bare Ship without tracked work proceeds only for exactly one unambiguous live lifecycle target.
 
 Ship creates no alternate definition-write route or authority. In every invoked `brainstorm` or `define <slug>` subroute, the delegated Spec Lead owns all definition artifacts, `status:`, exact `spec_path:`, managed definition regions, and definition log events exactly as the existing lifecycle contract requires; Ship writes none of them.
 

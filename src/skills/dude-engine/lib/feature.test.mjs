@@ -343,6 +343,144 @@ test('resolve still returns an owner for canonical ledgers that quote scalar val
   }
 });
 
+test('inventory accepts an exact package-less resolved ledger without granting it ownership', () => {
+  const root = temporaryRoot();
+  try {
+    // Arrange
+    define(root, 'defined', 'defined');
+    write(root, '.dude/ideas/draft.md', ledger('draft', ''));
+    write(root, '.dude/ideas/resolved.md', ledger('resolved', ''));
+
+    // Act
+    const inventory = inventoryDefinedFeatures({ root });
+    const owner = resolveFeatureOwner({ root, specPath: '.dude/specs/defined/spec.md' });
+
+    // Assert
+    assert.deepEqual(inventory, {
+      features: [
+        { ideaPath: '.dude/ideas/defined.md', specPath: '.dude/specs/defined/spec.md' },
+      ],
+      diagnostics: [],
+    });
+    assert.deepEqual(owner, {
+      owner: { ideaPath: '.dude/ideas/defined.md', specPath: '.dude/specs/defined/spec.md' },
+      diagnostics: [],
+    });
+    assert.equal(
+      inventory.features.some((feature) => feature.ideaPath === '.dude/ideas/resolved.md'),
+      false,
+      'a package-less resolved ledger never becomes an exact package owner',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('inventory rejects invalid resolved metadata before it can become ownership', () => {
+  const root = temporaryRoot();
+  try {
+    // Arrange
+    define(root, 'keep', 'keep');
+    const cases = [
+      {
+        idea: 'canonical-owner-claim',
+        content: ledger('resolved', '.dude/specs/keep/spec.md'),
+        codes: ['FEATURE_RESOLVED_SPEC_PATH'],
+      },
+      {
+        idea: 'dangling-path',
+        content: ledger('resolved', '.dude/specs/missing/spec.md'),
+        codes: ['FEATURE_RESOLVED_SPEC_PATH'],
+      },
+      {
+        idea: 'malformed-path',
+        content: ledger('resolved', 'not-a-canonical-spec-path'),
+        codes: ['FEATURE_RESOLVED_SPEC_PATH'],
+      },
+      {
+        idea: 'unsafe-path',
+        content: ledger('resolved', '.dude/specs/..\\outside/spec.md'),
+        codes: ['FEATURE_RESOLVED_SPEC_PATH'],
+      },
+      {
+        idea: 'quoted-nonempty-path',
+        content: ledger('resolved', '".dude/specs/keep/spec.md"'),
+        codes: ['FEATURE_RESOLVED_SPEC_PATH'],
+      },
+      {
+        idea: 'nonexact-status',
+        content: ledger('"resolved"', ''),
+        codes: ['FEATURE_STATUS_INVALID'],
+      },
+      {
+        idea: 'malformed-frontmatter',
+        content: '---\nstatus: resolved\nstatus: resolved\nspec_path:\n---\n\n## Idea\n\nBody.\n',
+        codes: ['FEATURE_FRONTMATTER_MALFORMED'],
+      },
+    ];
+    for (const fixture of cases) {
+      write(root, `.dude/ideas/${fixture.idea}.md`, fixture.content);
+    }
+
+    // Act
+    const inventory = inventoryDefinedFeatures({ root });
+    const codesFor = (idea) => inventory.diagnostics
+      .filter((diagnostic) => diagnostic.path === `.dude/ideas/${idea}.md`)
+      .map((diagnostic) => diagnostic.code);
+
+    // Assert
+    assert.deepEqual(inventory.features, [
+      { ideaPath: '.dude/ideas/keep.md', specPath: '.dude/specs/keep/spec.md' },
+    ]);
+    for (const fixture of cases) {
+      assert.deepEqual(codesFor(fixture.idea), fixture.codes, fixture.idea);
+    }
+    assert.match(
+      inventory.diagnostics.find((diagnostic) => diagnostic.path === '.dude/ideas/nonexact-status.md')?.message ?? '',
+      /invalid status 'resolved' \(valid: draft, defined, resolved\)/,
+    );
+    assert.equal(
+      inventory.features.some((feature) => cases.some((fixture) => (
+        feature.ideaPath === `.dude/ideas/${fixture.idea}.md`
+      ))),
+      false,
+      'every invalid resolved shape remains outside the owner inventory',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('duplicate defined owners remain diagnostic while a resolved bystander has zero ownership', () => {
+  const root = temporaryRoot();
+  try {
+    // Arrange
+    write(root, '.dude/specs/shared/spec.md', '# shared\n');
+    write(root, '.dude/ideas/alpha.md', ledger('defined', '.dude/specs/shared/spec.md'));
+    write(root, '.dude/ideas/beta.md', ledger('defined', '.dude/specs/shared/spec.md'));
+    write(root, '.dude/ideas/resolved.md', ledger('resolved', ''));
+
+    // Act
+    const inventory = inventoryDefinedFeatures({ root });
+
+    // Assert
+    assert.deepEqual(inventory.features, [
+      { ideaPath: '.dude/ideas/alpha.md', specPath: '.dude/specs/shared/spec.md' },
+      { ideaPath: '.dude/ideas/beta.md', specPath: '.dude/specs/shared/spec.md' },
+    ]);
+    assert.deepEqual(
+      inventory.diagnostics.map((diagnostic) => [diagnostic.path, diagnostic.code]),
+      [['.dude/specs/shared/spec.md', 'FEATURE_OWNER_DUPLICATE']],
+    );
+    assert.equal(
+      inventory.features.filter((feature) => feature.ideaPath === '.dude/ideas/resolved.md').length,
+      0,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // Feature 024 (T001@6b657973): `depends-on` is a canonical idea-frontmatter key.
 // Exercising the production CANONICAL_IDEA_KEYS set through the inventory and
 // resolve paths, a plain space- or comma-separated scalar of idea slugs must

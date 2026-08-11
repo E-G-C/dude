@@ -53,6 +53,7 @@ import {
   resolveMutationPath,
 } from '../dude-engine/lib/workspace-paths.mjs';
 import { resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
+import { refreshCommittedBacklog } from './backlog.mjs';
 import {
   canonicalJson,
   sha256,
@@ -240,6 +241,12 @@ function run(args) {
       if (args.write) {
         fs.writeFileSync(file, result.content);
         upsertTaskStateEntry(root, relKey, glyphsOf(parseTasks(result.content)));
+        try {
+          refreshCommittedBacklog({ root });
+        } catch {
+          process.stderr.write('[FAIL] canonical state committed; backlog refresh failed\n');
+          return 2;
+        }
         process.stdout.write(`[OK] ${args.id} set to "${args.state}" in ${args.file}\n`);
         return 0;
       }
@@ -270,6 +277,12 @@ function run(args) {
       if (args.write) {
         fs.writeFileSync(file, result.content);
         upsertTaskStateEntry(root, relKey, glyphsOf(parseTasks(result.content)));
+        try {
+          refreshCommittedBacklog({ root });
+        } catch {
+          process.stderr.write('[FAIL] canonical state committed; backlog refresh failed\n');
+          return 2;
+        }
         process.stdout.write(`[OK] applied ${result.applied.length} state(s) in ${args.file}\n`);
       } else {
         process.stdout.write(`${result.applied.length} state(s) would change (dry run; pass --write)\n`);
@@ -1188,8 +1201,9 @@ export function applyLightweightWorkRequest(requestValue) {
       return UNOBSERVED_SURFACES_HASH;
     }
   };
+  let result;
   try {
-    return commitLightweightWorkRequest(requestValue, context);
+    result = commitLightweightWorkRequest(requestValue, context);
   } catch (error) {
     if (error instanceof LaneIndeterminateError) {
       return { ok: false, phase: 'indeterminate', reason: error.reason, observedEvidenceHash: observed() };
@@ -1199,6 +1213,15 @@ export function applyLightweightWorkRequest(requestValue) {
       : 'invalid-request-shape';
     return { ok: false, phase: 'refused', reason, unchangedPrestateHash: observed() };
   }
+  if (!result.ok || result.phase !== 'committed') return result;
+  if (context.surfaces) {
+    try {
+      refreshCommittedBacklog({ root: context.surfaces.root });
+    } catch {
+      // The derived pair restores its own preimages. The canonical receipt stays exact.
+    }
+  }
+  return result;
 }
 
 /**

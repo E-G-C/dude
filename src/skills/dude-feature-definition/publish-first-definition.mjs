@@ -184,10 +184,16 @@ function extractCoordinatorLog(bytes, lines, state) {
 function validateOwnerTransition(current, staged, specPath) {
   const currentFrontmatter = parseOwnerFrontmatter(current, 'current');
   const stagedFrontmatter = parseOwnerFrontmatter(staged, 'staged');
-  if (currentFrontmatter.scalars.get('status')?.value !== 'draft') {
+  const currentStatusScalar = currentFrontmatter.scalars.get('status');
+  const currentStatus = currentStatusScalar?.value;
+  const currentSpecPath = currentFrontmatter.scalars.get('spec_path')?.value;
+  if (currentStatus === 'resolved' && currentStatusScalar?.raw === 'resolved' && currentSpecPath === '') {
+    throw new Error('current idea is resolved; explicit brainstorm reopen is required before first definition');
+  }
+  if (currentStatus !== 'draft') {
     throw new Error('current idea must have status: draft');
   }
-  if (currentFrontmatter.scalars.get('spec_path')?.value !== '') {
+  if (currentSpecPath !== '') {
     throw new Error('current idea must have an empty spec_path:');
   }
   if (stagedFrontmatter.scalars.get('status')?.value !== 'defined') {

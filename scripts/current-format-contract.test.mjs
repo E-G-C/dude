@@ -1,5 +1,6 @@
 // @ts-check
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,6 +13,7 @@ import {
   parseAgentSource,
   renderCopilotAgent,
 } from '../src/skills/dude-engine/lib/agent-projection.mjs';
+import { collectLifecycleModel } from '../src/skills/dude-lightweight-execution/backlog.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -275,6 +277,38 @@ function markdownSection(source, heading) {
     }
   }
   return lines.slice(start + 1, end).join('\n').trim();
+}
+
+/**
+ * Preserve the raw body bytes after an exact Markdown heading through the next
+ * heading at the same or higher level.
+ * @param {string} source
+ * @param {string} heading
+ */
+function rawMarkdownSectionBody(source, heading, { includeHeadingLine = false } = {}) {
+  const target = /^(#{1,6})[ \t]+(.+?)[ \t]*$/.exec(heading);
+  assert.ok(target, `invalid Markdown heading ${JSON.stringify(heading)}`);
+  const targetLevel = target[1].length;
+  let starts = 0;
+  let bodyStart = -1;
+  let end = source.length;
+  let offset = 0;
+
+  for (const line of source.split('\n')) {
+    const next = /^ {0,3}(#{1,6})[ \t]+/.exec(line);
+    if (line.trim() === heading) {
+      starts += 1;
+      // The heading line itself is included on request so a pinned digest also
+      // covers heading indentation, not just the body bytes beneath it.
+      if (starts === 1) bodyStart = includeHeadingLine ? offset : offset + line.indexOf(heading) + heading.length;
+    } else if (bodyStart !== -1 && end === source.length && next && next[1].length <= targetLevel) {
+      end = offset - 1;
+    }
+    offset += line.length + 1;
+  }
+
+  assert.equal(starts, 1, `${heading}: expected one raw exact heading`);
+  return source.slice(bodyStart, end);
 }
 
 /** @param {string} source @param {string} key */
@@ -1317,6 +1351,246 @@ test('T008 definition authority, rerun safety, guardrails, gates, and reconcilia
   }
 });
 
+test('T030 lifecycle guidance preserves resolved ledgers and requires explicit reopen', () => {
+  assertSectionMatchesAll('src/skills/dude-feature-definition/SKILL.md', '## Brainstorm', [
+    /rerun of a resolved ledger preserves exact `status: resolved` and its empty `spec_path:`/i,
+    /Only an explicit user request to reopen through `brainstorm <slug>` changes a resolved ledger to draft with an empty path and one appended lifecycle event/i,
+    /never infer reopen from refreshed prose/i,
+  ]);
+  assertSectionMatchesAll('src/skills/dude-feature-definition/SKILL.md', '## First Definition Transaction', [
+    /resolved ledger is terminal until explicitly reopened through `brainstorm <slug>`/i,
+    /first definition refuses it before any write/i,
+  ]);
+  assertSectionMatchesAll('src/skills/dude-feature-definition/SKILL.md', '## Re-definition', [
+    /explicit resolved-to-draft reopen/i,
+    /`define` and re-definition never turn a resolved ledger into a package owner/i,
+  ]);
+
+  assertSectionMatchesAll('src/skills/dude-work-intake/SKILL.md', '## Brainstorm', [
+    /normal refresh of an exact `status: resolved` ledger preserves its empty path/i,
+    /Reopen it only when the user explicitly asks to reopen through `brainstorm <slug>`/i,
+    /return it to draft with an empty path and append one lifecycle event/i,
+  ]);
+  assertSectionMatchesAll('src/skills/dude-work-intake/SKILL.md', '## Definition Gate', [
+    /resolved ledger must first be explicitly reopened through `brainstorm <slug>`/i,
+    /definition does not infer reopen or create its package/i,
+  ]);
+  assertSectionMatchesAll('src/skills/dude-work-intake/SKILL.md', '## Ship', [
+    /existing resolved ledger is terminal and is not a live package candidate/i,
+    /Stop before definition or Work and point to explicit `brainstorm <slug>` reopen/i,
+    /Ship never infers reopen/i,
+  ]);
+
+  assertSectionMatchesAll('src/agents/dude-spec-lead.agent.md', '## Required Workflow', [
+    /normal rerun of a resolved ledger preserves exact `status: resolved` and its empty path/i,
+    /Only an explicit user request to reopen through `brainstorm <slug>` returns a resolved ledger to draft with an empty path and one appended lifecycle event/i,
+    /resolved ledger is terminal: first definition, re-definition, and Ship must refuse it before writes until explicit brainstorm reopen/i,
+  ]);
+  assertSectionMatchesAll('src/agents/dude.agent.md', '## Lifecycle', [
+    /normal rerun of an exact `status: resolved` ledger preserves its empty path/i,
+    /only an explicit user request to reopen through `brainstorm <slug>` returns it to draft with an empty path and one appended lifecycle event/i,
+    /resolved ledger is terminal and must be explicitly reopened through brainstorm before first definition, re-definition, or Ship/i,
+    /none may create or select a package for it/i,
+  ]);
+  assertSectionMatchesAll('src/agents/dude.agent.md', '## Ship', [
+    /resolved target that requires explicit `brainstorm <slug>` reopen/i,
+    /pre-mutation stops/i,
+  ]);
+
+  const ledgerRelative = '.dude/ideas/core-dogfood-preview.md';
+  const ledger = read(ledgerRelative);
+  const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(ledger);
+  assert.ok(frontmatter, `${ledgerRelative}: frontmatter is present`);
+  assert.equal((frontmatter[1].match(/^status:/gm) ?? []).length, 1, `${ledgerRelative}: one status scalar`);
+  assert.match(frontmatter[1], /^status: resolved$/m, `${ledgerRelative}: exact resolved status`);
+  assert.equal((frontmatter[1].match(/^spec_path:/gm) ?? []).length, 1, `${ledgerRelative}: one spec_path scalar`);
+  assert.match(frontmatter[1], /^spec_path:$/m, `${ledgerRelative}: spec_path is exactly empty`);
+
+  const idea = markdownSection(ledger, '## Idea');
+  const developerWorkflow = markdownSection(ledger, '## Required Developer Workflow Documentation');
+  const openQuestions = markdownSection(ledger, '## Open Questions');
+  const assumptions = markdownSection(ledger, '## Assumptions');
+  // These pin user-controlled sections the migration had to preserve byte-for-byte,
+  // including each heading line so indentation cannot slip past the digest.
+  // A change means user intent was edited and must be re-authorized, not test-updated.
+  for (const { heading, body, bytes, sha256 } of [
+    {
+      heading: '## Idea',
+      body: rawMarkdownSectionBody(ledger, '## Idea', { includeHeadingLine: true }),
+      bytes: 5129,
+      sha256: '11963d905be999b52a460c46b7614532762ada9529323ba623ba7d7a487875bd',
+    },
+    {
+      heading: '## Open Questions',
+      body: rawMarkdownSectionBody(ledger, '## Open Questions', { includeHeadingLine: true }),
+      bytes: 1353,
+      sha256: '8e567ac330b865af117d7a8a6357bb54f3fe88746b95c94ae27288bc8cb4b54e',
+    },
+    {
+      heading: '## Assumptions',
+      body: rawMarkdownSectionBody(ledger, '## Assumptions', { includeHeadingLine: true }),
+      bytes: 2473,
+      sha256: '2cb5e3fac5b822505c014596905368b2ad4fcafc1f6521945695cb088b032d62',
+    },
+  ]) {
+    assert.equal(Buffer.byteLength(body, 'utf8'), bytes, `${ledgerRelative}: ${heading} UTF-8 byte length`);
+    assert.equal(
+      createHash('sha256').update(body, 'utf8').digest('hex'),
+      sha256,
+      `${ledgerRelative}: ${heading} SHA-256 digest`,
+    );
+  }
+  for (const statement of [
+    'it seems this feature is too rigid. It needs to be more flexible to allow turn around scenarios. I thought this feature would be something small, but has become a headache.',
+    "We're looking for a quick way to test our own implementation, but the current gates are too rigid while we are in the middle of features and stuff. There might be other things in motion and they won't pass because the dog food promotions constraints.",
+    'I want simplification as much as possible. I\'m about even considering removing the whole feature altogether',
+  ]) {
+    assert.match(idea, new RegExp(`^> ${statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'), `${ledgerRelative}: preserved user statement`);
+  }
+  assert.match(idea, /^### Earlier Captured Context$/m, `${ledgerRelative}: retained earlier context`);
+  assert.match(idea, /This is the primary, low-effort\/high-return outcome:/, `${ledgerRelative}: retained earlier outcome`);
+  assert.match(developerWorkflow, /^Updating existing developer documentation is part of the user-visible outcome\./m);
+  assert.match(developerWorkflow, /^- Show how to identify whether a proposed change belongs to core source, pack source, project-local customization, or docs only\.$/m);
+  assert.match(developerWorkflow, /^- Show the simplest core path exactly:/m);
+  assert.match(developerWorkflow, /^- Include at least one concise end-to-end pack-change example and one concise end-to-end core-change example\.$/m);
+  assert.ok((developerWorkflow.match(/^- /gm) ?? []).length >= 8, `${ledgerRelative}: substantive developer workflow requirements`);
+
+  const numberedQuestions = openQuestions
+    .split(/(?=^\d+\.\s)/m)
+    .filter((block) => /^\d+\.\s/.test(block));
+  assert.deepEqual(numberedQuestions.map((block) => /^\d+\./.exec(block)?.[0]), ['1.', '2.', '3.', '4.', '5.']);
+  const questionAndAnswerContracts = [
+    [
+      /^1\. Is direct canonical `build-dev` preview sufficient,/m,
+      /Answer: Direct canonical `node scripts\/build-dev\.mjs` is sufficient preview; it previews all current `src\/\*\*` edits together\./,
+    ],
+    [
+      /^2\. Is an optional manually created disposable checkout or worktree enough for rare isolation needs,/m,
+      /Answer: Optional manually-created disposable checkout or worktree is sufficient for rare isolation; no new preview tooling\./,
+    ],
+    [
+      /^3\. What is the minimum preview check set:/m,
+      /Answer: The default preview check set is focused tests, source\/generated parity, and one named behavior against `\.github\/`;/,
+    ],
+    [
+      /^4\. What target wall-clock time should a small preview meet\?/m,
+      /Answer: Target under 2 minutes for a small preview, excluding manual reload and the named behavior's own external latency\./,
+    ],
+    [
+      /^5\. Should successful preview remain informational only,/m,
+      /Answer: Preview evidence is informational only; final acceptance always uses fresh normal verification\./,
+    ],
+  ];
+  for (const [index, [question, answer]] of questionAndAnswerContracts.entries()) {
+    assert.match(numberedQuestions[index], question, `${ledgerRelative}: open question ${index + 1}`);
+    assert.match(numberedQuestions[index], answer, `${ledgerRelative}: recorded answer ${index + 1}`);
+  }
+
+  assert.match(assumptions, /^These are the Spec Lead's assumptions, not the user's, and any of them can be overturned\.$/m);
+  assert.match(assumptions, /^- Direct canonical `build-dev` is the selected preview path\.$/m);
+  assert.match(assumptions, /^### Earlier Captured Assumptions$/m, `${ledgerRelative}: retained earlier assumptions`);
+  assert.match(assumptions, /^- Preview is an implementation-time testing product, not a weaker form of accepted promotion or close\.$/m);
+  assert.match(assumptions, /^- No projection, isolation, invocation, output, cleanup, or evidence mechanism is selected yet\.$/m);
+  assert.ok((assumptions.match(/^- /gm) ?? []).length >= 16, `${ledgerRelative}: substantive current and earlier assumptions`);
+
+  const model = collectLifecycleModel({ root: ROOT });
+  const matchingItems = model.items.filter((item) => item.ideaPath === ledgerRelative);
+  assert.equal(matchingItems.length, 1, `${ledgerRelative}: one lifecycle item`);
+  const [item] = matchingItems;
+  assert.deepEqual(
+    item.coordinatorLog.slice(0, 3).map(({ date, text }) => ({ date, text })),
+    [
+      {
+        date: '2026-07-29',
+        text: '2026-07-29 UTC - brainstorm created by splitting `core-dogfood-promotion-flexibility`',
+      },
+      {
+        date: '2026-07-29',
+        text: '2026-07-29 UTC - brainstorm refreshed; maximum-simplification direction added, with existing build-dev as the minimal preview candidate and full policy retirement as a final-close option',
+      },
+      {
+        date: '2026-07-29',
+        text: '2026-07-29 UTC - brainstorm/decision refreshed; direct canonical build-dev preview selected, all five questions answered, and the retirement feature assigned the developer-documentation requirement',
+      },
+    ],
+    `${ledgerRelative}: pre-existing dated Coordinator Log events are preserved`,
+  );
+  assert.equal(item.coordinatorLog.length, 4, `${ledgerRelative}: only the resolution event was appended`);
+  const resolutionEvents = item.coordinatorLog.filter(({ text }) => /\bresolved\b/i.test(text));
+  assert.equal(resolutionEvents.length, 1, `${ledgerRelative}: exactly one resolution event`);
+  assert.match(resolutionEvents[0].text, /^2026-08-11 UTC - idea resolved without a package because /);
+  assert.match(resolutionEvents[0].text, /\bFeature 012\b[\s\S]*\bconsumed and delivered\b/i);
+
+  const matchingPackageEntries = fs.readdirSync(path.join(ROOT, '.dude', 'specs'), { withFileTypes: true })
+    .filter((entry) => entry.name === 'core-dogfood-preview' || entry.name.endsWith('-core-dogfood-preview'))
+    .map((entry) => entry.name);
+  assert.deepEqual(matchingPackageEntries, [], `${ledgerRelative}: no package directory or spec exists`);
+  assert.equal(item.rawSpecPath, '', `${ledgerRelative}: no declared package path`);
+  assert.equal(item.ownerSpecPath, null, `${ledgerRelative}: no defined package claims the ledger`);
+  assert.equal(item.specPath, null, `${ledgerRelative}: no resolved package path`);
+  assert.equal(item.tasksPath, null, `${ledgerRelative}: no task package`);
+  assert.equal(item.defined, false, `${ledgerRelative}: owns no defined feature`);
+  assert.deepEqual(item.tasks, [], `${ledgerRelative}: owns no tasks`);
+  assert.deepEqual(item.taskCounts, { open: 0, active: 0, blocked: 0, done: 0, total: 0 }, `${ledgerRelative}: carries no task counts`);
+
+  assert.equal(model.completed.filter((candidate) => candidate.ideaPath === ledgerRelative).length, 1, `${ledgerRelative}: classified once in Completed`);
+  assert.equal(item.section, 'completed', `${ledgerRelative}: Completed section`);
+  assert.equal(item.group, 'completed', `${ledgerRelative}: Completed group`);
+  assert.equal(
+    model.planned.awaitingDefinition.some((candidate) => candidate.ideaPath === ledgerRelative),
+    false,
+    `${ledgerRelative}: absent from awaiting-definition`,
+  );
+});
+
+test('T030 backlog freshness guidance remains bounded, pair-safe, and source-generated equivalent', () => {
+  const sourceSkill = 'src/skills/dude-lightweight-execution/SKILL.md';
+  const generatedSkill = '.github/skills/dude-lightweight-execution/SKILL.md';
+  const assertGuidanceMatchesAll = (relative, patterns) => {
+    const content = read(relative).replace(/\s+/g, ' ');
+    for (const pattern of patterns) assert.match(content, pattern, `${relative}: ${pattern}`);
+  };
+
+  assert.equal(read(generatedSkill), read(sourceSkill), 'generated Lightweight guidance equals its source');
+  assert.equal(
+    read('.github/skills/dude-lightweight-execution/backlog.mjs'),
+    read('src/skills/dude-lightweight-execution/backlog.mjs'),
+    'generated backlog helper equals its source',
+  );
+  assertSectionMatchesAll(sourceSkill, '### Cross-Idea Backlog', [
+    /pair-safe refresh renders both postimages before either write and restores both preimages if either write fails/i,
+    /runs after successful guarded `board\.mjs set --write`, guarded `apply-states --write`, and successful autonomous `applyLightweightWorkRequest`/i,
+    /does not run for `render --write`, reads, dry runs, or refused and failed canonical mutations/i,
+    /exits `2`, writes `\[FAIL\] canonical state committed; backlog refresh failed` to stderr, and does not print its success line/i,
+    /autonomous refresh failure preserves the exact committed `\{ ok, phase, receipt \}` result without a warning/i,
+    /`backlog\.mjs check` detects the restored stale pair, and the next successful coordinator refresh repairs it/i,
+    /Coordinator Log-only writes outside the autonomous boundary, brainstorm, definition, resolution, reopen, and backlog-order changes still require procedural `backlog\.mjs generate --write`/i,
+  ]);
+  assertGuidanceMatchesAll('README.md', [
+    /derived backlog pair, `\.dude\/backlog\.md` and `\.dude\/backlog\.html`, refreshes\s+after guarded task `set --write`, guarded batch `apply-states --write`, and a\s+successful autonomous Lightweight task application/i,
+    /not continuously\s+synchronized[\s\S]*?Coordinator Log-only, lifecycle, and backlog-order changes[\s\S]*?coordinator backlog generation/i,
+    /failed derived refresh never rolls back\s+committed task state; the freshness check detects the stale pair/i,
+  ]);
+  assertGuidanceMatchesAll('docs/commands.md', [
+    /Successful guarded `board set --write` and `apply-states --write`, plus a successful autonomous Lightweight application, refresh the committed backlog pair/i,
+    /Board rendering, reads, dry runs, and refused or failed canonical changes do not/i,
+    /exits `2` with `\[FAIL\] canonical state committed; backlog refresh failed`/i,
+    /autonomous result remains its existing committed receipt without a warning/i,
+    /Coordinator Log-only, lifecycle, and backlog-order changes still need procedural `backlog\.mjs generate --write`/i,
+  ]);
+  assertGuidanceMatchesAll('docs/reference.md', [
+    /refresh after guarded `set --write`, guarded `apply-states --write`, and a successful autonomous Lightweight application, but not after board rendering, reads, dry runs, or refused mutations/i,
+    /failed refresh keeps the canonical task commit; an autonomous result keeps its existing receipt, while `backlog\.mjs check` reports the stale pair/i,
+    /Log-only, lifecycle, and order updates require procedural backlog generation/i,
+  ]);
+  assertGuidanceMatchesAll('docs/workflow.md', [
+    /refresh after guarded `set --write`, guarded `apply-states --write`, and successful autonomous Lightweight applications/i,
+    /do not refresh for board-only rendering, reads, dry runs, or refused mutations/i,
+    /refresh failure leaves canonical task state committed; autonomous work keeps its existing committed receipt, and `backlog\.mjs check` detects the stale pair/i,
+    /Coordinator Log-only, lifecycle, and backlog-order changes remain procedural backlog-generation work/i,
+  ]);
+});
+
 test('T008 coordinator Status, Diff, Self-Check, and Flag procedures are section-bound', () => {
   const contracts = [
     {
@@ -2128,12 +2402,74 @@ test('optional-pack contracts retain target safety, exact ownership, complete in
   assert.match(design, /exact canonical `spec_path` equality is the only owner match/);
 });
 
-test('public docs retain current verbs, lifecycle draft status, canonical manifest, and upgrade rollback', () => {
+test('public docs retain current verbs, resolved lifecycle, canonical manifest, and upgrade rollback', () => {
   const commands = read('docs/commands.md');
+  const readme = read('README.md');
+  const reference = read('docs/reference.md');
+  const workflow = read('docs/workflow.md');
   for (const verb of ['brainstorm', 'define', 'status', 'track', 'work', 'flag', 'diff', 'self-check']) {
     assert.ok(commands.includes(`@dude ${verb}`), `supported public verb ${verb}`);
   }
-  assert.match(read('README.md'), /status: draft\|defined/);
+
+  const normalized = (content) => content.replace(/\s+/g, ' ');
+  const lifecycleDocs = [
+    ['README.md', readme],
+    ['docs/reference.md', reference],
+    ['docs/workflow.md', workflow],
+    ['docs/commands.md', commands],
+  ];
+  for (const [relative, content] of lifecycleDocs) {
+    const prose = normalized(content);
+    assert.match(prose, /draft\|defined\|resolved/, `${relative}: three lifecycle statuses`);
+    assert.doesNotMatch(prose, /\bdraft\|defined(?!\|resolved)/, `${relative}: no stale two-status vocabulary`);
+  }
+
+  assert.match(
+    normalized(readme),
+    /A `resolved` idea is terminal and package-less: it records an outcome completed without ever owning a `\.dude\/specs\/\*\*` package\./,
+  );
+  assert.match(
+    normalized(readme),
+    /A routine `@dude brainstorm` refresh leaves exact `status: resolved` and an empty `spec_path:` intact; it never returns the ledger to draft\./,
+  );
+  assert.match(
+    normalized(readme),
+    /Reopening requires an explicit `@dude brainstorm <slug>` lifecycle request\. Until a reopen request arrives, `@dude define` and `@dude ship` refuse to create a package\./,
+  );
+  assert.match(
+    normalized(reference),
+    /The backlog places a valid resolved ledger in Completed with no task counts only when its status scalar is exactly `resolved`, its unnormalized `spec_path:` is exactly empty, it has no owner claim, and it has no owner or metadata diagnostic\./,
+  );
+  assert.match(normalized(reference), /Any other resolved-shaped ledger is unavailable, not Completed\./);
+  assert.match(
+    normalized(reference),
+    /A normal `@dude brainstorm` rerun keeps exact `status: resolved` and its empty `spec_path:`; refreshed prose does not reopen it or return it to draft\./,
+  );
+  assert.match(
+    normalized(reference),
+    /Only an explicit `@dude brainstorm <slug>` lifecycle request reopens it\. Package creation through `@dude define` or `@dude ship` remains refused before reopening\./,
+  );
+  assert.match(
+    normalized(workflow),
+    /A routine `@dude brainstorm` rerun retains exact `status: resolved` and its empty `spec_path:`\. It stays terminal until an explicit `@dude brainstorm <slug>` lifecycle request reopens it to draft\. `@dude define` and `@dude ship` refuse package creation until it is reopened\./,
+  );
+  assert.match(
+    normalized(workflow),
+    /The backlog places a valid resolved ledger in Completed with no task counts only when its status scalar is exactly `resolved`, its unnormalized `spec_path:` is exactly empty, it has no owner claim, and it has no owner or metadata diagnostic\./,
+  );
+  assert.match(
+    normalized(commands),
+    /an existing resolved ledger is terminal: Ship stops before definition or Work, does not create a package, and points to explicit `@dude brainstorm <slug>` reopen/,
+  );
+  assert.match(
+    normalized(commands),
+    /Refreshing a resolved ledger ordinarily retains exact `status: resolved` and its empty `spec_path:` instead of returning it to draft\./,
+  );
+  assert.match(
+    normalized(commands),
+    /An explicit `@dude brainstorm <slug>` lifecycle request is required to reopen it\. Before that request, `@dude define` and `@dude ship` refuse to create a package\./,
+  );
+
   assert.match(read('docs/walkthrough.md'), /^status: draft$/m);
   assert.match(read('docs/prd-drafts.md'), /PRD draft or product brief/);
 

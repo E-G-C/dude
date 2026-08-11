@@ -1,7 +1,7 @@
 // @ts-check
 
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -44,6 +44,7 @@ const TARGET = Object.freeze({
   lane: 'lightweight',
   taskKey: 'T001@61646170',
 });
+const BACKLOG_CLI = fileURLToPath(new URL('../dude-lightweight-execution/backlog.mjs', import.meta.url));
 const SECOND_TARGET = Object.freeze({
   specPath: TARGET.specPath,
   lane: 'lightweight',
@@ -6359,6 +6360,96 @@ nodeTest('focused table A: sequential challenge protocol and foreground CLI', as
     assert.equal(collision.code, 1);
     assert.deepEqual(collision.rows.map((row) => row.type), ['result']);
     assert.equal(collision.rows[0].reason, 'checkpoint-ownership-unavailable');
+  });
+});
+
+nodeTest('T030 derived backlog failure preserves the production autonomous receipt, commit, and audit path', async () => {
+  await withSealedWorkspace(async (root) => {
+    // Arrange
+    writeSealedTaskState(root);
+    const artifacts = {
+      markdown: path.join(root, '.dude', 'backlog.md'),
+      html: path.join(root, '.dude', 'backlog.html'),
+    };
+    fs.writeFileSync(artifacts.markdown, 'host regression Markdown preimage\n');
+    fs.writeFileSync(artifacts.html, 'host regression HTML preimage\n');
+    const tasksPath = path.join(root, TASKS_PATH);
+    const realWriteFileSync = fs.writeFileSync;
+    let injected = 0;
+    let refreshPreimages = null;
+    let result;
+
+    try {
+      // Act
+      // The runner may write projection events before its final task close. Fail
+      // specifically at the final `x` poststate so the test observes the actual
+      // autonomous task-settlement boundary, not an earlier projection.
+      // @ts-ignore -- deliberate O_TRUNC-style derived-writer failure injection
+      fs.writeFileSync = (file, data, ...rest) => {
+        const absolute = path.resolve(String(file));
+        const finalTaskCommitted = fs.readFileSync(tasksPath, 'utf8').includes(`- [x] ${TARGET.taskKey}`);
+        if (injected === 0 && absolute === artifacts.markdown && finalTaskCommitted) {
+          refreshPreimages = {
+            markdown: fs.readFileSync(artifacts.markdown),
+            html: fs.readFileSync(artifacts.html),
+          };
+        }
+        if (injected === 0 && absolute === artifacts.html && finalTaskCommitted) {
+          injected += 1;
+          realWriteFileSync(file, Buffer.from('truncated before host refresh failure\n'), ...rest);
+          throw new Error('injected host backlog HTML write failure');
+        }
+        return realWriteFileSync(file, data, ...rest);
+      };
+      result = await runHostAdapter(focusedRunnerRequest(root), {
+        checkpoint: memoryCheckpointStore().port,
+      });
+    } finally {
+      fs.writeFileSync = realWriteFileSync;
+    }
+
+    // Assert: the derived error does not become refusal, rollback, or a second result channel.
+    assert.equal(injected, 1, 'the final backlog HTML write was deliberately interrupted');
+    assert.ok(refreshPreimages, 'the pair preimages were captured immediately before the failed refresh');
+    assert.equal(result.outcome, 'ended');
+    assert.equal(result.reason, 'task-settled');
+    assert.equal(Object.hasOwn(result, 'unchangedPrestateHash'), false);
+    assert.equal(Object.hasOwn(result, 'phase'), false);
+    assert.ok(
+      result.steps.some((step) => step.step === 'commit-lane-receipt' && step.reason === 'lane-receipt-committed'),
+      'the original autonomous receipt is normally committed',
+    );
+    assert.ok(
+      result.steps.some((step) => step.step === 'final-audit' && step.reason === 'run-audited'),
+      'normal post-commit audit handling remains intact',
+    );
+    assert.match(fs.readFileSync(tasksPath, 'utf8'), new RegExp(`- \\[x\\] ${TARGET.taskKey}`));
+    assert.equal(
+      JSON.parse(fs.readFileSync(path.join(root, TASK_STATE_PATH), 'utf8'))[TASKS_PATH].glyphs[TARGET.taskKey],
+      'x',
+      'canonical snapshot remains committed',
+    );
+    assert.deepEqual(
+      {
+        markdown: fs.readFileSync(artifacts.markdown),
+        html: fs.readFileSync(artifacts.html),
+      },
+      refreshPreimages,
+      'the failed refresh restores both pair preimages exactly',
+    );
+
+    const stale = spawnSync(process.execPath, [BACKLOG_CLI, 'check', '--root', root], { encoding: 'utf8' });
+    assert.equal(stale.status, 3, `${stale.stdout}${stale.stderr}`);
+    assert.match(stale.stderr, /\[STALE\] \.dude\/backlog\.md/);
+    assert.match(stale.stderr, /\[STALE\] \.dude\/backlog\.html/);
+    assert.deepEqual(
+      {
+        markdown: fs.readFileSync(artifacts.markdown),
+        html: fs.readFileSync(artifacts.html),
+      },
+      refreshPreimages,
+      'freshness detection remains read-only over the restored stale pair',
+    );
   });
 });
 

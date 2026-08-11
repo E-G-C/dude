@@ -679,7 +679,7 @@ test('lint rejects invalid status and malformed or duplicate idea frontmatter', 
     );
     const invalidStatus = lint(invalidStatusRoot);
     assert.equal(invalidStatus.code, 1, invalidStatus.output);
-    assert.match(invalidStatus.output, /invalid status 'ready' \(valid: draft, defined\)/);
+    assert.match(invalidStatus.output, /invalid status 'ready' \(valid: draft, defined, resolved\)/);
 
     write(duplicateRoot, '.dude/specs/x/spec.md', '# Spec\n');
     write(
@@ -878,6 +878,68 @@ test('lint accepts an empty draft spec_path in a canonical idea', () => {
     assert.doesNotMatch(result.output, /spec_path.*(?:must point at|unsafe or unresolved)/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lint delegates exact package-less resolved lifecycle validation to the feature inventory', () => {
+  const validRoot = rootWithManifest();
+  const cases = [
+    {
+      name: 'nonempty canonical owner claim',
+      content: ledger({ status: 'resolved', specPath: '.dude/specs/x/spec.md' }),
+      prepare(root) {
+        write(root, '.dude/specs/x/spec.md', '# Spec\n');
+      },
+      expected: /FEATURE_RESOLVED_SPEC_PATH/,
+    },
+    {
+      name: 'malformed nonempty path',
+      content: ledger({ status: 'resolved', specPath: 'not-a-canonical-spec-path' }),
+      expected: /FEATURE_RESOLVED_SPEC_PATH/,
+    },
+    {
+      name: 'non-exact quoted status',
+      content: ledger({ status: '"resolved"' }),
+      expected: /FEATURE_STATUS_INVALID/,
+    },
+    {
+      name: 'malformed frontmatter',
+      content: '---\nstatus: resolved\nstatus: resolved\nspec_path:\n---\n\n## Idea\n\nBody.\n\n## Coordinator Log\n',
+      expected: /FEATURE_FRONTMATTER_MALFORMED/,
+    },
+  ];
+  const invalidRoots = cases.map(() => rootWithManifest());
+  try {
+    // Arrange
+    write(validRoot, '.dude/ideas/resolved.md', ledger({ status: 'resolved' }));
+    for (const [index, fixture] of cases.entries()) {
+      fixture.prepare?.(invalidRoots[index]);
+      write(invalidRoots[index], '.dude/ideas/resolved.md', fixture.content);
+    }
+
+    // Act
+    const valid = lint(validRoot);
+    const invalid = cases.map((fixture, index) => ({
+      ...fixture,
+      result: lint(invalidRoots[index]),
+    }));
+
+    // Assert
+    assert.equal(valid.code, 0, valid.output);
+    assert.match(valid.output, /0 warning\(s\), 0 failure\(s\)/);
+    for (const fixture of invalid) {
+      assert.equal(fixture.result.code, 1, `${fixture.name}\n${fixture.result.output}`);
+      assert.match(fixture.result.output, fixture.expected, fixture.name);
+      assert.match(fixture.result.output, /\.dude\/ideas\/resolved\.md/, fixture.name);
+    }
+    assert.match(
+      invalid[0].result.output,
+      /status: resolved requires an empty spec_path:/,
+      invalid[0].name,
+    );
+  } finally {
+    fs.rmSync(validRoot, { recursive: true, force: true });
+    for (const root of invalidRoots) fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -1475,7 +1537,7 @@ test('lint maps shared feature diagnostics to exact severity and output once', (
     assert.equal(error.code, 1, error.output);
     assert.match(
       error.output,
-      /^\[FAIL\]  \.dude\/ideas\/x\.md  invalid status 'ready' \(valid: draft, defined\) \[FEATURE_STATUS_INVALID\]$/m,
+      /^\[FAIL\]  \.dude\/ideas\/x\.md  invalid status 'ready' \(valid: draft, defined, resolved\) \[FEATURE_STATUS_INVALID\]$/m,
     );
     assert.equal((error.output.match(/FEATURE_STATUS_INVALID/g) || []).length, 1);
   } finally {

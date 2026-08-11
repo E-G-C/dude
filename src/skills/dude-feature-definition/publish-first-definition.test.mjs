@@ -303,6 +303,40 @@ test("canonical lint failure rolls back the owner and helper-created package tre
   });
 });
 
+test("a valid resolved current preimage refuses first publication without writes", () => {
+  withFixture(({ root, stage, stageBytes }) => {
+    // Arrange
+    const resolvedCurrent = replaceBytes(
+      stageBytes["current-idea.md"],
+      "status: draft",
+      "status: resolved",
+    );
+    write(root, IDEA_PATH, resolvedCurrent);
+    fs.writeFileSync(path.join(stage, "current-idea.md"), resolvedCurrent);
+    const before = snapshotTree(root);
+
+    // Act
+    const result = publish(root, stage);
+
+    // Assert
+    assert.ifError(result.error);
+    assert.equal(result.signal, null);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.equal(
+      result.stderr,
+      "[FAIL] current idea is resolved; explicit brainstorm reopen is required before first definition\n",
+    );
+    assert.deepEqual(snapshotTree(root), before);
+    assert.deepEqual(packageFileState(root), {
+      "spec.md": null,
+      "plan.md": null,
+      "tasks.md": null,
+    });
+    assertNoAtomicTempResidue(root);
+  });
+});
+
 const PREFLIGHT_CASES = [
   {
     name: "stale current-idea.md preimage",

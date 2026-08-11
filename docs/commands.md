@@ -75,6 +75,9 @@ Ship resolves the target this way:
   `define`, then Work
 - an existing draft ledger runs the existing `define`, then Work
 - an existing defined package goes to Work as-is
+- an existing resolved ledger is terminal: Ship stops before definition or Work,
+  does not create a package, and points to explicit `@dude brainstorm <slug>`
+  reopen
 - bare `@dude ship` continues exactly one unambiguous live target
 
 Nothing is written until selection is settled. Any flag rejects the invocation
@@ -165,13 +168,18 @@ Next:
 - Run @dude define authentication when the idea is ready
 ```
 
-The file starts with `# Idea: <title>` and frontmatter containing
-`status: draft` plus an empty `spec_path:`. `## Idea` is user-controlled; active
-`## Open Questions` appear immediately after it. Users may also edit
+The lifecycle status vocabulary is `draft|defined|resolved`. A new file starts
+with `# Idea: <title>` and frontmatter containing `status: draft` plus an empty
+`spec_path:`. `## Idea` is user-controlled; active `## Open Questions` appear
+immediately after it. Users may also edit
 `## Assumptions` and `## Deferred Clarifications`. Dude maintains managed
 `## Normalized Intent`, `## Constraints`, and `## Definition Checklist`
 sections when they have content, plus `status:`, `spec_path:`, and the
 append-only `## Coordinator Log`.
+
+A resolved ledger is valid only with exact `status: resolved`, an exactly empty
+unnormalized `spec_path:` scalar, no owner claim, and no owner or metadata
+diagnostic. Otherwise it is unavailable rather than Completed.
 
 Informal, typo-heavy, dictated, and speech-to-text input is valid. On initial
 capture, Dude may conservatively clean clear spelling, grammar, punctuation,
@@ -182,6 +190,11 @@ unless you provide new material or request a revision. Replace each visible
 `**Your answer:** _Type your answer here._` prompt or adjust assumptions, then
 rerun brainstorm to re-normalize the same file or `@dude define <slug>` to
 continue.
+
+Refreshing a resolved ledger ordinarily retains exact `status: resolved` and
+its empty `spec_path:` instead of returning it to draft. An explicit
+`@dude brainstorm <slug>` lifecycle request is required to reopen it. Before
+that request, `@dude define` and `@dude ship` refuse to create a package.
 
 ### `@dude define`
 
@@ -829,6 +842,7 @@ The coordinator invokes them; they are not a background service.
 | `dude-compose/compose.mjs` | `list` / `status` / `add` / `remove` / `verify` optional packs and their versioned inventories |
 | `dude-bundle-upgrade/upgrade.mjs` | refresh core files from the upstream source |
 | `dude-lightweight-execution/board.mjs` | `parse` / `ready` / `next` / `render` / `set` / `apply-states` / `diff` on `tasks.md` |
+| `dude-lightweight-execution/backlog.mjs` | read-only lifecycle views, `check`, and pair-safe `generate --write` for `.dude/backlog.md` and `.dude/backlog.html` |
 | `dude-team-expansion/scaffold-agent.mjs` | emit a lint-clean `.agent.md` skeleton (`--pack` updates `pack.md`) |
 | `dude-skill-authoring/scaffold-skill.mjs` | emit a lint-clean `SKILL.md` skeleton (`--pack` updates `pack.md`) |
 | `dude-bundle-import/import.mjs` | focused `analyze` / `apply`, plus guarded directory analysis, planning, and apply |
@@ -851,6 +865,15 @@ The mutating commands (`board render`/`set`/`apply-states`, `beads mirror`) are
 refresh the coordinator snapshot. `memory append` refuses a near-duplicate unless
 `--force`. Every engine script exits `0` on success, `1` on usage error, `2` on
 operation error.
+
+Successful guarded `board set --write` and `apply-states --write`, plus a
+successful autonomous Lightweight application, refresh the committed backlog
+pair. Board rendering, reads, dry runs, and refused or failed canonical changes
+do not. If a guarded pair refresh fails after the canonical commit, it exits `2`
+with `[FAIL] canonical state committed; backlog refresh failed`; the autonomous
+result remains its existing committed receipt without a warning. The backlog
+`check` command exposes a stale restored pair. Coordinator Log-only, lifecycle, and
+backlog-order changes still need procedural `backlog.mjs generate --write`.
 
 ### Repo layout: source vs built bundle
 

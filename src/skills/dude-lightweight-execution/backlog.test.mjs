@@ -15,6 +15,7 @@ import {
   parseBacklogOrder,
   parseCoordinatorLog,
   parseProvisionalRelationships,
+  refreshCommittedBacklog,
   renderArtifacts,
   renderCurrentMermaid,
   renderFlowchart,
@@ -23,7 +24,8 @@ import {
 } from "./backlog.mjs";
 
 const BACKLOG_PATH = fileURLToPath(new URL("./backlog.mjs", import.meta.url));
-const TEMPLATE_PATH = fileURLToPath(new URL("./backlog-template.html", import.meta.url));
+const TEMPLATE_URL = new URL("./backlog-template.html", import.meta.url);
+const TEMPLATE_PATH = fileURLToPath(TEMPLATE_URL);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 function sha256(value) {
@@ -171,6 +173,23 @@ function snapshotTree(root) {
 
 function runCli(root, args) {
   return spawnSync(process.execPath, [BACKLOG_PATH, ...args, "--root", root], { encoding: "utf8" });
+}
+
+function backlogArtifactPaths(root) {
+  return {
+    markdown: path.join(root, ".dude", "backlog.md"),
+    html: path.join(root, ".dude", "backlog.html"),
+  };
+}
+
+function readIfPresent(absolutePath) {
+  return fs.existsSync(absolutePath) ? fs.readFileSync(absolutePath) : null;
+}
+
+function assertCommittedPair(root, expected, label) {
+  const artifacts = backlogArtifactPaths(root);
+  assert.deepEqual(fs.readFileSync(artifacts.markdown), Buffer.from(expected.markdown), `${label}: Markdown`);
+  assert.deepEqual(fs.readFileSync(artifacts.html), Buffer.from(expected.html), `${label}: HTML`);
 }
 
 function htmlClassification(html) {
@@ -324,6 +343,138 @@ test("T001 output source omits wall-clock, Git revision, checkout title, and fin
     assert.equal(template.includes(banned), false, banned);
   }
   assert.doesNotMatch(template, /generated\s+\d{4}|source revision|fingerprint/i);
+});
+
+test("T030 only an exact package-less resolved shape reaches Completed", () => {
+  const root = makeRoot();
+  try {
+    // Arrange
+    const writeLifecycleIdea = (slug, frontmatter) => writeFile(root, `.dude/ideas/${slug}.md`, [
+      "---",
+      `title: ${slug}`,
+      `slug: ${slug}`,
+      ...frontmatter,
+      "---",
+      "",
+      `# Idea: ${slug}`,
+      "",
+      "## Idea",
+      "",
+      `Lifecycle fixture for ${slug}.`,
+      "",
+      "## Coordinator Log",
+      "",
+    ].join("\n"));
+    writeFile(root, ".dude/specs/401-canonical/spec.md", "# Canonical raw-path fixture\n");
+    writeLifecycleIdea("resolved", ["status: resolved", "spec_path:"]);
+    writeLifecycleIdea("nonempty-canonical", [
+      "status: resolved",
+      "spec_path: .dude/specs/401-canonical/spec.md",
+    ]);
+    writeLifecycleIdea("malformed-path", ["status: resolved", "spec_path: not-a-canonical-spec-path"]);
+    writeLifecycleIdea("diagnostic-bearing", ["status: resolved", "spec_path:", "depends-on: invalid!"]);
+    writeLifecycleIdea("malformed-frontmatter", ["status: resolved", "status: resolved", "spec_path:"]);
+    writeLifecycleIdea("nonexact-status", ['status: "resolved"', "spec_path:"]);
+    const ownerClaim = fixtureItem("owner-claim", {
+      status: "resolved",
+      rawStatus: "resolved",
+      rawSpecPath: "",
+      ownerSpecPath: ".dude/specs/499-owner-claim/spec.md",
+      defined: true,
+      packageComplete: true,
+      tasksAvailable: true,
+    });
+
+    // Act
+    const collected = collectLifecycleItems({ root });
+    const model = deriveLifecycleModel({ items: [...collected, ownerClaim], order: [] });
+    const markdown = renderMarkdown(model);
+    const html = renderReport(fs.readFileSync(TEMPLATE_PATH, "utf8"), model);
+    const bySlug = new Map(model.items.map((item) => [item.slug, item]));
+    const markdownGroups = markdownClassification(markdown);
+    const htmlGroups = htmlClassification(html);
+
+    // Assert
+    const resolved = bySlug.get("resolved");
+    assert.ok(resolved);
+    assert.deepEqual(
+      {
+        status: resolved.status,
+        rawStatus: resolved.rawStatus,
+        rawSpecPath: resolved.rawSpecPath,
+        ownerSpecPath: resolved.ownerSpecPath,
+        resolvedCandidate: resolved.resolvedCandidate,
+        resolved: resolved.resolved,
+        defined: resolved.defined,
+        specPath: resolved.specPath,
+        tasksPath: resolved.tasksPath,
+        tasksAvailable: resolved.tasksAvailable,
+        packageComplete: resolved.packageComplete,
+        taskCounts: resolved.taskCounts,
+      },
+      {
+        status: "resolved",
+        rawStatus: "resolved",
+        rawSpecPath: "",
+        ownerSpecPath: null,
+        resolvedCandidate: true,
+        resolved: true,
+        defined: false,
+        specPath: null,
+        tasksPath: null,
+        tasksAvailable: false,
+        packageComplete: false,
+        taskCounts: { open: 0, active: 0, blocked: 0, done: 0, total: 0 },
+      },
+    );
+
+    const invalidSlugs = [
+      "nonempty-canonical",
+      "malformed-path",
+      "diagnostic-bearing",
+      "malformed-frontmatter",
+      "nonexact-status",
+      "owner-claim",
+    ];
+    for (const slug of invalidSlugs) {
+      const item = bySlug.get(slug);
+      assert.ok(item, slug);
+      assert.equal(item.resolved, false, slug);
+      assert.notEqual(item.section, "completed", slug);
+      assert.notEqual(markdownGroups.get(item.ideaPath), "completed/completed", slug);
+      assert.notEqual(htmlGroups.get(item.ideaPath), "completed/completed", slug);
+    }
+    assert.equal(bySlug.get("nonempty-canonical").ownerSpecPath, null);
+    assert.equal(bySlug.get("nonempty-canonical").resolvedCandidate, true);
+    assert.equal(bySlug.get("owner-claim").resolvedCandidate, true);
+    assert.equal(bySlug.get("owner-claim").defined, false);
+    assert.equal(bySlug.get("owner-claim").packageComplete, false);
+    assert.deepEqual(model.completed.map((item) => item.slug), ["resolved"]);
+    assert.equal(model.summary.completed, 1);
+    assertPartition(model, [...collected, ownerClaim]);
+    assert.equal(markdownGroups.get(resolved.ideaPath), "completed/completed");
+    assert.equal(htmlGroups.get(resolved.ideaPath), "completed/completed");
+
+    const marker = `data-idea-path="${resolved.ideaPath}"`;
+    const markerIndex = html.indexOf(marker);
+    const detailStart = html.lastIndexOf("<details", markerIndex);
+    const detailEnd = html.indexOf("</details>", markerIndex);
+    assert.ok(markerIndex >= 0 && detailStart >= 0 && detailEnd > markerIndex);
+    const resolvedDetail = html.slice(detailStart, detailEnd + "</details>".length);
+    assert.match(resolvedDetail, /Outcome resolved without a package; definition is not applicable\./);
+    assert.match(resolvedDetail, /Outcome resolved without a package; tasks are not applicable\./);
+    assert.match(
+      resolvedDetail,
+      /Lifecycle: Idea reached, Defined not applicable, Tasks not applicable, Done reached/,
+    );
+    assert.doesNotMatch(resolvedDetail, /class="counts|aria-label="Task states"|No task package/);
+    assert.doesNotMatch(resolvedDetail, /Awaiting definition - no tasks exist yet/);
+    assert.doesNotMatch(resolvedDetail, /T\d{3}@/);
+    const plannedMarkdown = markdown.slice(markdown.indexOf("## Planned"), markdown.indexOf("## Completed"));
+    assert.doesNotMatch(plannedMarkdown, /`resolved`/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("T002 collector exposes real idea, exact owner, stories, phases, tasks, deps, blockers, and milestones", () => {
@@ -1038,6 +1189,141 @@ test("T005 generate writes exactly the two fixed artifacts and dry generation wr
       .filter((entry) => entry.startsWith("file "))
       .map((entry) => entry.split(" ")[1]);
     assert.deepEqual(newFiles.sort(), [".dude/backlog.html", ".dude/backlog.md"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("T030 refresh renders both postimages before either committed artifact advances", () => {
+  // Arrange
+  const root = makeRoot("dude-backlog-render-before-write-");
+  const artifacts = backlogArtifactPaths(root);
+  const before = {
+    markdown: Buffer.from("legacy markdown preimage\n"),
+    html: Buffer.from("legacy html preimage\n"),
+  };
+  writeIdea(root, "render-before-write");
+  fs.writeFileSync(artifacts.markdown, before.markdown);
+  fs.writeFileSync(artifacts.html, before.html);
+  const realReadFileSync = fs.readFileSync;
+  let templateRead = false;
+
+  try {
+    // Act
+    // @ts-ignore -- deliberate render-stage failure injection
+    fs.readFileSync = (file, ...rest) => {
+      if (file instanceof URL && file.href === TEMPLATE_URL.href) {
+        templateRead = true;
+        throw new Error("injected HTML render failure");
+      }
+      return realReadFileSync(file, ...rest);
+    };
+    assert.throws(
+      () => refreshCommittedBacklog({ root }),
+      /injected HTML render failure/,
+      "a failed second postimage render must stop before any artifact write",
+    );
+
+    // Assert
+    assert.equal(templateRead, true, "the complete HTML render path was reached");
+    assert.deepEqual(fs.readFileSync(artifacts.markdown), before.markdown, "Markdown preimage remains exact");
+    assert.deepEqual(fs.readFileSync(artifacts.html), before.html, "HTML preimage remains exact");
+  } finally {
+    fs.readFileSync = realReadFileSync;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("T030 refresh restores pair preimages after first or truncated second write failures", () => {
+  const scenarios = [
+    { label: "present pair / first Markdown write", target: "markdown", present: true },
+    { label: "present pair / truncated second HTML write", target: "html", present: true },
+    { label: "missing pair / truncated second HTML write", target: "html", present: false },
+  ];
+
+  for (const scenario of scenarios) {
+    // Arrange
+    const root = makeRoot(`dude-backlog-restore-${scenario.target}-`);
+    const artifacts = backlogArtifactPaths(root);
+    const before = {
+      markdown: Buffer.from(`legacy Markdown ${scenario.label}\n`),
+      html: Buffer.from(`legacy HTML ${scenario.label}\n`),
+    };
+    writeIdea(root, `restore-${scenario.target}-${scenario.present ? "present" : "missing"}`);
+    if (scenario.present) {
+      fs.writeFileSync(artifacts.markdown, before.markdown);
+      fs.writeFileSync(artifacts.html, before.html);
+    }
+    const realWriteFileSync = fs.writeFileSync;
+    const target = artifacts[scenario.target];
+    let injected = 0;
+
+    try {
+      // Act
+      // @ts-ignore -- deliberate O_TRUNC-style writer failure injection
+      fs.writeFileSync = (file, data, ...rest) => {
+        if (injected === 0 && path.resolve(String(file)) === target) {
+          injected += 1;
+          realWriteFileSync(file, Buffer.from("truncated before write failure\n"), ...rest);
+          throw new Error(`injected ${scenario.target} write failure`);
+        }
+        return realWriteFileSync(file, data, ...rest);
+      };
+      assert.throws(
+        () => refreshCommittedBacklog({ root }),
+        new RegExp(`injected ${scenario.target} write failure`),
+        scenario.label,
+      );
+      fs.writeFileSync = realWriteFileSync;
+
+      // Assert
+      assert.equal(injected, 1, `${scenario.label}: the intended write failed`);
+      if (scenario.present) {
+        assert.deepEqual(fs.readFileSync(artifacts.markdown), before.markdown, `${scenario.label}: Markdown restored`);
+        assert.deepEqual(fs.readFileSync(artifacts.html), before.html, `${scenario.label}: HTML restored`);
+      } else {
+        assert.equal(readIfPresent(artifacts.markdown), null, `${scenario.label}: missing Markdown stays missing`);
+        assert.equal(readIfPresent(artifacts.html), null, `${scenario.label}: missing HTML stays missing`);
+      }
+
+      if (scenario.label === "present pair / truncated second HTML write") {
+        const stale = runCli(root, ["check"]);
+        assert.equal(stale.status, 3, stale.stderr);
+        assert.match(stale.stderr, /\[STALE\] \.dude\/backlog\.md/);
+        assert.match(stale.stderr, /\[STALE\] \.dude\/backlog\.html/);
+      }
+    } finally {
+      fs.writeFileSync = realWriteFileSync;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("T030 direct refresh and generate --write commit the exact fresh pair", () => {
+  // Arrange
+  const root = makeRoot("dude-backlog-refresh-success-");
+  const artifacts = backlogArtifactPaths(root);
+  try {
+    writeIdea(root, "refresh-success");
+    const expected = renderArtifacts({ root });
+
+    // Act
+    refreshCommittedBacklog({ root });
+
+    // Assert
+    assertCommittedPair(root, expected, "direct refresh");
+
+    // Arrange a distinct stale pair to exercise the explicit generate write path.
+    fs.writeFileSync(artifacts.markdown, "stale Markdown\n");
+    fs.writeFileSync(artifacts.html, "stale HTML\n");
+
+    // Act
+    const generated = runCli(root, ["generate", "--write"]);
+
+    // Assert
+    assert.equal(generated.status, 0, generated.stderr);
+    assert.match(generated.stdout, /\[OK\] wrote \.dude\/backlog\.md and \.dude\/backlog\.html/);
+    assertCommittedPair(root, expected, "generate --write");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

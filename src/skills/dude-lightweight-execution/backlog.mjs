@@ -375,10 +375,11 @@ export function collectLifecycleItems({ root }) {
     let slug = fallbackSlug;
     let authoritySlug = null;
     let status = "unknown";
+    let rawStatus = null;
+    let rawSpecPath = null;
     let declaredSpecPath = null;
     let dependsOn = [];
     let frontmatterAvailable = true;
-    let lifecycleAvailable = false;
     let dependencyAvailable = false;
     const localAuthorityIssues = [];
     try {
@@ -389,11 +390,12 @@ export function collectLifecycleItems({ root }) {
       // Display identity always resolves; only a canonical frontmatter slug carries authority.
       authoritySlug = CANONICAL_SLUG_RE.test(parsedSlug) ? parsedSlug : null;
       if (slug !== parsedSlug) localAuthorityIssues.push("The idea slug is malformed; the file name is used only as a stable display identity.");
-      status = frontmatter.scalars.get("status")?.value || "unknown";
-      lifecycleAvailable = status === "draft" || status === "defined";
-      if (!lifecycleAvailable) localAuthorityIssues.push("Lifecycle status is unavailable because idea metadata has no valid draft or defined status.");
-      const declared = frontmatter.scalars.get("spec_path")?.value || "";
-      declaredSpecPath = parseSpecIdentity(declared)?.path ?? null;
+      const statusScalar = frontmatter.scalars.get("status");
+      rawStatus = statusScalar?.raw ?? null;
+      status = statusScalar?.value || "unknown";
+      rawSpecPath = frontmatter.scalars.get("spec_path")?.value ?? null;
+      const declared = rawSpecPath ?? "";
+      declaredSpecPath = status === "resolved" ? null : parseSpecIdentity(declared)?.path ?? null;
       const dependencyText = frontmatter.scalars.get("depends-on")?.value || "";
       const dependencyTokens = dependencyText.split(/[\s,]+/).filter(Boolean);
       dependencyAvailable = dependencyTokens.every((value) => CANONICAL_SLUG_RE.test(value));
@@ -405,9 +407,27 @@ export function collectLifecycleItems({ root }) {
     }
 
     const ownerSpecPath = ownerByIdea.get(file.ideaPath) ?? null;
+    const resolvedCandidate = status === "resolved";
+    const itemDiagnostics = [
+      ...(diagnosticsByIdea.get(file.ideaPath) ?? []),
+      ...localAuthorityIssues,
+    ];
+    const resolved = resolvedCandidate
+      && rawStatus === "resolved"
+      && rawSpecPath === ""
+      && ownerSpecPath === null
+      && frontmatterAvailable
+      && itemDiagnostics.length === 0;
+    const lifecycleAvailable = status === "draft" || status === "defined" || resolved;
+    if (!lifecycleAvailable) {
+      localAuthorityIssues.push("Lifecycle status is unavailable because idea metadata has no valid draft, defined, or resolved status.");
+    }
+    if (resolvedCandidate && ownerSpecPath !== null) {
+      localAuthorityIssues.push("A resolved idea must not claim a feature definition.");
+    }
     const declaredDefined = lifecycleAvailable && status === "defined";
-    const defined = Boolean(ownerSpecPath) || declaredDefined;
-    const specPath = ownerSpecPath;
+    const defined = !resolvedCandidate && (Boolean(ownerSpecPath) || declaredDefined);
+    const specPath = resolvedCandidate ? null : ownerSpecPath;
     const tasksPath = specPath
       ? `${specPath.slice(0, -"spec.md".length)}tasks.md`
       : null;
@@ -437,7 +457,7 @@ export function collectLifecycleItems({ root }) {
     const phaseModel = tasksAvailable && tasksContent !== null
       ? phaseDetails(tasksContent, parsedTasks)
       : { phases: [], unphasedTasks: [] };
-    const packageComplete = Boolean(
+    const packageComplete = !resolvedCandidate && Boolean(
       ownerSpecPath && tasksAvailable && parsedTasks.length > 0 && parsedTasks.every((task) => task.state === "done"),
     );
     const ownBlocked = tasksAvailable && parsedTasks.some((task) => (
@@ -459,10 +479,15 @@ export function collectLifecycleItems({ root }) {
       authoritySlug,
       title,
       status,
+      rawStatus,
+      rawSpecPath,
       frontmatterAvailable,
       lifecycleAvailable,
       dependencyAvailable,
       authorityIssues,
+      ownerSpecPath,
+      resolvedCandidate,
+      resolved,
       declaredDefined,
       defined,
       declaredSpecPath,
@@ -501,23 +526,49 @@ function withItemDefaults(item, index) {
       : `item-${index}`;
   const slug = typeof item.slug === "string" ? item.slug : identity;
   const counts = item.taskCounts ?? taskCounts(Array.isArray(item.tasks) ? item.tasks : []);
+  const status = item.status ?? (item.defined ? "defined" : "draft");
+  const rawStatus = item.rawStatus ?? status;
+  const rawSpecPath = item.rawSpecPath ?? null;
+  const frontmatterAvailable = item.frontmatterAvailable ?? true;
+  const authorityIssues = Array.isArray(item.authorityIssues) ? [...item.authorityIssues] : [];
+  const ownerSpecPath = item.ownerSpecPath ?? item.specPath ?? null;
+  const resolvedCandidate = status === "resolved";
+  const resolved = resolvedCandidate
+    && rawStatus === "resolved"
+    && rawSpecPath === ""
+    && ownerSpecPath === null
+    && frontmatterAvailable
+    && authorityIssues.length === 0;
+  const lifecycleAvailable = resolvedCandidate
+    ? resolved
+    : frontmatterAvailable
+      && (status === "draft" || status === "defined")
+      && (item.lifecycleAvailable ?? true);
+  const defined = resolvedCandidate ? false : Boolean(item.defined);
+  const specPath = resolvedCandidate ? null : item.specPath ?? null;
+  const tasksPath = resolvedCandidate ? null : item.tasksPath ?? null;
   return {
     identity,
     ideaPath: item.ideaPath ?? identity,
     slug,
     authoritySlug: item.authoritySlug === undefined ? (CANONICAL_SLUG_RE.test(slug) ? slug : null) : item.authoritySlug,
     title: item.title ?? slug,
-    status: item.status ?? (item.defined ? "defined" : "draft"),
-    frontmatterAvailable: item.frontmatterAvailable ?? true,
-    lifecycleAvailable: item.lifecycleAvailable ?? true,
+    status,
+    rawStatus,
+    rawSpecPath,
+    frontmatterAvailable,
+    lifecycleAvailable,
     dependencyAvailable: item.dependencyAvailable ?? true,
-    authorityIssues: Array.isArray(item.authorityIssues) ? [...item.authorityIssues] : [],
+    authorityIssues,
     taskWarnings: Array.isArray(item.taskWarnings) ? [...item.taskWarnings] : [],
-    declaredDefined: item.declaredDefined ?? Boolean(item.defined),
-    defined: Boolean(item.defined),
-    declaredSpecPath: item.declaredSpecPath ?? item.specPath ?? null,
-    specPath: item.specPath ?? null,
-    tasksPath: item.tasksPath ?? null,
+    ownerSpecPath,
+    resolvedCandidate,
+    resolved,
+    declaredDefined: resolvedCandidate ? false : item.declaredDefined ?? Boolean(item.defined),
+    defined,
+    declaredSpecPath: resolvedCandidate ? null : item.declaredSpecPath ?? specPath,
+    specPath,
+    tasksPath,
     excerpt: item.excerpt ?? "",
     dependsOn: Array.isArray(item.dependsOn) ? [...item.dependsOn] : [],
     provisionalRelationships: Array.isArray(item.provisionalRelationships) ? [...item.provisionalRelationships] : [],
@@ -528,8 +579,8 @@ function withItemDefaults(item, index) {
     phases: Array.isArray(item.phases) ? [...item.phases] : [],
     unphasedTasks: Array.isArray(item.unphasedTasks) ? [...item.unphasedTasks] : [],
     taskCounts: { ...counts },
-    tasksAvailable: Boolean(item.tasksAvailable),
-    packageComplete: Boolean(item.packageComplete),
+    tasksAvailable: resolvedCandidate ? false : Boolean(item.tasksAvailable),
+    packageComplete: resolvedCandidate ? false : Boolean(item.packageComplete),
     hasInProgress: Boolean(item.hasInProgress),
     ownBlocked: Boolean(item.ownBlocked),
     unavailableDetail: item.unavailableDetail ?? null,
@@ -669,7 +720,8 @@ export function deriveLifecycleModel({ items: sourceItems = [], order = [] }) {
   const active = [];
   const pool = [];
   for (const item of items) {
-    if (item.defined && item.packageComplete) completed.push(item);
+    if (item.resolved) completed.push(item);
+    else if (!item.resolvedCandidate && item.lifecycleAvailable && item.defined && item.packageComplete) completed.push(item);
     else if (item.ownBlocked || authoritativeDependsOn(item).some((slug) => !dependencyMet(slug))) blocked.push(item);
     else if (item.hasInProgress) active.push(item);
     else pool.push(item);
@@ -765,17 +817,18 @@ function lifecycleRibbon(item) {
   const unknown = !item.lifecycleAvailable;
   const stages = [
     { key: "idea", label: "Idea", state: "reached" },
-    { key: "defined", label: "Defined", state: unknown ? "unknown" : item.defined ? "reached" : "pending" },
-    { key: "tasks", label: "Tasks", state: unknown || (item.defined && !item.tasksAvailable) ? "unknown" : item.taskCounts.total > 0 ? "reached" : "pending" },
-    { key: "done", label: "Done", state: unknown || (item.defined && !item.tasksAvailable) ? "unknown" : item.section === "completed" ? "reached" : "pending" },
+    { key: "defined", label: "Defined", state: item.resolved ? "not-applicable" : unknown ? "unknown" : item.defined ? "reached" : "pending" },
+    { key: "tasks", label: "Tasks", state: item.resolved ? "not-applicable" : unknown || (item.defined && !item.tasksAvailable) ? "unknown" : item.taskCounts.total > 0 ? "reached" : "pending" },
+    { key: "done", label: "Done", state: item.resolved ? "reached" : unknown || (item.defined && !item.tasksAvailable) ? "unknown" : item.section === "completed" ? "reached" : "pending" },
   ];
-  const description = stages.map((stage) => `${stage.label} ${stage.state === "unknown" ? "unavailable" : stage.state}`).join(", ");
+  const description = stages.map((stage) => `${stage.label} ${stage.state === "unknown" ? "unavailable" : stage.state === "not-applicable" ? "not applicable" : stage.state}`).join(", ");
   return `<span class="ribbon" aria-label="Lifecycle: ${esc(description)}">${stages.map((stage) => (
     `<span class="stage stage-${stage.key} ${stage.state}">${stage.label}</span>`
   )).join("")}</span>`;
 }
 
 function countsMarkup(item) {
+  if (item.resolved) return "";
   if (!item.lifecycleAvailable || (item.defined && !item.tasksAvailable)) return `<span class="counts unavailable">Task state unavailable</span>`;
   if (item.taskCounts.total === 0) return `<span class="counts none">No task package</span>`;
   const counts = item.taskCounts;
@@ -849,6 +902,7 @@ function renderTask(task) {
 }
 
 function renderTasks(item) {
+  if (item.resolved) return `<p class="quiet">Outcome resolved without a package; tasks are not applicable.</p>`;
   if (!item.lifecycleAvailable) return `<p class="awaiting">Task state is unavailable because lifecycle metadata is ambiguous.</p>`;
   if (!item.defined) return `<p class="awaiting">Awaiting definition - no tasks exist yet.</p>`;
   if (!item.tasksAvailable) return `<p class="awaiting">${esc(item.unavailableDetail ?? "Task details are unavailable.")}</p>`;
@@ -865,6 +919,7 @@ function renderTasks(item) {
 }
 
 function renderFeatureDefinition(item) {
+  if (item.resolved) return `<p class="quiet">Outcome resolved without a package; definition is not applicable.</p>`;
   if (!item.lifecycleAvailable) return `<p class="awaiting">Definition status is unavailable because idea metadata is ambiguous.</p>`;
   if (!item.defined) return `<p class="awaiting">Awaiting definition - no tasks exist yet.</p>`;
   if (!item.specPath) return `<p class="awaiting">${esc(item.unavailableDetail ?? "The linked feature definition is unavailable or ambiguous.")}</p>`;
@@ -1162,6 +1217,77 @@ export function renderArtifacts({ root }) {
   };
 }
 
+/** @param {unknown} error */
+function isMissingPath(error) {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+}
+
+/** Capture exact existing bytes, or the prior absence of one fixed artifact. */
+function captureBacklogPreimage(absolutePath) {
+  try {
+    return { missing: false, bytes: fs.readFileSync(absolutePath) };
+  } catch (error) {
+    if (isMissingPath(error)) return { missing: true, bytes: null };
+    throw error;
+  }
+}
+
+/** Restore one fixed artifact to its exact prior bytes or prior absence. */
+function restoreBacklogPreimage(artifact) {
+  if (artifact.preimage.missing) {
+    try {
+      fs.unlinkSync(artifact.absolutePath);
+    } catch (error) {
+      if (!isMissingPath(error)) throw error;
+    }
+    return;
+  }
+  fs.writeFileSync(artifact.absolutePath, artifact.preimage.bytes);
+  const restored = fs.readFileSync(artifact.absolutePath);
+  if (!restored.equals(artifact.preimage.bytes)) {
+    throw new Error(`backlog artifact restore did not complete: ${artifact.relativePath}`);
+  }
+}
+
+/**
+ * Render and replace the two committed backlog artifacts as one recoverable pair.
+ * @param {{root:string}} options
+ */
+export function refreshCommittedBacklog({ root }) {
+  // Rendering completes before either target is resolved or written, so both
+  // postimages necessarily come from the same authoritative poststate.
+  const rendered = renderArtifacts({ root });
+  const artifacts = [
+    { relativePath: BACKLOG_MD_PATH, content: Buffer.from(rendered.markdown) },
+    { relativePath: BACKLOG_HTML_PATH, content: Buffer.from(rendered.html) },
+  ].map((artifact) => ({
+    ...artifact,
+    absolutePath: resolveMutationPath(root, artifact.relativePath),
+  }));
+  for (const artifact of artifacts) artifact.preimage = captureBacklogPreimage(artifact.absolutePath);
+
+  try {
+    for (const artifact of artifacts) {
+      fs.writeFileSync(artifact.absolutePath, artifact.content);
+      const actual = fs.readFileSync(artifact.absolutePath);
+      if (!actual.equals(artifact.content)) {
+        throw new Error(`backlog artifact write did not complete: ${artifact.relativePath}`);
+      }
+    }
+  } catch (error) {
+    let restoreError = null;
+    for (const artifact of artifacts) {
+      try {
+        restoreBacklogPreimage(artifact);
+      } catch (failure) {
+        restoreError ??= failure;
+      }
+    }
+    if (restoreError) throw restoreError;
+    throw error;
+  }
+}
+
 function readCommittedArtifact(root, relativePath) {
   try {
     const absolute = resolveWorkspacePath(root, relativePath);
@@ -1204,13 +1330,12 @@ function runCheck(root, { write }) {
 }
 
 function runGenerate(root, { write }) {
-  const rendered = renderArtifacts({ root });
   if (!write) {
+    const rendered = renderArtifacts({ root });
     process.stdout.write(`==> ${BACKLOG_MD_PATH}\n${rendered.markdown}\n==> ${BACKLOG_HTML_PATH}\n${rendered.html}\n`);
     return 0;
   }
-  fs.writeFileSync(resolveMutationPath(root, BACKLOG_MD_PATH), rendered.markdown);
-  fs.writeFileSync(resolveMutationPath(root, BACKLOG_HTML_PATH), rendered.html);
+  refreshCommittedBacklog({ root });
   process.stdout.write(`[OK] wrote ${BACKLOG_MD_PATH} and ${BACKLOG_HTML_PATH}\n`);
   return 0;
 }
