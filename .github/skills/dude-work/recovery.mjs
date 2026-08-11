@@ -724,11 +724,137 @@ function extractCoordinatorLog(text) {
   return { text: text.slice(lines[headingIndex].start, endOffset), malformed: false };
 }
 
+const COORDINATOR_LOG_HEADING = /^ {0,3}##[ \t]+Coordinator Log(?:[ \t]+#+)?[ \t]*$/;
+const COORDINATOR_LOG_EVENT_START = /^- \d{4}-\d{2}-\d{2}(?:[ \t]|$)/;
+const STANDALONE_HTML_COMMENT = /^[ \t]*<!--.*-->[ \t]*$/;
+
+/** @param {string} text */
+function parseCoordinatorLogEvents(text) {
+  assertUnicodeScalarString(text, 'Coordinator Log');
+  const lines = logicalLines(text);
+  if (!COORDINATOR_LOG_HEADING.test(lines[0]?.text || '')) {
+    invalid('Coordinator Log', 'must begin with the accepted heading');
+  }
+  /** @type {string[]} */
+  const events = [];
+  /** @type {string[]|null} */
+  let current = null;
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    const exactLine = text.slice(line.start, line.end);
+    if (COORDINATOR_LOG_EVENT_START.test(line.text)) {
+      if (current !== null) events.push(current.join(''));
+      current = [exactLine];
+      continue;
+    }
+    if (STANDALONE_HTML_COMMENT.test(line.text)) continue;
+    if (current === null) {
+      if (/^[ \t]*$/.test(line.text)) continue;
+      invalid('Coordinator Log', 'contains non-framing content before its first event');
+    }
+    current.push(exactLine);
+  }
+  if (current !== null) events.push(current.join(''));
+  return events;
+}
+
 /** @param {unknown} value @param {string} label */
 function assertDirectIdeaPath(value, label) {
   if (typeof value !== 'string' || !/^\.dude\/ideas\/[^/]+\.md$/.test(value)) {
     invalid(label, 'must be a direct canonical idea path');
   }
+}
+
+/** @param {unknown} value @param {string} [label] */
+function validateOwnerLogBody(value, label = 'owner-log body') {
+  const owner = assertExactRecord(
+    value,
+    [
+      'ideaPath',
+      'specPath',
+      'fullLogSha256',
+      'fullLogByteLength',
+      'totalEventCount',
+      'includedEventCount',
+      'omittedEventCount',
+      'firstIncludedEventOrdinal',
+      'lastIncludedEventOrdinal',
+      'events',
+    ],
+    [],
+    label,
+  );
+  assertDirectIdeaPath(owner.ideaPath, `${label}.ideaPath`);
+  assertUnicodeScalarString(owner.specPath, `${label}.specPath`);
+  if (!SPEC_PATH_PATTERN.test(/** @type {string} */ (owner.specPath))) {
+    invalid(`${label}.specPath`, 'must be a canonical specification path');
+  }
+  assertHash(owner.fullLogSha256, `${label}.fullLogSha256`);
+  assertSafeInteger(owner.fullLogByteLength, `${label}.fullLogByteLength`, false);
+  assertSafeInteger(owner.totalEventCount, `${label}.totalEventCount`, false);
+  assertSafeInteger(owner.includedEventCount, `${label}.includedEventCount`, false);
+  assertSafeInteger(owner.omittedEventCount, `${label}.omittedEventCount`, false);
+  const events = assertDenseDataArray(owner.events, `${label}.events`);
+  for (let index = 0; index < events.length; index += 1) {
+    assertUnicodeScalarString(events[index], `${label}.events[${index}]`);
+  }
+  const total = /** @type {number} */ (owner.totalEventCount);
+  const included = /** @type {number} */ (owner.includedEventCount);
+  const omitted = /** @type {number} */ (owner.omittedEventCount);
+  if (included !== events.length) invalid(`${label}.includedEventCount`, 'must equal events.length');
+  if (included > total || omitted > total || omitted !== total - included) {
+    invalid(label, 'must have consistent total, included, and omitted event counts');
+  }
+  if (total === 0) {
+    if (owner.firstIncludedEventOrdinal !== null || owner.lastIncludedEventOrdinal !== null) {
+      invalid(label, 'must use null ordinals for a zero-event log');
+    }
+    return owner;
+  }
+  if (included === 0) invalid(`${label}.includedEventCount`, 'must include the newest event');
+  assertSafeInteger(owner.firstIncludedEventOrdinal, `${label}.firstIncludedEventOrdinal`, true);
+  assertSafeInteger(owner.lastIncludedEventOrdinal, `${label}.lastIncludedEventOrdinal`, true);
+  const first = /** @type {number} */ (owner.firstIncludedEventOrdinal);
+  const last = /** @type {number} */ (owner.lastIncludedEventOrdinal);
+  if (first !== omitted + 1 || last !== total || last - first + 1 !== included) {
+    invalid(label, 'must use the exact contiguous included ordinal range');
+  }
+  return owner;
+}
+
+/** @param {string} text @param {string} label */
+function parseOwnerLogBody(text, label) {
+  assertUnicodeScalarString(text, label);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    invalid(label, 'must contain one canonical JSON body');
+  }
+  const owner = validateOwnerLogBody(parsed, label);
+  if (canonicalJson(owner) !== text) invalid(label, 'must use the exact canonical JSON representation');
+  return owner;
+}
+
+/** @param {Record<string, unknown>} owner @param {string[]} events */
+function ownerLogProjectionBody(owner, events) {
+  const total = /** @type {number} */ (owner.totalEventCount);
+  const included = events.length;
+  const omitted = total - included;
+  const body = {
+    ideaPath: owner.ideaPath,
+    specPath: owner.specPath,
+    fullLogSha256: owner.fullLogSha256,
+    fullLogByteLength: owner.fullLogByteLength,
+    totalEventCount: total,
+    includedEventCount: included,
+    omittedEventCount: omitted,
+    firstIncludedEventOrdinal: included === 0 ? null : omitted + 1,
+    lastIncludedEventOrdinal: included === 0 ? null : total,
+    events: [...events],
+  };
+  validateOwnerLogBody(body, 'owner-log projection');
+  return body;
 }
 
 const REGISTRY_IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9._:/@-]{0,127}$/;
@@ -1248,12 +1374,28 @@ function normalizeOwnerLog(value, specPath, resolverDiagnostics) {
       ownerIdeaPath: owners[0].path,
     };
   }
+  let events;
+  try {
+    events = parseCoordinatorLogEvents(log.text);
+  } catch {
+    return {
+      item: acquiredEvidence('owner-log', true, 'malformed', canonicalJson({
+        ideaPath: owners[0].path,
+        specPath,
+        ownerBytes: owners[0].text,
+      })),
+      ownerIdeaPath: owners[0].path,
+    };
+  }
+  const body = ownerLogProjectionBody({
+    ideaPath: owners[0].path,
+    specPath,
+    fullLogSha256: sha256(log.text),
+    fullLogByteLength: Buffer.byteLength(log.text),
+    totalEventCount: events.length,
+  }, events);
   return {
-    item: acquiredEvidence('owner-log', true, 'present', canonicalJson({
-      ideaPath: owners[0].path,
-      specPath,
-      coordinatorLog: log.text,
-    })),
+    item: acquiredEvidence('owner-log', true, 'present', canonicalJson(body)),
     ownerIdeaPath: owners[0].path,
   };
 }
@@ -2798,15 +2940,58 @@ export function buildInspection(target, values) {
     }
   }
 
-  let crossingIndex = ordered.findIndex((item) => item.status === 'overflow');
+  /** @type {Record<string, unknown>[]} */
+  let selectedItems = ordered;
+  const presentOwnerItems = ordered.filter((item) => (
+    item.source === 'owner-log' && item.status === 'present'
+  ));
+  if (presentOwnerItems.length === 1) {
+    const ownerItem = presentOwnerItems[0];
+    if (typeof ownerItem.text !== 'string') {
+      invalid('owner-log body', 'must contain the complete available body');
+    }
+    const owner = parseOwnerLogBody(ownerItem.text, 'owner-log body');
+    const ownerIndex = ordered.indexOf(ownerItem);
+    const nonOwnerItems = ordered.filter((item) => item.source !== 'owner-log');
+    const nonOwnerPacket = packetProjection(inspectionTarget, nonOwnerItems);
+    const allItemCount = packetProjection(inspectionTarget, ordered).items.length;
+    if (allItemCount <= MAX_PACKET_ITEMS
+      && Buffer.byteLength(canonicalJson(nonOwnerPacket)) <= MAX_PACKET_BYTES) {
+      /** @param {string[]} candidateEvents */
+      const replaceOwner = (candidateEvents) => {
+        const text = canonicalJson(ownerLogProjectionBody(owner, candidateEvents));
+        const candidate = acquiredEvidence(
+          'owner-log',
+          /** @type {boolean} */ (ownerItem.required),
+          'present',
+          text,
+        );
+        return ordered.map((item, index) => (index === ownerIndex ? candidate : item));
+      };
+      const events = /** @type {string[]} */ (owner.events);
+      let candidateItems = replaceOwner(events.length === 0 ? [] : events.slice(-1));
+      selectedItems = candidateItems;
+      if (Buffer.byteLength(canonicalJson(packetProjection(inspectionTarget, candidateItems))) <= MAX_PACKET_BYTES) {
+        for (let first = events.length - 2; first >= 0; first -= 1) {
+          candidateItems = replaceOwner(events.slice(first));
+          if (Buffer.byteLength(canonicalJson(packetProjection(inspectionTarget, candidateItems))) > MAX_PACKET_BYTES) {
+            break;
+          }
+          selectedItems = candidateItems;
+        }
+      }
+    }
+  }
+
+  let crossingIndex = selectedItems.findIndex((item) => item.status === 'overflow');
   let availableCount = 0;
   /** @type {Record<string, unknown>[]} */
   const prefix = [];
   if (crossingIndex < 0 && Buffer.byteLength(canonicalJson(packetProjection(inspectionTarget, []))) > MAX_PACKET_BYTES) {
     crossingIndex = 0;
   }
-  for (let index = 0; crossingIndex < 0 && index < ordered.length; index += 1) {
-    const item = ordered[index];
+  for (let index = 0; crossingIndex < 0 && index < selectedItems.length; index += 1) {
+    const item = selectedItems[index];
     if (!isAvailable(item)) continue;
     availableCount += 1;
     prefix.push(item);
@@ -2817,9 +3002,9 @@ export function buildInspection(target, values) {
   }
 
   const overflow = crossingIndex >= 0;
-  let outputItems = ordered;
+  let outputItems = selectedItems;
   if (overflow) {
-    outputItems = ordered.map((item, index) => {
+    outputItems = selectedItems.map((item, index) => {
       const output = { ...item };
       if (index >= crossingIndex && isAvailable(item)) output.status = 'overflow';
       delete output.text;
@@ -2870,6 +3055,10 @@ export function validateInspection(value) {
       if (!['missing', 'nontext'].includes(/** @type {string} */ (item.status))
         && !Object.hasOwn(item, 'text')) {
         invalid('Inspection.items', 'must carry complete admitted text');
+      }
+      if (item.source === 'owner-log' && item.status === 'present') {
+        if (typeof item.text !== 'string') invalid('owner-log Inspection body', 'must be textual');
+        parseOwnerLogBody(item.text, 'owner-log Inspection body');
       }
     }
   }
@@ -3361,18 +3550,14 @@ function actionInputsMatch(target, assessment, inspection) {
     if (inspection) {
       const ownerItem = /** @type {Record<string, unknown>[]} */ (inspection.items)
         .find((item) => item.source === 'owner-log' && item.status === 'present');
-      if (ownerItem && typeof ownerItem.text === 'string') {
+      if (ownerItem) {
+        if (typeof ownerItem.text !== 'string') return false;
         try {
-          const owner = assertExactRecord(
-            JSON.parse(ownerItem.text),
-            ['ideaPath', 'specPath', 'coordinatorLog'],
-            [],
-            'owner-log body',
-          );
-          assertDirectIdeaPath(owner.ideaPath, 'owner-log body.ideaPath');
-          if (owner.specPath === target.specPath) ownerPath = /** @type {string} */ (owner.ideaPath);
+          const owner = parseOwnerLogBody(ownerItem.text, 'owner-log body');
+          if (owner.specPath !== target.specPath) return false;
+          ownerPath = /** @type {string} */ (owner.ideaPath);
         } catch {
-          ownerPath = null;
+          return false;
         }
       }
     }
@@ -8253,14 +8438,10 @@ function resolvedDefinitionOwnerV1(inspection, target) {
     .filter((item) => item.source === 'owner-log' && item.status === 'present' && typeof item.text === 'string');
   if (matches.length !== 1) return null;
   try {
-    const owner = assertExactRecord(
-      JSON.parse(/** @type {string} */ (matches[0].text)),
-      ['ideaPath', 'specPath', 'coordinatorLog'],
-      [],
+    const owner = parseOwnerLogBody(
+      /** @type {string} */ (matches[0].text),
       'definition reconciliation owner',
     );
-    assertDirectIdeaPath(owner.ideaPath, 'definition reconciliation owner.ideaPath');
-    assertUnicodeScalarString(owner.coordinatorLog, 'definition reconciliation owner.coordinatorLog');
     if (owner.specPath !== target.specPath) return null;
     return { ideaPath: owner.ideaPath, specPath: owner.specPath };
   } catch {
@@ -13472,14 +13653,15 @@ export function commitLaneReceiptV2(stateValue, inputValue, permitValue, receipt
 
 /** @param {Record<string, unknown>} inspection */
 function feature007OwnerBodyV2(inspection) {
-  const owner = assertExactRecord(
+  const owner = validateOwnerLogBody(
     inspectionSourceBodyV2(inspection, 'owner-log'),
-    ['ideaPath', 'specPath', 'coordinatorLog'],
-    [],
     'owner-log Inspection body',
   );
   if (owner.ideaPath !== FEATURE_007_IDEA_PATH) {
     invalid('owner-log Inspection body.ideaPath', `must be ${FEATURE_007_IDEA_PATH}`);
+  }
+  if (owner.specPath !== FEATURE_007_TARGET.specPath) {
+    invalid('owner-log Inspection body.specPath', `must be ${FEATURE_007_TARGET.specPath}`);
   }
   return owner;
 }
@@ -13606,7 +13788,7 @@ export function prepareIncidentCorrectionV2(stateValue, inputValue, requestValue
     tasksHash: tasksCapture.envelope.sha256,
     taskStatePath: TASK_STATE_PATH,
     taskStateHash: taskStateCapture.envelope.sha256,
-    ownerLogTailHash: sha256(/** @type {string} */ (owner.coordinatorLog)),
+    ownerLogTailHash: owner.fullLogSha256,
     taskUnitHash: fresh.taskUnitHash,
     glyph: '!',
     blockedBy: fresh.blockedBy,

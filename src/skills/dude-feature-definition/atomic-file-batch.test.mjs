@@ -100,7 +100,7 @@ function definitionTasksBytes(description) {
 
 function definitionFixtureBytes() {
   return {
-    owner: definitionOwnerBytes('recovery authorized'),
+    owner: definitionOwnerBytes('2026-01-01 recovery authorized'),
     spec: Buffer.from('# Feature Specification\n\nOriginal requirements.\n'),
     plan: Buffer.from('# Implementation Plan\n\nOriginal design.\n'),
     tasks: definitionTasksBytes('Original final review'),
@@ -457,7 +457,7 @@ test('T003 repair probe: Feature 014 rejects balanced Coordinator Log prefix cor
     const current = definitionFixtureBytes();
     const stagedOwner = current.owner.toString('utf8')
       .replace(
-        '- recovery authorized\n',
+        '- 2026-01-01 recovery authorized\n',
         '- recovery\n- inserted inside prior event\n- authorized\n',
       );
     const staged = { ...current, owner: Buffer.from(stagedOwner) };
@@ -515,8 +515,8 @@ test('T003 unified Markdown scanner ignores generic comment and inline-code look
     const staged = {
       ...current,
       owner: Buffer.from(ownerText.replace(
-        '- recovery authorized\n',
-        '- recovery authorized\n- generic scanner lookalikes ignored\n',
+        '- 2026-01-01 recovery authorized\n',
+        '- 2026-01-01 recovery authorized\n- generic scanner lookalikes ignored\n',
       )),
     };
     writeDefinitionFixture(root, current);
@@ -592,8 +592,8 @@ test('T003 paired inline spans keep controls lexically inert', () => {
     const staged = {
       ...current,
       owner: Buffer.from(current.owner.toString('utf8').replace(
-        '- recovery authorized\n',
-        '- recovery authorized\n- task scanner lookalikes ignored\n',
+        '- 2026-01-01 recovery authorized\n',
+        '- 2026-01-01 recovery authorized\n- task scanner lookalikes ignored\n',
       )),
     };
     writeDefinitionFixture(root, current);
@@ -640,8 +640,8 @@ test('T003 unified Markdown scanner keeps unmatched and mismatched backticks lin
     const staged = {
       ...current,
       owner: Buffer.from(current.owner.toString('utf8').replace(
-        '- recovery authorized\n',
-        '- recovery authorized\n- literal backticks retained\n',
+        '- 2026-01-01 recovery authorized\n',
+        '- 2026-01-01 recovery authorized\n- literal backticks retained\n',
       )),
     };
     writeDefinitionFixture(root, current);
@@ -665,8 +665,8 @@ test('T003 unified Markdown scanner keeps unmatched and mismatched backticks lin
     const staged = {
       ...current,
       owner: Buffer.from(current.owner.toString('utf8').replace(
-        '- recovery authorized\n',
-        '- recovery authorized\n- unmatched opener rejection staged\n',
+        '- 2026-01-01 recovery authorized\n',
+        '- 2026-01-01 recovery authorized\n- unmatched opener rejection staged\n',
       )),
     };
     writeDefinitionFixture(root, current);
@@ -706,8 +706,8 @@ test('T003 unified Markdown scanner preserves LF, CRLF, bare CR, mixed, and task
         const staged = {
           ...current,
           owner: Buffer.from(current.owner.toString('utf8').replace(
-            '- recovery authorized\n',
-            `- recovery authorized\n- ${name} task bytes retained\n`,
+            '- 2026-01-01 recovery authorized\n',
+            `- 2026-01-01 recovery authorized\n- ${name} task bytes retained\n`,
           )),
         };
         writeDefinitionFixture(root, current);
@@ -747,8 +747,8 @@ test('T003 unified Markdown scanner processes near-limit backtick-heavy lines wi
     const staged = {
       ...current,
       owner: Buffer.from(current.owner.toString('utf8').replace(
-        '- recovery authorized\n',
-        '- recovery authorized\n- near-limit scanner fixture retained\n',
+        '- 2026-01-01 recovery authorized\n',
+        '- 2026-01-01 recovery authorized\n- near-limit scanner fixture retained\n',
       )),
     };
     writeDefinitionFixture(root, current);
@@ -813,8 +813,8 @@ test('T003 repair probe: fenced and commented task lookalikes are inert', () => 
     const staged = {
       ...current,
       owner: Buffer.from(current.owner.toString('utf8').replace(
-        '- recovery authorized\n',
-        '- recovery authorized\n- lexical lookalikes ignored\n',
+        '- 2026-01-01 recovery authorized\n',
+        '- 2026-01-01 recovery authorized\n- lexical lookalikes ignored\n',
       )),
     };
     writeDefinitionFixture(root, current);
@@ -883,8 +883,8 @@ test('T003 repair probe: archived malformed Markdown is opaque after suffixed hi
         const staged = {
           ...current,
           owner: Buffer.from(current.owner.toString('utf8').replace(
-            '- recovery authorized\n',
-            '- recovery authorized\n- opaque archive retained\n',
+            '- 2026-01-01 recovery authorized\n',
+            '- 2026-01-01 recovery authorized\n- opaque archive retained\n',
           )),
         };
         writeDefinitionFixture(root, current);
@@ -945,8 +945,8 @@ test('T003 repair probe: terminal Discovered preserves trailing blanks with or w
         const staged = {
           ...current,
           owner: Buffer.from(current.owner.toString('utf8').replace(
-            '- recovery authorized\n',
-            '- recovery authorized\n- terminal discovered retained\n',
+            '- 2026-01-01 recovery authorized\n',
+            '- 2026-01-01 recovery authorized\n- terminal discovered retained\n',
           )),
         };
         writeDefinitionFixture(root, current);
@@ -1089,8 +1089,8 @@ test('T003 repair probe: bare CR tasks without terminal newline preserve exact b
     const staged = {
       ...current,
       owner: Buffer.from(current.owner.toString('utf8').replace(
-        '- recovery authorized\n',
-        '- recovery authorized\n- CR tasks retained\n',
+        '- 2026-01-01 recovery authorized\n',
+        '- 2026-01-01 recovery authorized\n- CR tasks retained\n',
       )),
     };
     writeDefinitionFixture(root, current);
@@ -1178,8 +1178,8 @@ test('T003 managed-region parser rejects malformed active markers and ignores fe
     const staged = {
       ...expected,
       owner: Buffer.from(owner.toString('utf8').replace(
-        '- recovery authorized\n',
-        '- recovery authorized\n- fenced lookalikes ignored\n',
+        '- 2026-01-01 recovery authorized\n',
+        '- 2026-01-01 recovery authorized\n- fenced lookalikes ignored\n',
       )),
     };
     writeDefinitionFixture(root, expected);
@@ -1211,8 +1211,8 @@ test('T003 balanced generated board and other managed fences do not become canon
     const staged = {
       ...current,
       owner: Buffer.from(current.owner.toString('utf8').replace(
-        '- recovery authorized\n',
-        '- recovery authorized\n- balanced generated regions retained\n',
+        '- 2026-01-01 recovery authorized\n',
+        '- 2026-01-01 recovery authorized\n- balanced generated regions retained\n',
       )),
     };
     writeDefinitionFixture(root, current);
@@ -1227,23 +1227,23 @@ test('T003 balanced generated board and other managed fences do not become canon
 
 test('T003 Coordinator Log must remain one terminal append-only complete section', () => {
   const cases = [
-    ['missing', (text) => text.replace('## Coordinator Log\n\n- recovery authorized\n', '')],
+    ['missing', (text) => text.replace('## Coordinator Log\n\n- 2026-01-01 recovery authorized\n', '')],
     ['duplicate', (text) => text.replace(
       '<!-- dude:managed:end -->',
       '## Coordinator Log\n\n- duplicate\n<!-- dude:managed:end -->',
     )],
     ['moved', (text) => text
-      .replace('## Coordinator Log\n\n- recovery authorized\n', '')
+      .replace('## Coordinator Log\n\n- 2026-01-01 recovery authorized\n', '')
       .replace(
         '<!-- dude:managed:start -->\n',
-        '<!-- dude:managed:start -->\n## Coordinator Log\n\n- recovery authorized\n',
+        '<!-- dude:managed:start -->\n## Coordinator Log\n\n- 2026-01-01 recovery authorized\n',
       )],
     ['split', (text) => text.replace(
-      '- recovery authorized\n<!-- dude:managed:end -->',
-      '- recovery authorized\n## Split Log\n- continuation\n<!-- dude:managed:end -->',
+      '- 2026-01-01 recovery authorized\n<!-- dude:managed:end -->',
+      '- 2026-01-01 recovery authorized\n## Split Log\n- continuation\n<!-- dude:managed:end -->',
     )],
-    ['truncated', (text) => text.replace('- recovery authorized', '- recovery author')],
-    ['prefix altered', (text) => text.replace('- recovery authorized', '- recovery authorized ')],
+    ['truncated', (text) => text.replace('- 2026-01-01 recovery authorized', '- recovery author')],
+    ['prefix altered', (text) => text.replace('- 2026-01-01 recovery authorized', '- 2026-01-01 recovery authorized ')],
     ['partial append', (text) => text.replace(
       '<!-- dude:managed:end -->',
       '- incomplete append<!-- dude:managed:end -->',
@@ -1444,8 +1444,8 @@ test('T003 coordinator gate contract: exact descriptor, proposal, and review dri
       const staged = {
         ...current,
         owner: Buffer.from(current.owner.toString('utf8').replace(
-          '- recovery authorized\n',
-          '- recovery authorized\n- exact identity staged\n',
+          '- 2026-01-01 recovery authorized\n',
+          '- 2026-01-01 recovery authorized\n- exact identity staged\n',
         )),
         plan: Buffer.from('# Implementation Plan\n\nRepaired design.\n'),
       };
@@ -1515,8 +1515,8 @@ test('T003 coordinator gate contract: post-write parse, lint, verification, and 
       const staged = {
         ...current,
         owner: Buffer.from(current.owner.toString('utf8').replace(
-          '- recovery authorized\n',
-          '- recovery authorized\n- post-apply staged\n',
+          '- 2026-01-01 recovery authorized\n',
+          '- 2026-01-01 recovery authorized\n- post-apply staged\n',
         )),
         spec: Buffer.from('# Feature Specification\n\nRepaired requirements.\n'),
         plan: Buffer.from('# Implementation Plan\n\nRepaired design.\n'),
@@ -1640,8 +1640,8 @@ test('T003 valid final proposal applies and each rollback-bound gate executes ex
     const current = definitionFixtureBytes();
     const staged = {
       owner: Buffer.from(current.owner.toString('utf8').replace(
-        '- recovery authorized\n',
-        '- recovery authorized\n- valid final proposal\n',
+        '- 2026-01-01 recovery authorized\n',
+        '- 2026-01-01 recovery authorized\n- valid final proposal\n',
       )),
       spec: Buffer.from('# Feature Specification\n\nValidated final requirements.\n'),
       plan: Buffer.from('# Implementation Plan\n\nValidated final design.\n'),
@@ -2399,8 +2399,8 @@ test('F: applyDefinitionRecovery requires one exact current and staged owner plu
     const staged = {
       ...current,
       owner: Buffer.from(current.owner.toString('utf8').replace(
-        '- recovery authorized\n',
-        '- recovery authorized\n- recovery staged\n',
+        '- 2026-01-01 recovery authorized\n',
+        '- 2026-01-01 recovery authorized\n- 2026-01-01 recovery staged\n',
       )),
     };
     const before = snapshotTree(root);
@@ -2417,7 +2417,7 @@ test('F: applyDefinitionRecovery requires one exact current and staged owner plu
 
     const wrongOwner = {
       ...staged,
-      owner: definitionOwnerBytes('recovery staged').map((byte) => byte),
+      owner: definitionOwnerBytes('2026-01-01 recovery staged').map((byte) => byte),
     };
     const wrongOwnerText = Buffer.from(wrongOwner.owner).toString('utf8')
       .replace(`spec_path: ${DEFINITION_SPEC_PATH}`, 'spec_path: .dude/specs/999-other/spec.md');
@@ -2588,11 +2588,11 @@ test('F: definition recovery preserves complete user-owned section bytes and bou
   ]) {
     await context.test(`accepts preserved ${fixture.name}`, () => {
       withTemporaryDirectory((root) => {
-        const owner = definitionOwnerBytes('recovery authorized', fixture.options);
+        const owner = definitionOwnerBytes('2026-01-01 recovery authorized', fixture.options);
         const newline = fixture.options.newline ?? '\n';
         const stagedOwner = Buffer.from(owner.toString('utf8').replace(
-          `- recovery authorized${newline}`,
-          `- recovery authorized${newline}- recovery staged${newline}`,
+          `- 2026-01-01 recovery authorized${newline}`,
+          `- 2026-01-01 recovery authorized${newline}- 2026-01-01 recovery staged${newline}`,
         ));
         const current = { ...definitionFixtureBytes(), owner };
         const staged = { ...current, owner: stagedOwner };
@@ -2639,8 +2639,8 @@ test('F: applyDefinitionRecovery delegates one sorted batch and restores on reco
       const current = definitionFixtureBytes();
       const staged = {
         owner: Buffer.from(current.owner.toString('utf8').replace(
-          '- recovery authorized\n',
-          '- recovery authorized\n- recovery applied\n',
+          '- 2026-01-01 recovery authorized\n',
+          '- 2026-01-01 recovery authorized\n- 2026-01-01 recovery applied\n',
         )),
         spec: Buffer.from('# Feature Specification\n\nRepaired requirements.\n'),
         plan: Buffer.from('# Implementation Plan\n\nRepaired design.\n'),
@@ -2667,8 +2667,8 @@ test('F: authorized definition repair applies owner/spec/plan/tasks and complete
     const current = definitionFixtureBytes();
     const staged = {
       owner: Buffer.from(current.owner.toString('utf8').replace(
-        '- recovery authorized\n',
-        '- recovery authorized\n- recovery applied after reconciliation\n',
+        '- 2026-01-01 recovery authorized\n',
+        '- 2026-01-01 recovery authorized\n- 2026-01-01 recovery applied after reconciliation\n',
       )),
       spec: Buffer.from('# Feature Specification\n\nRepaired requirements without changing intent.\n'),
       plan: Buffer.from('# Implementation Plan\n\nRepaired bounded design.\n'),

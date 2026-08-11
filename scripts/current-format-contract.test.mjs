@@ -5148,3 +5148,75 @@ test('T004 unattended continuity adds no stop reason, command, flag, or concurre
     assert.deepEqual(staleRecoveryPhrases(content), [], label);
   }
 });
+
+const FEATURE_029_GUIDANCE_SURFACES = [
+  'src/skills/dude-work/SKILL.md',
+  'docs/commands.md',
+  'docs/reference.md',
+  'docs/workflow.md',
+];
+
+const FEATURE_029_OWNER_BODY_FIELDS = [
+  'ideaPath',
+  'specPath',
+  'fullLogSha256',
+  'fullLogByteLength',
+  'totalEventCount',
+  'includedEventCount',
+  'omittedEventCount',
+  'firstIncludedEventOrdinal',
+  'lastIncludedEventOrdinal',
+  'events',
+];
+
+const FEATURE_029_GENERATED_PAIRS = [
+  ['src/skills/dude-work/SKILL.md', '.github/skills/dude-work/SKILL.md'],
+  ['src/skills/dude-work/recovery.mjs', '.github/skills/dude-work/recovery.mjs'],
+];
+
+test('T002 Feature 029 keeps bounded owner-log guidance, one body, and generated ownership current', () => {
+  const requiredGuidance = [
+    ['complete non-owner evidence', /all non-owner admitted evidence remains complete/i],
+    ['exact owner identity', /owner-log (?:item|evidence)[\s\S]{0,96}exact owner identity/i],
+    ['complete-log metadata', /complete[- ]log(?:'s)?[\s\S]{0,64}digest[\s\S]{0,64}byte length[\s\S]{0,64}event[- ]counts?/i],
+    ['maximal whole-event suffix', /maximal whole-event suffix/i],
+    ['honest omitted owner events', /omitted owner events are not inspected text/i],
+    ['descriptor-only overflow', /descriptor/i],
+    ['no model call', /no model call/i],
+    ['no batching', /batch(?:ing|es)?/i],
+  ];
+  const obsoleteFullOwnerPromises = [
+    /(?:all|complete|entire)\s+owner-log\s+(?:prose|text|events?)[\s\S]{0,80}\b(?:present|included|inspected|admitted)\b/i,
+    /owner-log[\s\S]{0,80}\b(?:all|complete|entire)\s+(?:prose|text|events?)[\s\S]{0,80}\b(?:present|included|inspected|admitted)\b/i,
+    /owner-log[\s\S]{0,80}\b(?:contains|carries|includes)\b[\s\S]{0,40}\ball\b[\s\S]{0,40}\bevents?\b/i,
+  ];
+
+  for (const relative of FEATURE_029_GUIDANCE_SURFACES) {
+    const source = read(relative).replace(/\s+/g, ' ');
+    for (const [label, pattern] of requiredGuidance) {
+      assert.match(source, pattern, `${relative}: ${label}`);
+    }
+    for (const pattern of obsoleteFullOwnerPromises) {
+      assert.doesNotMatch(source, pattern, `${relative}: no promise that all owner-log prose is inspected`);
+    }
+  }
+
+  const recovery = read('src/skills/dude-work/recovery.mjs');
+  const ownerBody = /function validateOwnerLogBody[\s\S]*?assertExactRecord\(\s*value,\s*\[([\s\S]*?)\],\s*\[\],\s*label,/.exec(recovery);
+  assert.ok(ownerBody, 'recovery.mjs validates the one owner-log body');
+  assert.deepEqual(
+    [...ownerBody[1].matchAll(/'([^']+)'/g)].map((entry) => entry[1]),
+    FEATURE_029_OWNER_BODY_FIELDS,
+    'recovery.mjs accepts only the current owner-log body fields',
+  );
+  assert.equal((recovery.match(/function validateOwnerLogBody/g) ?? []).length, 1);
+  assert.doesNotMatch(recovery, /\bcoordinatorLog\b/, 'no production coordinatorLog compatibility read');
+
+  for (const [source, generated] of FEATURE_029_GENERATED_PAIRS) {
+    assert.deepEqual(
+      fs.readFileSync(path.join(ROOT, generated)),
+      materializedSourceBytes(source, generated),
+      `${generated} is generated from ${source}`,
+    );
+  }
+});

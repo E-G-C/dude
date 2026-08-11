@@ -218,9 +218,13 @@ may still be maintained as a one-way Beads-derived mirror for portability.
 not another lane or authority. It inspects exact target history before a start
 or resume and after a block or failure. Ordinary Work reports the post-block
 inspection and stops; only explicit bounded recovery can authorize a retry.
-Feature-only inspection remains read-only, unavailable optional session history
-alone is nonblocking, and evidence overflow permits only a descriptor report,
-not recovery.
+Feature-only inspection remains read-only, and unavailable optional session
+history alone is nonblocking. All non-owner admitted evidence remains complete.
+An owner-log item carries exact owner identity, complete-log digest, byte length,
+and event-count metadata with the maximal whole-event suffix for that fresh
+packet; omitted owner events are not inspected text. Overflow permits only a
+descriptor report, no model call, no recovery, and no evidence splitting or
+batching.
 
 Work is sequential and processes one task at a time. Users do not configure
 concurrency. Outside `@dude work`, internal coordinator dispatch may fan out

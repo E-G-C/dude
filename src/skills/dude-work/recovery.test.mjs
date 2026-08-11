@@ -86,6 +86,7 @@ const EMPTY_HASH = sha256('');
 const TARGET = Object.freeze({ specPath: SPEC_PATH, lane: 'lightweight', taskKey: TASK_KEY });
 const TRACKED = Object.freeze({ specPath: SPEC_PATH, lane: 'tracked', issueId: 'dude-42' });
 const RECOVERY_SCRIPT = fileURLToPath(new URL('./recovery.mjs', import.meta.url));
+const REPO_ROOT = path.resolve(path.dirname(RECOVERY_SCRIPT), '../../..');
 const FIXED_RESOURCE_LIMITS = Object.freeze({
   cliRequestBytes: 6_291_456,
   sourceBodyBytes: 1_048_576,
@@ -102,9 +103,71 @@ function runtimeFunction(name) {
   return /** @type {(...args: any[]) => any} */ (value);
 }
 
+/**
+ * Construct a closed, canonical owner-log projection for unit fixtures that
+ * exercise the generic Inspection APIs without acquiring an owner file.
+ * @param {string[]} events
+ * @param {{ideaPath?:string,specPath?:string,fullLog?:string}} [overrides]
+ */
+function ownerLogBody(events, overrides = {}) {
+  const ideaPath = overrides.ideaPath || IDEA_PATH;
+  const specPath = overrides.specPath || SPEC_PATH;
+  const fullLog = overrides.fullLog || ['## Coordinator Log', '', ...events].join('\n');
+  return canonicalJson({
+    ideaPath,
+    specPath,
+    fullLogSha256: sha256(fullLog),
+    fullLogByteLength: Buffer.byteLength(fullLog),
+    totalEventCount: events.length,
+    includedEventCount: events.length,
+    omittedEventCount: 0,
+    firstIncludedEventOrdinal: events.length === 0 ? null : 1,
+    lastIncludedEventOrdinal: events.length === 0 ? null : events.length,
+    events,
+  });
+}
+
+/**
+ * Independently construct the current closed owner-log body for a known
+ * complete section and a known whole-event suffix.
+ * @param {string} fullLog
+ * @param {string[]} completeEvents
+ * @param {string[]} includedEvents
+ * @param {{ideaPath?:string,specPath?:string}} [overrides]
+ */
+function ownerLogProjectionText(fullLog, completeEvents, includedEvents, overrides = {}) {
+  const ideaPath = overrides.ideaPath || IDEA_PATH;
+  const specPath = overrides.specPath || SPEC_PATH;
+  const totalEventCount = completeEvents.length;
+  const includedEventCount = includedEvents.length;
+  const omittedEventCount = totalEventCount - includedEventCount;
+  return canonicalJson({
+    ideaPath,
+    specPath,
+    fullLogSha256: sha256(fullLog),
+    fullLogByteLength: Buffer.byteLength(fullLog),
+    totalEventCount,
+    includedEventCount,
+    omittedEventCount,
+    firstIncludedEventOrdinal: includedEventCount === 0 ? null : omittedEventCount + 1,
+    lastIncludedEventOrdinal: includedEventCount === 0 ? null : totalEventCount,
+    events: includedEvents,
+  });
+}
+
+/** @param {string} text */
+function datedOwnerEvent(text) {
+  return `- 2026-08-10 ${text}${text.endsWith('\n') ? '' : '\n'}`;
+}
+
 /** @param {string} source @param {string} text @param {boolean} [required] @param {string} [status] */
 function evidence(source, text, required = false, status = 'present') {
   return { source, required, status, ...contentDescriptor(text), text };
+}
+
+/** @param {string} [text] @param {boolean} [required] @param {string} [status] */
+function ownerEvidence(text = 'owner', required = false, status = 'present') {
+  return evidence('owner-log', ownerLogBody([datedOwnerEvent(text)]), required, status);
 }
 
 /** @param {string} source @param {boolean} [required] */
@@ -166,7 +229,7 @@ function withWorkspace(run) {
 }
 
 /** @param {string} [specPath] @param {string} [log] */
-function ideaBytes(specPath = SPEC_PATH, log = '- exact event\n') {
+function ideaBytes(specPath = SPEC_PATH, log = '- 2026-08-10 exact event\n') {
   return Buffer.from([
     '---',
     'title: Owner',
@@ -792,13 +855,13 @@ function adversarialArray(values, attack) {
 }
 
 test('all six closed record validators reject unknown, missing, and forbidden fields', () => {
-  const baseInspection = buildInspection(TARGET, [evidence('owner-log', 'owner')]);
+  const baseInspection = buildInspection(TARGET, [ownerEvidence()]);
   const hash = baseInspection.evidenceHash;
   const boundAssessment = assessment(hash);
   const blocker = { code: 'evidence-incomplete', subject: 'owner-log', evidenceHash: hash };
   const records = [
     [validateTarget, TARGET, 'lane'],
-    [validateEvidenceItem, evidence('owner-log', 'owner'), 'source'],
+    [validateEvidenceItem, ownerEvidence(), 'source'],
     [validateInspection, baseInspection, 'target'],
     [(value) => validateAssessment(TARGET, baseInspection, value), boundAssessment, 'evidenceHash'],
     [validateBlocker, blocker, 'code'],
@@ -859,7 +922,7 @@ test('Target accepts feature, Lightweight task, tracked issue-only, and tracked 
 
 test('optional unverified tracked task metadata cannot change packet or no-progress identity', () => {
   const mapped = { ...TRACKED, taskKey: TASK_KEY };
-  const items = [evidence('owner-log', 'same complete evidence', true)];
+  const items = [ownerEvidence('same complete evidence', true)];
   const issueOnlyInspection = buildInspection(TRACKED, items);
   const mappedInspection = buildInspection(mapped, items);
 
@@ -1465,7 +1528,7 @@ test('T008 regression: workspace reads fail closed when files grow or change ide
         const replacementPath = path.join(root, 'replacement-owner.md');
         fs.writeFileSync(ownerPath, ideaBytes());
         fs.writeFileSync(tasksPath, tasksBytes());
-        fs.writeFileSync(replacementPath, ideaBytes(SPEC_PATH, '- replacement bytes must not be acquired\n'));
+        fs.writeFileSync(replacementPath, ideaBytes(SPEC_PATH, '- 2026-08-10 replacement bytes must not be acquired\n'));
 
         const originalOpen = fs.openSync;
         const originalReadFile = fs.readFileSync;
@@ -2624,7 +2687,7 @@ test('T008: every declared JSON capture rejects noncanonical bytes while Markdow
   const runCommand = runtimeFunction('runCommand');
   withWorkspace((root) => {
     const markdownJson = '{"z":1, "z":2}';
-    fs.writeFileSync(path.join(root, IDEA_PATH), ideaBytes(SPEC_PATH, `- ${markdownJson}\n`));
+    fs.writeFileSync(path.join(root, IDEA_PATH), ideaBytes(SPEC_PATH, `- 2026-08-10 ${markdownJson}\n`));
     fs.writeFileSync(path.join(root, path.dirname(SPEC_PATH), 'tasks.md'), Buffer.concat([
       tasksBytes(),
       Buffer.from(`${markdownJson}\n`),
@@ -3009,7 +3072,7 @@ test('canonical JSON and projection hashes ignore object key insertion order and
   assert.throws(() => canonicalJson({ value: -0 }));
   assert.throws(() => canonicalJson(Number.MIN_SAFE_INTEGER - 1));
   assert.throws(() => canonicalJson({ value: '\ud800' }));
-  assert.throws(() => validateEvidenceItem({ ...evidence('owner-log', 'owner'), byteLength: -1 }));
+  assert.throws(() => validateEvidenceItem({ ...ownerEvidence(), byteLength: -1 }));
   assert.throws(() => validateRunState({ ...emptyState(), overallUsed: -1 }));
 });
 
@@ -3092,8 +3155,8 @@ test('exported boundaries reject malformed caller arrays without invoking indexe
   const boundaries = [
     ['canonicalJson array', ['value'], (value) => canonicalJson(value)],
     ['parseInvocation argv', ['feature'], (value) => parseInvocation(value)],
-    ['buildInspection items', [evidence('owner-log', 'owner')], (value) => buildInspection(TARGET, value)],
-    ['evidenceHash items', [evidence('owner-log', 'owner')], (value) => evidenceHash(TARGET, value)],
+    ['buildInspection items', [ownerEvidence()], (value) => buildInspection(TARGET, value)],
+    ['evidenceHash items', [ownerEvidence()], (value) => evidenceHash(TARGET, value)],
     ['Assessment targets', validAssessment.materialInputs.targets, (value) => materialBoundary('targets', value)],
     ['Assessment operations', validAssessment.materialInputs.operations, (value) => materialBoundary('operations', value)],
     ['Assessment checks', validAssessment.materialInputs.checks, (value) => materialBoundary('checks', value)],
@@ -3150,7 +3213,7 @@ test('source ordering is stable, exact duplicates collapse, and descriptors bind
   const first = evidence('review', 'same');
   const duplicate = clone(first);
   const otherSource = evidence('verification', 'same');
-  const owner = evidence('owner-log', 'owner');
+  const owner = ownerEvidence();
   const inspection = buildInspection(TARGET, [first, otherSource, duplicate, owner]);
   assert.deepEqual(inspection.items.map((item) => item.source), ['owner-log', 'review', 'verification']);
   assert.notDeepEqual(descriptor(first), descriptor(evidence('review', 'different')));
@@ -3158,11 +3221,11 @@ test('source ordering is stable, exact duplicates collapse, and descriptors bind
 });
 
 test('evidenceHash distinguishes complete bodies and canonical projection fields', () => {
-  const body = evidence('owner-log', 'complete-body-a', true);
+  const body = ownerEvidence('complete-body-a', true);
   const variants = [
     evidenceHash(TARGET, [body]),
-    evidenceHash(TARGET, [evidence('owner-log', 'complete-body-b', true)]),
-    evidenceHash(TARGET, [evidence('owner-log', 'different-length-complete-body', true)]),
+    evidenceHash(TARGET, [ownerEvidence('complete-body-b', true)]),
+    evidenceHash(TARGET, [ownerEvidence('different-length-complete-body', true)]),
     evidenceHash(TARGET, [{ ...body, source: 'review' }]),
     evidenceHash(TARGET, [{ ...body, required: false }]),
     evidenceHash(TARGET, [{ ...body, status: 'stale' }]),
@@ -3182,9 +3245,14 @@ function packetBytes(target, items) {
 
 /** @param {number} expectedBytes @param {ReturnType<typeof evidence>[]} prefix @param {string} source */
 function sizedFinalItem(expectedBytes, prefix, source) {
-  let length = Math.max(0, expectedBytes - packetBytes(TARGET, [...prefix, evidence(source, '')]));
+  const candidateFor = (length) => (
+    source === 'owner-log'
+      ? ownerEvidence('x'.repeat(length))
+      : evidence(source, 'x'.repeat(length))
+  );
+  let length = Math.max(0, expectedBytes - packetBytes(TARGET, [...prefix, candidateFor(0)]));
   for (let attempt = 0; attempt < 12; attempt += 1) {
-    const candidate = evidence(source, 'x'.repeat(length));
+    const candidate = candidateFor(length);
     const actual = packetBytes(TARGET, [...prefix, candidate]);
     if (actual === expectedBytes) return candidate;
     length += expectedBytes - actual;
@@ -3228,7 +3296,7 @@ test('item 17 and byte 65,537 return descriptor-only refusal without truncation 
 });
 
 test('an exact-bound available session that crosses the packet boundary refuses the whole packet', () => {
-  const prefix = [evidence('owner-log', 'owner'), evidence('lint', 'clean')];
+  const prefix = [ownerEvidence(), evidence('lint', 'clean')];
   const session = sizedFinalItem(limits.bytes + 1, prefix, 'session');
   const inspection = buildInspection(TARGET, [...prefix, session]);
   assert.equal(inspection.overflow, true);
@@ -3239,7 +3307,7 @@ test('an exact-bound available session that crosses the packet boundary refuses 
 });
 
 test('an unavailable optional session is represented but does not itself block', () => {
-  const inspection = buildInspection(TARGET, [evidence('owner-log', 'owner'), missing('session')]);
+  const inspection = buildInspection(TARGET, [ownerEvidence(), missing('session')]);
   assert.equal(inspection.overflow, false);
   assert.deepEqual(inspection.blockers, []);
   assert.deepEqual(modelPacket(inspection)?.items.map((item) => item.source), ['owner-log']);
@@ -3377,7 +3445,7 @@ test('Assessment requires evidenceHash and stale advice returns evidence-drift w
 });
 
 test('material targets reject empty and relative segments without excluding canonical identifiers', () => {
-  const inspection = buildInspection(TARGET, [evidence('owner-log', 'owner')]);
+  const inspection = buildInspection(TARGET, [ownerEvidence()]);
   const invalidTargets = ['', '.', '..', '/src', 'src/', 'src//file.mjs', 'src/./file.mjs', 'src/../file.mjs'];
   for (const materialTarget of invalidTargets) {
     assert.throws(
@@ -3575,7 +3643,7 @@ test('inspect acquires one exact owner and canonical task while ignoring generat
       '',
       '## Coordinator Log',
       '',
-      '- exact event',
+      '- 2026-08-10 exact event',
       '',
     ].join('\n'));
     fs.writeFileSync(tasksPath, [
@@ -3611,9 +3679,20 @@ test('inspect acquires one exact owner and canonical task while ignoring generat
     assert.equal(inspection.blockers.length, 0);
     const owner = inspection.items.find((item) => item.source === 'owner-log');
     const tasks = inspection.items.find((item) => item.source === 'task-history');
-    assert.equal(
-      JSON.parse(owner?.text || '{}').coordinatorLog,
-      '## Coordinator Log\n\n- exact event\n',
+    assert.deepEqual(
+      JSON.parse(owner?.text || '{}'),
+      {
+        ideaPath: '.dude/ideas/owner.md',
+        specPath: SPEC_PATH,
+        fullLogSha256: sha256('## Coordinator Log\n\n- 2026-08-10 exact event\n'),
+        fullLogByteLength: Buffer.byteLength('## Coordinator Log\n\n- 2026-08-10 exact event\n'),
+        totalEventCount: 1,
+        includedEventCount: 1,
+        omittedEventCount: 0,
+        firstIncludedEventOrdinal: 1,
+        lastIncludedEventOrdinal: 1,
+        events: ['- 2026-08-10 exact event\n'],
+      },
     );
     assert.match(tasks?.text || '', new RegExp(TASK_KEY.replace('@', '\\@')));
     assert.match(tasks?.text || '', /waiting/);
@@ -3702,7 +3781,7 @@ test('T008: public inspect APIs acquire the exact owner beside an unrelated vali
     const targetOwner = { path: IDEA_PATH, bytes: ideaBytes() };
     const unrelatedOwner = {
       path: '.dude/ideas/unrelated.md',
-      bytes: ideaBytes(unrelatedSpecPath, '- unrelated event\n'),
+      bytes: ideaBytes(unrelatedSpecPath, '- 2026-08-10 unrelated event\n'),
     };
     fs.mkdirSync(path.join(root, path.dirname(unrelatedSpecPath)), { recursive: true });
     fs.writeFileSync(path.join(root, unrelatedSpecPath), '# Unrelated Spec\n');
@@ -3757,7 +3836,7 @@ test('Coordinator Log extraction matches lint fence semantics across logical lin
       '',
       '## Coordinator Log',
       '',
-      '- exact event',
+      '- 2026-08-10 exact event',
       '',
       '```~~~md',
       '## fenced subsection',
@@ -3774,13 +3853,19 @@ test('Coordinator Log extraction matches lint fence semantics across logical lin
       directIdeas: [{ path: '.dude/ideas/owner.md', bytes: ownerBytes }],
     })));
     const owner = inspection.items.find((item) => item.source === 'owner-log');
-    const coordinatorLog = JSON.parse(owner?.text || '{}').coordinatorLog || '';
+    const ownerBody = JSON.parse(owner?.text || '{}');
+    const event = ownerBody.events?.[0] || '';
     assert.equal(owner?.status, 'present', JSON.stringify(separator));
-    assert.ok(coordinatorLog.startsWith(['## Coordinator Log', '', '- exact event'].join(separator)));
-    assert.ok(coordinatorLog.includes('## fenced subsection'));
-    assert.ok(coordinatorLog.includes('# fenced title'));
-    assert.equal(coordinatorLog.includes('## After Log'), false);
-    assert.equal(coordinatorLog.includes('- excluded'), false);
+    assert.equal(ownerBody.totalEventCount, 1);
+    assert.equal(ownerBody.includedEventCount, 1);
+    assert.equal(ownerBody.omittedEventCount, 0);
+    assert.equal(ownerBody.firstIncludedEventOrdinal, 1);
+    assert.equal(ownerBody.lastIncludedEventOrdinal, 1);
+    assert.ok(event.startsWith(['- 2026-08-10 exact event'].join(separator)));
+    assert.ok(event.includes('## fenced subsection'));
+    assert.ok(event.includes('# fenced title'));
+    assert.equal(event.includes('## After Log'), false);
+    assert.equal(event.includes('- excluded'), false);
   }
 });
 
@@ -3792,7 +3877,15 @@ test('Coordinator Log extraction rejects missing and duplicate real headings', (
     },
     {
       name: 'duplicate real heading',
-      body: ['## Coordinator Log', '', '- first', '', '## Coordinator Log', '', '- second'],
+      body: [
+        '## Coordinator Log',
+        '',
+        '- 2026-08-10 first',
+        '',
+        '## Coordinator Log',
+        '',
+        '- 2026-08-11 second',
+      ],
     },
   ];
   for (const fixture of fixtures) {
@@ -6698,7 +6791,7 @@ test('T004: a stale definition-plan fails closed as an evidence-incomplete block
   // missing, nontext, and overflow — and must never be misrouted to the
   // objective-source-conflict code reserved for the malformed and conflict statuses.
   const inspection = buildInspection(TARGET, [
-    evidence('owner-log', 'owner', true),
+    ownerEvidence('owner', true),
     evidence('definition-plan', canonicalJson({ path: PLAN_PATH }), true, 'stale'),
   ]);
   const blocker = inspection.blockers.find((entry) => entry.subject === 'definition-plan');
@@ -6790,7 +6883,7 @@ test('T004: the definition-plan participates in packet item and byte accounting 
   const sixteen = Array.from({ length: 16 }, (_, index) => evidence('current-run', `c-${index}`));
   assert.equal(buildInspection(TARGET, [planItem, ...sixteen]).overflow, true);
 
-  const prefix = [evidence('owner-log', 'owner')];
+  const prefix = [ownerEvidence()];
   const boundaryPlan = sizedFinalItem(limits.bytes, prefix, 'definition-plan');
   const atBoundary = buildInspection(TARGET, [...prefix, boundaryPlan]);
   assert.equal(atBoundary.overflow, false);
@@ -11510,22 +11603,25 @@ function t015T004CompositionFixture(options = {}) {
     blockedBy: 'definition defect',
   }]));
   const current = new Map([
-    [IDEA_PATH, t015T004OwnerBytes(['- current definition'])],
+    [IDEA_PATH, t015T004OwnerBytes(['- 2026-08-10 current definition'])],
     [PLAN_PATH, Buffer.from('# Plan\n\nCurrent plan.\n')],
     [SPEC_PATH, Buffer.from('# Spec\n\nCurrent outcome.\n')],
     [TASKS_PATH, currentTasks],
   ]);
   const staged = new Map([
-    [IDEA_PATH, t015T004OwnerBytes(['- current definition', '- Spec Lead stage'])],
+    [IDEA_PATH, t015T004OwnerBytes([
+      '- 2026-08-10 current definition',
+      '- 2026-08-10 Spec Lead stage',
+    ])],
     [PLAN_PATH, Buffer.from('# Plan\n\nRepaired route.\n')],
     [SPEC_PATH, Buffer.from('# Spec\n\nCurrent outcome clarified.\n')],
     [TASKS_PATH, stageTasks],
   ]);
   const final = new Map([
     [IDEA_PATH, t015T004OwnerBytes([
-      '- current definition',
-      '- Spec Lead stage',
-      '- coordinator reconciliation',
+      '- 2026-08-10 current definition',
+      '- 2026-08-10 Spec Lead stage',
+      '- 2026-08-10 coordinator reconciliation',
     ])],
     [PLAN_PATH, staged.get(PLAN_PATH)],
     [SPEC_PATH, staged.get(SPEC_PATH)],
@@ -12823,7 +12919,7 @@ test('T004 integration post-apply: a second defined owner discovered after apply
       ...t015T004DefinitionExecution(fixture, reviewed, root),
       failureInjector(event) {
         if (event.operation !== 'validate-applied') return;
-        fs.writeFileSync(duplicatePath, t015T004OwnerBytes(['- duplicate claimant']));
+        fs.writeFileSync(duplicatePath, t015T004OwnerBytes(['- 2026-08-10 duplicate claimant']));
       },
     }), /requires one exact defined owner/);
     fs.rmSync(duplicatePath, { force: true });
@@ -23025,4 +23121,470 @@ test('Feature 013 T003 H: a refusal reason the settled set does not name still h
   assert.equal(orphan.reason, 'pending-not-found');
   assert.equal(endsUnattendedLoop(orphan), true);
   assert.deepEqual(describeUnattendedHalt(orphan, cleanInspection), unnameable);
+});
+
+// --- Feature 029: bounded owner-log projection -----------------------------
+
+/**
+ * Acquire the public owner-log evidence path from one supplied owner ledger.
+ * @param {Record<string, unknown>} target
+ * @param {string} ideaPath
+ * @param {Buffer} bytes
+ */
+function feature029Inspection(target, ideaPath, bytes) {
+  const raw = transitionRaw(target, {
+    directIdeas: [{ path: ideaPath, bytes }],
+  });
+  return buildInspection(target, collectEvidence(target, raw));
+}
+
+/** @param {Record<string, unknown>} inspection */
+function feature029Owner(inspection) {
+  const item = inspection.items.find((candidate) => candidate.source === 'owner-log');
+  assert.ok(item, 'Inspection must carry owner-log evidence');
+  assert.equal(item.status, 'present', 'owner-log must be admitted');
+  assert.equal(typeof item.text, 'string', 'admitted owner-log must be textual');
+  return { item, body: JSON.parse(item.text) };
+}
+
+/** @param {string} file */
+function feature029FileFingerprint(file) {
+  const stat = fs.statSync(file, { bigint: true });
+  const bytes = fs.readFileSync(file);
+  return {
+    descriptor: contentDescriptor(bytes),
+    dev: stat.dev,
+    ino: stat.ino,
+    size: stat.size,
+    mtimeNs: stat.mtimeNs,
+    ctimeNs: stat.ctimeNs,
+  };
+}
+
+/** @param {Buffer} bytes */
+function feature029CompleteCoordinatorLog(bytes) {
+  const text = bytes.toString('utf8');
+  const heading = /^## Coordinator Log(?:\r\n|\n|\r)/m.exec(text);
+  assert.ok(heading, 'fixture must contain one top-level Coordinator Log heading');
+  return text.slice(/** @type {number} */ (heading.index));
+}
+
+/**
+ * Rebuild a canonical packet with a supplied owner body without calling the
+ * projector, for a maximality boundary assertion.
+ * @param {Record<string, unknown>} packet
+ * @param {string} ownerText
+ */
+function feature029PacketWithOwnerBody(packet, ownerText) {
+  const current = packet.items.find((item) => item.source === 'owner-log');
+  assert.ok(current, 'packet must contain owner-log');
+  const ownerItem = {
+    source: 'owner-log',
+    required: current.descriptor.required,
+    status: current.descriptor.status,
+    ...contentDescriptor(ownerText),
+    text: ownerText,
+  };
+  return {
+    target: packet.target,
+    items: packet.items.map((item) => (
+      item.source === 'owner-log'
+        ? { source: 'owner-log', descriptor: descriptor(ownerItem), text: ownerText }
+        : item
+    )),
+  };
+}
+
+test('Feature 029: small zero, one, and several-event logs retain every event and bind the canonical body', () => {
+  const cases = [
+    { name: 'zero', events: [] },
+    { name: 'one', events: ['- 2026-08-10 one complete event\n'] },
+    {
+      name: 'several',
+      events: [
+        '- 2026-08-08 oldest complete event\n',
+        '- 2026-08-09 middle complete event\n',
+        '- 2026-08-10 newest complete event\n',
+      ],
+    },
+  ];
+
+  for (const fixture of cases) {
+    // Arrange
+    const fullLog = `## Coordinator Log\n\n${fixture.events.join('')}`;
+    const bytes = ideaBytes(SPEC_PATH, fixture.events.join(''));
+
+    // Act
+    const inspection = feature029Inspection(TARGET, IDEA_PATH, bytes);
+    const { item, body } = feature029Owner(inspection);
+    const packet = modelPacket(inspection);
+
+    // Assert
+    assert.equal(inspection.overflow, false, fixture.name);
+    assert.ok(packet, fixture.name);
+    assert.ok(Buffer.byteLength(canonicalJson(packet)) <= limits.bytes, fixture.name);
+    assert.equal(packet.items.length <= limits.items, true, fixture.name);
+    assert.equal(
+      item.text,
+      ownerLogProjectionText(fullLog, fixture.events, fixture.events),
+      fixture.name,
+    );
+    assert.deepEqual(
+      Object.keys(body),
+      [
+        'events',
+        'firstIncludedEventOrdinal',
+        'fullLogByteLength',
+        'fullLogSha256',
+        'ideaPath',
+        'includedEventCount',
+        'lastIncludedEventOrdinal',
+        'omittedEventCount',
+        'specPath',
+        'totalEventCount',
+      ],
+      fixture.name,
+    );
+    assert.equal(body.fullLogSha256, sha256(fullLog), fixture.name);
+    assert.equal(body.fullLogByteLength, Buffer.byteLength(fullLog), fixture.name);
+    assert.equal(body.totalEventCount, fixture.events.length, fixture.name);
+    assert.equal(body.includedEventCount, fixture.events.length, fixture.name);
+    assert.equal(body.omittedEventCount, 0, fixture.name);
+    assert.equal(body.firstIncludedEventOrdinal, fixture.events.length === 0 ? null : 1, fixture.name);
+    assert.equal(body.lastIncludedEventOrdinal, fixture.events.length === 0 ? null : fixture.events.length, fixture.name);
+    assert.deepEqual(body.events, fixture.events, fixture.name);
+    assert.deepEqual(
+      packet.items.find((packetItem) => packetItem.source === 'owner-log'),
+      { source: 'owner-log', descriptor: descriptor(item), text: item.text },
+      fixture.name,
+    );
+  }
+});
+
+test('Feature 029: real oversized owner ledgers project a bounded suffix without mutating either source file', () => {
+  const ledgers = [
+    '.dude/ideas/agent-orchestration-metadata.md',
+    '.dude/ideas/remove-legacy-compatibility.md',
+  ];
+
+  for (const ideaPath of ledgers) {
+    // Arrange
+    const absolute = path.join(REPO_ROOT, ideaPath);
+    const before = feature029FileFingerprint(absolute);
+    const bytes = fs.readFileSync(absolute);
+    const text = bytes.toString('utf8');
+    const specPathMatch = /^spec_path: ([^\r\n]+)$/m.exec(text);
+    assert.ok(specPathMatch, `${ideaPath}: defined ledger must declare spec_path`);
+    const specPath = /** @type {string} */ (specPathMatch[1]);
+    const target = { specPath, lane: 'lightweight' };
+    const completeLog = feature029CompleteCoordinatorLog(bytes);
+    const independentlyCountedEvents = [...completeLog.matchAll(
+      /^- \d{4}-\d{2}-\d{2}(?:[ \t]|$)/gm,
+    )].length;
+
+    // Act
+    const inspection = feature029Inspection(target, ideaPath, bytes);
+    const { item, body } = feature029Owner(inspection);
+    const packet = modelPacket(inspection);
+    const after = feature029FileFingerprint(absolute);
+
+    // Assert
+    assert.deepEqual(after, before, `${ideaPath}: test must not mutate the real ledger`);
+    assert.equal(inspection.overflow, false, ideaPath);
+    assert.ok(packet, ideaPath);
+    assert.ok(packet.items.length <= limits.items, ideaPath);
+    assert.ok(Buffer.byteLength(canonicalJson(packet)) <= limits.bytes, ideaPath);
+    assert.equal(body.ideaPath, ideaPath, ideaPath);
+    assert.equal(body.specPath, specPath, ideaPath);
+    assert.equal(body.fullLogSha256, sha256(completeLog), ideaPath);
+    assert.equal(body.fullLogByteLength, Buffer.byteLength(completeLog), ideaPath);
+    assert.equal(body.totalEventCount, independentlyCountedEvents, ideaPath);
+    assert.equal(body.includedEventCount, body.events.length, ideaPath);
+    assert.equal(body.omittedEventCount, body.totalEventCount - body.includedEventCount, ideaPath);
+    assert.ok(body.totalEventCount > 0, ideaPath);
+    assert.ok(body.omittedEventCount > 0, `${ideaPath}: regression ledger must exercise omission`);
+    assert.ok(body.includedEventCount > 0, ideaPath);
+    assert.equal(body.firstIncludedEventOrdinal, body.omittedEventCount + 1, ideaPath);
+    assert.equal(body.lastIncludedEventOrdinal, body.totalEventCount, ideaPath);
+    assert.ok(body.events.every((event) => /^- \d{4}-\d{2}-\d{2}(?:[ \t]|$)/.test(event)), ideaPath);
+    assert.deepEqual(
+      packet.items.find((packetItem) => packetItem.source === 'owner-log'),
+      { source: 'owner-log', descriptor: descriptor(item), text: item.text },
+      ideaPath,
+    );
+  }
+});
+
+test('Feature 029: the selected suffix is maximal against the complete canonical packet', () => {
+  // Arrange
+  const completeEvents = Array.from({ length: 5 }, (_, index) => (
+    `- 2026-08-${String(index + 1).padStart(2, '0')} maximal event ${index + 1} ${'x'.repeat(18_000)}\n`
+  ));
+  const fullLog = `## Coordinator Log\n\n${completeEvents.join('')}`;
+  const raw = transitionRaw(TARGET, {
+    directIdeas: [{ path: IDEA_PATH, bytes: ideaBytes(SPEC_PATH, completeEvents.join('')) }],
+  });
+
+  // Act
+  const inspection = buildInspection(TARGET, collectEvidence(TARGET, raw));
+  const { body } = feature029Owner(inspection);
+  const packet = modelPacket(inspection);
+
+  // Assert
+  assert.ok(packet);
+  assert.equal(inspection.overflow, false);
+  assert.ok(body.omittedEventCount > 0, 'fixture must force an omitted predecessor');
+  assert.ok(body.includedEventCount > 0);
+  assert.deepEqual(body.events, completeEvents.slice(-body.includedEventCount));
+  assert.ok(Buffer.byteLength(canonicalJson(packet)) <= limits.bytes);
+
+  const predecessorIndex = completeEvents.length - body.includedEventCount - 1;
+  assert.ok(predecessorIndex >= 0, 'there must be exactly one immediately preceding event');
+  const immediatelyLargerEvents = completeEvents.slice(predecessorIndex);
+  const immediatelyLargerBody = ownerLogProjectionText(fullLog, completeEvents, immediatelyLargerEvents);
+  const immediatelyLargerPacket = feature029PacketWithOwnerBody(packet, immediatelyLargerBody);
+  assert.equal(
+    Buffer.byteLength(canonicalJson(immediatelyLargerPacket)) > limits.bytes,
+    true,
+    'adding exactly the preceding whole event must cross the canonical byte ceiling',
+  );
+});
+
+test('Feature 029: event boundaries retain Unicode and continuations while excluding all framing', () => {
+  // Arrange
+  const firstEvent = [
+    '- 2026-08-10 café e\u0301 😀 "quoted" \\ slash and JSON punctuation: {"x":[1,2]}',
+    '  Continuation with emoji 🚀 and combining a\u0308.',
+    '  - Indented bullet remains in the same event.',
+    '',
+    '  Paragraph after a blank continuation line remains in the same event.',
+  ].join('\n') + '\n';
+  const secondEvent = [
+    '- 2026-08-11 newest event keeps its own punctuation: []{},"\\',
+    '  Follow-up continuation.',
+  ].join('\n') + '\n';
+  const log = [
+    '<!-- dude:managed:start -->',
+    '',
+    firstEvent.slice(0, -1),
+    '<!-- framing comment between events -->',
+    secondEvent.slice(0, -1),
+    '<!-- dude:managed:end -->',
+    '',
+  ].join('\n');
+  const fullLog = `## Coordinator Log\n\n${log}`;
+
+  // Act
+  const inspection = feature029Inspection(TARGET, IDEA_PATH, ideaBytes(SPEC_PATH, log));
+  const { body } = feature029Owner(inspection);
+
+  // Assert
+  assert.equal(inspection.overflow, false);
+  assert.equal(body.fullLogSha256, sha256(fullLog));
+  assert.equal(body.fullLogByteLength, Buffer.byteLength(fullLog));
+  assert.equal(body.totalEventCount, 2);
+  assert.equal(body.includedEventCount, 2);
+  assert.equal(body.omittedEventCount, 0);
+  assert.equal(body.firstIncludedEventOrdinal, 1);
+  assert.equal(body.lastIncludedEventOrdinal, 2);
+  assert.deepEqual(body.events, [firstEvent, secondEvent]);
+  assert.ok(body.events[0].includes('e\u0301'));
+  assert.ok(body.events[0].includes('😀'));
+  assert.ok(body.events[0].includes('  - Indented bullet'));
+  assert.ok(body.events[0].includes('\n\n  Paragraph after'));
+  assert.ok(body.events.every((event) => !event.includes('## Coordinator Log')));
+  assert.ok(body.events.every((event) => !event.includes('dude:managed')));
+  assert.ok(body.events.every((event) => !event.includes('framing comment')));
+});
+
+test('Feature 029: an oversized newest event and non-owner evidence fail closed without a fallback packet', () => {
+  // Arrange
+  const oversizedNewest = `- 2026-08-10 newest ${'x'.repeat(70_000)}\n`;
+  const ownerBytes = ideaBytes(SPEC_PATH, oversizedNewest);
+  assert.ok(ownerBytes.byteLength < FIXED_RESOURCE_LIMITS.sourceBodyBytes);
+  const ownerRaw = transitionRaw(TARGET, {
+    directIdeas: [{ path: IDEA_PATH, bytes: ownerBytes }],
+  });
+  const acquiredOwnerItems = collectEvidence(TARGET, ownerRaw);
+  const acquiredOwner = acquiredOwnerItems.find((item) => item.source === 'owner-log');
+  assert.ok(acquiredOwner);
+  assert.equal(JSON.parse(acquiredOwner.text).events.length, 1);
+
+  // Act
+  const newestOverflow = buildInspection(TARGET, acquiredOwnerItems);
+  const nonOwnerPrefix = [ownerEvidence('small owner', true)];
+  const oversizedSession = sizedFinalItem(limits.bytes + 1, nonOwnerPrefix, 'session');
+  const nonOwnerOverflow = buildInspection(TARGET, [...nonOwnerPrefix, oversizedSession]);
+
+  // Assert
+  for (const [label, inspection] of [
+    ['newest owner event', newestOverflow],
+    ['non-owner session', nonOwnerOverflow],
+  ]) {
+    assert.equal(inspection.overflow, true, label);
+    assert.equal(modelPacket(inspection), null, label);
+    assert.ok(
+      inspection.blockers.some((blocker) => (
+        blocker.code === 'evidence-incomplete' && blocker.subject === 'model-packet'
+      )),
+      label,
+    );
+    assert.ok(inspection.items.every((item) => !Object.hasOwn(item, 'text')), label);
+    assert.equal(
+      inspection.items.some((item) => item.status === 'overflow'),
+      true,
+      `${label}: descriptor-only overflow must identify a concrete packet crossing`,
+    );
+  }
+  const ownerDescriptor = newestOverflow.items.find((item) => item.source === 'owner-log');
+  assert.equal(ownerDescriptor.status, 'overflow');
+  assert.equal(ownerDescriptor.sha256, acquiredOwner.sha256);
+  assert.equal(ownerDescriptor.byteLength, acquiredOwner.byteLength);
+  assert.equal(
+    Object.hasOwn(ownerDescriptor, 'text'),
+    false,
+    'the projector must not retry with an empty event array when the newest event cannot fit',
+  );
+  const sessionDescriptor = nonOwnerOverflow.items.find((item) => item.source === 'session');
+  assert.equal(sessionDescriptor.status, 'overflow');
+  assert.equal(sessionDescriptor.sha256, oversizedSession.sha256);
+  assert.equal(sessionDescriptor.byteLength, oversizedSession.byteLength);
+});
+
+test('Feature 029: owner resolution, definition reconciliation, and learning projection use only the closed body', () => {
+  // Arrange
+  const event = '- 2026-08-10 current owner event\n';
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const ownerPath = path.join(root, IDEA_PATH);
+    fs.writeFileSync(ownerPath, ideaBytes(SPEC_PATH, event));
+    const beforeProjection = inspect(autonomousInspectInput(root));
+    const inspectionBytes = canonicalJson(beforeProjection);
+
+    // Act
+    const resolved = resolveFeatureOwner({ root, specPath: SPEC_PATH });
+    const assessment = transitionAssessment('reconcile-derived-definition', {
+      evidenceHash: beforeProjection.evidenceHash,
+      targets: definitionTargets(),
+    });
+    const projectionOwner = projectionOwnerFake();
+    const learningEvent = buildLearningReviewEvent(learningEventInput());
+    const projection = projectEvent(projectionOwner, learningEvent);
+    const projectedState = admitLearningReviewReference(emptyState(), {
+      reviewIdentity: learningEvent.reviewIdentity,
+      target: TARGET,
+      eventHash: learningEvent.eventHash,
+      currentRunProjectionIdentity: projection.currentRunProjectionIdentity,
+      laneProjectionIdentity: projection.laneProjectionIdentity,
+    }, projectionOwner);
+
+    // Assert
+    assert.deepEqual(resolved, {
+      owner: { ideaPath: IDEA_PATH, specPath: SPEC_PATH },
+      diagnostics: [],
+    });
+    const { body } = feature029Owner(beforeProjection);
+    assert.equal(body.ideaPath, IDEA_PATH);
+    assert.equal(body.specPath, SPEC_PATH);
+    assert.ok(beforeProjection.items.some((item) => item.source === 'definition-plan'));
+    assert.doesNotThrow(() => validateAssessment(TARGET, beforeProjection, assessment));
+    assert.deepEqual(reacquireProjection(projectionOwner, learningEvent.eventHash, TARGET).event, learningEvent);
+    assert.equal(projectedState.learningReviewRefs.length, 1);
+    assert.equal(
+      canonicalJson(beforeProjection),
+      inspectionBytes,
+      'learning projection cannot mutate the acquired owner Inspection',
+    );
+  });
+
+  // Arrange
+  const validBody = JSON.parse(ownerLogBody([datedOwnerEvent('closed consumer')]));
+  const oldCompleteText = canonicalJson({
+    ideaPath: IDEA_PATH,
+    specPath: SPEC_PATH,
+    coordinatorLog: '## Coordinator Log\n\n- 2026-08-10 legacy complete text\n',
+  });
+  const malformedBodies = [
+    ['superseded complete-text body', oldCompleteText],
+    ['hybrid body', canonicalJson({
+      ...validBody,
+      coordinatorLog: '## Coordinator Log\n\n- 2026-08-10 hybrid\n',
+    })],
+    ['inconsistent counts', canonicalJson({ ...validBody, includedEventCount: 0 })],
+    ['invalid ordinal range', canonicalJson({ ...validBody, firstIncludedEventOrdinal: 2 })],
+  ];
+
+  // Act and Assert
+  for (const [label, text] of malformedBodies) {
+    const item = evidence('owner-log', /** @type {string} */ (text), true);
+    const inspection = {
+      target: canonicalTarget(TARGET),
+      items: [item],
+      evidenceHash: evidenceHash(TARGET, [item]),
+      overflow: false,
+      blockers: [],
+    };
+    assert.throws(() => buildInspection(TARGET, [item]), /owner-log|unknown|consistent|ordinal/i, label);
+    assert.throws(() => validateInspection(inspection), /owner-log|unknown|consistent|ordinal/i, label);
+    assert.throws(() => modelPacket(inspection), /owner-log|unknown|consistent|ordinal/i, label);
+  }
+});
+
+test('Feature 029: equal visible suffixes with different omitted history bind distinct complete-log incident prestates', () => {
+  const middle = `- 2026-08-09 common omitted-or-visible middle ${'m'.repeat(28_000)}\n`;
+  const newest = `- 2026-08-10 identical visible newest ${'n'.repeat(28_000)}\n`;
+
+  /** @param {string} marker */
+  const derive = (marker) => {
+    /** @type {{body:Record<string, unknown>,prestate:Record<string, unknown>,fullLog:string}|undefined} */
+    let observed;
+    withIncidentWorkspace((root) => {
+      // Arrange
+      const prefix = `- 2026-08-08 differing omitted prefix ${marker.repeat(28_000)}\n`;
+      const events = [prefix, middle, newest];
+      const fullLog = `## Coordinator Log\n\n${events.join('')}`;
+      fs.writeFileSync(path.join(root, F7_IDEA_PATH), ideaBytes(F7_TARGET.specPath, events.join('')));
+      const retained = t005IncidentEvidence(root);
+      const input = t005IncidentInput(root, retained.events, retained.fixtures);
+      const request = t005AcceptedEvidence(root);
+
+      // Act
+      const prepared = recoveryRuntime.prepareIncidentCorrectionV2(
+        autonomousState(),
+        input,
+        request,
+      );
+
+      // Assert
+      assert.equal(prepared.inspection.overflow, false);
+      assert.equal(prepared.transition.prepared, true);
+      const { body } = feature029Owner(prepared.inspection);
+      assert.equal(body.fullLogSha256, sha256(fullLog));
+      assert.equal(body.fullLogByteLength, Buffer.byteLength(fullLog));
+      assert.equal(body.totalEventCount, events.length);
+      assert.ok(body.omittedEventCount > 0, 'the distinct prefix must be outside the visible suffix');
+      observed = {
+        body,
+        prestate: prepared.transition.preview.prestate,
+        fullLog,
+      };
+    });
+    assert.ok(observed);
+    return observed;
+  };
+
+  // Act
+  const left = derive('A');
+  const right = derive('B');
+
+  // Assert
+  assert.equal(left.fullLog.length, right.fullLog.length);
+  assert.equal(left.body.fullLogByteLength, right.body.fullLogByteLength);
+  assert.equal(left.body.totalEventCount, right.body.totalEventCount);
+  assert.equal(left.body.includedEventCount, right.body.includedEventCount);
+  assert.equal(left.body.omittedEventCount, right.body.omittedEventCount);
+  assert.deepEqual(left.body.events, right.body.events);
+  assert.notEqual(left.body.fullLogSha256, right.body.fullLogSha256);
+  assert.equal(left.prestate.ownerLogTailHash, left.body.fullLogSha256);
+  assert.equal(right.prestate.ownerLogTailHash, right.body.fullLogSha256);
+  assert.notEqual(left.prestate.ownerLogTailHash, right.prestate.ownerLogTailHash);
 });

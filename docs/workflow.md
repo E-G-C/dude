@@ -342,10 +342,14 @@ coordinator-owned.
 Before each task start or resume, and after each block or failure, Work inspects
 all available current-format history exactly bound to that target. A requested
 feature-only inspection is read-only, and unavailable optional session history
-alone does not block it. One bounded complete evidence packet receives one
-evidence-bound Assessment carrying its Inspection's `evidenceHash`; Work
-freshly re-inspects before authorization, and drift refuses without changing
-counters. Overflow is reported by descriptor only, without recovery.
+alone does not block it. All non-owner admitted evidence remains complete. An
+owner-log item carries exact owner identity, complete-log digest, byte length,
+and event-count metadata plus the maximal whole-event suffix for that fresh
+packet; omitted owner events are not inspected text. One bounded complete
+evidence packet receives one evidence-bound Assessment carrying its Inspection's
+`evidenceHash`; Work freshly re-inspects before authorization, and drift refuses
+without changing counters. Overflow is reported by descriptor only, with no
+model call, recovery, evidence splitting, or batching.
 
 Ordinary Work performs the post-block inspection and stops. Only explicit
 recovery can authorize another attempt. Overall and exact-target recovery

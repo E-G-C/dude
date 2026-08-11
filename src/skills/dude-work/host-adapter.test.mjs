@@ -17,6 +17,7 @@ import {
   classifyOutcomeReason,
   contentDescriptor,
   inspect,
+  modelPacket,
   normalizeIndependentReviewEnvelopeV2,
   normalizeVerificationEnvelopeV2,
   OUTCOME_REASON_CLASSES,
@@ -1574,7 +1575,7 @@ function withSealedWorkspace(run) {
       '',
       '## Coordinator Log',
       '',
-      '- exact owner event',
+      '- 2026-08-10 exact owner event',
     ].join('\n'));
     fs.writeFileSync(path.join(root, TARGET.specPath), '# Feature Specification\n');
     fs.writeFileSync(path.join(root, planPath), '# Plan\n\nNo active objective registry.\n');
@@ -5580,6 +5581,272 @@ function focusedCancelResponse(challenge) {
     kind: challenge.kind,
   };
 }
+
+const FEATURE_029_PACKET_BYTES = 65_536;
+
+/**
+ * Recreate the exact model-packet projection only to measure the immediately
+ * larger owner suffix beside the real Inspection's other evidence.
+ * @param {Record<string, unknown>} inspection
+ * @param {Record<string, unknown>[]} [items]
+ */
+function feature029Packet(inspection, items = /** @type {Record<string, unknown>[]} */ (inspection.items)) {
+  return {
+    target: canonicalTarget(inspection.target),
+    items: items
+      .filter((item) => (
+        !['missing', 'nontext', 'overflow'].includes(/** @type {string} */ (item.status))
+        && Object.hasOwn(item, 'text')
+      ))
+      .map((item) => ({
+        source: item.source,
+        descriptor: {
+          required: item.required,
+          status: item.status,
+          sha256: item.sha256,
+          byteLength: item.byteLength,
+        },
+        text: item.text,
+      })),
+  };
+}
+
+/** @param {Record<string, unknown>} inspection @param {Record<string, unknown>[]} [items] */
+function feature029PacketBytes(inspection, items) {
+  return Buffer.byteLength(canonicalJson(feature029Packet(inspection, items)));
+}
+
+/** @param {string} root */
+function writeFeature029OversizedOwnerLog(root) {
+  const eventLines = Array.from({ length: 96 }, (_, index) => (
+    `- 2026-08-10 owner event ${String(index + 1).padStart(3, '0')} ${'x'.repeat(720)}`
+  ));
+  const ownerPath = path.join(root, IDEA_PATH);
+  fs.writeFileSync(ownerPath, [
+    '---',
+    'title: Autonomous RunState Continuity',
+    'slug: autonomous-runstate-continuity',
+    'status: defined',
+    `spec_path: ${TARGET.specPath}`,
+    '---',
+    '',
+    '## Idea',
+    '',
+    'Keep accepted state authoritative.',
+    '',
+    '## Coordinator Log',
+    '',
+    ...eventLines,
+    '',
+  ].join('\n'));
+  return {
+    ownerPath,
+    ownerBytes: fs.readFileSync(ownerPath),
+    events: eventLines.map((line) => `${line}\n`),
+  };
+}
+
+/**
+ * @param {Record<string, unknown>} assessment
+ * @param {string} label
+ * @param {number} checkCount
+ */
+function feature029SpecialistPair(assessment, label, checkCount) {
+  const result = focusedSpecialistPair(assessment, label);
+  result.verification.checks = Array.from({ length: checkCount }, (_, index) => ({
+    definition: `Feature 029 Tester check ${label} ${String(index + 1).padStart(2, '0')}`,
+    outcome: 'passed',
+    evidence: `Feature 029 Tester evidence ${label} ${String(index + 1).padStart(2, '0')}`,
+  }));
+  return result;
+}
+
+/** @param {Record<string, unknown>} input */
+function feature029CaptureByteLength(input) {
+  return ['verification', 'review']
+    .flatMap((source) => (
+      Array.isArray(input[source])
+        ? /** @type {Record<string, unknown>[]} */ (input[source])
+        : []
+    ))
+    .reduce((total, entry) => {
+      const bytes = /** @type {Record<string, unknown>} */ (entry.bytes);
+      return total + Buffer.from(/** @type {string} */ (bytes.base64), 'base64').byteLength;
+    }, 0);
+}
+
+/**
+ * Run the public runner while observing, but never authoring, the production
+ * capture request and its freshly rebuilt Inspection.
+ * @param {Record<string, unknown>} request
+ * @param {string} label
+ */
+async function runFeature029Settlement(request, label) {
+  /** @type {Record<string, unknown>[]} */
+  const observations = [];
+  const result = await runHostAdapter(request, {
+    checkpoint: memoryCheckpointStore().port,
+    runtime: {
+      identity: sha256(`feature-029-runtime:${label}`),
+      invoke(command, lowLevelRequest) {
+        const output = { status: 'returned', value: runCommand(command, lowLevelRequest) };
+        const lowLevel = /** @type {Record<string, unknown>} */ (lowLevelRequest);
+        const input = lowLevel.input && typeof lowLevel.input === 'object'
+          ? /** @type {Record<string, unknown>} */ (lowLevel.input)
+          : {};
+        const value = /** @type {Record<string, unknown>} */ (output.value);
+        if (Object.hasOwn(value, 'inspection')) {
+          const verification = Array.isArray(input.verification) ? input.verification : [];
+          const review = Array.isArray(input.review) ? input.review : [];
+          observations.push({
+            command,
+            mode: typeof lowLevel.mode === 'string' ? lowLevel.mode : null,
+            verificationCount: verification.length,
+            reviewCount: review.length,
+            captureByteLength: feature029CaptureByteLength(input),
+            inspection: clone(value.inspection),
+          });
+        }
+        return output;
+      },
+    },
+  });
+  return { result, observations };
+}
+
+/**
+ * @param {Record<string, unknown>[]} observations
+ * @param {string} label
+ */
+function feature029CapturedInspection(observations, label) {
+  const captureIndex = observations.findIndex((row) => (
+    row.command === 'complete' && row.mode === 'capture'
+  ));
+  assert.notEqual(captureIndex, -1, `${label}: production completion capture was observed`);
+  const capture = observations[captureIndex];
+  assert.equal(capture.verificationCount, 1, `${label}: production Tester capture`);
+  assert.equal(capture.reviewCount, 1, `${label}: production Reviewer capture`);
+  assert.ok(capture.captureByteLength > 0, `${label}: production captures have bytes`);
+  const before = observations.slice(0, captureIndex).find((row) => row.captureByteLength === 0);
+  assert.ok(before, `${label}: an Inspection existed before captures`);
+  assert.notEqual(
+    capture.inspection.evidenceHash,
+    before.inspection.evidenceHash,
+    `${label}: Inspection was rebuilt after trusted captures`,
+  );
+  const capturedSources = capture.inspection.items
+    .filter((item) => item.status === 'present' && typeof item.text === 'string')
+    .map((item) => item.source);
+  assert.ok(capturedSources.includes('verification'), `${label}: rebuilt Inspection admits Tester evidence`);
+  assert.ok(capturedSources.includes('review'), `${label}: rebuilt Inspection admits Reviewer evidence`);
+  return capture;
+}
+
+/**
+ * @param {Record<string, unknown>} inspection
+ * @param {string[]} allEvents
+ * @param {string} label
+ */
+function assertFeature029MaximalSuffix(inspection, allEvents, label) {
+  const packet = modelPacket(inspection);
+  assert.ok(packet, `${label}: fresh Inspection has a model packet`);
+  assert.equal(
+    feature029PacketBytes(inspection),
+    Buffer.byteLength(canonicalJson(packet)),
+    `${label}: test projection matches the production packet`,
+  );
+  assert.ok(packet.items.length <= 16, `${label}: packet remains within the item ceiling`);
+  assert.ok(
+    Buffer.byteLength(canonicalJson(packet)) <= FEATURE_029_PACKET_BYTES,
+    `${label}: packet remains within the byte ceiling`,
+  );
+  const ownerItem = inspection.items.find((item) => item.source === 'owner-log');
+  assert.ok(ownerItem && typeof ownerItem.text === 'string', `${label}: owner projection is admitted`);
+  const owner = JSON.parse(ownerItem.text);
+  const included = /** @type {string[]} */ (owner.events);
+  const first = /** @type {number} */ (owner.firstIncludedEventOrdinal);
+  assert.equal(owner.totalEventCount, allEvents.length, `${label}: complete event count`);
+  assert.ok(first > 1, `${label}: oversized fixture omits an older event`);
+  assert.deepEqual(included, allEvents.slice(first - 1), `${label}: selected events are one exact suffix`);
+
+  const expandedEvents = allEvents.slice(first - 2);
+  const expandedText = canonicalJson({
+    ideaPath: owner.ideaPath,
+    specPath: owner.specPath,
+    fullLogSha256: owner.fullLogSha256,
+    fullLogByteLength: owner.fullLogByteLength,
+    totalEventCount: owner.totalEventCount,
+    includedEventCount: expandedEvents.length,
+    omittedEventCount: first - 2,
+    firstIncludedEventOrdinal: first - 1,
+    lastIncludedEventOrdinal: owner.totalEventCount,
+    events: expandedEvents,
+  });
+  const expandedOwner = {
+    ...ownerItem,
+    ...contentDescriptor(expandedText),
+    text: expandedText,
+  };
+  const expandedItems = inspection.items.map((item) => (
+    item === ownerItem ? expandedOwner : item
+  ));
+  assert.ok(
+    feature029PacketBytes(inspection, expandedItems) > FEATURE_029_PACKET_BYTES,
+    `${label}: adding the immediately preceding whole event crosses the byte ceiling`,
+  );
+  return owner;
+}
+
+nodeTest('Feature 029 rebuilds the owner suffix through actual host-adapter settlement captures', async () => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const owner = writeFeature029OversizedOwnerLog(root);
+    const tasksBefore = fs.readFileSync(path.join(root, TASKS_PATH));
+    const taskStateBefore = fs.readFileSync(path.join(root, TASK_STATE_PATH));
+
+    const smallRequest = focusedRunnerRequest(root);
+    smallRequest.specialistResult = feature029SpecialistPair(smallRequest.assessment, 'small', 1);
+    const smallRun = await runFeature029Settlement(smallRequest, 'small');
+    assert.equal(smallRun.result.outcome, 'ended', 'the public terminal settlement route is reachable');
+    assert.equal(smallRun.result.reason, 'task-settled');
+    assert.ok(
+      smallRun.result.steps.some((step) => (
+        step.step === 'attempt:1:settle-completion' && step.reason === 'completed'
+      )),
+      'the captured completion reaches the actual settlement step',
+    );
+    const smallCapture = feature029CapturedInspection(smallRun.observations, 'small');
+    const smallOwner = assertFeature029MaximalSuffix(smallCapture.inspection, owner.events, 'small');
+    assert.deepEqual(fs.readFileSync(owner.ownerPath), owner.ownerBytes, 'small run leaves the owner byte-identical');
+
+    // Reset only the temporary lane surfaces so the same temporary owner ledger
+    // can drive a second, independently settled result pair.
+    fs.writeFileSync(path.join(root, TASKS_PATH), tasksBefore);
+    fs.writeFileSync(path.join(root, TASK_STATE_PATH), taskStateBefore);
+
+    const largeRequest = focusedRunnerRequest(root);
+    largeRequest.specialistResult = feature029SpecialistPair(largeRequest.assessment, 'large', 16);
+    const largeRun = await runFeature029Settlement(largeRequest, 'large');
+    assert.equal(largeRun.result.outcome, 'ended', 'larger capture set settles through the public route');
+    assert.equal(largeRun.result.reason, 'task-settled');
+    const largeCapture = feature029CapturedInspection(largeRun.observations, 'large');
+    const largeOwner = assertFeature029MaximalSuffix(largeCapture.inspection, owner.events, 'large');
+
+    assert.ok(
+      largeCapture.captureByteLength > smallCapture.captureByteLength + 2_000,
+      'sixteen Tester checks produce a materially larger actual capture set',
+    );
+    assert.ok(
+      largeOwner.includedEventCount <= smallOwner.includedEventCount,
+      'larger captures admit no more owner events',
+    );
+    assert.ok(
+      largeOwner.includedEventCount < smallOwner.includedEventCount,
+      'the chosen fixture strictly shrinks the selected suffix',
+    );
+    assert.deepEqual(fs.readFileSync(owner.ownerPath), owner.ownerBytes, 'both runs leave the owner byte-identical');
+  });
+});
 
 /**
  * @param {Record<string, unknown>} request

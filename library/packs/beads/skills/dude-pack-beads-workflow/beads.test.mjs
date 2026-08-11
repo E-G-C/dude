@@ -42,7 +42,7 @@ const FIXTURE = `## Setup
 
 function ideaLedger(specPath = SPEC_PATH, status = 'defined', idea = 'Test idea.') {
   const specLine = specPath === null ? '' : `spec_path: ${specPath}\n`;
-  return `---\nstatus: ${status}\n${specLine}---\n\n## Idea\n\n${idea}\n\n## Coordinator Log\n\n- Existing log entry.\n`;
+  return `---\nstatus: ${status}\n${specLine}---\n\n## Idea\n\n${idea}\n\n## Coordinator Log\n\n- 2026-01-01 Existing log entry.\n`;
 }
 
 /** @param {string} src @param {string} dest */
