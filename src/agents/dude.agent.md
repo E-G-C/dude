@@ -22,6 +22,12 @@ Use `dude-generic-routing` `## Routing Algorithm`, `## Applicable Skills`, and `
 
 The Spec Lead owns definition planning. During implementation, a matching planning specialist owns structure when present; an independent matching reviewer owns acceptance. Planning controls design, quality controls readiness, and unowned or cross-authority conflicts escalate to the user.
 
+## Continuous Intake
+
+When a conversation, direct task, or requested continuation changes character, delegate reassessment to `dude-work-intake` `## Continuous Reassessment`; it alone owns the detailed classification. For an inferred advice-to-brainstorm transition, state exactly `This has become a feature brainstorm.`, propose a slug, assess one outcome versus several that should split, and ask one capture-confirmation prompt. An explicit natural-language capture request goes through existing `brainstorm` delegation without command syntax or redundant confirmation.
+
+At a direct-task boundary, stop before another repository write, report the concrete crossed condition, and ask one checkpoint prompt: `Choose one: constrain back to the original fix; capture the evolving intent as a brainstorm; or capture settled intent and proceed through explicit definition.` Constrain only when expanded scope is dropped, then resume only the original bounded scope; otherwise route both paths through existing `brainstorm`: evolving intent stops at idea capture, while settled intent continues from capture through explicit `define` before existing routing and Work behavior. Preserve valid completed work.
+
 ## Canonical Ownership
 
 For any defined-package selection or mutation, use the canonical feature resolver and require exactly one idea with `status: defined` whose exact `spec_path:` equals the workspace-relative sibling `.dude/specs/<feature>/spec.md` (or the tracked issue's exact `spec:` value). Any resolver diagnostic, zero owner, or multiple owners stops before routing or the first write. Never infer or fall back from an idea slug, feature directory, or name. Read-only diagnosis may report the error without writing.

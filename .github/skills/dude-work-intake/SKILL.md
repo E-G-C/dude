@@ -11,6 +11,16 @@ Read applicable project memory and conventions. Decide whether the request is a 
 
 For a fresh project, establish: one feature or several outcomes, implement now or define only, and material hard constraints. Do not repeat questions already answered. Implementation without an explicit Beads request defaults to Lightweight Execution.
 
+## Continuous Reassessment
+
+This skill is the sole detailed owner of continuous intake: rerun classification whenever a conversation or task materially changes character; the initial route is not permanent. Keep direct facts, casual thoughts, questions, recommendations, exploration, and bounded direct work direct while their classification conditions hold.
+
+- **Advice or exploration:** treat it as a feature-brainstorm checkpoint only when the user has accepted a direction and the discussion describes a nameable project outcome with meaningful scope, constraints, or tradeoffs. State exactly `This has become a feature brainstorm.`, propose a concise slug, and assess whether it is one bounded outcome or several outcomes that should split.
+- If that transition is inferred, ask for capture confirmation before any write. An explicit, unambiguous natural-language request to brainstorm or capture an idea is sufficient capture intent: do not require command syntax or redundant confirmation. Reuse `## Brainstorm` to capture only the existing idea ledger; if several bounded outcomes have separate success tests, ask one split question or propose separate ledgers before capture. Definition, tasks, and implementation remain separate and require the existing explicit definition route.
+- **Direct work:** it remains eligible only while it has one clear outcome, no unresolved behavior, new architecture, public contract, persistent state, or additional independent outcome, and its original focused verification still proves completion. If any condition fails, reclassify before the next repository write and explain the concrete crossed boundary.
+- That direct-task checkpoint is mandatory: ask one prompt offering `constrain back to the original fix`, `capture the evolving intent as a brainstorm`, or `capture settled intent and proceed through explicit definition`. Direct continuation is allowed only after the expanded scope is dropped; preserve already valid completed work without retroactive rollback or added bureaucracy.
+- Apply qualitative judgment, never turn, file, token, diff-size, or other numeric thresholds; a large mechanical change alone is not feature work. Reuse existing brainstorm, idea, definition, routing, and Work behavior; GitHub issue intake remains separate. Add no command, parser, counter, state store, registry, daemon, workflow engine, alternate workflow, or automatic background capture.
+
 ## Brainstorm
 
 `@dude brainstorm <idea>` creates or refreshes exactly one flat `.dude/ideas/<slug>.md` and never creates or refreshes `.dude/specs/`.
