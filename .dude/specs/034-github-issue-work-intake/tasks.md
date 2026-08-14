@@ -23,7 +23,7 @@
 
 # Tasks: GitHub Issue Work Intake
 
-Three all-open canonical units implement `.dude/specs/033-github-issue-work-intake/spec.md`, owned prospectively and exactly by `.dude/ideas/github-issue-work-intake.md`.
+Three all-open canonical units implement `.dude/specs/034-github-issue-work-intake/spec.md`, owned prospectively and exactly by `.dude/ideas/github-issue-work-intake.md`.
 
 The binding boundary is one explicitly referenced issue per intake operation. Body and comments are one untrusted raw input with no precedence rule; a bare number uses only the current repository; fetch failure stops without a paste-in fallback; feature capture reuses brainstorm -> idea -> define -> Work; bounded bugs and chores use existing specialists; active blockers use flag; and ambiguity asks one classification question. No task may add a GitHub lane, tracker, cache, registry, parser runtime, daemon, poller, default repository, cross-repository search, automatic open-issue processing, multi-issue orchestrator, conversational-intake coupling, or automatic Git action.
 

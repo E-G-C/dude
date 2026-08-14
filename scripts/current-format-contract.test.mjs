@@ -5557,6 +5557,75 @@ test('T002 Feature 029 keeps bounded owner-log guidance, one body, and generated
   }
 });
 
+test('continuous work-intake reassessment is section-bound and mutation-resistant', () => {
+  const intakeRelative = 'src/skills/dude-work-intake/SKILL.md';
+  const intakeHeading = '## Continuous Reassessment';
+  const coordinatorRelative = 'src/agents/dude.agent.md';
+  const coordinatorHeading = '## Continuous Intake';
+  const instructionsRelative = 'src/instructions/dude.instructions.md';
+  const instructionsHeading = '# Dude Shared Rules';
+  const directWriterRule = '15. A directly dispatched writer keeps direct repository work bounded only while it has one clear outcome, no unresolved behavior, new architecture, public contract, persistent state, or additional independent outcome, and the original focused verification still proves completion. If any condition fails, stop before another repository write and report the concrete crossed condition to the coordinator; do not capture, define, or mutate workflow state. Size alone does not trigger this stop, and valid completed work is preserved without rollback.';
+
+  const contracts = [
+    {
+      relative: intakeRelative,
+      heading: intakeHeading,
+      ruleLines: [
+        'This skill is the sole detailed owner of continuous intake: rerun classification whenever a conversation or task materially changes character; the initial route is not permanent. Keep direct facts, casual thoughts, questions, recommendations, exploration, and bounded direct work direct while their classification conditions hold.',
+        '- **Advice or exploration:** treat it as a feature-brainstorm checkpoint only when the user has accepted a direction and the discussion describes a nameable project outcome with meaningful scope, constraints, or tradeoffs. State exactly `This has become a feature brainstorm.`, propose a concise slug, and assess whether it is one bounded outcome or several outcomes that should split.',
+        '- If that transition is inferred, ask for capture confirmation before any write. An explicit, unambiguous natural-language request to brainstorm or capture an idea is sufficient capture intent: do not require command syntax or redundant confirmation. Reuse `## Brainstorm` to capture only the existing idea ledger; if several bounded outcomes have separate success tests, ask one split question or propose separate ledgers before capture. Definition, tasks, and implementation remain separate and require the existing explicit definition route.',
+        '- **Direct work:** it remains eligible only while it has one clear outcome, no unresolved behavior, new architecture, public contract, persistent state, or additional independent outcome, and its original focused verification still proves completion. If any condition fails, reclassify before the next repository write and explain the concrete crossed boundary.',
+        '- That direct-task checkpoint is mandatory: ask one prompt offering `constrain back to the original fix`, `capture the evolving intent as a brainstorm`, or `capture settled intent and proceed through explicit definition`. Direct continuation is allowed only after the expanded scope is dropped; preserve already valid completed work without retroactive rollback or added bureaucracy.',
+        '- Apply qualitative judgment, never turn, file, token, diff-size, or other numeric thresholds; a large mechanical change alone is not feature work. Reuse existing brainstorm, idea, definition, routing, and Work behavior; GitHub issue intake remains separate. Add no command, parser, counter, state store, registry, daemon, workflow engine, alternate workflow, or automatic background capture.',
+      ],
+    },
+    {
+      relative: coordinatorRelative,
+      heading: coordinatorHeading,
+      ruleLines: [
+        'When a conversation, direct task, or requested continuation changes character, delegate reassessment to `dude-work-intake` `## Continuous Reassessment`; it alone owns the detailed classification. For an inferred advice-to-brainstorm transition, state exactly `This has become a feature brainstorm.`, propose a slug, assess one outcome versus several that should split, and ask one capture-confirmation prompt. An explicit natural-language capture request goes through existing `brainstorm` delegation without command syntax or redundant confirmation.',
+        'At a direct-task boundary, stop before another repository write, report the concrete crossed condition, and ask one checkpoint prompt: `Choose one: constrain back to the original fix; capture the evolving intent as a brainstorm; or capture settled intent and proceed through explicit definition.` Constrain only when expanded scope is dropped, then resume only the original bounded scope; otherwise route both paths through existing `brainstorm`: evolving intent stops at idea capture, while settled intent continues from capture through explicit `define` before existing routing and Work behavior. Preserve valid completed work.',
+      ],
+    },
+    {
+      relative: instructionsRelative,
+      heading: instructionsHeading,
+      ruleLines: [directWriterRule],
+    },
+  ];
+
+  assert.deepEqual(
+    ACTIVE_SOURCE_FILES.filter((relative) => visibleMarkdown(read(relative)).split('\n')
+      .some((line) => line.trim() === intakeHeading)),
+    [intakeRelative],
+    'dude-work-intake is the sole detailed reassessment owner',
+  );
+
+  for (const { relative, heading, ruleLines } of contracts) {
+    assert.equal(
+      visibleMarkdown(read(relative)).split('\n').filter((line) => line.trim() === heading).length,
+      1,
+      `${relative}: one visible ${heading}`,
+    );
+    assertSectionIncludesAll(relative, heading, ruleLines);
+    for (const ruleLine of ruleLines) {
+      assertSectionRuleRejectsMutations(relative, heading, ruleLine);
+    }
+  }
+
+  const coordinator = markdownSection(read(coordinatorRelative), coordinatorHeading);
+  assert.doesNotMatch(
+    coordinator,
+    /\b(?:no unresolved behavior|new architecture|public contract|persistent state|original focused verification|numeric thresholds?|large mechanical change)\b/i,
+    'the coordinator delegates detailed classification rather than duplicating it',
+  );
+  assert.match(
+    markdownSection(read(instructionsRelative), instructionsHeading),
+    /do not capture, define, or mutate workflow state\./,
+    'the direct-writer stop grants no capture, definition, or workflow-state authority',
+  );
+});
+
 // --- Feature 033: one explicit GitHub issue as intake material ----------------
 
 const GITHUB_ISSUE_INTAKE_OWNER = 'src/skills/dude-work-intake/SKILL.md';
@@ -6057,7 +6126,7 @@ test('GitHub issue intake rejects unsupported infrastructure and contradictory p
   }
   for (const relative of [
     ...GITHUB_ISSUE_AUTHORITY_PATHS,
-    '.dude/specs/033-github-issue-work-intake/spec.md',
+    '.dude/specs/034-github-issue-work-intake/spec.md',
   ]) {
     assert.equal(prohibitedGitHubIssueArtifact(relative), null, `allow ${relative}`);
   }

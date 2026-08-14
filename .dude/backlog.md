@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **3**
+- Ideas awaiting definition: **2**
 - Defined awaiting work: **0**
-- Completed: **35**
+- Completed: **36**
 
 ## Current
 
@@ -21,7 +21,6 @@ No current work to diagram.
 ### Ideas awaiting definition
 
 - `backlog-canvas` — Backlog Canvas (`.dude/ideas/backlog-canvas.md`)
-- `conversational-brainstorm-intake` — Conversational Brainstorm Intake Recognition (`.dude/ideas/conversational-brainstorm-intake.md`)
 - `multi-dude-work-coordination` — Multi-Dude Work Coordination (`.dude/ideas/multi-dude-work-coordination.md`)
 
 ## Completed
@@ -38,6 +37,7 @@ No current work to diagram.
 - `backlog-report` — Backlog Report (`.dude/ideas/backlog-report.md`)
 - `bounded-owner-log-projection` — Bounded Owner Log Projection (`.dude/ideas/bounded-owner-log-projection.md`)
 - `brainstorm-ideas-intake` — Brainstorm ideas intake (`.dude/ideas/brainstorm-ideas-intake.md`)
+- `conversational-brainstorm-intake` — Conversational Brainstorm Intake Recognition (`.dude/ideas/conversational-brainstorm-intake.md`)
 - `core-autonomous-event-round-trip` — Core Autonomous Event Round Trip (`.dude/ideas/core-autonomous-event-round-trip.md`)
 - `core-dogfood-close-simplification` — Core Dogfood Close Simplification (`.dude/ideas/core-dogfood-close-simplification.md`)
 - `core-dogfood-preview` — Core Dogfood Preview (`.dude/ideas/core-dogfood-preview.md`)

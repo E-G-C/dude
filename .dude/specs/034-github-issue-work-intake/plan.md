@@ -8,7 +8,7 @@ Feature issues use the existing brainstorm -> idea -> define -> Work lifecycle. 
 
 This is a Markdown authority and guidance change. It adds no parser module, runtime, API, cache, registry, state, lane, background process, or autonomous multi-issue caller. Existing static contract tests pin the behavior, and `node scripts/build-dev.mjs` projects the two authoritative `src/` changes into generated `.github/` core.
 
-The canonical feature identity is `.dude/specs/033-github-issue-work-intake/spec.md`, prospectively owned by `.dude/ideas/github-issue-work-intake.md`.
+The canonical feature identity is `.dude/specs/034-github-issue-work-intake/spec.md`, prospectively owned by `.dude/ideas/github-issue-work-intake.md`.
 
 This feature has no progress objective and no ObjectiveRegistry region.
 
