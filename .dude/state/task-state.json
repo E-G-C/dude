@@ -315,5 +315,13 @@
       "T003@61637074": "x"
     },
     "updated_at": "2026-08-11T23:20:37.123Z"
+  },
+  ".dude/specs/032-theme-agnostic-design-workflow/tasks.md": {
+    "glyphs": {
+      "T001@6465736e": "x",
+      "T002@73747261": "x",
+      "T003@72667368": "x"
+    },
+    "updated_at": "2026-08-14T02:23:51.000Z"
   }
 }

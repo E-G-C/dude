@@ -1,6 +1,6 @@
 ---
 name: Strata Stylist
-description: "Apply the Strata layered visual system to any visual surface — web pages, applications, components, SVG and graphics, data visualization, and long-form documents. Use when: apply Strata, use the Strata tokens, wire up --strata-* custom properties, switch to the spectrum palette, use the pigment palette, theme this app, style this chart, pick colours for these data series, add a dark theme, fix contrast, fix focus rings, put this on the spacing scale, make this less rounded, remove these drop shadows. Not a branding or trademark service: Strata is a neutral token system, unaffiliated with any company or design system, and ships no logo."
+description: "Apply the Strata layered visual system to any visual surface — web pages, applications, components, SVG and graphics, data visualization, and long-form documents. Use when: apply Strata, use the Strata tokens, wire up --strata-* custom properties, switch to the spectrum palette, use the pigment palette, work on an existing Strata surface. Not a branding or trademark service: Strata is a neutral token system, unaffiliated with any company or design system, and ships no logo."
 tools: ["read", "edit", "search", "todo"]
 user-invocable: false
 model-class: balanced

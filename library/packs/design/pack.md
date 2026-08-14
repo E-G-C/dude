@@ -28,22 +28,21 @@ technology domain.
 
 This lane stands on its own. Its only required handoffs are to **core**
 (`@dude-spec-lead` for the design-shaped spec package, `@dude-reviewer` for an
-independent readiness call), so it works in any project — including a hand-
-authored Hugo site with no other packs installed.
+independent readiness call), so it works in any project with no other packs
+installed. The full propose/approve/apply loop and its generic design-quality
+gates — accessibility, contrast, provenance, and functional realism — run
+entirely inside this lane.
 
-Its visual-system steps are **optional and conditional**:
+This pack provides no implementation specialist and no visual system.
+Implementation of an approved design routes to whichever installed specialist
+owns the actual target surface; the lane names none as a default, and when no
+owner is installed it asks which specialist owns the target rather than
+assuming one.
 
-- When the `strata` pack is also installed, the workflow runs the visual-system
-  validator (`dude-pack-strata-visual` scripts) and routes visual-quality
-  judgment to `@dude-pack-strata-stylist` *when visual identity is
-  material*.
-- When `strata` is absent, those references are inert (lint surfaces them as
-  warnings, not failures) and the lane simply runs without the visual-system
-  step.
-
-So: in a UI-only project you can install **`design` alone** and get the full
-propose/approve/apply loop; add `strata` (and/or `hugo` / `docsy`) only if you
-want the visual-system validator and theme specialists wired in.
+A chosen visual system is optional and independent of this lane. When a design
+selects one, that system is applied by its own pack and recorded only in the
+ordinary approved-direction and task wording — no registry, adapter, or schema.
+The lane references, requires, and activates no visual system of its own.
 
 ## Install / remove
 
@@ -51,9 +50,3 @@ want the visual-system validator and theme specialists wired in.
 @dude add pack design
 @dude remove pack design
 ```
-
-## Related packs
-
-- `strata` — adds the visual-system validator and visual-quality authority this lane
-  will use when present.
-- `hugo` / `docsy` — the surfaces a design spec is typically applied to.

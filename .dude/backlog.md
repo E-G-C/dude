@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **2**
+- Ideas awaiting definition: **3**
 - Defined awaiting work: **0**
-- Completed: **33**
+- Completed: **34**
 
 ## Current
 
@@ -21,6 +21,7 @@ No current work to diagram.
 ### Ideas awaiting definition
 
 - `backlog-canvas` — Backlog Canvas (`.dude/ideas/backlog-canvas.md`)
+- `conversational-brainstorm-intake` — Conversational Brainstorm Intake Recognition (`.dude/ideas/conversational-brainstorm-intake.md`)
 - `multi-dude-work-coordination` — Multi-Dude Work Coordination (`.dude/ideas/multi-dude-work-coordination.md`)
 
 ## Completed
@@ -55,6 +56,7 @@ No current work to diagram.
 - `specialist-attestation-producer` — Specialist Attestation Producer (`.dude/ideas/specialist-attestation-producer.md`)
 - `task-scoped-skill-resolution` — Task-Scoped Skill Resolution (`.dude/ideas/task-scoped-skill-resolution.md`)
 - `technical-docs-pack-remediation` — Technical Docs Pack Remediation (`.dude/ideas/technical-docs-pack-remediation.md`)
+- `theme-agnostic-design-workflow` — Theme-Agnostic And Technology-Independent Design Workflow (`.dude/ideas/theme-agnostic-design-workflow.md`)
 - `topology-first-enforcement-reset` — Add A Topology-First Reset When Review Revisions Expand Enforcement Scope (`.dude/ideas/topology-first-enforcement-reset.md`)
 - `transactional-pack-refresh` — Transactional Pack Refresh (`.dude/ideas/transactional-pack-refresh.md`)
 - `unattended-work-continuity` — Unattended Work Continuity (`.dude/ideas/unattended-work-continuity.md`)

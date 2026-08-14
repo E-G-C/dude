@@ -160,7 +160,7 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
       "files": [
         ".github/skills/dude-pack-design-workflow"
       ],
-      "installed_at": "2026-08-07T20:03:49.585Z",
+      "installed_at": "2026-08-14T02:12:03.624Z",
       "inventory": {
         "version": 1,
         "pack": "design",
@@ -169,17 +169,17 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
           "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-issue-3-add-a-topology-first-reset-when-review-r-891391/library/packs",
           "ref": ""
         },
-        "manifest_sha256": "b84e483a57d059ca6541f03bdd8a058d5b0a88922f8c049dd14dd1ee19b1eb15",
+        "manifest_sha256": "d467c55830226f02dd35ad0bb9b35e3b8e9fcebc5ee17c294a6af32f421b46d1",
         "artifacts": [
           {
             "path": ".github/skills/dude-pack-design-workflow",
             "kind": "skills",
             "source": "skills/dude-pack-design-workflow",
-            "source_sha256": "9947a711fc5ab431e1bbd6050a75dd72cfa20e7cc5cfab86f46bf1d9a0436252",
-            "installed_sha256": "9947a711fc5ab431e1bbd6050a75dd72cfa20e7cc5cfab86f46bf1d9a0436252"
+            "source_sha256": "3689ed45018b0c186fdf9f5fb50d664bdd2839221e7e363acd47adcf214f8103",
+            "installed_sha256": "3689ed45018b0c186fdf9f5fb50d664bdd2839221e7e363acd47adcf214f8103"
           }
         ],
-        "digest": "3937a912cbcb7346c384fae9d5d7872444653adcf6d38dc35b025ee9249dc440"
+        "digest": "d7bf95e7a9f28a9599fddf5b838e44bca1be36a87250a72aaa486a440a7d9fd4"
       }
     },
     "release": {
@@ -235,11 +235,10 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
     "strata": {
       "files": [
         ".github/agents/dude-pack-strata-stylist.agent.md",
-        ".github/instructions/dude-pack-strata-visual-system.instructions.md",
         ".github/prompts/dude-pack-strata-apply-visual-system.prompt.md",
         ".github/skills/dude-pack-strata-visual"
       ],
-      "installed_at": "2026-08-10T20:13:38.829Z",
+      "installed_at": "2026-08-14T02:12:03.700Z",
       "inventory": {
         "version": 1,
         "pack": "strata",
@@ -248,21 +247,14 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
           "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-issue-3-add-a-topology-first-reset-when-review-r-891391/library/packs",
           "ref": ""
         },
-        "manifest_sha256": "dd12136218d4203160480e056f207ab28dfaff6b0f8cb6642ec06633d06ff150",
+        "manifest_sha256": "892085c187769671eb6fc53678938abba657fa83ce0d8f130fcd315f3c3b6924",
         "artifacts": [
           {
             "path": ".github/agents/dude-pack-strata-stylist.agent.md",
             "kind": "agents",
             "source": "agents/dude-pack-strata-stylist.agent.md",
-            "source_sha256": "670745e809ba75adb1da6c3e36e467d4230e4c26242dc14d640c5428e3c27fce",
-            "installed_sha256": "6dbd5a396fd273caada209e6a79c5ac0f6a5c00fecfa324472d1405cba2b81a8"
-          },
-          {
-            "path": ".github/instructions/dude-pack-strata-visual-system.instructions.md",
-            "kind": "instructions",
-            "source": "instructions/dude-pack-strata-visual-system.instructions.md",
-            "source_sha256": "3fc8e9a31aae4ced9b903c0502d59b2810c2a43849dab780094af6afa888fa1d",
-            "installed_sha256": "3fc8e9a31aae4ced9b903c0502d59b2810c2a43849dab780094af6afa888fa1d"
+            "source_sha256": "bf0459a30faaa204119a3e6bbcb42754b5f3cad29c17726295e358be8e8c85a7",
+            "installed_sha256": "74d8dff722143009893556396a91ef42ae19d8981c3914a4d356bed709f833c3"
           },
           {
             "path": ".github/prompts/dude-pack-strata-apply-visual-system.prompt.md",
@@ -275,11 +267,11 @@ into this bundle's `.github/`. It is maintained by `dude-compose`
             "path": ".github/skills/dude-pack-strata-visual",
             "kind": "skills",
             "source": "skills/dude-pack-strata-visual",
-            "source_sha256": "16c8d4c3b4bbc6192221254f1cd8112d2325ccc001a0f9d6eac4681792ef66b9",
-            "installed_sha256": "16c8d4c3b4bbc6192221254f1cd8112d2325ccc001a0f9d6eac4681792ef66b9"
+            "source_sha256": "a691ccb12e9206c56ba92d935aeb1d985c3cffdb042eb9df4d6b91c4eef19c71",
+            "installed_sha256": "a691ccb12e9206c56ba92d935aeb1d985c3cffdb042eb9df4d6b91c4eef19c71"
           }
         ],
-        "digest": "71b4d1f70b1777ac3b8cca396ed8b6a4e271e6d722c29081de6589c25e83c9d3"
+        "digest": "8c1879133927338f3014d08ee1ee12e65422bfab202dce1f2bcd758ad335c2cd"
       }
     },
     "writing": {

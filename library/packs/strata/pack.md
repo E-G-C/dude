@@ -6,8 +6,6 @@ provides:
     - dude-pack-strata-stylist
   skills:
     - dude-pack-strata-visual
-  instructions:
-    - dude-pack-strata-visual-system.instructions.md
   prompts:
     - dude-pack-strata-apply-visual-system.prompt.md
 ---
@@ -85,12 +83,6 @@ palette. Never reference a colour by name in component code.
   - `tokens/` — CSS, SCSS, JSON, and a Tailwind preset.
   - `scripts/` — `strata-check.sh` / `strata-check.ps1`, folder-local
     validators.
-
-### Instructions
-
-- `dude-pack-strata-visual-system.instructions.md` — colour, typography,
-  spacing, radius, elevation, motion, data visualization, and accessibility
-  rules for matching source files.
 
 ### Prompts
 
