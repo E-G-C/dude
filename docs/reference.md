@@ -21,6 +21,18 @@ own: `@dude-spec-lead` still owns every definition artifact, `status:`, the exac
 back through an explicit `@dude brainstorm`, and a deliberate package refresh
 goes through an explicit `@dude define`.
 
+### GitHub Issue Intake
+
+Dude treats an issue body and its comments as one raw input. No label, author,
+comment age, or position has priority. The surrounding request controls
+classification and handoff: a question about an issue stays a direct answer, and
+only a capture or execution request follows an existing route.
+
+If retrieval fails, intake stops with an actionable error that identifies the
+submitted reference and reason. It offers no paste-in substitute. When the
+combined material remains unclear during interactive intake, Dude asks exactly
+one classification question and leaves the issue unadmitted without an answer.
+
 ```mermaid
 flowchart TD
   A["User idea or PRD"] --> BS["@dude brainstorm"]

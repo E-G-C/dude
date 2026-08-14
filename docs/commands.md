@@ -40,6 +40,36 @@ it with `@dude add pack beads`.
 
 Preferred workflow verbs are `brainstorm`, `define`, `ship`, `status`, `track`, `work`, `flag`, `diff`, and `self-check`. `hire`, `remember`, `upgrade`, `sync Beads to tasks.md`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
 
+### GitHub Issue Input
+
+One explicit GitHub issue can supply material to an existing request:
+
+```text
+@dude brainstorm E-G-C/dude#20
+@dude brainstorm https://github.com/E-G-C/dude/issues/20
+@dude ship issue 20
+```
+
+Numbers without an owner and repository resolve only in the current repository.
+Another repository requires `owner/repository#number` or a URL. Dude has no
+default-repository setting or cross-repository search.
+
+Dude reads the issue body and comments together as one raw input. No label,
+author, comment age, or position decides the route. Classification and handoff
+occur only when the surrounding request asks to capture or execute work; a
+request only about an issue receives a direct answer and admits nothing.
+
+The route depends on substance:
+
+- A feature request enters the existing brainstorm capture.
+- When execution is requested, a bounded bug or chore uses the existing
+  implementation, testing, and independent review path.
+- A blocker with a clear relationship to active work uses existing flag behavior.
+- If the material remains unclear, Dude asks exactly one classification question.
+
+If Dude cannot fetch the issue or its comments, it stops with an actionable error
+that names the submitted reference and reason. There is no paste-in fallback.
+
 ### `@dude ship`
 
 Ship carries one target through whatever lifecycle stages it still needs, and is
@@ -103,6 +133,12 @@ explicit `@dude define`.
 Ship performs no automatic Git or release action: no branch, worktree, commit,
 push, reset, or publish. Ship carries lifecycle advancement, not release
 publication, so a future release action is free to use its own verb.
+
+When existing delivery behavior creates a pull request for admitted issue work,
+it uses `gh pr create --base main`, includes `Fixes #<number>` for a
+same-repository issue or `Fixes <owner>/<repository>#<number>` when repositories
+differ, then verifies `baseRefName` with `gh pr view --json baseRefName`. Dude
+does not create a pull request on its own as part of issue intake.
 
 Ship runs autonomously with an unlimited budget: at recoverable checkpoints it
 authorizes the next attempt itself instead of handing the decision back to you.

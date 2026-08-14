@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **7**
+- Ideas awaiting definition: **6**
 - Defined awaiting work: **0**
-- Completed: **34**
+- Completed: **36**
 
 ## Current
 
@@ -22,7 +22,6 @@ No current work to diagram.
 
 - `backlog-canvas` — Backlog Canvas (`.dude/ideas/backlog-canvas.md`)
 - `bulk-pack-refresh` — Bulk Pack Refresh (`.dude/ideas/bulk-pack-refresh.md`)
-- `conversational-brainstorm-intake` — Conversational Brainstorm Intake Recognition (`.dude/ideas/conversational-brainstorm-intake.md`)
 - `multi-dude-work-coordination` — Multi-Dude Work Coordination (`.dude/ideas/multi-dude-work-coordination.md`)
 - `pack-catalog-refetch` — Pack Catalog Re-fetch (`.dude/ideas/pack-catalog-refetch.md`)
 - `simplify-pack-updates` — Simplify Pack Updates (`.dude/ideas/simplify-pack-updates.md`)
@@ -42,11 +41,13 @@ No current work to diagram.
 - `backlog-report` — Backlog Report (`.dude/ideas/backlog-report.md`)
 - `bounded-owner-log-projection` — Bounded Owner Log Projection (`.dude/ideas/bounded-owner-log-projection.md`)
 - `brainstorm-ideas-intake` — Brainstorm ideas intake (`.dude/ideas/brainstorm-ideas-intake.md`)
+- `conversational-brainstorm-intake` — Conversational Brainstorm Intake Recognition (`.dude/ideas/conversational-brainstorm-intake.md`)
 - `core-autonomous-event-round-trip` — Core Autonomous Event Round Trip (`.dude/ideas/core-autonomous-event-round-trip.md`)
 - `core-dogfood-close-simplification` — Core Dogfood Close Simplification (`.dude/ideas/core-dogfood-close-simplification.md`)
 - `core-dogfood-preview` — Core Dogfood Preview (`.dude/ideas/core-dogfood-preview.md`)
 - `feature-focus-order` — Feature Focus Order (`.dude/ideas/feature-focus-order.md`)
 - `first-definition-publish` — First-Definition Publish (`.dude/ideas/first-definition-publish.md`)
+- `github-issue-work-intake` — GitHub Issue Work Intake (`.dude/ideas/github-issue-work-intake.md`)
 - `good-enough-delivery` — Good Enough Delivery (`.dude/ideas/good-enough-delivery.md`)
 - `guarded-directory-artifact-import` — Guarded Directory Artifact Import (`.dude/ideas/guarded-directory-artifact-import.md`)
 - `historical-core-dogfood-fixture-repair` — Historical Core Dogfood Fixture Repair (`.dude/ideas/historical-core-dogfood-fixture-repair.md`)

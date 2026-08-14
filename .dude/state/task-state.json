@@ -323,5 +323,20 @@
       "T003@72667368": "x"
     },
     "updated_at": "2026-08-14T02:23:51.000Z"
+  },
+  ".dude/specs/033-conversational-brainstorm-intake/tasks.md": {
+    "glyphs": {
+      "T001@696e746b": "x",
+      "T002@67617465": "x"
+    },
+    "updated_at": "2026-08-14T16:08:23.396Z"
+  },
+  ".dude/specs/034-github-issue-work-intake/tasks.md": {
+    "glyphs": {
+      "T001@69737375": "x",
+      "T002@67756964": "x",
+      "T003@61637074": "x"
+    },
+    "updated_at": "2026-08-14T16:40:43.892Z"
   }
 }

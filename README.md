@@ -84,6 +84,25 @@ before it can define anything. Two lines of your own words get you further. Use 
 bare name to resume a feature that already has an idea or a spec package rather
 than to start one.
 
+## GitHub Issue Input
+
+One explicit GitHub issue can provide raw material for an ordinary request:
+
+```text
+@dude brainstorm E-G-C/dude#20
+@dude brainstorm https://github.com/E-G-C/dude/issues/20
+@dude ship issue 20
+```
+
+A bare number resolves only in the current repository. To name an issue
+elsewhere, use `owner/repository#number` or a URL; Dude has no
+default-repository setting and does not search across repositories.
+
+A reference supplies input only. It does not authorize work. Asking what an
+issue says gets a direct answer and admits no work; capture or execution asks
+Dude to classify it.
+Merely discovering or displaying an issue does not authorize execution.
+
 ## What Dude Writes
 
 Once the first two stages finish, the feature looks like this on disk:

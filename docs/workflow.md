@@ -23,6 +23,19 @@ question, and ownership or resolver diagnostics stay hard refusals. `@dude work`
 is the advanced form when you need to set the budgets or policy yourself, and the
 [command reference](commands.md#dude-ship) owns the full contract.
 
+### GitHub Issue Intake
+
+An explicit GitHub issue adds raw input to this lifecycle. It creates no GitHub
+lane, tracker, or command. When a feature is captured, its accepted idea includes
+`Origin: <canonical issue URL>` as visible prose, and Ship continues through the
+usual define and Work stages.
+
+After capture, the Dude idea and package are authoritative for intent and
+execution. Later GitHub edits do not silently rewrite either. A bounded execution
+request for a bug or chore stays with existing implementation, testing, and
+independent review; a blocker against active work uses flag behavior. A discovered
+or merely displayed issue remains unadmitted and has no execution authority.
+
 ### Driving the stages yourself
 
 Ship runs the same stages you can run one at a time. After `@dude define`,
