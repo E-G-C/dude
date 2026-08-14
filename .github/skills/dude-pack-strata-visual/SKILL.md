@@ -9,11 +9,8 @@ description:
   spacing, motion tokens, a seven-slot categorical chart ramp, and measured WCAG
   contrast across all four surfaces, in CSS, SCSS, JSON, and Tailwind. USE WHEN
   the user says "apply Strata", "use the Strata tokens", "wire up --strata-*",
-  "switch to the spectrum palette", "use the pigment palette", "theme this app",
-  "theme this component", "style this chart", "pick colours for these data
-  series", "give this a dark theme", "put this on the spacing scale", "fix the
-  contrast", "fix the focus rings", "make this less rounded", or "get rid of
-  these drop shadows". Includes folder-local validators (strata-check.sh /
+  "switch to the spectrum palette", or "use the pigment palette", or is working
+  on an existing Strata surface. Includes folder-local validators (strata-check.sh /
   strata-check.ps1) that check cross-format and cross-palette token parity, the
   no-shadow rule, and the radius ceiling. DO NOT USE FOR applying a real
   company's brand identity, logos, wordmarks, product marks, or trademark
@@ -31,14 +28,14 @@ logo, wordmark, or icon. It does not cover trademark or brand policy.
 
 ## When to use this skill
 
-Use it when the user asks to:
+Use it only when the user explicitly reaches for Strata — by name, by its
+tokens, or by its named palettes — or is working on a surface already built
+with Strata:
 
-- Apply Strata, or wire up the `--strata-*` tokens, in any build system
-- Theme an application, page, component, chart, slide, or report
-- Switch between the `pigment` and `spectrum` palettes, or add a dark theme
-- Choose colours for data series
-- Fix contrast, focus rings, drop shadows, or off-scale spacing and radii
-- Bring an arbitrary surface onto the spacing, type, and motion scales
+- Apply Strata, or use the Strata tokens, in any build system
+- Wire up the `--strata-*` custom properties
+- Switch to the spectrum palette, or use the pigment palette
+- Continue work on an existing Strata surface
 
 Do **not** use it for applying a real company's brand identity, generating a
 logo or product mark, or trademark guidance. Point the user at that company's

@@ -1,6 +1,6 @@
 ---
 name: "dude-pack-design-workflow"
-description: "Use for visual/site design proposal workflows: mood, layout, look-and-feel, mockups, Hugo/Docsy surface design, brand direction, preview approval, and applying an approved visual spec."
+description: "Use when agreeing a visual direction before changing a rendered surface (a site, app, document, or other artifact): mood, layout, look-and-feel, mockups, tokens, typography, spacing, color system, brand direction, preview approval, and applying an approved visual spec."
 ---
 
 # Design Proposal Workflow
@@ -19,9 +19,9 @@ Load this skill for requests involving:
 
 - visual design proposal, mockup, moodboard, design direction, look and feel
 - page/section layout, card treatment, masthead, hero, nav, editorial or magazine treatment
-- Hugo/Docsy rendered surfaces where the main question is visual direction
-- brand fit, Microsoft visual-brand application, tokens, typography, spacing, color system
-- "show me options", "agree on the visual elements", "before adding it to the website"
+- rendered surfaces where the main question is visual direction
+- brand fit, tokens, typography, spacing, color system
+- "show me options", "agree on the visual elements", "before we ship it"
 
 If the request is only a small implementation fix with no open visual direction, route normally to the owning specialist and use the standard execution path.
 
@@ -54,34 +54,30 @@ Exploration is normally a **live mock loop**, not a writing exercise. During `de
 - Build a throwaway `preview.html`, then **edit -> render -> screenshot -> user corrects -> repeat**. The screenshots are the evidence; a full `spec.md` is not required yet.
 - **Refinements are ungated.** Size, spacing, copy, and color tweaks do not need an approval prompt. Only the eventual *direction* sign-off is gated.
 - The scratch preview may live anywhere while exploring (for example under `design/`). Once `spec.md` exists, the accepted preview belongs under `.dude/specs/<feature>/design/` and `preview_path:` points at it.
-- **Mirror:** if the mock already backs real proposal artifacts (a `proposed/` template or SCSS tree), mirror each accepted mock change into those artifacts in the same turn. If there is no proposal artifact yet, say the mock is still scratch-only.
+- **Mirror:** if the mock already backs real proposal artifacts (a `proposed/` template or style-source tree), mirror each accepted mock change into those artifacts in the same turn. If there is no proposal artifact yet, say the mock is still scratch-only.
 - **Provenance:** every field shown in the mock must map to a real content or front-matter source, or be dropped. Do not ship invented sample values such as fake counts or estimated reading times into the real templates.
-- **Buildable affordances:** every actionable element (button, link, form field, share / submit / feedback control) must map to a capability the static site can actually deliver, not just look real. See **Functional Realism** below. Do not mock server-dependent actions — submit feedback, share to Teams, email-this, like / save, login — as if they already worked.
+- **Buildable affordances:** every actionable element (button, link, form field, share / submit / feedback control) must map to a capability the target can actually deliver, not just look real. See **Functional Realism** below. Do not mock affordances outside the target's declared capability envelope — submit feedback, share or send to an external service, email-this, like / save, login — as if they already worked.
 
 **Settle.** When the user stops correcting a surface and moves on, or asks to wire it in, the direction has *settled* (`design_status: proposed`). At settle, backfill `spec.md` **Visual Intent**, **Proposed Direction**, and the **Revision Log** (retroactive entries are fine), and have the coordinator append the settle event to the uniquely owning companion idea's `## Coordinator Log`. Settle happens **before** approval; approval is the next gate.
 
 ## Functional Realism
 
-A mock is a proposal for something the site can actually become, not just a picture. Every element a viewer could act on — button, link, form field, share / submit / feedback control, toggle, menu — must map to a capability this site can really deliver. If an element cannot be wired to something real, it does not belong in the mock, however good it looks.
+A mock is a proposal for something the target can actually become, not just a picture. Every element a viewer could act on — button, link, form field, share / submit / feedback control, toggle, menu — must map to a capability the real target can deliver. If an element cannot be wired to something real, it does not belong in the mock, however good it looks.
 
-This is a **static Hugo/Docsy site with no backend**, so anything that needs server-side processing or per-user state cannot be built as drawn. Treat these as **not buildable** unless there is a concrete static-compatible mechanism:
+What the target can deliver is not assumed. The **capability envelope** is whatever the actual target's implementation owner declares, meaning the installed specialist who owns that surface. Some targets are static with no backend; others have a server, a datastore, authentication, or live data. Validate each actionable element against the declared envelope for this target, never against a fixed assumption. A dynamic target may legitimately build affordances a static one cannot, and a static target cannot build affordances that need a server.
 
-- submit feedback / contact / comment forms that post to a server
-- "share to Teams" or "send via email" as in-app actions, or any server-sent message
-- like / save / bookmark / subscribe that persists per user
-- login, gated content, or anything that reads a signed-in identity
-- server-side search-with-write, voting, view counters, or live data that changes without a rebuild
+If no implementation owner has declared an envelope, request one before evaluating realism. Ask the owner of the actual target what it can deliver rather than assuming a default technology or a static, backend-free surface.
 
-An actionable element is valid only when it connects to something real:
+An actionable element is valid only when it maps to something inside the declared envelope, for example:
 
-- a link to a page, section, or anchor that exists (or will exist) on the site
-- a `mailto:` link, or a deep link to a real external service (a real Teams / Forms / SharePoint URL)
-- client-side-only behavior that runs in the browser (expand / collapse, copy-to-clipboard, filtering already-rendered content)
-- content or front matter that genuinely exists on the page
+- a link to a place that exists (or will exist) on the target
+- a real destination the envelope supports, such as an email link or a deep link to a real external service
+- behavior the envelope runs locally in the rendered surface (expand / collapse, copy, filtering already-rendered content)
+- content or data that genuinely exists on the surface
 
-When a design idea wants a capability the static site cannot provide, resolve it **before** drawing it as a finished affordance:
+When a design idea wants a capability outside the declared envelope, resolve it **before** drawing it as a finished affordance:
 
-1. replace it with a real static-compatible equivalent (a `mailto:` or a real Forms / Teams link instead of a fake "submit feedback" button), or
+1. replace it with a real equivalent the envelope does support, or
 2. drop the element and record the limitation under `## Scope And Surfaces` (out of scope) or `## Assumptions`, or
 3. flag it as `design-gap` and route it back instead of approving a mock that cannot be built.
 
@@ -157,7 +153,7 @@ Use these sections, omitting sections that do not materially apply:
 - ...
 ```
 
-`plan.md` is optional and lean for design work. Use it only when the implementation "how" matters, for example which Hugo templates, partials, shortcodes, SCSS files, or tokens will realize the approved look.
+`plan.md` is optional and lean for design work. Use it only when the implementation "how" matters, for example which concrete surfaces, components, or style sources will realize the approved look.
 
 ## Preview Assets
 
@@ -174,7 +170,7 @@ Prefer one preview at first. Use multiple options only when the direction is gen
 
 ## Approval Gate
 
-Execution must not touch the live site until the proposal is approved.
+Execution must not touch the live target surface until the proposal is approved.
 
 Accept direct approval phrases such as:
 
@@ -199,7 +195,7 @@ If the user asks to implement before approval, stop and ask for approval or revi
 After approval, derive `tasks.md` normally. Design tasks should be phrased as applying the approved spec to concrete surfaces, for example:
 
 ```markdown
-- [ ] T001@a1b2c3d4 [P] [US1] Apply approved news-card visual treatment to layouts/_shortcodes/news-card.html and assets/scss/_styles_project.scss
+- [ ] T001@a1b2c3d4 [P] [US1] Apply approved news-card visual treatment to the news-card surface and its shared style source
 ```
 
 Keep task IDs, glyphs, dependencies, board fences, and coordinator-only mutation rules exactly as defined in `dude-feature-definition` and `dude-lightweight-execution`. `tasks.md` holds the canonical task units in either lane, but when `@dude track` has activated tracked execution, execution state is governed by Beads per `dude-pack-beads-workflow` and `tasks.md` is a one-way mirror only.
@@ -208,17 +204,14 @@ Keep task IDs, glyphs, dependencies, board fences, and coordinator-only mutation
 
 When an implementation task applies an approved design, close it only after fresh visual evidence:
 
-1. Render or build the relevant surface (for this repo, prefer the existing Hugo/Docsy build/server command).
+1. Render or build the relevant surface using the target owner's build or preview mechanism.
 2. Capture or inspect the rendered surface at the relevant breakpoints.
-3. Run the Strata visual-system validator when the task touches a styled visual surface:
-   - `pwsh .github/skills/dude-pack-strata-visual/scripts/strata-check.ps1`
-   - or `bash .github/skills/dude-pack-strata-visual/scripts/strata-check.sh`
-4. Confirm every displayed field traces to real page content, front matter, or site config, and every actionable element (link, button, form, share / submit control) resolves to a real destination or client-side behavior — no invented sample values and no fake or server-dependent affordances. See **Functional Realism**.
+3. Confirm accessibility and contrast on the rendered surface itself: interactive elements are reachable and show a visible focus state, and text and essential UI meet WCAG AA contrast. Judge this against the accessibility constraints in `spec.md`, not against any theme or external validator.
+4. Confirm every displayed field traces to real content, data, or configuration, and every actionable element (link, button, form, share / submit control) resolves to a real destination or local behavior inside the target's declared capability envelope — no invented sample values and no affordances the target cannot deliver. See **Functional Realism**.
 5. Compare the result to the approved preview in `spec.md`.
-6. Route visual quality judgment to `@dude-pack-strata-stylist` when visual identity is material.
-7. Classify the result using the Post-Implementation Refinement Loop below.
-8. Have the coordinator append the close classification and any routing decision to the uniquely owning companion idea's `## Coordinator Log`.
-9. Only when the result matches the approved spec and works in the real rendered context may the coordinator close the task through the active lane: in Lightweight Execution mark the task `[x]` in `tasks.md`; in tracked execution close the Beads issue (`bd close`) and mirror the result one-way to `tasks.md` per `dude-pack-beads-workflow`.
+6. Classify the result using the Post-Implementation Refinement Loop below.
+7. Have the coordinator append the close classification and any routing decision to the uniquely owning companion idea's `## Coordinator Log`.
+8. Only when the result matches the approved spec and works in the real rendered context may the coordinator close the task through the active lane: in Lightweight Execution mark the task `[x]` in `tasks.md`; in tracked execution close the Beads issue (`bd close`) and mirror the result one-way to `tasks.md` per `dude-pack-beads-workflow`.
 
 If visual evidence fails, leave the task open or blocked and route the issue with `@dude flag ...`.
 
@@ -258,16 +251,14 @@ Use `design-gap` when reporting or flagging this blocker. A design-gap is a desi
 
 - For every route concerning an existing design package, first resolve its uniquely owning companion idea by exact `spec_path`; the coordinator appends the routed handoff and reason to that idea's `## Coordinator Log`.
 - Use `@dude-spec-lead` for maintaining idea metadata and the design-shaped `spec.md` package during definition.
-- Use the owning Hugo/Docsy specialist for site-specific implementation or template decisions.
-- Use `@dude-pack-strata-stylist` as visual quality authority for surfaces using the Strata visual system.
+- Route implementation, and any target-specific build or capability decision, to the installed specialist that owns the actual target surface; name no specialist as a default. If no owner is installed for the target, ask which specialist owns it rather than assuming one.
 - Use `@dude-reviewer` only when an independent readiness judgment is needed.
 
 ## Avoid
 
 - Do not create a separate `design-brief.md` plus `design-proposal.md`; the approved proposal is `spec.md`.
 - Do not ask the user to choose an execution lane; without active tracking, execution defaults to Lightweight Execution from `tasks.md`, and when `@dude track` is active, Beads is the live board with `tasks.md` mirror-only.
-- Do not implement into the live site before `design_status: approved`.
+- Do not implement into the live target surface before `design_status: approved`.
 - Do not keep executing when the rendered implementation exposes a `design-gap`; reopen the proposal and require re-approval.
-- Do not mock affordances the static site cannot deliver (submit feedback, share to Teams, email-this, like / save, login, server-side forms) as if they were real; map every actionable element to a real destination or client-side behavior, or drop it. See **Functional Realism**.
+- Do not mock affordances the target cannot deliver (submit feedback, share or send to an external service, email-this, like / save, login) as if they were real; map every actionable element to a real destination or local behavior inside the target's declared capability envelope, or drop it. See **Functional Realism**.
 - Do not invent a new color system, typography system, or logo treatment when existing tokens/patterns apply.
-- Do not route external/customer-facing Microsoft brand questions through this workflow; redirect to Microsoft Brand Central.
