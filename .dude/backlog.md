@@ -8,7 +8,7 @@ A read-only view built from idea files, linked feature files, task records, and 
 - Ready / Next: **0**
 - Ideas awaiting definition: **3**
 - Defined awaiting work: **0**
-- Completed: **34**
+- Completed: **35**
 
 ## Current
 
@@ -43,6 +43,7 @@ No current work to diagram.
 - `core-dogfood-preview` — Core Dogfood Preview (`.dude/ideas/core-dogfood-preview.md`)
 - `feature-focus-order` — Feature Focus Order (`.dude/ideas/feature-focus-order.md`)
 - `first-definition-publish` — First-Definition Publish (`.dude/ideas/first-definition-publish.md`)
+- `github-issue-work-intake` — GitHub Issue Work Intake (`.dude/ideas/github-issue-work-intake.md`)
 - `good-enough-delivery` — Good Enough Delivery (`.dude/ideas/good-enough-delivery.md`)
 - `guarded-directory-artifact-import` — Guarded Directory Artifact Import (`.dude/ideas/guarded-directory-artifact-import.md`)
 - `historical-core-dogfood-fixture-repair` — Historical Core Dogfood Fixture Repair (`.dude/ideas/historical-core-dogfood-fixture-repair.md`)
