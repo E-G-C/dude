@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   cmdAdd,
@@ -67,6 +68,86 @@ function createRoot() {
   fs.mkdirSync(path.join(root, 'library', 'packs'), { recursive: true });
   packageDependencies(root);
   return root;
+}
+
+/** @returns {string} */
+function createReleasedRoot() {
+  const root = createRoot();
+  fs.rmSync(path.join(root, 'library'), { recursive: true, force: true });
+  return root;
+}
+
+/** @param {string} cwd @param {...string} args */
+function runGit(cwd, ...args) {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  assert.equal(
+    result.status,
+    0,
+    `git ${args.join(' ')} failed in ${cwd}: ${result.stderr || result.stdout || 'no output'}`,
+  );
+  return result.stdout.trim();
+}
+
+/**
+ * Write one minimal remote pack whose source and rendered bytes identify the
+ * published revision.
+ * @param {string} repo
+ * @param {string} name
+ * @param {string} version
+ */
+function writeRemotePack(repo, name, version) {
+  const pack = path.join(repo, 'library', 'packs', name);
+  fs.rmSync(pack, { recursive: true, force: true });
+  fs.mkdirSync(path.join(pack, 'agents'), { recursive: true });
+  fs.writeFileSync(
+    path.join(pack, 'pack.md'),
+    `---\nname: ${name}\ndescription: ${JSON.stringify(`${name} catalog ${version}`)}\n---\n# ${name} ${version}\n`,
+  );
+  fs.writeFileSync(
+    path.join(pack, 'agents', `dude-pack-${name}-worker.agent.md`),
+    agentSource({ name: `${name} ${version}` }),
+  );
+}
+
+/** @param {string} repo @param {string} message */
+function commitRemote(repo, message) {
+  runGit(repo, 'add', '-A');
+  runGit(repo, '-c', 'user.email=fixture@example.test', '-c', 'user.name=Remote Fixture', 'commit', '-qm', message);
+  return runGit(repo, 'rev-parse', 'HEAD');
+}
+
+/**
+ * Create a Git worktree used only through its file URL, so compose follows its
+ * production remote-clone branch rather than its local-directory shortcut.
+ * @returns {{ parent: string, repo: string, source: string }}
+ */
+function createRemoteCatalog() {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-compose-remote-'));
+  const repo = path.join(parent, 'catalog');
+  fs.mkdirSync(repo);
+  runGit(repo, 'init', '-q', '-b', 'main');
+  return { parent, repo, source: pathToFileURL(repo).href };
+}
+
+/** @param {string} root @param {string} source @param {string} ref */
+function writeManifestSource(root, source, ref) {
+  const target = path.join(root, '.dude', 'metadata', 'bundle-manifest.md');
+  fs.writeFileSync(target, `# Bundle Manifest\n\n\`\`\`json\n${JSON.stringify({ source_repo: source, source_ref: ref })}\n\`\`\`\n`);
+}
+
+/** @param {ReturnType<typeof cmdList>} listed @param {string} name @param {string} description */
+function assertListedDescription(listed, name, description) {
+  assert.equal(listed.ok, true, listed.error);
+  const pack = listed.result?.packs.find((candidate) => candidate.name === name);
+  assert.equal(pack?.description, description);
+}
+
+/** @param {string} root @param {string} name @param {string} version */
+function assertInstalledVersion(root, name, version) {
+  assert.match(
+    fs.readFileSync(path.join(root, '.github', 'agents', `dude-pack-${name}-worker.agent.md`), 'utf8'),
+    new RegExp(`You are ${name} ${version}\\.`),
+  );
 }
 
 /**
@@ -392,6 +473,288 @@ function staticModuleClosure(entryPath) {
   }
   return closure;
 }
+
+test('remote manifest branch re-fetches current bytes for released-bundle list, add, and refresh', async () => {
+  const remote = createRemoteCatalog();
+  const root = createReleasedRoot();
+  const library = path.join(root, 'library', 'packs');
+  try {
+    writeRemotePack(remote.repo, 'demo', 'A');
+    commitRemote(remote.repo, 'publish A');
+    writeManifestSource(root, remote.source, 'main');
+    assert.equal(exists(path.join(root, 'library')), false, 'consumer must have the released-bundle shape');
+
+    // Arrange: list creates the first remote checkout at A.
+    assertListedDescription(cmdList({ root, library }), 'demo', 'demo catalog A');
+
+    // Act/Assert: each later consumer runs after a new branch publication.
+    writeRemotePack(remote.repo, 'demo', 'B');
+    commitRemote(remote.repo, 'publish B');
+    assertListedDescription(cmdList({ root, library }), 'demo', 'demo catalog B');
+
+    writeRemotePack(remote.repo, 'demo', 'C');
+    commitRemote(remote.repo, 'publish C');
+    const added = await cmdAdd({ root, library, name: 'demo', force: false });
+    assert.equal(added.ok, true, added.error);
+    assertInstalledVersion(root, 'demo', 'C');
+
+    writeRemotePack(remote.repo, 'demo', 'D');
+    commitRemote(remote.repo, 'publish D');
+    const refreshed = await cmdRefresh({ root, library, name: 'demo' });
+    assert.equal(refreshed.ok, true, refreshed.error);
+    assertInstalledVersion(root, 'demo', 'D');
+  } finally {
+    cleanup(root);
+    cleanup(remote.parent);
+  }
+});
+
+test('remote concrete tags and latest releases are resolved again after publication moves', async () => {
+  const tagRemote = createRemoteCatalog();
+  const latestRemote = createRemoteCatalog();
+  const tagRoot = createReleasedRoot();
+  const latestRoot = createReleasedRoot();
+  try {
+    writeRemotePack(tagRemote.repo, 'demo', 'tag-A');
+    commitRemote(tagRemote.repo, 'publish tag A');
+    runGit(tagRemote.repo, 'tag', 'catalog-fixture');
+    writeManifestSource(tagRoot, tagRemote.source, 'catalog-fixture');
+    assertListedDescription(
+      cmdList({ root: tagRoot, library: path.join(tagRoot, 'library', 'packs') }),
+      'demo',
+      'demo catalog tag-A',
+    );
+    writeRemotePack(tagRemote.repo, 'demo', 'tag-B');
+    commitRemote(tagRemote.repo, 'publish tag B');
+    runGit(tagRemote.repo, 'tag', '-f', 'catalog-fixture');
+    const tagAdded = await cmdAdd({
+      root: tagRoot,
+      library: path.join(tagRoot, 'library', 'packs'),
+      name: 'demo',
+      force: false,
+    });
+    assert.equal(tagAdded.ok, true, tagAdded.error);
+    assertInstalledVersion(tagRoot, 'demo', 'tag-B');
+
+    writeRemotePack(latestRemote.repo, 'demo', 'release-1');
+    commitRemote(latestRemote.repo, 'publish release 1');
+    runGit(latestRemote.repo, 'tag', 'v1.0.0');
+    writeManifestSource(latestRoot, latestRemote.source, 'latest');
+    assertListedDescription(
+      cmdList({ root: latestRoot, library: path.join(latestRoot, 'library', 'packs') }),
+      'demo',
+      'demo catalog release-1',
+    );
+    writeRemotePack(latestRemote.repo, 'demo', 'release-2');
+    commitRemote(latestRemote.repo, 'publish release 2');
+    runGit(latestRemote.repo, 'tag', 'v1.1.0');
+    assertListedDescription(
+      cmdList({ root: latestRoot, library: path.join(latestRoot, 'library', 'packs') }),
+      'demo',
+      'demo catalog release-2',
+    );
+  } finally {
+    cleanup(tagRoot);
+    cleanup(latestRoot);
+    cleanup(tagRemote.parent);
+    cleanup(latestRemote.parent);
+  }
+});
+
+test('a full remote SHA remains exact but refuses when its prior remote becomes unavailable', async () => {
+  const remote = createRemoteCatalog();
+  const root = createReleasedRoot();
+  const library = path.join(root, 'library', 'packs');
+  try {
+    writeRemotePack(remote.repo, 'demo', 'SHA-A');
+    const pinned = commitRemote(remote.repo, 'publish SHA A');
+    writeManifestSource(root, remote.source, pinned);
+    assertListedDescription(cmdList({ root, library }), 'demo', 'demo catalog SHA-A');
+
+    // Moving ordinary refs cannot alter a full-SHA selection.
+    writeRemotePack(remote.repo, 'demo', 'SHA-B');
+    commitRemote(remote.repo, 'publish SHA B');
+    runGit(remote.repo, 'tag', '-f', 'mutable-fixture');
+    const added = await cmdAdd({ root, library, name: 'demo', force: false });
+    assert.equal(added.ok, true, added.error);
+    assertInstalledVersion(root, 'demo', 'SHA-A');
+
+    // The earlier SHA checkout exists, so this would succeed under SHA checkout
+    // reuse. Removing the file:// source makes a fresh clone observable.
+    fs.renameSync(remote.repo, `${remote.repo}-offline`);
+    const repeated = cmdList({ root, library });
+    assert.equal(repeated.ok, false);
+    assert.equal(repeated.code, 2);
+    assert.match(repeated.error || '', /failed to fetch source/);
+  } finally {
+    cleanup(root);
+    cleanup(remote.parent);
+  }
+});
+
+test('unavailable mutable remotes refuse list, add, and refresh without stale mutation', async () => {
+  const remote = createRemoteCatalog();
+  const root = createReleasedRoot();
+  const library = path.join(root, 'library', 'packs');
+  try {
+    writeRemotePack(remote.repo, 'demo', 'online');
+    writeRemotePack(remote.repo, 'other', 'online');
+    commitRemote(remote.repo, 'publish online catalog');
+    writeManifestSource(root, remote.source, 'main');
+    assertListedDescription(cmdList({ root, library }), 'demo', 'demo catalog online');
+    const installed = await cmdAdd({ root, library, name: 'demo', force: false });
+    assert.equal(installed.ok, true, installed.error);
+    assertInstalledVersion(root, 'demo', 'online');
+
+    // A previous checkout is now available at compose's usual destination, but
+    // the selected remote can no longer provide current bytes.
+    fs.renameSync(remote.repo, `${remote.repo}-offline`);
+    const listed = cmdList({ root, library });
+    assert.equal(listed.ok, false);
+    assert.equal(listed.code, 2);
+    assert.match(listed.error || '', /failed to fetch source/);
+
+    const beforeAdd = mutationSnapshot(root);
+    const added = await cmdAdd({ root, library, name: 'other', force: false });
+    assert.equal(added.ok, false);
+    assert.match(added.error || '', /failed to fetch source/);
+    assertMutationUnchanged(root, beforeAdd);
+    assert.equal(readProfile(root).installed.other, undefined);
+    assertNoPackLeftovers(root, 'other');
+
+    const beforeRefresh = mutationSnapshot(root);
+    const refreshed = await cmdRefresh({ root, library, name: 'demo' });
+    assert.equal(refreshed.ok, false);
+    assert.match(refreshed.error || '', /failed to fetch source/);
+    assertMutationUnchanged(root, beforeRefresh);
+  } finally {
+    cleanup(root);
+    cleanup(remote.parent);
+  }
+});
+
+test('remote source selection preserves local authority, explicit inputs, manifest fallback, and no-fetch', async () => {
+  const remote = createRemoteCatalog();
+  const root = createRoot();
+  const explicitRoot = createReleasedRoot();
+  const noFetchRoot = createReleasedRoot();
+  try {
+    writeRemotePack(remote.repo, 'remote-only', 'manifest');
+    commitRemote(remote.repo, 'publish manifest main');
+    runGit(remote.repo, 'checkout', '-qb', 'explicit-fixture');
+    writeRemotePack(remote.repo, 'explicit-only', 'explicit');
+    commitRemote(remote.repo, 'publish explicit branch');
+    runGit(remote.repo, 'checkout', '-q', 'main');
+
+    writePack(root, 'local', [packAgent('local', 'worker', { name: 'Local Worker' })], { skill: false });
+    writeManifestSource(root, remote.source, 'main');
+    const library = path.join(root, 'library', 'packs');
+
+    // A whole local catalog wins even with a configured remote.
+    const localList = cmdList({ root, library });
+    assertListedDescription(localList, 'local', 'local fixture pack');
+    assert.equal(localList.result?.packs.some((pack) => pack.name === 'remote-only'), false);
+    assert.equal(localList.result?.origin, 'local');
+
+    // The requested local target also wins over an explicit unusable source.
+    const localAdded = await cmdAdd({
+      root,
+      library,
+      name: 'local',
+      force: false,
+      source: 'file:///definitely-missing-local-precedence',
+      ref: 'main',
+    });
+    assert.equal(localAdded.ok, true, localAdded.error);
+    const localSource = path.join(root, 'library', 'packs', 'local', 'agents', 'dude-pack-local-worker.agent.md');
+    fs.writeFileSync(
+      localSource,
+      fs.readFileSync(localSource, 'utf8').replace('You are Local Worker.', 'You are Local Worker refreshed.'),
+    );
+    const localRefreshed = await cmdRefresh({
+      root,
+      library,
+      name: 'local',
+      source: 'file:///definitely-missing-local-precedence',
+      ref: 'main',
+    });
+    assert.equal(localRefreshed.ok, true, localRefreshed.error);
+    assert.match(
+      fs.readFileSync(path.join(root, '.github', 'agents', 'dude-pack-local-worker.agent.md'), 'utf8'),
+      /You are Local Worker refreshed\./,
+    );
+
+    // Other local catalog content does not block a missing target's manifest
+    // fallback from reaching the remote.
+    const remoteAdded = await cmdAdd({ root, library, name: 'remote-only', force: false });
+    assert.equal(remoteAdded.ok, true, remoteAdded.error);
+    assertInstalledVersion(root, 'remote-only', 'manifest');
+
+    // Explicit source/ref values override an unusable manifest.
+    writeManifestSource(explicitRoot, 'file:///definitely-missing-manifest', 'main');
+    assertListedDescription(
+      cmdList({
+        root: explicitRoot,
+        library: path.join(explicitRoot, 'library', 'packs'),
+        source: remote.source,
+        ref: 'explicit-fixture',
+      }),
+      'explicit-only',
+      'explicit-only catalog explicit',
+    );
+
+    // An explicit source without a ref keeps main; it must not independently
+    // fill the ref from this conflicting manifest.
+    writeManifestSource(explicitRoot, 'file:///definitely-missing-manifest', 'explicit-fixture');
+    assertListedDescription(
+      cmdList({
+        root: explicitRoot,
+        library: path.join(explicitRoot, 'library', 'packs'),
+        source: remote.source,
+      }),
+      'remote-only',
+      'remote-only catalog manifest',
+    );
+
+    // An explicit ref combines with the manifest source instead of its ref.
+    writeManifestSource(explicitRoot, remote.source, 'main');
+    assertListedDescription(
+      cmdList({
+        root: explicitRoot,
+        library: path.join(explicitRoot, 'library', 'packs'),
+        ref: 'explicit-fixture',
+      }),
+      'explicit-only',
+      'explicit-only catalog explicit',
+    );
+
+    // Local-only callers neither need nor contact the configured remote.
+    writeManifestSource(noFetchRoot, 'file:///definitely-missing-no-fetch', 'main');
+    const noFetchList = cmdList({
+      root: noFetchRoot,
+      library: path.join(noFetchRoot, 'library', 'packs'),
+      fetch: false,
+    });
+    assert.equal(noFetchList.ok, true, noFetchList.error);
+    assert.deepEqual(noFetchList.result?.packs, []);
+    const noFetchBefore = mutationSnapshot(noFetchRoot);
+    const noFetchAdd = await cmdAdd({
+      root: noFetchRoot,
+      library: path.join(noFetchRoot, 'library', 'packs'),
+      name: 'remote-only',
+      force: false,
+      fetch: false,
+    });
+    assert.equal(noFetchAdd.ok, false);
+    assert.match(noFetchAdd.error || '', /pack not found in catalog/);
+    assertMutationUnchanged(noFetchRoot, noFetchBefore);
+  } finally {
+    cleanup(root);
+    cleanup(explicitRoot);
+    cleanup(noFetchRoot);
+    cleanup(remote.parent);
+  }
+});
 
 test('add renders one Copilot destination per source and writes version 1 inventory', async () => {
   const root = scaffold();

@@ -47,7 +47,7 @@ node .github/skills/dude-compose/compose.mjs verify          # temp-install + li
 
 Flags: `--root <dir>` (bundle root, default cwd), `--library <dir>` (catalog,
 default `<root>/library/packs`), `--source <repo>` / `--ref <ref>` (upstream for
-remote `add`/`list`; default the bundle manifest's
+remote `add`/`list`/`refresh`; default the bundle manifest's
 `source_repo` / `source_ref`), `--no-fetch` (never fetch — require the pack locally), `--json`
 (machine output), `--force` (overwrite existing destinations on add).
 Exit codes: `0` ok, `1` usage, `2` operation error.
@@ -160,25 +160,30 @@ inventory paths.
 
 ## Catalog Resolution
 
-`add` and `list` resolve the pack catalog in this order:
+`list` prefers a whole local catalog. `add` and `refresh` prefer the requested
+local target pack, but fetch that target when it is absent locally and fetching
+is enabled, even if other local packs exist.
 
 1. **Local catalog** — `<root>/library/packs/`. Present in the Dude
-   source/dogfood repo and in any install that vendors the catalog. Always wins
-   (it is the copy you can edit).
-2. **Remote catalog** — when the local catalog is absent (a released core ships
-   no `library/`), `compose.mjs` fetches the catalog from the bundle's upstream
-   source. `add` fetches the single `library/packs/<name>/`; `list` reads the
-   whole `library/packs/` to enumerate installable packs. The source is read
-   from `.dude/metadata/bundle-manifest.md` (`source_repo` / `source_ref`) —
-   the same trusted pin `dude-bundle-upgrade` already uses — or overridden with
-   `--source` / `--ref`. Local-path sources are read in place; remote sources are
-   shallow-cloned into a per-source cache under the OS temp dir and reused.
+   source/dogfood repo and in any install that vendors the catalog. It supplies
+   `list` and any requested target it contains (it is the copy you can edit).
+2. **Remote catalog** — when `list` has no local catalog, or `add` or `refresh`
+   needs a missing local target, `compose.mjs` fetches from the bundle's upstream
+   source. The source is read from `.dude/metadata/bundle-manifest.md`
+   (`source_repo` / `source_ref`) — the same trusted pin
+   `dude-bundle-upgrade` already uses — or overridden with `--source` / `--ref`.
+   Local-path sources are read in place; remote sources are cloned under the OS
+   temp dir. Every remote request gets current upstream bytes for that
+   invocation, including an exact full commit SHA; the SHA selects exact content
+   but never reuses an existing clone. A required remote fetch failure refuses
+   rather than using old fetched bytes.
 
 `--no-fetch` disables step 2 (require the pack locally; `list` then shows only
-the local catalog, which may be empty). The fetch reuses only the manifest's
-existing source pin; it does not invent arbitrary URLs. `git` is required for
-remote sources. For a fully offline/vendored install, use `dude-portability` to
-vendor the whole `library/` once.
+the local catalog, which may be empty). Remote selection uses only the manifest
+source pin unless `--source` / `--ref` overrides it; it does not invent
+arbitrary URLs. `git` is required for remote sources. For a fully
+offline/vendored install, use `dude-portability` to vendor the whole `library/`
+once.
 
 ## Verify (pack-source lint)
 

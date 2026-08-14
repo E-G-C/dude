@@ -1,8 +1,8 @@
 ---
 title: Pack Catalog Re-fetch
 slug: pack-catalog-refetch
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/035-pack-catalog-refetch/spec.md
 ---
 
 # Idea: Pack Catalog Re-fetch
@@ -19,19 +19,23 @@ not a request for a new distribution system.
 
 ### Q1: May pack fetching rely on an upstream policy that published tags never move, or must every non-SHA ref be treated as mutable?
 
-**Your answer:** _Pending._
+**Your answer:** Every remote ref other than a SHA is mutable, including tags.
 
 ### Q2: For a ref that can move, should every invocation re-fetch, update the existing clone, or use a short freshness window?
 
-**Your answer:** _Pending._
+**Your answer:** Every remote catalog-consuming operation must obtain current
+upstream bytes on every invocation. Use no TTL, freshness database, registry, or
+persistent cache metadata.
 
 ### Q3: Should `add` and `refresh` show the resolved concrete commit so “which revision did I just install?” is answerable without new persistent state?
 
-**Your answer:** _Pending._
+**Your answer:** No. Do not add revision display or persistent pack identity;
+`simplify-pack-updates` owns identity.
 
 ### Q4: If a required re-fetch fails or the consumer is offline, should the command use cached bytes with a clear warning or refuse?
 
-**Your answer:** _Pending._
+**Your answer:** Refuse clearly and never report success from potentially stale
+cached bytes.
 
 ## Established Evidence
 
@@ -65,50 +69,91 @@ not a request for a new distribution system.
 
 - Brainstorm intake only; no definition package, no implementation.
 - Local target-pack and local-catalog precedence remain unchanged.
-- No new registry, config file, or persistent freshness state is needed.
+- No TTL, freshness database, registry, config file, or persistent cache
+  metadata is needed.
 - Git remains required for remote sources, as today.
 - This is the freshness half of the split from `simplify-pack-updates`, which
-  owns bookkeeping simplification. Neither reopens Feature 031.
+  owns persistent pack identity and bookkeeping simplification. Neither reopens
+  Feature 031.
 
 <!-- dude:managed:start -->
 ## Normalized Intent
 
 - Make a published pack correction reachable on a consumer's next update
-  instead of silently re-projecting stale cached bytes for a moving ref.
-- Apply the smallest freshness correction to refs that can move, without
-  assuming temp-cache cleanup or treating tags as immutable Git objects.
-- Preserve local target-pack precedence. For remote resolution, retain explicit
-  flags with the manifest pin as fallback authority.
-- Decide whether published-tag policy permits tag-cache reuse, how remote cache
-  refresh works, what offline failure does, and whether commands show the
-  resolved commit without adding state.
-- Keep freshness separate from the bookkeeping simplification owned by
+  instead of silently re-projecting bytes from an earlier remote checkout.
+- Treat every remote ref other than a SHA as mutable, including a concrete tag,
+  while requiring every remote catalog-consuming `list`, `add`, or `refresh`
+  invocation to obtain current upstream bytes even when a full SHA was requested.
+- Preserve whole-local-catalog precedence for `list` and local target-pack
+  precedence for `add` and `refresh`. A missing local target may still use the
+  remote catalog when other local packs or other `library/` content exists.
+- For remote resolution, preserve explicit `--source` and `--ref` authority.
+  With no explicit source, use the manifest repository and, unless `--ref` is
+  explicit, its ref. With an explicit source and no explicit ref, preserve the
+  existing `main` default. Continue to honor local-only `--no-fetch` behavior.
+- Preserve pack opt-in, namespace, ownership, and release-channel selection
+  behavior; freshness changes only how the selected remote catalog is obtained.
+- Re-resolve moving release selectors such as `latest` on every remote
+  invocation, and do not assume a concrete published tag is immutable.
+- If current upstream bytes cannot be obtained, including while offline,
+  clearly refuse instead of reporting stale or empty success from an earlier
+  checkout.
+- Add neither revision display nor persistent pack identity. Keep freshness
+  separate from the identity and bookkeeping simplification owned by
   `simplify-pack-updates`, and do not reopen Feature 031.
 
 ## Constraints
 
-- Add no registry, cache format, config surface, daemon, scheduler, or workflow
-  lane.
+- Add no TTL, freshness database, registry, persistent cache metadata, cache
+  format, config surface, daemon, scheduler, workflow lane, or distribution
+  infrastructure.
 - Do not change local target-pack or local-catalog precedence.
-- Do not describe a concrete tag as immutable without a non-moving published-tag
-  policy.
-- Do not weaken pack namespace, ownership, or opt-in semantics.
-- Keep this as brainstorm-only scope; create no definition package and perform
-  no implementation.
+- Do not exempt any remote ref, including a full SHA, from per-invocation
+  fetching. A full SHA remains an immutable content selector, not permission to
+  reuse an earlier checkout.
+- Do not add revision display or persistent pack identity; that scope belongs to
+  `simplify-pack-updates`.
+- Do not report remote success when current upstream bytes were not obtained.
+- Do not weaken pack opt-in, namespace, ownership, or release-channel behavior.
+- Preserve Feature 031's installed-side authority, source staging, destination
+  diff, profile update, and all-or-restored refresh transaction.
 
 ## Definition Checklist
 
-- [x] Outcome is clear enough for brainstorm
-- [x] Cache lifetime, ref mutability, and source-resolution precedence are
-  stated accurately
-- [x] The exposed remote-consumer path is distinguished from local dogfood
-- [x] Boundaries against new state or distribution machinery are explicit
-- [x] Relationship to `simplify-pack-updates` and Feature 031 is explicit
-- [ ] Resolve tag policy, re-fetch strategy, offline behavior, and revision
-  output before definition
+- [x] Every remote invocation fetches again, including an exact full SHA, while
+  every non-SHA ref, including a concrete tag, is treated as mutable
+- [x] Remote `list`, `add`, and `refresh` freshness is independently testable
+- [x] Local precedence, explicit source/ref authority, manifest fallback, and
+  local-only behavior are preserved
+- [x] Moving release selectors and remote failures are covered
+- [x] Feature 031 transaction boundaries and `simplify-pack-updates` identity
+  scope remain unchanged
+- [x] The technology-agnostic specification has no unresolved clarification
+- [x] The implementation plan and four canonical tasks cover the smallest
+  current source and test surfaces while preserving execution state
 
 ## Coordinator Log
 
 - 2026-08-14 UTC - brainstorm captured
 - 2026-08-14 UTC - brainstorm revised after independent review
+- 2026-08-14 UTC - brainstorm rerun incorporated accepted freshness answers
+- 2026-08-14 UTC - first definition -> .dude/specs/035-pack-catalog-refetch/spec.md
+- 2026-08-14 UTC - definition reconciled -> .dude/specs/035-pack-catalog-refetch/spec.md
+- 2026-08-14 UTC - definition reconciled -> .dude/specs/035-pack-catalog-refetch/spec.md
+- 2026-08-14 UTC - T001@66726573 claimed for implementation
+- 2026-08-14 UTC - T001@66726573 closed after targeted verification
+- 2026-08-14 UTC - T002@72656772 claimed for regression coverage
+- 2026-08-14 UTC - T002@72656772 closed after targeted verification
+- 2026-08-14 UTC - T003@67617465 claimed for integrated validation
+- 2026-08-14 UTC - T003@67617465 closed after full bundle gates
+- 2026-08-14 UTC - T004@72657677 claimed for independent review
+- 2026-08-14 UTC - T002@72656772 reopened after review found two uncovered precedence cases
+- 2026-08-14 UTC - T003@67617465 reset pending refreshed evidence
+- 2026-08-14 UTC - T004@72657677 reset pending refreshed approval
+- 2026-08-14 UTC - T002@72656772 reclosed after focused precedence verification
+- 2026-08-14 UTC - T003@67617465 reclaimed for refreshed integrated validation
+- 2026-08-14 UTC - T003@67617465 reclosed after refreshed full bundle gates
+- 2026-08-14 UTC - T004@72657677 reclaimed for independent re-review
+- 2026-08-14 UTC - T004@72657677 closed after independent review approved the final diff
+- 2026-08-14 UTC - feature closed after all canonical tasks, full bundle gates, and independent approval completed
 <!-- dude:managed:end -->
