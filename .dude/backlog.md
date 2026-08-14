@@ -6,7 +6,7 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **2**
+- Ideas awaiting definition: **6**
 - Defined awaiting work: **0**
 - Completed: **36**
 
@@ -21,7 +21,11 @@ No current work to diagram.
 ### Ideas awaiting definition
 
 - `backlog-canvas` — Backlog Canvas (`.dude/ideas/backlog-canvas.md`)
+- `bulk-pack-refresh` — Bulk Pack Refresh (`.dude/ideas/bulk-pack-refresh.md`)
 - `multi-dude-work-coordination` — Multi-Dude Work Coordination (`.dude/ideas/multi-dude-work-coordination.md`)
+- `pack-catalog-refetch` — Pack Catalog Re-fetch (`.dude/ideas/pack-catalog-refetch.md`)
+- `simplify-pack-updates` — Simplify Pack Updates (`.dude/ideas/simplify-pack-updates.md`)
+- `upgrade-pack-guidance-correction` — Upgrade Pack Guidance Correction (`.dude/ideas/upgrade-pack-guidance-correction.md`)
 
 ## Completed
 
