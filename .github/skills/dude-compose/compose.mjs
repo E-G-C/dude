@@ -31,7 +31,7 @@
  * Flags:
  *   --root <dir>      bundle root (default: cwd). `.github` lives at <root>/.github
  *   --library <dir>   pack catalog dir (default: <root>/library/packs)
- *   --source <repo>   upstream source for add/list (default: the
+ *   --source <repo>   upstream source for add/list/refresh (default: the
  *                     bundle manifest's source_repo)
  *   --ref <ref>       upstream ref for source resolution (default: manifest / main)
  *   --no-fetch        never fetch; require the pack in the local catalog
@@ -483,14 +483,13 @@ function hasGit() {
 
 /**
  * Resolve a source tree for an upstream source + ref. Local-dir sources are
- * used in place; remote sources are shallow-cloned into a per-source cache and
- * reused across calls.
+ * used in place; remote sources are cloned anew so current upstream bytes are
+ * used for every invocation.
  * @param {string} source repo URL or local path
  * @param {string} ref
- * @param {boolean} [refresh]
  * @returns {{ tree: string } | { error: string }}
  */
-function resolveSourceTree(source, ref, refresh = false) {
+function resolveSourceTree(source, ref) {
   if (isDir(source)) return { tree: source };
   if (!hasGit()) return { error: 'git is required to fetch a pack from a remote source' };
   // Resolve the `latest` release channel to a concrete tag (shared with upgrade)
@@ -504,11 +503,11 @@ function resolveSourceTree(source, ref, refresh = false) {
   fs.mkdirSync(CACHE_ROOT, { recursive: true });
   const key = crypto.createHash('sha256').update(`${source}|${fetchRef}`).digest('hex').slice(0, 12);
   const dest = path.join(CACHE_ROOT, `src-${key}`);
-  if (!refresh && isDir(path.join(dest, '.git'))) return { tree: dest };
   removePath(dest);
   if (git(['clone', '--quiet', '--depth=1', '--branch', fetchRef, source, dest]) === 0) {
     return { tree: dest };
   }
+  removePath(dest);
   if (git(['clone', '--quiet', source, dest]) === 0 && git(['checkout', '--quiet', fetchRef], dest) === 0) {
     return { tree: dest };
   }
@@ -520,10 +519,10 @@ function resolveSourceTree(source, ref, refresh = false) {
  * Resolve a pack's source directory. Prefers the local catalog, then falls back
  * to the bundle's configured upstream source (or an explicit override), so a
  * pack can be installed even when `library/packs/` is not vendored locally.
- * @param {{ root: string, library: string, name: string, fetch: boolean, source?: string, ref?: string, refreshSource?: boolean }} a
+ * @param {{ root: string, library: string, name: string, fetch: boolean, source?: string, ref?: string }} a
  * @returns {{ packDir: string, origin: string, sourceIdentity: { type: string, location: string, ref: string } } | { error: string }}
  */
-function resolvePackDir({ root, library, name, fetch, source, ref, refreshSource = false }) {
+function resolvePackDir({ root, library, name, fetch, source, ref }) {
   const localDir = path.join(library, name);
   if (isDir(localDir) && exists(path.join(localDir, 'pack.md'))) {
     return {
@@ -550,7 +549,7 @@ function resolvePackDir({ root, library, name, fetch, source, ref, refreshSource
     };
   }
   if (!sref) sref = 'main';
-  const tree = resolveSourceTree(src, sref, refreshSource);
+  const tree = resolveSourceTree(src, sref);
   if ('error' in tree) return { error: tree.error };
   const fetchedDir = path.join(tree.tree, 'library', 'packs', name);
   if (isDir(fetchedDir) && exists(path.join(fetchedDir, 'pack.md'))) {
@@ -571,10 +570,10 @@ function resolvePackDir({ root, library, name, fetch, source, ref, refreshSource
  * Resolve the catalog directory to enumerate for `list`. Prefers a local
  * `library/packs/` when the repo vendors one; otherwise (a released core ships
  * no local catalog) falls back to the bundle's configured upstream source so
- * `list` can still show installable packs. Never throws: any fetch problem
- * degrades to the (usually empty) local view with the error surfaced as a note.
+ * `list` can still show installable packs. A selected remote source must resolve
+ * successfully; its fetch or missing-catalog failure is returned to the caller.
  * @param {{ root: string, library: string, fetch: boolean, source?: string, ref?: string }} a
- * @returns {{ dir: string, origin: string, error?: string }}
+ * @returns {{ dir: string, origin: string } | { error: string }}
  */
 function resolveCatalogDir({ root, library, fetch, source, ref }) {
   if (isDir(library)) return { dir: library, origin: 'local' };
@@ -591,12 +590,12 @@ function resolveCatalogDir({ root, library, fetch, source, ref }) {
   if (!src) return { dir: library, origin: 'local' };
   if (!sref) sref = 'main';
   const tree = resolveSourceTree(src, sref);
-  if ('error' in tree) return { dir: library, origin: 'local', error: tree.error };
+  if ('error' in tree) return { error: tree.error };
   const catalog = path.join(tree.tree, 'library', 'packs');
   if (isDir(catalog)) {
     return { dir: catalog, origin: isDir(src) ? `source ${src}` : `${src} @ ${sref}` };
   }
-  return { dir: library, origin: 'local', error: `no pack catalog found in ${src}${isDir(src) ? '' : ` @ ${sref}`}` };
+  return { error: `no pack catalog found in ${src}${isDir(src) ? '' : ` @ ${sref}`}` };
 }
 
 /** @param {string} root */
@@ -1379,7 +1378,7 @@ async function cmdRefresh({ root, library, name, fetch = true, source, ref }) {
 
 /**
  * @param {{ root: string, library: string, fetch?: boolean, source?: string, ref?: string }} args
- * @returns {{ ok: boolean, code: number, result: any }}
+ * @returns {{ ok: boolean, code: number, result?: any, error?: string }}
  */
 function cmdList({ root, library, fetch = true, source, ref }) {
   const loadedProfile = loadProfile(root);
@@ -1387,6 +1386,7 @@ function cmdList({ root, library, fetch = true, source, ref }) {
   const { profile } = loadedProfile;
   const installedSet = new Set(profile.enabled_packs);
   const cat = resolveCatalogDir({ root, library, fetch, source, ref });
+  if ('error' in cat) return { ok: false, code: 2, error: cat.error };
   const packs = availablePacks(cat.dir).map((name) => {
     let description = '';
     try {
@@ -1405,7 +1405,6 @@ function cmdList({ root, library, fetch = true, source, ref }) {
       packs,
       enabled_packs: [...installedSet].sort(),
       origin: cat.origin,
-      ...(cat.error ? { note: cat.error } : {}),
     },
   };
 }
@@ -1515,7 +1514,7 @@ Usage:
 Flags:
   --root <dir>      bundle root (default: cwd)
   --library <dir>   pack catalog (default: <root>/library/packs)
-  --source <repo>   upstream source for add/list (default: manifest)
+  --source <repo>   upstream source for add/list/refresh (default: manifest)
   --ref <ref>       upstream ref for source resolution (default: manifest / main)
   --no-fetch        never fetch; require the pack in the local catalog
   --json            machine-readable output

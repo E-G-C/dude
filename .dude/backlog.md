@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **6**
+- Ideas awaiting definition: **5**
 - Defined awaiting work: **0**
-- Completed: **36**
+- Completed: **37**
 
 ## Current
 
@@ -23,7 +23,6 @@ No current work to diagram.
 - `backlog-canvas` — Backlog Canvas (`.dude/ideas/backlog-canvas.md`)
 - `bulk-pack-refresh` — Bulk Pack Refresh (`.dude/ideas/bulk-pack-refresh.md`)
 - `multi-dude-work-coordination` — Multi-Dude Work Coordination (`.dude/ideas/multi-dude-work-coordination.md`)
-- `pack-catalog-refetch` — Pack Catalog Re-fetch (`.dude/ideas/pack-catalog-refetch.md`)
 - `simplify-pack-updates` — Simplify Pack Updates (`.dude/ideas/simplify-pack-updates.md`)
 - `upgrade-pack-guidance-correction` — Upgrade Pack Guidance Correction (`.dude/ideas/upgrade-pack-guidance-correction.md`)
 
@@ -51,6 +50,7 @@ No current work to diagram.
 - `good-enough-delivery` — Good Enough Delivery (`.dude/ideas/good-enough-delivery.md`)
 - `guarded-directory-artifact-import` — Guarded Directory Artifact Import (`.dude/ideas/guarded-directory-artifact-import.md`)
 - `historical-core-dogfood-fixture-repair` — Historical Core Dogfood Fixture Repair (`.dude/ideas/historical-core-dogfood-fixture-repair.md`)
+- `pack-catalog-refetch` — Pack Catalog Re-fetch (`.dude/ideas/pack-catalog-refetch.md`)
 - `pre-work-log-learning` — Pre-work Log Learning (`.dude/ideas/pre-work-log-learning.md`)
 - `remove-legacy-compatibility` — Remove Legacy Compatibility From The Bundle (`.dude/ideas/remove-legacy-compatibility.md`)
 - `remove-unused-authority-surfaces` — Remove Unused Authority Surfaces (`.dude/ideas/remove-unused-authority-surfaces.md`)
