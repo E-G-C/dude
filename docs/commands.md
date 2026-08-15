@@ -875,7 +875,7 @@ The coordinator invokes them; they are not a background service.
 | Script | Purpose |
 |---|---|
 | `dude-lint/lint.mjs` | structural hygiene of the bundle (read-only) |
-| `dude-compose/compose.mjs` | `list` / `status` / `add` / `remove` / `refresh` / `verify` optional packs and their versioned inventories |
+| `dude-compose/compose.mjs` | `list` / `status` / `add` / `remove` / `refresh` / `verify` optional packs and their installed-map records |
 | `dude-bundle-upgrade/upgrade.mjs` | refresh core files from the upstream source |
 | `dude-lightweight-execution/board.mjs` | `parse` / `ready` / `next` / `render` / `set` / `apply-states` / `diff` on `tasks.md` |
 | `dude-lightweight-execution/backlog.mjs` | read-only lifecycle views, `check`, and pair-safe `generate --write` for `.dude/backlog.md` and `.dude/backlog.html` |
@@ -1040,12 +1040,13 @@ generated core output.
 
 An installed pack does not update when its source or model mapping changes.
 Refresh it with `compose refresh <name>`, which re-projects the current source in
-one all-or-restored transaction after proving installed-side authority and
-refusing on drift. Unlike `remove`, refresh expects a changed source, so an
-edited `library/packs/<name>/` refreshes cleanly; on a released bundle without
-the `refresh` subcommand, fall back to `remove` then `add`. `remove`, `list`, and
-`status` do not load model configuration or the renderer; `add`, `refresh`, and
-`verify` use the packaged engine copy.
+one all-or-restored transaction. It always follows that projection path and may
+overwrite an installed edit. `remove` deletes only the pack's exact recorded safe
+files, even if source or installed bytes changed. Put a persistent customization
+under `dude-local-*`, not in an installed pack path. Caught failures restore the
+prior files and profile; process termination or machine failure is outside that
+guarantee. `remove`, `list`, and `status` do not load model configuration or the
+renderer; `add`, `refresh`, and `verify` use the packaged engine copy.
 
 Worked pack example: for a Beads workflow change, run
 `node --test library/packs/beads/skills/dude-pack-beads-workflow/beads.test.mjs`

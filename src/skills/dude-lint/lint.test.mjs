@@ -7,7 +7,6 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { inventoryDigest } from '../dude-engine/lib/profile.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./lint.mjs', import.meta.url));
 const PACKAGED_CONFIG_REL = '.github/skills/dude-engine/config/agent-models.json';
@@ -29,7 +28,7 @@ function rootWithManifest() {
     '.dude/metadata/bundle-manifest.md',
     '# Bundle Manifest\n\n```json\n{"source_repo":"x","source_ref":"main","installed_ref":"main"}\n```\n',
   );
-  write(root, '.dude/metadata/profile.md', profileDocument({ enabled_packs: [], installed: {} }));
+  write(root, '.dude/metadata/profile.md', profileDocument({ installed: {} }));
   write(root, '.github/skills/dude-engine/SKILL.md', ENGINE_SKILL_DOCUMENT);
   write(root, PACKAGED_CONFIG_REL, PACKAGED_CONFIG_BYTES);
   return root;
@@ -41,12 +40,25 @@ function profileDocument(payload) {
 }
 
 /** @returns {Record<string, unknown>} */
-function completeCurrentProfile() {
+function canonicalProfile() {
+  const artifactPath = '.github/prompts/dude-pack-demo-review.prompt.md';
+  return {
+    installed: {
+      demo: {
+        files: [artifactPath],
+        source: { type: 'local', location: '/catalog' },
+      },
+    },
+  };
+}
+
+/** @returns {Record<string, any>} */
+function completePredecessorProfile() {
   const artifactPath = '.github/prompts/dude-pack-demo-review.prompt.md';
   const inventory = {
     version: 1,
     pack: 'demo',
-    source: { type: 'library', location: '/catalog', ref: 'main' },
+    source: { type: 'library', location: '/catalog', ref: '' },
     manifest_sha256: '1'.repeat(64),
     artifacts: [{
       path: artifactPath,
@@ -57,7 +69,13 @@ function completeCurrentProfile() {
     }],
     digest: '',
   };
-  inventory.digest = inventoryDigest(inventory);
+  inventory.digest = createHash('sha256').update(JSON.stringify({
+    version: inventory.version,
+    pack: inventory.pack,
+    source: inventory.source,
+    manifest_sha256: inventory.manifest_sha256,
+    artifacts: inventory.artifacts,
+  })).digest('hex');
   return {
     enabled_packs: ['demo'],
     installed: {
@@ -1808,7 +1826,7 @@ test('lint requires and strictly parses the current canonical profile', () => {
     write(
       invalidRoot,
       '.dude/metadata/profile.md',
-      profileDocument({ enabled_packs: [], installed: {}, unsupported: true }),
+      profileDocument({ installed: {}, unsupported: true }),
     );
 
     const missing = lint(missingRoot);
@@ -1824,7 +1842,7 @@ test('lint requires and strictly parses the current canonical profile', () => {
 
     assert.equal(invalid.code, 1, invalid.output);
     assert.match(invalid.output, /\.dude\/metadata\/profile\.md  invalid current profile/);
-    assert.match(invalid.output, /must contain only enabled_packs and installed/);
+    assert.match(invalid.output, /neither canonical nor the complete predecessor shape/);
 
     for (const result of [missing, malformed, invalid]) {
       assert.doesNotMatch(result.output, /migrat|schema-v0/i);
@@ -1836,50 +1854,45 @@ test('lint requires and strictly parses the current canonical profile', () => {
   }
 });
 
-test('lint requires a complete current inventory for every installed profile entry', () => {
-  const missingInventoryRoot = rootWithManifest();
-  const partialInventoryRoot = rootWithManifest();
-  const entry = {
-    files: ['.github/prompts/dude-pack-demo-review.prompt.md'],
-    installed_at: '2026-07-13T00:00:00.000Z',
-  };
+test('lint preserves malformed and unsupported predecessor diagnostics', () => {
+  const malformedRoot = rootWithManifest();
+  const unsupportedRoot = rootWithManifest();
+  const malformed = completePredecessorProfile();
+  const unsupported = completePredecessorProfile();
+  malformed.installed.demo.inventory.artifacts[0].installed_sha256 = 'bad';
+  unsupported.installed.demo.inventory.version = 2;
   try {
     write(
-      missingInventoryRoot,
+      malformedRoot,
       '.dude/metadata/profile.md',
-      profileDocument({ enabled_packs: ['demo'], installed: { demo: entry } }),
+      profileDocument(malformed),
     );
     write(
-      partialInventoryRoot,
+      unsupportedRoot,
       '.dude/metadata/profile.md',
-      profileDocument({
-        enabled_packs: ['demo'],
-        installed: { demo: { ...entry, inventory: { version: 1, pack: 'demo' } } },
-      }),
+      profileDocument(unsupported),
     );
 
-    const missingInventory = lint(missingInventoryRoot);
-    const partialInventory = lint(partialInventoryRoot);
+    const malformedResult = lint(malformedRoot);
+    const unsupportedResult = lint(unsupportedRoot);
 
-    for (const result of [missingInventory, partialInventory]) {
+    for (const result of [malformedResult, unsupportedResult]) {
       assert.equal(result.code, 1, result.output);
-      assert.match(
-        result.output,
-        /\.dude\/metadata\/profile\.md  installed\.demo must include a complete current inventory/,
-      );
       assert.doesNotMatch(result.output, /migrat|schema-v0/i);
     }
+    assert.match(malformedResult.output, /malformed predecessor artifact/);
+    assert.match(unsupportedResult.output, /complete version-1 predecessor inventory/);
   } finally {
-    fs.rmSync(missingInventoryRoot, { recursive: true, force: true });
-    fs.rmSync(partialInventoryRoot, { recursive: true, force: true });
+    fs.rmSync(malformedRoot, { recursive: true, force: true });
+    fs.rmSync(unsupportedRoot, { recursive: true, force: true });
   }
 });
 
-test('lint accepts empty and complete non-empty current profiles', () => {
+test('lint accepts empty and non-empty canonical profiles', () => {
   const emptyRoot = rootWithManifest();
   const installedRoot = rootWithManifest();
   try {
-    write(installedRoot, '.dude/metadata/profile.md', profileDocument(completeCurrentProfile()));
+    write(installedRoot, '.dude/metadata/profile.md', profileDocument(canonicalProfile()));
 
     const empty = lint(emptyRoot);
     const installed = lint(installedRoot);
@@ -1891,57 +1904,6 @@ test('lint accepts empty and complete non-empty current profiles', () => {
   } finally {
     fs.rmSync(emptyRoot, { recursive: true, force: true });
     fs.rmSync(installedRoot, { recursive: true, force: true });
-  }
-});
-
-test('lint requires exact enabled and installed pack equality', () => {
-  const equalRoot = rootWithManifest();
-  const enabledExtraRoot = rootWithManifest();
-  const installedExtraRoot = rootWithManifest();
-  try {
-    // Exact equality (non-empty) passes.
-    write(equalRoot, '.dude/metadata/profile.md', profileDocument(completeCurrentProfile()));
-
-    // enabled_packs lists a pack that is not installed. parseProfileDocument
-    // permits enabled ⊋ installed, so lint must close this direction itself.
-    write(
-      enabledExtraRoot,
-      '.dude/metadata/profile.md',
-      profileDocument({ enabled_packs: ['ghost'], installed: {} }),
-    );
-
-    // installed carries a pack absent from enabled_packs (the other direction).
-    write(
-      installedExtraRoot,
-      '.dude/metadata/profile.md',
-      profileDocument({
-        enabled_packs: [],
-        installed: { ghost: { files: [], installed_at: '2026-07-13T00:00:00.000Z' } },
-      }),
-    );
-
-    const equal = lint(equalRoot);
-    const enabledExtra = lint(enabledExtraRoot);
-    const installedExtra = lint(installedExtraRoot);
-
-    assert.equal(equal.code, 0, equal.output);
-    assert.match(equal.output, /0 warning\(s\), 0 failure\(s\)/);
-
-    assert.equal(enabledExtra.code, 1, enabledExtra.output);
-    assert.match(
-      enabledExtra.output,
-      /\.dude\/metadata\/profile\.md  enabled pack\(s\) not installed: ghost/,
-    );
-
-    assert.equal(installedExtra.code, 1, installedExtra.output);
-    assert.match(
-      installedExtra.output,
-      /\.dude\/metadata\/profile\.md  invalid current profile \(profile\.md installed pack 'ghost' is not listed in enabled_packs\)/,
-    );
-  } finally {
-    fs.rmSync(equalRoot, { recursive: true, force: true });
-    fs.rmSync(enabledExtraRoot, { recursive: true, force: true });
-    fs.rmSync(installedExtraRoot, { recursive: true, force: true });
   }
 });
 
@@ -2106,7 +2068,7 @@ test('lint preserves canonical bundle-manifest schema diagnostics', () => {
   for (const fixture of cases) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-lint-manifest-'));
     try {
-      write(root, '.dude/metadata/profile.md', profileDocument({ enabled_packs: [], installed: {} }));
+      write(root, '.dude/metadata/profile.md', profileDocument({ installed: {} }));
       if (fixture.content !== null) write(root, '.dude/metadata/bundle-manifest.md', fixture.content);
       const result = lint(root);
       assert.equal(result.code, 1, `${fixture.name}\n${result.output}`);

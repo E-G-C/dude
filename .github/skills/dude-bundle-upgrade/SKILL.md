@@ -258,7 +258,8 @@ project content.
 
 Upgrade copies upstream core bytes. It does not project or repair installed pack
 profiles. A pack source or model mapping change reaches an installed pack only
-through `compose refresh <pack>`.
+through `compose refresh <pack>`. That refresh reprojects replaceable pack output
+and can overwrite edits; keep persistent customizations under `dude-local-*`.
 
 The existing `.github/skills/dude-engine/**` ownership recursively includes
 `.github/skills/dude-engine/config/agent-models.json` and the loader. This lets

@@ -25,7 +25,7 @@ const MANIFEST_BYTES = Buffer.from(
   "# Bundle Manifest\n\n```json\n{\"source_repo\":\"fixture\",\"source_ref\":\"main\"}\n```\n",
 );
 const PROFILE_BYTES = Buffer.from(
-  "# Install Profile\n\n```json\n{\"enabled_packs\":[],\"installed\":{}}\n```\n",
+  "# Install Profile\n\n```json\n{\"installed\":{}}\n```\n",
 );
 const PACKAGED_AGENT_MODEL_CONFIG_BYTES = fs.readFileSync(
   fileURLToPath(new URL("../../config/agent-models.json", import.meta.url)),
