@@ -6254,3 +6254,101 @@ test('GitHub issue public guidance rules stay section-bound', () => {
     );
   }
 });
+
+test('installed pack refresh guidance stays current and generated', () => {
+  // Arrange: these three sections are the complete shipped update surface. Their
+  // bounded scope makes the named recipes installed-pack update guidance, rather
+  // than trying to infer a contradiction from arbitrary prose elsewhere.
+  const refresh = '`compose refresh <pack>`';
+  const staleRecipes = [
+    '`compose remove <pack>` followed by `compose add <pack>`',
+    '`compose remove` then `compose add`',
+    '@dude remove pack <name>\n@dude add pack <name>',
+    'fall back to `compose remove <pack>` then `compose add <pack>`',
+  ];
+  const refreshSections = [
+    {
+      relative: 'src/skills/dude-bundle-upgrade/SKILL.md',
+      heading: '## Ownership Boundary For Generated Agent Profiles',
+      required: 'A pack source or model mapping change reaches an installed pack only through `compose refresh <pack>`.',
+    },
+    {
+      relative: 'src/skills/dude-bundle-upgrade/SKILL.md',
+      heading: '## Boundaries',
+      required: '- Never project or repair an agent profile. Upgrade copies upstream bytes for core paths; installed pack profiles refresh only through `compose refresh <pack>`.',
+    },
+    {
+      relative: 'docs/upgrading.md',
+      heading: '## Refreshing installed packs',
+      required: refresh,
+      leadsWithRefresh: true,
+    },
+  ];
+  const assertCurrentRefreshGuidance = (
+    section,
+    rawSection,
+    context,
+    required,
+    leadsWithRefresh = false,
+  ) => {
+    const normalized = unwrappedParagraphs(section);
+    assert.ok(normalized.includes(required), `${context}: requires current installed-pack refresh guidance`);
+    if (leadsWithRefresh) {
+      assert.ok(section.trimStart().startsWith(refresh), `${context}: leads with the refresh operation`);
+    }
+    for (const recipe of staleRecipes) {
+      assert.equal(rawSection.includes(recipe), false, `${context}: excludes stale remove-then-add recipe ${recipe}`);
+    }
+  };
+
+  // Act + Assert: each owning section names the current operation and no fixed
+  // obsolete recipe or fallback remains there.
+  for (const { relative, heading, required, leadsWithRefresh } of refreshSections) {
+    const source = read(relative);
+    assertCurrentRefreshGuidance(
+      markdownSection(source, heading),
+      rawMarkdownSectionBody(source, heading),
+      `${relative} ${heading}`,
+      required,
+      leadsWithRefresh,
+    );
+  }
+
+  const composeLifecycle = unwrappedParagraphs(
+    markdownSection(read('src/skills/dude-compose/SKILL.md'), '## When To Run'),
+  );
+  assert.match(composeLifecycle, /`@dude add pack <name>`\s*\/\s*`install the <name> pack`/);
+  assert.match(composeLifecycle, /`@dude remove pack <name>`\s*\/\s*`uninstall the <name> pack`/);
+
+  // In-memory falsifiers prove the required refresh and named-recipe rejection
+  // checks are live without changing any guidance fixture on disk.
+  const sourceSection = markdownSection(
+    read('src/skills/dude-bundle-upgrade/SKILL.md'),
+    '## Ownership Boundary For Generated Agent Profiles',
+  );
+  assert.throws(
+    () => assertCurrentRefreshGuidance(
+      sourceSection.replace(refresh, ''),
+      sourceSection.replace(refresh, ''),
+      'deleted refresh instruction',
+      refreshSections[0].required,
+    ),
+    'deleting the required refresh instruction fails',
+  );
+  const staleDocsBlock = `\`\`\`bash\n${staleRecipes[2]}\n\`\`\``;
+  assert.throws(
+    () => assertCurrentRefreshGuidance(
+      sourceSection,
+      `${sourceSection}\n\n${staleDocsBlock}`,
+      'stale docs command block',
+      refreshSections[0].required,
+    ),
+    'adding the prohibited remove-then-add docs command block fails',
+  );
+
+  assert.deepEqual(
+    fs.readFileSync(path.join(ROOT, '.github/skills/dude-bundle-upgrade/SKILL.md')),
+    fs.readFileSync(path.join(ROOT, 'src/skills/dude-bundle-upgrade/SKILL.md')),
+    'generated bundle-upgrade guidance is byte-identical to its authoritative source',
+  );
+});
