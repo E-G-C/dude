@@ -21,6 +21,7 @@ import {
   pickLatestReleaseTag,
   scanCoreInventoryPaths,
 } from './upgrade.mjs';
+import { cmdAdd } from '../dude-compose/compose.mjs';
 import { enumerateCorePaths } from '../dude-engine/lib/ownership.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./upgrade.mjs', import.meta.url));
@@ -30,6 +31,9 @@ const REMOVE_PATH = '.github/skills/dude-old/SKILL.md';
 const UP_TO_DATE_PATH = '.github/instructions/dude.instructions.md';
 const MANIFEST_PATH = '.dude/metadata/bundle-manifest.md';
 const UPGRADE_LOG_PATH = '.dude/metadata/upgrade-log.md';
+const COMPOSE_SOURCE = fileURLToPath(new URL('../dude-compose/compose.mjs', import.meta.url));
+const ENGINE_SOURCE = fileURLToPath(new URL('../dude-engine/', import.meta.url));
+const MODEL_CONFIG_SOURCE = fileURLToPath(new URL('../../config/agent-models.json', import.meta.url));
 
 /** @param {string} root @param {string} rel */
 function w(root, rel) {
@@ -278,6 +282,422 @@ function applyFixture(fixture, args = [], confirm = 'confirm-upgrade', extraEnv 
     env: { ...process.env, TMPDIR: fixture.tmpRoot, ...extraEnv },
   });
 }
+
+/** @param {string} root */
+function packageComposeRuntime(root) {
+  const compose = path.join(root, '.github', 'skills', 'dude-compose', 'compose.mjs');
+  fs.mkdirSync(path.dirname(compose), { recursive: true });
+  fs.copyFileSync(COMPOSE_SOURCE, compose);
+  fs.cpSync(ENGINE_SOURCE, path.join(root, '.github', 'skills', 'dude-engine'), { recursive: true });
+  const config = path.join(root, '.github', 'skills', 'dude-engine', 'config', 'agent-models.json');
+  fs.mkdirSync(path.dirname(config), { recursive: true });
+  fs.copyFileSync(MODEL_CONFIG_SOURCE, config);
+}
+
+/** @param {string} root @param {string} name @param {string} version @param {{ extra?: boolean }} [options] */
+function writeBulkPack(root, name, version, { extra = false } = {}) {
+  const pack = path.join(root, 'library', 'packs', name);
+  fs.rmSync(pack, { recursive: true, force: true });
+  fs.mkdirSync(path.join(pack, 'agents'), { recursive: true });
+  fs.writeFileSync(
+    path.join(pack, 'pack.md'),
+    `---\nname: ${name}\ndescription: ${JSON.stringify(`${name} ${version}`)}\n---\n# ${name}\n`,
+  );
+  fs.writeFileSync(
+    path.join(pack, 'agents', `dude-pack-${name}-worker.agent.md`),
+    `---\nname: ${JSON.stringify(`${name} ${version}`)}\ndescription: "fixture"\ntools: [read]\nuser-invocable: false\nmodel-class: balanced\n---\n\nYou are ${name} ${version}.\n`,
+  );
+  if (extra) {
+    fs.mkdirSync(path.join(pack, 'instructions'), { recursive: true });
+    fs.writeFileSync(path.join(pack, 'instructions', `dude-pack-${name}-extra.instructions.md`), `# ${name} ${version} extra\n`);
+  }
+}
+
+/**
+ * Build an upgrade workspace with installed old packs and an upstream file://
+ * repository that publishes the core plus newer pack source. The local root
+ * intentionally starts without library/ unless a local-target case requests it.
+ * @param {string[]} names
+ * @param {{ failing?: string, localTarget?: string }} [options]
+ */
+async function makeBulkFixture(names, options = {}) {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-up-bulk-'));
+  const localRoot = path.join(base, 'local');
+  const upstreamRoot = path.join(base, 'upstream');
+  const initialCatalog = path.join(base, 'initial-catalog');
+  const tmpRoot = path.join(base, 'tmp');
+  const planPath = path.join(base, 'bulk-plan.json');
+  fs.mkdirSync(localRoot, { recursive: true });
+  fs.mkdirSync(upstreamRoot, { recursive: true });
+  fs.mkdirSync(initialCatalog, { recursive: true });
+  fs.mkdirSync(tmpRoot, { recursive: true });
+  const source = pathToFileURL(upstreamRoot).href;
+
+  for (const root of [localRoot, upstreamRoot]) {
+    write(root, MANIFEST_PATH, manifest(source, 'v0.0.0', 'main'));
+    write(root, UPGRADE_LOG_PATH, '# Upgrade Log\n');
+    write(root, '.github/agents/dude.agent.md', root === localRoot ? 'old core\n' : 'new core\n');
+    write(root, '.github/instructions/dude.instructions.md', 'fixture instructions\n');
+    write(root, '.github/skills/dude-lint/lint.mjs', 'process.exit(0);\n');
+    packageComposeRuntime(root);
+  }
+  write(localRoot, 'project-sentinel.txt', 'preserve\n');
+  for (const name of names) {
+    writeBulkPack(initialCatalog, name, 'old');
+    writeBulkPack(upstreamRoot, name, 'remote-v1', { extra: options.failing === name });
+  }
+  if (options.localTarget) {
+    writeBulkPack(localRoot, options.localTarget, 'local-wins');
+  }
+
+  for (const name of names) {
+    const added = await cmdAdd({
+      root: localRoot,
+      library: path.join(initialCatalog, 'library', 'packs'),
+      name,
+      force: false,
+    });
+    assert.equal(added.ok, true, added.error);
+  }
+  git(upstreamRoot, ['init', '-q', '-b', 'main']);
+  git(upstreamRoot, ['config', 'user.name', 'Bulk Upstream']);
+  git(upstreamRoot, ['config', 'user.email', 'bulk-upstream@example.invalid']);
+  git(upstreamRoot, ['add', '-A']);
+  git(upstreamRoot, ['commit', '-q', '-m', 'upstream v1']);
+  git(localRoot, ['init', '-q', '-b', 'main']);
+  git(localRoot, ['config', 'user.name', 'Bulk Local']);
+  git(localRoot, ['config', 'user.email', 'bulk-local@example.invalid']);
+  git(localRoot, ['add', '-A']);
+  git(localRoot, ['commit', '-q', '-m', 'installed old core and packs']);
+  return { base, localRoot, upstreamRoot, tmpRoot, planPath, source };
+}
+
+/**
+ * @param {Awaited<ReturnType<typeof makeBulkFixture>>} fixture
+ * @param {string[]} args
+ * @param {Record<string, string>} [extraEnv]
+ */
+function runBulk(fixture, args, extraEnv = {}) {
+  return spawnSync(process.execPath, [SCRIPT, ...args, '--format', 'json'], {
+    cwd: fixture.localRoot,
+    encoding: 'utf8',
+    env: { ...process.env, TMPDIR: fixture.tmpRoot, ...extraEnv },
+  });
+}
+
+/**
+ * Make the next `git status --porcelain` after the aggregate pack commit report
+ * a controlled result. The commit signal distinguishes the final post-pack
+ * status check from the clean-tree preflight.
+ * @param {Awaited<ReturnType<typeof makeBulkFixture>>} fixture
+ * @param {'dirty' | 'failed'} outcome
+ */
+function injectFinalPackStatus(fixture, outcome) {
+  const shimDirectory = path.join(fixture.base, `git-status-${outcome}`);
+  const commitSignal = path.join(shimDirectory, 'pack-commit-completed');
+  const realGit = spawnSync('which', ['git'], { encoding: 'utf8' });
+  assert.equal(realGit.status, 0, realGit.stderr);
+  fs.mkdirSync(shimDirectory, { recursive: true });
+  fs.writeFileSync(
+    path.join(shimDirectory, 'git'),
+    [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      "const { spawnSync } = require('node:child_process');",
+      'const args = process.argv.slice(2);',
+      "if (fs.existsSync(process.env.DUDE_TEST_PACK_COMMIT_SIGNAL) && args.join('\\0') === 'status\\0--porcelain') {",
+      "  if (process.env.DUDE_TEST_FINAL_STATUS_OUTCOME === 'dirty') {",
+      "    process.stdout.write(' M forced-post-pack-status\\n');",
+      '    process.exit(0);',
+      '  }',
+      "  process.stderr.write('forced post-pack status failure\\n');",
+      '  process.exit(1);',
+      '}',
+      "const result = spawnSync(process.env.DUDE_TEST_REAL_GIT, args, { encoding: 'utf8' });",
+      "process.stdout.write(result.stdout || '');",
+      "process.stderr.write(result.stderr || '');",
+      "if (result.status === 0 && args.includes('commit')) fs.writeFileSync(process.env.DUDE_TEST_PACK_COMMIT_SIGNAL, 'committed\\n');",
+      'process.exit(result.status ?? 1);',
+      '',
+    ].join('\n'),
+    { mode: 0o755 },
+  );
+  return {
+    PATH: `${shimDirectory}${path.delimiter}${process.env.PATH || ''}`,
+    DUDE_TEST_REAL_GIT: realGit.stdout.trim(),
+    DUDE_TEST_PACK_COMMIT_SIGNAL: commitSignal,
+    DUDE_TEST_FINAL_STATUS_OUTCOME: outcome,
+  };
+}
+
+/** @param {Awaited<ReturnType<typeof makeBulkFixture>>} fixture */
+function planAndApplyBulkCore(fixture) {
+  const planned = runBulk(fixture, [
+    'plan',
+    '--source',
+    fixture.source,
+    '--ref',
+    'main',
+    '--out',
+    fixture.planPath,
+  ]);
+  assert.equal(planned.status, 10, `${planned.stdout}${planned.stderr}`);
+  const plan = JSON.parse(fs.readFileSync(fixture.planPath, 'utf8'));
+  const core = runBulk(fixture, ['apply', '--plan', fixture.planPath, '--confirm', 'confirm-upgrade']);
+  assert.equal(core.status, 0, `${core.stdout}${core.stderr}`);
+  return { plan, core: JSON.parse(core.stdout), coreCommit: git(fixture.localRoot, ['rev-parse', 'HEAD']) };
+}
+
+test('bulk packs preview after the core commit and commits all successful refreshes once', async () => {
+  // Arrange
+  const fixture = await makeBulkFixture(['bravo', 'alpha']);
+  try {
+    assert.equal(fs.existsSync(path.join(fixture.localRoot, 'library')), false, 'released-style root must not vendor library/');
+    const { plan, coreCommit } = planAndApplyBulkCore(fixture);
+
+    // Act
+    const previewResult = runBulk(fixture, ['packs-preview', '--plan', fixture.planPath]);
+    const preview = JSON.parse(previewResult.stdout);
+    const applyResult = runBulk(fixture, ['packs-apply', '--plan', fixture.planPath, '--confirm', 'confirm-packs']);
+    const applied = JSON.parse(applyResult.stdout);
+
+    // Assert
+    assert.equal(previewResult.status, 0, `${previewResult.stdout}${previewResult.stderr}`);
+    assert.equal(preview.status, 'previewed');
+    assert.equal(preview.core_commit, coreCommit, 'preview must run after the committed core result');
+    assert.deepEqual(preview.packs.map((pack) => pack.previewed), ['alpha', 'bravo'], 'installed membership must be sorted');
+    assert.equal(applyResult.status, 0, `${applyResult.stdout}${applyResult.stderr}`);
+    assert.equal(applied.status, 'applied');
+    assert.deepEqual(applied.successful, ['alpha', 'bravo']);
+    assert.equal(applied.failed, null);
+    assert.notEqual(applied.pack_commit, 'none');
+    assert.equal(git(fixture.localRoot, ['rev-parse', `${applied.pack_commit}^`]), coreCommit, 'aggregate pack commit must follow core');
+    assert.deepEqual(
+      git(fixture.localRoot, ['diff-tree', '--no-commit-id', '--name-only', '-r', applied.pack_commit]).split('\n').sort(),
+      [
+        '.dude/metadata/profile.md',
+        '.github/agents/dude-pack-alpha-worker.agent.md',
+        '.github/agents/dude-pack-bravo-worker.agent.md',
+      ],
+    );
+    assert.equal(git(fixture.localRoot, ['rev-parse', '--abbrev-ref', 'HEAD']), applied.upgrade_branch, 'bulk flow must not auto-merge');
+    assert.equal(git(fixture.upstreamRoot, ['rev-parse', 'HEAD']), plan.source.resolved_commit, 'bulk flow must not push');
+    assert.equal(git(fixture.localRoot, ['status', '--porcelain']), '');
+    assert.equal(plan.source.resolved_commit.length, 40);
+  } finally {
+    fs.rmSync(fixture.base, { recursive: true, force: true });
+  }
+});
+
+test('bulk packs stops at the first refusal without a pack commit or later mutation', async () => {
+  // Arrange
+  const fixture = await makeBulkFixture(['alpha', 'bravo'], { failing: 'alpha' });
+  try {
+    const blocked = path.join(fixture.localRoot, '.github', 'instructions', 'dude-pack-alpha-extra.instructions.md');
+    fs.mkdirSync(path.dirname(blocked), { recursive: true });
+    fs.writeFileSync(blocked, '# foreign blocker\n');
+    git(fixture.localRoot, ['add', '-A']);
+    git(fixture.localRoot, ['commit', '-q', '-m', 'foreign blocker']);
+    const { coreCommit } = planAndApplyBulkCore(fixture);
+    const bravoBefore = fs.readFileSync(path.join(fixture.localRoot, '.github', 'agents', 'dude-pack-bravo-worker.agent.md'), 'utf8');
+
+    // Act
+    const result = runBulk(fixture, ['packs-apply', '--plan', fixture.planPath, '--confirm', 'confirm-packs']);
+    const applied = JSON.parse(result.stdout);
+
+    // Assert
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.equal(applied.status, 'partial_failure');
+    assert.deepEqual(applied.successful, []);
+    assert.equal(applied.failed?.name, 'alpha');
+    assert.deepEqual(applied.not_attempted, ['bravo']);
+    assert.equal(applied.pack_commit, 'none');
+    assert.equal(git(fixture.localRoot, ['rev-parse', 'HEAD']), coreCommit);
+    assert.equal(fs.readFileSync(path.join(fixture.localRoot, '.github', 'agents', 'dude-pack-bravo-worker.agent.md'), 'utf8'), bravoBefore);
+    assert.equal(fs.readFileSync(blocked, 'utf8'), '# foreign blocker\n');
+    assert.equal(git(fixture.localRoot, ['status', '--porcelain']), '');
+  } finally {
+    fs.rmSync(fixture.base, { recursive: true, force: true });
+  }
+});
+
+test('bulk packs retains and commits successful progress before reporting the failed and skipped packs', async () => {
+  // Arrange
+  const fixture = await makeBulkFixture(['alpha', 'bravo', 'charlie'], { failing: 'bravo' });
+  try {
+    const blocked = path.join(fixture.localRoot, '.github', 'instructions', 'dude-pack-bravo-extra.instructions.md');
+    fs.mkdirSync(path.dirname(blocked), { recursive: true });
+    fs.writeFileSync(blocked, '# foreign blocker\n');
+    git(fixture.localRoot, ['add', '-A']);
+    git(fixture.localRoot, ['commit', '-q', '-m', 'foreign blocker']);
+    const { coreCommit } = planAndApplyBulkCore(fixture);
+
+    // Act
+    const result = runBulk(fixture, ['packs-apply', '--plan', fixture.planPath, '--confirm', 'confirm-packs']);
+    const applied = JSON.parse(result.stdout);
+
+    // Assert
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.equal(applied.status, 'partial_failure');
+    assert.deepEqual(applied.successful, ['alpha']);
+    assert.equal(applied.failed?.name, 'bravo');
+    assert.deepEqual(applied.not_attempted, ['charlie']);
+    assert.notEqual(applied.pack_commit, 'none');
+    assert.equal(git(fixture.localRoot, ['rev-parse', `${applied.pack_commit}^`]), coreCommit);
+    assert.deepEqual(
+      git(fixture.localRoot, ['diff-tree', '--no-commit-id', '--name-only', '-r', applied.pack_commit]).split('\n').sort(),
+      ['.dude/metadata/profile.md', '.github/agents/dude-pack-alpha-worker.agent.md'],
+    );
+    assert.match(fs.readFileSync(path.join(fixture.localRoot, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8'), /remote-v1/);
+    assert.match(fs.readFileSync(path.join(fixture.localRoot, '.github', 'agents', 'dude-pack-charlie-worker.agent.md'), 'utf8'), /old/);
+    assert.equal(git(fixture.localRoot, ['status', '--porcelain']), '');
+  } finally {
+    fs.rmSync(fixture.base, { recursive: true, force: true });
+  }
+});
+
+test('bulk packs reports a dirty or uninspectable final working tree as an operational failure', async (context) => {
+  for (const outcome of ['dirty', 'failed']) {
+    await context.test(outcome, async () => {
+      // Arrange
+      const fixture = await makeBulkFixture(['alpha']);
+      try {
+        const { coreCommit } = planAndApplyBulkCore(fixture);
+        const injectedGit = injectFinalPackStatus(fixture, outcome);
+
+        // Act
+        const result = runBulk(
+          fixture,
+          ['packs-apply', '--plan', fixture.planPath, '--confirm', 'confirm-packs'],
+          injectedGit,
+        );
+        const applied = JSON.parse(result.stdout);
+
+        // Assert
+        assert.equal(result.status, 40, `${result.stdout}${result.stderr}`);
+        assert.equal(applied.status, 'operational_failure');
+        assert.notEqual(applied.status, 'applied');
+        assert.notEqual(applied.status, 'partial_failure');
+        assert.equal(applied.clean, false);
+        assert.deepEqual(applied.successful, ['alpha']);
+        assert.equal(applied.failed, null);
+        assert.deepEqual(applied.not_attempted, []);
+        assert.notEqual(applied.pack_commit, 'none');
+        assert.equal(git(fixture.localRoot, ['rev-parse', `${applied.pack_commit}^`]), coreCommit);
+        assert.match(
+          applied.error,
+          outcome === 'dirty'
+            ? /working tree is dirty after pack refresh/
+            : /failed to inspect the local Git working tree after pack refresh: forced post-pack status failure/,
+        );
+        assert.equal(applied.review, `git diff <target-branch>...${applied.upgrade_branch}`);
+        assert.equal(
+          applied.rollback,
+          `node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback --tag ${applied.safety_tag}`,
+        );
+        assert.equal(git(fixture.localRoot, ['status', '--porcelain']), '', 'the shim alone supplies the final status failure');
+      } finally {
+        fs.rmSync(fixture.base, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('bulk packs handles an empty installed map and rejects absent or wrong pack confirmation without mutation', async () => {
+  // Arrange
+  const empty = await makeBulkFixture([]);
+  const confirmed = await makeBulkFixture(['alpha']);
+  try {
+    const emptyCore = planAndApplyBulkCore(empty);
+    const confirmedCore = planAndApplyBulkCore(confirmed);
+
+    // Act
+    const emptyPreviewResult = runBulk(empty, ['packs-preview', '--plan', empty.planPath]);
+    const emptyPreview = JSON.parse(emptyPreviewResult.stdout);
+    const emptyApplyResult = runBulk(empty, ['packs-apply', '--plan', empty.planPath, '--confirm', 'confirm-packs']);
+    const emptyApply = JSON.parse(emptyApplyResult.stdout);
+    const before = snapshotMutationBoundary(confirmed.localRoot);
+    const missing = runBulk(confirmed, ['packs-apply', '--plan', confirmed.planPath]);
+    const wrong = runBulk(confirmed, ['packs-apply', '--plan', confirmed.planPath, '--confirm', 'confirm-upgrade']);
+
+    // Assert
+    assert.equal(emptyPreviewResult.status, 0, `${emptyPreviewResult.stdout}${emptyPreviewResult.stderr}`);
+    assert.equal(emptyPreview.pack_confirmation_required, false);
+    assert.deepEqual(emptyPreview.packs, []);
+    assert.equal(emptyApplyResult.status, 0, `${emptyApplyResult.stdout}${emptyApplyResult.stderr}`);
+    assert.equal(emptyApply.status, 'core_only');
+    assert.equal(emptyApply.pack_commit, 'none');
+    assert.equal(git(empty.localRoot, ['rev-parse', 'HEAD']), emptyCore.coreCommit);
+    assert.equal(git(empty.localRoot, ['status', '--porcelain']), '');
+
+    assert.equal(missing.status, 40, `${missing.stdout}${missing.stderr}`);
+    assert.match(`${missing.stdout}${missing.stderr}`, /confirm-packs/);
+    assert.equal(wrong.status, 40, `${wrong.stdout}${wrong.stderr}`);
+    assert.match(`${wrong.stdout}${wrong.stderr}`, /confirm-packs/);
+    assert.deepEqual(snapshotMutationBoundary(confirmed.localRoot), before);
+    assert.equal(git(confirmed.localRoot, ['rev-parse', 'HEAD']), confirmedCore.coreCommit);
+  } finally {
+    fs.rmSync(empty.base, { recursive: true, force: true });
+    fs.rmSync(confirmed.base, { recursive: true, force: true });
+  }
+});
+
+test('bulk packs keeps a local target authoritative and freezes remote work at the core-selected commit', async () => {
+  // Arrange
+  const local = await makeBulkFixture(['alpha'], { localTarget: 'alpha' });
+  const remote = await makeBulkFixture(['alpha']);
+  try {
+    planAndApplyBulkCore(local);
+    const localAppliedResult = runBulk(local, ['packs-apply', '--plan', local.planPath, '--confirm', 'confirm-packs']);
+    const localApplied = JSON.parse(localAppliedResult.stdout);
+
+    const { plan } = planAndApplyBulkCore(remote);
+    writeBulkPack(remote.upstreamRoot, 'alpha', 'remote-v2');
+    git(remote.upstreamRoot, ['add', '-A']);
+    git(remote.upstreamRoot, ['commit', '-q', '-m', 'advance selector after core']);
+    const remotePreviewResult = runBulk(remote, ['packs-preview', '--plan', remote.planPath]);
+    const remotePreview = JSON.parse(remotePreviewResult.stdout);
+    const remoteAppliedResult = runBulk(remote, ['packs-apply', '--plan', remote.planPath, '--confirm', 'confirm-packs']);
+
+    // Assert
+    assert.equal(localAppliedResult.status, 0, `${localAppliedResult.stdout}${localAppliedResult.stderr}`);
+    assert.equal(localApplied.status, 'applied');
+    assert.match(fs.readFileSync(path.join(local.localRoot, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8'), /local-wins/);
+
+    assert.equal(fs.existsSync(path.join(remote.localRoot, 'library')), false, 'remote case is a released bundle without library/');
+    assert.equal(remotePreviewResult.status, 0, `${remotePreviewResult.stdout}${remotePreviewResult.stderr}`);
+    assert.equal(remotePreview.packs[0].source.resolved_commit, plan.source.resolved_commit);
+    assert.equal(remoteAppliedResult.status, 0, `${remoteAppliedResult.stdout}${remoteAppliedResult.stderr}`);
+    assert.match(fs.readFileSync(path.join(remote.localRoot, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8'), /remote-v1/);
+    assert.doesNotMatch(fs.readFileSync(path.join(remote.localRoot, '.github', 'agents', 'dude-pack-alpha-worker.agent.md'), 'utf8'), /remote-v2/);
+  } finally {
+    fs.rmSync(local.base, { recursive: true, force: true });
+    fs.rmSync(remote.base, { recursive: true, force: true });
+  }
+});
+
+test('bulk pack preview and apply refuse a dirty tree before loading Compose', async () => {
+  // Arrange
+  const fixture = await makeBulkFixture(['alpha']);
+  try {
+    planAndApplyBulkCore(fixture);
+    fs.appendFileSync(path.join(fixture.localRoot, 'project-sentinel.txt'), 'dirty\n');
+    const before = snapshotMutationBoundary(fixture.localRoot);
+
+    // Act
+    const preview = runBulk(fixture, ['packs-preview', '--plan', fixture.planPath]);
+    const apply = runBulk(fixture, ['packs-apply', '--plan', fixture.planPath, '--confirm', 'confirm-packs']);
+
+    // Assert
+    for (const result of [preview, apply]) {
+      assert.equal(result.status, 40, `${result.stdout}${result.stderr}`);
+      assert.match(`${result.stdout}${result.stderr}`, /working tree is dirty.*before refreshing packs/i);
+    }
+    assert.deepEqual(snapshotMutationBoundary(fixture.localRoot), before);
+  } finally {
+    fs.rmSync(fixture.base, { recursive: true, force: true });
+  }
+});
 
 /** @param {ReturnType<typeof makeUpgradeFixture>} fixture @param {string} message */
 function commitLocalDrift(fixture, message) {

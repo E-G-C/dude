@@ -900,21 +900,20 @@ function cmdRemove({ root, name }) {
 }
 
 /**
- * Refresh an already-installed pack's `.github/` projection from its current
- * authoritative source in one all-or-restored transaction. Its old authority is
- * the exact recorded file list; source and installed bytes are replaceable.
+ * Prepare an installed pack's ordinary refresh projection. The caller owns the
+ * successful stage directory and either previews it or runs the transaction.
  * @param {{ root: string, library: string, name: string, fetch?: boolean, source?: string, ref?: string }} args
  * @returns {Promise<{ ok: boolean, code: number, result?: any, error?: string }>}
  */
-async function cmdRefresh({ root, library, name, fetch = true, source, ref }) {
+async function prepareRefresh({ root, library, name, fetch = true, source, ref }) {
   const currentProfilePath = profilePath(root);
   try {
     resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
   } catch (error) {
-    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+    return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
   }
   if (!PACK_NAME_RE.test(name)) {
-    return { ok: false, code: 1, error: `invalid pack name: ${name}` };
+    return { ok: false, code: 1, mutation: 'none', error: `invalid pack name: ${name}` };
   }
 
   /** @type {Buffer | null} */
@@ -927,12 +926,12 @@ async function cmdRefresh({ root, library, name, fetch = true, source, ref }) {
       profile = parseProfileDocument(authorizedProfileBytes, { root });
     }
   } catch (error) {
-    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+    return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
   }
 
   const entry = profile.installed[name];
   if (!entry || !authorizedProfileBytes) {
-    return { ok: false, code: 2, error: `pack "${name}" is not installed` };
+    return { ok: false, code: 2, mutation: 'none', error: `pack "${name}" is not installed` };
   }
 
   const recordedFiles = entry.files.slice();
@@ -947,7 +946,7 @@ async function cmdRefresh({ root, library, name, fetch = true, source, ref }) {
       const abs = resolveProfileArtifact(root, file, name);
       oldResolved.set(file, abs);
     } catch (error) {
-      return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+      return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
     }
   }
 
@@ -955,13 +954,12 @@ async function cmdRefresh({ root, library, name, fetch = true, source, ref }) {
   try {
     projection = await loadProjectionDependencies(root);
   } catch (error) {
-    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+    return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
   }
 
   /** @type {string | null} */
   let stageRoot = null;
-  /** @type {string | null} */
-  let transactionRoot = null;
+  let ready = false;
   try {
     const stagedResult = stagePackFromSource({
       root,
@@ -974,7 +972,7 @@ async function cmdRefresh({ root, library, name, fetch = true, source, ref }) {
       ref,
     });
     if ('error' in stagedResult) {
-      return { ok: false, code: 2, error: stagedResult.error };
+      return { ok: false, code: 2, mutation: 'none', error: stagedResult.error };
     }
     stageRoot = stagedResult.stageRoot;
     const { sourceIdentity, staged } = stagedResult;
@@ -1026,7 +1024,7 @@ async function cmdRefresh({ root, library, name, fetch = true, source, ref }) {
         }
       }
     } catch (error) {
-      return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+      return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
     }
     for (const file of recordedFiles) {
       if (!newFileSet.has(file)) {
@@ -1034,7 +1032,7 @@ async function cmdRefresh({ root, library, name, fetch = true, source, ref }) {
       }
     }
     if (conflicts.length > 0) {
-      return { ok: false, code: 2, error: `destination ownership conflict:\n  ${conflicts.join('\n  ')}` };
+      return { ok: false, code: 2, mutation: 'none', error: `destination ownership conflict:\n  ${conflicts.join('\n  ')}` };
     }
 
     // Build the next canonical profile and re-establish authority by rereading
@@ -1048,18 +1046,104 @@ async function cmdRefresh({ root, library, name, fetch = true, source, ref }) {
     try {
       nextProfileBody = serializeProfile(root, nextProfile);
     } catch (error) {
-      return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+      return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
     }
+    const authorityError = reauthorizeRefresh({
+      root,
+      name,
+      currentProfilePath,
+      authorizedProfileBytes,
+    });
+    if (authorityError) return { ok: false, code: 2, mutation: 'none', error: authorityError };
 
-    try {
-      resolveMutationPath(root, WORKSPACE_PATHS.PROFILE);
-      const currentProfileBytes = exists(currentProfilePath) ? fs.readFileSync(currentProfilePath) : null;
-      if (!currentProfileBytes || !authorizedProfileBytes.equals(currentProfileBytes)) {
-        return { ok: false, code: 2, error: `profile changed after authorizing refresh of pack "${name}"; refusing refresh` };
-      }
-    } catch (error) {
-      return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+    ready = true;
+    return {
+      ok: true,
+      code: 0,
+      result: {
+        name,
+        sourceIdentity,
+        staged,
+        stageRoot,
+        currentProfilePath,
+        authorizedProfileBytes,
+        replacements,
+        additions,
+        removals,
+        newFiles,
+        nextProfileBody,
+      },
+    };
+  } catch (error) {
+    return { ok: false, code: 2, mutation: 'none', error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    if (stageRoot && !ready) removePath(stageRoot);
+  }
+}
+
+/** @param {any} prepared */
+function reauthorizeRefresh(prepared) {
+  try {
+    resolveMutationPath(prepared.root, WORKSPACE_PATHS.PROFILE);
+    const currentProfileBytes = exists(prepared.currentProfilePath) ? fs.readFileSync(prepared.currentProfilePath) : null;
+    if (!currentProfileBytes || !prepared.authorizedProfileBytes.equals(currentProfileBytes)) {
+      return `profile changed after authorizing refresh of pack "${prepared.name}"; refusing refresh`;
     }
+    return '';
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+/**
+ * Return the ordinary refresh projection without writing pack artifacts or the
+ * profile. The caller receives only the public preview shape.
+ * @param {{ root: string, library: string, name: string, fetch?: boolean, source?: string, ref?: string }} args
+ */
+async function cmdPreviewRefresh(args) {
+  const prepared = await prepareRefresh(args);
+  if (!prepared.ok) return prepared;
+  const data = prepared.result;
+  try {
+    const authorityError = reauthorizeRefresh({ ...data, root: args.root });
+    if (authorityError) return { ok: false, code: 2, mutation: 'none', error: authorityError };
+    return {
+      ok: true,
+      code: 0,
+      result: {
+        previewed: data.name,
+        replaced: data.replacements.map((item) => item.relPath).sort(),
+        added: data.additions.map((item) => item.relPath).sort(),
+        removed: data.removals.map((item) => item.relPath).sort(),
+        files: data.newFiles.slice(),
+        source: data.sourceIdentity,
+      },
+    };
+  } finally {
+    removePath(data.stageRoot);
+  }
+}
+
+async function cmdRefresh(args) {
+  const prepared = await prepareRefresh(args);
+  if (!prepared.ok) return prepared;
+  const data = prepared.result;
+  let transactionRoot = null;
+  let mutationStarted = false;
+  try {
+    const authorityError = reauthorizeRefresh({ ...data, root: args.root });
+    if (authorityError) return { ok: false, code: 2, mutation: 'none', error: authorityError };
+
+    const {
+      name,
+      currentProfilePath,
+      authorizedProfileBytes,
+      replacements,
+      additions,
+      removals,
+      newFiles,
+      nextProfileBody,
+    } = data;
 
     // All-or-restored transaction: back up every replacement and removal target
     // before mutating any; apply removals, then replacements, then additions,
@@ -1081,19 +1165,23 @@ async function cmdRefresh({ root, library, name, fetch = true, source, ref }) {
       }
       // Phase 2: removals, then replacements, then additions, then the profile.
       for (const item of removals) {
+        mutationStarted = true;
         applied.push({ relPath: item.relPath, destination: item.destination, stagedAbs: null, action: 'remove', backup: backups.get(item.relPath) ?? null });
         removePath(item.destination);
       }
       for (const item of replacements) {
+        mutationStarted = true;
         applied.push({ relPath: item.relPath, destination: item.destination, stagedAbs: item.stagedAbs, action: 'replace', backup: backups.get(item.relPath) ?? null });
         removePath(item.destination);
         copyRecursive(item.stagedAbs, item.destination);
       }
       for (const item of additions) {
+        mutationStarted = true;
         applied.push({ relPath: item.relPath, destination: item.destination, stagedAbs: item.stagedAbs, action: 'add', backup: null });
         copyRecursive(item.stagedAbs, item.destination);
       }
-      writeProfileDocument(root, nextProfileBody);
+      mutationStarted = true;
+      writeProfileDocument(args.root, nextProfileBody);
     } catch (error) {
       /** @type {string[]} */
       const rollbackErrors = [];
@@ -1120,6 +1208,7 @@ async function cmdRefresh({ root, library, name, fetch = true, source, ref }) {
       return {
         ok: false,
         code: 2,
+        mutation: rollbackErrors.length > 0 ? 'uncertain' : 'restored',
         error: rollbackErrors.length > 0
           ? `pack refresh failed (${error instanceof Error ? error.message : String(error)}); rollback failed: ${rollbackErrors.join('; ')}`
           : `pack refresh failed and was rolled back: ${error instanceof Error ? error.message : String(error)}`,
@@ -1138,10 +1227,15 @@ async function cmdRefresh({ root, library, name, fetch = true, source, ref }) {
       },
     };
   } catch (error) {
-    return { ok: false, code: 2, error: error instanceof Error ? error.message : String(error) };
+    return {
+      ok: false,
+      code: 2,
+      mutation: mutationStarted ? 'uncertain' : 'none',
+      error: error instanceof Error ? error.message : String(error),
+    };
   } finally {
     if (transactionRoot) removePath(transactionRoot);
-    if (stageRoot) removePath(stageRoot);
+    removePath(data.stageRoot);
   }
 }
 
@@ -1287,21 +1381,23 @@ Flags:
   --ref <ref>       upstream ref for source resolution (default: manifest / main)
   --no-fetch        never fetch; require the pack in the local catalog
   --json            machine-readable output
+  --dry-run         preview refresh without writing
   --force           overwrite existing files on add
 `;
 
 /**
  * @param {string[]} argv
- * @returns {{ cmd?: string, name?: string, root: string, library?: string, json: boolean, force: boolean, help: boolean }}
+ * @returns {{ cmd?: string, name?: string, root: string, library?: string, json: boolean, force: boolean, dryRun: boolean, help: boolean }}
  */
 function parseArgs(argv) {
   /** @type {any} */
-  const out = { root: process.cwd(), json: false, force: false, fetch: true, help: false };
+  const out = { root: process.cwd(), json: false, force: false, dryRun: false, fetch: true, help: false };
   /** @type {string[]} */
   const positionals = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') out.json = true;
+    else if (a === '--dry-run') out.dryRun = true;
     else if (a === '--force') out.force = true;
     else if (a === '--no-fetch') out.fetch = false;
     else if (a === '--help' || a === '-h') out.help = true;
@@ -1314,6 +1410,7 @@ function parseArgs(argv) {
   }
   out.cmd = positionals[0];
   out.name = positionals[1];
+  if (out.dryRun && out.cmd !== 'refresh') out.help = true;
   return out;
 }
 
@@ -1348,6 +1445,10 @@ function report(r, json) {
   } else if (res.refreshed) {
     process.stdout.write(
       `[OK] refreshed pack "${res.refreshed}" (${res.replaced.length} replaced, ${res.added.length} added, ${res.removed.length} removed)\n`
+    );
+  } else if (res.previewed) {
+    process.stdout.write(
+      `[OK] previewed pack "${res.previewed}" (${res.replaced.length} replaced, ${res.added.length} added, ${res.removed.length} removed)\n`
     );
   } else if (res.added) {
     const from = res.origin && res.origin !== 'local' ? ` from ${res.origin}` : '';
@@ -1410,7 +1511,9 @@ async function main() {
       if (!args.name) {
         r = { ok: false, code: 1, error: 'refresh requires a pack name' };
       } else {
-        r = await cmdRefresh({ root, library, name: args.name, fetch: args.fetch, source: args.source, ref: args.ref });
+        r = args.dryRun
+          ? await cmdPreviewRefresh({ root, library, name: args.name, fetch: args.fetch, source: args.source, ref: args.ref })
+          : await cmdRefresh({ root, library, name: args.name, fetch: args.fetch, source: args.source, ref: args.ref });
       }
       break;
     case 'verify':
@@ -1451,6 +1554,7 @@ export {
   cmdAdd,
   cmdRemove,
   cmdRefresh,
+  cmdPreviewRefresh,
   cmdList,
   cmdStatus,
   cmdVerify,

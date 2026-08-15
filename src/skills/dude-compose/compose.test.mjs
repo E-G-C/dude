@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   cmdAdd,
   cmdList,
+  cmdPreviewRefresh,
   cmdRefresh,
   cmdRemove,
   cmdStatus,
@@ -1599,6 +1600,89 @@ test('refresh reprojects a changed source over the same destination set', async 
     assert.deepEqual(repeated.result?.added, []);
     assert.deepEqual(repeated.result?.removed, []);
   } finally {
+    cleanup(root);
+  }
+});
+
+test('refresh preview has refresh parity, is byte-read-only, and cleans its stage', async () => {
+  // Arrange
+  const root = createRoot();
+  const refreshes = trackRefreshDirectories();
+  try {
+    writePack(root, 'mixed', [packAgent('mixed', 'worker', { name: 'Mixed Worker' })], {
+      skill: true,
+      instruction: true,
+      prompt: true,
+    });
+    const pack = path.join(root, 'library', 'packs', 'mixed');
+    fs.writeFileSync(path.join(pack, 'prompts', 'dude-pack-mixed-legacy.prompt.md'), '# old prompt\n');
+    assert.equal((await addPack(root, 'mixed')).ok, true);
+
+    fs.writeFileSync(
+      path.join(pack, 'agents', 'dude-pack-mixed-worker.agent.md'),
+      agentSource({ name: 'Mixed Worker' }).replace('You are Mixed Worker.', 'You are Mixed Worker v2.'),
+    );
+    fs.rmSync(path.join(pack, 'prompts', 'dude-pack-mixed-legacy.prompt.md'));
+    fs.writeFileSync(path.join(pack, 'instructions', 'dude-pack-mixed-extra.instructions.md'), '# added instruction\n');
+    const before = mutationSnapshot(root);
+
+    // Act
+    const preview = await cmdPreviewRefresh({ root, library: path.join(root, 'library', 'packs'), name: 'mixed' });
+
+    // Assert
+    assert.equal(preview.ok, true, preview.error);
+    assert.deepEqual(preview.result?.replaced, [
+      '.github/agents/dude-pack-mixed-worker.agent.md',
+      '.github/instructions/dude-pack-mixed-guide.instructions.md',
+      '.github/prompts/dude-pack-mixed-ask.prompt.md',
+      '.github/skills/dude-pack-mixed-helper',
+    ]);
+    assert.deepEqual(preview.result?.added, ['.github/instructions/dude-pack-mixed-extra.instructions.md']);
+    assert.deepEqual(preview.result?.removed, ['.github/prompts/dude-pack-mixed-legacy.prompt.md']);
+    assertMutationUnchanged(root, before);
+    assertNoSurvivingStageDirectories(refreshes.directories);
+
+    const refreshed = await refreshPack(root, 'mixed');
+    assert.equal(refreshed.ok, true, refreshed.error);
+    assert.deepEqual(refreshed.result?.replaced, preview.result?.replaced);
+    assert.deepEqual(refreshed.result?.added, preview.result?.added);
+    assert.deepEqual(refreshed.result?.removed, preview.result?.removed);
+    assert.equal(
+      exists(path.join(root, '.github', 'prompts', 'dude-pack-mixed-legacy.prompt.md')),
+      false,
+      'the previewed removal did not occur during refresh',
+    );
+  } finally {
+    refreshes.restore();
+    cleanup(root);
+  }
+});
+
+test('refresh preview refuses an occupied addition without mutation or surviving stage', async () => {
+  // Arrange
+  const root = createRoot();
+  const refreshes = trackRefreshDirectories();
+  try {
+    writePack(root, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
+    assert.equal((await addPack(root, 'demo')).ok, true);
+    const pack = path.join(root, 'library', 'packs', 'demo');
+    fs.mkdirSync(path.join(pack, 'instructions'), { recursive: true });
+    fs.writeFileSync(path.join(pack, 'instructions', 'dude-pack-demo-guide.instructions.md'), '# new source\n');
+    const occupied = path.join(root, '.github', 'instructions', 'dude-pack-demo-guide.instructions.md');
+    fs.writeFileSync(occupied, '# foreign bytes\n');
+    const before = mutationSnapshot(root);
+
+    // Act
+    const preview = await cmdPreviewRefresh({ root, library: path.join(root, 'library', 'packs'), name: 'demo' });
+
+    // Assert
+    assert.equal(preview.ok, false);
+    assert.match(preview.error || '', /already exists as a core, project, or foreign artifact/);
+    assertMutationUnchanged(root, before);
+    assert.equal(fs.readFileSync(occupied, 'utf8'), '# foreign bytes\n');
+    assertNoSurvivingStageDirectories(refreshes.directories);
+  } finally {
+    refreshes.restore();
     cleanup(root);
   }
 });

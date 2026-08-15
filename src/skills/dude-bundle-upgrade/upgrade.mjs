@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { enumerateCorePaths, classifyPath, TIER } from '../dude-engine/lib/ownership.mjs';
 import { resolveReleaseRef, pickLatestReleaseTag } from '../dude-engine/lib/release-channel.mjs';
 import {
@@ -1644,6 +1644,271 @@ function runLint() {
   return r.status === 0 ? 'OK' : 'FAIL';
 }
 
+/** @param {string} value */
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** @param {string} planArgument */
+function loadPersistedPlan(planArgument) {
+  let planPath = planArgument;
+  if (!isFile(planPath)) planPath = path.join(PLANS_DIR, `${planArgument}.json`);
+  if (!isFile(planPath)) throw new Error(`plan not found: ${planArgument}`);
+  return parseUpgradePlan(planPath);
+}
+
+/** @param {string} relativePath */
+function readHeadFile(relativePath) {
+  const result = git(['show', `HEAD:${relativePath}`]);
+  if (result.status !== 0) throw new Error(`committed core result is missing ${relativePath}`);
+  return result.stdout;
+}
+
+/**
+ * Validate that the reviewed plan already produced the current committed core
+ * result. This deliberately reads only committed evidence; pack preview must
+ * not create another plan or state record.
+ * @param {Record<string, any>} plan
+ */
+function verifyCommittedCoreBoundary(plan) {
+  verifyWorkspaceEvidence(plan);
+  const status = git(['status', '--porcelain']);
+  if (status.status !== 0) throw new Error('failed to inspect the local Git working tree');
+  if (status.stdout.trim()) throw new Error('working tree is dirty; commit or stash changes before refreshing packs');
+
+  const manifestText = readHeadFile(WORKSPACE_PATHS.BUNDLE_MANIFEST);
+  const manifestBody = extractManifestJson(manifestText);
+  const manifest = manifestBody ? parseManifest(manifestBody) : null;
+  const manifestErrors = validateMetadataManifest(manifest, 'committed bundle manifest');
+  if (manifestErrors.length) throw new Error(`committed bundle manifest is invalid: ${manifestErrors[0]}`);
+  if (manifest.source_repo !== plan.source.location
+      || manifest.source_ref !== plan.source.requested_ref
+      || manifest.installed_ref !== plan.to_ref) {
+    throw new Error('committed bundle manifest does not match the reviewed core plan');
+  }
+
+  const log = readHeadFile(WORKSPACE_PATHS.UPGRADE_LOG);
+  const entry = log.split(/^## /m).filter(Boolean).at(-1) || '';
+  const branch = new RegExp(`^- notes: plan_id=${escapeRegExp(plan.plan_id)}; branch=([^\\n]+)$`, 'm').exec(entry)?.[1] || '';
+  const safetyTag = /^- safety tag: ([^\n]+)$/m.exec(entry)?.[1] || '';
+  if (!branch || !safetyTag
+      || !new RegExp(`^- to:\\s+${escapeRegExp(plan.to_ref)}$`, 'm').test(entry)
+      || !new RegExp(`^- ref:\\s+${escapeRegExp(plan.source.requested_ref)}$`, 'm').test(entry)
+      || !/^- lint: \[OK\]$/m.test(entry)) {
+    throw new Error('latest committed upgrade log entry does not confirm the reviewed core plan and successful lint');
+  }
+  const currentBranch = git(['rev-parse', '--abbrev-ref', 'HEAD']);
+  if (currentBranch.status !== 0 || currentBranch.stdout.trim() !== branch) {
+    throw new Error('current branch is not the upgrade branch recorded for the reviewed core plan');
+  }
+  const tagCommit = git(['rev-parse', '--verify', `${safetyTag}^{commit}`]);
+  const parent = git(['rev-parse', '--verify', 'HEAD^']);
+  if (tagCommit.status !== 0 || parent.status !== 0 || tagCommit.stdout.trim() !== parent.stdout.trim()) {
+    throw new Error('recorded core safety tag does not bound the current committed core result');
+  }
+  const head = git(['rev-parse', 'HEAD']);
+  if (head.status !== 0) throw new Error('could not resolve committed core result');
+  return { branch, safetyTag, coreCommit: head.stdout.trim() };
+}
+
+async function loadInstalledCompose() {
+  const composePath = path.join(ROOT, '.github', 'skills', 'dude-compose', 'compose.mjs');
+  if (!isFile(composePath)) throw new Error(`upgraded bundle is missing Compose engine: ${composePath}`);
+  const key = sha256(fs.readFileSync(composePath));
+  const compose = await import(`${pathToFileURL(composePath).href}?sha256=${key}`);
+  for (const name of ['cmdStatus', 'cmdPreviewRefresh', 'cmdRefresh']) {
+    if (typeof compose[name] !== 'function') throw new Error(`upgraded Compose engine has no ${name} export`);
+  }
+  return compose;
+}
+
+/** @param {string[]} argv @param {boolean} apply */
+async function cmdPacks(argv, apply) {
+  const { flags, error } = parseFlags(
+    argv,
+    new Set(['plan', 'confirm', 'format']),
+    new Set(),
+  );
+  const format = flags.format || 'text';
+  if (error || (format !== 'text' && format !== 'json')) {
+    logError(error || `invalid --format: ${format} (expected text|json)`);
+    return 40;
+  }
+  if (!flags.plan) {
+    logError('--plan is required (path or plan id)');
+    return 40;
+  }
+  if (apply && flags.confirm !== 'confirm-packs') {
+    logError("packs-apply requires --confirm with literal string 'confirm-packs'");
+    return 40;
+  }
+  if (!apply && flags.confirm) {
+    logError('packs-preview does not accept --confirm');
+    return 40;
+  }
+  if (!hasGit() || git(['rev-parse', '--is-inside-work-tree']).status !== 0) {
+    logError('not a git working tree or git missing');
+    return 40;
+  }
+
+  let plan;
+  let boundary;
+  let compose;
+  try {
+    plan = loadPersistedPlan(flags.plan);
+    boundary = verifyCommittedCoreBoundary(plan);
+    compose = await loadInstalledCompose();
+  } catch (failure) {
+    logError(failure instanceof Error ? failure.message : String(failure));
+    return 40;
+  }
+
+  const installed = compose.cmdStatus({ root: ROOT });
+  if (!installed.ok) {
+    logError(installed.error || 'installed pack profile is invalid');
+    return 40;
+  }
+  const names = installed.result.enabled_packs.slice().sort(codeUnitCompare);
+  const source = plan.source.location;
+  const ref = plan.source.resolved_commit;
+  if (!apply) {
+    const packs = [];
+    for (const name of names) {
+      const preview = await compose.cmdPreviewRefresh({ root: ROOT, library: path.join(ROOT, 'library', 'packs'), name, source, ref });
+      if (!preview.ok) {
+        const output = {
+          status: 'failed',
+          core_commit: boundary.coreCommit,
+          safety_tag: boundary.safetyTag,
+          upgrade_branch: boundary.branch,
+          packs,
+          failed: { name, reason: preview.error, mutation: preview.mutation || 'uncertain' },
+        };
+        if (format === 'json') out(`${JSON.stringify(output, null, 2)}\n`);
+        else logError(`pack preview failed for "${name}": ${preview.error}`);
+        return 40;
+      }
+      packs.push(preview.result);
+    }
+    const output = {
+      status: 'previewed',
+      core_commit: boundary.coreCommit,
+      safety_tag: boundary.safetyTag,
+      upgrade_branch: boundary.branch,
+      packs,
+      pack_confirmation_required: names.length > 0,
+    };
+    if (format === 'json') out(`${JSON.stringify(output, null, 2)}\n`);
+    else if (names.length === 0) out('No installed packs to refresh; pack confirmation is not required.\n');
+    else for (const pack of packs) out(`Previewed ${pack.previewed}: ${pack.replaced.length} replaced, ${pack.added.length} added, ${pack.removed.length} removed\n`);
+    return 0;
+  }
+
+  /** @type {string[]} */
+  const successful = [];
+  if (names.length === 0) {
+    const output = {
+      status: 'core_only',
+      core_commit: boundary.coreCommit,
+      successful,
+      failed: null,
+      not_attempted: [],
+      pack_commit: 'none',
+      lint: 'SKIPPED',
+      clean: true,
+      safety_tag: boundary.safetyTag,
+      upgrade_branch: boundary.branch,
+      review: `git diff <target-branch>...${boundary.branch}`,
+      rollback: `node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback --tag ${boundary.safetyTag}`,
+    };
+    if (format === 'json') out(`${JSON.stringify(output, null, 2)}\n`);
+    else out('No installed packs to refresh; core upgrade remains committed and clean.\n');
+    return 0;
+  }
+  /** @type {string[]} */
+  const candidatePaths = [];
+  let failed = null;
+  let operationalFailure = '';
+  for (let index = 0; index < names.length; index += 1) {
+    const name = names[index];
+    const refreshed = await compose.cmdRefresh({ root: ROOT, library: path.join(ROOT, 'library', 'packs'), name, source, ref });
+    if (!refreshed.ok) {
+      failed = { name, reason: refreshed.error, mutation: refreshed.mutation || 'uncertain' };
+      if (failed.mutation === 'uncertain') {
+        operationalFailure = `pack "${name}" failed with uncertain rollback state`;
+      }
+      break;
+    }
+    successful.push(name);
+    candidatePaths.push(...refreshed.result.replaced, ...refreshed.result.added, ...refreshed.result.removed, ...refreshed.result.files);
+  }
+
+  let lint = 'SKIPPED';
+  let packCommit = 'none';
+  if (!operationalFailure) {
+    lint = runLint();
+    const stagePaths = [...new Set([...candidatePaths, WORKSPACE_PATHS.PROFILE])].sort(codeUnitCompare);
+    if (stagePaths.length > 1) {
+      const add = git(['add', '-A', '--', ...stagePaths]);
+      if (add.status !== 0) {
+        operationalFailure = `git add failed while staging refreshed pack paths: ${add.stderr.trim() || 'unknown error'}`;
+      } else {
+        const staged = git(['diff', '--cached', '--quiet', '--', ...stagePaths]);
+        if (staged.status !== 0 && staged.status !== 1) {
+          operationalFailure = `could not inspect staged refreshed pack paths: ${staged.stderr.trim() || 'unknown error'}`;
+        } else if (staged.status === 1) {
+          const hooksPath = fs.mkdtempSync(path.join(CACHE_ROOT, 'disabled-hooks-'));
+          const commit = gitWithoutHooks(hooksPath, ['commit', '-q', '-m', `chore: refresh installed Dude packs after ${plan.to_ref}`]);
+          fs.rmSync(hooksPath, { recursive: true, force: true });
+          if (commit.status !== 0) {
+            operationalFailure = `git commit failed for refreshed pack paths: ${commit.stderr.trim() || 'unknown error'}`;
+          } else {
+            packCommit = git(['rev-parse', 'HEAD']).stdout.trim();
+          }
+        }
+      }
+    }
+    if (!operationalFailure && lint === 'FAIL') {
+      operationalFailure = 'post-refresh lint reported failures';
+    }
+  }
+
+  const notAttempted = failed ? names.slice(names.indexOf(failed.name) + 1) : [];
+  const treeStatus = git(['status', '--porcelain']);
+  const clean = treeStatus.status === 0 && treeStatus.stdout.trim() === '';
+  if (!operationalFailure && !clean) {
+    operationalFailure = treeStatus.status === 0
+      ? 'working tree is dirty after pack refresh'
+      : `failed to inspect the local Git working tree after pack refresh: ${treeStatus.stderr.trim() || 'unknown error'}`;
+  }
+  const output = {
+    status: operationalFailure ? 'operational_failure' : (failed ? 'partial_failure' : 'applied'),
+    core_commit: boundary.coreCommit,
+    successful,
+    failed,
+    not_attempted: notAttempted,
+    pack_commit: packCommit,
+    lint,
+    clean,
+    safety_tag: boundary.safetyTag,
+    upgrade_branch: boundary.branch,
+    review: `git diff <target-branch>...${boundary.branch}`,
+    rollback: `node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback --tag ${boundary.safetyTag}`,
+    ...(operationalFailure ? { error: operationalFailure } : {}),
+  };
+  if (format === 'json') out(`${JSON.stringify(output, null, 2)}\n`);
+  else {
+    out(`Core retained: ${boundary.coreCommit}\n`);
+    out(`Successful packs: ${successful.length ? successful.join(', ') : 'none'}\n`);
+    if (failed) out(`Failed pack: ${failed.name}: ${failed.reason}\n`);
+    if (notAttempted.length) out(`Not attempted: ${notAttempted.join(', ')}\n`);
+    out(`Pack commit: ${packCommit}\nLint: [${lint}]\nWorking tree clean: ${clean ? 'yes' : 'no'}\n`);
+    out(`Review: ${output.review}\nRollback: ${output.rollback}\n`);
+    if (operationalFailure) logError(operationalFailure);
+  }
+  return operationalFailure ? 40 : 0;
+}
+
 // ----- flag parsing ----------------------------------------------------------
 /**
  * @param {string[]} argv
@@ -2196,6 +2461,8 @@ SUBCOMMANDS
   status     compare local manifest against upstream manifest (read-only)
   plan       fetch upstream tree, classify every file, persist plan (read-only)
   apply      apply a persisted plan: safety tag + branch + writes + commit
+  packs-preview  preview installed-pack refreshes after a committed core apply
+  packs-apply    refresh installed packs after preview and confirmation
   rollback   reset HEAD to the most recent dude-pre-upgrade-* safety tag
   help       this message
 
@@ -2211,6 +2478,15 @@ FLAGS (apply)
   --plan <id|path>     required: persisted plan from a previous \`plan\` run
   --confirm <token>    required: must be the literal string 'confirm-upgrade'
   --skip-removals      keep Remove-bucket files instead of deleting them
+  --format text|json   output format (default: text)
+
+FLAGS (packs-preview)
+  --plan <id|path>     required: committed core upgrade plan
+  --format text|json   output format (default: text)
+
+FLAGS (packs-apply)
+  --plan <id|path>     required: committed core upgrade plan
+  --confirm <token>    required: must be the literal string 'confirm-packs'
   --format text|json   output format (default: text)
 
 FLAGS (rollback)
@@ -2249,6 +2525,10 @@ async function main() {
       return cmdPlan(rest);
     case 'apply':
       return cmdApply(rest);
+    case 'packs-preview':
+      return cmdPacks(rest, false);
+    case 'packs-apply':
+      return cmdPacks(rest, true);
     case 'rollback':
       return cmdRollback(rest);
     case 'help':

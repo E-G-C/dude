@@ -1,6 +1,6 @@
 ---
 name: dude-compose
-description: "Use when installing, removing, refreshing, or listing optional Dude packs. Triggers: @dude add pack <name>, @dude remove pack <name>, @dude list packs, install pack, enable pack, uninstall pack, refresh an installed pack, re-project a pack after editing its source, the pack source or model mapping changed, which packs are available, compose the bundle, add tracked execution, add release tooling, add web specialists, add TDD. Do NOT use for upgrading the bundle itself (dude-bundle-upgrade) or importing an agent or skill from an external repository (dude-bundle-import)."
+description: "Use when installing, removing, refreshing, previewing a refresh for, or listing optional Dude packs. Triggers: @dude add pack <name>, @dude remove pack <name>, @dude list packs, install pack, enable pack, uninstall pack, refresh an installed pack, preview `refresh <name> --dry-run`, re-project a pack after editing its source, the pack source or model mapping changed, which packs are available, compose the bundle, add tracked execution, add release tooling, add web specialists, add TDD. Do NOT use for upgrading the bundle itself (dude-bundle-upgrade) or importing an agent or skill from an external repository (dude-bundle-import)."
 ---
 
 # Pack Compose
@@ -42,6 +42,7 @@ node .github/skills/dude-compose/compose.mjs status          # installed packs
 node .github/skills/dude-compose/compose.mjs add <name>      # install (local or fetched)
 node .github/skills/dude-compose/compose.mjs remove <name>   # uninstall
 node .github/skills/dude-compose/compose.mjs refresh <name>  # re-project an installed pack from current source
+node .github/skills/dude-compose/compose.mjs refresh <name> --dry-run  # read-only refresh preview
 node .github/skills/dude-compose/compose.mjs verify          # temp-install + lint every pack
 ```
 
@@ -49,11 +50,12 @@ Flags: `--root <dir>` (bundle root, default cwd), `--library <dir>` (catalog,
 default `<root>/library/packs`), `--source <repo>` / `--ref <ref>` (upstream for
 remote `add`/`list`/`refresh`; default the bundle manifest's
 `source_repo` / `source_ref`), `--no-fetch` (never fetch — require the pack locally), `--json`
-(machine output), `--force` (overwrite existing destinations on add).
+(machine output), `--dry-run` (read-only preview for `refresh` only), `--force`
+(overwrite existing destinations on add).
 Exit codes: `0` ok, `1` usage, `2` operation error.
 
 The command is selected before projection dependencies are loaded. `add`,
-`refresh`, and `verify` load the model configuration and renderer from the
+`refresh` (including `--dry-run`), and `verify` load the model configuration and renderer from the
 installed engine, using the absolute path
 `.github/skills/dude-engine/config/agent-models.json`. `remove`, `list`, and
 `status` do not load that configuration or the renderer.
@@ -100,23 +102,27 @@ transaction residue on rollback. This is not a crash-proof atomicity guarantee.
 
 Use refresh after a pack's authoritative source or a model mapping changed, to
 re-project the installed pack in one transaction instead of a manual
-remove-then-add.
+remove-then-add. Ordinary `refresh <name>` remains the canonical mutation path;
+`--dry-run` prepares and reports that same refresh without applying it.
 
 1. Run `status --json` to confirm the pack is installed. Refresh updates an
    installed pack; it does not install a new one.
-2. Preview the change. Tell the user the pack will be re-projected from its
-   current source: edited destinations are replaced in place, new source
-   destinations are added, and destinations the source dropped are deleted. Wait
-   for confirmation.
+2. Preview the change with
+   `node .github/skills/dude-compose/compose.mjs refresh <name> --dry-run --json`.
+   It returns `{ previewed, replaced, added, removed, files, source }`: edited
+   destinations are replacements, new source destinations are additions, and
+   destinations the source dropped are removals. The preview uses the same
+   source resolution, projection, ownership checks, profile authority, and
+   destination classification as refresh. It removes its staging area and
+   changes neither artifacts nor the profile. Wait for confirmation.
 3. Run `node .github/skills/dude-compose/compose.mjs refresh <name> --json`. The
    script uses the old exact file list for its replaceable destinations, stages
-   the current source through the same pipeline as `add`, and computes the
-   old-versus-new destination set. It refuses any new destination that is
-   occupied or claimed by another pack, then applies removals, replacements, and
-   additions plus the profile update as one all-or-restored transaction. It
-   always reprojects, including when the source and projected bytes appear
-   unchanged. A caught failure restores the prior artifacts and profile bytes;
-   process termination or machine failure is outside that guarantee.
+   the current source through that canonical preparation, then applies removals,
+   replacements, and additions plus the profile update as one all-or-restored
+   transaction. It always reprojects, including when the source and projected
+   bytes appear unchanged. A caught failure restores the prior artifacts and
+   profile bytes; process termination or machine failure is outside that
+   guarantee.
 4. Run lint and confirm `0 failures`.
 
 Refresh reports `{ refreshed, replaced, added, removed, files }`; the human line

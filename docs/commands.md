@@ -35,7 +35,7 @@ it with `@dude add pack beads`.
 | `@dude hire a <role>` | Add a new specialist to the active roster (creates `.github/agents/dude-local-<slug>.agent.md` for project-local agents). |
 | `@dude list the team` / `@dude show roster` | Read-only summary of the current specialists and their scopes. |
 | `@dude remove <role>` / `@dude modify <role>` | Remove or adjust an existing specialist. |
-| `@dude upgrade [--dry-run|--rollback|--ref <ref>]` | Refresh the installed Dude bundle from upstream while preserving project memory and active work. |
+| `@dude upgrade [--all] [--dry-run|--rollback|--ref <ref>]` | Refresh the installed Dude bundle from upstream while preserving project memory and active work. `--all` adds a post-core refresh of installed packs after a separate confirmation. |
 | `@dude import tasks from .dude/specs/<feature>/ into Beads` | Manually import a defined package into Beads when you do not want the normal automatic handoff. Requires the `beads` pack. |
 
 Preferred workflow verbs are `brainstorm`, `define`, `ship`, `status`, `track`, `work`, `flag`, `diff`, and `self-check`. `hire`, `remember`, `upgrade`, `sync Beads to tasks.md`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
@@ -1127,17 +1127,25 @@ Useful variants:
 ```text
 @dude upgrade --ref v1.4.0
 @dude upgrade --source https://github.com/<owner>/<repo>
+@dude upgrade --all
 ```
+
+`@dude upgrade --all` commits the reviewed core upgrade before the upgraded
+engine previews only the packs in the installed profile. Reply `confirm packs`
+after that preview to refresh them. Plain upgrade remains core-only, and
+`--all --dry-run` stops after the ordinary core preview.
 
 Only base-owned files — those matching the namespace convention
 (`.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md`,
 `.github/skills/dude-<slug>/**`, `.github/instructions/dude.instructions.md`,
 excluding the reserved `dude-local-<slug>` namespace) — are candidates for
-replacement. All `.dude/` project state, `.github/skills/project/`, custom agents/skills,
-`.github/copilot-instructions.md`, Beads, and product
-source are preserved. Root files and repository docs are intentionally excluded
-from the upgrade payload. The canonical manifest is required locally and in the
-upstream tree; only that path is accepted.
+replacement. The core phase preserves project ideas, specs, memory, execution
+state, `.github/skills/project/`, custom agents and skills,
+`.github/copilot-instructions.md`, Beads, and product source. With `--all`,
+the separate confirmed Compose phase may update the installed profile and its
+recorded pack artifacts. Root files and repository docs are intentionally
+excluded from the upgrade payload. The canonical manifest is required locally
+and in the upstream tree; only that path is accepted.
 
 The existing recursive ownership of `.github/skills/dude-engine/**` includes
 the packaged model configuration and loader, so an installed pre-feature

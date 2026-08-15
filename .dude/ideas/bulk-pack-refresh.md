@@ -1,8 +1,8 @@
 ---
 title: Bulk Pack Refresh
 slug: bulk-pack-refresh
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/038-bulk-pack-refresh/spec.md
 ---
 
 # Idea: Bulk Pack Refresh
@@ -18,106 +18,182 @@ after upgrading.
 
 ### Q1: Should the opt-in form use the proposed `--all` spelling or a more descriptive name such as `--with-packs`?
 
-**Your answer:** _Pending._
+**Your answer:** Use `@dude upgrade --all`. Plain `@dude upgrade` remains
+core-only.
 
 ### Q2: How much preview should the opt-in operation provide: current-core estimates, a planned-core isolated preview, or results only after core is applied?
 
-**Your answer:** _Pending._
+**Your answer:** Do not build a speculative planned-core renderer. Apply and
+commit the reviewed core upgrade first, then use the upgraded engine to produce
+the authoritative installed-pack preview, including additions, replacements,
+and removals. Require a separate explicit confirmation before mutating packs.
 
 ### Q3: If one pack cannot refresh after the core upgrade, should successful core/pack changes remain with a report, or should the operation attempt to roll everything back?
 
-**Your answer:** _Pending._
+**Your answer:** Keep the successful core upgrade. Stop when one pack fails and
+report the successful, failed, and not-attempted packs; do not automatically
+roll back core. Commit successful pack refresh output before completion or
+partial failure so the upgrade branch is never left dirty. Planning should
+choose the leanest coherent commit grouping.
 
 ### Q4: When a target pack exists locally, should bulk refresh keep using that local source, or should the opt-in upgrade be able to select the same exact upstream revision as core?
 
-**Your answer:** _Pending._
+**Your answer:** Preserve local target-pack precedence for local development.
+Remote consumers should use the same concrete upstream revision selected by the
+core upgrade.
 
 ### Q5: Must `pack-catalog-refetch` or `simplify-pack-updates` land first, or should this outcome remain independently definable?
 
-**Your answer:** _Pending._
+**Your answer:** The sibling dependency is satisfied, not open. At
+`76379cda1d5895427f95887241c884986b0fa268`, Features 035 and 037 and their
+tasks are complete, Compose removes and reclones remote sources on every
+invocation, and the profile's minimal `installed` map is canonical authority.
+
+### Q6: Which packs may `--all` refresh?
+
+**Your answer:** Only packs already enabled by membership in the profile's
+canonical `installed` map. It must never install another pack or weaken the
+profile's opt-in authority.
+
+### Q7: Are core and installed-pack changes one atomic transaction?
+
+**Your answer:** No. Core mutation and pack mutation are separate transaction
+boundaries; do not claim global atomicity.
 
 ## Established Evidence
 
+- The prerequisite state was independently verified at `HEAD` / `origin-main`
+  `76379cda1d5895427f95887241c884986b0fa268`. Features 035 and 037 and their
+  tasks are complete, so their sibling dependency is satisfied rather than
+  open.
+- Compose removes and reclones remote sources on every invocation. The
+  profile's minimal `installed` map is the canonical installed-pack and opt-in
+  authority.
 - `@dude upgrade` currently enumerates core-owned paths and preserves installed
-  pack artifacts and `.dude/metadata/profile.md`. Core renderer/model bytes can
-  therefore change while installed pack projections remain unchanged.
-- `compose refresh <pack>` updates one installed pack. There is no current bulk
-  operation over `profile.enabled_packs`.
-- Current Compose rendering loads the installed renderer and model config. It
-  cannot authoritatively preview post-upgrade rendering through that installed
-  engine before core apply. Rendering in isolation with staged/planned core
-  bytes is technically possible, but would be an additional mechanism whose
-  value remains subject to YAGNI.
+  pack artifacts and `.dude/metadata/profile.md`. Plain upgrade can therefore
+  remain core-only.
+- `compose refresh <pack>` is the canonical projection and refresh path for one
+  installed pack, including additions, replacements, and removals. There is no
+  current bulk operation over the installed map.
+- Compose rendering uses the installed engine. An authoritative post-upgrade
+  pack preview therefore follows the applied core upgrade; a separate
+  planned-core renderer would add a speculative mechanism.
 - Compose itself performs no Git commit. Upgrade rollback refuses a dirty
   working tree, so leaving refreshed pack output uncommitted would block the
-  current rollback command. Per-pack commits are one possible response, not a
-  requirement.
-- Refresh has a whole-profile currency gate. One incomplete installed record or
-  enabled-pack ghost can currently block refresh even when the target pack's
-  own inventory is current.
+  current rollback command.
 - `resolvePackDir` gives a local target pack precedence over `--source` and
-  `--ref`. Exact core-revision binding therefore does not work through current
-  Compose when that local target exists.
+  `--ref`, which is the accepted authority for local development.
 - Current rollback-on-caught-failure behavior is scoped to one pack refresh;
   there is no existing core-plus-all-packs transaction.
-
-### Candidate directions from exploration (not yet accepted)
-
-- Let upgrade orchestrate the existing pack operation, or add a minimal bulk
-  Compose entry point, rather than duplicating projection logic.
-- Preview after core apply or use an isolated planned-core stage; do not call
-  current-core rendering an authoritative post-upgrade preview.
-- Use one combined pack commit, per-pack commits, or another clean-worktree
-  integration; choose partial-failure and source-revision behavior explicitly.
 
 ## Assumptions
 
 - Brainstorm intake only; no definition package, no implementation.
-- Only packs already listed in `profile.enabled_packs` are refreshed; bulk
-  refresh never installs a new pack, because packs stay opt-in.
+- `@dude upgrade --all` refreshes only packs already represented in the
+  profile's canonical `installed` map; it never installs another pack.
 - Plain `@dude upgrade` stays core-only and unchanged by default.
-- The architecture, commit shape, preview timing, source binding, and
-  partial-failure policy are not yet accepted.
+- The reviewed core upgrade is applied and committed before the upgraded engine
+  produces an authoritative preview of installed-pack additions, replacements,
+  and removals.
+- Pack mutation requires its own explicit confirmation after that preview.
+- A pack failure stops further pack attempts, keeps the successful committed
+  core upgrade, preserves successful pack results in commits, reports
+  successful, failed, and not-attempted packs, and does not auto-rollback core.
+- Successful pack output is committed before completion or partial-failure
+  return so the upgrade branch is never left dirty; planning chooses the
+  leanest coherent grouping.
+- Local target-pack precedence remains authoritative for local development.
+  Remote consumers use the concrete upstream revision selected by the core
+  upgrade.
+- Core and pack mutation are separate transaction boundaries, with no global
+  atomicity claim.
+- Features 035 and 037 satisfy the sibling prerequisite at the independently
+  verified revision; this is not an open dependency.
 - This does not reopen Feature 031's completed per-pack refresh scope.
 
 <!-- dude:managed:start -->
 ## Normalized Intent
 
-- Keep plain `@dude upgrade` core-only and add, only if explicitly selected, a
-  bulk path for refreshing packs already present in `profile.enabled_packs`.
-- Let the user request one installed-pack update rather than remember one
-  manual refresh command per pack.
-- Keep all sequencing, preview, commit, failure, source-selection, and component
-  ownership choices open until definition.
-- Evaluate those choices against current source behavior and YAGNI without
-  turning exploration recommendations into user requirements.
-- Keep the sibling freshness and simplification outcomes separate and do not
-  reopen Feature 031.
+- Add `@dude upgrade --all` as the explicit bulk path for refreshing every pack
+  already enabled in the profile's canonical `installed` map. Keep plain
+  `@dude upgrade` core-only, preserve profile opt-in authority, and never install
+  another pack.
+- Reuse Compose's canonical projection and refresh path rather than duplicating
+  pack rendering, ownership, or transaction behavior.
+- Apply and commit the reviewed core upgrade first. Then use the upgraded engine
+  to produce the authoritative preview of installed-pack additions,
+  replacements, and removals; require a separate explicit confirmation before
+  pack mutation.
+- Preserve local target-pack precedence for local development. For remote
+  consumers, refresh from the same concrete upstream revision selected by the
+  core upgrade, including when the release bundle does not vendor `library/`.
+- Treat core mutation and pack mutation as separate transaction boundaries.
+  Make no global atomicity claim.
+- On a pack failure, keep the successful core upgrade, stop further pack
+  attempts, report successful, failed, and not-attempted packs, and do not
+  automatically roll back core. Preserve successful pack output in a commit
+  before returning.
+- Keep the safety branch/tag, usable rollback, no-push, and no-auto-merge
+  behavior. Never leave the upgrade branch dirty after success or partial
+  failure.
+- Cover the core-only default, installed-map selection, authoritative preview,
+  separate confirmation, additions/replacements/removals, local and remote
+  source authority, released bundles without `library/`, successful and partial
+  failure paths, clean-branch guarantees, rollback usability, and reporting.
+- Treat Features 035 and 037 as satisfied prerequisites and do not reopen
+  Feature 031.
 
 ## Constraints
 
-- Add no workflow lane, persistent artifact, daemon, store, scheduler, or second
-  board.
+- Add no workflow lane, registry, daemon, scheduler, second persistent state, or
+  second board.
 - Never install a pack that the user has not opted into.
 - Do not refresh packs during plain `@dude upgrade`; pack refresh remains
   explicit.
-- Do not claim planned-core preview is impossible, require per-pack commits, or
-  promise exact revision binding through unchanged local-source precedence.
-- Keep this as brainstorm-only scope; create no definition package and perform
-  no implementation.
+- Do not add a speculative planned-core renderer or treat a current-core
+  estimate as the authoritative installed-pack preview.
+- Do not weaken local target-pack precedence, profile authority, the existing
+  safety branch/tag, rollback usability, no-push, or no-auto-merge behavior.
+- Do not require per-pack commits when one aggregate successful-pack commit
+  satisfies the clean-branch and partial-failure requirements.
+- Do not claim crash-proof or global atomicity across core and pack mutation.
+- Follow YAGNI: add no alternate renderer, duplicate projection path, persistent
+  orchestration state, or capability without a current production caller.
 
 ## Definition Checklist
 
-- [x] Outcome is clear enough for brainstorm
-- [x] The user's core-only default and opt-in installed-pack proposal are
-  preserved in first person
-- [x] Verified preview, rollback, profile, and local-source behavior is captured
-- [x] Exploration architecture is clearly unaccepted
-- [ ] Resolve naming, preview, partial-failure, source-selection, and sibling
-  dependency choices before definition
+- [x] Outcome and one bounded package are clear
+- [x] Naming, sequencing, preview, confirmation, partial-failure, commit, and
+  transaction-boundary decisions are settled
+- [x] Profile opt-in, local/remote source authority, released-bundle operation,
+  and Compose reuse are binding
+- [x] Safety, coverage, YAGNI, and prohibited-surface constraints are explicit
+- [x] Features 035 and 037 are satisfied prerequisites
+- [x] No unresolved clarification remains
 
 ## Coordinator Log
 
 - 2026-08-14 UTC - brainstorm captured
 - 2026-08-14 UTC - brainstorm revised after independent review
+- 2026-08-15 UTC - brainstorm refreshed with accepted bulk pack upgrade decisions
+- 2026-08-15 UTC - first definition staged for .dude/specs/038-bulk-pack-refresh/spec.md
+- 2026-08-15 UTC - Lightweight task T001@61726368 claimed for architecture handoff
+- 2026-08-15 UTC - Lightweight task T001@61726368 closed after independent architecture approval and zero-failure lint
+- 2026-08-15 UTC - Lightweight task T002@696d706c claimed for implementation
+- 2026-08-15 UTC - Lightweight task T003@74657374 claimed for focused regression coverage
+- 2026-08-15 UTC - Lightweight task T004@736b696c claimed for authoritative skill guidance
+- 2026-08-15 UTC - T002-T004 readiness review rejected dirty-success reporting and contradictory upgrade boundary prose; revision assigned
+- 2026-08-15 UTC - Lightweight tasks T002@696d706c, T003@74657374, and T004@736b696c closed after revised focused suites passed 156/156, independent approval, and zero-failure lint
+- 2026-08-15 UTC - Lightweight task T005@696e7467 claimed for integration and generated parity
+- 2026-08-15 UTC - Lightweight task T005@696e7467 closed after idempotent build-dev parity, 25/25 build tests, and zero-failure lint
+- 2026-08-15 UTC - Lightweight task T006@76657269 claimed for independent full verification
+- 2026-08-15 UTC - T006@76657269 blocked after full-suite test failure; T005@696e7467 reopened for current-format guidance repair while coordinator refreshes backlog projections
+- 2026-08-15 UTC - T005@696e7467 reclosed after 107/107 current-format contracts passed; T006@76657269 resumed with current backlog projections
+- 2026-08-15 UTC - T006@76657269 blocked again after the refresh-guidance contract passed alone but failed under recursive concurrency; T005@696e7467 reopened for suite-interference diagnosis
+- 2026-08-15 UTC - Deterministic diagnosis found a source boundary regression, not concurrency; T005@696e7467 reclosed after restoring the canonical refresh rule and 107/107 contract tests, and T006@76657269 resumed
+- 2026-08-15 UTC - Lightweight task T006@76657269 closed after the full bundle gate passed with 2320/2324 recursive tests passing, 4 skipped, zero failures, zero-failure lint, and pristine-release verification
+- 2026-08-15 UTC - Lightweight task T007@63726576 claimed for independent software review
+- 2026-08-15 UTC - Lightweight task T007@63726576 closed after independent software approval with one non-blocking sentinel-fixture hardening suggestion
+- 2026-08-15 UTC - Lightweight task T008@72657677 claimed for final independent requirements acceptance
+- 2026-08-15 UTC - Lightweight task T008@72657677 and Feature 038 closed after final independent requirements approval; all eight canonical tasks are complete
 <!-- dude:managed:end -->

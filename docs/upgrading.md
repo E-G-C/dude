@@ -17,7 +17,7 @@ is the sole local, upstream, development-build, and release manifest endpoint.
 > silently overwritten by `@dude upgrade`. Editing a base agent, skill, or the
 > bundle instructions in place is unsupported; the next upgrade discards it.
 >
-> Installed **packs** (the reserved `dude-pack-<pack>-<slug>` namespace, managed by `dude-compose`) are their own tier and are **preserved** across upgrades — a core refresh never overwrites or deletes them.
+> Installed **packs** (the reserved `dude-pack-<pack>-<slug>` namespace, managed by `dude-compose`) are their own tier. The core phase preserves them; `@dude upgrade --all` later refreshes only packs already recorded as installed through Compose.
 >
 > To customize a default agent or skill, copy it under the reserved `dude-local-<slug>` namespace and edit there:
 >
@@ -98,6 +98,25 @@ replaceable generated output: refresh may overwrite edits and always runs its
 projection path. Keep a persistent customization under `dude-local-*`, not in
 an installed `dude-pack-*` path.
 
+Use `@dude upgrade --all` when you want to refresh the core and every pack
+already listed in the installed profile. Dude applies and commits the reviewed
+core upgrade first. The upgraded engine then previews each installed pack and
+waits for the separate `confirm packs` confirmation before it refreshes any
+pack. A dry run with `--all` still previews only the core because an
+authoritative pack preview requires the applied upgraded engine.
+
+The bulk path never installs a pack. It processes installed names in a stable
+order, keeps a local catalog target authoritative, and binds a remote target to
+the concrete upstream commit selected for the core upgrade. This also lets a
+released bundle refresh remote packs without a local `library/` directory.
+
+Each pack refresh retains its ordinary all-or-restored transaction. If one
+refuses, later packs are not attempted. Earlier successful output is staged
+with the profile and committed once, so normal and partial results leave the
+upgrade branch clean. A staging, commit, or lint failure is reported as an
+operational failure with the branch state and rollback command; it does not
+claim a clean result.
+
 ## Workflow
 
 The upgrade surface is small: **status -> dry-run -> upgrade -> rollback if needed**.
@@ -111,12 +130,18 @@ The upgrade surface is small: **status -> dry-run -> upgrade -> rollback if need
 4. **Verify** — runs `dude-lint` automatically. Any `[FAIL]` triggers a rollback offer before continuing.
 5. **Review & merge** — `git diff` on the safety branch, then merge or open a PR like any normal change.
 
+For `@dude upgrade --all`, confirm the core phase first. Inspect the
+post-core pack preview, then reply `confirm packs` to start pack refresh. The
+same safety tag is the rollback boundary for the core commit and the optional
+aggregate pack commit. Dude does not push or merge either commit.
+
 ## Common commands
 
 | Goal | Command |
 |---|---|
 | Preview only, no writes | `@dude upgrade --dry-run` |
 | Routine upgrade against the manifest's pinned ref | `@dude upgrade` |
+| Upgrade core, then preview and refresh installed packs | `@dude upgrade --all` |
 | Skip removals this run | reply `confirm upgrade skip-removals` at the gate |
 | Pin to a specific upstream version | `@dude upgrade --ref v1.4.0` |
 | Override the upstream source for one run | `@dude upgrade --source <url-or-local-path>` |
@@ -124,7 +149,8 @@ The upgrade surface is small: **status -> dry-run -> upgrade -> rollback if need
 
 ## What is preserved, exactly
 
-After any `@dude upgrade`, the following files and directories are byte-identical to what they were before the upgrade:
+After a core-only `@dude upgrade`, the following files and directories are
+byte-identical to what they were before the upgrade:
 
 - everything under `.dude/` except `.dude/metadata/bundle-manifest.md` (rewritten with the new `installed_ref`) and `.dude/metadata/upgrade-log.md` (one new entry appended)
 - everything under `.github/skills/project/`
@@ -135,7 +161,12 @@ After any `@dude upgrade`, the following files and directories are byte-identica
 - the Beads database
 - product and repository files outside the base-owned `.github/` namespace
 
-If anything in those locations is touched by the upgrader, that is a bug.
+With `@dude upgrade --all`, the core phase preserves those boundaries. Its
+separate, confirmed pack phase then refreshes only packs already listed in the
+installed profile through Compose. That phase may update
+`.dude/metadata/profile.md` and those packs' recorded artifacts; it never
+installs or enables a pack. The installed profile remains the only pack
+authority. If it touches any other location in the list above, that is a bug.
 
 Files matching the upstream base namespace are not preserved. Any local edits to those paths are silently discarded on apply. Use the `dude-local-<slug>` namespace to keep customizations of shipped agents or skills.
 
