@@ -256,6 +256,34 @@ test('lint accepts exact agent and skill frontmatter under LF and CRLF', () => {
   }
 });
 
+test('lint excludes roster references in every node_modules subtree but reports a sibling orphan', () => {
+  const root = rootWithManifest();
+  try {
+    // Arrange
+    write(root, '.github/node_modules/direct-dependency/README.md', '# @direct-dependency\n');
+    write(
+      root,
+      '.github/extensions/extension-name/node_modules/@napi-rs/canvas/README.md',
+      '# @napi-rs/canvas\n',
+    );
+    write(root, '.github/extensions/extension-name/README.md', '# @real-orphan\n');
+
+    // Act
+    const result = lint(root);
+
+    // Assert
+    assert.equal(result.code, 1, result.output);
+    assert.match(
+      result.output,
+      /orphan @real-orphan reference in \.github\/extensions\/extension-name\/README\.md/,
+    );
+    assert.doesNotMatch(result.output, /@direct-dependency/);
+    assert.doesNotMatch(result.output, /@napi-rs/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('lint accepts a non-exempt direct agent with one non-empty Scope and coordinator boundary', () => {
   const root = rootWithManifest();
   try {
