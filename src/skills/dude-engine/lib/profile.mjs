@@ -1,5 +1,5 @@
 // @ts-check
-/** Strict parser and path validator for `.dude/metadata/profile.md`. */
+/** Strict parser, bounded predecessor converter, and path validator for profile.md. */
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,254 +8,81 @@ import crypto from 'node:crypto';
 import { belongsToPack } from './ownership.mjs';
 
 export const PACK_NAME_RE = /^[a-z][a-z0-9-]*[a-z0-9]$/;
-export const PACK_INSTALL_ROOTS = Object.freeze([
-  '.github/agents',
-  '.github/skills',
-  '.github/instructions',
-  '.github/prompts',
-]);
-export const PROFILE_INVENTORY_VERSION = 1;
-export const PACK_ARTIFACT_KINDS = Object.freeze(['agents', 'skills', 'instructions', 'prompts']);
 
-const INVENTORY_FIELDS = Object.freeze(['artifacts', 'digest', 'manifest_sha256', 'pack', 'source', 'version']);
-const INVENTORY_SOURCE_FIELDS = Object.freeze(['location', 'ref', 'type']);
-const INVENTORY_ARTIFACT_FIELDS = Object.freeze(['installed_sha256', 'kind', 'path', 'source', 'source_sha256']);
+const PREDECESSOR_INVENTORY_FIELDS = Object.freeze(['artifacts', 'digest', 'manifest_sha256', 'pack', 'source', 'version']);
+const PREDECESSOR_SOURCE_FIELDS = Object.freeze(['location', 'ref', 'type']);
+const PREDECESSOR_ARTIFACT_FIELDS = Object.freeze(['installed_sha256', 'kind', 'path', 'source', 'source_sha256']);
+const PREDECESSOR_KINDS = Object.freeze(['agents', 'skills', 'instructions', 'prompts']);
 
-/** @typedef {{ path: string, kind: string, source: string, source_sha256: string, installed_sha256: string }} ProfileArtifact */
-/** @typedef {{ version: number, pack: string, source: { type: string, location: string, ref: string }, manifest_sha256: string, artifacts: ProfileArtifact[], digest: string }} PackInventory */
-/** @typedef {{ files: string[], installed_at: string, inventory?: PackInventory }} ProfileEntry */
-/** @typedef {{ enabled_packs: string[], installed: Record<string, ProfileEntry> }} Profile */
+/** @typedef {{ type: 'local', location: string } | { type: 'remote', repository: string, requested_ref: string, resolved_commit: string | null }} ProfileSource */
+/** @typedef {{ files: string[], source: ProfileSource }} ProfileEntry */
+/** @typedef {{ installed: Record<string, ProfileEntry> }} Profile */
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-/** @param {string} value @returns {boolean} */
+/** @param {Record<string, unknown>} value @param {readonly string[]} fields */
+function hasExactFields(value, fields) {
+  const actual = Object.keys(value).sort();
+  return actual.length === fields.length && actual.every((field, index) => field === [...fields].sort()[index]);
+}
+
+/** @param {unknown} value @returns {value is string} */
 function isSha256(value) {
-  return /^[a-f0-9]{64}$/.test(value);
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }
 
 /**
- * Compute the canonical digest carried by a pack inventory.
- * @param {Omit<PackInventory, 'digest'> | PackInventory} inventory
- * @returns {string}
- */
-export function inventoryDigest(inventory) {
-  const payload = {
-    version: inventory.version,
-    pack: inventory.pack,
-    source: {
-      type: inventory.source.type,
-      location: inventory.source.location,
-      ref: inventory.source.ref,
-    },
-    manifest_sha256: inventory.manifest_sha256,
-    artifacts: [...inventory.artifacts]
-      .sort((first, second) => first.path.localeCompare(second.path))
-      .map((artifact) => ({
-        path: artifact.path,
-        kind: artifact.kind,
-        source: artifact.source,
-        source_sha256: artifact.source_sha256,
-        installed_sha256: artifact.installed_sha256,
-      })),
-  };
-  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-}
-
-/**
- * Validate the persisted inventory for one pack. Missing required fields make
- * an otherwise valid inventory legacy-incomplete; supplied values remain
- * strictly validated and are never promoted into a synthesized inventory.
+ * Accept Git's full supported object identifier widths and emit the canonical
+ * lowercase spelling used in profile records.
  * @param {unknown} value
- * @param {string} packName
- * @returns {{ status: 'current', inventory: PackInventory } | { status: 'legacy-incomplete', artifacts: Record<string, unknown>[] | null }}
+ * @returns {string | null}
  */
-function validateInventory(value, packName) {
-  if (!isObject(value)) throw new Error(`profile.md installed.${packName}.inventory must be an object`);
-  const unknownFields = Object.keys(value).filter((key) => !INVENTORY_FIELDS.includes(key));
-  if (unknownFields.length > 0) {
-    throw new Error(`profile.md installed.${packName}.inventory has unsupported fields`);
-  }
-  let complete = INVENTORY_FIELDS.every((field) => Object.hasOwn(value, field));
-  if (Object.hasOwn(value, 'version') && value.version !== PROFILE_INVENTORY_VERSION) {
-    throw new Error(`profile.md installed.${packName}.inventory has unsupported version '${String(value.version)}'`);
-  }
-  if (Object.hasOwn(value, 'pack') && (typeof value.pack !== 'string' || value.pack !== packName)) {
-    throw new Error(`profile.md installed.${packName}.inventory belongs to pack '${String(value.pack)}'`);
-  }
-
-  if (Object.hasOwn(value, 'source')) {
-    if (!isObject(value.source)) {
-      throw new Error(`profile.md installed.${packName}.inventory.source must be an object`);
-    }
-    const unknownSourceFields = Object.keys(value.source).filter((key) => !INVENTORY_SOURCE_FIELDS.includes(key));
-    if (unknownSourceFields.length > 0) {
-      throw new Error(`profile.md installed.${packName}.inventory.source has unsupported fields`);
-    }
-    complete = complete && INVENTORY_SOURCE_FIELDS.every((field) => Object.hasOwn(value.source, field));
-    if (Object.hasOwn(value.source, 'type')
-      && (typeof value.source.type !== 'string' || !['library', 'source'].includes(value.source.type))) {
-      throw new Error(`profile.md installed.${packName}.inventory.source.type must be library or source`);
-    }
-    if (Object.hasOwn(value.source, 'location')
-      && (typeof value.source.location !== 'string' || !value.source.location)) {
-      throw new Error(`profile.md installed.${packName}.inventory.source.location must be a non-empty string`);
-    }
-    if (Object.hasOwn(value.source, 'ref') && typeof value.source.ref !== 'string') {
-      throw new Error(`profile.md installed.${packName}.inventory.source.ref must be a string`);
-    }
-  }
-
-  if (Object.hasOwn(value, 'manifest_sha256')
-    && (typeof value.manifest_sha256 !== 'string' || !isSha256(value.manifest_sha256))) {
-    throw new Error(`profile.md installed.${packName}.inventory.manifest_sha256 must be a SHA-256 digest`);
-  }
-
-  /** @type {ProfileArtifact[]} */
-  const artifacts = [];
-  /** @type {Record<string, unknown>[] | null} */
-  let partialArtifacts = null;
-  if (Object.hasOwn(value, 'artifacts')) {
-    if (!Array.isArray(value.artifacts) || value.artifacts.length === 0) {
-      throw new Error(`profile.md installed.${packName}.inventory.artifacts must be a non-empty array`);
-    }
-    partialArtifacts = [];
-    const seenPaths = new Set();
-    const seenSources = new Set();
-    for (const rawArtifact of value.artifacts) {
-      if (!isObject(rawArtifact)) {
-        throw new Error(`profile.md installed.${packName}.inventory has a malformed artifact record`);
-      }
-      const unknownArtifactFields = Object.keys(rawArtifact)
-        .filter((key) => !INVENTORY_ARTIFACT_FIELDS.includes(key));
-      if (unknownArtifactFields.length > 0) {
-        throw new Error(`profile.md installed.${packName}.inventory has a malformed artifact record`);
-      }
-      const artifactComplete = INVENTORY_ARTIFACT_FIELDS.every((field) => Object.hasOwn(rawArtifact, field));
-      complete = complete && artifactComplete;
-
-      if (Object.hasOwn(rawArtifact, 'path')) {
-        validateInventoryArtifactPath(rawArtifact.path, packName);
-        if (seenPaths.has(rawArtifact.path)) {
-          throw new Error(`profile.md installed.${packName}.inventory repeats '${rawArtifact.path}'`);
-        }
-        seenPaths.add(rawArtifact.path);
-      }
-      if (Object.hasOwn(rawArtifact, 'kind')
-        && (typeof rawArtifact.kind !== 'string' || !PACK_ARTIFACT_KINDS.includes(rawArtifact.kind))) {
-        throw new Error(`profile.md installed.${packName}.inventory has unsupported artifact kind '${String(rawArtifact.kind)}'`);
-      }
-      if (Object.hasOwn(rawArtifact, 'source')) {
-        if (typeof rawArtifact.source !== 'string') {
-          throw new Error(`profile.md installed.${packName}.inventory has unsafe source '${String(rawArtifact.source)}'`);
-        }
-        const sourceMatch = /^(agents|skills|instructions|prompts)\/([^/]+)$/.exec(rawArtifact.source);
-        if (!sourceMatch) {
-          throw new Error(`profile.md installed.${packName}.inventory has unsafe source '${rawArtifact.source}'`);
-        }
-        validateInventoryArtifactPath(`.github/${rawArtifact.source}`, packName);
-        if (Object.hasOwn(rawArtifact, 'kind') && sourceMatch[1] !== rawArtifact.kind) {
-          throw new Error(`profile.md installed.${packName}.inventory has unsafe source '${rawArtifact.source}'`);
-        }
-        if (seenSources.has(rawArtifact.source)) {
-          throw new Error(`profile.md installed.${packName}.inventory repeats source '${rawArtifact.source}'`);
-        }
-        seenSources.add(rawArtifact.source);
-      }
-      if (Object.hasOwn(rawArtifact, 'path') && Object.hasOwn(rawArtifact, 'kind')) {
-        const pathKind = /^\.github\/(agents|skills|instructions|prompts)\//.exec(rawArtifact.path)?.[1];
-        if (pathKind !== rawArtifact.kind) {
-          throw new Error(`profile.md installed.${packName}.inventory artifact '${rawArtifact.path}' conflicts with kind '${String(rawArtifact.kind)}'`);
-        }
-      }
-      if (Object.hasOwn(rawArtifact, 'path')
-        && Object.hasOwn(rawArtifact, 'source')
-        && rawArtifact.path !== `.github/${rawArtifact.source}`) {
-        throw new Error(`profile.md installed.${packName}.inventory artifact '${rawArtifact.path}' conflicts with source '${rawArtifact.source}'`);
-      }
-      for (const hashField of ['source_sha256', 'installed_sha256']) {
-        if (Object.hasOwn(rawArtifact, hashField)
-          && (typeof rawArtifact[hashField] !== 'string' || !isSha256(rawArtifact[hashField]))) {
-          const artifactPath = typeof rawArtifact.path === 'string' ? rawArtifact.path : '<incomplete>';
-          throw new Error(`profile.md installed.${packName}.inventory artifact '${artifactPath}' has an invalid SHA-256 digest`);
-        }
-      }
-      partialArtifacts.push({ ...rawArtifact });
-      if (artifactComplete) {
-        artifacts.push(/** @type {ProfileArtifact} */ ({ ...rawArtifact }));
-      }
-    }
-  }
-
-  if (Object.hasOwn(value, 'digest')
-    && (typeof value.digest !== 'string' || !isSha256(value.digest))) {
-    throw new Error(`profile.md installed.${packName}.inventory digest must be a SHA-256 digest`);
-  }
-  if (!complete) {
-    return { status: 'legacy-incomplete', artifacts: partialArtifacts };
-  }
-
-  const inventory = {
-    version: PROFILE_INVENTORY_VERSION,
-    pack: packName,
-    source: {
-      type: /** @type {string} */ (value.source.type),
-      location: /** @type {string} */ (value.source.location),
-      ref: /** @type {string} */ (value.source.ref),
-    },
-    manifest_sha256: /** @type {string} */ (value.manifest_sha256),
-    artifacts,
-    digest: /** @type {string} */ (value.digest),
-  };
-  if (inventory.digest !== inventoryDigest(inventory)) {
-    throw new Error(`profile.md installed.${packName}.inventory digest does not match its exact artifact inventory`);
-  }
-  return { status: 'current', inventory };
+export function normalizeGitObjectId(value) {
+  if (typeof value !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value)) return null;
+  return value.toLowerCase();
 }
 
-/**
- * Validate a supplied inventory artifact path without consulting the
- * filesystem or accepting another pack's reserved namespace.
- * @param {unknown} relPath
- * @param {string} packName
- */
-function validateInventoryArtifactPath(relPath, packName) {
-  if (typeof relPath !== 'string'
-    || !relPath
-    || relPath.includes('\\')
-    || path.posix.isAbsolute(relPath)
-    || path.win32.isAbsolute(relPath)
-    || relPath.split('/').some((part) => !part || part === '.' || part === '..')) {
-    throw new Error(`profile.md installed.${packName}.inventory has unsafe artifact path '${String(relPath)}'`);
+/** @param {unknown} value */
+function isPredecessorTimestamp(value) {
+  return typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+    && !Number.isNaN(Date.parse(value));
+}
+
+/** @param {string[]} values */
+function requireSorted(values, label) {
+  if (values.some((value, index) => index > 0 && values[index - 1].localeCompare(value) >= 0)) {
+    throw new Error(`${label} must be sorted with no duplicates`);
   }
-  const match = /^\.github\/(agents|skills|instructions|prompts)\/([^/]+)$/.exec(relPath);
-  if (!match) {
-    throw new Error(`profile.md installed.${packName}.inventory has unsafe artifact path '${relPath}'`);
+}
+
+/** @param {Record<string, unknown>} installed */
+function validatePackNames(installed) {
+  const names = Object.keys(installed);
+  for (const name of names) {
+    if (!PACK_NAME_RE.test(name)) throw new Error(`profile.md has invalid installed pack '${name}'`);
   }
-  const [,, name] = match;
-  if ((match[1] === 'agents' && !name.endsWith('.agent.md'))
-    || (match[1] === 'instructions' && (name === 'dude.instructions.md' || !name.endsWith('.instructions.md')))
-    || (match[1] === 'prompts' && !name.endsWith('.prompt.md'))) {
-    throw new Error(`profile.md installed.${packName}.inventory has unsafe artifact path '${relPath}'`);
-  }
-  if (name.startsWith('dude-pack-') && !belongsToPack(relPath, packName)) {
-    throw new Error(`pack profile path '${relPath}' is not owned by pack '${packName}' under the dude-pack-${packName}-* namespace`);
+  for (const name of names) {
+    for (const other of names) {
+      if (name !== other && (name.startsWith(`${other}-`) || other.startsWith(`${name}-`))) {
+        throw new Error(`profile.md pack names '${name}' and '${other}' collide by hyphen-prefix`);
+      }
+    }
   }
 }
 
 /**
  * Resolve one profile-owned artifact without accepting alternate separators,
- * traversal, nested artifact paths, or symbolic links.
+ * traversal, nested artifact paths, another pack's namespace, or symbolic links.
  * @param {string} root
  * @param {string} relPath
  * @param {string} packName
- * @param {ProfileArtifact} [artifact]
- * @param {{ allowUnverifiedOwnership?: boolean }} [options]
  * @returns {string}
  */
-export function resolveProfileArtifact(root, relPath, packName, artifact, options = {}) {
+export function resolveProfileArtifact(root, relPath, packName) {
   if (typeof relPath !== 'string'
     || !relPath
     || relPath.includes('\\')
@@ -268,8 +95,7 @@ export function resolveProfileArtifact(root, relPath, packName, artifact, option
   if (!match) {
     throw new Error(`pack profile path '${relPath}' is outside approved pack installation roots`);
   }
-  const kind = match[1];
-  const name = match[2];
+  const [, kind, name] = match;
   if (kind === 'agents' && !name.endsWith('.agent.md')) {
     throw new Error(`pack profile path '${relPath}' is not owned by pack '${packName}'`);
   }
@@ -279,17 +105,8 @@ export function resolveProfileArtifact(root, relPath, packName, artifact, option
   if (kind === 'prompts' && !name.endsWith('.prompt.md')) {
     throw new Error(`pack profile path '${relPath}' is not a supported prompt artifact`);
   }
-  const intrinsicallyOwned = belongsToPack(relPath, packName);
-  const exactLegacyLooseArtifact = (kind === 'instructions' || kind === 'prompts') && artifact;
-  if (name.startsWith('dude-pack-') && !intrinsicallyOwned) {
+  if (!belongsToPack(relPath, packName)) {
     throw new Error(`pack profile path '${relPath}' is not owned by pack '${packName}' under the dude-pack-${packName}-* namespace`);
-  }
-  if (!intrinsicallyOwned && !exactLegacyLooseArtifact && !options.allowUnverifiedOwnership) {
-    throw new Error(`pack profile path '${relPath}' is not owned by pack '${packName}' under the dude-pack-${packName}-* namespace without an exact persisted pack inventory`);
-  }
-  if (artifact
-    && (artifact.path !== relPath || artifact.kind !== kind || artifact.source !== `${kind}/${name}`)) {
-    throw new Error(`pack profile path '${relPath}' does not match its exact persisted source inventory`);
   }
 
   const absoluteRoot = path.resolve(root);
@@ -312,10 +129,249 @@ export function resolveProfileArtifact(root, relPath, packName, artifact, option
   return absolutePath;
 }
 
+/** @param {unknown} value @param {string} packName @returns {ProfileSource} */
+function validateCanonicalSource(value, packName) {
+  if (!isObject(value) || typeof value.type !== 'string') {
+    throw new Error(`profile.md installed.${packName}.source must be an object`);
+  }
+  if (value.type === 'local') {
+    if (!hasExactFields(value, ['location', 'type']) || typeof value.location !== 'string' || !value.location) {
+      throw new Error(`profile.md installed.${packName}.source must be an exact local identity`);
+    }
+    return { type: 'local', location: value.location };
+  }
+  if (value.type === 'remote') {
+    const resolvedCommit = value.resolved_commit === null ? null : normalizeGitObjectId(value.resolved_commit);
+    if (!hasExactFields(value, ['repository', 'requested_ref', 'resolved_commit', 'type'])
+      || typeof value.repository !== 'string' || !value.repository
+      || typeof value.requested_ref !== 'string' || !value.requested_ref
+      || (value.resolved_commit !== null && !resolvedCommit)) {
+      throw new Error(`profile.md installed.${packName}.source must be an exact remote identity`);
+    }
+    return {
+      type: 'remote',
+      repository: value.repository,
+      requested_ref: value.requested_ref,
+      resolved_commit: resolvedCommit,
+    };
+  }
+  throw new Error(`profile.md installed.${packName}.source has unsupported type '${value.type}'`);
+}
+
+/**
+ * Validate only the canonical minimal model.
+ * @param {unknown} value
+ * @param {{ root?: string }} [options]
+ * @returns {Profile}
+ */
+function validateCanonicalProfile(value, options = {}) {
+  if (!isObject(value)) throw new Error('profile.md JSON must be an object');
+  if (!hasExactFields(value, ['installed']) || !isObject(value.installed)) {
+    throw new Error('profile.md JSON must contain only installed');
+  }
+  validatePackNames(value.installed);
+  /** @type {Record<string, ProfileEntry>} */
+  const installed = {};
+  const claimedPaths = new Map();
+  for (const [name, rawEntry] of Object.entries(value.installed)) {
+    if (!isObject(rawEntry) || !hasExactFields(rawEntry, ['files', 'source'])) {
+      throw new Error(`profile.md installed.${name} has unsupported or missing fields`);
+    }
+    if (!Array.isArray(rawEntry.files) || rawEntry.files.length === 0) {
+      throw new Error(`profile.md installed.${name}.files must be a non-empty array`);
+    }
+    /** @type {string[]} */
+    const files = [];
+    for (const relPath of rawEntry.files) {
+      if (typeof relPath !== 'string') throw new Error(`profile.md installed.${name}.files must contain only strings`);
+      if (files.includes(relPath)) throw new Error(`profile.md installed.${name}.files repeats '${relPath}'`);
+      try {
+        if (options.root) resolveProfileArtifact(options.root, relPath, name);
+        else validatePredecessorArtifactPath(relPath, name);
+      } catch (error) {
+        throw new Error(`profile.md installed.${name}.files: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const owner = claimedPaths.get(relPath);
+      if (owner && owner !== name) throw new Error(`profile.md path '${relPath}' is claimed by both '${owner}' and '${name}'`);
+      claimedPaths.set(relPath, name);
+      files.push(relPath);
+    }
+    requireSorted(files, `profile.md installed.${name}.files`);
+    installed[name] = { files, source: validateCanonicalSource(rawEntry.source, name) };
+  }
+  return { installed };
+}
+
+/** @param {unknown} relPath @param {string} packName */
+function validatePredecessorArtifactPath(relPath, packName) {
+  if (typeof relPath !== 'string'
+    || !relPath
+    || relPath.includes('\\')
+    || path.posix.isAbsolute(relPath)
+    || path.win32.isAbsolute(relPath)
+    || relPath.split('/').some((part) => !part || part === '.' || part === '..')) {
+    throw new Error(`profile.md installed.${packName}.inventory has unsafe artifact path '${String(relPath)}'`);
+  }
+  const match = /^\.github\/(agents|skills|instructions|prompts)\/([^/]+)$/.exec(relPath);
+  if (!match || !PREDECESSOR_KINDS.includes(match[1])
+    || (match[1] === 'agents' && !match[2].endsWith('.agent.md'))
+    || (match[1] === 'instructions' && !match[2].endsWith('.instructions.md'))
+    || (match[1] === 'prompts' && !match[2].endsWith('.prompt.md'))
+    || !belongsToPack(relPath, packName)) {
+    throw new Error(`profile.md installed.${packName}.inventory has unsafe artifact path '${String(relPath)}'`);
+  }
+}
+
+/** @param {any} inventory */
+function predecessorDigest(inventory) {
+  const payload = {
+    version: inventory.version,
+    pack: inventory.pack,
+    source: { type: inventory.source.type, location: inventory.source.location, ref: inventory.source.ref },
+    manifest_sha256: inventory.manifest_sha256,
+    artifacts: [...inventory.artifacts]
+      .sort((first, second) => first.path.localeCompare(second.path))
+      .map((artifact) => ({
+        path: artifact.path,
+        kind: artifact.kind,
+        source: artifact.source,
+        source_sha256: artifact.source_sha256,
+        installed_sha256: artifact.installed_sha256,
+      })),
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+/** @param {Record<string, unknown>} source @param {string} packName @returns {ProfileSource} */
+function convertPredecessorSource(source, packName) {
+  if (!hasExactFields(source, PREDECESSOR_SOURCE_FIELDS)
+    || !['library', 'source'].includes(/** @type {any} */ (source.type))
+    || typeof source.location !== 'string' || !source.location
+    || typeof source.ref !== 'string') {
+    throw new Error(`profile.md installed.${packName}.inventory.source is not a complete predecessor identity`);
+  }
+  if (source.type === 'library') {
+    if (source.ref) throw new Error(`profile.md installed.${packName}.inventory.source is ambiguous`);
+    return { type: 'local', location: source.location };
+  }
+  if (path.isAbsolute(source.location) || path.win32.isAbsolute(source.location)) {
+    return { type: 'local', location: source.location };
+  }
+  if (!source.ref) {
+    throw new Error(`profile.md installed.${packName}.inventory.source is ambiguous`);
+  }
+  return {
+    type: 'remote',
+    repository: source.location,
+    requested_ref: source.ref,
+    resolved_commit: null,
+  };
+}
+
+/** @param {unknown} value @param {string} packName @param {{ root?: string }} options @returns {ProfileEntry} */
+function convertPredecessorEntry(value, packName, options) {
+  if (!isObject(value) || !hasExactFields(value, ['files', 'installed_at', 'inventory'])
+    || !Array.isArray(value.files) || value.files.length === 0
+    || !isPredecessorTimestamp(value.installed_at)
+    || !isObject(value.inventory) || !hasExactFields(value.inventory, PREDECESSOR_INVENTORY_FIELDS)) {
+    throw new Error(`profile.md installed.${packName} is not a complete predecessor entry`);
+  }
+  const inventory = value.inventory;
+  if (inventory.version !== 1 || inventory.pack !== packName || !isSha256(inventory.manifest_sha256)
+    || !isSha256(inventory.digest) || !isObject(inventory.source)
+    || !Array.isArray(inventory.artifacts) || inventory.artifacts.length === 0) {
+    throw new Error(`profile.md installed.${packName}.inventory is not a complete version-1 predecessor inventory`);
+  }
+  const source = convertPredecessorSource(inventory.source, packName);
+  /** @type {any[]} */
+  const artifacts = [];
+  const artifactPaths = new Set();
+  const artifactSources = new Set();
+  for (const artifact of inventory.artifacts) {
+    if (!isObject(artifact) || !hasExactFields(artifact, PREDECESSOR_ARTIFACT_FIELDS)
+      || typeof artifact.path !== 'string' || typeof artifact.kind !== 'string'
+      || typeof artifact.source !== 'string' || !isSha256(artifact.source_sha256)
+      || !isSha256(artifact.installed_sha256) || !PREDECESSOR_KINDS.includes(artifact.kind)) {
+      throw new Error(`profile.md installed.${packName}.inventory has a malformed predecessor artifact`);
+    }
+    validatePredecessorArtifactPath(artifact.path, packName);
+    const expectedSource = `${artifact.kind}/${artifact.path.split('/').at(-1)}`;
+    const expectedPath = `.github/${expectedSource}`;
+    if (artifact.path !== expectedPath || artifact.source !== expectedSource
+      || artifactPaths.has(artifact.path) || artifactSources.has(artifact.source)) {
+      throw new Error(`profile.md installed.${packName}.inventory has inconsistent predecessor artifact bindings`);
+    }
+    artifactPaths.add(artifact.path);
+    artifactSources.add(artifact.source);
+    artifacts.push(artifact);
+  }
+  requireSorted(artifacts.map((artifact) => artifact.path), `profile.md installed.${packName}.inventory.artifacts`);
+  if (predecessorDigest(inventory) !== inventory.digest) {
+    throw new Error(`profile.md installed.${packName}.inventory digest does not match its exact predecessor inventory`);
+  }
+
+  /** @type {string[]} */
+  const files = [];
+  for (const relPath of value.files) {
+    if (typeof relPath !== 'string' || files.includes(relPath) || !artifactPaths.has(relPath)) {
+      throw new Error(`profile.md installed.${packName}.files do not exactly match predecessor inventory`);
+    }
+    try {
+      if (options.root) resolveProfileArtifact(options.root, relPath, packName);
+      else validatePredecessorArtifactPath(relPath, packName);
+    } catch (error) {
+      throw new Error(`profile.md installed.${packName}.files: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    files.push(relPath);
+  }
+  requireSorted(files, `profile.md installed.${packName}.files`);
+  if (files.length !== artifacts.length) {
+    throw new Error(`profile.md installed.${packName}.files do not exactly match predecessor inventory`);
+  }
+  return { files, source };
+}
+
+/** @param {unknown} value @param {{ root?: string }} [options] @returns {Profile} */
+function convertPredecessorProfile(value, options = {}) {
+  if (!isObject(value) || !hasExactFields(value, ['enabled_packs', 'installed'])
+    || !Array.isArray(value.enabled_packs) || !isObject(value.installed)) {
+    throw new Error('profile.md JSON is neither canonical nor the complete predecessor shape');
+  }
+  validatePackNames(value.installed);
+  const installedOrder = Object.keys(value.installed);
+  if (installedOrder.some((name, index) => name !== [...installedOrder].sort()[index])) {
+    throw new Error('profile.md predecessor installed map must be sorted');
+  }
+  /** @type {string[]} */
+  const enabled = [];
+  for (const name of value.enabled_packs) {
+    if (typeof name !== 'string' || !PACK_NAME_RE.test(name) || enabled.includes(name)) {
+      throw new Error(`profile.md has invalid predecessor enabled pack '${String(name)}'`);
+    }
+    enabled.push(name);
+  }
+  requireSorted(enabled, 'profile.md enabled_packs');
+  const names = Object.keys(value.installed).sort();
+  if (enabled.length !== names.length || enabled.some((name, index) => name !== names[index])) {
+    throw new Error('profile.md predecessor enabled_packs and installed must have identical pack sets');
+  }
+  /** @type {Record<string, ProfileEntry>} */
+  const installed = {};
+  const claimed = new Map();
+  for (const name of names) {
+    const entry = convertPredecessorEntry(value.installed[name], name, options);
+    for (const file of entry.files) {
+      const owner = claimed.get(file);
+      if (owner) throw new Error(`profile.md path '${file}' is claimed by both '${owner}' and '${name}'`);
+      claimed.set(file, name);
+    }
+    installed[name] = entry;
+  }
+  return { installed };
+}
+
 /**
  * Parse the single fenced JSON payload without applying a profile schema.
- * Reconciliation uses this only to recognize schema-v0 input before building
- * and validating a canonical versioned profile.
  * @param {string | Buffer} content
  * @returns {unknown}
  */
@@ -333,122 +389,56 @@ export function parseProfilePayload(content) {
 }
 
 /**
- * Validate a parsed install profile and all removal-manifest paths.
+ * Parse canonical state or the one exact complete predecessor state. Conversion
+ * is in-memory only; a lifecycle writer is the sole place canonical bytes emit.
  * @param {unknown} value
  * @param {{ root?: string }} [options]
  * @returns {Profile}
  */
 export function validateProfile(value, options = {}) {
-  if (!isObject(value)) throw new Error('profile.md JSON must be an object');
-  const keys = Object.keys(value).sort();
-  if (keys.join(',') !== 'enabled_packs,installed') {
-    throw new Error('profile.md JSON must contain only enabled_packs and installed');
+  if (isObject(value) && hasExactFields(value, ['installed'])) {
+    return validateCanonicalProfile(value, options);
   }
-  if (!Array.isArray(value.enabled_packs)) {
-    throw new Error('profile.md enabled_packs must be an array');
-  }
-  /** @type {string[]} */
-  const enabledPacks = [];
-  for (const name of value.enabled_packs) {
-    if (typeof name !== 'string' || !PACK_NAME_RE.test(name)) {
-      throw new Error(`profile.md has invalid enabled pack '${String(name)}'`);
-    }
-    if (enabledPacks.includes(name)) throw new Error(`profile.md repeats enabled pack '${name}'`);
-    enabledPacks.push(name);
-  }
-  if (!isObject(value.installed)) throw new Error('profile.md installed must be an object');
+  return convertPredecessorProfile(value, options);
+}
 
-  /** @type {Record<string, ProfileEntry>} */
-  const installed = {};
-  const claimedPaths = new Map();
-  for (const [name, rawEntry] of Object.entries(value.installed)) {
-    if (!PACK_NAME_RE.test(name)) throw new Error(`profile.md has invalid installed pack '${name}'`);
-    if (!enabledPacks.includes(name)) {
-      throw new Error(`profile.md installed pack '${name}' is not listed in enabled_packs`);
-    }
-    if (!isObject(rawEntry)) throw new Error(`profile.md installed.${name} must be an object`);
-    const entryKeys = Object.keys(rawEntry).sort();
-    const legacy = entryKeys.join(',') === 'files,installed_at';
-    if (!legacy && entryKeys.join(',') !== 'files,installed_at,inventory') {
-      throw new Error(`profile.md installed.${name} has unsupported or missing fields`);
-    }
-    if (!Array.isArray(rawEntry.files)) {
-      throw new Error(`profile.md installed.${name}.files must be an array`);
-    }
-    if (typeof rawEntry.installed_at !== 'string' || !rawEntry.installed_at) {
-      throw new Error(`profile.md installed.${name}.installed_at must be a non-empty string`);
-    }
-    /** @type {string[]} */
-    const files = [];
-    const inventoryValidation = legacy ? null : validateInventory(rawEntry.inventory, name);
-    const inventory = inventoryValidation?.status === 'current' ? inventoryValidation.inventory : undefined;
-    const partialArtifacts = inventoryValidation?.status === 'legacy-incomplete'
-      ? inventoryValidation.artifacts
-      : null;
-    const inventoryByPath = new Map((inventory?.artifacts ?? []).map((artifact) => [artifact.path, artifact]));
-    for (const relPath of rawEntry.files) {
-      if (typeof relPath !== 'string') {
-        throw new Error(`profile.md installed.${name}.files must contain only strings`);
-      }
-      if (files.includes(relPath)) {
-        throw new Error(`profile.md installed.${name}.files repeats '${relPath}'`);
-      }
-      try {
-        if (options.root) {
-          resolveProfileArtifact(
-            options.root,
-            relPath,
-            name,
-            inventoryByPath.get(relPath),
-            { allowUnverifiedOwnership: inventoryValidation?.status === 'legacy-incomplete' },
-          );
-        }
-      } catch (error) {
-        throw new Error(`profile.md installed.${name}.files: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      if (inventory && !inventoryByPath.has(relPath)) {
-        throw new Error(`profile.md installed.${name}.files path '${relPath}' is absent from its exact inventory`);
-      }
-      const owner = claimedPaths.get(relPath);
-      if (owner && owner !== name) {
-        throw new Error(`profile.md path '${relPath}' is claimed by both '${owner}' and '${name}'`);
-      }
-      claimedPaths.set(relPath, name);
-      files.push(relPath);
-    }
-    if (inventory && inventory.artifacts.some((artifact) => !files.includes(artifact.path))) {
-      throw new Error(`profile.md installed.${name}.inventory contains an artifact absent from files`);
-    }
-    if (partialArtifacts) {
-      if (partialArtifacts.length !== files.length) {
-        throw new Error(`profile.md installed.${name}.inventory artifact count does not match files`);
-      }
-      for (const artifact of partialArtifacts) {
-        const artifactPath = typeof artifact.path === 'string'
-          ? artifact.path
-          : typeof artifact.source === 'string'
-            ? `.github/${artifact.source}`
-            : null;
-        if (artifactPath && !files.includes(artifactPath)) {
-          throw new Error(`profile.md installed.${name}.inventory artifact '${artifactPath}' is absent from files`);
-        }
-      }
-    }
-    installed[name] = {
-      files,
-      installed_at: rawEntry.installed_at,
-      ...(inventory ? { inventory } : {}),
-    };
-  }
-  return { enabled_packs: enabledPacks, installed };
+/** @param {string | Buffer} content @param {{ root?: string }} [options] @returns {Profile} */
+export function parseProfileDocument(content, options = {}) {
+  return validateProfile(parseProfilePayload(content), options);
 }
 
 /**
- * Parse the single fenced JSON payload from an install profile.
- * @param {string | Buffer} content
+ * Serialize canonical state only. Callers use parsed profile state, so this
+ * naturally writes converted predecessor profiles in canonical form.
+ * @param {Profile} profile
  * @param {{ root?: string }} [options]
- * @returns {Profile}
+ * @returns {string}
  */
-export function parseProfileDocument(content, options = {}) {
-  return validateProfile(parseProfilePayload(content), options);
+export function serializeProfileDocument(profile, options = {}) {
+  const validated = validateCanonicalProfile(profile, options);
+  /** @type {Record<string, ProfileEntry>} */
+  const installed = {};
+  for (const name of Object.keys(validated.installed).sort()) {
+    const entry = validated.installed[name];
+    installed[name] = {
+      files: [...entry.files].sort(),
+      source: entry.source.type === 'local'
+        ? { type: 'local', location: entry.source.location }
+        : {
+            type: 'remote',
+            repository: entry.source.repository,
+            requested_ref: entry.source.requested_ref,
+            resolved_commit: entry.source.resolved_commit,
+          },
+    };
+  }
+  return `# Install Profile
+
+This file records optional packs installed into this bundle's \`.github/\`.
+It is maintained by \`dude-compose\`. Do not hand-edit the \`installed\` map.
+
+\`\`\`json
+${JSON.stringify({ installed }, null, 2)}
+\`\`\`
+`;
 }

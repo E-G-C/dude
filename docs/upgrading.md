@@ -70,11 +70,9 @@ Direct file edits are still possible. If someone manually adds an unprefixed age
 ## Current bundle prerequisite
 
 `@dude upgrade` requires the canonical
-`.dude/metadata/bundle-manifest.md` and an inventory-backed
-`.dude/metadata/profile.md` whose installed packs carry versioned file
-inventories. Unsupported prior formats need external or manual recovery before
-upgrade; the upgrader does not translate project-state, profile, or manifest
-formats.
+`.dude/metadata/bundle-manifest.md` and a valid
+`.dude/metadata/profile.md`. The pack profile's installed map records opt-in
+membership, exact safe files, and source identity. The upgrader does not translate project-state, profile, or manifest formats.
 
 In the Dude source repository, `src/config/agent-models.json` is the model
 authority. Development and release builds validate it before changing output
@@ -95,7 +93,10 @@ plan, and apply the new plan.
 
 Run this after a core upgrade or pack-source change to re-project the installed
 pack from its current source. A core upgrade refreshes base files only; it
-preserves installed packs rather than projecting them in place.
+preserves installed packs rather than projecting them in place. Pack output is
+replaceable generated output: refresh may overwrite edits and always runs its
+projection path. Keep a persistent customization under `dude-local-*`, not in
+an installed `dude-pack-*` path.
 
 ## Workflow
 

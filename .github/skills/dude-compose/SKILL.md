@@ -71,9 +71,8 @@ installed engine, using the absolute path
    script parses the complete incoming agent set, validates its `agents`
    declarations once, and renders one Copilot profile per source before staging.
    It then preflights every destination and the next profile, copies
-   transactionally, and records the source, manifest digest, source/install
-   hashes, and file list. A copy or profile-write failure restores prior files
-   and profile bytes.
+   transactionally, and records the exact file list plus source identity. A
+   copy or profile-write failure restores prior files and profile bytes.
 4. Run `node .github/skills/dude-lint/lint.mjs .` and treat any `[FAIL]` as a
    hard stop — if installing the pack broke hygiene, remove it and report.
 5. Tell the user the pack is active and summarize what it added (new agents,
@@ -82,29 +81,20 @@ installed engine, using the absolute path
 ## Remove Flow (coordinator)
 
 1. Run `status --json` to confirm the pack is installed.
-2. Preview the artifacts that will be deleted (from `installed.<name>.files`),
-   but do not treat that list alone as deletion authority.
+2. Preview the artifacts that will be deleted from `installed.<name>.files`.
 3. Run `node .github/skills/dude-compose/compose.mjs remove <name> --json`. The
-   script authorizes removal only from a complete current inventory whose
-   artifact paths exactly equal `files`. It validates the inventory digest,
-   requires every installed artifact to match its recorded installed hash, and
-   rejects profile drift before deleting anything. When the recorded source is
-   available, its raw digest must match; a missing source does not block removal,
-   but invalid source evidence does. The command also requires the entire loaded
-   profile to be fully current —
-   every installed entry carrying a complete inventory and no enabled-only
-   ghost — so serializing the next profile never rewrites unrelated legacy or
-   partial evidence. A released bundle can remove a pack without a local catalog
-   because the exact inventory is persisted.
+   script authorizes deletion only from that pack's exact recorded safe paths.
+   It validates namespace, ownership, containment, and symbolic-link safety
+   before deleting. Changed source or installed bytes do not expand, block, or
+   alter that deletion set; a missing listed destination stays missing. A
+   released bundle can remove a pack without a local catalog because the exact
+   file list is persisted.
 4. Run lint and confirm `0 failures`.
 
-Legacy and partially populated profiles remain readable for status and
-diagnosis, but cannot authorize removal of any pack. Removal retains the exact
-authorizing profile bytes plus artifact backups and restores them on a failed
-artifact or profile write, backing up every artifact before deleting any and
-sweeping stray transaction siblings on rollback. It does not require a separate
-removal-plan artifact or literal confirmation token beyond the coordinator
-preview.
+Removal rereads its authorized profile bytes before applying changes. It retains
+artifact backups and restores them on a caught artifact or profile-write failure,
+backing up every existing listed artifact before deleting any and sweeping
+transaction residue on rollback. This is not a crash-proof atomicity guarantee.
 
 ## Refresh Flow (coordinator)
 
@@ -113,50 +103,46 @@ re-project the installed pack in one transaction instead of a manual
 remove-then-add.
 
 1. Run `status --json` to confirm the pack is installed. Refresh updates an
-   installed pack that still carries a complete current inventory; it does not
-   install a new one.
+   installed pack; it does not install a new one.
 2. Preview the change. Tell the user the pack will be re-projected from its
    current source: edited destinations are replaced in place, new source
    destinations are added, and destinations the source dropped are deleted. Wait
    for confirmation.
 3. Run `node .github/skills/dude-compose/compose.mjs refresh <name> --json`. The
-   script proves installed-side authority exactly as `remove` does (exact
-   authorized profile bytes, whole-profile currency, exact `files`-to-inventory
-   parity, and every installed artifact matching its recorded hash) and refuses
-   on any drift before touching a file. Unlike `remove`, it expects the source to
-   have changed, so it does not apply the uninstall recorded-source digest guard.
-   It stages the current source through the same pipeline as `add`, computes the
-   old-versus-new destination set, refuses any new destination that is occupied
-   or claimed by another pack, and applies removals, replacements, and additions
-   plus the profile update as one all-or-restored transaction. Any failure
-   restores the prior artifacts and profile bytes.
+   script uses the old exact file list for its replaceable destinations, stages
+   the current source through the same pipeline as `add`, and computes the
+   old-versus-new destination set. It refuses any new destination that is
+   occupied or claimed by another pack, then applies removals, replacements, and
+   additions plus the profile update as one all-or-restored transaction. It
+   always reprojects, including when the source and projected bytes appear
+   unchanged. A caught failure restores the prior artifacts and profile bytes;
+   process termination or machine failure is outside that guarantee.
 4. Run lint and confirm `0 failures`.
 
 Refresh reports `{ refreshed, replaced, added, removed, files }`; the human line
 summarizes the replaced, added, and removed counts. It never takes `--force` and
 never hand-edits the profile.
 
-## Parity, Refresh, And Inventory
+## Profile Authority And Customization
 
-The installed Copilot profile is measured through the narrow `model:`
-normalizer. A host may replace one well-formed `model:` line without changing
-the recorded installed hash. Duplicate or malformed model lines are not
-normalized, and `model-class` is never removed. Any other hand edit is drift,
-so `remove` refuses until the installed profile is restored.
+The `installed` map is the one pack authority. Its keys are opt-in membership,
+and each entry contains only its sorted exact safe `files` list and source
+identity. A direct local source records `{ type, location }`; it does not claim
+a Git commit. A remote source records its repository, requested ref, and the
+concrete commit fetched for that operation. Source identity identifies where the
+projection came from. It does not attest installed bytes.
 
-Concrete model mappings live in `src/config/agent-models.json`; the installed
-engine carries a byte-identical copy at
-`.github/skills/dude-engine/config/agent-models.json`. A mapping or pack-source
-change does not rewrite an installed pack. Refresh it with `compose refresh
-<pack>`, which re-projects the current source in one all-or-restored transaction
-after proving installed-side authority (see Refresh Flow). On a released bundle
-without the `refresh` subcommand, fall back to `compose remove <pack>` then
-`compose add <pack>`; that removal uses the persisted inventory and does not
-render the source again.
+An existing complete predecessor profile can make one in-memory transition to
+this shape. The next successful add, remove, or refresh writes the canonical
+map. Older, partial, malformed, mixed, or ambiguous profiles refuse rather than
+being repaired.
 
-Current inventories use `version: 1`. Each source artifact has one direct
-destination at `.github/<source>`, and the `files` list must exactly match the
-inventory paths.
+Installed pack output is a replaceable generated projection. Refresh can
+overwrite edits, and remove deletes the exact recorded safe files. Put a
+persistent project customization under `dude-local-*`, not inside
+`dude-pack-<name>-*`. Concrete model mappings live in
+`src/config/agent-models.json`; refresh a pack after changing a mapping or pack
+source.
 
 ## Catalog Resolution
 
@@ -215,15 +201,12 @@ web. Warnings are fine; only failures block.
 - Agent-set validation covers the complete incoming pack only. It does not make
   a cross-pack roster claim.
 - Never hand-edit an installed representation. Refresh with `compose refresh
-  <pack>`; on a released bundle without it, fall back to `remove` then `add`.
+  <pack>`.
 - Pack names must not be hyphen-prefixes of one another (e.g. `hugo` /
   `hugo-docsy`); the composer rejects such collisions because `remove` matches
   on the `dude-pack-<name>-` prefix.
-- Only a complete current `profile.md` inventory with exact `files` parity and
-   installed hashes is a removal manifest. Legacy or partial evidence is
-   diagnostic-only; do not hand-edit it into authority.
-- Historical loose instruction/prompt removal requires the exact inventory
-   source to remain available and hash-matching.
+- The `installed` map and each pack's exact safe `files` list are removal
+   authority. Do not hand-edit the profile.
 - In the dogfood repo, compose may use only its six currently installed profile
    packs: `authoring`, `coding`, `design`, `release`, `strata`, and `writing`.
    Test any other catalog pack in a throwaway root (`--root <tmp>`).

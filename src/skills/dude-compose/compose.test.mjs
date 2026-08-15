@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -421,6 +422,49 @@ function rewriteProfileJson(root, mutate) {
   fs.writeFileSync(target, text.replace(match[0], `\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``));
 }
 
+/** @param {string} root @param {string} name */
+function writeCompletePredecessorProfile(root, name) {
+  const files = readProfile(root).installed[name].files;
+  const inventory = {
+    version: 1,
+    pack: name,
+    source: { type: 'library', location: fs.realpathSync(path.join(root, 'library', 'packs')), ref: '' },
+    manifest_sha256: 'a'.repeat(64),
+    artifacts: files.map((file) => {
+      const kind = file.split('/')[1];
+      return {
+        path: file,
+        kind,
+        source: `${kind}/${file.split('/').at(-1)}`,
+        source_sha256: 'b'.repeat(64),
+        installed_sha256: 'c'.repeat(64),
+      };
+    }),
+    digest: '',
+  };
+  inventory.digest = crypto.createHash('sha256').update(JSON.stringify({
+    version: inventory.version,
+    pack: inventory.pack,
+    source: inventory.source,
+    manifest_sha256: inventory.manifest_sha256,
+    artifacts: [...inventory.artifacts].sort((first, second) => first.path.localeCompare(second.path)),
+  })).digest('hex');
+  const predecessor = {
+    enabled_packs: [name],
+    installed: {
+      [name]: {
+        files,
+        installed_at: '2026-08-01T12:00:00.000Z',
+        inventory,
+      },
+    },
+  };
+  fs.writeFileSync(
+    path.join(root, '.dude', 'metadata', 'profile.md'),
+    `# Install Profile\n\n\`\`\`json\n${JSON.stringify(predecessor, null, 2)}\n\`\`\`\n`,
+  );
+}
+
 /**
  * Alter only a copied packaged renderer for a validation fixture.
  * @param {string} root
@@ -493,16 +537,33 @@ test('remote manifest branch re-fetches current bytes for released-bundle list, 
     assertListedDescription(cmdList({ root, library }), 'demo', 'demo catalog B');
 
     writeRemotePack(remote.repo, 'demo', 'C');
-    commitRemote(remote.repo, 'publish C');
+    const commitC = commitRemote(remote.repo, 'publish C');
     const added = await cmdAdd({ root, library, name: 'demo', force: false });
     assert.equal(added.ok, true, added.error);
     assertInstalledVersion(root, 'demo', 'C');
+    assert.deepEqual(readProfile(root).installed.demo.source, {
+      type: 'remote',
+      repository: remote.source,
+      requested_ref: 'main',
+      resolved_commit: commitC,
+    });
+    assert.match(
+      readProfile(root).installed.demo.source.resolved_commit,
+      /^[a-f0-9]{40}$/,
+      'remote add records the normalized full concrete commit',
+    );
 
     writeRemotePack(remote.repo, 'demo', 'D');
-    commitRemote(remote.repo, 'publish D');
+    const commitD = commitRemote(remote.repo, 'publish D');
     const refreshed = await cmdRefresh({ root, library, name: 'demo' });
     assert.equal(refreshed.ok, true, refreshed.error);
     assertInstalledVersion(root, 'demo', 'D');
+    assert.equal(readProfile(root).installed.demo.source.resolved_commit, commitD);
+    assert.match(
+      readProfile(root).installed.demo.source.resolved_commit,
+      /^[a-f0-9]{40}$/,
+      'remote refresh records the normalized full concrete commit',
+    );
   } finally {
     cleanup(root);
     cleanup(remote.parent);
@@ -525,7 +586,7 @@ test('remote concrete tags and latest releases are resolved again after publicat
       'demo catalog tag-A',
     );
     writeRemotePack(tagRemote.repo, 'demo', 'tag-B');
-    commitRemote(tagRemote.repo, 'publish tag B');
+    const tagCommit = commitRemote(tagRemote.repo, 'publish tag B');
     runGit(tagRemote.repo, 'tag', '-f', 'catalog-fixture');
     const tagAdded = await cmdAdd({
       root: tagRoot,
@@ -535,6 +596,12 @@ test('remote concrete tags and latest releases are resolved again after publicat
     });
     assert.equal(tagAdded.ok, true, tagAdded.error);
     assertInstalledVersion(tagRoot, 'demo', 'tag-B');
+    assert.deepEqual(readProfile(tagRoot).installed.demo.source, {
+      type: 'remote',
+      repository: tagRemote.source,
+      requested_ref: 'catalog-fixture',
+      resolved_commit: tagCommit,
+    });
 
     writeRemotePack(latestRemote.repo, 'demo', 'release-1');
     commitRemote(latestRemote.repo, 'publish release 1');
@@ -546,13 +613,26 @@ test('remote concrete tags and latest releases are resolved again after publicat
       'demo catalog release-1',
     );
     writeRemotePack(latestRemote.repo, 'demo', 'release-2');
-    commitRemote(latestRemote.repo, 'publish release 2');
+    const latestCommit = commitRemote(latestRemote.repo, 'publish release 2');
     runGit(latestRemote.repo, 'tag', 'v1.1.0');
     assertListedDescription(
       cmdList({ root: latestRoot, library: path.join(latestRoot, 'library', 'packs') }),
       'demo',
       'demo catalog release-2',
     );
+    const latestAdded = await cmdAdd({
+      root: latestRoot,
+      library: path.join(latestRoot, 'library', 'packs'),
+      name: 'demo',
+      force: false,
+    });
+    assert.equal(latestAdded.ok, true, latestAdded.error);
+    assert.deepEqual(readProfile(latestRoot).installed.demo.source, {
+      type: 'remote',
+      repository: latestRemote.source,
+      requested_ref: 'latest',
+      resolved_commit: latestCommit,
+    });
   } finally {
     cleanup(tagRoot);
     cleanup(latestRoot);
@@ -578,6 +658,12 @@ test('a full remote SHA remains exact but refuses when its prior remote becomes 
     const added = await cmdAdd({ root, library, name: 'demo', force: false });
     assert.equal(added.ok, true, added.error);
     assertInstalledVersion(root, 'demo', 'SHA-A');
+    assert.deepEqual(readProfile(root).installed.demo.source, {
+      type: 'remote',
+      repository: remote.source,
+      requested_ref: pinned,
+      resolved_commit: pinned,
+    });
 
     // The earlier SHA checkout exists, so this would succeed under SHA checkout
     // reuse. Removing the file:// source makes a fresh clone observable.
@@ -666,6 +752,10 @@ test('remote source selection preserves local authority, explicit inputs, manife
       ref: 'main',
     });
     assert.equal(localAdded.ok, true, localAdded.error);
+    assert.deepEqual(readProfile(root).installed.local.source, {
+      type: 'local',
+      location: fs.realpathSync(library),
+    });
     const localSource = path.join(root, 'library', 'packs', 'local', 'agents', 'dude-pack-local-worker.agent.md');
     fs.writeFileSync(
       localSource,
@@ -756,7 +846,40 @@ test('remote source selection preserves local authority, explicit inputs, manife
   }
 });
 
-test('add renders one Copilot destination per source and writes version 1 inventory', async () => {
+test('direct local Git and non-Git catalogs record only their local locations', async () => {
+  const gitRoot = createRoot();
+  const plainRoot = createRoot();
+  try {
+    for (const [root, name] of [[gitRoot, 'gitlocal'], [plainRoot, 'plainlocal']]) {
+      writePack(root, name, [packAgent(name, 'worker', { name: `${name} Worker` })], { skill: false });
+    }
+    const gitCatalog = path.join(gitRoot, 'library');
+    runGit(gitCatalog, 'init', '-q', '-b', 'main');
+    runGit(gitCatalog, 'add', '-A');
+    runGit(gitCatalog, '-c', 'user.email=fixture@example.test', '-c', 'user.name=Fixture', 'commit', '-qm', 'catalog');
+
+    // Act
+    const gitAdded = await addPack(gitRoot, 'gitlocal');
+    const plainAdded = await addPack(plainRoot, 'plainlocal');
+
+    // Assert
+    assert.equal(gitAdded.ok, true, gitAdded.error);
+    assert.equal(plainAdded.ok, true, plainAdded.error);
+    for (const [root, name] of [[gitRoot, 'gitlocal'], [plainRoot, 'plainlocal']]) {
+      const source = readProfile(root).installed[name].source;
+      assert.deepEqual(source, {
+        type: 'local',
+        location: fs.realpathSync(path.join(root, 'library', 'packs')),
+      });
+      assert.equal(Object.hasOwn(source, 'resolved_commit'), false);
+    }
+  } finally {
+    cleanup(gitRoot);
+    cleanup(plainRoot);
+  }
+});
+
+test('add renders one Copilot destination per source and writes only exact files plus local identity', async () => {
   const root = scaffold();
   const stages = trackStageDirectories();
   try {
@@ -776,24 +899,15 @@ test('add renders one Copilot destination per source and writes version 1 invent
     );
 
     const entry = readProfile(root).installed.demo;
-    assert.equal(entry.inventory?.version, 1);
     assert.deepEqual(entry.files, [
       '.github/agents/dude-pack-demo-worker.agent.md',
       '.github/skills/dude-pack-demo-helper',
     ]);
-    assert.equal(entry.inventory?.artifacts.length, 2);
-    const agent = entry.inventory?.artifacts.find((artifact) => artifact.source === 'agents/dude-pack-demo-worker.agent.md');
-    assert.deepEqual(agent && {
-      path: agent.path,
-      kind: agent.kind,
-      source: agent.source,
-    }, {
-      path: '.github/agents/dude-pack-demo-worker.agent.md',
-      kind: 'agents',
-      source: 'agents/dude-pack-demo-worker.agent.md',
+    assert.deepEqual(entry.source, {
+      type: 'local',
+      location: fs.realpathSync(path.join(root, 'library', 'packs')),
     });
-    assert.match(agent?.source_sha256 || '', /^[a-f0-9]{64}$/);
-    assert.match(agent?.installed_sha256 || '', /^[a-f0-9]{64}$/);
+    assert.deepEqual(Object.keys(entry).sort(), ['files', 'source']);
 
     const removed = cmdRemove({ root, name: 'demo' });
     assert.equal(removed.ok, true, removed.error);
@@ -806,7 +920,7 @@ test('add renders one Copilot destination per source and writes version 1 invent
   }
 });
 
-test('add validates a multi-source set exactly once and records each direct binding', async () => {
+test('add validates a multi-source set exactly once and records each exact destination', async () => {
   const root = createRoot();
   const counterKey = `dude-compose-validate-agent-set-${path.basename(root)}`;
   try {
@@ -826,20 +940,14 @@ test('add validates a multi-source set exactly once and records each direct bind
 
     assert.equal(added.ok, true, added.error);
     assert.equal(globalThis[counterKey], 1, 'validateAgentSet must run exactly once for the complete incoming set');
-    const inventory = readProfile(root).installed.team.inventory;
-    assert.ok(inventory);
-    assert.equal(inventory.artifacts.length, agents.length);
-    assert.equal(readProfile(root).installed.team.files.length, agents.length);
-    const bindings = inventory.artifacts
-      .map(({ path: destination, kind, source }) => ({ destination, kind, source }))
-      .sort((first, second) => first.destination.localeCompare(second.destination));
-    assert.deepEqual(bindings, agents
+    const entry = readProfile(root).installed.team;
+    assert.equal(entry.files.length, agents.length);
+    assert.deepEqual(entry.files, agents
       .map(({ stem }) => ({
         destination: `.github/agents/${stem}.agent.md`,
-        kind: 'agents',
-        source: `agents/${stem}.agent.md`,
       }))
-      .sort((first, second) => first.destination.localeCompare(second.destination)));
+      .map(({ destination }) => destination)
+      .sort());
     for (const { stem } of agents) {
       assert.equal(exists(path.join(root, '.github', 'agents', `${stem}.agent.md`)), true);
     }
@@ -877,7 +985,7 @@ test('agents omission is a leaf and a non-empty agents roster is the composite d
     );
     assert.match(coordinatorOutput, new RegExp(`^agents: \\[${JSON.stringify(child.stem)}\\]$`, 'm'));
     assert.doesNotMatch(childOutput, /^agents:/m);
-    assert.equal(readProfile(root).installed.roster.inventory?.artifacts.length, 2);
+    assert.equal(readProfile(root).installed.roster.files.length, 2);
 
     const removed = cmdRemove({ root, name: 'roster' });
     assert.equal(removed.ok, true, removed.error);
@@ -1003,94 +1111,9 @@ for (const scenario of invalidAgentSetScenarios) {
   });
 }
 
-test('remove normalizes one host-owned model line but rejects duplicate-model drift', async () => {
-  const tolerated = scaffold();
-  const drifted = scaffold();
-  try {
-    const toleratedAdd = await cmdAdd({
-      root: tolerated,
-      library: path.join(tolerated, 'library', 'packs'),
-      name: 'demo',
-      force: false,
-    });
-    assert.equal(toleratedAdd.ok, true, toleratedAdd.error);
-    const toleratedAgent = path.join(tolerated, '.github', 'agents', 'dude-pack-demo-worker.agent.md');
-    const seeded = fs.readFileSync(toleratedAgent, 'utf8');
-    assert.match(seeded, /^model: .+$/m);
-    fs.writeFileSync(toleratedAgent, seeded.replace(/^model: .+$/m, 'model: host-selected-model'));
-    const toleratedRemove = cmdRemove({ root: tolerated, name: 'demo' });
-    assert.equal(toleratedRemove.ok, true, toleratedRemove.error);
-
-    const driftedAdd = await cmdAdd({
-      root: drifted,
-      library: path.join(drifted, 'library', 'packs'),
-      name: 'demo',
-      force: false,
-    });
-    assert.equal(driftedAdd.ok, true, driftedAdd.error);
-    const driftedAgent = path.join(drifted, '.github', 'agents', 'dude-pack-demo-worker.agent.md');
-    const original = fs.readFileSync(driftedAgent, 'utf8');
-    fs.writeFileSync(
-      driftedAgent,
-      original.replace(/^model: .+$/m, 'model: host-selected-model\nmodel: duplicate-model'),
-    );
-    const before = mutationSnapshot(drifted);
-    const driftedRemove = cmdRemove({ root: drifted, name: 'demo' });
-    assert.equal(driftedRemove.ok, false);
-    assert.match(driftedRemove.error || '', /no longer matches pack "demo" inventory/);
-    assertMutationUnchanged(drifted, before);
-  } finally {
-    cleanup(tolerated);
-    cleanup(drifted);
-  }
-});
-
-test('remove rejects a raw source model-line tamper and succeeds when the source is unavailable', async () => {
-  const changed = scaffold();
-  const unavailable = scaffold();
-  try {
-    const changedAdded = await cmdAdd({
-      root: changed,
-      library: path.join(changed, 'library', 'packs'),
-      name: 'demo',
-      force: false,
-    });
-    assert.equal(changedAdded.ok, true, changedAdded.error);
-    const sourcePath = path.join(changed, 'library', 'packs', 'demo', 'agents', 'dude-pack-demo-worker.agent.md');
-    const sourceBytes = fs.readFileSync(sourcePath, 'utf8');
-    // This is syntactically valid frontmatter. It must still alter the raw
-    // authoritative-source evidence rather than being treated as a host rewrite.
-    fs.writeFileSync(
-      sourcePath,
-      sourceBytes.replace('model-class: balanced\n', 'model-class: balanced\nmodel: source-tamper\n'),
-    );
-    const changedBefore = mutationSnapshot(changed);
-    const changedRemove = cmdRemove({ root: changed, name: 'demo' });
-    assert.equal(changedRemove.ok, false);
-    assert.match(changedRemove.error || '', /source artifact .* no longer matches its recorded digest/);
-    assertMutationUnchanged(changed, changedBefore);
-
-    const unavailableAdded = await cmdAdd({
-      root: unavailable,
-      library: path.join(unavailable, 'library', 'packs'),
-      name: 'demo',
-      force: false,
-    });
-    assert.equal(unavailableAdded.ok, true, unavailableAdded.error);
-    fs.rmSync(path.join(unavailable, 'library', 'packs', 'demo'), { recursive: true, force: true });
-    const unavailableRemove = cmdRemove({ root: unavailable, name: 'demo' });
-    assert.equal(unavailableRemove.ok, true, unavailableRemove.error);
-    assertNoPackLeftovers(unavailable, 'demo');
-  } finally {
-    cleanup(changed);
-    cleanup(unavailable);
-  }
-});
-
-test('remove refuses a symlinked available source without mutating profile or installed artifact', async () => {
+test('remove accepts changed source and installed bytes, missing listed paths, and deletes no unlisted artifact', async () => {
   const root = scaffold();
   try {
-    // Arrange
     const added = await cmdAdd({
       root,
       library: path.join(root, 'library', 'packs'),
@@ -1098,24 +1121,138 @@ test('remove refuses a symlinked available source without mutating profile or in
       force: false,
     });
     assert.equal(added.ok, true, added.error);
-    const sourcePath = path.join(root, 'library', 'packs', 'demo', 'agents', 'dude-pack-demo-worker.agent.md');
-    const tamperedPath = path.join(root, 'tampered-source.agent.md');
-    fs.writeFileSync(tamperedPath, `${fs.readFileSync(sourcePath, 'utf8')}tampered\n`);
-    fs.rmSync(sourcePath);
-    fs.symlinkSync(tamperedPath, sourcePath);
-    const profileBefore = profileBytes(root);
     const installedPath = path.join(root, '.github', 'agents', 'dude-pack-demo-worker.agent.md');
-    const installedBytesBefore = fs.readFileSync(installedPath);
+    const unlisted = path.join(root, '.github', 'agents', 'dude-pack-demo-unlisted.agent.md');
+    fs.writeFileSync(installedPath, 'hand-edited generated output\n');
+    fs.writeFileSync(unlisted, 'must remain\n');
+    fs.writeFileSync(
+      path.join(root, 'library', 'packs', 'demo', 'agents', 'dude-pack-demo-worker.agent.md'),
+      `${agentSource({ name: 'Demo Worker' })}changed source\n`,
+    );
+    fs.rmSync(path.join(root, '.github', 'skills', 'dude-pack-demo-helper'), { recursive: true });
 
     // Act
     const removed = cmdRemove({ root, name: 'demo' });
 
     // Assert
-    assert.equal(removed.ok, false);
-    assert.match(removed.error || '', /symbolic link/);
-    assert.deepEqual(profileBytes(root), profileBefore, 'profile bytes changed');
-    assert.equal(exists(installedPath), true, 'installed artifact was deleted');
-    assert.deepEqual(fs.readFileSync(installedPath), installedBytesBefore, 'installed artifact bytes changed');
+    assert.equal(removed.ok, true, removed.error);
+    assert.equal(exists(installedPath), false, 'listed edited artifact remains');
+    assert.equal(exists(unlisted), true, 'unlisted artifact was deleted');
+    assert.deepEqual(readProfile(root).installed, {});
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('add and remove restore exact bytes and clean profile residue after a caught profile-write failure', async () => {
+  const addRoot = scaffold();
+  const removeRoot = scaffold();
+  const originalWriteFileSync = fs.writeFileSync;
+  try {
+    const failProfileWrite = (file, ...rest) => {
+      if (typeof file === 'string' && path.basename(file).startsWith('profile.md.tmp-')) {
+        throw new Error('injected profile write failure');
+      }
+      return originalWriteFileSync(file, ...rest);
+    };
+
+    // Arrange
+    const addBefore = mutationSnapshot(addRoot);
+    fs.writeFileSync = failProfileWrite;
+    const failedAdd = await addPack(addRoot, 'demo');
+    fs.writeFileSync = originalWriteFileSync;
+
+    // Act + Assert
+    assert.equal(failedAdd.ok, false);
+    assert.match(failedAdd.error || '', /rolled back: injected profile write failure/);
+    assertMutationUnchanged(addRoot, addBefore);
+    assertNoPackLeftovers(addRoot, 'demo');
+
+    assert.equal((await addPack(removeRoot, 'demo')).ok, true);
+    const removeBefore = mutationSnapshot(removeRoot);
+    fs.writeFileSync = failProfileWrite;
+    const failedRemove = cmdRemove({ root: removeRoot, name: 'demo' });
+    fs.writeFileSync = originalWriteFileSync;
+    assert.equal(failedRemove.ok, false);
+    assert.match(failedRemove.error || '', /rolled back: injected profile write failure/);
+    assertMutationUnchanged(removeRoot, removeBefore);
+    for (const root of [addRoot, removeRoot]) {
+      const residue = fs.readdirSync(path.join(root, '.dude', 'metadata'))
+        .filter((entry) => /^profile\.md\.(?:tmp|backup)-/.test(entry));
+      assert.deepEqual(residue, [], 'profile transaction residue survived');
+    }
+  } finally {
+    fs.writeFileSync = originalWriteFileSync;
+    cleanup(addRoot);
+    cleanup(removeRoot);
+  }
+});
+
+test('remove and refresh refuse a symbolic linked recorded destination before mutation', async () => {
+  const root = scaffold();
+  try {
+    assert.equal((await addPack(root, 'demo')).ok, true);
+    const installed = path.join(root, '.github', 'agents', 'dude-pack-demo-worker.agent.md');
+    const decoy = path.join(root, 'decoy.agent.md');
+    fs.writeFileSync(decoy, 'outside\n');
+    fs.rmSync(installed);
+    fs.symlinkSync(decoy, installed);
+    const before = mutationSnapshot(root);
+
+    // Act + Assert
+    const removed = cmdRemove({ root, name: 'demo' });
+    const refreshed = await refreshPack(root, 'demo');
+    for (const result of [removed, refreshed]) {
+      assert.equal(result.ok, false);
+      assert.match(result.error || '', /symbolic link/);
+    }
+    assertMutationUnchanged(root, before);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('status derives sorted enabled packs and never rewrites a profile', async () => {
+  const root = createRoot();
+  try {
+    writePack(root, 'zeta', [packAgent('zeta', 'worker')], { skill: false });
+    writePack(root, 'alpha', [packAgent('alpha', 'worker')], { skill: false });
+    assert.equal((await addPack(root, 'zeta')).ok, true);
+    assert.equal((await addPack(root, 'alpha')).ok, true);
+    const before = profileBytes(root);
+
+    // Act
+    const status = cmdStatus({ root });
+
+    // Assert
+    assert.equal(status.ok, true, status.error);
+    assert.deepEqual(status.result.enabled_packs, ['alpha', 'zeta']);
+    assert.deepEqual(profileBytes(root), before, 'status rewrote profile bytes');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('status reads a complete predecessor without writing and a lifecycle writer emits canonical bytes', async () => {
+  const root = scaffold();
+  try {
+    assert.equal((await addPack(root, 'demo')).ok, true);
+    writeCompletePredecessorProfile(root, 'demo');
+    const predecessorBytes = profileBytes(root);
+
+    // Act
+    const status = cmdStatus({ root });
+
+    // Assert status remains read-only before a lifecycle writer runs.
+    assert.equal(status.ok, true, status.error);
+    assert.deepEqual(status.result.enabled_packs, ['demo']);
+    assert.deepEqual(profileBytes(root), predecessorBytes);
+
+    // Act + Assert: a successful writer serializes canonical state only.
+    const removed = cmdRemove({ root, name: 'demo' });
+    assert.equal(removed.ok, true, removed.error);
+    assert.notDeepEqual(profileBytes(root), predecessorBytes, 'successful lifecycle writer retained predecessor bytes');
+    assert.doesNotMatch(profileBytes(root).toString('utf8'), /enabled_packs|inventory|sha256|digest|installed_at/);
   } finally {
     cleanup(root);
   }
@@ -1396,7 +1533,7 @@ test('refresh rewrites all four artifact kinds and applies add, replace, and rem
       'removed destination still on disk',
     );
 
-    // The record's files and inventory reflect the new destination set.
+    // The record keeps only the new exact destination set and source identity.
     const entry = readProfile(root).installed.mixed;
     assert.deepEqual(entry.files.slice().sort(), [
       '.github/agents/dude-pack-mixed-worker.agent.md',
@@ -1406,7 +1543,7 @@ test('refresh rewrites all four artifact kinds and applies add, replace, and rem
       '.github/skills/dude-pack-mixed-helper',
     ]);
     assert.equal(entry.files.includes('.github/prompts/dude-pack-mixed-legacy.prompt.md'), false);
-    assert.equal(entry.inventory?.artifacts.length, 5);
+    assert.deepEqual(Object.keys(entry).sort(), ['files', 'source']);
 
     // The stage and transaction directories were created and then cleaned.
     assert.ok(refreshes.directories.length >= 2, 'refresh must create a stage and a transaction directory');
@@ -1425,9 +1562,6 @@ test('refresh reprojects a changed source over the same destination set', async 
     assert.equal(added.ok, true, added.error);
     const before = readProfile(root).installed.demo;
     const beforeFiles = before.files.slice().sort();
-    const beforeAgentHash = before.inventory?.artifacts
-      .find((artifact) => artifact.path === '.github/agents/dude-pack-demo-worker.agent.md')?.installed_sha256;
-    assert.ok(beforeAgentHash);
 
     // Content-only change across the same destination set.
     const packDir = path.join(root, 'library', 'packs', 'demo');
@@ -1448,10 +1582,6 @@ test('refresh reprojects a changed source over the same destination set', async 
 
     const after = readProfile(root).installed.demo;
     assert.deepEqual(after.files.slice().sort(), beforeFiles, 'file set changed on a content-only refresh');
-    const afterAgentHash = after.inventory?.artifacts
-      .find((artifact) => artifact.path === '.github/agents/dude-pack-demo-worker.agent.md')?.installed_sha256;
-    assert.notEqual(afterAgentHash, beforeAgentHash, 'inventory hash unchanged despite a content change');
-
     assert.match(
       fs.readFileSync(path.join(root, '.github', 'agents', 'dude-pack-demo-worker.agent.md'), 'utf8'),
       /You are Demo Worker changed\./,
@@ -1460,12 +1590,20 @@ test('refresh reprojects a changed source over the same destination set', async 
       fs.readFileSync(path.join(root, '.github', 'skills', 'dude-pack-demo-helper', 'SKILL.md'), 'utf8'),
       /# Helper changed/,
     );
+
+    // The same source identity and bytes still take the ordinary projection
+    // path; refresh has no unchanged shortcut.
+    const repeated = await refreshPack(root, 'demo');
+    assert.equal(repeated.ok, true, repeated.error);
+    assert.deepEqual(repeated.result?.replaced, beforeFiles);
+    assert.deepEqual(repeated.result?.added, []);
+    assert.deepEqual(repeated.result?.removed, []);
   } finally {
     cleanup(root);
   }
 });
 
-test('refresh refuses a hand-edited installed artifact and preserves the drift', async () => {
+test('refresh overwrites a hand-edited installed artifact and follows the ordinary reprojection path', async () => {
   const root = createRoot();
   const refreshes = trackRefreshDirectories();
   try {
@@ -1473,31 +1611,32 @@ test('refresh refuses a hand-edited installed artifact and preserves the drift',
     const added = await addPack(root, 'demo');
     assert.equal(added.ok, true, added.error);
 
-    // Change the source so a refresh would otherwise proceed, then hand-edit the
-    // installed artifact so the installed-side hash no longer matches.
+    // Change the source and hand-edit an installed destination. The recorded path
+    // remains replaceable output rather than byte-evidence authority.
     const packDir = path.join(root, 'library', 'packs', 'demo');
     fs.writeFileSync(path.join(packDir, 'skills', 'dude-pack-demo-helper', 'SKILL.md'), '---\nname: dude-pack-demo-helper\ndescription: "fixture helper"\n---\n# Helper changed\n');
     const installedAgent = path.join(root, '.github', 'agents', 'dude-pack-demo-worker.agent.md');
     const drifted = `${fs.readFileSync(installedAgent, 'utf8')}\nhand edit\n`;
     fs.writeFileSync(installedAgent, drifted);
 
-    const before = mutationSnapshot(root);
     const result = await refreshPack(root, 'demo');
 
-    assert.equal(result.ok, false);
-    assert.match(result.error || '', /installed artifact '.*' no longer matches pack "demo" inventory; refusing refresh/);
-    assertMutationUnchanged(root, before);
-    assert.equal(fs.readFileSync(installedAgent, 'utf8'), drifted, 'drifted bytes were not preserved');
-    // The refusal precedes staging.
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(result.result?.replaced.sort(), readProfile(root).installed.demo.files);
+    assert.doesNotMatch(fs.readFileSync(installedAgent, 'utf8'), /hand edit/);
+    assert.match(
+      fs.readFileSync(path.join(root, '.github', 'skills', 'dude-pack-demo-helper', 'SKILL.md'), 'utf8'),
+      /# Helper changed/,
+    );
     assertNoSurvivingStageDirectories(refreshes.directories);
-    assert.deepEqual(refreshes.directories, [], 'installed-drift refusal must precede staging');
+    assert.ok(refreshes.directories.length >= 2, 'refresh stages and applies even when bytes are unchanged or edited');
   } finally {
     refreshes.restore();
     cleanup(root);
   }
 });
 
-test('refresh refuses an absent pack and a non-current profile without mutating', async () => {
+test('refresh refuses an absent pack and malformed profile without mutating', async () => {
   const absent = createRoot();
   const nonCurrent = createRoot();
   try {
@@ -1506,24 +1645,22 @@ test('refresh refuses an absent pack and a non-current profile without mutating'
     const absentBefore = mutationSnapshot(absent);
     const absentResult = await refreshPack(absent, 'demo');
     assert.equal(absentResult.ok, false);
-    assert.match(absentResult.error || '', /pack "demo" refresh requires a complete current inventory/);
+    assert.match(absentResult.error || '', /pack "demo" is not installed/);
     assertMutationUnchanged(absent, absentBefore);
 
-    // Non-current profile: a second installed pack carries only a legacy record,
-    // so the whole profile is not fully current even though the target is.
+    // Malformed authority is rejected before staging or mutation.
     writePack(nonCurrent, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
     writePack(nonCurrent, 'extra', [packAgent('extra', 'aide', { name: 'Extra Aide' })], { skill: false });
     assert.equal((await addPack(nonCurrent, 'demo')).ok, true);
-    assert.equal((await addPack(nonCurrent, 'extra')).ok, true);
     rewriteProfileJson(nonCurrent, (payload) => {
-      delete payload.installed.extra.inventory;
+      payload.installed.demo.unexpected = true;
     });
     const nonCurrentBefore = mutationSnapshot(nonCurrent);
     const nonCurrentResult = await refreshPack(nonCurrent, 'demo');
     assert.equal(nonCurrentResult.ok, false);
     assert.match(
       nonCurrentResult.error || '',
-      /refusing to refresh pack "demo": the install profile is not fully current/,
+      /unsupported or missing fields/,
     );
     assertMutationUnchanged(nonCurrent, nonCurrentBefore);
   } finally {
@@ -1691,12 +1828,83 @@ test('refresh rolls back every mutation and leaves no residue when a phase-2 wri
   }
 });
 
-test('refresh preserves the remove digest guard and the add --force semantics', async () => {
+test('refresh rolls back a projected missing recorded replacement without recreating it', async () => {
+  // Arrange
+  const root = createRoot();
+  const refreshes = trackRefreshDirectories();
+  const originalWriteFileSync = fs.writeFileSync;
+  const originalRmSync = fs.rmSync;
+  const originalCopyFileSync = fs.copyFileSync;
+  try {
+    writePack(root, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
+    const added = await addPack(root, 'demo');
+    assert.equal(added.ok, true, added.error);
+
+    const missingDestination = path.join(root, '.github', 'agents', 'dude-pack-demo-worker.agent.md');
+    assert.ok(readProfile(root).installed.demo.files.includes('.github/agents/dude-pack-demo-worker.agent.md'));
+    fs.rmSync(missingDestination);
+    const before = mutationSnapshot(root);
+    const residueBefore = fs.readdirSync(path.join(root, '.dude', 'metadata'))
+      .filter((entry) => entry.startsWith('profile.md.tmp-') || entry.startsWith('profile.md.backup-'));
+    let missingReplacementRemovals = 0;
+    let projectedMissingDestination = false;
+    fs.rmSync = (target, ...rest) => {
+      if (typeof target === 'string' && path.resolve(target) === missingDestination) {
+        missingReplacementRemovals += 1;
+      }
+      return originalRmSync(target, ...rest);
+    };
+    fs.copyFileSync = (source, target, ...rest) => {
+      const copied = originalCopyFileSync(source, target, ...rest);
+      if (typeof target === 'string' && path.resolve(target) === missingDestination) {
+        projectedMissingDestination = exists(missingDestination);
+      }
+      return copied;
+    };
+    fs.writeFileSync = (file, ...rest) => {
+      if (typeof file === 'string' && path.basename(file).startsWith('profile.md.tmp-')) {
+        throw new Error('injected profile write failure');
+      }
+      return originalWriteFileSync(file, ...rest);
+    };
+
+    // Act
+    const result = await refreshPack(root, 'demo');
+
+    // Assert
+    fs.writeFileSync = originalWriteFileSync;
+    fs.rmSync = originalRmSync;
+    fs.copyFileSync = originalCopyFileSync;
+    assert.equal(result.ok, false);
+    assert.match(result.error || '', /pack refresh failed and was rolled back: injected profile write failure/);
+    assert.equal(projectedMissingDestination, true, 'refresh did not project the missing same-path destination before failing');
+    assert.equal(
+      missingReplacementRemovals,
+      2,
+      'missing recorded path must take the backup:null replacement apply and rollback branch, not addition-only handling',
+    );
+    assert.equal(exists(missingDestination), false, 'rollback recreated a destination absent before refresh');
+    assertMutationUnchanged(root, before);
+    const residueAfter = fs.readdirSync(path.join(root, '.dude', 'metadata'))
+      .filter((entry) => entry.startsWith('profile.md.tmp-') || entry.startsWith('profile.md.backup-'));
+    assert.deepEqual(residueAfter, residueBefore, 'profile transaction residue changed');
+    assert.ok(refreshes.directories.length >= 2, 'refresh created stage and transaction directories');
+    assertNoSurvivingStageDirectories(refreshes.directories);
+  } finally {
+    fs.writeFileSync = originalWriteFileSync;
+    fs.rmSync = originalRmSync;
+    fs.copyFileSync = originalCopyFileSync;
+    refreshes.restore();
+    cleanup(root);
+  }
+});
+
+test('remove accepts changed source bytes while add retains force semantics', async () => {
   // add --force still overwrites an occupied agent destination.
   const overwrite = createRoot();
   // add --force still refuses an occupied instruction destination.
   const protectedInstruction = createRoot();
-  // remove refuses a changed source that refresh nonetheless accepts (FR-011).
+  // remove no longer compares source bytes.
   const changed = createRoot();
   try {
     writePack(overwrite, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
@@ -1729,17 +1937,9 @@ test('refresh preserves the remove digest guard and the add --force semantics', 
       sourceAgent,
       fs.readFileSync(sourceAgent, 'utf8').replace('You are Demo Worker.', 'You are Demo Worker changed.'),
     );
-    const removeBefore = mutationSnapshot(changed);
     const removed = cmdRemove({ root: changed, name: 'demo' });
-    assert.equal(removed.ok, false);
-    assert.match(removed.error || '', /no longer matches its recorded digest/);
-    assertMutationUnchanged(changed, removeBefore);
-    const refreshed = await refreshPack(changed, 'demo');
-    assert.equal(refreshed.ok, true, refreshed.error);
-    assert.match(
-      fs.readFileSync(path.join(changed, '.github', 'agents', 'dude-pack-demo-worker.agent.md'), 'utf8'),
-      /You are Demo Worker changed\./,
-    );
+    assert.equal(removed.ok, true, removed.error);
+    assertNoPackLeftovers(changed, 'demo');
   } finally {
     cleanup(overwrite);
     cleanup(protectedInstruction);

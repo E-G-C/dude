@@ -526,7 +526,7 @@ function seedDirectoryLintWorkspace(root) {
   );
   fs.writeFileSync(
     path.join(root, '.dude', 'metadata', 'profile.md'),
-    '# Install Profile\n\n```json\n{"enabled_packs":[],"installed":{}}\n```\n',
+    '# Install Profile\n\n```json\n{"installed":{}}\n```\n',
   );
 }
 

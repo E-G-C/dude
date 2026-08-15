@@ -706,25 +706,7 @@ if (profileIssue) {
   }
 } else {
   try {
-    const profile = parseProfileDocument(read(profilePath), { root: ROOT });
-    for (const [name, entry] of Object.entries(profile.installed)) {
-      if (!entry.inventory) {
-        fail(`${WORKSPACE_PATHS.PROFILE}  installed.${name} must include a complete current inventory`);
-      }
-    }
-    // enabled_packs must equal the installed key set. parseProfileDocument
-    // already rejects any installed pack missing from enabled_packs (installed
-    // ⊆ enabled); this closes the other direction so the two sets stay exactly
-    // equal (compared as sorted sets).
-    const installedKeys = new Set(Object.keys(profile.installed));
-    const enabledNotInstalled = [...profile.enabled_packs]
-      .filter((name) => !installedKeys.has(name))
-      .sort();
-    if (enabledNotInstalled.length > 0) {
-      fail(
-        `${WORKSPACE_PATHS.PROFILE}  enabled pack(s) not installed: ${enabledNotInstalled.join(', ')}`,
-      );
-    }
+    parseProfileDocument(read(profilePath), { root: ROOT });
   } catch (error) {
     fail(
       `${WORKSPACE_PATHS.PROFILE}  invalid current profile `

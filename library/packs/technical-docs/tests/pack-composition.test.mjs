@@ -210,17 +210,6 @@ function readProfileJson(root) {
   return JSON.parse(blocks[0][1]);
 }
 
-/** Drop the wall-clock install stamp, which legitimately differs between two runs. */
-function profileWithoutTimestamps(profile) {
-  const installed = {};
-  for (const [name, entry] of Object.entries(profile.installed).sort()) {
-    const { installed_at: installedAt, ...rest } = entry;
-    assert.match(installedAt ?? "", /^\d{4}-\d{2}-\d{2}T/, `pack "${name}" must record an ISO install timestamp`);
-    installed[name] = rest;
-  }
-  return { enabled_packs: profile.enabled_packs, installed };
-}
-
 /* ------------------------------------------------------------- shared roots */
 
 const CANONICAL_TEMP_ROOT = realpathSync.native(tmpdir());
@@ -320,7 +309,7 @@ test("the built release is core-only, ships no pack or test artifact, and lints 
 
   assert.equal(files.has("library/packs/technical-docs/pack.md"), false, "the release must not ship the pack catalog");
   const profile = readProfileJson(pristineRoot);
-  assert.deepEqual(profile, { enabled_packs: [], installed: {} }, "a fresh release must record no installed pack");
+  assert.deepEqual(profile, { installed: {} }, "a fresh release must record no installed pack");
 
   // The bundled linter this suite uses everywhere is the exercised source linter.
   assert.equal(
@@ -350,7 +339,7 @@ test("technical-docs installs standalone into a disposable copy and the result l
     );
 
     const profile = readProfileJson(root);
-    assert.deepEqual(profile.enabled_packs, [PACK_NAME]);
+    assert.deepEqual(Object.keys(profile.installed), [PACK_NAME]);
     const expectedAgentDestinations = EXPECTED_AGENTS.map(agentDestination);
     assert.equal(
       expectedAgentDestinations.length,
@@ -362,25 +351,12 @@ test("technical-docs installs standalone into a disposable copy and the result l
       ...EXPECTED_PROMPTS.map((name) => `.github/prompts/${name}`),
       ...EXPECTED_SKILLS.map((name) => `.github/skills/${name}`),
     ].sort();
-    const expectedProfileSources = [
-      ...EXPECTED_AGENTS.map((name) => `agents/${name}`),
-      ...EXPECTED_PROMPTS.map((name) => `prompts/${name}`),
-      ...EXPECTED_SKILLS.map((name) => `skills/${name}`),
-    ].sort();
     const profileEntry = profile.installed[PACK_NAME];
     assert.deepEqual(profileEntry.files.slice().sort(), expectedProfileFiles);
-    assert.equal(profileEntry.inventory.version, 1, "the profile inventory must use version 1");
-    assert.equal(
-      profileEntry.inventory.artifacts.length,
-      expectedProfileSources.length,
-      "the profile inventory must contain one row per source"
-    );
     assert.deepEqual(
-      profileEntry.inventory.artifacts
-        .map(({ path, source }) => ({ path, source }))
-        .sort((first, second) => first.source.localeCompare(second.source)),
-      expectedProfileSources.map((source) => ({ path: `.github/${source}`, source })),
-      "every profile inventory row must bind its exact source to .github/<source>"
+      profileEntry.source,
+      { type: "local", location: realpathSync(LIBRARY_DIR) },
+      "the profile records the direct local catalog identity"
     );
 
     assertLintsClean(root, "the standalone technical-docs bundle");
@@ -504,16 +480,15 @@ test("technical-docs and writing install in either order and produce an equivale
     installedPackFiles(first.files, PACK_TOKEN).length > 0 && installedPackFiles(first.files, "dude-pack-writing-").length > 0,
     "both packs must actually be installed for the ordering comparison to mean anything"
   );
-  // The profile records a wall-clock install stamp, so it is compared structurally below.
   const withoutProfile = (relPath) => relPath !== PROFILE_REL;
   assert.deepEqual(entries(second.files, withoutProfile), entries(first.files, withoutProfile), "install order changed the installed files");
   assert.deepEqual(second.directories, first.directories, "install order changed the installed directories");
   assert.deepEqual(
-    profileWithoutTimestamps(profiles[1]),
-    profileWithoutTimestamps(profiles[0]),
+    profiles[1],
+    profiles[0],
     "install order changed the recorded install profile"
   );
-  assert.deepEqual(profiles[0].enabled_packs, [PACK_NAME, WRITING_PACK].sort());
+  assert.deepEqual(Object.keys(profiles[0].installed), [PACK_NAME, WRITING_PACK].sort());
 });
 
 /* ------------------------------------------------- 2. optional writing layer */
@@ -594,7 +569,7 @@ test("removing technical-docs restores the pristine surface and leaves no artifa
       );
       assert.deepEqual(readdirSync(join(root, ...relPath.split("/"))), [], `${relPath} still holds an artifact`);
     }
-    assert.deepEqual(readProfileJson(root), { enabled_packs: [], installed: {} }, "removal left profile evidence behind");
+    assert.deepEqual(readProfileJson(root), { installed: {} }, "removal left profile evidence behind");
     assertLintsClean(root, "the bundle after removing technical-docs");
   });
 });
@@ -627,7 +602,7 @@ test("removing technical-docs from a writing-enabled bundle leaves no leftovers 
 
     assert.deepEqual(installedPackFiles(files, "dude-pack-writing-"), writingBefore, "removal damaged the writing pack");
     const profile = readProfileJson(root);
-    assert.deepEqual(profile.enabled_packs, [WRITING_PACK]);
+    assert.deepEqual(Object.keys(profile.installed), [WRITING_PACK]);
     assert.deepEqual(Object.keys(profile.installed), [WRITING_PACK]);
     assertLintsClean(root, "the writing-only bundle after removing technical-docs");
   });
@@ -644,7 +619,7 @@ test("the pristine release is still core-only and byte-identical after every ins
     [],
     "the pristine release was contaminated with a pack artifact"
   );
-  assert.deepEqual(readProfileJson(pristineRoot), { enabled_packs: [], installed: {} }, "the pristine release records an install");
+  assert.deepEqual(readProfileJson(pristineRoot), { installed: {} }, "the pristine release records an install");
 
   const lint = lintBundle(pristineRoot);
   assert.equal(lint.failures, 0, `the pristine release lints with failures${describe(lint.result)}`);

@@ -2558,11 +2558,9 @@ test('agent configuration, projection, compose, upgrade, and CI docs describe th
     assert.match(futureAdapterContract, claude, `${sourceConcept} Claude future correspondence`);
     assert.match(futureAdapterContract, sdk, `${sourceConcept} SDK future correspondence`);
   }
-  assert.match(reference, /never strips `model-class`/);
-
   assert.match(compose, /command is selected before projection dependencies are loaded/);
   assert.match(compose, /`remove`, `list`, and\s+`status` do not load that configuration or the renderer/);
-  assert.match(compose, /Current inventories use `version: 1`/);
+  assert.match(compose, /existing complete predecessor profile can make one in-memory transition/i);
   assert.match(
     markdownSection(commands, '### Repo layout: source vs built bundle'),
     /six currently installed\s+dogfood packs:\s+`authoring`,\s+`coding`,\s+`design`,\s+`release`,\s+`strata`,\s+and\s+`writing`/,

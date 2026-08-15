@@ -521,10 +521,6 @@ fields. The renderer resolves `model-class` to `model`; it emits neither
 Generated profiles are output, not authority. Edit core or pack sources and
 regenerate them. For an installed pack, run `compose refresh <pack>`.
 
-The narrow profile normalizer tolerates one host-owned replacement of a
-well-formed `model:` line. It leaves duplicate or malformed model lines
-unchanged and never strips `model-class`.
-
 ### Documentation-Only Future Adapter Contracts
 
 These documentation-only future contracts define no current output, command,

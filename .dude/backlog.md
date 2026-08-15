@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **4**
+- Ideas awaiting definition: **3**
 - Defined awaiting work: **0**
-- Completed: **38**
+- Completed: **39**
 
 ## Current
 
@@ -23,7 +23,6 @@ No current work to diagram.
 - `backlog-canvas` — Backlog Canvas (`.dude/ideas/backlog-canvas.md`)
 - `bulk-pack-refresh` — Bulk Pack Refresh (`.dude/ideas/bulk-pack-refresh.md`)
 - `multi-dude-work-coordination` — Multi-Dude Work Coordination (`.dude/ideas/multi-dude-work-coordination.md`)
-- `simplify-pack-updates` — Simplify Pack Updates (`.dude/ideas/simplify-pack-updates.md`)
 
 ## Completed
 
@@ -56,6 +55,7 @@ No current work to diagram.
 - `runner-reason-code-coverage-fix` — Runner Reason-Code And Coverage Fix (`.dude/ideas/runner-reason-code-coverage-fix.md`)
 - `ship-command` — Ship Command (`.dude/ideas/ship-command.md`)
 - `simplify-context-footprint-audit` — Simplify Context Footprint Audit (`.dude/ideas/simplify-context-footprint-audit.md`)
+- `simplify-pack-updates` — Simplify Pack Updates (`.dude/ideas/simplify-pack-updates.md`)
 - `simplify-work-command` — Simplify Work Command (`.dude/ideas/simplify-work-command.md`)
 - `specialist-attestation-producer` — Specialist Attestation Producer (`.dude/ideas/specialist-attestation-producer.md`)
 - `task-scoped-skill-resolution` — Task-Scoped Skill Resolution (`.dude/ideas/task-scoped-skill-resolution.md`)

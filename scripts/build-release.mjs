@@ -73,7 +73,6 @@ It is maintained by \`dude-compose\`. Do not hand-edit the \`installed\` map.
 
 \`\`\`json
 {
-  "enabled_packs": [],
   "installed": {}
 }
 \`\`\`

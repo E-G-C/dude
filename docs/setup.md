@@ -46,10 +46,10 @@ Shipping a bare name with no idea file behind it also works, but the name then
 becomes the entire idea, so Dude has to interview you before it can define
 anything.
 
-New installs already seed an inventory-backed empty profile and do not need any
-profile conversion. Current bundles use
-`.dude/metadata/bundle-manifest.md` as the sole manifest and record installed
-pack files in the seeded profile's versioned inventory.
+New installs seed an empty installed-pack map and do not need profile conversion.
+The bundle uses `.dude/metadata/bundle-manifest.md` as the sole manifest for
+bundle upgrades. The separate pack profile records installed membership, each
+pack's exact safe file list, and its source identity.
 
 If you are not sure which artifact is live after any step, run `@dude status`.
 In Definition Only it points you back to the current idea file or

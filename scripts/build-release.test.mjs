@@ -293,6 +293,8 @@ test('buildRelease stages a lint-clean core bundle with one profile per source a
       fs.readFileSync(path.join(outDir, '.dude/metadata/profile.md'), 'utf8'),
       PROFILE_STUB,
     );
+    assert.match(PROFILE_STUB, /"installed": \{\}/);
+    assert.doesNotMatch(PROFILE_STUB, /enabled_packs|inventory|digest|sha256/);
     const manifest = parseManifestDocument(
       fs.readFileSync(path.join(outDir, '.dude/metadata/bundle-manifest.md')),
       'staged manifest',
