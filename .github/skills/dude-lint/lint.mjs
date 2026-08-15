@@ -162,7 +162,7 @@ function walkMatch(dir, match) {
   if (!isDir(dir)) return out;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const abs = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...walkMatch(abs, match));
+    if (entry.isDirectory() && entry.name !== 'node_modules') out.push(...walkMatch(abs, match));
     else if (entry.isFile() && match(entry.name)) out.push(abs);
   }
   return out.sort();
