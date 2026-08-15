@@ -1,19 +1,19 @@
 ---
 name: "dude-bundle-upgrade"
-description: "Use when the user wants to upgrade the Dude bundle itself, pull the newest base bundle from its source repo, refresh shipped agents/skills/instructions while preserving project memory and active work, or roll back a recent upgrade. Triggers: @dude upgrade, @dude upgrade --dry-run, @dude upgrade --rollback, upgrade dude, update dude bundle, pull latest dude. Do NOT use for installing or removing optional packs (dude-compose) or importing a single external agent or skill (dude-bundle-import)."
+description: "Use when the user wants to upgrade the Dude bundle itself, pull the newest base bundle from its source repo, refresh shipped agents/skills/instructions while preserving project memory and active work, refresh all installed packs after an upgrade, or roll back a recent upgrade. Triggers: @dude upgrade, @dude upgrade --all, @dude upgrade --dry-run, @dude upgrade --rollback, upgrade dude, update dude bundle, pull latest dude. Do NOT use for a standalone optional-pack install, removal, refresh, or refresh preview (dude-compose), or importing a single external agent or skill (dude-bundle-import)."
 ---
 
 # Bundle Upgrade
 
-Pull the newest base Dude bundle from its source repo and overlay it onto this project, replacing only base-owned engine files (default agents, default skills, and the bundle instructions under `.github/`). Preserve everything project-local: all project-specific ideas under `.dude/ideas/`, definition specs, memory, execution state, project skills, project-custom agents and skills, `.github/copilot-instructions.md`, root files, repository docs, and Beads. Only the upgrade-owned metadata exceptions named in [Boundaries](#boundaries) may change.
+Pull the newest base Dude bundle from its source repo and overlay it onto this project, replacing only base-owned engine files (default agents, default skills, and the bundle instructions under `.github/`). The core phase preserves project-local ideas, definition specs, memory, execution state, project skills, project-custom agents and skills, `.github/copilot-instructions.md`, root files, repository docs, and Beads. With the explicit `--all` option, a later pack phase refreshes only packs already recorded as installed. Only the exceptions named in [Boundaries](#boundaries) may change.
 
-Upgrades are preview-then-confirm. The `upgrade.mjs` script does the heavy lifting for status, plan, apply, and rollback; the LLM orchestrates the conversation, surfaces the report, and translates the user's confirmation phrase into the apply invocation. Nothing is written to the working tree before the user confirms the upgrade plan.
+Upgrades are preview-then-confirm. The `upgrade.mjs` script handles status, plan, core apply, post-core pack work, and rollback; the LLM orchestrates the conversation, surfaces the report, and translates confirmation phrases into apply invocations. Nothing is written to the working tree before the user confirms the reviewed core plan.
 
 > **Base files are upstream-owned.** Every file matching the dude base namespace convention (the `dude.agent.md` / `dude-<slug>.agent.md` agents, `dude-<slug>` skill directories, and the `dude.instructions.md` instructions file) is owned by upstream and is silently overwritten on apply. Editing a base file in place is unsupported \u2014 those edits will be lost on the next upgrade. To customize a default agent or skill, copy it under the reserved `dude-local-<slug>` namespace and edit there. See [Reserved Project Namespace](#reserved-project-namespace).
 
 ## Purpose
 
-Make engine updates routine, safe, and reversible. The user runs `@dude upgrade` and gets a clear report of what would change. After `confirm upgrade`, Dude applies the upgrade, verifies it, and commits it on a safety branch. Publish (merge + push) is a deliberate opt-in step, not automatic.
+Make engine updates routine, safe, and reversible. The user runs `@dude upgrade` and gets a clear core report. After `confirm upgrade`, Dude applies, verifies, and commits the core update on a safety branch. `@dude upgrade --all` then offers a separate installed-pack refresh. Publish (merge + push) is a deliberate opt-in step, not automatic.
 
 ## When To Run
 
@@ -28,10 +28,16 @@ Do **not** run on routine project work. This skill is coordinator-maintenance, e
 Accepted invocation forms:
 
 - `@dude upgrade` — fetch the upstream ref recorded in the manifest and apply after confirmation.
+- `@dude upgrade --all` — complete the reviewed core upgrade, then preview and optionally refresh every installed pack.
 - `@dude upgrade --dry-run` — produce the upgrade report only, write nothing.
+- `@dude upgrade --all --dry-run` — produce only the ordinary reviewed core report; authoritative pack preview requires the applied upgraded engine.
 - `@dude upgrade --ref <branch|tag|sha>` — override the manifest-pinned ref.
 - `@dude upgrade --source <url-or-local-path>` — override the source repo for this run.
 - `@dude upgrade --rollback` — restore from the most recent pre-upgrade safety tag.
+
+Plain upgrade stays core-only. `--all` does not add a status mode, change
+rollback, or alter `--ref`, `--source`, or `--skip-removals` behavior for the
+core phase.
 
 ### Release channel
 
@@ -48,6 +54,8 @@ The `upgrade.mjs` engine handles fetch, classification, validation, and reportin
 | `status`   | Compare local manifest against upstream manifest. Cheap availability check. | No |
 | `plan`     | Fetch full upstream tree, classify every file, persist a plan JSON for apply. | No (cache only) |
 | `apply`    | Apply a persisted plan: safety tag + branch, file ops, manifest rewrite, log append, lint, commit. | Yes |
+| `packs-preview` | Preview installed-pack refreshes after the matching core commit. | No |
+| `packs-apply` | Refresh previewed installed packs after separate confirmation. | Yes |
 | `rollback` | `git reset --hard` to the most recent (or named) `dude-pre-upgrade-*` safety tag, append rollback log entry, lint. | Yes |
 | `help`     | Print usage. | No |
 
@@ -58,10 +66,13 @@ node .github/skills/dude-bundle-upgrade/upgrade.mjs status   --format json
 node .github/skills/dude-bundle-upgrade/upgrade.mjs plan     --format json [--ref <r>] [--source <s>] [--out <path>]
 node .github/skills/dude-bundle-upgrade/upgrade.mjs apply    --plan <id|path> --confirm confirm-upgrade \
   [--skip-removals] [--format text|json]
+node .github/skills/dude-bundle-upgrade/upgrade.mjs packs-preview --plan <id|path> [--format text|json]
+node .github/skills/dude-bundle-upgrade/upgrade.mjs packs-apply --plan <id|path> --confirm confirm-packs \
+  [--format text|json]
 node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback [--tag <name>] [--format text|json]
 ```
 
-`apply` does not push or merge. It leaves the upgrade commit on a local `chore/dude-upgrade-<short-sha>` branch for the user to review and merge themselves. The `--confirm` value is the literal token `confirm-upgrade`; the LLM maps the user-facing phrase `confirm upgrade [skip-removals]` into the corresponding flag combination.
+`apply` does not push or merge. It leaves the upgrade commit on a local `chore/dude-upgrade-<short-sha>` branch for the user to review and merge themselves. The `--confirm` value is the literal token `confirm-upgrade`; the LLM maps the user-facing phrase `confirm upgrade [skip-removals]` into the corresponding flag combination. For the separate pack phase, only `confirm packs` maps to `--confirm confirm-packs`.
 
 ### Exit Codes
 
@@ -158,7 +169,9 @@ Summarize the plan for the user using the `summary` counts plus a short bulleted
 
 An empty file-operation summary is a true no-op only when the planned `source_repo`, `source_ref`, and `installed_ref` values already equal the current manifest values. When those values differ, `plan` exits 10 and `apply` performs the reviewed metadata manifest, log, branch, and commit transition even though Add/Replace/Remove are empty. A true no-op apply still requires confirmation and validates all reviewed evidence; it returns without creating a safety tag, branch, log entry, manifest write, or target write.
 
-If `--dry-run`, stop here.
+If `--dry-run`, stop here. With `--all`, explain that no authoritative pack
+preview exists yet because it must be prepared by the upgraded engine after the
+core commit; do not render a speculative pack plan.
 
 ### Step 3 — Confirmation gate
 
@@ -174,7 +187,7 @@ Before confirming, surface a single warning summarizing local edits that will be
 
 ### Step 4 — Apply (script)
 
-The script does the entire write phase in one invocation. Translate the user's confirmation phrase into flags and run:
+The script does the core write phase in one invocation. Translate the user's confirmation phrase into flags and run:
 
 ```bash
 node .github/skills/dude-bundle-upgrade/upgrade.mjs apply \
@@ -206,7 +219,7 @@ If an ordinary operation fails after mutation begins, report the failure and the
 
 On `lint = [FAIL]` the script exits 40 and prints the suggested `rollback --tag <safety_tag>` command.
 
-### Step 5 — Surface the result
+### Step 5 — Surface the core result
 
 Relay the apply output to the user:
 
@@ -216,6 +229,66 @@ Relay the apply output to the user:
 - lint result
 - the suggested review command (`git diff <target-branch>...<upgrade-branch>`) plus a reminder that merge is a manual user step
 - any new upstream agent or skill the user may want to enable
+
+For plain upgrade, stop here. For `--all`, continue only after a successful,
+committed core apply. The core commit is the first transaction boundary.
+
+### Step 6 — Preview installed packs (`--all` only)
+
+Run:
+
+```bash
+node .github/skills/dude-bundle-upgrade/upgrade.mjs packs-preview \
+  --plan <plan_id-or-path> --format json
+```
+
+This command requires the matching committed core result, upgrade branch, and a
+clean tree before it dynamically loads Compose from the upgraded installation.
+It reads only the canonical installed-pack map, in sorted order. It never
+scans the catalog to add membership and never installs or enables a pack.
+
+For each installed pack, show the Compose preview's replacements, additions,
+and removals. Compose retains local target precedence. When a target is absent
+locally, remote preview uses the exact `resolved_commit` selected by the
+reviewed core plan, rather than resolving its source ref again. This also lets
+an installed remote pack refresh from a released bundle without `library/`.
+
+If no packs are installed, report a core-only completion. Request no pack
+confirmation, make no pack commit, and leave the committed branch clean.
+
+### Step 7 — Pack confirmation and apply (`--all` only)
+
+After showing the complete post-core preview, wait for `confirm packs`. Map
+only that phrase to `--confirm confirm-packs`:
+
+```bash
+node .github/skills/dude-bundle-upgrade/upgrade.mjs packs-apply \
+  --plan <plan_id-or-path> --confirm confirm-packs --format json
+```
+
+Plain "yes", "ok", and "go" do not authorize pack mutation. If the user
+declines or does not provide `confirm packs`, do not invoke pack apply; retain
+the committed core result and clean branch.
+
+Pack apply repeats the committed-core and clean-tree checks, reads the sorted
+installed map again, and uses the same local-precedence and exact-remote-
+revision rules as preview. Each pack refresh keeps Compose's own
+all-or-restored transaction. Process packs sequentially and stop on the first
+refusal. Report successful packs, the failed pack and reason, and every later
+pack as not attempted.
+
+After all packs succeed or processing stops at the first refusal, lint once.
+If successful refreshes have a net change, create at most one hook-disabled
+aggregate pack commit for their reported pack paths and the profile. Do not
+create an empty commit. Before a successful or partial-failure result, verify
+the upgrade branch is clean and report the core commit, pack commit or `none`,
+lint result, safety tag, review command, and rollback command. A lint, staging,
+or commit failure is an operational failure: report the actual branch state and
+recovery command without claiming a clean or successful result.
+
+Core and pack work are separate transaction boundaries. A pack refusal does not
+roll back the committed core or earlier successful packs, and the workflow makes
+no global atomicity claim.
 
 ## Rollback
 
@@ -234,6 +307,10 @@ The script:
 5. Runs `dude-lint` and reports the restored sha plus the lint result.
 
 The **already-merged** path (creating a rollback commit on the target branch by restoring base-owned files from the safety tag, rather than force-pushing) is not yet automated. For now: invoke `rollback` from a fresh branch off the target, then merge that rollback branch via a normal PR. Force-push is never used.
+
+For `--all`, the same pre-core safety tag remains the rollback boundary for the
+core commit and any aggregate pack commit. There is no pack-only or alternate
+rollback mode.
 
 ## Reserved Project Namespace
 
@@ -300,13 +377,24 @@ Classification is done by **byte comparison** of local disk content vs the fetch
 
 - Never auto-push, auto-merge, or modify remote state. The upgrade branch is the deliverable; merging is a user action.
 - Never project or repair an agent profile. Upgrade copies upstream bytes for core paths; installed pack profiles refresh only through `compose refresh <pack>`.
-- Never delete or modify `.dude/` project state except the upgrade-owned `.dude/metadata/bundle-manifest.md` and `.dude/metadata/upgrade-log.md`. All project-specific ideas under `.dude/ideas/` are preserved through every upgrade.
+- With `--all`, after the core commit, orchestrate that same canonical Compose
+  refresh path only for profile-installed packs; retain local target precedence,
+  never install or enable a pack, and keep core and pack work as separate
+  transaction boundaries.
+- A core-only upgrade never deletes or modifies `.dude/` project state except
+  the upgrade-owned `.dude/metadata/bundle-manifest.md` and
+  `.dude/metadata/upgrade-log.md`. The explicit `--all` phase may update the
+  profile and artifacts of packs already recorded as installed through Compose.
+  That profile remains the only pack authority; the phase never installs or
+  enables a pack. All project-specific ideas under `.dude/ideas/` are
+  preserved through every upgrade.
 - Never delete or modify `.github/skills/project/`.
 - Never modify `.github/copilot-instructions.md`.
 - Never touch `.dude/ideas/`, `.dude/specs/`, `.dude/memory/`, `.dude/state/`, Beads, or product source.
 - Never apply or roll back on a dirty working tree. Commit or stash changes first.
 - Path containment and symbolic-link checks assume a locally controlled workspace without concurrent hostile mutation. They detect observed drift but do not claim race-free protection from adversarial transient replacement.
 - Never proceed past the confirmation gate without an explicit confirmation token.
+- Never treat core and pack work as one globally atomic transaction.
 - Never recurse into transitive bundle composition (one upgrade pulls one upstream bundle).
 
 ## Pre-flight Requirements
