@@ -1,8 +1,8 @@
 ---
 title: Upgrade Pack Guidance Correction
 slug: upgrade-pack-guidance-correction
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/036-upgrade-pack-guidance-correction/spec.md
 ---
 
 # Idea: Upgrade Pack Guidance Correction
@@ -18,7 +18,7 @@ people into the fragile recipe the refresh command was built to replace.
 
 ### Q1: Should remove-then-add remain documented as an explicit fallback for a released bundle whose installed engine predates the `refresh` command?
 
-**Your answer:** _Pending._
+**Your answer:** Do not preserve remove-then-add as a legacy update fallback. Current documentation describes the current engine. Keep `remove` and `add` documented only for ordinary uninstall and installation.
 
 ## Established Evidence
 
@@ -50,39 +50,48 @@ people into the fragile recipe the refresh command was built to replace.
 <!-- dude:managed:start -->
 ## Normalized Intent
 
-- Correct the upgrade guidance users encounter after an upgrade so it leads
-  with the existing `compose refresh <pack>` operation rather than the fragile
-  remove-then-add update recipe.
-- Keep `remove` and `add` documented for ordinary uninstall and install.
-- Decide whether remove-then-add remains an explicit fallback for bundles whose
-  installed engine predates `refresh`.
-- Make only a documentation-correctness change; add no engine behavior.
-- Allow the first implementing sibling to absorb this correction; do not
-  duplicate the same documentation scope.
+- Correct the two shipped upgrade-guidance surfaces users encounter after an
+  upgrade so installed-pack updates lead with `compose refresh <pack>`.
+- Remove installed-pack update claims that require remove-then-add, including
+  any legacy fallback wording; the guidance describes the current engine.
+- Preserve `remove` and `add` only for ordinary uninstall and installation.
+- Keep the correction documentation-only and add no engine behavior.
+- Edit authoritative `src/` guidance and regenerate its `.github/` projection
+  only through `node scripts/build-dev.mjs`.
+- Avoid duplicate implementation if a sibling has already absorbed the exact
+  correction before work begins.
 
 ## Constraints
 
-- Limit the outcome to documentation and guidance; change no engine behavior.
-- Keep `src/` authoritative and rebuild generated `.github/` core only via
-  `node scripts/build-dev.mjs`.
-- Keep `remove` and `add` documented for their own purposes.
-- Do not reopen Feature 031.
-- Do not duplicate this scope if a sibling absorbs it first.
-- Keep this as brainstorm-only scope; create no definition package and perform
-  no implementation.
+- Limit implementation to `src/skills/dude-bundle-upgrade/SKILL.md`,
+  `docs/upgrading.md`, the generated upgrade-skill projection, and the smallest
+  useful existing documentation contract.
+- Do not change upgrade, compose, refresh, add, or remove engine behavior.
+- Do not document remove-then-add as an installed-pack update path or legacy
+  fallback.
+- Keep remove and add available and documented for ordinary uninstall and
+  installation.
+- Generate `.github/skills/dude-bundle-upgrade/SKILL.md` only with
+  `node scripts/build-dev.mjs`; never hand-edit it.
+- Do not reopen or redefine Feature 031.
+- Do not edit `.dude/memory/guardrails.md` as part of this feature.
 
 ## Definition Checklist
 
-- [x] Documentation-correctness outcome is clear enough for brainstorm
-- [x] Stale guidance locations and Feature 031 coverage gap are captured
-- [x] Source and generated-core ownership rule is explicit
-- [x] Engine behavior is explicitly out of scope
-- [x] Test placement is deferred to planning rather than treated as a user
-  outcome choice
-- [ ] Resolve fallback wording before definition
+- [x] The accepted current-engine guidance and no-fallback decision are explicit
+- [x] Both requested shipped guidance surfaces are independently testable
+- [x] Ordinary uninstall and installation remain distinct from pack refresh
+- [x] Authoritative and generated-core ownership is explicit
+- [x] Engine behavior and memory edits are out of scope
+- [x] The technology-agnostic specification has no unresolved clarification
+- [x] One bounded canonical task covers the documentation slice and fresh proof
 
 ## Coordinator Log
 
 - 2026-08-14 UTC - brainstorm captured
 - 2026-08-14 UTC - brainstorm revised after independent review
+- 2026-08-14 UTC - brainstorm refreshed
+- 2026-08-14 UTC - first definition -> .dude/specs/036-upgrade-pack-guidance-correction/spec.md
+- 2026-08-15 UTC - claimed T001@75706764 for Lightweight Execution
+- 2026-08-15 UTC - completed T001@75706764: current upgrade guidance now uses `compose refresh <pack>` without a remove-then-add update fallback; the focused contract, 2,328-test recursive suite, workspace lint, compose verification, generated parity and idempotency, pristine release lint, and diff hygiene passed; independent review approved
 <!-- dude:managed:end -->

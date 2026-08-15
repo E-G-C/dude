@@ -258,7 +258,7 @@ project content.
 
 Upgrade copies upstream core bytes. It does not project or repair installed pack
 profiles. A pack source or model mapping change reaches an installed pack only
-through `compose remove <pack>` followed by `compose add <pack>`.
+through `compose refresh <pack>`.
 
 The existing `.github/skills/dude-engine/**` ownership recursively includes
 `.github/skills/dude-engine/config/agent-models.json` and the loader. This lets
@@ -298,7 +298,7 @@ Classification is done by **byte comparison** of local disk content vs the fetch
 ## Boundaries
 
 - Never auto-push, auto-merge, or modify remote state. The upgrade branch is the deliverable; merging is a user action.
-- Never project or repair an agent profile. Upgrade copies upstream bytes for core paths; installed pack profiles refresh only through `compose remove` then `compose add`.
+- Never project or repair an agent profile. Upgrade copies upstream bytes for core paths; installed pack profiles refresh only through `compose refresh <pack>`.
 - Never delete or modify `.dude/` project state except the upgrade-owned `.dude/metadata/bundle-manifest.md` and `.dude/metadata/upgrade-log.md`. All project-specific ideas under `.dude/ideas/` are preserved through every upgrade.
 - Never delete or modify `.github/skills/project/`.
 - Never modify `.github/copilot-instructions.md`.

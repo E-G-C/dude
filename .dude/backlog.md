@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **5**
+- Ideas awaiting definition: **4**
 - Defined awaiting work: **0**
-- Completed: **37**
+- Completed: **38**
 
 ## Current
 
@@ -24,7 +24,6 @@ No current work to diagram.
 - `bulk-pack-refresh` — Bulk Pack Refresh (`.dude/ideas/bulk-pack-refresh.md`)
 - `multi-dude-work-coordination` — Multi-Dude Work Coordination (`.dude/ideas/multi-dude-work-coordination.md`)
 - `simplify-pack-updates` — Simplify Pack Updates (`.dude/ideas/simplify-pack-updates.md`)
-- `upgrade-pack-guidance-correction` — Upgrade Pack Guidance Correction (`.dude/ideas/upgrade-pack-guidance-correction.md`)
 
 ## Completed
 
@@ -65,6 +64,7 @@ No current work to diagram.
 - `topology-first-enforcement-reset` — Add A Topology-First Reset When Review Revisions Expand Enforcement Scope (`.dude/ideas/topology-first-enforcement-reset.md`)
 - `transactional-pack-refresh` — Transactional Pack Refresh (`.dude/ideas/transactional-pack-refresh.md`)
 - `unattended-work-continuity` — Unattended Work Continuity (`.dude/ideas/unattended-work-continuity.md`)
+- `upgrade-pack-guidance-correction` — Upgrade Pack Guidance Correction (`.dude/ideas/upgrade-pack-guidance-correction.md`)
 
 ## Dependency and order notes
 

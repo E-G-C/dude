@@ -91,21 +91,11 @@ plan, and apply the new plan.
 
 ## Refreshing installed packs
 
-An upgrade refreshes base files only. It never projects an installed pack's
-agents in place. When a bundle or pack-source change affects an installed
-profile, refresh that pack explicitly:
+`compose refresh <pack>`
 
-```
-@dude remove pack <name>
-@dude add pack <name>
-```
-
-Current pack inventories use version 1: one source records one direct
-`.github/<source>` destination. Removal authorizes the recorded destinations
-from exact profile and installed-hash evidence. It compares raw source evidence
-when that source is available, but source absence does not block removal. The
-following add reads the current packaged configuration and renders the current
-profile.
+Run this after a core upgrade or pack-source change to re-project the installed
+pack from its current source. A core upgrade refreshes base files only; it
+preserves installed packs rather than projecting them in place.
 
 ## Workflow
 
