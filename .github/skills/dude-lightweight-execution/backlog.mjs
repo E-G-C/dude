@@ -822,7 +822,7 @@ function lifecycleRibbon(item) {
     { key: "done", label: "Done", state: item.resolved ? "reached" : unknown || (item.defined && !item.tasksAvailable) ? "unknown" : item.section === "completed" ? "reached" : "pending" },
   ];
   const description = stages.map((stage) => `${stage.label} ${stage.state === "unknown" ? "unavailable" : stage.state === "not-applicable" ? "not applicable" : stage.state}`).join(", ");
-  return `<span class="ribbon" aria-label="Lifecycle: ${esc(description)}">${stages.map((stage) => (
+  return `<span class="ribbon" role="img" aria-label="Lifecycle: ${esc(description)}">${stages.map((stage) => (
     `<span class="stage stage-${stage.key} ${stage.state}">${stage.label}</span>`
   )).join("")}</span>`;
 }
@@ -832,7 +832,7 @@ function countsMarkup(item) {
   if (!item.lifecycleAvailable || (item.defined && !item.tasksAvailable)) return `<span class="counts unavailable">Task state unavailable</span>`;
   if (item.taskCounts.total === 0) return `<span class="counts none">No task package</span>`;
   const counts = item.taskCounts;
-  return `<span class="counts" aria-label="Task states">`
+  return `<span class="counts" role="group" aria-label="Task states">`
     + `<span><strong>${counts.open}</strong> open</span>`
     + `<span><strong>${counts.active}</strong> active</span>`
     + `<span><strong>${counts.blocked}</strong> blocked</span>`
@@ -948,13 +948,13 @@ function renderFeatureDetail(model, item) {
     + `<section><h3>Coordinator milestones</h3>${renderMilestones(item)}</section>`
     + `<section><h3>Dependencies and order</h3>${renderDependencyFacts(model, item)}</section>`
     + `<section><h3>Feature definition</h3>${renderFeatureDefinition(item)}</section></div>`
-    + `<section class="tasks-section"><div class="section-heading"><div><p class="eyebrow">Execution detail</p><h3>Phases and tasks</h3></div>${taskPath}</div>${renderTasks(item)}</section>`
+    + `<section class="tasks-section"><div class="section-heading"><h3>Phases and tasks</h3>${taskPath}</div>${renderTasks(item)}</section>`
     + `</div></details>`;
 }
 
 function renderSummary(model) {
   const summary = model.summary;
-  return `<div class="metric-strip" aria-label="Where are we summary">`
+  return `<div class="metric-strip" role="group" aria-label="Where are we summary">`
     + `<div class="metric current"><strong>${summary.currentWork}</strong><span>Current work</span><small>${summary.active} active · ${summary.blocked} blocked</small></div>`
     + `<div class="metric next"><strong>${summary.readyNext}</strong><span>Ready / Next</span><small>ready from declared dependency or order</small></div>`
     + `<div class="metric ideas"><strong>${summary.ideasAwaitingDefinition}</strong><span>Ideas awaiting definition</span><small>no task package yet</small></div>`
@@ -997,9 +997,9 @@ function renderDeliveryMap(model) {
     ? `<div class="map-isolated data-unavailable"><strong>Dependency data unavailable:</strong> ${unavailable.map((item) => `<a href="#${esc(item.anchor)}">${esc(item.slug)}</a>`).join(" · ")}</div>`
     : "";
   return `<section class="delivery-map" aria-labelledby="delivery-title" aria-describedby="delivery-desc">`
-    + `<div class="section-heading"><div><p class="eyebrow">Zoomed out</p><h2 id="delivery-title">Delivery map</h2></div><p id="delivery-desc">Only declared order and dependency evidence, plus separately marked provisional idea statements. Layout position never creates authority.</p></div>`
+    + `<div class="section-heading"><h2 id="delivery-title">Delivery map</h2><p id="delivery-desc">Only declared order and dependency evidence, plus separately marked provisional idea statements. Layout position never creates authority.</p></div>`
     + `<div class="order-banner${hasExplicitOrder ? " order-present" : ""}">${hasExplicitOrder ? "Explicit feature order is declared in the backlog order input." : "No explicit feature order declared"}</div>`
-    + `${rows}${isolated}${unavailableRows}<div class="map-legend" aria-label="Delivery map legend"><span><i class="legend-line solid" aria-hidden="true"></i> solid = declared</span><span><i class="legend-line dashed" aria-hidden="true"></i> dashed = stated in idea, not authoritative</span><span><i class="legend-none" aria-hidden="true">—</i> no line = no order signal</span></div></section>`;
+    + `${rows}${isolated}${unavailableRows}<div class="map-legend" role="group" aria-label="Delivery map legend"><span><i class="legend-line solid" aria-hidden="true"></i> solid = declared</span><span><i class="legend-line dashed" aria-hidden="true"></i> dashed = stated in idea, not authoritative</span><span><i class="legend-none" aria-hidden="true">—</i> no line = no order signal</span></div></section>`;
 }
 
 function renderCurrent(model) {
@@ -1012,7 +1012,7 @@ function renderCurrent(model) {
   const body = subsections.length > 0
     ? subsections.join("")
     : `<p class="empty-state"><strong>No current execution.</strong> There are no blocked, active, or ready items.</p>`;
-  return `<section class="work-section current-work" aria-labelledby="current-title"><div class="section-heading"><div><p class="eyebrow">Now and next</p><h2 id="current-title">Current work</h2></div><p>Blocked first, then active work, then ready work. Empty subsections stay out of the way.</p></div>${body}</section>`;
+  return `<section class="work-section current-work" aria-labelledby="current-title"><div class="section-heading"><h2 id="current-title">Current work</h2><p>Blocked first, then active work, then ready work. Empty subsections stay out of the way.</p></div>${body}</section>`;
 }
 
 function renderPlanned(model) {
@@ -1023,7 +1023,7 @@ function renderPlanned(model) {
     subsections.push(`<section class="work-subsection planned-${group.key}"><div class="subsection-heading"><h3>${group.title}</h3><span>${rows.length}</span></div>${rows.map((item) => renderFeatureDetail(model, item)).join("")}</section>`);
   }
   const body = subsections.length > 0 ? subsections.join("") : `<p class="empty-state"><strong>No planned work.</strong></p>`;
-  return `<section class="work-section planned-work" aria-labelledby="planned-title"><div class="section-heading"><div><p class="eyebrow">Before execution</p><h2 id="planned-title">Planned work</h2></div><p>Undefined and defined-but-unstarted work remains compact until authoritative state moves it into Current.</p></div>${body}</section>`;
+  return `<section class="work-section planned-work" aria-labelledby="planned-title"><div class="section-heading"><h2 id="planned-title">Planned work</h2><p>Undefined and defined-but-unstarted work remains compact until authoritative state moves it into Current.</p></div>${body}</section>`;
 }
 
 function renderCompleted(model) {
@@ -1033,7 +1033,7 @@ function renderCompleted(model) {
   const printIndex = model.completed.length > 0
     ? `<ol class="print-completed-index" aria-label="Completed feature print index">${model.completed.map((item) => `<li><span class="identity">${esc(featureKind(item))}</span> ${esc(item.title)}</li>`).join("")}</ol>`
     : `<p class="print-completed-index quiet">No completed features are recorded.</p>`;
-  return `<section class="work-section completed-work" aria-labelledby="completed-title"><div class="section-heading"><div><p class="eyebrow">What happened</p><h2 id="completed-title">Completed library</h2></div><p>One collapsed library keeps completed history available without making it a peer lane.</p></div>`
+  return `<section class="work-section completed-work" aria-labelledby="completed-title"><div class="section-heading"><h2 id="completed-title">Completed library</h2><p>One collapsed library keeps completed history available without making it a peer lane.</p></div>`
     + `<details class="completed-library"><summary>${model.completed.length} completed feature${model.completed.length === 1 ? "" : "s"} — open compact library</summary><div class="details-body">${body}</div></details>${printIndex}</section>`;
 }
 
@@ -1042,7 +1042,7 @@ function renderActivity(model) {
   const groups = model.activityByDate.length > 0
     ? model.activityByDate.map((group) => `<section class="activity-day"><h3><time datetime="${group.date}">${group.date}</time></h3><ol>${group.events.map((event) => `<li><a href="#${esc(event.anchor)}"><code>${esc(event.slug)}</code></a><span>${esc(conciseEvidence(event.text, 240))}</span></li>`).join("")}</ol></section>`).join("")
     : `<p class="empty-state"><strong>No dated Coordinator Log entries are available.</strong></p>`;
-  return `<section class="work-section coordinator-activity" aria-labelledby="activity-title"><div class="section-heading"><div><p class="eyebrow">Recorded scope</p><h2 id="activity-title">Coordinator activity</h2></div><p>Grouped by calendar date, newest first; same-date entries use stable idea identity and append order, not invented intra-day chronology.</p></div>`
+  return `<section class="work-section coordinator-activity" aria-labelledby="activity-title"><div class="section-heading"><h2 id="activity-title">Coordinator activity</h2><p>Grouped by calendar date, newest first; same-date entries use stable idea identity and append order, not invented intra-day chronology.</p></div>`
     + `<p class="scope-note">Only dated entries from idea Coordinator Logs are shown. Git history, ad-hoc work outside Coordinator Logs, and other execution history sources are excluded.</p>`
     + `<details class="activity-library"><summary>${total} dated Coordinator Log entr${total === 1 ? "y" : "ies"} — open activity</summary><div class="activity-body">${groups}</div></details><p class="print-activity-summary">${total} dated Coordinator Log entr${total === 1 ? "y is" : "ies are"} available in the HTML report; the full activity list is omitted from print.</p></section>`;
 }
