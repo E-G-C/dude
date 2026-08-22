@@ -207,7 +207,28 @@ test('buildDev renders Copilot profiles, packages exact config bytes, and preser
   }
 });
 
-test('buildDev materializes the complete current core only in a disposable workspace', () => {
+test('checked-in dev core is a byte-identical non-mutating projection of authoritative source', () => {
+  const checkedInBefore = snapshotTree(path.join(repoRoot, '.github'));
+  const checkedInOutputs = listCoreOutputs(repoRoot);
+  const checkedInPaths = checkedInOutputs.map(({ relPath }) => relPath);
+
+  assert.ok(checkedInOutputs.length > 20, `expected authoritative core outputs, got ${checkedInOutputs.length}`);
+  assert.deepEqual(
+    checkedInPaths.filter((rel) => /\.test\./.test(rel)),
+    [],
+    'source test files must not have deploy destinations',
+  );
+  for (const output of checkedInOutputs) {
+    const expected = output.abs ? fs.readFileSync(output.abs) : /** @type {Buffer} */ (output.bytes);
+    assertExactBytes(
+      fs.readFileSync(path.join(repoRoot, ...output.relPath.split('/'))),
+      expected,
+      output.relPath,
+    );
+  }
+  assert.deepEqual(enumerateCorePaths(repoRoot), checkedInPaths);
+  assert.deepEqual(snapshotTree(path.join(repoRoot, '.github')), checkedInBefore);
+
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-complete-'));
   try {
     fs.cpSync(path.join(repoRoot, 'src'), path.join(root, 'src'), { recursive: true });

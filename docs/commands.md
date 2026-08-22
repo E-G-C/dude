@@ -121,9 +121,52 @@ Imported tracked work takes precedence over local candidates, and an explicit
 target that conflicts with it stops before mutation. Ship never invokes `track`,
 imports work, or falls back from tracked work to Lightweight Execution.
 
-Existing clarification and guardrail-ratification checkpoints are unchanged, and
-Ship never answers one for you. They pause and wait for your reply exactly as
-they do without Ship.
+Before Work begins on an explicit Ship invocation, the existing pre-Work stage
+owner runs its eligibility, prerequisite, authority, and safety gates before
+answerability. A failed gate returns its existing refusal. A checkpoint label
+alone does not stop Ship. After the gates pass, the owner may continue only when accepted
+intent, applicable context and guardrails, material evidence, and the user's
+interests make one conservative disposition clearly dominant within its
+authority with no material unresolved risk. This is a qualitative judgment, with
+no score, rubric, confidence threshold, or checkpoint-class allowlist. Otherwise
+the owner stops with the missing basis, why bounded delegation is insufficient,
+and the outcome-changing user choice.
+
+Definition remains the owner of definition decisions. It may resolve an
+already-answered clarification when accepted intent or material evidence already
+supplies the answer, but does not invent a fact, choice, permission, or
+assumption, and does not claim the user supplied a new answer.
+
+For guardrail candidates after definition's normal gates:
+
+- A wholly protective, applicable set consistent with accepted intent may be
+  adopted through the existing definition-owner guardrail write path.
+- For a mixed set, remove only clearly irrelevant, speculative, or
+  contrary-to-accepted-intent candidates. Remove only those candidates, then
+  adopt the unchanged qualifying remainder without materially rewriting it.
+- When every candidate is clearly irrelevant, reject the whole set and continue
+  under applicable existing project and bundle guardrails.
+- A material rewrite, tradeoff, conflict, user-owned authority, or consequential
+  uncertainty stops for the missing basis, why bounded delegation is
+  insufficient, and the outcome-changing user choice. Ship never chooses `skip`
+  when it would discard applicable project guardrails.
+
+Every autonomous adoption, narrowing, or reject-all result is a
+Ship-authorized definition-owner action, never direct user ratification or a
+user `accept`, `edit`, `reject`, or `skip`. Ordinary `@dude define` keeps its
+normal checkpoint and those four user choices.
+
+The coordinator reports each autonomous pre-Work item in the same Ship
+invocation with its checkpoint, disposition, and concise rationale, adding
+reversibility or residual risk only when material. This context is transient and
+does not enter Work's audit. `why did you stop?` is diagnostic only: it can
+revisit a stop when target, accepted intent, material evidence, workflow state,
+authority, and environment are unchanged and the question adds no fact, choice,
+permission, or authority. A changed basis is inconclusive and grants no
+permission.
+
+When Work begins, pre-Work answerability ends. Ship returns every Work outcome
+unchanged, with no reclassification, minimization, extra retry, or override.
 
 A package is never refreshed behind your back. Ship performs no proactive
 redefinition, staleness check, drift check, or intent merge. Changed intent needs
@@ -962,7 +1005,7 @@ workflow for each class.
 
   ```bash
   node --test \
-    --test-name-pattern='buildDev materializes the complete current core only in a disposable workspace' \
+    --test-name-pattern='checked-in dev core is a byte-identical non-mutating projection of authoritative source' \
     scripts/build-dev.test.mjs
   ```
 

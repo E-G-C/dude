@@ -26,7 +26,23 @@ If one ledger contains distinct outcomes with separate success tests, ask one na
 
 ## Guardrail And Spec Gates
 
-Read project memory and conventions. If only bundle guardrails exist, infer a minimal project-specific candidate set. When candidates exist, pause and say `This is a normal checkpoint, not an error.` `accept` persists the proposed rules to `.dude/memory/guardrails.md`, then resumes definition. `edit` persists only the user-edited accepted rules, then resumes. `reject` persists none and continues with existing project/bundle guardrails. `skip` persists none and continues with bundle defaults only. Only ratified rules persist. With no new guardrails, continue without pausing.
+Read project memory and conventions. If only bundle guardrails exist, infer a minimal project-specific candidate set. With no new guardrails, continue without pausing. Outside explicit Ship, when candidates exist, pause and say `This is a normal checkpoint, not an error.` `accept` persists the proposed rules to `.dude/memory/guardrails.md`, then resumes definition. `edit` persists only the user-edited accepted rules, then resumes. `reject` persists none and continues with existing project/bundle guardrails. `skip` persists none and continues with bundle defaults only. Outside explicit Ship, only ratified rules persist.
+
+### Explicit Ship
+
+During an existing explicit Ship lifecycle subaction and before Work begins, definition first applies every normal eligibility, prerequisite, authority, and safety gate. A failed gate returns its existing refusal before answerability. Only then may the definition owner apply the qualitative owner-first rule in `dude-work-intake`; a checkpoint label alone does not stop.
+
+Resolve a clarification only when accepted intent or material evidence already supplies the answer. Do not edit a user-controlled question answer merely to manufacture completion, invent a fact, choice, permission, or assumption, or claim the user supplied a new answer.
+
+| Candidate set after definition gates | Definition-owner disposition under Ship | Continuing guardrails | Attribution |
+| --- | --- | --- | --- |
+| Wholly protective: every candidate is clearly protective, applicable, consistent with accepted intent, and within existing definition authority | Adopt the set through the existing definition-owner guardrail write path | Existing project and bundle guardrails plus adopted entries | Ship-authorized definition-owner action |
+| Mixed, with an unchanged qualifying remainder and only clearly irrelevant, speculative, or contrary-to-accepted-intent candidates removable | Remove only those candidates and adopt the unchanged qualifying remainder | Existing project and bundle guardrails plus adopted entries | Ship-authorized definition-owner action |
+| Every candidate clearly irrelevant | Reject the whole set and continue | Applicable existing project and bundle guardrails | Ship-authorized definition-owner action, never a user `reject` |
+| Material rewrite, tradeoff, conflict, user-owned authority, or consequential uncertainty | Stop for the outcome-changing user choice | Applicable existing project and bundle guardrails remain in force | No autonomous disposition |
+| `skip` would discard applicable project guardrails | Do not choose `skip`; use another qualifying row or stop | Applicable existing project and bundle guardrails remain in force | Never a user `skip` |
+
+Never materially rewrite a candidate under autonomous authority. For a stop, state the missing basis, why bounded delegation is insufficient, and the user choice that changes the outcome. Identify every autonomous adoption, narrowing, or reject-all result as a Ship-authorized definition-owner action, never direct user ratification or a user `accept`, `edit`, `reject`, or `skip`. The coordinator reports it in the same Ship invocation's existing final or stop response; add no durable attribution or disposition record.
 
 Write and validate the technology-agnostic `spec.md` before `plan.md`. The spec covers WHAT and WHY with prioritized, independently testable user scenarios, edge cases, numbered requirements, applicable entities, measurable success criteria, and assumptions. Allow at most three `[NEEDS CLARIFICATION: ...]` markers, ordered scope, security/privacy, UX, then technical; keep overflow visible as deferred clarification. Resolve all markers before planning or task derivation.
 

@@ -572,12 +572,154 @@ function assertSectionIncludesAll(relative, heading, needles) {
   }
 }
 
-/** @param {string} section @param {Array<[string, RegExp[] | RegExp[][]]>} requirements */
+/** @param {string} block */
+function normalizeMarkdownBlock(block) {
+  return block.replace(/\s+/g, ' ').trim();
+}
+
+/** @param {string} line */
+function markdownTableRow(line) {
+  return /^\s*\|.*\|\s*$/.test(line);
+}
+
+/** @param {string} line */
+function markdownTableSeparator(line) {
+  return /^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$/.test(line);
+}
+
+/**
+ * A Markdown paragraph is normally the unit that owns a prose rule. A table row
+ * owns its own rule: collapsing a table permits one row's disposition to satisfy
+ * another row's condition.
+ *
+ * @typedef {{ kind: 'paragraph' | 'table-row', normalized: string, raw: string }} MarkdownRuleBlock
+ * @param {string} section
+ * @param {{ splitLists?: boolean }} [options]
+ * @returns {MarkdownRuleBlock[]}
+ */
+function markdownRuleBlocks(section, { splitLists = false } = {}) {
+  return section.split(/\n\s*\n/)
+    .filter((paragraph) => paragraph.trim() !== '')
+    .flatMap((paragraph) => {
+      const lines = paragraph.split('\n');
+      if (lines.length >= 2 && lines.every(markdownTableRow)) {
+        return lines
+          .filter((line) => !markdownTableSeparator(line))
+          .map((raw) => ({ kind: 'table-row', raw, normalized: normalizeMarkdownBlock(raw) }));
+      }
+      if (!splitLists) {
+        return [{ kind: 'paragraph', raw: paragraph, normalized: normalizeMarkdownBlock(paragraph) }];
+      }
+
+      /** @type {MarkdownRuleBlock[]} */
+      const blocks = [];
+      /** @type {string[]} */
+      let current = [];
+      let currentIsListItem = false;
+      const flush = () => {
+        if (current.length === 0) return;
+        const raw = current.join('\n');
+        blocks.push({ kind: 'paragraph', raw, normalized: normalizeMarkdownBlock(raw) });
+        current = [];
+      };
+      for (const line of lines) {
+        if (/^\s*(?:[-*+]|\d+[.)])\s+/.test(line)) {
+          flush();
+          current = [line];
+          currentIsListItem = true;
+        } else if (currentIsListItem && /^\s+/.test(line)) {
+          current.push(line);
+        } else if (currentIsListItem) {
+          flush();
+          current = [line];
+          currentIsListItem = false;
+        } else {
+          current.push(line);
+        }
+      }
+      flush();
+      return blocks;
+    });
+}
+
+/**
+ * Normalize visible Markdown rule blocks before matching a section contract.
+ * Soft wraps are presentation, not a change to the owning rule. Table rows stay
+ * independent so one disposition cannot satisfy another row's contract.
+ * @param {string} section
+ */
+function normalizedParagraphs(section) {
+  return markdownRuleBlocks(section).map(({ normalized }) => normalized);
+}
+
+/** Normalize one-level Markdown list items while preserving their full prose. @param {string} section */
+function normalizedListItems(section) {
+  /** @type {string[]} */
+  const items = [];
+  for (const line of section.split('\n')) {
+    if (/^[-*+] /.test(line)) {
+      items.push(line.trim());
+    } else if (items.length > 0) {
+      items[items.length - 1] += ` ${line.trim()}`;
+    }
+  }
+  return items.map((item) => item.replace(/\s+/g, ' ').trim());
+}
+
+/** @param {string} section @param {Array<[string, string]>} legacy */
+function presentLegacyParagraphFragments(section, legacy) {
+  const paragraphs = normalizedParagraphs(section);
+  return legacy
+    .filter(([, fragment]) => paragraphs.some((paragraph) => paragraph.includes(fragment)))
+    .map(([label]) => label);
+}
+
+/**
+ * A two-part requirement checks a section for historical callers. A three-part
+ * requirement binds its semantics to one independently named owning block.
+ * @param {[string, RegExp[] | RegExp[][]] | [string, string, RegExp[] | RegExp[][]]} requirement
+ */
+function paragraphRequirement(requirement) {
+  const [label, anchorOrSignals, maybeSignals] = requirement;
+  return {
+    anchor: typeof anchorOrSignals === 'string' ? anchorOrSignals : null,
+    label,
+    signalsOrClauses: maybeSignals ?? anchorOrSignals,
+  };
+}
+
+/** @param {RegExp[] | RegExp[][]} signalsOrClauses */
+function paragraphRequirementClauses(signalsOrClauses) {
+  assert.ok(signalsOrClauses.length > 0, 'paragraph requirement needs at least one semantic signal');
+  return signalsOrClauses[0] instanceof RegExp ? [signalsOrClauses] : signalsOrClauses;
+}
+
+/** @param {string} block @param {RegExp[] | RegExp[][]} signalsOrClauses */
+function blockSatisfiesParagraphRequirement(block, signalsOrClauses) {
+  return paragraphRequirementClauses(signalsOrClauses)
+    .every((signals) => signals.every((pattern) => pattern.test(block)));
+}
+
+/** @param {string} section @param {string} anchor */
+function anchoredRuleBlocks(section, anchor) {
+  return markdownRuleBlocks(section, { splitLists: true })
+    .filter((block) => block.normalized.includes(anchor));
+}
+
+/**
+ * @param {string} section
+ * @param {Array<[string, RegExp[] | RegExp[][]] | [string, string, RegExp[] | RegExp[][]]>} requirements
+ */
 function missingParagraphRequirements(section, requirements) {
-  const paragraphs = section.split(/\n\s*\n/);
+  const paragraphs = normalizedParagraphs(section);
   return requirements
-    .filter(([, signalsOrClauses]) => {
-      const clauses = signalsOrClauses[0] instanceof RegExp ? [signalsOrClauses] : signalsOrClauses;
+    .filter((requirement) => {
+      const { anchor, signalsOrClauses } = paragraphRequirement(requirement);
+      if (anchor !== null) {
+        const blocks = anchoredRuleBlocks(section, anchor);
+        return blocks.length !== 1 || !blockSatisfiesParagraphRequirement(blocks[0].normalized, signalsOrClauses);
+      }
+      const clauses = paragraphRequirementClauses(signalsOrClauses);
       return !clauses.every((signals) => paragraphs.some((paragraph) => (
         signals.every((pattern) => pattern.test(paragraph))
       )));
@@ -587,23 +729,57 @@ function missingParagraphRequirements(section, requirements) {
 
 /**
  * @param {string} section
- * @param {Array<[string, RegExp[] | RegExp[][]]>} requirements
+ * @param {Array<[string, RegExp[] | RegExp[][]] | [string, string, RegExp[] | RegExp[][]]>} requirements
  * @param {string} context
  */
 function assertShipParagraphRequirements(section, requirements, context) {
   assert.deepEqual(missingParagraphRequirements(section, requirements), [], context);
 
-  const paragraphs = section.split(/\n\s*\n/);
-  for (const [label, signalsOrClauses] of requirements) {
-    const clauses = signalsOrClauses[0] instanceof RegExp ? [signalsOrClauses] : signalsOrClauses;
-    const mutated = paragraphs
-      .filter((paragraph) => !clauses.some((signals) => (
-        signals.every((pattern) => pattern.test(paragraph))
-      )))
-      .join('\n\n');
+  for (const requirement of requirements) {
+    const { anchor, label, signalsOrClauses } = paragraphRequirement(requirement);
+    if (anchor === null) {
+      // Legacy two-part callers have no named anchor. Enumerate bounded
+      // structural blocks rather than selecting by the semantic regexes; this
+      // still proves one real deletion falsifier and catches masking duplicates.
+      const independentlyFalsified = markdownRuleBlocks(section, { splitLists: true })
+        .some((block) => {
+          if (section.split(block.raw).length - 1 !== 1) return false;
+          const deleted = section.replace(block.raw, '').replace(/\n{3,}/g, '\n\n').trim();
+          return missingParagraphRequirements(deleted, [requirement]).includes(label);
+        });
+      assert.ok(
+        independentlyFalsified,
+        `${context}: independently deleting one bounded block must fail ${label}`,
+      );
+      continue;
+    }
+    const blocks = anchoredRuleBlocks(section, anchor);
+    assert.equal(blocks.length, 1, `${context}: ${label} has one ${anchor} owning block`);
+    const [block] = blocks;
+    assert.equal(
+      section.split(block.raw).length - 1,
+      1,
+      `${context}: ${label} owning block is bounded and unique`,
+    );
+    const deleted = section.replace(block.raw, '').replace(/\n{3,}/g, '\n\n').trim();
     assert.ok(
-      missingParagraphRequirements(mutated, [[label, signalsOrClauses]]).includes(label),
-      `${context}: removing paragraphs that satisfy ${label} must fail`,
+      missingParagraphRequirements(deleted, [requirement]).includes(label),
+      `${context}: deleting the ${anchor} owning block must fail ${label}`,
+    );
+
+    assert.equal(
+      block.raw.split(anchor).length - 1,
+      1,
+      `${context}: ${label} anchor occurs once in its owning block`,
+    );
+    const duplicate = block.raw.replace(anchor, 'Duplicate wording');
+    assert.ok(
+      blockSatisfiesParagraphRequirement(normalizeMarkdownBlock(duplicate), signalsOrClauses),
+      `${context}: ${label} semantic signals are independent of its anchor`,
+    );
+    assert.ok(
+      missingParagraphRequirements(`${deleted}\n\n${duplicate}`, [requirement]).includes(label),
+      `${context}: duplicate wording cannot mask deletion of ${label}`,
     );
   }
 }
@@ -1180,9 +1356,9 @@ test('T008 definition authority, rerun safety, guardrails, gates, and reconcilia
         '`edit` persists only the user-edited accepted rules',
         '`reject` persists none and continues with existing project/bundle guardrails',
         '`skip` persists none and continues with bundle defaults only',
-        'Only ratified rules persist. No candidates means no pause.',
+        'Only user-accepted or user-edited rules persist in these ordinary flows. No candidates means no pause.',
       ],
-      ruleLine: '- When guardrail candidates exist, pause with `This is a normal checkpoint, not an error.` `accept` persists the proposed rules to `.dude/memory/guardrails.md`; `edit` persists only the user-edited accepted rules; both then resume definition. `reject` persists none and continues with existing project/bundle guardrails; `skip` persists none and continues with bundle defaults only. Only ratified rules persist. No candidates means no pause.',
+      ruleLine: '- Outside explicit Ship, when guardrail candidates exist, pause with `This is a normal checkpoint, not an error.` `accept` persists the proposed rules to `.dude/memory/guardrails.md`; `edit` persists only the user-edited accepted rules; both then resume definition. `reject` persists none and continues with existing project/bundle guardrails; `skip` persists none and continues with bundle defaults only. Only user-accepted or user-edited rules persist in these ordinary flows. No candidates means no pause.',
     },
     {
       relative: 'src/agents/dude-spec-lead.agent.md',
@@ -1256,9 +1432,10 @@ test('T008 definition authority, rerun safety, guardrails, gates, and reconcilia
         '`edit` persists only the user-edited accepted rules, then resumes',
         '`reject` persists none and continues with existing project/bundle guardrails',
         '`skip` persists none and continues with bundle defaults only',
-        'Only ratified rules persist. With no new guardrails, continue without pausing.',
+        'With no new guardrails, continue without pausing.',
+        'Outside explicit Ship, only ratified rules persist.',
       ],
-      ruleLine: 'Read project memory and conventions. If only bundle guardrails exist, infer a minimal project-specific candidate set. When candidates exist, pause and say `This is a normal checkpoint, not an error.` `accept` persists the proposed rules to `.dude/memory/guardrails.md`, then resumes definition. `edit` persists only the user-edited accepted rules, then resumes. `reject` persists none and continues with existing project/bundle guardrails. `skip` persists none and continues with bundle defaults only. Only ratified rules persist. With no new guardrails, continue without pausing.',
+      ruleLine: 'Read project memory and conventions. If only bundle guardrails exist, infer a minimal project-specific candidate set. With no new guardrails, continue without pausing. Outside explicit Ship, when candidates exist, pause and say `This is a normal checkpoint, not an error.` `accept` persists the proposed rules to `.dude/memory/guardrails.md`, then resumes definition. `edit` persists only the user-edited accepted rules, then resumes. `reject` persists none and continues with existing project/bundle guardrails. `skip` persists none and continues with bundle defaults only. Outside explicit Ship, only ratified rules persist.',
     },
     {
       relative: 'src/skills/dude-feature-definition/SKILL.md',
@@ -3219,9 +3396,35 @@ const FORBIDDEN_USER_COMMANDS = [
 const WORK_GRAMMAR_LINE = '@dude work [<feature>] [--max <N|unlimited>] [--until blocked] [--recover-on-block] [--recovery-cycles <N|unlimited>] [--policy guarded|autonomous]';
 const REMOVED_WORK_OPTION = `--${'parallel'}`;
 const SHIP_RESOLVER_OWNER = 'src/skills/dude-work-intake/SKILL.md';
+const SHIP_DEFINITION_OWNER = 'src/skills/dude-feature-definition/SKILL.md';
 const SHIP_COORDINATOR = 'src/agents/dude.agent.md';
+const SHIP_DEFINITION_AGENT = 'src/agents/dude-spec-lead.agent.md';
+const SHIP_GUARDRAIL_MEMORY = '.dude/memory/guardrails.md';
+const SHIP_GUARDRAIL_ENTRIES = [
+  '## Entries',
+  '',
+  '- `[bundle]` Once execution work is imported, Beads is the only live tracker for pending and completed work.',
+  '- `[bundle]` Keep intent separate from implementation: `spec.md` stays technology-agnostic, while `plan.md` carries technical design.',
+  '- `[bundle]` Optional disciplines such as worktrees and TDD are opt-in unless the user explicitly adopts them for the project.',
+  '- Specialist visibility (user preference): whenever Dude dispatches a specialist as a subagent (reviewer, coder, tester, architect, spec-lead, etc.), make the hand-off visible. Announce it before the work with a one-line `→ Dispatching: <Specialist>` marker, and present that specialist\'s raw findings/output under its own attributed heading (e.g. `<Specialist> — findings:`), kept separate from Dude\'s own synthesis and decision. Rationale: VS Code does not render subagent turns, so explicit labeling is how the user sees which specialist actually engaged.',
+  '- Prefer deterministic scripts for reproducible parsing, counting, budgeting, validation, state transitions, and rendering; reserve model reasoning for semantic diagnosis and recovery decisions.',
+  '- Keep model-facing instructions concise and non-redundant while preserving required authority, safety, and behavior.',
+  '- Choose the smallest design that satisfies proven requirements; reject speculative abstractions, state, schemas, or safeguards without a concrete failure mode or acceptance test.',
+  '- Core stays runtime-independent of optional packs: when a core generator needs an optional pack\'s visual language or assets, bake a validated copy into a committed artifact (template) and update it deliberately; never read the installed pack projection at generation time, so the output is identical whether or not the pack is installed. Rely on always-present runtimes (Node), not on optional packs.',
+  '- No dead affordances in generated static or offline artifacts: present only controls that actually function (honest chrome plus real data); never render navigation, tabs, or switches that lead nowhere in a file that has no server or scripting.',
+  '- Pack lifecycle rule: edit authoritative pack source only under `library/packs/<name>/` and use a disposable bundle for live validation; never develop by editing an installed `.github/dude-pack-*` projection in place. The installed map is the pack authority: its membership opts a pack in, and its exact safe `files` list bounds removal. If a pack is absent from the profile but namespaced files remain, treat them as post-uninstall residue: establish ownership before explicit cleanup rather than fabricating profile authority or silently deleting unknown files.',
+  '- Refresh an installed pack after editing its authoritative source with `compose refresh <pack>`: it re-projects the current source, may overwrite installed edits, and always follows its normal transaction path. Keep persistent customization under `dude-local-*`, not an installed pack path. Remove deletes only exact recorded safe files. Add, remove, and refresh restore prior files and profile bytes after a caught application failure, but do not promise crash-proof recovery.',
+  '- A pack that claims to be standalone must not name, route to, validate through, or ambiently activate another pack; optional themes/visual systems activate only by explicit identity or existing system evidence.',
+  '',
+].join('\n');
 const SHIP_GRAMMAR_LINE = '@dude ship [<target>]';
 const SHIP_POLICY = "{overall:'unlimited', recovery:'unlimited', recover:true, untilBlocked:false, mode:'autonomous'}";
+const SHIP_AUTONOMY_PROJECTION_PAIRS = [
+  [SHIP_RESOLVER_OWNER, '.github/skills/dude-work-intake/SKILL.md'],
+  [SHIP_DEFINITION_OWNER, '.github/skills/dude-feature-definition/SKILL.md'],
+  [SHIP_COORDINATOR, '.github/agents/dude.agent.md'],
+  [SHIP_DEFINITION_AGENT, '.github/agents/dude-spec-lead.agent.md'],
+];
 const SHIP_AUTHORITY_PATHS = new Set([
   SHIP_RESOLVER_OWNER,
   SHIP_COORDINATOR,
@@ -3238,6 +3441,77 @@ const SHIP_INVENTORY_ROOTS = [
   'src',
 ];
 const SHIP_INVENTORY_EXCLUDED_DIRECTORIES = new Set(['.git', 'dist', 'node_modules']);
+const SHIP_PROHIBITED_SURFACE_PROBES = [
+  ['central resolver', 'src/skills/dude-ship-resolver/SKILL.md'],
+  ['neutral central resolver', 'src/skills/dude-resolver/SKILL.md'],
+  ['neutral checkpoint resolver', 'src/skills/dude-checkpoint-resolver/SKILL.md'],
+  ['additional Ship command', 'scripts/ship-command.mjs'],
+  ['neutral command surface', 'scripts/command.mjs'],
+  ['Ship mode', 'src/skills/dude-ship-mode/SKILL.md'],
+  ['Ship parser', 'scripts/ship-parser.mjs'],
+  ['Ship lane', 'src/skills/dude-ship-lane/SKILL.md'],
+  ['checkpoint taxonomy', 'src/skills/dude-ship-taxonomy/SKILL.md'],
+  ['answerability score', 'src/skills/dude-ship-score.mjs'],
+  ['decision registry', 'src/skills/dude-ship-registry.mjs'],
+  ['Ship state', '.dude/state/ship-run.json'],
+  ['neutral checkpoint state', '.dude/state/checkpoint-state.json'],
+  ['Ship daemon', 'scripts/ship-daemon.mjs'],
+  ['Ship scheduler', 'scripts/ship-scheduler.mjs'],
+  ['new Ship report', 'scripts/ship-report.mjs'],
+  ['persistent Ship audit carrier', '.dude/metadata/ship-audit.json'],
+  ['neutral disposition audit carrier', '.dude/metadata/disposition-audit.json'],
+  ['duplicate Ship workflow', 'src/skills/dude-ship-workflow/SKILL.md'],
+  ['alternate Work surface', 'src/skills/dude-ship-work/SKILL.md'],
+  ['neutral alternate Work surface', 'src/skills/dude-checkpoint-work/SKILL.md'],
+  ['Ship-specific pack resolver', 'library/packs/example/skills/dude-pack-example-ship-resolver/SKILL.md'],
+  ['neutral checkpoint pack state', 'library/packs/example/skills/dude-pack-example-checkpoint-state.mjs'],
+];
+const SHIP_PROHIBITED_PATH_CONCEPTS = [
+  ['central resolver', 'resolver'],
+  ['additional command', 'command'],
+  ['Ship mode', 'mode'],
+  ['Ship parser', 'parser'],
+  ['Ship lane', 'lane'],
+  ['checkpoint taxonomy', 'taxonomy'],
+  ['answerability score', 'score'],
+  ['decision registry', 'registry'],
+  ['state store', 'state'],
+  ['Ship daemon', 'daemon'],
+  ['Ship scheduler', 'scheduler'],
+  ['new report surface', 'report'],
+  ['persistent audit carrier', 'audit'],
+  ['duplicate workflow', 'workflow'],
+];
+const SHIP_EXISTING_CAPABILITY_PATHS = new Set([
+  '.dude/state',
+  '.dude/state/task-state.json',
+  '.github/skills/dude-engine/lib/task-state.mjs',
+  'src/skills/dude-engine/lib/task-state.mjs',
+  'src/skills/dude-engine/lib/task-state.test.mjs',
+]);
+const SHIP_PROHIBITED_CAPABILITY_GRANTS = [
+  ['central checkpoint resolver', /\bcentral checkpoint resolver\b/i, 'Ship creates a central checkpoint resolver.'],
+  ['additional Ship command', /\badditional Ship command\b/i, 'Ship adds an additional Ship command.'],
+  ['Ship mode', /\bShip mode\b/i, 'Ship creates a Ship mode.'],
+  ['Ship parser', /\bShip parser\b/i, 'Ship adds a Ship parser.'],
+  ['Ship lane', /\bShip lane\b/i, 'Ship creates a Ship lane.'],
+  ['checkpoint taxonomy', /\bcheckpoint taxonomy\b/i, 'Ship creates a checkpoint taxonomy.'],
+  ['answerability score', /\banswerability score\b/i, 'Ship creates an answerability score.'],
+  ['decision registry', /\bdecision registry\b/i, 'Ship creates a decision registry.'],
+  ['persistent checkpoint state', /\bpersistent checkpoint state\b/i, 'Ship writes persistent checkpoint state.'],
+  ['Ship daemon', /\bShip daemon\b/i, 'Ship starts a Ship daemon.'],
+  ['Ship scheduler', /\bShip scheduler\b/i, 'Ship starts a Ship scheduler.'],
+  ['persistent Ship audit carrier', /\bpersistent Ship audit carrier\b/i, 'Ship writes a persistent Ship audit carrier.'],
+  ['duplicate Ship workflow', /\bduplicate Ship workflow\b/i, 'Ship creates a duplicate Ship workflow.'],
+  ['alternate Work implementation', /\balternate Work implementation\b/i, 'Ship creates an alternate Work implementation.'],
+];
+const SHIP_CAPABILITY_DENIAL = /\b(?:no|not|never|without|do not|does not|cannot|can't|refuse[sd]?|reject(?:s|ed)?|forbid(?:s|den)?|prohibit(?:s|ed)?)\b/i;
+const SHIP_PROHIBITED_CAPABILITY_SECTIONS = [
+  [SHIP_RESOLVER_OWNER, '## Ship'],
+  [SHIP_DEFINITION_OWNER, '### Explicit Ship'],
+  [SHIP_COORDINATOR, '## Ship'],
+  [SHIP_DEFINITION_AGENT, '## Required Workflow'],
+];
 const SHIP_AFFIRMATIVE_SUBJECT = String.raw`\bShip\s+(?:(?:may|can|will|must|shall|should|does)\s+|(?:is\s+)?(?:allowed|authorized|permitted)\s+to\s+|has\s+authority\s+to\s+)?`;
 const COORDINATOR_AFFIRMATIVE_SUBJECT = String.raw`\b(?:the\s+)?coordinator\s+(?:(?:may|can|will|must|shall|should|does)\s+|(?:is\s+)?(?:allowed|authorized|permitted)\s+to\s+|has\s+authority\s+to\s+)?`;
 const DEFINITION_WRITE_SURFACE = String.raw`(?:definition (?:artifacts?|metadata|log events?)|\`status:\`|\`spec_path:\`|managed definition regions?)`;
@@ -3285,6 +3559,17 @@ const SHIP_PROHIBITED_GRANTS = [
       'Ship answers guardrail checkpoints and grants a bypass.',
       'Ship supplies an answer to a guardrail checkpoint.',
       'Ship bypasses the guardrail-ratification checkpoint.',
+    ],
+  },
+  {
+    label: 'lean-definition expansion',
+    patterns: [
+      new RegExp(`${SHIP_AFFIRMATIVE_SUBJECT}(?:add|adds|create|creates|introduce|introduces|use|uses)\\s+(?:(?:a|the)\\s+)?(?:depth dial|complexity score|conditional review policy)\\b`, 'i'),
+    ],
+    mutations: [
+      'Ship adds a depth dial.',
+      'Ship creates a complexity score.',
+      'Ship introduces a conditional review policy.',
     ],
   },
   {
@@ -3371,6 +3656,25 @@ function assertShipAuthorityMutations(section, context) {
   }
 }
 
+/** @param {string} section */
+function shipProhibitedCapabilityGrants(section) {
+  // These are closed capability names from FR-020, not an attempt to infer
+  // semantic contradiction across arbitrary prose.
+  const clauses = sentences(section)
+    .flatMap((sentence) => sentence.split(/\s*;\s*|\s+but\s+|\s+however,?\s+/i))
+    .filter(Boolean);
+  return SHIP_PROHIBITED_CAPABILITY_GRANTS
+    .filter(([, pattern]) => clauses.some((clause) => (
+      pattern.test(clause) && !SHIP_CAPABILITY_DENIAL.test(clause)
+    )))
+    .map(([label]) => label);
+}
+
+/** @param {string} section @param {string} context */
+function assertNoShipProhibitedCapabilityGrants(section, context) {
+  assert.deepEqual(shipProhibitedCapabilityGrants(section), [], context);
+}
+
 /** @param {string} relativeRoot */
 function boundedShipInventory(relativeRoot) {
   const absoluteRoot = path.join(ROOT, relativeRoot);
@@ -3401,17 +3705,45 @@ function prohibitedShipArtifact(relative) {
   if (!SHIP_INVENTORY_ROOTS.some((root) => normalized === root || normalized.startsWith(`${root}/`))) {
     return null;
   }
-  const hasShipToken = normalized.split('/')
-    .some((segment) => /(?:^|[-_.])ship(?:$|[-_.])/i.test(segment));
-  if (!hasShipToken) return null;
-  if (normalized.startsWith('.dude/state/') || normalized.startsWith('.dude/metadata/')) {
-    return 'Ship-specific state or configuration';
+  if (
+    SHIP_EXISTING_CAPABILITY_PATHS.has(normalized)
+    || normalized.startsWith('.github/workflows/')
+  ) {
+    return null;
   }
-  if (normalized.includes('/skills/')) return 'Ship-specific skill artifact';
-  if (/\.(?:[cm]?js|ts|json|ya?ml|toml)$/i.test(normalized)) {
-    return 'Ship-specific parser, runtime, or configuration module';
+  const components = normalized.toLowerCase().split(/[/. _-]+/).filter(Boolean);
+  const featureScoped = components.some((component) => (
+    ['ship', 'checkpoint', 'answerability', 'autonomy'].includes(component)
+  ));
+  if (
+    (normalized.startsWith('library/packs/') || normalized.startsWith('.github/skills/dude-pack-'))
+    && !featureScoped
+  ) {
+    return null;
   }
-  return 'Ship-specific implementation artifact';
+  if (
+    components.includes('work')
+    && components.some((component) => ['ship', 'checkpoint', 'answerability', 'autonomy'].includes(component))
+  ) {
+    return 'alternate Work surface';
+  }
+  const match = SHIP_PROHIBITED_PATH_CONCEPTS
+    .find(([, concept]) => components.includes(concept));
+  return match?.[0] ?? null;
+}
+
+/**
+ * @param {Array<[string, string]>} pairs
+ * @param {(generated: string) => Buffer} [generatedBytes]
+ */
+function shipAutonomyProjectionMismatches(
+  pairs,
+  generatedBytes = (generated) => fs.readFileSync(path.join(ROOT, generated)),
+) {
+  return pairs
+    .filter(([source, generated]) => !materializedSourceBytes(source, generated)
+      .equals(generatedBytes(generated)))
+    .map(([source, generated]) => `${source} -> ${generated}`);
 }
 
 /** Sentences that grant concurrency without any denial or scoping token. @param {string} text */
@@ -3432,28 +3764,50 @@ test('Ship accepts one optional target and resolves only missing lifecycle stage
   );
 
   assertShipParagraphRequirements(ship, [
-    ['strict pre-mutation grammar', [
-      [/exactly one optional target/i, /no flags/i, /complete invocation/i, /before any mutation/i],
-      [/flag in any position or form/i, /beginning with `-`/i, /more than one target/i, /advanced Work/i, /without silently normalizing/i],
+    ['strict pre-mutation grammar', '`@dude ship [<target>]` accepts', [
+      /exactly one optional target/i,
+      /no flags/i,
+      /complete invocation/i,
+      /before any mutation/i,
+      /flag in any position or form/i,
+      /beginning with `-`/i,
+      /more than one target/i,
+      /advanced Work/i,
+      /without silently normalizing/i,
     ]],
-    ['unmatched raw idea lifecycle', [
-      [/unmatched raw idea/i, /existing explicit `brainstorm <idea>` route/i, /lifecycle subaction/i, /exactly one ledger/i],
-      [/existing explicit `define <slug>` route/i, /distinct lifecycle subaction/i, /then Work/i],
+    ['unmatched raw idea lifecycle', '2. An unmatched raw idea invokes', [
+      /existing explicit `brainstorm <idea>` route/i,
+      /lifecycle subaction/i,
+      /exactly one ledger/i,
+      /existing explicit `define <slug>` route/i,
+      /distinct lifecycle subaction/i,
+      /then Work/i,
     ]],
-    ['draft lifecycle', [
-      [/existing draft ledger/i, /existing explicit `define <slug>` route/i, /lifecycle subaction/i, /then Work/i],
+    ['draft lifecycle', '3. An existing draft ledger invokes', [
+      /existing explicit `define <slug>` route/i,
+      /lifecycle subaction/i,
+      /then Work/i,
     ]],
-    ['defined package without proactive redefinition', [
-      [/existing defined package/i, /Work as-is/i, /not proactively redefine/i, /staleness or drift/i, /merge invocation text/i],
-      [/changed intent/i, /explicit `brainstorm`/i, /package refresh/i, /explicit `define`/i],
+    ['defined package without proactive redefinition', '4. An existing defined package goes to Work as-is.', [
+      /Do not proactively redefine/i,
+      /staleness or drift/i,
+      /merge invocation text/i,
+      /changed intent/i,
+      /explicit `brainstorm`/i,
+      /package refresh/i,
+      /explicit `define`/i,
     ]],
-    ['bare Ship target selection', [
-      [/Bare Ship/i, /exactly one unambiguous live lifecycle target/i],
+    ['bare Ship target selection', '6. Bare Ship without tracked work proceeds', [
+      /exactly one unambiguous live lifecycle target/i,
     ]],
-    ['no Ship definition-write authority', [
-      [/no alternate definition-write route or authority/i],
-      [/delegated Spec Lead/i, /all definition artifacts/i, /`status:`/i, /exact `spec_path:`/i, /managed definition regions/i, /definition log events/i],
-      [/Ship writes none of them/i],
+    ['no Ship definition-write authority', 'Ship creates no alternate definition-write route or authority.', [
+      /delegated Spec Lead/i,
+      /all definition artifacts/i,
+      /`status:`/i,
+      /exact `spec_path:`/i,
+      /managed definition regions/i,
+      /definition log events/i,
+      /Ship writes none of them/i,
     ]],
   ], `${SHIP_RESOLVER_OWNER} ## Ship`);
 });
@@ -3462,17 +3816,28 @@ test('Ship ambiguity and tracked precedence fail closed before mutation', () => 
   const ship = markdownSection(read(SHIP_RESOLVER_OWNER), '## Ship');
 
   assertShipParagraphRequirements(ship, [
-    ['tracked authority wins without fallback or import', [
-      [/Imported tracked work wins/i, /explicit lifecycle target/i, /stops before mutation/i, /tracked precedence/i],
-      [/never invokes `track`[^.]*imports work[^.]*falls back/i, /Lightweight Execution/i],
+    ['tracked authority wins without fallback or import', '1. Imported tracked work wins.', [
+      /Bare Ship selects that authoritative tracked target/i,
+      /explicit lifecycle target/i,
+      /stops before mutation/i,
+      /tracked precedence/i,
+      /never invokes `track`[^.]*imports work[^.]*falls back/i,
+      /Lightweight Execution/i,
     ]],
-    ['one exact-candidate question and fresh resolution', [
-      [/several otherwise-valid candidates/i, /exactly one pre-mutation disambiguation question/i, /exact identities/i],
-      [/Do not rank/i, /persist a default/i, /mutate anything/i],
-      [/Restart the complete resolution from the answer/i, /no second question/i, /stop/i],
+    ['one exact-candidate question and fresh resolution', 'If several otherwise-valid candidates remain', [
+      /exactly one pre-mutation disambiguation question/i,
+      /exact identities/i,
+      /Do not rank/i,
+      /persist a default/i,
+      /mutate anything/i,
+      /Restart the complete resolution from the answer/i,
+      /no second question/i,
+      /stop/i,
     ]],
-    ['non-selection diagnostics remain hard refusals', [
-      [/resolver or canonical-ownership diagnostic/i, /selection cannot repair/i, /hard refusal/i, /not disambiguation/i],
+    ['non-selection diagnostics remain hard refusals', 'A resolver or canonical-ownership diagnostic', [
+      /selection cannot repair/i,
+      /hard refusal/i,
+      /not disambiguation/i,
     ]],
   ], `${SHIP_RESOLVER_OWNER} ## Ship`);
 });
@@ -3488,61 +3853,487 @@ test('Ship delegates the exact Work policy without weakening inherited boundarie
   assert.match(ship, /omit `--until blocked` because Work forbids combining until-blocked mode with recovery/i);
 
   assertShipParagraphRequirements(ship, [
-    ['unchanged Work execution authority', [
-      [/existing Work semantics/i, /one-time lane detection/i, /natural and hard stops/i],
-      [/verification/i, /review/i, /ownership/i, /reconciliation/i, /close/i, /audit/i, /reporting/i, /learning governance/i],
+    ['unchanged Work execution authority', 'After successful lifecycle resolution', [
+      /existing Work semantics/i,
+      /one-time lane detection/i,
+      /natural and hard stops/i,
+      /verification/i,
+      /review/i,
+      /ownership/i,
+      /reconciliation/i,
+      /close/i,
+      /audit/i,
+      /reporting/i,
+      /learning governance/i,
     ]],
-    ['unchanged clarification and guardrail checkpoints', [
-      [/brainstorm and definition clarification/i, /guardrail-ratification checkpoint/i],
-      [/never supplies an answer/i, /creates an assumption/i, /grants a bypass/i],
+    ['Ship itself has no generic answer, assumption, or bypass authority', 'Ship gains no artifact or write authority.', [
+      /stage owner makes the disposition/i,
+      /Ship itself neither supplies an answer nor creates an assumption/i,
+      /neither invents nor claims a new user-supplied fact, choice, permission, answer, or assumption/i,
+      /grants no generic bypass/i,
     ]],
-    ['unchanged authority Git and state boundaries', [
-      [/Spec Lead/i, /coordinator/i, /specialist/i, /reviewer authority/i],
-      [/no workflow/i, /lane/i, /board/i, /state/i, /ledger/i, /parser/i, /runtime/i, /persistent default/i],
-      [/automatic Git or release action/i, /commands and defaults remain unchanged/i],
+    ['unchanged Git, state, and lifecycle-machinery boundaries', 'Ship creates no resolver, workflow', [
+      /mode, lane, board, state, ledger/i,
+      /alias, parser, runtime, scheduler, report, persistent audit carrier, persistent default/i,
+      /automatic Git or release action/i,
+      /commands and defaults remain unchanged/i,
     ]],
-    ['no alternate Work implementation', [
-      [/no alternate Work implementation/i, /never reproduces or reinterprets/i],
-      [/Work's parser/i, /runtime/i, /lane detection/i, /recovery/i, /scheduling/i, /execution loop/i],
+    ['no alternate Work implementation', 'Ship adds no alternate Work implementation', [
+      /never reproduces or reinterprets/i,
+      /Work's parser/i,
+      /runtime/i,
+      /lane detection/i,
+      /recovery/i,
+      /scheduling/i,
+      /execution loop/i,
     ]],
   ], `${SHIP_RESOLVER_OWNER} ## Ship`);
+});
+
+test('Ship preserves Feature 017 lean-definition and tracked-definition-recovery outcomes', () => {
+  const definition = markdownSection(read(SHIP_DEFINITION_OWNER), '# Feature Definition');
+  assertShipParagraphRequirements(definition, [
+    ['lean definition remains explicit-definition-only', 'Maintain one flat idea ledger', [
+      /create a lean definition package only on explicit definition/i,
+    ]],
+  ], `${SHIP_DEFINITION_OWNER} # Feature Definition`);
+
+  const recovery = markdownSection(read('src/skills/dude-work/SKILL.md'), '## Inspection And Recovery');
+  assertShipParagraphRequirements(recovery, [
+    ['tracked definition recovery retains its inspected pre-write refusal', 'Route every authorization through its existing execution', [
+      /Tracked definition recovery is unsupported/i,
+      /only after a fresh Inspection and Assessment validation/i,
+      /before any helper or write path/i,
+    ]],
+  ], 'src/skills/dude-work/SKILL.md ## Inspection And Recovery');
+});
+
+test('Ship applies owner-first qualitative pre-Work answerability', () => {
+  const answerability = markdownSection(read(SHIP_RESOLVER_OWNER), '### Pre-Work Answerability');
+
+  assertShipParagraphRequirements(answerability, [
+    ['owner gates and established refusals precede answerability', 'Only during an explicit Ship invocation', [
+      /before Work begins/i,
+      /existing pre-Work stage owner/i,
+      /eligibility, prerequisite, authority, and safety gate/i,
+      /failed gate returns its existing refusal before answerability/i,
+      /refusal examples remain illustrative, not a second taxonomy/i,
+    ]],
+    ['the same stage owner makes the eligible answerable disposition', 'Only during an explicit Ship invocation', [
+      /After those gates pass, the same owner may continue only/i,
+      /within its authority/i,
+    ]],
+    ['checkpoint labels have no independent stopping effect', 'A checkpoint label alone establishes', [
+      /neither ineligibility nor answerability/i,
+      /does not stop Ship/i,
+    ]],
+    ['clearly dominant conservative answerability remains qualitative', 'After those gates pass', [
+      /accepted intent/i,
+      /applicable context and guardrails/i,
+      /material evidence/i,
+      /user's interests/i,
+      /one conservative disposition clearly dominant/i,
+      /within its authority/i,
+      /no material unresolved risk/i,
+      /qualitative judgment/i,
+      /not a score, rubric, threshold, or checkpoint-class allowlist/i,
+    ]],
+    ['unanswerable decisions return an actionable owner stop', 'Otherwise, stop with the missing basis', [
+      /why bounded delegation is insufficient/i,
+      /user choice that changes the outcome/i,
+    ]],
+    ['ordinary brainstorm define and Work gain no autonomy', 'Ordinary brainstorm, define, and Work invocations', [
+      /gain no new autonomy/i,
+    ]],
+    ['Ship itself retains no generic answer or write authority', 'Ship gains no artifact or write authority.', [
+      /stage owner makes the disposition/i,
+      /neither supplies an answer nor creates an assumption/i,
+      /neither invents nor claims a new user-supplied fact, choice, permission, answer, or assumption/i,
+      /grants no generic bypass/i,
+    ]],
+    ['the intake owner directly pins all six retrospective basis fields and no permission', 'For a pre-Work stop, `why did you stop?` is retrospective only.', [
+      /target/i,
+      /accepted intent/i,
+      /material evidence/i,
+      /workflow state/i,
+      /authority/i,
+      /environment are unchanged/i,
+      /question adds no fact, choice, permission, or authority/i,
+      /grants no permission/i,
+    ]],
+    ['the intake policy ends at Work and passes every Work outcome through unchanged', 'When Work begins, this policy ends.', [
+      /Return every Work outcome unchanged/i,
+      /without reclassification, minimization, extra retry, or override/i,
+    ]],
+  ], `${SHIP_RESOLVER_OWNER} ### Pre-Work Answerability`);
+});
+
+/** @param {string} section @param {string} anchor */
+function guardrailDispositionRow(section, anchor) {
+  const matches = markdownRuleBlocks(section, { splitLists: true })
+    .filter((block) => block.kind === 'table-row' && block.normalized.includes(anchor));
+  assert.equal(matches.length, 1, `one guardrail table row contains ${anchor}`);
+  return matches[0];
+}
+
+/** @param {MarkdownRuleBlock} row */
+function guardrailDispositionCells(row) {
+  const trimmed = row.raw.trim();
+  assert.ok(trimmed.startsWith('|') && trimmed.endsWith('|'), `table row: ${row.raw}`);
+  return trimmed.slice(1, -1).split('|').map((cell) => cell.trim());
+}
+
+/** @param {string} section @param {MarkdownRuleBlock} row @param {string[]} cells */
+function replaceGuardrailDispositionRow(section, row, cells) {
+  assert.equal(cells.length, 4, `guardrail row has four cells: ${row.raw}`);
+  assert.equal(section.split(row.raw).length - 1, 1, `one mutable guardrail row: ${row.raw}`);
+  return section.replace(row.raw, `| ${cells.join(' | ')} |`);
+}
+
+/** @param {string} section @param {string} anchor @param {number} index @param {string} value */
+function replaceGuardrailDispositionCell(section, anchor, index, value) {
+  const row = guardrailDispositionRow(section, anchor);
+  const cells = guardrailDispositionCells(row);
+  assert.ok(index > 0 && index < cells.length, `guardrail disposition cell ${index}`);
+  cells[index] = value;
+  return replaceGuardrailDispositionRow(section, row, cells);
+}
+
+/** @param {string} section @param {string} leftAnchor @param {string} rightAnchor */
+function swapGuardrailDispositionRows(section, leftAnchor, rightAnchor) {
+  const left = guardrailDispositionRow(section, leftAnchor);
+  const right = guardrailDispositionRow(section, rightAnchor);
+  const leftCells = guardrailDispositionCells(left);
+  const rightCells = guardrailDispositionCells(right);
+  assert.equal(leftCells.length, rightCells.length, 'guardrail rows have the same column count');
+  for (let index = 1; index < leftCells.length; index += 1) {
+    [leftCells[index], rightCells[index]] = [rightCells[index], leftCells[index]];
+  }
+  return replaceGuardrailDispositionRow(
+    replaceGuardrailDispositionRow(section, left, leftCells),
+    right,
+    rightCells,
+  );
+}
+
+test('Ship definition authority resolves only the settled clarification and guardrail rows', () => {
+  // Arrange
+  const explicitShip = markdownSection(read(SHIP_DEFINITION_OWNER), '### Explicit Ship');
+  const requirements = [
+    ['definition gates preserve their established refusal before answerability', 'During an existing explicit Ship lifecycle subaction', [
+      /before Work begins/i,
+      /definition first applies every normal eligibility, prerequisite, authority, and safety gate/i,
+      /failed gate returns its existing refusal before answerability/i,
+      /checkpoint label alone does not stop/i,
+    ]],
+    ['accepted intent or evidence can answer a clarification without user attribution', 'Resolve a clarification only when', [
+      /accepted intent or material evidence already supplies the answer/i,
+      /Do not edit a user-controlled question answer merely to manufacture completion/i,
+      /invent a fact, choice, permission, or assumption/i,
+      /claim the user supplied a new answer/i,
+    ]],
+    ['wholly protective candidates adopt through the existing definition-owner path', 'Wholly protective:', [
+      /every candidate is clearly protective/i,
+      /applicable/i,
+      /consistent with accepted intent/i,
+      /within existing definition authority/i,
+      /Adopt the set through the existing definition-owner guardrail write path/i,
+      /Existing project and bundle guardrails plus adopted entries/i,
+      /Ship-authorized definition-owner action/i,
+    ]],
+    ['mixed candidates remove only clearly unsuitable entries without rewriting the remainder', 'Mixed,', [
+      /unchanged qualifying remainder/i,
+      /only clearly irrelevant, speculative, or contrary(?:[-\s]+)to(?:[-\s]+)accepted(?:[-\s]+)intent candidates removable/i,
+      /Remove only those candidates and adopt the unchanged qualifying remainder/i,
+    ]],
+    ['all-irrelevant candidates reject and continue under applicable guardrails', 'Every candidate clearly irrelevant', [
+      /Reject the whole set and continue/i,
+      /Applicable existing project and bundle guardrails/i,
+      /Ship-authorized definition-owner action, never a user `reject`/i,
+    ]],
+    ['material rewrites and consequential uncertainty stop with the outcome-changing choice', 'Material rewrite,', [
+      /tradeoff/i,
+      /conflict/i,
+      /user-owned authority/i,
+      /consequential uncertainty/i,
+      /Stop for the outcome-changing user choice/i,
+      /Applicable existing project and bundle guardrails remain in force/i,
+      /No autonomous disposition/i,
+    ]],
+    ['Ship never uses skip to discard applicable project guardrails', '`skip` would discard', [
+      /applicable project guardrails/i,
+      /Do not choose `skip`; use another qualifying row or stop/i,
+      /Applicable existing project and bundle guardrails remain in force/i,
+      /Never a user `skip`/i,
+    ]],
+    ['autonomous disposition never materially rewrites a candidate', 'Never materially rewrite a candidate under autonomous authority.', [
+      /For a stop, state the missing basis/i,
+      /why bounded delegation is insufficient/i,
+      /user choice that changes the outcome/i,
+    ]],
+    ['autonomous guardrail results remain Ship-authorized definition-owner actions', 'Identify every autonomous adoption', [
+      /narrowing, or reject-all result/i,
+      /Ship-authorized definition-owner action/i,
+      /never direct user ratification or a user `accept`, `edit`, `reject`, or `skip`/i,
+      /same Ship invocation's existing final or stop response/i,
+      /no durable attribution or disposition record/i,
+    ]],
+  ];
+
+  // Act + Assert: each semantic row is bound to its own condition cell rather
+  // than to the table as one oversized paragraph.
+  assert.equal(
+    normalizedParagraphs(explicitShip).filter((block) => block.startsWith('|')).length,
+    6,
+    `${SHIP_DEFINITION_OWNER} ### Explicit Ship: header plus five independently parsed disposition rows`,
+  );
+  assertShipParagraphRequirements(
+    explicitShip,
+    requirements,
+    `${SHIP_DEFINITION_OWNER} ### Explicit Ship`,
+  );
+
+  const requirementByLabel = new Map(requirements.map((requirement) => [requirement[0], requirement]));
+  const allIrrelevant = requirementByLabel.get('all-irrelevant candidates reject and continue under applicable guardrails');
+  const whollyProtective = requirementByLabel.get('wholly protective candidates adopt through the existing definition-owner path');
+  const materialStop = requirementByLabel.get('material rewrites and consequential uncertainty stop with the outcome-changing choice');
+  assert.ok(allIrrelevant && whollyProtective && materialStop, 'guardrail row requirements are present');
+
+  const wrongOutcome = replaceGuardrailDispositionCell(
+    explicitShip,
+    'Every candidate clearly irrelevant',
+    1,
+    'Adopt the set through the existing definition-owner guardrail write path',
+  );
+  assert.ok(
+    missingParagraphRequirements(wrongOutcome, [allIrrelevant]).includes(allIrrelevant[0]),
+    'wrong all-irrelevant outcome fails its own bound row',
+  );
+
+  const swappedOutcomes = swapGuardrailDispositionRows(
+    explicitShip,
+    'Wholly protective:',
+    'Material rewrite,',
+  );
+  assert.deepEqual(
+    [
+      whollyProtective,
+      materialStop,
+    ].filter((requirement) => missingParagraphRequirements(swappedOutcomes, [requirement])
+      .includes(requirement[0]))
+      .map(([label]) => label),
+    [
+      whollyProtective[0],
+      materialStop[0],
+    ],
+    'swapping wholly-protective and material-stop dispositions fails both owning rows',
+  );
+});
+
+test('Ship preserves ordinary define guardrail choices outside explicit Ship', () => {
+  const gates = markdownSection(read(SHIP_DEFINITION_OWNER), '## Guardrail And Spec Gates');
+
+  assertShipParagraphRequirements(gates, [
+    ['ordinary definition retains its normal user checkpoint and four choices', 'Outside explicit Ship, when candidates exist', [
+      /This is a normal checkpoint, not an error/i,
+      /`accept` persists the proposed rules/i,
+      /`edit` persists only the user-edited accepted rules/i,
+      /`reject` persists none and continues with existing project\/bundle guardrails/i,
+      /`skip` persists none and continues with bundle defaults only/i,
+      /only ratified rules persist/i,
+    ]],
+    ['ordinary definition still continues without a new candidate set', 'Read project memory and conventions.', [
+      /With no new guardrails, continue without pausing/i,
+    ]],
+  ], `${SHIP_DEFINITION_OWNER} ## Guardrail And Spec Gates`);
+});
+
+test('Ship agents keep the definition owner, transient reporting, and Work boundary intact', () => {
+  const coordinator = markdownSection(read(SHIP_COORDINATOR), '## Ship');
+  assertShipParagraphRequirements(coordinator, [
+    ['same definition owner retains clarification and guardrail dispositions', 'Before Work begins, each existing pre-Work stage owner first applies', [
+      /current eligibility, prerequisite, authority, and safety gates/i,
+      /failed gate returns its existing refusal before answerability/i,
+      /definition clarifications and guardrail dispositions remain with the Spec Lead/i,
+      /checkpoint label alone does not stop Ship/i,
+    ]],
+    ['coordinator does not take definition content or guardrail writes', 'The coordinator does not decide definition content', [
+      /answer a clarification/i,
+      /persist candidate guardrail entries/i,
+      /edit user-controlled idea sections/i,
+    ]],
+    ['pre-Work reports stay transient and honestly attributed', 'For the current Ship invocation', [
+      /transient context/i,
+      /checkpoint, disposition, and concise rationale/i,
+      /reversibility or residual risk only when material/i,
+      /Ship-authorized definition-owner action/i,
+      /never as direct user ratification/i,
+      /user `accept`, `edit`, `reject`, or `skip`/i,
+      /Do not persist the report or add it to Work's audit/i,
+    ]],
+    ['fixed-basis retrospective grants no permission', 'Treat `why did you stop?` as a retrospective diagnostic only.', [
+      /target, accepted intent, material evidence, workflow state, authority, and environment are unchanged/i,
+      /question adds no fact, choice, permission, or authority/i,
+      /changed basis is inconclusive/i,
+      /never authorizes continuation/i,
+    ]],
+    ['Work starts a hard boundary and returns its outcomes unchanged', 'After every required pre-Work stage succeeds', [
+      /At Work start, pre-Work answerability ends/i,
+      /Work-owned dispositions remain in Work's existing audit and reporting/i,
+      /Return every Work outcome unchanged/i,
+      /without reclassification, minimization, extra retry, or override/i,
+      /Work remains the execution owner/i,
+      /do not reproduce or reinterpret/i,
+    ]],
+  ], `${SHIP_COORDINATOR} ## Ship`);
+
+  const specLead = markdownSection(read(SHIP_DEFINITION_AGENT), '## Required Workflow');
+  assertShipParagraphRequirements(specLead, [
+    ['Spec Lead owns eligible explicit-Ship definition dispositions', 'During explicit Ship and before Work begins', [
+      /normal definition eligibility, prerequisite, authority, and safety gate first/i,
+      /existing refusal before considering answerability/i,
+      /Spec Lead, not the coordinator, owns eligible definition dispositions/i,
+      /existing definition write path/i,
+    ]],
+    ['Spec Lead returns non-user attribution only in the current response', 'Identify autonomous guardrail adoption', [
+      /Ship-authorized definition-owner action/i,
+      /never as direct user ratification, a user `accept`, `edit`, `reject`, or `skip`, or a user-supplied answer/i,
+      /same invocation/i,
+      /persist no separate attribution, disposition record, or Work-audit entry/i,
+    ]],
+    ['Spec Lead leaves retrospective authority and Work behavior unchanged', 'A retrospective question grants no authority', [
+      /fixed-basis rule/i,
+      /policy ends when Work begins/i,
+      /changes none of Work's stop, recovery, review, audit, or reporting behavior/i,
+    ]],
+  ], `${SHIP_DEFINITION_AGENT} ## Required Workflow`);
+
+  for (const [context, section] of [
+    [`${SHIP_COORDINATOR} ## Ship`, coordinator],
+    [`${SHIP_DEFINITION_AGENT} ## Required Workflow`, specLead],
+  ]) {
+    assert.doesNotMatch(
+      section,
+      /\|\s*Candidate set after definition gates\s*\|/i,
+      `${context}: does not duplicate the definition-owned guardrail matrix`,
+    );
+  }
+});
+
+/** @param {string} source */
+function guardrailAuthorityPreamble(source) {
+  const entriesHeading = '\n## Entries\n';
+  assert.equal(source.split(entriesHeading).length - 1, 1, `${SHIP_GUARDRAIL_MEMORY}: one Entries heading`);
+  return normalizedParagraphs(visibleMarkdown(source.slice(0, source.indexOf(entriesHeading)))).join('\n\n');
+}
+
+/** @param {string} source */
+function guardrailEntriesGaps(source) {
+  const entriesHeading = '\n## Entries\n';
+  assert.equal(source.split(entriesHeading).length - 1, 1, `${SHIP_GUARDRAIL_MEMORY}: one Entries heading`);
+  return source.slice(source.indexOf(entriesHeading) + 1) === SHIP_GUARDRAIL_ENTRIES
+    ? []
+    : ['unchanged guardrail Entries bytes'];
+}
+
+test('Ship reconciles guardrail-memory authority while preserving every existing Entry byte', () => {
+  // Arrange
+  const source = read(SHIP_GUARDRAIL_MEMORY);
+  assert.match(source, /^# Dude Guardrails\n/, `${SHIP_GUARDRAIL_MEMORY}: preserves the heading`);
+
+  // Act + Assert: the authority preamble carries the exception semantically,
+  // while Entries remains a structurally valid, mutable project ledger.
+  assertShipParagraphRequirements(guardrailAuthorityPreamble(source), [
+    ['ordinary user ratification remains distinct from the explicit-Ship exception', 'Entries prefixed with `[bundle]` are shipped defaults.', [
+      /In ordinary definition, only user-accepted or user-edited rules become durable here/i,
+      /During explicit Ship, the definition owner may instead persist qualifying candidates/i,
+      /Ship-authorized action under `dude-feature-definition`/i,
+      /not direct user ratification/i,
+    ]],
+  ], `${SHIP_GUARDRAIL_MEMORY} authority preamble`);
+
+  assert.deepEqual(
+    guardrailEntriesGaps(source),
+    [],
+    `${SHIP_GUARDRAIL_MEMORY}: T003 preserves existing Entries bytes and appends no entry`,
+  );
+  assert.deepEqual(
+    guardrailEntriesGaps(source.replace(
+      '- Keep model-facing instructions concise and non-redundant while preserving required authority, safety, and behavior.\n',
+      '',
+    )),
+    ['unchanged guardrail Entries bytes'],
+    `${SHIP_GUARDRAIL_MEMORY}: deleting an existing Entry fails the byte-preservation contract`,
+  );
+  assert.deepEqual(
+    guardrailEntriesGaps(`${source}- added guardrail\n`),
+    ['unchanged guardrail Entries bytes'],
+    `${SHIP_GUARDRAIL_MEMORY}: appending an Entry fails the byte-preservation contract`,
+  );
 });
 
 test('Ship coordinator delegates lifecycle and execution without a new implementation', () => {
   assertShipParagraphRequirements(
     markdownSection(read(SHIP_COORDINATOR), '## Mode To Skill'),
-    [['composed Ship skill route', [
-      [/Ship lifecycle/i, /`dude-work-intake`/i, /existing explicit `brainstorm`/i, /explicit `define <slug>`/i, /`dude-feature-definition`/i, /`dude-work`/i],
+    [['composed Ship skill route', '- Ship lifecycle:', [
+      /`dude-work-intake`/i,
+      /existing explicit `brainstorm`/i,
+      /explicit `define <slug>`/i,
+      /`dude-feature-definition`/i,
+      /`dude-work`/i,
     ]]],
     `${SHIP_COORDINATOR} ## Mode To Skill`,
   );
 
   const coordinator = markdownSection(read(SHIP_COORDINATOR), '## Ship');
   assertShipParagraphRequirements(coordinator, [
-    ['intake-owned validation and visible pre-mutation stops', [
-      [/load `dude-work-intake`/i, /delegate target validation and lifecycle resolution/i, /`## Ship` contract/i],
-      [/unsupported input/i, /selection ambiguity or ownership diagnostics/i, /explicit-target conflict/i, /tracked work/i, /pre-mutation stops/i],
+    ['intake-owned validation and visible pre-mutation stops', 'For `@dude ship`, load', [
+      /`dude-work-intake`/i,
+      /delegate target validation and lifecycle resolution/i,
+      /`## Ship` contract/i,
+      /unsupported input/i,
+      /selection ambiguity or ownership diagnostics/i,
+      /explicit-target conflict/i,
+      /tracked work/i,
+      /pre-mutation stops/i,
     ]],
-    ['explicit lifecycle subroutes without alternate authority', [
-      [/missing lifecycle stage/i, /existing explicit `brainstorm`/i, /explicit `define <slug>`/i, /distinct lifecycle subactions/i],
-      [/Ship creates no alternate definition-write route or authority/i],
+    ['explicit lifecycle subroutes without alternate authority', 'When intake selects a missing lifecycle stage', [
+      /existing explicit `brainstorm`/i,
+      /explicit `define <slug>`/i,
+      /distinct lifecycle subactions/i,
+      /Ship creates no alternate definition-write route or authority/i,
     ]],
-    ['Spec Lead retains complete definition authority', [
-      [/load `dude-feature-definition`/i, /exactly as `## Lifecycle` requires/i, /delegate all definition artifacts/i],
-      [/`status:`/i, /exact `spec_path:`/i, /managed definition regions/i, /definition log events/i, /Spec Lead/i],
-      [/Do not answer clarification or guardrail checkpoints/i],
+    ['Spec Lead retains complete definition authority', 'Load `dude-feature-definition` and, exactly as `## Lifecycle` requires', [
+      /delegate all definition artifacts/i,
+      /`status:`/i,
+      /exact `spec_path:`/i,
+      /managed definition regions/i,
+      /definition log events/i,
+      /Spec Lead/i,
+      /does not decide definition content, answer a clarification, persist candidate guardrail entries, or edit user-controlled idea sections/i,
     ]],
-    ['coordinator retains only exact coordinator mutation authority', [
-      [/coordinator exclusively retains/i, /task glyphs and task metadata/i, /generated boards and tracked mirrors/i],
-      [/archive, discovered-work, and execution-history state/i, /execution reconciliation/i],
-      [/execution and close log events/i, /execution-lane or tracked state/i],
+    ['coordinator retains only exact coordinator mutation authority', 'The coordinator exclusively retains its existing authority over', [
+      /task glyphs and task metadata/i,
+      /generated boards and tracked mirrors/i,
+      /archive, discovered-work, and execution-history state/i,
+      /execution reconciliation/i,
+      /execution and close log events/i,
+      /execution-lane or tracked state/i,
     ]],
-    ['Work delegation without copied internals', [
-      [/exact resolved target/i, /intake-normalized Ship policy/i, /`dude-work`/i],
-      [/Work remains the execution owner/i, /do not reproduce or reinterpret/i, /never invoke tracked import/i],
+    ['Work delegation without copied internals', 'After every required pre-Work stage succeeds', [
+      /exact resolved target/i,
+      /intake-normalized Ship policy/i,
+      /`dude-work`/i,
+      /Work remains the execution owner/i,
+      /do not reproduce or reinterpret/i,
+      /never invoke tracked import/i,
     ]],
-    ['existing execution response convention', [
-      [/Lane: <lane> · Live: <authority>/, /Action:/, /Updated:/, /Next:/, /Blockers:/],
+    ['existing execution response convention', 'Once Work begins, preserve the active lane', [
+      /Lane: <lane> · Live: <authority>/,
+      /Action:/,
+      /Updated:/,
+      /Next:/,
+      /Blockers:/,
     ]],
   ], `${SHIP_COORDINATOR} ## Ship`);
   assert.doesNotMatch(coordinator, /recovery\.mjs|issue-attempt-permit|commit-lane-receipt/);
@@ -3561,7 +4352,7 @@ test('Ship authority sections reject affirmative forbidden grants', () => {
   }
 });
 
-test('Ship has no runtime, parser, skill, configuration, or state artifacts', () => {
+test('Ship adds no resolver, command, mode, parser, lane, taxonomy, score, registry, state, daemon, scheduler, report, audit carrier, duplicate workflow, or alternate Work surface', () => {
   const inventory = SHIP_INVENTORY_ROOTS
     .flatMap((relativeRoot) => boundedShipInventory(relativeRoot))
     .sort((left, right) => left.localeCompare(right));
@@ -3571,15 +4362,12 @@ test('Ship has no runtime, parser, skill, configuration, or state artifacts', ()
     .filter(([, violation]) => violation !== null);
   assert.deepEqual(violations, [], 'bounded repository-owned implementation, configuration, and state inventory');
 
-  for (const relative of [
-    'scripts/ship-parser.mjs',
-    '.dude/metadata/ship-config.json',
-    'library/packs/example/skills/dude-pack-example-ship/SKILL.md',
-    'src/skills/dude-ship/SKILL.md',
-    '.github/skills/dude-ship/recovery.mjs',
-    '.dude/state/ship-run.json',
-  ]) {
-    assert.notEqual(prohibitedShipArtifact(relative), null, `reject ${relative}`);
+  for (const [label, relative] of SHIP_PROHIBITED_SURFACE_PROBES) {
+    assert.notEqual(
+      prohibitedShipArtifact(relative),
+      null,
+      `mutation falsifier: rejects ${label} at ${relative}`,
+    );
   }
   for (const relative of [
     ...SHIP_AUTHORITY_PATHS,
@@ -3587,6 +4375,56 @@ test('Ship has no runtime, parser, skill, configuration, or state artifacts', ()
   ]) {
     assert.equal(prohibitedShipArtifact(relative), null, `allow ${relative}`);
   }
+});
+
+test('Ship rejects closed prohibited capabilities in existing owner prose', () => {
+  // Arrange + Assert: source owners are the applicable core prose boundary.
+  const sections = SHIP_PROHIBITED_CAPABILITY_SECTIONS.map(([relative, heading]) => [
+    `${relative} ${heading}`,
+    markdownSection(read(relative), heading),
+  ]);
+  for (const [context, section] of sections) {
+    assertNoShipProhibitedCapabilityGrants(section, context);
+  }
+
+  // Act + Assert: a prohibited capability can be introduced in an existing,
+  // neutrally named file, so path inventory alone is not a sufficient guard.
+  const [context, intakeShip] = sections[0];
+  for (const [label, , mutation] of SHIP_PROHIBITED_CAPABILITY_GRANTS) {
+    const injected = `${intakeShip}\n\n${mutation}`;
+    assert.deepEqual(
+      shipProhibitedCapabilityGrants(injected),
+      [label],
+      `${context}: injected ${label} is a closed capability violation`,
+    );
+    assert.throws(
+      () => assertNoShipProhibitedCapabilityGrants(injected, context),
+      `${context}: injected ${label} fails the owner capability contract`,
+    );
+  }
+});
+
+test('Ship autonomy projection checker detects a generated-byte deletion', () => {
+  // Arrange
+  const [source, generated] = SHIP_AUTONOMY_PROJECTION_PAIRS[0];
+  const expected = materializedSourceBytes(source, generated);
+  const deletedByte = expected.subarray(1);
+  assert.notDeepEqual(deletedByte, expected, `${source} has a deletable authority byte`);
+
+  // Act + Assert
+  assert.deepEqual(
+    shipAutonomyProjectionMismatches([[source, generated]], () => deletedByte),
+    [`${source} -> ${generated}`],
+    'projection mismatch checker reports the mutated generated pair',
+  );
+});
+
+test('Ship autonomy source changes project only through the generated dev core', () => {
+  assert.deepEqual(
+    shipAutonomyProjectionMismatches(SHIP_AUTONOMY_PROJECTION_PAIRS),
+    [],
+    'T005 must project every authoritative Ship autonomy source before release',
+  );
 });
 
 // --- Ship guidance in the primary user documentation --------------------------
@@ -3681,10 +4519,7 @@ function shipInvocationLines(source) {
 
 /** Unwrap soft line breaks so section patterns survive re-wrapped prose. @param {string} section */
 function unwrappedParagraphs(section) {
-  return section.split(/\n\s*\n/)
-    .map((paragraph) => paragraph.replace(/\s+/g, ' ').trim())
-    .filter(Boolean)
-    .join('\n\n');
+  return normalizedParagraphs(section).join('\n\n');
 }
 
 test('GitHub issue Ship documentation pins supported targets and leaves Work grammar intact', () => {
@@ -3858,9 +4693,6 @@ test('Ship command reference pins the lifecycle matrix, pre-mutation stops, and 
       [/Imported tracked work takes precedence/i, /stops before mutation/i],
       [/never invokes `track`/i, /imports work/i, /falls back/i, /Lightweight Execution/],
     ]],
-    ['unchanged clarification and guardrail checkpoints', [
-      [/clarification and guardrail-ratification checkpoints are unchanged/i, /never answers one for you/i],
-    ]],
     ['no proactive refresh or intent merge', [
       [/no proactive redefinition/i, /staleness check/i, /drift check/i, /intent\s*merge/i],
       [/changed intent/i, /explicit `@dude brainstorm`/i, /package refresh/i, /explicit `@dude define`/i],
@@ -3877,6 +4709,191 @@ test('Ship command reference pins the lifecycle matrix, pre-mutation stops, and 
 
   assertShipAuthorityDenials(section, context);
   assertShipAuthorityMutations(section, context);
+});
+
+test('Ship README gives the concise owner-first exception and links the full reference', () => {
+  const section = markdownSection(read('README.md'), '## Your First Feature');
+
+  assertShipParagraphRequirements(section, [
+    ['owner-first answerability replaces a label-only checkpoint pause', [
+      [/explicit Ship/i, /existing pre-Work stage owner/i],
+      [/eligibility, prerequisite, authority, and safety gates/i, /before answerability/i],
+      [/checkpoint label alone/i, /does not stop/i],
+      [/clearly dominant conservative disposition/i, /without asking the user/i],
+    ]],
+    ['the README sends detailed Ship policy to the command reference', [
+      [/\]\(docs\/commands\.md#dude-ship\)/i],
+    ]],
+  ], 'README.md ## Your First Feature');
+});
+
+test('Ship command reference carries the complete owner-first definition contract', () => {
+  const section = markdownSection(read(SHIP_COMMAND_DOC), SHIP_COMMAND_DOC_SECTION);
+
+  assertShipParagraphRequirements(section, [
+    ['owner gates run before a qualitative clearly-dominant decision', [
+      [/explicit Ship/i, /before Work begins/i, /existing pre-Work stage owner/i],
+      [/eligibility, prerequisite, authority, and safety gates/i, /existing refusal/i, /before answerability/i],
+      [/accepted intent/i, /applicable context and guardrails/i, /material evidence/i, /user's interests/i],
+      [/one conservative disposition clearly dominant/i, /no material unresolved risk/i],
+      [/qualitative/i, /no score, rubric, confidence threshold, or checkpoint-class allowlist/i],
+      [/checkpoint label alone/i, /does not stop/i],
+    ]],
+    ['already-answered clarifications use accepted basis without making up a user answer', [
+      [/clarification/i, /accepted intent or material evidence already supplies the answer/i],
+      [/does not invent/i, /fact, choice, permission, or assumption/i],
+      [/does not claim the user supplied a new answer/i],
+    ]],
+    ['wholly protective and mixed guardrail rows use only the existing definition-owner path', [
+      [/wholly protective/i, /applicable/i, /consistent with accepted intent/i, /definition-owner/i],
+      [/adopt/i, /existing definition-owner guardrail write path/i],
+      [/mixed/i, /only clearly irrelevant, speculative, or contrary(?:[-\s]+)to(?:[-\s]+)accepted(?:[-\s]+)intent/i],
+      [/remove only those candidates/i, /unchanged qualifying remainder/i, /without materially rewriting/i],
+    ]],
+    ['all-irrelevant candidates reject and continue under applicable project and bundle guardrails', [
+      [/every candidate.*clearly irrelevant/i, /reject the whole set and continue/i],
+      [/applicable existing project and bundle guardrails/i],
+    ]],
+    ['material rewrite tradeoff conflict authority and uncertainty cases stop actionably', [
+      [/material rewrite, tradeoff, conflict, user-owned authority, or consequential uncertainty/i],
+      [/missing basis/i, /why bounded delegation is insufficient/i, /outcome-changing user choice/i],
+      [/never chooses `skip`.*discard applicable project guardrails/i],
+    ]],
+    ['autonomous guardrail results remain Ship-authorized rather than user actions', [
+      [/Ship-authorized definition-owner action/i],
+      [/never.*direct user ratification/i, /user `accept`, `edit`, `reject`, or `skip`/i],
+    ]],
+    ['ordinary define keeps its four user choices', [
+      [/ordinary `@dude define`/i, /normal checkpoint/i],
+      [/`accept`, `edit`, `reject`, or `skip`/i],
+    ]],
+    ['reporting remains transient and outside Work audit', [
+      [/same Ship invocation/i, /checkpoint, disposition, and concise rationale/i],
+      [/reversibility or residual risk only when material/i],
+      [/transient/i, /not.*Work.*audit/i],
+    ]],
+    ['fixed-basis why-did-you-stop remains diagnostic only', [
+      [/target, accepted intent, material evidence, workflow state, authority, and environment/i],
+      [/question adds no fact, choice, permission, or authority/i],
+      [/changed basis.*inconclusive/i, /grants no permission/i],
+    ]],
+    ['Work begins unchanged after the pre-Work policy ends', [
+      [/When Work begins, pre-Work answerability ends/i],
+      [/returns every Work outcome unchanged/i, /reclassification, minimization, extra retry, or override/i],
+    ]],
+  ], `${SHIP_COMMAND_DOC} ${SHIP_COMMAND_DOC_SECTION}`);
+
+  const legacy = [[
+    'Feature 017 unconditional clarification and guardrail pause',
+    'Existing clarification and guardrail-ratification checkpoints are unchanged, and Ship never answers one for you. They pause and wait for your reply exactly as they do without Ship.',
+  ]];
+  assert.deepEqual(
+    presentLegacyParagraphFragments(section, legacy),
+    [],
+    `${SHIP_COMMAND_DOC} ${SHIP_COMMAND_DOC_SECTION}: replaces only the superseded checkpoint clause`,
+  );
+  assert.deepEqual(
+    presentLegacyParagraphFragments(`${section}\n\n${legacy[0][1]}`, legacy),
+    [legacy[0][0]],
+    `${SHIP_COMMAND_DOC} ${SHIP_COMMAND_DOC_SECTION}: restoring the superseded clause must fail`,
+  );
+});
+
+test('Ship setup distinguishes ordinary define approval from the narrow non-user exception', () => {
+  const section = markdownSection(read('docs/setup.md'), '## First-Time Setup');
+
+  assertShipParagraphRequirements(section, [
+    ['ordinary define retains its user ratification choices', [
+      [/`@dude define`/i],
+      [/`accept`, `edit`, `reject`, or `skip`/i],
+    ]],
+    ['explicit Ship leaves qualifying guardrail disposition with the definition owner', [
+      [/explicit Ship/i, /definition owner/i, /Ship-authorized/i],
+      [/not direct user ratification/i],
+    ]],
+  ], 'docs/setup.md ## First-Time Setup');
+
+  const legacy = [[
+    'Feature 017 setup claim that Ship never answers a checkpoint',
+    'every clarification and guardrail-ratification checkpoint described below still happens. Ship never answers one for you.',
+  ]];
+  assert.deepEqual(
+    presentLegacyParagraphFragments(section, legacy),
+    [],
+    'docs/setup.md ## First-Time Setup: replaces the superseded checkpoint claim',
+  );
+  assert.deepEqual(
+    presentLegacyParagraphFragments(`${section}\n\n${legacy[0][1]}`, legacy),
+    [legacy[0][0]],
+    'docs/setup.md ## First-Time Setup: restoring the superseded claim must fail',
+  );
+});
+
+test('Ship workflow guidance preserves stage ownership and the Work boundary', () => {
+  const section = markdownSection(read('docs/workflow.md'), SHIP_WORKFLOW_DOC_SECTION);
+
+  assertShipParagraphRequirements(section, [
+    ['owner-first pre-Work answerability leaves labels non-authoritative', [
+      [/existing pre-Work stage owner/i, /eligibility, prerequisite, authority, and safety gates/i],
+      [/before answerability/i, /checkpoint label alone/i, /does not stop/i],
+    ]],
+    ['definition ownership and Work authority remain separate', [
+      [/definition owner/i, /Ship-authorized/i],
+      [/When Work begins/i, /pre-Work answerability ends/i],
+      [/Work outcome unchanged/i, /no reclassification, retry, or override/i],
+    ]],
+  ], `docs/workflow.md ${SHIP_WORKFLOW_DOC_SECTION}`);
+});
+
+test('Ship walkthrough updates the fast path and guardrail example for answerable checkpoints', () => {
+  const fastPath = markdownSection(read('docs/walkthrough.md'), '## The fast path');
+  assertShipParagraphRequirements(fastPath, [
+    ['fast path names owner-first answerability', [
+      [/explicit Ship/i, /existing pre-Work owner/i],
+      [/answerable/i, /clearly dominant conservative disposition/i],
+    ]],
+  ], 'docs/walkthrough.md ## The fast path');
+
+  const continuation = markdownSection(read('docs/walkthrough.md'), '## 4. Continue without Beads');
+  assertShipParagraphRequirements(continuation, [
+    ['definition checkpoint example distinguishes answered and unresolved cases', [
+      [/accepted intent or material evidence/i, /already-answered clarification/i],
+      [/definition owner/i, /Ship-authorized/i],
+      [/genuine ambiguity/i, /stops for the user/i],
+    ]],
+  ], 'docs/walkthrough.md ## 4. Continue without Beads');
+  const legacy = [[
+    'Feature 017 walkthrough checkpoint example',
+    'pausing at the same checkpoints shown above.',
+  ]];
+  assert.deepEqual(
+    presentLegacyParagraphFragments(continuation, legacy),
+    [],
+    'docs/walkthrough.md ## 4. Continue without Beads: removes the superseded checkpoint example',
+  );
+  assert.deepEqual(
+    presentLegacyParagraphFragments(`${continuation}\n\n${legacy[0][1]}`, legacy),
+    [legacy[0][0]],
+    'docs/walkthrough.md ## 4. Continue without Beads: restoring the superseded example must fail',
+  );
+});
+
+test('Ship reference records the explicit-Ship guardrail exception without changing ordinary definition', () => {
+  const workflow = markdownSection(read('docs/reference.md'), '## Feature Definition Workflow');
+  assertShipParagraphRequirements(workflow, [
+    ['Ship delegates eligible definition dispositions to the existing owner', [
+      [/explicit Ship/i, /existing pre-Work stage owner/i, /before answerability/i],
+      [/definition owner/i, /Ship-authorized/i, /not direct user ratification/i],
+    ]],
+  ], 'docs/reference.md ## Feature Definition Workflow');
+
+  const rules = markdownSection(read('docs/reference.md'), '### Definition Rules');
+  assertShipParagraphRequirements(rules, [
+    ['ordinary definition keeps user ratification while explicit Ship is narrow', [
+      [/outside explicit Ship/i, /project-specific entries are ratified by the user/i],
+      [/explicit Ship/i, /definition owner/i, /qualifying candidates/i, /Ship-authorized/i],
+    ]],
+  ], 'docs/reference.md ### Definition Rules');
 });
 
 test('Ship lane guidance keeps tracked precedence and delegates execution to the Work owner', () => {
@@ -5481,6 +6498,219 @@ test('T004 unattended continuity adds no stop reason, command, flag, or concurre
     assert.deepEqual(concurrencyGrants(content), [], `${label} grants concurrency`);
     assert.deepEqual(staleRecoveryPhrases(content), [], label);
   }
+});
+
+const RECOVERY_CONTINUATION_CONTRACTS = [
+    {
+      heading: '## Iterate',
+      requirements: [
+        ['direct and Ship autonomous Work share one outer invocation', 'Autonomous Work entered', [
+          /directly or through Ship/i,
+          /one coordinator-owned outer invocation/i,
+        ]],
+        ['bounded assistance remains inside surviving authority', 'After bounded manual assistance resolves the current blocker', [
+          /same autonomous Work invocation remains active/i,
+          /original coordinator supervisor/i,
+          /context/i,
+          /retained invocation identity/i,
+          /survive/i,
+        ]],
+        ['recovered work completes every normal gate', 'The recovered task still requires', [
+          /fresh verification/i,
+          /independent review/i,
+          /exact settlement/i,
+          /closure/i,
+        ]],
+        ['clean per-task settlement is progress rather than a Work stop', 'A clean per-task', [
+          /`ended`\/`task-settled` result/i,
+          /progress/i,
+          /not a whole-Work stop/i,
+        ]],
+        ['the active loop keeps its lane target and normalized policy', 'The active coordinator loop then selects', [
+          /next ready task/i,
+          /already-detected lane/i,
+          /original target/i,
+          /normalized policy/i,
+          /without another Work or Ship request/i,
+        ]],
+        ['the next task has only fresh task-scoped authority', 'The next task receives', [
+          /fresh claim/i,
+          /prior task-scoped authority does not carry forward/i,
+        ]],
+        ['guarded and non-autonomous Work remain excluded', 'This continuation', [
+          /guarded or other non-autonomous Work/i,
+          /does not apply/i,
+        ]],
+      ],
+    },
+    {
+      heading: '## Stops',
+      requirements: [
+        ['failed completion gates never become continuation', [
+          /Verification failure, review rejection, unresolved blockage, or failed settlement or closure/i,
+          /existing outcome/i,
+          /never becomes successful continuation/i,
+        ]],
+        ['explicit pause and cancellation prevent another selection', [
+          /Explicit pause or cancellation prevents automatic next-task selection/i,
+        ]],
+        ['natural and hard stops retain precedence', [
+          /No-ready result, overall or recovery budget exhaustion, tool error, and every existing hard stop/i,
+          /retain (?:their )?existing precedence and behavior/i,
+          /without continuation/i,
+        ]],
+        ['failed work is not silently retried', [
+          /never silently retry/i,
+        ]],
+        ['the closed stop set gains no continuation-only reason', [
+          /no new stop reason/i,
+          /closed set is fixed/i,
+        ]],
+      ],
+    },
+    {
+      heading: '## Supervisor And Worker Continuity',
+      requirements: [
+        ['continuity loss remains a hard stop without fresh Work', 'Loss of that supervisor, its coordinator context, or that identity', [
+          /hard stop/i,
+          /no fresh Work invocation starts automatically/i,
+        ]],
+        ['post-stop and cross-invocation recovery stay unavailable', 'remain unavailable.', [
+          /post-hard-stop/i,
+          /cross-invocation/i,
+          /cross-session/i,
+          /takeover/i,
+          /orphan/i,
+        ]],
+      ],
+    },
+    {
+      heading: '## Checkpoint Lifecycle And Manual Cleanup',
+      requirements: [
+        ['cleanup permits only a later user-authorized clean claim', 'Manual cleanup permits only a later user-authorized clean claim', [
+          /existing cleanup and preflight requirements/i,
+        ]],
+        ['cleanup never revives prior authority', 'That later claim is', [
+          /never a takeover/i,
+          /orphan resume/i,
+          /cross-session continuation/i,
+        ]],
+      ],
+    },
+    {
+      relative: 'src/skills/dude-work-intake/SKILL.md',
+      heading: '### Pre-Work Answerability',
+      requirements: [
+        ['Feature 039 remains a distinct pre-Work boundary', 'When Work begins', [
+          /this policy ends/i,
+          /return every Work outcome unchanged/i,
+          /without reclassification, minimization, extra retry, or override/i,
+        ]],
+      ],
+    },
+    {
+      heading: '## Boundaries',
+      requirements: [
+        ['continuation adds no persistent surface', 'unique owner log', [
+          /never create new state, a lane, or a board/i,
+          /reuse canonical lane state/i,
+        ]],
+        ['continuation adds no prohibited execution surface', 'This continuation adds no', [
+          /command/i,
+          /mode/i,
+          /runtime/i,
+          /scheduler/i,
+          /daemon/i,
+          /registry/i,
+          /state store/i,
+          /persistent continuation/i,
+        ]],
+      ],
+    },
+  ];
+
+const RECOVERY_CONTINUATION_FALSIFIER_FIXTURES = new Map([
+  ['direct and Ship autonomous Work share one outer invocation',
+    'Autonomous Work entered directly or through Ship remains one coordinator-owned outer invocation.'],
+  ['bounded assistance remains inside surviving authority',
+    'After bounded manual assistance resolves the current blocker, the same autonomous Work invocation remains active while the original coordinator supervisor, context, and retained invocation identity survive.'],
+  ['recovered work completes every normal gate',
+    'The recovered task still requires fresh verification, independent review, exact settlement, and closure.'],
+  ['clean per-task settlement is progress rather than a Work stop',
+    'A clean per-task `ended`/`task-settled` result is progress, not a whole-Work stop.'],
+  ['the active loop keeps its lane target and normalized policy',
+    'The active coordinator loop then selects the next ready task in the already-detected lane under the original target and normalized policy without another Work or Ship request.'],
+  ['the next task has only fresh task-scoped authority',
+    'The next task receives a fresh claim; prior task-scoped authority does not carry forward.'],
+  ['guarded and non-autonomous Work remain excluded',
+    'This continuation does not apply to guarded or other non-autonomous Work.'],
+  ['failed completion gates never become continuation',
+    'Verification failure, review rejection, unresolved blockage, or failed settlement or closure retains its existing outcome and never becomes successful continuation.'],
+  ['explicit pause and cancellation prevent another selection',
+    'Explicit pause or cancellation prevents automatic next-task selection.'],
+  ['natural and hard stops retain precedence',
+    'No-ready result, overall or recovery budget exhaustion, tool error, and every existing hard stop retain their existing precedence and behavior without continuation.'],
+  ['failed work is not silently retried',
+    'Never silently retry a failed task.'],
+  ['the closed stop set gains no continuation-only reason',
+    'No new stop reason is introduced; the closed set is fixed.'],
+  ['continuity loss remains a hard stop without fresh Work',
+    'Loss of that supervisor, its coordinator context, or that identity is a hard stop; no fresh Work invocation starts automatically.'],
+  ['post-stop and cross-invocation recovery stay unavailable',
+    'Post-hard-stop, cross-invocation, cross-session, takeover, and orphan recovery remain unavailable.'],
+  ['cleanup permits only a later user-authorized clean claim',
+    'Manual cleanup permits only a later user-authorized clean claim after existing cleanup and preflight requirements.'],
+  ['cleanup never revives prior authority',
+    'That later claim is never a takeover, orphan resume, or cross-session continuation.'],
+  ['Feature 039 remains a distinct pre-Work boundary',
+    'When Work begins, this policy ends and returns every Work outcome unchanged without reclassification, minimization, extra retry, or override.'],
+  ['continuation adds no persistent surface',
+    'The unique owner log must never create new state, a lane, or a board and must reuse canonical lane state.'],
+  ['continuation adds no prohibited execution surface',
+    'This continuation adds no command, mode, runtime, scheduler, daemon, registry, state store, or persistent continuation surface.'],
+]);
+
+test('T001 Feature 040 proves every recovery-continuation falsifier against a temporary source', () => {
+  for (const { relative = CONTINUITY_OWNER, heading, requirements } of RECOVERY_CONTINUATION_CONTRACTS) {
+    const section = markdownSection(read(relative), heading);
+    const absent = missingParagraphRequirements(section, requirements);
+    const fixtures = absent.map((label) => RECOVERY_CONTINUATION_FALSIFIER_FIXTURES.get(label));
+    assert.equal(
+      fixtures.includes(undefined),
+      false,
+      `${relative} ${heading}: every missing requirement has a temporary-source falsifier fixture`,
+    );
+
+    // T001 intentionally precedes the source guidance. Complete only the absent
+    // clauses in memory, then prove that deleting every owning block fails. The
+    // source assertion below remains independent and honestly reports T002 gaps.
+    const temporarySource = absent.reduce((source, label) => {
+      const requirement = requirements.find(([requirementLabel]) => requirementLabel === label);
+      const fixture = RECOVERY_CONTINUATION_FALSIFIER_FIXTURES.get(label);
+      const { anchor } = paragraphRequirement(requirement);
+      const blocks = anchor === null ? [] : anchoredRuleBlocks(source, anchor);
+      return blocks.length === 1
+        ? source.replace(blocks[0].raw, fixture)
+        : `${source}\n\n${fixture}`;
+    }, section);
+    assertShipParagraphRequirements(
+      temporarySource,
+      requirements,
+      `${relative} ${heading}: recovery continuation temporary-source falsifiers`,
+    );
+  }
+});
+
+test('Feature 040 recovery continuation keeps same-invocation progress and every existing boundary', () => {
+  const missing = [];
+
+  for (const { relative = CONTINUITY_OWNER, heading, requirements } of RECOVERY_CONTINUATION_CONTRACTS) {
+    const section = markdownSection(read(relative), heading);
+    const absent = missingParagraphRequirements(section, requirements);
+    missing.push(...absent.map((label) => `${relative} ${heading}: ${label}`));
+  }
+
+  assert.deepEqual(missing, [], 'recovery continuation source contract');
 });
 
 const FEATURE_029_GUIDANCE_SURFACES = [

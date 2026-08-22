@@ -73,7 +73,7 @@ The active coordinator turn is the invocation supervisor. Before launching any a
 
 Exactly one active worker token and generation may write. Handoff is the only replacement path: the supervisor must have observed the exact prior-worker exit, then supply the matching prior token and generation together with one fresh token and next generation. There is no timeout, PID inference, lock stealing, automatic takeover, or concurrent writer path.
 
-The accepted recovery boundary is persistent-shell death and replaceable adapter-worker death, and only while the active coordinator supervisor and its independently retained invocation identity survive. Loss of that supervisor, its coordinator context, or that identity is a hard stop. Cross-conversation, VS Code restart, machine restart, and cross-machine resume are out of scope.
+The accepted recovery boundary is persistent-shell death and replaceable adapter-worker death, and only while the active coordinator supervisor and its independently retained invocation identity survive. Loss of that supervisor, its coordinator context, or that identity is a hard stop; no fresh Work invocation starts automatically. Post-hard-stop, cross-invocation, cross-session, takeover, and orphan recovery remain unavailable. Cross-conversation, VS Code restart, machine restart, and cross-machine resume are out of scope.
 
 Resume runs only after an accepted handoff and before any other replacement-worker operation, and it compares every bound authority fact exactly before any route runs: supplied invocation identity, active worker token and generation, `acceptedRevision` and `hostRevision`, real workspace and canonical target, exact defined owner and specification identity, active lane and authoritative task and lane prestate descriptors, canonical RunState bytes and hash, and any in-flight effect identity with its exact receipt or unchanged-prestate proof. Drift, corruption, conflicting revision, stale worker, unknown effect, or missing identity is a hard stop, and the adapter never infers state from lane state or history.
 
@@ -105,7 +105,7 @@ Keep the claim and checkpoint across closed refusals, eligible host and tool inc
 
 Creation and update times are diagnostic only. Age never authorizes resume, cleanup, ownership transfer, takeover, or replacement work, and no expiry, timer, background sweep, or lock stealing exists.
 
-An orphan claim or checkpoint refuses lazily on the next claim or load. The refusal derives the workspace-target key itself and reports that safe identifier with the bounded ownership-claim and checkpoint pair; it never accepts a caller-chosen cleanup path and adds no cleanup command. The user or operator must first confirm independently that no invocation or coordinator supervisor remains for that key. Manual removal then targets only that bounded pair, and a post-clean load and claim preflight must prove both artifacts absent before a fresh exclusive claim. Partial cleanup, a changed artifact, reappearance, operation failure, or failed absence validation is a hard stop that keeps blocking replacement work.
+An orphan claim or checkpoint refuses lazily on the next claim or load. The refusal derives the workspace-target key itself and reports that safe identifier with the bounded ownership-claim and checkpoint pair; it never accepts a caller-chosen cleanup path and adds no cleanup command. The user or operator must first confirm independently that no invocation or coordinator supervisor remains for that key. Manual removal then targets only that bounded pair, and a post-clean load and claim preflight must prove both artifacts absent before a fresh exclusive claim. Partial cleanup, a changed artifact, reappearance, operation failure, or failed absence validation is a hard stop that keeps blocking replacement work. Manual cleanup permits only a later user-authorized clean claim after existing cleanup and preflight requirements. That later claim is never a takeover, orphan resume, or cross-session continuation.
 
 ## Automatic Unchanged-Intent Redefinition
 
@@ -155,9 +155,29 @@ Existing optional `RunState.evaluationSequences` and `RunState.learningReviewRef
 
 For Lightweight, use `dude-lightweight-execution` to select, claim, block, close, render, log, and lint each task. For Tracked, use the installed tracked-execution skill to resume or select, claim, block, close, mirror, log, and lint. Route every implementation through `dude-generic-routing`; use `dude-verification-before-completion` and independent review as required by the lane.
 
+Autonomous Work entered directly or through Ship remains one coordinator-owned outer invocation.
+
+Ship's pre-Work answerability ends when Work begins.
+
+After bounded manual assistance resolves the current blocker, the same autonomous Work invocation remains active while the original coordinator supervisor, context, and retained invocation identity survive.
+
+The recovered task still requires fresh verification, independent review, exact settlement, and closure.
+
+A clean per-task `ended`/`task-settled` result is progress, not a whole-Work stop.
+
+The active coordinator loop then selects the next ready task in the already-detected lane under the original target and normalized policy without another Work or Ship request.
+
+The next task receives a fresh claim; prior task-scoped authority does not carry forward.
+
+This continuation does not apply to guarded or other non-autonomous Work.
+
 ## Stops
 
 **Unattended (autonomous) policy discipline:** Under the `autonomous` policy the loop keeps working through ready work and ends *only* when one of the closed-set stop conditions below applies. A progress report or milestone notice is never a stop and does not end the loop. No new stop reason is introduced; the closed set is fixed.
+
+Successful per-task settlement is progress within the active invocation, not a whole-Work stop.
+
+Verification failure, review rejection, unresolved blockage, or failed settlement or closure retains its existing outcome and never becomes successful continuation. Explicit pause or cancellation prevents automatic next-task selection. No-ready result, overall or recovery budget exhaustion, tool error, and every existing hard stop retain their existing precedence and behavior without continuation.
 
 **Named, actionable halt:** Every unattended halt echoes exactly one closed-set reason and carries the affected target, the specific causing subject or condition from existing Inspection and evidence surfaces, and the next owner action — enough to act without reading runtime internals. `recovery.mjs` owns the reason and those fields; model reasoning only phrases them and establishes no stop, reason, or approval. Fail closed and report the halt as unresolved when a closed-set reason or any of that detail cannot be established from real evidence, rather than emitting a named-but-opaque or unnameable halt. The deterministic autonomous runner attaches this report once, at its single terminal chokepoint `finish(row)` in `host-adapter-runner.mjs` — a hard-stop terminal carries the resolved-or-explicitly-unresolved report, and a clean settlement (task settled, controlled end, or cancelled) carries none — so the runtime, not the model, owns whether and how a halt is reported.
 
@@ -174,7 +194,7 @@ Stop on the first natural boundary and report partial results, exact reason, and
 - `tool error: <detail>` — unverifiable or after acceptance; a qualifying pre-acceptance host incident that proves no effect is nonterminal
 - `iteration limit reached (<N>)`
 
-Never silently retry a failed iteration.
+Never silently retry a failed task or iteration.
 
 ## Boundaries
 
@@ -183,6 +203,7 @@ Never silently retry a failed iteration.
 - Never create new state, a lane, or a board; reuse canonical lane state and the unique owner log.
 - No auto-commit, push, or other VCS mutation.
 - Never bypass verification, independent review when required, or coordinator-only state and close authority.
+- This continuation adds no command, mode, runtime, scheduler, daemon, registry, state store, or persistent continuation surface.
 
 ## Report
 

@@ -18,7 +18,9 @@ Describe the feature once, then let one verb carry it the rest of the way:
 `@dude ship authentication` alone also works, but with no idea file to read it
 has to interview you before it can define anything. The numbered sections below
 run the same lifecycle one stage at a time, so you can see what each stage
-produces and where you can intervene.
+produces and where you can intervene. During explicit Ship, an existing pre-Work
+owner can continue through an answerable checkpoint when one clearly dominant
+conservative disposition follows from the accepted basis.
 
 ## 1. Add a little project context
 
@@ -183,9 +185,10 @@ Ship enters the live execution lane as-is and advances until the work is done or
 an existing Work stop fires. Ship runs autonomously with an unlimited budget, so
 it authorizes its own retries at recoverable checkpoints such as a reviewer
 rejection. On a raw idea it would have run the existing `brainstorm` and
-`define` routes first, pausing at the same checkpoints shown above. If you want
-to cap iterations or choose the policy yourself, `@dude work` is the advanced
-form for those controls.
+`define` routes first. An already-answered clarification from accepted intent or
+material evidence can be resolved by the definition owner as a Ship-authorized
+action; genuine ambiguity stops for the user. If you want to cap iterations or
+choose the policy yourself, `@dude work` is the advanced form for those controls.
 
 Both verbs stay in Lightweight Execution, so neither one installs Beads. To drive
 the same lane step by step instead:

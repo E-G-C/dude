@@ -23,6 +23,15 @@ question, and ownership or resolver diagnostics stay hard refusals. `@dude work`
 is the advanced form when you need to set the budgets or policy yourself, and the
 [command reference](commands.md#dude-ship) owns the full contract.
 
+Before answerability, the existing pre-Work stage owner applies its eligibility,
+prerequisite, authority, and safety gates. A checkpoint label alone does not stop
+Ship. Eligible definition dispositions remain with the definition owner and are
+Ship-authorized, rather than user ratification.
+
+When Work begins, pre-Work answerability ends. Ship returns each Work outcome
+unchanged, with no reclassification, retry, or override; Work keeps its existing
+authority, audit, and reporting.
+
 ### GitHub Issue Intake
 
 An explicit GitHub issue adds raw input to this lifecycle. It creates no GitHub

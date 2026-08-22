@@ -69,10 +69,13 @@ flowchart LR
   WORK --> DONE
 ```
 
-The idea already exists, so this run starts at define. Dude stops and waits when
-it needs something from you: a question about what the feature has to do, or
-approval of a project rule it proposes to follow from then on. Answer in chat and
-it continues.
+The idea already exists, so this run starts at define. On an explicit Ship
+invocation, the existing pre-Work stage owner runs its eligibility, prerequisite,
+authority, and safety gates before answerability. A checkpoint label alone does
+not stop Ship: when one clearly dominant conservative disposition follows from
+the accepted intent and evidence, the owner can continue without asking the user.
+A missing decision, evidence, or authority still stops for your input. See the
+complete [Ship policy](docs/commands.md#dude-ship).
 
 `@dude ship [<target>]` takes exactly one optional target and no flags, and it
 advances until the work is done or an existing Work stop fires. Ship performs no

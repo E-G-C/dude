@@ -2,7 +2,7 @@
 
 Durable project rules and preferences that Dude should follow.
 
-Entries prefixed with `[bundle]` are shipped defaults. When no project-specific guardrails exist yet, Dude may infer candidate guardrails from the repo, current definition work, and remembered context, but only user-accepted guardrails become durable project rules here.
+Entries prefixed with `[bundle]` are shipped defaults. When no project-specific guardrails exist yet, Dude may infer candidate guardrails from the repo, current definition work, and remembered context. In ordinary definition, only user-accepted or user-edited rules become durable here. During explicit Ship, the definition owner may instead persist qualifying candidates as a Ship-authorized action under `dude-feature-definition`; that action is not direct user ratification.
 
 ## Entries
 

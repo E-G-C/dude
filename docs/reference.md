@@ -21,6 +21,11 @@ own: `@dude-spec-lead` still owns every definition artifact, `status:`, the exac
 back through an explicit `@dude brainstorm`, and a deliberate package refresh
 goes through an explicit `@dude define`.
 
+On explicit Ship, an existing pre-Work stage owner applies its normal gates before
+answerability. Eligible definition dispositions remain with the definition owner
+as Ship-authorized actions, not direct user ratification. The command reference
+defines the qualifying cases and stops.
+
 ### GitHub Issue Intake
 
 Dude treats an issue body and its comments as one raw input. No label, author,
@@ -124,11 +129,13 @@ the feature:
 - Active `## Open Questions` belong immediately after `## Idea`, with
   each question formatted as `### QN. ...` followed by a visible
   `**Your answer:** _Type your answer here._` slot.
-- `.dude/memory/guardrails.md` holds the project's durable guardrails. Dude
-  may infer candidates once it understands what is being built, but
-  project-specific entries are ratified by the user. If no new project-specific
-  guardrails are inferred beyond bundle defaults, definition can continue
-  without a separate guardrail pause.
+- `.dude/memory/guardrails.md` holds the project's durable guardrails. Outside
+  explicit Ship, Dude may infer candidates once it understands what is being
+  built, but project-specific entries are ratified by the user. If no new
+  project-specific guardrails are inferred beyond bundle defaults, definition can
+  continue without a separate guardrail pause. During explicit Ship, the
+  definition owner may apply qualifying candidates as a Ship-authorized action;
+  the detailed limits remain in the command reference.
 - Only create supporting artifacts the feature actually needs.
 - A lean package is valid; omit placeholder artifacts for domains that do not
   materially apply.

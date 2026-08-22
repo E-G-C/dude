@@ -39,8 +39,10 @@ Then start your first feature by writing the idea down and handing it over:
 `@dude ship [<target>]` takes one optional target and no flags, runs only the
 stages the target is still missing, and advances until the work is done or an
 existing Work stop fires. It runs the same brainstorm and define stages you
-would run by hand, and every clarification and guardrail-ratification checkpoint
-described below still happens. Ship never answers one for you.
+would run by hand. During explicit Ship, the definition owner may make a
+qualifying guardrail disposition under Ship-authorized authority; that is not
+direct user ratification. The complete policy is in the
+[Ship command reference](commands.md#dude-ship).
 
 Shipping a bare name with no idea file behind it also works, but the name then
 becomes the entire idea, so Dude has to interview you before it can define
@@ -100,10 +102,10 @@ set once it understands the repo and feature, then present those guardrails for
 your approval before planning continues. Add decisions, context, and lessons
 incrementally as they emerge.
 
-Depending on current project guardrails, `@dude define` either completes the
-package immediately or pauses briefly to ask whether inferred rules should be
-accepted. This is normal. Reply `accept`, `edit`, `reject`, or `skip`; rerun
-`@dude define <slug>` later if you leave and come back.
+Depending on current project guardrails, ordinary `@dude define` either
+completes the package immediately or pauses briefly to ask whether inferred rules
+should be accepted. This is normal. Reply `accept`, `edit`, `reject`, or `skip`;
+rerun `@dude define <slug>` later if you leave and come back.
 
 ### Guardrails explained
 
@@ -111,15 +113,17 @@ Guardrails are durable project rules that shape planning and execution across
 features. Typical examples are compatibility promises, audit retention,
 accessibility expectations, or security rules such as never logging secrets.
 
-If `@dude define` pauses for guardrails, the workflow is waiting for approval,
-not failing. Accept, edit, reject, or skip the proposed rules in the same
-conversation, or rerun `@dude define <slug>` later to resume from that
+If ordinary `@dude define` pauses for guardrails, the workflow is waiting for
+approval, not failing. Accept, edit, reject, or skip the proposed rules in the
+same conversation, or rerun `@dude define <slug>` later to resume from that
 checkpoint. `skip` means continue with bundle defaults only and do not add new
-project-specific guardrails for that pause. In clearly solo or exploratory
-repos, the inferred candidate set should usually stay short, and `skip` is a
-normal response when bundle defaults are enough. If no project-specific
-guardrails are inferred beyond bundle defaults, definition should continue
-without a separate pause.
+project-specific guardrails for that pause. In clearly solo or exploratory repos,
+the inferred candidate set should usually stay short, and `skip` is a normal
+response when bundle defaults are enough. If no project-specific guardrails are
+inferred beyond bundle defaults, definition should continue without a separate
+pause. Explicit Ship has only the narrow Ship-authorized definition-owner
+exception described in the [command reference](commands.md#dude-ship); it is not
+direct user ratification.
 
 Informal, typo-heavy, dictated, or speech-to-text input is valid during
 brainstorm. Initial capture may conservatively clean clear spelling, grammar,

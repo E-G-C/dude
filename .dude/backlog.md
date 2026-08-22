@@ -8,7 +8,7 @@ A read-only view built from idea files, linked feature files, task records, and 
 - Ready / Next: **0**
 - Ideas awaiting definition: **1**
 - Defined awaiting work: **0**
-- Completed: **40**
+- Completed: **42**
 
 ## Current
 
@@ -49,9 +49,11 @@ No current work to diagram.
 - `historical-core-dogfood-fixture-repair` — Historical Core Dogfood Fixture Repair (`.dude/ideas/historical-core-dogfood-fixture-repair.md`)
 - `pack-catalog-refetch` — Pack Catalog Re-fetch (`.dude/ideas/pack-catalog-refetch.md`)
 - `pre-work-log-learning` — Pre-work Log Learning (`.dude/ideas/pre-work-log-learning.md`)
+- `recovery-continuation` — Recovery Continuation (`.dude/ideas/recovery-continuation.md`)
 - `remove-legacy-compatibility` — Remove Legacy Compatibility From The Bundle (`.dude/ideas/remove-legacy-compatibility.md`)
 - `remove-unused-authority-surfaces` — Remove Unused Authority Surfaces (`.dude/ideas/remove-unused-authority-surfaces.md`)
 - `runner-reason-code-coverage-fix` — Runner Reason-Code And Coverage Fix (`.dude/ideas/runner-reason-code-coverage-fix.md`)
+- `ship-checkpoint-autonomy` — Ship Checkpoint Autonomy (`.dude/ideas/ship-checkpoint-autonomy.md`)
 - `ship-command` — Ship Command (`.dude/ideas/ship-command.md`)
 - `simplify-context-footprint-audit` — Simplify Context Footprint Audit (`.dude/ideas/simplify-context-footprint-audit.md`)
 - `simplify-pack-updates` — Simplify Pack Updates (`.dude/ideas/simplify-pack-updates.md`)
