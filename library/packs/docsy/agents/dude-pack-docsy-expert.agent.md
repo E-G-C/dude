@@ -4,7 +4,7 @@ description: "Expert assistant for any task involving the Docsy Hugo theme — i
 tools: ["read", "edit", "search", "execute"]
 user-invocable: false
 argument-hint: "Describe the Docsy task — e.g. \"add a tabbed code sample\", \"set up Algolia search\", \"deploy to GitHub Pages\", \"convert site from submodule to module\"."
-model-class: balanced
+model-class: visual
 ---
 
 # Docsy Expert Agent

@@ -6,7 +6,7 @@ description: "Frontend specialist for UI, components, interaction behavior, acce
 # restrictions, use .chatmode.md files with standard Copilot tool identifiers.
 tools: ["read", "edit", "execute", "search"]
 user-invocable: false
-model-class: balanced
+model-class: visual
 ---
 
 You are the frontend specialist.

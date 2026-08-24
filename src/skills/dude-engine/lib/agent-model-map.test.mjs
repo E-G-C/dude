@@ -79,12 +79,12 @@ test('loads the shipped document with its exact schema, dated provenance, and cl
 
   // Assert
   assert.deepEqual(rootKeys, ['classes', 'provenance', 'targets']);
-  assert.deepEqual(classKeys, ['balanced', 'fast', 'inherit', 'reasoning']);
+  assert.deepEqual(classKeys, ['balanced', 'fast', 'inherit', 'reasoning', 'visual']);
   assert.deepEqual(targetKeys, ['copilot']);
   assert.deepEqual(Object.keys(copilot).sort(), ['emits', 'models']);
   assert.deepEqual(copilot.emits, ['model']);
   assert.deepEqual(Object.keys(copilot.models).sort(), classKeys);
-  assert.deepEqual(efforts, ['high', 'low', 'medium']);
+  assert.deepEqual(efforts, ['high', 'low', 'max', 'medium']);
   assert.deepEqual(/** @type {Record<string, any>} */ (config.classes).inherit, {});
   assert.match(/** @type {string} */ (config.provenance), /\b\d{4}-\d{2}-\d{2}\b/);
 });
@@ -176,10 +176,10 @@ test('rejects empty values, undated provenance, invalid effort, and invalid inhe
   }, /setting 'provenance' must be a non-empty dated string/);
   await assertInvalidConfig((document) => {
     document.classes.fast.effort = '';
-  }, /class 'fast' setting 'effort' must be one of low, medium, high/);
+  }, /class 'fast' setting 'effort' must be one of low, medium, high, max/);
   await assertInvalidConfig((document) => {
     document.classes.fast.effort = 'outside-vocabulary';
-  }, /class 'fast' setting 'effort' must be one of low, medium, high/);
+  }, /class 'fast' setting 'effort' must be one of low, medium, high, max/);
   await assertInvalidConfig((document) => {
     document.classes.inherit.effort = 'low';
   }, /class 'inherit' must not declare setting 'effort'/);

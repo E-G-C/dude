@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const STABLE_IDENTIFIER_RE = /^[a-z][a-z0-9-]*$/;
-const EFFORT_VALUES = new Set(['low', 'medium', 'high']);
+const EFFORT_VALUES = new Set(['low', 'medium', 'high', 'max']);
 const EMITTED_SETTINGS = new Set(['model', 'effort']);
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
@@ -82,7 +82,7 @@ function validateClasses(classes) {
     }
     const effort = settings.effort;
     if (typeof effort !== 'string' || !EFFORT_VALUES.has(effort)) {
-      invalid(`class '${modelClass}' setting 'effort' must be one of low, medium, high`);
+      invalid(`class '${modelClass}' setting 'effort' must be one of low, medium, high, max`);
     }
   }
 }

@@ -3,3 +3,6 @@
 
 # Local design-hook cache (per-session, machine-local absolute paths)
 /.impeccable/
+
+# macOS Finder metadata
+.DS_Store

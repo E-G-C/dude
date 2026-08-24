@@ -1,5 +1,5 @@
 {
-  "provenance": "Copilot model IDs and their supported reasoning-effort sets were observed through current Copilot host model discovery on 2026-08-09. Official documentation does not publish a static GPT-5.6 ID table, so this is dated host-discovery provenance rather than a claim of official static coverage.",
+  "provenance": "Copilot model IDs and their supported reasoning-effort sets were observed through current Copilot host model discovery on 2026-08-09. Official documentation does not publish a static GPT-5.6 ID table, so this is dated host-discovery provenance rather than a claim of official static coverage. The Claude Opus 5 model ID was observed through current Copilot host model discovery on 2026-08-24.",
   "classes": {
     "inherit": {},
     "fast": {
@@ -10,6 +10,9 @@
     },
     "reasoning": {
       "effort": "high"
+    },
+    "visual": {
+      "effort": "max"
     }
   },
   "targets": {
@@ -21,7 +24,8 @@
         "inherit": null,
         "fast": "gpt-5.6-luna",
         "balanced": "gpt-5.6-terra",
-        "reasoning": "gpt-5.6-sol"
+        "reasoning": "gpt-5.6-sol",
+        "visual": "claude-opus-5"
       }
     }
   }

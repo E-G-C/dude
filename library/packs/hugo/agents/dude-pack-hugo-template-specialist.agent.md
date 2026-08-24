@@ -4,7 +4,7 @@ description: "Use when writing or debugging Hugo templates, base templates, part
 agents: ["dude-pack-hugo-docs-researcher"]
 tools: ["read", "search", "edit", "execute", "agent"]
 user-invocable: false
-model-class: balanced
+model-class: visual
 ---
 You are a Hugo template specialist. Your job is to produce correct, maintainable Hugo templates using the current layout system.
 

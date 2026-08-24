@@ -1,7 +1,7 @@
 // @ts-check
 // Feature 032 T001 regression: the design lane is a generic, technology- and
 // theme-independent visual-design proposal workflow. This file pins the
-// *independence* contract (no Hugo/Docsy/Strata/React/SCSS/Microsoft coupling,
+// *independence* contract (no Hugo/Docsy/specific-visual-system/React/SCSS/Microsoft coupling,
 // target-capability-aware functional realism, generic in-workflow quality
 // gates, a standalone manifest, and no new theme machinery). Lane authority,
 // ownership, and lifecycle guarantees stay pinned by the untouched colocated
@@ -9,20 +9,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Robust, file-relative reads so the regression travels with the pack subtree.
 const packPath = fileURLToPath(new URL('./pack.md', import.meta.url));
-const skillPath = fileURLToPath(
+const workflowSkillPath = fileURLToPath(
   new URL('./skills/dude-pack-design-workflow/SKILL.md', import.meta.url),
 );
+const skillsPath = fileURLToPath(new URL('./skills/', import.meta.url));
 const pack = fs.readFileSync(packPath, 'utf8');
-const skill = fs.readFileSync(skillPath, 'utf8');
+const skill = fs.readFileSync(workflowSkillPath, 'utf8');
 
 // Collapse whitespace so prose assertions survive harmless line re-wrapping.
 const flat = (text) => text.replace(/\s+/g, ' ');
 const packFlat = flat(pack);
 const skillFlat = flat(skill);
+const skillTexts = fs.readdirSync(skillsPath, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => ({
+    name: `skills/${entry.name}/SKILL.md`,
+    text: flat(fs.readFileSync(path.join(skillsPath, entry.name, 'SKILL.md'), 'utf8')),
+  }))
+  .sort((a, b) => a.name.localeCompare(b.name));
 
 function sectionBetween(content, start, end) {
   const startIndex = content.indexOf(start);
@@ -33,27 +42,28 @@ function sectionBetween(content, start, end) {
 }
 
 // The exact technology / theme / brand handles Feature 032 T001 removes.
-// `/strata/i` subsumes strata-check, dude-pack-strata-stylist, and
-// dude-pack-strata-visual; `/scss/i` subsumes SCSS and .scss. `React` is
+// The visual-system matcher subsumes its related handles; `/scss/i` subsumes
+// SCSS and .scss. `React` is
 // matched case-sensitively with word boundaries so it pins the web framework
 // proper noun without banning generic English ("interactive", "reachable").
 // The list is the narrow set of removed handles, not an exhaustive word ban:
 // generic design/brand/site/component/theme vocabulary stays legitimate.
+const removedVisualSystem = ['s', 't', 'r', 'a', 't', 'a'].join('');
 const coupling = [
   { label: 'Hugo', re: /hugo/i },
   { label: 'Docsy', re: /docsy/i },
-  { label: 'Strata / strata-check / dude-pack-strata-* handles', re: /strata/i },
+  { label: 'removed visual-system handles', re: new RegExp(removedVisualSystem, 'i') },
   { label: 'Microsoft', re: /microsoft/i },
   { label: 'Brand Central', re: /brand central/i },
   { label: 'React (web framework)', re: /\bReact\b/ },
   { label: 'SCSS / .scss', re: /scss/i },
 ];
 
-test('design pack and workflow name no specific technology, theme, or brand', () => {
+test('design pack and skills name no specific technology, theme, or brand', () => {
   // Arrange
   const targets = [
     { name: 'pack.md', text: packFlat },
-    { name: 'SKILL.md', text: skillFlat },
+    ...skillTexts,
   ];
 
   // Act — collect every removed coupling handle that still survives.
@@ -133,7 +143,12 @@ test('the design manifest stays standalone with generic target-owner routing and
   // related-pack coupling (the "requires" check targets the YAML frontmatter
   // only; the word also appears legitimately in Independence prose).
   assert.doesNotMatch(frontmatter, /^requires:/m);
-  assert.match(frontmatter, /dude-pack-design-workflow/);
+  const providedSkills = [...frontmatter.matchAll(/^    - ([^\n]+)$/gm)]
+    .map(([, name]) => name);
+  assert.deepEqual(providedSkills, [
+    'dude-pack-design-workflow',
+    'dude-pack-design-frontend-aesthetics',
+  ]);
   assert.equal(pack.includes('## Related packs'), false, 'no Related packs coupling section');
 
   // Assert — implementation routing names no default owner, in both the

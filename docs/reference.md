@@ -487,14 +487,15 @@ is rejected at build time.
 
 ### Model Classes
 
-`model-class` is required on every agent source and takes one of four values:
+`model-class` is required on every agent source and takes one of five values:
 
 | Class | Intent |
 |---|---|
 | `inherit` | Use whatever model the session already runs. Requests no effort level. |
 | `fast` | Cheap, quick, mechanical work. Lowest effort level. |
 | `balanced` | Ordinary implementation and drafting work. Middle effort level. |
-| `reasoning` | Analysis, review, architecture, and design work. Highest effort level. |
+| `reasoning` | Analysis, review, architecture, and design work. High effort level. |
+| `visual` | UI, visual, and presentation-layer surfaces. Highest effort level. |
 
 Concrete model identifiers and class effort live only in
 `src/config/agent-models.json`. Builds validate that file through an explicit

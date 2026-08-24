@@ -83,7 +83,7 @@ const PACK_CATALOG = Object.freeze({
     manifestAgents: ['dude-pack-docsy-expert'],
     agents: {
       'dude-pack-docsy-expert': {
-        modelClass: 'balanced', tools: ['read', 'edit', 'search', 'execute'],
+        modelClass: 'visual', tools: ['read', 'edit', 'search', 'execute'],
       },
     },
   },
@@ -91,7 +91,7 @@ const PACK_CATALOG = Object.freeze({
     manifestAgents: ['dude-pack-fluent-ui-specialist'],
     agents: {
       'dude-pack-fluent-ui-specialist': {
-        modelClass: 'balanced', tools: ['read', 'edit', 'execute', 'search'],
+        modelClass: 'visual', tools: ['read', 'edit', 'execute', 'search'],
       },
     },
   },
@@ -127,7 +127,7 @@ const PACK_CATALOG = Object.freeze({
         ],
       },
       'dude-pack-hugo-template-specialist': {
-        modelClass: 'balanced',
+        modelClass: 'visual',
         tools: ['read', 'search', 'edit', 'execute', 'agent'],
         roster: ['dude-pack-hugo-docs-researcher'],
       },
@@ -177,7 +177,7 @@ const PACK_CATALOG = Object.freeze({
     manifestAgents: ['dude-pack-strata-stylist'],
     agents: {
       'dude-pack-strata-stylist': {
-        modelClass: 'balanced', tools: ['read', 'edit', 'search', 'todo'],
+        modelClass: 'visual', tools: ['read', 'edit', 'search', 'todo'],
       },
     },
   },
@@ -221,7 +221,7 @@ const PACK_CATALOG = Object.freeze({
         modelClass: 'balanced', tools: ['read', 'edit', 'execute', 'search'],
       },
       'dude-pack-web-frontend': {
-        modelClass: 'balanced', tools: ['read', 'edit', 'execute', 'search'],
+        modelClass: 'visual', tools: ['read', 'edit', 'execute', 'search'],
       },
     },
   },

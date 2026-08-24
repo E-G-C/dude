@@ -5,6 +5,7 @@ provides:
   agents: []
   skills:
     - dude-pack-design-workflow
+    - dude-pack-design-frontend-aesthetics
 ---
 
 # Design Pack
@@ -23,6 +24,10 @@ technology domain.
   Defines a `design-gap` as a design-specific subtype of `spec-gap`, uses
   visual-spec checks (`VSC-…`), and leaves a task open/blocked when visual
   evidence fails.
+- `dude-pack-design-frontend-aesthetics` — judgment and process guidance for
+  testing whether a direction is grounded in its brief rather than a default;
+  it delegates palette, type scale, spacing, and token values to an owning
+  visual-system, theme, or branding skill, or to the approved design workflow.
 
 ## Independence
 
@@ -33,7 +38,7 @@ installed. The full propose/approve/apply loop and its generic design-quality
 gates — accessibility, contrast, provenance, and functional realism — run
 entirely inside this lane.
 
-This pack provides no implementation specialist and no visual system.
+This pack provides no implementation specialist and no fixed visual system.
 Implementation of an approved design routes to whichever installed specialist
 owns the actual target surface; the lane names none as a default, and when no
 owner is installed it asks which specialist owns the target rather than
