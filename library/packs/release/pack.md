@@ -1,6 +1,7 @@
 ---
 name: release
 description: "Release engineering specialist + skills for tag-driven versioning, GitHub Actions / Azure Pipelines parity, and protected-branch version write-back."
+use-cases: [release-management]
 provides:
   agents: [dude-pack-release-manager]
   skills:

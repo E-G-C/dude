@@ -1,6 +1,7 @@
 ---
 name: authoring
 description: "Bundle-authoring specialists — expert smiths for creating agents, skills, instructions, prompts, and packs. Dev tooling for building and maintaining Dude bundles."
+use-cases: [bundle-authoring]
 provides:
   agents: [dude-pack-authoring-agent-smith, dude-pack-authoring-instruction-smith, dude-pack-authoring-pack-smith, dude-pack-authoring-prompt-smith, dude-pack-authoring-skill-smith]
   skills: [dude-pack-authoring-instruction-conventions, dude-pack-authoring-pack-conventions, dude-pack-authoring-prompt-conventions]

@@ -27,6 +27,7 @@ const INSTALL_LOCATIONS = [
   '.github/instructions',
   '.github/prompts',
 ];
+const COMPOSE_SOURCE = fileURLToPath(new URL('./compose.mjs', import.meta.url));
 
 /** @param {string} target */
 function exists(target) {
@@ -96,14 +97,18 @@ function runGit(cwd, ...args) {
  * @param {string} repo
  * @param {string} name
  * @param {string} version
+ * @param {{ useCases?: string[] }} [options]
  */
-function writeRemotePack(repo, name, version) {
+function writeRemotePack(repo, name, version, { useCases } = {}) {
   const pack = path.join(repo, 'library', 'packs', name);
   fs.rmSync(pack, { recursive: true, force: true });
   fs.mkdirSync(path.join(pack, 'agents'), { recursive: true });
+  const useCasesLine = useCases === undefined
+    ? ''
+    : `use-cases: [${useCases.map((useCase) => JSON.stringify(useCase)).join(', ')}]\n`;
   fs.writeFileSync(
     path.join(pack, 'pack.md'),
-    `---\nname: ${name}\ndescription: ${JSON.stringify(`${name} catalog ${version}`)}\n---\n# ${name} ${version}\n`,
+    `---\nname: ${name}\ndescription: ${JSON.stringify(`${name} catalog ${version}`)}\n${useCasesLine}---\n# ${name} ${version}\n`,
   );
   fs.writeFileSync(
     path.join(pack, 'agents', `dude-pack-${name}-worker.agent.md`),
@@ -194,15 +199,23 @@ function packAgent(pack, suffix, options = {}) {
  * @param {string} root
  * @param {string} name
  * @param {Array<{ stem: string, name: string, modelClass?: string, agents?: string[], userInvocable?: boolean }>} agents
- * @param {{ skill?: boolean, instruction?: boolean, prompt?: boolean }} [options]
+ * @param {{ skill?: boolean, instruction?: boolean, prompt?: boolean, useCases?: string[] }} [options]
  * @returns {string}
  */
-function writePack(root, name, agents, { skill = true, instruction = false, prompt = false } = {}) {
+function writePack(root, name, agents, {
+  skill = true,
+  instruction = false,
+  prompt = false,
+  useCases,
+} = {}) {
   const pack = path.join(root, 'library', 'packs', name);
   fs.mkdirSync(pack, { recursive: true });
+  const useCasesLine = useCases === undefined
+    ? ''
+    : `use-cases: [${useCases.map((useCase) => JSON.stringify(useCase)).join(', ')}]\n`;
   fs.writeFileSync(
     path.join(pack, 'pack.md'),
-    `---\nname: ${name}\ndescription: ${JSON.stringify(`${name} fixture pack`)}\n---\n# ${name}\n`,
+    `---\nname: ${name}\ndescription: ${JSON.stringify(`${name} fixture pack`)}\n${useCasesLine}---\n# ${name}\n`,
   );
   if (agents.length > 0) {
     const directory = path.join(pack, 'agents');
@@ -240,6 +253,39 @@ function writePack(root, name, agents, { skill = true, instruction = false, prom
     );
   }
   return pack;
+}
+
+/**
+ * Add a raw use-cases declaration to an otherwise ordinary fixture manifest.
+ * This intentionally permits malformed values for consumer failure tests.
+ * @param {string} root
+ * @param {string} name
+ * @param {string} declaration
+ */
+function appendUseCasesDeclaration(root, name, declaration) {
+  const manifest = path.join(root, 'library', 'packs', name, 'pack.md');
+  const content = fs.readFileSync(manifest, 'utf8');
+  const closingFence = content.indexOf('\n---\n', 4);
+  assert.notEqual(closingFence, -1, 'fixture manifest must have a closing frontmatter fence');
+  fs.writeFileSync(
+    manifest,
+    `${content.slice(0, closingFence)}\nuse-cases: ${declaration}${content.slice(closingFence)}`,
+  );
+}
+
+/**
+ * Invoke the source Compose CLI against one fixture root.
+ * @param {string} root
+ * @param {...string} args
+ */
+function runCompose(root, ...args) {
+  const result = spawnSync(
+    process.execPath,
+    [COMPOSE_SOURCE, '--root', root, ...args],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.error, undefined, `source compose CLI could not start: ${result.error?.message || 'unknown error'}`);
+  return result;
 }
 
 /** @returns {string} */
@@ -518,6 +564,440 @@ function staticModuleClosure(entryPath) {
   }
   return closure;
 }
+
+test('list adds declared and omitted use-cases without changing existing fields or catalog order', async () => {
+  const root = createRoot();
+  try {
+    // Arrange: one installed declared pack and one omitted declaration.
+    writePack(root, 'alpha', [packAgent('alpha', 'worker')], {
+      skill: false,
+      useCases: ['writing', 'ui'],
+    });
+    writePack(root, 'beta', [packAgent('beta', 'worker')], { skill: false });
+    const added = await addPack(root, 'alpha');
+    assert.equal(added.ok, true, added.error);
+
+    // Act.
+    const listed = cmdList({ root, library: path.join(root, 'library', 'packs') });
+
+    // Assert: pre-existing values and catalog order remain stable; discovery is additive.
+    assert.equal(listed.ok, true, listed.error);
+    assert.deepEqual(listed.result, {
+      packs: [
+        {
+          name: 'alpha',
+          installed: true,
+          description: 'alpha fixture pack',
+          use_cases: ['writing', 'ui'],
+        },
+        {
+          name: 'beta',
+          installed: false,
+          description: 'beta fixture pack',
+          use_cases: [],
+        },
+      ],
+      enabled_packs: ['alpha'],
+      origin: 'local',
+    });
+    assert.deepEqual(Object.keys(readProfile(root).installed.alpha).sort(), ['files', 'source']);
+
+    // A malformed present value reports its pack context and leaves list read-only.
+    writePack(root, 'broken', [], { skill: false });
+    appendUseCasesDeclaration(root, 'broken', 'not-a-list');
+    const beforeMalformedList = mutationSnapshot(root);
+    const malformed = cmdList({ root, library: path.join(root, 'library', 'packs') });
+    assert.equal(malformed.ok, false);
+    assert.equal(malformed.code, 2);
+    assert.match(malformed.error || '', /pack "broken" has invalid metadata: .*use-cases.*must be a list/);
+    assertMutationUnchanged(root, beforeMalformedList);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('cmdList filters overlapping use cases by exact membership in catalog order and accepts no match', () => {
+  const root = createRoot();
+  try {
+    // Arrange: `writing` overlaps while the valid nearby identifier must not match it.
+    writePack(root, 'alpha', [packAgent('alpha', 'worker')], {
+      skill: false,
+      useCases: ['writing', 'ui'],
+    });
+    writePack(root, 'bravo', [packAgent('bravo', 'worker')], {
+      skill: false,
+      useCases: ['api', 'writing'],
+    });
+    writePack(root, 'charlie', [packAgent('charlie', 'worker')], {
+      skill: false,
+      useCases: ['writing-tools'],
+    });
+    const library = path.join(root, 'library', 'packs');
+
+    // Act.
+    const filtered = cmdList({ root, library, useCase: 'writing' });
+    const noMatch = cmdList({ root, library, useCase: 'release-management' });
+
+    // Assert.
+    assert.equal(filtered.ok, true, filtered.error);
+    assert.deepEqual(filtered.result?.packs.map((pack) => pack.name), ['alpha', 'bravo']);
+    assert.deepEqual(filtered.result?.packs.map((pack) => pack.use_cases), [
+      ['writing', 'ui'],
+      ['api', 'writing'],
+    ]);
+    assert.deepEqual(filtered.result?.enabled_packs, []);
+    assert.equal(filtered.result?.origin, 'local');
+    assert.equal(noMatch.ok, true, noMatch.error);
+    assert.equal(noMatch.code, 0);
+    assert.deepEqual(noMatch.result?.packs, []);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('cmdList rejects an invalid programmatic filter before resolving a released-root source', () => {
+  const root = createReleasedRoot();
+  try {
+    // Arrange: reaching catalog resolution would attempt this unavailable source.
+    const library = path.join(root, 'library', 'packs');
+    assert.equal(exists(path.join(root, 'library')), false);
+
+    // Act.
+    const result = cmdList({
+      root,
+      library,
+      source: 'file:///definitely-missing-use-case-source',
+      useCase: 'writing--tools',
+    });
+
+    // Assert: the usage error wins before profile/catalog/source work.
+    assert.deepEqual(result, {
+      ok: false,
+      code: 1,
+      error: 'invalid use case: "writing--tools"',
+    });
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('source CLI keeps unfiltered human lines and aligns human and JSON use-case results', () => {
+  const root = createRoot();
+  try {
+    // Arrange.
+    writePack(root, 'alpha', [packAgent('alpha', 'worker')], {
+      skill: false,
+      useCases: ['writing', 'ui'],
+    });
+    writePack(root, 'bravo', [packAgent('bravo', 'worker')], {
+      skill: false,
+      useCases: ['api', 'writing'],
+    });
+    writePack(root, 'charlie', [packAgent('charlie', 'worker')], { skill: false });
+
+    // Act.
+    const unfiltered = runCompose(root, 'list');
+    const human = runCompose(root, 'list', '--use-case', 'writing');
+    const json = runCompose(root, 'list', '--use-case', 'writing', '--json');
+    const emptyHuman = runCompose(root, 'list', '--use-case', 'release-management');
+    const emptyJson = runCompose(root, 'list', '--use-case', 'release-management', '--json');
+
+    // Assert: the unfiltered human contract is unchanged and both filtered modes agree.
+    assert.equal(unfiltered.status, 0, unfiltered.stderr);
+    assert.equal(
+      unfiltered.stdout,
+      '[ ] alpha — alpha fixture pack\n[ ] bravo — bravo fixture pack\n[ ] charlie — charlie fixture pack\n',
+    );
+    assert.equal(unfiltered.stderr, '');
+    assert.equal(human.status, 0, human.stderr);
+    assert.equal(human.stdout, '[ ] alpha — alpha fixture pack\n[ ] bravo — bravo fixture pack\n');
+    assert.equal(human.stderr, '');
+    assert.equal(json.status, 0, json.stderr);
+    assert.deepEqual(JSON.parse(json.stdout), {
+      ok: true,
+      packs: [
+        {
+          name: 'alpha',
+          installed: false,
+          description: 'alpha fixture pack',
+          use_cases: ['writing', 'ui'],
+        },
+        {
+          name: 'bravo',
+          installed: false,
+          description: 'bravo fixture pack',
+          use_cases: ['api', 'writing'],
+        },
+      ],
+      enabled_packs: [],
+      origin: 'local',
+    });
+    assert.equal(emptyHuman.status, 0, emptyHuman.stderr);
+    assert.equal(emptyHuman.stdout, 'No packs match use case "release-management".\n');
+    assert.equal(emptyHuman.stderr, '');
+    assert.equal(emptyJson.status, 0, emptyJson.stderr);
+    assert.deepEqual(JSON.parse(emptyJson.stdout), {
+      ok: true,
+      packs: [],
+      enabled_packs: [],
+      origin: 'local',
+    });
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('source CLI rejects missing, repeated, invalid, flag-valued, and non-list use-case filters', () => {
+  const root = createRoot();
+  try {
+    /** @type {Array<{ name: string, args: string[], error: string }>} */
+    const cases = [
+      {
+        name: 'missing value',
+        args: ['list', '--use-case'],
+        error: '--use-case requires an identifier',
+      },
+      {
+        name: 'repeated flag',
+        args: ['list', '--use-case', 'writing', '--use-case', 'ui'],
+        error: '--use-case may be specified only once',
+      },
+      {
+        name: 'invalid identifier',
+        args: ['list', '--use-case', 'Writing'],
+        error: 'invalid use case: "Writing"',
+      },
+      {
+        name: 'another flag as the value',
+        args: ['list', '--use-case', '--no-fetch'],
+        error: '--use-case requires an identifier',
+      },
+      {
+        name: 'non-list command',
+        args: ['status', '--use-case', 'writing'],
+        error: '--use-case is only supported by list',
+      },
+    ];
+
+    // Arrange / Act / Assert: every malformed use is a CLI usage error.
+    for (const scenario of cases) {
+      const result = runCompose(root, ...scenario.args);
+      assert.equal(result.status, 1, `${scenario.name}: ${result.stderr}`);
+      assert.equal(result.stdout, '', `${scenario.name}: unexpected standard output`);
+      assert.equal(result.stderr, `[FAIL] ${scenario.error}\n`, scenario.name);
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('a file URL catalog on a released root lists declared and omitted metadata unfiltered and filtered', () => {
+  const remote = createRemoteCatalog();
+  const root = createReleasedRoot();
+  const library = path.join(root, 'library', 'packs');
+  try {
+    // Arrange: file:// takes the remote-clone source branch, not the local shortcut.
+    writeRemotePack(remote.repo, 'declared', 'A', { useCases: ['writing', 'web-development'] });
+    writeRemotePack(remote.repo, 'omitted', 'A');
+    commitRemote(remote.repo, 'publish discovery fixtures');
+    writeManifestSource(root, remote.source, 'main');
+    assert.equal(exists(path.join(root, 'library')), false, 'fixture must retain released-root shape');
+
+    // Act.
+    const unfiltered = cmdList({ root, library });
+    const filtered = cmdList({ root, library, useCase: 'writing' });
+
+    // Assert.
+    assert.equal(unfiltered.ok, true, unfiltered.error);
+    assert.deepEqual(unfiltered.result, {
+      packs: [
+        {
+          name: 'declared',
+          installed: false,
+          description: 'declared catalog A',
+          use_cases: ['writing', 'web-development'],
+        },
+        {
+          name: 'omitted',
+          installed: false,
+          description: 'omitted catalog A',
+          use_cases: [],
+        },
+      ],
+      enabled_packs: [],
+      origin: `${remote.source} @ main`,
+    });
+    assert.equal(filtered.ok, true, filtered.error);
+    assert.deepEqual(filtered.result?.packs.map((pack) => pack.name), ['declared']);
+    assert.equal(filtered.result?.origin, `${remote.source} @ main`);
+    assert.equal(exists(path.join(root, 'library')), false, 'remote listing must not create a local catalog');
+  } finally {
+    cleanup(root);
+    cleanup(remote.parent);
+  }
+});
+
+test('lifecycle accepts omitted metadata, rejects malformed present metadata before mutation, and removes without source', async () => {
+  const root = createRoot();
+  try {
+    // Arrange: ordinary manifests omit metadata by default; a second fixture is malformed.
+    writePack(root, 'demo', [packAgent('demo', 'worker', { name: 'Demo Worker' })], { skill: true });
+    writePack(root, 'invalid', [packAgent('invalid', 'worker')], { skill: false });
+    appendUseCasesDeclaration(root, 'invalid', 'not-a-list');
+    const invalidAddBefore = mutationSnapshot(root);
+    const addStages = trackStageDirectories();
+    let invalidAdd;
+    try {
+      invalidAdd = await addPack(root, 'invalid');
+    } finally {
+      addStages.restore();
+    }
+
+    // Assert malformed add fails before staging or any artifact/profile mutation.
+    assert.equal(invalidAdd.ok, false);
+    assert.equal(invalidAdd.code, 2);
+    assert.match(invalidAdd.error || '', /pack "invalid" has invalid metadata: .*use-cases.*must be a list/);
+    assert.deepEqual(addStages.directories, []);
+    assertMutationUnchanged(root, invalidAddBefore);
+
+    // Act: omitted metadata remains valid across add, preview, and refresh.
+    const added = await addPack(root, 'demo');
+    assert.equal(added.ok, true, added.error);
+    const previewBefore = mutationSnapshot(root);
+    const preview = await cmdPreviewRefresh({ root, library: path.join(root, 'library', 'packs'), name: 'demo' });
+    assert.equal(preview.ok, true, preview.error);
+    assertMutationUnchanged(root, previewBefore);
+    const refreshed = await refreshPack(root, 'demo');
+    assert.equal(refreshed.ok, true, refreshed.error);
+    assert.equal(Object.hasOwn(readProfile(root).installed.demo, 'use_cases'), false);
+
+    // Assert malformed current metadata fails both refresh paths before staging or mutation.
+    appendUseCasesDeclaration(root, 'demo', 'not-a-list');
+    const invalidRefreshBefore = mutationSnapshot(root);
+    const refreshStages = trackRefreshDirectories();
+    let invalidPreview;
+    let invalidRefresh;
+    try {
+      invalidPreview = await cmdPreviewRefresh({
+        root,
+        library: path.join(root, 'library', 'packs'),
+        name: 'demo',
+      });
+      invalidRefresh = await refreshPack(root, 'demo');
+    } finally {
+      refreshStages.restore();
+    }
+    for (const result of [invalidPreview, invalidRefresh]) {
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 2);
+      assert.match(result.error || '', /pack "demo" has invalid metadata: .*use-cases.*must be a list/);
+    }
+    assert.deepEqual(refreshStages.directories, []);
+    assertMutationUnchanged(root, invalidRefreshBefore);
+
+    // Remove consults only installed-profile authority, even once the source is unavailable.
+    fs.rmSync(path.join(root, 'library', 'packs', 'demo'), { recursive: true, force: true });
+    const removed = cmdRemove({ root, name: 'demo' });
+    assert.equal(removed.ok, true, removed.error);
+    assertNoPackLeftovers(root, 'demo');
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('verify preserves source-lint results across discovery metadata and install state', async () => {
+  const root = createRoot();
+  try {
+    fs.writeFileSync(
+      packagedPath(root, 'SKILL.md'),
+      '---\nname: dude-engine\ndescription: fixture engine\n---\n# Engine\n',
+    );
+    writeManifestSource(root, 'https://example.invalid/dude', 'main');
+    writePack(root, 'good', [], { skill: true });
+    const library = path.join(root, 'library', 'packs');
+
+    async function verify() {
+      const before = mutationSnapshot(root);
+      const result = await cmdVerify({ root, library });
+      assertMutationUnchanged(root, before);
+      return result;
+    }
+
+    const omittedUninstalled = await verify();
+    assert.deepEqual(omittedUninstalled, {
+      ok: true,
+      code: 0,
+      result: {
+        verified: [{ name: 'good', warnings: 1, failures: 0, leftovers: 0 }],
+        profile: { status: 'absent' },
+      },
+    });
+
+    appendUseCasesDeclaration(root, 'good', 'not-a-list');
+    const malformedUninstalled = await verify();
+    assert.deepEqual(malformedUninstalled, omittedUninstalled);
+
+    writePack(root, 'good', [], { skill: true });
+    const added = await addPack(root, 'good');
+    assert.equal(added.ok, true, added.error);
+    const omittedInstalled = await verify();
+    assert.deepEqual(omittedInstalled, {
+      ok: true,
+      code: 0,
+      result: {
+        verified: omittedUninstalled.result?.verified,
+        profile: { status: 'valid', path: '.dude/metadata/profile.md' },
+      },
+    });
+
+    appendUseCasesDeclaration(root, 'good', 'not-a-list');
+    const malformedInstalled = await verify();
+    assert.deepEqual(malformedInstalled, omittedInstalled);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('verify retains its manifest-name check while ignoring discovery metadata', async () => {
+  const root = createRoot();
+  try {
+    // Arrange: this was a pre-discovery staging failure, not metadata validation.
+    writePack(root, 'good', [], { skill: true });
+    const manifest = path.join(root, 'library', 'packs', 'good', 'pack.md');
+    fs.writeFileSync(
+      manifest,
+      fs.readFileSync(manifest, 'utf8').replace('name: good', 'name: other'),
+    );
+    const before = mutationSnapshot(root);
+    const expected = {
+      ok: false,
+      code: 2,
+      result: {
+        verified: [{
+          name: 'good',
+          warnings: 0,
+          failures: 1,
+          leftovers: 0,
+          error: 'pack.md name "other" does not match directory "good"',
+        }],
+        profile: { status: 'absent' },
+      },
+    };
+    const library = path.join(root, 'library', 'packs');
+
+    // Act: malformed discovery metadata must not mask verify's original name check.
+    const omitted = await cmdVerify({ root, library });
+    appendUseCasesDeclaration(root, 'good', 'not-a-list');
+    const malformed = await cmdVerify({ root, library });
+
+    // Assert: both source forms preserve the exact pre-existing failure and stay read-only.
+    assert.deepEqual(omitted, expected);
+    assert.deepEqual(malformed, omitted);
+    assertMutationUnchanged(root, before);
+  } finally {
+    cleanup(root);
+  }
+});
 
 test('remote manifest branch re-fetches current bytes for released-bundle list, add, and refresh', async () => {
   const remote = createRemoteCatalog();

@@ -55,6 +55,7 @@ import {
   resolveProfileArtifact,
   serializeProfileDocument,
 } from '../dude-engine/lib/profile.mjs';
+import { parsePackManifestMetadata, USE_CASE_ID_RE } from '../dude-engine/lib/pack-manifest.mjs';
 import { normalizePath } from '../dude-engine/lib/text.mjs';
 import { resolveReleaseRef } from '../dude-engine/lib/release-channel.mjs';
 import {
@@ -144,15 +145,15 @@ function removePath(abs) {
 }
 
 /**
- * Parse the leading `--- ... ---` YAML-ish frontmatter for a top-level
- * `name:` scalar. Intentionally minimal (no YAML dependency).
+ * Read only the optional top-level pack name needed for the source-directory
+ * check. This deliberately does not interpret discovery metadata.
  * @param {string} text
  * @returns {string | null}
  */
 function frontmatterName(text) {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-  if (!m) return null;
-  const line = m[1].split(/\r?\n/).find((l) => /^name\s*:/.test(l));
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  if (!match) return null;
+  const line = match[1].split(/\r?\n/).find((candidate) => /^name\s*:/.test(candidate));
   if (!line) return null;
   return line
     .replace(/^name\s*:/, '')
@@ -531,16 +532,37 @@ function artifactInNamespace(artifact, packName) {
  * pre-stage validation passes, so an invalid source never creates a stage
  * directory. On success the caller owns cleanup of the returned `stageRoot`; on
  * a staging failure the helper removes its own stage directory before returning.
- * @param {{ root: string, library: string, name: string, projection: any, stagePrefix: string, fetch?: boolean, source?: string, ref?: string }} args
+ * @param {{ root: string, library: string, name: string, projection: any, stagePrefix: string, fetch?: boolean, source?: string, ref?: string, validateDiscoveryMetadata?: boolean }} args
  * @returns {{ origin: string, sourceIdentity: SourceIdentity, staged: StagedArtifact[], stageRoot: string } | { error: string }}
  */
-function stagePackFromSource({ root, library, name, projection, stagePrefix, fetch = true, source, ref }) {
+function stagePackFromSource({
+  root,
+  library,
+  name,
+  projection,
+  stagePrefix,
+  fetch = true,
+  source,
+  ref,
+  validateDiscoveryMetadata = true,
+}) {
   const resolved = resolvePackDir({ root, library, name, fetch, source, ref });
   if ('error' in resolved) {
     return { error: resolved.error };
   }
   const { packDir, origin, sourceIdentity } = resolved;
-  const manifestName = frontmatterName(fs.readFileSync(path.join(packDir, 'pack.md'), 'utf8'));
+  let manifestName;
+  if (validateDiscoveryMetadata) {
+    try {
+      manifestName = parsePackManifestMetadata(fs.readFileSync(path.join(packDir, 'pack.md'), 'utf8')).name;
+    } catch (error) {
+      return {
+        error: `pack "${name}" has invalid metadata: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  } else {
+    manifestName = frontmatterName(fs.readFileSync(path.join(packDir, 'pack.md'), 'utf8'));
+  }
   if (manifestName && manifestName !== name) {
     return { error: `pack.md name "${manifestName}" does not match directory "${name}"` };
   }
@@ -612,10 +634,19 @@ function stagePackFromSource({ root, library, name, projection, stagePrefix, fet
 }
 
 /**
- * @param {{ root: string, library: string, name: string, force: boolean }} args
+ * @param {{ root: string, library: string, name: string, force: boolean, validateDiscoveryMetadata?: boolean }} args
  * @returns {Promise<{ ok: boolean, code: number, result?: any, error?: string }>}
  */
-async function cmdAdd({ root, library, name, force, fetch = true, source, ref }) {
+async function cmdAdd({
+  root,
+  library,
+  name,
+  force,
+  fetch = true,
+  source,
+  ref,
+  validateDiscoveryMetadata = true,
+}) {
   if (!PACK_NAME_RE.test(name)) {
     return { ok: false, code: 1, error: `invalid pack name: ${name}` };
   }
@@ -656,6 +687,7 @@ async function cmdAdd({ root, library, name, force, fetch = true, source, ref })
       fetch,
       source,
       ref,
+      validateDiscoveryMetadata,
     });
     if ('error' in stagedResult) {
       return { ok: false, code: 2, error: stagedResult.error };
@@ -1240,32 +1272,43 @@ async function cmdRefresh(args) {
 }
 
 /**
- * @param {{ root: string, library: string, fetch?: boolean, source?: string, ref?: string }} args
+ * @param {{ root: string, library: string, fetch?: boolean, source?: string, ref?: string, useCase?: string }} args
  * @returns {{ ok: boolean, code: number, result?: any, error?: string }}
  */
-function cmdList({ root, library, fetch = true, source, ref }) {
+function cmdList({ root, library, fetch = true, source, ref, useCase }) {
+  if (useCase !== undefined && (typeof useCase !== 'string' || !USE_CASE_ID_RE.test(useCase))) {
+    return { ok: false, code: 1, error: `invalid use case: ${JSON.stringify(useCase)}` };
+  }
   const loadedProfile = loadProfile(root);
   if ('error' in loadedProfile) return { ok: false, code: 2, error: loadedProfile.error };
   const { profile } = loadedProfile;
   const installedSet = new Set(Object.keys(profile.installed));
   const cat = resolveCatalogDir({ root, library, fetch, source, ref });
   if ('error' in cat) return { ok: false, code: 2, error: cat.error };
-  const packs = availablePacks(cat.dir).map((name) => {
-    let description = '';
+  const packs = [];
+  for (const name of availablePacks(cat.dir)) {
+    let metadata;
     try {
-      const text = fs.readFileSync(path.join(cat.dir, name, 'pack.md'), 'utf8');
-      const m = /^description\s*:\s*(.+)$/m.exec(text);
-      if (m) description = m[1].trim().replace(/^["']|["']$/g, '');
-    } catch {
-      /* ignore */
+      metadata = parsePackManifestMetadata(fs.readFileSync(path.join(cat.dir, name, 'pack.md'), 'utf8'));
+    } catch (error) {
+      return {
+        ok: false,
+        code: 2,
+        error: `pack "${name}" has invalid metadata: ${error instanceof Error ? error.message : String(error)}`,
+      };
     }
-    return { name, installed: installedSet.has(name), description };
-  });
+    packs.push({
+      name,
+      installed: installedSet.has(name),
+      description: metadata.description,
+      use_cases: metadata.useCases,
+    });
+  }
   return {
     ok: true,
     code: 0,
     result: {
-      packs,
+      packs: useCase === undefined ? packs : packs.filter((pack) => pack.use_cases.includes(useCase)),
       enabled_packs: [...installedSet].sort(),
       origin: cat.origin,
     },
@@ -1325,7 +1368,14 @@ async function cmdVerify({ root, library }) {
       const libSrc = path.join(root, 'library');
       if (isDir(libSrc)) copyRecursive(libSrc, path.join(tmp, 'library'));
 
-      const add = await cmdAdd({ root: tmp, library: path.join(tmp, 'library', 'packs'), name, force: false, fetch: false });
+      const add = await cmdAdd({
+        root: tmp,
+        library: path.join(tmp, 'library', 'packs'),
+        name,
+        force: false,
+        fetch: false,
+        validateDiscoveryMetadata: false,
+      });
       if (!add.ok) {
         verified.push({ name, warnings: 0, failures: 1, leftovers: 0, error: add.error });
         continue;
@@ -1367,7 +1417,7 @@ async function cmdVerify({ root, library }) {
 const HELP = `dude-compose — install / remove optional packs
 
 Usage:
-  node compose.mjs list                 list catalog packs (local or fetched) + installed
+  node compose.mjs list [--use-case <id>] list catalog packs (local or fetched) + installed
   node compose.mjs status               list installed packs
   node compose.mjs add <name>           install a pack into .github/
   node compose.mjs remove <name>        uninstall a pack
@@ -1383,11 +1433,12 @@ Flags:
   --json            machine-readable output
   --dry-run         preview refresh without writing
   --force           overwrite existing files on add
+  --use-case <id>   exact discovery filter for list
 `;
 
 /**
  * @param {string[]} argv
- * @returns {{ cmd?: string, name?: string, root: string, library?: string, json: boolean, force: boolean, dryRun: boolean, help: boolean }}
+ * @returns {{ cmd?: string, name?: string, root: string, library?: string, json: boolean, force: boolean, dryRun: boolean, help: boolean, useCase?: string, useCaseSeen?: boolean, usageError?: string }}
  */
 function parseArgs(argv) {
   /** @type {any} */
@@ -1405,17 +1456,38 @@ function parseArgs(argv) {
     else if (a === '--library') out.library = argv[++i];
     else if (a === '--source') out.source = argv[++i];
     else if (a === '--ref') out.ref = argv[++i];
+    else if (a === '--use-case') {
+      const repeated = out.useCaseSeen === true;
+      out.useCaseSeen = true;
+      if (repeated) out.usageError ||= '--use-case may be specified only once';
+      const value = argv[i + 1];
+      if (!value || value.startsWith('-')) {
+        out.usageError ||= '--use-case requires an identifier';
+      } else {
+        i += 1;
+        out.useCase = value;
+        if (!USE_CASE_ID_RE.test(value)) {
+          out.usageError ||= `invalid use case: ${JSON.stringify(value)}`;
+        }
+      }
+    } else if (a.startsWith('--use-case=')) {
+      out.useCaseSeen = true;
+      out.usageError ||= '--use-case requires a separate identifier';
+    }
     else if (a.startsWith('--')) out.help = true;
     else positionals.push(a);
   }
   out.cmd = positionals[0];
   out.name = positionals[1];
   if (out.dryRun && out.cmd !== 'refresh') out.help = true;
+  if (out.useCaseSeen && out.cmd !== 'list') {
+    out.usageError ||= '--use-case is only supported by list';
+  }
   return out;
 }
 
-/** @param {any} r @param {boolean} json */
-function report(r, json) {
+/** @param {any} r @param {boolean} json @param {string | undefined} useCase */
+function report(r, json, useCase) {
   if (json) {
     process.stdout.write(JSON.stringify(
       r.ok
@@ -1439,7 +1511,11 @@ function report(r, json) {
       process.stdout.write(`${p.installed ? '[x]' : '[ ]'} ${p.name}${p.description ? ' — ' + p.description : ''}\n`);
     }
     if (res.packs.length === 0) {
-      process.stdout.write('No packs available in the catalog.\n');
+      process.stdout.write(
+        useCase === undefined
+          ? 'No packs available in the catalog.\n'
+          : `No packs match use case "${useCase}".\n`,
+      );
     }
     if (res.note) process.stderr.write(`[INFO] ${res.note}\n`);
   } else if (res.refreshed) {
@@ -1477,6 +1553,10 @@ function report(r, json) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.usageError) {
+    report({ ok: false, code: 1, error: args.usageError }, args.json, args.useCase);
+    process.exit(1);
+  }
   if (args.help || !args.cmd) {
     process.stdout.write(HELP);
     process.exit(args.help ? 0 : 1);
@@ -1488,7 +1568,14 @@ async function main() {
   let r;
   switch (args.cmd) {
     case 'list':
-      r = cmdList({ root, library, fetch: args.fetch, source: args.source, ref: args.ref });
+      r = cmdList({
+        root,
+        library,
+        fetch: args.fetch,
+        source: args.source,
+        ref: args.ref,
+        useCase: args.useCase,
+      });
       break;
     case 'status':
       r = cmdStatus({ root });
@@ -1523,7 +1610,7 @@ async function main() {
       r = { ok: false, code: 1, error: `unknown command: ${args.cmd}` };
   }
 
-  report(r, args.json);
+  report(r, args.json, args.useCase);
   process.exit(r.code);
 }
 

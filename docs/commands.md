@@ -40,6 +40,16 @@ it with `@dude add pack beads`.
 
 Preferred workflow verbs are `brainstorm`, `define`, `ship`, `status`, `track`, `work`, `flag`, `diff`, and `self-check`. `hire`, `remember`, `upgrade`, `sync Beads to tasks.md`, and the team-management verbs are coordinator-maintenance verbs and may be invoked any time.
 
+### Pack discovery
+
+```bash
+node .github/skills/dude-compose/compose.mjs list --use-case ui --json
+```
+
+`--use-case <id>` matches one declared value exactly. List JSON keeps its
+existing pack fields and adds `use_cases`; a pack without a declaration returns
+`[]`.
+
 ### GitHub Issue Input
 
 One explicit GitHub issue can supply material to an existing request:

@@ -1,6 +1,7 @@
 ---
 name: technical-docs
 description: "Create or update traceable technical documents from software repositories, source code, configuration, tests, transcripts, notes, drafts, and existing Markdown. Scales beyond the context window with an evidence ledger, incremental drafting, and coverage and lint gates."
+use-cases: [documentation, writing]
 provides:
   agents:
     - dude-pack-technical-docs-writer

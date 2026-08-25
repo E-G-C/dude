@@ -18,9 +18,10 @@ const COMPOSE_REL = "src/skills/dude-compose/compose.mjs";
 // meaning once T007 is itself committed.
 const BASE_REV = "54bca6a1ebfe872cb36decd28c00bff4a5e892ba";
 
-// Pinned so frontmatter and diagram-skill preservation are still enforced byte-exactly
+// Pinned so expected frontmatter and diagram-skill preservation are still enforced byte-exactly
 // where the base revision is unreachable (shallow clone, exported tree, no git binary).
-const BASE_PACK_FRONTMATTER_SHA256 = "7cb3b20c13380d38f3fa67fa50d4dd28bf04638935762c9fb17eac6778f67bed";
+const EXPECTED_PACK_FRONTMATTER_SHA256 = "4e0063b64cb3a7dc92be6f80db789b994d1f055f089d01f54c0ee6281ab2e330";
+const EXPECTED_USE_CASES_LINE = "use-cases: [documentation, writing]\n";
 const BASE_DIAGRAMS_SKILL_SHA256 = "f3ed58132f1cbd2dd6f4b31cb87d602d2fe7328c6efab40d326a99d369419902";
 
 const EXPECTED_AGENTS = [
@@ -294,10 +295,10 @@ test("the manifest inventory matches the shipped surface exactly", () => {
 
 /* ----------------------------------------------------- 2. frontmatter is base */
 
-test("pack.md keeps its complete frontmatter byte-for-byte while only its body changes", (context) => {
+test("pack.md keeps its baseline frontmatter plus exact discovery metadata", (context) => {
   const current = readFileSync(join(PACK_DIR, "pack.md"));
   const { frontmatter, body } = splitFrontmatter(current);
-  assert.equal(sha256(frontmatter), BASE_PACK_FRONTMATTER_SHA256, "pack.md frontmatter drifted from base");
+  assert.equal(sha256(frontmatter), EXPECTED_PACK_FRONTMATTER_SHA256, "pack.md frontmatter drifted from expectation");
 
   const probe = probeBase();
   if (!probe.available) {
@@ -307,7 +308,13 @@ test("pack.md keeps its complete frontmatter byte-for-byte while only its body c
   }
   const base = baseFileBytes(`${PACK_REL}/pack.md`);
   const baseParts = splitFrontmatter(base);
-  assert.ok(frontmatter.equals(baseParts.frontmatter), "pack.md frontmatter is not byte-identical to base");
+  const expectedFrontmatter = Buffer.from(
+    baseParts.frontmatter.toString("utf8").replace("provides:\n", `${EXPECTED_USE_CASES_LINE}provides:\n`)
+  );
+  assert.ok(
+    frontmatter.equals(expectedFrontmatter),
+    "pack.md frontmatter differs from base beyond the exact use-cases declaration"
+  );
   // Non-vacuity: the body really did change, so the frontmatter comparison above is
   // comparing an edited file rather than an untouched one.
   assert.ok(!body.equals(baseParts.body), "pack.md body is unchanged from base, so this comparison proves nothing");
@@ -317,9 +324,10 @@ test("pack.md frontmatter keeps its exact structure, values, and key order", () 
   const { frontmatter } = splitFrontmatter(readFileSync(join(PACK_DIR, "pack.md")));
   const text = frontmatter.toString("utf8");
   const parsed = parseFrontmatter(text);
-  assert.deepEqual(Object.keys(parsed), ["name", "description", "provides", "requires", "routing_hints", "hooks"]);
+  assert.deepEqual(Object.keys(parsed), ["name", "description", "use-cases", "provides", "requires", "routing_hints", "hooks"]);
   assert.equal(parsed.name, "technical-docs");
   assert.ok(parsed.description.length > 0, "the manifest description must not be empty");
+  assert.deepEqual(parsed["use-cases"], ["documentation", "writing"]);
   assert.deepEqual(Object.keys(parsed.provides), ["agents", "skills", "prompts"]);
   assert.deepEqual(parsed.provides.agents, [
     "dude-pack-technical-docs-writer",

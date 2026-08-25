@@ -1,6 +1,7 @@
 ---
 name: copilot-sdk
 description: "GitHub Copilot SDK specialist for SDK app architecture, hooks, custom agents, MCP, skills, authentication, deployment, and Rust integration."
+use-cases: [software-development]
 provides:
   agents:
     - dude-pack-copilot-sdk-specialist

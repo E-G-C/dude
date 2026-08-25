@@ -1,7 +1,7 @@
 // @ts-check
 /**
- * Minimal, dependency-free editor for a pack's `pack.md` frontmatter `provides`
- * lists. Used by the scaffolders to keep the manifest in sync when a new
+ * Minimal, dependency-free helpers for a pack's `pack.md` frontmatter. The
+ * `provides` editor is used by the scaffolders to keep the manifest in sync when a new
  * `dude-pack-<pack>-<slug>` agent or skill is created.
  *
  * Handles both list styles that appear in the catalog:
@@ -27,6 +27,132 @@ function frontmatter(content) {
   }
   if (end === -1) throw new Error('pack.md frontmatter is not closed');
   return { start: 0, end, lines };
+}
+
+/** Stable identifier accepted by the discovery `use-cases` metadata. */
+export const USE_CASE_ID_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+
+const COLUMN_ZERO_FENCE_RE = /^---[ \t]*$/;
+const USE_CASES_KEY_RE = /^use-cases[ \t]*:(.*)$/;
+const TOP_LEVEL_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]*[ \t]*:/;
+const USE_CASES_BLOCK_ITEM_RE = /^  -(?: +(.*)|[ \t]*)$/;
+
+/**
+ * Read only a leading, closed, column-zero frontmatter block. This is separate
+ * from the editor's legacy bounds helper so its established behavior stays
+ * unchanged.
+ * @param {string} content
+ * @returns {string[] | null}
+ */
+function closedFrontmatterLines(content) {
+  const lines = String(content).split(/\r?\n/);
+  if (!COLUMN_ZERO_FENCE_RE.test(lines[0] || '')) return null;
+  for (let index = 1; index < lines.length; index += 1) {
+    if (COLUMN_ZERO_FENCE_RE.test(lines[index])) return lines.slice(1, index);
+  }
+  return null;
+}
+
+/**
+ * Decode the intentionally small scalar subset shared by manifest metadata.
+ * @param {string} value
+ * @returns {string}
+ */
+function decodeSimpleScalar(value) {
+  const scalar = value.trim();
+  if (
+    scalar.length >= 2
+    && ((scalar.startsWith('"') && scalar.endsWith('"'))
+      || (scalar.startsWith("'") && scalar.endsWith("'")))
+  ) {
+    return scalar.slice(1, -1);
+  }
+  return scalar;
+}
+
+/**
+ * @param {string[]} lines
+ * @param {'name'|'description'} key
+ * @returns {string | null}
+ */
+function topLevelScalar(lines, key) {
+  const keyRe = new RegExp(`^${key}[ \\t]*:(.*)$`);
+  for (const line of lines) {
+    const match = keyRe.exec(line);
+    if (match) return decodeSimpleScalar(match[1]);
+  }
+  return null;
+}
+
+/**
+ * @param {string[]} values
+ * @returns {string[]}
+ */
+function validateUseCases(values) {
+  if (values.length === 0) throw new Error('pack.md use-cases must be a non-empty list');
+  const seen = new Set();
+  for (const value of values) {
+    if (!value) throw new Error('pack.md use-cases contains an empty item');
+    if (!USE_CASE_ID_RE.test(value)) {
+      throw new Error(`pack.md use-cases contains invalid value ${JSON.stringify(value)}`);
+    }
+    if (seen.has(value)) {
+      throw new Error(`pack.md use-cases contains duplicate value ${JSON.stringify(value)}`);
+    }
+    seen.add(value);
+  }
+  return values;
+}
+
+/**
+ * Parse the optional discovery list without attempting to implement YAML.
+ * @param {string[]} lines
+ * @returns {string[]}
+ */
+function parseUseCases(lines) {
+  /** @type {Array<{ index: number, value: string }>} */
+  const declarations = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = USE_CASES_KEY_RE.exec(lines[index]);
+    if (match) declarations.push({ index, value: match[1] });
+  }
+  if (declarations.length === 0) return [];
+  if (declarations.length > 1) throw new Error('pack.md use-cases must not be repeated');
+
+  const declaration = declarations[0];
+  const value = declaration.value.trim();
+  if (value) {
+    const inline = /^\[(.*)\]$/.exec(value);
+    if (!inline) throw new Error('pack.md use-cases must be a list');
+    if (!inline[1].trim()) throw new Error('pack.md use-cases must be a non-empty list');
+    return validateUseCases(inline[1].split(',').map(decodeSimpleScalar));
+  }
+
+  /** @type {string[]} */
+  const items = [];
+  for (let index = declaration.index + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (TOP_LEVEL_KEY_RE.test(line)) break;
+    const item = USE_CASES_BLOCK_ITEM_RE.exec(line);
+    if (!item) throw new Error('pack.md use-cases must be a list of two-space items');
+    items.push(decodeSimpleScalar(item[1] || ''));
+  }
+  return validateUseCases(items);
+}
+
+/**
+ * Parse the bounded pack metadata consumed by Compose discovery.
+ * @param {string} content
+ * @returns {{ name: string | null, description: string, useCases: string[] }}
+ */
+export function parsePackManifestMetadata(content) {
+  const lines = closedFrontmatterLines(content);
+  if (!lines) return { name: null, description: '', useCases: [] };
+  return {
+    name: topLevelScalar(lines, 'name'),
+    description: topLevelScalar(lines, 'description') || '',
+    useCases: parseUseCases(lines),
+  };
 }
 
 /** @param {string[]} items @returns {string[]} sorted unique */

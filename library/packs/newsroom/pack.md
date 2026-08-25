@@ -1,6 +1,7 @@
 ---
 name: newsroom
 description: "Turn transcripts, notes, and calendar invites into Hugo news articles and events: a newsroom writer + event deep-fetcher, with article, calendar-event, and static-safe-time skills."
+use-cases: [web-development, writing]
 provides:
   agents:
     - dude-pack-newsroom-writer

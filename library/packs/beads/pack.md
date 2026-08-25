@@ -1,6 +1,7 @@
 ---
 name: beads
 description: "Current-only tracked execution via Beads for canonical .dude/specs features, with exact-owner import, Beads-authoritative work, and a one-way tasks.md mirror."
+use-cases: [work-tracking]
 provides:
   agents: []
   skills: [dude-pack-beads-workflow, dude-pack-beads-spec-import]

@@ -1,6 +1,7 @@
 ---
 name: practices
 description: "Engineering-practice workflows. Currently: tests-first (TDD) implementation discipline."
+use-cases: [software-development]
 provides:
   agents: []
   skills: [dude-pack-practices-tdd]

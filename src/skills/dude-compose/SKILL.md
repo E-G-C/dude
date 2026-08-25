@@ -38,6 +38,7 @@ Node >= 20.
 
 ```bash
 node .github/skills/dude-compose/compose.mjs list            # catalog (local or fetched) + installed flag
+node .github/skills/dude-compose/compose.mjs list --use-case ui --json  # exact discovery matches
 node .github/skills/dude-compose/compose.mjs status          # installed packs
 node .github/skills/dude-compose/compose.mjs add <name>      # install (local or fetched)
 node .github/skills/dude-compose/compose.mjs remove <name>   # uninstall
@@ -50,8 +51,9 @@ Flags: `--root <dir>` (bundle root, default cwd), `--library <dir>` (catalog,
 default `<root>/library/packs`), `--source <repo>` / `--ref <ref>` (upstream for
 remote `add`/`list`/`refresh`; default the bundle manifest's
 `source_repo` / `source_ref`), `--no-fetch` (never fetch — require the pack locally), `--json`
-(machine output), `--dry-run` (read-only preview for `refresh` only), `--force`
-(overwrite existing destinations on add).
+(machine output), `--use-case <id>` (exact discovery filter for `list` only),
+`--dry-run` (read-only preview for `refresh` only), `--force` (overwrite existing
+destinations on add).
 Exit codes: `0` ok, `1` usage, `2` operation error.
 
 The command is selected before projection dependencies are loaded. `add`,
@@ -59,6 +61,22 @@ The command is selected before projection dependencies are loaded. `add`,
 installed engine, using the absolute path
 `.github/skills/dude-engine/config/agent-models.json`. `remove`, `list`, and
 `status` do not load that configuration or the renderer.
+
+## Discovery metadata
+
+`list` retains `name`, `installed`, and `description`, and adds `use_cases` to
+each pack result. `list --use-case <id>` returns only packs that declare that
+exact value, in catalog order.
+
+External manifests may omit `use-cases`; list returns `use_cases: []` for them.
+A present declaration must be a non-empty list of unique lowercase kebab-case
+identifiers. `add`, `refresh --dry-run`, and `refresh` validate a present
+declaration before staging, so malformed metadata stops before projection or a
+profile write.
+
+`verify` deliberately excludes discovery-metadata validation. Use cases are
+read-only discovery metadata: they add no profile data, and other Compose
+lifecycle behavior is unchanged.
 
 ## Add Flow (coordinator)
 

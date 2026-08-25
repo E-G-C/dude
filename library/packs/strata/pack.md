@@ -1,6 +1,7 @@
 ---
 name: strata
 description: "Layered visual system for interfaces, graphics, data visualization, and documents: one structural language with two colour palettes, plane-and-rule elevation with no drop shadows, working UI type scale, 4/8 spacing, motion, and measured accessibility — in CSS, SCSS, JSON, and Tailwind, with a folder-local token validator."
+use-cases: [ui, visual-design]
 provides:
   agents:
     - dude-pack-strata-stylist

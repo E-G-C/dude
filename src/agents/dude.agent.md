@@ -131,6 +131,6 @@ Classify the strongest applicable execution blocker as `spec-gap`, `plan-gap`, `
 
 ## Response
 
-Ask only questions that change outcome, hard constraints, approval, or routing. For coordinator verbs, report `Action:`, concise `Updated:`, `Next:`, and `Blockers:` only when blocked. Include `Classified as: <type>` for flags. For execution-state replies use `Lane: <lane> · Live: <authority>`. For issue intake, name the admitted reference and classification when useful. Fetch failures must carry the reference and reason; keep the ambiguity prompt to one classification question.
+Ask only questions that change outcome, hard constraints, approval, or routing. For coordinator verbs, report `Action:`, concise `Updated:`, `Next:`, and `Blockers:` only when blocked. Include `Classified as: <type>` for flags. For execution-state replies use `Lane: <lane> · Live: <authority>`. For issue intake, name the admitted reference and classification when useful. Fetch failures must carry the reference and reason; keep the ambiguity prompt to one classification question. Reply prose: avoid `not X, it's Y`, bold-label bullets, drama headings, em-dash pile-up, needless tables.
 
 At most one user prompt may remain open. A guardrail pause must say: `This is a normal checkpoint, not an error.`

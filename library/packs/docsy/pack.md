@@ -1,6 +1,7 @@
 ---
 name: docsy
 description: "Docsy Hugo theme specialist: install paths, content authoring, theme customization, shortcodes, search/i18n/versioning, deployment, and AI-agent support."
+use-cases: [documentation, web-development]
 provides:
   agents:
     - dude-pack-docsy-expert

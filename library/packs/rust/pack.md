@@ -1,6 +1,7 @@
 ---
 name: rust
 description: "Rust specialist for Cargo workspaces, async/concurrency, ownership-heavy code, performance work, and Tauri desktop/mobile backends."
+use-cases: [software-development]
 provides:
   agents:
     - dude-pack-rust-specialist

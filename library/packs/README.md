@@ -63,6 +63,7 @@ because removal matches on the `dude-pack-<name>-` prefix.
 ---
 name: <pack-name>                 # matches the directory name
 description: <one line>
+use-cases: [<lowercase-kebab-case-id>, ...] # optional discovery metadata
 provides:
   agents: [dude-pack-<name>-<slug>, ...]
   skills: [dude-pack-<name>-<slug>, ...]
@@ -78,6 +79,20 @@ hooks:                            # optional: core extension points it fills
 
 <What it adds, when to install it, and any setup notes.>
 ```
+
+## Discovery metadata
+
+`use-cases` is optional discovery metadata. A declared list is non-empty and
+unique; each value starts with a lowercase letter and uses lowercase letters,
+digits, and single hyphens between segments. External packs may omit it; Compose
+lists an omitted declaration as `use_cases: []`. Every maintained catalog
+manifest declares at least one value.
+
+Use cases are separate from `routing_hints`: they support discovery, while
+routing hints map request keywords to agent handles. Use cases do not affect
+installation, routing, or the profile. Run
+`node .github/skills/dude-compose/compose.mjs list --use-case <id>` for exact
+matches; `--json` includes `use_cases` on every pack object.
 
 ## Installing / removing
 

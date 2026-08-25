@@ -1,6 +1,7 @@
 ---
 name: web
 description: "Backend and frontend specialist agents for web application work (APIs, services, persistence + UI, components, accessibility)."
+use-cases: [api, ui, web-development]
 provides:
   agents: [dude-pack-web-backend, dude-pack-web-frontend]
   skills: []

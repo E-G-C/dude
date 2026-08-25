@@ -1,6 +1,7 @@
 ---
 name: writing
 description: "Write clear, professional, actionable prose and remove common AI writing tells from human-facing content."
+use-cases: [writing]
 provides:
   agents: []
   skills:

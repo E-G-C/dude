@@ -1,6 +1,7 @@
 ---
 name: fluent-ui
 description: "Fluent UI React v9 specialist for design system compliance, component selection, theming, layout patterns, and accessible UI composition."
+use-cases: [ui]
 provides:
   agents:
     - dude-pack-fluent-ui-specialist

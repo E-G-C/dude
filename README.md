@@ -229,6 +229,15 @@ after you install it.
 @dude remove pack beads
 ```
 
+For a focused catalog query:
+
+```bash
+node .github/skills/dude-compose/compose.mjs list --use-case ui --json
+```
+
+`--use-case <id>` returns exact matches. JSON pack objects include `use_cases`;
+a pack without a declaration returns `[]`.
+
 The catalog holds 16 packs. Installed packs use the reserved `dude-pack-*`
 namespace and survive `@dude upgrade`, so a core refresh never removes what you
 installed.

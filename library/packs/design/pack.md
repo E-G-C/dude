@@ -1,6 +1,7 @@
 ---
 name: design
 description: "A visual design-proposal lane: mood, layout, look-and-feel, mockups, surface design, brand direction, preview approval, and applying an approved visual spec — overlaid on the task/verification lifecycle."
+use-cases: [ui, visual-design]
 provides:
   agents: []
   skills:

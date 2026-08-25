@@ -1,6 +1,7 @@
 ---
 name: coding
 description: "Software-development specialists — coder, tester, architect, and code-reviewer. The coding-domain pack for using Dude on software projects."
+use-cases: [software-development]
 provides:
   agents: [dude-pack-coding-architect, dude-pack-coding-coder, dude-pack-coding-reviewer, dude-pack-coding-tester]
   skills: [dude-pack-coding-spec-artifacts]

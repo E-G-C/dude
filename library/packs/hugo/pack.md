@@ -1,6 +1,7 @@
 ---
 name: hugo
 description: "Hugo site architecture, templates, asset pipeline, migration, and troubleshooting specialists for Hugo static sites."
+use-cases: [web-development]
 provides:
   agents:
     - dude-pack-hugo-site-architect
