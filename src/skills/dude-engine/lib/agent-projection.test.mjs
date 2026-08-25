@@ -48,6 +48,14 @@ const PACK_CATALOG = Object.freeze({
     },
   },
   beads: { manifestAgents: [], agents: {} },
+  clearline: {
+    manifestAgents: ['dude-pack-clearline-stylist'],
+    agents: {
+      'dude-pack-clearline-stylist': {
+        modelClass: 'visual', tools: ['read', 'edit', 'search', 'todo'],
+      },
+    },
+  },
   coding: {
     manifestAgents: [
       'dude-pack-coding-architect',
@@ -609,7 +617,7 @@ test('preserves the T005 catalog manifests, source metadata, and local delegatio
     }
     assert.doesNotThrow(() => projection.validateAgentSet(records), `${pack} local source set`);
   }
-  assert.equal(sourceCount, 29, 'the complete catalog retains its 29 authoritative pack sources');
+  assert.equal(sourceCount, 30, 'the complete catalog retains its 30 authoritative pack sources');
 });
 
 test('keeps the Technical Docs Writer roster exact and retains its agent selector', async () => {

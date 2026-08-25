@@ -406,5 +406,12 @@
       "T004@70726f6a": "x"
     },
     "updated_at": "2026-08-25T12:45:07.000Z"
+  },
+  ".dude/specs/042-pack-visual-neutrality/tasks.md": {
+    "glyphs": {
+      "T001@70757267": "x",
+      "T002@76657266": "x"
+    },
+    "updated_at": "2026-08-25T18:50:05.000Z"
   }
 }

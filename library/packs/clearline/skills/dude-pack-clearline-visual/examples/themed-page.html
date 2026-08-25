@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Clearline themed page</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../tokens/clearline.css" />
+  <style>
+    body { margin: var(--cl-space-0); }
+    .container {
+      margin: var(--cl-space-0) auto;
+      max-width: var(--cl-docs-content-width);
+      padding: var(--cl-space-7) var(--cl-space-5);
+    }
+    header.site,
+    footer.site {
+      align-items: center;
+      display: flex;
+      gap: var(--cl-space-3);
+      padding: var(--cl-space-4) var(--cl-space-5);
+    }
+    header.site { border-bottom: var(--cl-control-border-width) solid var(--cl-border); }
+    footer.site {
+      border-top: var(--cl-control-border-width) solid var(--cl-border);
+      color: var(--cl-text-muted);
+      font-size: var(--cl-fs-caption);
+      justify-content: space-between;
+    }
+    .hero {
+      background: var(--cl-bg-subtle);
+      border-radius: var(--cl-radius-lg);
+      padding: var(--cl-space-8) var(--cl-space-5);
+    }
+    .hero h1 { margin: var(--cl-space-0) var(--cl-space-0) var(--cl-space-4); }
+    .hero p { color: var(--cl-text-muted); max-width: var(--cl-docs-readable-width); }
+    .actions { display: flex; gap: var(--cl-space-3); margin-top: var(--cl-space-5); }
+    .grid {
+      display: grid;
+      gap: var(--cl-space-5);
+      grid-template-columns: repeat(auto-fit, minmax(var(--cl-card-min-width), 1fr));
+      margin-top: var(--cl-space-7);
+    }
+    .cl-tag {
+      align-items: center;
+      background: var(--cl-bg-subtle);
+      border-radius: var(--cl-radius-pill);
+      color: var(--cl-text-muted);
+      display: inline-flex;
+      font-size: var(--cl-fs-caption);
+      padding: var(--cl-space-1) var(--cl-space-2);
+    }
+  </style>
+</head>
+<body class="cl-brand">
+  <header class="site">
+    <div class="cl-lockup">
+      <span class="cl-mark"
+            style="--cl-mark-bg: var(--cl-color-primary-bg); --cl-mark-fg: var(--cl-color-primary-fg);"
+            aria-hidden="true">P</span>
+      <span class="cl-wordmark">Project name</span>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <span class="cl-tag">Style demo</span>
+      <h1 class="cl-h1">Clearline page treatment</h1>
+      <p>
+        Neutral surfaces carry the layout. A single primary role handles the
+        main action and the optional project mark.
+      </p>
+      <div class="actions">
+        <a class="cl-btn cl-btn-primary" href="#color-roles">Explore color roles</a>
+        <a class="cl-btn cl-btn-secondary" href="#typography">Read typography notes</a>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="cl-card" id="color-roles">
+        <h3 class="cl-h3">Color roles</h3>
+        <p>Decorative accents stay separate from contrast-safe control fills.</p>
+      </article>
+      <article class="cl-card" id="typography">
+        <h3 class="cl-h3">Typography</h3>
+        <p>Inter handles interface text. JetBrains Mono is reserved for code.</p>
+        <code>npm install</code>
+      </article>
+      <article class="cl-card">
+        <h3 class="cl-h3">Layout</h3>
+        <p>The page uses the spacing scale, restrained radii, and tokenized elevation.</p>
+      </article>
+    </section>
+  </main>
+
+  <footer class="site">
+    <div class="cl-lockup cl-lockup--compact">
+      <span class="cl-mark"
+            style="--cl-mark-bg: var(--cl-color-primary-bg); --cl-mark-fg: var(--cl-color-primary-fg);"
+            aria-hidden="true">P</span>
+      <span>Example project</span>
+    </div>
+    <div>Example page</div>
+  </footer>
+</body>
+</html>

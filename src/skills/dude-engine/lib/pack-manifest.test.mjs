@@ -19,6 +19,7 @@ const REPOSITORY_ROOT = path.resolve(
 const EXPECTED_CATALOG_USE_CASES = new Map([
   ['authoring', ['bundle-authoring']],
   ['beads', ['work-tracking']],
+  ['clearline', ['ui', 'visual-design']],
   ['coding', ['software-development']],
   ['copilot-sdk', ['software-development']],
   ['design', ['ui', 'visual-design']],

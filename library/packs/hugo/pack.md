@@ -98,4 +98,3 @@ processing, template authoring, and Hugo version upgrades.
 
 - `docsy` — adds the Docsy theme specialist and Docsy-specific prompts. Many
   Docsy workflows cross-reference Hugo skills, so installing both is common.
-- `ms-brand` — Microsoft-specific brand styling layered on Hugo/Docsy sites.

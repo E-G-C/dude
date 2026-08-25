@@ -61,9 +61,7 @@ never says the word "Hugo".
      `@dude-pack-hugo-troubleshooter`
    - Migrations, generator imports, Docsy/Hugo upgrades, v0.146+ work →
      `@dude-pack-hugo-migration-specialist`
-3. **Pair the brand check** when the change edits or produces a rendered
-   Hugo/Docsy surface: include `@dude-pack-ms-brand-stylist` before close.
-4. **Synthesize and report** the specialist's result back through Dude. Do not
+3. **Synthesize and report** the specialist's result back through Dude. Do not
    perform specialist domain work inline when a specialist can credibly own it.
 
 ## Escape hatches

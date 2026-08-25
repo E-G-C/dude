@@ -2,9 +2,10 @@
 
 [Back to root README](../README.md)
 
-Start with the root README. It shows the one-verb `@dude ship` path and the
-files Dude creates. Use these pages when you need setup details, a command
-reference, or advanced behavior.
+Start with the root README. It introduces Dude as a spec-driven development
+workflow, shows the short `@dude ship` path, and explains how packs extend the
+core. Use these pages when you need setup details, command grammar, or advanced
+behavior.
 
 ## If You Are New
 
@@ -19,6 +20,6 @@ Read only what you need:
 
 - [Bundle upgrading](upgrading.md) — ownership, preservation, preview/apply, and rollback.
 - [Repository development workflow](commands.md#repository-development-workflow) for core, pack, project-local, and docs-only changes.
-- [Pack catalog](../library/packs/README.md) — the 16 optional expansions (tracked boards, release tooling, domain specialists, documentation pipelines, prose quality) and how to install them.
+- [Pack catalog](../library/packs/README.md) — the 17 optional expansions, including tracked work, domain specialists, visual systems, release tooling, and writing support.
 - [Starting from a PRD draft](prd-drafts.md) — turn a longer markdown PRD into Dude files.
 - [Definition and execution reference](reference.md) — deeper ownership, task, and quality rules.

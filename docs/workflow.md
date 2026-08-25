@@ -4,17 +4,19 @@
 
 ## Simple Model
 
-Dude always starts the same way:
-`brainstorm -> idea -> define -> spec -> work`. Brainstorm and define are
-distinct: `@dude brainstorm <idea>` creates or refreshes one flat
+Dude uses one spec-driven path:
+`brainstorm -> idea -> define -> spec -> work`. The idea preserves intent, the
+specification defines the outcome, the plan chooses an implementation, and the
+task list drives verified execution. Brainstorm and define are distinct:
+`@dude brainstorm <idea>` creates or refreshes one flat
 `.dude/ideas/<slug>.md` file and does not create a spec package.
 
 ### Ship: one verb across the lifecycle
 
 `@dude ship [<target>]` accepts exactly one optional target and no flags. It
 resolves only the lifecycle stages its target is still missing, then advances
-inside whichever execution lane is already live until the work is done or an
-existing Work stop fires. It adds no lane, board, or state of its own.
+inside whichever execution lane is already live until done or an existing Work
+stop applies. It adds no lane, board, or state of its own.
 
 Imported tracked work keeps precedence over local candidates: Ship never invokes
 `track`, imports work, or falls back from tracked work to Lightweight Execution.
@@ -55,6 +57,12 @@ choose one of three paths:
 | Definition Only | You only need the plan | `.dude/specs/<feature>/` |
 | Lightweight Execution | You want to implement without an issue tracker (core default) | `.dude/specs/<feature>/tasks.md` |
 | Tracked Execution (beads pack) | You want issue tracking on a board — install with `@dude add pack beads` | the tracked board |
+
+The core supplies the Lightweight lane, but implementation still needs a
+specialist that matches the work. Install the `coding` pack for software
+projects, another domain pack for its specialty, or provide an equivalent
+project-local roster. Without one, Dude can define the feature but fails closed
+before dispatching implementation to an invented agent.
 
 ```mermaid
 graph LR

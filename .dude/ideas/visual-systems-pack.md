@@ -1,7 +1,7 @@
 ---
 title: Visual Systems Pack
 slug: visual-systems-pack
-status: draft
+status: resolved
 spec_path:
 ---
 
@@ -92,4 +92,5 @@ No material open questions remain for brainstorm. The two prior topology questio
 
 - 2026-08-24 UTC - brainstorm captured; definition deferred to explicit `define visual-systems-pack`
 - 2026-08-25 UTC - brainstorm refreshed; accepted Visual System Pack Convention with independent direct-child provider packs and bounded future onboarding UI context; definition deferred to explicit `define visual-systems-pack`
+- 2026-08-25 UTC - idea resolved without a package because the accepted convention is already the working architecture and its one reachable gap was closed directly: a throwaway-bundle probe installed a second visual-system pack beside `strata` with no code change, discovery listed both providers, the pack's `model-class: visual` resolved automatically, and lint and `compose verify` reported zero failures and zero leftovers; per-path coexistence already works through project-owned `dude-local-*` instructions because `applyTo` accepts glob lists; the missing explicit-selection rule was added to `dude-pack-authoring-pack-conventions` with the theme/style/design-system/brand vocabulary named so a future provider cannot claim exemption; the remaining violation, where domain packs hardcode visual providers and `ms-brand` is referenced but absent, is tracked as issue #20; an umbrella pack, provider registry, activation state, or separate Compose path would add machinery no caller needs
 <!-- dude:managed:end -->

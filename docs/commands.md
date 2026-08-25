@@ -834,8 +834,8 @@ node .github/skills/dude-compose/compose.mjs verify
 ```
 
 It exits `2` if any pack lints with a failure or leaves artifacts behind.
-Expected sibling-pack **warnings** (e.g. `hugo` referencing `docsy`/`ms-brand`
-when they are not installed alongside) do not fail the run.
+Expected sibling-pack **warnings** (e.g. `hugo` referencing `docsy`
+when it is not installed alongside) do not fail the run.
 
 `@dude self-check` covers the runtime drift that a static linter cannot see
 (lane banner presence, manual `[x]` flips, append-only log). The two are

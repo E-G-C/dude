@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **2**
+- Ideas awaiting definition: **1**
 - Defined awaiting work: **0**
-- Completed: **43**
+- Completed: **45**
 
 ## Current
 
@@ -21,7 +21,6 @@ No current work to diagram.
 ### Ideas awaiting definition
 
 - `backlog-canvas` — Backlog Canvas (`.dude/ideas/backlog-canvas.md`)
-- `visual-systems-pack` — Visual Systems Pack (`.dude/ideas/visual-systems-pack.md`)
 
 ## Completed
 
@@ -50,6 +49,7 @@ No current work to diagram.
 - `historical-core-dogfood-fixture-repair` — Historical Core Dogfood Fixture Repair (`.dude/ideas/historical-core-dogfood-fixture-repair.md`)
 - `pack-catalog-refetch` — Pack Catalog Re-fetch (`.dude/ideas/pack-catalog-refetch.md`)
 - `pack-discovery-metadata` — Pack Discovery Metadata (`.dude/ideas/pack-discovery-metadata.md`)
+- `pack-visual-neutrality` — Pack Visual Neutrality (`.dude/ideas/pack-visual-neutrality.md`)
 - `pre-work-log-learning` — Pre-work Log Learning (`.dude/ideas/pre-work-log-learning.md`)
 - `recovery-continuation` — Recovery Continuation (`.dude/ideas/recovery-continuation.md`)
 - `remove-legacy-compatibility` — Remove Legacy Compatibility From The Bundle (`.dude/ideas/remove-legacy-compatibility.md`)
@@ -68,6 +68,7 @@ No current work to diagram.
 - `transactional-pack-refresh` — Transactional Pack Refresh (`.dude/ideas/transactional-pack-refresh.md`)
 - `unattended-work-continuity` — Unattended Work Continuity (`.dude/ideas/unattended-work-continuity.md`)
 - `upgrade-pack-guidance-correction` — Upgrade Pack Guidance Correction (`.dude/ideas/upgrade-pack-guidance-correction.md`)
+- `visual-systems-pack` — Visual Systems Pack (`.dude/ideas/visual-systems-pack.md`)
 
 ## Dependency and order notes
 

@@ -207,7 +207,7 @@ cover every install location: `.github/agents`, `.github/skills`,
 `.github/instructions`, and `.github/prompts`.
 
 Expected sibling-pack **warnings** (not failures) when a pack references another
-pack not installed alongside it: `hugo` -> docsy/ms-brand and `fluent-ui` ->
+pack not installed alongside it: `hugo` -> docsy and `fluent-ui` ->
 web. Warnings are fine; only failures block.
 
 ## Rules

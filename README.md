@@ -1,29 +1,45 @@
 # Dude
 
-Dude is a set of markdown files that GitHub Copilot discovers in your
-repository: a coordinator agent, a small set of specialist agents, and the
-skills and instructions they follow. Together they give Copilot one workflow for
-building a feature: record the idea, turn it into a spec, plan, and task list,
-then implement the tasks and verify each one before marking it done.
+Dude is spec-driven development for GitHub Copilot.
 
-Everything Dude produces is markdown committed next to your code. The core needs
-no service, database, or build step. Dude requires GitHub Copilot in VS Code or
-the Copilot CLI; Node.js 20 or later is needed only by the bundle's own
-maintenance scripts.
+Start with a rough idea. Dude turns it into an inspectable specification, an
+implementation plan, and an ordered task list. It then coordinates the coding,
+testing, and review work, and requires fresh evidence before a task is marked
+done.
+
+The whole workflow lives in your repository as Markdown. You can read every
+decision, correct the intent, and resume work without depending on a hosted
+service or hidden project state. The core stays small; optional packs add domain
+specialists, visual systems, release tooling, tracked work, and other
+capabilities when a project needs them.
+
+Dude requires GitHub Copilot in VS Code or the Copilot CLI. Node.js 20 or later
+is needed only by the bundle's maintenance scripts.
 
 ## Install
 
-A release bundle contains `.github/` and a seeded `.dude/metadata/`. Unpack it,
-then copy both directories into the repository you want to work in:
+Download the latest `dude-bundle-*.zip` from
+[GitHub Releases](https://github.com/E-G-C/dude/releases/latest). Unpack it,
+then copy its `.github/` and `.dude/` directories into the repository you want
+to work in:
 
 ```bash
 # from the unpacked release bundle
 cp -r .github .dude my-project/
 ```
 
-Add `library/` from this repository if you also want the optional pack catalog.
-Reload VS Code afterwards so Copilot picks up the new agents and skills.
-[docs/setup.md](docs/setup.md) covers prerequisites and first-run details.
+Reload VS Code so Copilot picks up the new agents and skills. The core can
+brainstorm and define any feature. Before implementing software, add the coding
+pack so Dude has a coder, tester, architect, and code reviewer:
+
+```text
+@dude add pack coding
+```
+
+Pack commands fetch from the bundle's configured catalog source. Copy
+`library/` from this repository only when you want a vendored or offline
+catalog. [docs/setup.md](docs/setup.md) covers prerequisites and first-run
+details.
 
 ## Your First Feature
 
@@ -69,17 +85,10 @@ flowchart LR
   WORK --> DONE
 ```
 
-The idea already exists, so this run starts at define. On an explicit Ship
-invocation, the existing pre-Work stage owner runs its eligibility, prerequisite,
-authority, and safety gates before answerability. A checkpoint label alone does
-not stop Ship: when one clearly dominant conservative disposition follows from
-the accepted intent and evidence, the owner can continue without asking the user.
-A missing decision, evidence, or authority still stops for your input. See the
-complete [Ship policy](docs/commands.md#dude-ship).
-
 `@dude ship [<target>]` takes exactly one optional target and no flags, and it
-advances until the work is done or an existing Work stop fires. Ship performs no
-automatic Git or release action, and it never promises unconditional completion.
+runs until done unless an existing Work stop fires. Ship performs no automatic
+Git or release action. A missing decision, evidence, or authority still stops
+for your input. See the complete [Ship policy](docs/commands.md#dude-ship).
 
 Ship also runs in a repository with nothing on disk. There is no idea file to
 read then, so the name becomes the whole idea, and Dude has to interview you
@@ -87,24 +96,61 @@ before it can define anything. Two lines of your own words get you further. Use 
 bare name to resume a feature that already has an idea or a spec package rather
 than to start one.
 
-## GitHub Issue Input
+## Why Specs Come First
 
-One explicit GitHub issue can provide raw material for an ordinary request:
+Coding starts after the feature has a durable shape. The idea file preserves
+what you meant, including uncertainty. The specification says what must be true.
+The plan records how this repository will deliver it, and `tasks.md` becomes the
+execution contract.
+
+That separation keeps product decisions out of implementation guesses. When
+code exposes a missing decision, Dude routes the gap back to the artifact and
+owner responsible for it. When work finishes, tests and independent review
+provide the evidence for closing the task.
+
+You can stop after definition and use the package as a plan, or let Dude
+continue through implementation:
 
 ```text
-@dude brainstorm E-G-C/dude#20
-@dude brainstorm https://github.com/E-G-C/dude/issues/20
-@dude ship issue 20
+idea -> spec -> plan -> tasks -> code -> verification
 ```
 
-A bare number resolves only in the current repository. To name an issue
-elsewhere, use `owner/repository#number` or a URL; Dude has no
-default-repository setting and does not search across repositories.
+## Extend Dude With Packs
 
-A reference supplies input only. It does not authorize work. Asking what an
-issue says gets a direct answer and admits no work; capture or execution asks
-Dude to classify it.
-Merely discovering or displaying an issue does not authorize execution.
+The core owns the spec-driven workflow. Packs add capabilities without loading
+every project with every specialist, instruction, or tool. The catalog lives at
+[library/packs/](library/packs/README.md), and each pack is installed only where
+it is useful.
+
+| Pack | Adds | Install when |
+|---|---|---|
+| `coding` | coder, tester, architect, and code reviewer | you want Dude to implement software |
+| `beads` | a tracked issue board | you need issue-level tracking beyond `tasks.md` |
+| `web` | backend and frontend specialists | you are building a web application |
+| `clearline` | the Clearline visual system | the project selects Clearline for one or more surfaces |
+| `release` | release engineering and versioning guidance | you publish versioned releases |
+
+```text
+@dude list packs
+@dude add pack clearline
+@dude remove pack clearline
+```
+
+Packs are ordinary, independent capabilities. Installing one makes it available;
+the request or project guidance decides when it applies. Projects can keep local
+rules under `dude-local-*`, including path-scoped choices that use different
+visual systems in different parts of one repository.
+
+For a focused catalog query:
+
+```bash
+node .github/skills/dude-compose/compose.mjs list --use-case ui --json
+```
+
+`--use-case <id>` returns exact matches. JSON pack objects include `use_cases`;
+a pack without a declaration returns `[]`. The catalog currently holds 17
+packs. Installed pack files use the reserved `dude-pack-*` namespace and survive
+core upgrades.
 
 ## What Dude Writes
 
@@ -171,6 +217,16 @@ Ship runs autonomously with an unlimited budget, authorizing the next attempt
 itself at recoverable checkpoints. `@dude work` stays guarded by default and is
 the advanced form when you want to set budgets, recovery, or policy yourself.
 
+### How Ship Handles Checkpoints
+
+During an explicit Ship run, the existing pre-Work stage owner applies its
+eligibility, prerequisite, authority, and safety gates before answerability. A
+checkpoint label alone does not stop Ship. When the accepted intent and evidence
+support one clearly dominant conservative disposition, that owner can continue
+without asking the user. Dude pauses when the choice remains consequential or
+uncertain. The complete rules are in the
+[Ship command reference](docs/commands.md#dude-ship).
+
 Brainstorm and define are also the only way to change intent, since Ship never
 refreshes a package behind your back.
 
@@ -210,39 +266,26 @@ Dude classifies the blocker and routes it to whoever owns that decision.
 Full grammar, illustrative results, and the maintenance verbs are in
 [docs/commands.md](docs/commands.md).
 
-## Packs (Optional Expansions)
+## GitHub Issue Input
 
-The core covers the feature workflow. Domain- and workflow-specific material
-lives in the catalog at [library/packs/](library/packs/README.md) and loads only
-after you install it.
-
-| Pack | Adds | Install when |
-|---|---|---|
-| `beads` | a tracked issue board (import, claim/close, mirror) | you want issue-level tracking instead of `tasks.md` |
-| `release` | a release-manager agent plus tag, pipeline-parity, and write-back skills | you publish versioned releases |
-| `web` | backend and frontend specialist agents | you build web apps (APIs and UI) |
-| `practices` | a tests-first (TDD) workflow skill | you want tests-first discipline |
+One explicit GitHub issue can provide raw material for an ordinary request:
 
 ```text
-@dude list packs
-@dude add pack beads
-@dude remove pack beads
+@dude brainstorm E-G-C/dude#20
+@dude brainstorm https://github.com/E-G-C/dude/issues/20
+@dude ship issue 20
 ```
 
-For a focused catalog query:
+A bare number resolves only in the current repository. To name an issue
+elsewhere, use `owner/repository#number` or a URL; Dude has no
+default-repository setting and does not search across repositories.
 
-```bash
-node .github/skills/dude-compose/compose.mjs list --use-case ui --json
-```
+A reference supplies input only. It does not authorize work. Asking what an
+issue says gets a direct answer and admits no work; capture or execution asks
+Dude to classify it. Merely discovering or displaying an issue does not
+authorize execution.
 
-`--use-case <id>` returns exact matches. JSON pack objects include `use_cases`;
-a pack without a declaration returns `[]`.
-
-The catalog holds 16 packs. Installed packs use the reserved `dude-pack-*`
-namespace and survive `@dude upgrade`, so a core refresh never removes what you
-installed.
-
-### When To Add A Tracked Board
+## When To Add A Tracked Board
 
 Dude implements straight from `tasks.md`, which is enough to finish a feature.
 Add the `beads` pack when you want issue-level tracking, richer multi-user

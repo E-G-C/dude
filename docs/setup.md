@@ -2,10 +2,10 @@
 
 [Back to root README](../README.md) | [Docs index](README.md) | [Workflow modes](workflow.md)
 
-Use the root README for the short lean-core quick start and the basic repo
-layout. This page owns the deeper setup material: prerequisites, first real
-feature setup, guardrails, advanced memory seeding, roster changes, and
-workflow boundaries.
+Use the root README for the short spec-driven quick start, pack model, and basic
+repository layout. This page carries the deeper setup material: prerequisites,
+first real feature setup, guardrails, advanced memory seeding, roster changes,
+and workflow boundaries.
 
 ## Prerequisites
 
@@ -25,8 +25,9 @@ feature as long as you provide the desired outcome and any hard constraints.
 
 The minimum useful setup is:
 
-- unpack the released bundle at the repository root so `.github/` engine files and seeded `.dude/metadata/` both land in place (and copy `library/` only when you vendor the optional pack catalog)
-- optionally install packs you need with `@dude add pack <name>`
+- download the latest `dude-bundle-*.zip` from [GitHub Releases](https://github.com/E-G-C/dude/releases/latest), then unpack it at the repository root so `.github/` engine files and seeded `.dude/metadata/` both land in place
+- install the packs needed for the work; software implementation normally starts with `@dude add pack coding`
+- copy `library/` only when you want a vendored or offline pack catalog
 - optionally remember one to three durable constraints
 
 Then start your first feature by writing the idea down and handing it over:
@@ -36,9 +37,12 @@ Then start your first feature by writing the idea down and handing it over:
 @dude ship expense-entry
 ```
 
+Core alone can capture and define the feature. Software execution needs the
+coding pack or an equivalent project-local implementation and testing roster.
+
 `@dude ship [<target>]` takes one optional target and no flags, runs only the
-stages the target is still missing, and advances until the work is done or an
-existing Work stop fires. It runs the same brainstorm and define stages you
+stages the target is still missing, and continues until the target is done or
+an existing Work stop fires. It runs the same brainstorm and define stages you
 would run by hand. During explicit Ship, the definition owner may make a
 qualifying guardrail disposition under Ship-authorized authority; that is not
 direct user ratification. The complete policy is in the

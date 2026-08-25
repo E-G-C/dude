@@ -86,4 +86,3 @@ for the underlying engine behavior.
 
 - `hugo` — Hugo engine specialists; Docsy prompts and skills cross-reference
   Hugo skills for non-Docsy behavior.
-- `ms-brand` — Microsoft visual-brand layer; pair with Docsy for branded sites.

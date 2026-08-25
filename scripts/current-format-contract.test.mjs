@@ -4711,8 +4711,8 @@ test('Ship command reference pins the lifecycle matrix, pre-mutation stops, and 
   assertShipAuthorityMutations(section, context);
 });
 
-test('Ship README gives the concise owner-first exception and links the full reference', () => {
-  const section = markdownSection(read('README.md'), '## Your First Feature');
+test('Ship README gives the concise owner-first exception after the quick start', () => {
+  const section = markdownSection(read('README.md'), '## How Much To Drive It');
 
   assertShipParagraphRequirements(section, [
     ['owner-first answerability replaces a label-only checkpoint pause', [
@@ -4724,7 +4724,7 @@ test('Ship README gives the concise owner-first exception and links the full ref
     ['the README sends detailed Ship policy to the command reference', [
       [/\]\(docs\/commands\.md#dude-ship\)/i],
     ]],
-  ], 'README.md ## Your First Feature');
+  ], 'README.md ## How Much To Drive It');
 });
 
 test('Ship command reference carries the complete owner-first definition contract', () => {

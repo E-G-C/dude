@@ -27,13 +27,14 @@ namespace, which the engine treats as a distinct ownership tier:
 | `practices` | tests-first (TDD) workflow skill | you want a tests-first implementation discipline |
 | `hugo` | 5 Hugo specialist agents + 7 skills + instructions + prompts | you build or maintain Hugo static sites |
 | `docsy` | Docsy theme expert + theme skill + Docsy-specific prompts | you use the Docsy Hugo theme (pairs with `hugo`) |
-| `ms-brand` | Microsoft visual-brand stylist + brand reference assets | you apply Microsoft branding to a site (pairs with `hugo` / `docsy`) |
 | `rust` | Rust specialist agent + Tauri development skill | you write Rust or build Tauri desktop/mobile apps |
 | `fluent-ui` | Fluent UI React v9 specialist agent | you build UIs with `@fluentui/react-components` |
 | `copilot-sdk` | GitHub Copilot SDK specialist agent | you build apps on the Copilot SDK |
 | `newsroom` | newsroom writer + event deep-fetcher agents + article / calendar-event / static-safe-time skills | you publish news & events to a Hugo/Docsy site's News section |
 | `writing` | avoid-AI-writing-tropes and professional-style prose-quality skills | you want a canonical guard against AI writing tells and consistent prose voice |
 | `design` | design-proposal workflow + frontend-aesthetics judgment guidance | you want a visual design workflow overlaid on the task lifecycle |
+| `strata` | Strata visual system: planes-and-rules elevation, two palettes, type scale, 4/8 spacing, motion, token validator | you choose Strata as a project's visual system |
+| `clearline` | Clearline visual system: calm neutrals, four accents, Inter type, 8-pt grid, shared left edge, optional brand-mark slot | you choose Clearline as a project's visual system |
 | `technical-docs` | 5 technical-document agents + 7 skills (evidence-ledger pipeline) + 2 prompts | you generate or update technical docs from a repo, transcripts, notes, drafts, or existing docs |
 
 Packs are added to this table as they are migrated out of core.
@@ -118,4 +119,4 @@ node .github/skills/dude-compose/compose.mjs verify
 It temp-installs each pack into a throwaway copy of the bundle, runs
 `dude-lint`, removes the pack, and checks for leftovers. Exit code `2` if any
 pack lints with a failure. Sibling-pack **warnings** (e.g. `hugo` referencing
-docsy/ms-brand when they are not installed) are expected and do not fail.
+docsy when it is not installed) are expected and do not fail.
