@@ -9,9 +9,12 @@
       "effort": "medium"
     },
     "reasoning": {
-      "effort": "high"
+      "effort": "max"
     },
     "visual": {
+      "effort": "max"
+    },
+        "coding": {
       "effort": "max"
     }
   },
@@ -25,7 +28,8 @@
         "fast": "gpt-5.6-luna",
         "balanced": "gpt-5.6-terra",
         "reasoning": "gpt-5.6-sol",
-        "visual": "claude-opus-5"
+        "visual": "claude-opus-5",
+        "coding":"gpt-5.6-sol-fast"
       }
     }
   }

@@ -3,7 +3,7 @@ name: Coder
 description: "Implements features from tasks.md: writes code, wires modules, and follows project conventions. Use for software implementation work."
 tools: ["read", "edit", "execute", "search"]
 user-invocable: false
-model-class: balanced
+model-class: coding
 ---
 
 You are the coding implementation specialist.

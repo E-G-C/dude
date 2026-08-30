@@ -934,6 +934,7 @@ const LANE_SNAPSHOT = '.dude/state/task-state.json';
 const LANE_TASK_KEY = 'T001@6c616e65';
 const LANE_OTHER_KEY = 'T002@6f746865';
 const LANE_STAMP = '2026-07-25T12:00:00Z';
+const LANE_EMPTY_SNAPSHOT = Buffer.from('{}\n');
 const LANE_TARGET = { specPath: LANE_SPEC, lane: 'lightweight', taskKey: LANE_TASK_KEY };
 const LANE_RUN_STATE = {
   policy: { overall: 3, recovery: 1, recover: false, untilBlocked: false, mode: 'autonomous' },
@@ -976,6 +977,40 @@ function writeLaneFile(root, rel, content) {
 /** @param {string} root @param {string} rel */
 function laneBytes(root, rel) {
   return fs.readFileSync(path.join(root, ...rel.split('/')));
+}
+
+/** @param {string} root */
+function laneSnapshotPath(root) {
+  return path.join(root, ...LANE_SNAPSHOT.split('/'));
+}
+
+/**
+ * Capture the physical form of the optional snapshot without following links.
+ * `unreadableBytes` is the known preimage for a deliberately unreadable regular
+ * file, which this test process must not try to read after permissions change.
+ * @param {string} root
+ * @param {Buffer} [unreadableBytes]
+ */
+function laneSnapshotShape(root, unreadableBytes) {
+  const absolute = laneSnapshotPath(root);
+  let stat;
+  try {
+    stat = fs.lstatSync(absolute);
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'ENOENT') return { kind: 'missing' };
+    throw error;
+  }
+  const mode = stat.mode & 0o777;
+  if (stat.isSymbolicLink()) return { kind: 'symlink', mode, target: fs.readlinkSync(absolute) };
+  if (stat.isDirectory()) return { kind: 'directory', mode, entries: fs.readdirSync(absolute).sort() };
+  if (stat.isFile()) {
+    return {
+      kind: 'file',
+      mode,
+      bytes: unreadableBytes === undefined ? fs.readFileSync(absolute) : Buffer.from(unreadableBytes),
+    };
+  }
+  return { kind: 'nonregular', mode };
 }
 
 /** @param {Buffer|string} value */
@@ -1125,7 +1160,7 @@ function laneProjectionMutation(overrides = {}) {
 /**
  * Build one complete valid wrapper request against the CURRENT fresh bytes.
  * @param {string} root
- * @param {{operation?:'work-project'|'work-set',mutation?:any,state?:any,glyph?:string,blockedBy?:string|null,taskKey?:string,mappingOverrides?:Record<string,unknown>}} [options]
+ * @param {{operation?:'work-project'|'work-set',mutation?:any,state?:any,glyph?:string,blockedBy?:string|null,taskKey?:string,mappingOverrides?:Record<string,unknown>,taskStateCapture?:Buffer|string}} [options]
  */
 function laneRequest(root, options = {}) {
   const operation = options.operation ?? 'work-set';
@@ -1133,7 +1168,15 @@ function laneRequest(root, options = {}) {
   const state = options.state ?? LANE_RUN_STATE;
   const taskKey = options.taskKey ?? LANE_TASK_KEY;
   const target = { specPath: LANE_SPEC, lane: 'lightweight', taskKey };
-  const surfaces = laneSurfaces(root);
+  const surfaces = {
+    tasks: laneBytes(root, LANE_TASKS),
+    // An absent optional snapshot has a semantic canonical baseline even though
+    // no physical file can be read. Callers otherwise bind the actual bytes.
+    taskState: options.taskStateCapture === undefined
+      ? laneBytes(root, LANE_SNAPSHOT)
+      : Buffer.from(options.taskStateCapture),
+    owner: laneBytes(root, LANE_IDEA),
+  };
   const ownerCapture = laneCapture(surfaces.owner);
   const ownerBindingHash = sha256(canonicalJson({
     ideaPath: LANE_IDEA,
@@ -1232,6 +1275,44 @@ function assertLaneRefusal(root, request, reason, label, options = {}) {
     assert.ok(before[surface].equals(after[surface]), `${label}: ${surface} must stay byte-identical`);
   }
   return result;
+}
+
+/**
+ * Fault the persistence primitive used by the real lane boundary. The legacy
+ * writer truncates its direct target before failing; the atomic batch writer
+ * stages by descriptor and fails before the target replacement. Supporting
+ * both keeps this test at the public boundary while migration changes it.
+ * @param {(absolutePath:string, operation:'write'|'rename')=>boolean} shouldFail
+ * @param {()=>unknown} apply
+ */
+function applyWithInjectedLanePersistenceFailure(shouldFail, apply) {
+  const realWriteFileSync = fs.writeFileSync;
+  const realRenameSync = fs.renameSync;
+  let injected = 0;
+  const failIfSelected = (file, operation) => {
+    const absolutePath = typeof file === 'string' ? path.resolve(file) : '';
+    if (injected === 0 && shouldFail(absolutePath, operation)) {
+      injected += 1;
+      if (operation === 'write') realWriteFileSync(file, Buffer.alloc(0));
+      throw new Error(`injected lane ${operation} failure`);
+    }
+  };
+  // @ts-ignore -- deliberate test-only persistence failure injection
+  fs.writeFileSync = (file, data, ...rest) => {
+    failIfSelected(file, 'write');
+    return realWriteFileSync(file, data, ...rest);
+  };
+  // @ts-ignore -- deliberate test-only persistence failure injection
+  fs.renameSync = (from, to, ...rest) => {
+    failIfSelected(to, 'rename');
+    return realRenameSync(from, to, ...rest);
+  };
+  try {
+    return { result: apply(), injected };
+  } finally {
+    fs.writeFileSync = realWriteFileSync;
+    fs.renameSync = realRenameSync;
+  }
 }
 
 test('T006 lane mutation reads only visible task syntax, never fenced lookalikes', () => {
@@ -1773,6 +1854,158 @@ test('T006 lightweight boundary rejects owner, snapshot, and root failures befor
   }
 });
 
+test('issue #21: an absent optional snapshot uses the canonical empty baseline and is created by the first mutation', () => {
+  // Arrange: the semantic capture is canonical `{}` while the physical preimage
+  // is absent. This is the only valid missing-snapshot representation.
+  const root = scaffoldLane();
+  try {
+    const snapshotPath = laneSnapshotPath(root);
+    fs.rmSync(snapshotPath);
+    const beforeTasks = laneBytes(root, LANE_TASKS);
+    const beforeOwner = laneBytes(root, LANE_IDEA);
+    assert.deepEqual(laneSnapshotShape(root), { kind: 'missing' });
+    const request = laneRequest(root, { taskStateCapture: LANE_EMPTY_SNAPSHOT });
+
+    // Act.
+    const result = applyLightweightWorkRequest(request);
+
+    // Assert: the authorized claim atomically establishes the real snapshot
+    // rather than treating absence as an expected-capture mismatch.
+    assert.equal(result.ok, true, `absent optional snapshot result: ${canonicalJson(result)}`);
+    assertAutonomousCommittedResult(result, root, 'absent optional snapshot');
+    assert.ok(fs.existsSync(snapshotPath), 'the first committed mutation creates the snapshot');
+    assert.equal(result.receipt.tasksPoststateHash, sha256(laneBytes(root, LANE_TASKS)));
+    assert.equal(result.receipt.ownerPoststateHash, sha256(laneBytes(root, LANE_IDEA)));
+    assert.equal(beforeTasks.equals(laneBytes(root, LANE_TASKS)), false, 'the claim changes tasks');
+    assert.ok(beforeOwner.equals(laneBytes(root, LANE_IDEA)), 'claim leaves its no-op owner log exact');
+    assert.deepEqual(JSON.parse(laneBytes(root, LANE_SNAPSHOT).toString('utf8'))[LANE_TASKS], {
+      glyphs: { [LANE_TASK_KEY]: '~', [LANE_OTHER_KEY]: ' ' },
+      updated_at: '2026-07-25T12:00:00.000Z',
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('issue #21: unsafe physical snapshots never borrow the absent-snapshot baseline', () => {
+  /** @type {Array<{
+   *   label:string,
+   *   arrange:(root:string)=>{unreadableBytes?:Buffer, assertExtra?:()=>void, cleanup?:()=>void}
+   * }>} */
+  const cases = [
+    {
+      label: 'zero-byte snapshot',
+      arrange(root) {
+        fs.writeFileSync(laneSnapshotPath(root), Buffer.alloc(0));
+        return {};
+      },
+    },
+    {
+      label: 'malformed snapshot',
+      arrange(root) {
+        const malformed = Buffer.from('{ not json\n');
+        fs.writeFileSync(laneSnapshotPath(root), malformed);
+        return {};
+      },
+    },
+    {
+      label: 'nonregular snapshot directory',
+      arrange(root) {
+        const snapshotPath = laneSnapshotPath(root);
+        fs.rmSync(snapshotPath);
+        fs.mkdirSync(snapshotPath);
+        return {};
+      },
+    },
+    {
+      label: 'symlinked snapshot',
+      arrange(root) {
+        const snapshotPath = laneSnapshotPath(root);
+        const outside = path.join(root, 'outside-task-state.json');
+        // A valid empty target proves the boundary rejects the link itself,
+        // rather than merely refusing because a followed target is malformed.
+        const outsideBytes = Buffer.from(LANE_EMPTY_SNAPSHOT);
+        fs.writeFileSync(outside, outsideBytes);
+        fs.rmSync(snapshotPath);
+        fs.symlinkSync(outside, snapshotPath);
+        return {
+          assertExtra() {
+            assert.deepEqual(fs.readFileSync(outside), outsideBytes, 'symlink target stays untouched');
+          },
+        };
+      },
+    },
+  ];
+  if (process.getuid?.() !== 0) {
+    cases.push({
+      label: 'unreadable snapshot',
+      arrange(root) {
+        const snapshotPath = laneSnapshotPath(root);
+        const original = fs.readFileSync(snapshotPath);
+        fs.chmodSync(snapshotPath, 0o000);
+        return {
+          unreadableBytes: original,
+          cleanup() {
+            fs.chmodSync(snapshotPath, 0o644);
+          },
+        };
+      },
+    });
+  }
+
+  for (const scenario of cases) {
+    const root = scaffoldLane();
+    let cleanup = () => {};
+    try {
+      const arranged = scenario.arrange(root);
+      cleanup = arranged.cleanup ?? cleanup;
+      const before = {
+        tasks: laneBytes(root, LANE_TASKS),
+        owner: laneBytes(root, LANE_IDEA),
+        snapshot: laneSnapshotShape(root, arranged.unreadableBytes),
+      };
+      // Bind the only semantic value allowed for a truly absent snapshot. A
+      // faulty null/nonregular fallback would accept this against an unsafe node.
+      const request = laneRequest(root, {
+        taskStateCapture: LANE_EMPTY_SNAPSHOT,
+        mutation: laneMutation({
+          ownerLog: laneOwnerAppend(root, ['- 2026-07-25T12:00:00Z - unsafe snapshot must refuse']),
+        }),
+      });
+
+      // Act.
+      const result = applyLightweightWorkRequest(request);
+
+      // Assert: only physical absence is an empty baseline. Every unsafe
+      // present form refuses and preserves its exact node/bytes.
+      assert.equal(result.ok, false, scenario.label);
+      assert.equal(result.phase, 'refused', scenario.label);
+      assert.match(result.unchangedPrestateHash, /^[0-9a-f]{64}$/, scenario.label);
+      assert.ok(before.tasks.equals(laneBytes(root, LANE_TASKS)), `${scenario.label}: tasks stay exact`);
+      assert.ok(before.owner.equals(laneBytes(root, LANE_IDEA)), `${scenario.label}: owner stays exact`);
+      assert.deepEqual(
+        laneSnapshotShape(root, arranged.unreadableBytes),
+        before.snapshot,
+        `${scenario.label}: snapshot node and bytes stay exact`,
+      );
+      if (arranged.unreadableBytes) {
+        const snapshotPath = laneSnapshotPath(root);
+        fs.chmodSync(snapshotPath, 0o644);
+        assert.deepEqual(
+          fs.readFileSync(snapshotPath),
+          arranged.unreadableBytes,
+          `${scenario.label}: unreadable snapshot bytes stay exact`,
+        );
+        fs.chmodSync(snapshotPath, 0o000);
+      }
+      arranged.assertExtra?.();
+    } finally {
+      cleanup();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test('T006 lightweight boundary rejects an ambiguous canonical task mapping', () => {
   const root = scaffoldLane();
   try {
@@ -1788,28 +2021,27 @@ test('T006 lightweight boundary rejects an ambiguous canonical task mapping', ()
 });
 
 // Atomicity is safety-critical: a partially applied board would corrupt live
-// workflow state. The three surfaces are written in order (tasks, snapshot,
-// owner), so blocking each one in turn exercises a failure BEFORE the first
-// write, AFTER one write, and AFTER two writes. Every case must roll the
-// already-written surfaces back and leave all three byte-identical.
-test('T006 lightweight application is atomic when any surface stage fails mid-sequence', (context) => {
-  if (process.platform === 'win32') return context.skip('POSIX permission semantics differ on Windows');
-  if (process.getuid?.() === 0) return context.skip('root ignores write permissions');
+// workflow state. Inject at each real destination rather than using file mode
+// bits, because atomic replacement rightly does not inherit a target file's
+// read-only bit.
+test('T006 lightweight application restores every existing surface after a persistence failure', () => {
   for (const blocked of [LANE_TASKS, LANE_SNAPSHOT, LANE_IDEA]) {
     const root = scaffoldLane();
     const absolute = path.join(root, ...blocked.split('/'));
     try {
-      // An owner-log append makes all three surfaces genuinely change, so each
-      // stage has real bytes to roll back.
+      // An owner-log append makes all three surfaces genuinely change.
       const mutation = laneMutation({ ownerLog: laneOwnerAppend(root, ['- 2026-07-25T12:00:00Z - lane claim']) });
       const request = laneRequest(root, { mutation });
       const before = laneSurfaces(root);
 
-      fs.chmodSync(absolute, 0o444);
-      const result = applyLightweightWorkRequest(request);
-      fs.chmodSync(absolute, 0o644);
+      // Act: fail the direct writer or the staged replacement at this surface.
+      const { result, injected } = applyWithInjectedLanePersistenceFailure(
+        (candidate) => candidate === absolute,
+        () => applyLightweightWorkRequest(request),
+      );
       const after = laneSurfaces(root);
 
+      assert.equal(injected, 1, `${blocked}: deterministic persistence failure fired`);
       assert.equal(result.ok, false, `${blocked}: must not report success`);
       assert.equal(result.phase, 'refused', `${blocked}: phase`);
       assert.equal(result.reason, 'atomic-apply-failed', `${blocked}: reason`);
@@ -1824,51 +2056,50 @@ test('T006 lightweight application is atomic when any surface stage fails mid-se
   }
 });
 
-// A read-only surface fails at OPEN, so it is never truncated. The dangerous
-// case is the opposite one: `O_TRUNC` succeeds and the data never lands
-// (ENOSPC, EIO, EDQUOT). That is not portably reproducible, so it is injected
-// through the writer the boundary actually calls -- the file is genuinely
-// truncated on disk before the failure, exactly as the kernel would leave it.
-test('T006 lightweight rollback restores a surface truncated by a mid-write failure', () => {
+test('issue #21: a later persistence failure restores task and owner bytes and snapshot absence', () => {
   const root = scaffoldLane();
-  const realWriteFileSync = fs.writeFileSync;
-  const snapshotAbsolute = path.join(root, ...LANE_SNAPSHOT.split('/'));
   try {
+    // Arrange: this request has the valid semantic empty baseline but no
+    // snapshot preimage on disk. A failure only after creation must delete it.
+    const snapshotAbsolute = laneSnapshotPath(root);
+    fs.rmSync(snapshotAbsolute);
     const mutation = laneMutation({ ownerLog: laneOwnerAppend(root, ['- 2026-07-25T12:00:00Z - lane claim']) });
-    const request = laneRequest(root, { mutation });
-    const before = laneSurfaces(root);
-
-    // The snapshot is the SECOND surface written, so tasks.md is already
-    // committed when the injected failure truncates this one.
-    let injected = 0;
-    // @ts-ignore -- the deliberate failing-writer injection
-    fs.writeFileSync = (file, data, ...rest) => {
-      if (injected === 0 && file === snapshotAbsolute) {
-        injected += 1;
-        realWriteFileSync(file, '');
-        const error = new Error('ENOSPC: no space left on device, write');
-        // @ts-ignore -- errno codes are not on the Error type
-        error.code = 'ENOSPC';
-        throw error;
-      }
-      return realWriteFileSync(file, data, ...rest);
+    const request = laneRequest(root, { mutation, taskStateCapture: LANE_EMPTY_SNAPSHOT });
+    const before = {
+      tasks: laneBytes(root, LANE_TASKS),
+      owner: laneBytes(root, LANE_IDEA),
+      snapshot: laneSnapshotShape(root),
     };
-    const result = applyLightweightWorkRequest(request);
-    fs.writeFileSync = realWriteFileSync;
-    const after = laneSurfaces(root);
+    const mutablePaths = new Set([
+      path.join(root, ...LANE_TASKS.split('/')),
+      path.join(root, ...LANE_IDEA.split('/')),
+    ]);
 
-    assert.equal(injected, 1, 'the mid-write failure actually fired');
+    // Act: wait until the snapshot exists, then fail a later task/owner
+    // persistence operation. This works for both direct write ordering and
+    // byte-sorted staged replacement without exposing a production test hook.
+    const { result, injected } = applyWithInjectedLanePersistenceFailure(
+      (candidate) => candidate !== snapshotAbsolute
+        && mutablePaths.has(candidate)
+        && fs.existsSync(snapshotAbsolute),
+      () => applyLightweightWorkRequest(request),
+    );
+
+    // Assert.
+    assert.equal(
+      injected,
+      1,
+      `the failure occurred after snapshot creation: ${canonicalJson(result)}`,
+    );
     assert.equal(result.ok, false, 'must not report success');
     assert.equal(result.phase, 'refused');
     assert.equal(result.reason, 'atomic-apply-failed');
     assert.equal(result.receipt, undefined, 'a failed application carries no receipt');
-    assert.ok(after.taskState.byteLength > 0, 'the truncated surface must not be left empty');
-    for (const surface of /** @type {const} */ (['tasks', 'taskState', 'owner'])) {
-      assert.ok(before[surface].equals(after[surface]), `${surface} must stay byte-identical`);
-    }
-    assert.equal(result.unchangedPrestateHash, laneObservationHash(root), 'fresh unchanged evidence');
+    assert.ok(before.tasks.equals(laneBytes(root, LANE_TASKS)), 'tasks must stay byte-identical');
+    assert.ok(before.owner.equals(laneBytes(root, LANE_IDEA)), 'owner must stay byte-identical');
+    assert.deepEqual(laneSnapshotShape(root), before.snapshot, 'snapshot absence must be restored');
+    assert.match(result.unchangedPrestateHash, /^[0-9a-f]{64}$/, 'refusal retains a fresh observation');
   } finally {
-    fs.writeFileSync = realWriteFileSync;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

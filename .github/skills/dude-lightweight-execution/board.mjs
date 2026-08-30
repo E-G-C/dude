@@ -135,6 +135,9 @@ Usage:
 Flags: --root <dir> (snapshot anchor, default cwd), --json
 `;
 
+const EMPTY_TASK_STATE_BYTES = Buffer.from('{}\n');
+const MISSING_TASK_STATE_PREIMAGE = 'missing';
+
 /** @param {any} args @returns {number} exit code */
 function run(args) {
   if (args.help || !args.cmd || !args.file) {
@@ -565,14 +568,60 @@ function readLightweightSurfaces(surfaces) {
     const bytes = fs.readFileSync(surface.absolutePath);
     return { ...surface, bytes, descriptor: descriptorOf(bytes) };
   };
-  return { tasks: read(surfaces.tasks), taskState: read(surfaces.taskState), owner: read(surfaces.owner) };
+  const taskState = readTaskState(surfaces.root);
+  if (taskState.status === 'absent') {
+    return {
+      tasks: read(surfaces.tasks),
+      taskState: {
+        ...surfaces.taskState,
+        bytes: Buffer.from(EMPTY_TASK_STATE_BYTES),
+        descriptor: descriptorOf(EMPTY_TASK_STATE_BYTES),
+        observedDescriptor: null,
+        preimage: MISSING_TASK_STATE_PREIMAGE,
+        status: 'absent',
+      },
+      owner: read(surfaces.owner),
+    };
+  }
+  if (taskState.status === 'corrupt') {
+    let observed = { bytes: null, descriptor: null };
+    try {
+      observed = read(surfaces.taskState);
+    } catch {
+      // `readTaskState` has already established that this is not a usable
+      // snapshot. Preserve an unreadable physical node as unobservable.
+    }
+    return {
+      tasks: read(surfaces.tasks),
+      taskState: {
+        ...surfaces.taskState,
+        bytes: null,
+        descriptor: observed.descriptor,
+        observedDescriptor: observed.descriptor,
+        preimage: null,
+        status: 'corrupt',
+      },
+      owner: read(surfaces.owner),
+    };
+  }
+  const observed = read(surfaces.taskState);
+  return {
+    tasks: read(surfaces.tasks),
+    taskState: {
+      ...observed,
+      observedDescriptor: observed.descriptor,
+      preimage: observed.bytes,
+      status: 'ok',
+    },
+    owner: read(surfaces.owner),
+  };
 }
 
 /** @param {ReturnType<typeof readLightweightSurfaces>} observation */
 function observationHash(observation) {
   return sha256(canonicalJson({
     owner: observation.owner.descriptor,
-    taskState: observation.taskState.descriptor,
+    taskState: observation.taskState.observedDescriptor,
     tasks: observation.tasks.descriptor,
   }));
 }
@@ -919,14 +968,22 @@ function lightweightTasksPostimage(visible, bytes, task, mutation, blocker, appe
 
 /**
  * Write every changed surface, then restore all preimages if any write throws.
- * @param {{absolutePath:string,before:Buffer,after:Buffer}[]} files
+ * @param {{absolutePath:string,before:Buffer|'missing',after:Buffer}[]} files
  */
 function applyAtomically(files) {
-  /** @type {{absolutePath:string,before:Buffer,after:Buffer}[]} */
+  /** @type {{absolutePath:string,before:Buffer|'missing',after:Buffer}[]} */
   const written = [];
+  let createdSnapshotDirectory = null;
   try {
     for (const file of files) {
-      if (file.before.equals(file.after)) continue;
+      if (file.before !== MISSING_TASK_STATE_PREIMAGE && file.before.equals(file.after)) continue;
+      if (file.before === MISSING_TASK_STATE_PREIMAGE) {
+        const parent = path.dirname(file.absolutePath);
+        if (lstatOrNull(parent) === null) {
+          fs.mkdirSync(parent);
+          createdSnapshotDirectory = parent;
+        }
+      }
       // Enrolled BEFORE the write: an open that truncates and then fails to
       // land its data leaves this surface truncated, so it must already be in
       // the rollback set.
@@ -934,21 +991,48 @@ function applyAtomically(files) {
       fs.writeFileSync(file.absolutePath, file.after);
     }
   } catch {
-    restorePreimages(written);
+    restorePreimages(written, createdSnapshotDirectory);
     refuse('atomic-apply-failed');
   }
+  return createdSnapshotDirectory;
 }
 
-/** @param {{absolutePath:string,before:Buffer}[]} files */
-function restorePreimages(files) {
+/**
+ * Restore every written preimage and remove a snapshot parent created only for
+ * this transaction.
+ * @param {{absolutePath:string,before:Buffer|'missing'}[]} files
+ * @param {string|null} [createdSnapshotDirectory]
+ */
+function restorePreimages(files, createdSnapshotDirectory = null) {
   for (const file of files) {
     try {
+      if (file.before === MISSING_TASK_STATE_PREIMAGE) {
+        const current = lstatOrNull(file.absolutePath);
+        if (current === null) continue;
+        if (!current.isFile() || current.isSymbolicLink()) throw new Error('missing snapshot became unsafe');
+        fs.unlinkSync(file.absolutePath);
+        if (lstatOrNull(file.absolutePath) !== null) throw new Error('missing snapshot remained after rollback');
+        continue;
+      }
       // A surface still holding its preimage (a write that failed at open, or
       // an unchanged surface) is already restored, and rewriting it could fail
       // for the very reason the application failed.
       if (fs.readFileSync(file.absolutePath).equals(file.before)) continue;
       fs.writeFileSync(file.absolutePath, file.before);
       if (!fs.readFileSync(file.absolutePath).equals(file.before)) indeterminate('lightweight-rollback-incomplete');
+    } catch (error) {
+      if (error instanceof LaneIndeterminateError) throw error;
+      indeterminate('lightweight-rollback-incomplete');
+    }
+  }
+  if (createdSnapshotDirectory !== null) {
+    try {
+      const current = lstatOrNull(createdSnapshotDirectory);
+      if (current !== null) {
+        if (!current.isDirectory() || current.isSymbolicLink()) throw new Error('created directory became unsafe');
+        fs.rmdirSync(createdSnapshotDirectory);
+        if (lstatOrNull(createdSnapshotDirectory) !== null) throw new Error('created directory remained after rollback');
+      }
     } catch (error) {
       if (error instanceof LaneIndeterminateError) throw error;
       indeterminate('lightweight-rollback-incomplete');
@@ -996,6 +1080,7 @@ function commitLightweightWorkRequest(requestValue, context) {
   const surfaces = resolveLightweightSurfaces(request.root, tasksPath, /** @type {string} */ (owner.ideaPath));
   context.surfaces = surfaces;
   const fresh = readLightweightSurfaces(surfaces);
+  if (fresh.taskState.status === 'corrupt') refuse('snapshot-corrupt');
   if (!fresh.tasks.bytes || !fresh.taskState.bytes) refuse('expected-capture-mismatch');
   if (!fresh.owner.bytes) refuse('owner-resolution-failed');
   if (!fresh.tasks.bytes.equals(expectedTasks)) refuse('expected-capture-mismatch');
@@ -1147,11 +1232,23 @@ function commitLightweightWorkRequest(requestValue, context) {
   const taskStateNext = `${JSON.stringify(ordered, null, 2)}\n`;
 
   const files = [
-    { absolutePath: surfaces.tasks.absolutePath, before: fresh.tasks.bytes, after: tasksNext },
-    { absolutePath: surfaces.taskState.absolutePath, before: fresh.taskState.bytes, after: Buffer.from(taskStateNext) },
-    { absolutePath: surfaces.owner.absolutePath, before: fresh.owner.bytes, after: Buffer.from(ownerNext) },
+    {
+      absolutePath: surfaces.tasks.absolutePath,
+      before: fresh.tasks.bytes,
+      after: tasksNext,
+    },
+    {
+      absolutePath: surfaces.taskState.absolutePath,
+      before: fresh.taskState.preimage,
+      after: Buffer.from(taskStateNext),
+    },
+    {
+      absolutePath: surfaces.owner.absolutePath,
+      before: fresh.owner.bytes,
+      after: Buffer.from(ownerNext),
+    },
   ];
-  applyAtomically(files);
+  const createdDirectories = applyAtomically(files);
 
   try {
     // Reacquire the poststate before any receipt exists.
@@ -1179,7 +1276,7 @@ function commitLightweightWorkRequest(requestValue, context) {
     validateLightweightAtomicReceiptV1(receipt);
     return { ok: true, phase: 'committed', receipt };
   } catch (error) {
-    restorePreimages(files);
+    restorePreimages(files, createdDirectories);
     if (error instanceof LaneIndeterminateError) throw error;
     return refuse('atomic-apply-failed');
   }

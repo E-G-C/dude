@@ -289,25 +289,43 @@ function rawMarkdownSectionBody(source, heading, { includeHeadingLine = false } 
   const target = /^(#{1,6})[ \t]+(.+?)[ \t]*$/.exec(heading);
   assert.ok(target, `invalid Markdown heading ${JSON.stringify(heading)}`);
   const targetLevel = target[1].length;
-  let starts = 0;
-  let bodyStart = -1;
+  const rawLines = source.split('\n');
+  const visibleLines = visibleMarkdown(source).split('\n');
+  const starts = visibleLines
+    .map((line, index) => (line.trim() === heading ? index : -1))
+    .filter((index) => index !== -1);
+  assert.equal(starts.length, 1, `${heading}: expected one visible exact heading`);
+
+  const start = starts[0];
+  let endLine = rawLines.length;
+  for (let index = start + 1; index < visibleLines.length; index += 1) {
+    const next = /^ {0,3}(#{1,6})[ \t]+/.exec(visibleLines[index]);
+    if (next && next[1].length <= targetLevel) {
+      endLine = index;
+      break;
+    }
+  }
+
+  let bodyStart = 0;
   let end = source.length;
   let offset = 0;
-
-  for (const line of source.split('\n')) {
-    const next = /^ {0,3}(#{1,6})[ \t]+/.exec(line);
-    if (line.trim() === heading) {
-      starts += 1;
-      // The heading line itself is included on request so a pinned digest also
-      // covers heading indentation, not just the body bytes beneath it.
-      if (starts === 1) bodyStart = includeHeadingLine ? offset : offset + line.indexOf(heading) + heading.length;
-    } else if (bodyStart !== -1 && end === source.length && next && next[1].length <= targetLevel) {
+  for (let index = 0; index < rawLines.length; index += 1) {
+    const line = rawLines[index];
+    if (index === start) {
+      // Keep raw offsets and bytes once visibility establishes the boundaries:
+      // fenced or commented headings cannot end this raw section.
+      const headingOffset = line.indexOf(heading);
+      bodyStart = includeHeadingLine
+        ? offset
+        : offset + (headingOffset === -1 ? line.length : headingOffset + heading.length);
+    }
+    if (index === endLine) {
       end = offset - 1;
+      break;
     }
     offset += line.length + 1;
   }
 
-  assert.equal(starts, 1, `${heading}: expected one raw exact heading`);
   return source.slice(bodyStart, end);
 }
 
@@ -7096,21 +7114,34 @@ const GITHUB_ISSUE_WORKFLOW_GUIDANCE_REQUIREMENTS = [
   ]],
 ];
 
+const GITHUB_ISSUE_SHIP_PULL_REQUEST_ANCHOR = 'When existing delivery behavior';
 const GITHUB_ISSUE_SHIP_GUIDANCE_REQUIREMENTS = [
-  ['FR-017 Ship has no automatic Git or release action', [
-    /Ship performs no automatic Git or release action: no branch, worktree, commit,/i,
+  ['FR-017 Ship has no automatic Git or release action', 'Ship performs no automatic Git or release action:', [
+    /no branch, worktree, commit,/i,
   ]],
-  ['FR-018 conditional issue pull-request linkage', [
-    /existing delivery behavior creates a pull request for admitted issue work/i,
-    /gh pr create --base main/i,
-    /Fixes #<number>/i,
-    /same-repository issue/i,
-    /Fixes <owner>\/<repository>#<number>/i,
-    /when repositories differ/i,
-    /baseRefName/i,
-    /does not create a pull request on its own as part of issue intake/i,
+  ['FR-018 existing delivery conditionally creates the pull request', GITHUB_ISSUE_SHIP_PULL_REQUEST_ANCHOR, [
+    /creates a pull request for admitted issue work/i,
+  ]],
+  ['FR-018 pull-request creation uses the exact gh command', GITHUB_ISSUE_SHIP_PULL_REQUEST_ANCHOR, [
+    /`gh pr create --base main`/i,
+  ]],
+  ['FR-018 pull-request linkage distinguishes same and other repositories', GITHUB_ISSUE_SHIP_PULL_REQUEST_ANCHOR, [
+    /`Fixes #<number>` for a same-repository issue/i,
+    /`Fixes <owner>\/<repository>#<number>` when repositories differ/i,
+  ]],
+  ['FR-018 pull-request creation verifies its base', GITHUB_ISSUE_SHIP_PULL_REQUEST_ANCHOR, [
+    /verifies `baseRefName` with `gh pr view --json baseRefName`/i,
+  ]],
+  ['FR-018 issue intake and Ship do not create pull requests automatically', GITHUB_ISSUE_SHIP_PULL_REQUEST_ANCHOR, [
+    /Dude does not create a pull request on its own as part of issue intake/i,
+    /Ship does not create one automatically/i,
   ]],
 ];
+
+/** Assert the single owning contract for Ship's conditional issue pull-request behavior. */
+function assertGitHubIssueShipPullRequestContract(section, context) {
+  assertShipParagraphRequirements(section, GITHUB_ISSUE_SHIP_GUIDANCE_REQUIREMENTS, context);
+}
 
 const GITHUB_ISSUE_DETAIL_MARKERS = [
   ['fetch command', /\bgh issue view\b/i],
@@ -7419,9 +7450,7 @@ test('GitHub issue public guidance preserves bounded intake and existing routes'
   const normalizedWorkflow = unwrappedParagraphs(
     markdownSection(read('docs/workflow.md'), '### GitHub Issue Intake'),
   );
-  const normalizedShip = unwrappedParagraphs(
-    markdownSection(read('docs/commands.md'), '### `@dude ship`'),
-  );
+  const ship = markdownSection(read('docs/commands.md'), '### `@dude ship`');
   const readmeExamples = fencedBlockContaining(read('README.md'), '@dude ship issue 20');
 
   // Assert: the short README makes the accepted reference shapes and authority
@@ -7463,9 +7492,8 @@ test('GitHub issue public guidance preserves bounded intake and existing routes'
 
   // Assert: the unchanged no-automatic-Git rule stays conditional, and existing
   // delivery behavior owns any later pull-request creation and verification.
-  assertShipParagraphRequirements(
-    normalizedShip,
-    GITHUB_ISSUE_SHIP_GUIDANCE_REQUIREMENTS,
+  assertGitHubIssueShipPullRequestContract(
+    ship,
     'docs/commands.md GitHub issue pull-request condition',
   );
 });
@@ -7481,6 +7509,240 @@ test('GitHub issue public guidance rules stay section-bound', () => {
       `${relative} ${heading} GitHub issue public guidance`,
     );
   }
+});
+
+test('GitHub issue decision guidance keeps the compact model discoverable and bounded', () => {
+  // Arrange
+  const readmeSource = read('README.md');
+  const commandsSource = read('docs/commands.md');
+  const referenceSource = read('docs/reference.md');
+  const workflowSource = read('docs/workflow.md');
+  const readme = markdownSection(readmeSource, '## GitHub Issue Input');
+  const commands = markdownSection(commandsSource, '### GitHub Issue Input');
+  const reference = markdownSection(referenceSource, '### GitHub Issue Intake');
+  const workflow = markdownSection(workflowSource, '### GitHub Issue Intake');
+  const ship = markdownSection(commandsSource, '### `@dude ship`');
+  const publicIssueSections = [
+    [readmeSource, '## GitHub Issue Input'],
+    [commandsSource, '### GitHub Issue Input'],
+    [referenceSource, '### GitHub Issue Intake'],
+    [workflowSource, '### GitHub Issue Intake'],
+    [commandsSource, '### `@dude ship`'],
+  ];
+
+  const assertIssueDiscovery = (currentReadme, currentCommands, currentReference) => {
+    assertShipParagraphRequirements(currentReadme, [
+      ['README issue orientation links to the compact model', 'Some issue execution takes a shorter route', [
+        /`@dude ship issue <number>` fetches, classifies, and executes through the existing route/i,
+        /\[issue intake decision model\]\(docs\/workflow\.md#github-issue-intake\)/i,
+        /inspect, ship, define a feature, run bounded work, flag an active-work blocker, or answer one classification question/i,
+      ]],
+    ], 'README.md ## GitHub Issue Input');
+    assertShipParagraphRequirements(currentCommands, [
+      ['command guidance links the one-verb execution form to the compact model', '`@dude ship issue <number>` is the one-verb execution form:', [
+        /fetches, classifies, and executes the existing route/i,
+        /\[issue intake decision model\]\(workflow\.md#github-issue-intake\)/i,
+        /inspection, feature capture, bounded direct work, flagging, or a classification question/i,
+      ]],
+    ], 'docs/commands.md ### GitHub Issue Input');
+    assertShipParagraphRequirements(currentReference, [
+      ['reference guidance links every route to the compact model', 'Use the [six-outcome issue intake decision model]', [
+        /\(workflow\.md#github-issue-intake\)/i,
+        /inspection, Ship, feature definition, bounded direct work, active-work flagging, and one-question ambiguity/i,
+        /reference and retrieval rules/i,
+      ]],
+    ], 'docs/reference.md ### GitHub Issue Intake');
+  };
+
+  const assertSixOutcomeModel = (section) => {
+    const blocks = markdownRuleBlocks(section, { splitLists: true });
+    const starts = blocks
+      .map((block, index) => (block.normalized.includes('Use this six-outcome model') ? index : -1))
+      .filter((index) => index !== -1);
+    const ends = blocks
+      .map((block, index) => (
+        block.normalized.includes('Contextual admission authorizes one existing route for the current request.')
+          ? index
+          : -1
+      ))
+      .filter((index) => index !== -1);
+    assert.equal(starts.length, 1, 'workflow issue model has one normalized introduction block');
+    assert.equal(ends.length, 1, 'workflow issue model has one normalized contextual-admission block');
+    assert.ok(ends[0] > starts[0], 'workflow issue model ends after its introduction');
+
+    const candidates = blocks
+      .slice(starts[0] + 1, ends[0])
+      .map((block) => {
+        const match = /^([ \t]*)(\d+)[.)][ \t]+/.exec(block.raw);
+        return match === null ? null : { indentation: match[1].length, ordinal: Number(match[2]) };
+      })
+      .filter((item) => item !== null);
+    assert.ok(candidates.length > 0, 'workflow issue model has ordered-list candidates');
+    const minimumIndentation = Math.min(...candidates.map((item) => item.indentation));
+    assert.deepEqual(
+      candidates
+        .filter((item) => item.indentation === minimumIndentation)
+        .map((item) => item.ordinal),
+      [1, 2, 3, 4, 5, 6],
+      'workflow issue model has exactly six top-level ordered outcomes',
+    );
+  };
+
+  const assertWorkflowDecisionModel = (section) => {
+    assertShipParagraphRequirements(section, [
+      ['inspect-only questions answer directly without admission', '**Inspect or ask a direct question.**', [
+        /Answer directly/i,
+        /admit no work/i,
+        /unadmitted/i,
+        /no execution authority/i,
+      ]],
+      ['Ship keeps the exact one-verb issue execution form', '**Ship an issue.**', [
+        /`@dude ship issue <number>`/i,
+        /fetches, classifies, and executes/i,
+        /existing route appropriate to the issue's substance/i,
+      ]],
+      ['feature requests preserve brainstorm Origin definition and Work', '**Feature request.**', [
+        /brainstorm/i,
+        /`Origin: <canonical issue URL>`/i,
+        /define and Work stages/i,
+      ]],
+      ['bounded bugs and chores stay direct through independent review', '**Bounded bug or chore.**', [
+        /systematic debugging, implementation, testing, and independent review/i,
+        /without an idea or specification package/i,
+      ]],
+      ['the direct-task boundary returns unresolved work to definition', 'If unresolved product intent, architecture, or multi-stage planning', [
+        /direct-task boundary/i,
+        /return to brainstorm and explicit definition/i,
+      ]],
+      ['only actual active-work blockers use flag rather than the direct route', '**Blocker against active work.**', [
+        /existing flag behavior only/i,
+        /clear blocker tied to actual active work/i,
+        /standalone bounded bug or chore uses the direct route instead/i,
+      ]],
+      ['ambiguity asks exactly one question and grants no authority without an answer', '**Ambiguous intake.**', [
+        /Ask exactly one classification question/i,
+        /Without an answer, admit no work and grant no execution authority/i,
+      ]],
+      ['admission is contextual rather than persistent issue workflow state', 'Contextual admission authorizes one existing route for the current request.', [
+        /no persistent issue authority, lane, tracker, cache, registry, admission record, daemon, poller, or automatic processing/i,
+      ]],
+    ], 'docs/workflow.md ### GitHub Issue Intake');
+    assert.deepEqual(
+      githubIssuePolicyContradictions(section),
+      [],
+      'docs/workflow.md ### GitHub Issue Intake: no affirmative prohibited capability',
+    );
+    assertSixOutcomeModel(section);
+  };
+
+  const admitCommand = /@dude[ \t]+admit(?=$|[^A-Za-z0-9_-])/i;
+  const assertNoAdmitCommand = (sections) => {
+    const rawPublicGuidance = sections
+      .map(([source, heading]) => rawMarkdownSectionBody(source, heading))
+      .join('\n\n');
+    assert.doesNotMatch(rawPublicGuidance, admitCommand, 'public issue guidance introduces no admit command');
+  };
+  const assertShipSignalDeletionFails = (section, label, signal) => {
+    const normalizedSection = normalizeMarkdownBlock(section);
+    const normalizedSignal = normalizeMarkdownBlock(signal);
+    assert.equal(
+      normalizedSection.split(normalizedSignal).length,
+      2,
+      `${label}: one normalized semantic source exists`,
+    );
+    const withoutSignal = normalizedSection.replace(normalizedSignal, '');
+    assert.notEqual(withoutSignal, normalizedSection, `${label}: deletion changes its semantic source`);
+    assert.throws(
+      () => assertGitHubIssueShipPullRequestContract(
+        withoutSignal,
+        'docs/commands.md ### `@dude ship` GitHub issue pull-request condition',
+      ),
+      `${label}: deletion must fail the pull-request owning assertion`,
+    );
+  };
+
+  // Act + Assert: concise surfaces link to the model, while its workflow section
+  // is the single detailed owner.
+  assertIssueDiscovery(readme, commands, reference);
+  assertWorkflowDecisionModel(workflow);
+  assertNoAdmitCommand(publicIssueSections);
+  assertGitHubIssueShipPullRequestContract(
+    ship,
+    'docs/commands.md ### `@dude ship` GitHub issue pull-request condition',
+  );
+
+  const workflowWithUnboldedSeventh = workflow.replace(
+    '\n\nContextual admission',
+    '\n7. Additional route.\n\nContextual admission',
+  );
+  assert.notEqual(workflowWithUnboldedSeventh, workflow, 'seventh-outcome mutation changes the model');
+  assert.throws(
+    () => assertSixOutcomeModel(workflowWithUnboldedSeventh),
+    'an unbolded seventh top-level outcome before contextual admission must fail',
+  );
+  const workflowWithUnboldedParenthesizedSeventh = workflow.replace(
+    '\n\nContextual admission',
+    '\n7) Additional route.\n\nContextual admission',
+  );
+  assert.notEqual(
+    workflowWithUnboldedParenthesizedSeventh,
+    workflow,
+    'parenthesized seventh-outcome mutation changes the model',
+  );
+  assert.throws(
+    () => assertSixOutcomeModel(workflowWithUnboldedParenthesizedSeventh),
+    'an unbolded parenthesized seventh top-level outcome before contextual admission must fail',
+  );
+  const workflowWithNestedNumbering = workflow.replace(
+    '\n\nContextual admission',
+    '\n   1. Nested numbered substep.\n\nContextual admission',
+  );
+  assertSixOutcomeModel(workflowWithNestedNumbering);
+  const workflowWithPostAdmissionNumbering = workflow.replace(
+    'record, daemon, poller, or automatic processing.',
+    'record, daemon, poller, or automatic processing.\n\n7. Numbering after contextual admission.',
+  );
+  assertSixOutcomeModel(workflowWithPostAdmissionNumbering);
+  const rewrappedWorkflow = workflow
+    .replace('Use this six-outcome model:', 'Use this six-outcome\nmodel:')
+    .replace(
+      'Contextual admission authorizes one existing route for the current request.',
+      'Contextual admission authorizes one existing route for the current\nrequest.',
+    );
+  assertSixOutcomeModel(rewrappedWorkflow);
+
+  // Mutate the source before extraction. The command follows both invisible
+  // headings, so neither can be treated as the section boundary.
+  const workflowWithHiddenHeadingAdmit = workflowSource.replace(
+    '### Driving the stages yourself',
+    '```text\n## Fenced example heading\n```\n<!--\n## Commented heading\n-->\n\n@dude admit, issue 21\n\n### Driving the stages yourself',
+  );
+  assert.notEqual(
+    workflowWithHiddenHeadingAdmit,
+    workflowSource,
+    'hidden-heading admit mutation changes its source',
+  );
+  assert.throws(
+    () => assertNoAdmitCommand(publicIssueSections.map(([source, heading]) => (
+      source === workflowSource ? [workflowWithHiddenHeadingAdmit, heading] : [source, heading]
+    ))),
+    'a punctuation-delimited admit command after hidden headings must fail',
+  );
+
+  for (const [label, signal] of [
+    ['conditional existing-delivery creation', 'creates a pull request for admitted issue work'],
+    ['exact gh pull-request command', '`gh pr create --base main`'],
+    ['same-repository closing reference', '`Fixes #<number>`'],
+    ['base verification', 'verifies `baseRefName` with `gh pr view --json baseRefName`'],
+    ['issue-intake no-create rule', 'does not create a pull request on its own as part of issue intake.'],
+    ['Ship no-automatic-create rule', 'Ship does not create one automatically.'],
+  ]) {
+    assertShipSignalDeletionFails(ship, label, signal);
+  }
+  assertGitHubIssueShipPullRequestContract(
+    ship.replace('same-repository issue or', 'same-repository\nissue or'),
+    'docs/commands.md ### `@dude ship` GitHub issue pull-request condition',
+  );
 });
 
 test('installed pack refresh guidance stays current and generated', () => {

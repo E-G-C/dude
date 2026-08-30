@@ -28,6 +28,11 @@ defines the qualifying cases and stops.
 
 ### GitHub Issue Intake
 
+Use the [six-outcome issue intake decision model](workflow.md#github-issue-intake)
+to choose between inspection, Ship, feature definition, bounded direct work,
+active-work flagging, and one-question ambiguity. This section records the
+reference and retrieval rules behind that model.
+
 Dude treats an issue body and its comments as one raw input. No label, author,
 comment age, or position has priority. The surrounding request controls
 classification and handoff: a question about an issue stays a direct answer, and

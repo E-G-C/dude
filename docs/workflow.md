@@ -37,15 +37,30 @@ authority, audit, and reporting.
 ### GitHub Issue Intake
 
 An explicit GitHub issue adds raw input to this lifecycle. It creates no GitHub
-lane, tracker, or command. When a feature is captured, its accepted idea includes
-`Origin: <canonical issue URL>` as visible prose, and Ship continues through the
-usual define and Work stages.
+lane, tracker, or command. Use this six-outcome model:
 
-After capture, the Dude idea and package are authoritative for intent and
-execution. Later GitHub edits do not silently rewrite either. A bounded execution
-request for a bug or chore stays with existing implementation, testing, and
-independent review; a blocker against active work uses flag behavior. A discovered
-or merely displayed issue remains unadmitted and has no execution authority.
+1. **Inspect or ask a direct question.** Answer directly and admit no work. A
+   discovered or merely displayed issue remains unadmitted and has no execution
+   authority.
+2. **Ship an issue.** `@dude ship issue <number>` fetches, classifies, and
+   executes the existing route appropriate to the issue's substance.
+3. **Feature request.** Brainstorm it. When a feature is captured, its accepted
+   idea includes `Origin: <canonical issue URL>` as visible prose, and Ship continues
+   through the usual define and Work stages. The Dude idea and package are authoritative
+   for intent and execution; later GitHub edits do not silently rewrite either.
+4. **Bounded bug or chore.** Use systematic debugging, implementation, testing,
+   and independent review without an idea or specification package.
+   If unresolved product intent, architecture, or multi-stage planning
+   crosses the existing direct-task boundary, return to brainstorm and explicit definition.
+5. **Blocker against active work.** Use existing flag behavior only for a clear
+   blocker tied to actual active work. A standalone bounded bug or chore uses the
+   direct route instead.
+6. **Ambiguous intake.** Ask exactly one classification question. Without an
+   answer, admit no work and grant no execution authority.
+
+Contextual admission authorizes one existing route for the current request. It
+creates no persistent issue authority, lane, tracker, cache, registry, admission
+record, daemon, poller, or automatic processing.
 
 ### Driving the stages yourself
 

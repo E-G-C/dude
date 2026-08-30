@@ -615,11 +615,26 @@ const RUNTIME_ANOMALIES = Object.freeze([
   ['throw', () => { throw new Error('runtime died'); }, 'runtime-threw'],
 ]);
 
+/** The accepted authority that a no-effect refusal is forbidden to charge. @param {Record<string, unknown>} session */
+function acceptedAuthorityTuple(session) {
+  const accepted = /** @type {Record<string, unknown>} */ (session.acceptedState);
+  return {
+    acceptedStateBytes: session.acceptedStateBytes,
+    acceptedStateHash: session.acceptedStateHash,
+    acceptedRevision: session.acceptedRevision,
+    overallUsed: accepted.overallUsed,
+    recoveryUsed: clone(accepted.recoveryUsed),
+    pending: clone(accepted.pending),
+    completed: clone(accepted.completed),
+  };
+}
+
 nodeTest('runtime anomalies with fresh exact no-effect proof close without state or attempt charge', () => {
   for (const [label, anomaly, reason] of RUNTIME_ANOMALIES) {
     withSealedWorkspace((root) => {
       const input = sealedInspectionInput(root);
-      const inspectionIdentity = sha256(canonicalJson(inspect(input)));
+      const initialInspection = inspect(input);
+      const inspectionIdentity = sha256(canonicalJson(initialInspection));
       let calls = 0;
       const adapter = createHostAdapter(sealedInitial({ inspectionIdentity }), sealedPorts((command, request) => {
         calls += 1;
@@ -627,30 +642,36 @@ nodeTest('runtime anomalies with fresh exact no-effect proof close without state
         return { status: 'returned', value: runCommand(command, request) };
       }));
       const predecessor = adapter.snapshot();
+      const acceptedPredecessor = acceptedAuthorityTuple(predecessor);
       const first = adapter.run(sealedResultRequest(adapter));
       assert.equal(first.outcome, 'closed-refusal', label);
       assert.equal(first.reason, reason, label);
+      assert.equal(first.nonterminal, true, label);
       assert.equal(first.next.kind, 'correction', label);
-      assert.equal(first.session.acceptedStateBytes, predecessor.acceptedStateBytes, label);
-      assert.equal(first.session.acceptedRevision, predecessor.acceptedRevision, label);
+      assert.deepEqual(acceptedAuthorityTuple(first.session), acceptedPredecessor, label);
       assert.equal(first.session.hostRevision, predecessor.hostRevision + 1, label);
-      assert.equal(first.session.acceptedState.overallUsed, predecessor.acceptedState.overallUsed, label);
-      assert.deepEqual(first.session.acceptedState.recoveryUsed, predecessor.acceptedState.recoveryUsed, label);
 
       const correction = sealedResultRequest(adapter);
       correction.correctionIdentity = first.next.correctionIdentity;
       const corrected = adapter.run(correction);
       assert.equal(corrected.outcome, 'closed-refusal', label);
+      assert.equal(corrected.nonterminal, true, label);
       assert.equal(corrected.next.kind, 'inspect', label);
       assert.equal(corrected.session.correction.consumed, true, label);
-      assert.equal(corrected.session.acceptedStateBytes, predecessor.acceptedStateBytes, label);
+      assert.deepEqual(acceptedAuthorityTuple(corrected.session), acceptedPredecessor, label);
       assert.ok(corrected.session.hostRevision > first.session.hostRevision, label);
 
-      fs.appendFileSync(path.join(root, `${TARGET.specPath.slice(0, -'spec.md'.length)}tasks.md`), '\n- fresh authoritative evidence\n');
+      // The second capture is a new occurrence over exactly unchanged authority:
+      // content identity remains stable while occurrence identity must advance.
+      const unchangedRecapture = inspect(input);
+      assert.equal(unchangedRecapture.evidenceHash, initialInspection.evidenceHash, label);
       const refreshed = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input }));
       assert.equal(refreshed.outcome, 'accepted', label);
       assert.equal(refreshed.reason, 'inspection-refreshed', label);
       assert.equal(refreshed.session.correction, null, label);
+      assert.notEqual(refreshed.session.inspectionIdentity, inspectionIdentity, label);
+      assert.equal(refreshed.session.status, 'active', label);
+      assert.deepEqual(acceptedAuthorityTuple(refreshed.session), acceptedPredecessor, label);
       assert.equal(calls, 3, label);
     });
   }
@@ -852,67 +873,95 @@ nodeTest('repeated malformed request consumes its correction cap and requires fr
   });
 });
 
-nodeTest('identical Inspection cannot reset a consumed correction cap', () => {
+nodeTest('an identical-authority recapture creates a new occurrence without resetting a consumed correction', () => {
   withSealedWorkspace((root) => {
     const input = sealedInspectionInput(root);
-    const inspectionIdentity = sha256(canonicalJson(inspect(input)));
+    const initialInspection = inspect(input);
+    const inspectionIdentity = sha256(canonicalJson(initialInspection));
     const adapter = createHostAdapter(sealedInitial({ inspectionIdentity }));
     const mismatchResult = guardedResult({ operations: ['wrong-action'] });
     const first = adapter.run(sealedResultRequest(adapter, mismatchResult));
     assert.equal(first.outcome, 'closed-refusal');
+    const acceptedPredecessor = acceptedAuthorityTuple(first.session);
+    const correctionIdentity = first.next.correctionIdentity;
     const correction = sealedResultRequest(adapter, mismatchResult);
-    correction.correctionIdentity = first.next.correctionIdentity;
+    correction.correctionIdentity = correctionIdentity;
     const consumed = adapter.run(correction);
     assert.equal(consumed.outcome, 'closed-refusal');
     assert.equal(consumed.next.kind, 'inspect');
     assert.equal(consumed.session.correction.consumed, true);
+    assert.deepEqual(acceptedAuthorityTuple(consumed.session), acceptedPredecessor);
 
-    for (let index = 0; index < 2; index += 1) {
-      const repeated = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input }));
-      assert.equal(repeated.outcome, 'reinspect-required');
-      assert.equal(repeated.reason, 'inspection-not-fresh');
-      assert.equal(repeated.session.correction.consumed, true);
-      assert.equal(repeated.session.correction.inspectionIdentity, inspectionIdentity);
-    }
+    // A correction is spent for its exact occurrence even if its caller learns
+    // the current consumed identity from a session snapshot.
+    const sameOccurrenceReplayRequest = sealedResultRequest(adapter, mismatchResult);
+    sameOccurrenceReplayRequest.correctionIdentity = consumed.session.correction.identity;
+    const sameOccurrenceReplay = adapter.run(sameOccurrenceReplayRequest);
+    assert.equal(sameOccurrenceReplay.outcome, 'reinspect-required');
+    assert.equal(sameOccurrenceReplay.reason, 'correction-consumed');
+    assert.equal(sameOccurrenceReplay.session.correction.consumed, true);
+    assert.equal(sameOccurrenceReplay.session.correction.inspectionIdentity, inspectionIdentity);
+    assert.deepEqual(acceptedAuthorityTuple(sameOccurrenceReplay.session), acceptedPredecessor);
 
-    fs.appendFileSync(path.join(root, `${TARGET.specPath.slice(0, -'spec.md'.length)}tasks.md`), '\n- fresh authoritative evidence\n');
+    // Act: this is a genuinely new capture, not a replay. Its authority content
+    // has not changed, so evidence identity stays equal while occurrence identity
+    // must change.
+    const recaptured = inspect(input);
+    assert.equal(recaptured.evidenceHash, initialInspection.evidenceHash);
     const refreshed = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input }));
     assert.equal(refreshed.outcome, 'accepted');
     assert.equal(refreshed.reason, 'inspection-refreshed');
     assert.equal(refreshed.session.correction, null);
     assert.notEqual(refreshed.session.inspectionIdentity, inspectionIdentity);
+    assert.deepEqual(acceptedAuthorityTuple(refreshed.session), acceptedPredecessor);
   });
 });
 
-nodeTest('identical Inspection cannot clear or rearm an unconsumed correction', () => {
+nodeTest('an identical-authority recapture clears only its old correction and rejects stale or foreign identities', () => {
   withSealedWorkspace((root) => {
     const input = sealedInspectionInput(root);
-    const inspectionIdentity = sha256(canonicalJson(inspect(input)));
+    const initialInspection = inspect(input);
+    const inspectionIdentity = sha256(canonicalJson(initialInspection));
     const adapter = createHostAdapter(sealedInitial({ inspectionIdentity }));
     const mismatchResult = guardedResult({ operations: ['wrong-action'] });
     const earned = adapter.run(sealedResultRequest(adapter, mismatchResult));
     assert.equal(earned.outcome, 'closed-refusal');
     assert.equal(earned.session.correction.consumed, false);
     const correctionIdentity = earned.next.correctionIdentity;
+    const acceptedPredecessor = acceptedAuthorityTuple(earned.session);
 
-    for (let index = 0; index < 3; index += 1) {
-      const repeated = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input }));
-      assert.equal(repeated.outcome, 'reinspect-required', `repeat ${index}`);
-      assert.equal(repeated.reason, 'inspection-not-fresh', `repeat ${index}`);
-      assert.equal(repeated.session.correction.consumed, true, `repeat ${index}`);
-      assert.notEqual(repeated.session.correction.identity, correctionIdentity, `repeat ${index}`);
-      assert.equal(repeated.session.inspectionIdentity, inspectionIdentity, `repeat ${index}`);
-    }
-
-    const spent = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input }));
-    assert.equal(spent.outcome, 'reinspect-required');
-    assert.equal(spent.reason, 'inspection-not-fresh');
-    assert.equal(spent.session.correction.consumed, true);
-
-    fs.appendFileSync(path.join(root, `${TARGET.specPath.slice(0, -'spec.md'.length)}tasks.md`), '\n- fresh authoritative evidence\n');
+    // A new capture may clear the unconsumed correction from the older
+    // occurrence, but it must not reuse that correction for the new occurrence.
+    assert.equal(inspect(input).evidenceHash, initialInspection.evidenceHash);
     const refreshed = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input }));
     assert.equal(refreshed.outcome, 'accepted');
     assert.equal(refreshed.session.correction, null);
+    assert.notEqual(refreshed.session.inspectionIdentity, inspectionIdentity);
+    assert.deepEqual(acceptedAuthorityTuple(refreshed.session), acceptedPredecessor);
+
+    const rearmed = adapter.run(sealedResultRequest(adapter, mismatchResult));
+    assert.equal(rearmed.outcome, 'closed-refusal');
+    assert.notEqual(rearmed.next.correctionIdentity, correctionIdentity);
+    assert.equal(
+      rearmed.session.correction.inspectionIdentity,
+      refreshed.session.inspectionIdentity,
+      'the new correction binds only the new capture occurrence',
+    );
+    const staleRequest = sealedResultRequest(adapter, mismatchResult);
+    staleRequest.correctionIdentity = correctionIdentity;
+    const stale = adapter.run(staleRequest);
+    assert.equal(stale.outcome, 'hard-stop');
+    assert.equal(stale.reason, 'correction-identity-mismatch');
+
+    // A guessed identity cannot substitute for the currently bound correction.
+    const foreignAdapter = createHostAdapter(sealedInitial({ inspectionIdentity }));
+    const foreignEarned = foreignAdapter.run(sealedResultRequest(foreignAdapter, mismatchResult));
+    assert.equal(foreignEarned.outcome, 'closed-refusal');
+    const foreignRequest = sealedResultRequest(foreignAdapter, mismatchResult);
+    foreignRequest.correctionIdentity = sha256('foreign-correction-identity');
+    const foreign = foreignAdapter.run(foreignRequest);
+    assert.equal(foreign.outcome, 'hard-stop');
+    assert.equal(foreign.reason, 'correction-identity-mismatch');
   });
 });
 
@@ -5961,6 +6010,80 @@ nodeTest('runner preflight refuses a blank lightweight task before exchange or p
   });
 });
 
+nodeTest('issue #21: the autonomous runner creates an absent optional snapshot through its first lane mutation', async () => {
+  await withSealedWorkspace(async (root) => {
+    // Arrange: unlike a corrupt file, no snapshot is a valid semantic `{}` baseline.
+    const snapshotPath = path.join(root, TASK_STATE_PATH);
+    const tasksBefore = fs.readFileSync(path.join(root, TASKS_PATH));
+    const ownerBefore = fs.readFileSync(path.join(root, IDEA_PATH));
+    assert.equal(fs.existsSync(snapshotPath), false, 'fixture starts without a snapshot');
+    const checkpoint = memoryCheckpointStore();
+
+    // Act.
+    const result = await runHostAdapter(focusedRunnerRequest(root), {
+      checkpoint: checkpoint.port,
+    });
+
+    // Assert: this is the real runner path (admission claim through settlement),
+    // not a direct board call with a hand-built postimage.
+    assert.equal(result.outcome, 'ended', result.reason);
+    assert.equal(result.reason, 'task-settled');
+    assert.equal(checkpoint.calls.filter((call) => call === 'claim').length, 1, 'runner ownership claim');
+    assert.equal(checkpoint.pair.checkpoint, null, 'settlement clears runner ownership');
+    for (const step of ['admitted', 'authorize-lane-effect', 'apply-lane-effect', 'commit-lane-receipt', 'end']) {
+      assert.ok(result.steps.some((row) => row.step === step), `runner reaches ${step}`);
+    }
+    assert.ok(fs.existsSync(snapshotPath), 'first authorized lane mutation creates the optional snapshot');
+    assert.equal(
+      JSON.parse(fs.readFileSync(snapshotPath, 'utf8'))[TASKS_PATH].glyphs[TARGET.taskKey],
+      'x',
+      'settled snapshot binds the final target glyph',
+    );
+    assert.equal(fs.readFileSync(path.join(root, TASKS_PATH)).equals(tasksBefore), false, 'task reaches close');
+    assert.deepEqual(fs.readFileSync(path.join(root, IDEA_PATH)), ownerBefore, 'unmodified owner stays exact');
+  });
+});
+
+nodeTest('issue #21: an unsafe snapshot halts autonomously with an actionable existing evidence reason', async () => {
+  await withSealedWorkspace(async (root) => {
+    // Arrange.
+    writeSealedTaskState(root);
+    const snapshotPath = path.join(root, TASK_STATE_PATH);
+    const unsafeSnapshot = Buffer.from('{ malformed task-state snapshot\n');
+    fs.writeFileSync(snapshotPath, unsafeSnapshot);
+    const tasksBefore = fs.readFileSync(path.join(root, TASKS_PATH));
+    const ownerBefore = fs.readFileSync(path.join(root, IDEA_PATH));
+
+    // Act.
+    const result = await runHostAdapter(focusedRunnerRequest(root), {
+      checkpoint: memoryCheckpointStore().port,
+    });
+
+    // Assert: snapshot corruption is evidence-incomplete, not a new opaque
+    // runner reason. Its carried blocker identifies the exact unsafe authority
+    // surface and the existing hard-stop action tells the owner what to do.
+    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(result.reason, 'evidence-incomplete');
+    assert.equal(OUTCOME_REASON_CLASSES[result.reason], 'hard-stop');
+    assert.ok(result.haltReport && typeof result.haltReport === 'object', 'hard stop carries a halt report');
+    const report = /** @type {Record<string, unknown>} */ (result.haltReport);
+    assert.deepEqual(Object.keys(report).sort(), [
+      'evidenceHash', 'halted', 'nextAction', 'reason', 'resolved', 'stopClass', 'subject', 'target',
+    ]);
+    assert.equal(report.halted, true);
+    assert.equal(report.resolved, true);
+    assert.equal(report.reason, 'evidence-incomplete');
+    assert.equal(report.stopClass, 'hard-stop');
+    assert.deepEqual(report.target, TARGET);
+    assert.equal(report.subject, TASK_STATE_PATH);
+    assert.equal(report.nextAction, 'request-human-input');
+    assert.match(report.evidenceHash, /^[0-9a-f]{64}$/);
+    assert.deepEqual(fs.readFileSync(path.join(root, TASKS_PATH)), tasksBefore, 'tasks stay exact');
+    assert.deepEqual(fs.readFileSync(path.join(root, IDEA_PATH)), ownerBefore, 'owner stays exact');
+    assert.deepEqual(fs.readFileSync(snapshotPath), unsafeSnapshot, 'unsafe snapshot bytes stay exact');
+  });
+});
+
 nodeTest('focused table A: sequential challenge protocol and foreground CLI', async () => {
   const cases = [
     {
@@ -5969,31 +6092,6 @@ nodeTest('focused table A: sequential challenge protocol and foreground CLI', as
       expectedReason: 'task-settled',
       expectedGlyph: 'x',
       dependencies: () => ({}),
-      request: (value) => value,
-    },
-    {
-      label: 'authoritative work-project refusal preserves the task',
-      expectedOutcome: 'hard-stop',
-      expectedReason: 'inspection-incomplete',
-      expectedGlyph: '~',
-      expectedSteps: [':correction', ':reinspect'],
-      checkpointPresent: true,
-      dependencies: () => ({
-        laneOwner: {
-          identity: sha256('focused-runner-refusing-lane-owner'),
-          apply(request) {
-            if (request.operation === 'work-project') {
-              return {
-                ok: false,
-                phase: 'refused',
-                reason: 'expected-capture-mismatch',
-                unchangedPrestateHash: sha256('focused-runner-unchanged-prestate'),
-              };
-            }
-            return applyLightweightWorkRequest(request);
-          },
-        },
-      }),
       request: (value) => value,
     },
     {
@@ -6031,6 +6129,180 @@ nodeTest('focused table A: sequential challenge protocol and foreground CLI', as
       assert.match(tasks, new RegExp(`- \\[${row.expectedGlyph}\\] ${TARGET.taskKey}`), row.label);
     });
   }
+
+  await withSealedWorkspace(async (root) => {
+    // Arrange: two refusal pairs exercise two separate Inspection occurrences.
+    // The finite script then lets the real authoritative lane boundary settle.
+    writeSealedTaskState(root);
+    const checkpoint = memoryCheckpointStore();
+    const authoritativePrestate = {
+      tasks: fs.readFileSync(path.join(root, TASKS_PATH)),
+      taskState: fs.readFileSync(path.join(root, TASK_STATE_PATH)),
+      owner: fs.readFileSync(path.join(root, IDEA_PATH)),
+    };
+    const workProjectRefusals = [
+      {
+        ok: false,
+        phase: 'refused',
+        reason: 'expected-capture-mismatch',
+        unchangedPrestateHash: sha256('focused-runner-scripted-refusal:1'),
+      },
+      {
+        ok: false,
+        phase: 'refused',
+        reason: 'expected-capture-mismatch',
+        unchangedPrestateHash: sha256('focused-runner-scripted-refusal:2'),
+      },
+      {
+        ok: false,
+        phase: 'refused',
+        reason: 'expected-capture-mismatch',
+        unchangedPrestateHash: sha256('focused-runner-scripted-refusal:3'),
+      },
+      {
+        ok: false,
+        phase: 'refused',
+        reason: 'expected-capture-mismatch',
+        unchangedPrestateHash: sha256('focused-runner-scripted-refusal:4'),
+      },
+    ];
+    const refusalRows = [];
+    let activeInspectionIdentity = null;
+    let delegatedWorkProjects = 0;
+
+    // Act.
+    const result = await runHostAdapter(focusedRunnerRequest(root), {
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('focused-runner-scripted-refusal-runtime'),
+        invoke(command, lowLevelRequest) {
+          const value = /** @type {Record<string, unknown>} */ (runCommand(command, lowLevelRequest));
+          if (command === 'inspect') {
+            activeInspectionIdentity = sha256(canonicalJson(value.inspection));
+          }
+          return { status: 'returned', value };
+        },
+      },
+      laneOwner: {
+        identity: sha256('focused-runner-scripted-refusal-lane-owner'),
+        apply(request) {
+          if (request.operation === 'work-project' && workProjectRefusals.length > 0) {
+            refusalRows.push({
+              operation: request.operation,
+              inspectionIdentity: activeInspectionIdentity,
+              delegatedWorkProjects,
+              authoritative: {
+                tasks: fs.readFileSync(path.join(root, TASKS_PATH)),
+                taskState: fs.readFileSync(path.join(root, TASK_STATE_PATH)),
+                owner: fs.readFileSync(path.join(root, IDEA_PATH)),
+              },
+            });
+            return workProjectRefusals.shift();
+          }
+          if (request.operation === 'work-project') delegatedWorkProjects += 1;
+          return applyLightweightWorkRequest(request);
+        },
+      },
+    });
+
+    // Assert: four proven no-effect refusals cross the old fabricated terminal.
+    assert.equal(
+      `${result.outcome}/${result.reason}`,
+      'ended/task-settled',
+      'a fresh reinspection after each spent correction must continue to the scripted success',
+    );
+    assert.equal(result.haltReport, null, 'a settled run carries no halt report');
+    assert.equal(
+      result.steps.some((step) => step.reason === 'repeated-closed-refusal'),
+      false,
+      'no synthetic repeated-refusal terminal is emitted',
+    );
+    assert.equal(workProjectRefusals.length, 0, 'all four genuine refusals reached the real lane boundary');
+    assert.equal(delegatedWorkProjects, 1, 'the fifth work-project call delegated to the real lane boundary');
+    assert.equal(refusalRows.length, 4, 'exactly four no-effect lane refusals were observed');
+
+    const refusalSteps = result.steps.filter((step) => step.outcome === 'closed-refusal'
+      && step.reason === 'expected-capture-mismatch');
+    assert.equal(refusalSteps.length, 4, 'each scripted refusal is retained in the runner result');
+    assert.deepEqual(
+      refusalSteps.map((step) => step.step.endsWith(':correction')),
+      [false, true, false, true],
+      'each Inspection occurrence receives exactly one immediate correction',
+    );
+    const correctionSteps = refusalSteps.filter((step) => step.step.endsWith(':correction'));
+    assert.equal(correctionSteps.length, 2);
+    for (const correction of correctionSteps) {
+      const correctionIndex = result.steps.indexOf(correction);
+      const preceding = result.steps[correctionIndex - 1];
+      const reinspection = result.steps[correctionIndex + 1];
+      assert.ok(preceding, 'the correction immediately follows its refusal');
+      assert.ok(reinspection, 'the spent correction is followed by a fresh Inspection');
+      assert.equal(preceding.outcome, 'closed-refusal');
+      assert.equal(preceding.reason, 'expected-capture-mismatch');
+      assert.equal(correction.step, `${preceding.step}:correction`);
+      assert.equal(reinspection.step, `${preceding.step}:reinspect`);
+      assert.equal(reinspection.outcome, 'accepted');
+      assert.equal(reinspection.reason, 'inspection-refreshed');
+    }
+
+    for (const [index, row] of refusalRows.entries()) {
+      assert.equal(row.operation, 'work-project', `refusal ${index + 1}`);
+      assert.equal(row.delegatedWorkProjects, 0, `refusal ${index + 1} precedes every real lane effect`);
+      assert.deepEqual(
+        row.authoritative,
+        authoritativePrestate,
+        `refusal ${index + 1} leaves all authoritative lane surfaces byte-exact`,
+      );
+      assert.equal(typeof row.inspectionIdentity, 'string', `refusal ${index + 1} has a fresh Inspection`);
+    }
+    assert.equal(refusalRows[0].inspectionIdentity, refusalRows[1].inspectionIdentity);
+    assert.notEqual(refusalRows[1].inspectionIdentity, refusalRows[2].inspectionIdentity);
+    assert.equal(refusalRows[2].inspectionIdentity, refusalRows[3].inspectionIdentity);
+
+    const acceptedAuthority = (step) => {
+      const acceptedStateBytes = Buffer.from(step.stateBase64, 'base64').toString('utf8');
+      const acceptedState = JSON.parse(acceptedStateBytes);
+      return {
+        ...acceptedAuthorityTuple({
+          acceptedState,
+          acceptedStateBytes,
+          acceptedStateHash: step.stateHash,
+          acceptedRevision: step.acceptedRevision,
+        }),
+        overallBudget: acceptedState.policy.overall,
+        recoveryBudget: acceptedState.policy.recovery,
+      };
+    };
+    const beforeFirstRefusal = acceptedAuthority(result.steps[result.steps.indexOf(refusalSteps[0]) - 1]);
+    for (const [index, refusal] of refusalSteps.entries()) {
+      const preserved = acceptedAuthority(refusal);
+      assert.equal(preserved.acceptedStateHash, sha256(preserved.acceptedStateBytes), `refusal ${index + 1}`);
+      assert.deepEqual(
+        preserved,
+        beforeFirstRefusal,
+        `refusal ${index + 1} preserves accepted bytes, revision, tuples, and budgets`,
+      );
+    }
+
+    assert.match(
+      fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'),
+      new RegExp(`- \\[x\\] ${TARGET.taskKey}`),
+      'the final real lane effect settles the task',
+    );
+    assert.equal(
+      JSON.parse(fs.readFileSync(path.join(root, TASK_STATE_PATH), 'utf8'))[TASKS_PATH].glyphs[TARGET.taskKey],
+      'x',
+      'the final real lane effect settles the snapshot',
+    );
+    assert.deepEqual(
+      fs.readFileSync(path.join(root, IDEA_PATH)),
+      authoritativePrestate.owner,
+      'task settlement keeps the exact owner and Coordinator Log when ownerLog is none',
+    );
+    assert.equal(checkpoint.calls.filter((call) => call === 'claim').length, 1);
+    assert.equal(checkpoint.pair.claim, null, 'the terminal result clears its ownership claim');
+    assert.equal(checkpoint.pair.checkpoint, null, 'the terminal result clears its checkpoint');
+  });
 
   const protocolCases = [
     {
@@ -6644,6 +6916,154 @@ nodeTest('focused table B: rejected review settles before learning and later att
   }
 });
 
+nodeTest('issue #21: review rejection recovers through address-review after an unchanged fresh recapture', async () => {
+  await withSealedWorkspace(async (root) => {
+    // Arrange: the first complete result carries real Tester and Reviewer
+    // evidence, but the Reviewer rejects it. The later address-review route
+    // deliberately sees two proven no-effect runtime failures.
+    writeSealedTaskState(root);
+    const request = focusedRunnerRequest(root);
+    request.specialistResult = focusedSpecialistPair(
+      request.assessment,
+      'issue-21-initial-review-rejection',
+      'rejected',
+    );
+    const checkpoint = memoryCheckpointStore();
+    const challengeKinds = [];
+    const assessmentActions = [];
+    let currentAssessment = null;
+    let emptyAddressReviewAuthorizations = 0;
+    let addressReviewEvidenceHash = null;
+    let unchangedRecoveryEvidenceHash = null;
+
+    // Act.
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('issue-21-unchanged-recapture-runtime'),
+        invoke(command, lowLevelRequest) {
+          const lowLevel = /** @type {Record<string, unknown>} */ (lowLevelRequest);
+          const assessment = lowLevel.assessment;
+          if (command === 'authorize'
+            && assessment !== null
+            && typeof assessment === 'object'
+            && /** @type {Record<string, unknown>} */ (assessment).action === 'address-review'
+            && emptyAddressReviewAuthorizations < 2) {
+            const evidenceHash = /** @type {Record<string, unknown>} */ (assessment).evidenceHash;
+            if (addressReviewEvidenceHash === null) addressReviewEvidenceHash = evidenceHash;
+            emptyAddressReviewAuthorizations += 1;
+            return { status: 'empty' };
+          }
+          const value = runCommand(command, lowLevelRequest);
+          if (command === 'inspect'
+            && emptyAddressReviewAuthorizations === 2
+            && unchangedRecoveryEvidenceHash === null) {
+            const inspection = /** @type {Record<string, unknown>} */ (
+              /** @type {Record<string, unknown>} */ (value).inspection
+            );
+            unchangedRecoveryEvidenceHash = /** @type {string} */ (inspection.evidenceHash);
+          }
+          return { status: 'returned', value };
+        },
+      },
+      exchange(challenge) {
+        challengeKinds.push(challenge.kind);
+        if (challenge.kind === 'assessment') {
+          currentAssessment = focusedChallengeAssessment(challenge, {
+            action: 'address-review',
+            materialInputs: {
+              targets: ['src/skills/dude-work/host-adapter.mjs'],
+              operations: ['address-review'],
+              checks: ['review', 'verification'],
+            },
+            summary: 'Address the retained Reviewer finding and repeat both required checks.',
+          });
+          assessmentActions.push(currentAssessment.action);
+          return focusedChallengeResponse(challenge, 'assessment', currentAssessment);
+        }
+        if (challenge.kind === 'specialist-pair') {
+          assert.ok(currentAssessment, 'a specialist result follows its bound Assessment');
+          return focusedChallengeResponse(
+            challenge,
+            'specialistResult',
+            focusedSpecialistPair(
+              /** @type {Record<string, unknown>} */ (currentAssessment),
+              'issue-21-address-review',
+              'accepted',
+            ),
+          );
+        }
+        assert.fail(`unexpected runner challenge: ${challenge.kind}`);
+      },
+    });
+
+    // Assert: one real runner ownership claim progresses from rejected review
+    // through the review-remediation action and its required verification/review
+    // checks to actual lane settlement.
+    assert.equal(
+      result.outcome,
+      'ended',
+      `${result.reason}:${result.steps.map((step) => `${step.step}=${step.reason}`).join(',')}`,
+    );
+    assert.equal(result.reason, 'task-settled');
+    assert.equal(checkpoint.calls.filter((call) => call === 'claim').length, 1);
+    assert.equal(checkpoint.pair.checkpoint, null);
+    // The rejected initial pair was supplied in the request. Recovery must
+    // authorize address-review before it can request a replacement pair: both
+    // no-effect authorization calls precede the fresh Assessment, then the
+    // successful authorization permits the one real specialist-pair challenge.
+    assert.deepEqual(
+      challengeKinds,
+      ['assessment', 'assessment', 'specialist-pair'],
+      'the replacement specialist pair follows successful address-review authorization',
+    );
+    assert.deepEqual(assessmentActions, ['address-review', 'address-review']);
+    assert.equal(emptyAddressReviewAuthorizations, 2, 'both no-effect refusals were exercised');
+    assert.equal(unchangedRecoveryEvidenceHash, addressReviewEvidenceHash, 'reinspection content is unchanged');
+
+    const noEffectSteps = result.steps.filter((step) => step.reason === 'runtime-output-empty');
+    assert.equal(noEffectSteps.length, 2, 'both address-review no-effect refusals are retained');
+    assert.deepEqual(
+      noEffectSteps.map((step) => step.step),
+      ['attempt:2:authorize-attempt', 'attempt:2:authorize-attempt:correction'],
+      'the second no-effect result is the one permitted correction',
+    );
+    const firstNoEffect = noEffectSteps[0];
+    const secondNoEffect = noEffectSteps[1];
+    assert.deepEqual(
+      {
+        acceptedRevision: secondNoEffect.acceptedRevision,
+        stateBase64: secondNoEffect.stateBase64,
+        stateHash: secondNoEffect.stateHash,
+      },
+      {
+        acceptedRevision: firstNoEffect.acceptedRevision,
+        stateBase64: firstNoEffect.stateBase64,
+        stateHash: firstNoEffect.stateHash,
+      },
+      'no-effect refusals neither charge accepted authority nor alter its state',
+    );
+    const recapture = result.steps.find((step) => step.step === 'attempt:2:authorize-attempt:reinspect');
+    assert.ok(recapture, 'second no-effect refusal triggers a fresh Inspection');
+    assert.equal(recapture.reason, 'inspection-refreshed');
+    assert.equal(recapture.acceptedRevision, firstNoEffect.acceptedRevision);
+    assert.equal(recapture.stateBase64, firstNoEffect.stateBase64);
+    assert.ok(
+      result.steps.some((step) => step.step === 'attempt:1:settle-completion' && step.reason === 'review-rejected'),
+      'initial Reviewer rejection reaches settlement',
+    );
+    assert.ok(
+      result.steps.some((step) => step.step === 'attempt:2:settle-completion' && step.reason === 'completed'),
+      'address-review reaches re-verification and re-review settlement',
+    );
+    assert.match(fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'), new RegExp(`- \\[x\\] ${TARGET.taskKey}`));
+    assert.equal(
+      JSON.parse(fs.readFileSync(path.join(root, TASK_STATE_PATH), 'utf8'))[TASKS_PATH].glyphs[TARGET.taskKey],
+      'x',
+    );
+  });
+});
+
 nodeTest('focused table C: projection receipts and replacement-worker resume stay exact', async () => {
   withSealedWorkspace((root) => {
     writeSealedTaskState(root);
@@ -6799,6 +7219,37 @@ nodeTest('focused table C: projection receipts and replacement-worker resume sta
     const checkpointRoot = path.join(root, 'checkpoint');
     fs.mkdirSync(checkpointRoot);
     const observedCurrentRun = [];
+    const workProjectRefusals = [
+      {
+        version: 1,
+        ok: false,
+        phase: 'refused',
+        reason: 'expected-capture-mismatch',
+        unchangedPrestateHash: sha256('focused-c-runner-order-refusal:1'),
+      },
+      {
+        version: 1,
+        ok: false,
+        phase: 'refused',
+        reason: 'expected-capture-mismatch',
+        unchangedPrestateHash: sha256('focused-c-runner-order-refusal:2'),
+      },
+      {
+        version: 1,
+        ok: false,
+        phase: 'refused',
+        reason: 'expected-capture-mismatch',
+        unchangedPrestateHash: sha256('focused-c-runner-order-refusal:3'),
+      },
+      {
+        version: 1,
+        ok: false,
+        phase: 'refused',
+        reason: 'expected-capture-mismatch',
+        unchangedPrestateHash: sha256('focused-c-runner-order-refusal:4'),
+      },
+    ];
+    let delegatedWorkProjects = 0;
     const result = await runHostAdapter(focusedRunnerRequest(root), {
       checkpoint: createTemporaryCheckpointStore({ root: checkpointRoot }),
       runtime: {
@@ -6813,18 +7264,17 @@ nodeTest('focused table C: projection receipts and replacement-worker resume sta
       laneOwner: {
         identity: sha256('focused-c-runner-order-lane-owner'),
         apply(request) {
-          if (request.operation !== 'work-project') return applyLightweightWorkRequest(request);
-          return {
-            version: 1,
-            ok: false,
-            phase: 'refused',
-            reason: 'expected-capture-mismatch',
-            unchangedPrestateHash: sha256('focused-c-runner-order-unchanged'),
-          };
+          if (request.operation === 'work-project' && workProjectRefusals.length > 0) {
+            return workProjectRefusals.shift();
+          }
+          if (request.operation === 'work-project') delegatedWorkProjects += 1;
+          return applyLightweightWorkRequest(request);
         },
       },
     });
-    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(`${result.outcome}/${result.reason}`, 'ended/task-settled');
+    assert.equal(workProjectRefusals.length, 0, 'the finite refusal script crossed both correction occurrences');
+    assert.equal(delegatedWorkProjects, 1, 'the later work-project call reaches the real lane boundary');
     assert.ok(
       observedCurrentRun.includes(1),
       'runner fresh Inspection must retain current-run before a refused lane projection',

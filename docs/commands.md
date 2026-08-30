@@ -69,6 +69,11 @@ author, comment age, or position decides the route. Classification and handoff
 occur only when the surrounding request asks to capture or execute work; a
 request only about an issue receives a direct answer and admits nothing.
 
+`@dude ship issue <number>` is the one-verb execution form: it fetches,
+classifies, and executes the existing route for the issue. The [issue intake
+decision model](workflow.md#github-issue-intake) shows when inspection, feature
+capture, bounded direct work, flagging, or a classification question applies.
+
 The route depends on substance:
 
 - A feature request enters the existing brainstorm capture.
@@ -192,6 +197,7 @@ it uses `gh pr create --base main`, includes `Fixes #<number>` for a
 same-repository issue or `Fixes <owner>/<repository>#<number>` when repositories
 differ, then verifies `baseRefName` with `gh pr view --json baseRefName`. Dude
 does not create a pull request on its own as part of issue intake.
+Ship does not create one automatically.
 
 Ship runs autonomously with an unlimited budget: at recoverable checkpoints it
 authorizes the next attempt itself instead of handing the decision back to you.

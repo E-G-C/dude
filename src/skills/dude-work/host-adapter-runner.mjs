@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 
 import { resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
+import { readTaskState } from '../dude-engine/lib/task-state.mjs';
 import { parseVisibleTasks } from '../dude-engine/lib/tasks.mjs';
 import { isMainModule } from '../dude-engine/lib/text.mjs';
 import { WORKSPACE_PATHS, resolveMutationPath } from '../dude-engine/lib/workspace-paths.mjs';
@@ -26,6 +27,9 @@ import {
 
 const MAX_REQUEST_BYTES = 1_048_576;
 const DEFAULT_RUNTIME_IDENTITY = sha256('dude-work/host-adapter-runner:recovery-runtime:v1');
+const EMPTY_TASK_STATE_BYTES = Buffer.from('{}\n');
+
+class TaskStateEvidenceError extends Error {}
 
 /** @param {unknown} value @param {string[]} fields @param {string} label @param {string[]} [optional] */
 function exactRecord(value, fields, label, optional = []) {
@@ -72,6 +76,15 @@ function readWorkspaceFile(root, relativePath) {
   return fs.readFileSync(resolveMutationPath(root, relativePath));
 }
 
+/** @param {string} root */
+function readTaskStateCapture(root) {
+  const taskState = readTaskState(root);
+  if (taskState.status === 'corrupt') throw new TaskStateEvidenceError(taskState.reason);
+  return taskState.status === 'absent'
+    ? Buffer.from(EMPTY_TASK_STATE_BYTES)
+    : readWorkspaceFile(root, WORKSPACE_PATHS.TASK_STATE);
+}
+
 /** @param {unknown} value */
 function canonicalTime(value = new Date()) {
   const time = value instanceof Date ? value : new Date(/** @type {string|number} */ (value));
@@ -96,7 +109,7 @@ function freshLaneBinding(root, targetValue, expectedOwner) {
   const tasksPath = tasksPathForSpec(target.specPath);
   const tasks = readWorkspaceFile(root, tasksPath);
   const owner = readWorkspaceFile(root, resolved.owner.ideaPath);
-  const taskState = readWorkspaceFile(root, WORKSPACE_PATHS.TASK_STATE);
+  const taskState = readTaskStateCapture(root);
   const visible = parseVisibleTasks(tasks, { path: tasksPath, state: 'host adapter runner binding' });
   const rows = visible.parsed.tasks.filter((task) => task.id === target.taskKey);
   if (visible.parsed.boardIssue || rows.length !== 1) throw new TypeError('mapping-missing');
@@ -379,6 +392,8 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   /** @type {Record<string, unknown>|null} */
   let currentInspection = null;
   /** @type {Record<string, unknown>|null} */
+  let carriedBlocker = null;
+  /** @type {Record<string, unknown>|null} */
   let runtimeInspection = null;
   /** @type {Record<string, unknown>|null} */
   let outstandingChallenge = null;
@@ -413,7 +428,11 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
         const haltState = JSON.parse(
           Buffer.from(/** @type {string} */ (row.stateBase64), 'base64').toString('utf8'),
         );
-        const report = describeUnattendedHalt({ state: haltState, reason: row.reason }, currentInspection);
+        const report = describeUnattendedHalt({
+          state: haltState,
+          reason: row.reason,
+          ...(carriedBlocker === null ? {} : { blocker: carriedBlocker }),
+        }, currentInspection);
         if (report !== null) haltReport = report;
       } catch {
         // Fail closed: keep the unresolved report; `finish` must never throw.
@@ -749,14 +768,12 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
 
   /** @param {string} step @param {string} operation @param {()=>Record<string, unknown>} payload */
   const runDeterministic = (step, operation, payload) => {
-    let outcome = runSemantic(step, operation, payload());
-    if (outcome.terminal || !outcome.reinspected) return outcome;
-    outcome = runSemantic(`${step}:fresh`, operation, payload());
-    if (outcome.terminal || !outcome.reinspected) return outcome;
-    return {
-      ...outcome,
-      terminal: orphan('repeated-closed-refusal', operation),
-    };
+    let operationStep = step;
+    while (true) {
+      const outcome = runSemantic(operationStep, operation, payload());
+      if (outcome.terminal || !outcome.reinspected) return outcome;
+      operationStep = `${step}:fresh`;
+    }
   };
 
   /** @param {Record<string, unknown>} effect @param {string} label */
@@ -1299,12 +1316,36 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     return finish(endedRow);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    const taskStateFailure = error instanceof TaskStateEvidenceError;
+    if (taskStateFailure && currentInspection === null) {
+      try {
+        currentInspection = clone(inspect(rawInput()));
+      } catch {
+        // The terminal report remains explicitly unresolved when no valid
+        // Inspection can bind the snapshot evidence.
+      }
+    }
+    if (taskStateFailure && currentInspection !== null) {
+      carriedBlocker = {
+        code: 'evidence-incomplete',
+        subject: WORKSPACE_PATHS.TASK_STATE,
+        evidenceHash: currentInspection.evidenceHash,
+      };
+    }
     const row = adapter === null
       ? initialStateResult(state, {
-        type: 'step', step: 'runner', outcome: 'hard-stop', reason: 'runner-refused', detail,
+        type: 'step',
+        step: 'runner',
+        outcome: 'hard-stop',
+        reason: taskStateFailure ? 'evidence-incomplete' : 'runner-refused',
+        detail,
       })
       : stateResult(adapter.snapshot(), {
-        type: 'step', step: 'runner', outcome: 'hard-stop', reason: 'runner-refused', detail,
+        type: 'step',
+        step: 'runner',
+        outcome: 'hard-stop',
+        reason: taskStateFailure ? 'evidence-incomplete' : 'runner-refused',
+        detail,
       });
     steps.push(row);
     return finish(row);

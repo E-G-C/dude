@@ -285,6 +285,12 @@ issue says gets a direct answer and admits no work; capture or execution asks
 Dude to classify it. Merely discovering or displaying an issue does not
 authorize execution.
 
+Some issue execution takes a shorter route than the feature lifecycle:
+`@dude ship issue <number>` fetches, classifies, and executes through the
+existing route for the issue. The [issue intake decision model](docs/workflow.md#github-issue-intake)
+explains when to inspect, ship, define a feature, run bounded work, flag an
+active-work blocker, or answer one classification question.
+
 ## When To Add A Tracked Board
 
 Dude implements straight from `tasks.md`, which is enough to finish a feature.

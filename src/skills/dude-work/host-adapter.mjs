@@ -2181,11 +2181,13 @@ function freshInspection(session, request, invoke) {
     session,
     'recovery inspect response.inspection',
   );
-  const inspectionIdentity = sha256(canonicalJson(inspection));
-  if (session.correction !== null
-    && /** @type {Record<string, unknown>} */ (session.correction).inspectionIdentity === inspectionIdentity) {
-    return reinspect(session, 'inspection-not-fresh');
-  }
+  // Evidence identity stays content-derived on Inspection itself. Bind this
+  // successful runtime capture to the prior serialized session so equal content
+  // captured again is a new occurrence without introducing another counter.
+  const inspectionIdentity = sha256(canonicalJson({
+    inspection,
+    predecessorSessionIdentity: session.sessionIdentity,
+  }));
   const notice = session.recoveryNotice;
   const next = advanceHost(session, { inspectionIdentity, correction: null, recoveryNotice: null });
   return checkedResult({
