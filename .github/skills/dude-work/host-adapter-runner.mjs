@@ -768,12 +768,14 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
 
   /** @param {string} step @param {string} operation @param {()=>Record<string, unknown>} payload */
   const runDeterministic = (step, operation, payload) => {
-    let operationStep = step;
-    while (true) {
-      const outcome = runSemantic(operationStep, operation, payload());
-      if (outcome.terminal || !outcome.reinspected) return outcome;
-      operationStep = `${step}:fresh`;
-    }
+    let outcome = runSemantic(step, operation, payload());
+    if (outcome.terminal || !outcome.reinspected) return outcome;
+    outcome = runSemantic(`${step}:fresh`, operation, payload());
+    if (outcome.terminal || !outcome.reinspected) return outcome;
+    return {
+      ...outcome,
+      terminal: orphan('repeated-closed-refusal', operation),
+    };
   };
 
   /** @param {Record<string, unknown>} effect @param {string} label */
