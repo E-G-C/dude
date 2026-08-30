@@ -68,7 +68,7 @@ const PACK_CATALOG = Object.freeze({
         modelClass: 'reasoning', tools: ['read', 'edit', 'execute', 'search'],
       },
       'dude-pack-coding-coder': {
-        modelClass: 'balanced', tools: ['read', 'edit', 'execute', 'search'],
+        modelClass: 'coding', tools: ['read', 'edit', 'execute', 'search'],
       },
       'dude-pack-coding-reviewer': {
         modelClass: 'reasoning', tools: ['read', 'search'],

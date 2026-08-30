@@ -3,7 +3,7 @@ name: "Coder"
 description: "Implements features from tasks.md: writes code, wires modules, and follows project conventions. Use for software implementation work."
 tools: ["read", "edit", "execute", "search"]
 user-invocable: false
-model: gpt-5.6-terra
+model: gpt-5.6-sol-fast
 ---
 
 You are the coding implementation specialist.

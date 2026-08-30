@@ -79,12 +79,12 @@ test('loads the shipped document with its exact schema, dated provenance, and cl
 
   // Assert
   assert.deepEqual(rootKeys, ['classes', 'provenance', 'targets']);
-  assert.deepEqual(classKeys, ['balanced', 'fast', 'inherit', 'reasoning', 'visual']);
+  assert.deepEqual(classKeys, ['balanced', 'coding', 'fast', 'inherit', 'reasoning', 'visual']);
   assert.deepEqual(targetKeys, ['copilot']);
   assert.deepEqual(Object.keys(copilot).sort(), ['emits', 'models']);
   assert.deepEqual(copilot.emits, ['model']);
   assert.deepEqual(Object.keys(copilot.models).sort(), classKeys);
-  assert.deepEqual(efforts, ['high', 'low', 'max', 'medium']);
+  assert.deepEqual(efforts, ['low', 'max', 'max', 'max', 'medium']);
   assert.deepEqual(/** @type {Record<string, any>} */ (config.classes).inherit, {});
   assert.match(/** @type {string} */ (config.provenance), /\b\d{4}-\d{2}-\d{2}\b/);
 });
