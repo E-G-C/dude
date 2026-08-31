@@ -115,6 +115,18 @@ code exposes a missing decision, Dude routes the gap back to the artifact and
 owner responsible for it. When work finishes, tests and independent review
 provide the evidence for closing the task.
 
+After Dude successfully closes one or more targets, the same final response
+contains one proportional `Completion Closeout:`. A bounded task usually needs
+only its closed scope and freshly observed worktree and branch state. Feature
+and release closeouts can also include evidenced delivery identities and actual
+URLs, exact optional cleanup that was not run, and learning already retained or
+proposed. Ship closeouts scale the same way. Empty categories are omitted, and a
+mixed result covers only the successful closures.
+
+The closeout is read-only, writes no state or report artifact, and works without
+optional packs. Pack advice already available may supply evidence, but cannot
+delay reporting or change who has authority.
+
 You can stop after definition and use the package as a plan, or let Dude
 continue through implementation:
 

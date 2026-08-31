@@ -7944,3 +7944,323 @@ test('installed pack refresh guidance stays current and generated', () => {
     'generated bundle-upgrade guidance is byte-identical to its authoritative source',
   );
 });
+
+// --- Feature 050: one evidence-based completion closeout ---------------------
+
+const COMPLETION_CLOSEOUT_OWNER = 'src/agents/dude.agent.md';
+const COMPLETION_CLOSEOUT_SECTION = '## Completion Closeout';
+const COMPLETION_CLOSEOUT_CATEGORY_ANCHORS = [
+  '**Repository state:**',
+  '**Delivery identities and links:**',
+  '**Optional cleanup:**',
+  '**Retained or proposed learning:**',
+];
+const COMPLETION_CLOSEOUT_REQUIREMENTS = [
+  ['successful-close trigger', 'When the current invocation successfully closes', [
+    /at least one workflow target/i,
+    /include exactly one `Completion Closeout:` block/i,
+  ]],
+  ['exactly one same-response closeout', 'When the current invocation successfully closes', [
+    /same final coordinator response/i,
+    /Do not emit a closeout per target or in an interim response/i,
+  ]],
+  ['no closeout without successful close', 'When the current invocation successfully closes', [
+    /If no target closes successfully, emit no success closeout/i,
+  ]],
+  ['FR-005 successful-target/evidence scoping', 'Identify the successfully closed target or targets', [
+    /without broadening the claim/i,
+    /only facts supported by evidence available to the coordinator/i,
+    /Never invent a status, identity, relationship, cleanliness claim, or link/i,
+  ]],
+  ['proportional bounded, feature, Ship, and release scope', 'When the current invocation successfully closes', [
+    /proportionally to a bounded task, completed feature work, Ship work, release work, or several successful closures together/i,
+  ]],
+  ['mixed-result scope preserves normal unfinished-work reporting', 'In a mixed-result invocation', [
+    /limit the closeout to those closures/i,
+    /preserve the normal stop reason, `Next:`, and `Blockers:` reporting/i,
+    /every unfinished, blocked, or failed target/i,
+    /never imply that the invocation or feature completed as a whole/i,
+  ]],
+  ['post-close read-only repository observation', 'After the successful close and before composing the final response', [
+    /freshly observe mutable worktree and branch state/i,
+    /read-only operations/i,
+    /repository-backed work/i,
+    /Earlier evidence may be reused only for immutable delivery facts/i,
+  ]],
+  ['unavailable repository observation remains honest', 'After the successful close and before composing the final response', [
+    /distinguish a named branch, detached HEAD, unborn branch, and unavailable branch state/i,
+    /Claim a clean worktree only when the fresh evidence proves it/i,
+    /report the unavailable fact and observed reason instead of inferring the missing state/i,
+  ]],
+  ['FR-007 dirty/untracked/ignored/out-of-scope status qualification', 'After the successful close and before composing the final response', [
+    /Claim a clean worktree only when the fresh evidence proves it/i,
+    /preserve observed dirty, untracked, ignored, and out-of-scope qualifications/i,
+  ]],
+  ['deterministic applicable-category order', 'After identifying the closed scope, render only applicable categories', [
+    /deterministic order/i,
+  ]],
+  ['fresh repository-state category', '**Repository state:**', [
+    /freshly observed worktree status/i,
+    /branch identity or detached, unborn, or unavailable state/i,
+  ]],
+  ['observed relevant delivery identities', '**Delivery identities and links:**', [
+    /only identities relevant to the successful closure/i,
+    /supported by observed evidence/i,
+    /each item is individually evidenced and relevant/i,
+  ]],
+  ['FR-008 observed commit identities', '**Delivery identities and links:**', [
+    /only identities relevant to the successful closure/i,
+    /supported by observed evidence/i,
+    /Include commits/i,
+    /each item is individually evidenced and relevant/i,
+  ]],
+  ['FR-009 observed pull request, tag, and release identities', '**Delivery identities and links:**', [
+    /only identities relevant to the successful closure/i,
+    /supported by observed evidence/i,
+    /pull requests, tags, releases/i,
+    /each item is individually evidenced and relevant/i,
+  ]],
+  ['FR-009 copied URL from observed evidence', '**Delivery identities and links:**', [
+    /Copy an actual URL from evidence/i,
+  ]],
+  ['FR-009 rejects synthesized URLs', '**Delivery identities and links:**', [
+    /never construct one/i,
+  ]],
+  ['exact optional unexecuted cleanup', '**Optional cleanup:**', [
+    /exact action and exact target/i,
+    /safe, current, and unambiguous/i,
+    /Label it optional and unexecuted/i,
+    /omit cleanup that is stale, unsafe, ambiguous, completed, or unrelated/i,
+  ]],
+  ['retained-or-proposed learning under existing authority', '**Retained or proposed learning:**', [
+    /already retained or already proposed/i,
+    /existing learning and memory authority/i,
+    /Preserve its existing disposition/i,
+    /do not create, promote, persist, or reclassify/i,
+  ]],
+  ['inapplicable categories are omitted completely', 'Omit every inapplicable category completely', [
+    /heading, placeholder, and negative boilerplate/i,
+    /routine bounded-task close therefore stays small/i,
+    /feature, Ship, and release closes surface only their evidenced delivery facts and follow-up/i,
+  ]],
+  ['closeout is read-only and grants no authority', 'The closeout is read-only and grants no authority.', [
+    /no cleanup, Git or delivery mutation, release action, workflow transition, reopening, learning promotion, or memory persistence/i,
+  ]],
+  ['closeout creates no hooks, stages, state, audit, or report surface', 'The closeout is read-only and grants no authority.', [
+    /no additional response, stage, hook, reviewer, acceptance decision, task, lane, board, audit carrier, report file, registry, or persistent state/i,
+  ]],
+  ['optional-pack-independent core closeout', 'Core closeout behavior has no dependency on an optional pack.', [
+    /Advisory feedback from an installed optional pack may contribute only evidence that already reached the coordinator before close under existing authority/i,
+    /pack absence, failure, or silence cannot delay close, weaken the closeout, add authority, or produce another closeout/i,
+  ]],
+];
+const COMPLETION_CLOSEOUT_PARTIAL_DELETION_FALSIFIERS = [
+  [
+    'FR-005 successful-target/evidence scoping',
+    'Identify the successfully closed target or targets',
+    'Never invent a status, identity, relationship, cleanliness claim, or link.',
+  ],
+  [
+    'FR-007 dirty/untracked/ignored/out-of-scope status qualification',
+    'After the successful close and before composing the final response',
+    'preserve observed dirty, untracked, ignored, and out-of-scope qualifications. ',
+  ],
+  [
+    'FR-008 observed commit identities',
+    '**Delivery identities and links:**',
+    'commits,',
+  ],
+  [
+    'FR-009 observed pull request, tag, and release identities',
+    '**Delivery identities and links:**',
+    'pull requests, tags, releases, or',
+  ],
+  [
+    'FR-009 copied URL from observed evidence',
+    '**Delivery identities and links:**',
+    'Copy an actual URL from evidence;',
+  ],
+  [
+    'FR-009 rejects synthesized URLs',
+    '**Delivery identities and links:**',
+    'never construct one from an issue, branch, tag, release, repository, or recognizable name.',
+  ],
+];
+
+/**
+ * Locate one clause in its named rule block after normalizing Markdown
+ * whitespace. Soft wraps are presentation, not a different falsifier target.
+ * @param {string} section
+ * @param {string} anchor
+ * @param {string} target
+ * @param {string} context
+ * @param {string} label
+ */
+function completionCloseoutFalsifierTarget(section, anchor, target, context, label) {
+  const blocks = anchoredRuleBlocks(section, anchor);
+  assert.equal(
+    blocks.length,
+    1,
+    `${context}: ${label} has one ${anchor} section-scoped deletion block`,
+  );
+  const [block] = blocks;
+  const normalizedTarget = normalizeMarkdownBlock(target);
+  assert.equal(
+    block.normalized.split(normalizedTarget).length - 1,
+    1,
+    `${context}: ${label} normalized deletion target occurs once in its section-scoped block`,
+  );
+  return { block, normalizedTarget };
+}
+
+/** @param {string} section @param {string} context */
+function assertCompletionCloseoutContract(section, context) {
+  assertShipParagraphRequirements(section, COMPLETION_CLOSEOUT_REQUIREMENTS, context);
+
+  const categoryAnchors = markdownRuleBlocks(section, { splitLists: true })
+    .map(({ normalized }) => COMPLETION_CLOSEOUT_CATEGORY_ANCHORS
+      .find((anchor) => normalized.includes(anchor)) ?? null)
+    .filter((anchor) => anchor !== null);
+  assert.deepEqual(
+    categoryAnchors,
+    COMPLETION_CLOSEOUT_CATEGORY_ANCHORS,
+    `${context}: applicable categories use repository, delivery, cleanup, then learning order exactly once`,
+  );
+}
+
+/** @param {string} section @param {string} context */
+function assertCompletionCloseoutPartialDeletionFalsifiers(section, context) {
+  for (const [label, anchor, target] of COMPLETION_CLOSEOUT_PARTIAL_DELETION_FALSIFIERS) {
+    const { block, normalizedTarget } = completionCloseoutFalsifierTarget(
+      section,
+      anchor,
+      target,
+      context,
+      label,
+    );
+    const deleted = section.replace(
+      block.raw,
+      block.normalized.replace(normalizedTarget, ''),
+    ).replace(/\n{3,}/g, '\n\n').trim();
+    assert.ok(
+      missingParagraphRequirements(deleted, COMPLETION_CLOSEOUT_REQUIREMENTS).includes(label),
+      `${context}: deleting ${label}'s normalized section-scoped target must fail its assertion`,
+    );
+  }
+}
+
+test('T002 Feature 050 coordinator closeout is section-bound, ordered, and deletion-falsifiable', () => {
+  // Arrange
+  const closeout = markdownSection(
+    read(COMPLETION_CLOSEOUT_OWNER),
+    COMPLETION_CLOSEOUT_SECTION,
+  );
+
+  // Act + Assert: every material behavior has one normalized owning block. The
+  // shared helper deletes that block per labeled requirement, so nearby prose
+  // cannot mask a removed closeout obligation.
+  assertCompletionCloseoutContract(
+    closeout,
+    `${COMPLETION_CLOSEOUT_OWNER} ${COMPLETION_CLOSEOUT_SECTION}`,
+  );
+  assertCompletionCloseoutPartialDeletionFalsifiers(
+    closeout,
+    `${COMPLETION_CLOSEOUT_OWNER} ${COMPLETION_CLOSEOUT_SECTION}`,
+  );
+
+  const [rewrapLabel, rewrapAnchor, rewrapTarget] = COMPLETION_CLOSEOUT_PARTIAL_DELETION_FALSIFIERS[0];
+  const { block: rewrapBlock, normalizedTarget: normalizedRewrapTarget } = completionCloseoutFalsifierTarget(
+    closeout,
+    rewrapAnchor,
+    rewrapTarget,
+    `${COMPLETION_CLOSEOUT_OWNER} ${COMPLETION_CLOSEOUT_SECTION}`,
+    rewrapLabel,
+  );
+  const rewrapped = closeout.replace(
+    rewrapBlock.raw,
+    rewrapBlock.normalized.replace(
+      normalizedRewrapTarget,
+      normalizedRewrapTarget.replace(' ', '\n  '),
+    ),
+  );
+  assert.doesNotThrow(
+    () => {
+      assertCompletionCloseoutContract(rewrapped, `${COMPLETION_CLOSEOUT_OWNER} ${COMPLETION_CLOSEOUT_SECTION}`);
+      assertCompletionCloseoutPartialDeletionFalsifiers(
+        rewrapped,
+        `${COMPLETION_CLOSEOUT_OWNER} ${COMPLETION_CLOSEOUT_SECTION}`,
+      );
+    },
+    'a harmless Markdown rewrap must preserve closeout contract and deletion falsifiers',
+  );
+
+  const categoryBlocks = markdownRuleBlocks(closeout, { splitLists: true })
+    .filter((block) => COMPLETION_CLOSEOUT_CATEGORY_ANCHORS
+      .some((anchor) => block.normalized.includes(anchor)));
+  assert.equal(categoryBlocks.length, 4, 'closeout has four independently mutable category blocks');
+  const [repository, , , learning] = categoryBlocks;
+  const reordered = closeout
+    .replace(repository.raw, 'FEATURE_050_REPOSITORY_CATEGORY_HOLDER')
+    .replace(learning.raw, repository.raw)
+    .replace('FEATURE_050_REPOSITORY_CATEGORY_HOLDER', learning.raw);
+  assert.notEqual(reordered, closeout, 'category-order falsifier changes the bounded closeout section');
+  assert.throws(
+    () => assertCompletionCloseoutContract(
+      reordered,
+      `${COMPLETION_CLOSEOUT_OWNER} ${COMPLETION_CLOSEOUT_SECTION}`,
+    ),
+    'reordering applicable categories must fail the deterministic-order assertion',
+  );
+});
+
+test('T002 Feature 050 Work and Lightweight consumers retain narrow coordinator-closeout pointers', () => {
+  const pointers = [
+    {
+      relative: 'src/skills/dude-work/SKILL.md',
+      heading: '## Report',
+      label: 'Work pointer',
+      anchor: 'If the Work invocation closed one or more tasks',
+      signals: [
+        /coordinator's `## Completion Closeout` contract exactly once/i,
+        /same final response/i,
+        /including when later work in that invocation stops/i,
+      ],
+    },
+    {
+      relative: 'src/skills/dude-lightweight-execution/SKILL.md',
+      heading: '## Lightweight Close Protocol',
+      label: 'Lightweight pointer',
+      anchor: 'After a bounded task closes successfully',
+      signals: [
+        /coordinator's `## Completion Closeout` contract once/i,
+        /same final response/i,
+      ],
+    },
+  ];
+  const coordinatorOnlyDetails = [
+    /freshly observe mutable worktree and branch state/i,
+    /Copy an actual URL from evidence/i,
+    /Label it optional and unexecuted/i,
+    /Retained or proposed learning/i,
+  ];
+
+  for (const { relative, heading, label, anchor, signals } of pointers) {
+    // Arrange
+    const section = markdownSection(read(relative), heading);
+
+    // Act + Assert: the consumer says when to apply the owner contract, but
+    // does not restate the evidence/rendering rules it does not own.
+    assertShipParagraphRequirements(section, [
+      [label, anchor, signals],
+    ], `${relative} ${heading}`);
+    const blocks = anchoredRuleBlocks(section, anchor);
+    assert.equal(blocks.length, 1, `${relative} ${heading}: one bounded ${label}`);
+    for (const detail of coordinatorOnlyDetails) {
+      assert.doesNotMatch(
+        blocks[0].normalized,
+        detail,
+        `${relative} ${heading}: ${label} stays a coordinator-owner pointer`,
+      );
+    }
+  }
+});
