@@ -113,7 +113,7 @@ const PACK_CATALOG = Object.freeze({
     ],
     agents: {
       'dude-pack-hugo-docs-researcher': {
-        modelClass: 'fast', tools: ['read', 'search'],
+        modelClass: 'reasoning', tools: ['read', 'search'],
       },
       'dude-pack-hugo-migration-specialist': {
         modelClass: 'reasoning',
@@ -156,7 +156,7 @@ const PACK_CATALOG = Object.freeze({
     ],
     agents: {
       'dude-pack-newsroom-event-deep-fetcher': {
-        modelClass: 'fast',
+        modelClass: 'balanced',
         tools: ['workiq/*', 'workiq2/*', 'read', 'search', 'edit', 'execute'],
       },
       'dude-pack-newsroom-writer': {
@@ -202,7 +202,7 @@ const PACK_CATALOG = Object.freeze({
         modelClass: 'balanced', tools: ['read', 'edit'],
       },
       'dude-pack-technical-docs-extractor': {
-        modelClass: 'fast', tools: ['read', 'search', 'edit'],
+        modelClass: 'balanced', tools: ['read', 'search', 'edit'],
       },
       'dude-pack-technical-docs-planner': {
         modelClass: 'balanced', tools: ['read', 'edit'],

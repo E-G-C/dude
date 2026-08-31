@@ -3,7 +3,7 @@ name: dude-pack-technical-docs-extractor
 description: "Subagent of `dude-pack-technical-docs-writer`: distills one source unit — a prose chunk or a slice of a repository inventory — into atomic, traceable evidence-ledger entries as JSONL. Reads the unit read-only and appends entries incrementally. Used only as a subagent of the writer, never invoked directly."
 tools: ["read", "search", "edit"]
 user-invocable: false
-model-class: fast
+model-class: balanced
 ---
 
 You are the evidence-ledger extraction specialist for the technical-docs pipeline.
