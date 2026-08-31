@@ -231,6 +231,7 @@ web. Warnings are fine; only failures block.
   on the `dude-pack-<name>-` prefix.
 - The `installed` map and each pack's exact safe `files` list are removal
    authority. Do not hand-edit the profile.
-- In the dogfood repo, compose may use only its six currently installed profile
-   packs: `authoring`, `coding`, `design`, `release`, `strata`, and `writing`.
-   Test any other catalog pack in a throwaway root (`--root <tmp>`).
+- In the dogfood repo, compose may use only its seven currently installed profile
+   packs: `authoring`, `coding`, `design`, `release`, `rubber-duck`, `strata`,
+   and `writing`. Test any other catalog pack in a throwaway root (`--root
+   <tmp>`).

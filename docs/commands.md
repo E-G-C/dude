@@ -1025,10 +1025,10 @@ backlog-order changes still need procedural `backlog.mjs generate --write`.
 This repository keeps the product **core** in `src/` — the `dude` / `dude-<slug>`
 agents, `dude-<slug>` skills (including the engine libraries and their tests),
 and `dude.instructions.md`. `.github/` holds the **built dev bundle**: the core
-synced from `src/` by `scripts/build-dev.mjs`, plus the six currently installed
-dogfood packs: `authoring`, `coding`, `design`, `release`, `strata`, and
-`writing`. This lets the maintainer's own `@dude` work. Consumers never see
-`src/`.
+synced from `src/` by `scripts/build-dev.mjs`, plus the seven currently installed
+dogfood packs: `authoring`, `coding`, `design`, `release`, `rubber-duck`,
+`strata`, and `writing`. This lets the maintainer's own `@dude` work. Consumers
+never see `src/`.
 
 - `scripts/build-release.mjs` stages a test-free core bundle from `src/` plus
   only `.dude/metadata/{bundle-manifest.md,profile.md}` as seeded release

@@ -86,6 +86,16 @@ Other destructive operations likewise require their skill's persisted or fresh p
 
 Implementation is never itself permission to close. Resolve the exact owner, collect the implementation result, obtain fresh verification evidence, obtain independent review when required, then let only the coordinator apply `[x]` or `bd close`. Append the close outcome and perform the active lane's mirror/lint steps. If verification or ownership fails, do not close.
 
+## Optional Rubber Duck Retrospective
+
+At a pending successful feature completion reached through direct feature work or an explicit Ship invocation that completes its feature, after final required Reviewer approval and before coordinator close, inspect the already-discovered direct agent roster for the exact provider stem `dude-pack-rubber-duck-retrospective`. If it is absent, continue the existing close path without a dispatch, artifact requirement, warning, delay, or degraded behavior. Do not use this step for an ordinary or bounded task close, a successful release run, or a failed, blocked, cancelled, or abandoned feature or Ship ending.
+
+When the provider is present, dispatch it exactly once with the exact feature identity, completion mode, package path, changed scope, and available verification and review evidence. This is the last agent dispatch before close. Treat explicit Ship that completes its feature as one `Ship completion` trigger, never separate Ship and Feature triggers. Never rerun, retry, substitute, or make a second retrospective dispatch, including after revision or re-review. Preserve the installed sequence: final Reviewer approval, one Rubber Duck retrospective dispatch, coordinator close, then the universal core closeout report.
+
+Treat findings, no findings, silence, and failure as advisory only. They never abort or delay close, force revision, add an approval gate, create a task or idea, alter Tester or Reviewer authority, or change learning-promotion or memory authority. After the one dispatch attempt and alongside the existing close event, only the coordinator creates or appends `.dude/specs/<NNN>-<slug>/retrospective.md`; the provider never writes it. Begin a new file with the feature-level title `# Retrospective: <feature title>`, then place each entry under `## <UTC ISO-8601 timestamp> — <Feature|Ship> completion` with the exact target, a `completed` or `unavailable` dispatch outcome, and concise advisory observations, a no-findings statement, or the observed unavailable reason. For an existing file, preserve every prior byte and append one blank line plus the new entry. On dispatch failure or silence, append at most one unavailable entry when writable. On artifact-write failure, report the observed failure outside `Completion Closeout:` and continue without retry. Neither failure blocks or delays close.
+
+Treat this as an ordinary conditional coordinator workflow step, not an event, callback, hook, listener, subscription, or lifecycle extension. It adds no command, lane, board, state model, registry, scheduler, daemon, index, or cross-feature aggregation surface.
+
 ## Completion Closeout
 
 When the current invocation successfully closes at least one workflow target, include exactly one `Completion Closeout:` block in that invocation's same final coordinator response. This applies proportionally to a bounded task, completed feature work, Ship work, release work, or several successful closures together. Do not emit a closeout per target or in an interim response. If no target closes successfully, emit no success closeout.
@@ -105,7 +115,7 @@ Omit every inapplicable category completely, including its heading, placeholder,
 
 The closeout is read-only and grants no authority. It performs no cleanup, Git or delivery mutation, release action, workflow transition, reopening, learning promotion, or memory persistence. It creates no additional response, stage, hook, reviewer, acceptance decision, task, lane, board, audit carrier, report file, registry, or persistent state.
 
-Core closeout behavior has no dependency on an optional pack. Advisory feedback from an installed optional pack may contribute only evidence that already reached the coordinator before close under existing authority; pack absence, failure, or silence cannot delay close, weaken the closeout, add authority, or produce another closeout.
+Core closeout behavior has no dependency on an optional pack. Advisory feedback from an installed optional pack may contribute only evidence that already reached the coordinator before close under existing authority; pack absence, failure, or silence cannot delay close, weaken the closeout, add authority, or produce another closeout. The universal block never cites `retrospective.md` or adds a retrospective category.
 
 ## Review Rejection
 

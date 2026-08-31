@@ -1,8 +1,8 @@
 ---
 title: Retrospective Rubber Duck Pack
 slug: retrospective-rubber-duck-pack
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/051-retrospective-rubber-duck-pack/spec.md
 ---
 
 # Idea: Retrospective Rubber Duck Pack
@@ -64,8 +64,8 @@ The separate core idea `.dude/ideas/050-completion-closeout-report.md` owns the 
 - Route reusable lessons only through existing learning-promotion and memory authority.
 - Keep the universal deterministic closeout report owned by `.dude/ideas/050-completion-closeout-report.md`; that core capability must not depend on this pack.
 - Preserve existing Reviewer -> coordinator close -> universal core closeout behavior when the pack is absent.
-- Defer the pack name, need for a separate procedural skill, artifact filenames, and model class to explicit definition.
-- Leave any closeout-report citation of the retrospective path for explicit definition without creating a core dependency on the pack.
+- Use the `rubber-duck` pack with one `dude-pack-rubber-duck-retrospective` agent, no procedural skill, the stable `retrospective.md` artifact, and the `balanced` model class.
+- Keep the retrospective path out of the universal closeout report; leave it discoverable at the stable feature-package path so core never depends on the optional pack.
 
 ## Workflow Boundary
 
@@ -74,7 +74,7 @@ The separate core idea `.dude/ideas/050-completion-closeout-report.md` owns the 
 - Uninstalled path: existing Reviewer approval -> coordinator close -> core closeout response, with no missing-pack warning or degraded core behavior.
 - Activation boundary: the coordinator dispatch is an ordinary workflow step. It is not an event, callback, hook, listener, subscription, or lifecycle extension.
 - Release path: successful release runs never dispatch the Rubber Duck.
-- Persistence boundary: the Rubber Duck returns read-only findings to the coordinator. Under the coordinator working assumptions, the coordinator writes the durable retrospective during close.
+- Persistence boundary: the Rubber Duck returns read-only findings to the coordinator, which appends the durable `.dude/specs/<NNN>-<slug>/retrospective.md` entry during close.
 
 ## Constraints
 
@@ -82,7 +82,7 @@ The separate core idea `.dude/ideas/050-completion-closeout-report.md` owns the 
 - Keep `hooks: []` in `pack.md` as inert metadata, never as an activation mechanism.
 - Give the Rubber Duck only read and search capabilities.
 - Do not let the Rubber Duck approve, overrule, close, clean up, deliver, write Git state, or mutate task glyphs or metadata, Coordinator Logs, definition artifacts, retrospective artifacts, memory, or ideas.
-- Under the coordinator working assumptions, let only the coordinator persist the bounded per-feature retrospective artifact.
+- Let only the coordinator persist the bounded per-feature `retrospective.md` artifact.
 - Do not replace or weaken Tester, Reviewer, learning-promotion, or memory authority.
 - Do not let a finding block close, force revision, create a retry, or trigger a second Rubber Duck dispatch.
 - Do not run after each task, after successful release runs, or after failed, blocked, cancelled, or abandoned endings.
@@ -91,8 +91,8 @@ The separate core idea `.dude/ideas/050-completion-closeout-report.md` owns the 
 - Do not make core depend on the optional pack or name it as a required runtime participant.
 - Do not duplicate the deterministic final report owned by `.dude/ideas/050-completion-closeout-report.md`.
 - Do not automatically promote advisory feedback into ideas, tasks, or memory.
-- Do not settle the pack name, procedural-skill split, artifact filenames, or model class during brainstorm.
-- Create no definition package or implementation artifact during brainstorm.
+- Implement one `rubber-duck` pack agent and no procedural skill, script, ObjectiveRegistry, or generated state.
+- Create no implementation artifact during definition.
 
 ## Current Project Context
 
@@ -100,7 +100,7 @@ The separate core idea `.dude/ideas/050-completion-closeout-report.md` owns the 
 - Maintained catalog packs declare at least one real lowercase kebab-case `use-cases` value; discovery metadata does not itself activate routing or runtime behavior.
 - Pack agents can use the read-only `["read", "search"]` tool set.
 - `.dude/ideas/050-completion-closeout-report.md` separately owns the universal deterministic coordinator closeout report; its behavior cannot depend on whether this optional pack is installed.
-- Pack identity, exact retrospective shape, and model selection are definition-stage design choices.
+- Definition settles `rubber-duck`, one agent with no skill, `retrospective.md`, and `balanced`; direct installed-agent roster presence is sufficient activation evidence.
 
 ## Definition Checklist
 
@@ -111,19 +111,31 @@ The separate core idea `.dude/ideas/050-completion-closeout-report.md` owns the 
 - [x] Exactly one dispatch occurs, findings remain advisory, and close proceeds without retry
 - [x] Rubber Duck feedback must persist as a durable artifact rather than remain session-only
 - [x] Rubber Duck remains read-only and the coordinator owns artifact writes
-- [x] Artifact location, write timing, append behavior, and evidence-only role are labeled as coordinator working assumptions for definition
+- [x] Artifact location, write timing, append behavior, and evidence-only role are settled for definition
 - [x] Reviewer, Tester, learning, and memory authority remain unchanged
 - [x] Read-only tools and prohibited mutations are explicit
 - [x] Coordinator dispatch is distinguished from events, callbacks, hooks, listeners, subscriptions, and lifecycle extensions
-- [x] Pack name, procedural-skill split, artifact filenames, and model class remain deferred to definition
+- [x] Pack name, procedural-skill split, artifact filename, and model class are settled during definition
 - [x] Final reporting remains owned by `.dude/ideas/050-completion-closeout-report.md`
 - [x] Release-run scope is answered: successful release runs never dispatch the Rubber Duck
-- [ ] Whether the closeout report cites the retrospective path remains deferred to explicit definition
-- [x] Definition, implementation, validation, and publication remain deferred
+- [x] Universal closeout-report citation is settled: do not cite the retrospective path
+- [x] Definition is staged; implementation, validation, and publication remain deferred
 
 ## Coordinator Log
 
 - 2026-08-31 UTC - brainstorm first-capture draft staged for coordinator publication; definition deferred to explicit `define retrospective-rubber-duck-pack`
 - 2026-08-31 UTC - brainstorm draft refreshed at user direction to narrow successful-completion scope, make Rubber Duck findings advisory, clarify ordinary coordinator dispatch, and defer pack design choices
 - 2026-08-31 UTC - brainstorm draft refreshed at user direction to exclude release runs, require durable retrospective feedback, and defer artifact shape to explicit definition
+- 2026-08-31 UTC - first definition staged at `.dude/specs/051-retrospective-rubber-duck-pack/spec.md`; settled `rubber-duck`, one balanced read-only agent with no procedural skill, coordinator-owned `retrospective.md`, and no universal-closeout citation
+- 2026-08-31 UTC - Lightweight task `T001@51a0d001` claimed for pack source authoring
+- 2026-08-31 UTC - Lightweight task `T001@51a0d001` closed after fresh verification and independent approval
+- 2026-08-31 UTC - Lightweight task `T002@51a0d002` claimed for the coordinator dispatch contract
+- 2026-08-31 UTC - Lightweight task `T002@51a0d002` closed after one review rejection on Ship-trigger scope and entry-heading shape, revision, and independent approval
+- 2026-08-31 UTC - Lightweight task `T003@51a0d003` claimed for contract verification
+- 2026-08-31 UTC - Lightweight task `T003@51a0d003` closed after three review rejections, a topology-first reset pinning denial negations, and independent approval
+- 2026-08-31 UTC - Lightweight task `T004@51a0d004` claimed for catalog and user documentation
+- 2026-08-31 UTC - Lightweight task `T004@51a0d004` closed after one review rejection on Ship-trigger wording, revision, and independent approval
+- 2026-08-31 UTC - Lightweight task `T005@51a0d005` claimed for generated projection and final repository validation
+- 2026-08-31 UTC - Lightweight task `T005@51a0d005` closed after full-suite verification and independent feature approval
+- 2026-08-31 UTC - Feature 051 closed in Lightweight Execution with all five canonical tasks complete
 <!-- dude:managed:end -->

@@ -173,6 +173,14 @@ const PACK_CATALOG = Object.freeze({
       },
     },
   },
+  'rubber-duck': {
+    manifestAgents: ['dude-pack-rubber-duck-retrospective'],
+    agents: {
+      'dude-pack-rubber-duck-retrospective': {
+        modelClass: 'reasoning', tools: ['read', 'search'],
+      },
+    },
+  },
   rust: {
     manifestAgents: ['dude-pack-rust-specialist'],
     agents: {
@@ -617,7 +625,7 @@ test('preserves the T005 catalog manifests, source metadata, and local delegatio
     }
     assert.doesNotThrow(() => projection.validateAgentSet(records), `${pack} local source set`);
   }
-  assert.equal(sourceCount, 30, 'the complete catalog retains its 30 authoritative pack sources');
+  assert.equal(sourceCount, 31, 'the complete catalog retains its 31 authoritative pack sources');
 });
 
 test('keeps the Technical Docs Writer roster exact and retains its agent selector', async () => {
