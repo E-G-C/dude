@@ -208,3 +208,5 @@ Never silently retry a failed task or iteration.
 ## Report
 
 Use the active lane banner and coordinator `Action / Updated / Next / Blockers` shape. Report each iteration, verification/close result, stopped reason when applicable, warnings for limits above soft ceilings, and the next executable action.
+
+If the Work invocation closed one or more tasks, apply the coordinator's `## Completion Closeout` contract exactly once in the same final response, including when later work in that invocation stops.

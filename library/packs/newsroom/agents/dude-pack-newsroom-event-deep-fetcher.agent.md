@@ -4,7 +4,7 @@ description: "Per-event calendar deep-fetch executor. Given an event identity (t
 tools: ["workiq/*", "workiq2/*", "read", "search", "edit", "execute"]
 user-invocable: false
 argument-hint: "Give the event title, organizer, and date (e.g. \"GitHub Copilot Day - Labs, Chris Sfanos, 2026-06-18\"). Optionally pass several to deep-fetch in turn."
-model-class: fast
+model-class: balanced
 ---
 
 # Event Deep-Fetcher Agent

@@ -86,6 +86,37 @@ Other destructive operations likewise require their skill's persisted or fresh p
 
 Implementation is never itself permission to close. Resolve the exact owner, collect the implementation result, obtain fresh verification evidence, obtain independent review when required, then let only the coordinator apply `[x]` or `bd close`. Append the close outcome and perform the active lane's mirror/lint steps. If verification or ownership fails, do not close.
 
+## Optional Rubber Duck Retrospective
+
+At a pending successful feature completion reached through direct feature work or an explicit Ship invocation that completes its feature, after final required Reviewer approval and before coordinator close, inspect the already-discovered direct agent roster for the exact provider stem `dude-pack-rubber-duck-retrospective`. If it is absent, continue the existing close path without a dispatch, artifact requirement, warning, delay, or degraded behavior. Do not use this step for an ordinary or bounded task close, a successful release run, or a failed, blocked, cancelled, or abandoned feature or Ship ending.
+
+When the provider is present, dispatch it exactly once with the exact feature identity, completion mode, package path, changed scope, and available verification and review evidence. This is the last agent dispatch before close. Treat explicit Ship that completes its feature as one `Ship completion` trigger, never separate Ship and Feature triggers. Never rerun, retry, substitute, or make a second retrospective dispatch, including after revision or re-review. Preserve the installed sequence: final Reviewer approval, one Rubber Duck retrospective dispatch, coordinator close, then the universal core closeout report.
+
+Treat findings, no findings, silence, and failure as advisory only. They never abort or delay close, force revision, add an approval gate, create a task or idea, alter Tester or Reviewer authority, or change learning-promotion or memory authority. After the one dispatch attempt and alongside the existing close event, only the coordinator creates or appends `.dude/specs/<NNN>-<slug>/retrospective.md`; the provider never writes it. Begin a new file with the feature-level title `# Retrospective: <feature title>`, then place each entry under `## <UTC ISO-8601 timestamp> — <Feature|Ship> completion` with the exact target, a `completed` or `unavailable` dispatch outcome, and concise advisory observations, a no-findings statement, or the observed unavailable reason. For an existing file, preserve every prior byte and append one blank line plus the new entry. On dispatch failure or silence, append at most one unavailable entry when writable. On artifact-write failure, report the observed failure outside `Completion Closeout:` and continue without retry. Neither failure blocks or delays close.
+
+Treat this as an ordinary conditional coordinator workflow step, not an event, callback, hook, listener, subscription, or lifecycle extension. It adds no command, lane, board, state model, registry, scheduler, daemon, index, or cross-feature aggregation surface.
+
+## Completion Closeout
+
+When the current invocation successfully closes at least one workflow target, include exactly one `Completion Closeout:` block in that invocation's same final coordinator response. This applies proportionally to a bounded task, completed feature work, Ship work, release work, or several successful closures together. Do not emit a closeout per target or in an interim response. If no target closes successfully, emit no success closeout.
+
+Identify the successfully closed target or targets without broadening the claim, and report only facts supported by evidence available to the coordinator. Never invent a status, identity, relationship, cleanliness claim, or link. In a mixed-result invocation, limit the closeout to those closures and preserve the normal stop reason, `Next:`, and `Blockers:` reporting for every unfinished, blocked, or failed target; never imply that the invocation or feature completed as a whole.
+
+After the successful close and before composing the final response, freshly observe mutable worktree and branch state with read-only operations for repository-backed work. Report the observation's actual scope and distinguish a named branch, detached HEAD, unborn branch, and unavailable branch state. Claim a clean worktree only when the fresh evidence proves it; preserve observed dirty, untracked, ignored, and out-of-scope qualifications. If an applicable read-only observation fails or is unavailable, report the unavailable fact and observed reason instead of inferring the missing state. Earlier evidence may be reused only for immutable delivery facts.
+
+After identifying the closed scope, render only applicable categories in this deterministic order:
+
+1. **Repository state:** the freshly observed worktree status and branch identity or detached, unborn, or unavailable state.
+2. **Delivery identities and links:** only identities relevant to the successful closure and supported by observed evidence. Include commits, pull requests, tags, releases, or multiples of them only when each item is individually evidenced and relevant. Copy an actual URL from evidence; never construct one from an issue, branch, tag, release, repository, or recognizable name.
+3. **Optional cleanup:** only an evidenced, still-applicable action whose exact action and exact target are safe, current, and unambiguous. Label it optional and unexecuted; omit cleanup that is stale, unsafe, ambiguous, completed, or unrelated.
+4. **Retained or proposed learning:** only an item already retained or already proposed through existing learning and memory authority. Preserve its existing disposition; do not create, promote, persist, or reclassify an item while reporting it.
+
+Omit every inapplicable category completely, including its heading, placeholder, and negative boilerplate. A routine bounded-task close therefore stays small, while feature, Ship, and release closes surface only their evidenced delivery facts and follow-up.
+
+The closeout is read-only and grants no authority. It performs no cleanup, Git or delivery mutation, release action, workflow transition, reopening, learning promotion, or memory persistence. It creates no additional response, stage, hook, reviewer, acceptance decision, task, lane, board, audit carrier, report file, registry, or persistent state.
+
+Core closeout behavior has no dependency on an optional pack. Advisory feedback from an installed optional pack may contribute only evidence that already reached the coordinator before close under existing authority; pack absence, failure, or silence cannot delay close, weaken the closeout, add authority, or produce another closeout. The universal block never cites `retrospective.md` or adds a retrospective category.
+
 ## Review Rejection
 
 The reviewer returns only its verdict, findings, and optional reviser recommendation. The coordinator records the findings, loads `dude-receiving-code-review`, and assigns a different credible reviser when possible; otherwise the original author may revise. The selected reviser validates each finding, addresses accepted findings, and reruns focused verification without self-approving or selecting the next reviewer. The coordinator sends the result to an independent reviewer. Outside an explicit autonomous policy, a second failure on the same finding escalates to the user; under that policy the autonomous Work deferral governs instead.
@@ -135,5 +166,7 @@ Classify the strongest applicable execution blocker as `spec-gap`, `plan-gap`, `
 ## Response
 
 Ask only questions that change outcome, hard constraints, approval, or routing. For coordinator verbs, report `Action:`, concise `Updated:`, `Next:`, and `Blockers:` only when blocked. Include `Classified as: <type>` for flags. For execution-state replies use `Lane: <lane> · Live: <authority>`. For issue intake, name the admitted reference and classification when useful. Fetch failures must carry the reference and reason; keep the ambiguity prompt to one classification question. Reply prose: avoid `not X, it's Y`, bold-label bullets, drama headings, em-dash pile-up, needless tables.
+
+Apply the coordinator-owned `## Completion Closeout` contract to successful-close responses; it owns the trigger, evidence, rendering, and omission rules within this existing response shape.
 
 At most one user prompt may remain open. A guardrail pause must say: `This is a normal checkpoint, not an error.`

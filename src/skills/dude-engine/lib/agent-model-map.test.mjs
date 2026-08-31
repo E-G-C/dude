@@ -84,7 +84,7 @@ test('loads the shipped document with its exact schema, dated provenance, and cl
   assert.deepEqual(Object.keys(copilot).sort(), ['emits', 'models']);
   assert.deepEqual(copilot.emits, ['model']);
   assert.deepEqual(Object.keys(copilot.models).sort(), classKeys);
-  assert.deepEqual(efforts, ['low', 'max', 'max', 'max', 'medium']);
+  assert.deepEqual(efforts, ['max', 'max', 'max', 'medium', 'medium']);
   assert.deepEqual(/** @type {Record<string, any>} */ (config.classes).inherit, {});
   assert.match(/** @type {string} */ (config.provenance), /\b\d{4}-\d{2}-\d{2}\b/);
 });
@@ -222,7 +222,7 @@ test('deep-freezes every nested configuration object and array', () => {
   assert.throws(() => {
     copilot.emits.push('effort');
   }, TypeError);
-  assert.equal(classes.fast.effort, 'low');
+  assert.equal(classes.fast.effort, 'medium');
   assert.equal(copilot.models.fast, originalFastModel);
   assert.equal(copilot.emits.length, 1);
 });

@@ -2860,11 +2860,11 @@ test('agent configuration, projection, compose, upgrade, and CI docs describe th
   assert.match(compose, /existing complete predecessor profile can make one in-memory transition/i);
   assert.match(
     markdownSection(commands, '### Repo layout: source vs built bundle'),
-    /six currently installed\s+dogfood packs:\s+`authoring`,\s+`coding`,\s+`design`,\s+`release`,\s+`strata`,\s+and\s+`writing`/,
+    /seven currently installed\s+dogfood packs:\s+`authoring`,\s+`coding`,\s+`design`,\s+`release`,\s+`rubber-duck`,\s+`strata`,\s+and\s+`writing`/,
   );
   assert.match(
     markdownSection(compose, '## Rules'),
-    /dogfood repo, compose may use only its six currently installed profile\s+packs:\s+`authoring`,\s+`coding`,\s+`design`,\s+`release`,\s+`strata`,\s+and\s+`writing`[\s\S]{0,100}other catalog pack in a throwaway root/,
+    /dogfood repo, compose may use only its seven currently installed profile\s+packs:\s+`authoring`,\s+`coding`,\s+`design`,\s+`release`,\s+`rubber-duck`,\s+`strata`,\s+and\s+`writing`[\s\S]{0,120}other catalog pack in a throwaway root/,
   );
   assert.match(upgrade, /existing `.github\/skills\/dude-engine\/\*\*` ownership recursively includes/);
   assert.match(upgrade, /rollback\s+restorability/i);
@@ -7943,4 +7943,835 @@ test('installed pack refresh guidance stays current and generated', () => {
     fs.readFileSync(path.join(ROOT, 'src/skills/dude-bundle-upgrade/SKILL.md')),
     'generated bundle-upgrade guidance is byte-identical to its authoritative source',
   );
+});
+
+// --- Feature 050: one evidence-based completion closeout ---------------------
+
+const COMPLETION_CLOSEOUT_OWNER = 'src/agents/dude.agent.md';
+const COMPLETION_CLOSEOUT_SECTION = '## Completion Closeout';
+const COMPLETION_CLOSEOUT_CATEGORY_ANCHORS = [
+  '**Repository state:**',
+  '**Delivery identities and links:**',
+  '**Optional cleanup:**',
+  '**Retained or proposed learning:**',
+];
+const COMPLETION_CLOSEOUT_REQUIREMENTS = [
+  ['successful-close trigger', 'When the current invocation successfully closes', [
+    /at least one workflow target/i,
+    /include exactly one `Completion Closeout:` block/i,
+  ]],
+  ['exactly one same-response closeout', 'When the current invocation successfully closes', [
+    /same final coordinator response/i,
+    /Do not emit a closeout per target or in an interim response/i,
+  ]],
+  ['no closeout without successful close', 'When the current invocation successfully closes', [
+    /If no target closes successfully, emit no success closeout/i,
+  ]],
+  ['FR-005 successful-target/evidence scoping', 'Identify the successfully closed target or targets', [
+    /without broadening the claim/i,
+    /only facts supported by evidence available to the coordinator/i,
+    /Never invent a status, identity, relationship, cleanliness claim, or link/i,
+  ]],
+  ['proportional bounded, feature, Ship, and release scope', 'When the current invocation successfully closes', [
+    /proportionally to a bounded task, completed feature work, Ship work, release work, or several successful closures together/i,
+  ]],
+  ['mixed-result scope preserves normal unfinished-work reporting', 'In a mixed-result invocation', [
+    /limit the closeout to those closures/i,
+    /preserve the normal stop reason, `Next:`, and `Blockers:` reporting/i,
+    /every unfinished, blocked, or failed target/i,
+    /never imply that the invocation or feature completed as a whole/i,
+  ]],
+  ['post-close read-only repository observation', 'After the successful close and before composing the final response', [
+    /freshly observe mutable worktree and branch state/i,
+    /read-only operations/i,
+    /repository-backed work/i,
+    /Earlier evidence may be reused only for immutable delivery facts/i,
+  ]],
+  ['unavailable repository observation remains honest', 'After the successful close and before composing the final response', [
+    /distinguish a named branch, detached HEAD, unborn branch, and unavailable branch state/i,
+    /Claim a clean worktree only when the fresh evidence proves it/i,
+    /report the unavailable fact and observed reason instead of inferring the missing state/i,
+  ]],
+  ['FR-007 dirty/untracked/ignored/out-of-scope status qualification', 'After the successful close and before composing the final response', [
+    /Claim a clean worktree only when the fresh evidence proves it/i,
+    /preserve observed dirty, untracked, ignored, and out-of-scope qualifications/i,
+  ]],
+  ['deterministic applicable-category order', 'After identifying the closed scope, render only applicable categories', [
+    /deterministic order/i,
+  ]],
+  ['fresh repository-state category', '**Repository state:**', [
+    /freshly observed worktree status/i,
+    /branch identity or detached, unborn, or unavailable state/i,
+  ]],
+  ['observed relevant delivery identities', '**Delivery identities and links:**', [
+    /only identities relevant to the successful closure/i,
+    /supported by observed evidence/i,
+    /each item is individually evidenced and relevant/i,
+  ]],
+  ['FR-008 observed commit identities', '**Delivery identities and links:**', [
+    /only identities relevant to the successful closure/i,
+    /supported by observed evidence/i,
+    /Include commits/i,
+    /each item is individually evidenced and relevant/i,
+  ]],
+  ['FR-009 observed pull request, tag, and release identities', '**Delivery identities and links:**', [
+    /only identities relevant to the successful closure/i,
+    /supported by observed evidence/i,
+    /pull requests, tags, releases/i,
+    /each item is individually evidenced and relevant/i,
+  ]],
+  ['FR-009 copied URL from observed evidence', '**Delivery identities and links:**', [
+    /Copy an actual URL from evidence/i,
+  ]],
+  ['FR-009 rejects synthesized URLs', '**Delivery identities and links:**', [
+    /never construct one/i,
+  ]],
+  ['exact optional unexecuted cleanup', '**Optional cleanup:**', [
+    /exact action and exact target/i,
+    /safe, current, and unambiguous/i,
+    /Label it optional and unexecuted/i,
+    /omit cleanup that is stale, unsafe, ambiguous, completed, or unrelated/i,
+  ]],
+  ['retained-or-proposed learning under existing authority', '**Retained or proposed learning:**', [
+    /already retained or already proposed/i,
+    /existing learning and memory authority/i,
+    /Preserve its existing disposition/i,
+    /do not create, promote, persist, or reclassify/i,
+  ]],
+  ['inapplicable categories are omitted completely', 'Omit every inapplicable category completely', [
+    /heading, placeholder, and negative boilerplate/i,
+    /routine bounded-task close therefore stays small/i,
+    /feature, Ship, and release closes surface only their evidenced delivery facts and follow-up/i,
+  ]],
+  ['closeout is read-only and grants no authority', 'The closeout is read-only and grants no authority.', [
+    /no cleanup, Git or delivery mutation, release action, workflow transition, reopening, learning promotion, or memory persistence/i,
+  ]],
+  ['closeout creates no hooks, stages, state, audit, or report surface', 'The closeout is read-only and grants no authority.', [
+    /no additional response, stage, hook, reviewer, acceptance decision, task, lane, board, audit carrier, report file, registry, or persistent state/i,
+  ]],
+  ['optional-pack-independent core closeout', 'Core closeout behavior has no dependency on an optional pack.', [
+    /Advisory feedback from an installed optional pack may contribute only evidence that already reached the coordinator before close under existing authority/i,
+    /pack absence, failure, or silence cannot delay close, weaken the closeout, add authority, or produce another closeout/i,
+  ]],
+];
+const COMPLETION_CLOSEOUT_PARTIAL_DELETION_FALSIFIERS = [
+  [
+    'FR-005 successful-target/evidence scoping',
+    'Identify the successfully closed target or targets',
+    'Never invent a status, identity, relationship, cleanliness claim, or link.',
+  ],
+  [
+    'FR-007 dirty/untracked/ignored/out-of-scope status qualification',
+    'After the successful close and before composing the final response',
+    'preserve observed dirty, untracked, ignored, and out-of-scope qualifications. ',
+  ],
+  [
+    'FR-008 observed commit identities',
+    '**Delivery identities and links:**',
+    'commits,',
+  ],
+  [
+    'FR-009 observed pull request, tag, and release identities',
+    '**Delivery identities and links:**',
+    'pull requests, tags, releases, or',
+  ],
+  [
+    'FR-009 copied URL from observed evidence',
+    '**Delivery identities and links:**',
+    'Copy an actual URL from evidence;',
+  ],
+  [
+    'FR-009 rejects synthesized URLs',
+    '**Delivery identities and links:**',
+    'never construct one from an issue, branch, tag, release, repository, or recognizable name.',
+  ],
+];
+
+/**
+ * Locate one clause in its named rule block after normalizing Markdown
+ * whitespace. Soft wraps are presentation, not a different falsifier target.
+ * @param {string} section
+ * @param {string} anchor
+ * @param {string} target
+ * @param {string} context
+ * @param {string} label
+ */
+function completionCloseoutFalsifierTarget(section, anchor, target, context, label) {
+  const blocks = anchoredRuleBlocks(section, anchor);
+  assert.equal(
+    blocks.length,
+    1,
+    `${context}: ${label} has one ${anchor} section-scoped deletion block`,
+  );
+  const [block] = blocks;
+  const normalizedTarget = normalizeMarkdownBlock(target);
+  assert.equal(
+    block.normalized.split(normalizedTarget).length - 1,
+    1,
+    `${context}: ${label} normalized deletion target occurs once in its section-scoped block`,
+  );
+  return { block, normalizedTarget };
+}
+
+/** @param {string} section @param {string} context */
+function assertCompletionCloseoutContract(section, context) {
+  assertShipParagraphRequirements(section, COMPLETION_CLOSEOUT_REQUIREMENTS, context);
+
+  const categoryAnchors = markdownRuleBlocks(section, { splitLists: true })
+    .map(({ normalized }) => COMPLETION_CLOSEOUT_CATEGORY_ANCHORS
+      .find((anchor) => normalized.includes(anchor)) ?? null)
+    .filter((anchor) => anchor !== null);
+  assert.deepEqual(
+    categoryAnchors,
+    COMPLETION_CLOSEOUT_CATEGORY_ANCHORS,
+    `${context}: applicable categories use repository, delivery, cleanup, then learning order exactly once`,
+  );
+}
+
+/** @param {string} section @param {string} context */
+function assertCompletionCloseoutPartialDeletionFalsifiers(section, context) {
+  for (const [label, anchor, target] of COMPLETION_CLOSEOUT_PARTIAL_DELETION_FALSIFIERS) {
+    const { block, normalizedTarget } = completionCloseoutFalsifierTarget(
+      section,
+      anchor,
+      target,
+      context,
+      label,
+    );
+    const deleted = section.replace(
+      block.raw,
+      block.normalized.replace(normalizedTarget, ''),
+    ).replace(/\n{3,}/g, '\n\n').trim();
+    assert.ok(
+      missingParagraphRequirements(deleted, COMPLETION_CLOSEOUT_REQUIREMENTS).includes(label),
+      `${context}: deleting ${label}'s normalized section-scoped target must fail its assertion`,
+    );
+  }
+}
+
+test('T002 Feature 050 coordinator closeout is section-bound, ordered, and deletion-falsifiable', () => {
+  // Arrange
+  const closeout = markdownSection(
+    read(COMPLETION_CLOSEOUT_OWNER),
+    COMPLETION_CLOSEOUT_SECTION,
+  );
+
+  // Act + Assert: every material behavior has one normalized owning block. The
+  // shared helper deletes that block per labeled requirement, so nearby prose
+  // cannot mask a removed closeout obligation.
+  assertCompletionCloseoutContract(
+    closeout,
+    `${COMPLETION_CLOSEOUT_OWNER} ${COMPLETION_CLOSEOUT_SECTION}`,
+  );
+  assertCompletionCloseoutPartialDeletionFalsifiers(
+    closeout,
+    `${COMPLETION_CLOSEOUT_OWNER} ${COMPLETION_CLOSEOUT_SECTION}`,
+  );
+
+  const [rewrapLabel, rewrapAnchor, rewrapTarget] = COMPLETION_CLOSEOUT_PARTIAL_DELETION_FALSIFIERS[0];
+  const { block: rewrapBlock, normalizedTarget: normalizedRewrapTarget } = completionCloseoutFalsifierTarget(
+    closeout,
+    rewrapAnchor,
+    rewrapTarget,
+    `${COMPLETION_CLOSEOUT_OWNER} ${COMPLETION_CLOSEOUT_SECTION}`,
+    rewrapLabel,
+  );
+  const rewrapped = closeout.replace(
+    rewrapBlock.raw,
+    rewrapBlock.normalized.replace(
+      normalizedRewrapTarget,
+      normalizedRewrapTarget.replace(' ', '\n  '),
+    ),
+  );
+  assert.doesNotThrow(
+    () => {
+      assertCompletionCloseoutContract(rewrapped, `${COMPLETION_CLOSEOUT_OWNER} ${COMPLETION_CLOSEOUT_SECTION}`);
+      assertCompletionCloseoutPartialDeletionFalsifiers(
+        rewrapped,
+        `${COMPLETION_CLOSEOUT_OWNER} ${COMPLETION_CLOSEOUT_SECTION}`,
+      );
+    },
+    'a harmless Markdown rewrap must preserve closeout contract and deletion falsifiers',
+  );
+
+  const categoryBlocks = markdownRuleBlocks(closeout, { splitLists: true })
+    .filter((block) => COMPLETION_CLOSEOUT_CATEGORY_ANCHORS
+      .some((anchor) => block.normalized.includes(anchor)));
+  assert.equal(categoryBlocks.length, 4, 'closeout has four independently mutable category blocks');
+  const [repository, , , learning] = categoryBlocks;
+  const reordered = closeout
+    .replace(repository.raw, 'FEATURE_050_REPOSITORY_CATEGORY_HOLDER')
+    .replace(learning.raw, repository.raw)
+    .replace('FEATURE_050_REPOSITORY_CATEGORY_HOLDER', learning.raw);
+  assert.notEqual(reordered, closeout, 'category-order falsifier changes the bounded closeout section');
+  assert.throws(
+    () => assertCompletionCloseoutContract(
+      reordered,
+      `${COMPLETION_CLOSEOUT_OWNER} ${COMPLETION_CLOSEOUT_SECTION}`,
+    ),
+    'reordering applicable categories must fail the deterministic-order assertion',
+  );
+});
+
+test('T002 Feature 050 Work and Lightweight consumers retain narrow coordinator-closeout pointers', () => {
+  const pointers = [
+    {
+      relative: 'src/skills/dude-work/SKILL.md',
+      heading: '## Report',
+      label: 'Work pointer',
+      anchor: 'If the Work invocation closed one or more tasks',
+      signals: [
+        /coordinator's `## Completion Closeout` contract exactly once/i,
+        /same final response/i,
+        /including when later work in that invocation stops/i,
+      ],
+    },
+    {
+      relative: 'src/skills/dude-lightweight-execution/SKILL.md',
+      heading: '## Lightweight Close Protocol',
+      label: 'Lightweight pointer',
+      anchor: 'After a bounded task closes successfully',
+      signals: [
+        /coordinator's `## Completion Closeout` contract once/i,
+        /same final response/i,
+      ],
+    },
+  ];
+  const coordinatorOnlyDetails = [
+    /freshly observe mutable worktree and branch state/i,
+    /Copy an actual URL from evidence/i,
+    /Label it optional and unexecuted/i,
+    /Retained or proposed learning/i,
+  ];
+
+  for (const { relative, heading, label, anchor, signals } of pointers) {
+    // Arrange
+    const section = markdownSection(read(relative), heading);
+
+    // Act + Assert: the consumer says when to apply the owner contract, but
+    // does not restate the evidence/rendering rules it does not own.
+    assertShipParagraphRequirements(section, [
+      [label, anchor, signals],
+    ], `${relative} ${heading}`);
+    const blocks = anchoredRuleBlocks(section, anchor);
+    assert.equal(blocks.length, 1, `${relative} ${heading}: one bounded ${label}`);
+    for (const detail of coordinatorOnlyDetails) {
+      assert.doesNotMatch(
+        blocks[0].normalized,
+        detail,
+        `${relative} ${heading}: ${label} stays a coordinator-owner pointer`,
+      );
+    }
+  }
+});
+
+// --- Feature 051: optional Rubber Duck retrospective ------------------------
+
+const RUBBER_DUCK_MANIFEST = 'library/packs/rubber-duck/pack.md';
+const RUBBER_DUCK_AGENT = 'library/packs/rubber-duck/agents/dude-pack-rubber-duck-retrospective.agent.md';
+const RUBBER_DUCK_COORDINATOR = 'src/agents/dude.agent.md';
+const RUBBER_DUCK_SECTION = '## Optional Rubber Duck Retrospective';
+
+/** @param {string} source */
+function frontmatterBody(source) {
+  const match = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(source);
+  assert.ok(match, 'source has one frontmatter block');
+  return match[1];
+}
+
+/**
+ * Each requirement is anchored to one visible, independently mutable rule
+ * block. Literal clauses deliberately pin the accepted prose rather than
+ * attempting to infer equivalent or contradictory natural language.
+ *
+ * @typedef {[label: string, anchor: string, clauses: string[], deletion: string]} RubberDuckRequirement
+ * @param {string} section
+ * @param {RubberDuckRequirement[]} requirements
+ * @returns {string[]}
+ */
+function missingRubberDuckRequirements(section, requirements) {
+  return requirements.filter(([, anchor, clauses]) => {
+    const blocks = anchoredRuleBlocks(section, normalizeMarkdownBlock(anchor));
+    return blocks.length !== 1 || !clauses.every((clause) => (
+      blocks[0].normalized.includes(normalizeMarkdownBlock(clause))
+    ));
+  }).map(([label]) => label);
+}
+
+/**
+ * Assert each literal requirement and prove its named, partial deletion
+ * falsifier. Replacing a block with normalized text is intentional: it makes
+ * the mutation independent of harmless source wrapping.
+ *
+ * @param {string} section
+ * @param {RubberDuckRequirement[]} requirements
+ * @param {string} context
+ */
+function assertRubberDuckRequirements(section, requirements, context) {
+  assert.deepEqual(missingRubberDuckRequirements(section, requirements), [], context);
+
+  for (const [label, anchor, clauses, deletion] of requirements) {
+    const blocks = anchoredRuleBlocks(section, normalizeMarkdownBlock(anchor));
+    assert.equal(blocks.length, 1, `${context}: ${label} has one section-bound owning block`);
+    const [block] = blocks;
+    for (const clause of clauses) {
+      assert.ok(
+        block.normalized.includes(normalizeMarkdownBlock(clause)),
+        `${context}: ${label} retains ${JSON.stringify(clause)}`,
+      );
+    }
+
+    const normalizedDeletion = normalizeMarkdownBlock(deletion);
+    const deletionPattern = new RegExp(
+      `(?<![\\p{L}\\p{N}])${normalizedDeletion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`,
+      'gu',
+    );
+    assert.equal(
+      block.normalized.match(deletionPattern)?.length ?? 0,
+      1,
+      `${context}: ${label} has one normalized deletion target`,
+    );
+    const deleted = section.replace(
+      block.raw,
+      block.normalized.replace(deletionPattern, ''),
+    );
+    assert.ok(
+      missingRubberDuckRequirements(deleted, requirements).includes(label),
+      `${context}: deletion falsifier fires for ${label}`,
+    );
+  }
+}
+
+/** @param {string} section @param {RubberDuckRequirement} requirement */
+function rewrapRubberDuckRequirement(section, [, anchor, , deletion]) {
+  const [block] = anchoredRuleBlocks(section, normalizeMarkdownBlock(anchor));
+  const normalizedDeletion = normalizeMarkdownBlock(deletion);
+  return section.replace(
+    block.raw,
+    block.normalized.replace(normalizedDeletion, normalizedDeletion.replace(' ', '\n  ')),
+  );
+}
+
+/** @type {RubberDuckRequirement[]} */
+const RUBBER_DUCK_MANIFEST_REQUIREMENTS = [
+  ['exact retrospective provider', 'dude-pack-rubber-duck-retrospective', ['dude-pack-rubber-duck-retrospective'], 'dude-pack-rubber-duck-retrospective'],
+  ['no provided skills', 'skills: []', ['skills: []'], 'skills: []'],
+  ['no required tools', 'tools: []', ['tools: []'], 'tools: []'],
+  ['inert empty hooks metadata', 'hooks: []', ['hooks: []'], 'hooks: []'],
+  ['valid retrospective use case', 'use-cases:', ['use-cases: [retrospective]'], 'use-cases: [retrospective]'],
+];
+
+/**
+ * Read the one concrete nested agent list without broadening this contract
+ * into a general YAML parser.
+ * @param {string} manifest
+ * @returns {string[]}
+ */
+function rubberDuckProvidedAgents(manifest) {
+  const match = /^provides:\n  agents:\n((?:    - [^\n]+\n?)*)  skills:/m.exec(manifest);
+  assert.ok(match, `${RUBBER_DUCK_MANIFEST}: provides has an agents list followed by skills`);
+  return [...match[1].matchAll(/^    - (.+)$/gm)].map(([, provider]) => provider);
+}
+
+/** @param {string} manifest @param {string} context */
+function assertRubberDuckManifestCapabilities(manifest, context) {
+  assert.deepEqual(
+    rubberDuckProvidedAgents(manifest),
+    ['dude-pack-rubber-duck-retrospective'],
+    `${context}: provides exactly the sole retrospective agent`,
+  );
+  assert.match(
+    manifest,
+    /^provides:\n  agents:\n(?:    - [^\n]+\n?)*  skills: \[\]$/m,
+    `${context}: provides no skills`,
+  );
+}
+
+/** @type {RubberDuckRequirement[]} */
+const RUBBER_DUCK_AGENT_FRONTMATTER_REQUIREMENTS = [
+  ['reasoning model class', 'model-class:', ['model-class: reasoning'], 'reasoning'],
+  ['not user invocable', 'user-invocable:', ['user-invocable: false'], 'false'],
+  ['read and search tools only', 'tools:', ['tools: ["read", "search"]'], '["read", "search"]'],
+];
+
+/** @type {RubberDuckRequirement[]} */
+const RUBBER_DUCK_AGENT_COORDINATOR_REQUIREMENTS = [
+  ['coordinator-only Coordinator Log boundary', '**Coordinator-only artifacts:**', ['do not edit `## Coordinator Log`'], 'do not edit `## Coordinator Log`'],
+  ['coordinator-only task-state boundary', '**Coordinator-only artifacts:**', ['task-state glyphs in `tasks.md`'], 'task-state glyphs in `tasks.md`'],
+  ['coordinator-only managed-fence boundary', '**Coordinator-only artifacts:**', ['fenced regions (`<!-- dude:managed:* -->`, `<!-- dude:board:* -->`)'], 'fenced regions (`<!-- dude:managed:* -->`, `<!-- dude:board:* -->`)'],
+  ['coordinator-only frontmatter boundary', '**Coordinator-only artifacts:**', ['`status:` / `spec_path:` frontmatter'], '`status:` / `spec_path:` frontmatter'],
+  ['coordinator-only reporting path', '**Coordinator-only artifacts:**', ['Report changes back to `@dude` instead.'], 'Report changes back to `@dude` instead.'],
+];
+
+/** @type {RubberDuckRequirement[]} */
+const RUBBER_DUCK_AGENT_BOUNDARY_REQUIREMENTS = [
+  ['advisory read-only advisor', 'Be advisory and read-only.', ['Be advisory and read-only.'], 'Be advisory and read-only.'],
+  ['advisor cannot mutate repository or delivery state', 'Be advisory and read-only.', ['write Git state or delivery state'], 'write Git state or delivery state'],
+  ['advisor cannot mutate workflow artifacts', 'Be advisory and read-only.', ['mutate task glyphs or metadata, Coordinator Logs, definition artifacts, retrospective artifacts, memory, or ideas'], 'mutate task glyphs or metadata, Coordinator Logs, definition artifacts, retrospective artifacts, memory, or ideas'],
+  ['advisor cannot overrule Tester or Reviewer', 'Never replace or overrule Tester or Reviewer.', ['Never replace or overrule Tester or Reviewer.'], 'Never replace or overrule Tester or Reviewer.'],
+  ['findings have no revision or close authority', 'Findings are not review verdicts', ['authority to revise, rerun, persist, or close'], 'authority to revise, rerun, persist, or close'],
+  ['findings return only to coordinator', 'Return findings only to the coordinator.', ['Return findings only to the coordinator.'], 'Return findings only to the coordinator.'],
+  ['provider never writes retrospective artifact', 'Only the coordinator may persist', ['Only the coordinator may persist a retrospective entry or any other retrospective artifact.'], 'Only the coordinator may persist a retrospective entry or any other retrospective artifact.'],
+  ['advisor does not choose retrospective path or format', 'Do not choose the retrospective artifact path', ['Do not choose the retrospective artifact path or format'], 'Do not choose the retrospective artifact path or format'],
+  ['advisor creates no follow-up work', 'Do not choose the retrospective artifact path', ['create follow-up work'], 'create follow-up work'],
+  ['advisor loads no procedural skill', 'Do not choose the retrospective artifact path', ['load a procedural skill'], 'load a procedural skill'],
+  ['advisor invokes no lifecycle logic', 'Do not choose the retrospective artifact path', ['invoke lifecycle logic'], 'invoke lifecycle logic'],
+  ['advisor has no mutable mechanism', 'Do not choose the retrospective artifact path', ['use scripts or mutable tools'], 'use scripts or mutable tools'],
+];
+
+/** @type {RubberDuckRequirement[]} */
+const RUBBER_DUCK_COORDINATOR_REQUIREMENTS = [
+  ['eligible pending successful completion', 'At a pending successful feature completion', ['At a pending successful feature completion'], 'pending successful feature completion'],
+  ['direct-work eligible completion', 'At a pending successful feature completion', ['reached through direct feature work'], 'reached through direct feature work'],
+  ['Ship eligible completion', 'At a pending successful feature completion', ['explicit Ship invocation that completes its feature'], 'explicit Ship invocation that completes its feature'],
+  ['post-final-Reviewer timing', 'At a pending successful feature completion', ['after final required Reviewer approval'], 'after final required Reviewer approval'],
+  ['pre-close timing', 'At a pending successful feature completion', ['before coordinator close'], 'before coordinator close'],
+  ['direct roster presence activation', 'At a pending successful feature completion', ['already-discovered direct agent roster'], 'already-discovered direct agent roster'],
+  ['exact provider-stem activation', 'At a pending successful feature completion', ['exact provider stem `dude-pack-rubber-duck-retrospective`'], 'exact provider stem `dude-pack-rubber-duck-retrospective`'],
+  ['absent provider continues existing close', 'If it is absent', ['continue the existing close path'], 'continue the existing close path'],
+  ['absent provider has no dispatch', 'If it is absent', ['without a dispatch'], 'without a dispatch'],
+  ['absent provider has no artifact requirement', 'If it is absent', ['artifact requirement'], 'artifact requirement'],
+  ['absent provider has no warning', 'If it is absent', ['warning'], 'warning'],
+  ['absent provider has no delay', 'If it is absent', ['delay'], 'delay'],
+  ['absent provider has no degraded behavior', 'If it is absent', ['degraded behavior'], 'degraded behavior'],
+  ['ordinary bounded task close exclusion', 'Do not use this step', ['ordinary or bounded task close'], 'ordinary or bounded task close'],
+  ['successful release exclusion', 'Do not use this step', ['successful release run'], 'successful release run'],
+  ['failed ending exclusion', 'Do not use this step', ['failed'], 'failed'],
+  ['blocked ending exclusion', 'Do not use this step', ['blocked'], 'blocked'],
+  ['cancelled ending exclusion', 'Do not use this step', ['cancelled'], 'cancelled'],
+  ['abandoned ending exclusion', 'Do not use this step', ['abandoned'], 'abandoned'],
+  ['exactly one dispatch', 'When the provider is present', ['dispatch it exactly once'], 'dispatch it exactly once'],
+  ['final agent dispatch', 'When the provider is present', ['last agent dispatch before close'], 'last agent dispatch before close'],
+  ['one Ship completion label', 'Treat explicit Ship', ['one `Ship completion` trigger'], 'one `Ship completion` trigger'],
+  ['Ship is not a second feature trigger', 'Treat explicit Ship', ['never separate Ship and Feature triggers'], 'never separate Ship and Feature triggers'],
+  ['no rerun after revision or re-review', 'Never rerun, retry, substitute', ['including after revision or re-review'], 'including after revision or re-review'],
+  ['no retrospective retry or substitute', 'Never rerun, retry, substitute', ['Never rerun, retry, substitute, or make a second retrospective dispatch'], 'Never rerun, retry, substitute, or make a second retrospective dispatch'],
+  ['sequence continues through universal closeout', 'Preserve the installed sequence:', ['final Reviewer approval, one Rubber Duck retrospective dispatch, coordinator close, then the universal core closeout report'], 'then the universal core closeout report'],
+  ['findings are advisory only', 'Treat findings, no findings, silence, and failure as advisory only.', ['Treat findings, no findings, silence, and failure as advisory only.'], 'Treat findings, no findings, silence, and failure as advisory only.'],
+  ['findings cannot abort close', 'They never abort or delay close', ['never abort'], 'never abort'],
+  ['findings cannot delay close', 'They never abort or delay close', ['delay close'], 'delay close'],
+  ['findings cannot force revision', 'They never abort or delay close', ['force revision'], 'force revision'],
+  ['findings cannot add approval gate', 'They never abort or delay close', ['add an approval gate'], 'add an approval gate'],
+  ['findings cannot create work', 'They never abort or delay close', ['create a task or idea'], 'create a task or idea'],
+  ['findings preserve Tester and Reviewer authority', 'They never abort or delay close', ['alter Tester or Reviewer authority'], 'alter Tester or Reviewer authority'],
+  ['findings preserve learning and memory authority', 'They never abort or delay close', ['change learning-promotion or memory authority'], 'change learning-promotion or memory authority'],
+  ['coordinator-owned retrospective path', 'After the one dispatch attempt', ['only the coordinator creates or appends `.dude/specs/<NNN>-<slug>/retrospective.md`'], 'only the coordinator creates or appends `.dude/specs/<NNN>-<slug>/retrospective.md`'],
+  ['provider never writes coordinator artifact', 'After the one dispatch attempt', ['the provider never writes it'], 'the provider never writes it'],
+  ['retrospective file title', 'Begin a new file', ['# Retrospective: <feature title>'], '# Retrospective: <feature title>'],
+  ['UTC completion entry heading', 'then place each entry under', ['## <UTC ISO-8601 timestamp> — <Feature|Ship> completion'], '## <UTC ISO-8601 timestamp> — <Feature|Ship> completion'],
+  ['entry identifies exact target', 'then place each entry under', ['exact target'], 'exact target'],
+  ['entry records dispatch outcome', 'then place each entry under', ['`completed` or `unavailable` dispatch outcome'], '`completed` or `unavailable` dispatch outcome'],
+  ['entry records advisory observations', 'then place each entry under', ['concise advisory observations, a no-findings statement, or the observed unavailable reason'], 'concise advisory observations, a no-findings statement, or the observed unavailable reason'],
+  ['append preserves prior bytes', 'For an existing file', ['preserve every prior byte'], 'preserve every prior byte'],
+  ['append adds a new entry', 'For an existing file', ['append one blank line plus the new entry'], 'append one blank line plus the new entry'],
+  ['dispatch failure has at most one unavailable entry', 'On dispatch failure or silence', ['append at most one unavailable entry when writable'], 'append at most one unavailable entry when writable'],
+  ['write failure is reported outside closeout', 'On artifact-write failure', ['report the observed failure outside `Completion Closeout:`'], 'report the observed failure outside `Completion Closeout:`'],
+  ['write failure has no retry', 'On artifact-write failure', ['continue without retry'], 'continue without retry'],
+  ['write failure does not block close', 'Neither failure blocks or delays close.', ['Neither failure blocks or delays close.'], 'Neither failure blocks or delays close.'],
+];
+
+/** @type {RubberDuckRequirement[]} */
+const RUBBER_DUCK_CLOSEOUT_INDEPENDENCE_REQUIREMENTS = [
+  ['core has no optional-pack dependency', 'Core closeout behavior has no dependency on an optional pack.', ['Core closeout behavior has no dependency on an optional pack.'], 'Core closeout behavior has no dependency on an optional pack.'],
+  ['universal closeout does not cite retrospective artifact', 'The universal block never cites', ['never cites `retrospective.md`'], 'never cites `retrospective.md`'],
+  ['universal closeout adds no retrospective category', 'The universal block never cites', ['or adds a retrospective category'], 'or adds a retrospective category'],
+  ['core optional-pack independence retains its negation', 'Core closeout behavior has no dependency on an optional pack.', ['Core closeout behavior has no dependency on an optional pack.'], 'no '],
+];
+
+/** @type {RubberDuckRequirement[]} */
+const RUBBER_DUCK_PROHIBITED_MECHANISM_REQUIREMENTS = [
+  ...[
+    ['event mechanism', 'event'],
+    ['callback mechanism', 'callback'],
+    ['hook mechanism', 'hook'],
+    ['listener mechanism', 'listener'],
+    ['subscription mechanism', 'subscription'],
+    ['lifecycle extension mechanism', 'lifecycle extension'],
+    ['command surface', 'command'],
+    ['lane surface', 'lane'],
+    ['board surface', 'board'],
+    ['state-model surface', 'state model'],
+    ['registry surface', 'registry'],
+    ['scheduler surface', 'scheduler'],
+    ['daemon surface', 'daemon'],
+    ['index surface', 'index'],
+    ['cross-feature aggregation surface', 'cross-feature aggregation surface'],
+  ].map(([label, term]) => [label, 'Treat this as an ordinary conditional coordinator workflow step', [term], term]),
+  ['mechanism denial retains its negation', 'Treat this as an ordinary conditional coordinator workflow step', ['Treat this as an ordinary conditional coordinator workflow step, not an event, callback, hook, listener, subscription, or lifecycle extension.'], 'not '],
+  ['no-new-surface denial retains its negation', 'It adds no command', ['It adds no command, lane, board, state model, registry, scheduler, daemon, index, or cross-feature aggregation surface.'], 'no '],
+];
+
+const RUBBER_DUCK_PROHIBITED_CAPABILITIES = [
+  ['event', 'events?'],
+  ['callback', 'callbacks?'],
+  ['hook', 'hooks?'],
+  ['listener', 'listeners?'],
+  ['subscription', 'subscriptions?'],
+  ['lifecycle extension', 'lifecycle extensions?'],
+  ['command', 'commands?'],
+  ['lane', 'lanes?'],
+  ['board', 'boards?'],
+  ['state model', 'state models?'],
+  ['registry', 'registr(?:y|ies)'],
+  ['scheduler', 'schedulers?'],
+  ['daemon', 'daemons?'],
+  ['index', '(?:indexes?|indices)'],
+  ['cross-feature aggregation', 'cross-feature aggregations?'],
+];
+
+const RUBBER_DUCK_AFFIRMATIVE_CAPABILITY_VERBS = [
+  'add',
+  'activate',
+  'create',
+  'enable',
+  'expose',
+  'implement',
+  'include',
+  'install',
+  'introduce',
+  'maintain',
+  'offer',
+  'provide',
+  'register',
+  'run',
+  'schedule',
+  'start',
+  'support',
+  'trigger',
+  'use',
+].map((verb) => `${verb}(?:s|d)?`).join('|');
+
+/**
+ * This deliberately recognizes only fixed affirmative declaration grammar for
+ * the named Feature 051 exclusions. It is not a repository-wide semantic scan;
+ * independent review remains responsible for prose conflicts outside this
+ * closed capability set and the owning blocks below.
+ * @param {string} section
+ * @returns {string[]}
+ */
+function affirmativeRubberDuckCapabilities(section) {
+  const paragraphs = normalizedParagraphs(section);
+  return RUBBER_DUCK_PROHIBITED_CAPABILITIES.filter(([capability, term]) => {
+    const affirmativeVerb = new RegExp(
+      `\\b(?:${RUBBER_DUCK_AFFIRMATIVE_CAPABILITY_VERBS})\\b\\s+(?:(?:a|an|the|new|optional)\\s+){0,3}${term}\\b`,
+      'i',
+    );
+    const passiveGrant = new RegExp(
+      `\\b(?:a|an|the)\\s+${term}\\b\\s+(?:is|are|will be|can be|may be)\\s+(?:added|activated|created|enabled|exposed|implemented|included|installed|introduced|maintained|offered|provided|registered|run|scheduled|started|supported|triggered|used)\\b`,
+      'i',
+    );
+    return paragraphs.some((paragraph) => affirmativeVerb.test(paragraph) || passiveGrant.test(paragraph));
+  }).map(([capability]) => capability);
+}
+
+/** @param {string} coordinator @param {string} closeoutIndependence @param {string} context */
+function assertNoAffirmativeRubberDuckCapabilities(coordinator, closeoutIndependence, context) {
+  assert.deepEqual(
+    affirmativeRubberDuckCapabilities(`${coordinator}\n\n${closeoutIndependence}`),
+    [],
+    `${context}: has no affirmative declaration of a closed-set prohibited capability`,
+  );
+}
+
+test('T003 Feature 051 pack manifest and agent stay read-only and section-bound', () => {
+  // Arrange
+  const manifest = frontmatterBody(read(RUBBER_DUCK_MANIFEST));
+  const agent = read(RUBBER_DUCK_AGENT);
+  const agentFrontmatter = frontmatterBody(agent);
+  const agentCoordinatorBoundary = agent.slice(0, agent.indexOf('## Scope')).trim();
+  const agentBoundaries = markdownSection(agent, '## Boundaries');
+
+  // Act + Assert
+  assertRubberDuckRequirements(manifest, RUBBER_DUCK_MANIFEST_REQUIREMENTS, RUBBER_DUCK_MANIFEST);
+  assertRubberDuckManifestCapabilities(manifest, RUBBER_DUCK_MANIFEST);
+  const useCases = /^use-cases:\s*\[([^\]]+)\]$/m.exec(manifest)?.[1]
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean) ?? [];
+  assert.ok(useCases.length > 0, `${RUBBER_DUCK_MANIFEST}: has a non-empty use-case list`);
+  assert.ok(
+    useCases.every((value) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)),
+    `${RUBBER_DUCK_MANIFEST}: use cases are lowercase kebab-case discovery values`,
+  );
+  assertRubberDuckRequirements(agentFrontmatter, RUBBER_DUCK_AGENT_FRONTMATTER_REQUIREMENTS, RUBBER_DUCK_AGENT);
+  assertRubberDuckRequirements(
+    agentCoordinatorBoundary,
+    RUBBER_DUCK_AGENT_COORDINATOR_REQUIREMENTS,
+    `${RUBBER_DUCK_AGENT} coordinator-only block`,
+  );
+  assertRubberDuckRequirements(
+    agentBoundaries,
+    RUBBER_DUCK_AGENT_BOUNDARY_REQUIREMENTS,
+    `${RUBBER_DUCK_AGENT} ## Boundaries`,
+  );
+
+  const secondProviderManifest = manifest.replace(
+    '    - dude-pack-rubber-duck-retrospective',
+    '    - dude-pack-rubber-duck-retrospective\n    - dude-pack-rubber-duck-another-agent',
+  );
+  assert.throws(
+    () => assertRubberDuckManifestCapabilities(secondProviderManifest, 'second-provider manifest mutation'),
+    /sole retrospective agent/,
+    'adding a second valid provider fails the sole-provider contract',
+  );
+});
+
+test('T003 Feature 051 coordinator contract is section-bound and deletion-falsifiable', () => {
+  // Arrange
+  const coordinator = markdownSection(read(RUBBER_DUCK_COORDINATOR), RUBBER_DUCK_SECTION);
+  const closeout = markdownSection(read(RUBBER_DUCK_COORDINATOR), COMPLETION_CLOSEOUT_SECTION);
+  const closeoutIndependenceBlocks = anchoredRuleBlocks(
+    closeout,
+    normalizeMarkdownBlock('Core closeout behavior has no dependency on an optional pack.'),
+  );
+
+  // Act + Assert
+  assertRubberDuckRequirements(
+    coordinator,
+    RUBBER_DUCK_COORDINATOR_REQUIREMENTS,
+    `${RUBBER_DUCK_COORDINATOR} ${RUBBER_DUCK_SECTION}`,
+  );
+  assertRubberDuckRequirements(
+    coordinator,
+    RUBBER_DUCK_PROHIBITED_MECHANISM_REQUIREMENTS,
+    `${RUBBER_DUCK_COORDINATOR} ${RUBBER_DUCK_SECTION}`,
+  );
+  assertRubberDuckRequirements(
+    closeout,
+    RUBBER_DUCK_CLOSEOUT_INDEPENDENCE_REQUIREMENTS,
+    `${RUBBER_DUCK_COORDINATOR} ${COMPLETION_CLOSEOUT_SECTION}`,
+  );
+  assert.equal(
+    closeoutIndependenceBlocks.length,
+    1,
+    `${RUBBER_DUCK_COORDINATOR} ${COMPLETION_CLOSEOUT_SECTION}: has one independence owning block`,
+  );
+  assertNoAffirmativeRubberDuckCapabilities(
+    coordinator,
+    closeoutIndependenceBlocks[0].raw,
+    `${RUBBER_DUCK_COORDINATOR} Feature 051 capability scope`,
+  );
+});
+
+test('T003 Feature 051 rejects affirmative prohibited capability grants', () => {
+  // Arrange
+  const coordinator = markdownSection(read(RUBBER_DUCK_COORDINATOR), RUBBER_DUCK_SECTION);
+  const closeout = markdownSection(read(RUBBER_DUCK_COORDINATOR), COMPLETION_CLOSEOUT_SECTION);
+  const [closeoutIndependence] = anchoredRuleBlocks(
+    closeout,
+    normalizeMarkdownBlock('Core closeout behavior has no dependency on an optional pack.'),
+  );
+  assert.ok(closeoutIndependence, 'Completion Closeout has an independence owning block');
+  const affirmativeEvent = coordinator.replace(
+    'Treat this as an ordinary conditional coordinator workflow step, not an event, callback, hook, listener, subscription, or lifecycle extension.',
+    'Treat this as an ordinary conditional coordinator workflow step. It activates an event.',
+  );
+  const affirmativeRegistry = coordinator.replace(
+    'It adds no command, lane, board, state model, registry, scheduler, daemon, index, or cross-feature aggregation surface.',
+    'It adds a registry.',
+  );
+  const affirmativeCloseoutRegistry = closeoutIndependence.raw.replace(
+    'Core closeout behavior has no dependency on an optional pack.',
+    'Core closeout behavior activates a registry.',
+  );
+  const pluralAffirmativeGrants = [
+    ['hooks', `${coordinator}\n\nIt adds hooks.`, /hook/],
+    ['events', `${coordinator}\n\nIt activates events.`, /event/],
+    ['registries', `${coordinator}\n\nIt adds registries.`, /registry/],
+    ['indices', `${coordinator}\n\nIt adds indices.`, /index/],
+  ];
+
+  // Act + Assert
+  assert.throws(
+    () => assertNoAffirmativeRubberDuckCapabilities(
+      affirmativeEvent,
+      closeoutIndependence.raw,
+      'affirmative event mutation',
+    ),
+    /event/,
+    'flipping the event denial into an affirmative grant fails',
+  );
+  assert.throws(
+    () => assertNoAffirmativeRubberDuckCapabilities(
+      affirmativeRegistry,
+      closeoutIndependence.raw,
+      'affirmative registry mutation',
+    ),
+    /registry/,
+    'flipping the registry denial into an affirmative grant fails',
+  );
+  assert.throws(
+    () => assertNoAffirmativeRubberDuckCapabilities(
+      coordinator,
+      affirmativeCloseoutRegistry,
+      'affirmative closeout registry mutation',
+    ),
+    /registry/,
+    'an affirmative registry grant in the Completion Closeout independence block fails',
+  );
+  for (const [pluralCapability, pluralGrant, capability] of pluralAffirmativeGrants) {
+    assert.throws(
+      () => assertNoAffirmativeRubberDuckCapabilities(
+        pluralGrant,
+        closeoutIndependence.raw,
+        `affirmative ${pluralCapability} mutation`,
+      ),
+      capability,
+      `an affirmative plural ${pluralCapability} grant fails`,
+    );
+  }
+});
+
+test('T003 Feature 051 section checks tolerate harmless Markdown rewraps', () => {
+  // Arrange
+  const manifest = frontmatterBody(read(RUBBER_DUCK_MANIFEST));
+  const agent = read(RUBBER_DUCK_AGENT);
+  const coordinator = markdownSection(read(RUBBER_DUCK_COORDINATOR), RUBBER_DUCK_SECTION);
+  const closeout = markdownSection(read(RUBBER_DUCK_COORDINATOR), COMPLETION_CLOSEOUT_SECTION);
+
+  // Act
+  const rewrappedManifest = rewrapRubberDuckRequirement(manifest, RUBBER_DUCK_MANIFEST_REQUIREMENTS[0]);
+  const rewrappedAgent = rewrapRubberDuckRequirement(
+    markdownSection(agent, '## Boundaries'),
+    RUBBER_DUCK_AGENT_BOUNDARY_REQUIREMENTS[1],
+  );
+  const rewrappedCoordinator = rewrapRubberDuckRequirement(
+    coordinator,
+    RUBBER_DUCK_COORDINATOR_REQUIREMENTS[18],
+  );
+  const rewrappedProhibitedCoordinator = rewrapRubberDuckRequirement(
+    coordinator,
+    RUBBER_DUCK_PROHIBITED_MECHANISM_REQUIREMENTS[5],
+  );
+  const rewrappedCloseout = rewrapRubberDuckRequirement(
+    closeout,
+    RUBBER_DUCK_CLOSEOUT_INDEPENDENCE_REQUIREMENTS[1],
+  );
+
+  // Assert
+  assert.doesNotThrow(() => {
+    assertRubberDuckRequirements(rewrappedManifest, RUBBER_DUCK_MANIFEST_REQUIREMENTS, 'rewrapped manifest');
+    assertRubberDuckRequirements(rewrappedAgent, RUBBER_DUCK_AGENT_BOUNDARY_REQUIREMENTS, 'rewrapped agent');
+    assertRubberDuckRequirements(rewrappedCoordinator, RUBBER_DUCK_COORDINATOR_REQUIREMENTS, 'rewrapped coordinator');
+    assertRubberDuckRequirements(
+      rewrappedCoordinator,
+      RUBBER_DUCK_PROHIBITED_MECHANISM_REQUIREMENTS,
+      'rewrapped prohibited mechanisms',
+    );
+    assertRubberDuckRequirements(
+      rewrappedCloseout,
+      RUBBER_DUCK_CLOSEOUT_INDEPENDENCE_REQUIREMENTS,
+      'rewrapped closeout',
+    );
+    const [rewrappedCloseoutIndependence] = anchoredRuleBlocks(
+      rewrappedCloseout,
+      normalizeMarkdownBlock('Core closeout behavior has no dependency on an optional pack.'),
+    );
+    assert.ok(rewrappedCloseoutIndependence, 'rewrapped closeout retains its independence owning block');
+    assertNoAffirmativeRubberDuckCapabilities(
+      rewrappedProhibitedCoordinator,
+      rewrappedCloseoutIndependence.raw,
+      'rewrapped Feature 051 capability scope',
+    );
+  }, 'Feature 051 section contracts survive harmless soft Markdown wrapping');
 });

@@ -57,6 +57,15 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
         "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-issue-3-add-a-topology-first-reset-when-review-r-891391/library/packs"
       }
     },
+    "rubber-duck": {
+      "files": [
+        ".github/agents/dude-pack-rubber-duck-retrospective.agent.md"
+      ],
+      "source": {
+        "type": "local",
+        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-refactored-guide/library/packs"
+      }
+    },
     "strata": {
       "files": [
         ".github/agents/dude-pack-strata-stylist.agent.md",

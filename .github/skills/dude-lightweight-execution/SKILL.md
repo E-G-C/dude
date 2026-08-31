@@ -70,6 +70,8 @@ For a completion claim:
 
 Implementation alone never closes a task. If evidence, review, ownership, render, or lint fails, do not mark `[x]`; report or route the blocker.
 
+After a bounded task closes successfully, apply the coordinator's `## Completion Closeout` contract once in that same final response.
+
 ## Status And Handoff
 
 `@dude status` is read-only. The coordinator first determines the active lane per its Status precedence; this detailed status applies only once that active lane is Lightweight Execution. A single defined package whose tasks are all `[ ]` with no execution evidence stays `Definition Only`, so do not report `tasks.md` counts for it. When Lightweight Execution is the active lane, report lane, live `tasks.md`, exact companion or `Ownership: ambiguous`, state counts, in-progress work, ready set, blockers, completion, tracked-not-started state, and unverified manual `[x]` drift. It may recompute a view in the response but must not set/render, log, snapshot, reconcile, or mutate.

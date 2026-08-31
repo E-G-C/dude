@@ -115,6 +115,66 @@ Key rules:
 - Empty or missing `.dude/ideas/` and `.dude/specs/` directories are valid;
   Dude creates them when brainstorm or definition starts.
 
+### Completion closeout timing and evidence
+
+Existing workflow owners still decide whether work is verified and ready to
+close. Once the current invocation successfully closes at least one bounded
+task or feature, Dude includes exactly one `Completion Closeout:` in that
+invocation's final response. Completed Ship work and completed release work use
+the same closeout, though Ship performs no release action. Several successful
+closes share one closeout. When later work blocks or fails, the success claims
+cover only the closed targets, and normal stop and blocker reporting still
+covers everything unfinished. No successful close means no success closeout.
+
+For repository-backed work, Dude observes mutable worktree and branch state
+after the close and before composing the response, using read-only operations.
+The result retains the observed scope and distinguishes a named branch, detached
+HEAD, unborn branch, or unavailable state. A failed observation is reported as
+unavailable with its observed reason; it never becomes an inferred branch or
+clean-worktree claim. Evidence captured earlier can be reused only for immutable
+delivery facts.
+
+After identifying the closed scope, the closeout uses this order and includes
+only applicable categories:
+
+1. Freshly observed repository state.
+2. Relevant, evidenced delivery identities and links, such as commits, pull
+   requests, tags, or releases. A URL appears only when the evidence contains
+   the actual URL; Dude does not construct one from a recognizable identity.
+3. An exact optional cleanup action and exact target, labeled optional and left
+   unexecuted.
+4. Learning already retained or already proposed by the existing learning and
+   memory authorities, with that disposition unchanged.
+
+Unsupported categories disappear entirely rather than leaving headings or
+placeholders. This keeps a bounded-task closeout small while allowing feature
+and release closeouts to include their evidenced delivery and follow-up facts.
+A Ship closeout scales by the same rule.
+
+Closeout rendering is read-only and grants no authority. It performs no cleanup,
+Git or delivery change, release action, workflow transition, learning promotion,
+or memory persistence. It adds no hook, workflow stage, state, or report
+artifact. The behavior works without optional packs. Advisory pack input may
+contribute only evidence that reached Dude before close; pack absence, failure,
+or silence cannot delay the closeout or add authority.
+
+### Optional retrospective at feature completion
+
+With `rubber-duck` installed, the coordinator runs its read-only retrospective
+exactly once when successful work is about to complete a feature. It runs after
+final Reviewer approval and before close. A Ship invocation that completes its
+feature uses this same single pass.
+
+No retrospective runs for ordinary or bounded task closes, successful release
+runs, or failed, blocked, cancelled, or abandoned feature or Ship endings.
+Findings are advisory and cannot block or delay close.
+
+The coordinator records each result as a dated, append-only entry in
+`.dude/specs/<NNN>-<slug>/retrospective.md`; the Rubber Duck does not write the
+file. This fixed feature-package path is the durable discovery point. The
+universal `Completion Closeout:` remains independent: it neither requires nor
+links the file and works unchanged when `rubber-duck` is not installed.
+
 ## Who Owns What
 
 | Part | Owns | Plain-English version |

@@ -36,6 +36,7 @@ namespace, which the engine treats as a distinct ownership tier:
 | `strata` | Strata visual system: planes-and-rules elevation, two palettes, type scale, 4/8 spacing, motion, token validator | you choose Strata as a project's visual system |
 | `clearline` | Clearline visual system: calm neutrals, four accents, Inter type, 8-pt grid, shared left edge, optional brand-mark slot | you choose Clearline as a project's visual system |
 | `technical-docs` | 5 technical-document agents + 7 skills (evidence-ledger pipeline) + 2 prompts | you generate or update technical docs from a repo, transcripts, notes, drafts, or existing docs |
+| `rubber-duck` | read-only retrospective agent; no skills or external dependencies | you want one advisory record at a pending successful feature completion reached through direct feature work or a Ship invocation that completes its feature |
 
 Packs are added to this table as they are migrated out of core.
 

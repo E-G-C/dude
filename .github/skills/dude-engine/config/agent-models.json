@@ -3,7 +3,7 @@
   "classes": {
     "inherit": {},
     "fast": {
-      "effort": "low"
+      "effort": "medium"
     },
     "balanced": {
       "effort": "medium"
@@ -14,7 +14,7 @@
     "visual": {
       "effort": "max"
     },
-        "coding": {
+    "coding": {
       "effort": "max"
     }
   },
@@ -25,11 +25,11 @@
       ],
       "models": {
         "inherit": null,
-        "fast": "gpt-5.6-luna",
-        "balanced": "gpt-5.6-terra",
+        "fast": "gpt-5.6-sol-fast",
+        "balanced": "gpt-5.6-sol-fast",
         "reasoning": "gpt-5.6-sol",
         "visual": "claude-opus-5",
-        "coding":"gpt-5.6-sol-fast"
+        "coding": "gpt-5.6-sol-fast"
       }
     }
   }

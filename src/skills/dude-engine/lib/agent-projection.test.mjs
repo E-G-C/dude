@@ -113,7 +113,7 @@ const PACK_CATALOG = Object.freeze({
     ],
     agents: {
       'dude-pack-hugo-docs-researcher': {
-        modelClass: 'fast', tools: ['read', 'search'],
+        modelClass: 'reasoning', tools: ['read', 'search'],
       },
       'dude-pack-hugo-migration-specialist': {
         modelClass: 'reasoning',
@@ -156,7 +156,7 @@ const PACK_CATALOG = Object.freeze({
     ],
     agents: {
       'dude-pack-newsroom-event-deep-fetcher': {
-        modelClass: 'fast',
+        modelClass: 'balanced',
         tools: ['workiq/*', 'workiq2/*', 'read', 'search', 'edit', 'execute'],
       },
       'dude-pack-newsroom-writer': {
@@ -170,6 +170,14 @@ const PACK_CATALOG = Object.freeze({
     agents: {
       'dude-pack-release-manager': {
         modelClass: 'reasoning', tools: ['read', 'edit', 'execute', 'search'],
+      },
+    },
+  },
+  'rubber-duck': {
+    manifestAgents: ['dude-pack-rubber-duck-retrospective'],
+    agents: {
+      'dude-pack-rubber-duck-retrospective': {
+        modelClass: 'reasoning', tools: ['read', 'search'],
       },
     },
   },
@@ -202,7 +210,7 @@ const PACK_CATALOG = Object.freeze({
         modelClass: 'balanced', tools: ['read', 'edit'],
       },
       'dude-pack-technical-docs-extractor': {
-        modelClass: 'fast', tools: ['read', 'search', 'edit'],
+        modelClass: 'balanced', tools: ['read', 'search', 'edit'],
       },
       'dude-pack-technical-docs-planner': {
         modelClass: 'balanced', tools: ['read', 'edit'],
@@ -617,7 +625,7 @@ test('preserves the T005 catalog manifests, source metadata, and local delegatio
     }
     assert.doesNotThrow(() => projection.validateAgentSet(records), `${pack} local source set`);
   }
-  assert.equal(sourceCount, 30, 'the complete catalog retains its 30 authoritative pack sources');
+  assert.equal(sourceCount, 31, 'the complete catalog retains its 31 authoritative pack sources');
 });
 
 test('keeps the Technical Docs Writer roster exact and retains its agent selector', async () => {
