@@ -23,11 +23,11 @@ function write(root, relativePath, content) {
 
 /** @param {string} root */
 function define(root) {
-  write(root, '.dude/specs/x/spec.md', '# X\n');
+  write(root, '.dude/specs/001-x/spec.md', '# X\n');
   write(
     root,
-    '.dude/ideas/x.md',
-    '---\nstatus: defined\nspec_path: .dude/specs/x/spec.md\n---\n',
+    '.dude/ideas/001-x.md',
+    '---\nslug: x\nstatus: defined\nspec_path: .dude/specs/001-x/spec.md\n---\n',
   );
 }
 
@@ -44,7 +44,7 @@ test('CLI emits exact inventory and resolve library results as JSON with one LF'
     const inventory = run(['inventory', '--root', root, '--json']);
     assert.deepEqual(inventory, {
       code: 0,
-      out: '{"features":[{"ideaPath":".dude/ideas/x.md","specPath":".dude/specs/x/spec.md"}],"diagnostics":[]}\n',
+      out: '{"features":[{"ideaPath":".dude/ideas/001-x.md","specPath":".dude/specs/001-x/spec.md"}],"diagnostics":[]}\n',
       err: '',
     });
 
@@ -52,13 +52,13 @@ test('CLI emits exact inventory and resolve library results as JSON with one LF'
       'resolve',
       '--json',
       '--spec',
-      '.dude/specs/x/spec.md',
+      '.dude/specs/001-x/spec.md',
       '--root',
       root,
     ]);
     assert.deepEqual(resolve, {
       code: 0,
-      out: '{"owner":{"ideaPath":".dude/ideas/x.md","specPath":".dude/specs/x/spec.md"},"diagnostics":[]}\n',
+      out: '{"owner":{"ideaPath":".dude/ideas/001-x.md","specPath":".dude/specs/001-x/spec.md"},"diagnostics":[]}\n',
       err: '',
     });
   } finally {
@@ -80,7 +80,7 @@ test('CLI exits zero for inventory warnings and two for error diagnostics', () =
       '--root',
       root,
       '--spec',
-      '.dude/specs/x/spec.md',
+      '.dude/specs/001-x/spec.md',
       '--json',
     ]);
     assert.equal(error.code, 2, error.err);
@@ -123,7 +123,7 @@ test('CLI is a thin direct library adapter with no scanning or child-process log
   const source = fs.readFileSync(CLI, 'utf8');
   assert.match(
     source,
-    /import \{ inventoryDefinedFeatures, resolveFeatureOwner \} from '\.\/lib\/feature\.mjs';/,
+    /inventoryDefinedFeatures,[\s\S]*inventoryLifecycleIdentities,[\s\S]*resolveFeatureOwner,[\s\S]*resolveIdeaSelector,[\s\S]*from '\.\/lib\/feature\.mjs';/,
   );
   assert.doesNotMatch(source, /node:fs|node:child_process|readdir|readFile|lstat|statSync|spawn|execFile/);
   assert.doesNotMatch(source, /parseFrontmatterScalars|parseSpecIdentity|resolveSpecIdentity/);

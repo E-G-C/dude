@@ -19,7 +19,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/bounded-owner-log-projection.md#coordinator-log -->
+<!-- audit log: .dude/ideas/029-bounded-owner-log-projection.md#coordinator-log -->
 
 # Tasks: Bounded Owner Log Projection
 

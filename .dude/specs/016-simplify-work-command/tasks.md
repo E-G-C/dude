@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/simplify-work-command.md#coordinator-log -->
+<!-- audit log: .dude/ideas/016-simplify-work-command.md#coordinator-log -->
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 

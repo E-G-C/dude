@@ -52,7 +52,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/remove-legacy-compatibility.md#coordinator-log -->
+<!-- audit log: .dude/ideas/002-remove-legacy-compatibility.md#coordinator-log -->
 
 # Tasks: Remove Legacy Compatibility
 

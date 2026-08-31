@@ -11,12 +11,22 @@ description: "Use for brainstorm idea capture, explicit feature definition, spec
 
 - `## Idea`, answers in `## Open Questions`, and `## Assumptions` are user-controlled. Preserve meaning, tone, uncertainty, incomplete thought, creative intent, answered questions, assumptions, and user edits.
 - During explicit `brainstorm` or `define`, the coordinator delegates definition writes to the Spec Lead: idea/package artifacts, `status:`, exact `spec_path:`, managed definition regions, and definition `## Coordinator Log` events. Other specialists do not mutate workflow state; execution state and close events remain coordinator-only. Never rewrite prior log entries.
-- A defined feature's identity is the workspace-relative `.dude/specs/<feature>/spec.md` path, not its slug, directory, title, or another artifact.
+- A defined feature's identity is the workspace-relative `.dude/specs/<NNN>-<slug>/spec.md` path, not its slug, directory, title, lifecycle number, or another artifact.
 - For re-definition, rendered task validation, and execution handoff, require exactly one `status: defined` owner by exact `spec_path:`. Any resolver diagnostic, no owner, or multiple owners stops before mutation. Never infer or fall back from slug, directory, or name.
 
 ## Brainstorm
 
-`brainstorm <idea>` creates or refreshes exactly one direct `.dude/ideas/<slug>.md`; brainstorm does not create or write `.dude/specs/`.
+`brainstorm <idea>` creates or refreshes exactly one direct `.dude/ideas/<NNN>-<slug>.md`; brainstorm does not create or write `.dude/specs/`.
+
+An unnumbered `<slug>` is an exact frontmatter semantic selector. An explicit `.dude/ideas/<NNN>-<slug>.md` is an exact physical-path selector. Do not strip a numeric prefix from a bare selector or fall back among selector forms.
+
+For a first capture, derive the unnumbered semantic slug, then invoke `node .github/skills/dude-engine/feature.mjs ideas --root . --json`. Stop on any error diagnostic. If the clean inventory contains that exact slug, refresh its reported exact `ideaPath` instead of allocating. Otherwise the Spec Lead stages the approved draft ledger bytes in one regular file under an operating-system temporary directory without writing the workspace, and the coordinator invokes exactly:
+
+```bash
+node .github/skills/dude-feature-definition/publish-first-capture.mjs --root . --slug <slug> --stage <absolute-staged-ledger-file>
+```
+
+The publisher owns the authoritative inventory re-read, `max(valid direct idea and package lifecycle numbers) + 1` allocation, expected-missing creation, and rollback-bound lint. It never fills a gap and stops at `999`, or on any inventory diagnostic. The coordinator deletes the temporary directory on success or failure and treats only the command's reported idea path as the captured identity. Refresh, resolved preservation, and explicit reopen reuse the selected exact path and never invoke this publisher.
 
 On first capture, only clear language or transcription errors may be corrected. On rerun, re-normalize managed content without opportunistically rewriting user text. Keep active questions immediately after `## Idea`, preserve resolved questions, answers, assumptions, and user edits, and add only focused questions introduced by new ambiguity. Set `status: draft` and empty `spec_path:` only for a first or still-undefined draft. A rerun of a defined ledger preserves `status: defined` and its exact `spec_path:`; never demote it or orphan its package.
 
@@ -52,12 +62,12 @@ The spec gate requires complete sections, testable requirements, measurable tech
 
 Initial definition has a prospective owner because no defined owner exists yet. This transaction is first-definition only; supporting artifacts, re-definition, and tracked recovery do not route through it:
 
-1. Select exactly one explicit direct draft idea by the requested slug or idea path; never use a same-name, recursive, or retired-path fallback. A resolved ledger is terminal until explicitly reopened through `brainstorm <slug>`; first definition refuses it before any write.
-2. Derive the next monotonic package number and future exact `spec_path:`. Preflight all direct ideas; identity collisions or ambiguous prospective selection stop before writes.
-3. The Spec Lead stages and approves the core trio, exact task audit breadcrumb, owner transition, and definition log event without writing, then returns those exact bytes to the coordinator. The Spec Lead retains staging authority; the coordinator retains execution and lane authority.
+1. Select exactly one explicit direct draft idea by an exact unnumbered frontmatter slug or an explicit exact numbered idea path; never use a same-name, numeric-prefix, recursive, or retired-path fallback. A resolved ledger is terminal until explicitly reopened through `brainstorm <slug>`; first definition refuses it before any write.
+2. Read the selected ledger's `<NNN>` and exact slug, then derive its future exact `.dude/specs/<NNN>-<slug>/spec.md`. Do not allocate a package number. Preflight all direct identities; a collision, inconsistent number or suffix, or ambiguous prospective selection stops before writes.
+3. The Spec Lead stages and approves the core trio, an exact task audit breadcrumb naming the selected numbered owner path, owner transition, and definition log event without writing, then returns those exact bytes to the coordinator. The Spec Lead retains staging authority; the coordinator retains execution and lane authority.
 4. After rechecking the prospective selection, the coordinator creates one operating-system temporary directory containing exactly `current-idea.md`, `staged-idea.md`, `spec.md`, `plan.md`, and `tasks.md`. `current-idea.md` is the exact selected draft preimage; the other four files are the Spec Lead-approved stage.
 
-   Invoke exactly: `node .github/skills/dude-feature-definition/publish-first-definition.mjs --root . --idea .dude/ideas/<slug>.md --spec .dude/specs/<NNN>-<package>/spec.md --stage <absolute-temporary-directory>`
+   Invoke exactly: `node .github/skills/dude-feature-definition/publish-first-definition.mjs --root . --idea .dude/ideas/<NNN>-<slug>.md --spec .dude/specs/<NNN>-<slug>/spec.md --stage <absolute-temporary-directory>`
 
    The command applies only the selected owner plus the core trio through the existing `applyAtomicFileBatch` transaction and runs fixed `dude-lint` inside its rollback boundary; on failure, it restores every pre-write byte and removes every newly created path.
 5. The coordinator deletes the temporary directory on success or failure. It makes no publication-success or definition-readiness claim unless the command succeeds and the reported lint result is zero failures.
@@ -90,7 +100,7 @@ Canonical task units live below any generated board and use:
 
 States are `[ ]`, `[~]`, `[!]`, and `[x]`. Durable keys survive only while task meaning survives. `[P]` is only a parallel candidate signal; actual fan-out still requires no dependency or blocker relation and known disjoint implementation write sets. `deps:` adds real durable-key blockers; `blocked-by:` explains `[!]`. Spec-derived IDs stay below `T9000`.
 
-`tasks.md` carries the exact owner breadcrumb. An optional balanced Dude board fence is a complete regenerated view of canonical units, never canonical state. Supporting checklists are advisory, not another board. Phases normally progress Setup, Foundational, prioritized User Stories, then Polish; every task traces to the plan and every plan decision to the spec.
+`tasks.md` carries the exact owner breadcrumb, for example `<!-- audit log: .dude/ideas/<NNN>-<slug>.md#coordinator-log -->`. An optional balanced Dude board fence is a complete regenerated view of canonical units, never canonical state. Supporting checklists are advisory, not another board. Phases normally progress Setup, Foundational, prioritized User Stories, then Polish; every task traces to the plan and every plan decision to the spec.
 
 ## Objective Registry
 

@@ -96,11 +96,11 @@ test('design workflow uses the canonical idea graph and exact unique ownership',
   const mutationRules = sectionBetween(workflow, '## Mutation Preconditions And Ownership', '## Mock Iteration');
 
   // Act
-  const hasCanonicalGraph = /\.dude\/ideas\/<slug>\.md[\s\S]{0,250}-> \.dude\/specs\/<feature>\/spec\.md[\s\S]{0,250}-> \.dude\/specs\/<feature>\/design\/[\s\S]{0,250}-> \.dude\/specs\/<feature>\/tasks\.md/.test(coreModel);
+  const hasCanonicalGraph = /\.dude\/ideas\/<NNN>-<slug>\.md[\s\S]{0,250}-> \.dude\/specs\/<feature>\/spec\.md[\s\S]{0,250}-> \.dude\/specs\/<feature>\/design\/[\s\S]{0,250}-> \.dude\/specs\/<feature>\/tasks\.md/.test(coreModel);
 
   // Assert
   assert.equal(hasCanonicalGraph, true, 'core model must flow from one flat idea to spec, design, and tasks');
-  assert.match(mutationRules, /Resolve exactly one companion idea from direct flat `\.dude\/ideas\/\*\.md` ledgers whose `spec_path` exactly equals/);
+  assert.match(mutationRules, /Resolve exactly one companion idea from direct numbered `\.dude\/ideas\/<NNN>-<slug>\.md` ledgers whose `spec_path` exactly equals/);
   assert.match(mutationRules, /If zero or multiple ideas claim that exact path,[\s\S]{0,220}stop before any idea, spec, log, status, routing, or task mutation/);
   assert.match(mutationRules, /Never infer ownership from a slug, directory name, or alternate path; exact canonical `spec_path` equality is the only owner match/);
 });
@@ -111,7 +111,7 @@ test('coordinator and Spec Lead ownership covers every design lifecycle log', ()
     /coordinator append the settle event to the uniquely owning companion idea's `## Coordinator Log`/,
     /coordinator append the approval event to the uniquely owning companion idea's `## Coordinator Log`/,
     /coordinator append the close classification and any routing decision to the uniquely owning companion idea's `## Coordinator Log`/,
-    /coordinator append the reopen reason to the uniquely owning companion idea's `## Coordinator Log` in `\.dude\/ideas\/<slug>\.md`/,
+    /coordinator append the reopen reason to the uniquely owning companion idea's `## Coordinator Log` at its exact resolved `\.dude\/ideas\/<NNN>-<slug>\.md` path/,
   ];
 
   // Act
@@ -143,7 +143,7 @@ test('design workflow defines a format-neutral primary artifact before output', 
   // Assert
   expectText(
     coreModel,
-    'For a raw or draft design idea, capture the flat ledger with `@dude brainstorm <idea>` when needed, then explicitly run `@dude define <slug>` before the first managed render, export, or capture.',
+    'For a raw or draft design idea, capture the numbered direct ledger with `@dude brainstorm <idea>` when needed, then explicitly run `@dude define <slug>` before the first managed render, export, or capture.',
     'raw ideas define before their first render, export, or capture',
   );
   expectText(
@@ -339,7 +339,7 @@ test('design workflow retains ownership, approval, quality, realism, and lane ga
   // Assert
   expectText(
     mutation,
-    'Resolve exactly one companion idea from direct flat `.dude/ideas/*.md` ledgers whose `spec_path` exactly equals the current package\'s `.dude/specs/<feature>/spec.md`.',
+    'Resolve exactly one companion idea from direct numbered `.dude/ideas/<NNN>-<slug>.md` ledgers whose `spec_path` exactly equals the current package\'s `.dude/specs/<feature>/spec.md`.',
     'mutations require exactly one exact-path companion idea owner',
   );
   expectText(

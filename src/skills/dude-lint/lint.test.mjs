@@ -102,7 +102,7 @@ function lint(root, script = SCRIPT) {
 }
 
 /**
- * @param {{ status?: string, specPath?: string, intakeHeading?: string }} [options]
+ * @param {{ slug?: string, status?: string, specPath?: string, intakeHeading?: string }} [options]
  * @returns {string}
  */
 function ledger(options = {}) {
@@ -111,6 +111,7 @@ function ledger(options = {}) {
   const intakeHeading = options.intakeHeading || 'Idea';
   return [
     '---',
+    `slug: ${options.slug || 'x'}`,
     `status: ${status}`,
     `spec_path: ${specPath}`,
     '---',
@@ -124,11 +125,12 @@ function ledger(options = {}) {
   ].join('\n');
 }
 
-/** @param {string} root @param {string} idea @param {string} feature */
-function writeDefinedIdea(root, idea, feature) {
+/** @param {string} root @param {string} number @param {string} slug */
+function writeDefinedIdea(root, number, slug) {
+  const feature = `${number}-${slug}`;
   const specPath = `.dude/specs/${feature}/spec.md`;
   write(root, specPath, `# Spec: ${feature}\n`);
-  write(root, `.dude/ideas/${idea}.md`, ledger({ status: 'defined', specPath }));
+  write(root, `.dude/ideas/${feature}.md`, ledger({ slug, status: 'defined', specPath }));
 }
 
 const TASK_BOARD_START = '<!-- dude:board:start -->';
@@ -191,18 +193,18 @@ function taskDocument(audit, options = {}) {
 test('lint accepts canonical draft and defined ideas and reports idea counts', () => {
   const root = rootWithManifest();
   try {
-    write(root, '.dude/specs/x/spec.md', '# Spec\n');
+    write(root, '.dude/specs/002-x/spec.md', '# Spec\n');
     write(
       root,
-      '.dude/ideas/draft.md',
-      '---\nstatus: draft\nspec_path:\n---\n\n## Idea\n\nDraft.\n\n## Coordinator Log\n',
+      '.dude/ideas/001-draft.md',
+      '---\nslug: draft\nstatus: draft\nspec_path:\n---\n\n## Idea\n\nDraft.\n\n## Coordinator Log\n',
     );
     write(
       root,
-      '.dude/ideas/x.md',
-      '---\nstatus: defined\nspec_path: .dude/specs/x/spec.md\n---\n\n## Idea\n\nDefined.\n\n## Coordinator Log\n',
+      '.dude/ideas/002-x.md',
+      '---\nslug: x\nstatus: defined\nspec_path: .dude/specs/002-x/spec.md\n---\n\n## Idea\n\nDefined.\n\n## Coordinator Log\n',
     );
-    write(root, '.dude/state/task-state.json', '{".dude/specs/x/tasks.md":{"glyphs":{},"updated_at":"2026-01-01T00:00:00.000Z"}}\n');
+    write(root, '.dude/state/task-state.json', '{".dude/specs/002-x/tasks.md":{"glyphs":{},"updated_at":"2026-01-01T00:00:00.000Z"}}\n');
     const result = lint(root);
     assert.equal(result.code, 0, result.output);
     assert.match(result.output, /Scanned: 2 idea\(s\)/);
@@ -696,11 +698,11 @@ test('lint accepts a skill description written as a multi-line plain scalar', ()
 test('lint accepts quoted canonical scalars and CRLF frontmatter consistently', () => {
   const root = rootWithManifest();
   try {
-    write(root, '.dude/specs/x/spec.md', '# Spec\r\n');
+    write(root, '.dude/specs/001-x/spec.md', '# Spec\r\n');
     write(
       root,
-      '.dude/ideas/x.md',
-      '---\r\nstatus: "defined"\r\nspec_path: \'.dude/specs/x/spec.md\'\r\n---\r\n\r\n## Idea\r\n\r\nQuoted.\r\n\r\n## Coordinator Log\r\n',
+      '.dude/ideas/001-x.md',
+      '---\r\nslug: x\r\nstatus: "defined"\r\nspec_path: \'.dude/specs/001-x/spec.md\'\r\n---\r\n\r\n## Idea\r\n\r\nQuoted.\r\n\r\n## Coordinator Log\r\n',
     );
 
     const result = lint(root);
@@ -720,18 +722,18 @@ test('lint rejects invalid status and malformed or duplicate idea frontmatter', 
   try {
     write(
       invalidStatusRoot,
-      '.dude/ideas/x.md',
-      '---\nstatus: ready\nspec_path:\n---\n\n## Idea\n\nInvalid.\n\n## Coordinator Log\n',
+      '.dude/ideas/001-x.md',
+      '---\nslug: x\nstatus: ready\nspec_path:\n---\n\n## Idea\n\nInvalid.\n\n## Coordinator Log\n',
     );
     const invalidStatus = lint(invalidStatusRoot);
     assert.equal(invalidStatus.code, 1, invalidStatus.output);
     assert.match(invalidStatus.output, /invalid status 'ready' \(valid: draft, defined, resolved\)/);
 
-    write(duplicateRoot, '.dude/specs/x/spec.md', '# Spec\n');
+    write(duplicateRoot, '.dude/specs/001-x/spec.md', '# Spec\n');
     write(
       duplicateRoot,
-      '.dude/ideas/x.md',
-      '---\nstatus: defined\nspec_path: .dude/specs/x/spec.md\nspec_path: .dude/specs/x/spec.md\n---\n\n## Idea\n\nDuplicate.\n\n## Coordinator Log\n',
+      '.dude/ideas/001-x.md',
+      '---\nslug: x\nstatus: defined\nspec_path: .dude/specs/001-x/spec.md\nspec_path: .dude/specs/001-x/spec.md\n---\n\n## Idea\n\nDuplicate.\n\n## Coordinator Log\n',
     );
     const duplicate = lint(duplicateRoot);
     assert.equal(duplicate.code, 1, duplicate.output);
@@ -739,8 +741,8 @@ test('lint rejects invalid status and malformed or duplicate idea frontmatter', 
 
     write(
       danglingRoot,
-      '.dude/ideas/x.md',
-      '---\nstatus: defined\nspec_path: .dude/specs/x/spec.md\n\n## Idea\n\nDangling.\n\n## Coordinator Log\n',
+      '.dude/ideas/001-x.md',
+      '---\nslug: x\nstatus: defined\nspec_path: .dude/specs/001-x/spec.md\n\n## Idea\n\nDangling.\n\n## Coordinator Log\n',
     );
     const dangling = lint(danglingRoot);
     assert.equal(dangling.code, 1, dangling.output);
@@ -757,8 +759,8 @@ test('lint rejects Windows-style traversal in canonical spec identity', () => {
   try {
     write(
       root,
-      '.dude/ideas/x.md',
-      '---\nstatus: defined\nspec_path: .dude/specs/..\\outside/spec.md\n---\n\n## Idea\n\nUnsafe.\n\n## Coordinator Log\n',
+      '.dude/ideas/001-x.md',
+      '---\nslug: x\nstatus: defined\nspec_path: .dude/specs/..\\outside/spec.md\n---\n\n## Idea\n\nUnsafe.\n\n## Coordinator Log\n',
     );
     const result = lint(root);
     assert.equal(result.code, 1, result.output);
@@ -790,7 +792,7 @@ test('lint strictly rejects missing delimiters and malformed quoted idea frontma
   for (const fixture of cases) {
     const root = rootWithManifest();
     try {
-      write(root, '.dude/ideas/x.md', fixture.content);
+      write(root, '.dude/ideas/001-x.md', fixture.content);
       const result = lint(root);
       assert.equal(result.code, 1, `${fixture.name}\n${result.output}`);
       assert.match(result.output, fixture.expected, fixture.name);
@@ -808,30 +810,30 @@ test('lint rejects dangling, non-file, and symbolic-link canonical spec targets'
   try {
     write(
       danglingRoot,
-      '.dude/ideas/x.md',
-      ledger({ status: 'defined', specPath: '.dude/specs/x/spec.md' }),
+      '.dude/ideas/001-x.md',
+      ledger({ status: 'defined', specPath: '.dude/specs/001-x/spec.md' }),
     );
     const dangling = lint(danglingRoot);
     assert.equal(dangling.code, 1, dangling.output);
     assert.match(dangling.output, /spec identity target does not exist/);
 
-    fs.mkdirSync(path.join(directoryRoot, '.dude/specs/x/spec.md'), { recursive: true });
+    fs.mkdirSync(path.join(directoryRoot, '.dude/specs/001-x/spec.md'), { recursive: true });
     write(
       directoryRoot,
-      '.dude/ideas/x.md',
-      ledger({ status: 'defined', specPath: '.dude/specs/x/spec.md' }),
+      '.dude/ideas/001-x.md',
+      ledger({ status: 'defined', specPath: '.dude/specs/001-x/spec.md' }),
     );
     const directory = lint(directoryRoot);
     assert.equal(directory.code, 1, directory.output);
     assert.match(directory.output, /spec identity target is not a regular file/);
 
     write(outside, 'spec.md', '# Outside\n');
-    fs.mkdirSync(path.join(symlinkRoot, '.dude/specs/x'), { recursive: true });
-    fs.symlinkSync(path.join(outside, 'spec.md'), path.join(symlinkRoot, '.dude/specs/x/spec.md'));
+    fs.mkdirSync(path.join(symlinkRoot, '.dude/specs/001-x'), { recursive: true });
+    fs.symlinkSync(path.join(outside, 'spec.md'), path.join(symlinkRoot, '.dude/specs/001-x/spec.md'));
     write(
       symlinkRoot,
-      '.dude/ideas/x.md',
-      ledger({ status: 'defined', specPath: '.dude/specs/x/spec.md' }),
+      '.dude/ideas/001-x.md',
+      ledger({ status: 'defined', specPath: '.dude/specs/001-x/spec.md' }),
     );
     const symlink = lint(symlinkRoot);
     assert.equal(symlink.code, 1, symlink.output);
@@ -854,7 +856,7 @@ test('lint rejects malformed non-empty canonical draft spec_path values', () => 
   for (const fixture of cases) {
     const root = rootWithManifest();
     try {
-      write(root, '.dude/ideas/x.md', ledger({ status: 'draft', specPath: fixture.specPath }));
+      write(root, '.dude/ideas/001-x.md', ledger({ status: 'draft', specPath: fixture.specPath }));
       results.push({ ...fixture, ...lint(root) });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -867,9 +869,9 @@ test('lint rejects malformed non-empty canonical draft spec_path values', () => 
     results.map((result) => `${result.name}:\n${result.output}`).join('\n'),
   );
   for (const result of results) {
-    assert.match(result.output, /\.dude\/ideas\/x\.md/, result.name);
+    assert.match(result.output, /\.dude\/ideas\/001-x\.md/, result.name);
     assert.ok(result.output.includes(`spec_path '${result.specPath}'`), result.output);
-    assert.match(result.output, /spec_path.*must point at \.dude\/specs\/<feature>\/spec\.md/, result.name);
+    assert.match(result.output, /spec_path.*must point at \.dude\/specs\/<NNN>-<slug>\/spec\.md/, result.name);
   }
 });
 
@@ -877,16 +879,16 @@ test('lint validates canonical draft spec_path targets without granting ownershi
   const missingRoot = rootWithManifest();
   const existingRoot = rootWithManifest();
   const packageRoot = rootWithManifest();
-  const specPath = '.dude/specs/x/spec.md';
+  const specPath = '.dude/specs/001-x/spec.md';
   try {
-    write(missingRoot, '.dude/ideas/x.md', ledger({ status: 'draft', specPath }));
+    write(missingRoot, '.dude/ideas/001-x.md', ledger({ status: 'draft', specPath }));
 
     write(existingRoot, specPath, '# Spec\n');
-    write(existingRoot, '.dude/ideas/x.md', ledger({ status: 'draft', specPath }));
+    write(existingRoot, '.dude/ideas/001-x.md', ledger({ status: 'draft', specPath }));
 
     write(packageRoot, specPath, '# Spec\n');
-    write(packageRoot, '.dude/ideas/x.md', ledger({ status: 'draft', specPath }));
-    write(packageRoot, '.dude/specs/x/tasks.md', taskDocument(ideaAudit('x')));
+    write(packageRoot, '.dude/ideas/001-x.md', ledger({ status: 'draft', specPath }));
+    write(packageRoot, '.dude/specs/001-x/tasks.md', taskDocument(ideaAudit('001-x')));
 
     const missing = lint(missingRoot);
     const existing = lint(existingRoot);
@@ -896,14 +898,14 @@ test('lint validates canonical draft spec_path targets without granting ownershi
     // inventory now emits FEATURE_DRAFT_SPEC_PATH and lint fails instead of
     // tolerating a draft whose canonical spec_path target already exists.
     assert.equal(existing.code, 1, existing.output);
-    assert.match(existing.output, /\.dude\/ideas\/x\.md.*\[FEATURE_DRAFT_SPEC_PATH\]/);
+    assert.match(existing.output, /\.dude\/ideas\/001-x\.md.*\[FEATURE_DRAFT_SPEC_PATH\]/);
 
     assert.equal(taskPackage.code, 1, taskPackage.output);
-    assert.match(taskPackage.output, /package \.dude\/specs\/x\/spec\.md has no defined idea owner/);
-    assert.match(taskPackage.output, /breadcrumb target \.dude\/ideas\/x\.md/);
+    assert.match(taskPackage.output, /package \.dude\/specs\/001-x\/spec\.md has no defined idea owner/);
+    assert.match(taskPackage.output, /breadcrumb target \.dude\/ideas\/001-x\.md/);
 
     assert.equal(missing.code, 1, missing.output);
-    assert.match(missing.output, /\.dude\/ideas\/x\.md.*spec_path '\.dude\/specs\/x\/spec\.md'/);
+    assert.match(missing.output, /\.dude\/ideas\/001-x\.md.*spec_path '\.dude\/specs\/001-x\/spec\.md'/);
     assert.match(missing.output, /unsafe or unresolved.*spec identity target does not exist/);
   } finally {
     fs.rmSync(missingRoot, { recursive: true, force: true });
@@ -915,7 +917,7 @@ test('lint validates canonical draft spec_path targets without granting ownershi
 test('lint accepts an empty draft spec_path in a canonical idea', () => {
   const root = rootWithManifest();
   try {
-    write(root, '.dude/ideas/x.md', ledger({ status: 'draft' }));
+    write(root, '.dude/ideas/001-x.md', ledger({ status: 'draft' }));
 
     const result = lint(root);
 
@@ -932,9 +934,9 @@ test('lint delegates exact package-less resolved lifecycle validation to the fea
   const cases = [
     {
       name: 'nonempty canonical owner claim',
-      content: ledger({ status: 'resolved', specPath: '.dude/specs/x/spec.md' }),
+      content: ledger({ slug: 'resolved', status: 'resolved', specPath: '.dude/specs/001-x/spec.md' }),
       prepare(root) {
-        write(root, '.dude/specs/x/spec.md', '# Spec\n');
+        write(root, '.dude/specs/001-x/spec.md', '# Spec\n');
       },
       expected: /FEATURE_RESOLVED_SPEC_PATH/,
     },
@@ -957,10 +959,10 @@ test('lint delegates exact package-less resolved lifecycle validation to the fea
   const invalidRoots = cases.map(() => rootWithManifest());
   try {
     // Arrange
-    write(validRoot, '.dude/ideas/resolved.md', ledger({ status: 'resolved' }));
+    write(validRoot, '.dude/ideas/001-resolved.md', ledger({ slug: 'resolved', status: 'resolved' }));
     for (const [index, fixture] of cases.entries()) {
       fixture.prepare?.(invalidRoots[index]);
-      write(invalidRoots[index], '.dude/ideas/resolved.md', fixture.content);
+      write(invalidRoots[index], '.dude/ideas/001-resolved.md', fixture.content);
     }
 
     // Act
@@ -976,7 +978,7 @@ test('lint delegates exact package-less resolved lifecycle validation to the fea
     for (const fixture of invalid) {
       assert.equal(fixture.result.code, 1, `${fixture.name}\n${fixture.result.output}`);
       assert.match(fixture.result.output, fixture.expected, fixture.name);
-      assert.match(fixture.result.output, /\.dude\/ideas\/resolved\.md/, fixture.name);
+      assert.match(fixture.result.output, /\.dude\/ideas\/001-resolved\.md/, fixture.name);
     }
     assert.match(
       invalid[0].result.output,
@@ -994,14 +996,14 @@ test('lint preserves defined spec_path requirements and valid ownership', () => 
   const invalidRoot = rootWithManifest();
   const validRoot = rootWithManifest();
   try {
-    write(emptyRoot, '.dude/ideas/x.md', ledger({ status: 'defined' }));
+    write(emptyRoot, '.dude/ideas/001-x.md', ledger({ status: 'defined' }));
 
-    write(invalidRoot, '.dude/specs/x/spec.md', '# Spec\n');
-    write(invalidRoot, '.dude/ideas/x.md', ledger({ status: 'defined', specPath: 'nope' }));
-    write(invalidRoot, '.dude/specs/x/tasks.md', taskDocument(ideaAudit('x')));
+    write(invalidRoot, '.dude/specs/001-x/spec.md', '# Spec\n');
+    write(invalidRoot, '.dude/ideas/001-x.md', ledger({ status: 'defined', specPath: 'nope' }));
+    write(invalidRoot, '.dude/specs/001-x/tasks.md', taskDocument(ideaAudit('001-x')));
 
-    writeDefinedIdea(validRoot, 'x', 'x');
-    write(validRoot, '.dude/specs/x/tasks.md', taskDocument(ideaAudit('x')));
+    writeDefinedIdea(validRoot, '001', 'x');
+    write(validRoot, '.dude/specs/001-x/tasks.md', taskDocument(ideaAudit('001-x')));
 
     const empty = lint(emptyRoot);
     const invalid = lint(invalidRoot);
@@ -1012,7 +1014,7 @@ test('lint preserves defined spec_path requirements and valid ownership', () => 
 
     assert.equal(invalid.code, 1, invalid.output);
     assert.match(invalid.output, /spec_path 'nope' must point at/);
-    assert.match(invalid.output, /package \.dude\/specs\/x\/spec\.md has no defined idea owner/);
+    assert.match(invalid.output, /package \.dude\/specs\/001-x\/spec\.md has no defined idea owner/);
 
     assert.equal(valid.code, 0, valid.output);
     assert.match(valid.output, /0 warning\(s\), 0 failure\(s\)/);
@@ -1029,9 +1031,10 @@ test('lint counts only real idea headings outside backtick and tilde fences', ()
   try {
     write(
       root,
-      '.dude/ideas/x.md',
+      '.dude/ideas/001-x.md',
       [
         '---',
+        'slug: x',
         'status: draft',
         'spec_path:',
         '---',
@@ -1110,8 +1113,8 @@ test('lint rejects missing, duplicate, noncanonical, mixed, and fake-only canoni
     try {
       write(
         root,
-        '.dude/ideas/x.md',
-        `---\nstatus: draft\nspec_path:\n---\n\n${fixture.body}`,
+        '.dude/ideas/001-x.md',
+        `---\nslug: x\nstatus: draft\nspec_path:\n---\n\n${fixture.body}`,
       );
       const result = lint(root);
       assert.equal(result.code, 1, `${fixture.name}\n${result.output}`);
@@ -1129,7 +1132,7 @@ test('lint accepts ordered managed fences and rejects unbalanced or misordered f
   try {
     write(
       validRoot,
-      '.dude/ideas/x.md',
+      '.dude/ideas/001-x.md',
       `${ledger()}\n<!-- dude:managed:start -->\nManaged.\n<!-- dude:managed:end -->\n`,
     );
     const valid = lint(validRoot);
@@ -1137,7 +1140,7 @@ test('lint accepts ordered managed fences and rejects unbalanced or misordered f
 
     write(
       unbalancedRoot,
-      '.dude/ideas/x.md',
+      '.dude/ideas/001-x.md',
       `${ledger()}\n<!-- dude:managed:start -->\n`,
     );
     const unbalanced = lint(unbalancedRoot);
@@ -1146,7 +1149,7 @@ test('lint accepts ordered managed fences and rejects unbalanced or misordered f
 
     write(
       misorderedRoot,
-      '.dude/ideas/x.md',
+      '.dude/ideas/001-x.md',
       `${ledger()}\n<!-- dude:managed:end -->\n<!-- dude:managed:start -->\n`,
     );
     const misordered = lint(misorderedRoot);
@@ -1182,11 +1185,11 @@ test('lint rejects symbolic links in canonical ideas without reading their targe
   try {
     write(outside, 'secret.md', 'SECRET_SENTINEL\n');
     fs.mkdirSync(path.join(root, '.dude/ideas'), { recursive: true });
-    fs.symlinkSync(path.join(outside, 'secret.md'), path.join(root, '.dude/ideas/link.md'));
+    fs.symlinkSync(path.join(outside, 'secret.md'), path.join(root, '.dude/ideas/001-link.md'));
 
     const result = lint(root);
     assert.equal(result.code, 1, result.output);
-    assert.match(result.output, /\.dude\/ideas\/link\.md.*unsupported symbolic link in canonical ideas/);
+    assert.match(result.output, /\.dude\/ideas\/001-link\.md.*unsupported symbolic link in canonical ideas/);
     assert.doesNotMatch(result.output, /SECRET_SENTINEL/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -1198,7 +1201,7 @@ test('lint rejects FIFO entries in canonical ideas as non-regular', { skip: proc
   const root = rootWithManifest();
   try {
     fs.mkdirSync(path.join(root, '.dude/ideas'), { recursive: true });
-    const fifoPath = path.join(root, '.dude/ideas/pipe.md');
+    const fifoPath = path.join(root, '.dude/ideas/001-pipe.md');
     const created = spawnSync('mkfifo', [fifoPath], { encoding: 'utf8' });
     if (created.status !== 0) {
       context.skip(`mkfifo unavailable: ${created.stderr || created.error || 'unknown error'}`);
@@ -1207,7 +1210,7 @@ test('lint rejects FIFO entries in canonical ideas as non-regular', { skip: proc
 
     const result = lint(root);
     assert.equal(result.code, 1, result.output);
-    assert.match(result.output, /\.dude\/ideas\/pipe\.md.*unsupported non-regular entry in canonical ideas/);
+    assert.match(result.output, /\.dude\/ideas\/001-pipe\.md.*unsupported non-regular entry in canonical ideas/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1240,7 +1243,7 @@ test('lint rejects symbolic-link workspace, .dude, and ideas roots without trave
     fs.symlinkSync(dudeOutside, path.join(dudeRoot, '.dude'), 'dir');
     const dudeResult = lint(dudeRoot);
     assert.equal(dudeResult.code, 1, dudeResult.output);
-    assert.match(dudeResult.output, /unsafe canonical ideas root or ancestor '\.dude' is a symbolic link/);
+    assert.match(dudeResult.output, /unsafe canonical inventory root or ancestor '\.dude' is a symbolic link/);
     assert.doesNotMatch(dudeResult.output, /DUDE_SECRET_SENTINEL|secret\.md/);
 
     write(ideasOutside, 'secret.md', 'IDEAS_SECRET_SENTINEL\n');
@@ -1248,7 +1251,7 @@ test('lint rejects symbolic-link workspace, .dude, and ideas roots without trave
     fs.symlinkSync(ideasOutside, path.join(ideasRoot, '.dude/ideas'), 'dir');
     const ideasResult = lint(ideasRoot);
     assert.equal(ideasResult.code, 1, ideasResult.output);
-    assert.match(ideasResult.output, /unsafe canonical ideas root or ancestor '\.dude\/ideas' is a symbolic link/);
+    assert.match(ideasResult.output, /unsafe canonical inventory root or ancestor '\.dude\/ideas' is a symbolic link/);
     assert.doesNotMatch(ideasResult.output, /IDEAS_SECRET_SENTINEL|secret\.md/);
   } finally {
     fs.rmSync(actualRoot, { recursive: true, force: true });
@@ -1298,23 +1301,23 @@ test('lint rejects symbolic-link workspace root without any downstream traversal
 test('lint rejects duplicate exact spec_path owners and lists every canonical idea', () => {
   const root = rootWithManifest();
   try {
-    write(root, '.dude/specs/x/spec.md', '# Spec\n');
+    write(root, '.dude/specs/001-x/spec.md', '# Spec\n');
     write(
       root,
-      '.dude/ideas/alpha.md',
-      ledger({ status: 'defined', specPath: '.dude/specs/x/spec.md' }),
+      '.dude/ideas/001-x.md',
+      ledger({ status: 'defined', specPath: '.dude/specs/001-x/spec.md' }),
     );
     write(
       root,
-      '.dude/ideas/beta.md',
-      ledger({ status: 'defined', specPath: '.dude/specs/x/spec.md' }),
+      '.dude/ideas/002-beta.md',
+      ledger({ slug: 'beta', status: 'defined', specPath: '.dude/specs/001-x/spec.md' }),
     );
 
     const result = lint(root);
     assert.equal(result.code, 1, result.output);
     assert.match(
       result.output,
-      /\.dude\/specs\/x\/spec\.md  duplicate defined idea owners: \.dude\/ideas\/alpha\.md, \.dude\/ideas\/beta\.md/,
+      /\.dude\/specs\/001-x\/spec\.md  duplicate defined idea owners: \.dude\/ideas\/001-x\.md, \.dude\/ideas\/002-beta\.md/,
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -1324,7 +1327,7 @@ test('lint rejects duplicate exact spec_path owners and lists every canonical id
 test('lint ignores unrelated content in retired-root-shaped directories', () => {
   const root = rootWithManifest();
   try {
-    write(root, '.dude/ideas/canonical.md', ledger());
+    write(root, '.dude/ideas/001-x.md', ledger());
     write(root, 'brief/nested/notes.txt', 'unrelated notes\n');
     write(root, '.dude/brief/archive.bin', 'unrelated archive\n');
     write(root, 'specs/example/spec.md', '# Unrelated spec\n');
@@ -1343,11 +1346,11 @@ test('lint ignores unrelated content in retired-root-shaped directories', () => 
 test('lint accepts an exact line-one canonical audit with one defined idea owner', () => {
   const root = rootWithManifest();
   try {
-    writeDefinedIdea(root, 'x', 'x');
+    writeDefinedIdea(root, '001', 'x');
     write(
       root,
-      '.dude/specs/x/tasks.md',
-      taskDocument(ideaAudit('x'), {
+      '.dude/specs/001-x/tasks.md',
+      taskDocument(ideaAudit('001-x'), {
         body: [
           '# Tasks',
           '',
@@ -1371,11 +1374,11 @@ test('lint accepts an exact line-one canonical audit with one defined idea owner
 test('lint accepts the literal rendered board protocol before the canonical audit', () => {
   const root = rootWithManifest();
   try {
-    writeDefinedIdea(root, 'x', 'x');
+    writeDefinedIdea(root, '001', 'x');
     write(
       root,
-      '.dude/specs/x/tasks.md',
-      taskDocument(ideaAudit('x'), {
+      '.dude/specs/001-x/tasks.md',
+      taskDocument(ideaAudit('001-x'), {
         rendered: true,
         body: '# Tasks\n\n- [ ] T001@a1b2c3d4 [US1] Canonical task',
       }),
@@ -1393,24 +1396,24 @@ test('lint accepts the literal rendered board protocol before the canonical audi
 test('lint requires the audit to be the first canonical line after a rendered board', () => {
   const root = rootWithManifest();
   try {
-    writeDefinedIdea(root, 'x', 'x');
+    writeDefinedIdea(root, '001', 'x');
     write(
       root,
-      '.dude/specs/x/tasks.md',
+      '.dude/specs/001-x/tasks.md',
       [
         TASK_BOARD_START,
         TASK_BOARD_NOTICE,
         TASK_BOARD_END,
         TASK_CANONICAL_NOTICE,
         '# Intervening prose',
-        ideaAudit('x'),
+        ideaAudit('001-x'),
         '',
       ].join('\n'),
     );
 
     const result = lint(root);
     assert.equal(result.code, 1, result.output);
-    assert.match(result.output, /\.dude\/specs\/x\/tasks\.md:5/);
+    assert.match(result.output, /\.dude\/specs\/001-x\/tasks\.md:5/);
     assert.match(result.output, /first canonical line must be exactly/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -1421,7 +1424,7 @@ test('lint rejects late, missing, malformed-board, nested, and wrong-root audit 
   const cases = [
     {
       name: 'breadcrumb later in file',
-      content: `# Tasks\n${ideaAudit('x')}\n`,
+      content: `# Tasks\n${ideaAudit('001-x')}\n`,
       expected: /first canonical line must be exactly/,
     },
     {
@@ -1436,7 +1439,7 @@ test('lint rejects late, missing, malformed-board, nested, and wrong-root audit 
         '<!-- wrong generated notice -->',
         TASK_BOARD_END,
         TASK_CANONICAL_NOTICE,
-        ideaAudit('x'),
+        ideaAudit('001-x'),
         '',
       ].join('\n'),
       expected: /rendered board preamble is malformed or missing its generated notice/,
@@ -1456,11 +1459,11 @@ test('lint rejects late, missing, malformed-board, nested, and wrong-root audit 
   for (const fixture of cases) {
     const root = rootWithManifest();
     try {
-      writeDefinedIdea(root, 'x', 'x');
-      write(root, '.dude/specs/x/tasks.md', fixture.content);
+      writeDefinedIdea(root, '001', 'x');
+      write(root, '.dude/specs/001-x/tasks.md', fixture.content);
       const result = lint(root);
       assert.equal(result.code, 1, `${fixture.name}\n${result.output}`);
-      assert.match(result.output, /\.dude\/specs\/x\/tasks\.md:/, fixture.name);
+      assert.match(result.output, /\.dude\/specs\/001-x\/tasks\.md:/, fixture.name);
       assert.match(result.output, fixture.expected, fixture.name);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -1471,16 +1474,16 @@ test('lint rejects late, missing, malformed-board, nested, and wrong-root audit 
 test('lint reports the package, target, and candidates when an audit targets another package owner', () => {
   const root = rootWithManifest();
   try {
-    writeDefinedIdea(root, 'owner', 'x');
-    writeDefinedIdea(root, 'other', 'y');
-    write(root, '.dude/specs/x/tasks.md', taskDocument(ideaAudit('other')));
+    writeDefinedIdea(root, '001', 'owner');
+    writeDefinedIdea(root, '002', 'other');
+    write(root, '.dude/specs/001-owner/tasks.md', taskDocument(ideaAudit('002-other')));
 
     const result = lint(root);
     assert.equal(result.code, 1, result.output);
-    assert.match(result.output, /audit breadcrumb target mismatch for package \.dude\/specs\/x\/spec\.md/);
-    assert.match(result.output, /\.dude\/ideas\/other\.md points to \.dude\/specs\/y\/spec\.md/);
-    assert.match(result.output, /unique owner is \.dude\/ideas\/owner\.md/);
-    assert.match(result.output, /candidate owners: \.dude\/ideas\/owner\.md/);
+    assert.match(result.output, /audit breadcrumb target mismatch for package \.dude\/specs\/001-owner\/spec\.md/);
+    assert.match(result.output, /\.dude\/ideas\/002-other\.md points to \.dude\/specs\/002-other\/spec\.md/);
+    assert.match(result.output, /unique owner is \.dude\/ideas\/001-owner\.md/);
+    assert.match(result.output, /candidate owners: \.dude\/ideas\/001-owner\.md/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1489,15 +1492,15 @@ test('lint reports the package, target, and candidates when an audit targets ano
 test('lint reports an existing but wrong audit target and the unique package owner', () => {
   const root = rootWithManifest();
   try {
-    writeDefinedIdea(root, 'owner', 'x');
-    write(root, '.dude/ideas/draft.md', ledger());
-    write(root, '.dude/specs/x/tasks.md', taskDocument(ideaAudit('draft')));
+    writeDefinedIdea(root, '001', 'owner');
+    write(root, '.dude/ideas/002-draft.md', ledger({ slug: 'draft' }));
+    write(root, '.dude/specs/001-owner/tasks.md', taskDocument(ideaAudit('002-draft')));
 
     const result = lint(root);
     assert.equal(result.code, 1, result.output);
-    assert.match(result.output, /audit breadcrumb target \.dude\/ideas\/draft\.md is not a valid defined feature owner/);
-    assert.match(result.output, /package \.dude\/specs\/x\/spec\.md/);
-    assert.match(result.output, /candidate owners: \.dude\/ideas\/owner\.md/);
+    assert.match(result.output, /audit breadcrumb target \.dude\/ideas\/002-draft\.md is not a valid defined feature owner/);
+    assert.match(result.output, /package \.dude\/specs\/001-owner\/spec\.md/);
+    assert.match(result.output, /candidate owners: \.dude\/ideas\/001-owner\.md/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1506,14 +1509,14 @@ test('lint reports an existing but wrong audit target and the unique package own
 test('lint reports the package and target when no defined idea owns a task package', () => {
   const root = rootWithManifest();
   try {
-    write(root, '.dude/specs/x/spec.md', '# Spec\n');
-    write(root, '.dude/ideas/draft.md', ledger());
-    write(root, '.dude/specs/x/tasks.md', taskDocument(ideaAudit('draft')));
+    write(root, '.dude/specs/001-x/spec.md', '# Spec\n');
+    write(root, '.dude/ideas/002-draft.md', ledger({ slug: 'draft' }));
+    write(root, '.dude/specs/001-x/tasks.md', taskDocument(ideaAudit('002-draft')));
 
     const result = lint(root);
     assert.equal(result.code, 1, result.output);
-    assert.match(result.output, /package \.dude\/specs\/x\/spec\.md has no defined idea owner/);
-    assert.match(result.output, /breadcrumb target \.dude\/ideas\/draft\.md/);
+    assert.match(result.output, /package \.dude\/specs\/001-x\/spec\.md has no defined idea owner/);
+    assert.match(result.output, /breadcrumb target \.dude\/ideas\/002-draft\.md/);
     assert.match(result.output, /candidate owners: \(none\)/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -1523,14 +1526,14 @@ test('lint reports the package and target when no defined idea owns a task packa
 test('lint reports a dangling audit target and the package owner candidate', () => {
   const root = rootWithManifest();
   try {
-    writeDefinedIdea(root, 'owner', 'x');
-    write(root, '.dude/specs/x/tasks.md', taskDocument(ideaAudit('missing')));
+    writeDefinedIdea(root, '001', 'owner');
+    write(root, '.dude/specs/001-owner/tasks.md', taskDocument(ideaAudit('002-missing')));
 
     const result = lint(root);
     assert.equal(result.code, 1, result.output);
-    assert.match(result.output, /audit breadcrumb target \.dude\/ideas\/missing\.md is not a valid defined feature owner/);
-    assert.match(result.output, /package \.dude\/specs\/x\/spec\.md/);
-    assert.match(result.output, /candidate owners: \.dude\/ideas\/owner\.md/);
+    assert.match(result.output, /audit breadcrumb target \.dude\/ideas\/002-missing\.md is not a valid defined feature owner/);
+    assert.match(result.output, /package \.dude\/specs\/001-owner\/spec\.md/);
+    assert.match(result.output, /candidate owners: \.dude\/ideas\/001-owner\.md/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1539,26 +1542,26 @@ test('lint reports a dangling audit target and the package owner candidate', () 
 test('lint reports every duplicate task-package owner in the ownership diagnostic', () => {
   const root = rootWithManifest();
   try {
-    write(root, '.dude/specs/x/spec.md', '# Spec\n');
+    write(root, '.dude/specs/001-x/spec.md', '# Spec\n');
     write(
       root,
-      '.dude/ideas/alpha.md',
-      ledger({ status: 'defined', specPath: '.dude/specs/x/spec.md' }),
+      '.dude/ideas/001-x.md',
+      ledger({ status: 'defined', specPath: '.dude/specs/001-x/spec.md' }),
     );
     write(
       root,
-      '.dude/ideas/beta.md',
-      ledger({ status: 'defined', specPath: '.dude/specs/x/spec.md' }),
+      '.dude/ideas/002-beta.md',
+      ledger({ slug: 'beta', status: 'defined', specPath: '.dude/specs/001-x/spec.md' }),
     );
-    write(root, '.dude/specs/x/tasks.md', taskDocument(ideaAudit('alpha')));
+    write(root, '.dude/specs/001-x/tasks.md', taskDocument(ideaAudit('001-x')));
 
     const result = lint(root);
     assert.equal(result.code, 1, result.output);
-    assert.match(result.output, /package \.dude\/specs\/x\/spec\.md does not have exactly one valid defined feature owner/);
-    assert.match(result.output, /breadcrumb target \.dude\/ideas\/alpha\.md/);
+    assert.match(result.output, /package \.dude\/specs\/001-x\/spec\.md does not have exactly one valid defined feature owner/);
+    assert.match(result.output, /breadcrumb target \.dude\/ideas\/001-x\.md/);
     assert.match(
       result.output,
-      /candidate owners: \.dude\/ideas\/alpha\.md, \.dude\/ideas\/beta\.md/,
+      /candidate owners: \.dude\/ideas\/001-x\.md, \.dude\/ideas\/002-beta\.md/,
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -1578,12 +1581,12 @@ test('lint maps shared feature diagnostics to exact severity and output once', (
     );
     assert.equal((warning.output.match(/FEATURE_IDEAS_ROOT_MISSING/g) || []).length, 1);
 
-    write(errorRoot, '.dude/ideas/x.md', ledger({ status: 'ready' }));
+    write(errorRoot, '.dude/ideas/001-x.md', ledger({ status: 'ready' }));
     const error = lint(errorRoot);
     assert.equal(error.code, 1, error.output);
     assert.match(
       error.output,
-      /^\[FAIL\]  \.dude\/ideas\/x\.md  invalid status 'ready' \(valid: draft, defined, resolved\) \[FEATURE_STATUS_INVALID\]$/m,
+      /^\[FAIL\]  \.dude\/ideas\/001-x\.md  invalid status 'ready' \(valid: draft, defined, resolved\) \[FEATURE_STATUS_INVALID\]$/m,
     );
     assert.equal((error.output.match(/FEATURE_STATUS_INVALID/g) || []).length, 1);
   } finally {
@@ -1596,13 +1599,13 @@ test('lint imports the feature library directly and does not reparse ownership m
   const source = fs.readFileSync(SCRIPT, 'utf8');
   assert.match(
     source,
-    /import \{ inventoryDefinedFeatures \} from '\.\.\/dude-engine\/lib\/feature\.mjs';/,
+    /import \{ inventoryLifecycleIdentities \} from '\.\.\/dude-engine\/lib\/feature\.mjs';/,
   );
   assert.doesNotMatch(
     source,
     /feature-identity\.mjs|parseFrontmatterScalars|parseSpecIdentity|resolveSpecIdentity/,
   );
-  assert.equal((source.match(/inventoryDefinedFeatures\(\{ root: ROOT \}\)/g) || []).length, 1);
+  assert.equal((source.match(/inventoryLifecycleIdentities\(\{ root: ROOT \}\)/g) || []).length, 1);
 });
 
 test('lint requires a sibling spec.md for every task package', () => {
@@ -1610,18 +1613,18 @@ test('lint requires a sibling spec.md for every task package', () => {
   try {
     write(
       root,
-      '.dude/ideas/x.md',
-      ledger({ status: 'defined', specPath: '.dude/specs/x/spec.md' }),
+      '.dude/ideas/001-x.md',
+      ledger({ status: 'defined', specPath: '.dude/specs/001-x/spec.md' }),
     );
-    write(root, '.dude/specs/x/tasks.md', taskDocument(ideaAudit('x')));
+    write(root, '.dude/specs/001-x/tasks.md', taskDocument(ideaAudit('001-x')));
 
     const result = lint(root);
     assert.equal(result.code, 1, result.output);
-    assert.match(result.output, /\.dude\/ideas\/x\.md.*spec_path '\.dude\/specs\/x\/spec\.md'/);
+    assert.match(result.output, /\.dude\/ideas\/001-x\.md.*spec_path '\.dude\/specs\/001-x\/spec\.md'/);
     assert.match(result.output, /spec identity target does not exist/);
     assert.match(
       result.output,
-      /\.dude\/specs\/x\/tasks\.md.*package \.dude\/specs\/x\/spec\.md.*(?:missing|does not exist)/,
+      /\.dude\/specs\/001-x\/tasks\.md.*package \.dude\/specs\/001-x\/spec\.md.*(?:missing|does not exist)/,
       'the task package itself must identify its missing sibling spec.md',
     );
   } finally {
@@ -1634,18 +1637,18 @@ test('lint rejects a non-regular sibling spec.md for a task package', () => {
   try {
     write(
       root,
-      '.dude/ideas/x.md',
-      ledger({ status: 'defined', specPath: '.dude/specs/x/spec.md' }),
+      '.dude/ideas/001-x.md',
+      ledger({ status: 'defined', specPath: '.dude/specs/001-x/spec.md' }),
     );
-    write(root, '.dude/specs/x/tasks.md', taskDocument(ideaAudit('x')));
-    fs.mkdirSync(path.join(root, '.dude/specs/x/spec.md'));
+    write(root, '.dude/specs/001-x/tasks.md', taskDocument(ideaAudit('001-x')));
+    fs.mkdirSync(path.join(root, '.dude/specs/001-x/spec.md'));
 
     const result = lint(root);
 
     assert.equal(result.code, 1, result.output);
     assert.match(
       result.output,
-      /\.dude\/specs\/x\/tasks\.md.*task package \.dude\/specs\/x\/spec\.md.*is not a regular file\/unsafe/,
+      /\.dude\/specs\/001-x\/tasks\.md.*task package \.dude\/specs\/001-x\/spec\.md.*is not a regular file\/unsafe/,
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -1655,17 +1658,17 @@ test('lint rejects a non-regular sibling spec.md for a task package', () => {
 test('lint requires the exact task package identity even when a nested package has a sibling spec', () => {
   const root = rootWithManifest();
   try {
-    writeDefinedIdea(root, 'x', 'x');
-    write(root, '.dude/specs/x/nested/spec.md', '# Nested spec\n');
-    write(root, '.dude/specs/x/nested/tasks.md', taskDocument(ideaAudit('x')));
+    writeDefinedIdea(root, '001', 'x');
+    write(root, '.dude/specs/001-x/nested/spec.md', '# Nested spec\n');
+    write(root, '.dude/specs/001-x/nested/tasks.md', taskDocument(ideaAudit('001-x')));
 
     const result = lint(root);
     assert.equal(result.code, 1, result.output);
     assert.match(
       result.output,
-      /package \.dude\/specs\/x\/nested\/spec\.md has no defined idea owner/,
+      /package \.dude\/specs\/001-x\/nested\/spec\.md has no defined idea owner/,
     );
-    assert.match(result.output, /breadcrumb target \.dude\/ideas\/x\.md/);
+    assert.match(result.output, /breadcrumb target \.dude\/ideas\/001-x\.md/);
     assert.match(result.output, /candidate owners: \(none\)/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -1702,8 +1705,8 @@ test('lint preserves canonical task grammar rejection diagnostics', () => {
   for (const fixture of cases) {
     const root = rootWithManifest();
     try {
-      writeDefinedIdea(root, 'x', 'x');
-      write(root, '.dude/specs/x/tasks.md', taskDocument(ideaAudit('x'), { body: fixture.body }));
+      writeDefinedIdea(root, '001', 'x');
+      write(root, '.dude/specs/001-x/tasks.md', taskDocument(ideaAudit('001-x'), { body: fixture.body }));
       const result = lint(root);
       assert.equal(result.code, 1, `${fixture.name}\n${result.output}`);
       assert.match(result.output, fixture.expected, fixture.name);
@@ -1730,7 +1733,7 @@ test('lint preserves unbalanced, duplicate, and incomplete rendered board diagno
         TASK_BOARD_NOTICE,
         TASK_BOARD_END,
         TASK_CANONICAL_NOTICE,
-        ideaAudit('x'),
+        ideaAudit('001-x'),
         '',
       ].join('\n'),
       expected: /multiple board fence pairs found \(2\); expected 0 or 1/,
@@ -1741,7 +1744,7 @@ test('lint preserves unbalanced, duplicate, and incomplete rendered board diagno
         TASK_BOARD_START,
         TASK_BOARD_NOTICE,
         TASK_BOARD_END,
-        ideaAudit('x'),
+        ideaAudit('001-x'),
         '',
       ].join('\n'),
       expected: /rendered board preamble must be followed by '<!-- canonical task units/,
@@ -1751,8 +1754,8 @@ test('lint preserves unbalanced, duplicate, and incomplete rendered board diagno
   for (const fixture of cases) {
     const root = rootWithManifest();
     try {
-      writeDefinedIdea(root, 'x', 'x');
-      write(root, '.dude/specs/x/tasks.md', fixture.content);
+      writeDefinedIdea(root, '001', 'x');
+      write(root, '.dude/specs/001-x/tasks.md', fixture.content);
       const result = lint(root);
       assert.equal(result.code, 1, `${fixture.name}\n${result.output}`);
       assert.match(result.output, fixture.expected, fixture.name);
@@ -1767,11 +1770,11 @@ test('lint preserves discovered-task boundaries and Beads tag warnings', () => {
   const validRoot = rootWithManifest();
   const warningRoot = rootWithManifest();
   try {
-    writeDefinedIdea(validRoot, 'x', 'x');
+    writeDefinedIdea(validRoot, '001', 'x');
     write(
       validRoot,
-      '.dude/specs/x/tasks.md',
-      taskDocument(ideaAudit('x'), {
+      '.dude/specs/001-x/tasks.md',
+      taskDocument(ideaAudit('001-x'), {
         body: '## Discovered During Execution\n- [ ] T9001@a1b2c3d4 [Shared] Found (Beads: dude-1)',
       }),
     );
@@ -1779,11 +1782,11 @@ test('lint preserves discovered-task boundaries and Beads tag warnings', () => {
     assert.equal(valid.code, 0, valid.output);
     assert.match(valid.output, /0 warning\(s\), 0 failure\(s\)/);
 
-    writeDefinedIdea(warningRoot, 'x', 'x');
+    writeDefinedIdea(warningRoot, '001', 'x');
     write(
       warningRoot,
-      '.dude/specs/x/tasks.md',
-      taskDocument(ideaAudit('x'), {
+      '.dude/specs/001-x/tasks.md',
+      taskDocument(ideaAudit('001-x'), {
         body: '## Discovered During Execution\n- [ ] T9001@a1b2c3d4 [Shared] Missing Beads tag',
       }),
     );
@@ -1800,11 +1803,11 @@ test('lint preserves discovered-task boundaries and Beads tag warnings', () => {
 test('lint rejects non-reserved tasks in the discovered section', () => {
   const discoveredRoot = rootWithManifest();
   try {
-    writeDefinedIdea(discoveredRoot, 'x', 'x');
+    writeDefinedIdea(discoveredRoot, '001', 'x');
     write(
       discoveredRoot,
-      '.dude/specs/x/tasks.md',
-      taskDocument(ideaAudit('x'), {
+      '.dude/specs/001-x/tasks.md',
+      taskDocument(ideaAudit('001-x'), {
         body: '## Discovered During Execution\n- [ ] T001@a1b2c3d4 [Shared] Wrong range (Beads: dude-1)',
       }),
     );
@@ -1819,11 +1822,11 @@ test('lint rejects non-reserved tasks in the discovered section', () => {
 test('lint preserves duplicate and final-position execution history diagnostics', () => {
   const root = rootWithManifest();
   try {
-    writeDefinedIdea(root, 'x', 'x');
+    writeDefinedIdea(root, '001', 'x');
     write(
       root,
-      '.dude/specs/x/tasks.md',
-      taskDocument(ideaAudit('x'), {
+      '.dude/specs/001-x/tasks.md',
+      taskDocument(ideaAudit('001-x'), {
         body: [
           '## Lightweight Execution History',
           'Historical prose.',
@@ -2215,7 +2218,7 @@ test('lint accepts a valid empty and a valid populated task-state snapshot', () 
 // with its code and exit non-zero. (The 'lint imports the feature library
 // directly' guard above stays green because lint.mjs is not modified.)
 test('lint reports strict owner-metadata violations from the feature library and exits non-zero', () => {
-  const specPath = '.dude/specs/x/spec.md';
+  const specPath = '.dude/specs/001-x/spec.md';
   const cases = [
     { name: 'noncanonical key', violation: 'priority: high' },
     { name: 'quoted canonical key', violation: '"title": Example' },
@@ -2228,12 +2231,12 @@ test('lint reports strict owner-metadata violations from the feature library and
       write(root, specPath, '# Spec\n');
       const content = ledger({ status: 'defined', specPath })
         .replace(`spec_path: ${specPath}\n---`, `spec_path: ${specPath}\n${fixture.violation}\n---`);
-      write(root, '.dude/ideas/x.md', content);
+      write(root, '.dude/ideas/001-x.md', content);
 
       const result = lint(root);
 
       assert.equal(result.code, 1, `${fixture.name}\n${result.output}`);
-      assert.match(result.output, /\.dude\/ideas\/x\.md/, fixture.name);
+      assert.match(result.output, /\.dude\/ideas\/001-x\.md/, fixture.name);
       assert.match(result.output, /FEATURE_FRONTMATTER_MALFORMED/, fixture.name);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

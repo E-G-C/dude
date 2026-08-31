@@ -1184,7 +1184,7 @@ test('T008 prompt inventory and coordinator routing stay bounded and roster-driv
 test('T008 intake keeps brainstorm separate, user-owned intent intact, and guardrails consensual', () => {
   assertSectionMatchesAll('src/agents/dude-spec-lead.agent.md', '## Required Workflow', [
     /must load[^\n]*dude-feature-definition/i,
-    /brainstorm[^\n]*(?:only|exactly one)[^\n]*\.dude\/ideas\/<slug>\.md/i,
+    /brainstorm[^\n]*(?:only|exactly one)[^\n]*\.dude\/ideas\/<NNN>-<slug>\.md/i,
     /brainstorm[^\n]*(?:does not|never)[^\n]*(?:create|write)[^\n]*\.dude\/specs/i,
     /explicit[^\n]*define/i,
     /`## Idea`[^\n]*`## Open Questions`[^\n]*`## Assumptions`[^\n]*user/i,
@@ -1537,7 +1537,7 @@ test('T008 definition authority, rerun safety, guardrails, gates, and reconcilia
   assertSectionRuleRejectsMutations(
     'src/skills/dude-feature-definition/SKILL.md',
     '## First Definition Transaction',
-    '   Invoke exactly: `node .github/skills/dude-feature-definition/publish-first-definition.mjs --root . --idea .dude/ideas/<slug>.md --spec .dude/specs/<NNN>-<package>/spec.md --stage <absolute-temporary-directory>`',
+    '   Invoke exactly: `node .github/skills/dude-feature-definition/publish-first-definition.mjs --root . --idea .dude/ideas/<NNN>-<slug>.md --spec .dude/specs/<NNN>-<slug>/spec.md --stage <absolute-temporary-directory>`',
   );
 
   for (const contract of contracts) {
@@ -1592,7 +1592,7 @@ test('T030 lifecycle guidance preserves resolved ledgers and requires explicit r
     /pre-mutation stops/i,
   ]);
 
-  const ledgerRelative = '.dude/ideas/core-dogfood-preview.md';
+  const ledgerRelative = '.dude/ideas/047-core-dogfood-preview.md';
   const ledger = read(ledgerRelative);
   const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(ledger);
   assert.ok(frontmatter, `${ledgerRelative}: frontmatter is present`);
@@ -1736,6 +1736,108 @@ test('T030 lifecycle guidance preserves resolved ledgers and requires explicit r
     false,
     `${ledgerRelative}: absent from awaiting-definition`,
   );
+});
+
+test('T003 current-format guidance carries numbered identity without selector or work-order fallback', () => {
+  // Arrange
+  const brainstorm = markdownSection(read('src/skills/dude-feature-definition/SKILL.md'), '## Brainstorm');
+  const firstDefinition = markdownSection(read('src/skills/dude-feature-definition/SKILL.md'), '## First Definition Transaction');
+  const intake = markdownSection(read('src/skills/dude-work-intake/SKILL.md'), '## Brainstorm');
+  const ship = markdownSection(read('src/skills/dude-work-intake/SKILL.md'), '## Ship');
+  const work = markdownSection(read('src/skills/dude-work/SKILL.md'), '## Detect The Lane Once');
+  const coordinator = read('src/agents/dude.agent.md');
+
+  /**
+   * Require each clause in its actual procedure, then prove its target is a
+   * unique, meaningful deletion falsifier. Read-only callers deliberately
+   * name an exact owner rather than restating Canonical Ownership's resolver
+   * algorithm and prohibited fallbacks.
+   * @param {string} heading
+   * @param {Array<[string, string]>} clauses
+   */
+  const assertProcedureClauses = (heading, clauses) => {
+    const section = markdownSection(coordinator, heading);
+    const missing = (candidate) => clauses
+      .filter(([, clause]) => (
+        anchoredRuleBlocks(candidate, normalizeMarkdownBlock(clause)).length !== 1
+      ))
+      .map(([label]) => label);
+    assert.deepEqual(missing(section), [], `${heading}: required identity clauses`);
+
+    for (const [label, clause] of clauses) {
+      const normalizedClause = normalizeMarkdownBlock(clause);
+      const matches = anchoredRuleBlocks(section, normalizedClause);
+      assert.equal(
+        matches.length,
+        1,
+        `${heading}: ${label} has one normalized bounded deletion target`,
+      );
+      const [block] = matches;
+      assert.deepEqual(
+        missing(section.replace(
+          block.raw,
+          block.normalized.replace(
+            normalizedClause,
+            normalizedClause.replace(' ', '\n  '),
+          ),
+        )),
+        [],
+        `${heading}: rewrapping ${label} must preserve this caller contract`,
+      );
+      assert.equal(
+        block.normalized.split(normalizedClause).length - 1,
+        1,
+        `${heading}: ${label} occurs once in its bounded deletion target`,
+      );
+      assert.deepEqual(
+        missing(section.replace(block.raw, block.normalized.replace(normalizedClause, ''))),
+        [label],
+        `${heading}: deleting ${label} must fail this caller contract`,
+      );
+    }
+  };
+
+  // Act / Assert
+  assert.match(brainstorm, /\.dude\/ideas\/<NNN>-<slug>\.md/);
+  assert.match(brainstorm, /unnumbered `<slug>` is an exact frontmatter semantic selector/i);
+  assert.match(brainstorm, /exact physical-path selector/i);
+  assert.match(brainstorm, /Do not strip a numeric prefix.*fall back among selector forms/i);
+  assert.match(firstDefinition, /Read the selected ledger's `<NNN>` and exact slug/);
+  assert.match(firstDefinition, /\.dude\/specs\/<NNN>-<slug>\/spec\.md/);
+  assert.match(firstDefinition, /Do not allocate a package number/);
+  assert.match(intake, /max \+ 1.*never fills a gap.*stops at `999`/i);
+  assert.match(ship, /receives its exact numbered `ideaPath`/);
+  assert.match(ship, /Never reconstruct `\.dude\/ideas\/<slug>\.md`/);
+  assert.match(work, /exact numbered `ideaPath`.*exact `spec_path:`/);
+  assert.match(work, /never reconstruct `\.dude\/ideas\/<slug>\.md`, strip a numeric prefix, or infer an owner from matching numbers/i);
+  assertProcedureClauses('## Canonical Ownership', [
+    ['exact spec_path resolver binding', 'require exactly one idea with `status: defined` whose exact `spec_path:` equals the workspace-relative sibling `.dude/specs/<feature>/spec.md` (or the tracked issue\'s exact `spec:` value)'],
+    ['ambiguous ownership stops', 'Any resolver diagnostic, zero owner, or multiple owners stops before routing or the first write'],
+    ['no lifecycle or name fallback', 'Do not infer or fall back to ownership from a matching lifecycle number, slug, filename, package directory, title, or name'],
+    ['read-only diagnostic does not write', 'Read-only diagnosis may report the error without writing'],
+  ]);
+  assertProcedureClauses('## Lifecycle', [
+    ['direct numbered ledger', 'only one direct numbered ledger at `.dude/ideas/<NNN>-<slug>.md`'],
+    ['exact numbered path retained', 'carry the resolver\'s exact numbered `ideaPath` through delegation and handoff; refresh, resolved preservation, and explicit reopen retain that path without allocating again or reconstructing it from the slug'],
+    ['exact spec_path retained', 'maintains `status:`, exact `spec_path:`, managed definition sections, and definition log events'],
+    ['lifecycle number is not work authority', 'The lifecycle number records capture chronology only. It never sets priority, dependency, roadmap position, task phase, readiness, dispatch, or execution order'],
+  ]);
+  assertProcedureClauses('## Status', [
+    ['read-only exact-owner resolution', 'Read only. Resolve the exact owner for each defined package'],
+    ['resolver ambiguity report', 'report `Ownership: ambiguous` on any resolver diagnostic'],
+    ['no state mutation', 'never mutate, render, log, import, reconcile, or close'],
+  ]);
+  assertProcedureClauses('## Diff', [
+    ['read-only independently resolved owners', 'Read only. An optional named feature narrows the report'],
+    ['exact owner per feature', 'Resolve each defined feature\'s exact owner independently'],
+    ['per-feature ambiguity report', 'Report one feature\'s ownership ambiguity for that feature without suppressing unrelated results'],
+    ['no persistent state or write', 'Keep no second persistent ledger, perform no writes'],
+  ]);
+  assertProcedureClauses('## Self-Check', [
+    ['read-only exact-owner inspection', 'Read only. Inspect the last three routing replies for a lane banner'],
+    ['exact owner and spec inspection', 'every defined package has one exact owner and an existing spec'],
+    ['reports drift without applying correction', 'Report each item as `OK` or `Drift`, then recommend a correction without applying it'],
+  ]);
 });
 
 test('T030 backlog freshness guidance remains bounded, pair-safe, and source-generated equivalent', () => {
@@ -1896,7 +1998,7 @@ test("T005 cross-idea backlog binds lifecycle semantics and read-only status for
     "Current work (active plus blocked), Ready / Next, Ideas awaiting definition, Defined awaiting work, and Completed",
     "node .github/skills/dude-lightweight-execution/backlog.mjs --root .",
     "node .github/skills/dude-lightweight-execution/backlog.mjs kanban --root .",
-    "node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <idea-slug> --root .",
+    "node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <slug> --root .",
     "Mermaid for current work only",
     "No explicit feature order declared",
   ]);
@@ -3801,7 +3903,7 @@ test('Ship accepts one optional target and resolves only missing lifecycle stage
       /distinct lifecycle subaction/i,
       /then Work/i,
     ]],
-    ['draft lifecycle', '3. An existing draft ledger invokes', [
+    ['draft lifecycle', '3. An existing draft ledger resolves', [
       /existing explicit `define <slug>` route/i,
       /lifecycle subaction/i,
       /then Work/i,

@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/pack-visual-neutrality.md#coordinator-log -->
+<!-- audit log: .dude/ideas/042-pack-visual-neutrality.md#coordinator-log -->
 
 # Tasks: Pack Visual Neutrality
 

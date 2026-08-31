@@ -19,7 +19,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/backlog-lifecycle-sync.md#coordinator-log -->
+<!-- audit log: .dude/ideas/030-backlog-lifecycle-sync.md#coordinator-log -->
 
 # Tasks: Backlog Lifecycle Sync
 

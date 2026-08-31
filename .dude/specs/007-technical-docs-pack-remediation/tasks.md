@@ -25,7 +25,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/technical-docs-pack-remediation.md#coordinator-log -->
+<!-- audit log: .dude/ideas/007-technical-docs-pack-remediation.md#coordinator-log -->
 
 # Tasks: Technical Docs Pack Remediation
 

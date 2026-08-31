@@ -24,7 +24,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/autonomous-work-modes.md#coordinator-log -->
+<!-- audit log: .dude/ideas/005-autonomous-work-modes.md#coordinator-log -->
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 

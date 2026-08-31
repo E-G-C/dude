@@ -5,9 +5,9 @@
 ## Feature Definition Workflow
 
 `@dude brainstorm <idea>` asks `@dude-spec-lead` to keep pre-spec collaboration
-in one flat `.dude/ideas/<slug>.md` file without creating a spec package.
+in one flat `.dude/ideas/<NNN>-<slug>.md` file without creating a spec package.
 `@dude define <slug>` then consumes that idea and creates a reusable definition
-package under `.dude/specs/<feature>/`. This is the
+package under `.dude/specs/<NNN>-<slug>/`. This is the
 `brainstorm -> idea -> define -> spec -> work` lifecycle. Use
 [Workflow modes and lifecycle](workflow.md) for the first-run lane choice, file
 lifecycle, and rerun expectations; this page is the deeper reference.
@@ -46,9 +46,9 @@ one classification question and leaves the issue unadmitted without an answer.
 ```mermaid
 flowchart TD
   A["User idea or PRD"] --> BS["@dude brainstorm"]
-  BS --> B[".dude/ideas/<slug>.md"]
+  BS --> B[".dude/ideas/<NNN>-<slug>.md"]
   B --> C["@dude routes define to @dude-spec-lead"]
-  C --> D["@dude define <slug>\n.dude/specs/<feature>/"]
+  C --> D["@dude define <slug>\n.dude/specs/<NNN>-<slug>/"]
     D --> E["Write spec.md\nWHAT + WHY\n(technology-agnostic)"]
     E --> CL{"Ambiguity?\n(max 3 markers)"}
     CL -->|Yes| Q["Ask focused clarification\nscope > security > UX > technical"]
@@ -85,8 +85,16 @@ the feature:
 
 ### Definition Rules
 
-- `.dude/ideas/<slug>.md` is the only pre-spec collaboration ledger. Idea files
-  are direct `.md` children; nested idea directories are not part of the model.
+- `.dude/ideas/<NNN>-<slug>.md` is the only pre-spec collaboration ledger. Idea
+  files are direct `.md` children; nested idea directories are not part of the
+  model.
+- A direct ledger gets its permanent three-digit lifecycle number when brainstorm
+  first captures it. Define carries the same number into
+  `.dude/specs/<NNN>-<slug>/`. Idea inventory follows this capture chronology,
+  and gaps are never recycled. Priority, dependencies, and execution use their
+  own authorities.
+- Commands normally select the exact unnumbered frontmatter `slug:`. An explicit
+  path selects only that exact numbered ledger.
 - An idea begins with `# Idea: <title>`. Its frontmatter uses only
   `status: draft|defined|resolved`. A draft has an empty `spec_path:` before
   definition; a defined ledger carries the exact workspace-relative path to the
@@ -178,8 +186,8 @@ the feature:
 - For everything else, make an informed default and document it in Assumptions.
 - All markers must be resolved before planning begins.
 - Overflow questions beyond the 3-marker cap go into `## Deferred Clarifications`
-  in `.dude/ideas/<slug>.md` so nothing is silently dropped. Promote them back
-  into the active set on later `define` runs if their priority rises.
+  in `.dude/ideas/<NNN>-<slug>.md` so nothing is silently dropped. Promote them
+  back into the active set on later `define` runs if their priority rises.
 
 ### Task Structure
 
@@ -224,8 +232,9 @@ canonical task commit; an autonomous result keeps its existing receipt, while
 updates require procedural backlog generation.
 
 Each `tasks.md` points its audit breadcrumb at the uniquely owning flat idea.
-Resolve that companion by requiring exactly one `.dude/ideas/*.md` file with
-`status: defined` whose exact `spec_path:` equals the sibling package path
+Resolve that companion by requiring exactly one numbered
+`.dude/ideas/<NNN>-<slug>.md` file with `status: defined` whose exact
+`spec_path:` equals the sibling package path
 `.dude/specs/<feature>/spec.md`; never infer ownership from a matching basename
 or an alternate path. Missing or multiple exact matches block execution mutation.
 

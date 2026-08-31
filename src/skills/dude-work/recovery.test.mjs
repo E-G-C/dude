@@ -81,7 +81,7 @@ const TASK_KEY = 'T001@8f31c2a7';
 const SECOND_TASK_KEY = 'T002@d4a90e6b';
 const THIRD_TASK_KEY = 'T003@6c1f8b42';
 const OTHER_SPEC_PATH = '.dude/specs/005-other-feature/spec.md';
-const IDEA_PATH = '.dude/ideas/owner.md';
+const IDEA_PATH = '.dude/ideas/004-pre-work-log-learning.md';
 const EMPTY_HASH = sha256('');
 const TARGET = Object.freeze({ specPath: SPEC_PATH, lane: 'lightweight', taskKey: TASK_KEY });
 const TRACKED = Object.freeze({ specPath: SPEC_PATH, lane: 'tracked', issueId: 'dude-42' });
@@ -230,10 +230,11 @@ function withWorkspace(run) {
 
 /** @param {string} [specPath] @param {string} [log] */
 function ideaBytes(specPath = SPEC_PATH, log = '- 2026-08-10 exact event\n') {
+  const slug = /^\.dude\/specs\/\d{3}-([a-z0-9-]+)\/spec\.md$/.exec(specPath)?.[1] ?? 'pre-work-log-learning';
   return Buffer.from([
     '---',
-    'title: Owner',
-    'slug: owner',
+    `title: ${slug}`,
+    `slug: ${slug}`,
     'status: defined',
     `spec_path: ${specPath}`,
     '---',
@@ -995,7 +996,7 @@ test('A: runCommand inspects every Work trigger before authorization and preserv
   const runCommand = runtimeFunction('runCommand');
   withWorkspace((root) => {
     const tasksPath = `${SPEC_PATH.slice(0, -'spec.md'.length)}tasks.md`;
-    fs.writeFileSync(path.join(root, '.dude/ideas/owner.md'), ideaBytes());
+    fs.writeFileSync(path.join(root, IDEA_PATH), ideaBytes());
     fs.writeFileSync(path.join(root, tasksPath), transitionTasksBytes([{ id: TASK_KEY, glyph: '~' }]));
     const inspectionInput = (target, overrides = {}) => ({
       root,
@@ -1052,7 +1053,7 @@ test('A: runCommand inspects every Work trigger before authorization and preserv
     }
 
     const featureTarget = { specPath: SPEC_PATH, lane: 'lightweight' };
-    const observedPaths = [SPEC_PATH, '.dude/ideas/owner.md', tasksPath];
+    const observedPaths = [SPEC_PATH, IDEA_PATH, tasksPath];
     const beforeEntries = fs.readdirSync(root, { recursive: true }).sort();
     const beforeBytes = observedPaths.map((relativePath) => fs.readFileSync(path.join(root, relativePath)));
     const explicit = runCommand('inspect', {
@@ -1102,7 +1103,7 @@ test('A: runCommand closes command requests and responses', () => {
 test('A: recovery.mjs CLI decodes canonical byte envelopes for inspect, authorize, and complete', () => {
   withWorkspace((root) => {
     const tasksPath = `${SPEC_PATH.slice(0, -'spec.md'.length)}tasks.md`;
-    fs.writeFileSync(path.join(root, '.dude/ideas/owner.md'), ideaBytes());
+    fs.writeFileSync(path.join(root, IDEA_PATH), ideaBytes());
     fs.writeFileSync(path.join(root, tasksPath), transitionTasksBytes([{ id: TASK_KEY, glyph: '~' }]));
     const internalInput = {
       root,
@@ -1167,7 +1168,7 @@ test('A: recovery.mjs CLI decodes canonical byte envelopes for inspect, authoriz
 test('A: CLI byte envelopes preserve exact bytes and reject unknown or noncanonical encodings', () => {
   withWorkspace((root) => {
     const tasksPath = `${SPEC_PATH.slice(0, -'spec.md'.length)}tasks.md`;
-    fs.writeFileSync(path.join(root, '.dude/ideas/owner.md'), ideaBytes());
+    fs.writeFileSync(path.join(root, IDEA_PATH), ideaBytes());
     fs.writeFileSync(path.join(root, tasksPath), transitionTasksBytes([{ id: TASK_KEY, glyph: '~' }]));
     const baseInput = {
       root,
@@ -2922,7 +2923,7 @@ test('T008 regression: collect, inspect, authorize, and sealed host paths share 
 test('A: runCommand authorize reuses one fresh Inspection with one bounded workspace acquisition', () => {
   const runCommand = runtimeFunction('runCommand');
   withWorkspace((root) => {
-    const ideaPath = path.join(root, '.dude/ideas/owner.md');
+    const ideaPath = path.join(root, IDEA_PATH);
     const tasksPath = path.join(root, SPEC_PATH.slice(0, -'spec.md'.length), 'tasks.md');
     const ownerBytes = ideaBytes();
     const taskBytes = transitionTasksBytes([{ id: TASK_KEY, glyph: '~' }]);
@@ -3627,12 +3628,12 @@ test('B: RunState rejects every state with more than one pending authorization',
 
 test('inspect acquires one exact owner and canonical task while ignoring generated board bytes', () => {
   withWorkspace((root) => {
-    const ownerPath = path.join(root, '.dude/ideas/owner.md');
+    const ownerPath = path.join(root, IDEA_PATH);
     const tasksPath = path.join(root, path.dirname(SPEC_PATH), 'tasks.md');
     fs.writeFileSync(ownerPath, [
       '---',
-      'title: Owner',
-      'slug: owner',
+      'title: pre-work-log-learning',
+      'slug: pre-work-log-learning',
       'status: defined',
       `spec_path: ${SPEC_PATH}`,
       '---',
@@ -3663,7 +3664,7 @@ test('inspect acquires one exact owner and canonical task while ignoring generat
       '',
     ].join('\n'));
     const beforeEntries = fs.readdirSync(root, { recursive: true }).sort();
-    const beforeBytes = [SPEC_PATH, '.dude/ideas/owner.md', `${path.dirname(SPEC_PATH)}/tasks.md`]
+    const beforeBytes = [SPEC_PATH, IDEA_PATH, `${path.dirname(SPEC_PATH)}/tasks.md`]
       .map((relativePath) => fs.readFileSync(path.join(root, relativePath)));
 
     const inspection = inspect({
@@ -3682,7 +3683,7 @@ test('inspect acquires one exact owner and canonical task while ignoring generat
     assert.deepEqual(
       JSON.parse(owner?.text || '{}'),
       {
-        ideaPath: '.dude/ideas/owner.md',
+        ideaPath: IDEA_PATH,
         specPath: SPEC_PATH,
         fullLogSha256: sha256('## Coordinator Log\n\n- 2026-08-10 exact event\n'),
         fullLogByteLength: Buffer.byteLength('## Coordinator Log\n\n- 2026-08-10 exact event\n'),
@@ -3700,7 +3701,7 @@ test('inspect acquires one exact owner and canonical task while ignoring generat
     assert.doesNotMatch(tasks?.text || '', /GENERATED ONLY/);
     assert.deepEqual(fs.readdirSync(root, { recursive: true }).sort(), beforeEntries);
     assert.deepEqual(
-      [SPEC_PATH, '.dude/ideas/owner.md', `${path.dirname(SPEC_PATH)}/tasks.md`]
+      [SPEC_PATH, IDEA_PATH, `${path.dirname(SPEC_PATH)}/tasks.md`]
         .map((relativePath) => fs.readFileSync(path.join(root, relativePath))),
       beforeBytes,
     );
@@ -3777,10 +3778,10 @@ test('owner acquisition fails closed for zero, multiple, and malformed direct ow
 test('T008: public inspect APIs acquire the exact owner beside an unrelated valid defined ledger', () => {
   const runCommand = runtimeFunction('runCommand');
   withWorkspace((root) => {
-    const unrelatedSpecPath = '.dude/specs/x/spec.md';
+    const unrelatedSpecPath = '.dude/specs/005-unrelated/spec.md';
     const targetOwner = { path: IDEA_PATH, bytes: ideaBytes() };
     const unrelatedOwner = {
-      path: '.dude/ideas/unrelated.md',
+      path: '.dude/ideas/005-unrelated.md',
       bytes: ideaBytes(unrelatedSpecPath, '- 2026-08-10 unrelated event\n'),
     };
     fs.mkdirSync(path.join(root, path.dirname(unrelatedSpecPath)), { recursive: true });
@@ -11511,8 +11512,8 @@ function t015T002RevisionFixture(options = {}) {
 function t015T004OwnerBytes(logLines) {
   return Buffer.from([
     '---',
-    'title: Owner',
-    'slug: owner',
+    'title: Pre-work Log Learning',
+    'slug: pre-work-log-learning',
     'status: defined',
     `spec_path: ${SPEC_PATH}`,
     '---',
@@ -18426,7 +18427,7 @@ const F7_TARGET = Object.freeze({
   lane: 'lightweight',
   taskKey: 'T001@00709e37',
 });
-const F7_IDEA_PATH = '.dude/ideas/technical-docs-pack-remediation.md';
+const F7_IDEA_PATH = '.dude/ideas/007-technical-docs-pack-remediation.md';
 const F7_TASKS_PATH = '.dude/specs/007-technical-docs-pack-remediation/tasks.md';
 const F7_PLAN_PATH = '.dude/specs/007-technical-docs-pack-remediation/plan.md';
 const F7_BLOCKER = 'unauthorized autonomous block';
@@ -23268,8 +23269,8 @@ test('Feature 029: small zero, one, and several-event logs retain every event an
 
 test('Feature 029: real oversized owner ledgers project a bounded suffix without mutating either source file', () => {
   const ledgers = [
-    '.dude/ideas/agent-orchestration-metadata.md',
-    '.dude/ideas/remove-legacy-compatibility.md',
+    '.dude/ideas/028-agent-orchestration-metadata.md',
+    '.dude/ideas/002-remove-legacy-compatibility.md',
   ];
 
   for (const ideaPath of ledgers) {
@@ -23617,12 +23618,12 @@ function feature030DefinedOwnerWithDependencyBytes() {
   ].join('\n'));
 }
 
-/** @param {string} [specPath] */
-function feature030ResolvedIdeaBytes(specPath = '') {
+/** @param {string} [specPath] @param {string} [slug] */
+function feature030ResolvedIdeaBytes(specPath = '', slug = 'resolved-bystander') {
   return Buffer.from([
     '---',
     'title: Resolved bystander',
-    'slug: resolved-bystander',
+    `slug: ${slug}`,
     'status: resolved',
     specPath === '' ? 'spec_path:' : `spec_path: ${specPath}`,
     '---',
@@ -23661,7 +23662,7 @@ test('Feature 030: autonomous inspect admits a defined owner carrying depends-on
 test('Feature 030: autonomous inspect admits a defined owner beside an exact resolved bystander', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
-    const resolvedIdeaPath = '.dude/ideas/resolved-bystander.md';
+    const resolvedIdeaPath = '.dude/ideas/005-resolved-bystander.md';
     fs.writeFileSync(path.join(root, resolvedIdeaPath), feature030ResolvedIdeaBytes());
 
     // Act
@@ -23685,10 +23686,10 @@ test('Feature 030: autonomous inspect admits a defined owner beside an exact res
 test('Feature 030: autonomous inspect rejects a resolved spec path without adding an owner', () => {
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
-    const resolvedIdeaPath = '.dude/ideas/resolved-owner-claim.md';
+    const resolvedIdeaPath = '.dude/ideas/005-resolved-owner-claim.md';
     // This deliberately shares the defined owner's path: admission to the owner
     // set would produce FEATURE_OWNER_DUPLICATE in public inspection evidence.
-    fs.writeFileSync(path.join(root, resolvedIdeaPath), feature030ResolvedIdeaBytes(SPEC_PATH));
+    fs.writeFileSync(path.join(root, resolvedIdeaPath), feature030ResolvedIdeaBytes(SPEC_PATH, 'resolved-owner-claim'));
 
     // Act
     const inspection = inspect(autonomousInspectInput(root));

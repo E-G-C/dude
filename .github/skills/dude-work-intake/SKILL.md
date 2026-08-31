@@ -47,19 +47,20 @@ Preserve Ship's no-automatic-Git rule. If an existing delivery action later crea
 
 ## Brainstorm
 
-`@dude brainstorm <idea>` creates or refreshes exactly one flat `.dude/ideas/<slug>.md` and never creates or refreshes `.dude/specs/`.
+`@dude brainstorm <idea>` creates or refreshes exactly one flat `.dude/ideas/<NNN>-<slug>.md` and never creates or refreshes `.dude/specs/`. On first capture, the definition publisher uses the clean direct idea and package inventories to allocate `max + 1`, never fills a gap, and stops at `999` or on any inventory diagnostic.
 
+- An unnumbered `<slug>` selects only an exact frontmatter `slug:`. An explicit `.dude/ideas/<NNN>-<slug>.md` selects only that exact direct path. A bare numeric prefix, title, stem, or package name is never stripped, translated, or used as fallback.
 - Keep user intent in `## Idea`, followed by active `## Open Questions` and answer slots, then `## Assumptions`.
 - Preserve meaning, tone, uncertainty, incomplete thought, creative intent, answered questions, assumptions, and user edits. Initial cleanup may fix only clear language or transcription errors.
 - Set `status: draft` with an empty `spec_path:` only for a first or still-undefined draft. A brainstorm rerun of a ledger already at `status: defined` preserves that status and its exact `spec_path:`; never demote it or orphan its package.
-- A normal refresh of an exact `status: resolved` ledger preserves its empty path. Reopen it only when the user explicitly asks to reopen through `brainstorm <slug>`; then return it to draft with an empty path and append one lifecycle event.
+- A normal refresh of an exact `status: resolved` ledger preserves its empty path, retains its numbered physical path, and allocates no number. Reopen it only when the user explicitly asks to reopen through `brainstorm <slug>`; then return it to draft with an empty path and append one lifecycle event without allocating another number.
 - If the input contains separate bounded outcomes, ask one split question or propose separate idea ledgers.
 
 The user controls `## Idea`, open-question answers, and `## Assumptions`; during explicit brainstorm the delegated Spec Lead preserves them and maintains definition metadata, managed sections, and definition log events.
 
 ## Definition Gate
 
-Route explicit `define <slug>` to the Spec Lead and load `dude-feature-definition` when the outcome is clear, unresolved questions are answered or consciously assumed, and one package can contain the scope. A resolved ledger must first be explicitly reopened through `brainstorm <slug>`; definition does not infer reopen or create its package. Otherwise add or ask one focused clarification.
+Route explicit `define <slug>` or an explicit exact idea path to the Spec Lead and load `dude-feature-definition` when the outcome is clear, unresolved questions are answered or consciously assumed, and one package can contain the scope. First definition reuses the selected ledger's `<NNN>` and slug for `.dude/specs/<NNN>-<slug>/`; exact `spec_path:` remains the sole package-owner relation. A resolved ledger must first be explicitly reopened through `brainstorm <slug>`; definition does not infer reopen or create its package. Otherwise add or ask one focused clarification.
 
 Direct facts stay direct. Implementation, verification, planning, artifact authoring, and review route through the closed-roster algorithm in `dude-generic-routing`.
 
@@ -70,17 +71,17 @@ Direct facts stay direct. Implementation, verification, planning, artifact autho
 Resolve the lifecycle target by invoking only existing explicit lifecycle routes; Ship has no definition-write authority of its own:
 
 1. Imported tracked work wins. Bare Ship selects that authoritative tracked target; an explicit lifecycle target that conflicts with it stops before mutation and reports tracked precedence. Ship never invokes `track`, imports work, or falls back from tracked work to Lightweight Execution.
-2. An unmatched raw idea invokes the existing explicit `brainstorm <idea>` route as one lifecycle subaction to create exactly one ledger, then invokes the existing explicit `define <slug>` route as a distinct lifecycle subaction, then Work.
-3. An existing draft ledger invokes the existing explicit `define <slug>` route as a lifecycle subaction, then Work.
+2. An unmatched raw idea invokes the existing explicit `brainstorm <idea>` route as one lifecycle subaction to create exactly one ledger, receives its exact numbered `ideaPath`, then invokes the existing explicit `define <slug>` route with that path as a distinct lifecycle subaction, then Work.
+3. An existing draft ledger resolves to its exact numbered `ideaPath`, then invokes the existing explicit `define <slug>` route with that path as a lifecycle subaction, then Work.
 4. An existing defined package goes to Work as-is. Do not proactively redefine it, check staleness or drift, or merge invocation text into its intent. New or changed intent requires explicit `brainstorm`; deliberate package refresh requires explicit `define`.
-5. An existing resolved ledger is terminal and is not a live package candidate. Stop before definition or Work and point to explicit `brainstorm <slug>` reopen; Ship never infers reopen.
+5. An existing resolved ledger is terminal and is not a live package candidate. Stop before definition or Work and point to explicit `brainstorm <slug>` reopen; Ship never infers reopen or allocates a replacement path.
 6. Bare Ship without tracked work proceeds only for exactly one unambiguous live lifecycle target.
 
-Ship creates no alternate definition-write route or authority. In every invoked `brainstorm` or `define <slug>` subroute, the delegated Spec Lead owns all definition artifacts, `status:`, exact `spec_path:`, managed definition regions, and definition log events exactly as the existing lifecycle contract requires; Ship writes none of them.
+Ship creates no alternate definition-write route or authority. In every invoked `brainstorm` or `define` subroute, the delegated Spec Lead owns all definition artifacts, `status:`, exact `spec_path:`, managed definition regions, and definition log events exactly as the existing lifecycle contract requires; Ship writes none of them.
 
 If several otherwise-valid candidates remain, ask exactly one pre-mutation disambiguation question that lists their exact identities. Do not rank them, infer or persist a default, or mutate anything. Restart the complete resolution from the answer; if it is still ambiguous, ask no second question in that pass and stop. A resolver or canonical-ownership diagnostic that target selection cannot repair is a hard refusal, not disambiguation.
 
-After successful lifecycle resolution, hand the exact resolved target to existing Work semantics with normalized policy `{overall:'unlimited', recovery:'unlimited', recover:true, untilBlocked:false, mode:'autonomous'}`. This is semantically equivalent to `work [feature] --max unlimited --recover-on-block --recovery-cycles unlimited --policy autonomous`; explicitly omit `--until blocked` because Work forbids combining until-blocked mode with recovery. Work retains its one-time lane detection, imported-tracked precedence, execution loop, natural and hard stops, verification, review, ownership, reconciliation, close, audit, reporting, and learning governance.
+After successful lifecycle resolution, hand the returned exact target to existing Work semantics with normalized policy `{overall:'unlimited', recovery:'unlimited', recover:true, untilBlocked:false, mode:'autonomous'}`. Never reconstruct `.dude/ideas/<slug>.md` or another owner path from the selector. This is semantically equivalent to `work [feature] --max unlimited --recover-on-block --recovery-cycles unlimited --policy autonomous`; explicitly omit `--until blocked` because Work forbids combining until-blocked mode with recovery. Work retains its one-time lane detection, imported-tracked precedence, execution loop, natural and hard stops, verification, review, ownership, reconciliation, close, audit, reporting, and learning governance.
 
 ### Pre-Work Answerability
 

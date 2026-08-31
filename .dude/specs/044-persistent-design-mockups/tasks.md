@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/persistent-design-mockups.md#coordinator-log -->
+<!-- audit log: .dude/ideas/044-persistent-design-mockups.md#coordinator-log -->
 
 # Tasks: Persistent Design Mockups
 

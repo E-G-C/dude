@@ -5,12 +5,19 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { inventoryDefinedFeatures, resolveFeatureOwner } from './lib/feature.mjs';
+import {
+  inventoryDefinedFeatures,
+  inventoryLifecycleIdentities,
+  resolveFeatureOwner,
+  resolveIdeaSelector,
+} from './lib/feature.mjs';
 
 const USAGE = [
   'Usage:',
   '  node feature.mjs inventory --root <path> --json',
+  '  node feature.mjs ideas --root <path> --json',
   '  node feature.mjs resolve --root <path> --spec <specPath> --json',
+  '  node feature.mjs select --root <path> (--slug <slug> | --idea <ideaPath>) --json',
   '  node feature.mjs --help',
   '',
 ].join('\n');
@@ -29,7 +36,7 @@ function main() {
   }
 
   const command = args.shift();
-  if (command !== 'inventory' && command !== 'resolve') {
+  if (!['inventory', 'ideas', 'resolve', 'select'].includes(command ?? '')) {
     usageError(`unknown or missing command '${command || ''}'`);
   }
 
@@ -37,7 +44,7 @@ function main() {
   const options = new Map();
   while (args.length > 0) {
     const option = args.shift();
-    if (option !== '--root' && option !== '--spec' && option !== '--json') {
+    if (!['--root', '--spec', '--slug', '--idea', '--json'].includes(option ?? '')) {
       usageError(`unknown or extra argument '${option || ''}'`);
     }
     if (options.has(option)) usageError(`option '${option}' must appear exactly once`);
@@ -52,17 +59,39 @@ function main() {
 
   if (!options.has('--root')) usageError("missing required option '--root'");
   if (!options.has('--json')) usageError("missing required option '--json'");
-  if (command === 'inventory' && options.has('--spec')) {
-    usageError("option '--spec' is not applicable to inventory");
+  if ((command === 'inventory' || command === 'ideas')
+    && [...options.keys()].some((option) => !['--root', '--json'].includes(option))) {
+    usageError(`selector options are not applicable to ${command}`);
   }
   if (command === 'resolve' && !options.has('--spec')) {
     usageError("missing required option '--spec'");
   }
+  if (command === 'resolve'
+    && [...options.keys()].some((option) => !['--root', '--spec', '--json'].includes(option))) {
+    usageError('only --spec is applicable to resolve');
+  }
+  if (command === 'select') {
+    const selectors = ['--slug', '--idea'].filter((option) => options.has(option));
+    if (selectors.length !== 1) usageError('select requires exactly one of --slug or --idea');
+    if (options.has('--spec')) usageError('--spec is not applicable to select');
+  }
 
   const root = /** @type {string} */ (options.get('--root'));
-  const result = command === 'inventory'
-    ? inventoryDefinedFeatures({ root })
-    : resolveFeatureOwner({ root, specPath: /** @type {string} */ (options.get('--spec')) });
+  let result;
+  if (command === 'inventory') result = inventoryDefinedFeatures({ root });
+  else if (command === 'ideas') result = inventoryLifecycleIdentities({ root });
+  else if (command === 'resolve') {
+    result = resolveFeatureOwner({
+      root,
+      specPath: /** @type {string} */ (options.get('--spec')),
+    });
+  } else {
+    result = resolveIdeaSelector({
+      root,
+      ...(options.has('--slug') ? { slug: /** @type {string} */ (options.get('--slug')) } : {}),
+      ...(options.has('--idea') ? { ideaPath: /** @type {string} */ (options.get('--idea')) } : {}),
+    });
+  }
   process.stdout.write(`${JSON.stringify(result)}\n`);
   if (result.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) process.exitCode = 2;
 }

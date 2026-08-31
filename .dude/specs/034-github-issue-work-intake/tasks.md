@@ -19,7 +19,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/github-issue-work-intake.md#coordinator-log -->
+<!-- audit log: .dude/ideas/034-github-issue-work-intake.md#coordinator-log -->
 
 # Tasks: GitHub Issue Work Intake
 

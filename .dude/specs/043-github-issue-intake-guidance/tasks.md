@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/github-issue-intake-guidance.md#coordinator-log -->
+<!-- audit log: .dude/ideas/043-github-issue-intake-guidance.md#coordinator-log -->
 
 # Tasks: GitHub Issue Intake Guidance
 

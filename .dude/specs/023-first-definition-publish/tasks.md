@@ -19,7 +19,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/first-definition-publish.md#coordinator-log -->
+<!-- audit log: .dude/ideas/023-first-definition-publish.md#coordinator-log -->
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 

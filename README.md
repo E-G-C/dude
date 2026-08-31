@@ -50,12 +50,18 @@ one file, and every later stage reads from what you wrote:
 @dude brainstorm expense entry with receipt upload and manager approval
 ```
 
-Dude writes `.dude/ideas/expense-entry.md`, restates the idea under `## Idea`,
-and lists the questions it still needs answered. Read the restatement, correct it
-if it drifted, and answer what you can in the `**Your answer:**` slots. Rough
-input is fine: first capture fixes obvious spelling, grammar, and transcription
-errors and leaves your meaning, tone, and uncertainty alone. When the notes are
-already written down, hand over the file instead:
+Dude writes `.dude/ideas/001-expense-entry.md`, restates the idea under
+`## Idea`, and lists the questions it still needs answered. At first brainstorm,
+it assigns the next permanent three-digit lifecycle number. That number orders
+the idea inventory by capture time, is reused for the feature package, and is
+never reused. It does not indicate priority, dependency, or execution order.
+
+The exact unnumbered slug, `expense-entry`, remains the command selector. Read
+the restatement, correct it if it drifted, and answer what you can in the
+`**Your answer:**` slots. Rough input is fine: first capture fixes obvious
+spelling, grammar, and transcription errors and leaves your meaning, tone, and
+uncertainty alone. When the notes are already written down, hand over the file
+instead:
 
 ```text
 @dude brainstorm notes/expense-entry.md
@@ -70,8 +76,9 @@ Once the idea file reads correctly, one verb carries it the rest of the way:
 @dude ship expense-entry
 ```
 
-`expense-entry` is the slug Dude derived from your idea, and it names every file
-the feature writes from now on.
+`expense-entry` is the exact unnumbered slug Dude derived from your idea. It
+remains the semantic selector even though the physical idea ledger and package
+carry the lifecycle number.
 
 ```mermaid
 flowchart LR
@@ -157,7 +164,7 @@ core upgrades.
 Once the first two stages finish, the feature looks like this on disk:
 
 ```text
-.dude/ideas/expense-entry.md          # the idea in your words, plus Dude's questions
+.dude/ideas/001-expense-entry.md      # the idea in your words, plus Dude's questions
 .dude/specs/001-expense-entry/
   spec.md                             # what the feature must do
   plan.md                             # how this project will build it

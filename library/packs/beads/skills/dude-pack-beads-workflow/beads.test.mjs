@@ -20,9 +20,9 @@ const repo = path.resolve(here, '../../../../..');
 const engineSrc = path.join(repo, '.github', 'skills', 'dude-engine');
 const recoverySrc = path.join(repo, 'src', 'skills', 'dude-work', 'recovery.mjs');
 const beadsSrc = path.join(here, 'beads.mjs');
-const SPEC_PATH = '.dude/specs/x/spec.md';
+const SPEC_PATH = '.dude/specs/001-x/spec.md';
 const RECOVERY_SPEC_PATH = '.dude/specs/004-pre-work-log-learning/spec.md';
-const IDEA_PATH = '.dude/ideas/x.md';
+const IDEA_PATH = '.dude/ideas/001-x.md';
 const POSIX_SKIP = process.platform === 'win32'
   ? 'requires POSIX symbolic-link and FIFO semantics'
   : false;
@@ -40,9 +40,11 @@ const FIXTURE = `## Setup
    blocked-by: waiting
 `;
 
-function ideaLedger(specPath = SPEC_PATH, status = 'defined', idea = 'Test idea.') {
+function ideaLedger(specPath = SPEC_PATH, status = 'defined', idea = 'Test idea.', slug = (
+  /^\.dude\/specs\/\d{3}-([a-z0-9-]+)\/spec\.md$/.exec(specPath ?? '')?.[1] ?? 'x'
+)) {
   const specLine = specPath === null ? '' : `spec_path: ${specPath}\n`;
-  return `---\nstatus: ${status}\n${specLine}---\n\n## Idea\n\n${idea}\n\n## Coordinator Log\n\n- 2026-01-01 Existing log entry.\n`;
+  return `---\ntitle: ${slug}\nslug: ${slug}\nstatus: ${status}\n${specLine}---\n\n## Idea\n\n${idea}\n\n## Coordinator Log\n\n- 2026-01-01 Existing log entry.\n`;
 }
 
 /** @param {string} src @param {string} dest */
@@ -73,10 +75,10 @@ function stage() {
   fs.copyFileSync(recoverySrc, path.join(skills, 'dude-work', 'recovery.mjs'));
   fs.mkdirSync(path.join(skills, 'dude-pack-beads-workflow'), { recursive: true });
   fs.copyFileSync(beadsSrc, path.join(skills, 'dude-pack-beads-workflow', 'beads.mjs'));
-  const file = path.join(root, '.dude', 'specs', 'x', 'tasks.md');
+  const file = path.join(root, ...SPEC_PATH.replace(/spec\.md$/, 'tasks.md').split('/'));
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, FIXTURE);
-  fs.writeFileSync(path.join(path.dirname(file), 'spec.md'), '# Spec X\n');
+  fs.writeFileSync(path.join(root, ...SPEC_PATH.split('/')), '# Spec X\n');
   const idea = path.join(root, ...IDEA_PATH.split('/'));
   fs.mkdirSync(path.dirname(idea), { recursive: true });
   fs.writeFileSync(idea, ideaLedger());
@@ -301,7 +303,7 @@ test('installed recovery wrappers bind Beads normalization and preserve UTF-8 is
     );
 
     const tasksPath = RECOVERY_SPEC_PATH.replace(/spec\.md$/, 'tasks.md');
-    const ideaPath = '.dude/ideas/recovery.md';
+    const ideaPath = '.dude/ideas/004-pre-work-log-learning.md';
     const rawInputs = {
       directIdeas: [{ path: ideaPath, bytes: Buffer.from(ideaLedger(RECOVERY_SPEC_PATH)) }],
       tasks: { path: tasksPath, bytes: Buffer.from('# Tasks\n') },
@@ -393,7 +395,7 @@ test('A: runRecoveryCommand seals the Beads normalizer for tracked command reque
       }],
     };
     const tasksPath = RECOVERY_SPEC_PATH.replace(/spec\.md$/, 'tasks.md');
-    const ideaPath = '.dude/ideas/recovery.md';
+    const ideaPath = '.dude/ideas/004-pre-work-log-learning.md';
     fs.rmSync(fixture.idea);
     writeFixture(fixture.root, RECOVERY_SPEC_PATH, '# Recovery spec\n');
     writeFixture(fixture.root, tasksPath, '# Tasks\n');
@@ -707,10 +709,10 @@ function assertBdNotQueried(fakeBd, result, label) {
 test('beads.mjs resolves the core engine post-install and plans an import', () => {
   const { root, script, file, emptyBd } = stage();
   try {
-    const r = runNode(script, ['plan-import', file, '--spec', '.dude/specs/x/spec.md', '--root', root, '--from', emptyBd, '--json']);
+    const r = runNode(script, ['plan-import', file, '--spec', SPEC_PATH, '--root', root, '--from', emptyBd, '--json']);
     assert.equal(r.code, 0, r.out);
     const plan = JSON.parse(r.out);
-    assert.equal(plan.idea_path, '.dude/ideas/x.md');
+    assert.equal(plan.idea_path, IDEA_PATH);
     assert.deepEqual(plan.discovery, { represented: false, matching_issue_ids: [] });
     // T001 is done -> skipped; T002 + T003 + T004 open
     assert.deepEqual(plan.skipped_done, ['T001@aaaaaaaa']);
@@ -719,7 +721,7 @@ test('beads.mjs resolves the core engine post-install and plans an import', () =
     // edge dropped because T001 is done.
     assert.ok(plan.deps.some((e) => e.from === 'T003@cccccccc' && e.to === 'T002@bbbbbbbb'));
     assert.ok(!plan.deps.some((e) => e.to === 'T001@aaaaaaaa'));
-    assert.ok(plan.issues.every((i) => i.description.startsWith('spec: .dude/specs/x/spec.md')));
+    assert.ok(plan.issues.every((i) => i.description.startsWith(`spec: ${SPEC_PATH}`)));
     assert.ok(plan.epic.status === 'deferred');
     assert.ok(plan.commands.some((c) => c.startsWith('bd create') && c.includes('-t epic')));
     // finding 3: [~]/[!] carry status on create
@@ -763,7 +765,7 @@ test('beads.mjs uses the installed feature library when the core feature CLI is 
 test('plan-import queries all statuses without a cap before emitting creates', () => {
   const { root, script, file } = stage();
   try {
-    const specPath = '.dude/specs/x/spec.md';
+    const specPath = SPEC_PATH;
     const issues = Array.from({ length: 75 }, (_, index) => ({
       id: `dude-${index}`,
       type: 'task',
@@ -822,7 +824,7 @@ test('plan-import compares the first spec line exactly and ignores prefix collis
         id: 'dude-prefix',
         type: 'task',
         status: 'closed',
-        description: 'spec: .dude/specs/x/spec.md-collision\nTask: T002@bbbbbbbb',
+        description: `spec: ${SPEC_PATH}-collision\nTask: T002@bbbbbbbb`,
       },
     ]));
 
@@ -830,7 +832,7 @@ test('plan-import compares the first spec line exactly and ignores prefix collis
       'plan-import',
       file,
       '--spec',
-      '.dude/specs/x/spec.md',
+      SPEC_PATH,
       '--root',
       root,
       '--from',
@@ -852,13 +854,13 @@ test('plan-import rejects duplicate durable task keys in existing Beads issues',
   try {
     const bdFile = path.join(root, 'duplicate-task-keys.json');
     fs.writeFileSync(bdFile, JSON.stringify([
-      { id: 'dude-a', type: 'task', description: 'spec: .dude/specs/x/spec.md\nTask: T002@bbbbbbbb first' },
-      { id: 'dude-b', type: 'task', description: 'spec: .dude/specs/x/spec.md\nTask: T002@bbbbbbbb second' },
+      { id: 'dude-a', type: 'task', description: `spec: ${SPEC_PATH}\nTask: T002@bbbbbbbb first` },
+      { id: 'dude-b', type: 'task', description: `spec: ${SPEC_PATH}\nTask: T002@bbbbbbbb second` },
     ]));
 
     const result = runNode(script, [
       'plan-import', file,
-      '--spec', '.dude/specs/x/spec.md',
+      '--spec', SPEC_PATH,
       '--root', root,
       '--from', bdFile,
     ]);
@@ -876,13 +878,13 @@ test('plan-import rejects duplicate feature epic identities', () => {
   try {
     const bdFile = path.join(root, 'duplicate-feature-identities.json');
     fs.writeFileSync(bdFile, JSON.stringify([
-      { id: 'dude-epic-a', type: 'epic', description: 'spec: .dude/specs/x/spec.md\nEpic: A' },
-      { id: 'dude-epic-b', issue_type: 'epic', description: 'spec: .dude/specs/x/spec.md\nEpic: B' },
+      { id: 'dude-epic-a', type: 'epic', description: `spec: ${SPEC_PATH}\nEpic: A` },
+      { id: 'dude-epic-b', issue_type: 'epic', description: `spec: ${SPEC_PATH}\nEpic: B` },
     ]));
 
     const result = runNode(script, [
       'plan-import', file,
-      '--spec', '.dude/specs/x/spec.md',
+      '--spec', SPEC_PATH,
       '--root', root,
       '--from', bdFile,
     ]);
@@ -900,8 +902,8 @@ test('plan-import rejects duplicate defined-idea feature identities', () => {
   try {
     const fakeBd = stageFakeBd(root);
     fs.writeFileSync(
-      path.join(root, '.dude/ideas/duplicate.md'),
-      ideaLedger(SPEC_PATH, 'defined', 'Duplicate.'),
+      path.join(root, '.dude/ideas/002-duplicate.md'),
+      ideaLedger(SPEC_PATH, 'defined', 'Duplicate.', 'duplicate'),
     );
 
     const result = runNode(script, [
@@ -912,7 +914,7 @@ test('plan-import rejects duplicate defined-idea feature identities', () => {
     ]);
 
     assert.equal(result.code, 2);
-    assert.match(result.out, /duplicate defined idea owners.*\.dude\/ideas\/duplicate\.md, \.dude\/ideas\/x\.md.*FEATURE_OWNER_DUPLICATE/s);
+    assert.match(result.out, /duplicate defined idea owners.*\.dude\/ideas\/001-x\.md, \.dude\/ideas\/002-duplicate\.md.*FEATURE_OWNER_DUPLICATE/s);
     assertBdNotQueried(fakeBd, result, 'duplicate owner');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -934,7 +936,7 @@ test('plan-import rejects missing or invalid defined idea owners before querying
     {
       name: 'malformed frontmatter',
       mutate: ({ idea }) => fs.writeFileSync(idea, `---\nstatus: defined\nspec_path: ${SPEC_PATH}\n\n## Idea\n\nBroken.\n`),
-      expected: /\.dude\/ideas\/x\.md.*closing delimiter.*FEATURE_FRONTMATTER_MALFORMED/s,
+      expected: /\.dude\/ideas\/001-x\.md.*closing delimiter.*FEATURE_FRONTMATTER_MALFORMED/s,
     },
     {
       name: 'defined idea without spec_path',
@@ -948,14 +950,17 @@ test('plan-import rejects missing or invalid defined idea owners before querying
     },
     {
       name: 'dangling spec_path',
-      mutate: ({ idea }) => fs.writeFileSync(idea, ideaLedger('.dude/specs/missing/spec.md')),
+      mutate: ({ root }) => {
+        writeFixture(root, '.dude/ideas/002-missing.md', ideaLedger('.dude/specs/002-missing/spec.md', 'defined', 'Missing.', 'missing'));
+      },
       expected: /FEATURE_SPEC_PATH_DANGLING/,
     },
     {
       name: 'mismatched defined owner',
       mutate: ({ root, idea }) => {
-        writeFixture(root, '.dude/specs/other/spec.md', '# Other\n');
-        fs.writeFileSync(idea, ideaLedger('.dude/specs/other/spec.md'));
+        fs.rmSync(idea);
+        writeFixture(root, '.dude/specs/002-other/spec.md', '# Other\n');
+        writeFixture(root, '.dude/ideas/002-other.md', ideaLedger('.dude/specs/002-other/spec.md', 'defined', 'Other.', 'other'));
       },
       expected: /FEATURE_OWNER_NOT_FOUND/,
     },
@@ -967,15 +972,15 @@ test('plan-import rejects missing or invalid defined idea owners before querying
       name: 'quoted canonical key',
       mutate: ({ idea }) => fs.writeFileSync(
         idea,
-        ideaLedger().replace('---\nstatus: defined', '---\n"title": Example\nstatus: defined'),
+        ideaLedger().replace('---\ntitle: x', '---\n"title": Example\ntitle: x'),
       ),
       expected: /FEATURE_FRONTMATTER_MALFORMED/,
     },
     {
       name: 'draft owner with resolvable spec_path',
       mutate: ({ root }) => {
-        writeFixture(root, '.dude/specs/draftish/spec.md', '# Draftish\n');
-        writeFixture(root, '.dude/ideas/draftish.md', ideaLedger('.dude/specs/draftish/spec.md', 'draft', 'Draftish.'));
+        writeFixture(root, '.dude/specs/002-draftish/spec.md', '# Draftish\n');
+        writeFixture(root, '.dude/ideas/002-draftish.md', ideaLedger('.dude/specs/002-draftish/spec.md', 'draft', 'Draftish.', 'draftish'));
       },
       expected: /FEATURE_DRAFT_SPEC_PATH/,
     },
@@ -1127,7 +1132,7 @@ test('plan-import rejects unrelated resolver errors before querying Beads', () =
   const fixture = stage();
   try {
     const fakeBd = stageFakeBd(fixture.root);
-    writeFixture(fixture.root, '.dude/ideas/unrelated.md', 'not frontmatter\n');
+    writeFixture(fixture.root, '.dude/ideas/002-unrelated.md', 'not frontmatter\n');
 
     const result = runNode(fixture.script, [
       'plan-import',
@@ -1142,7 +1147,7 @@ test('plan-import rejects unrelated resolver errors before querying Beads', () =
     ]);
 
     assert.equal(result.code, 2, result.out);
-    assert.match(result.out, /\.dude\/ideas\/unrelated\.md.*FEATURE_FRONTMATTER_MALFORMED/s);
+    assert.match(result.out, /\.dude\/ideas\/002-unrelated\.md.*FEATURE_FRONTMATTER_MALFORMED/s);
     assertBdNotQueried(fakeBd, result, 'unrelated resolver error');
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -1158,7 +1163,7 @@ test('plan-import rejects symlinked workspace and canonical feature targets befo
         fs.symlinkSync(fixture.root, linkedRoot, 'dir');
         return {
           root: linkedRoot,
-          file: path.join(linkedRoot, '.dude/specs/x/tasks.md'),
+          file: path.join(linkedRoot, ...SPEC_PATH.replace(/spec\.md$/, 'tasks.md').split('/')),
           cleanup: () => fs.unlinkSync(linkedRoot),
         };
       },
@@ -1222,7 +1227,7 @@ test('plan-import rejects malformed or unrecognized Beads list JSON', () => {
       fs.writeFileSync(bdFile, content);
       const result = runNode(script, [
         'plan-import', file,
-        '--spec', '.dude/specs/x/spec.md',
+        '--spec', SPEC_PATH,
         '--root', root,
         '--from', bdFile,
       ]);
@@ -1239,7 +1244,7 @@ test('beads.mjs plan-import refuses a malformed tasks.md', () => {
   const { root, script, file } = stage();
   try {
     fs.writeFileSync(file, '## Setup\n- [ ] T001@aaaaaaaa ok\n- [z] T002@bbbbbbbb bad glyph\n');
-    const r = runNode(script, ['plan-import', file, '--spec', '.dude/specs/x/spec.md', '--root', root]);
+    const r = runNode(script, ['plan-import', file, '--spec', SPEC_PATH, '--root', root]);
     assert.equal(r.code, 2);
     assert.match(r.out, /structural issues|malformed/);
   } finally {
@@ -1273,12 +1278,12 @@ test('beads.mjs plan-import rejects a spec from a different canonical feature di
 test('beads.mjs plan-import rejects a missing canonical spec file', () => {
   const { root, script, file } = stage();
   try {
-    fs.rmSync(path.join(root, '.dude/specs/x/spec.md'));
+    fs.rmSync(path.join(root, ...SPEC_PATH.split('/')));
     const result = runNode(script, [
       'plan-import',
       file,
       '--spec',
-      '.dude/specs/x/spec.md',
+      SPEC_PATH,
       '--root',
       root,
     ]);
@@ -1293,9 +1298,9 @@ test('beads.mjs mirror applies bd statuses back into tasks.md', () => {
   const { root, script, file, idea } = stage();
   try {
     const bd = [
-      { title: 'T002@bbbbbbbb Schema', description: 'spec: .dude/specs/x/spec.md\nTask: T002@bbbbbbbb', status: 'closed' },
-      { title: 'x', description: 'spec: .dude/specs/x/spec.md\nTask: T003@cccccccc build', status: 'in_progress' },
-      { title: 'unrelated', description: 'spec: .dude/specs/x/spec.md\nTask: T999@zzzzzzzz ghost', status: 'open' },
+      { title: 'T002@bbbbbbbb Schema', description: `spec: ${SPEC_PATH}\nTask: T002@bbbbbbbb`, status: 'closed' },
+      { title: 'x', description: `spec: ${SPEC_PATH}\nTask: T003@cccccccc build`, status: 'in_progress' },
+      { title: 'unrelated', description: `spec: ${SPEC_PATH}\nTask: T999@zzzzzzzz ghost`, status: 'open' },
     ];
     const bdFile = path.join(root, 'bd.json');
     fs.writeFileSync(bdFile, JSON.stringify(bd));
@@ -1307,7 +1312,7 @@ test('beads.mjs mirror applies bd statuses back into tasks.md', () => {
       '--from',
       bdFile,
       '--spec',
-      '.dude/specs/x/spec.md',
+      SPEC_PATH,
       '--root',
       root,
       '--write',
@@ -1315,7 +1320,7 @@ test('beads.mjs mirror applies bd statuses back into tasks.md', () => {
     assert.equal(r.code, 0, r.out);
     const out = fs.readFileSync(file, 'utf8');
     assert.equal(out, tasksBefore.replace('- [ ] T002@bbbbbbbb [US1] Schema', '- [x] T002@bbbbbbbb [US1] Schema'));
-    assert.match(r.out, /\[INFO\] idea_path: \.dude\/ideas\/x\.md/);
+    assert.match(r.out, /\[INFO\] idea_path: \.dude\/ideas\/001-x\.md/);
     assert.deepEqual(fs.readFileSync(idea), ideaBefore);
     assert.match(r.out, /bd issue key not in tasks.md: T999@zzzzzzzz/);
   } finally {
@@ -1327,13 +1332,13 @@ test('beads.mjs mirror --spec ignores issues from other features (finding 4)', (
   const { root, script, file } = stage();
   try {
     const bd = [
-      { description: 'spec: .dude/specs/x/spec.md\nTask: T002@bbbbbbbb', status: 'closed' },
+      { description: `spec: ${SPEC_PATH}\nTask: T002@bbbbbbbb`, status: 'closed' },
       // same task key but a DIFFERENT feature's spec — must be ignored
       { description: 'spec: .dude/specs/other/spec.md\nTask: T003@cccccccc', status: 'closed' },
     ];
     const bdFile = path.join(root, 'bd.json');
     fs.writeFileSync(bdFile, JSON.stringify(bd));
-    const r = runNode(script, ['mirror', file, '--from', bdFile, '--spec', '.dude/specs/x/spec.md', '--root', root, '--write']);
+    const r = runNode(script, ['mirror', file, '--from', bdFile, '--spec', SPEC_PATH, '--root', root, '--write']);
     assert.equal(r.code, 0, r.out);
     const out = fs.readFileSync(file, 'utf8');
     assert.ok(out.includes('- [x] T002@bbbbbbbb [US1] Schema'), 'ours applied');
@@ -1348,7 +1353,7 @@ test('beads.mjs mirror --write requires --spec and leaves tasks.md unchanged', (
   try {
     const bdFile = path.join(root, 'bd.json');
     fs.writeFileSync(bdFile, JSON.stringify([
-      { description: 'spec: .dude/specs/x/spec.md\nTask: T002@bbbbbbbb', status: 'closed' },
+      { description: `spec: ${SPEC_PATH}\nTask: T002@bbbbbbbb`, status: 'closed' },
     ]));
     const before = fs.readFileSync(file);
 
@@ -1392,7 +1397,7 @@ test('beads.mjs mirror compares the first spec line exactly, not by prefix', () 
     const bdFile = path.join(root, 'bd.json');
     fs.writeFileSync(bdFile, JSON.stringify([
       {
-        description: 'spec: .dude/specs/x/spec.md-collision\nTask: T002@bbbbbbbb',
+        description: `spec: ${SPEC_PATH}-collision\nTask: T002@bbbbbbbb`,
         status: 'closed',
       },
     ]));
@@ -1403,7 +1408,7 @@ test('beads.mjs mirror compares the first spec line exactly, not by prefix', () 
       '--from',
       bdFile,
       '--spec',
-      '.dude/specs/x/spec.md',
+      SPEC_PATH,
       '--root',
       root,
       '--write',
@@ -1421,8 +1426,8 @@ test('beads.mjs mirror rejects duplicate conflicting mappings without writing', 
   try {
     const bdFile = path.join(root, 'bd.json');
     fs.writeFileSync(bdFile, JSON.stringify([
-      { id: 'dude-a', description: 'spec: .dude/specs/x/spec.md\nTask: T002@bbbbbbbb', status: 'open' },
-      { id: 'dude-b', description: 'spec: .dude/specs/x/spec.md\nTask: T002@bbbbbbbb', status: 'closed' },
+      { id: 'dude-a', description: `spec: ${SPEC_PATH}\nTask: T002@bbbbbbbb`, status: 'open' },
+      { id: 'dude-b', description: `spec: ${SPEC_PATH}\nTask: T002@bbbbbbbb`, status: 'closed' },
     ]));
     const before = fs.readFileSync(file);
 
@@ -1432,7 +1437,7 @@ test('beads.mjs mirror rejects duplicate conflicting mappings without writing', 
       '--from',
       bdFile,
       '--spec',
-      '.dude/specs/x/spec.md',
+      SPEC_PATH,
       '--root',
       root,
       '--write',
@@ -1798,14 +1803,15 @@ test('beads.mjs mirror --write blocks invalid owners before inventory read or ta
     },
     {
       name: 'duplicate defined owners',
-      mutate: ({ root }) => writeFixture(root, '.dude/ideas/duplicate.md', ideaLedger(SPEC_PATH, 'defined', 'Duplicate.')),
+      mutate: ({ root }) => writeFixture(root, '.dude/ideas/002-duplicate.md', ideaLedger(SPEC_PATH, 'defined', 'Duplicate.', 'duplicate')),
       expected: /FEATURE_OWNER_DUPLICATE/,
     },
     {
       name: 'mismatched defined owner',
       mutate: ({ root, idea }) => {
-        writeFixture(root, '.dude/specs/other/spec.md', '# Other\n');
-        fs.writeFileSync(idea, ideaLedger('.dude/specs/other/spec.md'));
+        fs.rmSync(idea);
+        writeFixture(root, '.dude/specs/002-other/spec.md', '# Other\n');
+        writeFixture(root, '.dude/ideas/002-other.md', ideaLedger('.dude/specs/002-other/spec.md', 'defined', 'Other.', 'other'));
       },
       expected: /FEATURE_OWNER_NOT_FOUND/,
     },
@@ -1817,15 +1823,15 @@ test('beads.mjs mirror --write blocks invalid owners before inventory read or ta
       name: 'quoted canonical key',
       mutate: ({ idea }) => fs.writeFileSync(
         idea,
-        ideaLedger().replace('---\nstatus: defined', '---\n"title": Example\nstatus: defined'),
+        ideaLedger().replace('---\ntitle: x', '---\n"title": Example\ntitle: x'),
       ),
       expected: /FEATURE_FRONTMATTER_MALFORMED/,
     },
     {
       name: 'draft owner with resolvable spec_path',
       mutate: ({ root }) => {
-        writeFixture(root, '.dude/specs/draftish/spec.md', '# Draftish\n');
-        writeFixture(root, '.dude/ideas/draftish.md', ideaLedger('.dude/specs/draftish/spec.md', 'draft', 'Draftish.'));
+        writeFixture(root, '.dude/specs/002-draftish/spec.md', '# Draftish\n');
+        writeFixture(root, '.dude/ideas/002-draftish.md', ideaLedger('.dude/specs/002-draftish/spec.md', 'draft', 'Draftish.', 'draftish'));
       },
       expected: /FEATURE_DRAFT_SPEC_PATH/,
     },
@@ -1868,7 +1874,7 @@ test('beads.mjs mirror --write rejects unrelated resolver errors before inventor
   const fixture = stage();
   try {
     const tasksBefore = fs.readFileSync(fixture.file);
-    writeFixture(fixture.root, '.dude/ideas/unrelated.md', 'not frontmatter\n');
+    writeFixture(fixture.root, '.dude/ideas/002-unrelated.md', 'not frontmatter\n');
     const unreadInventory = path.join(fixture.root, 'must-not-be-read.json');
 
     const result = runNode(fixture.script, [
@@ -1884,7 +1890,7 @@ test('beads.mjs mirror --write rejects unrelated resolver errors before inventor
     ]);
 
     assert.equal(result.code, 2, result.out);
-    assert.match(result.out, /\.dude\/ideas\/unrelated\.md.*FEATURE_FRONTMATTER_MALFORMED/s);
+    assert.match(result.out, /\.dude\/ideas\/002-unrelated\.md.*FEATURE_FRONTMATTER_MALFORMED/s);
     assert.doesNotMatch(result.out, /must-not-be-read/);
     assert.deepEqual(fs.readFileSync(fixture.file), tasksBefore);
   } finally {
@@ -1910,7 +1916,7 @@ test('beads.mjs mirror --write succeeds despite unrelated directories', () => {
   try {
     const bdFile = path.join(root, 'bd.json');
     fs.writeFileSync(bdFile, JSON.stringify([
-      { description: 'spec: .dude/specs/x/spec.md\nTask: T002@bbbbbbbb', status: 'closed' },
+      { description: `spec: ${SPEC_PATH}\nTask: T002@bbbbbbbb`, status: 'closed' },
     ]));
     writeFixture(root, 'notes/archive/readme.md', '# Unrelated\n');
 
@@ -1920,7 +1926,7 @@ test('beads.mjs mirror --write succeeds despite unrelated directories', () => {
       '--from',
       bdFile,
       '--spec',
-      '.dude/specs/x/spec.md',
+      SPEC_PATH,
       '--root',
       root,
       '--write',
@@ -1957,7 +1963,7 @@ test('beads.mjs mirror --write rejects symlinked canonical targets before invent
   for (const target of ['tasks.md', 'spec.md']) {
     const fixture = stage();
     try {
-      const targetPath = path.join(fixture.root, '.dude/specs/x', target);
+      const targetPath = path.join(fixture.root, path.dirname(SPEC_PATH), target);
       const outside = writeFixture(fixture.root, `outside-${target}`, target === 'tasks.md' ? FIXTURE : '# Outside\n');
       const tasksBefore = fs.readFileSync(fixture.file);
       fs.rmSync(targetPath);
@@ -1989,7 +1995,7 @@ test('beads.mjs mirror --write rejects symlinked canonical targets before invent
 // equals an independently recomputed fresh observation.
 
 const TRACKED_SPEC = '.dude/specs/009-tracked/spec.md';
-const TRACKED_IDEA = '.dude/ideas/tracked.md';
+const TRACKED_IDEA = '.dude/ideas/009-tracked.md';
 const TRACKED_ISSUE_ID = 'bd-101';
 const TRACKED_TASK_KEY = 'T001@74726b64';
 const TRACKED_TARGET = { specPath: TRACKED_SPEC, lane: 'tracked', issueId: TRACKED_ISSUE_ID };
@@ -2275,7 +2281,7 @@ function stageTracked(ideaOverrides = {}) {
   writeFixture(
     fixture.root,
     TRACKED_IDEA,
-    `---\nstatus: defined\nspec_path: ${ideaOverrides.specPath ?? TRACKED_SPEC}\n---\n\n## Idea\n\nTracked lane.\n\n## Coordinator Log\n\n- Existing entry.\n`,
+    `---\ntitle: Tracked\nslug: tracked\nstatus: defined\nspec_path: ${ideaOverrides.specPath ?? TRACKED_SPEC}\n---\n\n## Idea\n\nTracked lane.\n\n## Coordinator Log\n\n- Existing entry.\n`,
   );
   return { ...fixture, root: fs.realpathSync(fixture.root) };
 }

@@ -22,7 +22,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/unattended-work-continuity.md#coordinator-log -->
+<!-- audit log: .dude/ideas/013-unattended-work-continuity.md#coordinator-log -->
 
 # Tasks: Unattended Work Continuity
 

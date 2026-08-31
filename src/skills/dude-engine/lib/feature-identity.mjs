@@ -8,6 +8,10 @@ export const SPEC_IDENTITY_KIND = Object.freeze({
   CANONICAL: 'canonical',
 });
 
+const CANONICAL_SLUG = '[a-z0-9][a-z0-9-]*';
+const IDEA_IDENTITY_RE = new RegExp(`^\\.dude/ideas/([0-9]{3})-(${CANONICAL_SLUG})\\.md$`);
+const SPEC_IDENTITY_RE = new RegExp(`^\\.dude/specs/([0-9]{3})-(${CANONICAL_SLUG})/spec\\.md$`);
+
 /**
  * @typedef {{ key: string, value: string, raw: string, quote: string, prefix: string, lineIndex: number }} FrontmatterScalar
  * @typedef {{ newline: string, lines: string[], endIndex: number, scalars: Map<string, FrontmatterScalar> }} ParsedFrontmatter
@@ -77,23 +81,59 @@ export function parseFrontmatterScalars(content, options = {}) {
 }
 
 /**
- * @typedef {{ kind: string, feature: string, path: string }} SpecIdentity
+ * @typedef {{
+ *   kind: string,
+ *   feature: string,
+ *   path: string,
+ *   directoryPath: string,
+ *   number: string,
+ *   numberValue: number,
+ *   slug: string,
+ * }} SpecIdentity
+ * @typedef {{
+ *   path: string,
+ *   number: string,
+ *   numberValue: number,
+ *   slug: string,
+ * }} IdeaIdentity
  */
 
 /**
- * Parse exactly `.dude/specs/<feature>/spec.md`, rejecting alternate
- * separators/traversal.
+ * Parse exactly `.dude/ideas/<NNN>-<slug>.md`.
+ * @param {string} value
+ * @returns {IdeaIdentity | null}
+ */
+export function parseIdeaIdentity(value) {
+  if (typeof value !== 'string' || !value || value.includes('\\') || value.includes('\0')) return null;
+  const match = IDEA_IDENTITY_RE.exec(value);
+  if (!match || match[1] === '000') return null;
+  return {
+    path: value,
+    number: match[1],
+    numberValue: Number(match[1]),
+    slug: match[2],
+  };
+}
+
+/**
+ * Parse exactly `.dude/specs/<NNN>-<slug>/spec.md`, rejecting alternate
+ * widths, separators, traversal, and out-of-range numbers.
  * @param {string} value
  * @returns {SpecIdentity | null}
  */
 export function parseSpecIdentity(value) {
   if (typeof value !== 'string' || !value || value.includes('\\') || value.includes('\0')) return null;
-  const match = /^\.dude\/specs\/([^/]+)\/spec\.md$/.exec(value);
-  if (!match || match[1] === '.' || match[1] === '..') return null;
+  const match = SPEC_IDENTITY_RE.exec(value);
+  if (!match || match[1] === '000') return null;
+  const feature = `${match[1]}-${match[2]}`;
   return {
     kind: SPEC_IDENTITY_KIND.CANONICAL,
-    feature: match[1],
+    feature,
     path: value,
+    directoryPath: `.dude/specs/${feature}`,
+    number: match[1],
+    numberValue: Number(match[1]),
+    slug: match[2],
   };
 }
 

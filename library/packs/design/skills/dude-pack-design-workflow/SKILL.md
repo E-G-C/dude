@@ -33,15 +33,15 @@ activate a preview or design-approval gate.
 The approved proposal is the spec.
 
 ```text
-.dude/ideas/<slug>.md                 # canonical flat idea ledger and audit companion
+.dude/ideas/<NNN>-<slug>.md           # canonical direct idea ledger and audit companion
   -> .dude/specs/<feature>/spec.md        # design proposal, then approved design spec
   -> .dude/specs/<feature>/design/        # primary mock, supporting files, screenshots, references
   -> .dude/specs/<feature>/tasks.md       # canonical task units applied through the active execution lane
 ```
 
-The uniquely owning idea's `spec_path` still points exactly to `.dude/specs/<feature>/spec.md`. Resolve that owner only from direct flat `.dude/ideas/*.md` ledgers by exact `spec_path` equality. An idea can be `status: defined` once `spec.md` exists even while the design proposal has `design_status: exploring` or `design_status: proposed`; the design approval gate remains `design_status` inside `spec.md`. Exact-file identity semantics are unchanged.
+The uniquely owning idea's `spec_path` still points exactly to `.dude/specs/<feature>/spec.md`. Resolve that owner only from direct numbered `.dude/ideas/<NNN>-<slug>.md` ledgers by exact `spec_path` equality. Carry the resolved exact owner path; never infer it from a number, slug, filename, or package name. An idea can be `status: defined` once `spec.md` exists even while the design proposal has `design_status: exploring` or `design_status: proposed`; the design approval gate remains `design_status` inside `spec.md`. Exact-file identity semantics are unchanged.
 
-For a raw or draft design idea, capture the flat ledger with
+For a raw or draft design idea, capture the numbered direct ledger with
 `@dude brainstorm <idea>` when needed, then explicitly run `@dude define <slug>`
 before the first managed render, export, or capture. Definition establishes a
 lean design package with `design_status: exploring` and a `preview_path` that
@@ -54,7 +54,7 @@ not render, export, or capture a temporary mock as a shortcut.
 
 This workflow mutates idea, spec, or task state during settle, approval, task generation, design close, and refinement. Before any such mutation:
 
-- Resolve exactly one companion idea from direct flat `.dude/ideas/*.md` ledgers whose `spec_path` exactly equals the current package's `.dude/specs/<feature>/spec.md`.
+- Resolve exactly one companion idea from direct numbered `.dude/ideas/<NNN>-<slug>.md` ledgers whose `spec_path` exactly equals the current package's `.dude/specs/<feature>/spec.md`.
 - If zero or multiple ideas claim that exact path, report canonical idea ownership as ambiguous and stop before any idea, spec, log, status, routing, or task mutation. Never infer ownership from a slug, directory name, or alternate path; exact canonical `spec_path` equality is the only owner match.
 
 Only the coordinator appends to `## Coordinator Log` or mutates idea `status`, design `design_status`, task glyphs, or task metadata. During definition, `@dude-spec-lead` maintains idea metadata and the design-shaped `spec.md` within that ownership boundary.
@@ -268,14 +268,14 @@ Classify visual review results into exactly one bucket:
 | **Matches approved spec** | The implementation matches the approved design and works in context | Keep `design_status: approved`; close the task after verification |
 | **Implementation mismatch** | The approved spec is still right, but the page does not match it | Keep `design_status: approved`; keep the task `[~]` and route back to the implementer |
 | **Design refinement needed** | The approved spec looked good in preview, but the real page reveals the design needs adjustment | Change `design_status: proposed`; append a revision-log entry; block the current task through the active lane (Lightweight Execution: mark `[!]` with `blocked-by: design-gap: <reason>` in `tasks.md`; tracked execution: `bd update --status blocked` with the same `design-gap` reason, then mirror per `dude-pack-beads-workflow`); stop execution until re-approved |
-| **New scope / new idea** | The user wants something beyond the approved proposal | Keep the current work stable; route through `@dude brainstorm <idea>` to create or refresh `.dude/ideas/<slug>.md`, then run `@dude define <slug>` for the new or expanded package |
+| **New scope / new idea** | The user wants something beyond the approved proposal | Keep the current work stable; route through `@dude brainstorm <idea>` to create or refresh `.dude/ideas/<NNN>-<slug>.md`, then run `@dude define <slug>` for the new or expanded package |
 
 When reopening an approved proposal for refinement:
 
 1. Change `design_status: approved` to `design_status: proposed`.
 2. Keep `approved_direction:` as historical context unless the direction is explicitly withdrawn; add a note in `## Revision Log`.
 3. Append a `## Revision Log` entry such as `YYYY-MM-DD HH:MM UTC - reopened after implementation: <reason>`.
-4. Have the coordinator append the reopen reason to the uniquely owning companion idea's `## Coordinator Log` in `.dude/ideas/<slug>.md`.
+4. Have the coordinator append the reopen reason to the uniquely owning companion idea's `## Coordinator Log` at its exact resolved `.dude/ideas/<NNN>-<slug>.md` path.
 5. Have the coordinator block the affected task through the active lane. In Lightweight Execution, mark the task `[!]` in `tasks.md` and add:
 
    ```markdown

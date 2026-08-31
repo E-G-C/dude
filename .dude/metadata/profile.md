@@ -42,7 +42,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/dude/library/packs"
+        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-refactored-guide/library/packs"
       }
     },
     "release": {

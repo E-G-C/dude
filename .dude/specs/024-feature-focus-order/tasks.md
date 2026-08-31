@@ -21,7 +21,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/feature-focus-order.md#coordinator-log -->
+<!-- audit log: .dude/ideas/024-feature-focus-order.md#coordinator-log -->
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 

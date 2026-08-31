@@ -53,8 +53,9 @@ Representable issues map each task key + status to a canonical glyph and apply
 the batch to `tasks.md` (skipping keys with no matching header).
 
 Write mode requires canonical sibling
-`.dude/specs/<feature>/{spec.md,tasks.md}` regular files and exactly one flat
-`.dude/ideas/*.md` owner with `status: defined` and that exact `spec_path`.
+`.dude/specs/<feature>/{spec.md,tasks.md}` regular files and exactly one direct
+numbered `.dude/ideas/<NNN>-<slug>.md` owner with `status: defined` and that
+exact `spec_path`.
 Issue descriptions must carry that exact value on their first line. Duplicate
 or conflicting task-key mappings are refused. Successful writes report the
 exact `idea_path`; the helper does not append its `## Coordinator Log`.
@@ -92,7 +93,7 @@ Mirror status mapping:
 
 Mirror only the task-state glyph and Beads-derived blocker metadata when needed. Preserve the task key, labels, description, explicit `deps:`, and human-authored task text. If a generated board region is present, regenerate it as a complete replacement from the canonical task units.
 
-Before every mirror or sync mutation, resolve exactly one direct regular Markdown child of flat `.dude/ideas/` with `status: defined` whose exact canonical `spec_path` equals the feature spec. Never infer an idea slug from the feature directory or translate an alternate identity. Missing, malformed, dangling, noncanonical, or duplicate ownership stops the write. For mechanical mirror writes, require the exact `idea_path` returned by the helper; if it is absent or differs from the coordinator's resolved owner, stop.
+Before every mirror or sync mutation, resolve exactly one direct regular numbered `.dude/ideas/<NNN>-<slug>.md` ledger with `status: defined` whose exact canonical `spec_path` equals the feature spec. Carry that exact path; never infer it from the number, slug, filename, or feature directory or translate an alternate identity. Missing, malformed, dangling, noncanonical, or duplicate ownership stops the write. For mechanical mirror writes, require the exact `idea_path` returned by the helper; if it is absent or differs from the coordinator's resolved owner, stop.
 
 The coordinator, not `beads.mjs`, appends exactly one concise UTC line to that idea's append-only `## Coordinator Log` for each successful mirror, explicit sync, Beads close, or derived-board regeneration event. If one coordinator operation produces several of those events, append one line per event; never combine them or let the helper write them. Use one of these stable forms:
 
@@ -295,7 +296,7 @@ These are the coordinator-side flows for tracked execution. They apply only when
 Use this only when the user explicitly asks to import execution work from `.dude/specs/` into Beads instead of using `@dude track`. Manual import still requires one uniquely owning defined idea as the identity source:
 
 1. Resolve the feature directory from the user's input or from `.dude/specs/`.
-2. Scan only direct regular `.md` children of flat `.dude/ideas/` and require exactly one `status: defined` idea whose exact canonical `spec_path` matches `<selected-dir>/spec.md`. If no matching owner exists, stop and tell the user to run `@dude brainstorm <feature>` and then `@dude define <slug>`.
+2. Scan only direct regular numbered `.dude/ideas/<NNN>-<slug>.md` ledgers and require exactly one `status: defined` idea whose exact canonical `spec_path` matches `<selected-dir>/spec.md`. If no matching owner exists, stop and tell the user to run `@dude brainstorm <feature>` and then `@dude define <slug>`.
 3. Load `dude-pack-beads-spec-import` and follow the Import Algorithm for reading artifacts, parsing task lines, creating Beads issues, deriving dependencies, and mapping priorities.
 4. After import, run `bd ready --json`, discard epics or other non-executable grouping issues from that ready set, and report how many task issues were created and how many actionable tasks are ready.
 
@@ -304,7 +305,7 @@ Use this only when the user explicitly asks to import execution work from `.dude
 Use this during `@dude track` before selecting new ready work.
 
 1. Load `dude-pack-beads-spec-import` and follow its `## Canonical Feature Identity` rule: the unique defined idea's exact `spec_path` and the Beads issue description `spec:` first line must carry the same value (the full path to the feature's `spec.md`).
-2. Scan only direct regular `.md` children of flat `.dude/ideas/` for files marked `status: defined` with a populated canonical `spec_path:`. Unsafe entries and malformed defined identities fail closed.
+2. Scan only direct regular numbered `.dude/ideas/<NNN>-<slug>.md` ledgers for files marked `status: defined` with a populated canonical `spec_path:`. Unsafe entries and malformed defined identities fail closed.
 3. Reject duplicate defined-idea `spec_path:` values, then run `beads.mjs plan-import` for each candidate. Before reading package files or loading Beads inventory, the helper validates canonical sibling feature files and the unique idea owner. It then queries `bd list --all --limit 0 --json`, uses exact first-line equality, and rejects duplicate durable-key mappings or feature epics before emitting any create command. Import only when the helper reports no exact existing representation.
 4. Require the plan's `idea_path` to equal the exact scanned owner. If it is missing, ambiguous, or different, stop before running any emitted command.
 5. Do not ask the user for a `.dude/specs/<feature>/` path during this automatic handoff; the idea file is the pointer.

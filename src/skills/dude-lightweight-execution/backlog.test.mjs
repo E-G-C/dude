@@ -45,6 +45,7 @@ function writeFile(root, relativePath, content) {
 function writeIdea(root, slug, options = {}) {
   const status = options.status ?? (options.feature ? "defined" : "draft");
   const feature = options.feature ?? null;
+  const number = options.number ?? /^([0-9]{3})-/.exec(feature ?? "")?.[1] ?? "001";
   const lines = [
     "---",
     `title: ${options.title ?? slug}`,
@@ -67,7 +68,7 @@ function writeIdea(root, slug, options = {}) {
     ...(options.log ?? []).map((entry) => `- ${entry}`),
     "",
   );
-  writeFile(root, `.dude/ideas/${slug}.md`, lines.join("\n"));
+  writeFile(root, `.dude/ideas/${number}-${slug}.md`, lines.join("\n"));
 }
 
 function writePackage(root, feature, options = {}) {
@@ -349,7 +350,7 @@ test("T030 only an exact package-less resolved shape reaches Completed", () => {
   const root = makeRoot();
   try {
     // Arrange
-    const writeLifecycleIdea = (slug, frontmatter) => writeFile(root, `.dude/ideas/${slug}.md`, [
+    const writeLifecycleIdea = (number, slug, frontmatter) => writeFile(root, `.dude/ideas/${number}-${slug}.md`, [
       "---",
       `title: ${slug}`,
       `slug: ${slug}`,
@@ -366,15 +367,15 @@ test("T030 only an exact package-less resolved shape reaches Completed", () => {
       "",
     ].join("\n"));
     writeFile(root, ".dude/specs/401-canonical/spec.md", "# Canonical raw-path fixture\n");
-    writeLifecycleIdea("resolved", ["status: resolved", "spec_path:"]);
-    writeLifecycleIdea("nonempty-canonical", [
+    writeLifecycleIdea("001", "resolved", ["status: resolved", "spec_path:"]);
+    writeLifecycleIdea("002", "nonempty-canonical", [
       "status: resolved",
       "spec_path: .dude/specs/401-canonical/spec.md",
     ]);
-    writeLifecycleIdea("malformed-path", ["status: resolved", "spec_path: not-a-canonical-spec-path"]);
-    writeLifecycleIdea("diagnostic-bearing", ["status: resolved", "spec_path:", "depends-on: invalid!"]);
-    writeLifecycleIdea("malformed-frontmatter", ["status: resolved", "status: resolved", "spec_path:"]);
-    writeLifecycleIdea("nonexact-status", ['status: "resolved"', "spec_path:"]);
+    writeLifecycleIdea("003", "malformed-path", ["status: resolved", "spec_path: not-a-canonical-spec-path"]);
+    writeLifecycleIdea("004", "diagnostic-bearing", ["status: resolved", "spec_path:", "depends-on: invalid!"]);
+    writeLifecycleIdea("005", "malformed-frontmatter", ["status: resolved", "status: resolved", "spec_path:"]);
+    writeLifecycleIdea("006", "nonexact-status", ['status: "resolved"', "spec_path:"]);
     const ownerClaim = fixtureItem("owner-claim", {
       status: "resolved",
       rawStatus: "resolved",
@@ -499,7 +500,7 @@ test("T002 collector exposes real idea, exact owner, stories, phases, tasks, dep
       ].join("\n"),
     });
     const item = collectLifecycleItems({ root })[0];
-    assert.equal(item.ideaPath, ".dude/ideas/evidence.md");
+    assert.equal(item.ideaPath, ".dude/ideas/201-evidence.md");
     assert.match(item.excerpt, /real idea excerpt/);
     assert.equal(item.specPath, ".dude/specs/201-evidence/spec.md");
     assert.equal(item.tasksPath, ".dude/specs/201-evidence/tasks.md");
@@ -522,7 +523,7 @@ test("T002 malformed idea metadata stays visibly unavailable without negative de
   // Arrange
   const root = makeRoot();
   try {
-    writeFile(root, ".dude/ideas/broken.md", [
+    writeFile(root, ".dude/ideas/001-broken.md", [
       "---",
       "title: Broken metadata",
       "slug: broken",
@@ -560,6 +561,55 @@ test("T002 malformed idea metadata stays visibly unavailable without negative de
     assert.doesNotMatch(html, /Awaiting definition - no tasks exist yet/);
     assert.match(markdown, /source data unavailable or ambiguous/);
     assert.match(markdown, /Dependency data is unavailable for `broken`; no negative dependency fact is inferred/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("T001 duplicate exact spec-path claimants suppress authority before diagnostic filtering", () => {
+  // Arrange
+  const root = makeRoot();
+  try {
+    writeIdea(root, "unrelated-safe", { number: "001", feature: "001-unrelated-safe" });
+    writePackage(root, "001-unrelated-safe");
+    writeIdea(root, "shared-claim", { number: "002", feature: "002-shared-claim" });
+    writePackage(root, "002-shared-claim");
+    writeFile(root, ".dude/ideas/003-malformed-claimant.md", [
+      "---",
+      "title: Malformed claimant",
+      "slug: malformed-claimant",
+      "status: defined",
+      "spec_path: .dude/specs/002-shared-claim/spec.md",
+      "unknown-owner-field: must-not-hide-the-claim",
+      "---",
+      "",
+      "# Idea: Malformed claimant",
+      "",
+      "## Idea",
+      "",
+      "This malformed ledger remains visible but cannot carry authority.",
+      "",
+    ].join("\n"));
+
+    // Act
+    const items = collectLifecycleItems({ root });
+    const byPath = new Map(items.map((item) => [item.ideaPath, item]));
+    const unrelated = byPath.get(".dude/ideas/001-unrelated-safe.md");
+    const safeClaimant = byPath.get(".dude/ideas/002-shared-claim.md");
+    const malformedClaimant = byPath.get(".dude/ideas/003-malformed-claimant.md");
+
+    // Assert
+    assert.ok(unrelated);
+    assert.ok(safeClaimant);
+    assert.ok(malformedClaimant);
+    assert.equal(unrelated.authoritySlug, "unrelated-safe");
+    assert.equal(unrelated.ownerSpecPath, ".dude/specs/001-unrelated-safe/spec.md");
+    assert.equal(safeClaimant.authoritySlug, null);
+    assert.equal(safeClaimant.ownerSpecPath, null);
+    assert.match(safeClaimant.authorityIssues.join("\n"), /multiple ideas claim the same spec_path/);
+    assert.equal(malformedClaimant.frontmatterAvailable, false);
+    assert.equal(malformedClaimant.authoritySlug, null);
+    assert.match(malformedClaimant.authorityIssues.join("\n"), /Idea metadata is unavailable/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -756,12 +806,12 @@ test("T002 duplicate and malformed slugs keep display-only identity while all so
   const root = makeRoot();
   try {
     for (const fileSlug of ["duplicate-a", "duplicate-b"]) {
-      writeFile(root, `.dude/ideas/${fileSlug}.md`, [
+      writeFile(root, `.dude/ideas/${fileSlug === "duplicate-a" ? "001" : "002"}-${fileSlug}.md`, [
         "---", `title: ${fileSlug}`, "slug: duplicate", "status: draft", "spec_path:", "---", "",
         `# Idea: ${fileSlug}`, "", "## Idea", "", "Duplicate identity fixture.", "",
       ].join("\n"));
     }
-    writeFile(root, ".dude/ideas/safe-id.md", [
+    writeFile(root, ".dude/ideas/301-safe-id.md", [
       "---",
       "title: <img src=x onerror=alert(1)> & dangerous title",
       "slug: bad<slug>",
@@ -785,7 +835,7 @@ test("T002 duplicate and malformed slugs keep display-only identity while all so
       "- [~] T001@aaaaaaaa Render <script>alert(3)</script> as text",
       "   blocked-by: <iframe src=https://attacker.example></iframe>", "",
     ].join("\n"));
-    writeIdea(root, "wants-safe-id", { dependsOn: "safe-id" });
+    writeIdea(root, "wants-safe-id", { number: "302", dependsOn: "safe-id" });
     writeFile(root, ".dude/state/backlog-order.md", ["- safe-id", "- wants-safe-id", ""].join("\n"));
 
     // Act
@@ -829,7 +879,7 @@ test("T002 a malformed-slug source declares no authoritative dependency in the o
   const root = makeRoot();
   try {
     writeIdea(root, "valid-target");
-    writeFile(root, ".dude/ideas/malformed-source.md", [
+    writeFile(root, ".dude/ideas/002-malformed-source.md", [
       "---", "title: malformed source", "slug: bad<slug>", "status: draft", "spec_path:",
       "depends-on: valid-target", "---", "",
       "# Idea: malformed source", "", "## Idea", "", "Malformed dependency source fixture.", "",
@@ -886,7 +936,7 @@ test("T002 draft summaries retain stable IDEA slug identity and plain-language l
 
     // Assert
     assert.equal(model.items[0].excerpt, "Readable label with code and markup.");
-    assert.match(html, /<span class="identity">IDEA · readable-draft<\/span>/);
+    assert.match(html, /<span class="identity">I-001 · readable-draft<\/span>/);
     assert.match(html, /Awaiting definition - no tasks exist yet/);
     assert.match(html, /No dependency signal/);
     assert.match(html, /ready from declared dependency or order/);
@@ -945,7 +995,7 @@ test("T002 check reports missing, stale, and fresh artifacts separately and neve
     assert.match(fresh.stdout, /backlog\.html is current/);
     assert.deepEqual(snapshotTree(root), freshBefore);
 
-    const ideaPath = path.join(root, ".dude", "ideas", "draft.md");
+    const ideaPath = path.join(root, ".dude", "ideas", "001-draft.md");
     fs.writeFileSync(ideaPath, fs.readFileSync(ideaPath, "utf8").replace("title: Original title", "title: Changed title"));
     const staleBefore = snapshotTree(root);
     const stale = runCli(root, ["check"]);
@@ -1338,16 +1388,36 @@ test("T005 runtime reads neither approved preview nor optional visual pack and k
   assert.match(source, /const BACKLOG_HTML_PATH = "\.dude\/backlog\.html"/);
 });
 
-test("T005 Feature 025 historical artifacts retain their exact bytes", () => {
+test("T005 Feature 025 historical artifacts retain exact bytes except its active owner breadcrumb", () => {
+  // Arrange
   const expected = new Map([
-    [".dude/ideas/backlog-report.md", "97bea6893c4f38280397571e3e61c26b1e7c875d632d5ca306b957d6e78d18e2"],
+    [".dude/ideas/025-backlog-report.md", "97bea6893c4f38280397571e3e61c26b1e7c875d632d5ca306b957d6e78d18e2"],
     [".dude/specs/025-backlog-report/plan.md", "8826c08aacc27ab05207e93d8babcf202980bf3ea251651fd9d50781faf5b39c"],
     [".dude/specs/025-backlog-report/spec.md", "14002da82cf134194aa48037db63b6097e63cb4a1301822cc1150c162707f7e8"],
-    [".dude/specs/025-backlog-report/tasks.md", "498a957464be36793df326697f5ba6e913e7a9642f92b578866b2f0f473c9173"],
   ]);
+  const taskPath = path.join(REPO_ROOT, ".dude/specs/025-backlog-report/tasks.md");
+  const oldBreadcrumb = "<!-- audit log: .dude/ideas/backlog-report.md#coordinator-log -->";
+  const newBreadcrumb = "<!-- audit log: .dude/ideas/025-backlog-report.md#coordinator-log -->";
+
+  // Act
+  const actual = new Map([...expected.keys()].map((relativePath) => [
+    relativePath,
+    sha256(fs.readFileSync(path.join(REPO_ROOT, ...relativePath.split("/")))),
+  ]));
+  const tasks = fs.readFileSync(taskPath, "utf8");
+
+  // Assert
   for (const [relativePath, hash] of expected) {
-    assert.equal(sha256(fs.readFileSync(path.join(REPO_ROOT, ...relativePath.split("/")))), hash, relativePath);
+    assert.equal(actual.get(relativePath), hash, relativePath);
   }
+  assert.ok(tasks.startsWith(newBreadcrumb), "the numbered owner is the active breadcrumb");
+  assert.equal(tasks.split(newBreadcrumb).length - 1, 1, "only the active breadcrumb uses the new owner path");
+  assert.equal(tasks.split(oldBreadcrumb).length - 1, 0, "the old owner path is absent from the active task file");
+  assert.equal(
+    sha256(Buffer.from(tasks.replace(newBreadcrumb, oldBreadcrumb))),
+    "498a957464be36793df326697f5ba6e913e7a9642f92b578866b2f0f473c9173",
+    "reversing the sole authorized breadcrumb change restores the exact historical tasks bytes",
+  );
 });
 
 test("T005 committed backlog artifacts are mechanically fresh in the existing test path", () => {

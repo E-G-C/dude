@@ -12104,7 +12104,7 @@ const FEATURE_007_TARGET = Object.freeze({
   lane: 'lightweight',
   taskKey: 'T001@00709e37',
 });
-const FEATURE_007_IDEA_PATH = '.dude/ideas/technical-docs-pack-remediation.md';
+const FEATURE_007_IDEA_PATH = '.dude/ideas/007-technical-docs-pack-remediation.md';
 const FEATURE_007_TASKS_PATH = '.dude/specs/007-technical-docs-pack-remediation/tasks.md';
 const INCIDENT_INCOMPLETE_BLOCKER =
   'contract-mismatch: evidence-incomplete autonomous review occurrence evidence unavailable';

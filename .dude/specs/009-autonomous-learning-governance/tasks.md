@@ -25,7 +25,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/autonomous-learning-governance.md#coordinator-log -->
+<!-- audit log: .dude/ideas/009-autonomous-learning-governance.md#coordinator-log -->
 
 # Tasks: Autonomous Learning Governance
 

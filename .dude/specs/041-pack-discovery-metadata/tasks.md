@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/pack-discovery-metadata.md#coordinator-log -->
+<!-- audit log: .dude/ideas/041-pack-discovery-metadata.md#coordinator-log -->
 
 # Tasks: Pack Discovery Metadata
 

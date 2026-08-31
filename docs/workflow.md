@@ -9,7 +9,13 @@ Dude uses one spec-driven path:
 specification defines the outcome, the plan chooses an implementation, and the
 task list drives verified execution. Brainstorm and define are distinct:
 `@dude brainstorm <idea>` creates or refreshes one flat
-`.dude/ideas/<slug>.md` file and does not create a spec package.
+`.dude/ideas/<NNN>-<slug>.md` file and does not create a spec package.
+
+When brainstorm first captures an idea, it gives the ledger the next permanent
+three-digit lifecycle number. The package later keeps that number. Inventory
+lists ideas in capture order and never recycles a gap. Scheduling still follows
+priority, dependencies, and execution state. Commands use the exact unnumbered
+frontmatter slug.
 
 ### Ship: one verb across the lifecycle
 
@@ -82,7 +88,7 @@ before dispatching implementation to an invented agent.
 ```mermaid
 graph LR
   INPUT["Idea"] --> BRAINSTORM["@dude brainstorm"]
-  BRAINSTORM --> IDEA[".dude/ideas/<slug>.md"]
+  BRAINSTORM --> IDEA[".dude/ideas/<NNN>-<slug>.md"]
   IDEA --> DEFINE["@dude define <slug>"]
   DEFINE --> PACKAGE[".dude/specs/<feature>/"]
   PACKAGE --> STOP["Definition Only"]
@@ -131,7 +137,7 @@ it also reports Beads state without mutating it.
 
 | Artifact                                         | Purpose                      | Human edits                                                               | Dude maintains                                                                                                     | How to keep it fresh                                            |
 | ------------------------------------------------ | ---------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
-| `.dude/ideas/<slug>.md`                           | Pre-spec collaboration                     | `## Idea`, `**Your answer:**` slots in the immediately following `## Open Questions`, assumption overrides, and items in `## Deferred Clarifications` | Content inside `<!-- dude:managed:start --> ... <!-- dude:managed:end -->` fences (`## Normalized Intent`, `## Constraints`, `## Definition Checklist`, `## Coordinator Log`), plus `status` and the exact `spec_path` | Rerun brainstorm to re-normalize; after intent changes, rerun `@dude define <slug>` |
+| `.dude/ideas/<NNN>-<slug>.md`                     | Pre-spec collaboration                     | `## Idea`, `**Your answer:**` slots in the immediately following `## Open Questions`, assumption overrides, and items in `## Deferred Clarifications` | Content inside `<!-- dude:managed:start --> ... <!-- dude:managed:end -->` fences (`## Normalized Intent`, `## Constraints`, `## Definition Checklist`, `## Coordinator Log`), plus `status` and the exact `spec_path` | Rerun brainstorm to re-normalize; after intent changes, rerun `@dude define <slug>` |
 | `.dude/specs/<feature>/spec.md`, `plan.md`             | Generated definition package               | Prefer editing `## Idea` instead of hand-editing these files             | the definition package contents                                                                                    | Rerun `@dude define <slug>` when scope or assumptions change                        |
 | `.dude/specs/<feature>/tasks.md`                       | Canonical phased task units plus a derived board view; live in Lightweight Execution and mirrored from Beads in Tracked Execution | Do not self-check `[x]`; let Dude mutate task state after routed outcomes and verification. Avoid rewriting task meaning by hand or editing the generated board region directly. | task selection via the generated board view when live, durable-key-first reconciliation, optional `deps:` metadata, coordinator-owned state updates in Lightweight Execution, and one-way Beads-derived mirror writes in Tracked Execution | Rerun `@dude define <slug>` when scope changes; preserve durable task keys and surviving task state when tasks still mean the same work. Use `@dude sync Beads to tasks.md` to refresh the mirror from Beads. |
 | Beads issues                                     | Live execution state after import          | through Dude's execution flow                                                 | issue state, dependencies, close decisions, and authoritative state while tracked execution is active                                                                     | Use `@dude track`, `@dude status`, `@dude sync Beads to tasks.md`, and Beads commands                                  |
@@ -199,7 +205,7 @@ Set-Location my-project
 @dude brainstorm authentication
 ```
 
-This creates or refreshes `.dude/ideas/authentication.md` without creating a
+This creates or refreshes `.dude/ideas/001-authentication.md` without creating a
 spec package. If the idea already exists, brainstorm re-normalizes it in place
 and preserves `## Idea`, answered questions, assumptions, and user edits unless
 you provide or request a revision.
@@ -210,10 +216,10 @@ If you want Dude to restate where you are before editing, run:
 @dude status
 ```
 
-At this point, it should point you to `.dude/ideas/authentication.md` as the live
+At this point, it should point you to `.dude/ideas/001-authentication.md` as the live
 collaboration surface.
 
-Inside `.dude/ideas/<slug>.md`:
+Inside `.dude/ideas/<NNN>-<slug>.md`:
 
 - read the user-controlled `## Idea` first, then edit it if the desired outcome changed
 - answer each `## Open Questions` prompt by replacing its `**Your answer:** _Type your answer here._` placeholder
@@ -227,7 +233,7 @@ conservatively clean clear spelling, grammar, punctuation, transcription,
 filler, or repetition problems while preserving meaning, tone, uncertainty,
 incomplete thought, and creative intent.
 
-To answer clarifications, edit `.dude/ideas/<slug>.md` directly: replace the
+To answer clarifications, edit `.dude/ideas/<NNN>-<slug>.md` directly: replace the
 `**Your answer:**` placeholder below each relevant question or adjust
 `## Assumptions`, then rerun
 brainstorm to re-normalize the file or `@dude define <slug>` to
@@ -638,7 +644,7 @@ snapshot is only as current as the last successful mirror or sync.
 
 ### Before you run `@dude track`
 
-- The current answers live in `.dude/ideas/<slug>.md`, not only in chat.
+- The current answers live in `.dude/ideas/<NNN>-<slug>.md`, not only in chat.
 - Exactly one flat idea shows `status: defined` and has `spec_path:` equal to
   the selected `.dude/specs/<feature>/spec.md` path.
 - If the idea changed, rerun `@dude define <slug>` first so the
@@ -685,11 +691,11 @@ package directly:
 @dude import tasks from .dude/specs/<feature>/ into Beads
 ```
 
-The coordinator scans only flat `.dude/ideas/*.md` children and requires
-exactly one idea with `status: defined` whose exact `spec_path:` matches the
-selected `.dude/specs/<feature>/spec.md`. If no such defined idea exists, run
-`@dude brainstorm <idea>` and `@dude define <slug>` first. Beads remains
-optional; without the beads pack, keep using `tasks.md` in Lightweight
+The coordinator scans only flat numbered `.dude/ideas/<NNN>-<slug>.md` children
+and requires exactly one idea with `status: defined` whose exact `spec_path:`
+matches the selected `.dude/specs/<feature>/spec.md`. If no such defined idea
+exists, run `@dude brainstorm <idea>` and `@dude define <slug>` first. Beads
+remains optional; without the beads pack, keep using `tasks.md` in Lightweight
 Execution.
 
 If you are switching from Lightweight Execution to Beads later, import the

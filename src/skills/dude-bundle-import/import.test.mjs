@@ -1938,7 +1938,7 @@ test('applyPlan accepts canonical ideas and creates the intended artifact', asyn
   const srcFile = path.join(root, 'security-reviewer.agent.md');
   try {
     fs.writeFileSync(srcFile, SOURCE_AGENT);
-    const ideaPath = path.join(root, '.dude/ideas/security-review.md');
+    const ideaPath = path.join(root, '.dude/ideas/001-security-review.md');
     fs.mkdirSync(path.dirname(ideaPath), { recursive: true });
     fs.writeFileSync(ideaPath, '# Canonical idea\n');
     const plan = reviewPlan(await analyze({ source: srcFile, root }));

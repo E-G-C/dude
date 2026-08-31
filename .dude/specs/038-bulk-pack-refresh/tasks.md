@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/bulk-pack-refresh.md#coordinator-log -->
+<!-- audit log: .dude/ideas/038-bulk-pack-refresh.md#coordinator-log -->
 
 # Tasks: Bulk Pack Refresh
 

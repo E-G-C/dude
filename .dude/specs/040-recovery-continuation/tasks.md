@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/recovery-continuation.md#coordinator-log -->
+<!-- audit log: .dude/ideas/040-recovery-continuation.md#coordinator-log -->
 
 # Tasks: Recovery Continuation
 

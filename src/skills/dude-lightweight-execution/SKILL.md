@@ -29,11 +29,11 @@ Task headers retain durable keys such as `T001@a1b2c3d4`, labels, descriptions, 
 The deterministic board helper parses, selects, renders, mutates, and detects manual completion:
 
 ```bash
-node .github/skills/dude-lightweight-execution/board.mjs next   .dude/specs/<feature>/tasks.md
-node .github/skills/dude-lightweight-execution/board.mjs ready  .dude/specs/<feature>/tasks.md --json
-node .github/skills/dude-lightweight-execution/board.mjs render .dude/specs/<feature>/tasks.md --write
-node .github/skills/dude-lightweight-execution/board.mjs set    .dude/specs/<feature>/tasks.md T0NN@sha8 done --write
-node .github/skills/dude-lightweight-execution/board.mjs diff   .dude/specs/<feature>/tasks.md
+node .github/skills/dude-lightweight-execution/board.mjs next   .dude/specs/<NNN>-<slug>/tasks.md
+node .github/skills/dude-lightweight-execution/board.mjs ready  .dude/specs/<NNN>-<slug>/tasks.md --json
+node .github/skills/dude-lightweight-execution/board.mjs render .dude/specs/<NNN>-<slug>/tasks.md --write
+node .github/skills/dude-lightweight-execution/board.mjs set    .dude/specs/<NNN>-<slug>/tasks.md T0NN@sha8 done --write
+node .github/skills/dude-lightweight-execution/board.mjs diff   .dude/specs/<NNN>-<slug>/tasks.md
 ```
 
 `render` and `set` print unless `--write` is present. Only the coordinator runs mutating commands. Every coordinator state change, render, reconciliation, accepted manual completion, and close outcome appends one UTC log event.
@@ -48,7 +48,7 @@ The boundary freshly rereads `tasks.md`, `.dude/state/task-state.json`, and the 
 
 ## Select And Route
 
-After ownership passes, read applicable spec, plan, and supporting artifacts. Stop if tasks are absent, malformed, or empty. Resume a clear `[~]` task first; otherwise select an eligible `[ ]` task, preferring a consistent generated Ready view, then respecting `[!]`, durable `deps:`, phase order, and `[P]` candidate work. `[P]` alone never authorizes fan-out; use `dude-parallel-dispatch` for that proof. Route through `dude-generic-routing`. Use `dude-work` only for continuous iteration.
+After ownership passes, read applicable spec, plan, and supporting artifacts. When a workflow selected an idea first, retain the inventory's returned exact numbered `ideaPath` and exact `spec_path:` binding; never rebuild an idea path from its slug. Stop if tasks are absent, malformed, or empty. Resume a clear `[~]` task first; otherwise select an eligible `[ ]` task, preferring a consistent generated Ready view, then respecting `[!]`, durable `deps:`, phase order, and `[P]` candidate work. `[P]` alone never authorizes fan-out; use `dude-parallel-dispatch` for that proof. Route through `dude-generic-routing`. Use `dude-work` only for continuous iteration.
 
 During continuous work, `dude-work` (`## Inspection And Recovery`) owns inspection and recovery policy. This skill retains Lightweight selection, claim and block mutation, close gates, history, rendering, and lint for each authorized action.
 
@@ -90,7 +90,7 @@ The where-are-we summary reports Current work (active plus blocked), Ready / Nex
 
 - `node .github/skills/dude-lightweight-execution/backlog.mjs --root .` (text Current / Planned / Completed orientation)
 - `node .github/skills/dude-lightweight-execution/backlog.mjs kanban --root .` (Mermaid for current work only)
-- `node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <idea-slug> --root .` (one defined package task `deps:` graph)
+- `node .github/skills/dude-lightweight-execution/backlog.mjs flowchart <slug> --root .` (one defined package task `deps:` graph; `<slug>` is the exact unnumbered frontmatter selector, not the numbered filename)
 
 The committed Markdown and self-contained HTML projections remain fixed at `.dude/backlog.md` and `.dude/backlog.html`. Freshness is mechanical. For direct `backlog.mjs` use:
 
@@ -103,7 +103,7 @@ If a guarded refresh fails after canonical state commits, the command exits `2`,
 
 Coordinator Log-only writes outside the autonomous boundary, brainstorm, definition, resolution, reopen, and backlog-order changes still require procedural `backlog.mjs generate --write`. The existing test and CI path runs the exact-byte check. Generation emits no wall-clock time, checkout name, or Git revision; unchanged authoritative input bytes render byte-identically in differently named roots.
 
-Both artifacts are derived projections and never authoritative. Idea frontmatter provides lifecycle and declared `depends-on:` relationships, canonical `tasks.md` provides execution, and optional `.dude/state/backlog-order.md` provides explicit order. A literal `depends-on: <slug>` marker written in the user-controlled `## Idea` body is displayed separately as provisional and non-authoritative; it never blocks, prioritizes, or orders work. When explicit order is absent, the report says `No explicit feature order declared`.
+Both artifacts are derived projections and never authoritative. Idea frontmatter provides lifecycle and declared `depends-on:` relationships, canonical `tasks.md` provides execution, and optional `.dude/state/backlog-order.md` provides explicit order. The report displays direct ledgers and uses their lifecycle numbers for chronological ordering inside the applicable lifecycle or work-state group only. A lifecycle number is never priority, dependency, explicit backlog order, phase, readiness, dispatch order, or execution order. A literal `depends-on: <slug>` marker written in the user-controlled `## Idea` body is displayed separately as provisional and non-authoritative; it never blocks, prioritizes, or orders work. When explicit order is absent, the report says `No explicit feature order declared`.
 
 Activity is labeled **Coordinator activity**. It contains only dated idea Coordinator Log entries grouped by calendar date, with stable same-date ordering by idea identity and append order. Git history, ad-hoc work outside Coordinator Logs, and other execution history sources are excluded.
 

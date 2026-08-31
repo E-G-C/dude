@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/simplify-pack-updates.md#coordinator-log -->
+<!-- audit log: .dude/ideas/037-simplify-pack-updates.md#coordinator-log -->
 
 # Tasks: Simplify Pack Updates
 

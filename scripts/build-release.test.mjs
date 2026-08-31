@@ -316,7 +316,7 @@ test('buildRelease stages a lint-clean core bundle with one profile per source a
     for (const [label, rel] of Object.entries(canonicalArtifacts)) {
       const text = fs.readFileSync(path.join(outDir, ...rel.split('/')), 'utf8');
       assert.match(text, /(?:@dude brainstorm <idea>|`brainstorm`)/, `${label} must expose brainstorm`);
-      assert.match(text, /\.dude\/ideas\/<slug>\.md/, `${label} must use the canonical idea ledger`);
+      assert.match(text, /\.dude\/ideas\/<NNN>-<slug>\.md/, `${label} must use the canonical idea ledger`);
       assert.doesNotMatch(text, /@dude draft/);
       assert.doesNotMatch(text, /\.dude\/brief/);
       assert.doesNotMatch(text, /(?:^|\n)## Draft/);

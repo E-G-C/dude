@@ -19,7 +19,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/specialist-attestation-producer.md#coordinator-log -->
+<!-- audit log: .dude/ideas/019-specialist-attestation-producer.md#coordinator-log -->
 
 <!-- canonical task units - only the coordinator mutates task state or metadata -->
 

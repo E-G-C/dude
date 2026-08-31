@@ -119,7 +119,7 @@ test('refuses an existing destination without --force, and a missing pack', () =
 test('scaffolds the intended agent with canonical ideas present', () => {
   const root = tmpRoot();
   try {
-    const ideaPath = path.join(root, '.dude/ideas/team-expansion.md');
+    const ideaPath = path.join(root, '.dude/ideas/001-team-expansion.md');
     fs.mkdirSync(path.dirname(ideaPath), { recursive: true });
     fs.writeFileSync(ideaPath, '# Canonical idea\n');
 

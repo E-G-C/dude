@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/backlog-report-usability.md#coordinator-log -->
+<!-- audit log: .dude/ideas/027-backlog-report-usability.md#coordinator-log -->
 
 # Tasks: Backlog Report Usability
 
