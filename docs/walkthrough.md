@@ -47,10 +47,10 @@ If you want a quick orientation checkpoint before editing the idea, run:
 @dude status
 ```
 
-In this phase, Dude should point you back to `.dude/ideas/authentication.md` as
-the live collaboration surface.
+In this first-feature example, Dude should point you back to
+`.dude/ideas/001-authentication.md` as the live collaboration surface.
 
-The normal result is a file like `.dude/ideas/authentication.md`:
+The normal result is a file like `.dude/ideas/001-authentication.md`:
 
 ```markdown
 ---
@@ -165,7 +165,7 @@ If definition pauses for guardrail approval first, use the setup guidance in
 [Setup and first feature](setup.md) as the expected interaction shape, then
 expect the completed package above.
 
-Once definition completes, the same `.dude/ideas/authentication.md` should read
+Once definition completes, the same `.dude/ideas/001-authentication.md` should read
 `status: defined`, have `spec_path:` set exactly to
 `.dude/specs/001-authentication/spec.md`, and contain an appended definition
 event in `## Coordinator Log`. If intent changes later, return to `## Idea` and

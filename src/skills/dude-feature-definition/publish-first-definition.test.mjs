@@ -8,8 +8,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT = fileURLToPath(new URL("./publish-first-definition.mjs", import.meta.url));
-const IDEA_PATH = ".dude/ideas/direct-draft.md";
-const SPEC_PATH = ".dude/specs/023-first-publish-fixture/spec.md";
+const IDEA_PATH = ".dude/ideas/023-direct-draft.md";
+const SPEC_PATH = ".dude/specs/023-direct-draft/spec.md";
 const PACKAGE_DIRECTORY = path.posix.dirname(SPEC_PATH);
 const SENTINEL_PATH = "unrelated-sentinel.bin";
 const STAGE_NAMES = Object.freeze([
@@ -274,7 +274,7 @@ test("canonical lint failure rolls back the owner and helper-created package tre
     const badTasks = replaceBytes(
       stageBytes["tasks.md"],
       `<!-- audit log: ${IDEA_PATH}#coordinator-log -->`,
-      "<!-- audit log: .dude/ideas/not-the-owner.md#coordinator-log -->",
+      "<!-- audit log: .dude/ideas/023-not-the-owner.md#coordinator-log -->",
     );
     fs.writeFileSync(path.join(stage, "tasks.md"), badTasks);
     const before = snapshotTree(root);
@@ -334,6 +334,88 @@ test("a valid resolved current preimage refuses first publication without writes
       "tasks.md": null,
     });
     assertNoAtomicTempResidue(root);
+  });
+});
+
+test("first-definition preserves optional canonical depends-on while rejecting changed and unknown frontmatter", async (context) => {
+  const addFrontmatterLine = (bytes, line) => replaceBytes(
+    bytes,
+    "---\n\n## Idea",
+    `${line}\n---\n\n## Idea`,
+  );
+
+  await context.test("matching depends-on bytes publish", () => {
+    withFixture(({ root, stage, stageBytes }) => {
+      // Arrange
+      const current = addFrontmatterLine(stageBytes["current-idea.md"], "depends-on: foundation");
+      const staged = addFrontmatterLine(stageBytes["staged-idea.md"], "depends-on: foundation");
+      stageBytes["current-idea.md"] = current;
+      stageBytes["staged-idea.md"] = staged;
+      write(root, IDEA_PATH, current);
+      fs.writeFileSync(path.join(stage, "current-idea.md"), current);
+      fs.writeFileSync(path.join(stage, "staged-idea.md"), staged);
+      const before = snapshotTree(root);
+
+      // Act
+      const result = publish(root, stage);
+
+      // Assert
+      assert.ifError(result.error);
+      assert.equal(result.signal, null);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stderr, "");
+      assert.equal(result.stdout, `${SPEC_PATH}\n`);
+      assert.deepEqual(snapshotTree(root), expectedSuccessTree(before, stageBytes));
+      assertNoAtomicTempResidue(root);
+    });
+  });
+
+  await context.test("changed depends-on bytes refuse without writes", () => {
+    withFixture(({ root, stage, stageBytes }) => {
+      // Arrange
+      const current = addFrontmatterLine(stageBytes["current-idea.md"], "depends-on: foundation");
+      const staged = addFrontmatterLine(stageBytes["staged-idea.md"], "depends-on: other-foundation");
+      write(root, IDEA_PATH, current);
+      fs.writeFileSync(path.join(stage, "current-idea.md"), current);
+      fs.writeFileSync(path.join(stage, "staged-idea.md"), staged);
+      const before = snapshotTree(root);
+
+      // Act
+      const result = publish(root, stage);
+
+      // Assert
+      assert.ifError(result.error);
+      assert.equal(result.signal, null);
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, "[FAIL] staged idea must preserve depends-on bytes\n");
+      assert.deepEqual(snapshotTree(root), before);
+      assertNoAtomicTempResidue(root);
+    });
+  });
+
+  await context.test("unknown staged frontmatter refuses without writes", () => {
+    withFixture(({ root, stage, stageBytes }) => {
+      // Arrange
+      const staged = addFrontmatterLine(stageBytes["staged-idea.md"], "priority: urgent");
+      fs.writeFileSync(path.join(stage, "staged-idea.md"), staged);
+      const before = snapshotTree(root);
+
+      // Act
+      const result = publish(root, stage);
+
+      // Assert
+      assert.ifError(result.error);
+      assert.equal(result.signal, null);
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.equal(
+        result.stderr,
+        "[FAIL] staged idea frontmatter is malformed (frontmatter key 'priority' is not a canonical owner key)\n",
+      );
+      assert.deepEqual(snapshotTree(root), before);
+      assertNoAtomicTempResidue(root);
+    });
   });
 });
 

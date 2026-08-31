@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { classifyPath, TIER } from '../dude-engine/lib/ownership.mjs';
-import { inventoryDefinedFeatures } from '../dude-engine/lib/feature.mjs';
+import { inventoryLifecycleIdentities } from '../dude-engine/lib/feature.mjs';
 import { loadAgentModelConfig } from '../dude-engine/lib/agent-model-map.mjs';
 import {
   BOARD_END as TASK_BOARD_END,
@@ -27,6 +27,7 @@ import {
 import { parseProfileDocument } from '../dude-engine/lib/profile.mjs';
 import { WORKSPACE_PATHS } from '../dude-engine/lib/workspace-paths.mjs';
 import { parseTaskState } from '../dude-engine/lib/task-state.mjs';
+import { scanObjectiveRegistry } from '../dude-work/recovery.mjs';
 
 const ROOT = path.resolve(process.argv[2] || '.');
 
@@ -463,7 +464,7 @@ try {
   fail(`.github/skills/dude-engine/config/agent-models.json  ${error instanceof Error ? error.message : String(error)}`);
 }
 
-const featureInventory = inventoryDefinedFeatures({ root: ROOT });
+const featureInventory = inventoryLifecycleIdentities({ root: ROOT });
 for (const diagnostic of featureInventory.diagnostics) {
   const report = diagnostic.severity === 'error' ? fail : warn;
   report(`${diagnostic.path}  ${diagnostic.message} [${diagnostic.code}]`);
@@ -477,6 +478,33 @@ for (const feature of featureInventory.features) {
   featuresByIdeaPath.set(feature.ideaPath, feature);
   if (!ideaOwners.has(feature.specPath)) ideaOwners.set(feature.specPath, []);
   ideaOwners.get(feature.specPath)?.push(feature);
+}
+
+for (const featurePackage of featureInventory.packages) {
+  const planRel = `${featurePackage.directoryPath}/plan.md`;
+  const planIssue = unsafeRegularFileDetail(planRel);
+  if (planIssue) continue;
+  const scan = scanObjectiveRegistry(read(path.join(ROOT, ...planRel.split('/'))));
+  if (scan.status === 'malformed') {
+    fail(`${planRel}  active ObjectiveRegistry region is malformed`);
+    continue;
+  }
+  if (scan.status === 'none') continue;
+  const registry = /** @type {Record<string, unknown>} */ (scan.registry);
+  const registryOwner = /** @type {Record<string, unknown>} */ (registry.owner);
+  const owners = ideaOwners.get(featurePackage.specPath) ?? [];
+  if (owners.length !== 1
+    || registryOwner.specPath !== featurePackage.specPath
+    || registryOwner.ideaPath !== owners[0].ideaPath) {
+    const candidates = owners.length > 0
+      ? owners.map((owner) => owner.ideaPath).join(', ')
+      : '(none)';
+    fail(
+      `${planRel}  active ObjectiveRegistry owner must be the exact current owner of `
+      + `${featurePackage.specPath}; found ${String(registryOwner.ideaPath)} / `
+      + `${String(registryOwner.specPath)}; candidate owners: ${candidates}`,
+    );
+  }
 }
 
 for (const file of structuralIdeaFiles()) {
@@ -600,7 +628,7 @@ for (const file of walkMatch(path.join(ROOT, ...WORKSPACE_PATHS.SPECS_DIR.split(
     } else {
       fail(
         `${rel}:${audit.lineNo}  first canonical line must be exactly `
-        + `'<!-- audit log: .dude/ideas/<slug>.md#coordinator-log -->'`,
+        + `'<!-- audit log: .dude/ideas/<NNN>-<slug>.md#coordinator-log -->'`,
       );
     }
   }

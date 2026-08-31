@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/simplify-context-footprint-audit.md#coordinator-log -->
+<!-- audit log: .dude/ideas/006-simplify-context-footprint-audit.md#coordinator-log -->
 
 # Tasks: Retire Context Footprint Audit
 

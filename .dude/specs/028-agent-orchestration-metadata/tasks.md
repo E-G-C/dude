@@ -28,7 +28,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/agent-orchestration-metadata.md#coordinator-log -->
+<!-- audit log: .dude/ideas/028-agent-orchestration-metadata.md#coordinator-log -->
 
 # Tasks: Agent Orchestration Metadata
 

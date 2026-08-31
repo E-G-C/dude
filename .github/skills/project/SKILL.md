@@ -17,7 +17,9 @@ description: "Project-specific domain knowledge, conventions, and patterns. Upda
 
 - The human decides desired outcome, hard constraints, and approvals; Dude owns normalization, routing, metadata bookkeeping, and handoff.
 - If the user's first substantive request already answers the three onboarding questions, treat onboarding as satisfied and move directly to the next workflow step.
-- `@dude brainstorm <idea>` is the sole intake command; it creates or refreshes the flat `.dude/ideas/<slug>.md` working ledger before definition.
+- `@dude brainstorm <idea>` is the sole intake command; it creates or refreshes one direct `.dude/ideas/<NNN>-<slug>.md` working ledger before definition. The normal selector is the exact unnumbered frontmatter `slug:`; an explicit idea path must match the direct ledger exactly.
+- First definition reuses the selected ledger's `<NNN>` and exact slug for `.dude/specs/<NNN>-<slug>/`. For package-bound work, carry the resolved exact owner path and require exact `spec_path:` ownership; never infer an owner from a number, slug, filename, or package name.
+- A lifecycle number records capture chronology only. It never determines priority, dependency, backlog or roadmap order, task phase, readiness, dispatch, or execution order.
 - Refresh `.dude/specs/<feature>/` artifacts via `@dude define` instead of hand-maintaining generated state.
 - `@dude status` is a read-only orientation command across definition, Lightweight Execution, and Tracked Execution; it must not import or mutate work.
 - `status:`, `spec_path:`, and `## Coordinator Log` are Dude-maintained workflow metadata.

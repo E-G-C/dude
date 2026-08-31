@@ -6,7 +6,7 @@ Durable project and process decisions that Dude should preserve.
 
 ### Lanes And Onboarding
 
-- Brainstorm-first workflow: `@dude brainstorm <idea>` captures one flat `.dude/ideas/<slug>.md` ledger with user-controlled `## Idea`; `@dude define <slug>` promotes it into `.dude/specs/<feature>/`. `@dude draft` is a deprecated compatibility alias that delegates to brainstorm and never selects legacy storage. `@dude track` remains the normal handoff into Beads, with explicit manual import as a fallback.
+- Brainstorm-first workflow: `@dude brainstorm <idea>` assigns the next permanent lifecycle number and captures one flat `.dude/ideas/<NNN>-<slug>.md` ledger with user-controlled `## Idea`; the exact unnumbered frontmatter `slug:` remains the semantic selector. `@dude define <slug>` reuses that number for `.dude/specs/<NNN>-<slug>/`. `@dude draft` is a deprecated compatibility alias that delegates to brainstorm and never selects legacy storage. `@dude track` remains the normal handoff into Beads, with explicit manual import as a fallback.
 - First-run default: one small feature through Definition Only. If the user wants implementation and does not explicitly ask for Beads, default to Lightweight Execution instead of requiring a three-way lane choice. Ask humans only the questions that materially change scope, hard constraints, approvals, or routing.
 - Onboarding: in a fresh repo with no active `.dude/ideas/` or `.dude/specs/` artifacts, proactively open with the three-question sequence (one feature vs many, implement-now vs define, hard constraints). If the first substantive request already answers them, treat onboarding as satisfied and move on without re-asking.
 
@@ -21,7 +21,7 @@ Durable project and process decisions that Dude should preserve.
 ### Definition Packages
 
 - Lean by default: create only artifacts that materially apply to the feature; omit placeholder files for non-applicable domains.
-- `.dude/specs/` numbering is monotonic — use `max existing prefix + 1` and never reuse deleted numbers.
+- Lifecycle numbering is monotonic at first brainstorm: use the greatest valid prefix across direct ideas and packages plus one, never reuse a lower gap, and stop at `999`. First definition reuses the selected idea's number rather than allocating a package number.
 - `status:`, `spec_path:`, and `## Coordinator Log` are Dude-maintained workflow metadata.
 
 ### Guardrails
@@ -39,7 +39,7 @@ Durable project and process decisions that Dude should preserve.
 
 ### Identity And Reconciliation
 
-- Canonical feature identity is shared across definition and execution: the uniquely owning idea's exact `spec_path` must match the Beads issue description `spec:` prefix (see `dude-pack-beads-spec-import` `## Canonical Feature Identity`). If `spec_path` changes after import — or after Lightweight Execution has already recorded checked task history — reconcile by durable task key. If the mapping is ambiguous, pause `@dude track`, report surviving versus changed or ambiguous completions, and ask the user to confirm which checkmarks survive.
+- Canonical feature identity is shared across definition and execution: the uniquely owning idea's exact `spec_path` must match the Beads issue description `spec:` prefix (see `dude-pack-beads-spec-import` `## Canonical Feature Identity`). Matching lifecycle numbers, slugs, or filenames never infer ownership. Lifecycle numbers show capture chronology only, not priority, dependency, or execution order. If `spec_path` changes after import — or after Lightweight Execution has already recorded checked task history — reconcile by durable task key. If the mapping is ambiguous, pause `@dude track`, report surviving versus changed or ambiguous completions, and ask the user to confirm which checkmarks survive.
 
 ### Architecture And Packs
 
@@ -51,4 +51,4 @@ Durable project and process decisions that Dude should preserve.
 - Tag-driven release versioning is the project standard for both GitHub Actions and Azure Pipelines: derive the package version from the `v*` tag before packaging, and sync `package.json` plus `package-lock.json` back to the default branch (direct push when allowed, PR fallback when branch protection blocks it).
 
 ### Current-Only Supersessions
-- Current-only workflow: `@dude brainstorm <idea>` is the sole intake command and `@dude define <slug>` promotes its canonical ledger; supported lifecycle verbs are `brainstorm`, `define`, `track`, `work`, `flag`, `status`, `diff`, and `self-check`, with no active compatibility aliases; project state uses only canonical `.dude/` surfaces, and unsupported older Dude layouts require external/manual recovery rather than an in-bundle migration or reconciliation path.
+- Current-only workflow: `@dude brainstorm <idea>` is the sole intake command and creates or refreshes a canonical numbered idea ledger; `@dude define <slug>` promotes that exact ledger with the same lifecycle number. The supported lifecycle verbs are `brainstorm`, `define`, `track`, `work`, `flag`, `status`, `diff`, and `self-check`, with no active compatibility aliases; project state uses only canonical `.dude/` surfaces, and unsupported older Dude layouts require external/manual recovery rather than an in-bundle migration or reconciliation path.

@@ -19,7 +19,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/autonomous-review-escalation-precedence.md#coordinator-log -->
+<!-- audit log: .dude/ideas/014-autonomous-review-escalation-precedence.md#coordinator-log -->
 
 # Tasks: Autonomous Review Escalation Precedence
 

@@ -18,7 +18,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/historical-core-dogfood-fixture-repair.md#coordinator-log -->
+<!-- audit log: .dude/ideas/011-historical-core-dogfood-fixture-repair.md#coordinator-log -->
 
 # Tasks: Historical Core Dogfood Fixture Repair
 

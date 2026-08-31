@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/upgrade-pack-guidance-correction.md#coordinator-log -->
+<!-- audit log: .dude/ideas/036-upgrade-pack-guidance-correction.md#coordinator-log -->
 
 # Tasks: Upgrade Pack Guidance Correction
 

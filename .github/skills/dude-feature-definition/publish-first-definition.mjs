@@ -7,7 +7,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { parseFrontmatterScalars, parseSpecIdentity } from '../dude-engine/lib/feature-identity.mjs';
+import { inventoryLifecycleIdentities } from '../dude-engine/lib/feature.mjs';
+import {
+  parseFrontmatterScalars,
+  parseIdeaIdentity,
+  parseSpecIdentity,
+} from '../dude-engine/lib/feature-identity.mjs';
 import { scanMarkdownVisibility } from '../dude-engine/lib/tasks.mjs';
 import { applyAtomicFileBatch } from './atomic-file-batch.mjs';
 
@@ -19,9 +24,9 @@ const STAGE_NAMES = Object.freeze([
   'plan.md',
   'tasks.md',
 ]);
-const OWNER_KEYS = Object.freeze(['title', 'slug', 'status', 'spec_path']);
+const OWNER_KEYS = Object.freeze(['title', 'slug', 'status', 'spec_path', 'depends-on']);
+const REQUIRED_OWNER_KEYS = Object.freeze(['title', 'slug', 'status', 'spec_path']);
 const PROTECTED_SECTIONS = Object.freeze(['Idea', 'Open Questions', 'Assumptions']);
-const IDEA_PATH = /^\.dude\/ideas\/[^/\\#\s]+\.md$/;
 const LEVEL_TWO_HEADING = /^ {0,3}##(?:[ \t]+|$)/;
 const COORDINATOR_LOG_HEADING = /^ {0,3}##[ \t]+Coordinator Log(?:[ \t]+#+)?[ \t]*$/;
 const MANAGED_END = '<!-- dude:managed:end -->';
@@ -56,14 +61,15 @@ function parseArguments(args) {
   const idea = /** @type {string} */ (options.get('--idea'));
   const spec = /** @type {string} */ (options.get('--spec'));
   const stage = /** @type {string} */ (options.get('--stage'));
-  if (!IDEA_PATH.test(idea) || idea.includes('\0')) {
-    throw new Error('--idea must be a direct .dude/ideas/<slug>.md path');
-  }
-  if (!parseSpecIdentity(spec)) {
-    throw new Error('--spec must be a direct .dude/specs/<feature>/spec.md path');
+  const ideaIdentity = parseIdeaIdentity(idea);
+  if (!ideaIdentity) throw new Error('--idea must be an exact numbered direct idea path');
+  const specIdentity = parseSpecIdentity(spec);
+  if (!specIdentity) throw new Error('--spec must be an exact numbered direct feature spec path');
+  if (ideaIdentity.number !== specIdentity.number || ideaIdentity.slug !== specIdentity.slug) {
+    throw new Error('--spec must reuse the selected idea number and slug');
   }
   if (!path.isAbsolute(stage)) throw new Error('--stage must be an absolute directory path');
-  return { root, idea, spec, stage };
+  return { root, idea, spec, stage, ideaIdentity, specIdentity };
 }
 
 /** @param {string} stagePath */
@@ -102,7 +108,7 @@ function readStage(stagePath) {
 function parseOwnerFrontmatter(bytes, state) {
   try {
     const parsed = parseFrontmatterScalars(bytes, { canonicalKeys: OWNER_KEYS });
-    for (const key of OWNER_KEYS) {
+    for (const key of REQUIRED_OWNER_KEYS) {
       if (!parsed.scalars.has(key)) throw new Error(`missing ${key}:`);
     }
     return parsed;
@@ -205,9 +211,10 @@ function validateOwnerTransition(current, staged, specPath) {
 
   const currentLines = scanMarkdownVisibility(current, 'current idea', 'generic').lines;
   const stagedLines = scanMarkdownVisibility(staged, 'staged idea', 'generic').lines;
-  for (const key of ['title', 'slug']) {
+  for (const key of ['title', 'slug', 'depends-on']) {
     const currentScalar = currentFrontmatter.scalars.get(key);
     const stagedScalar = stagedFrontmatter.scalars.get(key);
+    if (key === 'depends-on' && !currentScalar && !stagedScalar) continue;
     const currentLine = currentScalar && currentLines[currentScalar.lineIndex];
     const stagedLine = stagedScalar && stagedLines[stagedScalar.lineIndex];
     if (!currentLine || !stagedLine
@@ -245,7 +252,33 @@ function main() {
   validateOwnerTransition(currentIdea, stagedIdea, options.spec);
 
   const root = path.resolve(options.root);
+  const inventory = inventoryLifecycleIdentities({ root });
+  const errors = inventory.diagnostics.filter((diagnostic) => diagnostic.severity === 'error');
+  if (errors.length > 0) {
+    throw new Error(`lifecycle inventory is unsafe (${errors.map((item) => `${item.path}: ${item.message}`).join('; ')})`);
+  }
+  const selected = inventory.ideas.filter((idea) => idea.ideaPath === options.idea);
+  if (selected.length !== 1
+    || selected[0].number !== options.ideaIdentity.number
+    || selected[0].slug !== options.ideaIdentity.slug
+    || selected[0].status !== 'draft'
+    || selected[0].specPath !== '') {
+    throw new Error('selected idea is not one exact numbered draft in the current inventory');
+  }
+  if (inventory.packages.some((featurePackage) => (
+    featurePackage.number === options.ideaIdentity.number
+    || featurePackage.specPath === options.spec
+  ))) {
+    throw new Error(`selected lifecycle number ${options.ideaIdentity.number} already has a feature package claim`);
+  }
+
   const packageDirectory = path.posix.dirname(options.spec);
+  try {
+    fs.lstatSync(path.join(root, ...packageDirectory.split('/')));
+    throw new Error(`target feature package already exists: ${packageDirectory}`);
+  } catch (error) {
+    if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
   applyAtomicFileBatch({
     root,
     changes: [

@@ -1806,7 +1806,7 @@ test('upgrade apply accepts and preserves a canonical idea without reporting leg
     const manifestPath = path.join(root, '.dude/metadata/bundle-manifest.md');
     fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
     fs.writeFileSync(manifestPath, manifest);
-    const ideaPath = path.join(root, '.dude/ideas/x.md');
+    const ideaPath = path.join(root, '.dude/ideas/001-x.md');
     fs.mkdirSync(path.dirname(ideaPath), { recursive: true });
     fs.writeFileSync(ideaPath, 'canonical idea sentinel\n');
 

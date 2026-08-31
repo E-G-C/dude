@@ -22,7 +22,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/automatic-unchanged-intent-redefinition.md#coordinator-log -->
+<!-- audit log: .dude/ideas/015-automatic-unchanged-intent-redefinition.md#coordinator-log -->
 <!-- canonical task units - only the coordinator mutates task state -->
 
 # Tasks: Automatic Unchanged-Intent Redefinition

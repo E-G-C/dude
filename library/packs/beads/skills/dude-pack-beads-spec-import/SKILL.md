@@ -13,7 +13,7 @@ Defined ideas point at definition packages through `spec_path:`. The coordinator
 
 One value identifies a defined feature across the idea ledger and Beads:
 
-- Exactly one direct regular Markdown child of flat `.dude/ideas/` must have `status: defined` and a `spec_path:` equal to the feature's canonical workspace-relative `spec.md` path (for example, `.dude/specs/001-feature-name/spec.md`). This idea is the owner; never infer its slug from the feature directory or translate an alternate identity.
+- Exactly one direct regular numbered `.dude/ideas/<NNN>-<slug>.md` ledger must have `status: defined` and a `spec_path:` equal to the feature's canonical workspace-relative `spec.md` path (for example, `.dude/specs/001-feature-name/spec.md`). This idea is the owner; carry its exact path, and never infer it from the number, slug, filename, or feature directory or translate an alternate identity.
 - Every Beads issue imported from that feature carries the same value as a **structured first line** in its `--description`: `spec: .dude/specs/001-feature-name/spec.md`.
 - A feature is considered "already represented in Beads" iff at least one issue from the complete Beads inventory satisfies `description.split(/\r?\n/, 1)[0] === 'spec: <spec_path>'`, where `<spec_path>` is the idea's exact value. Query that inventory with `bd list --all --limit 0 --json`; prefix matching is forbidden because `.dude/specs/x/spec.md-collision` is a different identity.
 
@@ -82,7 +82,7 @@ Task headers in the **`T9001`–`T9999`** range live in the reserved discovered 
 
 ### Automatic mode (`@dude track`)
 
-- Scan only direct regular `.md` children of flat `.dude/ideas/` for files with `status: defined` and a populated canonical `spec_path:`.
+- Scan only direct regular numbered `.dude/ideas/<NNN>-<slug>.md` ledgers for files with `status: defined` and a populated canonical `spec_path:`.
 - Reject duplicate exact `spec_path:` values across defined ideas before creating anything.
 - Run `bd list --all --limit 0 --json` so closed, deferred, and boards larger than the default cap participate in discovery. For each defined entry, require exact first-line equality as defined above. If no issue matches, import the feature; otherwise skip it.
 - Before creating anything, reject duplicate durable task keys in `tasks.md`, duplicate durable-key mappings in existing issues for the feature, and more than one feature epic carrying the same exact identity.
@@ -94,7 +94,7 @@ Task headers in the **`T9001`–`T9999`** range live in the reserved discovered 
 Manual import still requires one uniquely owning defined idea as the identity source:
 
 - Resolve the feature directory from the user's input or from `.dude/specs/`.
-- Scan flat `.dude/ideas/` for exactly one defined idea whose exact canonical `spec_path` matches `<selected-dir>/spec.md`. If no matching idea exists, stop and tell the user to run `@dude brainstorm <feature>` and then `@dude define <slug>`.
+- Scan direct numbered `.dude/ideas/<NNN>-<slug>.md` ledgers for exactly one defined idea whose exact canonical `spec_path` matches `<selected-dir>/spec.md`. If no matching idea exists, stop and tell the user to run `@dude brainstorm <feature>` and then `@dude define <slug>`.
 - Once the unique idea is found, use its exact `spec_path` as the canonical identity for the import.
 - Do not guess when multiple feature directories exist in manual mode.
 

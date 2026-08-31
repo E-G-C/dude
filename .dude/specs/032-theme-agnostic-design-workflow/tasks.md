@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/theme-agnostic-design-workflow.md#coordinator-log -->
+<!-- audit log: .dude/ideas/032-theme-agnostic-design-workflow.md#coordinator-log -->
 
 # Tasks: Theme-Agnostic And Technology-Independent Design Workflow
 

@@ -9,7 +9,7 @@ Static validator for the bundle's structural conventions.
 
 ## Purpose
 
-Catch the structural mistakes that would otherwise surface as runtime drift: malformed ideas, ambiguous feature ownership, invalid task audit breadcrumbs, fence imbalance, stale `spec_path:` pointers, duplicate task IDs, oversized memory files, skill frontmatter/name drift, bundle manifest shape violations, orphaned agent-handle references, orphaned skill-path references, and source-only `model-class` leaking into an owned generated Copilot profile.
+Catch the structural mistakes that would otherwise surface as runtime drift: malformed numbered ideas, ambiguous feature ownership, invalid task audit breadcrumbs, fence imbalance, stale `spec_path:` pointers, duplicate task IDs, oversized memory files, skill frontmatter/name drift, bundle manifest shape violations, orphaned agent-handle references, orphaned skill-path references, and source-only `model-class` leaking into an owned generated Copilot profile.
 
 The linter is **read-only** and dependency-free beyond Node.js itself (Node >= 20 LTS, standard library only). It runs as a single Node script (`lint.mjs`). Node is a documented maintenance-time dependency: it is required only to run bundle tooling such as this linter and `@dude upgrade`, not for normal project work.
 
@@ -70,18 +70,19 @@ node --test .github/skills/dude-engine/lib/ownership.test.mjs
 
 1. **Idea files** (`.dude/ideas/*.md`)
    - Only direct regular `.md` children are supported. A nested directory, non-Markdown file, symbolic link, non-regular entry, or unsafe canonical root/ancestor fails with its path.
+   - Canonical current-format identity is exactly `.dude/ideas/<NNN>-<slug>.md`, with ASCII `001` through `999` and a suffix exactly matching frontmatter `slug:`. Unnumbered, malformed, out-of-range, duplicate-number, duplicate-slug, and filename/slug-mismatch identities fail.
    - Strict YAML frontmatter is present, including unique scalar keys and balanced quoted scalars.
    - `status:` is exactly `draft`, `defined`, or `resolved`. An exact
      `resolved` ledger has an exactly empty unnormalized `spec_path:` and no
      definition owner; any other resolved shape fails canonical ownership validation.
-   - When `status: defined`, `spec_path:` is set, structurally matches `.dude/specs/<feature>/spec.md` with forward slashes, and resolves to an existing file (not a directory).
+   - When `status: defined`, `spec_path:` is set, structurally matches `.dude/specs/<NNN>-<slug>/spec.md` with forward slashes, resolves to an existing file (not a directory), and has the matching lifecycle number and slug. Exact `spec_path:` remains the sole owner relation.
    - `<!-- dude:managed:start -->` / `<!-- dude:managed:end -->` fence pairs are both balanced **and** well-ordered (start, end, start, end, ...). Out-of-order or nested regions fail with the offending line number.
    - Exactly one real `## Idea` and exactly one real `## Coordinator Log` heading exist outside CommonMark backtick and tilde fenced blocks. Missing or duplicate headings fail; a noncanonical `## User Draft` heading is not valid in a canonical idea.
    - Every defined `spec_path:` has one unique idea owner. Duplicate owners fail and report every conflicting idea path.
 
 2. **Task files** (`.dude/specs/*/tasks.md`)
    - Every file carries one exact audit breadcrumb. In an unrendered file it is the literal first line. In a rendered file, the recognized board block plus canonical notice form a generated preamble, and the breadcrumb is the **first canonical line** immediately after that preamble. A similar comment later in the file is not accepted.
-   - Canonical form is exactly `<!-- audit log: .dude/ideas/<slug>.md#coordinator-log -->`, where `<slug>.md` is a direct idea filename. The target must exist and be the unique defined idea whose exact `spec_path:` equals the package's sibling `spec.md`; missing targets, mismatches, missing owners, and duplicate owners fail with the package, breadcrumb, and candidate paths.
+   - Canonical form is exactly `<!-- audit log: .dude/ideas/<NNN>-<slug>.md#coordinator-log -->`, where the target is the exact current direct owner filename. The target must exist and be the unique defined idea whose exact `spec_path:` equals the package's sibling `spec.md`; matching numbers, slugs, titles, or directories never establish ownership. Missing targets, mismatches, missing owners, and duplicate owners fail with the package, breadcrumb, and candidate paths.
    - `<!-- dude:board:start -->` / `<!-- dude:board:end -->` fence pairs are balanced, ordered, and at most one pair exists. When the fence sequence is malformed, the parser does **not** enter board-skip mode, so canonical task rows after a stray fence are still validated.
    - The generated board region is ignored for canonical task validation.
    - `## Lightweight Execution History` is terminal archive context: task rows inside it are ignored. Sections after history (for example a `## Notes` appendix) are allowed and parsed normally, but a duplicate `## Lightweight Execution History` heading fails, and any canonical task row that appears below history fails so active or mirrored task rows cannot be hidden under the archive.
@@ -92,7 +93,7 @@ node --test .github/skills/dude-engine/lib/ownership.test.mjs
    - No duplicate canonical task IDs within the same file.
 
 3. **Task-state snapshot** (`.dude/state/task-state.json`)
-   - Fail malformed JSON or keys that do not match `.dude/specs/<feature>/tasks.md`.
+   - Fail malformed JSON or keys that do not match `.dude/specs/<NNN>-<slug>/tasks.md`.
 
 4. **Memory files** (`.dude/memory/*.md`)
    - Warn when top-level `- ` bullet count exceeds 20 (per `dude-memory-ledger` consolidation threshold).

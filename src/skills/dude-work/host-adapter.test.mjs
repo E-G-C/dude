@@ -1005,7 +1005,7 @@ function sealedLaneApplication(permit, overrides = {}) {
   return {
     root: '/tmp/sealed-lane-root',
     owner: {
-      ideaPath: '.dude/ideas/autonomous-runstate-continuity.md',
+      ideaPath: '.dude/ideas/018-autonomous-runstate-continuity.md',
       specPath: TARGET.specPath,
       ownerCapture: { base64: '', sha256: sha256(''), byteLength: 0 },
       ownerBindingHash: sha256('sealed-owner-binding'),
@@ -1605,7 +1605,7 @@ function sealedRecordInput(root, overrides = {}) {
 /** @param {(root:string)=>unknown} run */
 function withSealedWorkspace(run) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dude-host-adapter-')));
-  const ideaPath = '.dude/ideas/autonomous-runstate-continuity.md';
+  const ideaPath = '.dude/ideas/018-autonomous-runstate-continuity.md';
   const tasksPath = `${TARGET.specPath.slice(0, -'spec.md'.length)}tasks.md`;
   const planPath = `${TARGET.specPath.slice(0, -'spec.md'.length)}plan.md`;
   try {
@@ -1745,7 +1745,7 @@ nodeTest('authorize-attempt deterministically issues and consumes the real auton
     const input = sealedInspectionInput(root, { policyMode: 'autonomous' });
     const inspection = inspect(input);
     const tasksPath = `${TARGET.specPath.slice(0, -'spec.md'.length)}tasks.md`;
-    const ideaPath = '.dude/ideas/autonomous-runstate-continuity.md';
+    const ideaPath = '.dude/ideas/018-autonomous-runstate-continuity.md';
     const tasks = fs.readFileSync(path.join(root, tasksPath));
     const owner = fs.readFileSync(path.join(root, ideaPath));
     const taskState = Buffer.from(canonicalJson({ version: 1, tasks: [] }));
@@ -3645,7 +3645,7 @@ nodeTest('checkpoint dependencies and the workspace binding are required togethe
 });
 
 const TASKS_PATH = `${TARGET.specPath.slice(0, -'spec.md'.length)}tasks.md`;
-const IDEA_PATH = '.dude/ideas/autonomous-runstate-continuity.md';
+const IDEA_PATH = '.dude/ideas/018-autonomous-runstate-continuity.md';
 const TASK_STATE_PATH = '.dude/state/task-state.json';
 
 /** @param {string} root */
@@ -4069,7 +4069,7 @@ nodeTest('a pending definition reconciliation refuses autonomous attestation wit
         action: 'reconcile-derived-definition',
         materialInputs: {
           targets: [
-            '.dude/ideas/autonomous-runstate-continuity.md',
+            '.dude/ideas/018-autonomous-runstate-continuity.md',
             `${packageRoot}plan.md`,
             `${packageRoot}spec.md`,
             `${packageRoot}tasks.md`,

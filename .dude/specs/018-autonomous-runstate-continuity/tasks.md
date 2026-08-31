@@ -20,7 +20,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/autonomous-runstate-continuity.md#coordinator-log -->
+<!-- audit log: .dude/ideas/018-autonomous-runstate-continuity.md#coordinator-log -->
 
 # Tasks: Autonomous RunState Continuity
 

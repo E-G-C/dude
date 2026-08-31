@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/transactional-pack-refresh.md#coordinator-log -->
+<!-- audit log: .dude/ideas/031-transactional-pack-refresh.md#coordinator-log -->
 
 # Tasks: Transactional Pack Refresh
 

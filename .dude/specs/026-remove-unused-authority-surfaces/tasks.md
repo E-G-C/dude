@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/remove-unused-authority-surfaces.md#coordinator-log -->
+<!-- audit log: .dude/ideas/026-remove-unused-authority-surfaces.md#coordinator-log -->
 
 # Tasks: Remove Unused Authority Surfaces
 

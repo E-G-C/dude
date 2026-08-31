@@ -7,7 +7,7 @@ input for `@dude brainstorm`.
 
 The same three lanes apply when you start from a PRD draft. Dude does not send
 the PRD directly to Beads. Brainstorm first captures the source in one flat
-`.dude/ideas/<slug>.md` collaboration file without creating a spec package;
+`.dude/ideas/<NNN>-<slug>.md` collaboration file without creating a spec package;
 define then creates the normal package under `.dude/specs/<feature>/`. Stop
 there for Definition Only, continue from `tasks.md` for Lightweight Execution,
 or run `@dude track` if you want Tracked Execution.
@@ -16,7 +16,7 @@ or run `@dude track` if you want Tracked Execution.
 
 1. Write or collect your PRD draft or product brief in markdown.
 2. Ask `@dude` to brainstorm that input.
-3. Let `@dude-spec-lead` normalize it inside `.dude/ideas/<slug>.md`.
+3. Let `@dude-spec-lead` normalize it inside `.dude/ideas/<NNN>-<slug>.md`.
 4. Resolve clarification questions in the same idea file.
 5. Define the idea into the normal package.
 6. If you want implementation without Beads, continue from `tasks.md`, starting with the generated board view when present.
@@ -25,7 +25,7 @@ or run `@dude track` if you want Tracked Execution.
 ```mermaid
 flowchart LR
   PRD["PRD draft or product brief\nMarkdown document"] --> DUDE["@dude brainstorm"]
-  DUDE --> IDEA[".dude/ideas/<slug>.md\ncollaboration file"]
+  DUDE --> IDEA[".dude/ideas/<NNN>-<slug>.md\ncollaboration file"]
   IDEA --> SPEC["@dude-spec-lead\nnormalizes intent"]
     SPEC --> CLARIFY{"Material ambiguity?"}
     CLARIFY -->|Yes| Q["Ask focused clarifications"]
@@ -76,7 +76,7 @@ planning:
 The PRD draft or product brief remains source input, but Dude turns it into two
 working layers:
 
-- `.dude/ideas/<slug>.md` — pre-spec collaboration, open questions, assumptions,
+- `.dude/ideas/<NNN>-<slug>.md` — pre-spec collaboration, open questions, assumptions,
   coordinator log
 - `spec.md` — normalized WHAT and WHY after definition
 - `plan.md` — implementation approach

@@ -84,7 +84,8 @@ instead when you want the advanced form with your own recovery settings.
 - Read the user-controlled `## Idea`, edit it if needed, answer the
   `**Your answer:**` slots in the immediately following `## Open Questions`,
   and update `## Assumptions` or `## Deferred Clarifications` when needed in
-  `.dude/ideas/<slug>.md`.
+  `.dude/ideas/<NNN>-<slug>.md`. Use the exact unnumbered `<slug>` in commands;
+  the lifecycle number belongs to the physical ledger.
 - Leave managed `## Normalized Intent`, `## Constraints`, and
   `## Definition Checklist` sections, `status:`, the exact `spec_path:`, and
   the append-only `## Coordinator Log` to Dude.
@@ -218,7 +219,7 @@ TDD requirement.
 
 ## Workflow Boundaries
 
-Dude focuses on pre-spec collaboration under `.dude/ideas/<slug>.md`, native
+Dude focuses on pre-spec collaboration under `.dude/ideas/<NNN>-<slug>.md`, native
 feature definition under `.dude/specs/<feature>/`, and optional tracked
 execution in Beads.
 

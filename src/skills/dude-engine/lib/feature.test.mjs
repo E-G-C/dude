@@ -22,16 +22,16 @@ function write(root, relativePath, content) {
   fs.writeFileSync(absolutePath, content);
 }
 
-/** @param {string} status @param {string} specPath @returns {string} */
-function ledger(status, specPath) {
-  return `---\nstatus: ${status}\nspec_path: ${specPath}\n---\n\n## Idea\n\nBody.\n`;
+/** @param {string} status @param {string} specPath @param {string} slug @returns {string} */
+function ledger(status, specPath, slug) {
+  return `---\nslug: ${slug}\nstatus: ${status}\nspec_path: ${specPath}\n---\n\n## Idea\n\nBody.\n`;
 }
 
-/** @param {string} root @param {string} ideaName @param {string} feature */
-function define(root, ideaName, feature) {
-  const specPath = `.dude/specs/${feature}/spec.md`;
-  write(root, specPath, `# ${feature}\n`);
-  write(root, `.dude/ideas/${ideaName}.md`, ledger('defined', specPath));
+/** @param {string} root @param {string} number @param {string} slug */
+function define(root, number, slug) {
+  const specPath = `.dude/specs/${number}-${slug}/spec.md`;
+  write(root, specPath, `# ${number}-${slug}\n`);
+  write(root, `.dude/ideas/${number}-${slug}.md`, ledger('defined', specPath, slug));
 }
 
 /** @param {string} root @returns {Array<{ path: string, type: string, content?: string }>} */
@@ -62,15 +62,15 @@ function snapshot(root) {
 test('inventory returns exact records sorted by specPath then ideaPath', () => {
   const root = temporaryRoot();
   try {
-    define(root, 'z-owner', 'z-feature');
-    define(root, 'm-owner', 'a-feature');
-    define(root, 'a-owner', 'm-feature');
+    define(root, '003', 'z-feature');
+    define(root, '001', 'a-feature');
+    define(root, '002', 'm-feature');
 
     assert.deepEqual(inventoryDefinedFeatures({ root }), {
       features: [
-        { ideaPath: '.dude/ideas/m-owner.md', specPath: '.dude/specs/a-feature/spec.md' },
-        { ideaPath: '.dude/ideas/a-owner.md', specPath: '.dude/specs/m-feature/spec.md' },
-        { ideaPath: '.dude/ideas/z-owner.md', specPath: '.dude/specs/z-feature/spec.md' },
+        { ideaPath: '.dude/ideas/001-a-feature.md', specPath: '.dude/specs/001-a-feature/spec.md' },
+        { ideaPath: '.dude/ideas/002-m-feature.md', specPath: '.dude/specs/002-m-feature/spec.md' },
+        { ideaPath: '.dude/ideas/003-z-feature.md', specPath: '.dude/specs/003-z-feature/spec.md' },
       ],
       diagnostics: [],
     });
@@ -82,36 +82,38 @@ test('inventory returns exact records sorted by specPath then ideaPath', () => {
 test('inventory aggregates sorted diagnostics, suppresses malformed cascades, and retains valid duplicate records', () => {
   const root = temporaryRoot();
   try {
-    define(root, 'owner-b', 'shared');
-    write(root, '.dude/ideas/owner-a.md', ledger('defined', '.dude/specs/shared/spec.md'));
-    write(root, '.dude/ideas/draft-dangling.md', ledger('draft', '.dude/specs/missing/spec.md'));
-    write(root, '.dude/ideas/malformed.md', '---\nstatus: defined\nspec_path: x\n');
-    write(root, '.dude/ideas/missing-status.md', '---\nspec_path: nope\n---\n');
-    write(root, '.dude/ideas/missing-spec.md', ledger('defined', ''));
-    write(root, '.dude/ideas/invalid.md', ledger('ready', 'outside/spec.md'));
+    define(root, '001', 'shared');
+    write(root, '.dude/ideas/002-owner-a.md', ledger('defined', '.dude/specs/001-shared/spec.md', 'owner-a'));
+    write(root, '.dude/ideas/003-draft-dangling.md', ledger('draft', '.dude/specs/004-missing/spec.md', 'draft-dangling'));
+    write(root, '.dude/ideas/004-malformed.md', '---\nstatus: defined\nspec_path: x\n');
+    write(root, '.dude/ideas/005-missing-status.md', '---\nspec_path: nope\n---\n');
+    write(root, '.dude/ideas/006-missing-spec.md', ledger('defined', '', 'missing-spec'));
+    write(root, '.dude/ideas/007-invalid.md', ledger('ready', 'outside/spec.md', 'invalid'));
 
     const result = inventoryDefinedFeatures({ root });
 
     assert.deepEqual(result.features, [
-      { ideaPath: '.dude/ideas/owner-a.md', specPath: '.dude/specs/shared/spec.md' },
-      { ideaPath: '.dude/ideas/owner-b.md', specPath: '.dude/specs/shared/spec.md' },
+      { ideaPath: '.dude/ideas/001-shared.md', specPath: '.dude/specs/001-shared/spec.md' },
+      { ideaPath: '.dude/ideas/002-owner-a.md', specPath: '.dude/specs/001-shared/spec.md' },
     ]);
     assert.deepEqual(result.diagnostics.map(({ path: diagnosticPath, code, severity }) => ({
       path: diagnosticPath,
       code,
       severity,
     })), [
-      { path: '.dude/ideas/draft-dangling.md', code: 'FEATURE_SPEC_PATH_DANGLING', severity: 'error' },
-      { path: '.dude/ideas/invalid.md', code: 'FEATURE_SPEC_PATH_INVALID', severity: 'error' },
-      { path: '.dude/ideas/invalid.md', code: 'FEATURE_STATUS_INVALID', severity: 'error' },
-      { path: '.dude/ideas/malformed.md', code: 'FEATURE_FRONTMATTER_MALFORMED', severity: 'error' },
-      { path: '.dude/ideas/missing-spec.md', code: 'FEATURE_SPEC_PATH_MISSING', severity: 'error' },
-      { path: '.dude/ideas/missing-status.md', code: 'FEATURE_SPEC_PATH_INVALID', severity: 'error' },
-      { path: '.dude/ideas/missing-status.md', code: 'FEATURE_STATUS_MISSING', severity: 'error' },
-      { path: '.dude/specs/shared/spec.md', code: 'FEATURE_OWNER_DUPLICATE', severity: 'error' },
+      { path: '.dude/ideas/002-owner-a.md', code: 'FEATURE_OWNER_IDENTITY_MISMATCH', severity: 'error' },
+      { path: '.dude/ideas/003-draft-dangling.md', code: 'FEATURE_SPEC_PATH_DANGLING', severity: 'error' },
+      { path: '.dude/ideas/004-malformed.md', code: 'FEATURE_FRONTMATTER_MALFORMED', severity: 'error' },
+      { path: '.dude/ideas/005-missing-status.md', code: 'FEATURE_SLUG_MISSING', severity: 'error' },
+      { path: '.dude/ideas/005-missing-status.md', code: 'FEATURE_SPEC_PATH_INVALID', severity: 'error' },
+      { path: '.dude/ideas/005-missing-status.md', code: 'FEATURE_STATUS_MISSING', severity: 'error' },
+      { path: '.dude/ideas/006-missing-spec.md', code: 'FEATURE_SPEC_PATH_MISSING', severity: 'error' },
+      { path: '.dude/ideas/007-invalid.md', code: 'FEATURE_SPEC_PATH_INVALID', severity: 'error' },
+      { path: '.dude/ideas/007-invalid.md', code: 'FEATURE_STATUS_INVALID', severity: 'error' },
+      { path: '.dude/specs/001-shared/spec.md', code: 'FEATURE_OWNER_DUPLICATE', severity: 'error' },
     ]);
-    assert.equal(result.diagnostics.filter((item) => item.path.endsWith('/malformed.md')).length, 1);
-    assert.match(result.diagnostics.at(-1)?.message || '', /owner-a\.md, \.dude\/ideas\/owner-b\.md/);
+    assert.equal(result.diagnostics.filter((item) => item.path.endsWith('/004-malformed.md')).length, 1);
+    assert.match(result.diagnostics.at(-1)?.message || '', /001-shared\.md, \.dude\/ideas\/002-owner-a\.md/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -122,26 +124,26 @@ test('inventory enforces flat real ideas and symlink-safe roots and specs while 
   const outside = temporaryRoot();
   const linkedRoot = `${root}-link`;
   try {
-    define(root, 'valid', 'valid');
+    define(root, '001', 'valid');
     write(root, '.dude/ideas/nested/hidden.md', ledger('defined', '.dude/specs/hidden/spec.md'));
     write(root, '.dude/ideas/notes.txt', 'unsupported\n');
-    write(outside, 'linked.md', ledger('draft', ''));
-    fs.symlinkSync(path.join(outside, 'linked.md'), path.join(root, '.dude/ideas/linked.md'));
+    write(outside, 'linked.md', ledger('draft', '', 'linked'));
+    fs.symlinkSync(path.join(outside, 'linked.md'), path.join(root, '.dude/ideas/002-linked.md'));
     write(outside, 'spec.md', '# Outside\n');
-    fs.mkdirSync(path.join(root, '.dude/specs/unsafe'), { recursive: true });
-    fs.symlinkSync(path.join(outside, 'spec.md'), path.join(root, '.dude/specs/unsafe/spec.md'));
-    write(root, '.dude/ideas/unsafe.md', ledger('defined', '.dude/specs/unsafe/spec.md'));
+    fs.mkdirSync(path.join(root, '.dude/specs/003-unsafe'), { recursive: true });
+    fs.symlinkSync(path.join(outside, 'spec.md'), path.join(root, '.dude/specs/003-unsafe/spec.md'));
+    write(root, '.dude/ideas/003-unsafe.md', ledger('defined', '.dude/specs/003-unsafe/spec.md', 'unsafe'));
     fs.symlinkSync(root, linkedRoot);
 
     const result = inventoryDefinedFeatures({ root });
     assert.deepEqual(result.features, [
-      { ideaPath: '.dude/ideas/valid.md', specPath: '.dude/specs/valid/spec.md' },
+      { ideaPath: '.dude/ideas/001-valid.md', specPath: '.dude/specs/001-valid/spec.md' },
     ]);
     assert.deepEqual(result.diagnostics.map((item) => [item.path, item.code]), [
-      ['.dude/ideas/linked.md', 'FEATURE_IDEA_ENTRY_UNSUPPORTED'],
+      ['.dude/ideas/002-linked.md', 'FEATURE_IDEA_ENTRY_UNSUPPORTED'],
       ['.dude/ideas/nested', 'FEATURE_IDEA_ENTRY_UNSUPPORTED'],
       ['.dude/ideas/notes.txt', 'FEATURE_IDEA_ENTRY_UNSUPPORTED'],
-      ['.dude/ideas/unsafe.md', 'FEATURE_SPEC_PATH_UNSAFE'],
+      ['.dude/ideas/003-unsafe.md', 'FEATURE_SPEC_PATH_UNSAFE'],
     ]);
     assert.deepEqual(inventoryDefinedFeatures({ root: linkedRoot }).diagnostics.map((item) => item.code), [
       'FEATURE_ROOT_UNSAFE',
@@ -171,22 +173,22 @@ test('resolve requires an exact query, one owner, and a globally error-free inve
   const dirtyRoot = temporaryRoot();
   const emptyRoot = temporaryRoot();
   try {
-    define(cleanRoot, 'x', 'x');
-    assert.deepEqual(resolveFeatureOwner({ root: cleanRoot, specPath: '.dude/specs/x/spec.md' }), {
-      owner: { ideaPath: '.dude/ideas/x.md', specPath: '.dude/specs/x/spec.md' },
+    define(cleanRoot, '001', 'x');
+    assert.deepEqual(resolveFeatureOwner({ root: cleanRoot, specPath: '.dude/specs/001-x/spec.md' }), {
+      owner: { ideaPath: '.dude/ideas/001-x.md', specPath: '.dude/specs/001-x/spec.md' },
       diagnostics: [],
     });
     const invalidQuery = resolveFeatureOwner({ root: cleanRoot, specPath: 'specs/x/spec.md' });
     assert.equal(invalidQuery.owner, null);
     assert.deepEqual(invalidQuery.diagnostics.map((item) => item.code), ['FEATURE_QUERY_INVALID']);
 
-    define(dirtyRoot, 'x', 'x');
-    write(dirtyRoot, '.dude/ideas/broken.md', 'not frontmatter\n');
-    const globallyDirty = resolveFeatureOwner({ root: dirtyRoot, specPath: '.dude/specs/x/spec.md' });
+    define(dirtyRoot, '001', 'x');
+    write(dirtyRoot, '.dude/ideas/002-broken.md', 'not frontmatter\n');
+    const globallyDirty = resolveFeatureOwner({ root: dirtyRoot, specPath: '.dude/specs/001-x/spec.md' });
     assert.equal(globallyDirty.owner, null);
     assert.deepEqual(globallyDirty.diagnostics.map((item) => item.code), ['FEATURE_FRONTMATTER_MALFORMED']);
 
-    const absent = resolveFeatureOwner({ root: emptyRoot, specPath: '.dude/specs/x/spec.md' });
+    const absent = resolveFeatureOwner({ root: emptyRoot, specPath: '.dude/specs/001-x/spec.md' });
     assert.equal(absent.owner, null);
     assert.deepEqual(absent.diagnostics.map((item) => item.code), [
       'FEATURE_IDEAS_ROOT_MISSING',
@@ -202,18 +204,18 @@ test('resolve requires an exact query, one owner, and a globally error-free inve
 test('feature ownership APIs are read-only and have no Beads or process back-edge', () => {
   const root = temporaryRoot();
   try {
-    define(root, 'x', 'x');
+    define(root, '001', 'x');
     const before = snapshot(root);
 
     inventoryDefinedFeatures({ root });
-    resolveFeatureOwner({ root, specPath: '.dude/specs/x/spec.md' });
+    resolveFeatureOwner({ root, specPath: '.dude/specs/001-x/spec.md' });
 
     assert.deepEqual(snapshot(root), before);
     const source = fs.readFileSync(MODULE, 'utf8');
     assert.doesNotMatch(source, /dude-pack-beads|beads\.mjs|node:child_process|spawn(?:Sync)?\s*\(/);
     assert.doesNotMatch(source, /writeFile|appendFile|mkdir|rmSync|rename|copyFile|chmod/);
     const resolverSource = source.slice(source.indexOf('export function resolveFeatureOwner'));
-    assert.equal((resolverSource.match(/inventoryDefinedFeatures\(\{ root \}\)/g) || []).length, 1);
+    assert.equal((resolverSource.match(/inventoryLifecycleIdentities\(\{ root \}\)/g) || []).length, 1);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -226,38 +228,38 @@ test('feature ownership APIs are read-only and have no Beads or process back-edg
 test('inventory rejects noncanonical owner metadata as malformed while retaining valid ledgers', () => {
   const root = temporaryRoot();
   try {
-    define(root, 'keep', 'keep');
-    write(root, '.dude/specs/quoted/spec.md', '# quoted\n');
+    define(root, '001', 'keep');
+    write(root, '.dude/specs/002-quoted/spec.md', '# quoted\n');
     write(
       root,
-      '.dude/ideas/quoted.md',
-      '---\n"status": defined\nspec_path: .dude/specs/quoted/spec.md\n---\n\n## Idea\n\nBody.\n',
+      '.dude/ideas/002-quoted.md',
+      '---\nslug: quoted\n"status": defined\nspec_path: .dude/specs/002-quoted/spec.md\n---\n\n## Idea\n\nBody.\n',
     );
-    write(root, '.dude/specs/noncanon/spec.md', '# noncanon\n');
+    write(root, '.dude/specs/003-noncanon/spec.md', '# noncanon\n');
     write(
       root,
-      '.dude/ideas/noncanon.md',
-      '---\nstatus: defined\nspec_path: .dude/specs/noncanon/spec.md\npriority: high\n---\n\n## Idea\n\nBody.\n',
+      '.dude/ideas/003-noncanon.md',
+      '---\nslug: noncanon\nstatus: defined\nspec_path: .dude/specs/003-noncanon/spec.md\npriority: high\n---\n\n## Idea\n\nBody.\n',
     );
-    write(root, '.dude/specs/structured/spec.md', '# structured\n');
+    write(root, '.dude/specs/004-structured/spec.md', '# structured\n');
     write(
       root,
-      '.dude/ideas/structured.md',
-      '---\nstatus: defined\nspec_path: .dude/specs/structured/spec.md\ntitle: [a, b]\n---\n\n## Idea\n\nBody.\n',
+      '.dude/ideas/004-structured.md',
+      '---\nslug: structured\nstatus: defined\nspec_path: .dude/specs/004-structured/spec.md\ntitle: [a, b]\n---\n\n## Idea\n\nBody.\n',
     );
 
     const result = inventoryDefinedFeatures({ root });
 
     assert.deepEqual(result.features, [
-      { ideaPath: '.dude/ideas/keep.md', specPath: '.dude/specs/keep/spec.md' },
+      { ideaPath: '.dude/ideas/001-keep.md', specPath: '.dude/specs/001-keep/spec.md' },
     ]);
     const malformed = result.diagnostics
       .filter((item) => item.code === 'FEATURE_FRONTMATTER_MALFORMED')
       .map((item) => item.path);
     assert.deepEqual(malformed, [
-      '.dude/ideas/noncanon.md',
-      '.dude/ideas/quoted.md',
-      '.dude/ideas/structured.md',
+      '.dude/ideas/002-quoted.md',
+      '.dude/ideas/003-noncanon.md',
+      '.dude/ideas/004-structured.md',
     ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -267,9 +269,9 @@ test('inventory rejects noncanonical owner metadata as malformed while retaining
 test('inventory flags draft ledgers with a resolvable spec_path and leaves dangling drafts unchanged', () => {
   const root = temporaryRoot();
   try {
-    write(root, '.dude/specs/dr/spec.md', '# dr\n');
-    write(root, '.dude/ideas/draft-resolvable.md', ledger('draft', '.dude/specs/dr/spec.md'));
-    write(root, '.dude/ideas/draft-dangling.md', ledger('draft', '.dude/specs/missing/spec.md'));
+    write(root, '.dude/specs/001-dr/spec.md', '# dr\n');
+    write(root, '.dude/ideas/001-dr.md', ledger('draft', '.dude/specs/001-dr/spec.md', 'dr'));
+    write(root, '.dude/ideas/002-draft-dangling.md', ledger('draft', '.dude/specs/003-missing/spec.md', 'draft-dangling'));
 
     const result = inventoryDefinedFeatures({ root });
     const codesFor = (ideaPath) => result.diagnostics
@@ -278,9 +280,12 @@ test('inventory flags draft ledgers with a resolvable spec_path and leaves dangl
       .sort();
 
     // New FR-029 diagnostic: a draft must not carry a resolvable spec_path.
-    assert.deepEqual(codesFor('.dude/ideas/draft-resolvable.md'), ['FEATURE_DRAFT_SPEC_PATH']);
+    assert.deepEqual(codesFor('.dude/ideas/001-dr.md'), [
+      'FEATURE_DRAFT_SPEC_PATH',
+      'FEATURE_NUMBER_COLLISION',
+    ]);
     // Unchanged: a dangling draft spec_path stays a single dangling diagnostic.
-    assert.deepEqual(codesFor('.dude/ideas/draft-dangling.md'), ['FEATURE_SPEC_PATH_DANGLING']);
+    assert.deepEqual(codesFor('.dude/ideas/002-draft-dangling.md'), ['FEATURE_SPEC_PATH_DANGLING']);
     assert.deepEqual(result.features, []);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -292,19 +297,19 @@ test('resolve returns no owner when a noncanonical or draft-with-spec ledger poi
     {
       name: 'noncanonical key ledger',
       apply: (root) => {
-        write(root, '.dude/specs/other/spec.md', '# other\n');
+        write(root, '.dude/specs/002-other/spec.md', '# other\n');
         write(
           root,
-          '.dude/ideas/other.md',
-          '---\nstatus: defined\nspec_path: .dude/specs/other/spec.md\npriority: high\n---\n\n## Idea\n\nBody.\n',
+          '.dude/ideas/002-other.md',
+          '---\nslug: other\nstatus: defined\nspec_path: .dude/specs/002-other/spec.md\npriority: high\n---\n\n## Idea\n\nBody.\n',
         );
       },
     },
     {
       name: 'draft with resolvable spec_path',
       apply: (root) => {
-        write(root, '.dude/specs/draftish/spec.md', '# draftish\n');
-        write(root, '.dude/ideas/draftish.md', ledger('draft', '.dude/specs/draftish/spec.md'));
+        write(root, '.dude/specs/002-draftish/spec.md', '# draftish\n');
+        write(root, '.dude/ideas/002-draftish.md', ledger('draft', '.dude/specs/002-draftish/spec.md', 'draftish'));
       },
     },
   ];
@@ -312,9 +317,9 @@ test('resolve returns no owner when a noncanonical or draft-with-spec ledger poi
   for (const poison of poisons) {
     const root = temporaryRoot();
     try {
-      define(root, 'x', 'x');
+      define(root, '001', 'x');
       poison.apply(root);
-      const resolved = resolveFeatureOwner({ root, specPath: '.dude/specs/x/spec.md' });
+      const resolved = resolveFeatureOwner({ root, specPath: '.dude/specs/001-x/spec.md' });
       assert.equal(resolved.owner, null, `${poison.name}: ${JSON.stringify(resolved)}`);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -325,17 +330,17 @@ test('resolve returns no owner when a noncanonical or draft-with-spec ledger poi
 test('resolve still returns an owner for canonical ledgers that quote scalar values', () => {
   const root = temporaryRoot();
   try {
-    write(root, '.dude/specs/x/spec.md', '# x\n');
+    write(root, '.dude/specs/001-x/spec.md', '# x\n');
     write(
       root,
-      '.dude/ideas/x.md',
-      '---\nstatus: "defined"\nspec_path: ".dude/specs/x/spec.md"\n---\n\n## Idea\n\nBody.\n',
+      '.dude/ideas/001-x.md',
+      '---\nslug: x\nstatus: "defined"\nspec_path: ".dude/specs/001-x/spec.md"\n---\n\n## Idea\n\nBody.\n',
     );
 
-    const resolved = resolveFeatureOwner({ root, specPath: '.dude/specs/x/spec.md' });
+    const resolved = resolveFeatureOwner({ root, specPath: '.dude/specs/001-x/spec.md' });
 
     assert.deepEqual(resolved, {
-      owner: { ideaPath: '.dude/ideas/x.md', specPath: '.dude/specs/x/spec.md' },
+      owner: { ideaPath: '.dude/ideas/001-x.md', specPath: '.dude/specs/001-x/spec.md' },
       diagnostics: [],
     });
   } finally {
@@ -347,27 +352,27 @@ test('inventory accepts an exact package-less resolved ledger without granting i
   const root = temporaryRoot();
   try {
     // Arrange
-    define(root, 'defined', 'defined');
-    write(root, '.dude/ideas/draft.md', ledger('draft', ''));
-    write(root, '.dude/ideas/resolved.md', ledger('resolved', ''));
+    define(root, '001', 'defined');
+    write(root, '.dude/ideas/002-draft.md', ledger('draft', '', 'draft'));
+    write(root, '.dude/ideas/003-resolved.md', ledger('resolved', '', 'resolved'));
 
     // Act
     const inventory = inventoryDefinedFeatures({ root });
-    const owner = resolveFeatureOwner({ root, specPath: '.dude/specs/defined/spec.md' });
+    const owner = resolveFeatureOwner({ root, specPath: '.dude/specs/001-defined/spec.md' });
 
     // Assert
     assert.deepEqual(inventory, {
       features: [
-        { ideaPath: '.dude/ideas/defined.md', specPath: '.dude/specs/defined/spec.md' },
+        { ideaPath: '.dude/ideas/001-defined.md', specPath: '.dude/specs/001-defined/spec.md' },
       ],
       diagnostics: [],
     });
     assert.deepEqual(owner, {
-      owner: { ideaPath: '.dude/ideas/defined.md', specPath: '.dude/specs/defined/spec.md' },
+      owner: { ideaPath: '.dude/ideas/001-defined.md', specPath: '.dude/specs/001-defined/spec.md' },
       diagnostics: [],
     });
     assert.equal(
-      inventory.features.some((feature) => feature.ideaPath === '.dude/ideas/resolved.md'),
+      inventory.features.some((feature) => feature.ideaPath === '.dude/ideas/003-resolved.md'),
       false,
       'a package-less resolved ledger never becomes an exact package owner',
     );
@@ -380,68 +385,68 @@ test('inventory rejects invalid resolved metadata before it can become ownership
   const root = temporaryRoot();
   try {
     // Arrange
-    define(root, 'keep', 'keep');
+    define(root, '001', 'keep');
     const cases = [
       {
         idea: 'canonical-owner-claim',
-        content: ledger('resolved', '.dude/specs/keep/spec.md'),
+        content: ledger('resolved', '.dude/specs/001-keep/spec.md', 'canonical-owner-claim'),
         codes: ['FEATURE_RESOLVED_SPEC_PATH'],
       },
       {
         idea: 'dangling-path',
-        content: ledger('resolved', '.dude/specs/missing/spec.md'),
+        content: ledger('resolved', '.dude/specs/003-missing/spec.md', 'dangling-path'),
         codes: ['FEATURE_RESOLVED_SPEC_PATH'],
       },
       {
         idea: 'malformed-path',
-        content: ledger('resolved', 'not-a-canonical-spec-path'),
+        content: ledger('resolved', 'not-a-canonical-spec-path', 'malformed-path'),
         codes: ['FEATURE_RESOLVED_SPEC_PATH'],
       },
       {
         idea: 'unsafe-path',
-        content: ledger('resolved', '.dude/specs/..\\outside/spec.md'),
+        content: ledger('resolved', '.dude/specs/..\\outside/spec.md', 'unsafe-path'),
         codes: ['FEATURE_RESOLVED_SPEC_PATH'],
       },
       {
         idea: 'quoted-nonempty-path',
-        content: ledger('resolved', '".dude/specs/keep/spec.md"'),
+        content: ledger('resolved', '".dude/specs/001-keep/spec.md"', 'quoted-nonempty-path'),
         codes: ['FEATURE_RESOLVED_SPEC_PATH'],
       },
       {
         idea: 'nonexact-status',
-        content: ledger('"resolved"', ''),
+        content: ledger('"resolved"', '', 'nonexact-status'),
         codes: ['FEATURE_STATUS_INVALID'],
       },
       {
         idea: 'malformed-frontmatter',
-        content: '---\nstatus: resolved\nstatus: resolved\nspec_path:\n---\n\n## Idea\n\nBody.\n',
+        content: '---\nslug: malformed-frontmatter\nstatus: resolved\nstatus: resolved\nspec_path:\n---\n\n## Idea\n\nBody.\n',
         codes: ['FEATURE_FRONTMATTER_MALFORMED'],
       },
     ];
     for (const fixture of cases) {
-      write(root, `.dude/ideas/${fixture.idea}.md`, fixture.content);
+      write(root, `.dude/ideas/${String(cases.indexOf(fixture) + 2).padStart(3, '0')}-${fixture.idea}.md`, fixture.content);
     }
 
     // Act
     const inventory = inventoryDefinedFeatures({ root });
     const codesFor = (idea) => inventory.diagnostics
-      .filter((diagnostic) => diagnostic.path === `.dude/ideas/${idea}.md`)
+      .filter((diagnostic) => diagnostic.path.endsWith(`-${idea}.md`))
       .map((diagnostic) => diagnostic.code);
 
     // Assert
     assert.deepEqual(inventory.features, [
-      { ideaPath: '.dude/ideas/keep.md', specPath: '.dude/specs/keep/spec.md' },
+      { ideaPath: '.dude/ideas/001-keep.md', specPath: '.dude/specs/001-keep/spec.md' },
     ]);
     for (const fixture of cases) {
       assert.deepEqual(codesFor(fixture.idea), fixture.codes, fixture.idea);
     }
     assert.match(
-      inventory.diagnostics.find((diagnostic) => diagnostic.path === '.dude/ideas/nonexact-status.md')?.message ?? '',
+      inventory.diagnostics.find((diagnostic) => diagnostic.path.endsWith('-nonexact-status.md'))?.message ?? '',
       /invalid status 'resolved' \(valid: draft, defined, resolved\)/,
     );
     assert.equal(
       inventory.features.some((feature) => cases.some((fixture) => (
-        feature.ideaPath === `.dude/ideas/${fixture.idea}.md`
+        feature.ideaPath.endsWith(`-${fixture.idea}.md`)
       ))),
       false,
       'every invalid resolved shape remains outside the owner inventory',
@@ -455,25 +460,28 @@ test('duplicate defined owners remain diagnostic while a resolved bystander has 
   const root = temporaryRoot();
   try {
     // Arrange
-    write(root, '.dude/specs/shared/spec.md', '# shared\n');
-    write(root, '.dude/ideas/alpha.md', ledger('defined', '.dude/specs/shared/spec.md'));
-    write(root, '.dude/ideas/beta.md', ledger('defined', '.dude/specs/shared/spec.md'));
-    write(root, '.dude/ideas/resolved.md', ledger('resolved', ''));
+    write(root, '.dude/specs/001-shared/spec.md', '# shared\n');
+    write(root, '.dude/ideas/001-shared.md', ledger('defined', '.dude/specs/001-shared/spec.md', 'shared'));
+    write(root, '.dude/ideas/002-beta.md', ledger('defined', '.dude/specs/001-shared/spec.md', 'beta'));
+    write(root, '.dude/ideas/003-resolved.md', ledger('resolved', '', 'resolved'));
 
     // Act
     const inventory = inventoryDefinedFeatures({ root });
 
     // Assert
     assert.deepEqual(inventory.features, [
-      { ideaPath: '.dude/ideas/alpha.md', specPath: '.dude/specs/shared/spec.md' },
-      { ideaPath: '.dude/ideas/beta.md', specPath: '.dude/specs/shared/spec.md' },
+      { ideaPath: '.dude/ideas/001-shared.md', specPath: '.dude/specs/001-shared/spec.md' },
+      { ideaPath: '.dude/ideas/002-beta.md', specPath: '.dude/specs/001-shared/spec.md' },
     ]);
     assert.deepEqual(
       inventory.diagnostics.map((diagnostic) => [diagnostic.path, diagnostic.code]),
-      [['.dude/specs/shared/spec.md', 'FEATURE_OWNER_DUPLICATE']],
+      [
+        ['.dude/ideas/002-beta.md', 'FEATURE_OWNER_IDENTITY_MISMATCH'],
+        ['.dude/specs/001-shared/spec.md', 'FEATURE_OWNER_DUPLICATE'],
+      ],
     );
     assert.equal(
-      inventory.features.filter((feature) => feature.ideaPath === '.dude/ideas/resolved.md').length,
+      inventory.features.filter((feature) => feature.ideaPath === '.dude/ideas/003-resolved.md').length,
       0,
     );
   } finally {
@@ -494,18 +502,18 @@ test('inventory validates plain space- and comma-separated depends-on scalars as
   try {
     // Arrange: two defined owners declaring depends-on as a plain scalar.
     // Case 1 — space-separated slugs.
-    write(root, '.dude/specs/space/spec.md', '# space\n');
+    write(root, '.dude/specs/001-space/spec.md', '# space\n');
     write(
       root,
-      '.dude/ideas/space.md',
-      '---\nstatus: defined\nspec_path: .dude/specs/space/spec.md\ndepends-on: alpha beta\n---\n\n## Idea\n\nBody.\n',
+      '.dude/ideas/001-space.md',
+      '---\nslug: space\nstatus: defined\nspec_path: .dude/specs/001-space/spec.md\ndepends-on: alpha beta\n---\n\n## Idea\n\nBody.\n',
     );
     // Case 2 — comma-separated slugs.
-    write(root, '.dude/specs/comma/spec.md', '# comma\n');
+    write(root, '.dude/specs/002-comma/spec.md', '# comma\n');
     write(
       root,
-      '.dude/ideas/comma.md',
-      '---\nstatus: defined\nspec_path: .dude/specs/comma/spec.md\ndepends-on: alpha, beta\n---\n\n## Idea\n\nBody.\n',
+      '.dude/ideas/002-comma.md',
+      '---\nslug: comma\nstatus: defined\nspec_path: .dude/specs/002-comma/spec.md\ndepends-on: alpha, beta\n---\n\n## Idea\n\nBody.\n',
     );
 
     // Act.
@@ -513,8 +521,8 @@ test('inventory validates plain space- and comma-separated depends-on scalars as
 
     // Assert: both ideas inventory as clean defined owners with no diagnostics.
     assert.deepEqual(result.features, [
-      { ideaPath: '.dude/ideas/comma.md', specPath: '.dude/specs/comma/spec.md' },
-      { ideaPath: '.dude/ideas/space.md', specPath: '.dude/specs/space/spec.md' },
+      { ideaPath: '.dude/ideas/001-space.md', specPath: '.dude/specs/001-space/spec.md' },
+      { ideaPath: '.dude/ideas/002-comma.md', specPath: '.dude/specs/002-comma/spec.md' },
     ]);
     assert.deepEqual(result.diagnostics, []);
   } finally {
@@ -527,20 +535,20 @@ test('inventory rejects structured flow and block-list depends-on values as malf
   try {
     // Arrange: a clean owner to retain, plus two structured depends-on values
     // strict canonical validation must still reject.
-    define(root, 'keep', 'keep');
+    define(root, '001', 'keep');
     // Case 3 — YAML flow sequence value.
-    write(root, '.dude/specs/flow/spec.md', '# flow\n');
+    write(root, '.dude/specs/002-flow/spec.md', '# flow\n');
     write(
       root,
-      '.dude/ideas/flow.md',
-      '---\nstatus: defined\nspec_path: .dude/specs/flow/spec.md\ndepends-on: [alpha, beta]\n---\n\n## Idea\n\nBody.\n',
+      '.dude/ideas/002-flow.md',
+      '---\nslug: flow\nstatus: defined\nspec_path: .dude/specs/002-flow/spec.md\ndepends-on: [alpha, beta]\n---\n\n## Idea\n\nBody.\n',
     );
     // Case 4 — YAML block-list value.
-    write(root, '.dude/specs/block/spec.md', '# block\n');
+    write(root, '.dude/specs/003-block/spec.md', '# block\n');
     write(
       root,
-      '.dude/ideas/block.md',
-      '---\nstatus: defined\nspec_path: .dude/specs/block/spec.md\ndepends-on:\n  - alpha\n  - beta\n---\n\n## Idea\n\nBody.\n',
+      '.dude/ideas/003-block.md',
+      '---\nslug: block\nstatus: defined\nspec_path: .dude/specs/003-block/spec.md\ndepends-on:\n  - alpha\n  - beta\n---\n\n## Idea\n\nBody.\n',
     );
 
     // Act.
@@ -549,13 +557,15 @@ test('inventory rejects structured flow and block-list depends-on values as malf
     // Assert: neither structured ledger inventories; only the clean owner
     // survives, and each malformed ledger yields one malformed-frontmatter error.
     assert.deepEqual(result.features, [
-      { ideaPath: '.dude/ideas/keep.md', specPath: '.dude/specs/keep/spec.md' },
+      { ideaPath: '.dude/ideas/001-keep.md', specPath: '.dude/specs/001-keep/spec.md' },
     ]);
     assert.deepEqual(
       result.diagnostics.map((item) => [item.path, item.code, item.severity]),
       [
-        ['.dude/ideas/block.md', 'FEATURE_FRONTMATTER_MALFORMED', 'error'],
-        ['.dude/ideas/flow.md', 'FEATURE_FRONTMATTER_MALFORMED', 'error'],
+        ['.dude/ideas/002-flow.md', 'FEATURE_FRONTMATTER_MALFORMED', 'error'],
+        ['.dude/ideas/003-block.md', 'FEATURE_FRONTMATTER_MALFORMED', 'error'],
+        ['.dude/specs/002-flow/spec.md', 'FEATURE_OWNER_NOT_FOUND', 'error'],
+        ['.dude/specs/003-block/spec.md', 'FEATURE_OWNER_NOT_FOUND', 'error'],
       ],
     );
   } finally {
@@ -568,12 +578,12 @@ test('inventory leaves an idea without a depends-on field unaffected', () => {
   try {
     // Arrange: a defined owner with no depends-on (case 5), alongside one that
     // declares it, so the widened canonical key set runs over both in one pass.
-    define(root, 'plain', 'plain');
-    write(root, '.dude/specs/declared/spec.md', '# declared\n');
+    define(root, '001', 'plain');
+    write(root, '.dude/specs/002-declared/spec.md', '# declared\n');
     write(
       root,
-      '.dude/ideas/declared.md',
-      '---\nstatus: defined\nspec_path: .dude/specs/declared/spec.md\ndepends-on: plain\n---\n\n## Idea\n\nBody.\n',
+      '.dude/ideas/002-declared.md',
+      '---\nslug: declared\nstatus: defined\nspec_path: .dude/specs/002-declared/spec.md\ndepends-on: plain\n---\n\n## Idea\n\nBody.\n',
     );
 
     // Act.
@@ -582,8 +592,8 @@ test('inventory leaves an idea without a depends-on field unaffected', () => {
     // Assert: the depends-on-free idea validates exactly as before, and both
     // ideas inventory cleanly with no diagnostics.
     assert.deepEqual(result.features, [
-      { ideaPath: '.dude/ideas/declared.md', specPath: '.dude/specs/declared/spec.md' },
-      { ideaPath: '.dude/ideas/plain.md', specPath: '.dude/specs/plain/spec.md' },
+      { ideaPath: '.dude/ideas/001-plain.md', specPath: '.dude/specs/001-plain/spec.md' },
+      { ideaPath: '.dude/ideas/002-declared.md', specPath: '.dude/specs/002-declared/spec.md' },
     ]);
     assert.deepEqual(result.diagnostics, []);
   } finally {
@@ -595,20 +605,20 @@ test('resolve returns the owner by exact spec_path when depends-on is present', 
   const root = temporaryRoot();
   try {
     // Arrange: one defined owner that also declares depends-on (case 6).
-    write(root, '.dude/specs/dep/spec.md', '# dep\n');
+    write(root, '.dude/specs/001-dep/spec.md', '# dep\n');
     write(
       root,
-      '.dude/ideas/dep.md',
-      '---\nstatus: defined\nspec_path: .dude/specs/dep/spec.md\ndepends-on: alpha beta\n---\n\n## Idea\n\nBody.\n',
+      '.dude/ideas/001-dep.md',
+      '---\nslug: dep\nstatus: defined\nspec_path: .dude/specs/001-dep/spec.md\ndepends-on: alpha beta\n---\n\n## Idea\n\nBody.\n',
     );
 
     // Act.
-    const resolved = resolveFeatureOwner({ root, specPath: '.dude/specs/dep/spec.md' });
+    const resolved = resolveFeatureOwner({ root, specPath: '.dude/specs/001-dep/spec.md' });
 
     // Assert: status/spec_path resolution is unchanged; the owner resolves by
     // exact spec_path with no diagnostics.
     assert.deepEqual(resolved, {
-      owner: { ideaPath: '.dude/ideas/dep.md', specPath: '.dude/specs/dep/spec.md' },
+      owner: { ideaPath: '.dude/ideas/001-dep.md', specPath: '.dude/specs/001-dep/spec.md' },
       diagnostics: [],
     });
   } finally {

@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/core-dogfood-close-simplification.md#coordinator-log -->
+<!-- audit log: .dude/ideas/012-core-dogfood-close-simplification.md#coordinator-log -->
 
 <!-- canonical task units - only the coordinator mutates task state -->
 

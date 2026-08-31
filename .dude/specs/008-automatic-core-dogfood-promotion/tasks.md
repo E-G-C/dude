@@ -23,7 +23,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/automatic-core-dogfood-promotion.md#coordinator-log -->
+<!-- audit log: .dude/ideas/008-automatic-core-dogfood-promotion.md#coordinator-log -->
 
 # Tasks: Automatic Core Dogfood Promotion
 

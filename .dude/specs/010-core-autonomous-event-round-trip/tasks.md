@@ -20,7 +20,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/core-autonomous-event-round-trip.md#coordinator-log -->
+<!-- audit log: .dude/ideas/010-core-autonomous-event-round-trip.md#coordinator-log -->
 
 # Tasks: Core Autonomous Event Round Trip
 

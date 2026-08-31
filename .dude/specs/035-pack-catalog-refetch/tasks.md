@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/pack-catalog-refetch.md#coordinator-log -->
+<!-- audit log: .dude/ideas/035-pack-catalog-refetch.md#coordinator-log -->
 
 # Tasks: Pack Catalog Re-fetch
 

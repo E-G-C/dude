@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/ship-checkpoint-autonomy.md#coordinator-log -->
+<!-- audit log: .dude/ideas/039-ship-checkpoint-autonomy.md#coordinator-log -->
 
 # Tasks: Ship Checkpoint Autonomy
 

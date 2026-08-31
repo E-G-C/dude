@@ -119,7 +119,8 @@ function captureStreams(fn) {
   return { code, stdout: stdout.join(''), stderr: stderr.join('') };
 }
 
-const BACKLOG_HOOK_FEATURE = 'backlog-hook';
+const BACKLOG_HOOK_FEATURE = '008-backlog-hook';
+const BACKLOG_HOOK_SLUG = 'backlog-hook';
 const BACKLOG_HOOK_TASK = 'T001@6261636b';
 
 /** Build one defined, single-task feature whose artifacts can be classified by the backlog. */
@@ -133,7 +134,7 @@ function scaffoldBacklogHookFeature() {
   fs.writeFileSync(path.join(root, '.dude', 'ideas', `${BACKLOG_HOOK_FEATURE}.md`), [
     '---',
     'title: Backlog Hook Fixture',
-    `slug: ${BACKLOG_HOOK_FEATURE}`,
+    `slug: ${BACKLOG_HOOK_SLUG}`,
     'status: defined',
     `spec_path: .dude/specs/${BACKLOG_HOOK_FEATURE}/spec.md`,
     '---',
@@ -929,7 +930,7 @@ test('board preserves an unrelated feature entry across a successful --write', (
 
 const LANE_SPEC = '.dude/specs/009-lane/spec.md';
 const LANE_TASKS = '.dude/specs/009-lane/tasks.md';
-const LANE_IDEA = '.dude/ideas/lane.md';
+const LANE_IDEA = '.dude/ideas/009-lane.md';
 const LANE_SNAPSHOT = '.dude/state/task-state.json';
 const LANE_TASK_KEY = 'T001@6c616e65';
 const LANE_OTHER_KEY = 'T002@6f746865';
@@ -963,7 +964,7 @@ const LANE_TASKS_WITHOUT_HISTORY_FIXTURE = `# Tasks: Lane
 `;
 
 function laneIdeaLedger(specPath = LANE_SPEC) {
-  return `---\nstatus: defined\nspec_path: ${specPath}\n---\n\n## Idea\n\nLane boundary.\n\n## Coordinator Log\n\n- Existing entry.\n`;
+  return `---\ntitle: Lane\nslug: lane\nstatus: defined\nspec_path: ${specPath}\n---\n\n## Idea\n\nLane boundary.\n\n## Coordinator Log\n\n- Existing entry.\n`;
 }
 
 /** @param {string} root @param {string} rel @param {string} content */
@@ -1847,7 +1848,7 @@ test('T006 lightweight boundary rejects owner, snapshot, and root failures befor
     fs.writeFileSync(snapshotFile, goodSnapshot);
 
     // A second defined owner for the same spec is ambiguous ownership.
-    writeLaneFile(root, '.dude/ideas/lane-duplicate.md', laneIdeaLedger());
+    writeLaneFile(root, '.dude/ideas/010-lane-duplicate.md', laneIdeaLedger());
     assertLaneRefusal(root, laneRequest(root), 'owner-resolution-failed', 'ambiguous defined owners');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -2180,7 +2181,7 @@ test('T006 lightweight controlled-end refuses a completed target and a state cha
 // it needs its own fixture at that exact spec path and task key.
 const INCIDENT_SPEC = '.dude/specs/007-technical-docs-pack-remediation/spec.md';
 const INCIDENT_TASKS = '.dude/specs/007-technical-docs-pack-remediation/tasks.md';
-const INCIDENT_IDEA = '.dude/ideas/incident.md';
+const INCIDENT_IDEA = '.dude/ideas/007-technical-docs-pack-remediation.md';
 const INCIDENT_TASK_KEY = 'T001@00709e37';
 const INCIDENT_TARGET = { specPath: INCIDENT_SPEC, lane: 'lightweight', taskKey: INCIDENT_TASK_KEY };
 const INCIDENT_BLOCKER = 'superseded by the corrected intent';
@@ -2203,7 +2204,7 @@ function scaffoldIncident() {
   writeLaneFile(
     root,
     INCIDENT_IDEA,
-    `---\nstatus: defined\nspec_path: ${INCIDENT_SPEC}\n---\n\n## Idea\n\nIncident.\n\n## Coordinator Log\n\n- Existing entry.\n`,
+    `---\ntitle: Technical Docs Pack Remediation\nslug: technical-docs-pack-remediation\nstatus: defined\nspec_path: ${INCIDENT_SPEC}\n---\n\n## Idea\n\nIncident.\n\n## Coordinator Log\n\n- Existing entry.\n`,
   );
   writeLaneFile(root, LANE_SNAPSHOT, `${JSON.stringify({
     [INCIDENT_TASKS]: { glyphs: { [INCIDENT_TASK_KEY]: '!' }, updated_at: '2026-07-24T00:00:00.000Z' },

@@ -26,7 +26,7 @@
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
-<!-- audit log: .dude/ideas/guarded-directory-artifact-import.md#coordinator-log -->
+<!-- audit log: .dude/ideas/003-guarded-directory-artifact-import.md#coordinator-log -->
 
 # Tasks: Guarded Directory Artifact Import
 

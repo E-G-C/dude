@@ -100,7 +100,7 @@ test('scaffolds beside retired-root content without changing it', () => {
 test('scaffolds the intended skill with canonical ideas present', () => {
   const root = tmpRoot();
   try {
-    const ideaPath = path.join(root, '.dude/ideas/skill-authoring.md');
+    const ideaPath = path.join(root, '.dude/ideas/001-skill-authoring.md');
     fs.mkdirSync(path.dirname(ideaPath), { recursive: true });
     fs.writeFileSync(ideaPath, '# Canonical idea\n');
 

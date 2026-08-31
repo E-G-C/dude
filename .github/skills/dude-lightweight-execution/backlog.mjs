@@ -7,8 +7,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-import { inventoryDefinedFeatures } from "../dude-engine/lib/feature.mjs";
-import { parseFrontmatterScalars, parseSpecIdentity } from "../dude-engine/lib/feature-identity.mjs";
+import { inventoryLifecycleIdentities } from "../dude-engine/lib/feature.mjs";
+import { parseFrontmatterScalars, parseIdeaIdentity, parseSpecIdentity } from "../dude-engine/lib/feature-identity.mjs";
 import { parseTasks } from "../dude-engine/lib/tasks.mjs";
 import { WORKSPACE_PATHS, resolveWorkspacePath, resolveMutationPath } from "../dude-engine/lib/workspace-paths.mjs";
 
@@ -33,6 +33,12 @@ function compareIdentity(left, right) {
   if (left < right) return -1;
   if (left > right) return 1;
   return 0;
+}
+
+function compareLifecycle(left, right) {
+  const leftNumber = Number.isSafeInteger(left.numberValue) ? left.numberValue : Number.MAX_SAFE_INTEGER;
+  const rightNumber = Number.isSafeInteger(right.numberValue) ? right.numberValue : Number.MAX_SAFE_INTEGER;
+  return leftNumber - rightNumber || compareIdentity(left.identity, right.identity);
 }
 
 /** @param {unknown} value */
@@ -278,13 +284,44 @@ function listIdeaFiles(root) {
     } catch {
       continue;
     }
+    const ideaPath = `${WORKSPACE_PATHS.IDEAS_DIR}/${entry.name}`;
+    const identity = parseIdeaIdentity(ideaPath);
     files.push({
       name: entry.name,
-      ideaPath: `${WORKSPACE_PATHS.IDEAS_DIR}/${entry.name}`,
+      ideaPath,
       absolutePath,
+      number: identity?.number ?? null,
+      numberValue: identity?.numberValue ?? null,
+      identitySlug: identity?.slug ?? entry.name.slice(0, -3),
     });
   }
-  return files.sort((left, right) => compareIdentity(left.ideaPath, right.ideaPath));
+  return files.sort((left, right) => {
+    const leftNumber = left.numberValue ?? Number.MAX_SAFE_INTEGER;
+    const rightNumber = right.numberValue ?? Number.MAX_SAFE_INTEGER;
+    return leftNumber - rightNumber || compareIdentity(left.ideaPath, right.ideaPath);
+  });
+}
+
+function collectExactSpecPathClaims(content) {
+  const lines = String(content).split(/\r\n|\n|\r/);
+  if (lines[0] !== "---") return [];
+  const endIndex = lines.indexOf("---", 1);
+  if (endIndex < 0) return [];
+  const declarations = lines.slice(1, endIndex).filter((line) => /^spec_path[ \t]*:/.test(line));
+  const claims = [];
+  for (const declaration of declarations) {
+    try {
+      const frontmatter = parseFrontmatterScalars(
+        `---\n${declaration}\n---`,
+        { canonicalKeys: ["spec_path"] },
+      );
+      const claim = parseSpecIdentity(frontmatter.scalars.get("spec_path")?.value ?? "")?.path;
+      if (claim) claims.push(claim);
+    } catch {
+      // Malformed declarations are not ownership evidence.
+    }
+  }
+  return claims;
 }
 
 function readOrder(root) {
@@ -349,12 +386,24 @@ function anchorFor(item, duplicated) {
 
 /** Collect every safe direct idea and its exact-owner evidence. */
 export function collectLifecycleItems({ root }) {
-  const inventory = inventoryDefinedFeatures({ root });
+  const inventory = inventoryLifecycleIdentities({ root });
+  const files = listIdeaFiles(root).map((file) => ({
+    ...file,
+    content: fs.readFileSync(file.absolutePath, "utf8"),
+  }));
   const diagnosticsByIdea = new Map();
   for (const diagnostic of inventory.diagnostics) {
     const list = diagnosticsByIdea.get(diagnostic.path) ?? [];
     list.push(diagnostic.message);
     diagnosticsByIdea.set(diagnostic.path, list);
+  }
+  const claimantsBySpec = new Map();
+  for (const file of files) {
+    for (const specPath of collectExactSpecPathClaims(file.content)) {
+      const claimants = claimantsBySpec.get(specPath) ?? new Set();
+      claimants.add(file.ideaPath);
+      claimantsBySpec.set(specPath, claimants);
+    }
   }
   const ownersBySpec = new Map();
   for (const feature of inventory.features) {
@@ -363,16 +412,28 @@ export function collectLifecycleItems({ root }) {
     ownersBySpec.set(feature.specPath, list);
   }
   const ownerByIdea = new Map();
-  for (const candidates of ownersBySpec.values()) {
-    if (candidates.length === 1) ownerByIdea.set(candidates[0].ideaPath, candidates[0].specPath);
+  const ambiguousOwnerIdeas = new Set();
+  for (const claimants of claimantsBySpec.values()) {
+    if (claimants.size > 1) {
+      for (const ideaPath of claimants) ambiguousOwnerIdeas.add(ideaPath);
+    }
   }
-
+  for (const candidates of ownersBySpec.values()) {
+    if (candidates.length === 1) {
+      const candidate = candidates[0];
+      if (!ambiguousOwnerIdeas.has(candidate.ideaPath)
+        && (diagnosticsByIdea.get(candidate.ideaPath) ?? []).length === 0) {
+        ownerByIdea.set(candidate.ideaPath, candidate.specPath);
+      }
+    } else {
+      for (const candidate of candidates) ambiguousOwnerIdeas.add(candidate.ideaPath);
+    }
+  }
   const items = [];
-  for (const file of listIdeaFiles(root)) {
-    const content = fs.readFileSync(file.absolutePath, "utf8");
-    const fallbackSlug = file.name.slice(0, -3);
-    let title = fallbackSlug;
-    let slug = fallbackSlug;
+  for (const file of files) {
+    const { content } = file;
+    let title = file.identitySlug;
+    let slug = file.identitySlug;
     let authoritySlug = null;
     let status = "unknown";
     let rawStatus = null;
@@ -384,9 +445,9 @@ export function collectLifecycleItems({ root }) {
     const localAuthorityIssues = [];
     try {
       const frontmatter = parseFrontmatterScalars(content, { canonicalKeys: IDEA_KEYS });
-      title = frontmatter.scalars.get("title")?.value || fallbackSlug;
-      const parsedSlug = frontmatter.scalars.get("slug")?.value || fallbackSlug;
-      slug = CANONICAL_SLUG_RE.test(parsedSlug) ? parsedSlug : fallbackSlug;
+      title = frontmatter.scalars.get("title")?.value || file.identitySlug;
+      const parsedSlug = frontmatter.scalars.get("slug")?.value || file.identitySlug;
+      slug = CANONICAL_SLUG_RE.test(parsedSlug) ? parsedSlug : file.identitySlug;
       // Display identity always resolves; only a canonical frontmatter slug carries authority.
       authoritySlug = CANONICAL_SLUG_RE.test(parsedSlug) ? parsedSlug : null;
       if (slug !== parsedSlug) localAuthorityIssues.push("The idea slug is malformed; the file name is used only as a stable display identity.");
@@ -404,6 +465,12 @@ export function collectLifecycleItems({ root }) {
     } catch (error) {
       frontmatterAvailable = false;
       localAuthorityIssues.push(`Idea metadata is unavailable (${error instanceof Error ? error.message : String(error)}).`);
+    }
+    if (ambiguousOwnerIdeas.has(file.ideaPath)) {
+      authoritySlug = null;
+      localAuthorityIssues.push("Feature ownership is unavailable because multiple ideas claim the same spec_path.");
+    } else if ((diagnosticsByIdea.get(file.ideaPath) ?? []).length > 0) {
+      authoritySlug = null;
     }
 
     const ownerSpecPath = ownerByIdea.get(file.ideaPath) ?? null;
@@ -431,14 +498,18 @@ export function collectLifecycleItems({ root }) {
     const tasksPath = specPath
       ? `${specPath.slice(0, -"spec.md".length)}tasks.md`
       : null;
-    const specContent = specPath ? readSafeFile(root, specPath) : null;
-    const tasksContent = tasksPath ? readSafeFile(root, tasksPath) : null;
+    const displaySpecPath = ownerSpecPath ?? declaredSpecPath;
+    const displayTasksPath = displaySpecPath
+      ? `${displaySpecPath.slice(0, -"spec.md".length)}tasks.md`
+      : null;
+    const specContent = displaySpecPath ? readSafeFile(root, displaySpecPath) : null;
+    const tasksContent = displayTasksPath ? readSafeFile(root, displayTasksPath) : null;
     let parsedTasks = [];
     let taskWarnings = [];
     let tasksAvailable = false;
     if (tasksContent !== null) {
       try {
-        const parsed = parseTasks(tasksContent, { path: tasksPath ?? undefined });
+        const parsed = parseTasks(tasksContent, { path: displayTasksPath ?? undefined });
         taskWarnings = [...parsed.warnings];
         const ambiguous = Boolean(parsed.boardIssue) || taskWarnings.some((warning) => (
           warning.startsWith("duplicate task id ") || warning.startsWith("malformed task line ")
@@ -460,10 +531,12 @@ export function collectLifecycleItems({ root }) {
     const packageComplete = !resolvedCandidate && Boolean(
       ownerSpecPath && tasksAvailable && parsedTasks.length > 0 && parsedTasks.every((task) => task.state === "done"),
     );
-    const ownBlocked = tasksAvailable && parsedTasks.some((task) => (
+    const ownBlocked = Boolean(ownerSpecPath) && tasksAvailable && parsedTasks.some((task) => (
       task.state === "blocked" || (task.blockedBy !== null && task.state !== "done")
     ));
-    const hasInProgress = tasksAvailable && parsedTasks.some((task) => task.state === "in-progress");
+    const hasInProgress = Boolean(ownerSpecPath)
+      && tasksAvailable
+      && parsedTasks.some((task) => task.state === "in-progress");
     const authorityIssues = [...new Set([...(diagnosticsByIdea.get(file.ideaPath) ?? []), ...localAuthorityIssues])];
     let unavailableDetail = null;
     if (!frontmatterAvailable || !lifecycleAvailable) unavailableDetail = "Lifecycle details are unavailable because idea metadata is ambiguous.";
@@ -475,6 +548,8 @@ export function collectLifecycleItems({ root }) {
     items.push({
       identity: file.ideaPath,
       ideaPath: file.ideaPath,
+      number: file.number,
+      numberValue: file.numberValue,
       slug,
       authoritySlug,
       title,
@@ -513,8 +588,17 @@ export function collectLifecycleItems({ root }) {
   }
 
   const slugCounts = new Map();
+  const numberCounts = new Map();
   for (const item of items) slugCounts.set(item.slug, (slugCounts.get(item.slug) ?? 0) + 1);
-  for (const item of items) item.anchor = anchorFor(item, (slugCounts.get(item.slug) ?? 0) > 1);
+  for (const item of items) {
+    if (item.number) numberCounts.set(item.number, (numberCounts.get(item.number) ?? 0) + 1);
+  }
+  for (const item of items) {
+    const duplicateSlug = (slugCounts.get(item.slug) ?? 0) > 1;
+    const duplicateNumber = item.number !== null && (numberCounts.get(item.number) ?? 0) > 1;
+    if (duplicateSlug || duplicateNumber) item.authoritySlug = null;
+    item.anchor = anchorFor(item, duplicateSlug);
+  }
   return items;
 }
 
@@ -525,6 +609,11 @@ function withItemDefaults(item, index) {
       ? item.ideaPath
       : `item-${index}`;
   const slug = typeof item.slug === "string" ? item.slug : identity;
+  const parsedIdentity = parseIdeaIdentity(item.ideaPath ?? identity);
+  const number = typeof item.number === "string" ? item.number : parsedIdentity?.number ?? null;
+  const numberValue = Number.isSafeInteger(item.numberValue)
+    ? item.numberValue
+    : parsedIdentity?.numberValue ?? null;
   const counts = item.taskCounts ?? taskCounts(Array.isArray(item.tasks) ? item.tasks : []);
   const status = item.status ?? (item.defined ? "defined" : "draft");
   const rawStatus = item.rawStatus ?? status;
@@ -550,6 +639,8 @@ function withItemDefaults(item, index) {
   return {
     identity,
     ideaPath: item.ideaPath ?? identity,
+    number,
+    numberValue,
     slug,
     authoritySlug: item.authoritySlug === undefined ? (CANONICAL_SLUG_RE.test(slug) ? slug : null) : item.authoritySlug,
     title: item.title ?? slug,
@@ -700,7 +791,7 @@ function buildRelationships(items, validOrder, orderIndex) {
 export function deriveLifecycleModel({ items: sourceItems = [], order = [] }) {
   const items = sourceItems
     .map(withItemDefaults)
-    .sort((left, right) => compareIdentity(left.identity, right.identity));
+    .sort(compareLifecycle);
   const unique = uniqueItemsBySlug(items);
   const orderIndex = new Map();
   const validOrder = [];
@@ -750,7 +841,7 @@ export function deriveLifecycleModel({ items: sourceItems = [], order = [] }) {
     else next.push(item);
   }
 
-  const byIdentity = (left, right) => compareIdentity(left.identity, right.identity);
+  const byIdentity = compareLifecycle;
   const byOrder = (left, right) => (
     (orderIndex.get(left.authoritySlug) ?? Number.MAX_SAFE_INTEGER)
     - (orderIndex.get(right.authoritySlug) ?? Number.MAX_SAFE_INTEGER)
@@ -807,10 +898,8 @@ export function collectLifecycleModel({ root }) {
 }
 
 function featureKind(item) {
-  const source = item.specPath ?? item.declaredSpecPath;
-  const identity = source ? parseSpecIdentity(source) : null;
-  const number = identity ? /^(\d+)/.exec(identity.feature)?.[1] : null;
-  return number ? `F-${number}` : "IDEA";
+  if (!item.number) return "IDEA";
+  return item.defined ? `F-${item.number}` : `I-${item.number}`;
 }
 
 function lifecycleRibbon(item) {
@@ -922,10 +1011,15 @@ function renderFeatureDefinition(item) {
   if (item.resolved) return `<p class="quiet">Outcome resolved without a package; definition is not applicable.</p>`;
   if (!item.lifecycleAvailable) return `<p class="awaiting">Definition status is unavailable because idea metadata is ambiguous.</p>`;
   if (!item.defined) return `<p class="awaiting">Awaiting definition - no tasks exist yet.</p>`;
-  if (!item.specPath) return `<p class="awaiting">${esc(item.unavailableDetail ?? "The linked feature definition is unavailable or ambiguous.")}</p>`;
   const stories = item.userStories.length > 0
     ? `<ul class="story-list">${item.userStories.map((story) => `<li>${esc(story)}</li>`).join("")}</ul>`
     : `<p class="quiet">No user-story headings are present in the linked feature specification.</p>`;
+  if (!item.specPath) {
+    const declaredSource = item.declaredSpecPath && item.userStories.length > 0
+      ? `<p class="source-path"><span>Declared spec (display only)</span> <code>${esc(item.declaredSpecPath)}</code></p>${stories}`
+      : "";
+    return `<p class="awaiting">${esc(item.unavailableDetail ?? "The linked feature definition is unavailable or ambiguous.")}</p>${declaredSource}`;
+  }
   return `<p class="source-path"><span>Spec</span> <code>${esc(item.specPath)}</code></p>${stories}`;
 }
 
@@ -939,7 +1033,7 @@ function renderFeatureDetail(model, item) {
   const warnings = [...item.authorityIssues, ...item.taskWarnings];
   const warningMarkup = warnings.length > 0 ? `<aside class="data-warning" aria-label="Unavailable or ambiguous source data"><strong>Some source data is unavailable or ambiguous.</strong><ul>${warnings.map((warning) => `<li>${esc(warning)}</li>`).join("")}</ul></aside>` : "";
   const kind = featureKind(item);
-  const visibleIdentity = kind === "IDEA" ? `IDEA · ${item.slug}` : kind;
+  const visibleIdentity = kind === "IDEA" || kind.startsWith("I-") ? `${kind} · ${item.slug}` : kind;
   return `<details class="feature-detail${compact}" id="${esc(item.anchor)}" data-feature-entry="${esc(item.slug)}" data-idea-path="${esc(item.ideaPath)}" data-section="${esc(item.section)}" data-group="${esc(item.group)}"${open}>`
     + `<summary><span class="summary-grid"><span class="identity">${esc(visibleIdentity)}</span>`
     + `<span class="feature-title">${esc(item.title)}</span>${lifecycleRibbon(item)}${countsMarkup(item)}${dependencySignal(item)}</span></summary>`
@@ -1074,7 +1168,8 @@ function markdownInline(value) {
 
 function markdownItem(item) {
   const unavailable = item.authorityIssues.length > 0 || item.taskWarnings.some((warning) => warning.startsWith("duplicate task id ") || warning.startsWith("malformed task line "));
-  return `- \`${String(item.slug).replace(/`/g, "")}\` — ${markdownInline(item.title)} (\`${String(item.ideaPath).replace(/`/g, "")}\`)${unavailable ? " — source data unavailable or ambiguous" : ""}`;
+  const number = item.number ? `\`${item.number}\` · ` : "";
+  return `- ${number}\`${String(item.slug).replace(/`/g, "")}\` — ${markdownInline(item.title)} (\`${String(item.ideaPath).replace(/`/g, "")}\`)${unavailable ? " — source data unavailable or ambiguous" : ""}`;
 }
 
 /** Render a current-work-only Mermaid diagram. */
@@ -1087,7 +1182,7 @@ export function renderCurrentMermaid(model) {
     lines.push(`  ${group.key}[${group.title}]`);
     for (const item of rows) {
       count += 1;
-      lines.push(`    work_${count}[${safeMermaidLabel(item.slug)}]`);
+      lines.push(`    work_${count}[${safeMermaidLabel(`${item.number ?? ""} ${item.slug}`.trim())}]`);
     }
   }
   if (count === 0) return "";
@@ -1173,7 +1268,7 @@ export function renderText(model) {
   const add = (title, rows) => {
     lines.push(`${title} (${rows.length}):`);
     if (rows.length === 0) lines.push("  (none)");
-    else for (const item of rows) lines.push(`  ${item.slug}`);
+    else for (const item of rows) lines.push(`  ${item.number ? `${item.number} ` : ""}${item.slug}`);
     lines.push("");
   };
   add("Blocked", model.current.blocked);

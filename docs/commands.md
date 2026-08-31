@@ -21,7 +21,7 @@ it with `@dude add pack beads`.
 | ------- | ----------- |
 | `@dude ship [<target>]` | Advance one target through only the lifecycle stages it still needs, until it is done or an existing Work stop fires. Exactly one optional target and no flags. |
 | `@dude status` | Read-only report of the current lane, live artifact, next step, and blockers. |
-| `@dude brainstorm <idea>` | Create or refresh one flat `.dude/ideas/<slug>.md` collaboration file without creating a spec package. |
+| `@dude brainstorm <idea>` | Create or refresh one flat `.dude/ideas/<NNN>-<slug>.md` collaboration file without creating a spec package. |
 | `@dude define <slug>` | Turn the matching idea into a reusable package under `.dude/specs/<feature>/`. |
 | `@dude work [<feature>] [--max <N\|unlimited>] [--until blocked] [--recover-on-block] [--recovery-cycles <N\|unlimited>] [--policy guarded\|autonomous]` | Run the next few ready tasks back-to-back inside whichever execution lane is already live, with optional Work-authorized recovery and an optional autonomous policy. Not a new lane. |
 | `@dude flag [<type>:] <details>` | Route a real blocker or mismatch back to the right owner. Typed prefixes are preferred, but plain language is accepted. |
@@ -215,7 +215,7 @@ Updated:
 - T003@a1b2c3d4 implemented, verified, marked [x]
 - T004@e4f5g6h7 implemented, verified, marked [x]
 - T005@91ac4e2f reviewer rejected, revised, re-verified, re-reviewed, marked [x]
-- 3 Coordinator Log entries appended to .dude/ideas/expense-entry.md
+- 3 Coordinator Log entries appended to .dude/ideas/001-expense-entry.md
 - dude-lint: ok after each close
 Blockers:
 - Stopped on T006@2f7b81ce: learning review found no credible alternative
@@ -257,16 +257,22 @@ Illustrative result:
 ```text
 Action: brainstorm
 Updated:
-- .dude/ideas/authentication.md created or refreshed
+- .dude/ideas/001-authentication.md created or refreshed
 Next:
 - Review ## Idea, then edit it or answer any open-question prompts
 - Run @dude define authentication when the idea is ready
 ```
 
+The first brainstorm assigns the next permanent three-digit lifecycle number.
+It orders idea inventory by capture time, is reused for the feature package, and
+is never reused. It does not set priority, dependency, or execution order. The
+exact unnumbered frontmatter slug remains the normal selector, so commands still
+use `authentication`; an explicit path must name the exact numbered ledger.
+
 The lifecycle status vocabulary is `draft|defined|resolved`. A new file starts
-with `# Idea: <title>` and frontmatter containing `status: draft` plus an empty
-`spec_path:`. `## Idea` is user-controlled; active `## Open Questions` appear
-immediately after it. Users may also edit
+with `# Idea: <title>` and frontmatter containing the exact unnumbered `slug:`,
+`status: draft`, and an empty `spec_path:`. `## Idea` is user-controlled; active
+`## Open Questions` appear immediately after it. Users may also edit
 `## Assumptions` and `## Deferred Clarifications`. Dude maintains managed
 `## Normalized Intent`, `## Constraints`, and `## Definition Checklist`
 sections when they have content, plus `status:`, `spec_path:`, and the
@@ -314,8 +320,8 @@ Definition completed:
 Action: define
 Updated:
 - .dude/specs/001-authentication/spec.md created or refreshed
-- .dude/ideas/authentication.md updated with status: defined and exact spec_path
-- Definition event appended to .dude/ideas/authentication.md Coordinator Log
+- .dude/ideas/001-authentication.md updated with status: defined and exact spec_path
+- Definition event appended to .dude/ideas/001-authentication.md Coordinator Log
 Next:
 - Read .dude/specs/001-authentication/spec.md first, then plan.md
 - Stop here for definition-only work
@@ -522,7 +528,7 @@ Updated:
 - Iteration 1/3: T003@a1b2c3d4 implemented, verified, marked [x]
 - Iteration 2/3: T004@e4f5g6h7 implemented, verified, marked [x]
 - Iteration 3/3: T005@91ac4e2f implemented, verified, marked [x]
-- 3 Coordinator Log entries appended to .dude/ideas/expense-entry.md
+- 3 Coordinator Log entries appended to .dude/ideas/001-expense-entry.md
 - dude-lint: ok after each iteration
 Next:
 - Run @dude work expense-entry --max 3 to continue

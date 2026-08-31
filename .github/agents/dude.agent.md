@@ -29,7 +29,7 @@ At a direct-task boundary, stop before another repository write, report the conc
 
 ## Canonical Ownership
 
-For any defined-package selection or mutation, use the canonical feature resolver and require exactly one idea with `status: defined` whose exact `spec_path:` equals the workspace-relative sibling `.dude/specs/<feature>/spec.md` (or the tracked issue's exact `spec:` value). Any resolver diagnostic, zero owner, or multiple owners stops before routing or the first write. Never infer or fall back from an idea slug, feature directory, or name. Read-only diagnosis may report the error without writing.
+For any defined-package selection or mutation, use the canonical feature resolver and require exactly one idea with `status: defined` whose exact `spec_path:` equals the workspace-relative sibling `.dude/specs/<feature>/spec.md` (or the tracked issue's exact `spec:` value). Any resolver diagnostic, zero owner, or multiple owners stops before routing or the first write. Do not infer or fall back to ownership from a matching lifecycle number, slug, filename, package directory, title, or name; use them only to confirm consistency. Read-only diagnosis may report the error without writing.
 
 The unique owner supplies the append-only `## Coordinator Log`. During explicit `brainstorm` or `define`, the Spec Lead writes definition artifacts and metadata, managed definition regions, and definition log events. The coordinator exclusively applies task glyphs and metadata, generated board fences and tracked mirrors, archive/discovered/execution-history state, and execution-reconciliation or close events. In canonical `tasks.md`, the audit breadcrumb names that owner.
 
@@ -37,7 +37,8 @@ The unique owner supplies the append-only `## Coordinator Log`. During explicit 
 
 `brainstorm` and `define` are separate. Explicit `brainstorm` is the only route for user-intent changes and resolved-to-draft reopen; outside the exception in `## Work`, explicit `define` is the only route for package creation or refresh. Route both to the Spec Lead and require `dude-feature-definition`:
 
-- `brainstorm <idea>` creates or refreshes only one flat `.dude/ideas/<slug>.md`; it never creates or refreshes `.dude/specs/`.
+- `brainstorm <idea>` creates or refreshes only one direct numbered ledger at `.dude/ideas/<NNN>-<slug>.md`; it never creates or refreshes `.dude/specs/`. The normal semantic selector remains the exact unnumbered frontmatter `slug:`; an explicit idea path selects only that exact direct file.
+- First capture allocates the lifecycle number once from the clean direct inventories. After selection, carry the resolver's exact numbered `ideaPath` through delegation and handoff; refresh, resolved preservation, and explicit reopen retain that path without allocating again or reconstructing it from the slug. First definition reuses that path's lifecycle number and exact slug for `.dude/specs/<NNN>-<slug>/`.
 - Users control `## Idea`, answers in `## Open Questions`, and `## Assumptions`. Preserve their meaning, uncertainty, incomplete thought, creative intent, and edits.
 - The delegated Spec Lead maintains `status:`, exact `spec_path:`, managed definition sections, and definition log events. A brainstorm rerun of a defined ledger preserves `status: defined` and its exact `spec_path:`; `status: draft` with an empty path applies only to a first or still-undefined draft.
 - A normal rerun of an exact `status: resolved` ledger preserves its empty path; only an explicit user request to reopen through `brainstorm <slug>` returns it to draft with an empty path and one appended lifecycle event.
@@ -46,6 +47,8 @@ The unique owner supplies the append-only `## Coordinator Log`. During explicit 
 - After accepting a complete re-definition stage, the coordinator snapshots both halves, delegates only definition artifact/metadata/definition-log writes to the Spec Lead, and exclusively applies task glyphs, task metadata, generated board, archive/discovered/history state, and the execution-reconciliation log event. If either half or validation fails, restore all affected bytes and new paths; never leave or report half-applied state.
 - The Spec Lead has no terminal authority and does not claim lint execution. The coordinator runs `node .github/skills/dude-lint/lint.mjs .`; definition readiness requires the coordinator to report zero failures.
 - Outside explicit Ship, when guardrail candidates exist, pause with `This is a normal checkpoint, not an error.` `accept` persists the proposed rules to `.dude/memory/guardrails.md`; `edit` persists only the user-edited accepted rules; both then resume definition. `reject` persists none and continues with existing project/bundle guardrails; `skip` persists none and continues with bundle defaults only. Only user-accepted or user-edited rules persist in these ordinary flows. No candidates means no pause.
+
+The lifecycle number records capture chronology only. It never sets priority, dependency, roadmap position, task phase, readiness, dispatch, or execution order.
 
 Intent changes return to the owning idea and then `define`; do not treat generated spec or plan files as the intent source.
 

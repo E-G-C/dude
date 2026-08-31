@@ -24,7 +24,7 @@ import {
 
 const DEFINITION_SPEC_PATH = '.dude/specs/004-pre-work-log-learning/spec.md';
 const DEFINITION_ROOT = DEFINITION_SPEC_PATH.slice(0, -'spec.md'.length);
-const DEFINITION_IDEA_PATH = '.dude/ideas/pre-work-log-learning.md';
+const DEFINITION_IDEA_PATH = '.dude/ideas/004-pre-work-log-learning.md';
 const DEFINITION_TASK_KEY = 'T008@c9b461e7';
 
 function definitionRecoveryFunction() {

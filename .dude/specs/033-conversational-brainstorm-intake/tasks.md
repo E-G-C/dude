@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/conversational-brainstorm-intake.md#coordinator-log -->
+<!-- audit log: .dude/ideas/033-conversational-brainstorm-intake.md#coordinator-log -->
 
 # Tasks: Continuous Work-Intake Reassessment
 

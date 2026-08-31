@@ -1,4 +1,4 @@
-<!-- audit log: .dude/ideas/task-scoped-skill-resolution.md#coordinator-log -->
+<!-- audit log: .dude/ideas/020-task-scoped-skill-resolution.md#coordinator-log -->
 
 <!-- canonical task units — edit task descriptions here, but let @dude mutate state glyphs -->
 
