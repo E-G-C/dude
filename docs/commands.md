@@ -581,6 +581,50 @@ by evidence is reported unresolved rather than given a name it cannot support.
 [docs/workflow.md](workflow.md). The full skill lives at
 [.github/skills/dude-work/SKILL.md](../.github/skills/dude-work/SKILL.md).
 
+### Completion closeouts
+
+When an invocation successfully closes at least one bounded task or feature, its
+same final response contains exactly one `Completion Closeout:`. Completed Ship
+work and completed release work use the same closeout, though Ship performs no
+release action. Several closes share that block. If later work stops, the block
+covers only the successful closures, while the usual `Blockers:` and `Next:`
+lines describe unfinished work. An invocation with no successful close has no
+success closeout.
+
+After the closed scope, applicable categories appear in this order: repository
+state; delivery identities and links; optional cleanup; retained or proposed
+learning. Empty or inapplicable categories do not appear. Delivery entries use
+only relevant, evidenced identities and actual URLs. Cleanup names an exact
+action and target and remains explicitly optional and unexecuted. A learning
+entry only repeats a disposition already retained or proposed through the
+existing learning process; reporting never creates or persists one.
+
+Before reporting repository state, Dude freshly reads the mutable worktree and
+branch state after the close. Earlier evidence can support immutable delivery
+facts, but cannot support a current branch or worktree claim. An unavailable
+observation is reported with its observed reason instead of being guessed.
+
+A bounded-task result stays concise:
+
+```text
+Lane: Lightweight Execution · Live: .dude/specs/001-authentication/tasks.md
+Action: work
+Updated:
+- T003@a1b2c3d4 implemented, verified, and marked [x]
+Next:
+- Continue with T004@e4f5g6h7
+Completion Closeout:
+- Closed: T003@a1b2c3d4
+- Repository state: after close, the worktree has modified task and coordinator-log files on branch feature/authentication
+```
+
+Rendering the closeout is read-only. It runs no cleanup, Git, delivery, release,
+or learning action and creates no hook, stage, state, or report artifact.
+Optional packs are not required. Advice from a pack can contribute only when it
+has already reached Dude; it cannot delay the close or add authority. See
+[Completion closeout timing and evidence](workflow.md#completion-closeout-timing-and-evidence)
+for the full workflow behavior.
+
 ### `@dude status`
 
 Status takes a read-only snapshot of the current workflow state and changes

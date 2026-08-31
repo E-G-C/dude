@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **1**
+- Ideas awaiting definition: **2**
 - Defined awaiting work: **0**
-- Completed: **48**
+- Completed: **49**
 
 ## Current
 
@@ -21,6 +21,7 @@ No current work to diagram.
 ### Ideas awaiting definition
 
 - `048` · `backlog-canvas` — Backlog Canvas (`.dude/ideas/048-backlog-canvas.md`)
+- `051` · `retrospective-rubber-duck-pack` — Retrospective Rubber Duck Pack (`.dude/ideas/051-retrospective-rubber-duck-pack.md`)
 
 ## Completed
 
@@ -72,6 +73,7 @@ No current work to diagram.
 - `046` · `good-enough-delivery` — Good Enough Delivery (`.dude/ideas/046-good-enough-delivery.md`)
 - `047` · `core-dogfood-preview` — Core Dogfood Preview (`.dude/ideas/047-core-dogfood-preview.md`)
 - `049` · `visual-systems-pack` — Visual Systems Pack (`.dude/ideas/049-visual-systems-pack.md`)
+- `050` · `completion-closeout-report` — Completion Closeout Report (`.dude/ideas/050-completion-closeout-report.md`)
 
 ## Dependency and order notes
 

@@ -439,5 +439,14 @@
       "T005@61636370": "x"
     },
     "updated_at": "2026-08-31T13:47:11.000Z"
+  },
+  ".dude/specs/050-completion-closeout-report/tasks.md": {
+    "glyphs": {
+      "T001@c10e50a1": "x",
+      "T002@c10e50b2": "x",
+      "T003@c10e50c3": "x",
+      "T004@c10e50d4": "x"
+    },
+    "updated_at": "2026-08-31T18:53:36.226Z"
   }
 }
