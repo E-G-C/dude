@@ -158,6 +158,23 @@ artifact. The behavior works without optional packs. Advisory pack input may
 contribute only evidence that reached Dude before close; pack absence, failure,
 or silence cannot delay the closeout or add authority.
 
+### Optional retrospective at feature completion
+
+With `rubber-duck` installed, the coordinator runs its read-only retrospective
+exactly once when successful work is about to complete a feature. It runs after
+final Reviewer approval and before close. A Ship invocation that completes its
+feature uses this same single pass.
+
+No retrospective runs for ordinary or bounded task closes, successful release
+runs, or failed, blocked, cancelled, or abandoned feature or Ship endings.
+Findings are advisory and cannot block or delay close.
+
+The coordinator records each result as a dated, append-only entry in
+`.dude/specs/<NNN>-<slug>/retrospective.md`; the Rubber Duck does not write the
+file. This fixed feature-package path is the durable discovery point. The
+universal `Completion Closeout:` remains independent: it neither requires nor
+links the file and works unchanged when `rubber-duck` is not installed.
+
 ## Who Owns What
 
 | Part | Owns | Plain-English version |

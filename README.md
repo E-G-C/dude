@@ -127,6 +127,19 @@ The closeout is read-only, writes no state or report artifact, and works without
 optional packs. Pack advice already available may supply evidence, but cannot
 delay reporting or change who has authority.
 
+When the optional `rubber-duck` pack is installed, Dude runs exactly one
+retrospective after final Reviewer approval and before closing a successfully
+completed feature. The same rule covers a Ship invocation that completes its
+feature. The coordinator writes a dated, append-only entry to
+`.dude/specs/<NNN>-<slug>/retrospective.md`, giving each feature package a
+stable place to find its retrospective history.
+
+This retrospective does not run for ordinary or bounded task closes, successful
+release runs, or failed, blocked, cancelled, or abandoned endings. Its findings
+are advisory and never block or delay close. The universal `Completion Closeout:`
+does not require or link the retrospective file and works unchanged without the
+pack.
+
 You can stop after definition and use the package as a plan, or let Dude
 continue through implementation:
 
@@ -148,6 +161,7 @@ it is useful.
 | `web` | backend and frontend specialists | you are building a web application |
 | `clearline` | the Clearline visual system | the project selects Clearline for one or more surfaces |
 | `release` | release engineering and versioning guidance | you publish versioned releases |
+| `rubber-duck` | a read-only retrospective teammate | you want advisory findings at a pending successful feature completion reached through direct feature work or a Ship invocation that completes its feature |
 
 ```text
 @dude list packs
@@ -167,7 +181,7 @@ node .github/skills/dude-compose/compose.mjs list --use-case ui --json
 ```
 
 `--use-case <id>` returns exact matches. JSON pack objects include `use_cases`;
-a pack without a declaration returns `[]`. The catalog currently holds 17
+a pack without a declaration returns `[]`. The catalog currently holds 18
 packs. Installed pack files use the reserved `dude-pack-*` namespace and survive
 core upgrades.
 

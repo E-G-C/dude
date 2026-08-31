@@ -29,6 +29,7 @@ const EXPECTED_CATALOG_USE_CASES = new Map([
   ['newsroom', ['web-development', 'writing']],
   ['practices', ['software-development']],
   ['release', ['release-management']],
+  ['rubber-duck', ['retrospective']],
   ['rust', ['software-development']],
   ['strata', ['ui', 'visual-design']],
   ['technical-docs', ['documentation', 'writing']],
