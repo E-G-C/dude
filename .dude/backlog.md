@@ -8,7 +8,7 @@ A read-only view built from idea files, linked feature files, task records, and 
 - Ready / Next: **0**
 - Ideas awaiting definition: **1**
 - Defined awaiting work: **0**
-- Completed: **46**
+- Completed: **47**
 
 ## Current
 
@@ -51,6 +51,7 @@ No current work to diagram.
 - `pack-catalog-refetch` — Pack Catalog Re-fetch (`.dude/ideas/pack-catalog-refetch.md`)
 - `pack-discovery-metadata` — Pack Discovery Metadata (`.dude/ideas/pack-discovery-metadata.md`)
 - `pack-visual-neutrality` — Pack Visual Neutrality (`.dude/ideas/pack-visual-neutrality.md`)
+- `persistent-design-mockups` — Persistent Design Mockups (`.dude/ideas/persistent-design-mockups.md`)
 - `pre-work-log-learning` — Pre-work Log Learning (`.dude/ideas/pre-work-log-learning.md`)
 - `recovery-continuation` — Recovery Continuation (`.dude/ideas/recovery-continuation.md`)
 - `remove-legacy-compatibility` — Remove Legacy Compatibility From The Bundle (`.dude/ideas/remove-legacy-compatibility.md`)

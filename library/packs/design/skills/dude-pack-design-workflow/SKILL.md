@@ -25,6 +25,9 @@ Load this skill for requests involving:
 
 If the request is only a small implementation fix with no open visual direction, route normally to the owning specialist and use the standard execution path.
 
+A change to this workflow or other non-rendered workflow prose does not itself
+activate a preview or design-approval gate.
+
 ## Core Model
 
 The approved proposal is the spec.
@@ -32,11 +35,20 @@ The approved proposal is the spec.
 ```text
 .dude/ideas/<slug>.md                 # canonical flat idea ledger and audit companion
   -> .dude/specs/<feature>/spec.md        # design proposal, then approved design spec
-  -> .dude/specs/<feature>/design/        # preview(s), screenshots, visual references
+  -> .dude/specs/<feature>/design/        # primary mock, supporting files, screenshots, references
   -> .dude/specs/<feature>/tasks.md       # canonical task units applied through the active execution lane
 ```
 
 The uniquely owning idea's `spec_path` still points exactly to `.dude/specs/<feature>/spec.md`. Resolve that owner only from direct flat `.dude/ideas/*.md` ledgers by exact `spec_path` equality. An idea can be `status: defined` once `spec.md` exists even while the design proposal has `design_status: exploring` or `design_status: proposed`; the design approval gate remains `design_status` inside `spec.md`. Exact-file identity semantics are unchanged.
+
+For a raw or draft design idea, capture the flat ledger with
+`@dude brainstorm <idea>` when needed, then explicitly run `@dude define <slug>`
+before the first managed render, export, or capture. Definition establishes a
+lean design package with `design_status: exploring` and a `preview_path` that
+records the selected primary artifact's exact workspace-relative filename and
+actual extension under `.dude/specs/<feature>/design/`; it may stay lean while
+the direction develops. Brainstorm alone creates no design package or mock. Do
+not render, export, or capture a temporary mock as a shortcut.
 
 ## Mutation Preconditions And Ownership
 
@@ -51,10 +63,12 @@ Only the coordinator appends to `## Coordinator Log` or mutates idea `status`, d
 
 Exploration is normally a **live mock loop**, not a writing exercise. During `design_status: exploring`:
 
-- Build a throwaway `preview.html`, then **edit -> render -> screenshot -> user corrects -> repeat**. The screenshots are the evidence; a full `spec.md` is not required yet.
-- **Refinements are ungated.** Size, spacing, copy, and color tweaks do not need an approval prompt. Only the eventual *direction* sign-off is gated.
-- The scratch preview may live anywhere while exploring (for example under `design/`). Once `spec.md` exists, the accepted preview belongs under `.dude/specs/<feature>/design/` and `preview_path:` points at it.
-- **Mirror:** if the mock already backs real proposal artifacts (a `proposed/` template or style-source tree), mirror each accepted mock change into those artifacts in the same turn. If there is no proposal artifact yet, say the mock is still scratch-only.
+- The first actual output is the canonical primary mock under `.dude/specs/<feature>/design/`. Select its format for the target and intended output. HTML, PDF, PNG/JPEG, SVG, other images or documents, slides or decks, canvas exports, and MCP or other tool output are illustrative examples, not an allowlist. Keep every required asset, source, export, variant, page, or other supporting file beside it under that `design/` directory.
+- `preview_path` identifies that primary artifact by its exact workspace-relative filename and actual extension through `design_status: exploring`, `proposed`, and `approved`. It is the sole orientation entrypoint and live authority; supporting files do not become a second live authority. Every design-loop response that creates, updates, or resumes the mock reports the exact current `preview_path`.
+- **Edit or compose -> render, export, or capture as appropriate -> inspect -> user corrects -> repeat.** Capture and retain screenshot evidence wherever it applies. Directly inspect an inherently viewable artifact when that establishes its visible output without a separate image screenshot solely duplicating it, but direct inspection never waives otherwise applicable screenshot evidence. Refinements remain ungated; only direction sign-off is gated.
+- Export or save MCP and other tool output into `design/` before treating it as the current mock. If accepted current content arrives from an external or scratch location, copy, move, save, or export its primary artifact and every required supporting file into `design/` before continuing. The external or scratch source may remain as inert input after handoff, but the canonical `preview_path` artifact set is the sole live authority and receives all later edits.
+- Record useful external sources, sessions, or tool references under `design/references/` only as context. A reference or external session cannot become `preview_path`, replace the artifact set, or hold live authority.
+- **Mirror:** if the mock already backs real proposal artifacts (a `proposed/` template or style-source tree), mirror each accepted mock change into those artifacts in the same turn. Those artifacts do not become another live authority. If there is no proposal artifact yet, the primary artifact identified by `preview_path` remains the sole live mock.
 - **Provenance:** every field shown in the mock must map to a real content or front-matter source, or be dropped. Do not ship invented sample values such as fake counts or estimated reading times into the real templates.
 - **Buildable affordances:** every actionable element (button, link, form field, share / submit / feedback control) must map to a capability the target can actually deliver, not just look real. See **Functional Realism** below. Do not mock affordances outside the target's declared capability envelope — submit feedback, share or send to an external service, email-this, like / save, login — as if they already worked.
 
@@ -94,7 +108,7 @@ slug: feature-title
 work_type: design
 design_status: exploring # exploring | proposed | approved
 approved_direction:
-preview_path: .dude/specs/001-feature-title/design/preview.html
+preview_path: .dude/specs/001-feature-title/design/<actual-primary-artifact>
 ---
 ```
 
@@ -128,7 +142,7 @@ Use these sections, omitting sections that do not materially apply:
 - Layout
 - Components
 - Color / type / spacing approach
-- Preview: [preview.html](design/preview.html)
+- Primary mock: [`<actual-primary-artifact>`](design/<actual-primary-artifact>)
 
 ### Option B - <name>
 - ...
@@ -141,7 +155,7 @@ Use these sections, omitting sections that do not materially apply:
 ## Visual Success Criteria
 - VSC-001: The preview is scannable in <specific context>.
 - VSC-002: The surface uses existing brand tokens, not raw brand hex values.
-- VSC-003: The rendered result matches the approved preview at the agreed breakpoints.
+- VSC-003: The rendered result matches the approved primary mock identified by `preview_path` at the agreed breakpoints.
 - VSC-004: Brand check passes and contrast is WCAG AA.
 
 ## Revision Log
@@ -161,12 +175,40 @@ Store rendered proposal assets under:
 
 ```text
 .dude/specs/<feature>/design/
-  preview.html
+  <actual-primary-artifact>              # exact filename and extension in preview_path
+  <required-supporting-files>/
   screenshots/
-  references/
+  references/                            # external context only; never live authority
 ```
 
-Prefer one preview at first. Use multiple options only when the direction is genuinely open. Do not create visual variants just to fill a template.
+`design/` contains the primary mock and its required supporting files, not
+product source. Apply an approved design in the target's normal source location;
+do not turn the primary mock into product source.
+
+Prefer one primary mock at first. Use multiple options only when the direction
+is genuinely open. `preview_path` still identifies one current orientation
+entrypoint; do not create visual variants just to fill a template or competing
+live authorities for one direction.
+
+The ordinary repository or worktree filesystem provides the artifact set's
+persistence across a process, session, or computer restart. It does not recover
+a deleted file or uncommitted work lost with the disk. This workflow adds no
+registry, revision database, cache, state store, daemon, autosave service,
+background process, duplicate workflow, command, automatic Git action, manifest
+change, or core status/runtime change. Do not edit core absent concrete current
+proof and redefinition.
+
+## Resume And Orientation
+
+For an existing design package, design-workflow resume and orientation report
+the exact current workspace-relative `preview_path`, including the primary
+artifact's actual filename and extension. After a process, session, or computer
+restart, and in `exploring`, `proposed`, or `approved`, inspect and continue
+that primary artifact and every required supporting file according to the
+current state; do not silently recreate, replace, abandon, supersede, or select
+another artifact set. If the primary artifact or any required supporting file is
+missing, report each missing exact path and stop instead of manufacturing a
+replacement.
 
 ## Approval Gate
 
@@ -208,7 +250,7 @@ When an implementation task applies an approved design, close it only after fres
 2. Capture or inspect the rendered surface at the relevant breakpoints.
 3. Confirm accessibility and contrast on the rendered surface itself: interactive elements are reachable and show a visible focus state, and text and essential UI meet WCAG AA contrast. Judge this against the accessibility constraints in `spec.md`, not against any theme or external validator.
 4. Confirm every displayed field traces to real content, data, or configuration, and every actionable element (link, button, form, share / submit control) resolves to a real destination or local behavior inside the target's declared capability envelope — no invented sample values and no affordances the target cannot deliver. See **Functional Realism**.
-5. Compare the result to the approved preview in `spec.md`.
+5. Compare the result to the approved primary mock identified by `preview_path` in `spec.md`.
 6. Classify the result using the Post-Implementation Refinement Loop below.
 7. Have the coordinator append the close classification and any routing decision to the uniquely owning companion idea's `## Coordinator Log`.
 8. Only when the result matches the approved spec and works in the real rendered context may the coordinator close the task through the active lane: in Lightweight Execution mark the task `[x]` in `tasks.md`; in tracked execution close the Beads issue (`bd close`) and mirror the result one-way to `tasks.md` per `dude-pack-beads-workflow`.

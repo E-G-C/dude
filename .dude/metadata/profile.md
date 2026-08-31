@@ -37,11 +37,12 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
     },
     "design": {
       "files": [
+        ".github/skills/dude-pack-design-frontend-aesthetics",
         ".github/skills/dude-pack-design-workflow"
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-issue-3-add-a-topology-first-reset-when-review-r-891391/library/packs"
+        "location": "/Users/eg/work/dude/library/packs"
       }
     },
     "release": {
