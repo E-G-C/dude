@@ -22,6 +22,17 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
         "location": "/Users/eg/work/dude/library/packs"
       }
     },
+    "clearline": {
+      "files": [
+        ".github/agents/dude-pack-clearline-stylist.agent.md",
+        ".github/prompts/dude-pack-clearline-apply-visual-system.prompt.md",
+        ".github/skills/dude-pack-clearline-visual"
+      ],
+      "source": {
+        "type": "local",
+        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-stunning-winner/library/packs"
+      }
+    },
     "coding": {
       "files": [
         ".github/agents/dude-pack-coding-architect.agent.md",
@@ -43,6 +54,15 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       "source": {
         "type": "local",
         "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-refactored-guide/library/packs"
+      }
+    },
+    "fluent-ui": {
+      "files": [
+        ".github/agents/dude-pack-fluent-ui-specialist.agent.md"
+      ],
+      "source": {
+        "type": "local",
+        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-stunning-winner/library/packs"
       }
     },
     "release": {

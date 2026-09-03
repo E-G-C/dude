@@ -897,6 +897,42 @@ test('plan-import rejects duplicate feature epic identities', () => {
   }
 });
 
+test('plan-import treats either conflicting type field as epic without precedence', () => {
+  const scenarios = [
+    { id: 'dude-type-epic', type: 'EPIC', issue_type: 'task' },
+    { id: 'dude-issue-type-epic', type: 'task', issue_type: 'ePiC' },
+  ];
+
+  for (const scenario of scenarios) {
+    // Arrange
+    const { root, script, file } = stage();
+    try {
+      const bdFile = path.join(root, 'conflicting-epic-type.json');
+      fs.writeFileSync(bdFile, JSON.stringify([{
+        ...scenario,
+        status: 'deferred',
+        description: `spec: ${SPEC_PATH}\nEpic: Existing feature`,
+      }]));
+
+      // Act
+      const result = runNode(script, [
+        'plan-import', file,
+        '--spec', SPEC_PATH,
+        '--root', root,
+        '--from', bdFile,
+      ]);
+
+      // Assert
+      assert.equal(result.code, 2, result.out);
+      assert.match(result.out, /already represented/);
+      assert.match(result.out, new RegExp(scenario.id));
+      assert.doesNotMatch(result.out, /bd create/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test('plan-import rejects duplicate defined-idea feature identities', () => {
   const { root, script, file } = stage();
   try {
@@ -1664,6 +1700,189 @@ test('regression: mirror applies every supported status spelling and skips the d
   assert.deepEqual(result.ideaAfter, result.ideaBefore);
 });
 
+test('regression: mirror treats either conflicting type field as epic without precedence', () => {
+  // Arrange
+  const tasks = [
+    '## Conflicting types',
+    '- [ ] T020@aaaaaa20 type epic',
+    '- [~] T021@aaaaaa21 issue_type epic',
+    '',
+  ].join('\n');
+  const inventory = JSON.stringify([
+    {
+      id: 'type-epic',
+      type: 'EPIC',
+      issue_type: 'task',
+      status: 'closed',
+      description: `spec: ${SPEC_PATH}\nTask: T020@aaaaaa20`,
+    },
+    {
+      id: 'issue-type-epic',
+      type: 'task',
+      issue_type: 'ePiC',
+      status: 'open',
+      description: `spec: ${SPEC_PATH}\nTask: T021@aaaaaa21`,
+    },
+  ]);
+
+  // Act
+  const result = runMirrorFixture({ inventory, tasks, write: true });
+
+  // Assert
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /mirrored 0 state\(s\)/);
+  assert.deepEqual(result.tasksAfter, result.tasksBefore);
+  assert.deepEqual(result.ideaAfter, result.ideaBefore);
+});
+
+test('regression: mirror rejects non-string authority fields without coercion or false completion', () => {
+  // Arrange
+  const invalidValues = [
+    ['null', null],
+    ['number', 0],
+    ['array', ['closed']],
+    ['object', { value: 'closed' }],
+    ['boolean', false],
+  ];
+  const scenarios = ['type', 'issue_type', 'status', 'state'].flatMap((field) => (
+    invalidValues.map(([kind, value]) => ({
+      label: `${field}: ${kind}`,
+      field,
+      issue: {
+        id: `malformed-${field}-${kind}`,
+        type: 'task',
+        status: 'closed',
+        [field]: value,
+        description: `spec: ${SPEC_PATH}\nTask: T002@bbbbbbbb`,
+      },
+    }))
+  ));
+  scenarios.push(
+    {
+      label: 'invalid issue_type beside valid type epic',
+      field: 'issue_type',
+      issue: {
+        id: 'mixed-type-epic',
+        type: 'epic',
+        issue_type: null,
+        status: 'closed',
+        description: `spec: ${SPEC_PATH}\nTask: T002@bbbbbbbb`,
+      },
+    },
+    {
+      label: 'invalid type beside valid issue_type epic',
+      field: 'type',
+      issue: {
+        id: 'mixed-issue-type-epic',
+        type: ['epic'],
+        issue_type: 'epic',
+        status: 'closed',
+        description: `spec: ${SPEC_PATH}\nTask: T002@bbbbbbbb`,
+      },
+    },
+  );
+
+  // Act
+  const observations = scenarios.map((scenario) => {
+    const inventory = JSON.stringify([
+      scenario.issue,
+      {
+        id: 'supported-closed-sibling',
+        type: 'task',
+        status: 'closed',
+        description: `spec: ${SPEC_PATH}\nTask: T003@cccccccc`,
+      },
+    ]);
+    const results = [false, true].map((write) => runMirrorFixture({ inventory, write }));
+    return {
+      label: scenario.label,
+      actual: results.map((result) => rejectionObservation(
+        result,
+        new RegExp(`requires '${scenario.field}' to be a string when present`),
+      )),
+      output: results.map((result) => result.out).join('\n'),
+    };
+  });
+
+  // Assert
+  for (const observation of observations) {
+    assert.deepEqual(
+      observation.actual,
+      [EXPECTED_REJECTION, EXPECTED_REJECTION],
+      `${observation.label}\n${observation.output}`,
+    );
+  }
+});
+
+test('regression: mirror gives nonempty status precedence and falls back to state only for empty status', () => {
+  // Arrange
+  const tasks = [
+    '## Status precedence',
+    '- [x] T030@aaaaaa30 status wins',
+    '- [ ] T031@aaaaaa31 state fallback',
+    '- [ ] T032@aaaaaa32 normalized status',
+    '',
+  ].join('\n');
+  const inventory = JSON.stringify([
+    {
+      id: 'status-wins',
+      type: 'task',
+      status: 'OPEN',
+      state: 'closed',
+      description: `spec: ${SPEC_PATH}\nTask: T030@aaaaaa30`,
+    },
+    {
+      id: 'state-fallback',
+      type: 'task',
+      status: '',
+      state: 'DONE',
+      description: `spec: ${SPEC_PATH}\nTask: T031@aaaaaa31`,
+    },
+    {
+      id: 'normalized-status',
+      type: 'task',
+      status: 'IN \t PROGRESS',
+      state: 'blocked',
+      description: `spec: ${SPEC_PATH}\nTask: T032@aaaaaa32`,
+    },
+  ]);
+
+  // Act
+  const result = runMirrorFixture({ inventory, tasks, write: true });
+
+  // Assert
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /mirrored 3 state\(s\)/);
+  const after = result.tasksAfter.toString();
+  assert.match(after, /- \[ \] T030@aaaaaa30 status wins/);
+  assert.match(after, /- \[x\] T031@aaaaaa31 state fallback/);
+  assert.match(after, /- \[~\] T032@aaaaaa32 normalized status/);
+  assert.deepEqual(result.ideaAfter, result.ideaBefore);
+});
+
+test('regression: mirror does not fall back to state when a truthy status is unsupported', () => {
+  // Arrange
+  const inventory = JSON.stringify([{
+    id: 'unsupported-status-wins',
+    type: 'task',
+    status: 'future',
+    state: 'closed',
+    description: `spec: ${SPEC_PATH}\nTask: T002@bbbbbbbb`,
+  }]);
+
+  // Act
+  const results = [false, true].map((write) => runMirrorFixture({ inventory, write }));
+
+  // Assert
+  assert.deepEqual(
+    results.map((result) => rejectionObservation(
+      result,
+      /unsupported executable Beads issue.*unsupported-status-wins.*status=future/is,
+    )),
+    [EXPECTED_REJECTION, EXPECTED_REJECTION],
+  );
+});
+
 const STRUCTURAL_MIRROR_SCENARIOS = [
   {
     name: 'duplicate canonical task ids with exact one-header mapping',
@@ -1898,11 +2117,15 @@ test('beads.mjs mirror --write rejects unrelated resolver errors before inventor
   }
 });
 
-test('beads.mjs imports only the feature library and exposes no compatibility validator', () => {
+test('beads.mjs imports canonical feature and Beads normalization without a compatibility validator', () => {
   const source = fs.readFileSync(beadsSrc, 'utf8');
   assert.match(
     source,
     /import \{ resolveFeatureOwner \} from '\.\.\/dude-engine\/lib\/feature\.mjs';/,
+  );
+  assert.match(
+    source,
+    /import \{ normalizeBeadsIssue \} from '\.\.\/dude-engine\/lib\/beads-issue\.mjs';/,
   );
   assert.doesNotMatch(source, /dude-engine\/feature\.mjs|feature-identity\.mjs/);
   assert.doesNotMatch(source, /validateDefinedIdeaIdentity/);

@@ -31,6 +31,8 @@ const BUILD_DESTINATION_DIRS = [
   '.github/agents',
   '.github/skills',
   '.github/instructions',
+  '.github/extensions',
+  '.github/extensions/dude',
 ];
 
 /** @param {string} absolutePath @returns {fs.Stats | null} */
@@ -114,6 +116,9 @@ function listCoreRemovalPaths(repoRoot) {
       if (isCorePath(`${relPath}/`)) removals.push(relPath);
     }
   }
+
+  const dudeExtensionDir = path.join(repoRoot, '.github', 'extensions', 'dude');
+  if (fs.existsSync(dudeExtensionDir)) removals.push('.github/extensions/dude');
 
   return removals.sort();
 }

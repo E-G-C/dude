@@ -1,7 +1,7 @@
 ---
 title: Backlog Canvas
 slug: backlog-canvas
-status: draft
+status: resolved
 spec_path:
 ---
 
@@ -16,6 +16,12 @@ For now, the same information. The canvas starts by showing what the report alre
 This was split out of the `backlog-report` idea, which carries the `focus` to `backlog` rename, the generated markdown file, and the offline HTML report. The canvas is a third surface over that feature's bucket derivation and HTML renderer, so `backlog-report` has to ship first.
 
 That dependency is deliberately not in this ledger's frontmatter. The shipped first-definition publisher validates only the four owner keys `title`, `slug`, `status`, and `spec_path`, and rejects anything else, so a draft carrying `depends-on:` cannot be first-defined. `depends-on: backlog-report` is added to this ledger's frontmatter after it is first defined.
+
+### Superseded
+
+This idea is resolved as superseded by `052-dude-canvas-ui`. Its backlog-canvas
+intent is absorbed there, and its still-load-bearing verified findings were
+carried across before this ledger was resolved.
 
 ### Coordinator findings on the canvas extension
 
@@ -116,4 +122,5 @@ These are the coordinator's working assumptions, not user decisions. Correct any
 ## Coordinator Log
 
 - 2026-08-07 UTC - brainstorm captured (split from backlog-report)
+- 2026-08-31 UTC - brainstorm resolved this package-less ledger as superseded by `.dude/ideas/052-dude-canvas-ui.md` after its intent and still-load-bearing verified findings were carried there
 <!-- dude:managed:end -->

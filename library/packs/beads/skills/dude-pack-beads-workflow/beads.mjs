@@ -37,6 +37,7 @@ import {
   BOARD_START,
   BOARD_END,
 } from '../dude-engine/lib/tasks.mjs';
+import { normalizeBeadsIssue } from '../dude-engine/lib/beads-issue.mjs';
 import { resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
 import { resolveMutationPath } from '../dude-engine/lib/workspace-paths.mjs';
 import {
@@ -56,11 +57,8 @@ import {
 const BD_STATE_GLYPH = {
   open: ' ',
   in_progress: '~',
-  'in-progress': '~',
-  inprogress: '~',
   blocked: '!',
   closed: 'x',
-  done: 'x',
 };
 
 const TASK_KEY_RE = /\bT\d{3,}@[a-z0-9]{8}\b/;
@@ -483,8 +481,7 @@ function issueId(issue) {
 
 /** @param {any} issue @returns {boolean} */
 function isEpicIssue(issue) {
-  return [issue.type, issue.issue_type]
-    .some((value) => String(value ?? '').toLowerCase() === 'epic');
+  return normalizeBeadsIssue(issue).isEpic;
 }
 
 /** @param {any} issue @param {string} specPath @returns {boolean} */
@@ -500,14 +497,14 @@ function hasExactSpecIdentity(issue, specPath) {
  */
 export function inspectImportInventory(bdIssues, { specPath }) {
   const matching = bdIssues.filter((issue) => hasExactSpecIdentity(issue, specPath));
-  const epics = matching.filter(isEpicIssue);
+  const epics = matching.filter((issue) => normalizeBeadsIssue(issue).isEpic);
   if (epics.length > 1) {
     throw new Error(`duplicate feature identity '${specPath}' is claimed by epics: ${epics.map(issueId).join(', ')}`);
   }
 
   const taskOwners = new Map();
   for (const issue of matching) {
-    if (isEpicIssue(issue)) continue;
+    if (normalizeBeadsIssue(issue).isEpic) continue;
     const text = `${issue.description}\n${String(issue.title || '')}`;
     const keys = [...new Set(text.match(new RegExp(TASK_KEY_RE.source, 'g')) || [])];
     if (keys.length > 1) {
@@ -655,7 +652,7 @@ function issueTaskKey(issue) {
 
 /** @param {any} issue @returns {string} */
 function issueStatus(issue) {
-  return String(issue.status || issue.state || '').toLowerCase().replace(/\s+/g, '_');
+  return normalizeBeadsIssue(issue).statusToken;
 }
 
 /**
@@ -666,8 +663,8 @@ function issueStatus(issue) {
 export function issueToState(issue) {
   const key = issueTaskKey(issue);
   if (!key) return null;
-  const status = issueStatus(issue);
-  const glyph = BD_STATE_GLYPH[status];
+  const { status } = normalizeBeadsIssue(issue);
+  const glyph = status === null ? undefined : BD_STATE_GLYPH[status];
   if (glyph === undefined) return null;
   return { key, glyph };
 }
@@ -697,13 +694,13 @@ export function mirrorMap(bdIssues, specPath) {
   const representable = [];
   for (const issue of Array.isArray(bdIssues) ? bdIssues : []) {
     if (specPath && issueSpecIdentity(issue) !== specPath) continue;
-    if (isEpicIssue(issue)) continue;
+    const normalized = normalizeBeadsIssue(issue);
+    if (normalized.isEpic) continue;
     const key = issueTaskKey(issue);
     if (!key) continue;
-    const status = issueStatus(issue);
-    const glyph = BD_STATE_GLYPH[status];
+    const glyph = normalized.status === null ? undefined : BD_STATE_GLYPH[normalized.status];
     if (glyph === undefined) {
-      unsupported.push({ issue_id: issueId(issue), key, status });
+      unsupported.push({ issue_id: issueId(issue), key, status: normalized.statusToken });
       continue;
     }
     representable.push({ key, glyph });

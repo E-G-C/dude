@@ -23,6 +23,38 @@ test('classifyPath: core coordinator + instructions', () => {
   assert.equal(classifyPath('.github/skills/dude-engine/lib/ownership.mjs'), TIER.CORE);
 });
 
+test('classifyPath: only the deployed Dude extension tree is core-owned', () => {
+  // Arrange
+  const core = [
+    '.github/extensions/dude',
+    '.github/extensions/dude/',
+    '.github/extensions/dude/extension.mjs',
+    '.github/extensions/dude/lib/nested/runtime.mjs',
+    '.github\\extensions\\dude\\ui\\assets\\app.js',
+  ];
+  const project = [
+    '.github/extensions',
+    '.github/extensions/dude-preview/extension.mjs',
+    '.github/extensions/dude-local/extension.mjs',
+    '.github/extensions/other/extension.mjs',
+    'src/extensions/dude/extension.mjs',
+    'src/extensions/dude/lib/runtime.mjs',
+    'scripts/dude-canvas-ui/package.json',
+    'scripts/dude-canvas-ui/package-lock.json',
+    'scripts/dude-canvas-ui/build.mjs',
+  ];
+
+  // Act + Assert
+  for (const relPath of core) {
+    assert.equal(classifyPath(relPath), TIER.CORE, relPath);
+    assert.equal(isCorePath(relPath), true, relPath);
+  }
+  for (const relPath of project) {
+    assert.equal(classifyPath(relPath), TIER.PROJECT, relPath);
+    assert.equal(isCorePath(relPath), false, relPath);
+  }
+});
+
 test('classifyPath: pack tier', () => {
   assert.equal(classifyPath('.github/agents/dude-pack-beads-workflow.agent.md'), TIER.PACK);
   assert.equal(classifyPath('.github/skills/dude-pack-beads-workflow/SKILL.md'), TIER.PACK);
@@ -108,6 +140,45 @@ test('enumerateCorePaths returns only core files, sorted', () => {
       '.github/skills/dude-lint/SKILL.md',
       '.github/skills/dude-lint/lint.mjs',
     ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('enumerateCorePaths lists only regular files under the exact Dude extension tree', () => {
+  // Arrange
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-ownership-extension-'));
+  try {
+    const touch = (rel) => {
+      const abs = path.join(root, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, rel);
+    };
+    const extensionFiles = [
+      '.github/extensions/dude/extension.mjs',
+      '.github/extensions/dude/lib/canvas-server.mjs',
+      '.github/extensions/dude/lib/nested/projection.mjs',
+      '.github/extensions/dude/ui/assets/app.js',
+      '.github/extensions/dude/ui/assets/licenses/NOTICE.txt',
+      '.github/extensions/dude/ui/index.html',
+    ];
+    for (const rel of [
+      ...extensionFiles,
+      '.github/extensions/dude-preview/extension.mjs',
+      '.github/extensions/dude-local/extension.mjs',
+      '.github/extensions/other/deep/extension.mjs',
+      'src/extensions/dude/extension.mjs',
+      'scripts/dude-canvas-ui/build.mjs',
+    ]) touch(rel);
+    const linkPath = path.join(root, '.github/extensions/dude/lib/ignored-link.mjs');
+    fs.symlinkSync(path.join(root, 'src/extensions/dude/extension.mjs'), linkPath);
+
+    // Act
+    const actual = enumerateCorePaths(root);
+
+    // Assert
+    assert.deepEqual(actual, [...extensionFiles].sort());
+    assert.equal(actual.includes('.github/extensions/dude/lib/ignored-link.mjs'), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

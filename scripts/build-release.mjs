@@ -9,10 +9,10 @@
  * root.
  *
  * Ships: core-tier files only (the `dude` / `dude-<slug>` agents, `dude-<slug>`
- * skill directories, and `dude.instructions.md`) MINUS every test file, plus a
- * generic `project` skill stub and seeded canonical metadata. Each agent source
- * ships as one projected Copilot profile (`.github/agents/`) rather than as a
- * byte copy.
+ * skill directories, `dude.instructions.md`, and the exact Dude extension
+ * runtime allowlist) MINUS every test file, plus a generic `project` skill stub
+ * and seeded canonical metadata. Each agent source ships as one projected
+ * Copilot profile (`.github/agents/`) rather than as a byte copy.
  * Excluded: `*.test.mjs`, packs (`dude-pack-*`), project-local customizations
  * (`dude-local-*`), and everything outside the core namespace.
  *
@@ -36,6 +36,17 @@ import { WORKSPACE_PATHS } from '../src/skills/dude-engine/lib/workspace-paths.m
 
 const AGENT_MODEL_CONFIG_SOURCE = ['src', 'config', 'agent-models.json'];
 const AGENT_MODEL_CONFIG_DESTINATION = '.github/skills/dude-engine/config/agent-models.json';
+const DUDE_EXTENSION_DEPLOY_ROOT = '.github/extensions/dude';
+
+/** @param {string} relPath @returns {boolean} */
+function isDudeExtensionRuntimeFile(relPath) {
+  if (/\.test\.[^/]+$/.test(relPath)) return false;
+  if (/(?:^|\/)node_modules(?:\/|$)/.test(relPath)) return false;
+  if (relPath === `${DUDE_EXTENSION_DEPLOY_ROOT}/extension.mjs`) return true;
+  if (relPath === `${DUDE_EXTENSION_DEPLOY_ROOT}/ui/index.html`) return true;
+  return relPath.startsWith(`${DUDE_EXTENSION_DEPLOY_ROOT}/lib/`)
+    || relPath.startsWith(`${DUDE_EXTENSION_DEPLOY_ROOT}/ui/assets/`);
+}
 
 /** Generic project-knowledge stub shipped in a fresh bundle. */
 export const PROJECT_STUB = `---
@@ -86,7 +97,10 @@ It is maintained by \`dude-compose\`. Do not hand-edit the \`installed\` map.
  */
 export function isReleaseFile(relPath) {
   const p = String(relPath).replace(/\\/g, '/').replace(/^\.\//, '');
-  if (/\.test\.(mjs|cjs|js)$/.test(p)) return false;
+  if (/\.test\.(mjs|cjs|js)$/.test(p) || p.endsWith('.map')) return false;
+  if (p === DUDE_EXTENSION_DEPLOY_ROOT || p.startsWith(`${DUDE_EXTENSION_DEPLOY_ROOT}/`)) {
+    return isDudeExtensionRuntimeFile(p);
+  }
   return isCorePath(p);
 }
 

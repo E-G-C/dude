@@ -14,6 +14,12 @@ import {
   renderCopilotAgent,
 } from '../src/skills/dude-engine/lib/agent-projection.mjs';
 import { collectLifecycleModel } from '../src/skills/dude-lightweight-execution/backlog.mjs';
+import {
+  isReleaseFile,
+  listCoreOutputs,
+  listCoreSourceFiles,
+} from './build-release.mjs';
+import { TIER, classifyPath } from '../src/skills/dude-engine/lib/ownership.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -3520,21 +3526,17 @@ const SHIP_DEFINITION_OWNER = 'src/skills/dude-feature-definition/SKILL.md';
 const SHIP_COORDINATOR = 'src/agents/dude.agent.md';
 const SHIP_DEFINITION_AGENT = 'src/agents/dude-spec-lead.agent.md';
 const SHIP_GUARDRAIL_MEMORY = '.dude/memory/guardrails.md';
-const SHIP_GUARDRAIL_ENTRIES = [
+const SHIP_GUARDRAIL_BUNDLE_ENTRIES = [
   '## Entries',
   '',
   '- `[bundle]` Once execution work is imported, Beads is the only live tracker for pending and completed work.',
   '- `[bundle]` Keep intent separate from implementation: `spec.md` stays technology-agnostic, while `plan.md` carries technical design.',
   '- `[bundle]` Optional disciplines such as worktrees and TDD are opt-in unless the user explicitly adopts them for the project.',
-  '- Specialist visibility (user preference): whenever Dude dispatches a specialist as a subagent (reviewer, coder, tester, architect, spec-lead, etc.), make the hand-off visible. Announce it before the work with a one-line `→ Dispatching: <Specialist>` marker, and present that specialist\'s raw findings/output under its own attributed heading (e.g. `<Specialist> — findings:`), kept separate from Dude\'s own synthesis and decision. Rationale: VS Code does not render subagent turns, so explicit labeling is how the user sees which specialist actually engaged.',
-  '- Prefer deterministic scripts for reproducible parsing, counting, budgeting, validation, state transitions, and rendering; reserve model reasoning for semantic diagnosis and recovery decisions.',
-  '- Keep model-facing instructions concise and non-redundant while preserving required authority, safety, and behavior.',
-  '- Choose the smallest design that satisfies proven requirements; reject speculative abstractions, state, schemas, or safeguards without a concrete failure mode or acceptance test.',
-  '- Core stays runtime-independent of optional packs: when a core generator needs an optional pack\'s visual language or assets, bake a validated copy into a committed artifact (template) and update it deliberately; never read the installed pack projection at generation time, so the output is identical whether or not the pack is installed. Rely on always-present runtimes (Node), not on optional packs.',
-  '- No dead affordances in generated static or offline artifacts: present only controls that actually function (honest chrome plus real data); never render navigation, tabs, or switches that lead nowhere in a file that has no server or scripting.',
-  '- Pack lifecycle rule: edit authoritative pack source only under `library/packs/<name>/` and use a disposable bundle for live validation; never develop by editing an installed `.github/dude-pack-*` projection in place. The installed map is the pack authority: its membership opts a pack in, and its exact safe `files` list bounds removal. If a pack is absent from the profile but namespaced files remain, treat them as post-uninstall residue: establish ownership before explicit cleanup rather than fabricating profile authority or silently deleting unknown files.',
-  '- Refresh an installed pack after editing its authoritative source with `compose refresh <pack>`: it re-projects the current source, may overwrite installed edits, and always follows its normal transaction path. Keep persistent customization under `dude-local-*`, not an installed pack path. Remove deletes only exact recorded safe files. Add, remove, and refresh restore prior files and profile bytes after a caught application failure, but do not promise crash-proof recovery.',
-  '- A pack that claims to be standalone must not name, route to, validate through, or ambiently activate another pack; optional themes/visual systems activate only by explicit identity or existing system evidence.',
+].join('\n');
+const SHIP_GUARDRAIL_ENTRIES_FIXTURE = [
+  SHIP_GUARDRAIL_BUNDLE_ENTRIES,
+  '- Existing project guardrail fixture: preserve this first entry byte-for-byte.',
+  '- Existing project guardrail fixture: preserve this second entry byte-for-byte.',
   '',
 ].join('\n');
 const SHIP_GRAMMAR_LINE = '@dude ship [<target>]';
@@ -4348,10 +4350,15 @@ function guardrailAuthorityPreamble(source) {
 }
 
 /** @param {string} source */
-function guardrailEntriesGaps(source) {
+function guardrailEntries(source) {
   const entriesHeading = '\n## Entries\n';
   assert.equal(source.split(entriesHeading).length - 1, 1, `${SHIP_GUARDRAIL_MEMORY}: one Entries heading`);
-  return source.slice(source.indexOf(entriesHeading) + 1) === SHIP_GUARDRAIL_ENTRIES
+  return source.slice(source.indexOf(entriesHeading) + 1);
+}
+
+/** @param {string} source */
+function guardrailEntriesGaps(source) {
+  return guardrailEntries(source) === SHIP_GUARDRAIL_ENTRIES_FIXTURE
     ? []
     : ['unchanged guardrail Entries bytes'];
 }
@@ -4372,21 +4379,31 @@ test('Ship reconciles guardrail-memory authority while preserving every existing
     ]],
   ], `${SHIP_GUARDRAIL_MEMORY} authority preamble`);
 
+  const liveEntries = guardrailEntries(source);
   assert.deepEqual(
-    guardrailEntriesGaps(source),
+    liveEntries.split('\n').filter((entry) => entry.startsWith('- `[bundle]` ')),
+    SHIP_GUARDRAIL_BUNDLE_ENTRIES.split('\n').filter((entry) => entry.startsWith('- `[bundle]` ')),
+    `${SHIP_GUARDRAIL_MEMORY}: preserves exact immutable bundle defaults`,
+  );
+
+  // Normalize the mutable project ledger to T003's self-contained preimage.
+  // The current authority preamble is then checked against those exact bytes.
+  const scenarioSource = `${source.slice(0, source.length - liveEntries.length)}${SHIP_GUARDRAIL_ENTRIES_FIXTURE}`;
+  assert.deepEqual(
+    guardrailEntriesGaps(scenarioSource),
     [],
     `${SHIP_GUARDRAIL_MEMORY}: T003 preserves existing Entries bytes and appends no entry`,
   );
   assert.deepEqual(
-    guardrailEntriesGaps(source.replace(
-      '- Keep model-facing instructions concise and non-redundant while preserving required authority, safety, and behavior.\n',
+    guardrailEntriesGaps(scenarioSource.replace(
+      '- Existing project guardrail fixture: preserve this first entry byte-for-byte.\n',
       '',
     )),
     ['unchanged guardrail Entries bytes'],
     `${SHIP_GUARDRAIL_MEMORY}: deleting an existing Entry fails the byte-preservation contract`,
   );
   assert.deepEqual(
-    guardrailEntriesGaps(`${source}- added guardrail\n`),
+    guardrailEntriesGaps(`${scenarioSource}- added guardrail\n`),
     ['unchanged guardrail Entries bytes'],
     `${SHIP_GUARDRAIL_MEMORY}: appending an Entry fails the byte-preservation contract`,
   );
@@ -7290,6 +7307,11 @@ const GITHUB_ISSUE_AUTHORITY_PATHS = new Set([
   ...GITHUB_ISSUE_GENERATED_PAIRS.map(([, generated]) => generated),
   'scripts/current-format-contract.test.mjs',
 ]);
+const GITHUB_ISSUE_BEADS_NORMALIZATION_PATHS = new Set([
+  'src/skills/dude-engine/lib/beads-issue.mjs',
+  '.github/skills/dude-engine/lib/beads-issue.mjs',
+  'src/skills/dude-engine/lib/beads-issue.test.mjs',
+]);
 const GITHUB_ISSUE_DOCUMENTATION_ROOT = 'docs/';
 const GITHUB_ISSUE_DENIAL = /\b(?:no|not|never|without|do not|does not|cannot|can't|refuse|stop|separate from)\b/i;
 // The required default denials above are the dominating invariant: their presence is
@@ -7327,6 +7349,7 @@ function assertGitHubIssueIntakeContract(section, context) {
 function prohibitedGitHubIssueArtifact(relative) {
   const normalized = relative.split(path.sep).join('/');
   if (GITHUB_ISSUE_AUTHORITY_PATHS.has(normalized)) return null;
+  if (GITHUB_ISSUE_BEADS_NORMALIZATION_PATHS.has(normalized)) return null;
   if (!GITHUB_ISSUE_INVENTORY_ROOTS.some((root) => normalized === root || normalized.startsWith(`${root}/`))) {
     return null;
   }
@@ -7495,11 +7518,15 @@ test('GitHub issue intake rejects unsupported infrastructure and contradictory p
     'scripts/github-issue-lane-runner.mjs',
     'scripts/github-issue-daemon.mjs',
     'scripts/multi-issue-orchestrator.mjs',
+    'src/skills/dude-engine/lib/beads-issue-parser.mjs',
+    '.github/skills/dude-engine/lib/beads-issue-cache.json',
+    'src/skills/dude-engine/lib/beads-issues.test.mjs',
   ]) {
     assert.notEqual(prohibitedGitHubIssueArtifact(relative), null, `reject ${relative}`);
   }
   for (const relative of [
     ...GITHUB_ISSUE_AUTHORITY_PATHS,
+    ...GITHUB_ISSUE_BEADS_NORMALIZATION_PATHS,
     '.dude/specs/034-github-issue-work-intake/spec.md',
   ]) {
     assert.equal(prohibitedGitHubIssueArtifact(relative), null, `allow ${relative}`);
@@ -8787,4 +8814,103 @@ test('T003 Feature 051 section checks tolerate harmless Markdown rewraps', () =>
       'rewrapped Feature 051 capability scope',
     );
   }, 'Feature 051 section contracts survive harmless soft Markdown wrapping');
+});
+
+/** @param {string} relative @returns {string[]} */
+function regularFilesBelow(relative) {
+  /** @type {string[]} */
+  const files = [];
+  const scan = (directory, prefix) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      const child = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) scan(absolute, child);
+      else if (entry.isFile()) files.push(child);
+    }
+  };
+  const root = path.join(ROOT, relative);
+  if (fs.existsSync(root)) scan(root, '');
+  return files.sort();
+}
+
+/** @param {string} sourceRelative */
+function isDudeRuntimeSource(sourceRelative) {
+  if (!sourceRelative.startsWith('src/extensions/dude/')) return false;
+  const rel = sourceRelative.slice('src/extensions/dude/'.length);
+  if (/\.test\.[^/]+$/.test(rel) || rel.endsWith('.map') || /(?:^|\/)node_modules(?:\/|$)/.test(rel)) {
+    return false;
+  }
+  return rel === 'extension.mjs'
+    || rel.startsWith('lib/')
+    || rel === 'ui/index.html'
+    || rel.startsWith('ui/assets/');
+}
+
+test('T009 current runtime projection is exact, generated, and consumer-tooling-free', () => {
+  // Arrange
+  const sourceRoot = 'src/extensions/dude';
+  const deployRoot = '.github/extensions/dude';
+  const sourceFiles = regularFilesBelow(sourceRoot).map((rel) => `${sourceRoot}/${rel}`);
+  const expectedRuntimeSources = sourceFiles.filter(isDudeRuntimeSource);
+  const expectedDeploy = expectedRuntimeSources
+    .map((source) => source.replace(/^src\//, '.github/'))
+    .sort();
+
+  // Act
+  const plannedSources = listCoreSourceFiles(ROOT)
+    .map(({ deployRel }) => deployRel)
+    .filter((rel) => rel.startsWith(`${deployRoot}/`));
+  const plannedOutputs = listCoreOutputs(ROOT)
+    .map(({ relPath }) => relPath)
+    .filter((rel) => rel.startsWith(`${deployRoot}/`));
+  const deployed = regularFilesBelow(deployRoot).map((rel) => `${deployRoot}/${rel}`);
+
+  // Assert
+  assert.ok(expectedRuntimeSources.length > 0, 'current source contains Dude runtime files');
+  assert.deepEqual(plannedSources, expectedDeploy);
+  assert.deepEqual(plannedOutputs, expectedDeploy);
+  assert.deepEqual(deployed, expectedDeploy);
+  for (const deployedPath of expectedDeploy) {
+    const sourcePath = deployedPath.replace(/^\.github\//, 'src/');
+    assert.deepEqual(
+      fs.readFileSync(path.join(ROOT, sourcePath)),
+      fs.readFileSync(path.join(ROOT, deployedPath)),
+      `${deployedPath} is a byte-identical committed runtime projection`,
+    );
+  }
+
+  for (const nearMiss of [
+    `${deployRoot}/canvas-server.test.mjs`,
+    `${deployRoot}/lib/projection.test.mjs`,
+    `${deployRoot}/frontend/app.jsx`,
+    `${deployRoot}/ui/preview.html`,
+    `${deployRoot}/ui/assets/app.js.map`,
+    `${deployRoot}/lib/node_modules/dependency/index.mjs`,
+    `${deployRoot}-preview/extension.mjs`,
+    `src/extensions/dude/extension.mjs`,
+  ]) assert.equal(isReleaseFile(nearMiss), false, nearMiss);
+  assert.equal(classifyPath(deployRoot), TIER.CORE);
+  assert.equal(classifyPath(`${deployRoot}/lib/projection.mjs`), TIER.CORE);
+  for (const projectPath of [
+    '.github/extensions/other/extension.mjs',
+    '.github/extensions/dude-preview/extension.mjs',
+    'src/extensions/dude/lib/projection.mjs',
+    'scripts/dude-canvas-ui/package.json',
+    'scripts/dude-canvas-ui/package-lock.json',
+    'scripts/dude-canvas-ui/build.mjs',
+  ]) assert.equal(classifyPath(projectPath), TIER.PROJECT, projectPath);
+
+  const releaseOutput = listCoreOutputs(ROOT).map(({ relPath }) => relPath);
+  assert.deepEqual(
+    releaseOutput.filter((rel) => (
+      /(?:^|\/)(?:frontend|node_modules)(?:\/|$)/.test(rel)
+      || /(?:^|\/)(?:package(?:-lock)?\.json|build\.mjs)$/.test(rel)
+      || /\.test\.[^/]+$/.test(rel)
+      || rel.endsWith('.map')
+      || rel.startsWith('scripts/dude-canvas-ui/')
+      || /(?:^|\/)(?:registry|installer)(?:\/|$)/.test(rel)
+    )),
+    [],
+    'release output exposes no frontend, test, source-map, package, build, registry, or installer path',
+  );
 });

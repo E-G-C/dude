@@ -47,6 +47,14 @@ export const CANONICAL_IDEA_KEYS = Object.freeze(['title', 'slug', 'status', 'sp
  *   diagnostics: FeatureDiagnostic[],
  * }} LifecycleInventory
  * @typedef {{ features: FeatureRecord[], diagnostics: FeatureDiagnostic[] }} FeatureInventory
+ * @typedef {{
+ *   inventory: LifecycleInventory,
+ *   idea: IdeaRecord | null,
+ *   owner: FeatureRecord | null,
+ *   choices: IdeaRecord[],
+ *   explicit: boolean,
+ *   diagnostics: FeatureDiagnostic[],
+ * }} LifecycleSummarySelection
  */
 
 /** @param {string} left @param {string} right */
@@ -158,9 +166,10 @@ function resolveInventoryRoot(absoluteRoot, relativeRoot, diagnostics, options =
 /**
  * @param {string} absoluteRoot
  * @param {FeatureDiagnostic[]} diagnostics
+ * @param {{ validateSpecFiles: boolean }} options
  * @returns {IdeaRecord[]}
  */
-function inventoryIdeas(absoluteRoot, diagnostics) {
+function inventoryIdeas(absoluteRoot, diagnostics, options) {
   /** @type {IdeaRecord[]} */
   const ideas = [];
   const ideasRoot = resolveInventoryRoot(
@@ -328,6 +337,8 @@ function inventoryIdeas(absoluteRoot, diagnostics) {
         ideaPath,
         `spec_path '${specPath}' must point at .dude/specs/<NNN>-<slug>/spec.md`,
       );
+    } else if (!options.validateSpecFiles) {
+      specPathValid = true;
     } else {
       try {
         resolveSpecIdentity(absoluteRoot, specPath, { canonicalOnly: true, mustExist: true });
@@ -372,9 +383,10 @@ function inventoryIdeas(absoluteRoot, diagnostics) {
 /**
  * @param {string} absoluteRoot
  * @param {FeatureDiagnostic[]} diagnostics
+ * @param {{ validateSpecFiles: boolean }} options
  * @returns {PackageRecord[]}
  */
-function inventoryPackages(absoluteRoot, diagnostics) {
+function inventoryPackages(absoluteRoot, diagnostics, options) {
   /** @type {PackageRecord[]} */
   const packages = [];
   const specsRoot = resolveInventoryRoot(absoluteRoot, WORKSPACE_PATHS.SPECS_DIR, diagnostics);
@@ -438,30 +450,32 @@ function inventoryPackages(absoluteRoot, diagnostics) {
       continue;
     }
 
-    try {
-      const absoluteSpec = path.join(absoluteDirectory, 'spec.md');
-      const specStat = fs.lstatSync(absoluteSpec);
-      if (specStat.isSymbolicLink() || !specStat.isFile()) {
-        throw new Error('spec.md is not a direct regular file');
+    if (options.validateSpecFiles) {
+      try {
+        const absoluteSpec = path.join(absoluteDirectory, 'spec.md');
+        const specStat = fs.lstatSync(absoluteSpec);
+        if (specStat.isSymbolicLink() || !specStat.isFile()) {
+          throw new Error('spec.md is not a direct regular file');
+        }
+        fs.readFileSync(absoluteSpec);
+      } catch (error) {
+        const alreadyDiagnosed = diagnostics.some((diagnostic) => (
+          diagnostic.code === 'FEATURE_SPEC_PATH_UNSAFE'
+          && diagnostic.message.includes(`'${specPath}'`)
+        ));
+        if (!alreadyDiagnosed) {
+          diagnose(
+            diagnostics,
+            isMissing(error) ? 'FEATURE_PACKAGE_SPEC_MISSING' : 'FEATURE_PACKAGE_SPEC_UNSAFE',
+            'error',
+            specPath,
+            isMissing(error)
+              ? 'feature package is missing its direct spec.md'
+              : `feature package spec is unsafe or unreadable (${errorMessage(error)})`,
+          );
+        }
+        continue;
       }
-      fs.readFileSync(absoluteSpec);
-    } catch (error) {
-      const alreadyDiagnosed = diagnostics.some((diagnostic) => (
-        diagnostic.code === 'FEATURE_SPEC_PATH_UNSAFE'
-        && diagnostic.message.includes(`'${specPath}'`)
-      ));
-      if (!alreadyDiagnosed) {
-        diagnose(
-          diagnostics,
-          isMissing(error) ? 'FEATURE_PACKAGE_SPEC_MISSING' : 'FEATURE_PACKAGE_SPEC_UNSAFE',
-          'error',
-          specPath,
-          isMissing(error)
-            ? 'feature package is missing its direct spec.md'
-            : `feature package spec is unsafe or unreadable (${errorMessage(error)})`,
-        );
-      }
-      continue;
     }
 
     packages.push({
@@ -502,12 +516,10 @@ function diagnoseDuplicates(records, keyFor, pathFor, diagnostics, code, message
 }
 
 /**
- * Inventory all direct numbered ideas and feature packages as one fail-closed
- * lifecycle authority.
- * @param {{ root: string }} options
+ * @param {{ root: string, validateSpecFiles: boolean }} options
  * @returns {LifecycleInventory}
  */
-export function inventoryLifecycleIdentities({ root }) {
+function inventoryLifecycle({ root, validateSpecFiles }) {
   /** @type {FeatureDiagnostic[]} */
   const diagnostics = [];
   /** @type {IdeaRecord[]} */
@@ -545,8 +557,8 @@ export function inventoryLifecycleIdentities({ root }) {
     };
   }
 
-  ideas = inventoryIdeas(absoluteRoot, diagnostics);
-  packages = inventoryPackages(absoluteRoot, diagnostics);
+  ideas = inventoryIdeas(absoluteRoot, diagnostics, { validateSpecFiles });
+  packages = inventoryPackages(absoluteRoot, diagnostics, { validateSpecFiles });
   ideas.sort((left, right) => left.numberValue - right.numberValue || compareCodeUnit(left.ideaPath, right.ideaPath));
   packages.sort((left, right) => left.numberValue - right.numberValue || compareCodeUnit(left.specPath, right.specPath));
 
@@ -585,6 +597,20 @@ export function inventoryLifecycleIdentities({ root }) {
     const owners = ideasBySpec.get(idea.specPath) ?? [];
     owners.push(idea);
     ideasBySpec.set(idea.specPath, owners);
+  }
+  if (!validateSpecFiles) {
+    for (const idea of ideas) {
+      if (idea.status !== 'defined'
+        || parseSpecIdentity(idea.specPath) === null
+        || packageSpecPaths.has(idea.specPath)) continue;
+      diagnose(
+        diagnostics,
+        'FEATURE_OWNER_NOT_FOUND',
+        'error',
+        idea.specPath,
+        `defined idea has no direct feature package for '${idea.specPath}'`,
+      );
+    }
   }
   for (const [specPath, owners] of ideasBySpec) {
     owners.sort((left, right) => compareCodeUnit(left.ideaPath, right.ideaPath));
@@ -685,6 +711,107 @@ export function inventoryLifecycleIdentities({ root }) {
     exhausted,
     diagnostics,
   };
+}
+
+/**
+ * Inventory all direct numbered ideas and feature packages as one fail-closed
+ * lifecycle authority. Full inventory validates and reads every package spec.
+ * @param {{ root: string }} options
+ * @returns {LifecycleInventory}
+ */
+export function inventoryLifecycleIdentities({ root }) {
+  return inventoryLifecycle({ root, validateSpecFiles: true });
+}
+
+/**
+ * Select one exact lifecycle idea from summary inventory. Package directories
+ * are inventoried by direct identity, but package documents are deferred until
+ * the caller has selected one exact owner.
+ * @param {{ root: string, target?: string }} options
+ * @returns {LifecycleSummarySelection}
+ */
+export function selectLifecycleIdeaSummary({ root, target }) {
+  const inventory = inventoryLifecycle({ root, validateSpecFiles: false });
+  /** @type {FeatureDiagnostic[]} */
+  const diagnostics = [...inventory.diagnostics];
+  const explicit = target !== undefined;
+  /** @type {IdeaRecord | null} */
+  let idea = null;
+  /** @type {FeatureRecord | null} */
+  let owner = null;
+  /** @type {IdeaRecord[]} */
+  let choices = [];
+
+  if (diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+    return { inventory, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
+  }
+
+  if (explicit) {
+    const byPath = typeof target === 'string' && target.startsWith('.dude/');
+    const valid = typeof target === 'string' && (byPath
+      ? parseIdeaIdentity(target) !== null
+      : /^[a-z0-9][a-z0-9-]*$/.test(target));
+    if (!valid) {
+      diagnose(
+        diagnostics,
+        'FEATURE_IDEA_QUERY_INVALID',
+        'error',
+        '.',
+        'idea query must be an exact canonical frontmatter slug or numbered direct idea path',
+      );
+      return { inventory, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
+    }
+    const matches = inventory.ideas.filter((candidate) => (
+      byPath ? candidate.ideaPath === target : candidate.slug === target
+    ));
+    if (matches.length !== 1) {
+      diagnose(
+        diagnostics,
+        'FEATURE_IDEA_NOT_FOUND',
+        'error',
+        '.',
+        'no exact canonical idea matched the supplied target',
+      );
+      return { inventory, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
+    }
+    [idea] = matches;
+  } else {
+    const ownedIdeas = new Set(inventory.features.map((feature) => feature.ideaPath));
+    choices = inventory.ideas.filter((candidate) => (
+      candidate.status === 'draft'
+      || (candidate.status === 'defined' && ownedIdeas.has(candidate.ideaPath))
+    ));
+    if (choices.length !== 1) {
+      return { inventory, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
+    }
+    [idea] = choices;
+  }
+
+  if (idea.status === 'defined') {
+    const owners = inventory.features.filter((feature) => (
+      feature.ideaPath === idea.ideaPath && feature.specPath === idea.specPath
+    ));
+    if (owners.length !== 1) {
+      diagnose(
+        diagnostics,
+        'FEATURE_OWNER_NOT_FOUND',
+        'error',
+        idea.specPath,
+        'no exact defined owner was established for the selected feature package',
+      );
+      return {
+        inventory,
+        idea: null,
+        owner,
+        choices,
+        explicit,
+        diagnostics: sortDiagnostics(diagnostics),
+      };
+    }
+    [owner] = owners;
+  }
+
+  return { inventory, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
 }
 
 /**

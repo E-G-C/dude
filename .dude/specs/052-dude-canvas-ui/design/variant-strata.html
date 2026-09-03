@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="en" data-strata-palette="pigment">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Now cockpit — Strata variant (052-dude-canvas-ui)</title>
+
+<!--
+  ============================================================================
+  NOW COCKPIT — Strata variant
+  Feature: 052-dude-canvas-ui   Surface: GitHub Copilot canvas side panel, 380px
+  ============================================================================
+
+  VISUAL SYSTEM
+  Strata, inlined verbatim from
+  .github/skills/dude-pack-strata-visual/tokens/strata.css
+  (same self-contained pattern as
+   .github/skills/dude-lightweight-execution/backlog-template.html).
+  No network, no build, no external stylesheet, no font files, no JS.
+
+  PALETTE: pigment (Strata's default; `data-strata-palette="pigment"` above).
+  Why pigment for a dense product panel:
+    * pigment's ground is a true neutral (#FFFFFF / #F4F6F8 / #EDEFF3 light,
+      #101215 / #181B20 / #1E2228 dark). This panel is embedded chrome inside a
+      host IDE, so it must not impose a ground tint of its own. spectrum tints
+      every plane blue-violet (#FAFBFF / #EDF1FC / #E4E9F7) and reads as a brand
+      rather than as chrome.
+    * pigment has the higher ink contrast of the two palettes (18.11:1 vs
+      16.68:1 on canvas), which matters at the 11-13px metadata sizes a 380px
+      panel forces.
+    * pigment dark's canvas (#101215) is a neutral near-black that sits against
+      dark IDE chrome; spectrum dark is navy (#0B1020).
+  All four palette/theme blocks are included below, so a reviewer can flip
+  `data-strata-palette` on <html> (and on the two theme rows) and every frame
+  re-colours with zero component changes — no rule below names a palette value.
+
+  STRATA COMMITMENTS HONOURED
+    1. Stratification, not shadow — zero `box-shadow`, zero `backdrop-filter`,
+       zero blur. Every plane change carries `var(--strata-rule-hairline)`.
+    2. 4px shape — `--strata-radius-md` on every control, `--strata-radius-lg`
+       (8px ceiling) on the panel shell only. No pills.
+    3. Type-led at working scale — no display hero; monospace marks metadata.
+    4. Fields have edges — every badge is bordered with its own `-tint-ink`,
+       every filled/tinted block carries a 1px rule.
+
+  TOKEN GAPS ENCOUNTERED (noted, not invented around)
+    a) Strata ships no `--strata-<state>-tint` / `-tint-ink` ROLE aliases; only
+       `--strata-<state>` and `-<state>-text` are aliased. Badges therefore
+       address `--strata-series-N-tint` / `-tint-ink` directly, which is exactly
+       what strata.css's own `.strata-badge-danger` etc. do. Slot->stage mapping
+       is declared once in `.nc-badge--*` so it stays a single edit.
+    b) Strata ships no `--strata-icon-*` or `--strata-control-height-*` token.
+       reference/layout-and-iconography.md documents icon sizes 16/20/24/32/48
+       with a ~1.5px nominal stroke, and button heights 32 (compact) / 40
+       (default) / 48 (touch). This panel uses 16px icons and the 32px compact
+       height — documented Strata values, written as literals because no token
+       expresses them. Same for the 2px focus outline, which is documented.
+    c) `.strata-meta` hard-codes `text-transform: uppercase`. Uppercasing a
+       case-sensitive literal (`052-dude-canvas-ui`, `.dude/specs/.../spec.md`,
+       `contract-mismatch`) would misrepresent the value, so literals use
+       `.nc-mono` — same monospace metadata register, transform removed. Every
+       LABEL still uses `.strata-meta` unchanged.
+    d) The 380px panel width is a product constraint, not a Strata token.
+
+  ACCESSIBILITY
+    * No meaning is carried by colour alone anywhere. Stage = shape glyph +
+      literal word + tint + border. Stepper = three different shapes
+      (check / solid square / dashed square) + a literal state word +
+      solid-vs-dashed connectors + aria-current. Blocked = octagon-with-bar
+      glyph + the word "Blocked" + a 4px left rule + a mono classification chip
+      + a reason sentence.
+    * Focus is `outline: 2px solid var(--strata-focus)` at `outline-offset: 2px`
+      on every interactive element. Never a box-shadow; the offset is never
+      reduced (at 0 the ring drops below 3:1 on nearly every fill).
+    * Interactive elements are real <button> / <summary> elements in reading
+      order. No tabindex, no traps, no JS.
+    * prefers-reduced-motion collapses every duration to 1ms (not 0s, so
+      transitionend still fires).
+-->
+
+<style>
+/* ==========================================================================
+   0. STRATA TOKENS — inlined verbatim from
+      .github/skills/dude-pack-strata-visual/tokens/strata.css
+      Values are NOT edited. This block is the only place a literal appears.
+   ========================================================================== */
+
+/* --- 0a. STRUCTURE (palette-independent, declared once) ------------------ */
+:root {
+  color-scheme: light dark;
+
+  /* Local-only. No font files, no @font-face, no remote import. */
+  --strata-font-sans: "Atkinson Hyperlegible", "Noto Sans", system-ui, -apple-system,
+                      BlinkMacSystemFont, sans-serif;
+  --strata-font-mono: "Noto Sans Mono", "Liberation Mono", ui-monospace, SFMono-Regular,
+                      Menlo, Consolas, monospace;
+
+  /* Working UI scale. --strata-fs-display is deliberately NOT used here. */
+  --strata-fs-h1:      36px;
+  --strata-fs-h2:      28px;
+  --strata-fs-h3:      22px;
+  --strata-fs-h4:      18px;
+  --strata-fs-body-lg: 18px;
+  --strata-fs-body:    16px;
+  --strata-fs-caption: 13px;
+  --strata-fs-micro:   11px;
+
+  --strata-fw-regular:  400;
+  --strata-fw-semibold: 600;
+
+  --strata-lh-h1:      1.2;
+  --strata-lh-h2:      1.25;
+  --strata-lh-h3:      1.3;
+  --strata-lh-h4:      1.35;
+  --strata-lh-body:    1.5;
+  --strata-lh-caption: 1.4;
+  --strata-lh-micro:   1.3;
+  --strata-lh-normal:  var(--strata-lh-body);
+
+  /* Metadata only — labels, column heads, identifiers, ticks. Not a voice. */
+  --strata-meta-tracking:  0.06em;
+  --strata-meta-transform: uppercase;
+
+  /* Long-form measure — used only to constrain the page-chrome intro prose. */
+  --strata-reading-measure: 688px;
+
+  /* Spacing (4/8) */
+  --strata-space-0: 0px;
+  --strata-space-1: 4px;
+  --strata-space-2: 8px;
+  --strata-space-3: 12px;
+  --strata-space-4: 16px;
+  --strata-space-5: 24px;
+  --strata-space-6: 32px;
+  --strata-space-7: 48px;
+  --strata-space-8: 64px;
+
+  /* Radii: 4px interactive default, 8px maximum. Pill retained, unused. */
+  --strata-radius-sm:   2px;
+  --strata-radius-md:   4px;
+  --strata-radius-lg:   8px;
+
+  --strata-rule-width:    1px;
+  --strata-rule-hairline: var(--strata-rule-width) solid var(--strata-rule);
+
+  /* Motion. Both easings are explicit cubic-bezier(); keywords are banned. */
+  --strata-dur-micro:    150ms;
+  --strata-dur-standard: 250ms;
+  --strata-dur-entrance: 400ms;
+  --strata-ease-enter: cubic-bezier(0.2, 0, 0, 1);
+  --strata-ease-exit:  cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* --- 0b. PALETTE: pigment — LIGHT (the default) -------------------------- */
+:root,
+[data-strata-palette="pigment"] {
+  --strata-canvas:  #FFFFFF;
+  --strata-surface: #FFFFFF;
+  --strata-soft:    #F4F6F8;
+  --strata-sunken:  #EDEFF3;
+
+  --strata-ink:        #14161A;  /* 18.11:1 on canvas */
+  --strata-muted:      #565C66;  /*  6.73:1 on canvas */
+  --strata-on-accent:  #FFFFFF;
+  --strata-on-warning: #14161A;
+
+  --strata-rule: #828994;  /* >= 3:1 on every plane, both themes */
+  --strata-hair: #E3E6EA;  /* DECORATIVE ONLY — ~1.25:1. Unused below. */
+
+  --strata-series-1: #1348E8;  --strata-series-1-deep: #0E37B8;
+  --strata-series-2: #0098B8;  --strata-series-2-deep: #00757D;
+  --strata-series-3: #00B36B;  --strata-series-3-deep: #00794A;
+  --strata-series-4: #FFB400;  --strata-series-4-deep: #7F5800;
+  --strata-series-5: #E63A1F;  --strata-series-5-deep: #CE2E14;
+  --strata-series-6: #7A2FE0;  --strata-series-6-deep: #5A1FB0;
+  --strata-series-7: #D1176B;  --strata-series-7-deep: #C41364;
+
+  --strata-series-1-tint: #E7EEFF; --strata-series-1-tint-ink: #0E37B8;
+  --strata-series-2-tint: #DEF4F7; --strata-series-2-tint-ink: #005C63;
+  --strata-series-3-tint: #DFF6EA; --strata-series-3-tint-ink: #00603A;
+  --strata-series-4-tint: #FFF3D6; --strata-series-4-tint-ink: #6B4A00;
+  --strata-series-5-tint: #FFE8E3; --strata-series-5-tint-ink: #A32410;
+  --strata-series-6-tint: #F0E7FF; --strata-series-6-tint-ink: #5A1FB0;
+  --strata-series-7-tint: #FFE6F0; --strata-series-7-tint-ink: #9C0F50;
+}
+
+/* --- 0c. PALETTE: spectrum — LIGHT --------------------------------------- */
+[data-strata-palette="spectrum"] {
+  --strata-canvas:  #FAFBFF;
+  --strata-surface: #FFFFFF;
+  --strata-soft:    #EDF1FC;
+  --strata-sunken:  #E4E9F7;
+
+  --strata-ink:        #101A33;
+  --strata-muted:      #4C5B7A;
+  --strata-on-accent:  #FFFFFF;
+  --strata-on-warning: #101A33;
+
+  --strata-rule: #79859F;
+  --strata-hair: #DFE5F2;
+
+  --strata-series-1: #1552E0;  --strata-series-1-deep: #0F3FB5;
+  --strata-series-2: #00A0A8;  --strata-series-2-deep: #00757D;
+  --strata-series-3: #12B76A;  --strata-series-3-deep: #097340;
+  --strata-series-4: #F5A700;  --strata-series-4-deep: #7A5200;
+  --strata-series-5: #D71E3C;  --strata-series-5-deep: #B01730;
+  --strata-series-6: #6D28D9;  --strata-series-6-deep: #5B21B6;
+  --strata-series-7: #B0009B;  --strata-series-7-deep: #8A0079;
+
+  --strata-series-1-tint: #E3EDFF; --strata-series-1-tint-ink: #0B3FA8;
+  --strata-series-2-tint: #DEF4F7; --strata-series-2-tint-ink: #00595F;
+  --strata-series-3-tint: #DFF7EA; --strata-series-3-tint-ink: #06623B;
+  --strata-series-4-tint: #FFF2D1; --strata-series-4-tint-ink: #7A4E00;
+  --strata-series-5-tint: #FFE4E8; --strata-series-5-tint-ink: #A3122C;
+  --strata-series-6-tint: #EFE6FE; --strata-series-6-tint-ink: #5B21B6;
+  --strata-series-7-tint: #FCE3FA; --strata-series-7-tint-ink: #8A0079;
+}
+
+/* --- 0d. PALETTE: pigment — DARK ----------------------------------------- */
+[data-strata-theme="dark"],
+[data-strata-palette="pigment"][data-strata-theme="dark"],
+.strata-theme-dark {
+  color-scheme: dark;
+
+  --strata-canvas:  #101215;
+  --strata-surface: #181B20;
+  --strata-soft:    #1E2228;
+  --strata-sunken:  #141719;
+
+  --strata-ink:        #EDEFF3;
+  --strata-muted:      #A2A9B4;
+  --strata-on-accent:  #101215;
+  --strata-on-warning: #101215;
+
+  --strata-rule: #828994;  /* shared with pigment light, by design */
+  --strata-hair: #2A2F36;
+
+  --strata-series-1: #6A9BFF;  --strata-series-1-deep: #9BBCFF;
+  --strata-series-2: #2FC9D4;  --strata-series-2-deep: #7FDDE6;
+  --strata-series-3: #2FCB86;  --strata-series-3-deep: #7DE0B0;
+  --strata-series-4: #FFC22E;  --strata-series-4-deep: #FFD97A;
+  --strata-series-5: #FF7355;  --strata-series-5-deep: #FFAE99;
+  --strata-series-6: #B98CFF;  --strata-series-6-deep: #CBAAFF;
+  --strata-series-7: #FF7FB5;  --strata-series-7-deep: #FFB3D2;
+
+  --strata-series-1-tint: #141F3D; --strata-series-1-tint-ink: #A8C4FF;
+  --strata-series-2-tint: #0A2A2E; --strata-series-2-tint-ink: #7FDDE6;
+  --strata-series-3-tint: #0C2E20; --strata-series-3-tint-ink: #7DE0B0;
+  --strata-series-4-tint: #33260A; --strata-series-4-tint-ink: #FFD97A;
+  --strata-series-5-tint: #361510; --strata-series-5-tint-ink: #FFAE99;
+  --strata-series-6-tint: #231640; --strata-series-6-tint-ink: #CBAAFF;
+  --strata-series-7-tint: #3B1228; --strata-series-7-tint-ink: #FFB3D2;
+}
+
+/* --- 0e. PALETTE: spectrum — DARK ---------------------------------------- */
+[data-strata-palette="spectrum"][data-strata-theme="dark"] {
+  color-scheme: dark;
+
+  --strata-canvas:  #0B1020;
+  --strata-surface: #131A2E;
+  --strata-soft:    #1C2540;
+  --strata-sunken:  #0E1526;
+
+  --strata-ink:        #EAEFFA;
+  --strata-muted:      #A3B0CC;
+  --strata-on-accent:  #06090F;
+  --strata-on-warning: #06090F;
+
+  --strata-rule: #79859F;
+  --strata-hair: #232D4A;
+
+  --strata-series-1: #5B9DFF;  --strata-series-1-deep: #A9CBFF;
+  --strata-series-2: #3FD6E6;  --strata-series-2-deep: #7FE0EA;
+  --strata-series-3: #34D98B;  --strata-series-3-deep: #7FE9B8;
+  --strata-series-4: #FFC542;  --strata-series-4-deep: #FFD98A;
+  --strata-series-5: #FF6B85;  --strata-series-5-deep: #FFA8B6;
+  --strata-series-6: #A98BFF;  --strata-series-6-deep: #CBAAFF;
+  --strata-series-7: #EE7BFF;  --strata-series-7-deep: #F5AEFF;
+
+  --strata-series-1-tint: #16294D; --strata-series-1-tint-ink: #A9CBFF;
+  --strata-series-2-tint: #0A2E33; --strata-series-2-tint-ink: #7FE0EA;
+  --strata-series-3-tint: #0E3326; --strata-series-3-tint-ink: #7FE9B8;
+  --strata-series-4-tint: #3A2A08; --strata-series-4-tint-ink: #FFD98A;
+  --strata-series-5-tint: #3D141C; --strata-series-5-tint-ink: #FFA8B6;
+  --strata-series-6-tint: #241A47; --strata-series-6-tint-ink: #CBAAFF;
+  --strata-series-7-tint: #331240; --strata-series-7-tint-ink: #F5AEFF;
+}
+
+/* --- 0f. SEMANTIC ROLES — palette-independent aliases onto series-N ------
+   Everything below section 1 references THESE (or a plane token), never a
+   palette value. That is what survives a palette switch.                    */
+:root {
+  --strata-plane-base:   var(--strata-canvas);
+  --strata-plane-raised: var(--strata-surface);
+  --strata-plane-inset:  var(--strata-soft);
+  --strata-plane-sunken: var(--strata-sunken);
+
+  --strata-primary:      var(--strata-series-1);
+  --strata-primary-deep: var(--strata-series-1-deep);
+  --strata-hover:        var(--strata-series-1-deep);
+  --strata-info:         var(--strata-series-2);
+  --strata-info-text:    var(--strata-series-2-deep);
+  --strata-success:      var(--strata-series-3);
+  --strata-success-text: var(--strata-series-3-deep);
+  --strata-warning:      var(--strata-series-4);
+  --strata-warning-text: var(--strata-series-4-deep);
+  --strata-danger:       var(--strata-series-5);
+  --strata-danger-text:  var(--strata-series-5-deep);
+  --strata-focus:        var(--strata-series-6);
+}
+
+/* --- 0g. Page chrome follows the OS. The six panel frames below carry an
+   explicit data-strata-theme, so BOTH themes are always on screen. -------- */
+@media (prefers-color-scheme: dark) {
+  :root,
+  [data-strata-palette="pigment"]:root {
+    color-scheme: dark;
+    --strata-canvas:  #101215;  --strata-surface: #181B20;
+    --strata-soft:    #1E2228;  --strata-sunken:  #141719;
+    --strata-ink:     #EDEFF3;  --strata-muted:   #A2A9B4;
+    --strata-on-accent: #101215; --strata-on-warning: #101215;
+    --strata-rule: #828994;     --strata-hair: #2A2F36;
+    --strata-series-1: #6A9BFF;  --strata-series-1-deep: #9BBCFF;
+    --strata-series-2: #2FC9D4;  --strata-series-2-deep: #7FDDE6;
+    --strata-series-3: #2FCB86;  --strata-series-3-deep: #7DE0B0;
+    --strata-series-4: #FFC22E;  --strata-series-4-deep: #FFD97A;
+    --strata-series-5: #FF7355;  --strata-series-5-deep: #FFAE99;
+    --strata-series-6: #B98CFF;  --strata-series-6-deep: #CBAAFF;
+    --strata-series-7: #FF7FB5;  --strata-series-7-deep: #FFB3D2;
+    --strata-series-1-tint: #141F3D; --strata-series-1-tint-ink: #A8C4FF;
+    --strata-series-2-tint: #0A2A2E; --strata-series-2-tint-ink: #7FDDE6;
+    --strata-series-3-tint: #0C2E20; --strata-series-3-tint-ink: #7DE0B0;
+    --strata-series-4-tint: #33260A; --strata-series-4-tint-ink: #FFD97A;
+    --strata-series-5-tint: #361510; --strata-series-5-tint-ink: #FFAE99;
+    --strata-series-6-tint: #231640; --strata-series-6-tint-ink: #CBAAFF;
+    --strata-series-7-tint: #3B1228; --strata-series-7-tint-ink: #FFB3D2;
+  }
+  [data-strata-palette="spectrum"]:root {
+    --strata-canvas:  #0B1020;  --strata-surface: #131A2E;
+    --strata-soft:    #1C2540;  --strata-sunken:  #0E1526;
+    --strata-ink:     #EAEFFA;  --strata-muted:   #A3B0CC;
+    --strata-on-accent: #06090F; --strata-on-warning: #06090F;
+    --strata-rule: #79859F;     --strata-hair: #232D4A;
+    --strata-series-1: #5B9DFF;  --strata-series-1-deep: #A9CBFF;
+    --strata-series-2: #3FD6E6;  --strata-series-2-deep: #7FE0EA;
+    --strata-series-3: #34D98B;  --strata-series-3-deep: #7FE9B8;
+    --strata-series-4: #FFC542;  --strata-series-4-deep: #FFD98A;
+    --strata-series-5: #FF6B85;  --strata-series-5-deep: #FFA8B6;
+    --strata-series-6: #A98BFF;  --strata-series-6-deep: #CBAAFF;
+    --strata-series-7: #EE7BFF;  --strata-series-7-deep: #F5AEFF;
+    --strata-series-1-tint: #16294D; --strata-series-1-tint-ink: #A9CBFF;
+    --strata-series-2-tint: #0A2E33; --strata-series-2-tint-ink: #7FE0EA;
+    --strata-series-3-tint: #0E3326; --strata-series-3-tint-ink: #7FE9B8;
+    --strata-series-4-tint: #3A2A08; --strata-series-4-tint-ink: #FFD98A;
+    --strata-series-5-tint: #3D141C; --strata-series-5-tint-ink: #FFA8B6;
+    --strata-series-6-tint: #241A47; --strata-series-6-tint-ink: #CBAAFF;
+    --strata-series-7-tint: #331240; --strata-series-7-tint-ink: #F5AEFF;
+  }
+}
+
+/* ==========================================================================
+   1. STRATA PRIMITIVES used here (lifted from strata.css, unmodified)
+   ========================================================================== */
+
+.strata-meta {
+  font-family: var(--strata-font-mono);
+  font-size: var(--strata-fs-micro);
+  line-height: var(--strata-lh-micro);
+  letter-spacing: var(--strata-meta-tracking);
+  text-transform: var(--strata-meta-transform);
+  color: var(--strata-muted);
+}
+
+/* The ink is BOTH the text and the border: a bare tint is ~1.1:1 against
+   every plane, so the border is what makes the badge an object. */
+.strata-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--strata-space-1);
+  padding: var(--strata-space-1) var(--strata-space-2);
+  border: var(--strata-rule-width) solid currentColor;
+  border-radius: var(--strata-radius-md);
+  font-family: var(--strata-font-mono);
+  font-size: var(--strata-fs-micro);
+  line-height: var(--strata-lh-micro);
+  letter-spacing: var(--strata-meta-tracking);
+  text-transform: var(--strata-meta-transform);
+  white-space: nowrap;
+}
+
+/* Pure outline — never a box-shadow. `outline` paints outside the border box,
+   so the 2px offset shows the PARENT plane on both sides of the ring and its
+   visibility never depends on the fill. The offset is load-bearing: at 0 the
+   ring drops below 3:1 on 26 of 28 fills across the four surfaces. */
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--strata-focus);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   2. PAGE SCAFFOLD — deliberately NOT the panel.
+      A plain sunken ground with a 1px rule, so each frame reads as an object
+      sitting on a backdrop rather than as part of the page.
+   ========================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: var(--strata-space-6) var(--strata-space-5) var(--strata-space-8);
+  background: var(--strata-plane-base);
+  color: var(--strata-ink);
+  font-family: var(--strata-font-sans);
+  font-size: var(--strata-fs-body);
+  font-weight: var(--strata-fw-regular);
+  line-height: var(--strata-lh-normal);
+  overflow-wrap: break-word;
+}
+
+.page-head { max-width: var(--strata-reading-measure); margin: 0 0 var(--strata-space-6); }
+.page-head h1 {
+  margin: 0 0 var(--strata-space-2);
+  font-size: var(--strata-fs-h1);
+  font-weight: var(--strata-fw-semibold);
+  line-height: var(--strata-lh-h1);
+}
+.page-head p { margin: 0 0 var(--strata-space-2); color: var(--strata-muted); }
+.page-head .strata-meta { margin: 0; }
+
+.themes { display: grid; gap: var(--strata-space-6); }
+
+/* The backdrop: sunken plane + rule. In BOTH themes the panel (surface) is the
+   lighter plane, so the figure/ground relationship is stable. */
+.theme {
+  padding: var(--strata-space-5);
+  background: var(--strata-plane-sunken);
+  color: var(--strata-ink);
+  border: var(--strata-rule-hairline);
+  border-radius: var(--strata-radius-lg);
+}
+.theme-head { margin: 0 0 var(--strata-space-5); }
+.theme-head h2 {
+  margin: 0 0 var(--strata-space-1);
+  font-size: var(--strata-fs-h2);
+  font-weight: var(--strata-fw-semibold);
+  line-height: var(--strata-lh-h2);
+}
+.theme-head p { margin: 0; }
+
+.frames { display: flex; flex-wrap: wrap; gap: var(--strata-space-5); align-items: flex-start; }
+
+.frame { inline-size: 380px; max-inline-size: 100%; }
+.frame-label {
+  margin: 0 0 var(--strata-space-2);
+  font-size: var(--strata-fs-h4);
+  font-weight: var(--strata-fw-semibold);
+  line-height: var(--strata-lh-h4);
+  color: var(--strata-ink);
+}
+.frame-label span { color: var(--strata-muted); font-weight: var(--strata-fw-regular); }
+
+/* Icons: one geometric family, 16px, 1.5 stroke, currentColor.
+   16px and 1.5 are Strata's documented icon values (no token exists). */
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.nc-icon { width: 16px; height: 16px; flex: none; }
+
+/* ==========================================================================
+   3. THE PANEL — plane + 1px rule. No shadow anywhere in this file.
+   ========================================================================== */
+
+.nc {
+  background: var(--strata-plane-raised);
+  border: var(--strata-rule-hairline);
+  border-radius: var(--strata-radius-lg);
+}
+
+/* Header sits on the inset plane with a shared bottom edge: a plane change is
+   only perceivable WITH its rule (the light plane scale spans ~1.15:1, and in
+   pigment canvas and surface are the same value). */
+.nc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--strata-space-3);
+  padding: var(--strata-space-3) var(--strata-space-4);
+  background: var(--strata-plane-inset);
+  border-bottom: var(--strata-rule-hairline);
+  border-radius: var(--strata-radius-lg) var(--strata-radius-lg) 0 0;
+}
+.nc-product {
+  font-size: var(--strata-fs-body);
+  font-weight: var(--strata-fw-semibold);
+  line-height: var(--strata-lh-micro);
+  color: var(--strata-ink);
+}
+
+/* Sibling strata separated by a single shared edge. */
+.nc-section { padding: var(--strata-space-4); }
+.nc-section + .nc-section { border-top: var(--strata-rule-hairline); }
+
+/* --- Controls ------------------------------------------------------------
+   Subtle variant: plane change + 1px rule. 32px is Strata's compact height. */
+.nc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--strata-space-2);
+  height: 32px;
+  padding: 0 var(--strata-space-3);
+  background: var(--strata-plane-raised);
+  color: var(--strata-ink);
+  border: var(--strata-rule-width) solid var(--strata-rule);
+  border-radius: var(--strata-radius-md);
+  font-family: var(--strata-font-sans);
+  font-size: var(--strata-fs-body);
+  font-weight: var(--strata-fw-semibold);
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--strata-dur-micro) var(--strata-ease-exit),
+              border-color var(--strata-dur-micro) var(--strata-ease-exit);
+}
+/* Hover is always one plane DOWN (sunken) in both themes, so the direction of
+   the feedback is identical light and dark. The 1px rule is always present, so
+   the control never depends on the ~1.15:1 light plane scale to be seen. */
+.nc-btn:hover { background: var(--strata-plane-sunken); }
+.nc-btn[aria-expanded="true"] { background: var(--strata-plane-sunken); }
+.nc-btn[aria-expanded="true"] .nc-icon { transform: rotate(180deg); }
+.nc-btn .nc-icon { transition: transform var(--strata-dur-micro) var(--strata-ease-exit); }
+
+/* --- Feature identity ---------------------------------------------------- */
+.nc-title {
+  margin: 0;
+  font-size: var(--strata-fs-h3);
+  font-weight: var(--strata-fw-semibold);
+  line-height: var(--strata-lh-h3);
+  color: var(--strata-ink);
+}
+.nc-subid { margin: var(--strata-space-1) 0 0; color: var(--strata-muted); }
+
+/* Literal identifiers and paths keep the monospace metadata register but must
+   NOT be uppercased — see token gap (c) in the header comment. */
+.nc-mono {
+  font-family: var(--strata-font-mono);
+  font-size: var(--strata-fs-caption);
+  line-height: var(--strata-lh-caption);
+  overflow-wrap: anywhere;
+}
+
+/* --- Lifecycle stepper ---------------------------------------------------
+   Three encodings, none of them colour: shape (check / solid square / dashed
+   square), a literal state word, and solid-vs-dashed connectors. */
+.nc-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: var(--strata-space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.nc-step {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: var(--strata-space-1);
+  min-width: 0;
+  text-align: center;
+}
+.nc-step + .nc-step::before {
+  content: "";
+  position: absolute;
+  top: var(--strata-space-2);   /* vertical centre of the 16px marker */
+  left: -50%;
+  width: 100%;
+  border-top: var(--strata-rule-hairline);
+}
+.nc-step.is-todo::before { border-top-style: dashed; }
+.nc-step-mark {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  padding: 0 var(--strata-space-1);
+  background: var(--strata-plane-raised);
+}
+.nc-step.is-done    .nc-step-mark { color: var(--strata-success-text); }
+.nc-step.is-current .nc-step-mark { color: var(--strata-primary-deep); }
+.nc-step.is-todo    .nc-step-mark { color: var(--strata-muted); }
+.nc-step-name {
+  font-size: var(--strata-fs-caption);
+  line-height: var(--strata-lh-caption);
+  color: var(--strata-muted);
+}
+.nc-step.is-done .nc-step-name    { color: var(--strata-ink); }
+.nc-step.is-current .nc-step-name { color: var(--strata-ink); font-weight: var(--strata-fw-semibold); }
+.nc-step-state { display: block; }
+.nc-step.is-done    .nc-step-state { color: var(--strata-success-text); }
+.nc-step.is-current .nc-step-state { color: var(--strata-primary-deep); }
+
+/* --- Stage --------------------------------------------------------------- */
+.nc-field { display: flex; align-items: center; gap: var(--strata-space-3); flex-wrap: wrap; margin: 0; }
+.nc-label { margin: 0; }
+
+/* Stage slot mapping lives HERE and nowhere else. Five stages is more than two
+   categorical slots, so every badge also carries a shape glyph and its literal
+   name — the ramp is hue-differentiated, not luminance-differentiated. */
+.nc-badge--idea     { background: var(--strata-series-4-tint); color: var(--strata-series-4-tint-ink); }
+.nc-badge--defined  { background: var(--strata-series-2-tint); color: var(--strata-series-2-tint-ink); }
+.nc-badge--work     { background: var(--strata-series-1-tint); color: var(--strata-series-1-tint-ink); }
+.nc-badge--verified { background: var(--strata-series-3-tint); color: var(--strata-series-3-tint-ink); }
+.nc-badge--blocked  { background: var(--strata-series-5-tint); color: var(--strata-series-5-tint-ink); }
+
+/* --- Next step -----------------------------------------------------------
+   Emphasis carried by a rule, not a tint wash (strata-reading-note pattern). */
+.nc-next {
+  margin: var(--strata-space-3) 0 0;
+  padding: var(--strata-space-3);
+  background: var(--strata-plane-inset);
+  border: var(--strata-rule-hairline);
+  border-left: var(--strata-space-1) solid var(--strata-primary);
+  border-radius: var(--strata-radius-md);
+}
+.nc-next-value {
+  margin: var(--strata-space-1) 0 0;
+  font-size: var(--strata-fs-body-lg);
+  font-weight: var(--strata-fw-semibold);
+  line-height: var(--strata-lh-body);
+  color: var(--strata-ink);
+}
+.nc-why {
+  margin: var(--strata-space-3) 0 0;
+  padding-top: var(--strata-space-3);
+  border-top: var(--strata-rule-hairline);
+  font-size: var(--strata-fs-caption);
+  line-height: var(--strata-lh-caption);
+  color: var(--strata-muted);
+}
+.nc-why-label { display: block; margin-bottom: var(--strata-space-1); }
+
+/* --- Attention ----------------------------------------------------------- */
+.nc-attn {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--strata-space-2);
+  margin: 0;
+  color: var(--strata-ink);
+}
+.nc-attn + .nc-attn { margin-top: var(--strata-space-2); }
+.nc-attn .nc-icon { margin-top: var(--strata-space-1); }
+.nc-attn--question .nc-icon { color: var(--strata-warning-text); }
+.nc-attn--clear { color: var(--strata-muted); }
+.nc-attn--clear .nc-icon { color: var(--strata-success-text); }
+
+/* Blocked: this is a `.strata-badge` scaled up to a field — one ink is the
+   text, the border AND the 4px left rule, over the matching tint. Blocked is
+   signalled five ways (shape glyph, the literal word, the left rule, the mono
+   classification chip, the reason sentence); colour is never the only cue.
+   Token gap (a): Strata aliases --strata-danger / -danger-text but ships no
+   --strata-danger-tint / -tint-ink role, so the slot pair is addressed
+   directly here, exactly as strata.css's own .strata-badge-danger does. */
+.nc-blocker {
+  margin: 0 0 var(--strata-space-3);
+  padding: var(--strata-space-3);
+  background: var(--strata-series-5-tint);
+  color: var(--strata-series-5-tint-ink);
+  border: var(--strata-rule-width) solid var(--strata-series-5-tint-ink);
+  border-left: var(--strata-space-1) solid var(--strata-series-5-tint-ink);
+  border-radius: var(--strata-radius-md);
+}
+.nc-blocker-head {
+  display: flex;
+  align-items: center;
+  gap: var(--strata-space-2);
+  flex-wrap: wrap;
+  margin: 0;
+}
+.nc-blocker-word {
+  font-size: var(--strata-fs-body);
+  font-weight: var(--strata-fw-semibold);
+  line-height: var(--strata-lh-micro);
+}
+.nc-blocker-class {
+  padding: var(--strata-space-1) var(--strata-space-2);
+  background: var(--strata-plane-raised);
+  color: var(--strata-series-5-tint-ink);
+  border: var(--strata-rule-width) solid var(--strata-series-5-tint-ink);
+  border-radius: var(--strata-radius-md);
+  font-family: var(--strata-font-mono);
+  font-size: var(--strata-fs-micro);
+  line-height: var(--strata-lh-micro);
+  letter-spacing: var(--strata-meta-tracking);
+}
+.nc-blocker-reason {
+  margin: var(--strata-space-2) 0 0;
+  font-size: var(--strata-fs-caption);
+  line-height: var(--strata-lh-caption);
+  color: var(--strata-series-5-tint-ink);
+}
+
+/* --- Freshness ----------------------------------------------------------- */
+.nc-fresh {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--strata-space-3);
+  flex-wrap: wrap;
+}
+.nc-fresh .strata-meta { margin: 0; }
+
+/* --- Source details disclosure ------------------------------------------- */
+.nc-details {
+  margin-top: var(--strata-space-3);
+  background: var(--strata-plane-inset);
+  border: var(--strata-rule-hairline);
+  border-radius: var(--strata-radius-md);
+}
+.nc-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--strata-space-2);
+  padding: var(--strata-space-2) var(--strata-space-3);
+  border-radius: var(--strata-radius-md);
+  color: var(--strata-ink);
+  font-size: var(--strata-fs-body);
+  font-weight: var(--strata-fw-semibold);
+  cursor: pointer;
+  list-style: none;
+  transition: background var(--strata-dur-micro) var(--strata-ease-exit);
+}
+.nc-summary::-webkit-details-marker { display: none; }
+.nc-summary:hover { background: var(--strata-plane-sunken); }
+.nc-summary .nc-icon {
+  color: var(--strata-muted);
+  transition: transform var(--strata-dur-micro) var(--strata-ease-exit);
+}
+.nc-details[open] > .nc-summary {
+  border-bottom: var(--strata-rule-hairline);
+  border-radius: var(--strata-radius-md) var(--strata-radius-md) 0 0;
+}
+.nc-details[open] > .nc-summary .nc-icon { transform: rotate(90deg); }
+
+.nc-facts { display: grid; gap: var(--strata-space-3); margin: 0; padding: var(--strata-space-3); }
+.nc-fact { display: grid; gap: var(--strata-space-1); }
+.nc-fact dt { margin: 0; }
+.nc-fact dd { margin: 0; color: var(--strata-ink); }
+
+/* --- Chooser -------------------------------------------------------------- */
+.nc-lead { margin: 0 0 var(--strata-space-3); color: var(--strata-ink); }
+.nc-choices { display: grid; gap: var(--strata-space-2); margin: 0; padding: 0; list-style: none; }
+.nc-choice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--strata-space-1) var(--strata-space-2);
+  width: 100%;
+  padding: var(--strata-space-3);
+  background: var(--strata-plane-inset);
+  color: var(--strata-ink);
+  border: var(--strata-rule-hairline);
+  border-radius: var(--strata-radius-md);
+  font-family: var(--strata-font-sans);
+  font-size: var(--strata-fs-body);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--strata-dur-micro) var(--strata-ease-exit);
+}
+.nc-choice:hover { background: var(--strata-plane-sunken); }
+.nc-choice-title {
+  min-width: 0;
+  font-size: var(--strata-fs-body);
+  font-weight: var(--strata-fw-semibold);
+  line-height: var(--strata-lh-h4);
+  color: var(--strata-ink);
+}
+.nc-choice .strata-badge { align-self: start; }
+.nc-choice-id { grid-column: 1 / -1; color: var(--strata-muted); }
+
+/* ==========================================================================
+   4. NARROW VIEWPORT — the panel keeps its own width; the page chrome yields.
+      Checked at 360px (panel gets the full viewport) and 480px.
+   ========================================================================== */
+@media (max-width: 480px) {
+  body { padding: var(--strata-space-4) var(--strata-space-0) var(--strata-space-6); }
+  .page-head { padding-inline: var(--strata-space-3); }
+  .theme {
+    padding-inline: var(--strata-space-0);
+    border-inline-width: 0;
+    border-radius: 0;
+  }
+  .theme-head, .frame-label { padding-inline: var(--strata-space-3); }
+}
+
+/* ==========================================================================
+   5. REDUCED MOTION — 1ms rather than 0s so transitionend still fires.
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --strata-dur-micro:    1ms;
+    --strata-dur-standard: 1ms;
+    --strata-dur-entrance: 1ms;
+  }
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<!-- One geometric icon family. 16px box, 1.5 stroke, currentColor. No emoji. -->
+<svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-check" viewBox="0 0 16 16">
+    <path d="M3.2 8.4 6.4 11.6 12.8 4.6" fill="none" stroke="currentColor"
+          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-square-fill" viewBox="0 0 16 16">
+    <rect x="3" y="3" width="10" height="10" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-square-dash" viewBox="0 0 16 16">
+    <rect x="3.75" y="3.75" width="8.5" height="8.5" fill="none" stroke="currentColor"
+          stroke-width="1.5" stroke-dasharray="3 2.4"/>
+  </symbol>
+  <symbol id="i-circle" viewBox="0 0 16 16">
+    <circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  </symbol>
+  <symbol id="i-square" viewBox="0 0 16 16">
+    <rect x="3.25" y="3.25" width="9.5" height="9.5" fill="none" stroke="currentColor"
+          stroke-width="1.5"/>
+  </symbol>
+  <symbol id="i-square-half" viewBox="0 0 16 16">
+    <rect x="3.25" y="3.25" width="9.5" height="9.5" fill="none" stroke="currentColor"
+          stroke-width="1.5"/>
+    <rect x="4" y="4" width="4" height="8" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-octagon-bar" viewBox="0 0 16 16">
+    <polygon points="5.5,2.4 10.5,2.4 13.6,5.5 13.6,10.5 10.5,13.6 5.5,13.6 2.4,10.5 2.4,5.5"
+             fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+    <path d="M5.2 8 H10.8" fill="none" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-question" viewBox="0 0 16 16">
+    <circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <path d="M6.4 6.4a1.65 1.65 0 1 1 1.75 1.85v1.05" fill="none" stroke="currentColor"
+          stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="8.15" cy="11.5" r="0.85" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 16 16">
+    <path d="M4.5 6.25 8 9.75 11.5 6.25" fill="none" stroke="currentColor"
+          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 16 16">
+    <path d="M6.25 4.5 9.75 8 6.25 11.5" fill="none" stroke="currentColor"
+          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+</svg>
+
+<header class="page-head">
+  <h1>Now cockpit — Strata variant</h1>
+  <p>
+    Three states of the 380px Copilot canvas side panel for
+    <strong>052-dude-canvas-ui</strong>, rendered light and dark. The panel is
+    read-only: the only working controls are Refresh, the Source details
+    disclosure, and the chooser rows.
+  </p>
+  <p class="strata-meta">
+    Strata &middot; pigment palette &middot; planes and 1px rules, no shadows &middot; 4px shape
+  </p>
+</header>
+
+<div class="themes">
+
+  <!-- ====================================================================
+       LIGHT ROW — explicit theme so it stays light under a dark OS setting.
+       ==================================================================== -->
+  <section class="theme" data-strata-palette="pigment" data-strata-theme="light"
+           aria-labelledby="row-light">
+    <div class="theme-head">
+      <h2 id="row-light">Light</h2>
+      <p class="strata-meta">pigment &middot; light</p>
+    </div>
+
+    <div class="frames">
+
+      <!-- ============ STATE 1 · NORMAL (light) ============ -->
+      <section class="frame" aria-labelledby="f1l">
+        <h3 class="frame-label" id="f1l">State 1 <span>&mdash; Normal</span></h3>
+
+        <div class="nc">
+          <header class="nc-header">
+            <span class="nc-product">Dude</span>
+            <button type="button" class="nc-btn" aria-expanded="false">
+              Change feature
+              <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg>
+            </button>
+          </header>
+
+          <div class="nc-section">
+            <h4 class="nc-title">Dude Canvas UI</h4>
+            <p class="nc-subid nc-mono">052-dude-canvas-ui</p>
+
+            <ol class="nc-steps" aria-label="Lifecycle">
+              <li class="nc-step is-done">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg></span>
+                <span class="nc-step-name">Idea</span>
+                <span class="nc-step-state strata-meta">Complete</span>
+              </li>
+              <li class="nc-step is-current" aria-current="step">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-fill"/></svg></span>
+                <span class="nc-step-name">Defined</span>
+                <span class="nc-step-state strata-meta">Current</span>
+              </li>
+              <li class="nc-step is-todo">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-dash"/></svg></span>
+                <span class="nc-step-name">Work</span>
+                <span class="nc-step-state strata-meta">Not started</span>
+              </li>
+              <li class="nc-step is-todo">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-dash"/></svg></span>
+                <span class="nc-step-name">Verified</span>
+                <span class="nc-step-state strata-meta">Not started</span>
+              </li>
+            </ol>
+          </div>
+
+          <div class="nc-section">
+            <p class="nc-field">
+              <span class="strata-meta nc-label">Stage</span>
+              <span class="strata-badge nc-badge--defined">
+                <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square"/></svg>Defined
+              </span>
+            </p>
+
+            <div class="nc-next">
+              <span class="strata-meta nc-label">Next step</span>
+              <p class="nc-next-value">Review D1-D3 research, then accept it</p>
+              <p class="nc-why">
+                <span class="strata-meta nc-why-label">Why</span>
+                All 13 tasks are open and none has started. This review gates every mock and code task.
+              </p>
+            </div>
+          </div>
+
+          <div class="nc-section">
+            <p class="nc-attn nc-attn--question">
+              <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-question"/></svg>
+              <span>1 unanswered question</span>
+            </p>
+            <p class="nc-attn nc-attn--clear">
+              <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg>
+              <span>No blockers</span>
+            </p>
+          </div>
+
+          <div class="nc-section">
+            <div class="nc-fresh">
+              <p class="strata-meta">Read just now</p>
+              <button type="button" class="nc-btn">Refresh</button>
+            </div>
+
+            <details class="nc-details">
+              <summary class="nc-summary">
+                <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-chevron-right"/></svg>
+                Source details
+              </summary>
+              <dl class="nc-facts">
+                <div class="nc-fact"><dt class="strata-meta">Authority</dt><dd class="nc-mono">Definition Only</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Idea</dt><dd class="nc-mono">.dude/ideas/052-dude-canvas-ui.md</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Spec</dt><dd class="nc-mono">.dude/specs/052-dude-canvas-ui/spec.md</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Tasks</dt><dd class="nc-mono">.dude/specs/052-dude-canvas-ui/tasks.md</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Tasks</dt><dd class="nc-mono">13 open, 0 started</dd></div>
+              </dl>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ STATE 2 · BLOCKED (light) ============ -->
+      <section class="frame" aria-labelledby="f2l">
+        <h3 class="frame-label" id="f2l">State 2 <span>&mdash; Blocked</span></h3>
+
+        <div class="nc">
+          <header class="nc-header">
+            <span class="nc-product">Dude</span>
+            <button type="button" class="nc-btn" aria-expanded="false">
+              Change feature
+              <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg>
+            </button>
+          </header>
+
+          <div class="nc-section">
+            <h4 class="nc-title">Dude Canvas UI</h4>
+            <p class="nc-subid nc-mono">052-dude-canvas-ui</p>
+
+            <ol class="nc-steps" aria-label="Lifecycle">
+              <li class="nc-step is-done">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg></span>
+                <span class="nc-step-name">Idea</span>
+                <span class="nc-step-state strata-meta">Complete</span>
+              </li>
+              <li class="nc-step is-current" aria-current="step">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-fill"/></svg></span>
+                <span class="nc-step-name">Defined</span>
+                <span class="nc-step-state strata-meta">Current</span>
+              </li>
+              <li class="nc-step is-todo">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-dash"/></svg></span>
+                <span class="nc-step-name">Work</span>
+                <span class="nc-step-state strata-meta">Not started</span>
+              </li>
+              <li class="nc-step is-todo">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-dash"/></svg></span>
+                <span class="nc-step-name">Verified</span>
+                <span class="nc-step-state strata-meta">Not started</span>
+              </li>
+            </ol>
+          </div>
+
+          <div class="nc-section">
+            <p class="nc-field">
+              <span class="strata-meta nc-label">Stage</span>
+              <span class="strata-badge nc-badge--blocked">
+                <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-octagon-bar"/></svg>Blocked
+              </span>
+            </p>
+
+            <div class="nc-next">
+              <span class="strata-meta nc-label">Next step</span>
+              <p class="nc-next-value">Choose a tracked feature, or restore tracking for this one</p>
+              <p class="nc-why">
+                <span class="strata-meta nc-why-label">Why</span>
+                Execution authority is tracked, and no tracked issue matches this feature.
+              </p>
+            </div>
+          </div>
+
+          <div class="nc-section">
+            <!-- Blocked is signalled five ways: octagon-with-bar glyph, the
+                 literal word, a 4px left rule, a mono classification chip, and
+                 a reason sentence. Colour is never the only cue. -->
+            <div class="nc-blocker">
+              <p class="nc-blocker-head">
+                <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-octagon-bar"/></svg>
+                <span class="nc-blocker-word">Blocked</span>
+                <span class="nc-blocker-class">contract-mismatch</span>
+              </p>
+              <p class="nc-blocker-reason">
+                Tracked board is authoritative for other work; this feature has no tracked issue.
+              </p>
+            </div>
+
+            <p class="nc-attn nc-attn--question">
+              <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-question"/></svg>
+              <span>1 unanswered question</span>
+            </p>
+          </div>
+
+          <div class="nc-section">
+            <div class="nc-fresh">
+              <p class="strata-meta">Read 4 minutes ago</p>
+              <button type="button" class="nc-btn">Refresh</button>
+            </div>
+
+            <details class="nc-details">
+              <summary class="nc-summary">
+                <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-chevron-right"/></svg>
+                Source details
+              </summary>
+              <dl class="nc-facts">
+                <div class="nc-fact"><dt class="strata-meta">Authority</dt><dd class="nc-mono">Definition Only</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Idea</dt><dd class="nc-mono">.dude/ideas/052-dude-canvas-ui.md</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Spec</dt><dd class="nc-mono">.dude/specs/052-dude-canvas-ui/spec.md</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Tasks</dt><dd class="nc-mono">.dude/specs/052-dude-canvas-ui/tasks.md</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Tasks</dt><dd class="nc-mono">13 open, 0 started</dd></div>
+              </dl>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ STATE 3 · CHOOSE A FEATURE (light) ============ -->
+      <section class="frame" aria-labelledby="f3l">
+        <h3 class="frame-label" id="f3l">State 3 <span>&mdash; Choose a feature</span></h3>
+
+        <div class="nc">
+          <header class="nc-header">
+            <span class="nc-product">Dude</span>
+            <button type="button" class="nc-btn" aria-expanded="true">
+              Change feature
+              <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg>
+            </button>
+          </header>
+
+          <div class="nc-section">
+            <p class="nc-lead">Several features are active. Choose one.</p>
+
+            <ul class="nc-choices">
+              <li>
+                <button type="button" class="nc-choice">
+                  <span class="nc-choice-title">Dude Canvas UI</span>
+                  <span class="strata-badge nc-badge--defined">
+                    <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square"/></svg>Defined
+                  </span>
+                  <span class="nc-choice-id nc-mono">052-dude-canvas-ui</span>
+                </button>
+              </li>
+              <li>
+                <button type="button" class="nc-choice">
+                  <span class="nc-choice-title">Design-Stage Critique</span>
+                  <span class="strata-badge nc-badge--idea">
+                    <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-circle"/></svg>Idea
+                  </span>
+                  <span class="nc-choice-id nc-mono">053-design-stage-critique</span>
+                </button>
+              </li>
+              <li>
+                <button type="button" class="nc-choice">
+                  <span class="nc-choice-title">Backlog Report</span>
+                  <span class="strata-badge nc-badge--work">
+                    <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-half"/></svg>Work
+                  </span>
+                  <span class="nc-choice-id nc-mono">025-backlog-report</span>
+                </button>
+              </li>
+              <li>
+                <button type="button" class="nc-choice">
+                  <span class="nc-choice-title">Persistent Design Mockups</span>
+                  <span class="strata-badge nc-badge--verified">
+                    <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg>Verified
+                  </span>
+                  <span class="nc-choice-id nc-mono">044-persistent-design-mockups</span>
+                </button>
+              </li>
+              <li>
+                <button type="button" class="nc-choice">
+                  <span class="nc-choice-title">Theme-Agnostic Design Workflow</span>
+                  <span class="strata-badge nc-badge--verified">
+                    <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg>Verified
+                  </span>
+                  <span class="nc-choice-id nc-mono">032-theme-agnostic-design-workflow</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </section>
+
+  <!-- ====================================================================
+       DARK ROW — Strata's documented dark treatment, applied explicitly so
+       both themes are visible without changing an OS setting.
+       ==================================================================== -->
+  <section class="theme" data-strata-palette="pigment" data-strata-theme="dark"
+           aria-labelledby="row-dark">
+    <div class="theme-head">
+      <h2 id="row-dark">Dark</h2>
+      <p class="strata-meta">pigment &middot; dark</p>
+    </div>
+
+    <div class="frames">
+
+      <!-- ============ STATE 1 · NORMAL (dark) ============ -->
+      <section class="frame" aria-labelledby="f1d">
+        <h3 class="frame-label" id="f1d">State 1 <span>&mdash; Normal</span></h3>
+
+        <div class="nc">
+          <header class="nc-header">
+            <span class="nc-product">Dude</span>
+            <button type="button" class="nc-btn" aria-expanded="false">
+              Change feature
+              <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg>
+            </button>
+          </header>
+
+          <div class="nc-section">
+            <h4 class="nc-title">Dude Canvas UI</h4>
+            <p class="nc-subid nc-mono">052-dude-canvas-ui</p>
+
+            <ol class="nc-steps" aria-label="Lifecycle">
+              <li class="nc-step is-done">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg></span>
+                <span class="nc-step-name">Idea</span>
+                <span class="nc-step-state strata-meta">Complete</span>
+              </li>
+              <li class="nc-step is-current" aria-current="step">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-fill"/></svg></span>
+                <span class="nc-step-name">Defined</span>
+                <span class="nc-step-state strata-meta">Current</span>
+              </li>
+              <li class="nc-step is-todo">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-dash"/></svg></span>
+                <span class="nc-step-name">Work</span>
+                <span class="nc-step-state strata-meta">Not started</span>
+              </li>
+              <li class="nc-step is-todo">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-dash"/></svg></span>
+                <span class="nc-step-name">Verified</span>
+                <span class="nc-step-state strata-meta">Not started</span>
+              </li>
+            </ol>
+          </div>
+
+          <div class="nc-section">
+            <p class="nc-field">
+              <span class="strata-meta nc-label">Stage</span>
+              <span class="strata-badge nc-badge--defined">
+                <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square"/></svg>Defined
+              </span>
+            </p>
+
+            <div class="nc-next">
+              <span class="strata-meta nc-label">Next step</span>
+              <p class="nc-next-value">Review D1-D3 research, then accept it</p>
+              <p class="nc-why">
+                <span class="strata-meta nc-why-label">Why</span>
+                All 13 tasks are open and none has started. This review gates every mock and code task.
+              </p>
+            </div>
+          </div>
+
+          <div class="nc-section">
+            <p class="nc-attn nc-attn--question">
+              <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-question"/></svg>
+              <span>1 unanswered question</span>
+            </p>
+            <p class="nc-attn nc-attn--clear">
+              <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg>
+              <span>No blockers</span>
+            </p>
+          </div>
+
+          <div class="nc-section">
+            <div class="nc-fresh">
+              <p class="strata-meta">Read just now</p>
+              <button type="button" class="nc-btn">Refresh</button>
+            </div>
+
+            <details class="nc-details">
+              <summary class="nc-summary">
+                <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-chevron-right"/></svg>
+                Source details
+              </summary>
+              <dl class="nc-facts">
+                <div class="nc-fact"><dt class="strata-meta">Authority</dt><dd class="nc-mono">Definition Only</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Idea</dt><dd class="nc-mono">.dude/ideas/052-dude-canvas-ui.md</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Spec</dt><dd class="nc-mono">.dude/specs/052-dude-canvas-ui/spec.md</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Tasks</dt><dd class="nc-mono">.dude/specs/052-dude-canvas-ui/tasks.md</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Tasks</dt><dd class="nc-mono">13 open, 0 started</dd></div>
+              </dl>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ STATE 2 · BLOCKED (dark) ============ -->
+      <section class="frame" aria-labelledby="f2d">
+        <h3 class="frame-label" id="f2d">State 2 <span>&mdash; Blocked</span></h3>
+
+        <div class="nc">
+          <header class="nc-header">
+            <span class="nc-product">Dude</span>
+            <button type="button" class="nc-btn" aria-expanded="false">
+              Change feature
+              <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg>
+            </button>
+          </header>
+
+          <div class="nc-section">
+            <h4 class="nc-title">Dude Canvas UI</h4>
+            <p class="nc-subid nc-mono">052-dude-canvas-ui</p>
+
+            <ol class="nc-steps" aria-label="Lifecycle">
+              <li class="nc-step is-done">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg></span>
+                <span class="nc-step-name">Idea</span>
+                <span class="nc-step-state strata-meta">Complete</span>
+              </li>
+              <li class="nc-step is-current" aria-current="step">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-fill"/></svg></span>
+                <span class="nc-step-name">Defined</span>
+                <span class="nc-step-state strata-meta">Current</span>
+              </li>
+              <li class="nc-step is-todo">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-dash"/></svg></span>
+                <span class="nc-step-name">Work</span>
+                <span class="nc-step-state strata-meta">Not started</span>
+              </li>
+              <li class="nc-step is-todo">
+                <span class="nc-step-mark"><svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-dash"/></svg></span>
+                <span class="nc-step-name">Verified</span>
+                <span class="nc-step-state strata-meta">Not started</span>
+              </li>
+            </ol>
+          </div>
+
+          <div class="nc-section">
+            <p class="nc-field">
+              <span class="strata-meta nc-label">Stage</span>
+              <span class="strata-badge nc-badge--blocked">
+                <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-octagon-bar"/></svg>Blocked
+              </span>
+            </p>
+
+            <div class="nc-next">
+              <span class="strata-meta nc-label">Next step</span>
+              <p class="nc-next-value">Choose a tracked feature, or restore tracking for this one</p>
+              <p class="nc-why">
+                <span class="strata-meta nc-why-label">Why</span>
+                Execution authority is tracked, and no tracked issue matches this feature.
+              </p>
+            </div>
+          </div>
+
+          <div class="nc-section">
+            <div class="nc-blocker">
+              <p class="nc-blocker-head">
+                <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-octagon-bar"/></svg>
+                <span class="nc-blocker-word">Blocked</span>
+                <span class="nc-blocker-class">contract-mismatch</span>
+              </p>
+              <p class="nc-blocker-reason">
+                Tracked board is authoritative for other work; this feature has no tracked issue.
+              </p>
+            </div>
+
+            <p class="nc-attn nc-attn--question">
+              <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-question"/></svg>
+              <span>1 unanswered question</span>
+            </p>
+          </div>
+
+          <div class="nc-section">
+            <div class="nc-fresh">
+              <p class="strata-meta">Read 4 minutes ago</p>
+              <button type="button" class="nc-btn">Refresh</button>
+            </div>
+
+            <details class="nc-details">
+              <summary class="nc-summary">
+                <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-chevron-right"/></svg>
+                Source details
+              </summary>
+              <dl class="nc-facts">
+                <div class="nc-fact"><dt class="strata-meta">Authority</dt><dd class="nc-mono">Definition Only</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Idea</dt><dd class="nc-mono">.dude/ideas/052-dude-canvas-ui.md</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Spec</dt><dd class="nc-mono">.dude/specs/052-dude-canvas-ui/spec.md</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Tasks</dt><dd class="nc-mono">.dude/specs/052-dude-canvas-ui/tasks.md</dd></div>
+                <div class="nc-fact"><dt class="strata-meta">Tasks</dt><dd class="nc-mono">13 open, 0 started</dd></div>
+              </dl>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ STATE 3 · CHOOSE A FEATURE (dark) ============ -->
+      <section class="frame" aria-labelledby="f3d">
+        <h3 class="frame-label" id="f3d">State 3 <span>&mdash; Choose a feature</span></h3>
+
+        <div class="nc">
+          <header class="nc-header">
+            <span class="nc-product">Dude</span>
+            <button type="button" class="nc-btn" aria-expanded="true">
+              Change feature
+              <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg>
+            </button>
+          </header>
+
+          <div class="nc-section">
+            <p class="nc-lead">Several features are active. Choose one.</p>
+
+            <ul class="nc-choices">
+              <li>
+                <button type="button" class="nc-choice">
+                  <span class="nc-choice-title">Dude Canvas UI</span>
+                  <span class="strata-badge nc-badge--defined">
+                    <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square"/></svg>Defined
+                  </span>
+                  <span class="nc-choice-id nc-mono">052-dude-canvas-ui</span>
+                </button>
+              </li>
+              <li>
+                <button type="button" class="nc-choice">
+                  <span class="nc-choice-title">Design-Stage Critique</span>
+                  <span class="strata-badge nc-badge--idea">
+                    <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-circle"/></svg>Idea
+                  </span>
+                  <span class="nc-choice-id nc-mono">053-design-stage-critique</span>
+                </button>
+              </li>
+              <li>
+                <button type="button" class="nc-choice">
+                  <span class="nc-choice-title">Backlog Report</span>
+                  <span class="strata-badge nc-badge--work">
+                    <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-square-half"/></svg>Work
+                  </span>
+                  <span class="nc-choice-id nc-mono">025-backlog-report</span>
+                </button>
+              </li>
+              <li>
+                <button type="button" class="nc-choice">
+                  <span class="nc-choice-title">Persistent Design Mockups</span>
+                  <span class="strata-badge nc-badge--verified">
+                    <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg>Verified
+                  </span>
+                  <span class="nc-choice-id nc-mono">044-persistent-design-mockups</span>
+                </button>
+              </li>
+              <li>
+                <button type="button" class="nc-choice">
+                  <span class="nc-choice-title">Theme-Agnostic Design Workflow</span>
+                  <span class="strata-badge nc-badge--verified">
+                    <svg class="nc-icon" aria-hidden="true" focusable="false"><use href="#i-check"/></svg>Verified
+                  </span>
+                  <span class="nc-choice-id nc-mono">032-theme-agnostic-design-workflow</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </section>
+
+</div>
+
+</body>
+</html>

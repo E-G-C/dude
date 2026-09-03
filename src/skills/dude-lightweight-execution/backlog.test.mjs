@@ -785,20 +785,32 @@ test("T002 explicit order edges read earlier to later and never claim a dependen
   assert.doesNotMatch(edge, /prerequisite|dependent/);
 });
 
-test("T002 live backlog-canvas relation is exact, provisional, non-authoritative, and default-open", () => {
-  const artifacts = renderArtifacts({ root: REPO_ROOT });
-  const canvas = artifacts.model.items.find((item) => item.slug === "backlog-canvas");
-  assert.ok(canvas);
-  assert.deepEqual(canvas.provisionalRelationships.map((entry) => entry.targetSlug), ["backlog-report"]);
-  assert.deepEqual(
-    artifacts.model.relationships.provisional.map((relation) => `${relation.fromSlug}->${relation.toSlug}`),
-    ["backlog-report->backlog-canvas"],
-  );
-  assert.equal(canvas.section, "planned");
-  assert.match(artifacts.html, /data-authority="provisional"/);
-  assert.match(artifacts.html, /class="map-connector dashed"/);
-  assert.match(artifacts.html, /stated in idea, not authoritative/);
-  assert.match(artifacts.html, /id="feature-backlog-canvas"[^>]* open>/);
+test("T002 planned backlog-canvas relation is exact, provisional, non-authoritative, and default-open", () => {
+  const root = makeRoot();
+  try {
+    writeIdea(root, "backlog-report", { number: "001", status: "draft" });
+    writeIdea(root, "backlog-canvas", {
+      number: "002",
+      status: "draft",
+      body: "The canvas records `depends-on: backlog-report` after it is first defined.",
+    });
+
+    const artifacts = renderArtifacts({ root });
+    const canvas = artifacts.model.items.find((item) => item.slug === "backlog-canvas");
+    assert.ok(canvas);
+    assert.deepEqual(canvas.provisionalRelationships.map((entry) => entry.targetSlug), ["backlog-report"]);
+    assert.deepEqual(
+      artifacts.model.relationships.provisional.map((relation) => `${relation.fromSlug}->${relation.toSlug}`),
+      ["backlog-report->backlog-canvas"],
+    );
+    assert.equal(canvas.section, "planned");
+    assert.match(artifacts.html, /data-authority="provisional"/);
+    assert.match(artifacts.html, /class="map-connector dashed"/);
+    assert.match(artifacts.html, /stated in idea, not authoritative/);
+    assert.match(artifacts.html, /id="feature-backlog-canvas"[^>]* open>/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("T002 duplicate and malformed slugs keep display-only identity while all source fields render as escaped text", () => {

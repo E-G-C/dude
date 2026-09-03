@@ -141,6 +141,36 @@ function writeBuildMetadata(root) {
   w(root, '.dude/metadata/bundle-manifest.md', MANIFEST);
 }
 
+/** @param {string} root @param {{ includeExcluded?: boolean }} [options] */
+function writeDudeExtensionFixture(root, { includeExcluded = false } = {}) {
+  const runtime = {
+    'src/extensions/dude/extension.mjs': 'extension runtime\n',
+    'src/extensions/dude/lib/canvas-server.mjs': 'server runtime\n',
+    'src/extensions/dude/lib/nested/projection.json': '{"runtime":true}\n',
+    'src/extensions/dude/ui/index.html': '<!doctype html>\n',
+    'src/extensions/dude/ui/assets/app.js': 'browser runtime\n',
+    'src/extensions/dude/ui/assets/licenses/NOTICE.txt': 'notice runtime\n',
+  };
+  for (const [relPath, bytes] of Object.entries(runtime)) w(root, relPath, bytes);
+  if (includeExcluded) {
+    for (const [relPath, bytes] of Object.entries({
+      'src/extensions/dude/canvas-server.test.mjs': 'root test\n',
+      'src/extensions/dude/lib/nested/projection.test.mjs': 'nested test\n',
+      'src/extensions/dude/lib/source.mjs.map': 'source map\n',
+      'src/extensions/dude/lib/node_modules/dependency/index.mjs': 'dependency\n',
+      'src/extensions/dude/frontend/app.jsx': 'frontend source\n',
+      'src/extensions/dude/ui/preview.html': 'other UI\n',
+      'src/extensions/dude/ui/assets/app.js.map': 'asset map\n',
+      'src/extensions/dude/ui/assets/node_modules/dependency/index.js': 'dependency\n',
+      'src/extensions/other/extension.mjs': 'other extension\n',
+      'scripts/dude-canvas-ui/package.json': '{}\n',
+      'scripts/dude-canvas-ui/package-lock.json': '{}\n',
+      'scripts/dude-canvas-ui/build.mjs': 'build input\n',
+    })) w(root, relPath, bytes);
+  }
+  return runtime;
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
 
@@ -371,6 +401,127 @@ test('buildDev removes stale Copilot profiles without touching pack, local, proj
     }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('buildDev replaces only the Dude extension runtime tree with the exact source allowlist', () => {
+  // Arrange
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-extension-'));
+  try {
+    writeCanonicalConfig(root);
+    writeBuildMetadata(root);
+    const runtime = writeDudeExtensionFixture(root, { includeExcluded: true });
+    for (const [relPath, bytes] of Object.entries({
+      '.github/extensions/other/deep/sentinel.txt': 'other extension\n',
+      '.github/extensions/dude-preview/extension.mjs': 'preview extension\n',
+      '.github/extensions/project-owned.txt': 'project extension root file\n',
+      '.github/agents/dude-pack-fixture.agent.md': 'pack profile\n',
+      '.github/agents/dude-local-fixture.agent.md': 'local profile\n',
+      '.github/agents/project-fixture.agent.md': 'project profile\n',
+      '.github/skills/project/SKILL.md': 'project skill\n',
+      '.github/extensions/dude/extension.mjs': 'stale extension\n',
+      '.github/extensions/dude/lib/removed.mjs': 'stale lib runtime\n',
+      '.github/extensions/dude/ui/assets/former-app.js': 'stale asset\n',
+      '.github/extensions/dude/frontend/escaped.jsx': 'stale frontend\n',
+    })) w(root, relPath, bytes);
+    const protectedExtensions = snapshotTree(path.join(root, '.github/extensions'))
+      .filter((entry) => entry.path !== 'dude' && !entry.path.startsWith('dude/'));
+    const protectedPaths = new Map([
+      ['.github/agents/dude-pack-fixture.agent.md', Buffer.from('pack profile\n')],
+      ['.github/agents/dude-local-fixture.agent.md', Buffer.from('local profile\n')],
+      ['.github/agents/project-fixture.agent.md', Buffer.from('project profile\n')],
+      ['.github/skills/project/SKILL.md', Buffer.from('project skill\n')],
+    ]);
+
+    // Act
+    const result = buildDev({ repoRoot: root });
+    const projected = snapshotTree(path.join(root, '.github/extensions/dude'))
+      .filter((entry) => entry.type === 'file')
+      .map((entry) => entry.path)
+      .sort();
+
+    // Assert
+    const expected = Object.keys(runtime)
+      .map((relPath) => relPath.replace(/^src\/extensions\/dude\//, ''))
+      .sort();
+    assert.deepEqual(projected, expected);
+    for (const relativePath of expected) {
+      assertExactBytes(
+        fs.readFileSync(path.join(root, '.github/extensions/dude', ...relativePath.split('/'))),
+        Buffer.from(runtime[`src/extensions/dude/${relativePath}`]),
+        relativePath,
+      );
+    }
+    assert.ok(result.removed.includes('.github/extensions/dude'));
+    assert.deepEqual(
+      snapshotTree(path.join(root, '.github/extensions'))
+        .filter((entry) => entry.path !== 'dude' && !entry.path.startsWith('dude/')),
+      protectedExtensions,
+      'every unrelated extension path retains its pre-build bytes and type',
+    );
+    for (const [relPath, bytes] of protectedPaths) {
+      assertExactBytes(fs.readFileSync(path.join(root, ...relPath.split('/'))), bytes, relPath);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('buildDev rejects unsafe extension roots and computed extension outputs before cleanup', () => {
+  const cases = [
+    {
+      label: 'wrong-type extensions root',
+      setup: (root) => w(root, '.github/extensions', 'not a directory\n'),
+    },
+    {
+      label: 'wrong-type exact Dude root',
+      setup: (root) => w(root, '.github/extensions/dude', 'not a directory\n'),
+    },
+    {
+      label: 'symlinked extensions root',
+      setup: (root, outside) => {
+        fs.mkdirSync(path.join(root, '.github'), { recursive: true });
+        fs.symlinkSync(path.join(outside, 'extension-root'), path.join(root, '.github/extensions'), 'dir');
+      },
+    },
+    {
+      label: 'symlinked exact Dude root',
+      setup: (root, outside) => {
+        fs.mkdirSync(path.join(root, '.github/extensions'), { recursive: true });
+        fs.symlinkSync(path.join(outside, 'dude-root'), path.join(root, '.github/extensions/dude'), 'dir');
+      },
+    },
+    {
+      label: 'symlinked computed runtime output parent',
+      setup: (root, outside) => {
+        fs.mkdirSync(path.join(root, '.github/extensions/dude'), { recursive: true });
+        fs.symlinkSync(path.join(outside, 'lib'), path.join(root, '.github/extensions/dude/lib'), 'dir');
+      },
+    },
+  ];
+
+  for (const { label, setup } of cases) {
+    // Arrange
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-extension-preflight-'));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-extension-outside-'));
+    try {
+      writeCanonicalConfig(root);
+      writeBuildMetadata(root);
+      writeDudeExtensionFixture(root);
+      w(root, '.github/agents/dude-stale.agent.md', 'must survive preflight\n');
+      w(outside, 'sentinel.txt', 'outside bytes\n');
+      setup(root, outside);
+      const beforeRoot = snapshotTree(root);
+      const beforeOutside = snapshotTree(outside);
+
+      // Act + Assert
+      assert.throws(() => buildDev({ repoRoot: root }), /unsafe|symbolic link|non-directory/i, label);
+      assert.deepEqual(snapshotTree(root), beforeRoot, `${label}: repository preimage changed`);
+      assert.deepEqual(snapshotTree(outside), beforeOutside, `${label}: outside preimage changed`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
   }
 });
 

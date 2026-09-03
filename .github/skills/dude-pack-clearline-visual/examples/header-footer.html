@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Clearline header and footer patterns</title>
+  <link rel="stylesheet" href="../tokens/clearline.css" />
+  <style>
+    body { margin: var(--cl-space-0); }
+    section { padding: var(--cl-space-6) var(--cl-space-5); }
+    section + section { border-top: var(--cl-control-border-width) solid var(--cl-border); }
+    .row { align-items: center; display: flex; gap: var(--cl-space-3); }
+    .spacer { flex: 1; }
+  </style>
+</head>
+<body class="cl-brand">
+  <section>
+    <div class="row">
+      <div class="cl-lockup">
+        <span class="cl-mark" aria-hidden="true">
+          <img src="placeholder-mark.svg" alt="" />
+        </span>
+        <strong class="cl-wordmark">Project name</strong>
+      </div>
+      <span class="spacer"></span>
+      <a class="cl-link" href="../README.md">Reference</a>
+      <a class="cl-link" href="../reference/brand-mark.md">Mark rules</a>
+    </div>
+  </section>
+
+  <section data-cl-theme="dark" style="background: var(--cl-bg-dark); color: var(--cl-text-on-dark);">
+    <div class="row">
+      <div class="cl-lockup">
+        <span class="cl-mark"
+              style="--cl-mark-bg: var(--cl-color-primary-bg); --cl-mark-fg: var(--cl-color-primary-fg);"
+              aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M2 2h20v20H2zm5 5v10h10V7z" />
+          </svg>
+        </span>
+        <strong class="cl-wordmark">Project name</strong>
+      </div>
+      <span class="spacer"></span>
+      <a class="cl-link" href="../README.md">Reference</a>
+      <a class="cl-link" href="../reference/colors.md">Color roles</a>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <div class="cl-lockup">
+        <span class="cl-mark"
+              style="--cl-mark-bg: var(--cl-color-primary-bg); --cl-mark-fg: var(--cl-color-primary-fg);"
+              aria-hidden="true">P</span>
+        <strong class="cl-wordmark">Project name</strong>
+      </div>
+      <span class="spacer"></span>
+      <a class="cl-link" href="../reference/brand-mark.md">Lockup rule</a>
+    </div>
+  </section>
+
+  <section style="color: var(--cl-text-muted); font-size: var(--cl-fs-caption);">
+    <div class="row">
+      <div class="cl-lockup cl-lockup--compact">
+        <span class="cl-mark"
+              style="--cl-mark-bg: var(--cl-color-primary-bg); --cl-mark-fg: var(--cl-color-primary-fg);"
+              aria-hidden="true">P</span>
+        <span>Example project</span>
+      </div>
+      <span class="spacer"></span>
+      <a class="cl-link" href="../reference/sources.md">Sources</a>
+      <a class="cl-link" href="../reference/layout-and-iconography.md">Accessibility</a>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <div class="cl-lockup cl-lockup--hero">
+        <span class="cl-mark"
+              style="--cl-mark-bg: var(--cl-color-primary-bg); --cl-mark-fg: var(--cl-color-primary-fg);"
+              role="img" aria-label="Project name">P</span>
+      </div>
+      <span class="spacer"></span>
+      <span>Standalone accessible hero mark</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <div class="cl-lockup">
+        <span class="cl-mark cl-mark-placeholder" aria-hidden="true"></span>
+        <strong class="cl-wordmark">Asset pending</strong>
+      </div>
+      <span class="spacer"></span>
+      <span>This mockup state is not for production.</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <strong class="cl-wordmark">Project name</strong>
+      <span class="spacer"></span>
+      <a class="cl-link" href="../README.md">Reference</a>
+    </div>
+  </section>
+</body>
+</html>
