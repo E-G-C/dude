@@ -5933,6 +5933,19 @@ test('T003 the adapter owns every ordinary Work runtime route', () => {
     ['the runner adds no model or resident process surface', [
       [/makes no model call/, /adds no service, REPL, daemon, registry, route or mode control, or checkpoint state/],
     ]],
+    ['Assessment responses are validated at both ends and classified exactly', [
+      [
+        /host integration validates it with the authoritative `validateAssessment\(target, inspection, assessment\)`/,
+        /normalizes no model field/,
+        /validator is the first consumer of the raw Assessment/,
+        /captures one inert snapshot and validates that exact snapshot before accepting it/,
+        /`challenge-response-stale` applies only when the initial failure is the known noncurrent evidence hash/,
+        /replacing only that field in an inert snapshot makes the whole Assessment valid/,
+        /every other malformed Assessment or envelope is `challenge-response-invalid`/,
+        /malformed envelopes and exchange failures use fixed runner-owned detail/,
+        /never rejected strings, paths, evidence, hashes, exception messages, unknown field names, or validator messages/,
+      ],
+    ]],
     ['autonomous attestation is cooperative and host-derived', [
       [
         /Autonomous attestation is cooperative, not cryptographic/,

@@ -2538,7 +2538,7 @@ test('T008 regression: programmatic Buffer and typed-array bodies are charged be
 });
 
 test('T008: descriptor 64 is retained before separate packet overflow and descriptor 65 refuses before append', () => {
-  assert.deepEqual(limits, { items: 16, bytes: 65_536 });
+  assert.deepEqual(limits, { items: 16, bytes: 131_072 });
   const exactRaw = rawInputs({
     currentRun: Array.from({ length: 57 }, (_, index) => (
       capture(TARGET, 'succeeded', [{ descriptor: index }])
@@ -3261,7 +3261,140 @@ function sizedFinalItem(expectedBytes, prefix, source) {
   throw new Error(`could not construct ${expectedBytes}-byte packet fixture`);
 }
 
-test('exactly 16 items and exactly 65,536 canonical packet bytes are admitted together', () => {
+test('T010 packet: the fixed increase leaves every other declared packet and body limit unchanged', () => {
+  assert.deepEqual(limits, { items: 16, bytes: 131_072 });
+  const source = fs.readFileSync(RECOVERY_SCRIPT, 'utf8');
+  for (const declaration of [
+    'const MAX_PACKET_ITEMS = 16;',
+    'const MAX_SOURCE_BODY_BYTES = 1_048_576;',
+    'const MAX_INSPECTION_BODY_BYTES = 4_194_304;',
+  ]) {
+    assert.equal(source.split(declaration).length - 1, 1, declaration);
+  }
+});
+
+test('T010 packet: the actual current T009 Inspection plus compact verification and accepted review is admitted', () => {
+  const target = {
+    specPath: '.dude/specs/018-autonomous-runstate-continuity/spec.md',
+    lane: 'lightweight',
+    taskKey: 'T009@6c696e74',
+  };
+  const ideaPath = '.dude/ideas/018-autonomous-runstate-continuity.md';
+  const packageRoot = path.dirname(target.specPath);
+  const artifactPaths = [
+    ideaPath,
+    `${packageRoot}/spec.md`,
+    `${packageRoot}/plan.md`,
+    `${packageRoot}/tasks.md`,
+  ];
+  const copiedBytes = new Map(artifactPaths.map((artifactPath) => [
+    artifactPath,
+    fs.readFileSync(path.join(REPO_ROOT, artifactPath)),
+  ]));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-t010-t009-'));
+  try {
+    for (const artifactPath of artifactPaths) {
+      const destination = path.join(root, artifactPath);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.copyFileSync(path.join(REPO_ROOT, artifactPath), destination);
+      assert.deepEqual(fs.readFileSync(destination), copiedBytes.get(artifactPath), artifactPath);
+    }
+
+    const input = {
+      root,
+      specPath: target.specPath,
+      target,
+      lane: { kind: 'lightweight' },
+      currentRun: [],
+      review: [],
+      verification: [],
+      lint: [],
+      policyMode: 'autonomous',
+    };
+    const baseInspection = inspect(input);
+    assert.equal(baseInspection.overflow, false);
+    assert.deepEqual(baseInspection.blockers, []);
+    assert.ok(modelPacket(baseInspection));
+
+    const trusted = t002EnvelopeFixture({
+      target,
+      inspectedEvidenceHash: baseInspection.evidenceHash,
+      checkOutcome: 'passed',
+      verdict: 'accepted',
+    });
+    const verificationEnvelope = recoveryRuntime.normalizeVerificationEnvelopeV2(
+      trusted.verificationCapture,
+    );
+    const reviewEnvelope = recoveryRuntime.normalizeIndependentReviewEnvelopeV2(
+      trusted.reviewCapture,
+      verificationEnvelope,
+    );
+    assert.deepEqual(verificationEnvelope.checks.map((check) => check.outcome), ['passed']);
+    assert.equal(reviewEnvelope.verdict, 'accepted');
+    assert.equal(reviewEnvelope.verificationEnvelopeIdentity, verificationEnvelope.envelopeIdentity);
+
+    const streams = {
+      review: [capture(target, 'accepted', [trusted.reviewCapture])],
+      verification: [capture(target, 'passed', [trusted.verificationCapture])],
+    };
+    assert.ok(
+      [...streams.review, ...streams.verification]
+        .reduce((total, entry) => total + entry.bytes.byteLength, 0) < 16_384,
+      'mandatory trusted capture streams must remain compact',
+    );
+
+    const inspection = inspect({ ...input, ...streams });
+    assert.deepEqual(inspection.target, target);
+    assert.deepEqual(
+      inspection.items.filter((item) => item.status === 'present').map((item) => item.source),
+      [
+        'owner-log',
+        'task-history',
+        'definition-plan',
+        'lane-history',
+        'current-run',
+        'review',
+        'verification',
+        'lint',
+      ],
+    );
+    const itemBody = (source) => JSON.parse(
+      inspection.items.find((item) => item.source === source)?.text || '{}',
+    );
+    const owner = itemBody('owner-log');
+    const taskHistory = itemBody('task-history');
+    const definitionPlan = itemBody('definition-plan');
+    const laneHistory = itemBody('lane-history');
+    assert.equal(owner.ideaPath, ideaPath);
+    assert.equal(owner.specPath, target.specPath);
+    assert.equal(taskHistory.path, `${packageRoot}/tasks.md`);
+    assert.deepEqual(taskHistory.canonicalTasks.map((task) => task.id), [target.taskKey]);
+    assert.equal(definitionPlan.path, `${packageRoot}/plan.md`);
+    assert.deepEqual(
+      definitionPlan.definitionPrestate.prestateDescriptors.map((entry) => entry.path),
+      definitionTargets(target.specPath, ideaPath),
+    );
+    assert.equal(laneHistory.kind, target.lane);
+    assert.deepEqual(laneHistory.canonicalTasks.map((task) => task.id), [target.taskKey]);
+    assert.equal(itemBody('review').state, 'accepted');
+    assert.equal(itemBody('verification').state, 'passed');
+
+    const packet = modelPacket(inspection);
+    assert.ok(packet);
+    const admittedPacketBytes = Buffer.byteLength(canonicalJson(packet));
+    assert.ok(admittedPacketBytes > 65_536, 'the real completion-capture packet must exceed the former bound');
+    assert.ok(admittedPacketBytes <= 131_072);
+    assert.equal(inspection.overflow, false);
+    assert.deepEqual(inspection.blockers, []);
+    for (const artifactPath of artifactPaths) {
+      assert.deepEqual(fs.readFileSync(path.join(root, artifactPath)), copiedBytes.get(artifactPath), artifactPath);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T010 packet: exactly 16 items and exactly 131,072 canonical bytes are admitted together', () => {
   const sixteen = Array.from({ length: limits.items }, (_, index) => evidence('current-run', `item-${index}`));
   const countInspection = buildInspection(TARGET, sixteen);
   assert.equal(countInspection.overflow, false);
@@ -3273,11 +3406,11 @@ test('exactly 16 items and exactly 65,536 canonical packet bytes are admitted to
   const packet = modelPacket(byteInspection);
   assert.ok(packet);
   assert.equal(packet.items.length, 16);
-  assert.equal(Buffer.byteLength(canonicalJson(packet)), 65_536);
+  assert.equal(Buffer.byteLength(canonicalJson(packet)), 131_072);
   assert.equal(byteInspection.overflow, false);
 });
 
-test('item 17 and byte 65,537 return descriptor-only refusal without truncation or a packet', () => {
+test('item 17 and a packet byte overflow return descriptor-only refusal without truncation or a packet', () => {
   const seventeen = Array.from({ length: limits.items + 1 }, (_, index) => evidence('current-run', `item-${index}`));
   const countInspection = buildInspection(TARGET, seventeen);
   assert.equal(countInspection.overflow, true);
@@ -3294,6 +3427,53 @@ test('item 17 and byte 65,537 return descriptor-only refusal without truncation 
   assert.equal(byteInspection.items[0].byteLength, oversized.byteLength);
   assert.equal(byteInspection.items[0].sha256, oversized.sha256);
   assert.equal(modelPacket(byteInspection), null);
+});
+
+test('T010 packet: 131,073 complete non-owner bytes refuse without completion, recovery, or state charge', () => {
+  const raw = transitionRaw(TARGET);
+  const prefix = collectEvidence(TARGET, raw).filter((item) => item.source !== 'session');
+  const oversizedSession = sizedFinalItem(131_073, prefix, 'session');
+  const oversizedRaw = {
+    ...raw,
+    session: {
+      target: TARGET,
+      availability: 'available',
+      bytes: Buffer.from(oversizedSession.text),
+    },
+  };
+  const completeItems = collectEvidence(TARGET, oversizedRaw);
+  const completeSession = completeItems.find((item) => item.source === 'session');
+  assert.equal(packetBytes(TARGET, completeItems), 131_073);
+  assert.equal(completeSession?.status, 'present');
+  assert.equal(completeSession?.text, oversizedSession.text);
+
+  const inspection = buildInspection(TARGET, completeItems);
+  assert.equal(inspection.overflow, true);
+  assert.equal(modelPacket(inspection), null);
+  assert.ok(inspection.items.every((item) => !Object.hasOwn(item, 'text')));
+  const sessionDescriptor = inspection.items.find((item) => item.source === 'session');
+  assert.equal(sessionDescriptor?.status, 'overflow');
+  assert.equal(sessionDescriptor?.sha256, oversizedSession.sha256);
+  assert.equal(sessionDescriptor?.byteLength, oversizedSession.byteLength);
+
+  const state = emptyState({ overall: 'unlimited', recovery: 'unlimited', recover: true });
+  const before = canonicalJson(state);
+  const refused = authorizeAttempt(
+    state,
+    TARGET,
+    oversizedRaw,
+    transitionAssessment('retry-task'),
+    'recovery',
+  );
+  assert.equal(refused.authorized, false);
+  assert.equal(refused.reason, 'evidence-incomplete');
+  assert.equal(refused.blocker.subject, 'model-packet');
+  assert.strictEqual(refused.state, state);
+  assert.equal(canonicalJson(state), before);
+  assert.equal(state.overallUsed, 0);
+  assert.deepEqual(state.recoveryUsed, []);
+  assert.deepEqual(state.pending, []);
+  assert.deepEqual(state.completed, []);
 });
 
 test('an exact-bound available session that crosses the packet boundary refuses the whole packet', () => {
@@ -6888,7 +7068,7 @@ test('T004: the definition-plan participates in packet item and byte accounting 
   const boundaryPlan = sizedFinalItem(limits.bytes, prefix, 'definition-plan');
   const atBoundary = buildInspection(TARGET, [...prefix, boundaryPlan]);
   assert.equal(atBoundary.overflow, false);
-  assert.equal(Buffer.byteLength(canonicalJson(modelPacket(atBoundary))), 65_536);
+  assert.equal(Buffer.byteLength(canonicalJson(modelPacket(atBoundary))), 131_072);
   const overPlan = sizedFinalItem(limits.bytes + 1, prefix, 'definition-plan');
   assert.equal(buildInspection(TARGET, [...prefix, overPlan]).overflow, true);
 });
@@ -10316,6 +10496,11 @@ test('T002 completion Inspection overflow precedence: measured 16-basis and 17-b
       const input = autonomousInspectInput(root, {
         currentRun: [capture(TARGET, 'failed', fixture.events.map((event) => ({ event })))],
         ...t002GroupedTrustedStreams(fixture.fixtures),
+        session: {
+          target: TARGET,
+          availability: 'available',
+          bytes: Buffer.alloc(limits.bytes, 0x78),
+        },
       });
       const stateBefore = clone(fixture.finalCapture.state);
       const stateBytes = canonicalJson(fixture.finalCapture.state);
@@ -23267,7 +23452,7 @@ test('Feature 029: small zero, one, and several-event logs retain every event an
   }
 });
 
-test('Feature 029: real oversized owner ledgers project a bounded suffix without mutating either source file', () => {
+test('Feature 029: real owner ledgers project a bounded suffix without mutating either source file', () => {
   const ledgers = [
     '.dude/ideas/028-agent-orchestration-metadata.md',
     '.dude/ideas/002-remove-legacy-compatibility.md',
@@ -23308,7 +23493,6 @@ test('Feature 029: real oversized owner ledgers project a bounded suffix without
     assert.equal(body.includedEventCount, body.events.length, ideaPath);
     assert.equal(body.omittedEventCount, body.totalEventCount - body.includedEventCount, ideaPath);
     assert.ok(body.totalEventCount > 0, ideaPath);
-    assert.ok(body.omittedEventCount > 0, `${ideaPath}: regression ledger must exercise omission`);
     assert.ok(body.includedEventCount > 0, ideaPath);
     assert.equal(body.firstIncludedEventOrdinal, body.omittedEventCount + 1, ideaPath);
     assert.equal(body.lastIncludedEventOrdinal, body.totalEventCount, ideaPath);
@@ -23324,7 +23508,7 @@ test('Feature 029: real oversized owner ledgers project a bounded suffix without
 test('Feature 029: the selected suffix is maximal against the complete canonical packet', () => {
   // Arrange
   const completeEvents = Array.from({ length: 5 }, (_, index) => (
-    `- 2026-08-${String(index + 1).padStart(2, '0')} maximal event ${index + 1} ${'x'.repeat(18_000)}\n`
+    `- 2026-08-${String(index + 1).padStart(2, '0')} maximal event ${index + 1} ${'x'.repeat(36_000)}\n`
   ));
   const fullLog = `## Coordinator Log\n\n${completeEvents.join('')}`;
   const raw = transitionRaw(TARGET, {
@@ -23405,7 +23589,7 @@ test('Feature 029: event boundaries retain Unicode and continuations while exclu
 
 test('Feature 029: an oversized newest event and non-owner evidence fail closed without a fallback packet', () => {
   // Arrange
-  const oversizedNewest = `- 2026-08-10 newest ${'x'.repeat(70_000)}\n`;
+  const oversizedNewest = `- 2026-08-10 newest ${'x'.repeat(140_000)}\n`;
   const ownerBytes = ideaBytes(SPEC_PATH, oversizedNewest);
   assert.ok(ownerBytes.byteLength < FIXED_RESOURCE_LIMITS.sourceBodyBytes);
   const ownerRaw = transitionRaw(TARGET, {
@@ -23536,8 +23720,8 @@ test('Feature 029: owner resolution, definition reconciliation, and learning pro
 });
 
 test('Feature 029: equal visible suffixes with different omitted history bind distinct complete-log incident prestates', () => {
-  const middle = `- 2026-08-09 common omitted-or-visible middle ${'m'.repeat(28_000)}\n`;
-  const newest = `- 2026-08-10 identical visible newest ${'n'.repeat(28_000)}\n`;
+  const middle = `- 2026-08-09 common omitted-or-visible middle ${'m'.repeat(45_000)}\n`;
+  const newest = `- 2026-08-10 identical visible newest ${'n'.repeat(45_000)}\n`;
 
   /** @param {string} marker */
   const derive = (marker) => {
@@ -23545,7 +23729,7 @@ test('Feature 029: equal visible suffixes with different omitted history bind di
     let observed;
     withIncidentWorkspace((root) => {
       // Arrange
-      const prefix = `- 2026-08-08 differing omitted prefix ${marker.repeat(28_000)}\n`;
+      const prefix = `- 2026-08-08 differing omitted prefix ${marker.repeat(45_000)}\n`;
       const events = [prefix, middle, newest];
       const fullLog = `## Coordinator Log\n\n${events.join('')}`;
       fs.writeFileSync(path.join(root, F7_IDEA_PATH), ideaBytes(F7_TARGET.specPath, events.join('')));

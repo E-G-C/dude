@@ -23,6 +23,7 @@ import {
   OUTCOME_REASON_CLASSES,
   runCommand,
   sha256,
+  validateAssessment,
   validateRunState,
 } from './recovery.mjs';
 import { buildSpecialistAttestation } from './specialist-attestation.mjs';
@@ -55,6 +56,14 @@ const MATERIAL_INPUTS = Object.freeze({
   operations: ['execute-task'],
   checks: ['verification'],
 });
+// Four sorted, unique material targets, so index 3 is the exact slot a trailing
+// slash occupies in the motivating Assessment rejection.
+const SORTED_MATERIAL_TARGETS = Object.freeze([
+  TARGET.specPath,
+  'src/skills/dude-work/host-adapter-runner.mjs',
+  'src/skills/dude-work/host-adapter.mjs',
+  'src/skills/dude-work/recovery.mjs',
+]);
 
 /** @param {unknown} value */
 function clone(value) {
@@ -1595,7 +1604,7 @@ function sealedInspectionInput(root, overrides = {}) {
  * @param {string} root @param {Record<string, unknown>} [overrides]
  */
 function sealedRecordInput(root, overrides = {}) {
-  const { verification, review, ...rest } = sealedInspectionInput(root, {
+  const { verification, review, lint, ...rest } = sealedInspectionInput(root, {
     policyMode: 'autonomous',
     ...overrides,
   });
@@ -1811,9 +1820,11 @@ nodeTest('authorize-attempt deterministically issues and consumes the real auton
  * Reproduce the exact captures host integration derives and injects, so later
  * inspections carry the same trusted source stream the adapter already produced.
  * @param {Record<string, unknown>} state @param {string} label @param {'accepted'|'rejected'} [verdict]
+ * @param {Record<string, unknown>[]} [findings]
  */
-function sealedTrustedFixture(state, label, verdict = 'rejected') {
+function sealedTrustedFixture(state, label, verdict = 'rejected', findings) {
   const semantic = specialistResult(label, verdict);
+  if (findings) semantic.review.findings = clone(findings);
   const pending = /** @type {Record<string, unknown>[]} */ (state.pending)[0];
   const target = clone(pending.target);
   const attemptOrdinal = state.overallUsed;
@@ -1943,6 +1954,59 @@ nodeTest('real recovery trusted review rejection capture binds predecessor and e
     assert.equal(
       captured.session.pendingEffect.provisionalState.pendingCompletion.reviewEnvelopeIdentity,
       fixture.identities.reviewEnvelopeIdentity,
+    );
+  });
+});
+
+nodeTest('trusted multi-finding capture compares identity sets without reordering occurrence events', () => {
+  withSealedWorkspace((root) => {
+    const state = pendingState('autonomous');
+    const label = 'multi-finding-order';
+    const definition = `focused check:${label}`;
+    const findings = ['amber', 'birch', 'cobalt', 'dune', 'elm'].map((marker) => ({
+      basis: {
+        expectation: { kind: 'governing-rule', reference: `governing rule:${marker}` },
+        subjects: [TARGET.taskKey],
+        failureClass: 'review-rejection',
+        checkDefinition: definition,
+      },
+      observation: { kind: 'observed-evidence', evidence: `observed evidence:${marker}` },
+    }));
+    const fixture = sealedTrustedFixture(state, label, 'rejected', findings);
+    const { captured } = captureAdapter(state, fixture, root);
+
+    assert.equal(captured.outcome, 'effect-required');
+    assert.equal(captured.reason, 'occurrence-retention-required');
+    assert.notEqual(captured.reason, 'effect-contract-mismatch');
+
+    const events = captured.effect.projectionBatch.events;
+    assert.equal(events[0].type, 'approach-occurrence');
+    assert.deepEqual(
+      events.slice(1).map((/** @type {Record<string, unknown>} */ event) => event.type),
+      Array(findings.length).fill('finding-occurrence'),
+    );
+    const occurrenceIdentities = events.slice(1)
+      .map((/** @type {Record<string, unknown>} */ event) => event.occurrenceIdentity);
+    assert.deepEqual(
+      occurrenceIdentities,
+      [...occurrenceIdentities].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
+      'finding events retain occurrenceIdentity ordering',
+    );
+
+    const projectedFindingIdentities = events.slice(1).map((
+      /** @type {Record<string, unknown>} */ event,
+    ) => /** @type {Record<string, unknown>} */ (event.occurrence).findingIdentity);
+    assert.notDeepEqual(
+      projectedFindingIdentities,
+      fixture.identities.findingIdentities,
+      'the regression requires occurrenceIdentity and findingIdentity to induce different orders',
+    );
+    assert.deepEqual(
+      [...projectedFindingIdentities].sort((left, right) => (
+        Buffer.compare(Buffer.from(left), Buffer.from(right))
+      )),
+      fixture.identities.findingIdentities,
+      'mapped findingIdentity sets compare after UTF-8 sorting',
     );
   });
 });
@@ -3907,6 +3971,10 @@ nodeTest('an ordinary autonomous request cannot select, author, or override the 
         input: { ...sealedRecordInput(root), review: transportStream(fixture.streams.review) },
         result: semantic,
       }, /must not select the 'review' trusted capture/],
+      ['selects a lint capture', {
+        input: { ...sealedRecordInput(root), lint: transportStream(fixture.streams.verification) },
+        result: semantic,
+      }, /must not select the 'lint' trusted capture/],
       // No caller-precomputed trusted identity.
       ['authors an attempt identity', {
         input: sealedRecordInput(root),
@@ -4103,6 +4171,150 @@ nodeTest('a pending definition reconciliation refuses autonomous attestation wit
     assert.equal(refused.session.pendingEffect, null);
     assert.equal(refused.session.acceptedStateBytes, canonicalJson(state));
     assert.equal(refused.session.acceptedRevision, 0);
+  });
+});
+
+/**
+ * Build one valid pending autonomous state from the existing action/check
+ * authority. Definition reconciliation remains proposal-bound and is used only
+ * to prove that its refusal precedes capture.
+ * @param {string} action @param {string[]} checks
+ */
+function pendingActionState(action, checks) {
+  const state = pendingState('autonomous');
+  const pending = state.pending[0];
+  const packageRoot = TARGET.specPath.slice(0, -'spec.md'.length);
+  const targets = action === 'reconcile-derived-definition'
+      ? [
+        '.dude/ideas/018-autonomous-runstate-continuity.md',
+        `${packageRoot}plan.md`,
+        `${packageRoot}spec.md`,
+        `${packageRoot}tasks.md`,
+      ].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))
+      : clone(MATERIAL_INPUTS.targets);
+  pending.action = action;
+  pending.materialInputs = { targets, operations: [action], checks: [...checks] };
+  pending.mode = action === 'execute-task' ? 'ordinary' : 'recovery';
+  pending.approachHash = action === 'reconcile-derived-definition'
+    ? sha256('lint-matrix-definition-proposal')
+    : approachHash({ action, materialInputs: pending.materialInputs });
+  if (pending.mode === 'recovery') {
+    state.policy.recover = true;
+    const key = canonicalJson(canonicalTarget(TARGET));
+    state.recoveryUsed = [{ targetKey: key, targetHash: sha256(key), count: 1 }];
+  }
+  validateRunState(state);
+  return state;
+}
+
+/** @param {Record<string, unknown>} state @param {Record<string, unknown>} semantic @param {string} root */
+function capturedSpecialistInput(state, semantic, root) {
+  let input = null;
+  let runtimeInvocations = 0;
+  const adapter = createHostAdapter(sealedInitial({ state }), sealedPorts((command, lowLevelRequest) => {
+    runtimeInvocations += 1;
+    if (command === 'complete' && lowLevelRequest.mode === 'capture') {
+      input = clone(lowLevelRequest.input);
+    }
+    return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+  }));
+  const result = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
+    attemptResult: { input: sealedRecordInput(root), result: semantic },
+  }));
+  return { input, result, runtimeInvocations };
+}
+
+nodeTest('Tester lint reuse follows the exact current six-action matrix', () => {
+  const matrix = [
+    ['execute-task', ['verification'], false],
+    ['retry-task', ['verification'], false],
+    ['address-test', ['lint', 'verification'], true],
+    ['address-review', ['review', 'verification'], false],
+    ['reconcile-derived-definition', ['lint', 'review', 'verification'], 'refused'],
+    ['retain-learning', ['lint'], true],
+  ];
+  withSealedWorkspace((root) => {
+    for (const [action, checks, lintExpected] of matrix) {
+      const state = pendingActionState(
+        /** @type {string} */ (action),
+        /** @type {string[]} */ (checks),
+      );
+      const semantic = specialistResult(`lint-matrix:${action}`, 'accepted');
+      semantic.operations = [action];
+      const captured = capturedSpecialistInput(state, semantic, root);
+      if (lintExpected === 'refused') {
+        assert.equal(captured.result.outcome, 'hard-stop', action);
+        assert.equal(captured.result.reason, 'definition-reconciliation-attestation-unsupported', action);
+        assert.equal(captured.input, null, action);
+        assert.equal(captured.runtimeInvocations, 0, action);
+        continue;
+      }
+      assert.equal(captured.result.outcome, 'effect-required', `${action}:${captured.result.reason}`);
+      assert.ok(captured.input, `${action}: capture input`);
+      assert.equal(captured.input.verification.length, 1, action);
+      assert.equal(captured.input.review.length, 1, action);
+      assert.equal(captured.input.lint.length, lintExpected === true ? 1 : 0, action);
+    }
+  });
+});
+
+nodeTest('lint and verification reuse one conservative Tester capture with identical identity, body, and state', () => {
+  const cases = [
+    ['address-test', ['lint', 'verification']],
+    ['retain-learning', ['lint']],
+  ];
+  withSealedWorkspace((root) => {
+    for (const [action, requiredChecks] of cases) {
+      for (const failed of [false, true]) {
+        const label = `${action}:${failed ? 'one-failed' : 'all-passed'}`;
+        const semantic = specialistResult(label, 'accepted');
+        semantic.operations = [action];
+        semantic.outcome = failed ? 'failed' : 'succeeded';
+        semantic.verification.checks = [
+          {
+            definition: `focused check:${label}:a`,
+            outcome: 'passed',
+            evidence: `check evidence:${label}:a`,
+          },
+          {
+            definition: `focused check:${label}:b`,
+            outcome: failed ? 'failed' : 'passed',
+            evidence: `check evidence:${label}:b`,
+          },
+        ];
+        const captured = capturedSpecialistInput(
+          pendingActionState(action, requiredChecks),
+          semantic,
+          root,
+        );
+        assert.equal(captured.result.outcome, 'effect-required', `${label}:${captured.result.reason}`);
+        const verificationRow = captured.input.verification[0];
+        const lintRow = captured.input.lint[0];
+        assert.deepEqual(lintRow, verificationRow, `${label}: exact stream row`);
+        assert.equal(verificationRow.state, failed ? 'failed' : 'passed', label);
+        assert.equal(lintRow.state, failed ? 'failed' : 'passed', label);
+
+        const verificationBody = JSON.parse(
+          Buffer.from(verificationRow.bytes.base64, 'base64').toString('utf8'),
+        );
+        const lintBody = JSON.parse(Buffer.from(lintRow.bytes.base64, 'base64').toString('utf8'));
+        assert.deepEqual(lintBody, verificationBody, `${label}: exact stream body`);
+        assert.equal(verificationBody.records.length, 1, `${label}: sole Tester capture`);
+        assert.equal(lintBody.records.length, 1, `${label}: reused Tester capture`);
+        const verificationCapture = verificationBody.records[0].substantive;
+        const lintCapture = lintBody.records[0].substantive;
+        assert.equal(
+          sha256(canonicalJson(lintCapture)),
+          sha256(canonicalJson(verificationCapture)),
+          `${label}: exact capture identity`,
+        );
+        assert.equal(
+          normalizeVerificationEnvelopeV2(lintCapture).envelopeIdentity,
+          normalizeVerificationEnvelopeV2(verificationCapture).envelopeIdentity,
+          `${label}: exact normalized verification identity`,
+        );
+      }
+    }
   });
 });
 
@@ -5611,6 +5823,19 @@ function focusedSpecialistPair(assessment, label, verdict = 'accepted') {
   };
 }
 
+/** @param {Record<string, unknown>} assessment @param {string} label */
+function focusedFailedSpecialistPair(assessment, label) {
+  const pair = focusedSpecialistPair(assessment, label, 'accepted');
+  pair.outcome = 'failed';
+  pair.verification.checks[0].outcome = 'failed';
+  return pair;
+}
+
+/** @param {readonly string[]} targets */
+function focusedMaterialInputs(targets) {
+  return { targets: [...targets], operations: ['execute-task'], checks: ['verification'] };
+}
+
 /** @param {Record<string, unknown>} challenge @param {string} field @param {unknown} value */
 function focusedChallengeResponse(challenge, field, value) {
   return {
@@ -5620,6 +5845,34 @@ function focusedChallengeResponse(challenge, field, value) {
     kind: challenge.kind,
     [field]: clone(value),
   };
+}
+
+/** @param {Record<string, unknown>} challenge @param {string} field @param {unknown} value */
+function focusedRawChallengeResponse(challenge, field, value) {
+  return {
+    version: 1,
+    type: 'challenge-response',
+    challengeIdentity: challenge.challengeIdentity,
+    kind: challenge.kind,
+    [field]: value,
+  };
+}
+
+/**
+ * Exercise the producing-host boundary without changing the value later
+ * received and independently validated by the runner.
+ * @param {Record<string, unknown>} challenge
+ * @param {unknown} assessment
+ * @param {('accepted'|'rejected')[]} producerVerdicts
+ */
+function focusedProducedAssessmentResponse(challenge, assessment, producerVerdicts) {
+  try {
+    validateAssessment(challenge.target, challenge.inspection, assessment);
+    producerVerdicts.push('accepted');
+  } catch {
+    producerVerdicts.push('rejected');
+  }
+  return focusedRawChallengeResponse(challenge, 'assessment', assessment);
 }
 
 /** @param {Record<string, unknown>} challenge */
@@ -5632,7 +5885,7 @@ function focusedCancelResponse(challenge) {
   };
 }
 
-const FEATURE_029_PACKET_BYTES = 65_536;
+const FEATURE_029_PACKET_BYTES = 131_072;
 
 /**
  * Recreate the exact model-packet projection only to measure the immediately
@@ -5669,7 +5922,7 @@ function feature029PacketBytes(inspection, items) {
 /** @param {string} root */
 function writeFeature029OversizedOwnerLog(root) {
   const eventLines = Array.from({ length: 96 }, (_, index) => (
-    `- 2026-08-10 owner event ${String(index + 1).padStart(3, '0')} ${'x'.repeat(720)}`
+    `- 2026-08-10 owner event ${String(index + 1).padStart(3, '0')} ${'x'.repeat(1_440)}`
   ));
   const ownerPath = path.join(root, IDEA_PATH);
   fs.writeFileSync(ownerPath, [
@@ -6161,12 +6414,433 @@ nodeTest('focused table A: sequential challenge protocol and foreground CLI', as
     {
       label: 'stale bound Assessment refuses without authorization',
       reason: 'challenge-response-stale',
+      detail: 'assessment',
+      kinds: ['assessment'],
+      preservedState: true,
+      producerVerdicts: /** @type {('accepted'|'rejected')[]} */ ([]),
       exchange(challenge) {
-        return focusedChallengeResponse(challenge, 'assessment', {
+        return focusedProducedAssessmentResponse(challenge, {
           ...focusedChallengeAssessment(challenge),
           evidenceHash: sha256('stale-challenge-assessment'),
-        });
+        }, this.producerVerdicts);
       },
+    },
+    {
+      // The motivating rejection: one trailing slash in the fourth material
+      // target is a malformed contract, never a stale binding.
+      label: 'a trailing-slash material target is invalid with a coarse safe detail',
+      reason: 'challenge-response-invalid',
+      detail: 'Assessment: invalid-contract',
+      kinds: ['assessment'],
+      preservedState: true,
+      producerVerdicts: /** @type {('accepted'|'rejected')[]} */ ([]),
+      exchange(challenge) {
+        return focusedProducedAssessmentResponse(challenge, {
+          ...focusedChallengeAssessment(challenge),
+          materialInputs: focusedMaterialInputs([
+            ...SORTED_MATERIAL_TARGETS.slice(0, 3),
+            'src/skills/dude-work/recovery.mjs/',
+          ]),
+        }, this.producerVerdicts);
+      },
+    },
+    {
+      label: 'an unknown Assessment field is invalid with a coarse safe detail',
+      reason: 'challenge-response-invalid',
+      detail: 'Assessment: invalid-contract',
+      kinds: ['assessment'],
+      preservedState: true,
+      producerVerdicts: /** @type {('accepted'|'rejected')[]} */ ([]),
+      exchange(challenge) {
+        return focusedProducedAssessmentResponse(challenge, {
+          ...focusedChallengeAssessment(challenge),
+          hostNote: 'model commentary the contract never accepts',
+        }, this.producerVerdicts);
+      },
+    },
+    {
+      label: 'a missing Assessment field is invalid with a coarse safe detail',
+      reason: 'challenge-response-invalid',
+      detail: 'Assessment: invalid-contract',
+      kinds: ['assessment'],
+      preservedState: true,
+      producerVerdicts: /** @type {('accepted'|'rejected')[]} */ ([]),
+      exchange(challenge) {
+        const { summary: _summary, ...assessment } = focusedChallengeAssessment(challenge);
+        return focusedProducedAssessmentResponse(challenge, assessment, this.producerVerdicts);
+      },
+    },
+    {
+      label: 'an Assessment Proxy is invalid before authorization',
+      reason: 'challenge-response-invalid',
+      detail: 'Assessment: invalid-contract',
+      kinds: ['assessment'],
+      preservedState: true,
+      rejectedMarkers: ['assessment-proxy-attacker-marker'],
+      producerVerdicts: /** @type {('accepted'|'rejected')[]} */ ([]),
+      exchange(challenge) {
+        return focusedProducedAssessmentResponse(
+          challenge,
+          // The same raw hostile Proxy reaches producer and runner validation.
+          new Proxy(focusedChallengeAssessment(challenge), {
+            ownKeys() {
+              throw new Error('assessment-proxy-attacker-marker');
+            },
+          }),
+          this.producerVerdicts,
+        );
+      },
+    },
+    {
+      label: 'an Assessment Proxy trap error with a hostile outer message stays invalid',
+      reason: 'challenge-response-invalid',
+      detail: 'Assessment: invalid-contract',
+      kinds: ['assessment'],
+      preservedState: true,
+      rejectedMarkers: ['assessment-proxy-trap-outer-message-attacker-marker'],
+      producerVerdicts: /** @type {('accepted'|'rejected')[]} */ ([]),
+      exchange(challenge) {
+        return focusedProducedAssessmentResponse(
+          challenge,
+          new Proxy(focusedChallengeAssessment(challenge), {
+            ownKeys() {
+              const marker = 'assessment-proxy-trap-outer-message-attacker-marker';
+              const failure = new Error(marker);
+              assert.deepEqual(
+                Object.getOwnPropertyDescriptor(failure, 'message'),
+                { value: marker, writable: true, enumerable: false, configurable: true },
+                'the thrown trap Error retains the attacker marker in its own message',
+              );
+              throw failure;
+            },
+          }),
+          this.producerVerdicts,
+        );
+      },
+    },
+    (() => {
+      let messageAccessorCalls = 0;
+      return {
+        label: 'an Assessment Proxy trap error with a hostile throwing message accessor stays invalid',
+        reason: 'challenge-response-invalid',
+        detail: 'Assessment: invalid-contract',
+        kinds: ['assessment'],
+        preservedState: true,
+        rejectedMarkers: ['assessment-proxy-trap-accessor-message-attacker-marker'],
+        producerVerdicts: /** @type {('accepted'|'rejected')[]} */ ([]),
+        exchange(challenge) {
+          return focusedProducedAssessmentResponse(
+            challenge,
+            new Proxy(focusedChallengeAssessment(challenge), {
+              ownKeys() {
+                const failure = new Error();
+                Object.defineProperty(failure, 'message', {
+                  get() {
+                    messageAccessorCalls += 1;
+                    throw new Error('assessment-proxy-trap-accessor-message-attacker-marker');
+                  },
+                });
+                throw failure;
+              },
+            }),
+            this.producerVerdicts,
+          );
+        },
+        assertResult() {
+          assert.equal(
+            messageAccessorCalls,
+            0,
+            'producer and runner never read the hostile error accessor',
+          );
+        },
+      };
+    })(),
+    (() => {
+      let getterCalls = 0;
+      return {
+        label: 'an Assessment accessor is invalid without invoking its throwing getter',
+        reason: 'challenge-response-invalid',
+        detail: 'Assessment: invalid-contract',
+        kinds: ['assessment'],
+        preservedState: true,
+        rejectedMarkers: ['assessment-getter-attacker-marker'],
+        producerVerdicts: /** @type {('accepted'|'rejected')[]} */ ([]),
+        exchange(challenge) {
+          const assessment = focusedChallengeAssessment(challenge);
+          Object.defineProperty(assessment, 'summary', {
+            enumerable: true,
+            get() {
+              getterCalls += 1;
+              throw new Error('assessment-getter-attacker-marker');
+            },
+          });
+          return focusedProducedAssessmentResponse(
+            challenge,
+            assessment,
+            this.producerVerdicts,
+          );
+        },
+        assertResult() {
+          assert.equal(
+            getterCalls,
+            0,
+            'producer and runner Assessment validation never invoke an accessor',
+          );
+        },
+      };
+    })(),
+    (() => {
+      let evidenceHashReads = 0;
+      return {
+        label: 'a value-changing Assessment Proxy cannot become valid or stale',
+        reason: 'challenge-response-invalid',
+        detail: 'Assessment: invalid-contract',
+        kinds: ['assessment'],
+        preservedState: true,
+        rejectedMarkers: [sha256('value-changing-proxy-stale-hash')],
+        producerVerdicts: /** @type {('accepted'|'rejected')[]} */ ([]),
+        exchange(challenge) {
+          const assessment = focusedChallengeAssessment(challenge);
+          const proxy = new Proxy(assessment, {
+            get(targetValue, property, receiver) {
+              if (property === 'evidenceHash') {
+                evidenceHashReads += 1;
+                return evidenceHashReads === 1
+                  ? targetValue.evidenceHash
+                  : sha256('value-changing-proxy-stale-hash');
+              }
+              return Reflect.get(targetValue, property, receiver);
+            },
+          });
+          return focusedProducedAssessmentResponse(challenge, proxy, this.producerVerdicts);
+        },
+        assertResult() {
+          // Producer validation reads the current then changed hash; runner
+          // validation independently reads it twice and once more while
+          // disproving stale as the sole defect.
+          assert.equal(evidenceHashReads, 5, 'only authoritative validation reads the Proxy');
+        },
+      };
+    })(),
+    (() => {
+      let snapshotMutations = 0;
+      return {
+        label: 'an invalid inert Assessment snapshot is rejected after raw validation',
+        reason: 'challenge-response-invalid',
+        detail: 'Assessment: invalid-contract',
+        kinds: ['assessment'],
+        preservedState: true,
+        exchange(challenge) {
+          assert.equal(challenge.kind, 'assessment', 'the invalid snapshot must not reach specialists');
+          const assessment = focusedChallengeAssessment(challenge);
+          const validInputs = /** @type {Record<string, unknown>} */ (assessment.materialInputs);
+          const invalidInputs = { ...clone(validInputs), checks: [] };
+          const operations = /** @type {string[]} */ (validInputs.operations);
+          validInputs.operations = new Proxy(operations, {
+            get(targetValue, property, receiver) {
+              if (property === 'length') {
+                snapshotMutations += 1;
+                assessment.materialInputs = invalidInputs;
+              }
+              return Reflect.get(targetValue, property, receiver);
+            },
+          });
+          assert.doesNotThrow(
+            () => validateAssessment(challenge.target, challenge.inspection, assessment),
+            'the authoritative validator accepts the raw Assessment',
+          );
+          assessment.materialInputs = validInputs;
+          return focusedRawChallengeResponse(challenge, 'assessment', assessment);
+        },
+        assertResult() {
+          assert.equal(snapshotMutations, 2, 'producer and runner each validate the raw Assessment');
+        },
+      };
+    })(),
+    {
+      label: 'a cyclic Assessment data graph is invalid',
+      reason: 'challenge-response-invalid',
+      detail: 'Assessment: invalid-contract',
+      kinds: ['assessment'],
+      preservedState: true,
+      producerVerdicts: /** @type {('accepted'|'rejected')[]} */ ([]),
+      exchange(challenge) {
+        const assessment = focusedChallengeAssessment(challenge);
+        assessment.cycle = assessment;
+        return focusedProducedAssessmentResponse(challenge, assessment, this.producerVerdicts);
+      },
+    },
+    {
+      label: 'an extra response-envelope field has fixed non-leaking detail',
+      reason: 'challenge-response-invalid',
+      detail: 'challenge-response-envelope',
+      kinds: ['assessment'],
+      preservedState: true,
+      rejectedMarkers: ['envelope-field-attacker-marker'],
+      exchange(challenge) {
+        return {
+          ...focusedChallengeResponse(
+            challenge,
+            'assessment',
+            focusedChallengeAssessment(challenge),
+          ),
+          'envelope-field-attacker-marker': true,
+        };
+      },
+    },
+    {
+      label: 'a response-envelope Proxy is invalid',
+      reason: 'challenge-response-invalid',
+      detail: 'challenge-response-envelope',
+      kinds: ['assessment'],
+      preservedState: true,
+      exchange(challenge) {
+        return new Proxy(focusedChallengeResponse(
+          challenge,
+          'assessment',
+          focusedChallengeAssessment(challenge),
+        ), {});
+      },
+    },
+    (() => {
+      let getterCalls = 0;
+      return {
+        label: 'a response-envelope accessor is invalid without invoking its getter',
+        reason: 'challenge-response-invalid',
+        detail: 'challenge-response-envelope',
+        kinds: ['assessment'],
+        preservedState: true,
+        rejectedMarkers: ['envelope-getter-attacker-marker'],
+        exchange(challenge) {
+          const response = focusedChallengeResponse(
+            challenge,
+            'assessment',
+            focusedChallengeAssessment(challenge),
+          );
+          Object.defineProperty(response, 'assessment', {
+            enumerable: true,
+            get() {
+              getterCalls += 1;
+              throw new Error('envelope-getter-attacker-marker');
+            },
+          });
+          return response;
+        },
+        assertResult() {
+          assert.equal(getterCalls, 0, 'envelope capture never invokes an accessor');
+        },
+      };
+    })(),
+    {
+      label: 'a response envelope missing its payload is invalid',
+      reason: 'challenge-response-invalid',
+      detail: 'challenge-response-envelope',
+      kinds: ['assessment'],
+      preservedState: true,
+      exchange(challenge) {
+        return {
+          version: 1,
+          type: 'challenge-response',
+          challengeIdentity: challenge.challengeIdentity,
+          kind: challenge.kind,
+        };
+      },
+    },
+    {
+      label: 'an exchange exception has fixed non-leaking detail',
+      reason: 'exchange-context-lost',
+      detail: 'exchange-failed',
+      kinds: ['assessment'],
+      preservedState: true,
+      rejectedMarkers: ['exchange-error-attacker-marker'],
+      exchange() {
+        throw new Error('exchange-error-attacker-marker');
+      },
+    },
+    {
+      // A noncurrent hash cannot launder a malformed Assessment into staleness:
+      // the discriminator rebinds only the hash and requires the rest to validate.
+      label: 'a noncurrent evidence hash beside a malformed target stays invalid',
+      reason: 'challenge-response-invalid',
+      detail: 'Assessment: invalid-contract',
+      kinds: ['assessment'],
+      preservedState: true,
+      producerVerdicts: /** @type {('accepted'|'rejected')[]} */ ([]),
+      exchange(challenge) {
+        return focusedProducedAssessmentResponse(challenge, {
+          ...focusedChallengeAssessment(challenge),
+          evidenceHash: sha256('stale-and-malformed-assessment'),
+          materialInputs: focusedMaterialInputs([
+            ...SORTED_MATERIAL_TARGETS.slice(0, 3),
+            'src/skills/dude-work/recovery.mjs/',
+          ]),
+        }, this.producerVerdicts);
+      },
+    },
+    (() => {
+      let getterCalls = 0;
+      return {
+        label: 'a noncurrent hash beside an accessor stays invalid without invoking it',
+        reason: 'challenge-response-invalid',
+        detail: 'Assessment: invalid-contract',
+        kinds: ['assessment'],
+        preservedState: true,
+        rejectedMarkers: ['stale-accessor-attacker-marker'],
+        producerVerdicts: /** @type {('accepted'|'rejected')[]} */ ([]),
+        exchange(challenge) {
+          const assessment = {
+            ...focusedChallengeAssessment(challenge),
+            evidenceHash: sha256('stale-accessor-assessment'),
+          };
+          Object.defineProperty(assessment, 'summary', {
+            enumerable: true,
+            get() {
+              getterCalls += 1;
+              throw new Error('stale-accessor-attacker-marker');
+            },
+          });
+          return focusedProducedAssessmentResponse(
+            challenge,
+            assessment,
+            this.producerVerdicts,
+          );
+        },
+        assertResult() {
+          assert.equal(
+            getterCalls,
+            0,
+            'producer and runner stale classification never invoke a later accessor',
+          );
+        },
+      };
+    })(),
+    {
+      label: 'a valid sorted multi-target Assessment is accepted and the run continues',
+      reason: 'task-settled',
+      outcome: 'ended',
+      checkpointPresent: false,
+      kinds: ['assessment', 'specialist-pair'],
+      producerVerdicts: /** @type {('accepted'|'rejected')[]} */ ([]),
+      exchange: (() => {
+        let assessment;
+        return function exchange(challenge) {
+          if (challenge.kind === 'assessment') {
+            assessment = focusedChallengeAssessment(challenge, {
+              materialInputs: focusedMaterialInputs(SORTED_MATERIAL_TARGETS),
+            });
+            return focusedProducedAssessmentResponse(
+              challenge,
+              assessment,
+              this.producerVerdicts,
+            );
+          }
+          return focusedChallengeResponse(
+            challenge,
+            'specialistResult',
+            focusedSpecialistPair(assessment, 'sorted-material-targets'),
+          );
+        };
+      })(),
     },
     {
       label: 'replayed consumed response refuses the later challenge',
@@ -6317,12 +6991,49 @@ nodeTest('focused table A: sequential challenge protocol and foreground CLI', as
       );
       assert.equal(result.outcome, row.outcome || 'hard-stop', row.label);
       assert.equal(result.outcome === 'active', false, row.label);
+      if (row.producerVerdicts) {
+        assert.deepEqual(
+          row.producerVerdicts,
+          [row.reason === 'task-settled' ? 'accepted' : 'rejected'],
+          `${row.label}: producer independently validates the raw Assessment`,
+        );
+      }
+      if (row.detail !== undefined) {
+        assert.equal(result.detail, row.detail, row.label);
+        assert.equal(result.orphan, true, row.label);
+        assert.equal(result.cleanup, 'not-attempted', row.label);
+        // No rejection may echo the refused Assessment's target text or hashes.
+        const emitted = canonicalJson(result);
+        for (const rejected of [
+          'src/skills/dude-work/recovery.mjs/',
+          'hostNote',
+          sha256('stale-challenge-assessment'),
+          sha256('stale-and-malformed-assessment'),
+          ...(row.rejectedMarkers || []),
+        ]) {
+          assert.equal(emitted.includes(rejected), false, `${row.label}:${rejected}`);
+        }
+      }
+      if (row.preservedState === true) {
+        assert.deepEqual(
+          JSON.parse(Buffer.from(result.stateBase64, 'base64').toString('utf8')),
+          emptyState('autonomous'),
+          `${row.label}: accepted bytes, counters, and pending authority stay unchanged`,
+        );
+        assert.equal(
+          result.steps.some((step) => step.step.includes('authorize') || step.step.includes('apply')),
+          false,
+          `${row.label}: a refused Assessment authorizes and implements nothing`,
+        );
+        assert.equal(checkpoint.calls.filter((call) => call === 'claim').length, 1, row.label);
+      }
       assert.equal(
         checkpoint.pair.checkpoint !== null,
         row.checkpointPresent !== false,
         row.label,
       );
       if (row.kinds) assert.deepEqual(kinds, row.kinds, row.label);
+      if (row.assertResult) row.assertResult(result);
       assert.ok(
         fs.readFileSync(path.join(root, TASKS_PATH), 'utf8').includes(
           `- [${result.reason === 'task-settled' ? 'x' : '~'}] ${TARGET.taskKey}`,
@@ -6887,6 +7598,175 @@ nodeTest('issue #21: review rejection recovers through address-review after an u
       JSON.parse(fs.readFileSync(path.join(root, TASK_STATE_PATH), 'utf8'))[TASKS_PATH].glyphs[TARGET.taskKey],
       'x',
     );
+  });
+});
+
+nodeTest('verification failure recovers through address-test, fresh PASS, projection, and settlement', async () => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const request = focusedRunnerRequest(root);
+    request.specialistResult = focusedFailedSpecialistPair(
+      request.assessment,
+      'address-test-initial-failure',
+    );
+    let assessment = null;
+    const challenges = [];
+    const captureInputs = [];
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port,
+      runtime: {
+        identity: sha256('address-test-end-to-end-runtime'),
+        invoke(command, lowLevelRequest) {
+          if (command === 'complete' && lowLevelRequest.mode === 'capture') {
+            captureInputs.push(clone(lowLevelRequest.input));
+          }
+          return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+        },
+      },
+      exchange(challenge) {
+        challenges.push(challenge.kind);
+        if (challenge.kind === 'assessment') {
+          assessment = focusedChallengeAssessment(challenge, {
+            action: 'address-test',
+            materialInputs: {
+              targets: ['src/skills/dude-work/host-adapter.mjs'],
+              operations: ['address-test'],
+              checks: ['lint', 'verification'],
+            },
+            summary: 'Address the failed Tester check and rerun its required checks.',
+          });
+          return focusedChallengeResponse(challenge, 'assessment', assessment);
+        }
+        assert.ok(assessment, 'the fresh specialist result follows address-test authorization');
+        return focusedChallengeResponse(
+          challenge,
+          'specialistResult',
+          focusedSpecialistPair(
+            /** @type {Record<string, unknown>} */ (assessment),
+            'address-test-fresh-pass',
+          ),
+        );
+      },
+    });
+
+    assert.equal(
+      result.outcome,
+      'ended',
+      `${result.reason}:${result.steps.map((step) => `${step.step}=${step.reason}`).join(',')}`,
+    );
+    assert.equal(result.reason, 'task-settled');
+    assert.deepEqual(challenges, ['assessment', 'specialist-pair']);
+    assert.equal(captureInputs.length, 2);
+    assert.equal(captureInputs[0].verification[0].state, 'failed');
+    assert.deepEqual(captureInputs[0].lint, [], 'execute-task produces no lint stream');
+    assert.equal(captureInputs[1].verification[0].state, 'passed');
+    assert.equal(captureInputs[1].lint[0].state, 'passed');
+    assert.deepEqual(captureInputs[1].lint[0], captureInputs[1].verification[0]);
+    assert.ok(result.steps.some((step) => (
+      step.step === 'attempt:1:settle-completion' && step.reason === 'verification-failed'
+    )));
+    assert.ok(result.steps.some((step) => (
+      step.step === 'attempt:2:settle-completion' && step.reason === 'completed'
+    )));
+    assert.ok(result.steps.some((step) => step.step.startsWith('attempt:2:completion:apply-projection')));
+    assert.ok(result.steps.some((step) => step.step.startsWith('attempt:2:completion:commit-projection')));
+    assert.equal(
+      result.steps.some((step) => step.reason === 'runtime-output-malformed'),
+      false,
+      'same-capture lint is accepted by every runtime route',
+    );
+    assert.match(fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'), new RegExp(`- \\[x\\] ${TARGET.taskKey}`));
+  });
+});
+
+nodeTest('runner retains observed lint unchanged but excludes it from each fresh attestation input', async () => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const request = focusedRunnerRequest(root);
+    request.state.policy.recovery = 2;
+    request.specialistResult = focusedFailedSpecialistPair(
+      request.assessment,
+      'lint-carriage-initial-failure',
+    );
+    let assessment = null;
+    let specialistOrdinal = 0;
+    const runtimeCalls = [];
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port,
+      runtime: {
+        identity: sha256('lint-carriage-runtime'),
+        invoke(command, lowLevelRequest) {
+          runtimeCalls.push({
+            command,
+            mode: lowLevelRequest.mode || 'ordinary',
+            input: Object.hasOwn(lowLevelRequest, 'input') ? clone(lowLevelRequest.input) : null,
+          });
+          return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+        },
+      },
+      exchange(challenge) {
+        if (challenge.kind === 'assessment') {
+          assessment = focusedChallengeAssessment(challenge, {
+            action: 'address-test',
+            materialInputs: {
+              targets: ['src/skills/dude-work/host-adapter.mjs'],
+              operations: ['address-test'],
+              checks: ['lint', 'verification'],
+            },
+            summary: 'Rerun the exact failed Tester checks.',
+          });
+          return focusedChallengeResponse(challenge, 'assessment', assessment);
+        }
+        specialistOrdinal += 1;
+        assert.ok(assessment, 'specialist pair follows its address-test Assessment');
+        const pair = specialistOrdinal === 1
+          ? focusedFailedSpecialistPair(
+            /** @type {Record<string, unknown>} */ (assessment),
+            'lint-carriage-failed-address-test',
+          )
+          : focusedSpecialistPair(
+            /** @type {Record<string, unknown>} */ (assessment),
+            'lint-carriage-passed-address-test',
+          );
+        return focusedChallengeResponse(challenge, 'specialistResult', pair);
+      },
+    });
+
+    assert.equal(
+      result.outcome,
+      'ended',
+      `${result.reason}:${result.steps.map((step) => `${step.step}=${step.reason}`).join(',')}`,
+    );
+    assert.equal(result.reason, 'task-settled');
+    const captures = runtimeCalls
+      .map((call, index) => ({ ...call, index }))
+      .filter((call) => call.command === 'complete' && call.mode === 'capture');
+    assert.equal(captures.length, 3);
+    assert.deepEqual(captures[0].input.lint, [], 'initial execute-task has no lint');
+    assert.equal(captures[1].input.lint.length, 1);
+    assert.equal(captures[1].input.lint[0].state, 'failed');
+    assert.deepEqual(captures[1].input.lint[0], captures[1].input.verification[0]);
+    assert.equal(captures[2].input.lint.length, 1, 'prior lint is removed before fresh attestation');
+    assert.equal(captures[2].input.lint[0].state, 'passed');
+    assert.deepEqual(captures[2].input.lint[0], captures[2].input.verification[0]);
+    assert.notDeepEqual(captures[2].input.lint[0], captures[1].input.lint[0]);
+
+    const betweenCaptures = runtimeCalls
+      .slice(captures[1].index + 1, captures[2].index)
+      .filter((call) => call.input && call.input.lint.length > 0);
+    assert.ok(betweenCaptures.length > 0, 'failed lint remains observed before the next capture');
+    for (const call of betweenCaptures) {
+      assert.deepEqual(call.input.lint, captures[1].input.lint, `${call.command}:${call.mode}`);
+    }
+    const carriedLint = [...captures[1].input.lint, ...captures[2].input.lint];
+    const afterFreshCapture = runtimeCalls
+      .slice(captures[2].index + 1)
+      .filter((call) => call.input && call.input.lint.length > 0);
+    assert.ok(afterFreshCapture.length > 0, 'later runtime input carries observed lint');
+    for (const call of afterFreshCapture) {
+      assert.deepEqual(call.input.lint, carriedLint, `${call.command}:${call.mode}`);
+    }
+    assert.equal(result.steps.some((step) => step.reason === 'runtime-output-malformed'), false);
   });
 });
 

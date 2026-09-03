@@ -16,6 +16,7 @@ import {
   deriveGovernanceRuntimeRequestV1,
   normalizeIndependentReviewEnvelopeV2,
   normalizeVerificationEnvelopeV2,
+  requiredChecksForAction,
   runCommand as runRecoveryCommand,
   sha256,
   validateAssessment,
@@ -608,7 +609,7 @@ export function validateHostAdapterRequest(value, stateValue) {
     const attempt = exactRecord(request.attemptResult, ['input', 'result'], [], 'HostAdapterRequest.attemptResult');
     if (validateAttemptResult(attempt.result, 'HostAdapterRequest.attemptResult.result') === 'trusted') {
       const input = record(attempt.input, 'HostAdapterRequest.attemptResult.input');
-      for (const stream of ['verification', 'review']) {
+      for (const stream of ['verification', 'review', 'lint']) {
         if (Object.hasOwn(input, stream)) {
           invalid('HostAdapterRequest.attemptResult.input', `must not select the '${stream}' trusted capture`);
         }
@@ -1259,7 +1260,10 @@ function handleTrustedCapture(session, trusted, response) {
         invalid('recovery trusted capture response finding event', 'must bind the exact review envelope');
       }
       return findingOccurrence.findingIdentity;
-    });
+    }).sort((left, right) => Buffer.compare(
+      Buffer.from(/** @type {string} */ (left)),
+      Buffer.from(/** @type {string} */ (right)),
+    ));
     if (occurrence.attemptIdentity !== trusted.attemptIdentity
       || occurrence.resultIdentity !== trusted.resultIdentity
       || occurrence.authorizationEvidenceHash !== pending.evidenceHash
@@ -1378,6 +1382,20 @@ function specialistAttestation(state, pending, semanticResult) {
     normalizeIndependentReviewEnvelopeV2(reviewCapture, verificationEnvelope)
   );
   const checks = /** @type {Record<string, unknown>[]} */ (verificationEnvelope.checks);
+  const verificationState = checks.some((check) => check.outcome === 'failed') ? 'failed' : 'passed';
+  const testerStream = trustedCaptureStream(target, verificationState, verificationCapture);
+  /** @type {{verification:Record<string, unknown>[],review:Record<string, unknown>[],lint:Record<string, unknown>[]}} */
+  const streams = {
+    verification: testerStream,
+    review: trustedCaptureStream(target, /** @type {string} */ (reviewEnvelope.verdict), reviewCapture),
+    lint: [],
+  };
+  if (requiredChecksForAction[
+    /** @type {keyof typeof requiredChecksForAction} */ (pending.action)
+  ].includes('lint')) {
+    // Lint is the same cooperative Tester provenance, not an independent check.
+    streams.lint = testerStream;
+  }
   return {
     trusted: {
       attemptIdentity: verificationEnvelope.attemptIdentity,
@@ -1387,14 +1405,7 @@ function specialistAttestation(state, pending, semanticResult) {
       findingIdentities: /** @type {Record<string, unknown>[]} */ (reviewEnvelope.findings)
         .map((finding) => finding.findingIdentity),
     },
-    streams: {
-      verification: trustedCaptureStream(
-        target,
-        checks.some((check) => check.outcome === 'failed') ? 'failed' : 'passed',
-        verificationCapture,
-      ),
-      review: trustedCaptureStream(target, /** @type {string} */ (reviewEnvelope.verdict), reviewCapture),
-    },
+    streams,
   };
 }
 
