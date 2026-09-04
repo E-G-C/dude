@@ -746,6 +746,12 @@ export function selectLifecycleIdeaSummary({ root, target }) {
     return { inventory, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
   }
 
+  const ownedIdeas = new Set(inventory.features.map((feature) => feature.ideaPath));
+  choices = inventory.ideas.filter((candidate) => (
+    candidate.status === 'draft'
+    || (candidate.status === 'defined' && ownedIdeas.has(candidate.ideaPath))
+  ));
+
   if (explicit) {
     const byPath = typeof target === 'string' && target.startsWith('.dude/');
     const valid = typeof target === 'string' && (byPath
@@ -776,11 +782,6 @@ export function selectLifecycleIdeaSummary({ root, target }) {
     }
     [idea] = matches;
   } else {
-    const ownedIdeas = new Set(inventory.features.map((feature) => feature.ideaPath));
-    choices = inventory.ideas.filter((candidate) => (
-      candidate.status === 'draft'
-      || (candidate.status === 'defined' && ownedIdeas.has(candidate.ideaPath))
-    ));
     if (choices.length !== 1) {
       return { inventory, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
     }

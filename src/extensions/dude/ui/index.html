@@ -3,67 +3,66 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Dude — I0 canvas skeleton</title>
+    <meta name="color-scheme" content="light dark" />
+    <title>Dude — Now</title>
     <style>
       :root {
         color-scheme: light dark;
+        background: #f5f5f5;
+      }
+      html,
+      body,
+      #root {
+        min-width: 0;
+        min-height: 100%;
+        margin: 0;
       }
       body {
-        margin: 0;
-        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: #f5f5f5;
       }
-      main {
-        max-width: 60ch;
-        padding: 24px;
+      @media (prefers-color-scheme: dark) {
+        :root,
+        body {
+          background: #141414;
+        }
       }
-      h1 {
-        font-size: 1.25rem;
-        margin: 0 0 12px;
-      }
-      p {
-        margin: 0 0 12px;
-      }
-      #viewport {
-        margin: 0;
-        opacity: 0.7;
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
       }
     </style>
+    <script type="module" src="/assets/app.js"></script>
   </head>
   <body>
-    <main>
-      <h1>Dude — I0 canvas skeleton</h1>
-      <p>
-        This page is the I0 architecture-risk proof for the Dude canvas. It exists only to show that the extension
-        registers, opens on a loopback server, and closes cleanly.
-      </p>
-      <p>It reads no project state and renders nothing about your work. The Now cockpit arrives in a later task.</p>
-      <p id="viewport">Reporting host viewport…</p>
-    </main>
+    <div id="root"></div>
+    <noscript>Dude Now requires JavaScript to read and display the repository projection.</noscript>
     <script>
-      const status = document.getElementById("viewport");
-      let reported = "";
+      (() => {
+        let reported = "";
+        const report = () => {
+          const width = Math.round(window.innerWidth);
+          const height = Math.round(window.innerHeight);
+          const size = width + "\u00d7" + height;
+          if (size === reported) return;
+          reported = size;
+          fetch("/api/viewport", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ width, height }),
+          }).catch(() => {});
+        };
 
-      function report() {
-        const width = Math.round(window.innerWidth);
-        const height = Math.round(window.innerHeight);
-        const size = width + "\u00d7" + height;
-        if (size === reported) return;
-        reported = size;
-        status.textContent = "Host viewport " + size + " reported to the session log.";
-        fetch("/api/viewport", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ width, height }),
-        }).catch(() => {
-          status.textContent = "Host viewport " + size + " could not be reported.";
-        });
-      }
-
-      // Attaching proves the renderer reached the loopback server, and closing
-      // the panel must tear this stream down.
-      new EventSource("/events");
-      window.addEventListener("resize", report);
-      report();
+        const events = new EventSource("/events");
+        window.addEventListener("pagehide", () => events.close(), { once: true });
+        window.addEventListener("resize", report);
+        report();
+      })();
     </script>
   </body>
 </html>

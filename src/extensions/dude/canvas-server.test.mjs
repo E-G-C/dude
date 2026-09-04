@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * Tests for the Dude canvas I0 skeleton server — loopback binding, the closed
+ * Tests for the Dude canvas Now cockpit server — loopback binding, the closed
  * route allowlist, cross-origin refusal, idempotent open by `instanceId`, and
  * cleanup on close. The SDK canvas plumbing itself is not retested here.
  */
@@ -44,7 +44,9 @@ function installBdFixture(steps = []) {
     `const steps = ${JSON.stringify(steps)};`,
     'const calls = JSON.parse(fs.readFileSync(callsPath, "utf8"));',
     'calls.push({ args: process.argv.slice(2), pid: process.pid });',
-    'fs.writeFileSync(callsPath, JSON.stringify(calls));',
+    'const temporaryCallsPath = `${callsPath}.${process.pid}.tmp`;',
+    'fs.writeFileSync(temporaryCallsPath, JSON.stringify(calls));',
+    'fs.renameSync(temporaryCallsPath, callsPath);',
     'const step = steps[Math.min(calls.length - 1, Math.max(steps.length - 1, 0))] || {};',
     'let finished = false;',
     'let holdTimer = null;',
@@ -141,6 +143,26 @@ function writeDraft(root, number, slug) {
     `${slug} body.`,
     '',
   ].join('\n'));
+}
+
+/** @param {string} root @returns {Map<string, Buffer>} */
+function snapshotFiles(root) {
+  /** @type {string[]} */
+  const paths = [];
+  /** @param {string} directory */
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute);
+      else if (entry.isFile()) paths.push(absolute);
+      else assert.fail(`fixture has unsupported path type: ${absolute}`);
+    }
+  };
+  visit(root);
+  return new Map(paths.sort().map((absolute) => [
+    path.relative(root, absolute),
+    fs.readFileSync(absolute),
+  ]));
 }
 
 /**
@@ -279,7 +301,7 @@ function copiedExtensionHarness() {
   };
 }
 
-test('open binds an OS-assigned loopback port and serves the skeleton page', async () => {
+test('open binds an OS-assigned loopback port and serves the shipped Now shell', async () => {
   const { log } = recorder();
   const instance = await openInstance('bind-1', log);
   try {
@@ -293,8 +315,9 @@ test('open binds an OS-assigned loopback port and serves the skeleton page', asy
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-type') ?? '', /^text\/html/);
     const body = await response.text();
-    assert.match(body, /I0 canvas skeleton/);
-    assert.match(body, /Now cockpit arrives in a later task/);
+    assert.match(body, /<title>Dude — Now<\/title>/);
+    assert.match(body, /<script type="module" src="\/assets\/app\.js"><\/script>/);
+    assert.match(body, /new EventSource\("\/events"\)/);
   } finally {
     await closeInstance('bind-1');
   }
@@ -328,20 +351,56 @@ test('concurrent opens for one instanceId start exactly one server', async () =>
   }
 });
 
-test('only the allowlisted routes are served', async () => {
-  assert.deepEqual(Object.keys(ASSET_ROUTES), ['/']);
-
+test('only exact Now shell assets are served with fixed MIME and cache headers', async () => {
+  // Arrange
   const { log } = recorder();
   const instance = await openInstance('routes', log);
   try {
-    for (const path of ['/index.html', '/ui/index.html', '/lib/canvas-server.mjs', '/api/state', '/nope']) {
-      const response = await call(instance.url, { path });
-      assert.equal(response.status, 404, `expected 404 for ${path}`);
+    const expectedAssets = [
+      ['/', 'text/html; charset=utf-8', 'ui/index.html'],
+      ['/assets/app.js', 'text/javascript; charset=utf-8', 'ui/assets/app.js'],
+      ['/assets/app.js.LEGAL.txt', 'text/plain; charset=utf-8', 'ui/assets/app.js.LEGAL.txt'],
+    ];
+
+    // Act + Assert
+    assert.deepEqual(Object.keys(ASSET_ROUTES), expectedAssets.map(([route]) => route));
+    for (const [route, mime, relative] of expectedAssets) {
+      const response = await call(instance.url, { path: route });
+      assert.equal(response.status, 200, `GET ${route}`);
+      assert.equal(response.headers.get('content-type'), mime, `MIME for ${route}`);
+      assert.equal(response.headers.get('cache-control'), 'no-store', `cache policy for ${route}`);
+      assert.equal(
+        await response.text(),
+        fs.readFileSync(new URL(`./${relative}`, import.meta.url), 'utf8'),
+        `exact bytes for ${route}`,
+      );
     }
 
-    // Allowlisted paths are still method-scoped.
-    const posted = await call(instance.url, { method: 'POST' });
-    assert.equal(posted.status, 404);
+    for (const route of [
+      '/index.html',
+      '/ui/index.html',
+      '/assets/',
+      '/assets/app.js/',
+      '/assets/nested/app.js',
+      '/assets/app.js.map',
+      '/lib/canvas-server.mjs',
+      '/api/state',
+      '/review',
+      '/nope',
+    ]) {
+      const response = await call(instance.url, { path: route });
+      assert.equal(response.status, 404, `unknown path ${route}`);
+    }
+    assert.equal(await rawStatus(instance.server, { path: '/../extension.mjs' }), 404);
+    for (const [route] of expectedAssets) {
+      for (const method of ['POST', 'PUT', 'DELETE', 'HEAD']) {
+        assert.equal(
+          await rawStatus(instance.server, { path: route, method }),
+          404,
+          `${method} ${route} is not an asset route`,
+        );
+      }
+    }
   } finally {
     await closeInstance('routes');
   }
@@ -359,6 +418,7 @@ test('read-only API route matrix permits only projection GETs and refresh POST',
   const controlRoutes = [
     ...REMOVED_PROOF_ROUTES,
     '/api/proof',
+    '/api/review',
     '/api/state',
     '/api/send',
     '/api/sendAndWait',
@@ -436,7 +496,8 @@ test('read-only API route matrix permits only projection GETs and refresh POST',
     assert.deepEqual(freshnessPayload, projectionPayload);
     assert.deepEqual(refreshPayload, { ...projectionPayload, replaced: false });
     assert.equal(body, fs.readFileSync(new URL('./ui/index.html', import.meta.url), 'utf8'));
-    assert.match(body, /Dude — I0 canvas skeleton/);
+    assert.match(body, /<title>Dude — Now<\/title>/);
+    assert.match(body, /<script type="module" src="\/assets\/app\.js"><\/script>/);
     assert.doesNotMatch(body, /<(?:button|form|input|select|textarea)\b/i);
     assert.doesNotMatch(body, /__dude_i0|proof\/abort/i);
     for (const control of forbiddenControls) {
@@ -446,7 +507,11 @@ test('read-only API route matrix permits only projection GETs and refresh POST',
         `${control} must not appear in a served route`,
       );
     }
-    assert.deepEqual(Object.keys(ASSET_ROUTES), ['/']);
+    assert.deepEqual(Object.keys(ASSET_ROUTES), [
+      '/',
+      '/assets/app.js',
+      '/assets/app.js.LEGAL.txt',
+    ]);
   } finally {
     await closeInstance('default-routes');
   }
@@ -536,6 +601,7 @@ test('refresh route swaps only a complete exact-target successor', async () => {
         const invalidPayload = await invalidTarget.json();
         assert.equal(invalidPayload.replaced, false);
         assert.equal(invalidPayload.projection.selected.slug, 'beta');
+        assert.equal(instance.readInput?.target, 'beta', 'a refused successor preserves the committed target');
         assert.equal(invalidPayload.freshness.state, 'stale');
         assert.deepEqual(invalidPayload.freshness.nextAction, {
           kind: 'refresh',
@@ -545,6 +611,99 @@ test('refresh route swaps only a complete exact-target successor', async () => {
         });
       } finally {
         await closeInstance('refresh-live');
+      }
+
+      const chooserPrevious = await readNowProjection({ root });
+      const chooserInstance = await openInstance('refresh-chooser', log, chooserPrevious, { root });
+      try {
+        const refused = await call(chooserInstance.url, {
+          path: '/api/refresh',
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ target: 'not-present' }),
+        });
+
+        // Assert
+        assert.equal(refused.status, 200);
+        const refusedPayload = await refused.json();
+        assert.equal(refusedPayload.replaced, false);
+        assert.equal(refusedPayload.projection.selected, null);
+        assert.deepEqual(
+          refusedPayload.projection.choices.map((choice) => choice.slug),
+          ['alpha', 'beta'],
+          'a refused chooser selection preserves its original inventory',
+        );
+        assert.equal(chooserInstance.projection, chooserPrevious);
+        assert.deepEqual(chooserInstance.readInput, { root }, 'a refused chooser selection must remain targetless');
+      } finally {
+        await closeInstance('refresh-chooser');
+      }
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('isolated shipped server reaches chooser, refresh, viewport, and events without project writes', async () => {
+  // Arrange
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-server-shipped-smoke-'));
+  writeDraft(root, '001', 'alpha');
+  writeDraft(root, '002', 'beta');
+  const before = snapshotFiles(path.join(root, '.dude'));
+  const { lines, log } = recorder();
+  const bd = installBdFixture();
+  try {
+    await bd.run(async () => {
+      const instance = await openInstance('shipped-smoke', log, null, { root });
+      const streamAbort = new AbortController();
+      try {
+        // Act
+        const [page, application, legal, initial, freshness, viewport, stream] = await Promise.all([
+          call(instance.url),
+          call(instance.url, { path: '/assets/app.js' }),
+          call(instance.url, { path: '/assets/app.js.LEGAL.txt' }),
+          call(instance.url, { path: '/api/projection' }),
+          call(instance.url, { path: '/api/freshness' }),
+          call(instance.url, {
+            path: '/api/viewport',
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ width: 1080, height: 720 }),
+          }),
+          call(instance.url, { path: '/events', signal: streamAbort.signal }),
+        ]);
+        const refreshed = await call(instance.url, {
+          path: '/api/refresh',
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ target: 'alpha' }),
+        });
+        const reader = /** @type {ReadableStream<Uint8Array>} */ (stream.body).getReader();
+        await reader.read();
+
+        // Assert
+        assert.equal(page.status, 200);
+        assert.equal(application.status, 200);
+        assert.equal(legal.status, 200);
+        assert.equal(stream.status, 200);
+        assert.ok((await application.text()).length > 100_000, 'the bundled application is served');
+        assert.match(await legal.text(), /Bundled license information/);
+        assert.equal((await initial.json()).projection.status, 'choose');
+        assert.equal((await freshness.json()).freshness.state, 'current');
+        assert.deepEqual(await viewport.json(), { recorded: true, width: 1080, height: 720 });
+        const refreshPayload = await refreshed.json();
+        assert.equal(refreshPayload.replaced, true);
+        assert.equal(refreshPayload.projection.selected.slug, 'alpha');
+        assert.ok(lines.includes('Dude canvas shipped-smoke: renderer attached.'));
+
+        const closed = await closeInstance('shipped-smoke');
+        assert.equal(closed, true);
+        assert.equal(instance.server.listening, false);
+        assert.equal((await reader.read()).done, true);
+        assert.deepEqual(snapshotFiles(path.join(root, '.dude')), before, 'server must not write project state');
+      } finally {
+        streamAbort.abort();
+        await closeInstance('shipped-smoke');
       }
     });
   } finally {
@@ -979,7 +1138,7 @@ test('extension lifecycle contains rejected session logs without touching stdout
     assert.deepEqual(stdout, '', 'the extension must not write JSON-RPC stdout');
     assert.deepEqual(stderr, '', 'the harness must not emit an unhandled log rejection');
     assert.equal(result.first.title, 'Dude');
-    assert.equal(result.first.status, 'Read-only Now projection');
+    assert.equal(result.first.status, 'Read-only Now cockpit');
     assert.match(result.first.url, /^http:\/\/127\.0\.0\.1:\d+\/$/);
     assert.deepEqual(result.second, result.first, 'reopening must reuse the one live instance');
     assert.equal(result.pageStatus, 200, 'the reused server must remain usable after open logging rejects');

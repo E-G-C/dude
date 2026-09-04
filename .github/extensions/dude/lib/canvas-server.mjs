@@ -3,7 +3,7 @@
  * Dude canvas read-only loopback server.
  *
  * One loopback HTTP server per open canvas instance. It serves a closed route
- * allowlist only: the placeholder page, lifecycle event stream, viewport
+ * allowlist only: the browser application, lifecycle event stream, viewport
  * report, and the private read-only projection path. It holds no durable store.
  *
  * Dependency-free ESM, Node >= 20. `stdout` belongs to JSON-RPC, so nothing
@@ -30,7 +30,17 @@ import {
 const UI_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
 
 /** Closed allowlist of served assets: request path -> `ui/`-relative file. */
-export const ASSET_ROUTES = Object.freeze({ '/': 'index.html' });
+export const ASSET_ROUTES = Object.freeze({
+  '/': 'index.html',
+  '/assets/app.js': 'assets/app.js',
+  '/assets/app.js.LEGAL.txt': 'assets/app.js.LEGAL.txt',
+});
+
+const ASSET_MIME_TYPES = Object.freeze({
+  '/': 'text/html; charset=utf-8',
+  '/assets/app.js': 'text/javascript; charset=utf-8',
+  '/assets/app.js.LEGAL.txt': 'text/plain; charset=utf-8',
+});
 
 /** The viewport report is a few numbers; anything larger is not ours. */
 const MAX_BODY_BYTES = 4 * 1024;
@@ -133,8 +143,9 @@ async function handleRequest(instance, req, res) {
   const { pathname } = new URL(req.url ?? '/', instance.url);
 
   if (req.method === 'GET' && Object.hasOwn(ASSET_ROUTES, pathname)) {
-    const file = resolveMutationPath(UI_ROOT, ASSET_ROUTES[/** @type {'/'} */ (pathname)]);
-    res.writeHead(200, { 'Cache-Control': 'no-store', 'Content-Type': 'text/html; charset=utf-8' });
+    const assetPath = /** @type {keyof typeof ASSET_ROUTES} */ (pathname);
+    const file = resolveMutationPath(UI_ROOT, ASSET_ROUTES[assetPath]);
+    res.writeHead(200, { 'Cache-Control': 'no-store', 'Content-Type': ASSET_MIME_TYPES[assetPath] });
     res.end(await readFile(file));
     return;
   }

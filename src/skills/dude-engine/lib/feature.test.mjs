@@ -654,29 +654,41 @@ test('resolve returns the owner by exact spec_path when depends-on is present', 
   }
 });
 
-test('summary selection resolves one exact owner without reading package documents', () => {
+test('summary selection exposes one ordered eligible chooser inventory for exact, automatic, and ambiguous paths without package-document reads', () => {
   const root = temporaryRoot();
+  const automaticRoot = temporaryRoot();
   try {
     // Arrange
     define(root, '001', 'selected');
-    define(root, '002', 'other');
+    write(root, '.dude/ideas/002-draft.md', ledger('draft', '', 'draft'));
+    define(root, '003', 'other');
+    write(root, '.dude/ideas/004-resolved.md', ledger('resolved', '', 'resolved'));
     write(root, '.dude/specs/001-selected/tasks.md', '- [ ] T001@aaaaaaaa Selected task\n');
-    write(root, '.dude/specs/002-other/tasks.md', '- [ ] T001@bbbbbbbb Other task\n');
+    write(root, '.dude/specs/003-other/tasks.md', '- [ ] T001@bbbbbbbb Other task\n');
+    define(automaticRoot, '005', 'only');
     const packageDocuments = [
       '.dude/specs/001-selected/spec.md',
       '.dude/specs/001-selected/tasks.md',
-      '.dude/specs/002-other/spec.md',
-      '.dude/specs/002-other/tasks.md',
-    ].map((relativePath) => path.resolve(root, relativePath));
+      '.dude/specs/003-other/spec.md',
+      '.dude/specs/003-other/tasks.md',
+    ].map((relativePath) => path.resolve(root, relativePath)).concat([
+      path.resolve(automaticRoot, '.dude/specs/005-only/spec.md'),
+      path.resolve(automaticRoot, '.dude/specs/005-only/tasks.md'),
+    ]);
 
     // Act
-    const observed = observeReadPaths(() => selectLifecycleIdeaSummary({
-      root,
-      target: '.dude/ideas/001-selected.md',
+    const observed = observeReadPaths(() => ({
+      ambiguous: selectLifecycleIdeaSummary({ root }),
+      automatic: selectLifecycleIdeaSummary({ root: automaticRoot }),
+      automaticExact: selectLifecycleIdeaSummary({ root: automaticRoot, target: 'only' }),
+      exact: selectLifecycleIdeaSummary({
+        root,
+        target: '.dude/ideas/001-selected.md',
+      }),
     }));
 
     // Assert
-    assert.deepEqual(observed.result.idea, {
+    assert.deepEqual(observed.result.exact.idea, {
       ideaPath: '.dude/ideas/001-selected.md',
       number: '001',
       numberValue: 1,
@@ -684,12 +696,48 @@ test('summary selection resolves one exact owner without reading package documen
       status: 'defined',
       specPath: '.dude/specs/001-selected/spec.md',
     });
-    assert.deepEqual(observed.result.owner, {
+    assert.deepEqual(observed.result.exact.owner, {
       ideaPath: '.dude/ideas/001-selected.md',
       specPath: '.dude/specs/001-selected/spec.md',
     });
-    assert.equal(observed.result.explicit, true);
-    assert.deepEqual(observed.result.diagnostics, []);
+    assert.equal(observed.result.exact.explicit, true);
+    assert.equal(observed.result.ambiguous.idea, null);
+    assert.equal(observed.result.ambiguous.explicit, false);
+    assert.equal(observed.result.automatic.idea?.slug, 'only');
+    assert.equal(observed.result.automatic.explicit, false);
+    const eligiblePaths = [
+      '.dude/ideas/001-selected.md',
+      '.dude/ideas/002-draft.md',
+      '.dude/ideas/003-other.md',
+    ];
+    assert.deepEqual(
+      observed.result.exact.choices.map((choice) => choice.ideaPath),
+      eligiblePaths,
+      'eligible choices retain safe source order',
+    );
+    assert.deepEqual(
+      observed.result.ambiguous.choices,
+      observed.result.exact.choices,
+      'exact and ambiguous success expose the same navigation inventory',
+    );
+    assert.deepEqual(
+      observed.result.automatic.choices.map((choice) => choice.ideaPath),
+      ['.dude/ideas/005-only.md'],
+      'automatic selection retains its sole eligible navigation choice',
+    );
+    assert.deepEqual(
+      observed.result.automatic.choices,
+      observed.result.automaticExact.choices,
+      'automatic and exact success expose the same eligible inventory',
+    );
+    assert.equal(
+      observed.result.exact.choices.some((choice) => choice.slug === 'resolved'),
+      false,
+      'resolved ideas are never navigation choices',
+    );
+    for (const result of Object.values(observed.result)) {
+      assert.deepEqual(result.diagnostics, [], 'a safe summary has no diagnostics');
+    }
     assert.deepEqual(
       observed.readPaths.filter((candidate) => packageDocuments.includes(candidate)),
       [],
@@ -697,6 +745,7 @@ test('summary selection resolves one exact owner without reading package documen
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(automaticRoot, { recursive: true, force: true });
   }
 });
 

@@ -33,6 +33,7 @@ const BD_LIST_ARGS = Object.freeze(['list', '--all', '--limit', '0', '--json']);
 const BD_READY_ARGS = Object.freeze(['ready', '--json']);
 const TRACKED_COMMAND = `bd ${BD_LIST_ARGS.join(' ')}`;
 const READY_COMMAND = `bd ${BD_READY_ARGS.join(' ')}`;
+const NO_BEADS_DATABASE = 'Error: no beads database found';
 const PROJECTION_DEADLINE_MS = 5_000;
 const MAX_BD_BUFFER = 8 * 1024 * 1024;
 const REFRESH_ACTION = Object.freeze({
@@ -139,14 +140,21 @@ class TrackedFactConflict extends Error {
 }
 
 /**
+ * @typedef {object} BdCommandResult
+ * @property {unknown} [error]
+ * @property {number|null} status
+ * @property {string|Buffer} [stdout]
+ * @property {string|Buffer} [stderr]
+ * @property {unknown} [signal]
+ * @property {unknown} [timeout]
+ */
+
+/**
  * @typedef {object} ProjectionOperationOptions
  * @property {AbortSignal} [signal]
  * @property {number} [timeoutMs]
- * @property {(args:string[], options:Record<string, unknown>) => Promise<{
- *   error?:unknown,status:number|null,stdout?:string|Buffer,stderr?:string|Buffer
- * }>|{
- *   error?:unknown,status:number|null,stdout?:string|Buffer,stderr?:string|Buffer
- * }} [runBd]
+ * @property {(args:string[], options:Record<string, unknown>) =>
+ *   Promise<BdCommandResult>|BdCommandResult} [runBd]
  */
 
 /**
@@ -165,13 +173,16 @@ function runBdProcess(args, options) {
     };
     try {
       const child = execFile('bd', args, options, (error, stdout, stderr) => {
+        // execFile reports an ordinary nonzero exit as an Error with a numeric
+        // code; retain other errors as acquisition failures.
+        const status = error
+          ? (typeof /** @type {NodeJS.ErrnoException} */ (error).code === 'number'
+              ? /** @type {number} */ (/** @type {NodeJS.ErrnoException} */ (error).code)
+              : null)
+          : 0;
         callbackResult = {
-          error,
-          status: error
-            ? (typeof /** @type {NodeJS.ErrnoException} */ (error).code === 'number'
-                ? /** @type {number} */ (/** @type {NodeJS.ErrnoException} */ (error).code)
-                : null)
-            : 0,
+          ...(error && status === null ? { error } : {}),
+          status,
           stdout,
           stderr,
         };
@@ -256,12 +267,25 @@ async function invokeBd(operation, root, args, unavailableCode) {
   if (operation.signal.aborted
     || operation.remaining() <= 0
     || result?.error
-    || result?.status !== 0
+    || result?.signal
+    || result?.timeout
+    || !Number.isInteger(result?.status)
     || Buffer.byteLength(String(stdout)) > MAX_BD_BUFFER
     || Buffer.byteLength(String(stderr)) > MAX_BD_BUFFER) {
     throw new TrackedQueryError(unavailableCode);
   }
-  return stdout;
+  return { status: result.status, stdout, stderr };
+}
+
+/** @param {BdCommandResult} result */
+function isAbsentDatabaseResult(result) {
+  if (typeof result.status !== 'number'
+    || result.status === 0
+    || String(result.stdout ?? '').trim() !== '') return false;
+  const firstNonblankLine = String(result.stderr ?? '')
+    .split(/\r\n|\n|\r/)
+    .find((line) => line.trim() !== '');
+  return firstNonblankLine === NO_BEADS_DATABASE;
 }
 
 /** @param {unknown} error */
@@ -424,7 +448,13 @@ function parseTrackedIssues(bytes) {
  * @param {ReturnType<typeof projectionOperation>} operation
  */
 async function queryTrackedIssues(root, operation) {
-  const stdout = await invokeBd(operation, root, BD_LIST_ARGS, 'TRACKED_AUTHORITY_UNAVAILABLE');
+  const result = await invokeBd(operation, root, BD_LIST_ARGS, 'TRACKED_AUTHORITY_UNAVAILABLE');
+  const stdout = result.status === 0
+    ? result.stdout
+    : isAbsentDatabaseResult(result)
+      ? '[]'
+      : null;
+  if (stdout === null) throw new TrackedQueryError('TRACKED_AUTHORITY_UNAVAILABLE');
   try {
     const issues = parseTrackedIssues(stdout);
     return { issues, identity: contentIdentity(JSON.stringify(issues)) };
@@ -440,9 +470,10 @@ async function queryTrackedIssues(root, operation) {
  * @param {ReturnType<typeof projectionOperation>} operation
  */
 async function queryReadyIssues(root, operation) {
-  const stdout = await invokeBd(operation, root, BD_READY_ARGS, 'TRACKED_READINESS_UNAVAILABLE');
+  const result = await invokeBd(operation, root, BD_READY_ARGS, 'TRACKED_READINESS_UNAVAILABLE');
+  if (result.status !== 0) throw new TrackedQueryError('TRACKED_READINESS_UNAVAILABLE');
   try {
-    const issues = parseBeadsIssues(stdout, READY_COMMAND);
+    const issues = parseBeadsIssues(result.stdout, READY_COMMAND);
     return { issues, identity: contentIdentity(JSON.stringify(issues)) };
   } catch {
     throw new TrackedQueryError('TRACKED_READINESS_UNAVAILABLE');
@@ -668,6 +699,7 @@ function projectionBase() {
     attention: [],
     diagnostics: [],
     sources: [],
+    choices: [],
     action: null,
   };
 }
@@ -1147,18 +1179,19 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
     if (inventoryDiagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
       return failedProjection(base, inventoryDiagnostics);
     }
+    const choices = lifecycle.choices.map((candidate) => ({
+      ideaPath: candidate.ideaPath,
+      slug: candidate.slug,
+      specPath: candidate.status === 'defined' ? candidate.specPath : null,
+    }));
+    const completeBase = { ...base, choices };
     /** @type {Array<Record<string, any>>} */
     const sources = [inventorySource(inventory)];
 
     const { idea, owner, explicit } = lifecycle;
     if (!idea) {
-      const choices = lifecycle.choices.map((candidate) => ({
-        ideaPath: candidate.ideaPath,
-        slug: candidate.slug,
-        specPath: candidate.status === 'defined' ? candidate.specPath : null,
-      }));
       return await completeProjection(root, {
-        ...base,
+        ...completeBase,
         status: 'choose',
         diagnostics: inventoryDiagnostics,
         attention: attentionFrom(inventoryDiagnostics),
@@ -1206,7 +1239,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
 
     if (idea.status === 'resolved') {
       return await completeProjection(root, {
-        ...base,
+        ...completeBase,
         status: 'ok',
         selected,
         authority: 'definition',
@@ -1266,7 +1299,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
           message: 'Selected feature is absent from the populated tracked board.',
         }];
         return await completeProjection(root, {
-          ...base,
+          ...completeBase,
           status: 'ok',
           selected,
           authority: 'tracked',
@@ -1369,7 +1402,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
             ? 'Verified'
             : 'Defined';
       return await completeProjection(root, {
-        ...base,
+        ...completeBase,
         status: 'ok',
         selected,
         authority: 'tracked',
@@ -1397,7 +1430,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
 
     if (!owner) {
       return await completeProjection(root, {
-        ...base,
+        ...completeBase,
         status: 'ok',
         selected,
         authority: 'definition',
@@ -1436,7 +1469,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
     if (!executionEvidence) {
       sources.push(fileSource('Tasks', tasksPath, 'authority-check', taskBytes));
       return await completeProjection(root, {
-        ...base,
+        ...completeBase,
         status: 'ok',
         selected,
         authority: 'definition',
@@ -1476,7 +1509,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
         ? 'Verified'
         : 'In progress';
     return await completeProjection(root, {
-      ...base,
+      ...completeBase,
       status: 'ok',
       selected,
       authority: 'lightweight',

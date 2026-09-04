@@ -2485,3 +2485,123 @@ test('upgrade status, plan, and apply reject missing canonical metadata with cur
         fs.rmSync(fixture.base, { recursive: true, force: true });
       }
     });
+
+test('public upgrade surfaces state exact core ownership and matching-ref plan authority', () => {
+  const surfaces = new Map([
+    ['source skill', fs.readFileSync(new URL('./SKILL.md', import.meta.url), 'utf8')],
+    [
+      'deployed skill',
+      fs.readFileSync(
+        new URL('../../../.github/skills/dude-bundle-upgrade/SKILL.md', import.meta.url),
+        'utf8',
+      ),
+    ],
+    [
+      'seeded manifest',
+      fs.readFileSync(new URL('../../../.dude/metadata/bundle-manifest.md', import.meta.url), 'utf8'),
+    ],
+    [
+      'upgrading guide',
+      fs.readFileSync(new URL('../../../docs/upgrading.md', import.meta.url), 'utf8'),
+    ],
+    [
+      'command reference',
+      fs.readFileSync(new URL('../../../docs/commands.md', import.meta.url), 'utf8'),
+    ],
+  ]);
+
+  for (const [label, content] of surfaces) {
+    const prose = content.replace(/^>\s?/gm, '').replace(/\s+/g, ' ');
+    for (const corePath of [
+      '.github/agents/dude.agent.md',
+      '.github/agents/dude-<slug>.agent.md',
+      '.github/skills/dude-<slug>/**',
+      '.github/instructions/dude.instructions.md',
+      '.github/extensions/dude/**',
+    ]) {
+      assert.ok(content.includes(corePath), `${label}: missing exact core category ${corePath}`);
+    }
+    assert.ok(content.includes('dude-local-*'), `${label}: missing local-tier exclusion`);
+    assert.ok(content.includes('dude-pack-*'), `${label}: missing pack-tier exclusion`);
+    assert.ok(
+      content.includes('.github/extensions/dude-preview/**')
+        && content.includes('.github/extensions/dude-local/**'),
+      `${label}: missing near-match extension examples`,
+    );
+    assert.match(
+      prose,
+      /(?:siblings|other names)[\s\S]{0,600}project-owned and preserved/i,
+      `${label}: other extension trees must be preserved`,
+    );
+    assert.match(
+      prose,
+      /only (?:upstream\/)?core-owned extension tree/i,
+      `${label}: Dude runtime must be the sole core extension tree`,
+    );
+    assert.ok(
+      content.includes('`upgrade.mjs status`'),
+      `${label}: missing the internal upgrader status phase`,
+    );
+    assert.match(
+      prose,
+      /(?:distinct|separate) from (?:the )?global `@dude status`|(?:global )?`@dude status`[^.]{0,180}(?:does not check|lane-orientation)/i,
+      `${label}: internal upgrader status must be distinct from global @dude status`,
+    );
+    assert.match(
+      prose,
+      /status[\s\S]{0,500}(?:not byte-completeness proof|does not establish byte completeness|proves neither[^.]{0,100}bytes)/i,
+      `${label}: status must not claim byte completeness`,
+    );
+    assert.match(
+      prose,
+      /(?:matching|equal) refs?[\s\S]{0,220}(?:Add, Replace, or Remove|Add\/Replace\/Remove)/i,
+      `${label}: matching refs may still have file operations`,
+    );
+    assert.ok(content.includes('confirm upgrade'), `${label}: file operations require confirmation`);
+    assert.match(
+      prose,
+      /(?:`(?:upgrade\.mjs )?plan`|`plan`)[^.]{0,120}authoritative|authoritative[^.]{0,120}(?:`(?:upgrade\.mjs )?plan`|`plan`)/i,
+      `${label}: plan must be the byte-difference authority`,
+    );
+    assert.match(
+      prose,
+      /true no-op[\s\S]{0,400}(?:manifest|metadata)[\s\S]{0,400}(?:empty|no file operations|operations and metadata are unchanged)/i,
+      `${label}: a no-op requires matching metadata and no file operations`,
+    );
+    assert.doesNotMatch(content, /\banything else\b/i, `${label}: false exhaustive fallback`);
+  }
+
+  const source = surfaces.get('source skill');
+  const deployed = surfaces.get('deployed skill');
+  assert.ok(source);
+  assert.ok(deployed);
+  assert.equal(deployed, source, 'source and deployed upgrade skills must be byte-identical');
+
+  const commandReference = surfaces.get('command reference');
+  assert.ok(commandReference);
+  const commandSectionStart = commandReference.indexOf('### Upgrading the bundle');
+  const commandSectionEnd = commandReference.indexOf('\n### ', commandSectionStart + 4);
+  assert.ok(commandSectionStart >= 0 && commandSectionEnd > commandSectionStart);
+  const commandSection = commandReference.slice(commandSectionStart, commandSectionEnd);
+  const commandExamples = [...commandSection.matchAll(/```(?:text|bash)?\n([\s\S]*?)```/g)]
+    .map((match) => match[1])
+    .join('\n');
+  assert.doesNotMatch(
+    commandExamples,
+    /(?:^|\n)\s*@dude status(?:\s|$)/,
+    'the upgrade command examples must not present global @dude status as an upgrade step',
+  );
+
+  const workflow = source.slice(source.indexOf('## Workflow'), source.indexOf('## Rollback'));
+  assert.match(
+    workflow,
+    /continue to Step 2 even when the result is `up_to_date`[\s\S]*matching ref is not byte-completeness evidence/,
+  );
+  assert.match(workflow, /safe historical workflow is an explicit second\s+`@dude upgrade`/);
+  assert.match(workflow, /fresh exact plan[\s\S]*fresh `confirm\s+upgrade`/);
+  assert.match(
+    workflow,
+    /Never call an internal planner as a hidden\s+follow-up, reuse the first persisted plan, or auto-apply the second plan/,
+  );
+  assert.match(workflow, /exact current core is installed and stop without an\s+apply/);
+});

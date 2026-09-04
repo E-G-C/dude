@@ -1216,20 +1216,26 @@ request.
 
 Use the `dude-bundle-upgrade` skill to refresh the installed Dude engine from its
 source repo. The skill reads the sole manifest at
-`.dude/metadata/bundle-manifest.md`, compares
-the locally recorded `installed_ref` against the newest release tag on the
-source, fetches the resolved release into an OS temp directory for
-dry-run/apply, produces an upgrade report, and waits for the explicit
-`confirm upgrade` token before writing.
+`.dude/metadata/bundle-manifest.md`. Each invocation runs the upgrade workflow's
+internal `upgrade.mjs status` phase to compare refs for orientation. Unless that
+phase returns an error, an offline result, or `no releases published yet`, the
+workflow continues to the byte-authoritative `plan` phase, fetches the resolved
+release into an OS temp directory, and produces an upgrade report. Global
+`@dude status` is the separate read-only workflow lane-orientation command; it
+does not check upgrade availability.
 
-The simple flow is status, dry-run, upgrade, rollback if needed:
+Start with a preview or the upgrade itself, then roll back only if needed:
 
 ```text
-@dude status
 @dude upgrade --dry-run
+# or
 @dude upgrade
+
 @dude upgrade --rollback
 ```
+
+The dry run writes nothing. Plain `@dude upgrade` shows a fresh report and waits
+for the explicit `confirm upgrade` token before writing.
 
 Useful variants:
 
@@ -1244,17 +1250,32 @@ engine previews only the packs in the installed profile. Reply `confirm packs`
 after that preview to refresh them. Plain upgrade remains core-only, and
 `--all --dry-run` stops after the ordinary core preview.
 
-Only base-owned files — those matching the namespace convention
-(`.github/agents/dude.agent.md`, `.github/agents/dude-<slug>.agent.md`,
-`.github/skills/dude-<slug>/**`, `.github/instructions/dude.instructions.md`,
-excluding the reserved `dude-local-<slug>` namespace) — are candidates for
-replacement. The core phase preserves project ideas, specs, memory, execution
-state, `.github/skills/project/`, custom agents and skills,
-`.github/copilot-instructions.md`, Beads, and product source. With `--all`,
-the separate confirmed Compose phase may update the installed profile and its
-recorded pack artifacts. Root files and repository docs are intentionally
-excluded from the upgrade payload. The canonical manifest is required locally
-and in the upstream tree; only that path is accepted.
+Core-owned candidates are exactly:
+
+- canonical default agents at `.github/agents/dude.agent.md` and
+  `.github/agents/dude-<slug>.agent.md`, excluding `dude-local-*` and
+  `dude-pack-*`;
+- canonical core skill directories at `.github/skills/dude-<slug>/**`,
+  excluding `dude-local-*`, `dude-pack-*`, and
+  `.github/skills/project/**`;
+- `.github/instructions/dude.instructions.md`; and
+- the exact deployed runtime tree `.github/extensions/dude/**`.
+
+The core phase may add, replace, or remove files only in those categories.
+`.github/extensions/dude/**` is the only core-owned extension tree. Siblings,
+near matches, and every other extension tree—including
+`.github/extensions/dude-preview/**` and
+`.github/extensions/dude-local/**`—are project-owned and preserved.
+`src/extensions/dude/**` is also project-owned source content, not a deployed
+core target.
+
+The core phase preserves project ideas, specs, memory, execution state,
+installed `dude-pack-*` artifacts, `.github/skills/project/`, `dude-local-*`
+and unreserved custom agents and skills, `.github/copilot-instructions.md`,
+Beads, product source, root files, and repository docs. With `--all`, the
+separate confirmed Compose phase may update the installed profile and its
+recorded pack artifacts. The canonical manifest is required locally and in the
+upstream tree; only that path is accepted.
 
 The existing recursive ownership of `.github/skills/dude-engine/**` includes
 the packaged model configuration and loader, so an installed pre-feature
@@ -1262,17 +1283,28 @@ upgrader can bootstrap the current engine without a migration rule. Before
 writing, apply refuses any ignored, untracked planned destination that Git
 cannot restore during rollback.
 
-> Base files matching the upstream namespace convention are upstream-owned and
-> are silently overwritten on apply. To customize a default agent or skill,
+A historical install whose older engine cannot see a newly introduced core
+category may require two explicit `@dude upgrade` invocations. Complete the
+first invocation with its fresh plan and confirmation, then invoke
+`@dude upgrade` again, review its fresh same-ref plan, and provide a fresh
+`confirm upgrade`. There is no hidden follow-up, reused plan, or automatic
+second apply.
+
+> Core-owned files in the exact categories above are upstream-owned and are
+> overwritten on apply. To customize a default agent or skill,
 > copy it under `dude-local-<slug>` first and edit there — direct edits to
-> base files are discarded by `@dude upgrade`.
+> core files are discarded by `@dude upgrade`.
 
 `installed_ref` identifies the installed release version for orientation.
-`@dude status` reports upgrade availability when `installed_ref` differs from the
-newest release the source offers; on the `latest` channel the newest stable
-`vX.Y.Z` tag is discovered with `git ls-remote --tags` (remote) or `git tag`
-(local-path), so an upstream contributor never has to manually bump a field
-inside the upstream manifest for downstream installs to see new releases.
+The internal `upgrade.mjs status` phase may report `up_to_date` while core
+files are missing or different; that result is not byte-completeness proof. The
+authoritative `plan` phase compares the complete core inventory and bytes, so
+matching refs can still produce Add, Replace, or Remove operations. A true
+no-op requires matching `source_repo`, `source_ref`, and `installed_ref`
+metadata plus no file operations. On the `latest` channel, the internal phase
+discovers the newest stable `vX.Y.Z` tag with `git ls-remote --tags` (remote) or
+`git tag` (local-path), so an upstream contributor never has to bump the
+upstream manifest manually for downstream installs to find new releases.
 
 Use reserved `dude-local-` paths for project-owned artifacts:
 `.github/agents/dude-local-<slug>.agent.md` and `.github/skills/dude-local-<slug>/`.

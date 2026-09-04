@@ -157,6 +157,7 @@ function historicalSource(sourcePath) {
 function writeHistoricalUpgradeInstall(root) {
   const historicalFiles = [
     'src/skills/dude-bundle-upgrade/upgrade.mjs',
+    'src/skills/dude-bundle-upgrade/SKILL.md',
     'src/skills/dude-engine/lib/ownership.mjs',
     'src/skills/dude-engine/lib/release-channel.mjs',
     'src/skills/dude-engine/lib/workspace-paths.mjs',
@@ -680,12 +681,14 @@ test('buildRelease is byte-stable across repeated valid disposable outputs', () 
   }
 });
 
-test('the last pre-feature installed upgrader installs candidate engine config and reaches upgraded compose add', async () => {
+test('the supported historical upgrade flow bootstraps every current extension byte in two reviewed invocations', async () => {
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-historical-bootstrap-'));
   const candidate = path.join(sandbox, 'candidate');
   const workspace = path.join(sandbox, 'workspace');
   const cache = path.join(sandbox, 'cache');
-  const planPath = path.join(sandbox, 'historical-plan.json');
+  const historicalPlanPath = path.join(sandbox, 'historical-plan.json');
+  const bootstrapPlanPath = path.join(sandbox, 'same-ref-bootstrap-plan.json');
+  const noOpPlanPath = path.join(sandbox, 'same-ref-no-op-plan.json');
   try {
     buildRelease({ repoRoot, outDir: candidate, ref: 'v9.9.9' });
     initializeRepository(candidate, 'bootstrap');
@@ -732,6 +735,26 @@ test('the last pre-feature installed upgrader installs candidate engine config a
       encoding: 'utf8',
       env: { ...process.env, TMPDIR: cache },
     };
+
+    // First explicit @dude upgrade, using the exact historical installed
+    // procedure and engine: status -> reviewed plan -> literal confirmation.
+    const historicalStatus = spawnSync(process.execPath, [
+      historicalUpgrade,
+      'status',
+      '--source',
+      candidate,
+      '--ref',
+      'bootstrap',
+      '--format',
+      'json',
+    ], common);
+    assert.equal(
+      historicalStatus.status,
+      0,
+      (historicalStatus.stdout || '') + (historicalStatus.stderr || ''),
+    );
+    assert.equal(JSON.parse(historicalStatus.stdout).status, 'upgrade_available');
+
     const planned = spawnSync(process.execPath, [
       historicalUpgrade,
       'plan',
@@ -742,10 +765,10 @@ test('the last pre-feature installed upgrader installs candidate engine config a
       '--format',
       'json',
       '--out',
-      planPath,
+      historicalPlanPath,
     ], common);
     assert.equal(planned.status, 10, (planned.stdout || '') + (planned.stderr || ''));
-    const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+    const plan = JSON.parse(fs.readFileSync(historicalPlanPath, 'utf8'));
     const expectedHistoricalAdds = [
       '.github/skills/dude-engine/lib/agent-model-map.mjs',
       '.github/skills/dude-engine/lib/agent-projection.mjs',
@@ -762,7 +785,7 @@ test('the last pre-feature installed upgrader installs candidate engine config a
       historicalUpgrade,
       'apply',
       '--plan',
-      planPath,
+      historicalPlanPath,
       '--confirm',
       'confirm-upgrade',
       '--format',
@@ -777,15 +800,45 @@ test('the last pre-feature installed upgrader installs candidate engine config a
       );
     }
 
-    // The historical ownership scanner cannot discover a newly introduced
-    // extension tree. Its current engine replacement above is the bootstrap;
-    // the installed current planner must then acquire the exact runtime bytes.
+    // The historical engine has now atomically installed the candidate's
+    // current procedure/engine and advanced installed_ref, but its historical
+    // ownership scanner could not authorize the newly introduced extension.
     const currentUpgrade = path.join(workspace, '.github/skills/dude-bundle-upgrade/upgrade.mjs');
-    const currentPlanPath = path.join(sandbox, 'current-extension-plan.json');
     const extensionPaths = listRelativeFiles(candidate)
       .filter((relPath) => relPath.startsWith('.github/extensions/dude/'));
     assert.ok(extensionPaths.length > 0, 'release candidate contains Dude runtime files');
     assert.equal(fs.existsSync(path.join(workspace, '.github/extensions/dude')), false);
+    assert.deepEqual(
+      fs.readFileSync(currentUpgrade),
+      fs.readFileSync(path.join(candidate, '.github/skills/dude-bundle-upgrade/upgrade.mjs')),
+      'first apply installed the candidate current upgrade engine',
+    );
+    assert.deepEqual(
+      fs.readFileSync(path.join(workspace, '.github/skills/dude-bundle-upgrade/SKILL.md')),
+      fs.readFileSync(path.join(candidate, '.github/skills/dude-bundle-upgrade/SKILL.md')),
+      'first apply installed the candidate current upgrade procedure',
+    );
+
+    // Second explicit @dude upgrade, now following the installed current
+    // procedure. Matching-ref status is informational and proceeds to a fresh,
+    // independently confirmed same-ref plan; there is no internal planner call.
+    const bootstrapStatus = spawnSync(process.execPath, [
+      currentUpgrade,
+      'status',
+      '--source',
+      candidate,
+      '--ref',
+      'bootstrap',
+      '--format',
+      'json',
+    ], common);
+    assert.equal(
+      bootstrapStatus.status,
+      0,
+      (bootstrapStatus.stdout || '') + (bootstrapStatus.stderr || ''),
+    );
+    assert.equal(JSON.parse(bootstrapStatus.stdout).status, 'up_to_date');
+
     const currentPlanned = spawnSync(process.execPath, [
       currentUpgrade,
       'plan',
@@ -796,10 +849,21 @@ test('the last pre-feature installed upgrader installs candidate engine config a
       '--format',
       'json',
       '--out',
-      currentPlanPath,
+      bootstrapPlanPath,
     ], common);
     assert.equal(currentPlanned.status, 10, (currentPlanned.stdout || '') + (currentPlanned.stderr || ''));
-    const currentPlan = JSON.parse(fs.readFileSync(currentPlanPath, 'utf8'));
+    const currentPlan = JSON.parse(fs.readFileSync(bootstrapPlanPath, 'utf8'));
+    assert.equal(currentPlan.from_ref, 'bootstrap');
+    assert.equal(currentPlan.to_ref, 'bootstrap');
+    assert.deepEqual(
+      [
+        ...currentPlan.buckets.add,
+        ...currentPlan.buckets.remove,
+        ...currentPlan.buckets.replace,
+      ].map((entry) => entry.path).sort(),
+      extensionPaths,
+      'the fresh same-ref plan authorizes only the missing Dude extension runtime',
+    );
     assert.deepEqual(
       currentPlan.buckets.add
         .map((entry) => entry.path)
@@ -816,13 +880,19 @@ test('the last pre-feature installed upgrader installs candidate engine config a
       currentUpgrade,
       'apply',
       '--plan',
-      currentPlanPath,
+      bootstrapPlanPath,
       '--confirm',
       'confirm-upgrade',
       '--format',
       'json',
     ], common);
     assert.equal(currentApplied.status, 0, (currentApplied.stdout || '') + (currentApplied.stderr || ''));
+    assert.deepEqual(
+      listRelativeFiles(workspace)
+        .filter((relPath) => relPath.startsWith('.github/extensions/dude/')),
+      extensionPaths,
+      'supported flow installs every and only candidate Dude extension runtime path',
+    );
     for (const relPath of extensionPaths) {
       assert.deepEqual(
         fs.readFileSync(path.join(workspace, ...relPath.split('/'))),
@@ -833,6 +903,45 @@ test('the last pre-feature installed upgrader installs candidate engine config a
     for (const [relPath, bytes] of unrelatedExtensionBytes) {
       assert.deepEqual(fs.readFileSync(path.join(workspace, ...relPath.split('/'))), bytes, relPath);
     }
+
+    // A subsequent normal @dude upgrade repeats status then full planning. It
+    // proves byte completeness and stops at a true no-op without another apply.
+    const finalStatus = spawnSync(process.execPath, [
+      currentUpgrade,
+      'status',
+      '--source',
+      candidate,
+      '--ref',
+      'bootstrap',
+      '--format',
+      'json',
+    ], common);
+    assert.equal(finalStatus.status, 0, (finalStatus.stdout || '') + (finalStatus.stderr || ''));
+    assert.equal(JSON.parse(finalStatus.stdout).status, 'up_to_date');
+    const finalPlan = spawnSync(process.execPath, [
+      currentUpgrade,
+      'plan',
+      '--source',
+      candidate,
+      '--ref',
+      'bootstrap',
+      '--format',
+      'json',
+      '--out',
+      noOpPlanPath,
+    ], common);
+    assert.equal(finalPlan.status, 0, (finalPlan.stdout || '') + (finalPlan.stderr || ''));
+    const noOpPlan = JSON.parse(fs.readFileSync(noOpPlanPath, 'utf8'));
+    assert.deepEqual(
+      {
+        add: noOpPlan.summary.add,
+        remove: noOpPlan.summary.remove,
+        replace: noOpPlan.summary.replace,
+      },
+      { add: 0, remove: 0, replace: 0 },
+      'the supported follow-up plan is a true no-op',
+    );
+    assert.equal(git(workspace, ['status', '--porcelain']).stdout, '');
 
     writeBootstrapPack(workspace);
     const composePath = path.join(workspace, '.github/skills/dude-compose/compose.mjs');

@@ -70,6 +70,200 @@
       answers a question, approves, or stops work.
 
     --------------------------------------------------------------------------
+    REVISION 2026-09-04 — feature selection, corrected against the real host
+    --------------------------------------------------------------------------
+    The approved shell was built and reviewed in the real host, and the review
+    found four things wrong with one region: feature selection. No other region
+    was reopened; the only other edits below are the measurements, mappings,
+    and counts that this one change made stale.
+
+      1. IT WAS OFFERED TWICE. The command bar opened a chooser, and the work
+         surface rendered a second copy of the same chooser under "SELECT A
+         FEATURE". One job, two controls, two places to look.
+         NOW: exactly one selection control exists, in the command bar, where
+         global context belongs. The work surface says that nothing is
+         selected and where the list is, and renders no control at all.
+
+      2. IT TOOK TWO CLICKS TO SEE AN OPTION. The bar held a Button that
+         opened a Popover that contained the Combobox, so the first click
+         revealed another control rather than the list.
+         NOW: the context slot IS the Combobox. The first click, or the first
+         focus, opens the list with options already on screen.
+
+      3. THE ROWS WERE SIZED FOR DATA THAT DOES NOT EXIST. A row was 56px of
+         title, stage badge, and identifier, but a real choice carries only an
+         idea path, a slug, and a spec path, so the rows read as one short
+         string floating in a large box.
+         NOW: one-line 36px options carrying the feature's canonical
+         identifier and nothing else; the two-line anatomy and its badges are
+         gone.
+
+      4. LATER OPTIONS WERE UNREACHABLE. Only the first rows existed until
+         something was typed, so `052-dude-canvas-ui` looked absent from a list
+         that genuinely contains it.
+         NOW: all 50 options are in the list. Five are visible at a time,
+         eight on a tall window, and every one of them is reachable by
+         scrolling, by End, or by typing. Order is source order; nothing is
+         promoted by recency, by lifecycle number, or by last use.
+
+    The identity chip that a resolved projection shows in the same slot is
+    deliberately inert and unchanged: that projection carries no inventory, so
+    a control there would have nothing honest to open.
+    [SUPERSEDED BY REVISION 2026-09-04d. Hiding the control once a feature was
+    open is half of the defect that revision fixes: the fork is inventory, not
+    selection, so a resolved projection now keeps the Combobox and only the
+    empty projection — which found no features at all — takes the chip.]
+
+    The review's own screenshots are kept beside this file, so the four points
+    above can be checked against what was actually seen rather than against
+    this description of it:
+      screenshots/2026-09-04-review-1-duplicate-selectors.png
+      screenshots/2026-09-04-review-2-two-clicks-to-options.png
+      screenshots/2026-09-04-review-3-row-density-and-truncation.png
+    They also show a fifth thing that this mock never does: the in-page copy
+    opened pre-filled with a slug nobody had chosen. Nothing here is
+    pre-selected, and the input opens empty with a placeholder.
+    [PARTLY SUPERSEDED BY REVISION 2026-09-04d. Nothing is pre-selected still
+    holds: the chooser opens empty. But a field that is DISPLAYING the feature
+    the window is genuinely showing is not a pre-filled guess, and revision d
+    makes that display value explicitly not a query.]
+
+    --------------------------------------------------------------------------
+    REVISION 2026-09-04b — numbered option labels restored, at the owner's ask
+    --------------------------------------------------------------------------
+    The revision above shortened a chooser row to the bare semantic slug. The
+    owner restored the numbers: an option is labelled with the feature's
+    CANONICAL IDENTIFIER, `052-dude-canvas-ui`, the physical identity the
+    feature already has on disk, in the identity strip, and in every path this
+    window prints. `dude-canvas-ui` alone is only half of that name.
+
+    Scope of this revision is the selector and the sentences that described it.
+    The single-selector decision, the count band above the list, the 36px row,
+    5/8 visible rows, source order, and the empty-on-open input are unchanged.
+      - The visible label and the Fluent <Option text> are featureKey(f) —
+        number + slug, derived from the exact idea path, never the raw path.
+      - The filter matches the canonical identifier OR the slug, case-
+        insensitively, so `052`, `dude`, and `dude-canvas-ui` all find the
+        same row and no habit is broken.
+      - Selection still submits the record's semantic slug. The displayed
+        string is never parsed back into a target, so there is one identity
+        and no fallback.
+      - The placeholder and the count stay total-based; they describe the list,
+        not a row.
+
+    --------------------------------------------------------------------------
+    REVISION 2026-09-04c — the stated ellipsis contract, actually implemented
+    --------------------------------------------------------------------------
+    The revision above described one-line options that "ellipsize rather than
+    wrap". The markup did not do that. `.option` is a flex row, so the bare
+    identifier text node became an ANONYMOUS flex item, `text-overflow` on the
+    flex root had nothing to apply to, and `overflow: hidden` cut the string
+    mid-glyph with no ellipsis. Measured at 360 wide before this fix, the
+    longest identifier overhung the row's content box by 101.5px and the third
+    row read `003-guarded-directory-artifact-im` with the `m` sliced in half.
+
+    Nothing about the approved design changes. The visible string now sits in
+    a `.option-label` span that owns min-width:0, overflow, nowrap, and the
+    ellipsis; the root keeps overflow:hidden as the clip boundary and drops the
+    `text-overflow` it could never honour. The canonical label, the slug
+    payload, `role="option"`, `aria-selected`, the single selector, the count
+    band, the 36px row, and all 50 options in source order are untouched, and
+    the accessible name is still the full canonical identifier, because a
+    name computed from contents does not see the truncation.
+
+    --------------------------------------------------------------------------
+    REVISION 2026-09-04d — the selected feature, and the list you can still open
+    --------------------------------------------------------------------------
+    REPORTED, in the built host, with `052-dude-canvas-ui` open: pressing the
+    chevron produced a list of ONE row — the feature already open — and the
+    only way to see the other 49 was to delete a 19-character name the user had
+    never typed. Two decisions caused it, and they are fixed as one:
+
+      1. THE SLOT FORKED ON SELECTION INSTEAD OF ON INVENTORY. A projection
+         with a feature open swapped the control for the inert identity chip,
+         so the window could show a feature but not change which one.
+         NOW: the fork is INVENTORY. Chooser mode and selected-feature mode are
+         THE SAME command-bar Combobox; only the empty projection, which found
+         no features at all, still takes the chip.
+
+      2. THE DISPLAYED VALUE WAS ALSO THE QUERY. The field held the selected
+         identifier and that same string was fed to the filter, so opening
+         filtered to the one row already chosen.
+         NOW: SELECTED VALUE AND QUERY ARE TWO PIECES OF STATE. `committed`
+         owns the closed display value and the one row carrying aria-selected.
+         `query` is null until the user actually types. A null query is NO
+         filter, so the first click — on the chevron, the field, or the label
+         side — always opens all 50 with the committed row marked, made active,
+         and scrolled into view, while the field goes on displaying it.
+
+    THE CONTRACT THIS REVISION ADDS
+      - Closed, selected mode displays the canonical identifier and nothing
+        else. Closed, chooser mode is empty with the total-based placeholder.
+      - One click opens. It never toggles shut, so a first click cannot end
+        with the list hidden.
+      - Opening selects the displayed text, so the next character REPLACES the
+        identifier instead of appending to it; Backspace and Delete drop the
+        display and show the whole list rather than chipping a letter off a
+        name that is not a query. Nothing has to be deleted by the user.
+      - Filtering matches the canonical identifier OR the slug, so `052`,
+        `dude`, and `dude-canvas-ui` all find the same row. Source order
+        survives; nothing is ranked.
+      - ESCAPE HAS TWO STEPS. With a filter running it RESTORES: the committed
+        identifier returns to the field, the whole list returns with that row
+        marked, highlighted, and revealed, and the popup stays open. Pressing
+        it again closes and preserves the selection. Focus stays on the one
+        control either way.
+      - An abandoned search — Escape, blur, an outside click, Tab away — is
+        discarded, never promoted: the field can never sit in the bar showing
+        a value the window is not actually showing.
+      - A REFUSED SELECTION IS NOT A SELECTION. `committed` is untouched, the
+        previous identifier is put back, the previous row is re-marked, the
+        list comes back open, and one sentence names both the refused feature
+        and the one that is still open. It can never look committed to the
+        refused value.
+      - A SUCCESSFUL SELECTION submits the record's semantic slug, closes the
+        list, updates the canonical label in the bar and the identity strip,
+        and lands focus on the opened feature's heading.
+
+    THE SELECTED ROW IS MARKED WITH REAL FLUENT OPTION SEMANTICS, AND THE ROW
+    DOES NOT GROW. Fluent's Option renders a `checkIcon` slot for every option
+    in a selectable listbox and hides it with `visibility`, so marking one row
+    never re-flows the list. That is exactly what `.option-check` does here:
+    16px of reserved glyph plus a 4px gap on all 50 rows, the row height still
+    exactly 36px, the label column still one column. Three independent cues
+    carry selection — the brand check GLYPH, the neutral selected FILL, and
+    `aria-selected` — so it survives losing colour, and the fill is never the
+    only one. SELECTED is not ACTIVE: aria-selected marks the committed row and
+    only ever moves on a commit, while aria-activedescendant carries the
+    keyboard highlight and commits nothing.
+
+    ONE BEHAVIOURAL DEFECT WAS FOUND BY THE HEADLESS SCRIPT AND FIXED HERE.
+    Choosing an option repaints the listbox, so the clicked row is detached
+    from the document before the page-level outside-click listener runs, and
+    `root.contains(target)` no longer recognised it as ours. A refused pointer
+    selection therefore reopened the list inside the option handler and had it
+    closed again one event later by the very click that caused it — taking the
+    failure sentence, which lives inside the popup, off screen with it. The
+    listener now ignores a target the control itself detached. The keyboard
+    refusal path was never affected, which is what made it worth catching.
+
+    WHAT IS UNCHANGED: one control and one tab stop, 36px numbered rows in
+    source order, all 50 options in the DOM, the count band above the list,
+    the ellipsis contract from revision c, the inline popup (no portal, no
+    dialog, no focus trap, no second copy anywhere on the page), the strokes,
+    and every region of the shell outside the command bar.
+
+    MEASURED AFTER THE CHANGE, selected mode with `052-dude-canvas-ui` open:
+      one click opens 50 options; option 48 of 50 carries aria-selected="true",
+      the visible check, and the selected fill, and the scroller lands at
+      1548px so that row is on screen; the field still reads
+      `052-dude-canvas-ui`; row height 36px at every width tested.
+      Check glyph on the selected fill 4.52:1 light / 4.18:1 dark (needs 3:1);
+      row label on the selected fill 13.02:1 light / 11.73:1 dark (needs
+      4.5:1). The fill itself is 1.19:1 light / 1.24:1 dark against the popup,
+      which is why it is deliberately NOT load-bearing on its own.
+
+    --------------------------------------------------------------------------
     WHERE THE STRUCTURE COMES FROM — lifecycle tools, not their branding
     --------------------------------------------------------------------------
     Each convention below is borrowed for a reason, and none of these products
@@ -110,10 +304,11 @@
           chrome, high information ratio, keyboard hints kept in view.
 
       GitHub Desktop
-        - The prominent CURRENT-CONTEXT control in the title bar: a small
-          caption ("Feature") stacked over the current name, which opens the
-          real chooser. Changing context is a first-class piece of chrome, not
-          a link buried in the page.
+        - The prominent CURRENT-CONTEXT control in the title bar. Changing
+          context is a first-class piece of chrome, not a link buried in the
+          page. Adapted, not copied: GitHub Desktop's control is a button that
+          opens a panel, and this window instead puts the real control in the
+          bar, because the panel had nothing to add.
 
       Outlook / Teams
         - The rail -> list -> reading-pane instinct, adapted honestly: I1 Now
@@ -154,8 +349,8 @@
       and its thresholds really are about the window. Regions inside it use
       CONTAINER queries, because those thresholds are about how much room the
       region actually got. One MEDIA query is keyed to viewport HEIGHT rather
-      than width: at >= 1000px tall the in-page chooser shows eight rows
-      instead of five, because on a tall window the list is the job.
+      than width: at >= 1000px tall the command-bar feature list shows eight
+      rows instead of five, because a tall window can spare the room.
 
         >= 1080px   three docked regions: rail | work | dock.
                     Derivation: 48 rail + 1 rule + 640 work floor + 1 rule
@@ -206,21 +401,34 @@
       Blocked           1143             0                0
       Stale             1143             0                0
       Malformed         1066            18               18
-      Chooser           1034            50               50
       Empty              911           173              173
       Tracking mismatch  886           198              198
       Another feature   1002            82               82   (not-read case)
+      Chooser            637           451              451   (revised; was 1034)
 
-      Worst case is 198px of window background under an 886px document in a
-      1084px column: 18%. At 1440x900 and at every width from 360 to 1080 the
-      document is taller than the column and the page simply scrolls, so the
-      slack is zero everywhere except the two 1200px-tall cases above.
+      Every row except Chooser is the approved measurement, re-verified
+      unchanged for this revision under a headless Chromium 133 harness. The
+      Chooser row changed because the revision deleted the duplicated in-page
+      chooser: the work surface now states that nothing is selected and points
+      at the command bar, and the three regions that a choose projection
+      genuinely cannot fill say so in the same voice as the rest of the page.
+      The result is 451px of window background under a 637px document in a
+      1084px column: 42%, and the worst case on the page.
+
+      That is stated rather than fixed, because the honest ways to fix it are
+      both worse. Reinstating a second chooser is precisely the duplication
+      the review rejected. Padding the column with titles, stage badges, or
+      task counts invents inventory that a choose projection does not carry.
+      A shorter page with one control beats a full page with two. At 1440x900
+      the same fixture leaves 151px, and at every width from 360 to 1080 the
+      other fixtures are taller than the column and simply scroll, so slack is
+      zero everywhere except the 1200px-tall cases above.
 
       For comparison, the same page with Phases, Activity, and the composed
       not-read block suppressed — which is what the reviewed screenshot showed
       — leaves this much of the same 1084px column empty at 1440x1200:
         Current 668, Blocked 668, Stale 668, Malformed 695, Empty 770,
-        Tracking mismatch 679, Chooser 260, and the not-read case 739.
+        Tracking mismatch 679, and the not-read case 739.
       That is 62% empty in the Current fixture and 68% in the screenshot case.
 
     --------------------------------------------------------------------------
@@ -232,12 +440,44 @@
                               aria-expanded, theme = <Switch>, fixtures =
                               <RadioGroup layout="horizontal"> + <Radio>.
       title/command bar ..... header row at Toolbar height, <Divider> beneath.
-      feature control ....... <Button appearance="secondary"> with stacked
-                              caption + name, + <Popover>/<PopoverSurface>.
-      chooser ............... <Combobox freeform> anatomy: SearchBox-style
-                              input with role="combobox" + <Listbox> with
-                              role="listbox"/"option" and aria-activedescendant.
-                              ONE tab stop; windowed option rendering.
+      feature control ....... whenever the projection carries an inventory —
+                              chooser mode and selected-feature mode alike:
+                              <Field orientation="horizontal" label="Feature">
+                              wrapping a <Combobox freeform inlinePopup> with
+                              `selectedOptions` and an app-controlled `value`,
+                              the split Fluent's own filtering example uses:
+                              onOptionSelect sets the display value,
+                              onChange sets the search string. The control
+                              itself sits in the bar, so one click opens the
+                              options. Only the empty projection — no features
+                              found at all — replaces it with an inert identity
+                              chip (<Text> caption over <Text> name), because
+                              there is nothing there to open.
+      chooser ............... the Combobox's <Listbox>: role="listbox" with
+                              role="option" children and aria-activedescendant.
+                              ONE tab stop. Every option is rendered — five are
+                              visible, eight on a tall window, and the rest are
+                              reached by scrolling, End, or typing. Opening
+                              with a feature selected seeds activeOption from
+                              selectedOptions, which is why the committed row
+                              is the one revealed. The popup is inline
+                              (no portal) and spans the whole Field, so the
+                              build passes `positioning={{ matchTargetSize:
+                              undefined }}` instead of Fluent's default
+                              trigger-width match. See the listbox surface
+                              block below for the measured reason.
+      option ................ <Option value={slug} text={`${n}-${slug}`}> at one
+                              line: 36px, canonical identifier only, ellipsis
+                              on overflow — carried by the Option's content
+                              slot element, never by the flex row around it.
+                              No title, badge, or meta line, because a choice
+                              carries none of them. `text` is the
+                              accessible name and the typeahead string;
+                              `value` is the slug that onOptionSelect returns.
+                              Fluent's own `checkIcon` slot is reserved on
+                              every row and hidden with `visibility`, so the
+                              selected row is marked without the list re-flowing
+                              and without the row growing past 36px.
       Refresh ............... <Button appearance="subtle" icon={ArrowClockwise}>
       activity rail ......... <Tab>/<TabList vertical> anatomy expressed as a
                               nav list; the five later surfaces are real
@@ -263,8 +503,10 @@
       unavailable region .... <MessageBar intent="info"> anatomy reduced to its
                               quiet form: dashed edge, em-dash glyph, reason.
       not-read notice ....... <Card> anatomy, centred and bounded, with one
-                              <Button appearance="secondary"> that reopens the
-                              existing feature <Popover>.
+                              <Button appearance="secondary"> that clears the
+                              requested feature and returns to the choose
+                              projection, focusing the one existing Combobox.
+                              It opens no second selector.
       task progress ......... composed meter. Fluent's <ProgressBar> is
                               single-value, so three proportional bars share
                               one 4px (--strokeWidthThickest) track. Disclosed
@@ -331,10 +573,35 @@
         phase's distribution bar is aria-hidden and always paired with its
         count in words. An unavailable region is dashed edge + em-dash + the
         reason written out.
-      - Every interactive target is >= 24x24 CSS px. Measured: the only new
-        control is the not-read notice's "Choose another feature" button, at
-        28px minimum height like every other in-window button.
-      - Focus is 2px --colorStrokeFocus2 at 2px offset, never removed.
+      - Every interactive target is >= 24x24 CSS px. Measured: the not-read
+        notice's "Return to the feature list" button is 28px minimum height
+        like every other in-window button; the feature Combobox is 32px; and a
+        36px chooser option clears SC 2.5.8 by 12px even at one-line density.
+      - A chooser option's accessible name is its canonical identifier, read
+        as the row's own text: `052-dude-canvas-ui`, the same string a sighted
+        user sees and the same one the identity strip shows once it is open.
+        No visually hidden alternative name is substituted, so what is heard,
+        what is read, and what is typed to find it are one string.
+      - The SELECTED row is announced as selected and shown as selected, and
+        neither depends on the other. `aria-selected="true"` is on the
+        committed row and only that row; the visible cues are the brand check
+        glyph and the neutral selected fill. Measured on that row: label
+        13.02:1 light / 11.73:1 dark (needs 4.5:1) and check glyph 4.52:1 /
+        4.18:1 against the fill (needs 3:1). The fill alone is 1.19:1 / 1.24:1
+        against the popup, so it is a supporting cue and never the cue — losing
+        colour entirely leaves the glyph and the ARIA state intact.
+      - The keyboard highlight is aria-activedescendant plus a brand left edge
+        and a background change, so ACTIVE and SELECTED are distinguishable
+        from each other and both survive on the same row when the list opens
+        on the feature that is already open. A closed control names no active
+        descendant at all.
+      - Focus is 2px --colorStrokeFocus2 at 2px offset, never removed. The
+        feature Combobox carries two indicators, the way Fluent's own Combobox
+        does: a --colorCompoundBrandStroke underline on any focus (5.38:1
+        light / 5.18:1 dark against the field, needs 3:1) and the standard 2px
+        ring on keyboard focus (20.1:1 / 16.5:1 against the bar). The ring is
+        drawn on the field root, so it wraps the control rather than the bare
+        text node inside it.
       - Landmarks: region (prototype drawer), banner (command bar), navigation
         (activity rail), main (Now), complementary (details dock), contentinfo
         (status bar). One h1, h2 per region, h3 per section — Phases and
@@ -342,8 +609,12 @@
       - Phases and Activity are real <ol> lists, not decorative divs, so they
         are announced with their item counts.
       - aria-live="polite" announces refresh, chooser result counts, selection,
-        surface changes, copy results, and the notice action opening the
-        feature list.
+        surface changes, copy results, and the notice action returning to the
+        feature list. In the one control it also announces the two Escape
+        steps — "Search cleared. 50 features. 052-dude-canvas-ui is still
+        selected." and then "Feature list closed. 052-dude-canvas-ui is still
+        selected." — and a refusal, which names the feature that could not be
+        opened and the one that is still open.
       - Measured contrast of every new text node, light and dark, across the
         fixtures: minimum 5.38:1 (needs 4.5:1). New non-text boundaries — the
         current-phase accent, the trail node, the dashed unavailable edge —
@@ -383,18 +654,41 @@
 
     The latest lifecycle event is the last line of the Revision Log in
     .dude/specs/052-dude-canvas-ui/spec.md.
-    The chooser inventory is the complete set of 54 direct .dude/ideas/*.md
-    files, with title, slug, status, and spec_path copied verbatim from each
-    file's frontmatter. Nothing is invented.
+
+    The chooser inventory is derived, not decorative. There are 54 direct
+    .dude/ideas/*.md files; a choose projection offers only those that are
+    `draft`, or `defined` with a spec of their own, which excludes the 4
+    resolved ideas and leaves exactly 50 options. Each option shows the
+    canonical identifier `NNN-slug`, composed from the number and slug of that
+    file's exact path — `.dude/ideas/052-dude-canvas-ui.md` renders as
+    `052-dude-canvas-ui` — and NOTHING else; the raw path is never a row label.
+    A choice in that projection still carries only ideaPath, slug, and
+    specPath, and the slug is what selection submits. Typing matches either
+    form, case-insensitively: `052`, `dude`, and `dude-canvas-ui` all find the
+    same row. `052-dude-canvas-ui` is option 48 of 50 in source order —
+    reachable, and not promoted for being the feature under review. Nothing is
+    invented, ordered by recency, or pre-selected: the chooser opens with an
+    empty field and nothing marked. When a feature IS open, the row that
+    carries aria-selected is resolved from the projection's own identity key,
+    not remembered from the last click, and the list still opens whole with
+    that row revealed at scroll offset 1548px.
 
     STATE FIXTURES — one window, seven projections, no extra frames.
-      Current            the real state above.
-      Chooser            no feature selected; the real 54-item chooser.
+      Current            the real state above. It is also the selected-feature
+                         form of the one control: the field displays
+                         `052-dude-canvas-ui` and opening still shows all 50.
+      Chooser            no feature selected; the real 50-option list, empty
+                         field, nothing marked, nothing highlighted.
       Blocked            an authoritative feature blocker.
       Stale              last complete projection preserved, refresh failed.
-      Empty              no project state found.
+      Empty              no project state found. The only projection with no
+                         inventory, and therefore the only inert chip.
       Malformed          the owning feature file did not read safely.
       Tracking mismatch  the bare SC-003 acceptance case, and NOT a blocker.
+    The prototype drawer's SELECTION switch (`?select=fail`) is the eighth
+    case and the only one that is not a projection: it makes the host refuse
+    the next request, which is how the refusal path is reviewed in the same
+    window as the success path.
 
     FUNCTIONAL REALISM — what selecting another feature may show
       Selecting any feature other than 052-dude-canvas-ui renders ONLY what its
@@ -406,10 +700,11 @@
       column blank. It now closes with one composed block that names the four
       things that were not read, says in one sentence why nothing stands in
       their place, and offers the single safe action this read-only window
-      already has: reopening the feature list. Phases and Activity still render
-      for it, as honest unavailable states in the shared dashed treatment, so
-      the regions are accounted for rather than silently dropped. Empty and
-      Malformed get the same composed close, for the same reason.
+      already has: dropping the request and returning to the feature list in
+      the command bar. Phases and Activity still render for it, as honest
+      unavailable states in the shared dashed treatment, so the regions are
+      accounted for rather than silently dropped. Empty and Malformed get the
+      same composed close, for the same reason.
 
     WHAT PHASES AND ACTIVITY ARE NOT
       Neither is the deferred Work surface. There is no per-task row, no
@@ -421,13 +716,18 @@
     FOCUS ACROSS RERENDER
       Work, dock, and status content are replaced wholesale on every update, so
       a focused node inside them is destroyed. Focus intent is captured before
-      the update and restored afterwards: chooser selection closes the popover
-      and lands on the selected feature's heading, Escape returns focus to the
-      trigger, and Refresh returns to the Refresh button. Focus never falls to
-      <body>, and it is never taken for a background change the user did not
-      ask for. The command bar and the activity rail are deliberately NOT
-      replaced, which is itself part of the application-shell idea: window
-      chrome persists, documents change.
+      the update and restored afterwards: selecting a feature closes the list
+      and lands on the selected feature's heading; Escape keeps focus on the
+      Combobox that owns the list, restoring the committed value on the first
+      press and closing on the second; a refused selection returns focus to the
+      same control with the list reopened; and Refresh returns to the Refresh
+      button. Focus never falls to <body>, and it is never taken for a
+      background change the user did not ask for. Tab always leaves — the list
+      is a popup, not a trap. The command bar and the
+      activity rail are deliberately NOT replaced, which is itself part of the
+      application-shell idea: window chrome persists, documents change. That
+      is also why feature selection lives in the bar — it is the one control
+      that must survive every rerender it causes.
   -->
   <style>
     /*
@@ -528,7 +828,17 @@
       --layout-measure-headline: 36ch;
 
       /* controls */
-      --chooser-row: 56px;        /* 10 + 20 (title) + 16 (meta) + 10 */
+      /*
+        One-line Fluent Option. A row carries one canonical identifier and
+        nothing else, so it is one line of Body1 and the height is that line
+        plus one vertical step above and below:
+          --lineHeightBase300 20 + 2 x --spacingVerticalS 8 = 36px.
+        36 is dense enough for fifty identifiers and still well over the 24x24
+        minimum target size of WCAG 2.2 SC 2.5.8. The four extra characters of
+        the `NNN-` prefix change the string, not the box: the row is one line
+        either way.
+      */
+      --chooser-row: 36px;        /* 8 + 20 (identifier) + 8 */
       --button-height-medium: 32px;
       --button-height-compact: 28px;
       --rail-target: 32px;
@@ -553,6 +863,8 @@
     html[data-proto-theme="light"] .theme-system {
       --colorNeutralBackground1: #ffffff;
       --colorNeutralBackground1Hover: #f5f5f5;
+      /* Fluent's own selected-row fill. Added for the selected Option cue. */
+      --colorNeutralBackground1Selected: #ebebeb;
       --colorNeutralBackground2: #fafafa;
       --colorNeutralBackground3: #f5f5f5;
       --colorNeutralBackground4: #f0f0f0;
@@ -602,6 +914,7 @@
     html[data-proto-theme="dark"] .theme-system {
       --colorNeutralBackground1: #292929;
       --colorNeutralBackground1Hover: #3d3d3d;
+      --colorNeutralBackground1Selected: #383838;
       --colorNeutralBackground2: #1f1f1f;
       --colorNeutralBackground3: #141414;
       --colorNeutralBackground4: #0a0a0a;
@@ -970,9 +1283,28 @@
     }
 
     /*
-      GitHub-Desktop-style context control: a small caption stacked over the
-      current name. It is the only way the window changes what it is showing,
-      so it is chrome, not page content.
+      THE ONE FEATURE-SELECTION SURFACE.
+
+      Feature context is global window state, so it lives in the command bar
+      and nowhere else. The slot has exactly two forms and never both at once,
+      and the fork is INVENTORY, not whether a feature happens to be open:
+
+        inventory available  a real Fluent Combobox. One tab stop. The first
+                             click, or the first focus, opens the WHOLE list.
+                             This is the same control whether nothing is
+                             selected yet or `052-dude-canvas-ui` already is;
+                             when one is, the field displays that identifier
+                             and the matching row is the marked option.
+        no inventory at all  a noninteractive identity chip. Only the empty
+                             projection reaches this: zero features were found,
+                             so there is nothing honest for a control to open.
+
+      A resolved feature used to take the chip too, which is what made the
+      selection look final and unchangeable. A window that can show a feature
+      can also change which one it shows, so the control stays.
+
+      There is no second selector anywhere in the window, and no button that
+      opens a dialog that contains the real control.
     */
     .shell-context {
       position: relative;
@@ -981,30 +1313,144 @@
       max-width: 420px;
     }
 
-    .ctx-button {
+    /* Fluent <Field label="Feature" orientation="horizontal"> */
+    .ctx-chooser {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      min-width: 0;
+    }
+
+    .ctx-chooser[hidden],
+    .ctx-identity[hidden] { display: none; }
+
+    .ctx-label {
+      flex: 0 0 auto;
+      font-size: var(--fontSizeBase100);
+      line-height: var(--lineHeightBase100);
+      font-weight: var(--fontWeightSemibold);
+      text-transform: uppercase;
+      letter-spacing: var(--spacingHorizontalXXS);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /*
+      Under 720 the bar has to carry the brand, the control, and Refresh in
+      360px, so the visible label collapses to its accessible form only. The
+      <label for> association, and therefore the accessible name, is unchanged.
+    */
+    @media (max-width: 719px) {
+      .ctx-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: var(--spacingVerticalNone);
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+        border: 0;
+      }
+    }
+
+    /* Fluent Combobox root: Input anatomy plus the expand icon. */
+    .ctx-combobox {
+      display: flex;
+      flex: 1 1 auto;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      min-width: 0;
+      min-height: var(--button-height-medium);
+      box-sizing: border-box;
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalS);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      /* Fluent Input's compound brand underline */
+      border-bottom: var(--strokeWidthThick) solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium);
+      cursor: text;
+    }
+
+    .ctx-combobox:hover { background-color: var(--colorNeutralBackground1Hover); }
+
+    /*
+      Fluent splits the two indicators, and so does this: the compound brand
+      underline follows ANY focus, and the 2px ring follows KEYBOARD focus
+      only — which is what createCustomFocusIndicatorStyle emits as
+      [data-fui-focus-visible]. The ring is drawn on the field root rather
+      than the inner <input> so it wraps the whole control, including the
+      expand glyph, the way a real Combobox does. Stock Fluent stops at the
+      underline; the ring is added here deliberately, because a 2px underline
+      on the bottom edge of a 32px field sitting in a command bar is easy to
+      lose next to the bar's own divider.
+    */
+    .ctx-combobox:focus-within { border-bottom-color: var(--colorCompoundBrandStroke); }
+
+    .ctx-combobox:has(.ctx-input:focus-visible) {
+      outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2);
+      outline-offset: var(--spacingHorizontalXXS);
+    }
+
+    /*
+      Fluent <Field validationState="error">. A refused selection is the one
+      failure this control can report, and it is never colour alone: the
+      boundary changes, `aria-invalid` is set on the input, the popup carries
+      the sentence that names both features, and the live region says it out
+      loud. It is cleared by the next keystroke, the next open, or the next
+      successful selection — it is a report, not a mode.
+    */
+    .ctx-combobox:has(.ctx-input[aria-invalid="true"]) {
+      border-color: var(--colorPaletteRedBorder2);
+    }
+
+    .ctx-input {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: var(--spacingVerticalXS) var(--spacingHorizontalNone);
+      font-family: var(--fontFamilyBase);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      color: var(--colorNeutralForeground1);
+      background: none;
+      border: none;
+    }
+
+    /* The ring belongs to the field root, not to the bare text node inside it. */
+    .ctx-input:focus,
+    .ctx-input:focus-visible { outline: none; }
+    .ctx-input::placeholder { color: var(--colorNeutralForeground3); }
+
+    /* Fluent's expandIcon slot: decoration inside the control, never a target. */
+    .ctx-expand {
+      flex: 0 0 auto;
+      display: flex;
+      width: var(--icon-size-12);
+      height: var(--icon-size-12);
+      color: var(--colorNeutralForeground3);
+    }
+
+    .ctx-expand svg {
+      width: 100%;
+      height: 100%;
+      transform: rotate(90deg);
+    }
+
+    /*
+      The identity chip. Same footprint as the control it replaces, deliberately
+      inert: no cursor change, no hover, no caret, no handler.
+    */
+    .ctx-identity {
       display: flex;
       align-items: center;
       gap: var(--spacingHorizontalS);
       width: 100%;
+      box-sizing: border-box;
       min-height: var(--button-height-medium);
       padding: var(--spacingVerticalXXS) var(--spacingHorizontalS);
-      font-family: var(--fontFamilyBase);
-      text-align: left;
       color: var(--colorNeutralForeground1);
       background-color: var(--colorNeutralBackground1);
       border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
       border-radius: var(--borderRadiusMedium);
-      cursor: pointer;
-      transition: background-color var(--durationFaster) ease;
-    }
-
-    .ctx-button:hover { background-color: var(--colorNeutralBackground1Hover); }
-
-    .ctx-button:disabled {
-      color: var(--colorNeutralForegroundDisabled);
-      background-color: var(--colorNeutralBackgroundDisabled);
-      border-color: var(--colorNeutralStrokeDisabled);
-      cursor: not-allowed;
     }
 
     .ctx-icon {
@@ -1036,14 +1482,6 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-    }
-
-    .ctx-caret {
-      flex: 0 0 auto;
-      width: var(--icon-size-12);
-      height: var(--icon-size-12);
-      color: var(--colorNeutralForeground3);
-      transform: rotate(90deg);
     }
 
     .shell-toolbar {
@@ -1384,24 +1822,44 @@
       height: var(--icon-size-16);
     }
 
-    /* ---------- Fluent Popover ---------- */
-    .fui-popover-surface {
+    /* ---------- Fluent Combobox listbox popup ---------- */
+    /*
+      The inline popup of the one feature Combobox. It is in the DOM tree next
+      to its own control (Fluent's `inlinePopup`), not portalled to <body>, so
+      the host page keeps one tree and one stacking context.
+
+      WIDTH IS SPECIFIED, NOT INHERITED. The popup spans the whole Field —
+      label and control — rather than the control alone. Fluent v9 positions a
+      Combobox listbox with `matchTargetSize: 'width'` by default, which would
+      anchor it to the input and make it 351.8px at 1440; a real build must
+      therefore pass `positioning={{ matchTargetSize: undefined }}` and size
+      the listbox to the Field to reproduce what is drawn here. Measured, at
+      the longest identifier in the real inventory:
+        Field width, as drawn ..... popup 420px, 0 of 50 rows ellipsized
+        Fluent's default .......... popup 351.8px, 1 of 50 rows ellipsized
+      The difference is one row and 68px, it is spent on the one thing a row
+      carries, and below 720 the two are identical anyway: the visible label
+      collapses there, so the Field and the control are the same box.
+    */
+    .fui-listbox-surface {
       position: absolute;
       z-index: 30;
       top: calc(100% + var(--spacingVerticalXS));
       left: 0;
-      width: min(440px, calc(100vw - var(--spacingHorizontalXXL)));
+      box-sizing: border-box;
+      width: 100%;
+      min-width: 0;
       display: grid;
-      gap: var(--spacingVerticalS);
-      padding: var(--spacingVerticalM);
+      gap: var(--spacingVerticalXS);
+      padding: var(--spacingVerticalXS);
       background-color: var(--colorNeutralBackground1);
       border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
       border-radius: var(--borderRadiusMedium);
-      /* Elevation kept: Fluent Popover semantics justify it. */
+      /* Elevation kept: a Fluent Combobox popup justifies it. */
       box-shadow: var(--shadow16);
     }
 
-    .fui-popover-surface[hidden] { display: none; }
+    .fui-listbox-surface[hidden] { display: none; }
 
     /* ====================================================================
        Work surface content — dense rows separated by rules, not gaps.
@@ -2559,178 +3017,207 @@
     }
 
     /* ====================================================================
-       CHOOSER — one Fluent Combobox/Listbox composite. ONE tab stop.
-       Reused wholesale from fluent-responsive-workspace.html, at a denser
-       56px row. Used both inside the command-bar Popover and as the
-       no-selection fixture in the work surface.
+       FEATURE LIST — the listbox of the one command-bar Combobox.
+       ONE tab stop, one-line options, every option in the DOM.
        ==================================================================== */
-    .chooser { display: grid; gap: var(--spacingVerticalS); min-width: 0; }
-
-    .chooser-label {
+    .chooser-count {
+      margin: var(--spacingVerticalNone);
+      padding: var(--spacingVerticalXXS) var(--spacingHorizontalS);
       font-size: var(--fontSizeBase200);
       line-height: var(--lineHeightBase200);
-      font-weight: var(--fontWeightSemibold);
-      color: var(--colorNeutralForeground3);
+      color: var(--colorNeutralForeground2);
     }
-
-    /* Fluent SearchBox anatomy */
-    .fui-searchbox {
-      display: flex;
-      align-items: center;
-      gap: var(--spacingHorizontalS);
-      min-height: var(--button-height-medium);
-      padding: var(--spacingVerticalNone) var(--spacingHorizontalMNudge);
-      background-color: var(--colorNeutralBackground1);
-      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
-      /* Fluent Input's compound brand underline */
-      border-bottom: var(--strokeWidthThick) solid var(--colorNeutralStrokeAccessible);
-      border-radius: var(--borderRadiusMedium);
-    }
-
-    .fui-searchbox:focus-within { border-bottom-color: var(--colorCompoundBrandStroke); }
-
-    .fui-searchbox svg {
-      flex: 0 0 auto;
-      width: var(--icon-size-16);
-      height: var(--icon-size-16);
-      color: var(--colorNeutralForeground3);
-    }
-
-    .fui-searchbox-input {
-      flex: 1 1 auto;
-      min-width: 0;
-      padding: var(--spacingVerticalXS) var(--spacingHorizontalNone);
-      font-family: var(--fontFamilyBase);
-      font-size: var(--fontSizeBase300);
-      line-height: var(--lineHeightBase300);
-      color: var(--colorNeutralForeground1);
-      background: none;
-      border: none;
-    }
-
-    .fui-searchbox-input:focus { outline: none; }
-    .fui-searchbox-input::placeholder { color: var(--colorNeutralForeground3); }
 
     /*
-      Windowed scroller. At most WINDOW option elements exist at a time; the
-      untenanted space above and below is expressed as padding on the listbox,
-      so the scrollbar still describes all 54 rows. Row height is a layout
-      constant so the window arithmetic is exact.
+      Scroller. FIVE rows are visible, EIGHT on a tall window, and every
+      remaining option is one scroll or one keystroke away: all of them are in
+      the DOM, so the scrollbar and the filter both describe the whole list.
+      Nothing is cut to the first rows.
     */
     .chooser-scroll {
       max-height: calc(var(--chooser-row) * 5);
       overflow-y: auto;
       overscroll-behavior: contain;
       background-color: var(--colorNeutralBackground1);
-      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
       border-radius: var(--borderRadiusMedium);
     }
 
     /*
-      Choosing a feature is the whole job of the Chooser fixture, so on a tall
-      window the in-page list takes the extra height instead of leaving the
-      work column short. Eight visible rows keeps two rows of overscan above
-      and below the 12-element window, so the windowing arithmetic in
-      createChooser (start = firstVisible - 2, end = start + 12) stays exact.
-      The popover copy is deliberately untouched: it hangs off the command bar
-      and has to stay compact there.
+      A tall window can afford three more rows without pushing anything else
+      off screen, so the list takes them.
     */
     @media (min-height: 1000px) {
-      #page-chooser .chooser-scroll { max-height: calc(var(--chooser-row) * 8); }
+      .chooser-scroll { max-height: calc(var(--chooser-row) * 8); }
     }
 
     .chooser-list { margin: var(--spacingVerticalNone); padding: var(--spacingVerticalNone); list-style: none; }
 
-    .option {
-      display: grid;
-      align-content: center;
-      gap: var(--spacingVerticalNone);
-      height: var(--chooser-row);
-      padding: var(--spacingVerticalMNudge) var(--spacingHorizontalM);
-      border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
-      cursor: pointer;
-      min-width: 0;
-    }
-
-    .option:last-child { border-bottom: none; }
-    .option:hover { background-color: var(--colorNeutralBackground1Hover); }
-
     /*
-      The active option is never colour-only: it carries a brand left edge, a
-      background change, aria-selected, and aria-activedescendant.
-    */
-    .option.is-active {
-      background-color: var(--colorNeutralBackground2);
-      border-left: var(--strokeWidthThicker) solid var(--colorCompoundBrandStroke);
-      padding-left: var(--spacingHorizontalMNudge);
-    }
+      One line, one name. A choice in the real projection carries an idea path,
+      a slug, and a specification path; the row shows the canonical identifier
+      composed from that path — `052-dude-canvas-ui` — and nothing else, so a
+      two-line row with a title, a stage badge, and a meta line would be three
+      quarters empty chrome. Longer identifiers ellipsize rather than wrap: the
+      row height is a contract, and the number that distinguishes them is at
+      the start of the string, where truncation never reaches. Stock Fluent
+      Option has no divider either: hover and the active edge carry the row.
 
-    .option-title {
+      THE IDENTIFIER IS ITS OWN ELEMENT, and it has to be.
+      The row is a flex container, because a 36px row centres its content with
+      align-items. A bare text node inside a flex container is wrapped by the
+      engine in an ANONYMOUS flex item, and an anonymous box inherits no
+      `text-overflow`: the declaration on the flex root has nothing to act on,
+      the item overflows its shrunk-to-fit line, and `overflow: hidden` cuts it
+      mid-glyph with no ellipsis. Measured before the fix, at 360 wide, the
+      longest identifier overhung the row's content box by 101.5px and was
+      clipped through a letter — the row LOOKED truncated but told the reader
+      nothing about it. So the visible string lives in `.option-label`, a real
+      block-level flex item with `min-width: 0` so it may shrink below its
+      content, and the ellipsis belongs to that element alone. The root keeps
+      `overflow: hidden` as the clip boundary and no longer claims a
+      `text-overflow` it cannot honour.
+
+      The wrapper is presentational only. `role="option"`, `aria-selected`,
+      the `data-slug` payload, the row height, and the accessible name are
+      unchanged: an option's name is computed from its contents, and the
+      contents are still the whole canonical identifier, ellipsis or not.
+
+      MEASURED, at the real inventory's longest identifier
+      (`014-autonomous-review-escalation-precedence`, 43 characters), with the
+      check slot reserved on every row:
+        1440, 1280, 1024, and 720 wide — popup 420px, label box 313.8px,
+        0 of 50 rows ellipsized; the longest identifier fits with less than a
+        pixel to spare, which is the width this list is sized for.
+        360 wide — popup 238.3px, label box 192.3px, 34 of 50 rows ellipsized
+        and the longest overhanging by 122px. That is more rows than the 25
+        measured before the check slot existed: 16px of glyph plus a 4px gap
+        come out of the label, and at 360 the label is what is left. The cost
+        is paid only in the narrowest composition, and it is paid at the END
+        of the string: the number and the first words survive, the truncation
+        is announced by a real ellipsis rather than a severed letter, and the
+        full name is in the identity strip the moment the feature is open.
+    */
+    .option {
       display: flex;
       align-items: center;
-      gap: var(--spacingHorizontalS);
+      gap: var(--spacingHorizontalXS);
+      box-sizing: border-box;
+      height: var(--chooser-row);
+      padding: var(--spacingVerticalS) var(--spacingHorizontalS);
       font-size: var(--fontSizeBase300);
       line-height: var(--lineHeightBase300);
-      font-weight: var(--fontWeightSemibold);
       color: var(--colorNeutralForeground1);
+      border-radius: var(--borderRadiusMedium);
+      cursor: pointer;
       min-width: 0;
+      overflow: hidden;
     }
 
-    .option-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-    .option-title .fui-badge {
+    /*
+      THE CHECK SLOT — Fluent Option's own `checkIcon`, reserved on EVERY row.
+      Fluent renders that slot for every option in a selectable listbox and
+      hides it with `visibility` rather than dropping it, so the labels stay on
+      one column and marking a selection never re-flows the list. The same rule
+      is what keeps the contract here: the row is still exactly 36px, the
+      rhythm of the list is untouched, and the only thing that changes when a
+      feature is selected is which check is painted. The cost is horizontal —
+      16px of glyph plus a 4px gap — and it is paid identically by all 50 rows.
+    */
+    .option-check {
       flex: 0 0 auto;
-      min-height: var(--spacingVerticalL);
-      padding: 0 var(--spacingHorizontalSNudge);
-      font-size: var(--fontSizeBase100);
-      line-height: var(--lineHeightBase100);
-      text-transform: uppercase;
-      letter-spacing: var(--spacingHorizontalXXS);
+      display: flex;
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
+      visibility: hidden;
+      color: var(--colorBrandForeground1);
     }
 
-    .option-meta {
-      font-family: var(--fontFamilyMonospace);
-      font-size: var(--fontSizeBase200);
-      line-height: var(--lineHeightBase200);
-      color: var(--colorNeutralForeground3);
+    .option-check svg { width: 100%; height: 100%; }
+
+    /*
+      The visible canonical identifier. In a real Fluent v9 build this is the
+      Option's content slot, which is an element for exactly this reason.
+    */
+    .option-label {
+      display: block;
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
-    .chooser-empty {
-      margin: var(--spacingVerticalNone);
-      padding: var(--spacingVerticalM) var(--spacingHorizontalM);
-      font-size: var(--fontSizeBase300);
-      line-height: var(--lineHeightBase300);
-      color: var(--colorNeutralForeground2);
+    .option:hover { background-color: var(--colorNeutralBackground1Hover); }
+
+    /*
+      SELECTED is not ACTIVE, and the list shows both at once.
+        selected  the feature the window is actually showing. It carries
+                  aria-selected="true", the check glyph, and the selected fill.
+                  Exactly one row can have it, and only a committed selection
+                  moves it.
+        active    the keyboard highlight, aria-activedescendant, the brand
+                  edge. It moves with every arrow key and commits nothing.
+      Conflating the two is what the old code did — aria-selected followed the
+      highlight — so a screen reader heard "selected" for a row nobody had
+      chosen, and the row that WAS chosen was announced as unselected.
+      Three independent cues carry selection, so it survives losing colour:
+      the check GLYPH, the fill, and the ARIA state. None of them is the fill
+      alone.
+    */
+    .option.is-selected { background-color: var(--colorNeutralBackground1Selected); }
+    .option.is-selected .option-check { visibility: visible; }
+
+    /*
+      The active option is never colour-only: it carries a brand left edge, a
+      background change, and aria-activedescendant.
+    */
+    .option.is-active {
+      background-color: var(--colorNeutralBackground2);
+      border-left: var(--strokeWidthThicker) solid var(--colorCompoundBrandStroke);
+      padding-left: var(--spacingHorizontalXS);
     }
 
-    .preview {
+    /*
+      Selected AND active is the ordinary case the instant the list opens with
+      a feature already chosen. The row keeps the selected fill and gains the
+      active edge; one cue never cancels the other.
+    */
+    .option.is-selected.is-active { background-color: var(--colorNeutralBackground1Selected); }
+
+    /*
+      The one failure this control can report: a request the host refused.
+      Fluent MessageBar anatomy at the popup's own scale — an icon and one
+      sentence that names BOTH features, so which one is still open is never
+      left to inference. It sits above the count band and changes nothing
+      below it: the band, the rows, and the 36px rhythm are untouched.
+    */
+    .chooser-message {
       display: grid;
-      gap: var(--spacingVerticalXXS);
-      padding: var(--spacingVerticalS) var(--spacingHorizontalMNudge);
-      background-color: var(--colorNeutralBackground1);
-      border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: start;
+      gap: var(--spacingHorizontalS);
+      margin: var(--spacingVerticalNone);
+      padding: var(--spacingVerticalXS) var(--spacingHorizontalS);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorPaletteRedForeground1);
+      background-color: var(--colorPaletteRedBackground1);
+      border: var(--strokeWidthThin) solid var(--colorPaletteRedBorder1);
       border-radius: var(--borderRadiusMedium);
     }
 
-    .preview-title {
-      margin: var(--spacingVerticalNone);
-      font-size: var(--fontSizeBase200);
-      line-height: var(--lineHeightBase200);
-      font-weight: var(--fontWeightSemibold);
-      color: var(--colorNeutralForeground1);
-      overflow-wrap: anywhere;
+    .chooser-message[hidden] { display: none; }
+
+    .chooser-message svg {
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
     }
 
-    .preview-key {
+    .chooser-empty {
       margin: var(--spacingVerticalNone);
-      font-family: var(--fontFamilyMonospace);
-      font-size: var(--fontSizeBase200);
-      line-height: var(--lineHeightBase200);
-      color: var(--colorNeutralForeground3);
-      overflow-wrap: anywhere;
+      padding: var(--spacingVerticalS) var(--spacingHorizontalS);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      color: var(--colorNeutralForeground2);
     }
 
     .steps {
@@ -2821,7 +3308,23 @@
         </div>
       </div>
 
-      <p class="proto-hint">Resize the window to inspect the composition. Query parameters: <code>?state=chooser&amp;theme=dark&amp;controls=open</code></p>
+      <!--
+        Selection outcome. The host can refuse a request — a feature file that
+        vanished between the read and the click, a package whose owner no
+        longer resolves — and the control has to survive that without ever
+        looking as though the refused feature is now open. This switch is the
+        only way to reach that path in a prototype with no host behind it.
+      -->
+      <div class="proto-group">
+        <span class="proto-group-label" id="select-label">Selection</span>
+        <!-- Fluent <Switch> -->
+        <button type="button" class="fui-switch" id="select-switch" role="switch" aria-checked="false" aria-labelledby="select-label select-state">
+          <span class="fui-switch-track" aria-hidden="true"><span class="fui-switch-thumb"></span></span>
+          <span id="select-state">Succeeds</span>
+        </button>
+      </div>
+
+      <p class="proto-hint">Resize the window to inspect the composition. Query parameters: <code>?state=chooser&amp;theme=dark&amp;controls=open&amp;select=fail</code></p>
     </div>
   </div>
 
@@ -2840,18 +3343,39 @@
       </p>
       <span class="shell-bar-rule" aria-hidden="true"></span>
 
-      <!-- GitHub-Desktop-style current-context control + Fluent Popover -->
+      <!--
+        THE ONE FEATURE-SELECTION SURFACE.
+        Inventory available -> a real Fluent Combobox with an inline listbox,
+        whether or not a feature is already open. No inventory at all (the
+        empty projection) -> an inert identity chip. Never both.
+      -->
       <div class="shell-context">
-        <button type="button" class="ctx-button" id="change-feature" aria-expanded="false" aria-haspopup="dialog" aria-controls="feature-popover">
+        <!-- <Field label="Feature" orientation="horizontal"> + <Combobox freeform inlinePopup> -->
+        <div class="ctx-chooser" id="feature-chooser" hidden>
+          <label class="ctx-label" for="feature-input">Feature</label>
+          <div class="ctx-combobox" id="feature-combobox">
+            <input class="ctx-input" id="feature-input" type="text" role="combobox"
+              aria-expanded="false" aria-controls="feature-listbox" aria-autocomplete="list"
+              aria-describedby="feature-message feature-count" autocomplete="off" spellcheck="false"
+              placeholder="Choose from 50 features">
+            <span class="ctx-expand" aria-hidden="true"><svg focusable="false"><use href="#i-chevron"></use></svg></span>
+          </div>
+          <div class="fui-listbox-surface" id="feature-surface" hidden>
+            <p class="chooser-message" id="feature-message" hidden></p>
+            <p class="chooser-count" id="feature-count" role="status" aria-live="polite"></p>
+            <div class="chooser-scroll" id="feature-scroll" tabindex="-1">
+              <ul class="chooser-list" id="feature-listbox" role="listbox" aria-label="Features"></ul>
+            </div>
+            <p class="chooser-empty" id="feature-empty" hidden></p>
+          </div>
+        </div>
+        <!-- Inert: a projection with no inventory has nothing to open. -->
+        <div class="ctx-identity" id="feature-identity">
           <svg class="ctx-icon" aria-hidden="true" focusable="false"><use href="#i-doc"></use></svg>
           <span class="ctx-text">
-            <span class="ctx-caption" id="change-feature-caption">Feature</span>
-            <span class="ctx-name" id="change-feature-label">Dude Canvas UI</span>
+            <span class="ctx-caption">Feature</span>
+            <span class="ctx-name" id="feature-name">Dude Canvas UI</span>
           </span>
-          <svg class="ctx-caret" aria-hidden="true" focusable="false"><use href="#i-chevron"></use></svg>
-        </button>
-        <div class="fui-popover-surface" id="feature-popover" role="dialog" aria-label="Choose a feature" hidden>
-          <div id="popover-chooser"></div>
         </div>
       </div>
 
@@ -2997,6 +3521,38 @@
       { n: '054', title: 'Mockup Opens in Review', slug: 'mockup-opens-in-review', status: 'draft', idea: '.dude/ideas/054-mockup-opens-in-review.md', spec: null }
     ];
 
+    /*
+      THE CHOICES the real projection offers, and the only thing the list may
+      show. A `choose` projection sends one record per candidate carrying its
+      exact idea path, its slug, and its specification path when one is
+      recorded. It does NOT send a title, a status word, or any task state. So
+      the rule below reproduces the live candidate rule exactly — a draft idea,
+      or a defined idea whose feature package has an exact owner.
+
+      A row shows the CANONICAL IDENTIFIER, `NNN-slug`, composed by featureKey
+      from the number and slug that the record's own idea path already carries.
+      That is the name the feature has everywhere else in this window — the
+      identity strip, the breadcrumb, Source details — and repeating it here
+      means the list and the rest of the product agree. The slug stays the
+      payload: it is what selection submits.
+
+      54 idea files, four of them resolved with no active package, 50 choices.
+      Source order is file order. Nothing is promoted, ranked, or defaulted by
+      recency, lifecycle number, or last use, so `052-dude-canvas-ui` sits at
+      position 48 of 50 and is reached by scrolling or by typing, exactly like
+      every other option.
+    */
+    var CHOICES = IDEAS.filter(function (f) {
+      return f.status === 'draft' || (f.status === 'defined' && f.spec);
+    });
+
+    function ideaBySlug(slug) {
+      for (var i = 0; i < IDEAS.length; i += 1) {
+        if (IDEAS[i].slug === slug) { return IDEAS[i]; }
+      }
+      return null;
+    }
+
     function ideaByNumber(n) {
       for (var i = 0; i < IDEAS.length; i += 1) {
         if (IDEAS[i].n === n) { return IDEAS[i]; }
@@ -3011,7 +3567,11 @@
         : 'Defined';
     }
 
-    /* Human-facing identifier: number + slug, never a file path. */
+    /* Human-facing identifier: number + slug, never a file path. It is derived
+       from the same number and slug the exact idea path is built from, so
+       `.dude/ideas/052-dude-canvas-ui.md` reads as `052-dude-canvas-ui`. This
+       is the one label used for a feature anywhere it is named on screen —
+       chooser row, identity strip, and announcements alike. */
     function featureKey(f) {
       return f.n + '-' + f.slug;
     }
@@ -3518,8 +4078,9 @@
 
     /*
       CHOOSER — no feature is selected, nothing is preselected, and no recency,
-      chronology, or lifecycle-number inference is made. The list is the real
-      54-item inventory.
+      chronology, or lifecycle-number inference is made. The list itself lives
+      in the command bar; this projection describes the state and the list, and
+      renders no control of its own.
     */
     STATES.chooser = function () {
       return {
@@ -3528,35 +4089,44 @@
         trust: VERIFIED_TRUST,
         stageWord: 'No feature selected',
         focal: null,
-        lifecycle: null,
+        lifecycle: { unavailable: 'No feature is selected, so there is no lifecycle to show. Opening a feature shows where it stands.' },
         progress: null,
         progressNote: null,
         /*
-          The chooser column is already full: instructions plus a windowed
-          54-row list. These two regions are still declared, compactly, so the
-          window composes the same way in every fixture and so the reason
-          nothing is broken down here is stated rather than implied.
+          Both regions are still declared, compactly, so the window composes
+          the same way in every fixture and so the reason nothing is broken
+          down here is stated rather than implied.
         */
         phases: { unavailable: 'No feature is selected, so there is no phase breakdown to show. Open a feature to see its phases.' },
         activity: { unavailable: 'No feature is selected, so there is no recorded history to show.' },
         notice: null,
         attention: null,
         instruction: {
-          title: 'How this list works',
+          title: 'Select a feature',
+          lead: 'The feature list is the Feature box in the command bar at the top of this window. It is the only place a feature is chosen.',
           steps: [
-            'Type to narrow all 54 features by title, identifier, or stage.',
-            'Arrow keys highlight a result; Home, End, Page Up, and Page Down move further.',
-            'Press Enter to open the highlighted feature. Nothing opens until you do.',
-            'Press Escape to clear the search.'
+            'Click the Feature box, or Tab to it: the list opens on the first click, already showing options.',
+            'Scroll the list to reach any of the ' + CHOICES.length + ' features, or type any part of a number or name to narrow it — 052 and dude both find 052-dude-canvas-ui.',
+            'Arrow keys move the highlight; Home and End jump to the ends of the list.',
+            'Enter opens the highlighted feature. Escape clears the search, then closes the list.'
+          ],
+          facts: [
+            ['In the list', CHOICES.length + ' features, out of ' + IDEAS.length + ' recorded idea files'],
+            ['Not in the list', (IDEAS.length - CHOICES.length) + ' resolved ideas with no active feature package'],
+            ['Order', 'The order the idea files are read. Nothing is promoted by recency, number, or last use.'],
+            ['Each row shows', 'The feature\u2019s canonical identifier, number and name, exactly as it is filed'],
+            ['Once a feature is open', 'The same box shows that feature\u2019s identifier and still opens the whole list. The open feature is the ticked row, and what is displayed is never treated as something you typed.']
           ]
         },
         freshness: { state: 'current', label: 'Read just now', detail: 'The feature list was read completely.' },
-        props: [['Features', '54 available'], ['Selected', 'None'], ['Last read', 'Just now']],
-        work: '54 features to choose from',
+        props: [['Features', CHOICES.length + ' available'], ['Selected', 'None'], ['Last read', 'Just now']],
+        work: CHOICES.length + ' features to choose from',
         evidence: {
           rows: [
-            ['Features', '54 idea files read'],
-            ['Fields read', 'title, slug, status, spec_path'],
+            ['Features', CHOICES.length + ' selectable, from ' + IDEAS.length + ' idea files read'],
+            ['Each choice carries', 'An exact idea path, a slug, and a specification path where one is recorded'],
+            ['Displayed', 'The canonical identifier, number and name, composed from the idea path. No title, stage, or task state is read for a feature that is not open.'],
+            ['Submitted', 'The slug from the chosen record. The displayed identifier is never parsed back into a target.'],
             ['Paths', 'Exact idea and specification paths are shown under the selected feature\u2019s Source details.'],
             ['Selection', 'No exact target was supplied and more than one feature is active, so a chooser is shown instead of a guess.']
           ],
@@ -3627,8 +4197,8 @@
           ],
           after: 'Nothing is shown in place of those, because inferring them from a file that was not read would not be true.',
           action: {
-            label: 'Choose another feature',
-            note: 'Reopens the feature list in the toolbar. This window only reads project state; nothing on it can change any.'
+            label: 'Return to the feature list',
+            note: 'Drops this target and reopens the list in the command bar. This window only reads project state; nothing on it can change any.'
           }
         },
         attention: {
@@ -3698,123 +4268,260 @@
     }
 
     /* ---------------------------------------------------------------- */
-    /* Chooser — ONE Fluent Combobox/Listbox composite, ONE tab stop     */
+    /* FEATURE COMBOBOX — the one selection surface, one tab stop        */
     /* ---------------------------------------------------------------- */
     /*
-      54 features must never become 54 tab stops. The search input is the only
-      tabbable node; the listbox is navigated with aria-activedescendant, which
-      is the Fluent v9 Combobox/Listbox behaviour. Reused from
-      fluent-responsive-workspace.html; only the row height changed.
+      WHAT CHANGED, AND WHY — the reported selected-state defect
+        The revised shell put the real Combobox in the command bar and opened
+        it on the first click, which fixed the duplicate control and the
+        two-click list. It then hid that control the moment a feature WAS
+        selected, and the built host went the other way: it kept a field whose
+        VALUE was the selected identifier and fed that same value to the
+        filter. Pressing the chevron with `052-dude-canvas-ui` selected
+        therefore opened a list of exactly one option — the one already
+        selected — and the only way to see the other 49 was to delete a name
+        the user had never typed.
 
-      Visible rows carry title, identifier, and stage. No raw path appears in
-      the chooser: exact paths belong to Source details.
+        Both halves are fixed here, and they are one fix:
+          - The control exists whenever there is an inventory to open, whether
+            a feature is selected or not. Only the empty projection, which has
+            zero features, still shows the inert chip.
+          - THE SELECTED VALUE AND THE QUERY ARE TWO DIFFERENT THINGS. The
+            field displays the committed identifier; the filter is driven by
+            `query`, which is null until the user actually types. Opening
+            filters nothing, so the first click always shows all 50 options
+            with the selected one marked and scrolled into view.
+
+      SHAPE
+        Fluent v9 <Combobox freeform inlinePopup> with `selectedOptions` and a
+        `value` the app controls — the same split Fluent's own filtering
+        example uses, where `onOptionSelect` sets the display value and
+        `onChange` sets the search string. The input is the only tabbable node;
+        the listbox is navigated with aria-activedescendant, so 50 options
+        never become 50 tab stops. The popup is inline in the DOM tree next to
+        its own control, which is what the host embeds cleanly. No portal, no
+        dialog, no focus trap, and no second copy anywhere on the page.
+
+      EVERY OPTION IS REALLY THERE
+        All 50 options are rendered into the listbox. The scroller shows five
+        of them (eight on a tall window) and the rest are one scroll or one
+        keystroke away. Nothing slices the list to the first rows, so the
+        scrollbar, the arrow keys, End, and the filter all describe the same
+        complete set of 50 — and so does opening the list on a feature that is
+        already selected.
+
+      ONE NAME ON SCREEN, ONE NAME ON THE WIRE
+        A row is labelled with the canonical identifier — `052-dude-canvas-ui`
+        — so the list names features the same way the rest of the window and
+        the repository do, and the closed field displays that same string for
+        the selected feature. The record's slug is what selection submits. The
+        filter accepts either form, so the number and the name are both
+        typable, and neither identity is guessed from the other.
+
+      NOTHING IS COMMITTED THAT DID NOT HAPPEN
+        A selection is committed only when the handler accepts it. A refused
+        request leaves `committed` exactly where it was, puts the previous
+        identifier back in the field, re-marks the previous row, and says in
+        one sentence which feature is still open. An abandoned search — Escape,
+        blur, an outside click — is discarded the same way. The field can never
+        be left displaying a value the window is not actually showing.
     */
-    function createChooser(host, opts) {
-      var id = opts.id;
-      var WINDOW = 12;
-      var ROW = 56;
+    var chooser = (function () {
+      var ROW = 36;                       /* --chooser-row, as a number */
 
-      var query = '';
+      var root = document.getElementById('feature-chooser');
+      var identity = document.getElementById('feature-identity');
+      var combobox = document.getElementById('feature-combobox');
+      var input = document.getElementById('feature-input');
+      var surface = document.getElementById('feature-surface');
+      var scroll = document.getElementById('feature-scroll');
+      var listbox = document.getElementById('feature-listbox');
+      var count = document.getElementById('feature-count');
+      var empty = document.getElementById('feature-empty');
+      var message = document.getElementById('feature-message');
+
+      /*
+        FIVE PIECES OF STATE, AND THE FIRST TWO ARE NOT THE SAME PIECE.
+          committed      the record the window is actually showing. It owns the
+                         closed display value and the one row that carries
+                         aria-selected. Only an accepted selection changes it.
+          query          null while the user is NOT filtering — which is every
+                         moment until they type — and a string once they are.
+                         A null query means NO FILTER, so the list opens whole
+                         even though the field is displaying a value. This one
+                         distinction is the whole of the reported defect.
+          active         the keyboard highlight and aria-activedescendant. It
+                         starts on the committed row when there is one, and it
+                         commits nothing by moving.
+          selectedIndex  where `committed` sits in the CURRENT filtered list,
+                         or -1 when the filter happens to exclude it. The
+                         selection survives a filter that hides it.
+          choices        the inventory this projection actually offers.
+      */
+      var choices = CHOICES.slice();
+      var committed = null;
+      var query = null;
       var active = -1;
-      var lastKey = '';
-      var filtered = IDEAS.slice();
-      var suppressScroll = 0;
+      var selectedIndex = -1;
+      var filtered = choices.slice();
+      var reopenBlocked = false;
+      var onSelect = null;
 
-      host.innerHTML =
-        '<div class="chooser">' +
-          '<label class="chooser-label" for="' + id + '-input">Search features<\/label>' +
-          '<div class="fui-searchbox">' + icon('i-search', '') +
-            '<input class="fui-searchbox-input" id="' + id + '-input" type="text" role="combobox"' +
-              ' aria-expanded="true" aria-controls="' + id + '-listbox" aria-autocomplete="list"' +
-              ' aria-describedby="' + id + '-count ' + id + '-hint" autocomplete="off" spellcheck="false"' +
-              ' placeholder="Search ' + IDEAS.length + ' features">' +
-          '<\/div>' +
-          '<p class="caption" id="' + id + '-count" role="status" aria-live="polite"><\/p>' +
-          '<div class="chooser-scroll" id="' + id + '-scroll" tabindex="-1">' +
-            '<ul class="chooser-list" id="' + id + '-listbox" role="listbox" aria-label="Features"><\/ul>' +
-            '<p class="chooser-empty" id="' + id + '-empty" hidden><\/p>' +
-          '<\/div>' +
-          '<p class="caption" id="' + id + '-hint">Arrow keys highlight a result. Enter opens the highlighted feature. Escape clears the search.<\/p>' +
-        '<\/div>';
+      input.placeholder = 'Choose from ' + choices.length + ' features';
 
-      var input = document.getElementById(id + '-input');
-      var listbox = document.getElementById(id + '-listbox');
-      var scroll = document.getElementById(id + '-scroll');
-      var count = document.getElementById(id + '-count');
-      var empty = document.getElementById(id + '-empty');
+      function isOpen() { return !surface.hidden; }
+      function isFiltering() { return query !== null; }
+      function needle() { return query === null ? '' : query.trim().toLowerCase(); }
+      function committedLabel() { return committed ? featureKey(committed) : ''; }
 
-      function matches(f) {
-        if (!query) { return true; }
-        var hay = (featureKey(f) + ' ' + f.title + ' ' + f.slug + ' ' + f.status + ' ' + stageWord(f)).toLowerCase();
-        return hay.indexOf(query.toLowerCase()) !== -1;
+      /* The closed field shows the committed identifier, never a leftover search. */
+      function showCommitted() { input.value = committedLabel(); }
+
+      function indexIn(list, record) {
+        if (!record) { return -1; }
+        for (var i = 0; i < list.length; i += 1) {
+          if (list[i].slug === record.slug) { return i; }
+        }
+        return -1;
       }
 
-      function optionHtml(f, index) {
-        var isActive = index === active;
-        var current = opts.currentNumber && opts.currentNumber() === f.n;
-        return '<li class="option' + (isActive ? ' is-active' : '') + '"' +
-            ' id="' + id + '-opt-' + index + '" role="option"' +
-            ' aria-selected="' + (isActive ? 'true' : 'false') + '" data-index="' + index + '">' +
-          '<span class="option-title">' +
-            '<span class="option-name">' + esc(f.title) + '<\/span>' +
-            '<span class="fui-badge fui-badge-subtle">' + esc(stageWord(f)) + '<\/span>' +
-            (current ? '<span class="fui-badge fui-badge-outline">Open<\/span>' : '') +
-          '<\/span>' +
-          '<span class="option-meta">' + esc(featureKey(f)) + '<\/span>' +
+      /*
+        Selecting the displayed text on open is the other half of "the value is
+        not the query": the identifier is visible, so the user can read what is
+        selected, and it is highlighted, so the next character REPLACES it
+        instead of appending to it. Nothing is deleted for the user, and
+        nothing has to be deleted by them.
+      */
+      function selectAll() {
+        window.setTimeout(function () {
+          if (document.activeElement !== input) { return; }
+          try { input.setSelectionRange(0, input.value.length); } catch (error) { /* not selectable */ }
+        }, 0);
+      }
+
+      /*
+        THE VISIBLE LABEL IS THE CANONICAL IDENTIFIER.
+        featureKey() composes it from the number and slug that the exact idea
+        path already carries — `052-dude-canvas-ui` — so the row reads as the
+        thing that exists on disk. It is never the raw full path: a listbox row
+        is not a file browser, and `.dude/ideas/052-dude-canvas-ui.md` would
+        spend the whole row on a prefix that is identical for all 50 options.
+        The semantic slug still travels with the record and is what selection
+        submits; the label is identity, not payload.
+        In Fluent v9 this is <Option value={choice.slug} text={featureKey(f)}>:
+        `text` is the typeahead and accessible-name string, `value` is what
+        onOptionSelect hands back. Nothing here reads the visible string back
+        out to resolve a target.
+
+        The identifier is emitted inside `.option-label`, not as a bare text
+        node: the row is a flex container, and a bare text node there becomes
+        an anonymous flex item that `text-overflow` cannot reach, so overflow
+        would be cut mid-glyph instead of ellipsized. The span is
+        presentational — role, aria-selected, data-slug, the 36px row, and the
+        contents-computed accessible name are all unaffected. Fluent's own
+        Option renders its content slot as an element for the same reason.
+
+        The check span in front of it is Fluent's `checkIcon` slot. It is
+        rendered on every row and hidden with `visibility`, so the label column
+        never moves and the accessible name never changes: the span is
+        aria-hidden, and an option's name is still computed from the identifier
+        alone. aria-selected marks the COMMITTED row, and only that row —
+        aria-activedescendant is what says where the highlight is.
+      */
+      function optionHtml(choice, index) {
+        var on = index === active;
+        var chosen = index === selectedIndex;
+        return '<li class="option' + (on ? ' is-active' : '') + (chosen ? ' is-selected' : '') + '"' +
+            ' id="feature-opt-' + index + '" role="option"' +
+            ' aria-selected="' + (chosen ? 'true' : 'false') + '" data-index="' + index + '"' +
+            ' data-slug="' + esc(choice.slug) + '">' +
+          '<span class="option-check" aria-hidden="true">' + icon('i-check', '') + '<\/span>' +
+          '<span class="option-label">' + esc(featureKey(choice)) + '<\/span>' +
         '<\/li>';
       }
 
       function paint() {
-        var total = filtered.length;
-        var maxStart = Math.max(0, total - WINDOW);
-        var start = Math.floor(scroll.scrollTop / ROW) - 2;
-        if (start < 0) { start = 0; }
-        if (start > maxStart) { start = maxStart; }
-        var end = Math.min(total, start + WINDOW);
-
-        /* Scrolling the highlight out of the window drops the highlight
-           rather than leaving aria-activedescendant pointing at nothing. */
-        if (active >= 0 && (active < start || active >= end)) { active = -1; }
-
         var html = '';
-        for (var i = start; i < end; i += 1) { html += optionHtml(filtered[i], i); }
-        listbox.style.paddingTop = (start * ROW) + 'px';
-        listbox.style.paddingBottom = ((total - end) * ROW) + 'px';
+        for (var i = 0; i < filtered.length; i += 1) { html += optionHtml(filtered[i], i); }
         listbox.innerHTML = html;
 
-        empty.hidden = total !== 0;
-        if (total === 0) { empty.textContent = 'No features match ' + JSON.stringify(query) + '.'; }
+        empty.hidden = filtered.length !== 0;
+        if (!filtered.length) { empty.textContent = 'No features match ' + JSON.stringify(query) + '.'; }
+        scroll.hidden = filtered.length === 0;
 
-        input.setAttribute('aria-activedescendant', active >= 0 ? id + '-opt-' + active : '');
+        input.setAttribute('aria-activedescendant', active >= 0 ? 'feature-opt-' + active : '');
       }
 
+      /*
+        The count band describes the LIST, and — when there is one — names the
+        selection separately from the search. Reading "50 features.
+        052-dude-canvas-ui is selected." is the plainest possible statement
+        that the displayed value did not narrow anything, and while a search is
+        running "stays selected" says the same thing the other way round.
+      */
       function updateCount() {
-        count.textContent = !query
-          ? IDEAS.length + ' features. Nothing is selected.'
-          : filtered.length + ' of ' + IDEAS.length + ' features match ' + JSON.stringify(query) + '.';
+        var selected = committedLabel();
+        if (!needle()) {
+          count.textContent = choices.length + ' features.' +
+            (selected ? ' ' + selected + ' is selected.' : '') +
+            ' Scroll or type to narrow them.';
+          return;
+        }
+        count.textContent = filtered.length + ' of ' + choices.length +
+          ' features match ' + JSON.stringify(query) + '.' +
+          (selected ? ' ' + selected + ' stays selected.' : '');
       }
 
+      /*
+        TYPING MATCHES BOTH FORMS OF THE SAME NAME, case-insensitively:
+        the canonical identifier that is on screen (`052-dude-canvas-ui`) and
+        the semantic slug inside it (`dude-canvas-ui`). So `052` narrows by
+        number, `dude` narrows by word, and the exact slug still finds its one
+        row. Matching the visible string alone would silently break every
+        habit built on typing the slug; matching the slug alone would make the
+        number on screen untypable. Substring, not prefix or fuzzy: no ranking
+        is introduced, and source order survives filtering.
+
+        An EMPTY needle is not a filter. That is why opening on a selected
+        feature shows 50 rows: `query` is null, the needle is empty, and the
+        committed identifier sitting in the field is display, not input.
+      */
       function refilter() {
-        filtered = IDEAS.filter(matches);
-        active = -1;
-        suppressScroll += 1;
-        scroll.scrollTop = 0;
+        var find = needle();
+        filtered = !find ? choices.slice() : choices.filter(function (choice) {
+          return featureKey(choice).toLowerCase().indexOf(find) !== -1 ||
+            choice.slug.toLowerCase().indexOf(find) !== -1;
+        });
+        selectedIndex = indexIn(filtered, committed);
+        /*
+          Opening without typing starts the highlight ON the committed row, the
+          way Fluent seeds activeOption from selectedOptions, so the first
+          ArrowDown steps from where the user already is and the selected row
+          is what gets scrolled into view. Typing starts a new search, so
+          nothing is highlighted until the user moves. With nothing committed,
+          nothing is highlighted either: the chooser still preselects nothing.
+          A CLOSED control has no active option at all — aria-activedescendant
+          must not name a row while there is no popup to point into.
+        */
+        active = (isOpen() && !isFiltering()) ? selectedIndex : -1;
         paint();
         updateCount();
-        if (opts.onActive) { opts.onActive(null); }
+        if (active >= 0) { ensureVisible(); } else { scroll.scrollTop = 0; }
+        if (isOpen()) { syncKeysHint(); }
       }
 
+      /*
+        Every row is the same height and every row is rendered, so the exact
+        arithmetic is enough and no scrollIntoView is needed — which also means
+        highlighting an option, or revealing the selected one, can never scroll
+        the page behind the window.
+      */
       function ensureVisible() {
         var top = active * ROW;
         var bottom = top + ROW;
         var view = scroll.clientHeight;
-        if (top < scroll.scrollTop) {
-          suppressScroll += 1;
-          scroll.scrollTop = top;
-        } else if (bottom > scroll.scrollTop + view) {
-          suppressScroll += 1;
-          scroll.scrollTop = bottom - view;
-        }
+        if (top < scroll.scrollTop) { scroll.scrollTop = top; }
+        else if (bottom > scroll.scrollTop + view) { scroll.scrollTop = bottom - view; }
       }
 
       function setActive(index) {
@@ -3822,64 +4529,223 @@
         if (index < 0) { index = 0; }
         if (index > filtered.length - 1) { index = filtered.length - 1; }
         active = index;
-        ensureVisible();
         paint();
-        if (opts.onActive) { opts.onActive(filtered[active]); }
+        ensureVisible();
       }
 
       function move(delta) {
+        if (!isOpen()) { open(); }
         if (!filtered.length) { return; }
         if (active < 0) { setActive(delta > 0 ? 0 : filtered.length - 1); return; }
         setActive(active + delta);
       }
 
-      function choose() {
-        if (active < 0) {
-          announce('Use the arrow keys to highlight a feature, then press Enter to open it.');
-          return;
-        }
-        opts.onSelect(filtered[active], lastKey !== '');
+      /* A page is however many rows are actually visible: five, or eight tall. */
+      function pageSize() { return Math.max(1, Math.round(scroll.clientHeight / ROW)); }
+
+      /*
+        OPENING NEVER FILTERS. The committed identifier is displayed, not
+        typed, so it is not a query: `query` is set to null, the needle is
+        empty, and all 50 options are painted with the committed row marked,
+        active, and scrolled into view. This is the one line the built host got
+        wrong, and it is the one the review asked for.
+      */
+      function open() {
+        if (root.hidden || isOpen()) { return; }
+        surface.hidden = false;
+        input.setAttribute('aria-expanded', 'true');
+        query = null;
+        showCommitted();
+        refilter();
+        syncKeysHint();
       }
 
+      /*
+        Closing discards an unfinished search rather than promoting it: the
+        field goes back to the committed identifier, so a half-typed string can
+        never sit in the bar looking like the feature that is open.
+      */
+      function close() {
+        if (!isOpen()) { return; }
+        surface.hidden = true;
+        input.setAttribute('aria-expanded', 'false');
+        query = null;
+        showCommitted();
+        refilter();                       /* whole list restored, nothing active */
+        syncKeysHint();
+      }
+
+      function clearFailure() {
+        if (message.hidden) { return; }
+        message.hidden = true;
+        message.innerHTML = '';
+        input.removeAttribute('aria-invalid');
+      }
+
+      /*
+        A REFUSED SELECTION IS NOT A SELECTION. Nothing about `committed` was
+        touched, so the field is already showing the feature that is genuinely
+        open; the sentence names the refused one and the kept one, the boundary
+        turns, aria-invalid is set, and the list comes back with the kept row
+        still marked so the next attempt starts from the truth.
+      */
+      function showFailure(picked) {
+        var kept = committedLabel();
+        var text = esc(featureKey(picked)) + ' could not be opened. ' +
+          (kept ? esc(kept) + ' is still the open feature.' : 'No feature is open.');
+        message.innerHTML = '<span aria-hidden="true">' + icon('i-warning', '') + '<\/span>' +
+          '<span>' + text + '<\/span>';
+        message.hidden = false;
+        input.setAttribute('aria-invalid', 'true');
+        announce(featureKey(picked) + ' could not be opened. ' +
+          (kept ? kept + ' is still the open feature.' : 'No feature is open.'));
+      }
+
+      /*
+        The handler answers. `false` means the host refused the request, so
+        nothing was opened and nothing may look opened. Anything else is an
+        acceptance, and by the time it returns the projection has already been
+        replaced and setProjection has committed the new value.
+      */
+      function choose(index, viaKeyboard) {
+        var picked = filtered[index];
+        if (!picked || !onSelect) { return; }
+        clearFailure();
+        close();
+        if (onSelect(picked, viaKeyboard) === false) {
+          showFailure(picked);
+          reopenBlocked = false;
+          input.focus();
+          open();
+        }
+      }
+
+      /*
+        ONE CLICK. Pointer interaction anywhere on the control — the field, the
+        label side, or the expand chevron — opens the list and never toggles it
+        shut, so the first click always ends with the whole list on screen.
+        Escape, an outside click, and choosing are what close it.
+      */
+      combobox.addEventListener('mousedown', function (event) {
+        if (event.target !== input) { event.preventDefault(); }
+        reopenBlocked = false;
+        clearFailure();
+        input.focus();
+        open();
+        selectAll();
+      });
+
+      /* Tabbing in opens it too: focus and click behave the same way. */
+      input.addEventListener('focus', function () {
+        if (reopenBlocked) { return; }
+        open();
+        selectAll();
+      });
+
+      /*
+        Focus left the control. An unfinished search is not a selection, so the
+        field goes back to the committed identifier instead of sitting there
+        looking like a value somebody chose.
+      */
+      input.addEventListener('blur', function () {
+        reopenBlocked = false;
+        if (isOpen()) { close(); return; }
+        if (isFiltering()) { query = null; showCommitted(); refilter(); }
+      });
+
+      /*
+        The user's own text always wins. open() restores the committed label by
+        design, so the typed string is captured first and written back after —
+        otherwise typing into a closed field would erase the character that
+        opened it.
+      */
       input.addEventListener('input', function () {
-        query = input.value.trim();
+        var typed = input.value;
+        reopenBlocked = false;
+        clearFailure();
+        if (!isOpen()) { open(); }
+        input.value = typed;
+        query = typed;
         refilter();
       });
 
+      /* A printable key, with no modifier that would make it a shortcut. */
+      function isTypingKey(event) {
+        return event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
+      }
+
       input.addEventListener('keydown', function (event) {
-        lastKey = event.key;
-        if (event.key === 'ArrowDown') { event.preventDefault(); move(1); return; }
-        if (event.key === 'ArrowUp') { event.preventDefault(); move(-1); return; }
-        if (event.key === 'PageDown') { event.preventDefault(); move(5); return; }
-        if (event.key === 'PageUp') { event.preventDefault(); move(-5); return; }
-        if (event.key === 'Home') { event.preventDefault(); setActive(0); return; }
-        if (event.key === 'End') { event.preventDefault(); setActive(filtered.length - 1); return; }
-        if (event.key === 'Enter') { event.preventDefault(); choose(); return; }
-        if (event.key === 'Escape') {
-          if (query) {
+        /*
+          THE FIRST KEYSTROKE STARTS A SEARCH; IT DOES NOT EDIT THE SELECTION.
+          The field may be displaying a committed identifier. Typing over it —
+          with the text selected or with a caret parked mid-string — clears the
+          display and begins a fresh filter, so nobody has to delete 19
+          characters of a name they never typed in order to search for another
+          one. Backspace and Delete mean the same thing here: drop the
+          displayed value and show the whole list, not chip a letter off an
+          identifier that is not a query.
+        */
+        if (!isFiltering() && (isTypingKey(event) || event.key === 'Backspace' || event.key === 'Delete')) {
+          reopenBlocked = false;
+          clearFailure();
+          open();
+          input.value = '';
+          query = '';
+          if (event.key === 'Backspace' || event.key === 'Delete') {
             event.preventDefault();
-            event.stopPropagation();
-            input.value = '';
-            query = '';
             refilter();
-            announce('Search cleared. ' + IDEAS.length + ' features.');
             return;
           }
-          if (active >= 0) {
-            event.preventDefault();
-            event.stopPropagation();
-            active = -1;
-            paint();
-            if (opts.onActive) { opts.onActive(null); }
-          }
-          /* Otherwise the document-level handler closes the popover and
-             returns focus to its trigger. */
+          /* A printable key falls through: the browser inserts it into the now
+             empty field and the `input` handler above sets the query. */
         }
-      });
 
-      scroll.addEventListener('scroll', function () {
-        if (suppressScroll > 0) { suppressScroll -= 1; return; }
-        paint();
+        if (event.key === 'ArrowDown') { event.preventDefault(); reopenBlocked = false; move(1); return; }
+        if (event.key === 'ArrowUp') { event.preventDefault(); reopenBlocked = false; move(-1); return; }
+        if (event.key === 'PageDown') { event.preventDefault(); move(pageSize()); return; }
+        if (event.key === 'PageUp') { event.preventDefault(); move(-pageSize()); return; }
+        if (event.key === 'Home') { event.preventDefault(); open(); setActive(0); return; }
+        if (event.key === 'End') { event.preventDefault(); open(); setActive(filtered.length - 1); return; }
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          if (active < 0) {
+            announce('Use the arrow keys to highlight a feature, then press Enter to open it.');
+            return;
+          }
+          choose(active, true);
+          return;
+        }
+        /*
+          Escape has two steps, and the first one is a RESTORE, not a wipe.
+            filtering  the search is discarded, the committed identifier comes
+                       back into the field, the whole list comes back with that
+                       row marked and highlighted, and the popup stays open.
+            not        the popup closes and the selection is untouched.
+          Focus stays on the control either way, and the list does not spring
+          straight back open: nothing is trapped and nothing is fought over.
+        */
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          clearFailure();
+          if (isFiltering()) {
+            query = null;
+            showCommitted();
+            refilter();
+            selectAll();
+            announce(committed
+              ? 'Search cleared. ' + choices.length + ' features. ' + committedLabel() + ' is still selected.'
+              : 'Search cleared. ' + choices.length + ' features.');
+            return;
+          }
+          if (isOpen()) {
+            close();
+            reopenBlocked = true;
+            announce(committed
+              ? 'Feature list closed. ' + committedLabel() + ' is still selected.'
+              : 'Feature list closed.');
+          }
+        }
       });
 
       listbox.addEventListener('mousedown', function (event) {
@@ -3890,22 +4756,87 @@
       listbox.addEventListener('click', function (event) {
         var node = event.target.closest ? event.target.closest('[data-index]') : null;
         if (!node) { return; }
-        lastKey = '';
-        opts.onSelect(filtered[Number(node.getAttribute('data-index'))], false);
+        choose(Number(node.getAttribute('data-index')), false);
+      });
+
+      document.addEventListener('click', function (event) {
+        if (!isOpen()) { return; }
+        /*
+          A NODE THIS CONTROL ITSELF REPLACED IS NOT AN OUTSIDE CLICK.
+          Choosing an option repaints the listbox, so the row that was clicked
+          is already detached from the document by the time this document-level
+          listener runs, and `contains` can no longer recognise it as ours.
+          Without this guard the refusal path closed itself: the option handler
+          reopened the list with the kept feature marked, and one event later
+          the very click that caused it was mistaken for a click outside and
+          closed it again — taking the failure sentence, which lives inside the
+          popup, off screen with it. Measured: the refusal reported itself only
+          through the live region and the red boundary, and the list the user
+          was told to try again in was gone.
+        */
+        if (event.target && event.target.isConnected === false) { return; }
+        if (root.contains(event.target)) { return; }
+        close();
       });
 
       paint();
       updateCount();
 
       return {
+        isOpen: isOpen,
+        isFiltering: isFiltering,
         focus: function () { input.focus(); },
-        reset: function () {
-          input.value = '';
-          query = '';
+        open: open,
+        close: close,
+        contains: function (node) { return root.contains(node) || identity.contains(node); },
+        onSelect: function (handler) { onSelect = handler; },
+        /*
+          The command bar never re-renders, so the context slot is updated here
+          rather than rebuilt. The fork is INVENTORY: the control whenever the
+          projection offers features to choose from — selected or not — and the
+          inert chip only when it offers none at all.
+
+          `selected` is the record the projection resolved, so the field and
+          the marked row are set from the projection rather than from whatever
+          the user last clicked. A search that is still in flight survives a
+          background re-render; a finished one does not exist any more.
+        */
+        setProjection: function (inventory, selected, chipLabel) {
+          var live = query;
+          root.hidden = !inventory.length;
+          identity.hidden = !!inventory.length;
+          document.getElementById('feature-name').textContent = chipLabel;
+          clearFailure();
+
+          if (!inventory.length) {
+            /*
+              A projection with no choices has no list, so the mock empties it
+              rather than parking 50 hidden options in the tree — which is what
+              React does when the Combobox is simply not rendered.
+            */
+            close();
+            choices = [];
+            filtered = [];
+            committed = null;
+            query = null;
+            active = -1;
+            selectedIndex = -1;
+            input.value = '';
+            listbox.innerHTML = '';
+            count.textContent = '';
+            empty.hidden = true;
+            return;
+          }
+
+          choices = inventory.slice();
+          input.placeholder = 'Choose from ' + choices.length + ' features';
+          committed = selected || null;
+          query = live;
+          if (!isFiltering()) { showCommitted(); }
           refilter();
         }
       };
-    }
+    }());
 
     /* ---------------------------------------------------------------- */
     /* Work surface — breadcrumb, identity, NEXT STEP, lifecycle         */
@@ -3951,12 +4882,15 @@
     }
 
     function focalHtml(p) {
-      if (p.mode === 'chooser') {
-        return '<section class="work-region" aria-labelledby="work-choose-h">' +
-          '<div class="region-head"><h3 class="region-title" id="work-choose-h">Select a feature<\/h3><\/div>' +
-          '<div id="page-chooser"><\/div>' +
-        '<\/section>';
-      }
+      /*
+        NO SECOND SELECTOR. The chooser projection used to render its own copy
+        of the feature Combobox here, under a "Select a feature" heading, while
+        the command bar carried another one. The window now states the fact —
+        nothing is selected, and the list is in the command bar — and leaves
+        the one control where global context belongs. Nothing in this region
+        is interactive.
+      */
+      if (p.mode === 'chooser') { return ''; }
 
       var f = p.focal;
       var facts = '';
@@ -3990,8 +4924,14 @@
 
     function lifecycleHtml(p) {
       if (!p.lifecycle) { return ''; }
-      return '<section class="work-region" aria-labelledby="work-life-h">' +
-        '<div class="region-head"><h3 class="region-title" id="work-life-h">Lifecycle<\/h3><\/div>' +
+      var head = '<div class="region-head"><h3 class="region-title" id="work-life-h">Lifecycle<\/h3><\/div>';
+      /* Same shared dashed treatment as Phases and Activity: a declared region
+         with nothing true to show is composed, never dropped. */
+      if (p.lifecycle.unavailable) {
+        return '<section class="work-region" aria-labelledby="work-life-h">' + head +
+          unavailableHtml(p.lifecycle.unavailable) + '<\/section>';
+      }
+      return '<section class="work-region" aria-labelledby="work-life-h">' + head +
         (p.lifecycle.note ? '<p class="caption">' + esc(p.lifecycle.note) + '<\/p>' : '') +
         stepper(p.lifecycle.steps) +
         (p.progress ? meter(p.progress) : '') +
@@ -3999,14 +4939,28 @@
       '<\/section>';
     }
 
+    /*
+      The chooser state's whole centre: where the one control is, how it
+      behaves, and what is actually in it. Prose, an ordered list, and
+      label/value facts — no control, no option row, no second list.
+      The facts exist because "why is my feature not at the top" is exactly
+      what the source order does not answer on its own.
+    */
     function instructionHtml(p) {
       if (!p.instruction) { return ''; }
+      var facts = p.instruction.facts
+        ? '<div class="focal-facts">' + p.instruction.facts.map(function (fact) {
+            return '<div class="focal-fact"><p class="fact-label">' + esc(fact[0]) + '<\/p>' +
+              '<p class="fact-value">' + esc(fact[1]) + '<\/p><\/div>';
+          }).join('') + '<\/div>'
+        : '';
       return '<section class="work-region" aria-labelledby="work-how-h">' +
         '<div class="region-head"><h3 class="region-title" id="work-how-h">' + esc(p.instruction.title) + '<\/h3><\/div>' +
+        (p.instruction.lead ? '<p class="work-note">' + esc(p.instruction.lead) + '<\/p>' : '') +
         '<ol class="steps">' + p.instruction.steps.map(function (s) {
           return '<li>' + esc(s) + '<\/li>';
         }).join('') + '<\/ol>' +
-        '<div id="chooser-preview"><\/div>' +
+        facts +
       '<\/section>';
     }
 
@@ -4271,9 +5225,16 @@
     }
 
     function keysHint() {
-      return popoverOpen()
-        ? '<kbd>\u2191<\/kbd> <kbd>\u2193<\/kbd> move · <kbd>Enter<\/kbd> open · <kbd>Esc<\/kbd> close'
-        : '<kbd>Tab<\/kbd> moves · <kbd>Enter<\/kbd> activates';
+      if (!chooser.isOpen()) { return '<kbd>Tab<\/kbd> moves · <kbd>Enter<\/kbd> activates'; }
+      /*
+        Escape's first step depends on whether a search is running, so the hint
+        says which one it is rather than describing both and leaving the reader
+        to work out where they are.
+      */
+      return '<kbd>\u2191<\/kbd> <kbd>\u2193<\/kbd> move · <kbd>Enter<\/kbd> open · ' +
+        (chooser.isFiltering()
+          ? '<kbd>Esc<\/kbd> clears the search'
+          : '<kbd>Esc<\/kbd> closes');
     }
 
     function statusHtml(p) {
@@ -4307,14 +5268,8 @@
     var stateId = 'current';
     var selectedNumber = SELECTED;
     var busy = false;
-    var pageChooser = null;
-
-    var popover = document.getElementById('feature-popover');
-    var changeButton = document.getElementById('change-feature');
-    var changeLabel = document.getElementById('change-feature-label');
-    var changeCaption = document.getElementById('change-feature-caption');
-
-    function popoverOpen() { return !popover.hidden; }
+    /* Prototype-only: makes the host refuse the next selection. See the drawer. */
+    var selectionFails = false;
 
     function projection() {
       if (stateId === 'chooser') { return STATES.chooser(); }
@@ -4326,20 +5281,35 @@
       return STATES[stateId]();
     }
 
-    function renderChooserPreview(f) {
-      var host = document.getElementById('chooser-preview');
-      if (!host) { return; }
-      if (!f) { host.innerHTML = ''; return; }
-      host.innerHTML = '<div class="preview">' +
-        '<p class="preview-title">' + esc(f.title) + '<\/p>' +
-        '<p class="caption">Stage: ' + esc(stageWord(f)) + '<\/p>' +
-        '<p class="preview-key">' + esc(featureKey(f)) + '<\/p>' +
-        '<p class="caption">Highlighted only. Press Enter to open it.<\/p>' +
-      '<\/div>';
-    }
-
     function announce(message) {
       document.getElementById('live-region').textContent = message;
+    }
+
+    /*
+      WHAT THE COMMAND-BAR CONTROL IS OFFERED, PER PROJECTION.
+      A projection that found features carries them all, whether or not one of
+      them is already open — that is the point of the revision: opening a
+      feature must not consume the inventory that let you open it. Only the
+      empty projection, which found nothing at all, has an empty inventory, and
+      it is the only one that falls back to the inert chip.
+    */
+    function inventoryFor(p) {
+      return p.mode === 'empty' ? [] : CHOICES;
+    }
+
+    /*
+      WHICH ROW IS THE SELECTED ONE. The projection's identity key is the
+      canonical identifier, the same string the option labels are built from,
+      so the marked row is resolved from the projection rather than remembered
+      from the last click. A projection with no identity — the chooser — has no
+      selected row, and nothing is marked or preselected.
+    */
+    function selectedChoice(p) {
+      if (p.mode === 'chooser' || !p.identity) { return null; }
+      for (var i = 0; i < CHOICES.length; i += 1) {
+        if (featureKey(CHOICES[i]) === p.identity.key) { return CHOICES[i]; }
+      }
+      return null;
     }
 
     /*
@@ -4350,37 +5320,25 @@
     */
     function render() {
       var p = projection();
+      var hadContextFocus = chooser.contains(document.activeElement);
 
       document.getElementById('work').innerHTML = workHtml(p);
       document.getElementById('dock').innerHTML = dockHtml(p);
       document.getElementById('status').innerHTML = statusHtml(p);
 
-      pageChooser = null;
-      if (p.mode === 'chooser') {
-        pageChooser = createChooser(document.getElementById('page-chooser'), {
-          id: 'page',
-          currentNumber: function () { return null; },
-          onSelect: function (f, viaKeyboard) { selectFeature(f, viaKeyboard); },
-          onActive: renderChooserPreview
-        });
-      }
-
       /*
-        Nothing to choose => a real inert button: `disabled`, out of the tab
-        order, and labelled with the reason in words rather than left focusable
-        behind a low-contrast border.
+        The context slot follows the projection, and only the projection. The
+        fork is INVENTORY, not selection: the Combobox whenever there are real
+        choices to open — with the selected feature displayed and marked when
+        one is open — and the inert identity chip only when the projection
+        carries no features at all. No disabled control is left in the bar
+        pretending to be a way in, and no selection is left without a way out.
       */
-      var noFeatures = p.mode === 'empty';
-      var hadFocus = document.activeElement === changeButton;
-      changeButton.disabled = noFeatures;
-      changeCaption.textContent = noFeatures ? 'Feature' : 'Feature';
-      changeLabel.textContent = noFeatures
-        ? 'No features to choose'
-        : p.mode === 'chooser' ? 'No feature selected'
-        : (p.identity ? p.identity.title : 'No feature selected');
-      if (noFeatures) {
-        closePopover(false);
-        if (hadFocus) { moveFocus(document.getElementById('work-feature-title'), keyboardIntent); }
+      chooser.setProjection(inventoryFor(p), selectedChoice(p), p.mode === 'empty'
+        ? 'No feature available'
+        : (p.identity ? p.identity.title : 'No feature selected'));
+      if (hadContextFocus && !chooser.contains(document.activeElement)) {
+        moveFocus(document.getElementById('work-feature-title'), keyboardIntent);
       }
 
       document.getElementById('proto-now').textContent =
@@ -4394,21 +5352,48 @@
       host.innerHTML = icon('i-keyboard', '') + '<span>' + keysHint() + '<\/span>';
     }
 
-    function selectFeature(f, viaKeyboard) {
-      if (!f) { return; }
+    /*
+      SELECTION SUBMITS THE SEMANTIC SLUG. The row displays the canonical
+      identifier, but the request that leaves this control carries `slug`,
+      which is the field a `choose` record actually sends and the only one the
+      host resolves against. The picked record is passed by reference, so the
+      slug is never re-derived by parsing the visible label — there is one
+      identity, no fallback, and no ambiguity between the two forms.
+
+      THE HANDLER ANSWERS, AND THE ANSWER IS LOAD-BEARING.
+        false  the request was refused. Nothing is committed, nothing is
+               rendered, the selector still holds the feature that is genuinely
+               open, and the control says so. A refusal must never leave the
+               window looking as though the refused feature were open.
+        true   the projection is replaced, the list closes, and focus lands on
+               the heading of the feature that was just opened — not back on a
+               control the user has finished with. The announcement names the
+               canonical identifier, because that is what the user just read on
+               the row, and the same string is now displayed in the bar.
+    */
+    function selectFeature(choice, viaKeyboard) {
+      if (!choice) { return false; }
+      var f = ideaBySlug(choice.slug);
+      if (!f) { return false; }
+      /*
+        The one modelled refusal. A real host can fail here — a feature file
+        that moved between the read and the click, a package whose exact owner
+        no longer resolves — and the prototype drawer is the only way to reach
+        that path in a page with no host behind it. The refusal is returned,
+        not announced here: the control knows both the refused feature and the
+        one it kept, so it is the honest place to say which is which.
+      */
+      if (selectionFails) { return false; }
       selectedNumber = f.n;
       /* Fixtures other than Current describe 052 only. */
       if (stateId === 'chooser' || (f.n !== SELECTED && stateId !== 'current')) {
         stateId = 'current';
         syncRadios();
       }
-      closePopover(false);
       render();
-      var target = document.getElementById('work-feature-title');
-      if (!target || !moveFocus(target, viaKeyboard || keyboardIntent)) {
-        moveFocus(changeButton, viaKeyboard || keyboardIntent);
-      }
-      announce('Opened ' + f.title + '.');
+      moveFocus(document.getElementById('work-feature-title'), viaKeyboard || keyboardIntent);
+      announce('Opened ' + featureKey(f) + '.');
+      return true;
     }
 
     /* ---------------------------------------------------------------- */
@@ -4564,45 +5549,38 @@
     });
 
     /* ---------------------------------------------------------------- */
-    /* Feature popover — the same chooser component, at every width       */
+    /* The one feature control is wired to the one selection handler      */
     /* ---------------------------------------------------------------- */
-    var popoverChooser = createChooser(document.getElementById('popover-chooser'), {
-      id: 'pop',
-      currentNumber: function () { return selectedNumber; },
-      onSelect: function (f, viaKeyboard) { selectFeature(f, viaKeyboard); },
-      onActive: null
-    });
+    /*
+      Open, close, filter, keyboard, and outside-click all live inside the
+      Combobox above. Nothing else in the window opens a feature list, because
+      there is nothing else to open.
+    */
+    chooser.onSelect(function (choice, viaKeyboard) { return selectFeature(choice, viaKeyboard); });
 
-    function openPopover() {
-      if (changeButton.disabled) { return; }
-      popover.hidden = false;
-      changeButton.setAttribute('aria-expanded', 'true');
-      syncKeysHint();
-      popoverChooser.reset();
-      popoverChooser.focus();
+    /* ---------------------------------------------------------------- */
+    /* Selection outcome (prototype control)                             */
+    /* ---------------------------------------------------------------- */
+    /*
+      Not part of Dude, and not a product setting. It exists so the refusal
+      path can be reviewed in the same window as the success path: with it on,
+      every request is refused, the selector keeps the feature that is actually
+      open, and the popup says which request failed and which feature stands.
+    */
+    var selectSwitch = document.getElementById('select-switch');
+    var selectStateLabel = document.getElementById('select-state');
+
+    function syncSelectionControl() {
+      selectSwitch.setAttribute('aria-checked', selectionFails ? 'true' : 'false');
+      selectStateLabel.textContent = selectionFails ? 'Fails' : 'Succeeds';
     }
 
-    function closePopover(returnFocus) {
-      if (popover.hidden) { return; }
-      popover.hidden = true;
-      changeButton.setAttribute('aria-expanded', 'false');
-      syncKeysHint();
-      /* Escape and the toggle both hand focus back to the trigger. */
-      if (returnFocus) { moveFocus(changeButton, keyboardIntent); }
-    }
-
-    changeButton.addEventListener('click', function () {
-      if (popover.hidden) { openPopover(); } else { closePopover(true); }
-    });
-
-    document.addEventListener('keydown', function (event) {
-      if (event.key === 'Escape') { closePopover(true); }
-    });
-
-    document.addEventListener('click', function (event) {
-      if (popover.hidden) { return; }
-      if (popover.contains(event.target) || changeButton.contains(event.target)) { return; }
-      closePopover(false);
+    selectSwitch.addEventListener('click', function () {
+      selectionFails = !selectionFails;
+      syncSelectionControl();
+      announce(selectionFails
+        ? 'Prototype: selection requests will be refused.'
+        : 'Prototype: selection requests will succeed.');
     });
 
     /* ---------------------------------------------------------------- */
@@ -4684,16 +5662,21 @@
       if (action.getAttribute('data-action') === 'refresh') { refresh(); }
       if (action.getAttribute('data-action') === 'copy') { copyText(action.getAttribute('data-copy'), action); }
       /*
-        The one safe action offered by the not-read notice. It does not
-        navigate, mutate, or read anything new: it opens the feature list that
-        already lives in the command bar, and focus lands on its search input.
-        The document click listener above would close a popover opened from
+        The one safe action offered by the not-read notice. It selects nothing
+        and reads nothing new: it hands focus to the one control in the command
+        bar and opens its list, with the feature that is currently open still
+        displayed in the field and still marked in the list. It is a way BACK
+        to the single selector, never a second one, and it no longer throws the
+        current selection away to get there — the list opens whole either way,
+        so there is nothing to gain by clearing it.
+        The chooser's own outside-click handler would close a list opened from
         inside the document, so this is deferred past that handler.
       */
       if (action.getAttribute('data-action') === 'choose') {
         window.setTimeout(function () {
-          openPopover();
-          announce('Feature list opened. Type to narrow it.');
+          chooser.focus();
+          chooser.open();
+          announce('Feature list opened. ' + CHOICES.length + ' features. Scroll it, or type to narrow it.');
         }, 0);
       }
     });
@@ -4711,8 +5694,10 @@
           selectedNumber = wanted === 'chooser' ? null : SELECTED;
         }
         if (params.get('controls') === 'open') { setDrawer(true); }
+        if (params.get('select') === 'fail') { selectionFails = true; }
       }
       syncRadios();
+      syncSelectionControl();
       /* Host preference is the first-load default; the CSS already painted it. */
       syncThemeControl(effectiveDark());
       render();

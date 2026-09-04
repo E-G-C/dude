@@ -3,11 +3,11 @@
  * Dude canvas extension.
  *
  * Registers the single `dude` canvas, opens it on a loopback server, reads one
- * authoritative projection, and closes cleanly. The route set remains private
- * and read-only and sends no session request.
+ * authoritative projection, serves the shipped read-only Now cockpit, and
+ * closes cleanly. The route set remains private and sends no session request.
  *
  * Wiring only; the loopback server lives in ./lib/canvas-server.mjs and the
- * placeholder page in ./ui/index.html. `stdout` is reserved for JSON-RPC, so
+ * browser entry in ./ui/index.html. `stdout` is reserved for JSON-RPC, so
  * everything user-visible goes through `session.log`.
  */
 
@@ -40,7 +40,7 @@ const session = await joinSession({
     createCanvas({
       id: 'dude',
       displayName: 'Dude',
-      description: 'Dude workspace canvas. Currently an internal read-only projection.',
+      description: 'Dude read-only Now cockpit for authoritative feature orientation.',
       open: async (ctx) => {
         const root = process.cwd();
         const target = exactTarget(ctx);
@@ -52,7 +52,7 @@ const session = await joinSession({
           readInput,
         );
         await logToSession(`Dude canvas ${ctx.instanceId}: open at ${instance.url}`);
-        return { title: 'Dude', status: 'Read-only Now projection', url: instance.url };
+        return { title: 'Dude', status: 'Read-only Now cockpit', url: instance.url };
       },
       onClose: async (ctx) => {
         if (await closeInstance(ctx.instanceId)) {

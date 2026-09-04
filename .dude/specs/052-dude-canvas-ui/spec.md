@@ -386,3 +386,27 @@ a permanent narrow shell and preserves a coherent one-column collapse.
 - 2026-09-02 UTC - reconciled package-wide design authority to the approved
   Fluent 2 desktop application shell and its source-backed Phases and Activity;
   retained earlier responsive variants as evidence only.
+- 2026-09-04 UTC - reopened after real-host implementation review: feature
+  selection was duplicated between command chrome and the page, required two
+  clicks to expose options, used oversized one-line rows, and hid later options
+  behind a fixed first-five render. The revised proposal keeps one command-bar
+  selector, opens its scrollable compact list on the first click, removes the
+  duplicate page selector, and keeps all available slugs discoverable by scroll
+  or filtering. Explicit re-approval is required before T012 resumes.
+- 2026-09-04 UTC - user authorized continued Ship execution in direct response
+  to the revised feature-selection approval prompt. Approved the same canonical
+  desktop shell with one command-bar Combobox, first-click options, compact
+  36px slug rows, full scroll/filter access to all choices, and no duplicate
+  page selector; all unrelated approved shell regions remain unchanged.
+- 2026-09-04 UTC - reopened after selected-state real-host review: the visible
+  selected identifier was also used as the filter query, so opening the
+  chevron showed only the current item and required manual text deletion.
+  Refine the single command-bar selector so opening it preserves and marks the
+  current selection while listing every feature; typing alone enters filtering,
+  and a failed selection cannot masquerade as a committed selected value.
+- 2026-09-04 UTC - approved the selected-state refinement from the owner's
+  explicit expected behavior and instruction to keep going: every complete
+  projection supplies the bounded navigation inventory, opening the single
+  command-bar selector lists all features while preserving and marking the
+  committed selection, typing enters filtering without changing committed
+  state, and failed selection restores the prior truthful value.

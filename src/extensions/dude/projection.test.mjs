@@ -58,8 +58,9 @@ function deferred() {
  * @param {number} [exitCode]
  * @param {Record<string, {
  *   output?: unknown,
+ *   stderr?: string,
  *   exitCode?: number,
- *   sequence?: Array<{output?: unknown, exitCode?: number}>,
+ *   sequence?: Array<{output?: unknown, stderr?: string, exitCode?: number}>,
  * }>} [responses]
  */
 function installBdCommand(root, output = [], exitCode = 0, responses = {}) {
@@ -84,6 +85,7 @@ function installBdCommand(root, output = [], exitCode = 0, responses = {}) {
     'const response = reply ?? fallback;',
     'const stdout = typeof response.output === "string" ? response.output : JSON.stringify(response.output);',
     'process.stdout.write(stdout);',
+    'process.stderr.write(response.stderr ?? "");',
     'process.exit(response.exitCode ?? 0);',
     '',
   ].join('\n');
@@ -213,6 +215,17 @@ function assertComplete(projection) {
   assert.equal(projection.complete, true);
   assert.match(projection.readAt, /^\d{4}-\d{2}-\d{2}T.+Z$/);
   assert.equal(projection.attemptedAt, null);
+  assert.ok(Array.isArray(projection.choices), 'every complete projection supplies a navigation inventory');
+  for (const choice of projection.choices) {
+    assert.deepEqual(
+      Object.keys(choice).sort(),
+      ['ideaPath', 'slug', 'specPath'],
+      'navigation choices expose only the public identity triple',
+    );
+    assert.equal(typeof choice.ideaPath, 'string');
+    assert.equal(typeof choice.slug, 'string');
+    assert.ok(choice.specPath === null || typeof choice.specPath === 'string');
+  }
   assert.ok(Array.isArray(projection.sources));
   assert.ok(projection.sources.length > 0);
   assert.ok(projection.sources.every((source) => (
@@ -298,14 +311,22 @@ test('exact target wins while omitted target makes no mtime, chronology, file, t
     ]);
 
     // Assert
+    assertComplete(exactSlug);
+    assertComplete(exactPath);
     assert.equal(exactSlug.selected?.ideaPath, beta.ideaPath);
     assert.equal(exactPath.selected?.ideaPath, alpha.ideaPath);
+    assert.deepEqual(
+      exactSlug.choices,
+      exactPath.choices,
+      'exact selections expose the same source-ordered navigation inventory',
+    );
     assert.equal(ambiguous.status, 'choose');
-    assert.deepEqual(new Set(ambiguous.choices?.map((choice) => choice.ideaPath)), new Set([
-      alpha.ideaPath,
+    assert.deepEqual(ambiguous.choices?.map((choice) => choice.ideaPath), [
       beta.ideaPath,
-    ]), 'multiple candidates remain choices regardless of mtime, lifecycle number, filename, task, or log order');
+      alpha.ideaPath,
+    ], 'multiple candidates retain source order rather than mtime, lifecycle number, filename, task, or log order');
     assertComplete(ambiguous);
+    assertComplete(single);
     assert.equal(single.status, 'ok');
     assert.equal(single.selected?.ideaPath, lone);
     assert.equal(single.selected?.explicit, false);
@@ -355,6 +376,7 @@ test('an explicit resolved idea exposes only supported definition facts', async 
     assert.deepEqual(result.phases, []);
     assert.equal(result.unansweredQuestions, 0);
     assert.deepEqual(result.diagnostics, []);
+    assert.deepEqual(result.choices, [], 'resolved ideas are not navigation choices');
     assert.equal(bd.calls, null, 'resolved lifecycle must finish before a tracked query');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -373,6 +395,7 @@ test('a warning-only missing ideas root returns an empty chooser instead of refu
     // Assert
     assertComplete(result);
     assert.equal(result.status, 'choose');
+    assert.deepEqual(result.choices, [], 'an incomplete base projection withholds navigation choices');
     assert.equal(result.selected, null);
     assert.equal(result.authority, null);
     assert.equal(result.stage, null);
@@ -537,6 +560,81 @@ test('Lightweight projection reuses canonical task readiness and blocker metadat
   }
 });
 
+test('canonical no-database output is equivalent to empty tracked authority across freshness and refresh', async () => {
+  const root = temporaryRoot();
+  try {
+    // Arrange
+    const feature = define(root, '001', 'no-database', {
+      tasks: '- [~] T001@aaaaaaaa Current lightweight task\n',
+    });
+    const successfulEmptyBd = installBdCommand(root);
+    const successfulEmpty = await successfulEmptyBd.run(() => (
+      readNowProjection({ root, target: 'no-database' })
+    ));
+    const successfulEmptyIdentity = successfulEmpty.sources.find((source) => (
+      source.kind === 'tracked' && source.command === 'bd list --all --limit 0 --json'
+    ))?.contentIdentity;
+    const stderrVariants = [
+      [
+        'LF',
+        "Error: no beads database found\nHint: Run 'bd init' to initialize a database here.\n",
+      ],
+      [
+        'CRLF with leading blank lines',
+        "\r\n \t\r\nError: no beads database found\r\nHint: Run 'bd init' to initialize a database here.\r\n",
+      ],
+    ];
+
+    // Act / Assert
+    assertComplete(successfulEmpty);
+    assert.equal(successfulEmpty.status, 'ok');
+    assert.equal(successfulEmpty.selected?.ideaPath, feature.ideaPath);
+    assert.equal(successfulEmpty.authority, 'lightweight');
+    assert.equal(successfulEmpty.next?.description, 'Current lightweight task');
+    assert.deepEqual(successfulEmpty.diagnostics, []);
+    assert.match(successfulEmptyIdentity ?? '', /^sha256:[a-f0-9]{64}$/);
+    assert.deepEqual(successfulEmptyBd.callSequence, [BD_LIST_CALL, BD_LIST_CALL]);
+
+    for (const [label, stderr] of stderrVariants) {
+      const noDatabaseBd = installBdCommand(root, [], 0, {
+        [BD_LIST_CALL.join(' ')]: { output: '', stderr, exitCode: 1 },
+      });
+      const { freshness, refreshed } = await noDatabaseBd.run(async () => ({
+        freshness: await checkProjectionFreshness({ root, projection: successfulEmpty }),
+        refreshed: await refreshNowProjection({
+          root,
+          target: 'no-database',
+          previous: successfulEmpty,
+        }),
+      }));
+      const projection = refreshed.projection;
+      const trackedIdentity = projection.sources.find((source) => (
+        source.kind === 'tracked' && source.command === 'bd list --all --limit 0 --json'
+      ))?.contentIdentity;
+
+      assert.equal(freshness.state, 'current', label);
+      assert.equal(refreshed.replaced, true, label);
+      assert.equal(refreshed.freshness.state, 'current', label);
+      assertComplete(projection);
+      assert.equal(projection.status, 'ok', label);
+      assert.equal(projection.selected?.ideaPath, feature.ideaPath, label);
+      assert.equal(projection.authority, successfulEmpty.authority, label);
+      assert.equal(projection.next?.description, successfulEmpty.next?.description, label);
+      assert.deepEqual(projection.tasks, successfulEmpty.tasks, label);
+      assert.equal(trackedIdentity, successfulEmptyIdentity, label);
+      assert.deepEqual(projection.diagnostics, [], label);
+      assert.doesNotMatch(JSON.stringify(projection), /no beads database found|Hint:/i, label);
+      assert.deepEqual(
+        noDatabaseBd.callSequence,
+        [BD_LIST_CALL, BD_LIST_CALL, BD_LIST_CALL],
+        `${label}: freshness and refresh must never probe bd ready`,
+      );
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('populated tracked authority never falls back to selected feature markdown, including when no tracked task is ready', async () => {
   const root = temporaryRoot();
   try {
@@ -573,6 +671,8 @@ test('populated tracked authority never falls back to selected feature markdown,
     const noneReady = await betaBd.run(() => readNowProjection({ root, target: 'beta' }));
 
     // Assert
+    assertComplete(absent);
+    assertComplete(noneReady);
     assert.equal(absent.selected?.ideaPath, beta.ideaPath);
     assert.equal(absent.authority, 'tracked');
     assert.equal(absent.next, null);
@@ -581,6 +681,14 @@ test('populated tracked authority never falls back to selected feature markdown,
     assert.deepEqual(absent.phases, []);
     assert.deepEqual(absent.blockers, []);
     assert.match(absent.nextReason, /no exact issue/i);
+    assert.deepEqual(
+      absent.choices.map((choice) => ({ ...choice })),
+      [
+        { ideaPath: alpha.ideaPath, slug: 'alpha', specPath: alpha.specPath },
+        { ideaPath: beta.ideaPath, slug: 'beta', specPath: beta.specPath },
+      ],
+      'selected B exposes navigation identity only, without tracked A execution facts',
+    );
     assert.deepEqual(absent.diagnostics.map((item) => item.code), ['TRACKED_FEATURE_NOT_FOUND']);
     assert.deepEqual(absent.attention.map((item) => item.code), ['TRACKED_FEATURE_NOT_FOUND']);
     assert.deepEqual(
@@ -1800,6 +1908,7 @@ test('final lifecycle verification rejects an exact-target mixed read and refres
       path: '.',
     }]);
     assertSafeReadAction(mixedRead);
+    assert.deepEqual(mixedRead.choices, [], 'a failed final inventory identity check withholds navigation choices');
     assert.equal(mixedRead.sources.length, 0, 'a rejected mixed read exposes no stale source identities');
     assert.ok(!JSON.stringify(mixedRead).includes(root), 'conflict facts must retain repository-relative paths');
     assert.doesNotMatch(JSON.stringify(mixedRead), /\bsha256:/, 'a primary failure view must not expose raw hashes');
@@ -1858,6 +1967,7 @@ test('final lifecycle verification rejects stale omitted auto-selection and refr
       'PROJECTION_READ_CONFLICT',
     ]);
     assertSafeReadAction(mixedRead);
+    assert.deepEqual(mixedRead.choices, [], 'a failed final omitted-selection identity check withholds navigation choices');
 
     assert.equal(refreshed.replaced, false);
     assert.equal(refreshed.projection, previous);
@@ -1959,6 +2069,7 @@ test('41-package exact and omitted first-use selection paths leave unselected pa
     // Assert
     assertComplete(exact.result);
     assert.equal(exact.result.selected?.ideaPath, features[0].ideaPath);
+    assert.equal(exact.result.choices.length, 41, 'complete exact selections retain the bounded navigation inventory');
     assert.ok(exact.readPaths.includes(path.resolve(root, features[0].specPath)));
     assert.ok(exact.readPaths.includes(path.resolve(root, features[0].tasksPath)));
     assert.equal(
@@ -2185,11 +2296,21 @@ test('one injected operation shares one decreasing deadline across list and read
 test('injected tracked command failures are typed, private, and never fall back to markdown', async () => {
   // Arrange
   const overflow = Buffer.alloc((8 * 1024 * 1024) + 1, 'x');
+  const noDatabaseStderr = "Error: no beads database found\nHint: Run 'bd init' to initialize a database here.\n";
   const scenarios = [
     ['list nonzero', 'list', { status: 1, stdout: '[]', stderr: '/private/list-error' }, 'TRACKED_AUTHORITY_UNAVAILABLE', null],
+    ['list no-database with stdout', 'list', { status: 1, stdout: '[]', stderr: noDatabaseStderr }, 'TRACKED_AUTHORITY_UNAVAILABLE', null],
+    ['list no-database altered case', 'list', { status: 1, stdout: '', stderr: noDatabaseStderr.replace('Error:', 'error:') }, 'TRACKED_AUTHORITY_UNAVAILABLE', null],
+    ['list no-database altered message', 'list', { status: 1, stdout: '', stderr: noDatabaseStderr.replace('database found', 'database is available') }, 'TRACKED_AUTHORITY_UNAVAILABLE', null],
+    ['list no-database prefixed', 'list', { status: 1, stdout: '', stderr: `bd: ${noDatabaseStderr}` }, 'TRACKED_AUTHORITY_UNAVAILABLE', null],
+    ['list no-database suffixed', 'list', { status: 1, stdout: '', stderr: noDatabaseStderr.replace('found\n', 'found here\n') }, 'TRACKED_AUTHORITY_UNAVAILABLE', null],
+    ['list no-database with error', 'list', { error: new Error('acquisition failed'), status: null, stdout: '', stderr: noDatabaseStderr }, 'TRACKED_AUTHORITY_UNAVAILABLE', null],
+    ['list no-database with signal', 'list', { status: 1, stdout: '', stderr: noDatabaseStderr, signal: 'SIGTERM' }, 'TRACKED_AUTHORITY_UNAVAILABLE', null],
+    ['list no-database with timeout', 'list', { status: 1, stdout: '', stderr: noDatabaseStderr, timeout: true }, 'TRACKED_AUTHORITY_UNAVAILABLE', null],
     ['list malformed', 'list', { status: 0, stdout: '{', stderr: '' }, 'TRACKED_AUTHORITY_UNAVAILABLE', null],
     ['list overflow', 'list', { status: 0, stdout: overflow, stderr: '' }, 'TRACKED_AUTHORITY_UNAVAILABLE', null],
     ['ready nonzero', 'ready', { status: 1, stdout: '[]', stderr: '/private/ready-error' }, 'TRACKED_READINESS_UNAVAILABLE', 'tracked'],
+    ['ready no-database', 'ready', { status: 1, stdout: '', stderr: noDatabaseStderr }, 'TRACKED_READINESS_UNAVAILABLE', 'tracked'],
     ['ready malformed', 'ready', { status: 0, stdout: '{', stderr: '' }, 'TRACKED_READINESS_UNAVAILABLE', 'tracked'],
     ['ready overflow', 'ready', { status: 0, stdout: overflow, stderr: '' }, 'TRACKED_READINESS_UNAVAILABLE', 'tracked'],
   ];
