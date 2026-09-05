@@ -252,6 +252,25 @@ function machineReadableDate(value) {
   return value.endsWith(' UTC') ? value.slice(0, -4) : value;
 }
 
+/**
+ * Authoritative all-task completion only: a complete read of a selected feature
+ * whose recorded task counts are non-empty and entirely done, with no recorded
+ * blocker and no next step. Absent counts, an unread tracker, a resolved idea
+ * without a package, and "no canonical task is ready" are never completion.
+ */
+function completionSummary(projection, view) {
+  if (view.mode !== 'feature' || projection?.status !== 'ok') return null;
+  if (projection.stage !== 'Verified') return null;
+  if (projection.next) return null;
+  if (Array.isArray(projection.blockers) && projection.blockers.length > 0) return null;
+  const tasks = projection.tasks;
+  if (!tasks || typeof tasks.total !== 'number' || typeof tasks.done !== 'number') return null;
+  if (tasks.total < 1 || tasks.done !== tasks.total) return null;
+  return tasks.total === 1
+    ? 'The 1 task for this feature is complete.'
+    : `All ${tasks.total} tasks for this feature are complete.`;
+}
+
 function currentPhase(projection) {
   return projection?.phases?.find((phase) => phase.state === 'current')?.name ?? null;
 }
@@ -733,34 +752,50 @@ function FocalRegion({ projection, view, choices, styles }) {
   }
 
   const next = projection?.next?.description ?? null;
+  const complete = next ? null : completionSummary(projection, view);
   const why = next
     ? nextAuthorityReason(projection?.authority)
-    : projection?.nextReason ?? null;
-  const phase = currentPhase(projection);
-  const unavailable = !next;
+    : complete
+      ? null
+      : projection?.nextReason ?? null;
+  const phase = complete ? null : currentPhase(projection);
+  const unavailable = !next && !complete;
   const formattedNext = next ? formatNextStep(next) : null;
-  const headline = formattedNext?.headline || (view.mode === 'empty'
-    ? 'No Dude features were found in this repository.'
-    : view.mode === 'loading'
-      ? 'Reading the current projection…'
-      : 'Next step unavailable');
-  const detail = view.mode === 'empty'
+  const headline = formattedNext?.headline || (complete
+    ? 'All tasks complete'
+    : view.mode === 'empty'
+      ? 'No Dude features were found in this repository.'
+      : view.mode === 'loading'
+        ? 'Reading the current projection…'
+        : 'Next step unavailable');
+  const detail = complete || (view.mode === 'empty'
     ? 'There is no selected project state from which to show a stage, step, or blocker.'
     : view.mode === 'loading'
       ? 'The view will appear only after one complete read.'
       : projection?.blockers?.length
         ? `${projection.blockers.length} authoritative blocker${projection.blockers.length === 1 ? ' is' : 's are'} recorded.`
-        : null;
+        : null);
 
   return (
     <section aria-labelledby="next-heading" className={styles.region}>
       <Card
         appearance="outline"
-        className={mergeClasses(styles.focalCard, unavailable && styles.focalUnavailable)}
+        className={mergeClasses(
+          styles.focalCard,
+          complete && styles.focalComplete,
+          unavailable && styles.focalUnavailable,
+        )}
       >
-        <h3 className={mergeClasses(styles.eyebrow, unavailable && styles.eyebrowUnavailable)} id="next-heading">
-          <Glyph className={styles.icon} name={unavailable ? 'warning' : 'chevron'} />
-          Next step
+        <h3
+          className={mergeClasses(
+            styles.eyebrow,
+            complete && styles.eyebrowComplete,
+            unavailable && styles.eyebrowUnavailable,
+          )}
+          id="next-heading"
+        >
+          <Glyph className={styles.icon} name={complete ? 'check' : unavailable ? 'warning' : 'chevron'} />
+          {complete ? 'Complete' : 'Next step'}
         </h3>
         <Title3 as="p" className={styles.focalHeadline}>{headline}</Title3>
         {formattedNext?.condensed ? (

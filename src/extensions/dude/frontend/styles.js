@@ -374,6 +374,9 @@ export const useCanvasStyles = makeStyles({
     borderLeftColor: tokens.colorNeutralStrokeAccessible,
     boxShadow: 'none',
   },
+  focalComplete: {
+    borderLeftColor: tokens.colorPaletteGreenBorder2,
+  },
   eyebrow: {
     display: 'flex',
     alignItems: 'center',
@@ -388,6 +391,9 @@ export const useCanvasStyles = makeStyles({
   },
   eyebrowUnavailable: {
     color: tokens.colorNeutralForeground3,
+  },
+  eyebrowComplete: {
+    color: tokens.colorPaletteGreenForeground1,
   },
   focalHeadline: {
     maxWidth: layout.headlineMeasure,

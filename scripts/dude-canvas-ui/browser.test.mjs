@@ -76,6 +76,8 @@ function loadChooserSurfaceTokens() {
         background2: cssRgb(theme.colorNeutralBackground2),
         brand: cssRgb(theme.colorCompoundBrandStroke),
         brandForeground: cssRgb(theme.colorBrandForeground1),
+        greenForeground: cssRgb(theme.colorPaletteGreenForeground1),
+        greenBorder: cssRgb(theme.colorPaletteGreenBorder2),
         selected: cssRgb(theme.colorNeutralBackground1Selected),
         stroke2: cssRgb(theme.colorNeutralStroke2),
         thicker: theme.strokeWidthThicker,
@@ -154,7 +156,9 @@ function completeProjection(options = {}) {
   const slug = options.slug ?? 'lightweight-workspace';
   const number = options.number ?? '042';
   const selection = selected(slug, number);
-  const tasks = options.tasks ?? { total: 5, open: 1, inProgress: 1, blocked: 0, done: 3 };
+  const tasks = options.tasks === undefined
+    ? { total: 5, open: 1, inProgress: 1, blocked: 0, done: 3 }
+    : options.tasks;
   const phases = options.phases ?? [
     { name: 'Foundation', total: 3, open: 0, inProgress: 0, blocked: 0, done: 3, state: 'done' },
     { name: 'Verification', total: 2, open: 1, inProgress: 1, blocked: 0, done: 0, state: 'current' },
@@ -291,8 +295,8 @@ const BLOCKED = completeProjection({
   number: '044',
   stage: 'Blocked',
   next: null,
-  nextReason: 'No task is ready until its dependency is complete.',
-  tasks: { total: 3, open: 0, inProgress: 1, blocked: 1, done: 1 },
+  nextReason: 'No canonical task is ready.',
+  tasks: { total: 3, open: 1, inProgress: 0, blocked: 1, done: 1 },
   blockers: [{
     classification: 'external-dependency',
     reason: 'Waiting for the authoritative service response.',
@@ -303,7 +307,7 @@ const BLOCKED = completeProjection({
       reason: 'Waiting for the authoritative service response.',
     },
   }],
-  phases: [{ name: 'Validation', total: 3, open: 0, inProgress: 1, blocked: 1, done: 1, state: 'current' }],
+  phases: [{ name: 'Validation', total: 3, open: 1, inProgress: 0, blocked: 1, done: 1, state: 'current' }],
 });
 const MISMATCH = completeProjection({
   slug: 'selected-b',
@@ -320,6 +324,24 @@ const MISMATCH = completeProjection({
     message: 'Selected feature is absent from the populated tracked board.',
   }],
 });
+
+const COMPLETED_PROJECTIONS = Object.fromEntries([
+  ['complete-lightweight', 'dude-canvas-ui', '052', 'lightweight', 3],
+  ['complete-tracked', 'feature-17', '017', 'tracked', 4],
+  ['complete-single', 'feature-01', '001', 'lightweight', 1],
+].map(([fixture, slug, number, authority, total]) => {
+  const tasks = { total, open: 0, inProgress: 0, blocked: 0, done: total };
+  return [fixture, completeProjection({
+    slug, number, authority, tasks,
+    stage: 'Verified',
+    next: null,
+    nextReason: authority === 'tracked'
+      ? 'No supported next tracked task is currently established.'
+      : 'All canonical tasks are complete.',
+    unansweredQuestions: 0,
+    phases: authority === 'tracked' ? [] : [{ name: 'Delivery', ...tasks, state: 'done' }],
+  })];
+}));
 
 /**
  * Loopback-only production-shape fixture server. Each state is keyed by the
@@ -435,6 +457,47 @@ async function bodyJson(req) {
 
 /** @param {string} fixture */
 function projectionPayload(fixture) {
+  if (Object.hasOwn(COMPLETED_PROJECTIONS, fixture)) {
+    return {
+      projection: COMPLETED_PROJECTIONS[fixture],
+      freshness: freshness('current', 'Every authoritative source matches the last complete read.'),
+    };
+  }
+  if (fixture === 'definition-only' || fixture === 'resolved') {
+    const projection = completeProjection({
+      authority: 'definition',
+      stage: fixture === 'resolved' ? 'Completed without a package' : 'Defined',
+      next: null,
+      nextReason: fixture === 'resolved' ? 'This idea is resolved.' : 'No canonical task execution evidence exists yet.',
+      tasks: null,
+      phases: [],
+    });
+    if (fixture === 'resolved') {
+      projection.selected.specPath = null;
+      projection.sources = projection.sources.filter(({ label }) => label !== 'Specification');
+      projection.latestEvent = null;
+      projection.choices = [];
+    }
+    return { projection, freshness: freshness('current', 'Every authoritative source matches the last complete read.') };
+  }
+  if (fixture === 'tracked-waiting' || fixture === 'tracked-no-executable-tasks') {
+    // Production can have open tasks with no ready issue, or only an exact
+    // owning epic (zero executable tasks). Neither establishes completion.
+    const waiting = fixture === 'tracked-waiting';
+    return {
+      projection: completeProjection({
+        authority: 'tracked',
+        stage: waiting ? 'In progress' : 'Defined',
+        next: null,
+        nextReason: 'No supported next tracked task is currently established.',
+        tasks: waiting
+          ? { total: 2, open: 1, inProgress: 0, blocked: 0, done: 1 }
+          : { total: 0, open: 0, inProgress: 0, blocked: 0, done: 0 },
+        phases: [],
+      }),
+      freshness: freshness('current', 'Every authoritative source matches the last complete read.'),
+    };
+  }
   if (fixture === 'chooser' || fixture === 'empty') {
     return {
       projection: {
@@ -1212,6 +1275,55 @@ async function computedContrastSamples(page, samples = DEFAULT_CONTRAST_SAMPLES)
   })()`);
 }
 
+/** @param {Cdp} page @param {number} total */
+async function assertCompletedCard(page, total) {
+  const card = await evaluate(page, `(() => {
+    const card = document.querySelector('section[aria-labelledby="next-heading"] .fui-Card');
+    const heading = card?.querySelector('h3#next-heading');
+    const glyph = heading?.querySelector('svg');
+    return {
+      heading: heading?.textContent.trim(),
+      paragraphs: [...(card?.querySelectorAll('p') ?? [])].map(node => node.textContent.trim()),
+      glyph: {
+        hidden: glyph?.getAttribute('aria-hidden'),
+        focusable: glyph?.getAttribute('focusable'),
+        paths: [...(glyph?.querySelectorAll('path') ?? [])].map(node => node.getAttribute('d')),
+      },
+      text: card?.innerText,
+      dividers: card?.querySelectorAll('.fui-Divider, [role="separator"]').length,
+      alerts: card?.querySelectorAll('[role="alert"]').length,
+    };
+  })()`);
+  assert.equal(card.heading, 'Complete');
+  assert.deepEqual(card.paragraphs, [
+    'All tasks complete',
+    total === 1 ? 'The 1 task for this feature is complete.' : `All ${total} tasks for this feature are complete.`,
+  ]);
+  assert.deepEqual(card.glyph, {
+    hidden: 'true', focusable: 'false', paths: ['m4.5 8 2.25 2.25L11.75 5'],
+  }, 'shared check is decorative, not the warning glyph');
+  assert.doesNotMatch(card.text, /Why|Current phase|Next step unavailable|commit|merge|release/i);
+  assert.equal(card.dividers, 0, 'no empty facts divider');
+  assert.equal(card.alerts, 0);
+}
+
+/** @param {Cdp} page */
+async function assertUnavailableCard(page) {
+  const card = await evaluate(page, `(() => {
+    const card = document.querySelector('section[aria-labelledby="next-heading"] .fui-Card');
+    return {
+      heading: card?.querySelector('#next-heading')?.textContent.trim(),
+      headline: card?.querySelector('.fui-Title3')?.textContent.trim(),
+      glyph: card?.querySelector('#next-heading svg')?.innerHTML,
+      text: card?.innerText,
+    };
+  })()`);
+  assert.equal(card.heading, 'Next step');
+  assert.equal(card.headline, 'Next step unavailable');
+  assert.match(card.glyph, /M8 2/, 'unavailable card retains the warning glyph');
+  assert.doesNotMatch(card.text, /All tasks complete|tasks? for this feature (?:is|are) complete/);
+}
+
 /** @param {string[]} failures @param {() => void} assertion */
 function collect(failures, assertion) {
   try {
@@ -1331,7 +1443,8 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
       assert.match(blocked, /Blocked Workspace/);
       assert.match(blocked, /Authoritative blocker/);
       assert.match(blocked, /Waiting for the authoritative service response\./);
-      assert.match(blocked, /No task is ready until its dependency is complete\./);
+      assert.match(blocked, /No canonical task is ready\./);
+      await assertUnavailableCard(page);
       screenshots.push(await screenshot(page, 'blocked', 'blocked', 1440, 'light', ['blocker is named in Attention and next reason remains focal']));
 
       for (const [state, expected] of [
@@ -1346,6 +1459,7 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
         assert.match(result.text, /Next step unavailable/);
         assert.equal(result.lifecycle, false, `${state} withholds lifecycle instead of mixing partial facts`);
         assert.match(result.tasks, /Withheld|Not available from this authority/);
+        await assertUnavailableCard(page);
       }
       screenshots.push(await screenshot(page, 'partial', 'partial', 960, 'light', ['incomplete projection withholds task and phase facts']));
 
@@ -1357,6 +1471,90 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
       assert.match(mismatch.dock, /Selected feature is absent from the populated tracked board\./);
       assert.doesNotMatch(mismatch.dock, /Authoritative blocker/);
       assert.doesNotMatch(`${mismatch.main}\n${mismatch.dock}`, /tracked-only-a|Markdown fallback|T001@/i);
+      await assertUnavailableCard(page);
+    });
+
+    await t.test('completed cards show only the confirmed all-task summary, with accessible green treatment', async () => {
+      // Arrange: the user's three-task Lightweight case covers both themes and
+      // the supported narrow/wide layouts; other counts need no duplicate matrix.
+      for (const [state, total, width, theme, identifier] of [
+        ['complete-lightweight', 3, 1440, 'light', '052-dude-canvas-ui'],
+        ['complete-lightweight', 3, 360, 'dark', '052-dude-canvas-ui'],
+        ['complete-tracked', 4, 1440, 'dark', '017-feature-17'],
+        ['complete-single', 1, 360, 'light', '001-feature-01'],
+      ]) {
+        // Act
+        await navigate(page, state, width, theme, base);
+
+        // Assert
+        await assertCompletedCard(page, total);
+        assert.equal(await evaluate(page, `document.querySelector('header input[role="combobox"]')?.value`), identifier);
+        const ax = axNodes((await page.send('Accessibility.getFullAXTree')).nodes);
+        assert.equal(ax.filter(({ role, name, level }) => role === 'heading' && name.toLowerCase() === 'complete' && level === 3).length, 1,
+          `one Complete heading without an announced glyph: ${JSON.stringify(ax.filter(({ role }) => role === 'heading'))}`);
+        assert.equal(ax.some(({ role }) => role === 'alert'), false, 'completion never announces an error');
+        assert.equal(ax.some(({ role, name }) => role === 'img' && /warning|error|check/i.test(name)), false);
+        const geometry = await evaluate(page, `(() => {
+          const card = document.querySelector('section[aria-labelledby="next-heading"] .fui-Card');
+          const rect = card.getBoundingClientRect();
+          return {
+            width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
+            left: rect.left, right: rect.right, height: rect.height,
+            clipped: [...card.querySelectorAll('h3, p')].some(node => node.scrollWidth > node.clientWidth),
+            border: getComputedStyle(card).borderLeftColor,
+          };
+        })()`);
+        assert.equal(geometry.width, width);
+        assert.equal(geometry.scrollWidth, width, `${state} ${theme}: no horizontal overflow`);
+        assert.ok(geometry.left >= 0 && geometry.right <= width && geometry.height > 0);
+        assert.equal(geometry.clipped, false, 'summary is not horizontally clipped');
+        assert.equal(geometry.border, CHOOSER_SURFACE_TOKENS[theme].greenBorder);
+        const samples = await computedContrastSamples(page, [
+          { name: 'completion eyebrow', selector: '#next-heading' },
+          { name: 'completion check', selector: '#next-heading svg' },
+          { name: 'completion boundary', selector: '[aria-labelledby="next-heading"] .fui-Card', property: 'border-left-color' },
+          { name: 'completion headline', selector: '[aria-labelledby="next-heading"] .fui-Title3' },
+          { name: 'completion body', selector: '[aria-labelledby="next-heading"] .fui-Body1' },
+        ]);
+        const observations = [];
+        for (const sample of samples) {
+          if (/eyebrow|check/.test(sample.name)) {
+            assert.equal(sample.foreground, CHOOSER_SURFACE_TOKENS[theme].greenForeground);
+          }
+          assert.match(sample.background, /^rgb\(/, 'measure against the real opaque card background');
+          const ratio = contrast(sample.foreground, sample.background);
+          const large = sample.fontSize >= 24 || (sample.fontSize >= 18.66 && sample.fontWeight >= 700);
+          const threshold = /check|boundary/.test(sample.name) || large ? 3 : 4.5;
+          assert.ok(ratio >= threshold, `${state} ${theme} ${sample.name}: ${ratio.toFixed(2)}:1 >= ${threshold}:1`);
+          observations.push(`${sample.name}: ${ratio.toFixed(2)}:1 (minimum ${threshold}:1); ${sample.foreground} on ${sample.background}`);
+        }
+        await click(page, 'header input[role="combobox"]');
+        await until(() => evaluate(page, `Boolean(document.querySelector('header [role="option"][aria-selected="true"]'))`), 'confirmed completed selection');
+        assert.equal(await evaluate(page, `document.querySelector('header [role="option"][aria-selected="true"]').textContent.trim()`), identifier);
+        await key(page, 'Escape');
+        await until(() => evaluate(page, `document.querySelector('header input[role="combobox"]')?.getAttribute('aria-expanded') === 'false'`), 'completed chooser closed');
+        observations.push(`Confirmed ${identifier}; ${width}px; card ${JSON.stringify(geometry)}; decorative check; no warning, Why, current phase, or divider`);
+        screenshots.push(await screenshot(page, 'completed', state, width, theme, observations));
+      }
+    });
+
+    await t.test('no next step without completed execution never claims all tasks complete', async () => {
+      // Arrange
+      for (const [state, reason] of [
+        ['definition-only', 'No canonical task execution evidence exists yet.'],
+        ['resolved', 'This idea is resolved.'],
+        ['tracked-waiting', 'No supported next tracked task is currently established.'],
+        ['tracked-no-executable-tasks', 'No supported next tracked task is currently established.'],
+      ]) {
+        // Act
+        await navigate(page, state, 1200, 'light', base);
+
+        // Assert
+        await assertUnavailableCard(page);
+        const text = await evaluate(page, `document.querySelector('section[aria-labelledby="next-heading"]').innerText`);
+        assert.ok(text.includes(reason), `${state}: existing reason remains visible`);
+        assert.match(text, /Why/i);
+      }
     });
 
     await t.test('next-step formatting keeps T013 source exact, concise, accessible, and responsive', async () => {
@@ -3902,13 +4100,37 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
         assert.equal(refreshed.projection.selected.slug, 'feature-17');
         assert.equal(refreshed.projection.stage, 'Verified');
         assert.deepEqual(refreshed.projection.tasks, { total: 2, open: 0, inProgress: 0, blocked: 0, done: 2 });
+        assert.equal(refreshed.projection.nextReason, 'All canonical tasks are complete.', 'canonical reason remains in the API data');
         await until(() => evaluate(page, `document.querySelector('aside')?.innerText.includes('Current complete read')
-          && document.querySelector('main')?.innerText.includes('All canonical tasks are complete.')`), 'new complete facts after explicit refresh');
+          && document.querySelector('[aria-labelledby="next-heading"] .fui-Title3')?.textContent === 'All tasks complete'`), 'new complete facts after explicit refresh');
+        await assertCompletedCard(page, 2);
         assert.notEqual(await main(), committed017);
         assert.equal(await value(), '017-feature-17');
         assert.equal((await activeElement(page)).text, 'Refresh');
         screenshots.push(await screenshot(page, 'refreshed-017', 'real-provider', 760, 'light', [
           'Explicit production Refresh replaces changed source with two done tasks and current freshness',
+        ]));
+        // A failed read after completion must retain the completed facts AND the
+        // existing freshness warning; completion is not a freshness override.
+        const completed017 = await main();
+        provider.setOutcome('failure');
+        const completedRefreshCount = requests.filter(({ path }) => path === '/api/refresh').length;
+        await clickRefresh(page);
+        const failedCompletedRequest = await until(
+          () => requests.filter(({ path }) => path === '/api/refresh')[completedRefreshCount],
+          'Refresh of completed feature', 1_500,
+        );
+        const failedCompleted = await readResponse(failedCompletedRequest);
+        assert.equal(failedCompleted.replaced, false);
+        assert.equal(failedCompleted.freshness.state, 'unavailable');
+        assert.deepEqual(failedCompleted.projection, refreshed.projection);
+        await until(() => evaluate(page, `document.querySelector('aside')?.innerText.includes('Read unavailable')`), 'completed read freshness warning');
+        assert.equal(await main(), completed017, 'last complete facts remain intact');
+        await assertCompletedCard(page, 2);
+        assert.match(await evaluate(page, `document.querySelector('aside').innerText`), /last complete read was preserved/);
+        assert.equal((await activeElement(page)).text, 'Refresh');
+        screenshots.push(await screenshot(page, 'completed-read-unavailable', 'real-provider', 760, 'light', [
+          'Failed real-provider Refresh retains the two-task completion card alongside Read unavailable',
         ]));
         const allowed = new Set(['GET /', 'GET /assets/app.js', 'GET /favicon.ico',
           'GET /api/projection', 'GET /api/freshness', 'GET /events', 'POST /api/refresh', 'POST /api/viewport']);
