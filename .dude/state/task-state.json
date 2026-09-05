@@ -479,5 +479,13 @@
       "T013@052rel13": "x"
     },
     "updated_at": "2026-09-04T21:58:56.242Z"
+  },
+  ".dude/specs/055-canvas-acceptance-reliability/tasks.md": {
+    "glyphs": {
+      "T001@055ci001": "x",
+      "T002@055real2": "x",
+      "T003@055grid3": "x"
+    },
+    "updated_at": "2026-09-05T03:43:01.000Z"
   }
 }

@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **2**
+- Ideas awaiting definition: **3**
 - Defined awaiting work: **0**
-- Completed: **52**
+- Completed: **53**
 
 ## Current
 
@@ -22,6 +22,7 @@ No current work to diagram.
 
 - `053` · `design-stage-critique` — Design-Stage Critique (`.dude/ideas/053-design-stage-critique.md`)
 - `054` · `mockup-opens-in-review` — Mockup Opens in Review (`.dude/ideas/054-mockup-opens-in-review.md`)
+- `056` · `ship-orphan-cleanup` — Ship Orphan Cleanup (`.dude/ideas/056-ship-orphan-cleanup.md`)
 
 ## Completed
 
@@ -77,6 +78,7 @@ No current work to diagram.
 - `050` · `completion-closeout-report` — Completion Closeout Report (`.dude/ideas/050-completion-closeout-report.md`)
 - `051` · `retrospective-rubber-duck-pack` — Retrospective Rubber Duck Pack (`.dude/ideas/051-retrospective-rubber-duck-pack.md`)
 - `052` · `dude-canvas-ui` — Dude Canvas UI (`.dude/ideas/052-dude-canvas-ui.md`)
+- `055` · `canvas-acceptance-reliability` — Canvas Acceptance Reliability (`.dude/ideas/055-canvas-acceptance-reliability.md`)
 
 ## Dependency and order notes
 

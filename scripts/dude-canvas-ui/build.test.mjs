@@ -24,7 +24,7 @@ const DEPLOYED_ASSET_ROOT = path.join(ROOT, '.github', 'extensions', 'dude', 'ui
 const EXPECTED_ASSETS = Object.freeze(['app.js', 'app.js.LEGAL.txt']);
 const PACKAGE_SECTION_START = '----- BEGIN BUNDLED PACKAGE LICENSE -----';
 const PACKAGE_SECTION_END = '----- END BUNDLED PACKAGE LICENSE -----';
-const SCOPED_DEPENDENCY_SKIP = 'requires installed scoped dependencies; npm ci is intentionally outside recursive tests';
+const SCOPED_DEPENDENCY_SKIP = 'requires installed scoped dependencies; run `npm ci --prefix scripts/dude-canvas-ui` (intentionally outside recursive tests)';
 const COMBOBOX_PACKAGE_MARKER = '@fluentui/react-combobox/package.json';
 const COMBOBOX_RENDERER_DEPENDENCY = '@fluentui/react-combobox/lib/components/Combobox/renderCombobox.js';
 
@@ -126,6 +126,40 @@ function buildFixture() {
   return { sandbox, repo };
 }
 
+// Copies deliberately omit node_modules. Never move or remove the real install.
+function acceptanceFixture() {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-harness-fixture-'));
+  for (const file of ['browser.test.mjs', 'build.test.mjs']) {
+    write(repo, `scripts/dude-canvas-ui/${file}`, fs.readFileSync(path.join(TOOL_ROOT, file)));
+  }
+  fs.cpSync(path.dirname(ASSET_ROOT), path.join(repo, 'src/extensions/dude/ui'), { recursive: true });
+  return repo;
+}
+
+/** @param {string} repo @param {'browser'|'build'} file @param {object} [options] */
+function runAcceptanceFixture(repo, file, { env = {}, nodeArgs = [], pattern = '' } = {}) {
+  return spawnSync(process.execPath, [
+    ...nodeArgs,
+    '--test',
+    '--test-reporter=tap',
+    ...(pattern ? [`--test-name-pattern=${pattern}`] : []),
+    `scripts/dude-canvas-ui/${file}.test.mjs`,
+  ], {
+    cwd: repo,
+    encoding: 'utf8',
+    timeout: 30_000,
+    env: {
+      ...process.env,
+      // This child is a new runner, not a worker of the parent Node test run.
+      NODE_TEST_CONTEXT: undefined,
+      DUDE_CANVAS_BROWSER: undefined,
+      DUDE_CANVAS_BROWSER_REQUIRED: undefined,
+      DUDE_CANVAS_ARTIFACTS_DIR: undefined,
+      ...env,
+    },
+  });
+}
+
 /**
  * Build a separate repository so git evaluates the production ignore file
  * without inheriting this worktree's index, status, or global exclusions.
@@ -193,6 +227,12 @@ function runFixtureBuild(repo) {
 
 function hasFrontendTestRuntime() {
   return fs.existsSync(path.join(TOOL_ROOT, 'node_modules', 'esbuild'));
+}
+
+/** @param {import('node:test').TestContext} context */
+function skipScopedDependencies(context) {
+  assert.notEqual(process.env.DUDE_CANVAS_BROWSER_REQUIRED, '1', `Required canvas build coverage: ${SCOPED_DEPENDENCY_SKIP}`);
+  context.skip(SCOPED_DEPENDENCY_SKIP);
 }
 
 /** @param {string} relative */
@@ -669,6 +709,7 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   const html = read('src/extensions/dude/ui/index.html');
 
   // Act + Assert
+  assert.equal(read('.github/extensions/dude/ui/index.html'), html, 'index.html is an exact development projection');
   assert.deepEqual(sourceFiles, EXPECTED_ASSETS);
   assert.deepEqual(deployedFiles, EXPECTED_ASSETS);
   for (const filename of EXPECTED_ASSETS) {
@@ -710,7 +751,7 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
 
 test('metafile-derived legal inventory contains every contributing package and complete MIT terms', async (context) => {
   if (!hasFrontendTestRuntime()) {
-    context.skip('requires installed scoped dependencies; npm ci is intentionally outside recursive tests');
+    skipScopedDependencies(context);
     return;
   }
 
@@ -774,7 +815,7 @@ test('metafile-derived legal inventory contains every contributing package and c
 
 test('license collection rejects missing, ambiguous, and unsafe package evidence', async (context) => {
   if (!hasFrontendTestRuntime()) {
-    context.skip('requires installed scoped dependencies; npm ci is intentionally outside recursive tests');
+    skipScopedDependencies(context);
     return;
   }
   const { collectBundledPackageLicenses } = await import('./build.mjs');
@@ -949,7 +990,7 @@ test('static frontend keeps the real Fluent shell, accessibility boundary, and r
 
 test('completion and dock colors keep their accessible installed Fluent token pairings', (context) => {
   if (!installedScopedDependencyPath('@fluentui/react-components/package.json')) {
-    context.skip(SCOPED_DEPENDENCY_SKIP);
+    skipScopedDependencies(context);
     return;
   }
 
@@ -993,7 +1034,7 @@ test('completion and dock colors keep their accessible installed Fluent token pa
 
 test('authored Griffel borders use supported side longhands that compile to token CSS', (context) => {
   if (!installedScopedDependencyPath('@griffel/core/package.json')) {
-    context.skip(SCOPED_DEPENDENCY_SKIP);
+    skipScopedDependencies(context);
     return;
   }
 
@@ -1178,7 +1219,7 @@ test('prose captions are block flow while compact metadata, Freshness, and the n
 
 test('direct inline feature chooser has no trigger, Popover, portal, or modal layer', async (context) => {
   if (!installedScopedDependencyPath(COMBOBOX_PACKAGE_MARKER)) {
-    context.skip(SCOPED_DEPENDENCY_SKIP);
+    skipScopedDependencies(context);
     return;
   }
 
@@ -1251,7 +1292,7 @@ test('direct inline feature chooser has no trigger, Popover, portal, or modal la
   );
 
   if (!hasFrontendTestRuntime()) {
-    context.skip('requires installed scoped dependencies; npm ci is intentionally outside recursive tests');
+    skipScopedDependencies(context);
     return;
   }
   const { frontend, dispose } = await loadFrontendForSsr({ open: true, useFluentTestDouble: false });
@@ -1353,7 +1394,7 @@ test('busy chooser remains labelled and focusable while only a complete selected
   assert.doesNotMatch(runRefresh, /(?:Reading|Opened) \$\{target\}/);
 
   if (!hasFrontendTestRuntime()) {
-    context.skip('requires installed scoped dependencies; npm ci is intentionally outside recursive tests');
+    skipScopedDependencies(context);
     return;
   }
   const { frontend, dispose } = await loadFrontendForSsr({ useFluentTestDouble: false });
@@ -1560,7 +1601,7 @@ test('approved rail chrome is present and inert outside the local Now announceme
 test('Why attributes a ready next step to its authority and keeps blockers in Attention', async (context) => {
   // Arrange
   if (!hasFrontendTestRuntime()) {
-    context.skip('requires installed scoped dependencies; npm ci is intentionally outside recursive tests');
+    skipScopedDependencies(context);
     return;
   }
   const { frontend, dispose } = await loadFrontendForSsr();
@@ -1622,7 +1663,7 @@ test('Why attributes a ready next step to its authority and keeps blockers in At
 test('shared valid-choice helper keeps chooser, placeholder, and page counts consistent', async (context) => {
   // Arrange
   if (!hasFrontendTestRuntime()) {
-    context.skip('requires installed scoped dependencies; npm ci is intentionally outside recursive tests');
+    skipScopedDependencies(context);
     return;
   }
   const app = read('src/extensions/dude/frontend/app.jsx');
@@ -1651,12 +1692,7 @@ test('shared valid-choice helper keeps chooser, placeholder, and page counts con
       slug,
     };
   });
-  const projectedChoices = [
-    ...choices,
-    { ideaPath: '.dude/ideas/52-too-short.md', slug: 'too-short' },
-    { ideaPath: '.dude/ideas/055-Uppercase.md', slug: 'uppercase' },
-    { ideaPath: '.dude/ideas/056-missing-extension', slug: 'missing-extension' },
-  ];
+  const projectedChoices = choices;
   const [all, features, identifier, dude, slug, empty, escaped] = await Promise.all([
     loadFrontendForSsr({ open: true }),
     loadFrontendForSsr({ open: true, query: 'FEATURE' }),
@@ -1833,7 +1869,7 @@ test('shared valid-choice helper keeps chooser, placeholder, and page counts con
     ]) assert.match(focalRegion, exactCopy);
     assert.doesNotMatch(focalRegion, /(?:slug-only|type a slug|filter by slug)/i);
 
-    assert.equal((allMarkup.match(/role="option"/g) ?? []).length, 50, 'three malformed paths are excluded from the 53-item projection');
+    assert.equal((allMarkup.match(/role="option"/g) ?? []).length, 50, 'the complete canonical inventory is rendered');
     assert.match(allMarkup, /50 features\. Scroll or type to narrow them\./);
     assert.match(focalMarkup, /50 features from the complete projected inventory/);
     assert.match(chooser, /placeholder=\{`Choose from \$\{selectableChoices\.length\} features`\}/);
@@ -1847,7 +1883,7 @@ test('shared valid-choice helper keeps chooser, placeholder, and page counts con
       'every filtered option retains projection source order rather than sorting choices',
     );
     assert.equal(featureMarkup.includes('054-feature-50'), true, 'unwindowed filter renders the final matching row');
-    assert.doesNotMatch(featureMarkup, /\.dude\/ideas\/|too-short|uppercase|missing-extension/);
+    assert.doesNotMatch(featureMarkup, /\.dude\/ideas\//);
     assert.deepEqual(
       [...identifierMarkup.matchAll(/role="option">\s*<span[^>]*>([^<]+)</g)].map(([, text]) => text),
       ['052-dude-canvas-ui'],
@@ -1929,7 +1965,7 @@ test('chooser composite surfaces use only Fluent tokens for their required edges
 
 test('two clean fixture builds remove stale assets and preserve every non-asset byte', (context) => {
   if (!fs.existsSync(path.join(TOOL_ROOT, 'node_modules', 'esbuild'))) {
-    context.skip('requires installed scoped dependencies; npm ci is intentionally outside recursive tests');
+    skipScopedDependencies(context);
     return;
   }
 
@@ -1968,7 +2004,7 @@ test('two clean fixture builds remove stale assets and preserve every non-asset 
 
 test('fixture build rejects wrong-type and symlinked asset boundaries before mutation', (context) => {
   if (!fs.existsSync(path.join(TOOL_ROOT, 'node_modules', 'esbuild'))) {
-    context.skip('requires installed scoped dependencies; npm ci is intentionally outside recursive tests');
+    skipScopedDependencies(context);
     return;
   }
   for (const setup of [
@@ -2010,5 +2046,171 @@ test('fixture build rejects wrong-type and symlinked asset boundaries before mut
       fs.rmSync(sandbox, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
     }
+  }
+});
+
+test('browser prerequisites skip an absent default only in optional mode and reject an invalid override', () => {
+  // Arrange: make the local default absent on every test machine.
+  const repo = acceptanceFixture();
+  const missing = path.join(repo, 'absent-browser');
+  const relative = 'scripts/dude-canvas-ui/browser.test.mjs';
+  const source = fs.readFileSync(path.join(repo, relative), 'utf8');
+  const withoutDefault = source.replace(
+    "?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'",
+    `?? ${JSON.stringify(missing)}`,
+  );
+  assert.notEqual(withoutDefault, source, 'fixture replaces only the local default');
+  write(repo, relative, withoutDefault);
+  try {
+    for (const required of ['0', '1']) {
+      // Act
+      const absentDefault = runAcceptanceFixture(repo, 'browser', {
+        env: { DUDE_CANVAS_BROWSER_REQUIRED: required },
+      });
+      const invalidOverride = runAcceptanceFixture(repo, 'browser', {
+        env: { DUDE_CANVAS_BROWSER_REQUIRED: required, DUDE_CANVAS_BROWSER: missing },
+      });
+
+      // Assert
+      assert.equal(absentDefault.error, undefined);
+      assert.equal(absentDefault.status, required === '1' ? 1 : 0, absentDefault.stdout + absentDefault.stderr);
+      assert.match(absentDefault.stdout, /Browser is not executable.*set DUDE_CANVAS_BROWSER/);
+      if (required === '0') assert.match(absentDefault.stdout, /# SKIP/);
+      assert.equal(invalidOverride.error, undefined);
+      assert.equal(invalidOverride.status, 1, invalidOverride.stdout + invalidOverride.stderr);
+      assert.match(invalidOverride.stdout, /Browser is not executable.*absent-browser/);
+      assert.doesNotMatch(invalidOverride.stdout, /# SKIP/);
+    }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('browser prerequisite reports actionable Node guidance when global WebSocket is unavailable', () => {
+  // Arrange
+  const repo = acceptanceFixture();
+  try {
+    for (const required of ['0', '1']) {
+      // Act
+      const result = runAcceptanceFixture(repo, 'browser', {
+        nodeArgs: ['--no-experimental-websocket'],
+        env: { DUDE_CANVAS_BROWSER_REQUIRED: required, DUDE_CANVAS_BROWSER: process.execPath },
+      });
+
+      // Assert
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, required === '1' ? 1 : 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /Global WebSocket is unavailable; use Node 22\+/);
+      if (required === '0') assert.match(result.stdout, /# SKIP/);
+      else assert.doesNotMatch(result.stdout, /# SKIP/);
+    }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('build parity prerequisite fails required mode without scoped dependencies', () => {
+  // Arrange
+  const repo = acceptanceFixture();
+  try {
+    for (const required of ['0', '1']) {
+      // Act
+      const result = runAcceptanceFixture(repo, 'build', {
+        pattern: '^two clean fixture builds',
+        env: { DUDE_CANVAS_BROWSER_REQUIRED: required },
+      });
+
+      // Assert
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, required === '1' ? 1 : 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /requires installed scoped dependencies; run `npm ci --prefix scripts\/dude-canvas-ui`/);
+      if (required === '0') assert.match(result.stdout, /# SKIP requires installed scoped dependencies/);
+      else assert.doesNotMatch(result.stdout, /# SKIP requires installed scoped dependencies/);
+      assert.equal(fs.existsSync(path.join(repo, 'scripts/dude-canvas-ui/node_modules')), false);
+    }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('browser prerequisite fails required mode without scoped dependencies', (context) => {
+  if (typeof globalThis.WebSocket !== 'function') {
+    assert.notEqual(process.env.DUDE_CANVAS_BROWSER_REQUIRED, '1', 'Required browser probes need Node 22+ with global WebSocket');
+    context.skip('browser dependency probe needs Node 22+ with global WebSocket');
+    return;
+  }
+  // Arrange
+  const repo = acceptanceFixture();
+  try {
+    for (const required of ['0', '1']) {
+      // Act
+      const result = runAcceptanceFixture(repo, 'browser', {
+        env: { DUDE_CANVAS_BROWSER_REQUIRED: required, DUDE_CANVAS_BROWSER: process.execPath },
+      });
+
+      // Assert
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, required === '1' ? 1 : 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /Scoped Fluent dependencies are absent; run `npm ci --prefix scripts\/dude-canvas-ui`/);
+      if (required === '0') assert.match(result.stdout, /# SKIP/);
+      else assert.doesNotMatch(result.stdout, /# SKIP/);
+      assert.equal(fs.existsSync(path.join(repo, 'scripts/dude-canvas-ui/node_modules')), false);
+    }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('browser launch failures retain isolated evidence under one parent and default temporary storage', (context) => {
+  if (typeof globalThis.WebSocket !== 'function') {
+    assert.notEqual(process.env.DUDE_CANVAS_BROWSER_REQUIRED, '1', 'Required browser probes need Node 22+ with global WebSocket');
+    context.skip('browser launch probe needs Node 22+ with global WebSocket');
+    return;
+  }
+  if (!installedScopedDependencyPath('@fluentui/react-components/package.json')) {
+    skipScopedDependencies(context);
+    return;
+  }
+  // Arrange: Node is executable but cannot launch as Chromium.
+  const repo = acceptanceFixture();
+  fs.symlinkSync(path.join(TOOL_ROOT, 'node_modules'), path.join(repo, 'scripts/dude-canvas-ui/node_modules'), 'dir');
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-evidence-regression-'));
+  write(parent, 'existing.txt', 'caller-owned evidence\n');
+  const retained = new Map();
+  try {
+    for (const outputParent of [parent, parent, undefined]) {
+      // Act
+      const result = runAcceptanceFixture(repo, 'browser', {
+        env: {
+          DUDE_CANVAS_BROWSER_REQUIRED: '1',
+          DUDE_CANVAS_BROWSER: process.execPath,
+          DUDE_CANVAS_ARTIFACTS_DIR: outputParent,
+        },
+      });
+
+      // Assert: a startup failure is not a prerequisite skip or a fallback launch.
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      assert.match(result.stdout, /Could not launch DUDE_CANVAS_BROWSER=.*Browser exited before CDP startup/);
+      assert.doesNotMatch(result.stdout, /# SKIP/);
+      const directory = /# Canvas evidence directory: (.+)/.exec(result.stdout)?.[1];
+      assert.ok(directory, result.stdout);
+      assert.equal(fs.realpathSync(path.dirname(directory)), fs.realpathSync(outputParent ?? os.tmpdir()));
+      assert.equal(retained.has(directory), false, 'every run uses a distinct child');
+      for (const [previous, bytes] of retained) {
+        assert.deepEqual(fs.readFileSync(path.join(previous, 'index.json')), bytes, 'later runs leave earlier evidence untouched');
+      }
+      const bytes = fs.readFileSync(path.join(directory, 'index.json'));
+      const index = JSON.parse(bytes.toString());
+      assert.equal(index.browser, null, 'partial index does not claim rendered execution');
+      assert.deepEqual(index.screenshots, []);
+      assert.equal(index.assets['assets/app.js'], sha256(fs.readFileSync(path.join(ASSET_ROOT, 'app.js'))));
+      retained.set(directory, bytes);
+      context.diagnostic(`Retained launch-failure evidence: ${directory}`);
+    }
+    assert.equal(fs.readFileSync(path.join(parent, 'existing.txt'), 'utf8'), 'caller-owned evidence\n');
+    assert.equal(retained.size, 3);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
   }
 });

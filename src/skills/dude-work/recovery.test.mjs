@@ -23452,6 +23452,113 @@ test('Feature 029: small zero, one, and several-event logs retain every event an
   }
 });
 
+test('Coordinator Log ISO: offset-first inspection preserves exact events', () => {
+  withWorkspace((root) => {
+    // Arrange: the failing Work055 shape starts with an offset, not a legacy date.
+    const events = [
+      '- 2026-09-04T21:22:30-04:00 - Definition recorded.\n',
+      '- 2026-09-05T01:24:00Z - Ready for fresh inspection.\n',
+    ];
+    const fullLog = `## Coordinator Log\n\n${events.join('')}`;
+    const bytes = ideaBytes(SPEC_PATH, events.join(''));
+    const ownerPath = path.join(root, IDEA_PATH);
+    fs.writeFileSync(ownerPath, bytes);
+    fs.writeFileSync(
+      path.join(root, path.dirname(SPEC_PATH), 'tasks.md'),
+      transitionTasksBytes([{ id: TASK_KEY }]),
+    );
+
+    // Act
+    const inspection = inspect(publicInspectionInput(root));
+
+    // Assert
+    const { item, body } = feature029Owner(inspection);
+    assert.equal(inspection.overflow, false);
+    assert.equal(inspection.blockers.some((blocker) => blocker.subject === 'owner-log'), false);
+    assert.deepEqual(body.events, events);
+    assert.equal(item.text, ownerLogProjectionText(fullLog, events, events));
+    assert.deepEqual(fs.readFileSync(ownerPath), bytes, 'inspection must not rewrite timestamps');
+  });
+});
+
+test('Coordinator Log ISO: Z-first events retain fractional seconds', () => {
+  for (const timestamp of ['2026-09-05T01:24:00Z', '2026-09-05T01:24:00.615Z']) {
+    // Arrange
+    const events = [`- ${timestamp} - Fresh inspection recorded.\n`];
+    const fullLog = `## Coordinator Log\n\n${events.join('')}`;
+    const bytes = ideaBytes(SPEC_PATH, events.join(''));
+
+    // Act
+    const inspection = feature029Inspection(TARGET, IDEA_PATH, bytes);
+
+    // Assert
+    const { item, body } = feature029Owner(inspection);
+    assert.deepEqual(body.events, events, timestamp);
+    assert.equal(item.text, ownerLogProjectionText(fullLog, events, events), timestamp);
+    assert.equal(inspection.blockers.some((blocker) => blocker.subject === 'owner-log'), false, timestamp);
+  }
+});
+
+test('Coordinator Log ISO: mixed events retain continuations and framing digest', () => {
+  // Arrange: ISO rows after a legacy event must not become its continuation.
+  const events = [
+    '- 2026-09-04 - Legacy event.\n  Existing continuation.\n\n',
+    [
+      '- 2026-09-04T21:22:30-04:00 - Offset event: café e\u0301 🚀.',
+      '  - Indented detail stays in this event.',
+      '',
+      '  Follow-up keeps its inline <!-- note --> and trailing spaces.  ',
+      '',
+    ].join('\n'),
+    '- 2026-09-05T01:24:00.615Z - UTC event.\n  Final continuation.\n',
+  ];
+  const log = [
+    '<!-- leading framing -->\n',
+    events[0],
+    '<!-- between-event framing -->\n',
+    events[1],
+    events[2],
+    '<!-- trailing framing -->\n',
+  ].join('');
+  const fullLog = `## Coordinator Log\n\n${log}`;
+  const bytes = ideaBytes(SPEC_PATH, `${log}## After Log\nNot owner-log evidence.\n`);
+
+  // Act
+  const inspection = feature029Inspection(TARGET, IDEA_PATH, bytes);
+
+  // Assert
+  const { item, body } = feature029Owner(inspection);
+  assert.equal(inspection.overflow, false);
+  assert.deepEqual(body.events, events, 'preserve exact event bytes, excluding standalone framing');
+  assert.equal(
+    item.text,
+    ownerLogProjectionText(fullLog, events, events),
+    'bind the complete section including framing, three events, and ordinals 1 through 3',
+  );
+});
+
+test('Coordinator Log ISO: non-framing content before the first event still refuses', () => {
+  // Arrange
+  const log = [
+    '<!-- allowed framing -->',
+    '',
+    'Undated content is not an event.',
+    '- 2026-09-04T21:22:30-04:00 - A later valid event cannot repair the prefix.',
+    '',
+  ].join('\n');
+  const bytes = ideaBytes(SPEC_PATH, log);
+
+  // Act
+  const inspection = feature029Inspection(TARGET, IDEA_PATH, bytes);
+
+  // Assert
+  const owner = inspection.items.find((item) => item.source === 'owner-log');
+  assert.equal(owner?.status, 'malformed');
+  assert.ok(inspection.blockers.some((blocker) => (
+    blocker.code === 'evidence-incomplete' && blocker.subject === 'owner-log'
+  )));
+});
+
 test('Feature 029: real owner ledgers project a bounded suffix without mutating either source file', () => {
   const ledgers = [
     '.dude/ideas/028-agent-orchestration-metadata.md',

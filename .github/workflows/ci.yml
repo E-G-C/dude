@@ -62,7 +62,7 @@ jobs:
       # Dependency-free ESM: no install step. Pass test files explicitly because
       # bare `node --test` discovery does not recurse this tree reliably.
       - name: Unit tests
-        run: find . -name '*.test.mjs' -print0 | xargs -0 node --test
+        run: find . -type d \( -name node_modules -o -name dist \) -prune -o -type f -name '*.test.mjs' -print0 | xargs -0 node --test
 
       - name: Bundle lint
         run: node .github/skills/dude-lint/lint.mjs .
@@ -75,3 +75,38 @@ jobs:
         run: |
           node scripts/build-release.mjs --out dist
           node .github/skills/dude-lint/lint.mjs dist
+
+  canvas-browser:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Install scoped canvas build dependencies
+        run: npm ci --prefix scripts/dude-canvas-ui
+
+      # Test committed assets before any workspace build.
+      - name: Required canvas build and browser acceptance
+        env:
+          DUDE_CANVAS_BROWSER_REQUIRED: '1'
+          DUDE_CANVAS_ARTIFACTS_DIR: ${{ runner.temp }}/canvas-browser
+        run: |
+          DUDE_CANVAS_BROWSER="$(command -v google-chrome)"
+          test -x "$DUDE_CANVAS_BROWSER"
+          export DUDE_CANVAS_BROWSER
+          "$DUDE_CANVAS_BROWSER" --version
+          node --test --test-reporter=tap scripts/dude-canvas-ui/build.test.mjs scripts/dude-canvas-ui/browser.test.mjs
+
+      - name: Retain canvas evidence, including partial failures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: canvas-browser-evidence
+          path: ${{ runner.temp }}/canvas-browser/
+          if-no-files-found: warn

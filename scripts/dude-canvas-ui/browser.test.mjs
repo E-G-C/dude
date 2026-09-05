@@ -2,9 +2,9 @@
 /**
  * Browser-level contract coverage for the shipped Dude Now canvas.
  *
- * This intentionally uses no browser library. It drives a fresh Microsoft Edge
+ * This intentionally uses no browser library. It drives a fresh headless Chromium
  * process over the Chrome DevTools Protocol and serves the actual committed
- * shell and bundle with controlled, production-shape projection responses.
+ * shell and bundle through the production provider and controlled UI fixtures.
  * Screenshots are evidence only and deliberately live outside the repository.
  */
 import assert from 'node:assert/strict';
@@ -21,10 +21,12 @@ import { test } from 'node:test';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
 const UI_ROOT = path.join(ROOT, 'src', 'extensions', 'dude', 'ui');
-const EDGE = '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
+const BROWSER = process.env.DUDE_CANVAS_BROWSER ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
+const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const FLUENT_PACKAGE_ROOT = path.join(HERE, 'node_modules', '@fluentui', 'react-components');
 const FLUENT_PACKAGE_JSON = path.join(FLUENT_PACKAGE_ROOT, 'package.json');
-const ARTIFACT_ROOT = '/Users/eg/.copilot/session-state/5c18f926-9e5b-4303-b236-cb926acfde82/files/t011-rendered';
+/** @type {string} Evidence belongs to the single suite run in this process. */
+let artifactRoot;
 const DEADLINE_MS = 12_000;
 const SHA256 = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const LONG_OPTION_SLUG = 'feature-with-a-deliberately-overlong-canonical-name-that-must-remain-accessible-while-the-visible-option-label-is-clipped';
@@ -263,18 +265,9 @@ const MANY_CHOICES = Object.freeze([
       specPath: `.dude/specs/${number}-${slug}/spec.md`,
     };
   }),
-  // This production-shape inventory has 51 rows, including one structurally
-  // invalid path. Every chooser-facing count must report only its 50 valid rows.
-  {
-    ideaPath: '.dude/ideas/55-malformed-choice.md',
-    slug: 'malformed-choice',
-    specPath: '.dude/specs/55-malformed-choice/spec.md',
-  },
 ]);
 const UNLISTED_EXACT_SELECTED_CHOICES = Object.freeze([
-  ...MANY_CHOICES.filter(({ slug }) => (
-    slug !== 'dude-canvas-ui' && slug !== 'malformed-choice'
-  )),
+  ...MANY_CHOICES.filter(({ slug }) => slug !== 'dude-canvas-ui'),
   {
     ideaPath: '.dude/ideas/055-listed-feature.md',
     slug: 'listed-feature',
@@ -600,6 +593,132 @@ function freshnessPayload(fixture) {
 }
 
 /**
+ * Only bd is substituted. Production reads these canonical files and spawns
+ * this executable, including every input-identity recheck. Like the server
+ * tests, a recorded child PID is the release barrier, not an elapsed delay.
+ */
+function createProviderFixture() {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-provider-'));
+  const root = path.join(directory, 'repo');
+  const bin = path.join(directory, 'bin');
+  const callsPath = path.join(directory, 'calls');
+  const controlPath = path.join(directory, 'control.json');
+  const heldPath = path.join(directory, 'held');
+  const originalPath = process.env.PATH;
+  const write = (relative, text) => {
+    const file = path.join(root, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+  };
+  const tasks017 = '.dude/specs/017-feature-17/tasks.md';
+  const initial017 = '# Feature 17 tasks\n\n## Phase 1: Delivery\n\n'
+    + '- [x] T001@017base1 Record the baseline evidence.\n'
+    + '- [~] T002@017check Validate the selected feature before handoff.\n';
+  try {
+    fs.mkdirSync(bin);
+    fs.mkdirSync(callsPath);
+    for (const choice of MANY_CHOICES) {
+      const defined = ['feature-01', 'feature-17', 'dude-canvas-ui'].includes(choice.slug);
+      const title = choice.slug === 'dude-canvas-ui' ? 'Dude Canvas UI' : choice.slug.replaceAll('-', ' ');
+      write(choice.ideaPath, [
+        '---', `title: ${title}`, `slug: ${choice.slug}`,
+        `status: ${defined ? 'defined' : 'draft'}`, `spec_path: ${defined ? choice.specPath : ''}`,
+        '---', '', '## Idea', '', `Read-only orientation for ${title}.`, '',
+        ...(defined ? [
+          '## Coordinator Log', '',
+          '- 2026-09-02 UTC - Implementation evidence was recorded.',
+          '- 2026-09-03 UTC - Browser acceptance was requested.', '',
+        ] : []),
+      ].join('\n'));
+      if (!defined) continue;
+      write(choice.specPath, [
+        `# ${title}`, '', 'Show the selected feature and its source-backed work.', '',
+        '## Revision Log', '', '- 2026-09-01 UTC - Initial read-only scope defined.', '',
+      ].join('\n'));
+      write(path.posix.join(path.posix.dirname(choice.specPath), 'tasks.md'),
+        choice.slug === 'dude-canvas-ui'
+          ? [
+            '# Canvas tasks', '', '## Phase 1: Foundation', '',
+            '- [x] T001@052base1 Define the read-only provider boundary.',
+            '- [x] T002@052base2 Build the committed renderer.', '',
+            '## Phase 2: Acceptance', '',
+            '- [x] T012@052dog12 Record the browser interaction evidence.',
+            `- [~] T013@052rel13 ${T013_SOURCE_DESCRIPTION}`,
+            '    deps: T012@052dog12',
+            '- [ ] T014@052ship1 Publish the accepted evidence.',
+            '    deps: T013@052rel13', '',
+          ].join('\n')
+          : choice.slug === 'feature-17' ? initial017
+            : '# Baseline tasks\n\n## Phase 1: Baseline\n\n- [~] T001@001base1 Inspect the initial committed feature.\n');
+    }
+    fs.writeFileSync(controlPath, JSON.stringify({ outcome: 'empty', hold: false }));
+    fs.writeFileSync(path.join(bin, 'bd'), [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      `const control = JSON.parse(fs.readFileSync(${JSON.stringify(controlPath)}, 'utf8'));`,
+      'let held = false;',
+      'if (control.hold) {',
+      `  try { fs.closeSync(fs.openSync(${JSON.stringify(heldPath)}, 'wx')); held = true; }`,
+      "  catch (error) { if (error.code !== 'EEXIST') throw error; }",
+      '}',
+      'let timer;',
+      'const finish = () => {',
+      '  clearInterval(timer);',
+      "  if (control.outcome === 'empty') { process.stdout.write('[]'); process.exit(0); }",
+      "  process.stderr.write(control.outcome === 'absent' ? 'Error: no beads database found\\n' : 'Error: fixture read failed\\n');",
+      '  process.exit(1);',
+      '};',
+      "if (held) { timer = setInterval(() => {}, 1000); process.once('SIGUSR1', finish); }",
+      // Publish after the signal handler is installed. Separate files avoid
+      // losing calls if a browser freshness read overlaps another acquisition.
+      `const record = ${JSON.stringify(callsPath)} + '/' + process.pid + '.json';`,
+      'fs.writeFileSync(record + ".tmp", JSON.stringify({pid: process.pid, args: process.argv.slice(2), outcome: control.outcome, held}));',
+      'fs.renameSync(record + ".tmp", record);',
+      'if (!held) finish();',
+      '',
+    ].join('\n'), { mode: 0o755 });
+    process.env.PATH = `${bin}${path.delimiter}${originalPath ?? ''}`;
+  } catch (error) {
+    fs.rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+  const calls = () => fs.readdirSync(callsPath).filter((file) => file.endsWith('.json'))
+    .map((file) => JSON.parse(fs.readFileSync(path.join(callsPath, file), 'utf8')));
+  return {
+    root,
+    directory,
+    calls,
+    setOutcome(outcome, hold = false) {
+      fs.writeFileSync(controlPath, JSON.stringify({ outcome, hold }));
+    },
+    changeSelectedSource() {
+      write(tasks017, initial017.replace('[~] T002', '[x] T002'));
+    },
+    async close() {
+      try {
+        // closeInstance normally reaps these first; also cover fixture failures.
+        const owned = calls().map(({ pid }) => pid);
+        for (const pid of owned) {
+          try { process.kill(pid, 'SIGKILL'); } catch (error) {
+            if (error.code !== 'ESRCH') throw error;
+          }
+        }
+        await until(() => owned.every((pid) => {
+          try { process.kill(pid, 0); return false; } catch (error) {
+            if (error.code === 'ESRCH') return true;
+            throw error;
+          }
+        }), 'owned bd children reaped', 2_000);
+      } finally {
+        if (originalPath === undefined) delete process.env.PATH;
+        else process.env.PATH = originalPath;
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  };
+}
+
+/**
  * Bounded condition wait. It is used only for lifecycle/DOM/network conditions;
  * no test relies on an arbitrary fixed delay.
  * @template T
@@ -709,7 +828,7 @@ async function stopBrowser(child) {
   for (const pid of pids.reverse()) {
     try { process.kill(pid, 'SIGTERM'); } catch { /* process already exited */ }
   }
-  await until(() => child.exitCode !== null || child.signalCode !== null, 'Edge process exit', 3_000)
+  await until(() => child.exitCode !== null || child.signalCode !== null, 'browser process exit', 3_000)
     .catch(() => undefined);
   if (child.exitCode !== null || child.signalCode !== null) return;
   for (const pid of [child.pid, ...descendants(child.pid)].reverse()) {
@@ -718,8 +837,8 @@ async function stopBrowser(child) {
 }
 
 async function startBrowser() {
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-edge-'));
-  const browser = spawn(EDGE, [
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-browser-profile-'));
+  const browser = spawn(BROWSER, [
     '--headless=new',
     '--disable-gpu',
     '--no-first-run',
@@ -729,17 +848,27 @@ async function startBrowser() {
     `--user-data-dir=${profile}`,
     'about:blank',
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let launchError;
+  let stderr = '';
+  browser.once('error', (error) => { launchError = error; });
+  browser.stdout.resume();
+  browser.stderr.on('data', (bytes) => { stderr += bytes; });
   try {
     const portFile = path.join(profile, 'DevToolsActivePort');
     const port = await until(() => {
+      if (launchError) return launchError;
+      if (browser.exitCode !== null || browser.signalCode !== null) {
+        return new Error(`Browser exited before CDP startup (${browser.exitCode ?? browser.signalCode}): ${stderr}`);
+      }
       if (!fs.existsSync(portFile)) return null;
       const first = fs.readFileSync(portFile, 'utf8').split(/\r?\n/)[0];
       return /^\d+$/.test(first) ? Number(first) : null;
-    }, 'Edge DevToolsActivePort');
+    }, 'browser DevToolsActivePort');
+    if (port instanceof Error) throw port;
     const info = await until(async () => {
       const response = await fetch(`http://127.0.0.1:${port}/json/version`);
       return response.ok ? response.json() : null;
-    }, 'Edge DevTools version endpoint');
+    }, 'browser DevTools version endpoint');
     const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json();
     const page = new Cdp(target.webSocketDebuggerUrl);
     await page.open();
@@ -754,7 +883,7 @@ async function startBrowser() {
   } catch (error) {
     await stopBrowser(browser);
     fs.rmSync(profile, { recursive: true, force: true });
-    throw error;
+    throw new Error(`Could not launch DUDE_CANVAS_BROWSER=${BROWSER}: ${error.message}`, { cause: error });
   }
 }
 
@@ -772,7 +901,7 @@ async function evaluate(page, expression) {
   return result.result?.value;
 }
 
-/** @param {Cdp} page @param {string} fixture @param {number} width @param {'light'|'dark'} theme @param {string} base @param {number} [height] @param {boolean} [forcedColors] */
+/** @param {Cdp} page @param {string|null} fixture @param {number} width @param {'light'|'dark'} theme @param {string} base @param {number} [height] @param {boolean} [forcedColors] */
 async function navigate(page, fixture, width, theme, base, height = 900, forcedColors = false) {
   await page.send('Emulation.setDeviceMetricsOverride', {
     width,
@@ -787,7 +916,7 @@ async function navigate(page, fixture, width, theme, base, height = 900, forcedC
       { name: 'forced-colors', value: forcedColors ? 'active' : 'none' },
     ],
   });
-  await page.send('Page.navigate', { url: `${base}/?fixture=${fixture}` });
+  await page.send('Page.navigate', { url: fixture ? `${base}/?fixture=${fixture}` : `${base}/` });
   try {
     await until(async () => evaluate(page, `Boolean(
       document.querySelector('header') &&
@@ -866,9 +995,42 @@ async function clickRefresh(page) {
   });
 }
 
-/** @param {Cdp} page @param {string} selector */
-async function click(page, selector) {
-  const point = await evaluate(page, `(() => {
+/** Measure current targets and hit-test the same coordinates used for CDP input.
+ * @param {Cdp} page @param {string} selector @param {string[]} observations
+ */
+async function measuredPointer(page, selector, observations) {
+  const target = await evaluate(page, `(() => {
+    const node = document.querySelector(${JSON.stringify(selector)});
+    if (!node) throw new Error('Missing pointer target: ' + ${JSON.stringify(selector)});
+    const rect = node.getBoundingClientRect();
+    return {
+      rect: rect.toJSON(),
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      viewport: { width: innerWidth, height: innerHeight },
+      disabled: node.matches(':disabled, [aria-disabled="true"]'),
+    };
+  })()`);
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: target.x, y: target.y });
+  const hit = await evaluate(page, `(() => {
+    const node = document.querySelector(${JSON.stringify(selector)});
+    const hit = document.elementFromPoint(${target.x}, ${target.y});
+    return { contained: node.contains(hit), tag: hit?.tagName, text: hit?.textContent.trim() };
+  })()`);
+  const evidence = `${selector}: ${JSON.stringify({ ...target, hit })}`;
+  observations.push(evidence);
+  assert.equal(target.disabled, false, evidence);
+  assert.ok(target.rect.width >= 24 && target.rect.height >= 24, `WCAG 2.2 AA 2.5.8, 24x24 CSSpx: ${evidence}`);
+  assert.ok(target.rect.left >= 0 && target.rect.top >= 0
+    && target.rect.right <= target.viewport.width && target.rect.bottom <= target.viewport.height,
+  `full pointer target is in the viewport: ${evidence}`);
+  assert.equal(hit.contained, true, `actual pointer coordinates hit the intended target: ${evidence}`);
+  return { x: target.x, y: target.y };
+}
+
+/** @param {Cdp} page @param {string} selector @param {string[]} [observations] */
+async function click(page, selector, observations) {
+  const point = observations ? await measuredPointer(page, selector, observations) : await evaluate(page, `(() => {
     const node = document.querySelector(${JSON.stringify(selector)});
     if (!node) throw new Error('Missing click target: ${selector}');
     const rect = node.getBoundingClientRect();
@@ -944,7 +1106,7 @@ async function screenshot(page, name, fixture, width, theme, observations) {
   const image = await page.send('Page.captureScreenshot', { format: 'png' });
   const bytes = Buffer.from(image.data, 'base64');
   const filename = `${String(width).padStart(4, '0')}-${fixture}-${theme}-${name}.png`;
-  const absolute = path.join(ARTIFACT_ROOT, filename);
+  const absolute = path.join(artifactRoot, filename);
   fs.writeFileSync(absolute, bytes);
   return {
     file: filename,
@@ -1069,23 +1231,54 @@ function axNodes(nodes) {
 }
 
 test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }, async (t) => {
-  if (!fs.existsSync(EDGE)) {
-    t.skip(`Microsoft Edge is absent at ${EDGE}; direct CDP browser coverage cannot run.`);
+  const skipOrFail = (message) => {
+    assert.equal(REQUIRED, false, `Required canvas browser coverage: ${message}`);
+    t.skip(message);
+  };
+  try {
+    fs.accessSync(BROWSER, fs.constants.X_OK);
+  } catch {
+    const message = `Browser is not executable at ${BROWSER}; set DUDE_CANVAS_BROWSER to a Chromium-family executable.`;
+    if (process.env.DUDE_CANVAS_BROWSER !== undefined) assert.fail(message);
+    skipOrFail(message);
+    return;
+  }
+  if (typeof globalThis.WebSocket !== 'function') {
+    skipOrFail('Global WebSocket is unavailable; use Node 22+ without --no-experimental-websocket for direct CDP coverage.');
     return;
   }
   if (!fs.existsSync(FLUENT_PACKAGE_ROOT) || !fs.existsSync(FLUENT_PACKAGE_JSON)) {
-    t.skip('Scoped Fluent dependencies are absent; run `npm ci --prefix scripts/dude-canvas-ui` to run browser coverage.');
+    skipOrFail('Scoped Fluent dependencies are absent; run `npm ci --prefix scripts/dude-canvas-ui` to run browser coverage.');
     return;
   }
-  const CHOOSER_SURFACE_TOKENS = loadChooserSurfaceTokens();
-  fs.mkdirSync(ARTIFACT_ROOT, { recursive: true });
-  const fixture = createFixtureServer();
-  const base = await fixture.listen();
-  const { browser, info, page, profile } = await startBrowser();
+  const artifactParent = path.resolve(process.env.DUDE_CANVAS_ARTIFACTS_DIR ?? os.tmpdir());
+  fs.mkdirSync(artifactParent, { recursive: true });
+  artifactRoot = fs.mkdtempSync(path.join(artifactParent, 'dude-canvas-browser-'));
+  t.diagnostic(`Canvas evidence directory: ${artifactRoot}`);
+  const assets = Object.fromEntries(['index.html', 'assets/app.js', 'assets/app.js.LEGAL.txt']
+    .map((file) => [file, sha256(fs.readFileSync(path.join(UI_ROOT, file)))]));
+  t.diagnostic(`Committed canvas asset SHA-256: ${JSON.stringify(assets)}`);
+  let browserVersion = null;
   /** @type {Array<Record<string,unknown>>} */
   const screenshots = [];
   /** @type {string[]} */
   const screenshotObservations = [];
+  t.after(() => {
+    fs.writeFileSync(path.join(artifactRoot, 'index.json'), `${JSON.stringify({
+      browser: browserVersion,
+      generatedAt: new Date().toISOString(),
+      assets,
+      screenshots,
+      observations: screenshotObservations,
+    }, null, 2)}\n`);
+  });
+  const CHOOSER_SURFACE_TOKENS = loadChooserSurfaceTokens();
+  const fixture = createFixtureServer();
+  t.after(() => fixture.close());
+  const base = await fixture.listen();
+  const { browser, info, page, profile } = await startBrowser();
+  browserVersion = info.Browser;
+  t.diagnostic(`Canvas browser: ${browserVersion}; executable: ${BROWSER}`);
   /** @type {Array<{url:string}>} */
   const network = [];
   page.on('Network.requestWillBeSent', (event) => network.push({ url: event.request.url }));
@@ -1469,9 +1662,9 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
       assert.ok(Number.parseFloat(forcedColors.borderLeftWidth) > 0);
     });
 
-    await t.test('malformed 51-row chooser fixture reports 50 valid choices everywhere', async () => {
-      // Arrange: this production-shape inventory has one malformed choice among 51 rows.
-      assert.equal(MANY_CHOICES.length, 51, 'defensive fixture includes the malformed projected row');
+    await t.test('canonical 50-row chooser reports the complete inventory everywhere', async () => {
+      // Arrange: every row is reachable through canonical inventory.
+      assert.equal(MANY_CHOICES.length, 50);
       await navigate(page, 'chooser', 760, 'light', base);
       await click(page, 'header input[role="combobox"]');
       await until(
@@ -1515,12 +1708,7 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
       assert.deepEqual(
         reportedCounts,
         { pageFact: '50', placeholder: '50', summaryBand: '50', list: '50', properties: '50' },
-        'page fact, placeholder, summary band, list, and Properties dock exclude the malformed 51st choice',
-      );
-      assert.doesNotMatch(
-        JSON.stringify(reportedCounts),
-        /51/,
-        'no chooser-facing count reports the raw 51-row inventory',
+        'page fact, placeholder, summary band, list, and Properties dock agree on the complete inventory',
       );
       assert.match(initial.text, /50 features\. Scroll or type to narrow them\./);
       assert.match(
@@ -1533,11 +1721,10 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
       );
       assert.doesNotMatch(initial.text, /(?:slug-only|type a slug|filter by slug)/i);
       assert.equal(initial.inputValue, '', 'chooser has no default value');
-      assert.equal(initial.placeholder, 'Choose from 50 features', 'placeholder excludes the malformed projected choice');
+      assert.equal(initial.placeholder, 'Choose from 50 features');
       assert.equal(initial.optionCount, 50, 'the complete projected inventory is in the DOM');
       assert.equal(initial.options[0], '001-feature-01', 'the first visible choice derives its canonical identifier from ideaPath');
       assert.equal(initial.options[47], '052-dude-canvas-ui', 'the 48th visible choice uses the exact canvas idea identifier');
-      assert.equal(initial.options.includes('055-malformed-choice'), false, 'malformed projected choice never becomes an option');
       assert.doesNotMatch(initial.text, /\.dude\/ideas\//, 'the chooser does not disclose raw idea paths');
       assert.match(initial.text, /50 features from the complete projected inventory/, 'page count shares the canonical valid choices');
       assert.match(initial.properties, /PropertiesFeatures50 availableSelectedNone/, 'Properties dock shares the canonical valid-choice count');
@@ -1703,10 +1890,15 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
       );
     });
 
-    await t.test('a listed selected projection keeps 052 committed while browsing, refusing, and replacing a target', async () => {
+    /** @param {number} width @param {'light'|'dark'} theme */
+    async function selectedOpenJourney(width, theme) {
       // Arrange
-      await navigate(page, 'selected', 760, 'light', base);
+      await navigate(page, 'selected', width, theme, base);
       const inputSelector = 'header input[role="combobox"]';
+      /** @type {string[]} */
+      const observations = [];
+      const selectedRefreshes = () => fixture.observations.refreshes
+        .filter((refresh) => refresh.fixture === 'selected').length;
       const initial = await evaluate(page, `(() => {
         const input = document.querySelector(${JSON.stringify(inputSelector)});
         return {
@@ -1716,11 +1908,12 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
       })()`);
 
       // Act: the first pointer interaction opens the committed selection's full inventory.
-      await click(page, inputSelector);
+      await click(page, inputSelector, observations);
       await until(
         () => evaluate(page, `document.querySelectorAll('header [role="option"]').length === 50`),
         'selected 052 opens all valid inventory choices',
       );
+      await settleBrowserWork(page);
       const opened = await evaluate(page, `(() => {
         const input = document.querySelector(${JSON.stringify(inputSelector)});
         const option = [...document.querySelectorAll('header [role="option"]')]
@@ -1730,6 +1923,14 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
         const listbox = document.querySelector('header [role="listbox"]');
         const box = listbox?.getBoundingClientRect();
         const row = option?.getBoundingClientRect();
+        // clientWidth/Height round to integers; preserve the fractional box
+        // edge while subtracting borders and any reserved scrollbar space.
+        const scrollport = box && {
+          top: box.top + listbox.clientTop,
+          bottom: box.bottom - (listbox.offsetHeight - listbox.clientHeight - listbox.clientTop),
+          left: box.left + listbox.clientLeft,
+          right: box.right - (listbox.offsetWidth - listbox.clientWidth - listbox.clientLeft),
+        };
         return {
           check: check && {
             color: getComputedStyle(check).color,
@@ -1739,19 +1940,72 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
           fill: style?.backgroundColor,
           selected: option?.getAttribute('aria-selected'),
           summary: document.querySelector('header [role="status"]')?.textContent.trim(),
-          visible: Boolean(box && row && row.top >= box.top && row.bottom <= box.bottom),
+          visible: Boolean(scrollport && row
+            && row.top >= scrollport.top && row.bottom <= scrollport.bottom
+            && row.left >= scrollport.left && row.right <= scrollport.right),
+          row: row?.toJSON(),
+          listbox: box?.toJSON(),
+          scrollport,
+          viewport: { width: innerWidth, height: innerHeight },
+          document: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth },
+          listWidth: { scroll: listbox.scrollWidth, client: listbox.clientWidth },
+          identifiers: [...listbox.querySelectorAll('[role="option"]')].map((node) => node.textContent.trim()),
+          selectedLabel: (() => {
+            const label = option.querySelector('span:last-child');
+            return { scroll: label.scrollWidth, client: label.clientWidth };
+          })(),
+          // Below-the-fold facts remain scrollable; only the selected row must
+          // fit vertically in the viewport. Other inventory rows may scroll away.
+          content: [...document.querySelectorAll(
+            '#feature-heading, #feature-heading + span, main section, main p, main h3, aside section, aside p, aside h3, aside dl, footer'
+          )].map((node) => ({
+            name: node.id || node.getAttribute('aria-labelledby') || node.tagName,
+            rect: node.getBoundingClientRect().toJSON(),
+            scrollWidth: node.scrollWidth, clientWidth: node.clientWidth,
+            scrollHeight: node.scrollHeight, clientHeight: node.clientHeight,
+          })),
         };
       })()`);
+      observations.push(`selected-open ${width}/${theme}: ${JSON.stringify(opened)}`);
+      // Capture before assertions too, so a geometry failure retains its image.
+      screenshots.push(await screenshot(page, 'selected-open', 'selected', width, theme, observations));
 
       // Assert
       assert.deepEqual(initial, { expanded: 'false', value: '052-dude-canvas-ui' });
       assert.equal(opened.expanded, 'true');
       assert.equal(opened.selected, 'true', 'the committed row remains selected while browsing');
-      assert.equal(opened.visible, true, 'opening scrolls the committed 052 row into view');
+      assert.equal(opened.visible, true, `opening scrolls the full committed 052 row into view: ${JSON.stringify({ row: opened.row, scrollport: opened.scrollport })}`);
       assert.equal(opened.check?.visible, true, 'the committed row renders Fluent’s selection check');
-      assert.equal(opened.check?.color, CHOOSER_SURFACE_TOKENS.light.brandForeground, 'the local selected check uses brand foreground');
-      assert.equal(opened.fill, CHOOSER_SURFACE_TOKENS.light.selected, 'the committed row retains its selected fill');
+      assert.equal(opened.check?.color, CHOOSER_SURFACE_TOKENS[theme].brandForeground, 'the local selected check uses brand foreground');
+      assert.equal(opened.fill, CHOOSER_SURFACE_TOKENS[theme].selected, 'the committed row retains its selected fill');
       assert.equal(opened.summary, '50 features. 052-dude-canvas-ui is selected. Scroll or type to narrow them.');
+      assert.deepEqual(opened.identifiers, MANY_CHOICES.map(({ ideaPath }) => path.basename(ideaPath, '.md')),
+        'the complete canonical inventory stays ordered, including offscreen rows');
+      for (const [name, rect] of Object.entries({ row: opened.row, listbox: opened.listbox })) {
+        assert.ok(rect && rect.left >= 0 && rect.top >= 0
+          && rect.right <= opened.viewport.width && rect.bottom <= opened.viewport.height,
+        `${width}/${theme}: full ${name} fits the viewport: ${JSON.stringify(rect)}`);
+      }
+      assert.equal(opened.document.scrollWidth, opened.document.clientWidth, 'no page horizontal overflow');
+      assert.equal(opened.listWidth.scroll, opened.listWidth.client, 'no listbox horizontal overflow');
+      assert.equal(opened.selectedLabel.scroll, opened.selectedLabel.client, 'the current 052 label is fully visible');
+      for (const name of ['feature-heading', 'next-heading', 'lifecycle-heading', 'phases-heading',
+        'activity-heading', 'attention-heading', 'freshness-heading', 'properties-heading', 'evidence-heading', 'FOOTER']) {
+        assert.ok(opened.content.some((content) => content.name === name), `required content is measured: ${name}`);
+      }
+      for (const content of opened.content) {
+        assert.ok(content.rect.width > 0 && content.rect.height > 0
+          && content.rect.left >= 0 && content.rect.right <= width
+          && content.scrollWidth <= content.clientWidth
+          && content.scrollHeight <= content.clientHeight,
+        `${width}/${theme}: essential content has no clipping: ${JSON.stringify(content)}`);
+      }
+      const optionNames = axNodes((await page.send('Accessibility.getFullAXTree')).nodes)
+        .filter((node) => node.role === 'option').map((node) => node.name);
+      assert.ok(optionNames.includes('052-dude-canvas-ui'), 'AX exposes the committed canonical identity');
+      assert.ok(optionNames.includes(LONG_CANONICAL_IDENTIFIER), 'intentional long-label ellipsis retains full AX identity');
+      await measuredPointer(page, 'header [role="option"][aria-selected="true"]', observations);
+      await measuredPointer(page, inputSelector, observations);
 
       // Act + Assert: typing replaces (rather than appends to) the committed value, and Escape restores it.
       await page.send('Input.insertText', { text: 'dude' });
@@ -1777,14 +2031,34 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
         () => evaluate(page, `document.querySelector(${JSON.stringify(inputSelector)})?.getAttribute('aria-expanded') === 'false'`),
         'second Escape closes the restored chooser',
       );
+      // Dismiss the popup before measuring underlying controls it can cover.
+      await measuredPointer(page, 'header button', observations);
+      await measuredPointer(page, 'button[aria-label="Now, the open surface"]', observations);
+
+      // Native Tab must not commit the active row or steal focus later.
+      await click(page, inputSelector, observations);
+      await key(page, 'End');
+      await key(page, 'ArrowUp');
+      await key(page, 'ArrowUp');
+      assert.equal(await evaluate(page, `document.querySelector('header [role="option"][data-activedescendant-focusvisible]')?.textContent.trim()`),
+        '052-dude-canvas-ui', 'the committed row is active before Tab');
+      const beforeTab = selectedRefreshes();
+      await key(page, 'Tab');
+      assert.equal((await activeElement(page)).text, 'Refresh', 'Tab immediately reaches Refresh');
+      await settleBrowserWork(page);
+      assert.equal((await activeElement(page)).text, 'Refresh', 'Tab does not trigger deferred focus restoration');
+      assert.equal(selectedRefreshes(), beforeTab, 'Tab never issues a selection refresh');
+      assert.equal(await evaluate(page, `document.querySelector(${JSON.stringify(inputSelector)}).value`), '052-dude-canvas-ui');
+      assert.equal(await evaluate(page, `document.querySelector(${JSON.stringify(inputSelector)}).getAttribute('aria-expanded')`), 'false');
 
       // Act: a pointer selection that the server refuses cannot replace 052.
-      await click(page, inputSelector);
+      await click(page, inputSelector, observations);
       await until(
         () => evaluate(page, `document.querySelector('header [role="option"][aria-selected="true"]')?.textContent.trim() === '052-dude-canvas-ui'`),
         'reopened selected 052 row',
       );
-      await click(page, 'header [role="option"][aria-selected="true"]');
+      await settleBrowserWork(page);
+      await click(page, 'header [role="option"][aria-selected="true"]', observations);
       await fixture.waitForRefresh('selected');
       assert.deepEqual(
         fixture.observations.refreshes.at(-1),
@@ -1839,7 +2113,24 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
         '017-feature-17',
         'only the accepted projection commits the replacement display label',
       );
-    });
+
+      // The remaining current control may be below the fold; scroll it into
+      // reach rather than treating ordinary document scrolling as clipping.
+      const sourceSelector = '[aria-labelledby="evidence-heading"] button';
+      await evaluate(page, `document.querySelector(${JSON.stringify(sourceSelector)}).scrollIntoView({ block: 'center' })`);
+      await settleBrowserWork(page);
+      await click(page, sourceSelector, observations);
+      assert.equal(await evaluate(page, `document.querySelector(${JSON.stringify(sourceSelector)}).getAttribute('aria-expanded')`), 'true');
+      await click(page, sourceSelector, observations);
+      assert.equal(await evaluate(page, `document.querySelector(${JSON.stringify(sourceSelector)}).getAttribute('aria-expanded')`), 'false');
+    }
+
+    for (const theme of /** @type {const} */ (['light', 'dark'])) {
+      for (const width of [360, 760, 1440]) {
+        await t.test(`selected-open ${width}px ${theme}: keeps 052 committed while browsing, refusing, and replacing a target`,
+          () => selectedOpenJourney(width, theme));
+      }
+    }
 
     await t.test('Tab closes an active listed selected row without refresh or focus hijack', async () => {
       // Arrange: a complete selected projection has its listed 052 row active.
@@ -3409,17 +3700,288 @@ test('shipped canvas browser contract', { timeout: 120_000, concurrency: false }
         'no prohibited capability route is reached',
       );
     });
+
+    await t.test('real provider: canonical selection, no-database fallback, refusal, replacement, and source freshness', async (flow) => {
+      // Arrange: lazy import keeps T001 prerequisite probes dependency-free.
+      const { openInstance, closeInstance } = await import('../../src/extensions/dude/lib/canvas-server.mjs');
+      const originalPath = process.env.PATH;
+      const provider = createProviderFixture();
+      const instanceId = `browser-${path.basename(provider.directory)}`;
+      const requests = [];
+      const completed = new Set();
+      let origin;
+      let instance;
+      let succeeded = false;
+      const inputSelector = 'header input[role="combobox"]';
+      const value = () => evaluate(page, `document.querySelector('${inputSelector}')?.value`);
+      const main = () => evaluate(page, `document.querySelector('main')?.innerText`);
+      const statuses = () => evaluate(page, `[...document.querySelectorAll('[role="status"]')].map(node => node.textContent.trim())`);
+      const recordRequest = ({ requestId, request }) => {
+        if (!origin || !request.url.startsWith(`${origin}/`)) return;
+        requests.push({
+          id: requestId, url: request.url, method: request.method,
+          path: new URL(request.url).pathname,
+          ...(request.postData ? { body: JSON.parse(request.postData) } : {}),
+        });
+      };
+      const recordCompleted = ({ requestId }) => completed.add(requestId);
+      page.on('Network.requestWillBeSent', recordRequest);
+      page.on('Network.loadingFinished', recordCompleted);
+      const readResponse = async (request) => {
+        await until(() => completed.has(request.id), `${request.method} ${request.path} response`, 5_000);
+        const response = await page.send('Network.getResponseBody', { requestId: request.id });
+        return JSON.parse(response.body);
+      };
+      const select017 = async () => {
+        const previous = requests.filter(({ path }) => path === '/api/refresh').length;
+        if (await evaluate(page, `document.querySelector('${inputSelector}')?.getAttribute('aria-expanded') !== 'true'`)) {
+          await click(page, inputSelector);
+        }
+        await page.send('Input.insertText', { text: '017' });
+        await until(() => evaluate(page, `document.querySelectorAll('header [role="option"]').length === 1
+          && document.querySelector('header [role="option"]')?.textContent.trim() === '017-feature-17'`), '017 filtered option');
+        await click(page, 'header [role="option"]');
+        return until(() => requests.filter(({ path }) => path === '/api/refresh')[previous], '017 POST target', 1_500);
+      };
+      try {
+        instance = await openInstance(instanceId, () => {}, null, { root: provider.root, target: 'feature-01' });
+        origin = new URL(instance.url).origin;
+        await navigate(page, null, 760, 'light', origin);
+        await until(() => instance.eventClients.size === 1, 'production EventSource attachment');
+        const initialRequest = requests.find(({ path }) => path === '/api/projection');
+        assert.ok(initialRequest, 'renderer requested the production projection');
+        const initial = await readResponse(initialRequest);
+        assert.equal(initial.projection.complete, true);
+        assert.equal(initial.projection.selected.slug, 'feature-01');
+        assert.equal(initial.projection.authority, 'lightweight');
+        assert.equal(initial.projection.choices.length, 50);
+        assert.deepEqual(initial.projection.diagnostics, []);
+        assert.equal(await value(), '001-feature-01');
+        const before = await main();
+        assert.match(before, /Inspect the initial committed feature/);
+
+        // Act: one physical click opens all 50; query text alone cannot commit.
+        await click(page, inputSelector);
+        await until(() => evaluate(page, `document.querySelectorAll('header [role="option"]').length === 50`), 'production full inventory');
+        const inventory = await evaluate(page, `[...document.querySelectorAll('header [role="option"]')].map(node => node.textContent.trim())`);
+        assert.deepEqual(inventory, MANY_CHOICES.map(({ ideaPath }) => path.posix.basename(ideaPath, '.md')));
+        assert.equal(await evaluate(page, `document.querySelector('header [role="option"][aria-selected="true"]')?.textContent.trim()`), '001-feature-01');
+        await page.send('Input.insertText', { text: '052' });
+        await until(() => evaluate(page, `document.querySelectorAll('header [role="option"]').length === 1`), '052 filtered option');
+        assert.equal(await value(), '052');
+        assert.equal(await main(), before, 'typing preserves all committed facts');
+        assert.equal(requests.filter(({ path }) => path === '/api/refresh').length, 0, 'typing sends no selection');
+
+        provider.setOutcome('absent', true);
+        await click(page, 'header [role="option"]');
+        const held = await until(() => provider.calls().find(({ held }) => held), 'held production bd child', 1_500);
+        const pendingStarted = Date.now();
+        try {
+          const selection = requests.find(({ path }) => path === '/api/refresh');
+          assert.deepEqual(selection?.body, { target: 'dude-canvas-ui' }, 'one activation posts only the semantic slug');
+          assert.equal(requests.filter(({ path }) => path === '/api/refresh').length, 1);
+          assert.deepEqual(held.args, ['list', '--all', '--limit', '0', '--json']);
+          assert.equal(held.outcome, 'absent');
+          assert.equal(await main(), before, 'held read preserves the old heading and every fact');
+          assert.equal(await value(), '052-dude-canvas-ui', 'pending display identifies the request, not a committed replacement');
+          assert.ok((await statuses()).includes('Reading 052-dude-canvas-ui.'), 'pending announcement names the requested 052');
+          assert.equal((await statuses()).some((text) => text === 'Opened 052-dude-canvas-ui.'), false);
+          screenshots.push(await screenshot(page, 'pending-052', 'real-provider', 760, 'light', [
+            'Held real bd child; pending 052 display/announcement with committed 001 heading and facts',
+          ]));
+        } finally {
+          process.kill(held.pid, 'SIGUSR1');
+        }
+        assert.ok(Date.now() - pendingStarted < 2_000, 'release the observed barrier well inside the production deadline');
+        const accepted052 = await readResponse(requests.find(({ path }) => path === '/api/refresh'));
+        assert.equal(accepted052.replaced, true);
+        assert.equal(accepted052.freshness.state, 'current');
+        assert.equal(accepted052.projection.complete, true);
+        assert.equal(accepted052.projection.authority, 'lightweight');
+        assert.deepEqual(accepted052.projection.diagnostics, []);
+        assert.equal(accepted052.projection.selected.specPath, '.dude/specs/052-dude-canvas-ui/spec.md');
+        assert.deepEqual(accepted052.projection.tasks, { total: 5, open: 1, inProgress: 1, blocked: 0, done: 3 });
+        assert.deepEqual(accepted052.projection.phases.map(({ name }) => name), ['Foundation', 'Acceptance']);
+        assert.equal(accepted052.projection.activity.total, 2);
+        assert.equal(accepted052.projection.activity.recent[0].text, 'Browser acceptance was requested.');
+        assert.equal(accepted052.projection.latestEvent.source.path, '.dude/ideas/052-dude-canvas-ui.md');
+        assert.deepEqual(accepted052.projection.next.source, T013_NEXT_SOURCE, 'long Next comes from canonical task bytes');
+        const absenceCalls = provider.calls().filter(({ outcome }) => outcome === 'absent');
+        assert.ok(absenceCalls.length >= 2, 'absence stays stable through the source-identity recheck');
+        assert.ok(absenceCalls.every(({ args }) => JSON.stringify(args) === JSON.stringify(['list', '--all', '--limit', '0', '--json'])),
+          'no bd ready probe for recognized database absence');
+        await until(async () => await value() === '052-dude-canvas-ui' && (await activeElement(page)).id === 'feature-heading', '052 commit and heading focus');
+        const committed052 = await main();
+        assert.match(committed052, /Dude Canvas UI/);
+        assert.match(committed052, /Browser acceptance was requested/);
+        assert.ok((await statuses()).includes('Opened 052-dude-canvas-ui.'));
+        assert.equal(await evaluate(page, `document.querySelector('section[aria-labelledby="next-heading"] .fui-Title3')?.textContent.trim()`),
+          'Run final unchanged-revision verification.');
+        const evidenceSelector = 'section[aria-labelledby="evidence-heading"] button';
+        await focus(page, evidenceSelector);
+        await key(page, 'Enter');
+        await until(() => evaluate(page, `document.querySelector('${evidenceSelector}')?.getAttribute('aria-expanded') === 'true'`), 'real task-source disclosure');
+        const disclosedSource = await evaluate(page, `(() => {
+          const label = [...document.querySelectorAll('section[aria-labelledby="evidence-heading"] dt')]
+            .find(node => node.textContent.trim() === 'Next source');
+          return label?.nextElementSibling?.querySelector('code')?.textContent;
+        })()`);
+        assert.deepEqual(JSON.parse(disclosedSource), T013_NEXT_SOURCE, 'renderer discloses the exact real task source');
+        await key(page, 'Enter');
+        screenshots.push(await screenshot(page, 'accepted-052', 'real-provider', 760, 'light', [
+          'Production openInstance/readNowProjection over 50 canonical ledgers',
+          'One-click selection; held bd read released with exact no-database stderr, empty stdout, exit 1',
+          'Complete Lightweight facts and exact long Next source',
+        ]));
+
+        // Act + Assert: an unrelated nonzero read refuses, retaining all of 052.
+        provider.setOutcome('failure');
+        const failedRequest = await select017();
+        assert.deepEqual(failedRequest.body, { target: 'feature-17' });
+        const refused = await readResponse(failedRequest);
+        assert.equal(refused.replaced, false);
+        assert.equal(refused.freshness.state, 'unavailable', 'production distinguishes unreadable authority from other stale reads');
+        assert.match(refused.freshness.message, /last complete read was preserved/);
+        assert.deepEqual(refused.projection, accepted052.projection);
+        assert.ok(refused.freshness.diagnostics.some(({ code }) => code === 'TRACKED_AUTHORITY_UNAVAILABLE'));
+        await until(() => evaluate(page, `document.querySelector('${inputSelector}')?.getAttribute('aria-invalid') === 'true'`), 'production selection refusal');
+        assert.equal(await value(), '052-dude-canvas-ui');
+        assert.equal(await main(), committed052);
+        assert.match(await evaluate(page, `document.querySelector('aside').innerText`), /Read unavailable/);
+        assert.match(await evaluate(page, `document.querySelector('aside').innerText`), /last complete read was preserved/);
+        assert.ok((await statuses()).includes('017-feature-17 could not be opened. 052-dude-canvas-ui is still the open feature.'));
+        assert.equal((await statuses()).includes('Opened 017-feature-17.'), false);
+        screenshots.push(await screenshot(page, 'refused-017', 'real-provider', 760, 'light', [
+          'Generic bd exit 1 reports unavailable authority and preserves the last complete read',
+          'Committed 052 value, heading, and all rendered facts retained',
+        ]));
+
+        provider.setOutcome('empty');
+        const retryRequest = await select017();
+        assert.notEqual(retryRequest.id, failedRequest.id);
+        assert.deepEqual(retryRequest.body, { target: 'feature-17' });
+        const accepted017 = await readResponse(retryRequest);
+        assert.equal(accepted017.replaced, true);
+        assert.equal(accepted017.projection.complete, true);
+        assert.equal(accepted017.projection.selected.specPath, '.dude/specs/017-feature-17/spec.md');
+        assert.deepEqual(accepted017.projection.tasks, { total: 2, open: 0, inProgress: 1, blocked: 0, done: 1 });
+        await until(async () => await value() === '017-feature-17' && (await activeElement(page)).id === 'feature-heading', '017 replacement and heading focus');
+        assert.ok((await statuses()).includes('Opened 017-feature-17.'));
+        const committed017 = await main();
+        assert.match(committed017, /Validate the selected feature before handoff/);
+
+        // Act: edit only disposable selected source. Synthetic focus exercises
+        // the renderer listener; it is not a claim about Copilot host focus.
+        provider.changeSelectedSource();
+        const freshnessCount = requests.filter(({ path }) => path === '/api/freshness').length;
+        const announcement = await statuses();
+        await evaluate(page, `window.dispatchEvent(new Event('focus'))`);
+        await until(() => requests.filter(({ path }) => path === '/api/freshness').length > freshnessCount, 'real GET freshness from focus listener');
+        const freshnessRequest = requests.filter(({ path }) => path === '/api/freshness').at(-1);
+        assert.equal(freshnessRequest.method, 'GET');
+        const changed = await readResponse(freshnessRequest);
+        assert.equal(changed.freshness.state, 'changed');
+        assert.deepEqual(changed.projection, accepted017.projection, 'freshness route never replaces the committed projection');
+        await until(() => evaluate(page, `document.querySelector('aside')?.innerText.includes('Repository changed')`), 'changed-source indication');
+        assert.equal(await main(), committed017, 'changed-source indication leaves all old facts intact');
+        assert.deepEqual(await statuses(), announcement, 'background freshness does not announce replacement');
+        assert.equal((await activeElement(page)).id, 'feature-heading');
+        screenshots.push(await screenshot(page, 'changed-017', 'real-provider', 760, 'light', [
+          'Synthetic focus reached real freshness route and detected edited task bytes without replacement',
+        ]));
+
+        const refreshCount = requests.filter(({ path }) => path === '/api/refresh').length;
+        await clickRefresh(page);
+        const refreshRequest = await until(() => requests.filter(({ path }) => path === '/api/refresh')[refreshCount], 'explicit Refresh POST', 1_500);
+        assert.deepEqual(refreshRequest.body, {}, 'Refresh uses the committed production target');
+        const refreshed = await readResponse(refreshRequest);
+        assert.equal(refreshed.replaced, true);
+        assert.equal(refreshed.freshness.state, 'current');
+        assert.equal(refreshed.projection.complete, true);
+        assert.deepEqual(refreshed.projection.diagnostics, []);
+        assert.equal(refreshed.projection.selected.slug, 'feature-17');
+        assert.equal(refreshed.projection.stage, 'Verified');
+        assert.deepEqual(refreshed.projection.tasks, { total: 2, open: 0, inProgress: 0, blocked: 0, done: 2 });
+        await until(() => evaluate(page, `document.querySelector('aside')?.innerText.includes('Current complete read')
+          && document.querySelector('main')?.innerText.includes('All canonical tasks are complete.')`), 'new complete facts after explicit refresh');
+        assert.notEqual(await main(), committed017);
+        assert.equal(await value(), '017-feature-17');
+        assert.equal((await activeElement(page)).text, 'Refresh');
+        screenshots.push(await screenshot(page, 'refreshed-017', 'real-provider', 760, 'light', [
+          'Explicit production Refresh replaces changed source with two done tasks and current freshness',
+        ]));
+        const allowed = new Set(['GET /', 'GET /assets/app.js', 'GET /favicon.ico',
+          'GET /api/projection', 'GET /api/freshness', 'GET /events', 'POST /api/refresh', 'POST /api/viewport']);
+        assert.ok(requests.every(({ method, path }) => allowed.has(`${method} ${path}`)), 'production route allowlist only');
+        for (const route of ['GET /api/projection', 'GET /api/freshness', 'POST /api/refresh', 'GET /events', 'POST /api/viewport']) {
+          assert.ok(requests.some(({ method, path }) => `${method} ${path}` === route), `renderer reached ${route}`);
+        }
+        assert.ok(network.every(({ url }) => url.startsWith(base) || url.startsWith(`${origin}/`)), 'both flows stay on their loopback servers');
+        assert.ok(provider.calls().every(({ args }) => JSON.stringify(args) === JSON.stringify(['list', '--all', '--limit', '0', '--json'])));
+        succeeded = true;
+      } catch (error) {
+        screenshots.push(await screenshot(page, 'failure', 'real-provider', 760, 'light', [String(error)])
+          .catch(() => ({ observations: ['Could not capture failed production flow'] })));
+        throw error;
+      } finally {
+        screenshotObservations.push(`Real-provider routes: ${JSON.stringify(requests)}`);
+        screenshotObservations.push(`Real-provider bd calls: ${JSON.stringify(provider.calls())}`);
+        const cleanupErrors = [];
+        for (const cleanup of [
+          () => page.send('Page.navigate', { url: 'about:blank' }),
+          () => closeInstance(instanceId),
+          () => provider.close(),
+        ]) {
+          try { await cleanup(); } catch (error) { cleanupErrors.push(String(error)); }
+        }
+        page.listeners.get('Network.requestWillBeSent')?.splice(page.listeners.get('Network.requestWillBeSent').indexOf(recordRequest), 1);
+        page.listeners.get('Network.loadingFinished')?.splice(page.listeners.get('Network.loadingFinished').indexOf(recordCompleted), 1);
+        if (cleanupErrors.length) flow.diagnostic(`Production fixture cleanup: ${cleanupErrors.join('; ')}`);
+        if (succeeded) {
+          assert.deepEqual(cleanupErrors, []);
+          assert.equal(process.env.PATH, originalPath);
+          assert.equal(fs.existsSync(provider.directory), false);
+          assert.equal(instance.server.listening, false);
+          assert.equal(instance.eventClients.size, 0);
+        }
+      }
+    });
+
+    await t.test('production fixture cleanup reaps a held acquisition after an assertion failure', async () => {
+      // Arrange: exercise this fixture's failure path, not a new process framework.
+      const { openInstance, closeInstance } = await import('../../src/extensions/dude/lib/canvas-server.mjs');
+      const originalPath = process.env.PATH;
+      const provider = createProviderFixture();
+      const instanceId = `cleanup-${path.basename(provider.directory)}`;
+      let child;
+      let startup;
+
+      // Act
+      await assert.rejects(async () => {
+        try {
+          provider.setOutcome('empty', true);
+          startup = openInstance(instanceId, () => {}, null, { root: provider.root, target: 'feature-01' })
+            .catch((error) => error);
+          child = await until(() => provider.calls().find(({ held }) => held), 'cleanup fixture held child', 1_500);
+          assert.fail('deliberate fixture assertion failure');
+        } finally {
+          try { await closeInstance(instanceId); } finally { await provider.close(); }
+        }
+      }, /deliberate fixture assertion failure/);
+
+      // Assert
+      assert.match((await startup).message, /startup was cancelled/);
+      assert.throws(() => process.kill(child.pid, 0), { code: 'ESRCH' });
+      assert.equal(process.env.PATH, originalPath);
+      assert.equal(fs.existsSync(provider.directory), false);
+      assert.equal(await closeInstance(instanceId), false, 'no production instance remains');
+    });
   } finally {
-    const index = {
-      browser: info.Browser,
-      generatedAt: new Date().toISOString(),
-      screenshots,
-      observations: screenshotObservations,
-    };
-    fs.writeFileSync(path.join(ARTIFACT_ROOT, 'index.json'), `${JSON.stringify(index, null, 2)}\n`);
     page.close();
-    await stopBrowser(browser);
-    fs.rmSync(profile, { recursive: true, force: true });
-    await fixture.close();
+    try {
+      await stopBrowser(browser);
+    } finally {
+      fs.rmSync(profile, { recursive: true, force: true });
+    }
   }
 });

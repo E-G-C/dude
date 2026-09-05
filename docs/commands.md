@@ -1201,12 +1201,110 @@ Docs-only work needs no development build. A mixed docs and core change follows
 both workflows and receives fresh ordinary verification and review before
 commit.
 
+#### Canvas maintainer acceptance
+
+Ordinary repository tests stay dependency-free. Missing optional browser or
+scoped build prerequisites produce explicit skips. Prune dependency and output
+directories when discovering tests, including after a scoped maintainer install:
+
+```bash
+find . -type d \( -name node_modules -o -name dist \) -prune -o -type f -name '*.test.mjs' -print0 | xargs -0 node --test
+```
+
+For required canvas acceptance, use Node 22+ with its global WebSocket client
+and an installed Chromium-family browser. Run from the repository root:
+
+```bash
+npm ci --prefix scripts/dude-canvas-ui
+export DUDE_CANVAS_BROWSER="/absolute/path/to/chromium"
+DUDE_CANVAS_BROWSER_REQUIRED=1 node --test --test-reporter=tap scripts/dude-canvas-ui/build.test.mjs scripts/dude-canvas-ui/browser.test.mjs
+```
+
+Include the production provider regressions when changing selection or freshness
+coverage:
+
+```bash
+DUDE_CANVAS_BROWSER_REQUIRED=1 node --test --test-reporter=tap scripts/dude-canvas-ui/build.test.mjs scripts/dude-canvas-ui/browser.test.mjs src/extensions/dude/canvas-server.test.mjs src/extensions/dude/projection.test.mjs
+```
+
+`DUDE_CANVAS_BROWSER` selects that exact executable. Omit it to use the existing
+macOS Microsoft Edge default. An invalid supplied path or a failed launch always
+fails, even in optional mode; there is no browser fallback. Every launch is
+headless with a fresh temporary profile and does not open or focus your browser.
+`DUDE_CANVAS_BROWSER_REQUIRED=1` turns missing browser, WebSocket, and scoped
+dependency prerequisites into failures, including the build-parity checks.
+Leave it unset for ordinary optional execution.
+
+Acceptance serves the committed assets without rebuilding the working tree.
+The build tests compare two disposable builds with committed JavaScript and legal
+notice bytes, and check source/deployed shell and asset equality. Do not run
+`build-dev` or regenerate assets before testing for drift. Consumer installations
+still need no npm install, build, or network access to open the cockpit.
+
+Set `DUDE_CANVAS_ARTIFACTS_DIR` to an optional output parent. Each browser run
+creates a fresh `dude-canvas-browser-*` child there, or in the OS temporary
+directory when unset. TAP diagnostics report the exact evidence directory,
+browser version, and committed asset SHA-256 hashes. Require executed named
+browser subtests and a zero exit status with no skips; screenshots alone do not
+establish a pass. Screenshots and `index.json` remain after success or failure,
+including partial startup evidence. The tests remove their profiles and input
+fixtures, never the caller's output parent or earlier evidence. Remove retained
+evidence yourself when no longer needed.
+
+The named real-provider browser flow runs the committed bundle through production
+`openInstance`, `readNowProjection`, refresh, and freshness routes over 50
+disposable canonical ledgers. Only the external `bd` executable is substituted;
+its real process arguments and held-read barrier are observed. It covers selection
+without premature commitment, the existing no-database fallback, generic failure
+with prior facts preserved, successful replacement, and changed-source detection
+followed by explicit refresh. Generic authority failure reports `unavailable`
+with the last complete read preserved. The other rendered cases retain controlled
+projection responses for independent UI states, layout, keyboard, and accessibility
+checks.
+
+The selected-open journey runs at 360, 760, and 1440 CSS pixels in both light and
+dark themes, with matching Fluent tokens. Each of the six cases checks the full
+committed 052 row against the listbox scrollport and viewport, required-content
+clipping, page horizontal overflow, and hit-testing at actual CDP pointer
+coordinates. The complete 50-row inventory remains available without requiring
+every row to be onscreen. Intentional long-label ellipsis retains its full
+accessible identity. Query, Tab noncommit, failed selection, successful replacement,
+and focus assertions remain alongside the existing long Next source disclosure,
+accessibility-tree, contrast, zoom, and forced-color checks.
+
+Target measurements cover the chooser input, current option, Refresh, Now, and
+Source details. The exposed input and current option are measured while the
+popup is open. Dismiss the popup before reaching underlying controls: Refresh
+and Now are measured after the second Escape closes it. The checks use WCAG
+2.2 AA criterion 2.5.8's 24-by-24 CSS-pixel
+minimum, not the 44-pixel AAA target. No target-size exception is used. An
+undersized target must fail unless an applicable exception is demonstrated by
+measurement; spacing would require the criterion's 24-pixel-diameter circle
+separation, not an assumed exemption. Decorative icons and disabled future
+surfaces are not separate active targets. Each case retains a `selected-open`
+screenshot and numeric geometry/hit-test observations in the existing run's
+`index.json`; these are diagnostic evidence, not image-comparison baselines.
+
+These are standalone browser checks, not Copilot host evidence. Synthetic focus
+dispatch proves the renderer's freshness listener and real GET route; actual host
+provider discovery, iframe sizing/theme/focus, and reload lifecycle still require
+host smoke. Complete automatable interaction coverage before requesting that
+narrow human check. No extension scaffold, SDK tooling, or reload is needed for
+maintainer acceptance.
+
 ### Releases and CI
 
 `.github/workflows/ci.yml` runs on every push and PR (Node 20 + 22): unit tests,
 bundle lint, pack-source verify, a product build + lint, and the dev-bundle
-drift check. `.github/workflows/release.yml` runs on a `v*` tag: it gates on the
-same checks, builds the core bundle with `scripts/build-release.mjs`, and
+drift check. Its separate `canvas-browser` job uses Ubuntu 24.04, Node 22, and the
+runner-installed `google-chrome`, resolved with `command -v`, checked for
+executability, and reported with `--version`. Missing Chrome fails the job.
+Only this job installs scoped dependencies and requires the explicit build and
+browser suites. It uploads retained evidence from its runner-temp output parent
+even after failure. The dependency-free jobs keep their optional skips.
+
+`.github/workflows/release.yml` runs on a `v*` tag: it gates on the
+bundle checks, builds the core bundle with `scripts/build-release.mjs`, and
 publishes a `dude-bundle-<tag>.zip` to a GitHub Release. Unzip it at a repo root
 to drop `.github/` engine files and seeded `.dude/metadata/` into place.
 CI reports drift only. It does not create a branch, commit, push, or pull

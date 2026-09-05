@@ -725,7 +725,7 @@ function extractCoordinatorLog(text) {
 }
 
 const COORDINATOR_LOG_HEADING = /^ {0,3}##[ \t]+Coordinator Log(?:[ \t]+#+)?[ \t]*$/;
-const COORDINATOR_LOG_EVENT_START = /^- \d{4}-\d{2}-\d{2}(?:[ \t]|$)/;
+const COORDINATOR_LOG_EVENT_START = /^- \d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))?(?:[ \t]|$)/;
 const STANDALONE_HTML_COMMENT = /^[ \t]*<!--.*-->[ \t]*$/;
 
 /** @param {string} text */
