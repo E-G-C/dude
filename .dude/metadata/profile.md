@@ -19,7 +19,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-stunning-winner/library/packs"
+        "location": "/Users/eg/work/dude/library/packs"
       }
     },
     "clearline": {
@@ -30,7 +30,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-stunning-winner/library/packs"
+        "location": "/Users/eg/work/dude/library/packs"
       }
     },
     "coding": {
@@ -43,7 +43,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-stunning-winner/library/packs"
+        "location": "/Users/eg/work/dude/library/packs"
       }
     },
     "design": {
@@ -53,7 +53,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-refactored-guide/library/packs"
+        "location": "/Users/eg/work/dude/library/packs"
       }
     },
     "fluent-ui": {
@@ -62,7 +62,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-stunning-winner/library/packs"
+        "location": "/Users/eg/work/dude/library/packs"
       }
     },
     "release": {
@@ -74,7 +74,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-stunning-winner/library/packs"
+        "location": "/Users/eg/work/dude/library/packs"
       }
     },
     "rubber-duck": {
@@ -83,7 +83,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-stunning-winner/library/packs"
+        "location": "/Users/eg/work/dude/library/packs"
       }
     },
     "strata": {
@@ -104,7 +104,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/AI/dude/library/packs"
+        "location": "/Users/eg/work/dude/library/packs"
       }
     }
   }
