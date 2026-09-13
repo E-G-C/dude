@@ -19,7 +19,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/dude/library/packs"
+        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-stunning-winner/library/packs"
       }
     },
     "clearline": {
@@ -43,7 +43,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/dude/library/packs"
+        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-stunning-winner/library/packs"
       }
     },
     "design": {
@@ -74,7 +74,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-issue-3-add-a-topology-first-reset-when-review-r-891391/library/packs"
+        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-stunning-winner/library/packs"
       }
     },
     "rubber-duck": {
@@ -83,7 +83,7 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
       ],
       "source": {
         "type": "local",
-        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-refactored-guide/library/packs"
+        "location": "/Users/eg/work/copilot-worktrees/dude/e-g-c-stunning-winner/library/packs"
       }
     },
     "strata": {
