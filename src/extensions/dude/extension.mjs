@@ -3,8 +3,8 @@
  * Dude canvas extension.
  *
  * Registers the single `dude` canvas, opens it on a loopback server, reads one
- * authoritative projection, serves the shipped read-only Now cockpit, and
- * closes cleanly. The route set remains private and sends no session request.
+ * authoritative projection, serves the work and Needs You workspace, and
+ * closes cleanly. The joined provider owns bounded human handoffs.
  *
  * Wiring only; the loopback server lives in ./lib/canvas-server.mjs and the
  * browser entry in ./ui/index.html. `stdout` is reserved for JSON-RPC, so
@@ -13,6 +13,11 @@
 
 import { createCanvas, joinSession } from '@github/copilot-sdk/extension';
 import { closeInstance, openInstance } from './lib/canvas-server.mjs';
+import { createNeedsYou } from './lib/needs-you.mjs';
+import { createReview } from './lib/review.mjs';
+
+const root = process.cwd();
+const needsYou = createNeedsYou({ root, reviewAdapter: createReview({ root }) });
 
 /** @param {unknown} context */
 function exactTarget(context) {
@@ -36,13 +41,14 @@ async function logToSession(message) {
 }
 
 const session = await joinSession({
+  tools: [needsYou.tool],
+  onEvent: needsYou.onEvent,
   canvases: [
     createCanvas({
       id: 'dude',
       displayName: 'Dude',
-      description: 'Dude read-only Now cockpit for authoritative feature orientation.',
+      description: 'Discover recorded work, respond to current owner requests, and review canonical designs.',
       open: async (ctx) => {
-        const root = process.cwd();
         const target = exactTarget(ctx);
         const readInput = { root, ...(target === undefined ? {} : { target }) };
         const instance = await openInstance(
@@ -50,9 +56,10 @@ const session = await joinSession({
           logToSession,
           null,
           readInput,
+          needsYou,
         );
         await logToSession(`Dude canvas ${ctx.instanceId}: open at ${instance.url}`);
-        return { title: 'Dude', status: 'Read-only Now cockpit', url: instance.url };
+        return { title: 'Dude', status: 'Work and Needs you', url: instance.url };
       },
       onClose: async (ctx) => {
         if (await closeInstance(ctx.instanceId)) {
@@ -62,3 +69,4 @@ const session = await joinSession({
     }),
   ],
 });
+needsYou.bindSession(session);

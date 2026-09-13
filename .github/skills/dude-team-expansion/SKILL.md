@@ -136,7 +136,9 @@ only in the canonical configuration.
 
 Tool selectors are the canonical coarse set — `read`, `edit`, `search`,
 `execute`, `todo`, and `agent`. The Copilot adapter maps these selectors; do
-not invent finer-grained or host-specific spellings in a source. Pick the
+not invent finer-grained or host-specific spellings in a source. Only Dude
+declares `dude_needs_you`, the sole supported explicit core tool, for
+coordinator-owned publication and acknowledgment. Pick the
 smallest set the role needs:
 
 | Role Type | Tools |

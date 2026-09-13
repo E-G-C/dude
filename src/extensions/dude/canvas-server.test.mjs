@@ -1,12 +1,13 @@
 // @ts-check
 /**
- * Tests for the Dude canvas Now cockpit server — loopback binding, the closed
+ * Tests for the Dude canvas workspace server — loopback binding, the closed
  * route allowlist, cross-origin refusal, idempotent open by `instanceId`, and
  * cleanup on close. The SDK canvas plumbing itself is not retested here.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ASSET_ROUTES,
+  REVIEW_ASSET_ROUTES,
   closeInstance,
   isTrustedRequest,
   openInstance,
@@ -213,12 +215,22 @@ function copiedExtensionHarness() {
   }));
   fs.writeFileSync(path.join(sdkRoot, 'extension.mjs'), [
     'let canvas;',
+    'let sessionOptions;',
     'let logCalls = 0;',
     'export function createCanvas(value) { canvas = value; return value; }',
-    'export async function joinSession() {',
+    'export async function joinSession(value) {',
+    '  sessionOptions = value;',
     '  return { log: async () => { logCalls += 1; throw new Error("rejected session log"); } };',
     '}',
     'export function registeredCanvas() { return canvas; }',
+    'export function registeredSessionSummary() {',
+    '  return {',
+    '    toolNames: sessionOptions.tools.map((tool) => tool.name),',
+    '    operationNames: sessionOptions.tools[0].parameters.properties.op.enum,',
+    '    hasOnEvent: typeof sessionOptions.onEvent === "function",',
+    '    canvasCount: sessionOptions.canvases.length,',
+    '  };',
+    '}',
     'export function sessionLogCalls() { return logCalls; }',
     '',
   ].join('\n'));
@@ -250,6 +262,7 @@ function copiedExtensionHarness() {
     '  process.send?.({',
     '    first, second, pageStatus: page.status, projection, portRefused,',
     '    sessionLogCalls: sdk.sessionLogCalls(), stdoutWrites,',
+    '    sessionRegistration: sdk.registeredSessionSummary(),',
     '  });',
     '} catch (error) {',
     "  process.send?.({ error: error instanceof Error ? error.stack : String(error), stdoutWrites });",
@@ -301,7 +314,7 @@ function copiedExtensionHarness() {
   };
 }
 
-test('open binds an OS-assigned loopback port and serves the shipped Now shell', async () => {
+test('open binds an OS-assigned loopback port and serves the shipped workspace shell', async () => {
   const { log } = recorder();
   const instance = await openInstance('bind-1', log);
   try {
@@ -315,9 +328,11 @@ test('open binds an OS-assigned loopback port and serves the shipped Now shell',
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-type') ?? '', /^text\/html/);
     const body = await response.text();
-    assert.match(body, /<title>Dude — Now<\/title>/);
+    assert.match(body, /<title>Dude<\/title>/);
     assert.match(body, /<script type="module" src="\/assets\/app\.js"><\/script>/);
-    assert.match(body, /new EventSource\("\/events"\)/);
+    assert.doesNotMatch(body, /new EventSource\("\/events"\)/,
+      'the React data owner, not the bootstrap document, owns the one event stream');
+    assert.match(body, /recorded work and current owner requests/);
   } finally {
     await closeInstance('bind-1');
   }
@@ -351,7 +366,7 @@ test('concurrent opens for one instanceId start exactly one server', async () =>
   }
 });
 
-test('only exact Now shell assets are served with fixed MIME and cache headers', async () => {
+test('only exact workspace shell assets are served with fixed MIME and cache headers', async () => {
   // Arrange
   const { log } = recorder();
   const instance = await openInstance('routes', log);
@@ -406,14 +421,194 @@ test('only exact Now shell assets are served with fixed MIME and cache headers',
   }
 });
 
+test('provider instances serve exactly nine adopted Review files while default read-only instances stay useful', async () => {
+  // Arrange
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-review-static-'));
+  const expected = [
+    ['/review/engine.mjs', 'text/javascript; charset=utf-8', 'ui/review/engine.mjs'],
+    ['/review/geometry.mjs', 'text/javascript; charset=utf-8', 'ui/review/geometry.mjs'],
+    ['/review/shapes.mjs', 'text/javascript; charset=utf-8', 'ui/review/shapes.mjs'],
+    ['/review/inspector.mjs', 'text/javascript; charset=utf-8', 'ui/review/inspector.mjs'],
+    ['/review/panel.mjs', 'text/javascript; charset=utf-8', 'ui/review/panel.mjs'],
+    ['/review/capture.mjs', 'text/javascript; charset=utf-8', 'ui/review/capture.mjs'],
+    ['/review/bridge.mjs', 'text/javascript; charset=utf-8', 'ui/review/bridge.mjs'],
+    ['/review/styles.css', 'text/css; charset=utf-8', 'ui/review/styles.css'],
+    ['/review/NOTICE.txt', 'text/plain; charset=utf-8', 'ui/review/NOTICE.txt'],
+  ];
+  const provider = /** @type {any} */ ({
+    matchesRoot: (candidate) => path.resolve(candidate) === path.resolve(root),
+    subscribe: () => () => {},
+  });
+  const plain = await openInstance('review-static-plain', () => {}, Object.freeze({ complete: true }));
+  const enabled = await openInstance(
+    'review-static-enabled',
+    () => {},
+    Object.freeze({ complete: true }),
+    { root },
+    provider,
+  );
+  try {
+    // Act + Assert
+    assert.equal((await call(plain.url)).status, 200, 'the existing shell is independent of Review');
+    assert.equal((await call(plain.url, { path: '/review/engine.mjs' })).status, 404);
+    assert.deepEqual(Object.keys(REVIEW_ASSET_ROUTES), expected.map(([route]) => route));
+    for (const [route, mime, relative] of expected) {
+      for (const origin of [undefined, 'null']) {
+        const response = await call(enabled.url, {
+          path: route,
+          ...(origin ? { headers: { origin } } : {}),
+        });
+        assert.equal(response.status, 200, `${route} from ${origin ?? 'same-origin navigation'}`);
+        assert.equal(response.headers.get('content-type'), mime);
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+        assert.equal(response.headers.get('access-control-allow-origin'), '*');
+        assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+        assert.deepEqual(
+          Buffer.from(await response.arrayBuffer()),
+          fs.readFileSync(new URL(`./${relative}`, import.meta.url)),
+          `exact adopted bytes for ${route}`,
+        );
+      }
+    }
+    for (const route of [
+      '/review/unlisted.mjs',
+      '/review/nested/engine.mjs',
+      '/review/engine.test.mjs',
+      '/review/package.json',
+      '/review/node_modules/dependency/index.mjs',
+      '/frontend/app.jsx',
+    ]) {
+      assert.equal((await call(enabled.url, { path: route })).status, 404, route);
+    }
+    assert.equal(
+      await rawStatus(enabled.server, { path: '/review/../extension.mjs' }),
+      404,
+      'review traversal never becomes a static source read',
+    );
+  } finally {
+    await closeInstance('review-static-plain');
+    await closeInstance('review-static-enabled');
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T011 work-index route is an exact read-only GET over the production reader', async () => {
+  // Arrange
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-work-index-'));
+  writeDraft(root, '001', 'route-fixture');
+  const bd = installBdFixture([{ output: [] }, { output: [] }]);
+  await bd.run(async () => {
+    const instance = await openInstance(
+      'work-index-route',
+      () => {},
+      Object.freeze({ complete: true }),
+      { root },
+    );
+    try {
+      // Act
+      const response = await call(instance.url, { path: '/api/work-index' });
+      const body = await response.json();
+
+      // Assert
+      assert.equal(response.status, 200);
+      assert.deepEqual(Object.keys(body).sort(), [
+        'contexts', 'coverage', 'inventoryIdentity', 'items', 'readAt',
+        'rootIdentity', 'sourceIdentity', 'sources', 'workspace', 'workspaceId',
+      ]);
+      assert.equal(body.contexts.length, 1);
+      assert.equal(body.items[0].ideaPath, '.dude/ideas/001-route-fixture.md');
+      assert.equal(body.items[0].basis, 'idea-ledger');
+      assert.equal(body.items[0].taskCounts, null);
+      assert.equal(body.coverage.inventory.state, 'current');
+      assert.equal((await call(instance.url, { path: '/api/work-index?target=route-fixture' })).status, 404);
+      assert.equal((await call(instance.url, { path: '/api/work-index/' })).status, 404);
+      assert.equal((await call(instance.url, { path: '/api/work-index', method: 'POST' })).status, 404);
+      assert.deepEqual(bd.calls.map(({ args }) => args), [BD_LIST_CALL, BD_LIST_CALL]);
+    } finally {
+      await closeInstance('work-index-route');
+    }
+  });
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('T011 Review history GET accepts only exact owner query keys once', async () => {
+  // Arrange
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-history-route-'));
+  const calls = [];
+  const provider = /** @type {any} */ ({
+    matchesRoot: (candidate) => path.resolve(candidate) === path.resolve(root),
+    subscribe: () => () => {},
+    readReviewHistory(value, options) {
+      assert.equal(options.signal.aborted, false);
+      calls.push(value);
+      return {
+        scope: value.scope,
+        ...(value.submissionId ? { submissionId: value.submissionId } : {}),
+        status: value.submissionId ? 'historical' : 'listed',
+      };
+    },
+  });
+  const instance = await openInstance(
+    'history-query-route',
+    () => {},
+    Object.freeze({ complete: true }),
+    { root },
+    provider,
+  );
+  const ideaPath = '.dude/ideas/001-owned.md';
+  const specPath = '.dude/specs/001-owned/spec.md';
+  const submissionId = randomUUID();
+  try {
+    const query = new URLSearchParams({ ideaPath, specPath, submissionId });
+
+    // Act
+    const selected = await call(instance.url, {
+      path: `/api/needs-you/review/history?${query}`,
+    });
+    const listing = await call(instance.url, {
+      path: `/api/needs-you/review/history?${new URLSearchParams({ ideaPath, specPath })}`,
+    });
+    const invalid = await Promise.all([
+      call(instance.url, { path: `/api/needs-you/review/history?ideaPath=${encodeURIComponent(ideaPath)}` }),
+      call(instance.url, { path: `/api/needs-you/review/history?ideaPath=${encodeURIComponent(ideaPath)}&specPath=${encodeURIComponent(specPath)}&extra=x` }),
+      call(instance.url, { path: `/api/needs-you/review/history?ideaPath=${encodeURIComponent(ideaPath)}&ideaPath=${encodeURIComponent(ideaPath)}&specPath=${encodeURIComponent(specPath)}` }),
+      call(instance.url, { path: `/api/needs-you/review/history?ideaPath=${encodeURIComponent(ideaPath)}&specPath=${encodeURIComponent(specPath)}&submissionId=${submissionId}&submissionId=${submissionId}` }),
+      call(instance.url, {
+        path: `/api/needs-you/review/history?${query}`,
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }),
+    ]);
+
+    // Assert
+    assert.equal(selected.status, 200);
+    assert.equal(listing.status, 200);
+    assert.deepEqual(await selected.json(), {
+      scope: { kind: 'feature', ideaPath, specPath },
+      submissionId,
+      status: 'historical',
+    });
+    assert.deepEqual(await listing.json(), {
+      scope: { kind: 'feature', ideaPath, specPath },
+      status: 'listed',
+    });
+    assert.deepEqual(invalid.map(({ status }) => status), [400, 400, 400, 400, 404]);
+    assert.deepEqual(calls, [
+      { scope: { kind: 'feature', ideaPath, specPath }, submissionId },
+      { scope: { kind: 'feature', ideaPath, specPath } },
+    ], 'invalid or duplicate query keys never reach the selected-owner reader');
+  } finally {
+    await closeInstance('history-query-route');
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('read-only API route matrix permits only projection GETs and refresh POST', async () => {
   // Arrange
   const { log } = recorder();
-  const projection = Object.freeze({
-    complete: true,
-    status: 'ok',
-    selected: Object.freeze({ slug: 'fixture' }),
-  });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-read-only-routes-'));
+  const projection = await readNowProjection({ root });
   const instance = await openInstance('default-routes', log, projection);
   const controlRoutes = [
     ...REMOVED_PROOF_ROUTES,
@@ -496,7 +691,7 @@ test('read-only API route matrix permits only projection GETs and refresh POST',
     assert.deepEqual(freshnessPayload, projectionPayload);
     assert.deepEqual(refreshPayload, { ...projectionPayload, replaced: false });
     assert.equal(body, fs.readFileSync(new URL('./ui/index.html', import.meta.url), 'utf8'));
-    assert.match(body, /<title>Dude — Now<\/title>/);
+    assert.match(body, /<title>Dude<\/title>/);
     assert.match(body, /<script type="module" src="\/assets\/app\.js"><\/script>/);
     assert.doesNotMatch(body, /<(?:button|form|input|select|textarea)\b/i);
     assert.doesNotMatch(body, /__dude_i0|proof\/abort/i);
@@ -514,6 +709,7 @@ test('read-only API route matrix permits only projection GETs and refresh POST',
     ]);
   } finally {
     await closeInstance('default-routes');
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -1138,7 +1334,7 @@ test('extension lifecycle contains rejected session logs without touching stdout
     assert.deepEqual(stdout, '', 'the extension must not write JSON-RPC stdout');
     assert.deepEqual(stderr, '', 'the harness must not emit an unhandled log rejection');
     assert.equal(result.first.title, 'Dude');
-    assert.equal(result.first.status, 'Read-only Now cockpit');
+    assert.equal(result.first.status, 'Work and Needs you');
     assert.match(result.first.url, /^http:\/\/127\.0\.0\.1:\d+\/$/);
     assert.deepEqual(result.second, result.first, 'reopening must reuse the one live instance');
     assert.equal(result.pageStatus, 200, 'the reused server must remain usable after open logging rejects');
@@ -1149,6 +1345,12 @@ test('extension lifecycle contains rejected session logs without touching stdout
     assert.equal(result.portRefused, true, 'close must remove the server despite close logging rejection');
     assert.equal(result.sessionLogCalls, 3, 'both opens and the successful close attempt session logging');
     assert.equal(result.stdoutWrites, 0, 'neither lifecycle nor logging containment may use stdout');
+    assert.deepEqual(result.sessionRegistration, {
+      toolNames: ['dude_needs_you'],
+      operationNames: ['request', 'acknowledge'],
+      hasOnEvent: true,
+      canvasCount: 1,
+    }, 'the existing Canvas and one closed two-operation handoff share the joined session');
   } finally {
     fs.rmSync(harness.root, { recursive: true, force: true });
   }

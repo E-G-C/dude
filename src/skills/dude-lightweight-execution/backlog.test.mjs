@@ -519,6 +519,113 @@ test("T002 collector exposes real idea, exact owner, stories, phases, tasks, dep
   }
 });
 
+test("T002 collector blocker regression: blank metadata and live blockers", async (t) => {
+  const cases = [
+    { name: "active task with empty blocker", glyph: "~", reason: "", parsedReason: "",
+      state: "in-progress", count: "active", group: "active", ownBlocked: false },
+    { name: "active task with whitespace-only blocker", glyph: "~", reason: " \t ", parsedReason: "",
+      state: "in-progress", count: "active", group: "active", ownBlocked: false },
+    { name: "open task with empty blocker", glyph: " ", reason: "", parsedReason: "",
+      state: "todo", count: "open", group: "defined-awaiting-work", ownBlocked: false },
+    { name: "open task with whitespace-only blocker", glyph: " ", reason: " \t ", parsedReason: "",
+      state: "todo", count: "open", group: "defined-awaiting-work", ownBlocked: false },
+    { name: "active task with genuine blocker", glyph: "~", reason: "external-dependency: waiting on service",
+      parsedReason: "external-dependency: waiting on service", state: "in-progress", count: "active", group: "blocked", ownBlocked: true },
+    { name: "open task with genuine blocker", glyph: " ", reason: "external-dependency: waiting on service",
+      parsedReason: "external-dependency: waiting on service", state: "todo", count: "open", group: "blocked", ownBlocked: true },
+    { name: "explicit blocked glyph without a reason", glyph: "!", reason: null, parsedReason: null,
+      state: "blocked", count: "blocked", group: "blocked", ownBlocked: true },
+  ];
+  for (const scenario of cases) {
+    await t.test(scenario.name, () => {
+      // Arrange
+      const root = makeRoot();
+      try {
+        const feature = "202-blocker-regression";
+        const tasksPath = `.dude/specs/${feature}/tasks.md`;
+        const tasks = [
+          "# Tasks: blocker-regression", "", "## Phase 1: Work", "",
+          `- [${scenario.glyph}] T001@aaaaaaaa Live work`,
+          // The separator space makes an empty emitted reason parse as "", not absent metadata.
+          ...(scenario.reason === null ? [] : [`   blocked-by: ${scenario.reason}`]),
+          "",
+        ].join("\n");
+        writeIdea(root, "blocker-regression", { feature });
+        writePackage(root, feature, { tasks });
+
+        // Act
+        const model = collectLifecycleModel({ root });
+        const item = model.items[0];
+
+        // Assert
+        assert.equal(model.items.length, 1);
+        assert.equal(item.ownerSpecPath, `.dude/specs/${feature}/spec.md`);
+        assert.equal(item.authoritySlug, "blocker-regression");
+        assert.deepEqual(item.authorityIssues, []);
+        assert.equal(item.tasksAvailable, true);
+        assert.deepEqual(item.taskWarnings, []);
+        assert.deepEqual(item.tasks.map(({ id, glyph, state, blockedBy }) => ({ id, glyph, state, blockedBy })), [
+          { id: "T001@aaaaaaaa", glyph: scenario.glyph, state: scenario.state, blockedBy: scenario.parsedReason },
+        ]);
+        assert.deepEqual(item.taskCounts, {
+          open: 0, active: 0, blocked: 0, done: 0, total: 1, [scenario.count]: 1,
+        });
+        assert.equal(item.ownBlocked, scenario.ownBlocked);
+        assert.equal(item.section, scenario.group === "defined-awaiting-work" ? "planned" : "current");
+        assert.equal(item.group, scenario.group);
+        assert.deepEqual(partitionRows(model), [item]);
+        assert.equal(fs.readFileSync(path.join(root, tasksPath), "utf8"), tasks);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("T002 collector blocker regression: completed blockers stay historical", () => {
+  // Arrange
+  const root = makeRoot();
+  try {
+    const feature = "203-historical-blocker";
+    const tasksPath = `.dude/specs/${feature}/tasks.md`;
+    const tasks = [
+      "# Tasks: historical-blocker", "", "## Phase 1: Work", "",
+      "- [~] T001@aaaaaaaa Live work",
+      "- [x] T002@bbbbbbbb Previously blocked work",
+      "   blocked-by: historical only",
+      "",
+    ].join("\n");
+    writeIdea(root, "historical-blocker", { feature });
+    writePackage(root, feature, { tasks });
+
+    // Act
+    const model = collectLifecycleModel({ root });
+    const item = model.items[0];
+
+    // Assert
+    assert.equal(model.items.length, 1);
+    assert.equal(item.ownerSpecPath, `.dude/specs/${feature}/spec.md`);
+    assert.equal(item.authoritySlug, "historical-blocker");
+    assert.deepEqual(item.authorityIssues, []);
+    assert.equal(item.tasksAvailable, true);
+    assert.deepEqual(item.taskWarnings, []);
+    assert.deepEqual(item.tasks.map(({ id, glyph, state, blockedBy }) => ({ id, glyph, state, blockedBy })), [
+      { id: "T001@aaaaaaaa", glyph: "~", state: "in-progress", blockedBy: null },
+      { id: "T002@bbbbbbbb", glyph: "x", state: "done", blockedBy: "historical only" },
+    ]);
+    assert.deepEqual(item.taskCounts, { open: 0, active: 1, blocked: 0, done: 1, total: 2 });
+    assert.equal(item.packageComplete, false);
+    assert.equal(item.ownBlocked, false);
+    assert.equal(item.section, "current");
+    assert.equal(item.group, "active");
+    assert.deepEqual(model.current.active, [item]);
+    assert.deepEqual(model.current.blocked, []);
+    assert.equal(fs.readFileSync(path.join(root, tasksPath), "utf8"), tasks);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("T002 malformed idea metadata stays visibly unavailable without negative dependency or draft claims", () => {
   // Arrange
   const root = makeRoot();

@@ -14,7 +14,7 @@ specialists, visual systems, release tooling, tracked work, and other
 capabilities when a project needs them.
 
 Dude requires GitHub Copilot in VS Code or the Copilot CLI. Node.js 20 or later
-is needed only by the bundle's maintenance scripts.
+is needed for the bundle's maintenance scripts.
 
 ## Install
 
@@ -282,6 +282,37 @@ it instead of patching the spec by hand:
 ```
 
 Dude classifies the blocker and routes it to whoever owns that decision.
+
+## Canvas
+
+In a canvas-capable Copilot host, the Dude surface provides Overview, Context,
+Needs you, New idea, and explicit Review entry. One Open / Closed / All finder
+covers recorded work. Closed distinguishes completed features from resolved
+ideas.
+
+Needs you shows current owner-qualified questions and choices. Responses return
+to the same agent: Sent waits for owner acknowledgment, and Accepted does not
+mean Applied. The UI neither writes protected workflow state nor executes an
+operation you consent to.
+
+In New idea, Submit continues the existing brainstorm. Save captures for later
+without discussion, definition, or execution; Cancel keeps the draft in this
+tab. Ordinary Defer does not capture an idea or promise persistence. A saved
+idea requires owner acknowledgment and a reread of the canonical result.
+
+Review lets you annotate an exactly owned canonical HTML mock and send a
+numbered report with an actual PNG to its waiting agent. Comment text is
+optional: a numbered pin on a valid target sends its report and image without
+prose, and comments stay local until you send them. Feedback requests revision;
+approval stays separate and applies only to the current revision. Capture needs
+an available Edge, Chrome, or Chromium executable and renders the exact source
+fresh rather than recording host pixels. Nothing is downloaded automatically;
+missing capability is shown as unavailable.
+
+Canvas uses the host extension runtime. Consumers need no npm install or browser
+build. See [Canvas responses and Review](docs/commands.md#canvas) for capture
+limits and saved-evidence behavior, or [Canvas maintainer
+acceptance](docs/commands.md#canvas-maintainer-acceptance) for development checks.
 
 ## Commands
 

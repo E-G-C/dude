@@ -10,9 +10,11 @@ import * as projection from './agent-projection.mjs';
 
 const CONFIG_PATH = fileURLToPath(new URL('../../../config/agent-models.json', import.meta.url));
 const PACKS_DIRECTORY = fileURLToPath(new URL('../../../../library/packs/', import.meta.url));
+const CORE_AGENTS_DIRECTORY = fileURLToPath(new URL('../../../agents/', import.meta.url));
+const GENERATED_AGENTS_DIRECTORY = fileURLToPath(new URL('../../../../.github/agents/', import.meta.url));
 const CONFIG = loadAgentModelConfig(CONFIG_PATH);
 const COPILOT_TOOLS = Object.freeze([
-  'read', 'edit', 'search', 'execute', 'todo', 'agent', 'workiq/*', 'workiq2/*',
+  'read', 'edit', 'search', 'execute', 'todo', 'agent', 'dude_needs_you', 'workiq/*', 'workiq2/*',
 ]);
 const DEFAULT_TOOLS = Object.freeze(['read', 'edit', 'search', 'execute', 'todo', 'agent']);
 
@@ -459,6 +461,42 @@ test('accepts exactly the current Copilot selectors and rejects unmappable selec
     assertAgentFailure(
       () => parse(source({ tools: [selector] })),
       new RegExp(`tool selector '${selector.replace('*', '\\*')}' is unsupported for Copilot`),
+    );
+  }
+});
+
+test('projects the coordinator-only Needs You grant while Spec Lead keeps its existing scope', async () => {
+  // Arrange
+  const cases = [
+    {
+      stem: 'dude',
+      expectedTools: ['read', 'edit', 'search', 'execute', 'todo', 'agent', 'dude_needs_you'],
+    },
+    {
+      stem: 'dude-spec-lead',
+      expectedTools: ['read', 'edit', 'search'],
+    },
+  ];
+
+  // Act + Assert
+  for (const { stem, expectedTools } of cases) {
+    const sourceBytes = await readFile(join(CORE_AGENTS_DIRECTORY, `${stem}.agent.md`));
+    const parsed = parse(sourceBytes, stem);
+    const rendered = projection.renderCopilotAgent(parsed, CONFIG);
+    const generated = await readFile(join(GENERATED_AGENTS_DIRECTORY, `${stem}.agent.md`), 'utf8');
+
+    assert.deepEqual(parsed.frontmatter.tools, expectedTools, `${stem} source selectors`);
+    assert.equal(
+      generated,
+      rendered.toString('utf8'),
+      `${stem} generated profile is the current source projection`,
+    );
+    assert.equal(
+      generated.split('\n').includes(
+        `tools: [${expectedTools.map((tool) => JSON.stringify(tool)).join(', ')}]`,
+      ),
+      true,
+      `${stem} generated selector roster`,
     );
   }
 });

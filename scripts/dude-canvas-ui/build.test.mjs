@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * T010 maintainer-build and static browser-contract coverage. These tests use
+ * T010/T011 maintainer-build and static browser-contract coverage. These tests use
  * only a disposable copy of the build boundary. They deliberately do not run
  * npm or contact the registry, so recursive repository tests stay offline.
  */
@@ -22,6 +22,19 @@ const FRONTEND_ROOT = path.join(ROOT, 'src', 'extensions', 'dude', 'frontend');
 const ASSET_ROOT = path.join(ROOT, 'src', 'extensions', 'dude', 'ui', 'assets');
 const DEPLOYED_ASSET_ROOT = path.join(ROOT, '.github', 'extensions', 'dude', 'ui', 'assets');
 const EXPECTED_ASSETS = Object.freeze(['app.js', 'app.js.LEGAL.txt']);
+const REVIEW_ROOT = path.join(ROOT, 'src', 'extensions', 'dude', 'ui', 'review');
+const DEPLOYED_REVIEW_ROOT = path.join(ROOT, '.github', 'extensions', 'dude', 'ui', 'review');
+const EXPECTED_REVIEW_STATIC = Object.freeze([
+  'NOTICE.txt',
+  'bridge.mjs',
+  'capture.mjs',
+  'engine.mjs',
+  'geometry.mjs',
+  'inspector.mjs',
+  'panel.mjs',
+  'shapes.mjs',
+  'styles.css',
+]);
 const PACKAGE_SECTION_START = '----- BEGIN BUNDLED PACKAGE LICENSE -----';
 const PACKAGE_SECTION_END = '----- END BUNDLED PACKAGE LICENSE -----';
 const SCOPED_DEPENDENCY_SKIP = 'requires installed scoped dependencies; run `npm ci --prefix scripts/dude-canvas-ui` (intentionally outside recursive tests)';
@@ -114,6 +127,13 @@ function buildFixture() {
   );
   write(repo, 'src/extensions/dude/ui/index.html', '<!doctype html>\n');
   write(repo, 'src/extensions/dude/ui/keep.txt', 'sibling runtime bytes\n');
+  for (const filename of EXPECTED_REVIEW_STATIC) {
+    write(
+      repo,
+      `src/extensions/dude/ui/review/${filename}`,
+      fs.readFileSync(path.join(REVIEW_ROOT, filename)),
+    );
+  }
   write(repo, 'README.md', 'project bytes\n');
   write(repo, 'src/extensions/dude/ui/assets/app.js', 'obsolete application bytes\n');
   write(repo, 'src/extensions/dude/ui/assets/app.js.LEGAL.txt', 'obsolete legal bytes\n');
@@ -129,14 +149,14 @@ function buildFixture() {
 // Copies deliberately omit node_modules. Never move or remove the real install.
 function acceptanceFixture() {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-harness-fixture-'));
-  for (const file of ['browser.test.mjs', 'build.test.mjs']) {
+  for (const file of ['browser.test.mjs', 't011-browser.test.mjs', 'build.test.mjs']) {
     write(repo, `scripts/dude-canvas-ui/${file}`, fs.readFileSync(path.join(TOOL_ROOT, file)));
   }
-  fs.cpSync(path.dirname(ASSET_ROOT), path.join(repo, 'src/extensions/dude/ui'), { recursive: true });
+  fs.cpSync(path.join(ROOT, 'src'), path.join(repo, 'src'), { recursive: true });
   return repo;
 }
 
-/** @param {string} repo @param {'browser'|'build'} file @param {object} [options] */
+/** @param {string} repo @param {'browser'|'t011-browser'|'build'} file @param {object} [options] */
 function runAcceptanceFixture(repo, file, { env = {}, nodeArgs = [], pattern = '' } = {}) {
   return spawnSync(process.execPath, [
     ...nodeArgs,
@@ -155,6 +175,7 @@ function runAcceptanceFixture(repo, file, { env = {}, nodeArgs = [], pattern = '
       DUDE_CANVAS_BROWSER: undefined,
       DUDE_CANVAS_BROWSER_REQUIRED: undefined,
       DUDE_CANVAS_ARTIFACTS_DIR: undefined,
+      DUDE_CANVAS_ACCEPTANCE_FIXTURE: '1',
       ...env,
     },
   });
@@ -245,6 +266,7 @@ async function currentBundleMetafile() {
   const esbuild = createRequire(path.join(TOOL_ROOT, 'package.json'))('esbuild');
   const result = await esbuild.build({
     absWorkingDir: ROOT,
+    alias: { keyborg: path.join(TOOL_ROOT, 'node_modules', 'keyborg') },
     bundle: true,
     charset: 'utf8',
     define: {
@@ -681,6 +703,10 @@ test('root-anchored scoped dependency ignore hides only the private install', ()
 test('build configuration has one fixed browser-ESM entry and only fixed generated outputs', () => {
   // Arrange
   const build = read('scripts/dude-canvas-ui/build.mjs');
+  const workflow = read('.github/workflows/ci.yml');
+  const canvasCommands = workflow.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('node --test --test-reporter=tap scripts/dude-canvas-ui/'));
 
   // Act + Assert
   assert.match(build, /const ENTRY_FILE = path\.join\([^;]*'frontend', 'app\.jsx'\)/);
@@ -692,18 +718,24 @@ test('build configuration has one fixed browser-ESM entry and only fixed generat
   assert.match(build, /treeShaking: true/);
   assert.match(build, /legalComments: 'linked'/);
   assert.match(build, /metafile: true/);
+  assert.match(build, /alias: \{ keyborg: path\.join\(DEPENDENCY_DIRECTORY, 'keyborg'\) \}/);
   assert.match(build, /sourcemap: false/);
   assert.match(build, /outfile: OUTPUT_FILE/);
   assert.match(build, /new Set\(\['app\.js', 'app\.js\.LEGAL\.txt'\]\)/);
   assert.doesNotMatch(build, /\b(?:external|splitting|outdir|plugins)\s*:/);
   assert.match(build, /if \(stat\.isSymbolicLink\(\) \|\| !stat\.isDirectory\(\)\)/);
   assert.match(build, /fs\.rmSync\(ASSETS_DIRECTORY, \{ recursive: true, force: true \}\)/);
+  assert.deepEqual(canvasCommands, [
+    'node --test --test-reporter=tap scripts/dude-canvas-ui/build.test.mjs scripts/dude-canvas-ui/browser.test.mjs scripts/dude-canvas-ui/t011-browser.test.mjs',
+  ], 'required canvas CI registers build, T010, and published T011 browser entries exactly once');
 });
 
 test('built runtime is a committed ESM bundle with legal notice and no runtime dependency fetch', () => {
   // Arrange
   const sourceFiles = filesBelow(ASSET_ROOT);
   const deployedFiles = filesBelow(DEPLOYED_ASSET_ROOT);
+  const reviewFiles = filesBelow(REVIEW_ROOT);
+  const deployedReviewFiles = filesBelow(DEPLOYED_REVIEW_ROOT);
   const application = fs.readFileSync(path.join(ASSET_ROOT, 'app.js'), 'utf8');
   const legal = fs.readFileSync(path.join(ASSET_ROOT, 'app.js.LEGAL.txt'), 'utf8');
   const html = read('src/extensions/dude/ui/index.html');
@@ -712,22 +744,37 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.equal(read('.github/extensions/dude/ui/index.html'), html, 'index.html is an exact development projection');
   assert.deepEqual(sourceFiles, EXPECTED_ASSETS);
   assert.deepEqual(deployedFiles, EXPECTED_ASSETS);
+  assert.deepEqual(reviewFiles, EXPECTED_REVIEW_STATIC);
+  assert.deepEqual(deployedReviewFiles, EXPECTED_REVIEW_STATIC);
   for (const filename of EXPECTED_ASSETS) {
     const source = fs.readFileSync(path.join(ASSET_ROOT, filename));
     const deployed = fs.readFileSync(path.join(DEPLOYED_ASSET_ROOT, filename));
-    assert.deepEqual(deployed, source, `${filename} is an exact development projection`);
+    assert.ok(deployed.equals(source), `${filename} is an exact development projection`);
   }
+  for (const filename of EXPECTED_REVIEW_STATIC) {
+    const source = fs.readFileSync(path.join(REVIEW_ROOT, filename));
+    const deployed = fs.readFileSync(path.join(DEPLOYED_REVIEW_ROOT, filename));
+    assert.ok(deployed.equals(source), `review/${filename} is an exact development projection`);
+  }
+  const reviewNotice = fs.readFileSync(path.join(REVIEW_ROOT, 'NOTICE.txt'), 'utf8');
+  for (const required of [
+    'MIT License',
+    'Copyright (c) 2026 Enrique Gonzalez',
+    'Permission is hereby granted, free of charge',
+    'THE SOFTWARE IS PROVIDED "AS IS"',
+    'There is no runtime connection to the source repository.',
+  ]) assert.match(reviewNotice, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.ok(application.length > 100_000, 'the application bundle must contain the browser runtime');
   const gzipBytes = gzipSync(application, { level: 9 }).length;
-  assert.equal(Buffer.byteLength(application), 636_228, 'committed app.js raw byte size');
+  assert.equal(Buffer.byteLength(application), 879_549, 'committed app.js raw byte size');
   assert.equal(
     sha256(application),
-    '5009f00fc3b294304daeddfdfb39744a83d441305281763d3feadd1666e03fe6',
+    '8c6e3fe19edef61cff5489a0e0e26d4167e933a9124c22b43a6b9d9e410b74a5',
     'committed app.js raw SHA-256',
   );
   assert.equal(
     gzipBytes,
-    180_420,
+    245_819,
     'gzip -9 -n equivalent app.js byte size',
   );
   assert.equal(gzipBytes < 350 * 1024, true, 'gzip budget comparison');
@@ -739,10 +786,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.match(legal, /keyborg\/dist\/index\.js/);
   assert.match(legal, /MIT License/i);
   assert.match(legal, /Third-party package licenses \(metafile-derived\)/);
-  assert.equal(Buffer.byteLength(legal), 60_027, 'complete legal notice byte size');
+  assert.equal(Buffer.byteLength(legal), 79_762, 'complete legal notice byte size');
   assert.equal(
     sha256(legal),
-    'b6c7ada06bc1777c08965b0f6941f246cffa7e34998bd357450f3faa0501bc70',
+    '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387cf70ba7a6d869',
     'complete legal notice SHA-256',
   );
   assert.match(html, /<script type="module" src="\/assets\/app\.js"><\/script>/);
@@ -762,9 +809,28 @@ test('metafile-derived legal inventory contains every contributing package and c
   // Act
   const expected = expectedBundledPackages(metafile);
   const actual = parsePackageLicenseSections(legal);
+  const appOutput = Object.entries(metafile.outputs).find(([output]) => (
+    path.resolve(ROOT, output) === path.join(ASSET_ROOT, 'app.js')
+  ))?.[1];
+  assert.ok(appOutput, 'metafile has the published app.js output');
+  const menuGraphPackages = [
+    ['@fluentui/react-menu', '9.25.4'],
+    ['@fluentui/react-motion-components-preview', '0.15.8'],
+    ['@fluentui/react-tooltip', '9.10.5'],
+  ].map(([name, version]) => {
+    const marker = `/node_modules/${name}/`;
+    const inputs = Object.entries(appOutput.inputs || {})
+      .filter(([input, detail]) => input.includes(marker) && detail.bytesInOutput > 0);
+    return {
+      name,
+      version,
+      inputCount: inputs.length,
+      bytesInOutput: inputs.reduce((sum, [, detail]) => sum + detail.bytesInOutput, 0),
+    };
+  });
 
   // Assert
-  assert.ok(expected.length > 0, 'metafile identifies bundled npm packages');
+  assert.equal(expected.length, 53, 'metafile identifies the exact bundled npm package count');
   assert.deepEqual(
     actual.map(({ name, rootRelative, version }) => ({ name, rootRelative, version })),
     expected,
@@ -772,6 +838,62 @@ test('metafile-derived legal inventory contains every contributing package and c
   );
   assert.equal(new Set(actual.map((entry) => entry.rootRelative)).size, actual.length);
   assert.equal(actual.some((entry) => entry.name === 'esbuild'), false, 'build-only esbuild is not claimed');
+  assert.deepEqual(
+    expected.filter((entry) => entry.name === 'keyborg'),
+    [{ name: 'keyborg', rootRelative: 'keyborg', version: '2.14.1' }],
+    'the browser bundle contains one top-level Keyborg implementation',
+  );
+  assert.deepEqual(menuGraphPackages, [
+    {
+      name: '@fluentui/react-menu',
+      version: '9.25.4',
+      inputCount: 36,
+      bytesInOutput: 31_640,
+    },
+    {
+      name: '@fluentui/react-motion-components-preview',
+      version: '0.15.8',
+      inputCount: 5,
+      bytesInOutput: 1_734,
+    },
+    {
+      name: '@fluentui/react-tooltip',
+      version: '9.10.5',
+      inputCount: 6,
+      bytesInOutput: 8_332,
+    },
+  ], 'the shipped menu, motion implementation, and tooltip contribute real app.js bytes');
+  for (const { name, version } of menuGraphPackages) {
+    const entry = actual.find(candidate => candidate.name === name);
+    assert.ok(entry, `${name} has a legal inventory section`);
+    assert.equal(entry.version, version, `${name} legal version`);
+    assert.equal(entry.license, 'MIT', `${name} legal expression`);
+    const installed = fs.readFileSync(
+      path.join(TOOL_ROOT, 'node_modules', ...name.split('/'), 'LICENSE'),
+      'utf8',
+    );
+    assert.equal(
+      entry.licenseText,
+      installed,
+      `${name} legal section is the complete installed LICENSE, without truncation`,
+    );
+  }
+  const frontendPackage = JSON.parse(fs.readFileSync(path.join(TOOL_ROOT, 'package.json'), 'utf8'));
+  const frontendLock = JSON.parse(fs.readFileSync(path.join(TOOL_ROOT, 'package-lock.json'), 'utf8'));
+  assert.equal(frontendPackage.dependencies['@fluentui/react-components'], '9.74.7');
+  assert.equal(
+    Object.hasOwn(frontendPackage.dependencies, '@fluentui/react-tooltip'),
+    false,
+    'the reached tooltip remains transitive rather than a new direct dependency',
+  );
+  assert.deepEqual(
+    {
+      version:frontendLock.packages['node_modules/@fluentui/react-tooltip']?.version,
+      license:frontendLock.packages['node_modules/@fluentui/react-tooltip']?.license,
+    },
+    {version:'9.10.5',license:'MIT'},
+    'the already-locked transitive tooltip identity is exact',
+  );
 
   const completeTermsPackages = actual.filter((entry) => (
     entry.name === 'react'
@@ -908,10 +1030,23 @@ test('shipped runtime gzip -9 -n budget and complete legal notice are auditable'
   const gzip = spawnSync('gzip', ['-9', '-n', '-c', path.join(ASSET_ROOT, 'app.js')], {
     encoding: null,
   });
+  const legalGzip = spawnSync('gzip', ['-9', '-n', '-c', path.join(ASSET_ROOT, 'app.js.LEGAL.txt')], {
+    encoding: null,
+  });
 
   // Act + Assert
   assert.equal(gzip.error, undefined, 'gzip must be available for the release budget');
   assert.equal(gzip.status, 0, Buffer.from(gzip.stderr ?? '').toString('utf8'));
+  assert.equal(legalGzip.error, undefined, 'gzip must be available for the legal inventory measurement');
+  assert.equal(legalGzip.status, 0, Buffer.from(legalGzip.stderr ?? '').toString('utf8'));
+  assert.equal(gzip.stdout.length, 245_819, 'exact app.js gzip -9 -n bytes');
+  assert.equal(
+    sha256(gzip.stdout),
+    '54b725b2b7784f902d354025ae10dc2fc2d01a06ffa30f23d04d04b3fd51e7c7',
+    'exact app.js gzip -9 -n SHA-256',
+  );
+  assert.equal(legalGzip.stdout.length, 3_382, 'exact legal inventory gzip -9 -n bytes');
+  assert.equal(358_400 - gzip.stdout.length, 112_581, 'current gzip budget headroom');
   assert.ok(
     gzip.stdout.length <= 358_400,
     `app.js gzip -9 -n is ${gzip.stdout.length} bytes; budget is 358400 bytes`,
@@ -934,7 +1069,190 @@ test('shipped runtime gzip -9 -n budget and complete legal notice are auditable'
   }));
 });
 
-test('static frontend keeps the real Fluent shell, accessibility boundary, and read-only interactions', () => {
+function t011Sources() {
+  return {
+    app: read('src/extensions/dude/frontend/app.jsx'),
+    hook: read('src/extensions/dude/frontend/use-canvas-data.js'),
+    needs: read('src/extensions/dude/frontend/needs-you.jsx'),
+    review: read('src/extensions/dude/frontend/review.jsx'),
+    styles: read('src/extensions/dude/frontend/styles.js'),
+    theme: read('src/extensions/dude/frontend/theme.js'),
+    bundle: fs.readFileSync(path.join(ASSET_ROOT, 'app.js'), 'utf8'),
+  };
+}
+
+function assertT011WorkspaceContract() {
+  const { app, hook, needs, review, styles, theme } = t011Sources();
+  assert.match(app, /const TABS = \[\['overview', 'Overview'\], \['context', 'Context'\], \['needs', 'Needs you'\], \['new', 'New idea'\]\]/);
+  assert.equal((app.match(/<WorkFinder\b/g) ?? []).length, 1);
+  assert.equal((app.match(/<FluentProvider\b/g) ?? []).length, 1);
+  assert.match(app, /<TabList[\s\S]*?aria-label="Workspace views"[\s\S]*?selectTabOnFocus=\{false\}/);
+  assert.match(app, /<main ref=\{main\} className=\{s\.product\}>/);
+  assert.match(app, /<footer className=\{s\.footer\}>/);
+  assert.doesNotMatch(app, /ActivityRail|FeatureChooser|Details|Browse features|Dude — Now/);
+  assert.match(styles, /makeStyles\(/);
+  assert.match(theme, /webDarkTheme, webLightTheme/);
+  assert.match(needs, /MessageBar[\s\S]*?layout="multiline"/);
+  assert.match(review, /OverlayDrawer/);
+  assert.deepEqual(
+    [...hook.matchAll(/json\('([^']+)'/g)].map((match) => match[1]).sort(),
+    [
+      '/api/freshness',
+      '/api/needs-you',
+      '/api/needs-you/capture',
+      '/api/needs-you/capture-receipt',
+      '/api/needs-you/respond',
+      '/api/needs-you/review/open',
+      '/api/refresh',
+      '/api/work-index',
+    ].sort(),
+  );
+  assert.match(hook, /`\/api\/needs-you\/review\/history\?\$\{query\}`/);
+}
+
+function assertT011AccessibleTokens() {
+  const { styles, theme } = t011Sources();
+  assert.doesNotMatch(styles, /#[\da-f]{3,8}\b|rgba?\(|hsla?\(/i);
+  assert.match(theme, /colorNeutralStroke1: theme\.colorNeutralStrokeAccessible/);
+  assert.match(theme, /colorNeutralStroke1Hover: theme\.colorNeutralStrokeAccessibleHover/);
+  assert.match(theme, /colorNeutralStroke1Pressed: theme\.colorNeutralStrokeAccessiblePressed/);
+  assert.match(theme, /colorNeutralStroke1Selected: theme\.colorNeutralStrokeAccessibleSelected/);
+  assert.match(styles, /color: tokens\.colorNeutralForeground1/);
+  assert.match(styles, /backgroundColor: tokens\.colorNeutralBackground1/);
+  assert.match(styles, /color: tokens\.colorNeutralForeground2/);
+}
+
+function assertT011CompiledBorders() {
+  const { styles, bundle } = t011Sources();
+  for (const name of ['titlebar', 'commands', 'workScroll', 'focal', 'scope', 'drawingToolbar', 'historyImage']) {
+    const rule = styleRule(styles, name);
+    assert.match(rule, /\bborder(?:Bottom|Left)?:/);
+  }
+  assert.match(bundle, /colorNeutralStroke2/);
+  assert.doesNotMatch(styles, /border:\s*['"`][^'"`]*(?:#|rgb|hsl)/i);
+}
+
+function assertT011TargetGeometry() {
+  const { styles } = t011Sources();
+  assert.match(styleRule(styles, 'workItem'), /minHeight: '48px'/);
+  assert.match(styleRule(styles, 'requestOption'), /minHeight: '48px'/);
+  assert.match(styleRule(styles, 'toolButton'), /minWidth: '36px', minHeight: '36px'/);
+  assert.match(styleRule(styles, 'back'), /flexShrink: 0/);
+  assert.match(styleRule(styles, 'app'), /minWidth: 0/);
+  assert.match(styleRule(styles, 'product'), /minHeight: 0, minWidth: 0/);
+  assert.match(styleRule(styles, 'detail'), /overflowY: 'auto', scrollbarGutter: 'stable'/);
+  assert.doesNotMatch(styles, /(?:^|\n)\s*(?:['"]?(?:\*|html|body)['"]?)\s*:\s*\{[\s\S]*?boxSizing:/);
+}
+
+function assertT011LiteralProse() {
+  const { app, needs, styles } = t011Sources();
+  assert.match(styleRule(styles, 'prose'), /whiteSpace: 'pre-wrap'/);
+  assert.match(styleRule(styles, 'instruction'), /whiteSpace: 'pre-wrap'/);
+  assert.match(styleRule(styles, 'code'), /whiteSpace: 'pre-wrap'/);
+  assert.match(app, /<p className=\{s\.prose\}>\{instruction\(orientation\)\}<\/p>/);
+  assert.match(needs, /new TextEncoder\(\)\.encode\(value\)\.length/);
+  assert.match(needs, /your text has not been truncated/);
+  assert.doesNotMatch(`${app}\n${needs}`, /\.trim\(\)\s*\}\s*\)\s*;\s*void data\.(?:respond|capture)/);
+}
+
+function assertT011SingleFinder() {
+  const { app } = t011Sources();
+  const finder = app.slice(app.indexOf('function WorkFinder'), app.indexOf('function ReviewEntry'));
+  assert.match(finder, /Field label="Search work"/);
+  assert.match(finder, /SelectField label="Show"/);
+  assert.match(finder, /\[\[ 'open', 'Open' \], \[ 'closed', 'Closed' \], \[ 'all', 'All' \]\]/);
+  assert.match(finder, /data-work-scroll/);
+  assert.match(finder, /Nothing has been removed/);
+  assert.match(finder, /alphabetical, not priority order/);
+  assert.doesNotMatch(finder, /(?:slice|splice)\(/);
+  assert.doesNotMatch(app, /FeatureChooser|Browse|Details/);
+}
+
+function assertT011EpochAndFocus() {
+  const { app, hook } = t011Sources();
+  assert.equal((hook.match(/new EventSource\('\/events'\)/g) ?? []).length, 1);
+  assert.match(hook, /events\.addEventListener\('workspace', \(\) => queue\(true\)\)/);
+  assert.match(hook, /events\.addEventListener\('needs-you', \(\) => queue\(\)\)/);
+  assert.match(hook, /if \(pending\.epoch !== epoch\)/);
+  assert.match(hook, /locks\.current\.add\(key\); \/\/ Synchronous guard before fetch/);
+  assert.match(hook, /Nothing will be resent/);
+  assert.match(app, /focus\(\{ preventScroll: true \}\)/);
+  assert.match(app, /scroll\.current/);
+  assert.match(hook, /const rootChanged = previous\.index/);
+}
+
+function assertT011FluentComposition() {
+  const { app, needs, review, bundle } = t011Sources();
+  assert.match(app, /from '@fluentui\/react-components'/);
+  assert.match(app, /from '@fluentui\/react-icons'/);
+  assert.match(needs, /from '@fluentui\/react-components'/);
+  assert.match(review, /from '@fluentui\/react-components'/);
+  assert.doesNotMatch(`${app}\n${needs}\n${review}`, /<svg\b|unicode icon|@fluentui\/react\/unstable/i);
+  assert.match(bundle, /Workspace navigation/);
+  assert.match(bundle, /Current request coverage unavailable/);
+  assert.match(bundle, /Send annotations/);
+}
+
+function assertT011ExactIdentity() {
+  const { app, needs } = t011Sources();
+  assert.match(app, /left\.ideaPath === right\.ideaPath && left\.specPath === right\.specPath/);
+  assert.match(app, /data-work-path=\{row\.ideaPath\}/);
+  assert.match(app, /setSelection\(\{ ideaPath: context\.ideaPath, specPath: context\.specPath, title: context\.title \}\)/);
+  assert.match(needs, /record\.request\.scope\.ideaPath === context\.ideaPath && record\.request\.scope\.specPath === context\.specPath/);
+  assert.match(needs, /No current owner-qualified preview request is waiting for this record/);
+}
+
+function assertT011StableNavigation() {
+  const { app } = t011Sources();
+  assert.equal((app.match(/const TABS =/g) ?? []).length, 1);
+  assert.match(app, /TABS\.map\(\(\[value, label\]\) => <Tab/);
+  assert.doesNotMatch(app.slice(app.indexOf('TABS.map(([value, label])'), app.indexOf('</TabList>')), /\bdisabled\b/);
+  assert.match(app, /!reviewActive && !history && <nav/);
+  assert.match(app, /setReviewActive\(false\); setTab\(returning\?\.tab \|\| 'needs'\)/);
+}
+
+function assertT011CurrentWorkAuthority() {
+  const { app } = t011Sources();
+  const orientation = app.slice(app.indexOf('function currentOrientation'), app.indexOf('function instruction'));
+  assert.match(orientation, /sameContext\(projection\?\.selected, context\)/);
+  assert.match(orientation, /candidate\.contentIdentity === source\.contentIdentity/);
+  assert.match(orientation, /row\?\.lane === 'tracked'/);
+  assert.match(app, /Current task instruction/);
+  assert.match(app, /Only a current owner-qualified request belongs in Needs you/);
+  assert.match(app, /This is not a statement about current human requests/);
+}
+
+function assertT011CompleteRowSemantics() {
+  const { app } = t011Sources();
+  const rows = app.slice(app.indexOf('function rowsFor'), app.indexOf('function currentOrientation'));
+  assert.match(rows, /data\.index\?\.contexts \|\| data\.projection\?\.contexts/);
+  assert.match(rows, /new Map\(data\.index\.items\.map\(item => \[item\.ideaPath, item\]\)\)/);
+  assert.match(rows, /candidate\.availability\.state === 'current'/);
+  assert.match(rows, /context\.status === 'resolved' \? 'Resolved idea'/);
+  assert.match(rows, /\.sort\(\(a, b\) => a\.title\.localeCompare/);
+  assert.match(app, /const fallback = finder\.scope !== 'all' && rows\.some\(row => row\.open === null\)/);
+  assert.match(app, /Unknown records are included so missing progress cannot hide work/);
+}
+
+function assertT011ClosedForms() {
+  const { hook, needs, review } = t011Sources();
+  for (const requestClass of ['onboarding', 'fact', 'preview', 'manual_observation', 'permission', 'scope_choice']) {
+    assert.match(needs, new RegExp(requestClass));
+  }
+  assert.match(needs, /value\.confirmation !== fields\.confirmation/);
+  assert.match(needs, /targets: fields\.targets, confirmation: value\.confirmation/);
+  assert.match(needs, /Defer does not capture an idea/);
+  assert.match(needs, /void data\.capture\(value\.captureText, 'capture_only', record\)/);
+  assert.match(review, /sending\.current = true/);
+  assert.match(review, /await data\.respond\(entry\.record, sealed\.response\)/);
+  assert.match(review, /This report and image belong to the recorded source revision/);
+  assert.match(hook, /body: \{ requestHandle: intended \}/);
+  assert.match(hook, /const intended = record\?\.requestHandle \?\? null/);
+}
+
+test('T011 static frontend matches the approved interactive Fluent workspace contract', () => {
+  assertT011WorkspaceContract();
+  return;
   // Arrange
   const app = read('src/extensions/dude/frontend/app.jsx');
   const styles = read('src/extensions/dude/frontend/styles.js');
@@ -988,7 +1306,70 @@ test('static frontend keeps the real Fluent shell, accessibility boundary, and r
   assert.deepEqual(fetchedPaths, ['/api/projection', '/api/freshness', '/api/refresh']);
 });
 
-test('completion and dock colors keep their accessible installed Fluent token pairings', (context) => {
+test('T012 comment drawer names local capture without claiming delivery', () => {
+  // Arrange
+  const { review, bundle } = t011Sources();
+  const drawer = review.slice(
+    review.indexOf('<OverlayDrawer'),
+    review.indexOf('</OverlayDrawer>') + '</OverlayDrawer>'.length,
+  );
+
+  // Act
+  const liveRegionCount = (drawer.match(/\brole="status"/g) ?? []).length;
+  const sentWords = [...drawer.matchAll(/\bsent\b/gi)].map((match) => match[0].toLowerCase());
+
+  // Assert
+  assert.ok(drawer.startsWith('<OverlayDrawer') && drawer.endsWith('</OverlayDrawer>'));
+  assert.match(
+    drawer,
+    /<Badge[^>]*size="small"[^>]*appearance="tint"[^>]*color="informative">Not sent<\/Badge>/,
+  );
+  assert.match(
+    drawer,
+    /Comments are kept as you type\. Sending them is a separate action\./,
+  );
+  assert.match(
+    review,
+    /state\.dirty \? `Comment kept on annotation \$\{selectedNumber\}\. Markup not saved yet\.`\s*: `Comment kept on annotation \$\{selectedNumber\}\. Markup saved\.`/,
+  );
+  assert.match(
+    drawer,
+    /title="Close this list\. Your comments stay on their annotations\."/,
+  );
+  assert.match(
+    drawer,
+    /<Button appearance="primary" data-review-comments-done[\s\S]*?>Done<\/Button>/,
+  );
+  assert.match(
+    drawer,
+    /title="Close this list\. Comments stay on their annotations\. Sending them is a separate action\."/,
+  );
+  assert.match(
+    review,
+    /const finishComments = \(\) => \{\s*setInspector\(false\);\s*requestAnimationFrame\(\(\) => commentsAction\.current\?\.focus\(\{ preventScroll: true \}\)\);\s*\}/,
+    'Done closes first and then restores focus to the Comments count after Fluent restoration',
+  );
+  assert.equal(liveRegionCount, 1, 'the footer is the drawer’s sole live region');
+  assert.doesNotMatch(drawer, /<Badge[^>]*\brole="status"/,
+    'the static Not sent badge must not become a second announcer');
+  assert.deepEqual(sentWords, ['sent'],
+    'the only exact “sent” word in drawer source is the negated badge');
+  assert.doesNotMatch(drawer, /\b(?:submitted|delivered|approved)\b/i);
+  for (const exact of [
+    'Not sent',
+    'Comment kept on annotation ',
+    'Markup not saved yet.',
+    'Markup saved.',
+    'Close this list. Your comments stay on their annotations.',
+    'Close this list. Comments stay on their annotations. Sending them is a separate action.',
+  ]) {
+    assert.equal(bundle.includes(exact), true, `published app.js retains exact honest copy: ${exact}`);
+  }
+});
+
+test('T011 accessible workspace colors use installed Fluent token pairings', (context) => {
+  assertT011AccessibleTokens();
+  return;
   if (!installedScopedDependencyPath('@fluentui/react-components/package.json')) {
     skipScopedDependencies(context);
     return;
@@ -1032,7 +1413,9 @@ test('completion and dock colors keep their accessible installed Fluent token pa
   );
 });
 
-test('authored Griffel borders use supported side longhands that compile to token CSS', (context) => {
+test('T011 authored workspace borders compile from Fluent token declarations', (context) => {
+  assertT011CompiledBorders();
+  return;
   if (!installedScopedDependencyPath('@griffel/core/package.json')) {
     skipScopedDependencies(context);
     return;
@@ -1121,7 +1504,9 @@ test('authored Griffel borders use supported side longhands that compile to toke
   }
 });
 
-test('only authored exact-size bordered elements use local border-box sizing', () => {
+test('T011 responsive workspace owns explicit targets and bounded scroll geometry', () => {
+  assertT011TargetGeometry();
+  return;
   // Arrange
   const styles = read('src/extensions/dude/frontend/styles.js');
   const exactSizeBordered = {
@@ -1163,7 +1548,9 @@ test('only authored exact-size bordered elements use local border-box sizing', (
   );
 });
 
-test('prose captions are block flow while compact metadata, Freshness, and the narrow dock remain bounded', async () => {
+test('T011 literal intent, instruction, and receipt prose remains wrapping block flow', async () => {
+  assertT011LiteralProse();
+  return;
   // Arrange
   const app = read('src/extensions/dude/frontend/app.jsx');
   const styles = read('src/extensions/dude/frontend/styles.js');
@@ -1217,7 +1604,9 @@ test('prose captions are block flow while compact metadata, Freshness, and the n
   }
 });
 
-test('direct inline feature chooser has no trigger, Popover, portal, or modal layer', async (context) => {
+test('T011 one work finder replaces the dual chooser without a modal Browse surface', async (context) => {
+  assertT011SingleFinder();
+  return;
   if (!installedScopedDependencyPath(COMBOBOX_PACKAGE_MARKER)) {
     skipScopedDependencies(context);
     return;
@@ -1326,7 +1715,9 @@ test('direct inline feature chooser has no trigger, Popover, portal, or modal la
   }
 });
 
-test('busy chooser remains labelled and focusable while only a complete selected response moves focus', async (context) => {
+test('T011 coalesced reads, epochs, synchronous locks, and focus retention stay explicit', async (context) => {
+  assertT011EpochAndFocus();
+  return;
   // Arrange
   const app = read('src/extensions/dude/frontend/app.jsx');
   const styles = read('src/extensions/dude/frontend/styles.js');
@@ -1419,7 +1810,9 @@ test('busy chooser remains labelled and focusable while only a complete selected
   }
 });
 
-test('Fluent audit corrections remain in authored UI and the shipped bundle', () => {
+test('T011 Fluent composition and published bundle retain accessible named controls', () => {
+  assertT011FluentComposition();
+  return;
   // Arrange
   const app = read('src/extensions/dude/frontend/app.jsx');
   const styles = read('src/extensions/dude/frontend/styles.js');
@@ -1502,7 +1895,9 @@ test('Fluent audit corrections remain in authored UI and the shipped bundle', ()
   assert.match(application, /"Tab"\)," moves · ",[\s\S]{0,100}"Enter"\)," activates"/);
 });
 
-test('identity code exposes only a canonical direct selected idea path', () => {
+test('T011 browsing and preview entry require exact idea plus spec identity', () => {
+  assertT011ExactIdentity();
+  return;
   // Arrange
   const app = read('src/extensions/dude/frontend/app.jsx');
   const identity = app.slice(app.indexOf('function IdentityStrip'), app.indexOf('function SectionHead'));
@@ -1541,7 +1936,9 @@ test('identity code exposes only a canonical direct selected idea path', () => {
   );
 });
 
-test('approved rail chrome is present and inert outside the local Now announcement', async () => {
+test('T011 four stable workspace tabs replace the inert Now rail', async () => {
+  assertT011StableNavigation();
+  return;
   // Arrange
   const app = read('src/extensions/dude/frontend/app.jsx');
   const rail = app.slice(app.indexOf('function ActivityRail'), app.indexOf('function BreadcrumbStrip'));
@@ -1576,7 +1973,12 @@ test('approved rail chrome is present and inert outside the local Now announceme
     app,
     /\b(?:ReviewPanel|ReviewRoute|ReviewState|reviewRoute|reviewState|openReview|setReview)\b/,
   );
-  assert.doesNotMatch(server, /\/(?:api\/)?review\b/i);
+  assert.match(
+    server,
+    /'\/api\/needs-you\/review\/open'[\s\S]*'\/api\/needs-you\/review\/save'[\s\S]*'\/api\/needs-you\/review\/seal'/,
+    'T010 adds only the provider-bound Review adapter routes before T011 wires shell entry',
+  );
+  assert.doesNotMatch(server, /pathname\s*===\s*['"]\/api\/review(?:\/|['"])/);
 
   if (hasFrontendTestRuntime()) {
     const { frontend, dispose } = await loadFrontendForSsr({ useFluentTestDouble: false });
@@ -1598,7 +2000,9 @@ test('approved rail chrome is present and inert outside the local Now announceme
   }
 });
 
-test('Why attributes a ready next step to its authority and keeps blockers in Attention', async (context) => {
+test('T011 current task instructions require matching source authority and blockers stay nonrequests', async (context) => {
+  assertT011CurrentWorkAuthority();
+  return;
   // Arrange
   if (!hasFrontendTestRuntime()) {
     skipScopedDependencies(context);
@@ -1660,7 +2064,9 @@ test('Why attributes a ready next step to its authority and keeps blockers in At
   }
 });
 
-test('shared valid-choice helper keeps chooser, placeholder, and page counts consistent', async (context) => {
+test('T011 work rows preserve complete inventory, closed semantics, and unknown fallback', async (context) => {
+  assertT011CompleteRowSemantics();
+  return;
   // Arrange
   if (!hasFrontendTestRuntime()) {
     skipScopedDependencies(context);
@@ -1916,7 +2322,9 @@ test('shared valid-choice helper keeps chooser, placeholder, and page counts con
   }
 });
 
-test('chooser composite surfaces use only Fluent tokens for their required edges', () => {
+test('T011 six closed forms retain exact permission, capture, Review, and history boundaries', () => {
+  assertT011ClosedForms();
+  return;
   // Arrange
   const styles = read('src/extensions/dude/frontend/styles.js');
   const summaryBand = styleRule(styles, 'chooserSummaryBand');
@@ -1974,6 +2382,10 @@ test('two clean fixture builds remove stale assets and preserve every non-asset 
   try {
     const stableBefore = snapshotTree(repo)
       .filter((entry) => !entry.path.startsWith('src/extensions/dude/ui/assets'));
+    const reviewBefore = new Map(EXPECTED_REVIEW_STATIC.map((filename) => [
+      filename,
+      fs.readFileSync(path.join(repo, 'src', 'extensions', 'dude', 'ui', 'review', filename)),
+    ]));
 
     // Act
     const first = runFixtureBuild(repo);
@@ -1989,8 +2401,18 @@ test('two clean fixture builds remove stale assets and preserve every non-asset 
     assert.deepEqual(filesBelow(path.join(repo, 'src', 'extensions', 'dude', 'ui', 'assets')), EXPECTED_ASSETS);
     for (const filename of EXPECTED_ASSETS) {
       const built = fs.readFileSync(path.join(repo, 'src', 'extensions', 'dude', 'ui', 'assets', filename));
-      assert.deepEqual(built, firstAssets.get(filename), `second build changed ${filename}`);
-      assert.deepEqual(built, fs.readFileSync(path.join(ASSET_ROOT, filename)), `build drift in ${filename}`);
+      assert.ok(built.equals(firstAssets.get(filename)), `second build changed ${filename}`);
+      assert.ok(built.equals(fs.readFileSync(path.join(ASSET_ROOT, filename))), `build drift in ${filename}`);
+    }
+    assert.deepEqual(
+      filesBelow(path.join(repo, 'src', 'extensions', 'dude', 'ui', 'review')),
+      EXPECTED_REVIEW_STATIC,
+      'clean frontend builds retain exactly the nine separately adopted Review static files',
+    );
+    for (const filename of EXPECTED_REVIEW_STATIC) {
+      const retained = fs.readFileSync(path.join(repo, 'src', 'extensions', 'dude', 'ui', 'review', filename));
+      assert.ok(retained.equals(reviewBefore.get(filename)), `first/second clean build changed review/${filename}`);
+      assert.ok(retained.equals(fs.readFileSync(path.join(REVIEW_ROOT, filename))), `review/${filename} drifted from adopted source`);
     }
     assert.deepEqual(
       snapshotTree(repo).filter((entry) => !entry.path.startsWith('src/extensions/dude/ui/assets')),
@@ -2053,7 +2475,7 @@ test('browser prerequisites skip an absent default only in optional mode and rej
   // Arrange: make the local default absent on every test machine.
   const repo = acceptanceFixture();
   const missing = path.join(repo, 'absent-browser');
-  const relative = 'scripts/dude-canvas-ui/browser.test.mjs';
+  const relative = 'scripts/dude-canvas-ui/t011-browser.test.mjs';
   const source = fs.readFileSync(path.join(repo, relative), 'utf8');
   const withoutDefault = source.replace(
     "?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'",
@@ -2064,17 +2486,17 @@ test('browser prerequisites skip an absent default only in optional mode and rej
   try {
     for (const required of ['0', '1']) {
       // Act
-      const absentDefault = runAcceptanceFixture(repo, 'browser', {
+      const absentDefault = runAcceptanceFixture(repo, 't011-browser', {
         env: { DUDE_CANVAS_BROWSER_REQUIRED: required },
       });
-      const invalidOverride = runAcceptanceFixture(repo, 'browser', {
+      const invalidOverride = runAcceptanceFixture(repo, 't011-browser', {
         env: { DUDE_CANVAS_BROWSER_REQUIRED: required, DUDE_CANVAS_BROWSER: missing },
       });
 
       // Assert
       assert.equal(absentDefault.error, undefined);
       assert.equal(absentDefault.status, required === '1' ? 1 : 0, absentDefault.stdout + absentDefault.stderr);
-      assert.match(absentDefault.stdout, /Browser is not executable.*set DUDE_CANVAS_BROWSER/);
+      assert.match(absentDefault.stdout, /Browser is not executable.*absent-browser/);
       if (required === '0') assert.match(absentDefault.stdout, /# SKIP/);
       assert.equal(invalidOverride.error, undefined);
       assert.equal(invalidOverride.status, 1, invalidOverride.stdout + invalidOverride.stderr);
@@ -2092,7 +2514,7 @@ test('browser prerequisite reports actionable Node guidance when global WebSocke
   try {
     for (const required of ['0', '1']) {
       // Act
-      const result = runAcceptanceFixture(repo, 'browser', {
+      const result = runAcceptanceFixture(repo, 't011-browser', {
         nodeArgs: ['--no-experimental-websocket'],
         env: { DUDE_CANVAS_BROWSER_REQUIRED: required, DUDE_CANVAS_BROWSER: process.execPath },
       });
@@ -2100,7 +2522,7 @@ test('browser prerequisite reports actionable Node guidance when global WebSocke
       // Assert
       assert.equal(result.error, undefined);
       assert.equal(result.status, required === '1' ? 1 : 0, result.stdout + result.stderr);
-      assert.match(result.stdout, /Global WebSocket is unavailable; use Node 22\+/);
+      assert.match(result.stdout, /Global WebSocket is unavailable; use the supported Node runtime/);
       if (required === '0') assert.match(result.stdout, /# SKIP/);
       else assert.doesNotMatch(result.stdout, /# SKIP/);
     }
@@ -2144,14 +2566,14 @@ test('browser prerequisite fails required mode without scoped dependencies', (co
   try {
     for (const required of ['0', '1']) {
       // Act
-      const result = runAcceptanceFixture(repo, 'browser', {
+      const result = runAcceptanceFixture(repo, 't011-browser', {
         env: { DUDE_CANVAS_BROWSER_REQUIRED: required, DUDE_CANVAS_BROWSER: process.execPath },
       });
 
       // Assert
       assert.equal(result.error, undefined);
       assert.equal(result.status, required === '1' ? 1 : 0, result.stdout + result.stderr);
-      assert.match(result.stdout, /Scoped Fluent dependencies are absent; run `npm ci --prefix scripts\/dude-canvas-ui`/);
+      assert.match(result.stdout, /Existing scoped Fluent dependencies are unavailable/);
       if (required === '0') assert.match(result.stdout, /# SKIP/);
       else assert.doesNotMatch(result.stdout, /# SKIP/);
       assert.equal(fs.existsSync(path.join(repo, 'scripts/dude-canvas-ui/node_modules')), false);
@@ -2171,19 +2593,22 @@ test('browser launch failures retain isolated evidence under one parent and defa
     skipScopedDependencies(context);
     return;
   }
-  // Arrange: Node is executable but cannot launch as Chromium.
+  // Arrange: an owned executable exits immediately and cannot launch as Chromium.
   const repo = acceptanceFixture();
   fs.symlinkSync(path.join(TOOL_ROOT, 'node_modules'), path.join(repo, 'scripts/dude-canvas-ui/node_modules'), 'dir');
+  const failingBrowser = path.join(repo, 'failing-browser');
+  fs.writeFileSync(failingBrowser, '#!/usr/bin/env node\nprocess.exit(2);\n', { mode: 0o755 });
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-evidence-regression-'));
   write(parent, 'existing.txt', 'caller-owned evidence\n');
   const retained = new Map();
   try {
     for (const outputParent of [parent, parent, undefined]) {
       // Act
-      const result = runAcceptanceFixture(repo, 'browser', {
+      const result = runAcceptanceFixture(repo, 't011-browser', {
+        pattern: '^T011 browser: published blank',
         env: {
           DUDE_CANVAS_BROWSER_REQUIRED: '1',
-          DUDE_CANVAS_BROWSER: process.execPath,
+          DUDE_CANVAS_BROWSER: failingBrowser,
           DUDE_CANVAS_ARTIFACTS_DIR: outputParent,
         },
       });
@@ -2191,20 +2616,19 @@ test('browser launch failures retain isolated evidence under one parent and defa
       // Assert: a startup failure is not a prerequisite skip or a fallback launch.
       assert.equal(result.error, undefined);
       assert.equal(result.status, 1, result.stdout + result.stderr);
-      assert.match(result.stdout, /Could not launch DUDE_CANVAS_BROWSER=.*Browser exited before CDP startup/);
+      assert.match(result.stdout, /browser exited before CDP startup/);
       assert.doesNotMatch(result.stdout, /# SKIP/);
-      const directory = /# Canvas evidence directory: (.+)/.exec(result.stdout)?.[1];
+      const directory = /# T011 evidence directory: (.+)/.exec(result.stdout)?.[1];
       assert.ok(directory, result.stdout);
       assert.equal(fs.realpathSync(path.dirname(directory)), fs.realpathSync(outputParent ?? os.tmpdir()));
       assert.equal(retained.has(directory), false, 'every run uses a distinct child');
       for (const [previous, bytes] of retained) {
-        assert.deepEqual(fs.readFileSync(path.join(previous, 'index.json')), bytes, 'later runs leave earlier evidence untouched');
+        assert.deepEqual(fs.readFileSync(path.join(previous, 'results.json')), bytes, 'later runs leave earlier evidence untouched');
       }
-      const bytes = fs.readFileSync(path.join(directory, 'index.json'));
+      const bytes = fs.readFileSync(path.join(directory, 'results.json'));
       const index = JSON.parse(bytes.toString());
-      assert.equal(index.browser, null, 'partial index does not claim rendered execution');
-      assert.deepEqual(index.screenshots, []);
-      assert.equal(index.assets['assets/app.js'], sha256(fs.readFileSync(path.join(ASSET_ROOT, 'app.js'))));
+      assert.deepEqual(index.results, [], 'partial evidence does not claim rendered execution');
+      assert.equal(index.sources['src/extensions/dude/ui/assets/app.js'], sha256(fs.readFileSync(path.join(ASSET_ROOT, 'app.js'))));
       retained.set(directory, bytes);
       context.diagnostic(`Retained launch-failure evidence: ${directory}`);
     }

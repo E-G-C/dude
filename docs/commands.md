@@ -699,6 +699,123 @@ warning is also printed for the current lane. A `Roster gap:` line is
 actionable, not a pointer — it tells you the exact `@dude hire ...` verb to
 run. Use `@dude self-check` if you want the full roster on demand.
 
+### Canvas
+
+Each Needs you request identifies its owner, source, current revision, why your
+input is needed, and what it unblocks. Blank answer slots, task failures, and
+history do not create requests. Missing or stale coverage is shown explicitly,
+not reported as an empty inbox.
+
+Sending a response leaves it awaiting acknowledgment. Accepted means the owner
+accepted the response; Applied requires owner confirmation and a fresh source
+read. Stale responses are refused, and uncertain delivery is not automatically
+retried. Canvas does not edit protected answers, task state, or approvals, or
+execute the underlying consented operation.
+
+New idea's Cancel returns to Needs you and keeps unsent text only in the current
+tab. It does not undo a submission; reloading clears the local draft. For an
+unfiled request, Save as idea explicitly captures the intent you select through
+brainstorm. Ordinary Defer creates no ledger and promises no restored request
+after restart. Source-backed deferral uses the existing owner's acknowledgment
+and source reread; saving intent requires an acknowledged, reread canonical idea.
+
+Enter Review from a current preview request or eligible design link. The target
+must be canonical HTML in an exactly owned defined package, with declared local
+assets; a draft shows the Define-first prerequisite. Send annotations returns
+the semantic report and actual annotated PNG to the original waiting request.
+The owner revises the canonical mock, acknowledges it, and issues a fresh
+request. Only separate, explicit approval applies to the current revision. The
+embedded Sharpie code does not call `session.send` directly.
+
+Start and finish drawings inside the reviewed frame, leaving room for the whole
+mark. New marks that do not fit are rejected, not added as hidden annotations.
+A drawing tool stays selected after each mark, so you can place several without
+reselecting it, and Escape returns to Select. Send shows progress or a blocking
+message beside the action. The message names the numbered annotations that
+cannot be captured; use Inspect annotations to edit or delete those entries in
+Comments. Existing markup is never corrected or deleted automatically.
+
+Comment text is optional. A numbered pin is complete once its geometry and
+target check out, and Send still delivers the numbered report and the actual
+annotated PNG carrying that number. Comments stay local until you send them:
+the Comments drawer's Done closes the list and keeps each comment on its
+annotation, Save markup is disabled once the current markup is already saved,
+and neither one submits anything.
+
+Choose Select (V) to work with marks you already made. Pick one by its number
+badge, or anywhere inside a box or highlight, then double-click it to write its
+comment; Enter does the same for the selected annotation, and the Comments
+action opens the same list. While a drawing tool is armed, a press on the mock
+starts a new mark instead.
+
+The first annotation pins the reviewed viewport. After that, shrinking the host
+panel pans the pinned frame rather than reflowing the mock or rebasing existing
+marks, and arrow keys pan it as well. A genuine change of source, theme,
+display scale, or pinned frame size still refuses the submission and retains
+your markup. Nothing is remapped automatically; correct retained invalid
+annotations yourself through Inspect annotations.
+
+Working markup and sealed submissions stay under that owner's
+`reviews/<submission-id>/`. Saved files restore work and evidence, not live
+request authority or permission to resend.
+
+Capture preflights an available Edge, Chrome, or Chromium executable rather
+than downloading one. Its image is a fresh Chromium rendering of the exact
+source and assets, not a recording of native host pixels. Capture verifies
+portable evidence: selector, tag, and text identity, projected target geometry,
+viewport and scroll position, target visibility, and marker containment.
+Computed-CSS equality, glyph equivalence, and whole-page paint equality are not
+claimed; each renderer is still required to hold still on its own side while
+its view is read. The report always travels with its image, so there is no
+marker-only or report-only send.
+
+Source, asset, geometry, or selector mismatches refuse submission and retain
+markup. Annotations follow their target through recorded nested scrolling. A
+marker outside its target's visible scroll area stays retained but hidden;
+scroll it back into view before sending. Older markup without the required
+scroll context is retained rather than assigned a guessed anchor.
+Capture checks reproducible basic SVG shapes and explicitly refuses unsupported
+SVG reference/effect modes or transient state it cannot reproduce.
+
+Three separate conditions refuse annotating, scrolling, or sending while the
+mock cannot be read reliably, and each names its own cause. "The mock has not
+settled" means its fonts, images, animations, or layout are still changing, so
+wait for them. "The mock did not answer in time" means the frame missed a
+bounded query; keep it visible on screen, then try again. "The mock kept
+changing while its view was read" means the view moved mid-read, so try again.
+Your markup is retained in every case, and capture reports the same readiness
+wording when the fresh rendering has not settled.
+
+#### Reloading the development canvas
+
+The Canvas Refresh control rereads workspace data; it reloads neither the
+renderer nor the backend. UI assets are served from disk on each request, so a
+renderer reload fetches a rebuilt bundle without restarting the app. Reopening
+an existing panel may only focus the cached UI. None of these operations
+reloads the extension's backend modules.
+After rebuilding backend code, use the runtime's `extensions_reload({})` tool
+when it is available. An SDK host already connected to this session can use
+`session.rpc.extensions.reload()`. This reloads all extension providers for
+the session, not just Dude.
+
+Before reloading, confirm that Review shows markup as saved and retain any
+unsaved New idea text. After the provider reconnects, reopen the existing canvas
+instance if needed. Saved review files remain on disk, but pending requests,
+receipts, and cached capture capability do not survive provider replacement.
+Dude must publish a fresh current preview request before another response can
+be sent; reopening a panel or retaining a submission file does not restore that
+authority or automatically attach old markup to the new request.
+
+If extension-management tools are unavailable in the current client, report
+that limitation. Restarting the app is a fallback for loading changed backend
+code, not a requirement of the Canvas API. Do not use `/clear` just to reload
+an extension, because it also replaces the conversation context.
+
+The SDK's canvas contract exposes rendering, actions, and lifecycle callbacks,
+not a screenshot API for the embedded page. Review therefore keeps its owned
+browser capture: a Canvas URL or successful reopen cannot replace the required
+source-aligned PNG.
+
 ### Pending prompt replies
 
 When Dude is waiting on a specific reply (a reconciliation gate or a manual
@@ -1211,86 +1328,130 @@ directories when discovering tests, including after a scoped maintainer install:
 find . -type d \( -name node_modules -o -name dist \) -prune -o -type f -name '*.test.mjs' -print0 | xargs -0 node --test
 ```
 
-For required canvas acceptance, use Node 22+ with its global WebSocket client
-and an installed Chromium-family browser. Run from the repository root:
+Required Canvas browser acceptance uses Node 22+ with its global WebSocket
+client and an installed Edge, Chrome, or Chromium executable. This is a
+maintenance harness requirement: production capture uses Node >=20 Chrome
+DevTools Protocol (CDP) pipes in the host extension runtime, without a global
+WebSocket requirement.
+
+When setting up maintainer dependencies, run this scoped install from the
+repository root. Consumers need neither this install nor a browser build:
 
 ```bash
 npm ci --prefix scripts/dude-canvas-ui
-export DUDE_CANVAS_BROWSER="/absolute/path/to/chromium"
-DUDE_CANVAS_BROWSER_REQUIRED=1 node --test --test-reporter=tap scripts/dude-canvas-ui/build.test.mjs scripts/dude-canvas-ui/browser.test.mjs
 ```
 
-Include the production provider regressions when changing selection or freshness
-coverage:
+Run all three browser/build suites and the real-provider source regressions:
 
 ```bash
-DUDE_CANVAS_BROWSER_REQUIRED=1 node --test --test-reporter=tap scripts/dude-canvas-ui/build.test.mjs scripts/dude-canvas-ui/browser.test.mjs src/extensions/dude/canvas-server.test.mjs src/extensions/dude/projection.test.mjs
+export DUDE_CANVAS_BROWSER="/absolute/path/to/browser-executable"
+DUDE_CANVAS_BROWSER_REQUIRED=1 node --test --test-concurrency=1 --test-reporter=tap \
+  scripts/dude-canvas-ui/build.test.mjs \
+  scripts/dude-canvas-ui/browser.test.mjs \
+  scripts/dude-canvas-ui/t011-browser.test.mjs \
+  src/extensions/dude/projection.test.mjs \
+  src/extensions/dude/work-index.test.mjs \
+  src/extensions/dude/needs-you.test.mjs \
+  src/extensions/dude/review.test.mjs \
+  src/extensions/dude/browser-process.test.mjs \
+  src/extensions/dude/canvas-server.test.mjs
 ```
 
-`DUDE_CANVAS_BROWSER` selects that exact executable. Omit it to use the existing
-macOS Microsoft Edge default. An invalid supplied path or a failed launch always
-fails, even in optional mode; there is no browser fallback. Every launch is
-headless with a fresh temporary profile and does not open or focus your browser.
-`DUDE_CANVAS_BROWSER_REQUIRED=1` turns missing browser, WebSocket, and scoped
-dependency prerequisites into failures, including the build-parity checks.
-Leave it unset for ordinary optional execution.
+The command uses `--test-concurrency=1` so these heavy suites run serialized
+instead of competing for the same machine resources. Run this named list rather
+than sending them through recursive parallel discovery. `DUDE_CANVAS_BROWSER`
+selects the exact test executable; omitting it uses the browser suites'
+existing macOS Edge default. Invalid overrides and launch failures fail even in
+optional mode, without fallback or download. Launches are headless with
+isolated profiles. Required mode fails missing browser, global WebSocket, or
+scoped dependency prerequisites, including build parity.
 
-Acceptance serves the committed assets without rebuilding the working tree.
-The build tests compare two disposable builds with committed JavaScript and legal
-notice bytes, and check source/deployed shell and asset equality. Do not run
-`build-dev` or regenerate assets before testing for drift. Consumer installations
-still need no npm install, build, or network access to open the cockpit.
+Check TAP for the named T010, T011, and T012 cases registered in these suites,
+with a nonzero executed count, zero exit status, and no required browser skips.
+A successful file wrapper or screenshots alone do not establish execution.
+Coverage includes 360, 768, and 1440 CSS pixels in both themes, all six request
+forms and response/coverage states, full work-finder discovery, query and scroll
+retention, late responses, the null-idle capture race, and ordinary-chat refresh
+with no waiter. Review checks cover keyboard operation, comment caret, root and
+nested scrolling, clipped-marker recovery, native status announcements, contrast,
+source-aligned image fidelity, and sealed history.
+WCAG 2.2 AA target checks use 24-by-24 CSS pixels or a demonstrated equivalent
+control path. Review engine handles use equivalent numeric/keyboard controls.
 
-Set `DUDE_CANVAS_ARTIFACTS_DIR` to an optional output parent. Each browser run
-creates a fresh `dude-canvas-browser-*` child there, or in the OS temporary
-directory when unset. TAP diagnostics report the exact evidence directory,
-browser version, and committed asset SHA-256 hashes. Require executed named
-browser subtests and a zero exit status with no skips; screenshots alone do not
-establish a pass. Screenshots and `index.json` remain after success or failure,
-including partial startup evidence. The tests remove their profiles and input
-fixtures, never the caller's output parent or earlier evidence. Remove retained
-evidence yourself when no longer needed.
+Test committed/published bytes before regeneration. Do not run `build-dev` or
+regenerate UI assets first when checking drift. Two clean disposable builds
+must match the committed UI, static, and legal bytes, with source/deployed
+equality. Preserve all nine adopted Review static files, including the MIT
+`NOTICE.txt`. The enforced `app.js` gzip `-9 -n` ceiling is 358400 bytes; byte
+comparison and complete license accounting matter more than a frozen raw size
+or package count.
 
-The named real-provider browser flow runs the committed bundle through production
-`openInstance`, `readNowProjection`, refresh, and freshness routes over 50
-disposable canonical ledgers. Only the external `bd` executable is substituted;
-its real process arguments and held-read barrier are observed. It covers selection
-without premature commitment, the existing no-database fallback, generic failure
-with prior facts preserved, successful replacement, and changed-source detection
-followed by explicit refresh. Generic authority failure reports `unavailable`
-with the last complete read preserved. The other rendered cases retain controlled
-projection responses for independent UI states, layout, keyboard, and accessibility
-checks.
+Once those checks are done and frontend source has changed, rebuild the UI
+bundle with `node scripts/dude-canvas-ui/build.mjs`, which writes
+`src/extensions/dude/ui/assets/`. `node scripts/build-dev.mjs` projects the
+already-built runtime into `.github/extensions/dude/`; it does not re-bundle
+the frontend.
 
-The selected-open journey runs at 360, 760, and 1440 CSS pixels in both light and
-dark themes, with matching Fluent tokens. Each of the six cases checks the full
-committed 052 row against the listbox scrollport and viewport, required-content
-clipping, page horizontal overflow, and hit-testing at actual CDP pointer
-coordinates. The complete 50-row inventory remains available without requiring
-every row to be onscreen. Intentional long-label ellipsis retains its full
-accessible identity. Query, Tab noncommit, failed selection, successful replacement,
-and focus assertions remain alongside the existing long Next source disclosure,
-accessibility-tree, contrast, zoom, and forced-color checks.
+`DUDE_CANVAS_ARTIFACTS_DIR` is an optional evidence parent. Each browser case/run
+creates a unique subdirectory there, or under the OS temporary directory.
+Diagnostics identify retained screenshots and JSON observations, browser
+version, and asset hashes. Failures retain available evidence. The suites remove
+their profiles and input fixtures, not the caller's parent or earlier evidence;
+remove retained artifacts when no longer needed.
 
-Target measurements cover the chooser input, current option, Refresh, Now, and
-Source details. The exposed input and current option are measured while the
-popup is open. Dismiss the popup before reaching underlying controls: Refresh
-and Now are measured after the second Escape closes it. The checks use WCAG
-2.2 AA criterion 2.5.8's 24-by-24 CSS-pixel
-minimum, not the 44-pixel AAA target. No target-size exception is used. An
-undersized target must fail unless an applicable exception is demonstrated by
-measurement; spacing would require the criterion's 24-pixel-diameter circle
-separation, not an assumed exemption. Decorative icons and disabled future
-surfaces are not separate active targets. Each case retains a `selected-open`
-screenshot and numeric geometry/hit-test observations in the existing run's
-`index.json`; these are diagnostic evidence, not image-comparison baselines.
+These Node/browser suites use SDK-session stand-ins with real provider, HTTP,
+filesystem, browser, and capture behavior. They do not establish installed CLI
+or desktop-app behavior.
 
-These are standalone browser checks, not Copilot host evidence. Synthetic focus
-dispatch proves the renderer's freshness listener and real GET route; actual host
-provider discovery, iframe sizing/theme/focus, and reload lifecycle still require
-host smoke. Complete automatable interaction coverage before requesting that
-narrow human check. No extension scaffold, SDK tooling, or reload is needed for
-maintainer acceptance.
+##### Installed Copilot host
+
+Invoke `scripts/dude-canvas-ui/t012-installed-host.mjs` explicitly; recursive
+`*.test.mjs` discovery does not run it. Use existing installed CLI, runtime, and
+browser artifacts:
+
+```bash
+DUDE_COPILOT_CLI="$(command -v copilot)" \
+DUDE_COPILOT_RUNTIME="/absolute/path/to/installed/copilot/index.js" \
+DUDE_CANVAS_BROWSER="/absolute/path/to/browser-executable" \
+DUDE_CANVAS_ARTIFACTS_DIR="/absolute/path/to/acceptance-artifacts" \
+  node scripts/dude-canvas-ui/t012-installed-host.mjs
+```
+
+The current driver loads the SDK from the fixed macOS app-bundle path
+`/Applications/GitHub Copilot.app/Contents/Resources/copilot-sdk`. It does not
+install Copilot, an SDK, or a browser. Its evidence parent receives a unique
+`installed-host-*` directory with a manifest.
+
+The driver builds the current release into owned blank Git/non-Git fixtures,
+uses installed CLI/SDK stdio and discovered Dude extension code, and drives the
+returned Canvas URL in Edge over CDP. It keeps the raw file-discovered project
+Dude and Spec Lead profiles, with Dude selected and no `customAgents`, runtime
+profile projection/augmentation, or deselection. Dude's shipped tools explicitly
+include one `dude_needs_you` grant; Spec Lead's remain `read`/`edit`/`search`.
+
+A credential-free local deterministic model chooses actual offered `task`,
+`skill`, `create`, `view`, `edit`, `bash`, and `dude_needs_you` calls; only actual
+owner tools make post-seed canonical writes. For blank capture, Spec Lead stages
+the draft, then Dude invokes the shipped first-capture publisher, rereads the
+canonical draft, and acknowledges. Two actual report/PNG replies reach original
+waiters A/B; Dude delegates B/C revisions through Spec Lead's normal
+`view`/`edit`/`view` tools, with acknowledgments and fresh requests before explicit
+approval of current C.
+
+The recorded 2026-09-08 run used Darwin arm64, Node 26.8.1, CLI 1.0.83-5
+(protocol 3), and Edge 133.0.3065.69. This establishes normal installed tool
+execution and Spec Lead delegation with scripted model choices, not unscripted
+remote-model reasoning. The SDK reported `ui.canvases: false`; Edge rendered the
+returned URL separately. Desktop panel chrome, embedding/sizing, theme/focus,
+and reload/Review-entry behavior still require host-only smoke after automatable
+coverage. This evidence does not verify other operating systems or browser
+versions.
+
+The installed failure control received a matching `user.message` receipt before
+transport failure, so it stayed awaiting acknowledgment without duplicate
+submission. Pre-receipt uncertainty could not be induced in that run; the
+provider/browser negative controls cover that case, not a fresh installed
+occurrence.
 
 ### Releases and CI
 
@@ -1300,8 +1461,10 @@ drift check. Its separate `canvas-browser` job uses Ubuntu 24.04, Node 22, and t
 runner-installed `google-chrome`, resolved with `command -v`, checked for
 executability, and reported with `--version`. Missing Chrome fails the job.
 Only this job installs scoped dependencies and requires the explicit build and
-browser suites. It uploads retained evidence from its runner-temp output parent
-even after failure. The dependency-free jobs keep their optional skips.
+browser suites: `build.test.mjs`, `browser.test.mjs`, and
+`t011-browser.test.mjs` under `scripts/dude-canvas-ui/`. It uploads retained
+evidence from its runner-temp output parent even after failure. The
+dependency-free jobs keep their optional skips.
 
 `.github/workflows/release.yml` runs on a `v*` tag: it gates on the
 bundle checks, builds the core bundle with `scripts/build-release.mjs`, and

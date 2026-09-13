@@ -7288,7 +7288,7 @@ const GITHUB_ISSUE_POLICY_NEIGHBOUR_MARKERS = [
   ['issue-intake specialist-selection policy', /\b(?:current\s+)?closed-roster algorithm\b|\btesting to `Tester`\b|\bacceptance to an independent reviewer\b|\b(?:issue|intake|reference|admission|unadmitted|fetched)\b[\s\S]{0,120}\b(?:specialist(?:[-\s]+selection)?|Tester|independent reviewer)\b|\b(?:specialist(?:[-\s]+selection)?|Tester|independent reviewer)\b[\s\S]{0,120}\b(?:issue|intake|reference|admission|unadmitted|fetched)\b/i],
   [
     'issue-intake Work policy',
-    /\bcurrent execution authority\b|\b(?:issue|intake|reference|admission|unadmitted|fetched)\b[\s\S]{0,120}(?:--policy|(?:autonomous|guarded)`?\s+Work|Work policy|Work semantics|Work\b[\s\S]{0,48}\b(?:autonomous|guarded)\s+mode)\b|(?:--policy|(?:autonomous|guarded)`?\s+Work|Work policy|Work semantics|Work\b[\s\S]{0,48}\b(?:autonomous|guarded)\s+mode)\b[\s\S]{0,120}\b(?:issue|intake|reference|admission|unadmitted|fetched)\b/i,
+    /\bcurrent execution authority\b|\b(?:issue|(?<!work-)intake|reference|admission|unadmitted|fetched)\b[\s\S]{0,120}(?:--policy|(?:autonomous|guarded)`?\s+Work|Work policy|Work semantics|Work\b[\s\S]{0,48}\b(?:autonomous|guarded)\s+mode)\b|(?:--policy|(?:autonomous|guarded)`?\s+Work|Work policy|Work semantics|Work\b[\s\S]{0,48}\b(?:autonomous|guarded)\s+mode)\b[\s\S]{0,120}\b(?:issue|(?<!work-)intake|reference|admission|unadmitted|fetched)\b/i,
   ],
 ];
 
@@ -8843,7 +8843,8 @@ function isDudeRuntimeSource(sourceRelative) {
   return rel === 'extension.mjs'
     || rel.startsWith('lib/')
     || rel === 'ui/index.html'
-    || rel.startsWith('ui/assets/');
+    || rel.startsWith('ui/assets/')
+    || rel.startsWith('ui/review/');
 }
 
 test('T009 current runtime projection is exact, generated, and consumer-tooling-free', () => {
@@ -8859,10 +8860,12 @@ test('T009 current runtime projection is exact, generated, and consumer-tooling-
   // Act
   const plannedSources = listCoreSourceFiles(ROOT)
     .map(({ deployRel }) => deployRel)
-    .filter((rel) => rel.startsWith(`${deployRoot}/`));
+    .filter((rel) => rel.startsWith(`${deployRoot}/`))
+    .sort();
   const plannedOutputs = listCoreOutputs(ROOT)
     .map(({ relPath }) => relPath)
-    .filter((rel) => rel.startsWith(`${deployRoot}/`));
+    .filter((rel) => rel.startsWith(`${deployRoot}/`))
+    .sort();
   const deployed = regularFilesBelow(deployRoot).map((rel) => `${deployRoot}/${rel}`);
 
   // Assert

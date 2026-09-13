@@ -27,9 +27,9 @@
         "inherit": null,
         "fast": "gpt-5.6-sol-fast",
         "balanced": "gpt-5.6-sol-fast",
-        "reasoning": "gpt-5.6-sol",
+        "reasoning": "gpt-6-astra",
         "visual": "claude-opus-5",
-        "coding": "gpt-5.6-sol-fast"
+        "coding": "gpt-6-astra"
       }
     }
   }

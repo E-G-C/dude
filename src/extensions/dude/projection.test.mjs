@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -210,6 +211,40 @@ function contentSnapshot(root) {
   return result;
 }
 
+/** @param {unknown} value */
+function assertDeepFrozen(value) {
+  if (!value || typeof value !== 'object') return;
+  assert.ok(Object.isFrozen(value), 'every published discovery object must be immutable');
+  for (const child of Object.values(value)) assertDeepFrozen(child);
+}
+
+/** @template T @param {() => Promise<T>} operation */
+async function observeReadPaths(operation) {
+  const originalReadFileSync = fs.readFileSync;
+  /** @type {string[]} */
+  const readPaths = [];
+  fs.readFileSync = function observedRead(file, ...args) {
+    readPaths.push(path.resolve(String(file)));
+    return originalReadFileSync.call(fs, file, ...args);
+  };
+  try {
+    return { result: await operation(), readPaths };
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+  }
+}
+
+// The existing injectable command boundary keeps discovery-only fixtures away
+// from the host's actual Beads database.
+const emptyTrackedBoard = {
+  runBd: async () => ({ status: 0, stdout: '[]', stderr: '' }),
+};
+
+/** @param {string} body */
+function managed(body) {
+  return `<!-- dude:managed:start -->\n${body}\n<!-- dude:managed:end -->\n`;
+}
+
 /** @param {any} projection */
 function assertComplete(projection) {
   assert.equal(projection.complete, true);
@@ -383,41 +418,65 @@ test('an explicit resolved idea exposes only supported definition facts', async 
   }
 });
 
-test('a warning-only missing ideas root returns an empty chooser instead of refusing', async () => {
-  const root = temporaryRoot();
-  try {
-    // Arrange
-    const bd = installBdCommand(root);
+test('T003 blank non-Git and Git workspaces with missing or empty discovery directories create no artifacts', async (t) => {
+  for (const layout of ['non-git', 'git', 'empty-ideas', 'empty-specs', 'both-empty']) {
+    await t.test(layout, async () => {
+      // Arrange
+      const root = temporaryRoot();
+      try {
+        if (layout === 'git') execFileSync('git', ['init', '--quiet', root], { stdio: 'pipe' });
+        if (['empty-ideas', 'both-empty'].includes(layout)) {
+          fs.mkdirSync(path.join(root, '.dude/ideas'), { recursive: true });
+        }
+        if (['empty-specs', 'both-empty'].includes(layout)) {
+          fs.mkdirSync(path.join(root, '.dude/specs'), { recursive: true });
+        }
+        const before = contentSnapshot(root);
+        let trackedCalls = 0;
+        const options = { runBd: async () => {
+          trackedCalls += 1;
+          throw new Error('blank discovery must not query tracked authority');
+        } };
 
-    // Act
-    const result = await bd.run(() => readNowProjection({ root }));
+        // Act
+        const result = await readNowProjection({ root }, options);
+        const freshness = await checkProjectionFreshness({ root, projection: result }, options);
+        const refreshed = await refreshNowProjection({ root, previous: result }, options);
 
-    // Assert
-    assertComplete(result);
-    assert.equal(result.status, 'choose');
-    assert.deepEqual(result.choices, [], 'an incomplete base projection withholds navigation choices');
-    assert.equal(result.selected, null);
-    assert.equal(result.authority, null);
-    assert.equal(result.stage, null);
-    assert.equal(result.next, null);
-    assert.equal(result.nextReason, null);
-    assert.deepEqual(result.blockers, []);
-    assert.equal(result.unansweredQuestions, null);
-    assert.deepEqual(result.diagnostics, [{
-      code: 'FEATURE_IDEAS_ROOT_MISSING',
-      severity: 'warning',
-      path: '.dude/ideas',
-      message: 'canonical ideas root is missing',
-    }]);
-    assert.deepEqual(result.choices, []);
-    assertSafeReadAction(result);
-    assert.equal(bd.calls, null, 'chooser inventory must not query tracked authority');
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+        // Assert
+        assertComplete(result);
+        assert.equal(result.workspace, 'blank');
+        assert.equal(result.status, 'choose');
+        assert.deepEqual(result.choices, []);
+        assert.deepEqual(result.contexts, []);
+        assert.deepEqual(result.diagnostics, []);
+        assert.deepEqual(result.attention, []);
+        for (const field of ['selected', 'authority', 'stage', 'next', 'nextReason', 'tasks', 'unansweredQuestions']) {
+          assert.equal(result[field], null, field);
+        }
+        assert.deepEqual(result.blockers, []);
+        assert.deepEqual(result.coverage.inventory, {
+          state: 'current', ideas: 0, readable: 0, packages: 0, diagnostics: [],
+        });
+        assert.equal(result.coverage.selected.state, 'not-selected');
+        assert.equal(result.coverage.live.state, 'unavailable', 'blank disk inventory is not a live all-clear');
+        assert.ok(result.coverage.live.reason);
+        assert.equal(freshness.state, 'current');
+        assert.equal(refreshed.replaced, true);
+        assert.equal(refreshed.projection.workspace, 'blank');
+        assert.equal(refreshed.freshness.state, 'current');
+        assertSafeReadAction(result);
+        assertDeepFrozen(result);
+        assert.equal(trackedCalls, 0);
+        assert.deepEqual(contentSnapshot(root), before, 'reads must not create Git, .dude, ideas, packages, or state');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
   }
 });
 
-test('fatal lifecycle diagnostics refuse projection and withhold every authority field', async () => {
+test('T003 malformed unrelated ledger preserves healthy explicit selection and qualifies inventory coverage', async () => {
   const root = temporaryRoot();
   try {
     // Arrange
@@ -429,17 +488,20 @@ test('fatal lifecycle diagnostics refuse projection and withhold every authority
     const result = await bd.run(() => readNowProjection({ root, target: 'valid' }));
 
     // Assert
-    assert.equal(result.status, 'unavailable');
-    assert.equal(result.selected, null);
-    assert.equal(result.authority, null);
-    assert.equal(result.stage, null);
+    assertComplete(result);
+    assert.equal(result.status, 'ok');
+    assert.equal(result.selected?.slug, 'valid');
+    assert.equal(result.authority, 'definition');
+    assert.equal(result.stage, 'Defined');
     assert.equal(result.next, null);
-    assert.match(result.nextReason, /malformed frontmatter/i);
+    assert.equal(result.nextReason, 'No canonical task execution evidence exists yet.');
     assert.deepEqual(result.blockers, []);
-    assert.equal(result.unansweredQuestions, null);
-    assert.equal(result.complete, false);
-    assert.equal(result.readAt, null);
-    assertSafeReadAction(result);
+    assert.equal(result.unansweredQuestions, 0);
+    assert.equal(result.coverage.inventory.state, 'partial');
+    assert.equal(result.coverage.selected.state, 'current');
+    assert.equal(result.contexts[0].coverage.state, 'current');
+    assert.equal(result.coverage.live.state, 'unavailable');
+    assert.equal(initialProjectionFreshness(result).state, 'stale');
     assert.deepEqual(
       result.diagnostics.map(({ code, severity, path: diagnosticPath }) => ({
         code,
@@ -452,7 +514,535 @@ test('fatal lifecycle diagnostics refuse projection and withhold every authority
         path: '.dude/ideas/002-malformed.md',
       }],
     );
-    assert.equal(bd.calls, null, 'fatal lifecycle state must refuse before a tracked query');
+    assert.deepEqual(bd.callSequence, [BD_LIST_CALL, BD_LIST_CALL], 'healthy selected authority is still read and verified');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 discovers all 50 drafts alongside defined and resolved contexts without package reads or inferred priority', async () => {
+  // Arrange
+  const root = temporaryRoot();
+  try {
+    const drafts = Array.from({ length: 50 }, (_, index) => {
+      const number = String(index + 1).padStart(3, '0');
+      return draft(root, number, `draft-${number}`);
+    });
+    const feature = define(root, '051', 'active', { tasks: '- [~] T001@aaaaaaaa Active task\n' });
+    const finished = resolved(root, '052', 'finished');
+    const deferredPath = drafts[22];
+    const disposition = 'Owner deferred this intent until an explicit revisit. It is not resolved.';
+    write(root, deferredPath, fs.readFileSync(path.join(root, deferredPath), 'utf8')
+      + managed(`## Definition Disposition\n\n${disposition}`));
+    const recent = new Date('2030-01-01T00:00:00Z');
+    fs.utimesSync(path.join(root, drafts[0]), recent, recent);
+    const before = contentSnapshot(root);
+
+    // Act
+    const chooser = await observeReadPaths(() => readNowProjection({ root }, emptyTrackedBoard));
+    const first = await readNowProjection({ root, target: 'draft-001' }, emptyTrackedBoard);
+    const last = await readNowProjection({ root, target: drafts[49] }, emptyTrackedBoard);
+    const selectedFeature = await readNowProjection({ root, target: 'active' }, emptyTrackedBoard);
+    const queryOnly = await readNowProjection({ root, target: 'draft-0' }, emptyTrackedBoard);
+
+    // Assert
+    const result = chooser.result;
+    assertComplete(result);
+    assert.equal(result.workspace, 'populated');
+    assert.equal(result.selected, null, 'neither recent mtime nor lifecycle number selects a context');
+    assert.deepEqual(result.contexts.map((context) => context.ideaPath), [...drafts, feature.ideaPath, finished]);
+    assert.deepEqual(result.choices.map((choice) => choice.ideaPath), [...drafts, feature.ideaPath]);
+    assert.deepEqual(result.coverage.inventory, {
+      state: 'current', ideas: 52, readable: 52, packages: 1, diagnostics: [],
+    });
+    for (const [index, context] of result.contexts.entries()) {
+      assert.equal(context.kind, index === 50 ? 'feature' : 'idea');
+      assert.equal(context.status, index === 50 ? 'defined' : index === 51 ? 'resolved' : 'draft');
+      assert.equal(context.specPath, index === 50 ? feature.specPath : null);
+      assert.equal(context.coverage.scope, 'idea-ledger', 'unselected package state is not claimed to be read');
+      assert.equal(context.coverage.state, 'current');
+      assert.equal(context.intent.source.path, context.ideaPath);
+      assert.equal(context.intent.source.section, 'Idea');
+      assert.equal(context.intent.truncated, false);
+      assert.equal(context.intent.text, index === 51 ? 'finished resolved.' : `${context.slug} body.`);
+      assert.equal(context.title, context.slug);
+    }
+    assert.equal(result.contexts[22].dispositions[0].text, disposition);
+    assert.equal(result.contexts[22].dispositions[0].attribution, 'managed-source');
+    assert.deepEqual(chooser.readPaths.filter((file) => file.startsWith(path.join(root, '.dude/specs/'))), []);
+    assert.equal(first.selected?.ideaPath, drafts[0]);
+    assert.equal(last.selected?.ideaPath, drafts[49]);
+    assert.equal(selectedFeature.selected?.ideaPath, feature.ideaPath);
+    assert.equal(selectedFeature.next?.description, 'Active task');
+    for (const projection of [first, last, selectedFeature, queryOnly]) {
+      assert.deepEqual(projection.contexts, result.contexts, 'selection and a partial query never filter the authoritative inventory');
+      assert.deepEqual(projection.choices, result.choices);
+    }
+    assert.equal(queryOnly.selected, null, 'a query prefix is not an exact selector');
+    assert.equal(queryOnly.complete, false);
+    assert.ok(queryOnly.diagnostics.some((diagnostic) => diagnostic.code === 'FEATURE_IDEA_NOT_FOUND'));
+    assert.deepEqual(result.attention, []);
+    assert.equal(result.coverage.live.state, 'unavailable');
+    assertDeepFrozen(result);
+    assert.throws(() => result.contexts.push({}), TypeError);
+    assert.throws(() => { result.contexts[22].dispositions[0].text = 'reactivated'; }, TypeError);
+    assert.throws(() => { result.coverage.inventory.readable = 0; }, TypeError);
+    assert.deepEqual(contentSnapshot(root), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 saved intent and source-backed deferral survive reread and a new process without request resurrection', async () => {
+  // Arrange: canonical files represent already acknowledged owner capture.
+  // The capture/acknowledgment transport itself belongs to T009.
+  const root = temporaryRoot();
+  try {
+    const saved = draft(root, '001', 'saved-intent');
+    const literalIntent = 'Keep my <layout> & spacing.\n\nA second paragraph.';
+    const blankQuestion = '1. Which layout?\n   Answer:';
+    const disposition = 'Q1: owner defers this choice until the user explicitly revisits it; not fulfilled.';
+    const original = fs.readFileSync(path.join(root, saved), 'utf8')
+      .replace('saved-intent body.', literalIntent).replace('None.', blankQuestion)
+      + managed(`## Definition Disposition\n\n${disposition}`)
+      + '\n## Coordinator Log\n\n- 2026-09-01 - Owner acknowledged brainstorm capture and deferral.\n'
+      + '- 2026-09-02 - Historical approval: yes. Reviewer failed; ordinary debugging continues.\n';
+    write(root, saved, original);
+    const before = contentSnapshot(root);
+
+    // Act
+    const first = await readNowProjection({ root, target: 'saved-intent' }, emptyTrackedBoard);
+    const refreshed = await refreshNowProjection({ root, target: 'saved-intent', previous: first }, emptyTrackedBoard);
+    const moduleUrl = new URL('./lib/projection.mjs', import.meta.url).href;
+    const restarted = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', `
+      const { readNowProjection } = await import(${JSON.stringify(moduleUrl)});
+      const projection = await readNowProjection(
+        { root: ${JSON.stringify(root)}, target: 'saved-intent' },
+        { runBd: async () => ({ status: 0, stdout: '[]', stderr: '' }) },
+      );
+      process.stdout.write(JSON.stringify(projection));
+    `], { encoding: 'utf8' }));
+
+    // Assert
+    for (const projection of [first, refreshed.projection, restarted]) {
+      assertComplete(projection);
+      assert.equal(projection.contexts.length, 1, 'deferral reuses its owner, not a duplicate ledger');
+      const [context] = projection.contexts;
+      assert.equal(context.ideaPath, saved);
+      assert.equal(context.status, 'draft', 'no invented deferred lifecycle or automatic definition');
+      assert.equal(context.specPath, null);
+      assert.equal(context.intent.text, literalIntent);
+      assert.deepEqual(context.dispositions, [{
+        text: disposition, truncated: false, attribution: 'managed-source',
+        source: { path: saved, section: 'Definition Disposition' },
+      }]);
+      assert.equal(projection.unansweredQuestions, 1, 'the preserved legacy orientation count is not a request');
+      assert.deepEqual(projection.attention, [], 'blank answers, history, approval and reviewer failure do not create attention requests');
+      assert.equal(projection.next, null);
+      assert.equal(projection.coverage.live.state, 'unavailable', 'disk cannot restore a pending invocation');
+    }
+    assert.equal(refreshed.replaced, true);
+    assert.deepEqual(contentSnapshot(root), before);
+
+    // Act: an outside answer is observed, not written or accepted by Canvas.
+    write(root, saved, original.replace('   Answer:', '   Answer: Keep the two-column layout.'));
+    const outsideBytes = contentSnapshot(root);
+    const changed = await checkProjectionFreshness({ root, projection: first }, emptyTrackedBoard);
+    const reread = await refreshNowProjection({ root, target: 'saved-intent', previous: first }, emptyTrackedBoard);
+
+    // Assert
+    assert.equal(changed.state, 'changed');
+    assert.equal(reread.replaced, true);
+    assert.equal(reread.projection.unansweredQuestions, 0);
+    assert.deepEqual(reread.projection.contexts, first.contexts, 'an answer edit alone neither reactivates nor settles attributed deferral');
+    assert.deepEqual(reread.projection.attention, []);
+    assert.equal(reread.projection.coverage.live.state, 'unavailable');
+    assert.deepEqual(contentSnapshot(root), outsideBytes, 'external answer bytes remain untouched');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 disposition discovery distinguishes absent, hidden, ambiguous and malformed source sections', async (t) => {
+  const fixtures = [
+    { name: 'absent', suffix: '', state: 'current' },
+    { name: 'outside managed region', suffix: '## Definition Disposition\n\nDeferred.', state: 'partial', code: 'PROJECTION_DISPOSITION_UNVERIFIED' },
+    {
+      name: 'duplicate section',
+      suffix: managed('## Definition Disposition\n\nDeferred.\n\n## Definition Disposition\n\nResolved.'),
+      state: 'partial', code: 'PROJECTION_DISPOSITION_UNVERIFIED',
+    },
+    {
+      name: 'code-hidden section and markers',
+      suffix: `\`\`\`md\n${managed('## Definition Disposition\n\nHidden approval.')}\`\`\`\n`,
+      state: 'current',
+    },
+    {
+      name: 'comment-hidden section and markers',
+      suffix: `<!--\n${managed('## Definition Disposition\n\nHidden approval.')}-->\n`,
+      state: 'current',
+    },
+    {
+      name: 'unclosed managed region',
+      suffix: '<!-- dude:managed:start -->\n## Definition Disposition\n\nDeferred.',
+      state: 'partial', code: 'PROJECTION_MANAGED_REGION_MALFORMED',
+    },
+    {
+      name: 'misordered managed markers',
+      suffix: '<!-- dude:managed:end -->\n## Definition Disposition\n\nDeferred.\n<!-- dude:managed:start -->',
+      state: 'partial', code: 'PROJECTION_MANAGED_REGION_MALFORMED',
+    },
+    {
+      name: 'nested managed regions',
+      suffix: managed(managed('## Definition Disposition\n\nDeferred.')),
+      state: 'partial', code: 'PROJECTION_MANAGED_REGION_MALFORMED',
+    },
+    {
+      name: 'unbalanced Markdown fence',
+      suffix: '```md\n## Definition Disposition\n\nUnclosed example.',
+      state: 'partial', code: 'PROJECTION_IDEA_SECTIONS_MALFORMED',
+    },
+    {
+      name: 'empty declared disposition',
+      suffix: managed('## Definition Disposition\n\n'),
+      state: 'partial',
+    },
+  ];
+  for (const fixture of fixtures) {
+    await t.test(fixture.name, async () => {
+      // Arrange
+      const root = temporaryRoot();
+      try {
+        const ideaPath = draft(root, '001', 'source');
+        write(root, ideaPath, fs.readFileSync(path.join(root, ideaPath), 'utf8') + fixture.suffix);
+        const before = contentSnapshot(root);
+
+        // Act
+        const result = await readNowProjection({ root, target: 'source' }, emptyTrackedBoard);
+
+        // Assert
+        assertComplete(result);
+        const [context] = result.contexts;
+        assert.equal(context.coverage.state, fixture.state);
+        assert.equal(result.coverage.inventory.state, fixture.state);
+        assert.deepEqual(context.dispositions.filter((entry) => entry.text.trim()), [], 'no unverifiable disposition becomes owner evidence');
+        if (fixture.code) {
+          assert.ok(context.coverage.diagnostics.some((diagnostic) => (
+            diagnostic.code === fixture.code && diagnostic.path === ideaPath
+          )));
+        }
+        if (fixture.state === 'partial') {
+          assert.ok(context.coverage.diagnostics.length > 0, 'uncertainty needs a source-backed explanation');
+          assert.equal(initialProjectionFreshness(result).state, 'stale');
+        } else {
+          assert.deepEqual(context.coverage.diagnostics, []);
+          assert.equal(initialProjectionFreshness(result).state, 'current');
+        }
+        assert.equal(result.coverage.live.state, 'unavailable');
+        assert.equal(result.next, null);
+        assertDeepFrozen(result);
+        assert.deepEqual(contentSnapshot(root), before);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('T003 multiple ordered managed regions follow canonical grammar and retain both attributed dispositions', async () => {
+  // Arrange: dude-lint permits start/end/start/end; the single-active-region
+  // constraint on automatic definition repair is not the discovery grammar.
+  const root = temporaryRoot();
+  try {
+    const ideaPath = draft(root, '001', 'multi-region');
+    write(root, ideaPath, fs.readFileSync(path.join(root, ideaPath), 'utf8')
+      + managed('## Definition Disposition\n\nQ1 is deferred by the owner.')
+      + '\nUser-authored text between regions.\n\n'
+      + managed('## Re-definition Disposition\n\nQ2 uses the stated assumption, not a user answer.'));
+
+    // Act
+    const result = await readNowProjection({ root, target: 'multi-region' }, emptyTrackedBoard);
+
+    // Assert
+    assertComplete(result);
+    assert.deepEqual(result.contexts[0].coverage.diagnostics, [], 'ordered balanced regions are valid canonical ledgers');
+    assert.equal(result.contexts[0].coverage.state, 'current');
+    assert.deepEqual(result.contexts[0].dispositions, [
+      {
+        text: 'Q1 is deferred by the owner.', truncated: false, attribution: 'managed-source',
+        source: { path: ideaPath, section: 'Definition Disposition' },
+      },
+      {
+        text: 'Q2 uses the stated assumption, not a user answer.', truncated: false, attribution: 'managed-source',
+        source: { path: ideaPath, section: 'Re-definition Disposition' },
+      },
+    ]);
+    assert.equal(result.coverage.inventory.state, 'current');
+    assert.deepEqual(result.attention, []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 bounded excerpts disclose truncation and preserve the full source identity', async () => {
+  // Arrange
+  const root = temporaryRoot();
+  try {
+    const ideaPath = draft(root, '001', 'long-source');
+    const intent = 'Keep α & <literal> formatting.\n\n'.repeat(60);
+    const disposition = 'Owner deferred this question; this is source prose, not a request.\n'.repeat(90);
+    write(root, ideaPath, fs.readFileSync(path.join(root, ideaPath), 'utf8')
+      .replace('long-source body.', intent.trim())
+      + managed(`## Definition Disposition\n\n${disposition.trim()}`));
+    const before = contentSnapshot(root);
+
+    // Act
+    const result = await readNowProjection({ root, target: 'long-source' }, emptyTrackedBoard);
+
+    // Assert
+    assertComplete(result);
+    const [context] = result.contexts;
+    assert.deepEqual(context.intent, {
+      text: intent.trim().slice(0, 1200), truncated: true, source: { path: ideaPath, section: 'Idea' },
+    });
+    assert.deepEqual(context.dispositions, [{
+      text: disposition.trim().slice(0, 4000), truncated: true, attribution: 'managed-source',
+      source: { path: ideaPath, section: 'Definition Disposition' },
+    }]);
+    assert.equal(context.coverage.state, 'current', 'an explicitly bounded excerpt is not a failed source read');
+    assert.equal(result.sources.filter((source) => source.path === ideaPath).length, 1);
+    assert.deepEqual(contentSnapshot(root), before);
+
+    // Act: change content beyond the displayed excerpt, preserving the excerpt.
+    write(root, ideaPath, fs.readFileSync(path.join(root, ideaPath), 'utf8').replace(
+      '<!-- dude:managed:end -->', 'Owner retained an additional source detail.\n<!-- dude:managed:end -->',
+    ));
+    const freshness = await checkProjectionFreshness({ root, projection: result }, emptyTrackedBoard);
+
+    // Assert
+    assert.equal(freshness.state, 'changed', 'freshness hashes full source bytes, not just displayed excerpts');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 incomplete inventory never auto-selects a sole healthy candidate or claims a live all-clear', async () => {
+  // Arrange
+  const root = temporaryRoot();
+  const unreadableRoot = temporaryRoot();
+  try {
+    const healthy = draft(root, '001', 'healthy');
+    const malformedPath = '.dude/ideas/002-malformed.md';
+    write(root, malformedPath, 'not frontmatter\n');
+    write(unreadableRoot, malformedPath, 'not frontmatter\n');
+    const before = contentSnapshot(root);
+
+    // Act
+    const chooser = await readNowProjection({ root }, emptyTrackedBoard);
+    const selected = await readNowProjection({ root, target: healthy }, emptyTrackedBoard);
+    const checked = await checkProjectionFreshness({ root, projection: selected }, emptyTrackedBoard);
+    const refreshed = await refreshNowProjection({ root, target: healthy, previous: selected }, emptyTrackedBoard);
+    const unknown = await readNowProjection({ root: unreadableRoot }, emptyTrackedBoard);
+
+    // Assert
+    assertComplete(chooser);
+    assert.equal(chooser.status, 'choose');
+    assert.equal(chooser.selected, null);
+    assert.deepEqual(chooser.choices.map((choice) => choice.ideaPath), [healthy]);
+    assert.equal(chooser.coverage.selected.state, 'not-selected');
+    assert.equal(chooser.coverage.inventory.state, 'partial');
+    assert.equal(chooser.coverage.inventory.ideas, 1, 'malformed ledgers are diagnosed, not counted as authoritative identities');
+    assert.equal(chooser.coverage.inventory.readable, 1);
+    assert.ok(chooser.coverage.inventory.diagnostics.some((diagnostic) => diagnostic.path === malformedPath));
+    assert.equal(chooser.contexts[0].coverage.state, 'current');
+    assertComplete(selected);
+    assert.equal(selected.selected?.ideaPath, healthy);
+    assert.equal(selected.coverage.selected.state, 'current');
+    assert.equal(checked.state, 'stale', 'unchanged incomplete coverage cannot become current merely by checking hashes');
+    assert.equal(refreshed.replaced, true, 'a usable partial inventory may refresh');
+    assert.equal(refreshed.freshness.state, 'stale', 'adopting that snapshot must preserve the coverage qualification');
+    assert.equal(unknown.workspace, 'unknown', 'a malformed-only workspace is not blank');
+    assert.equal(unknown.complete, false);
+    assert.equal(unknown.coverage.inventory.state, 'unavailable');
+    assert.equal(unknown.coverage.inventory.readable, 0);
+    assertSafeReadAction(unknown);
+    for (const result of [chooser, selected, refreshed.projection, unknown]) {
+      assert.equal(result.coverage.live.state, 'unavailable');
+      assert.ok(result.coverage.live.reason);
+      assertDeepFrozen(result);
+    }
+    assert.deepEqual(contentSnapshot(root), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(unreadableRoot, { recursive: true, force: true });
+  }
+});
+
+test('T003 selected task failures stay scoped and leave other contexts discoverable and selectable', async (t) => {
+  for (const failure of ['malformed', 'missing']) {
+    await t.test(failure, async () => {
+      // Arrange
+      const root = temporaryRoot();
+      try {
+        const broken = define(root, '001', 'broken', { tasks: '- [z] T001@aaaaaaaa Invalid task\n' });
+        if (failure === 'missing') fs.rmSync(path.join(root, broken.tasksPath));
+        const healthy = define(root, '002', 'healthy', { tasks: '- [~] T002@bbbbbbbb Continue healthy work\n' });
+        const ideaPath = draft(root, '003', 'draft');
+        const before = contentSnapshot(root);
+
+        // Act
+        const failed = await readNowProjection({ root, target: 'broken' }, emptyTrackedBoard);
+        const selected = await observeReadPaths(() => readNowProjection({ root, target: 'healthy' }, emptyTrackedBoard));
+
+        // Assert
+        assert.equal(failed.complete, false);
+        assert.equal(failed.authority, null);
+        assert.equal(failed.next, null);
+        assert.equal(failed.coverage.selected.state, 'unavailable');
+        assert.equal(failed.coverage.selected.ideaPath, broken.ideaPath, 'failed selected state must retain its exact scope');
+        assert.ok(failed.coverage.selected.diagnostics.some((diagnostic) => (
+          diagnostic.path === broken.tasksPath
+          && diagnostic.code === (failure === 'missing' ? 'PROJECTION_INPUT_MISSING' : 'TASKS_MALFORMED')
+        )));
+        assert.deepEqual(failed.contexts.map((context) => context.ideaPath), [broken.ideaPath, healthy.ideaPath, ideaPath]);
+        assert.equal(failed.contexts.find((context) => context.ideaPath === healthy.ideaPath).coverage.state, 'current');
+        assert.equal(failed.contexts.find((context) => context.ideaPath === ideaPath).coverage.state, 'current');
+        assert.equal(failed.coverage.inventory.state, 'current', 'task failure does not make the ledger inventory unreadable');
+        assert.equal(failed.coverage.live.state, 'unavailable');
+        assertDeepFrozen(failed);
+        assertComplete(selected.result);
+        assert.equal(selected.result.coverage.selected.ideaPath, healthy.ideaPath);
+        assert.equal(selected.result.next?.description, 'Continue healthy work');
+        assert.deepEqual(selected.result.blockers, []);
+        assert.deepEqual(selected.result.attention, []);
+        assert.deepEqual(selected.readPaths.filter((file) => [broken.tasksPath, broken.specPath]
+          .some((relative) => path.resolve(root, relative) === file)), [], 'selection must not read the failed bystander package');
+        assert.deepEqual(contentSnapshot(root), before);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('T003 unselected ledger drift is scoped even during final asynchronous authority verification', async (t) => {
+  for (const mutationCall of [1, 2]) {
+    await t.test(`drift on tracked capture ${mutationCall}`, async () => {
+      // Arrange
+      const root = temporaryRoot();
+      try {
+        const selected = define(root, '001', 'selected', { tasks: '- [~] T001@aaaaaaaa Keep working\n' });
+        const other = draft(root, '002', 'other');
+        const original = fs.readFileSync(path.join(root, other), 'utf8')
+          + managed('## Definition Disposition\n\nOwner deferred this intent.');
+        write(root, other, original);
+        const fixedTime = new Date('2000-01-01T00:00:00Z');
+        fs.utimesSync(path.join(root, other), fixedTime, fixedTime);
+        let calls = 0;
+        const runBd = async () => {
+          calls += 1;
+          if (calls === mutationCall) {
+            write(root, other, original.replace('deferred', 'retained'));
+            fs.utimesSync(path.join(root, other), fixedTime, fixedTime);
+          }
+          return { status: 0, stdout: '[]', stderr: '' };
+        };
+
+        // Act
+        const result = await readNowProjection({ root, target: 'selected' }, { runBd });
+        const freshness = await checkProjectionFreshness({ root, projection: result }, emptyTrackedBoard);
+        const refreshed = await refreshNowProjection({ root, target: 'selected', previous: result }, emptyTrackedBoard);
+
+        // Assert
+        assert.equal(calls, 2, 'mutation occurs at a real awaited L1 or L2 command boundary');
+        assert.equal(fs.statSync(path.join(root, other)).mtime.getTime(), fixedTime.getTime());
+        assertComplete(result);
+        assert.equal(result.selected?.ideaPath, selected.ideaPath);
+        assert.equal(result.next?.description, 'Keep working');
+        assert.equal(result.coverage.selected.state, 'current');
+        assert.equal(result.contexts.find((context) => context.ideaPath === selected.ideaPath).coverage.state, 'current');
+        assert.equal(result.contexts.find((context) => context.ideaPath === other).coverage.state, 'stale');
+        assert.equal(result.coverage.inventory.state, 'partial', 'a changed unselected excerpt cannot be published as current');
+        assert.ok(result.coverage.inventory.diagnostics.some((diagnostic) => (
+          diagnostic.code === 'PROJECTION_READ_CONFLICT' && diagnostic.path === other
+        )));
+        assert.equal(initialProjectionFreshness(result).state, 'stale');
+        assert.equal(freshness.state, 'changed');
+        assert.equal(refreshed.replaced, true);
+        assert.equal(refreshed.freshness.state, 'current');
+        assert.equal(refreshed.projection.contexts.find((context) => context.ideaPath === other)
+          .dispositions[0].text, 'Owner retained this intent.');
+        assert.equal(result.coverage.live.state, 'unavailable');
+        assertDeepFrozen(result);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('T003 unselected source-only edits invalidate chooser freshness without loading package documents', async () => {
+  // Arrange
+  const root = temporaryRoot();
+  try {
+    draft(root, '001', 'first');
+    const other = define(root, '002', 'other');
+    const previous = await readNowProjection({ root }, emptyTrackedBoard);
+    const fixedTime = new Date('2000-01-01T00:00:00Z');
+    fs.utimesSync(path.join(root, other.ideaPath), fixedTime, fixedTime);
+    write(root, other.ideaPath, fs.readFileSync(path.join(root, other.ideaPath), 'utf8').replace('other body.', 'Edited intent.'));
+    fs.utimesSync(path.join(root, other.ideaPath), fixedTime, fixedTime);
+
+    // Act
+    const checked = await observeReadPaths(() => checkProjectionFreshness({ root, projection: previous }, emptyTrackedBoard));
+    const refreshed = await refreshNowProjection({ root, previous }, emptyTrackedBoard);
+
+    // Assert
+    assertComplete(previous);
+    assert.equal(previous.selected, null);
+    assert.equal(checked.result.state, 'changed');
+    assert.deepEqual(checked.readPaths.filter((file) => file.startsWith(path.join(root, '.dude/specs/'))), []);
+    assert.equal(refreshed.replaced, true);
+    assert.equal(refreshed.projection.selected, null);
+    assert.deepEqual(refreshed.projection.choices, previous.choices);
+    assert.equal(refreshed.projection.contexts[1].intent.text, 'Edited intent.');
+    assert.equal(previous.contexts[1].intent.text, 'other body.', 'the prior immutable snapshot is not patched in place');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 a new draft published during final authority read rejects mixed inventory and preserves the prior snapshot', async () => {
+  // Arrange
+  const root = temporaryRoot();
+  try {
+    define(root, '001', 'selected', { tasks: '- [~] T001@aaaaaaaa Existing work\n' });
+    const retained = draft(root, '002', 'retained');
+    const previous = await readNowProjection({ root, target: 'selected' }, emptyTrackedBoard);
+    let calls = 0;
+    const runBd = async () => {
+      calls += 1;
+      if (calls === 2) draft(root, '003', 'newly-published');
+      return { status: 0, stdout: '[]', stderr: '' };
+    };
+
+    // Act
+    const refreshed = await refreshNowProjection({ root, target: 'selected', previous }, { runBd });
+    const reread = await readNowProjection({ root, target: 'selected' }, emptyTrackedBoard);
+
+    // Assert
+    assert.equal(calls, 2);
+    assert.equal(refreshed.replaced, false);
+    assert.equal(refreshed.projection, previous);
+    assert.equal(refreshed.freshness.state, 'conflict');
+    assert.ok(refreshed.freshness.diagnostics.some((diagnostic) => diagnostic.code === 'PROJECTION_READ_CONFLICT'));
+    assert.equal(previous.contexts.length, 2);
+    assert.equal(previous.contexts[1].ideaPath, retained);
+    assertComplete(reread);
+    assert.equal(reread.contexts.length, 3);
+    assert.equal(reread.selected?.slug, 'selected', 'publication does not retarget an explicit selection');
+    assert.equal(reread.coverage.inventory.state, 'current');
+    assert.equal(reread.coverage.live.state, 'unavailable');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1383,7 +1973,7 @@ test('tracked blockers fail closed without identity and preserve valid exact sou
   }
 });
 
-test('ownership resolution fails closed for no owner, duplicate owner, and identity mismatch', async () => {
+test('affected ownership fails closed for duplicate owners and identity mismatch while an unrelated orphan permits draft discovery', async () => {
   const noOwnerRoot = temporaryRoot();
   const duplicateRoot = temporaryRoot();
   const mismatchRoot = temporaryRoot();
@@ -1417,13 +2007,18 @@ test('ownership resolution fails closed for no owner, duplicate owner, and ident
     ]);
 
     // Assert
-    assert.equal(noOwner.status, 'unavailable');
+    assertComplete(noOwner);
+    assert.equal(noOwner.status, 'ok', 'an unrelated orphan package does not disable explicit draft discovery');
+    assert.equal(noOwner.selected?.slug, 'draft');
+    assert.equal(noOwner.authority, 'definition');
+    assert.equal(noOwner.coverage.inventory.state, 'partial');
+    assert.equal(noOwner.coverage.selected.state, 'current');
     assert.ok(noOwner.diagnostics.some((item) => item.code === 'FEATURE_OWNER_NOT_FOUND'));
     assert.equal(duplicate.status, 'unavailable');
     assert.ok(duplicate.diagnostics.some((item) => item.code === 'FEATURE_OWNER_DUPLICATE'));
     assert.equal(mismatch.status, 'unavailable');
     assert.ok(mismatch.diagnostics.some((item) => item.code === 'FEATURE_OWNER_IDENTITY_MISMATCH'));
-    for (const result of [noOwner, duplicate, mismatch]) {
+    for (const result of [duplicate, mismatch]) {
       assert.equal(result.authority, null);
       assert.equal(result.next, null);
       assert.equal(result.complete, false);
@@ -2098,8 +2693,8 @@ test('41-package exact and omitted first-use selection paths leave unselected pa
     for (const feature of features) {
       assert.equal(
         chooser.readPaths.filter((candidate) => candidate === path.resolve(root, feature.ideaPath)).length,
-        2,
-        'chooser completion must re-run bounded lifecycle summary selection',
+        4,
+        'chooser captures and verifies ledger content as well as both lifecycle summaries',
       );
     }
     assert.deepEqual(
@@ -2222,6 +2817,7 @@ test('runtime projection boundary has no mutation, session-control, watcher, or 
     ['./extension.mjs', '../../../.github/extensions/dude/extension.mjs'],
     ['./lib/projection.mjs', '../../../.github/extensions/dude/lib/projection.mjs'],
     ['./lib/canvas-server.mjs', '../../../.github/extensions/dude/lib/canvas-server.mjs'],
+    ['./lib/needs-you.mjs', '../../../.github/extensions/dude/lib/needs-you.mjs'],
   ]) {
     assert.equal(
       fs.readFileSync(new URL(authored, import.meta.url), 'utf8'),
@@ -2975,4 +3571,119 @@ test('current repository projection makes the newest Coordinator execution entry
   assert.equal(result.latestEvent?.date, result.activity?.recent[0]?.date);
   assert.equal(result.latestEvent?.text, result.activity?.recent[0]?.text);
   assert.deepEqual(contentSnapshot(path.join(root, '.dude')), before, 'current repository projection must not write .dude');
+});
+
+test('T003 reviewer regression: freshness detects unselected ledger drift during awaited Beads acquisition', async () => {
+  // Arrange: /api/freshness calls this same exported reader. No projection
+  // construction or refresh occurs after the baseline snapshot.
+  const root = temporaryRoot();
+  try {
+    define(root, '001', 'selected', { tasks: '- [~] T001@aaaaaaaa Continue selected work\n' });
+    const other = define(root, '002', 'other');
+    const original = fs.readFileSync(path.join(root, other.ideaPath), 'utf8')
+      + managed('## Definition Disposition\n\nOwner deferred this intent.');
+    write(root, other.ideaPath, original);
+    const fixedTime = new Date('2000-01-01T00:00:00Z');
+    fs.utimesSync(path.join(root, other.ideaPath), fixedTime, fixedTime);
+    const projection = await readNowProjection({ root, target: 'selected' }, emptyTrackedBoard);
+    assertComplete(projection);
+    assert.equal(initialProjectionFreshness(projection).state, 'current');
+    const before = contentSnapshot(root);
+    const acquisition = deferred();
+    const entered = deferred();
+    const calls = [];
+
+    // Act: edit only unselected source prose while the unchanged tracked
+    // authority acquisition is pending, keeping metadata and mtime unchanged.
+    const pending = observeReadPaths(() => checkProjectionFreshness({ root, projection }, {
+      runBd: async (args) => {
+        calls.push(args);
+        entered.resolve();
+        return acquisition.promise;
+      },
+    }));
+    await entered.promise;
+    const edited = original.replace('other body.', 'Updated unselected intent.')
+      .replace('Owner deferred this intent.', 'Owner retained this intent for a later explicit revisit.');
+    write(root, other.ideaPath, edited);
+    fs.utimesSync(path.join(root, other.ideaPath), fixedTime, fixedTime);
+    acquisition.resolve({ status: 0, stdout: '[]', stderr: '' });
+    const checked = await pending;
+
+    // Assert
+    assert.deepEqual(calls, [BD_LIST_CALL], 'the race occurs in the freshness acquisition, not a new projection read');
+    assert.equal(fs.statSync(path.join(root, other.ideaPath)).mtime.getTime(), fixedTime.getTime());
+    assert.deepEqual(checked.readPaths.filter((file) => [other.specPath, other.tasksPath]
+      .some((relative) => path.resolve(root, relative) === file)), [], 'freshness must not load unselected package documents');
+    assert.equal(projection.contexts.find((context) => context.ideaPath === other.ideaPath).intent.text, 'other body.');
+    assertDeepFrozen(projection);
+    assert.deepEqual(contentSnapshot(root), before.map((entry) => (
+      entry[0] === other.ideaPath ? [entry[0], entry[1], edited] : entry
+    )), 'freshness must leave all source bytes untouched');
+    assert.equal(checked.result.state, 'changed', 'a source changed during the awaited check; current is a false freshness claim');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 reviewer regression: visible disposition headings use established whitespace and boundary grammar', async (t) => {
+  // Canonical headings allow 0–3 leading spaces and one or more spaces/tabs
+  // after ##: dude-lint realLedgerHeadings and publish-first-definition's
+  // LEVEL_TWO_HEADING/extractProtectedSections. These are visible headings,
+  // not new Markdown constructs or headings hidden inside examples.
+  const fixtures = [
+    {
+      name: 'double-spaced disposition heading',
+      body: '##  Definition Disposition\n\nOwner deferred this choice.',
+      expected: ['Owner deferred this choice.'],
+      state: 'current',
+    },
+    {
+      name: 'normal and double-spaced conflicting duplicate',
+      body: '## Definition Disposition\n\nOwner deferred this choice.\n\n##  Definition Disposition\n\nOwner resolved this choice.',
+      expected: [],
+      state: 'partial',
+    },
+    {
+      name: 'indented level-two boundary excludes following context',
+      body: '## Definition Disposition\n\nOwner deferred this choice.\n\n  ## Review Notes\n\nThis later text is not a disposition.',
+      expected: ['Owner deferred this choice.'],
+      state: 'current',
+    },
+  ];
+  for (const fixture of fixtures) {
+    await t.test(fixture.name, async () => {
+      // Arrange
+      const root = temporaryRoot();
+      try {
+        const ideaPath = draft(root, '001', 'whitespace');
+        write(root, ideaPath, fs.readFileSync(path.join(root, ideaPath), 'utf8') + managed(fixture.body));
+        const before = contentSnapshot(root);
+
+        // Act
+        const result = await readNowProjection({ root, target: 'whitespace' }, emptyTrackedBoard);
+
+        // Assert
+        assertComplete(result);
+        const [context] = result.contexts;
+        assert.equal(result.coverage.live.state, 'unavailable');
+        assert.deepEqual(contentSnapshot(root), before);
+        assert.deepEqual(context.dispositions.map((entry) => entry.text), fixture.expected,
+          'canonical heading whitespace must not hide a disposition, hide a duplicate, or extend its attribution');
+        assert.equal(context.coverage.state, fixture.state);
+        assert.equal(result.coverage.inventory.state, fixture.state);
+        if (fixture.state === 'partial') {
+          assert.ok(context.coverage.diagnostics.some((diagnostic) => (
+            diagnostic.code === 'PROJECTION_DISPOSITION_UNVERIFIED' && diagnostic.path === ideaPath
+          )), 'conflicting canonical headings require scoped uncertainty');
+        } else {
+          assert.deepEqual(context.coverage.diagnostics, []);
+          assert.deepEqual(context.dispositions[0].source, { path: ideaPath, section: 'Definition Disposition' });
+          assert.equal(context.dispositions[0].attribution, 'managed-source');
+        }
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
 });

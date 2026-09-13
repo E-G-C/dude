@@ -37,6 +37,11 @@ import { WORKSPACE_PATHS } from '../src/skills/dude-engine/lib/workspace-paths.m
 const AGENT_MODEL_CONFIG_SOURCE = ['src', 'config', 'agent-models.json'];
 const AGENT_MODEL_CONFIG_DESTINATION = '.github/skills/dude-engine/config/agent-models.json';
 const DUDE_EXTENSION_DEPLOY_ROOT = '.github/extensions/dude';
+const DUDE_REVIEW_RUNTIME_FILES = new Set([
+  'engine.mjs', 'geometry.mjs', 'shapes.mjs', 'inspector.mjs', 'panel.mjs',
+  'capture.mjs', 'bridge.mjs', 'styles.css', 'NOTICE.txt',
+]);
+const DUDE_REVIEW_LIBRARY_FILES = new Set(['browser.mjs', 'data.mjs', 'png.mjs']);
 
 /** @param {string} relPath @returns {boolean} */
 function isDudeExtensionRuntimeFile(relPath) {
@@ -44,6 +49,12 @@ function isDudeExtensionRuntimeFile(relPath) {
   if (/(?:^|\/)node_modules(?:\/|$)/.test(relPath)) return false;
   if (relPath === `${DUDE_EXTENSION_DEPLOY_ROOT}/extension.mjs`) return true;
   if (relPath === `${DUDE_EXTENSION_DEPLOY_ROOT}/ui/index.html`) return true;
+  if (relPath.startsWith(`${DUDE_EXTENSION_DEPLOY_ROOT}/ui/review/`)) {
+    return DUDE_REVIEW_RUNTIME_FILES.has(relPath.slice(`${DUDE_EXTENSION_DEPLOY_ROOT}/ui/review/`.length));
+  }
+  if (relPath.startsWith(`${DUDE_EXTENSION_DEPLOY_ROOT}/lib/review/`)) {
+    return DUDE_REVIEW_LIBRARY_FILES.has(relPath.slice(`${DUDE_EXTENSION_DEPLOY_ROOT}/lib/review/`.length));
+  }
   return relPath.startsWith(`${DUDE_EXTENSION_DEPLOY_ROOT}/lib/`)
     || relPath.startsWith(`${DUDE_EXTENSION_DEPLOY_ROOT}/ui/assets/`);
 }

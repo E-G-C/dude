@@ -48,7 +48,13 @@ export const CANONICAL_IDEA_KEYS = Object.freeze(['title', 'slug', 'status', 'sp
  * }} LifecycleInventory
  * @typedef {{ features: FeatureRecord[], diagnostics: FeatureDiagnostic[] }} FeatureInventory
  * @typedef {{
+ *   idea: IdeaRecord,
+ *   owner: FeatureRecord | null,
+ *   diagnostics: FeatureDiagnostic[],
+ * }} LifecycleSummaryContext
+ * @typedef {{
  *   inventory: LifecycleInventory,
+ *   contexts: LifecycleSummaryContext[],
  *   idea: IdeaRecord | null,
  *   owner: FeatureRecord | null,
  *   choices: IdeaRecord[],
@@ -724,9 +730,37 @@ export function inventoryLifecycleIdentities({ root }) {
 }
 
 /**
+ * Attribute summary diagnostics using the inventory's exact records. Duplicate
+ * diagnostics name only their first path, so include every member of that group.
+ * Strict ownership APIs below still refuse any inventory error.
+ * @param {LifecycleInventory} inventory
+ * @param {IdeaRecord} idea
+ */
+function summaryIdeaDiagnostics(inventory, idea) {
+  const spec = parseSpecIdentity(idea.specPath);
+  return inventory.diagnostics.filter((diagnostic) => {
+    if (diagnostic.path === '.'
+      || [idea.ideaPath, idea.specPath].some((inputPath) => (
+        inputPath === diagnostic.path || inputPath.startsWith(`${diagnostic.path}/`)
+      ))) return true;
+    const firstIdea = inventory.ideas.find((candidate) => candidate.ideaPath === diagnostic.path);
+    const firstPackage = inventory.packages.find((candidate) => candidate.directoryPath === diagnostic.path);
+    if (diagnostic.code === 'FEATURE_IDEA_SLUG_DUPLICATE') return firstIdea?.slug === idea.slug;
+    if (diagnostic.code === 'FEATURE_IDEA_NUMBER_DUPLICATE') return firstIdea?.number === idea.number;
+    if (diagnostic.code === 'FEATURE_PACKAGE_NUMBER_DUPLICATE') return firstPackage?.number === spec?.number;
+    if (diagnostic.code === 'FEATURE_NUMBER_COLLISION') {
+      const number = firstIdea?.number ?? firstPackage?.number;
+      return number === idea.number || number === spec?.number;
+    }
+    return false;
+  });
+}
+
+/**
  * Select one exact lifecycle idea from summary inventory. Package directories
  * are inventoried by direct identity, but package documents are deferred until
- * the caller has selected one exact owner.
+ * the caller has selected one exact owner. Canvas may discover healthy contexts
+ * alongside scoped errors; incomplete inventory never implies a sole selection.
  * @param {{ root: string, target?: string }} options
  * @returns {LifecycleSummarySelection}
  */
@@ -741,16 +775,23 @@ export function selectLifecycleIdeaSummary({ root, target }) {
   let owner = null;
   /** @type {IdeaRecord[]} */
   let choices = [];
-
-  if (diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
-    return { inventory, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
-  }
-
-  const ownedIdeas = new Set(inventory.features.map((feature) => feature.ideaPath));
-  choices = inventory.ideas.filter((candidate) => (
-    candidate.status === 'draft'
-    || (candidate.status === 'defined' && ownedIdeas.has(candidate.ideaPath))
-  ));
+  const contexts = inventory.ideas.map((candidate) => {
+    const scoped = summaryIdeaDiagnostics(inventory, candidate);
+    const owners = inventory.features.filter((feature) => (
+      feature.ideaPath === candidate.ideaPath && feature.specPath === candidate.specPath
+    ));
+    return {
+      idea: candidate,
+      owner: !scoped.some((diagnostic) => diagnostic.severity === 'error') && owners.length === 1
+        ? owners[0]
+        : null,
+      diagnostics: scoped,
+    };
+  });
+  choices = contexts.filter((context) => (
+    !context.diagnostics.some((diagnostic) => diagnostic.severity === 'error')
+    && (context.idea.status === 'draft' || context.owner !== null)
+  )).map((context) => context.idea);
 
   if (explicit) {
     const byPath = typeof target === 'string' && target.startsWith('.dude/');
@@ -765,7 +806,7 @@ export function selectLifecycleIdeaSummary({ root, target }) {
         '.',
         'idea query must be an exact canonical frontmatter slug or numbered direct idea path',
       );
-      return { inventory, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
+      return { inventory, contexts, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
     }
     const matches = inventory.ideas.filter((candidate) => (
       byPath ? candidate.ideaPath === target : candidate.slug === target
@@ -778,41 +819,23 @@ export function selectLifecycleIdeaSummary({ root, target }) {
         '.',
         'no exact canonical idea matched the supplied target',
       );
-      return { inventory, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
+      return { inventory, contexts, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
     }
     [idea] = matches;
   } else {
-    if (choices.length !== 1) {
-      return { inventory, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
+    if (choices.length !== 1 || diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+      return { inventory, contexts, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
     }
     [idea] = choices;
   }
 
-  if (idea.status === 'defined') {
-    const owners = inventory.features.filter((feature) => (
-      feature.ideaPath === idea.ideaPath && feature.specPath === idea.specPath
-    ));
-    if (owners.length !== 1) {
-      diagnose(
-        diagnostics,
-        'FEATURE_OWNER_NOT_FOUND',
-        'error',
-        idea.specPath,
-        'no exact defined owner was established for the selected feature package',
-      );
-      return {
-        inventory,
-        idea: null,
-        owner,
-        choices,
-        explicit,
-        diagnostics: sortDiagnostics(diagnostics),
-      };
-    }
-    [owner] = owners;
+  const selected = contexts.find((context) => context.idea === idea);
+  if (selected.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+    return { inventory, contexts, idea: null, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
   }
+  owner = selected.owner;
 
-  return { inventory, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
+  return { inventory, contexts, idea, owner, choices, explicit, diagnostics: sortDiagnostics(diagnostics) };
 }
 
 /**

@@ -375,6 +375,8 @@ export async function buildCanvasUi() {
   prepareAssetsDirectory();
   const result = await build({
     absWorkingDir: REPOSITORY_ROOT,
+    // Fluent and Tabster must share Keyborg's window registry and ID counter.
+    alias: { keyborg: path.join(DEPENDENCY_DIRECTORY, 'keyborg') },
     bundle: true,
     charset: 'utf8',
     define: {

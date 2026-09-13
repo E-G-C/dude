@@ -101,7 +101,7 @@ jobs:
           test -x "$DUDE_CANVAS_BROWSER"
           export DUDE_CANVAS_BROWSER
           "$DUDE_CANVAS_BROWSER" --version
-          node --test --test-reporter=tap scripts/dude-canvas-ui/build.test.mjs scripts/dude-canvas-ui/browser.test.mjs
+          node --test --test-reporter=tap scripts/dude-canvas-ui/build.test.mjs scripts/dude-canvas-ui/browser.test.mjs scripts/dude-canvas-ui/t011-browser.test.mjs
 
       - name: Retain canvas evidence, including partial failures
         if: always()

@@ -161,6 +161,8 @@ Autonomous Work entered directly or through Ship remains one coordinator-owned o
 
 Ship's pre-Work answerability ends when Work begins.
 
+At a genuine human-only stop admitted under the existing Work policy, the coordinator uses `dude-work-intake` `## Needs You Handoff`. The reply returns to the responsible Work owner and does not revive a dead supervisor, grant continuation, change settlement or close authority, or trigger Git.
+
 After bounded manual assistance resolves the current blocker, the same autonomous Work invocation remains active while the original coordinator supervisor, context, and retained invocation identity survive.
 
 The recovered task still requires fresh verification, independent review, exact settlement, and closure.

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>Dude — Now</title>
+    <title>Dude</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -41,7 +41,7 @@
   </head>
   <body>
     <div id="root"></div>
-    <noscript>Dude Now requires JavaScript to read and display the repository projection.</noscript>
+    <noscript>Dude requires JavaScript to display recorded work and current owner requests.</noscript>
     <script>
       (() => {
         let reported = "";
@@ -58,8 +58,6 @@
           }).catch(() => {});
         };
 
-        const events = new EventSource("/events");
-        window.addEventListener("pagehide", () => events.close(), { once: true });
         window.addEventListener("resize", report);
         report();
       })();

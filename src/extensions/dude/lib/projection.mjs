@@ -36,6 +36,8 @@ const READY_COMMAND = `bd ${BD_READY_ARGS.join(' ')}`;
 const NO_BEADS_DATABASE = 'Error: no beads database found';
 const PROJECTION_DEADLINE_MS = 5_000;
 const MAX_BD_BUFFER = 8 * 1024 * 1024;
+const INTENT_EXCERPT_LIMIT = 1_200;
+const DISPOSITION_EXCERPT_LIMIT = 4_000;
 const REFRESH_ACTION = Object.freeze({
   kind: 'refresh',
   label: 'Refresh from repository',
@@ -525,8 +527,9 @@ function issueTitle(issue) {
 }
 
 /**
- * Count only confidently recognized unanswered entries in the canonical
- * user-owned Open Questions section. Unrecognized structure returns `null`.
+ * Legacy Now orientation count, not current-request authority. A blank answer
+ * can have an owner disposition; Needs You uses explicit live publications.
+ * Unrecognized structure returns `null`.
  * @param {Buffer} bytes
  */
 function countOpenQuestions(bytes) {
@@ -563,6 +566,156 @@ function countOpenQuestions(bytes) {
     if (!body.some((line) => /^\s*Answer:\s*\S/.test(line))) unanswered += 1;
   }
   return unanswered;
+}
+
+/**
+ * Read source excerpts, never pending questions or inferred dispositions.
+ * Visibility and byte boundaries use the same Markdown scanner as the engine.
+ * @param {Buffer} bytes
+ * @param {string} ideaPath
+ */
+function ideaDiscovery(bytes, ideaPath) {
+  const source = { path: ideaPath };
+  const diagnostics = [];
+  const dispositions = [];
+  let intent = null;
+  const diagnose = (code, message) => diagnostics.push({
+    code, severity: /** @type {'warning'} */ ('warning'), path: ideaPath, message,
+  });
+  try {
+    const { lines } = scanMarkdownVisibility(bytes, ideaPath, 'generic');
+    const regions = [];
+    let start = null;
+    let managed = true;
+    for (const line of lines) {
+      if (line.text === '<!-- dude:managed:start -->') {
+        if (start !== null) managed = false;
+        else start = line.start;
+      } else if (line.text === '<!-- dude:managed:end -->') {
+        if (start === null) managed = false;
+        else {
+          regions.push({ start, end: line.start });
+          start = null;
+        }
+      }
+    }
+    if (start !== null) managed = false;
+    if (!managed) {
+      diagnose('PROJECTION_MANAGED_REGION_MALFORMED', 'The idea has nested, unbalanced, or misordered managed regions.');
+    }
+    const headings = lines.flatMap((line) => {
+      const heading = /^ {0,3}##[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/.exec(line.text);
+      return heading ? [{ ...line, section: heading[1] }] : [];
+    });
+    const excerpt = (heading, limit) => {
+      const next = lines.find((line) => line.start > heading.start
+        && (/^ {0,3}#{1,2}(?:[ \t]+|$)/.test(line.text) || /^<!-- dude:managed:(?:start|end) -->$/.test(line.text)));
+      const text = bytes.subarray(heading.end, next?.start ?? bytes.length).toString('utf8').trim();
+      return {
+        text: text.slice(0, limit),
+        truncated: text.length > limit,
+        source: { ...source, section: heading.section },
+      };
+    };
+    const ideaHeadings = headings.filter((heading) => heading.section === 'Idea');
+    if (ideaHeadings.length === 1) intent = excerpt(ideaHeadings[0], INTENT_EXCERPT_LIMIT);
+    if (!intent?.text) diagnose('PROJECTION_INTENT_UNAVAILABLE', 'The idea has no single nonempty Idea section.');
+
+    for (const section of ['Definition Disposition', 'Re-definition Disposition']) {
+      const matches = headings.filter((heading) => heading.section === section);
+      if (matches.length === 0) continue;
+      const verified = managed && matches.length === 1
+        && regions.some((region) => matches[0].start > region.start && matches[0].start < region.end);
+      if (!verified) {
+        diagnose('PROJECTION_DISPOSITION_UNVERIFIED', `The ${section} section is not unique within a valid managed region.`);
+        continue;
+      }
+      const disposition = excerpt(matches[0], DISPOSITION_EXCERPT_LIMIT);
+      if (!disposition.text) {
+        diagnose('PROJECTION_DISPOSITION_UNVERIFIED', `The ${section} section has no disposition evidence.`);
+        continue;
+      }
+      dispositions.push({
+        ...disposition,
+        attribution: 'managed-source',
+      });
+    }
+  } catch {
+    diagnose('PROJECTION_IDEA_SECTIONS_MALFORMED', 'The idea sections could not be read completely.');
+  }
+  return { intent, dispositions, diagnostics };
+}
+
+/**
+ * Inventory is independent of selected execution state and live handoffs.
+ * Only ledgers are read here; unselected package documents remain deferred.
+ * @param {string} root
+ * @param {ReturnType<typeof selectLifecycleIdeaSummary>} lifecycle
+ */
+function discoveryProjection(root, lifecycle) {
+  const diagnostics = boundedDiagnostics(root, lifecycle.inventory.diagnostics)
+    .filter((diagnostic) => diagnostic.code !== 'FEATURE_IDEAS_ROOT_MISSING');
+  const ideaBytes = new Map();
+  const sources = [];
+  const contexts = lifecycle.contexts.map(({ idea, owner, diagnostics: scoped }) => {
+    const contextDiagnostics = boundedDiagnostics(root, scoped);
+    let details = { intent: null, dispositions: [] };
+    let source = null;
+    try {
+      const bytes = readSafeFile(root, idea.ideaPath);
+      ideaBytes.set(idea.ideaPath, bytes);
+      const discovery = ideaDiscovery(bytes, idea.ideaPath);
+      details = { intent: discovery.intent, dispositions: discovery.dispositions };
+      contextDiagnostics.push(...discovery.diagnostics);
+      diagnostics.push(...discovery.diagnostics);
+      source = { kind: 'file', path: idea.ideaPath };
+      if (idea.ideaPath !== lifecycle.idea?.ideaPath) {
+        sources.push(fileSource('Idea', idea.ideaPath, 'discovery', bytes));
+      }
+    } catch (error) {
+      const diagnostic = projectionErrorDiagnostic(error);
+      contextDiagnostics.push(diagnostic);
+      diagnostics.push(diagnostic);
+    }
+    return {
+      kind: idea.status === 'defined' ? 'feature' : 'idea',
+      status: idea.status,
+      ideaPath: idea.ideaPath,
+      slug: idea.slug,
+      specPath: owner?.specPath ?? null,
+      title: ideaBytes.has(idea.ideaPath) ? selectedTitle(ideaBytes.get(idea.ideaPath)) : null,
+      ...details,
+      source,
+      coverage: {
+        scope: 'idea-ledger',
+        state: contextDiagnostics.some((diagnostic) => diagnostic.severity === 'error')
+          ? 'unavailable' : contextDiagnostics.length ? 'partial' : 'current',
+        diagnostics: contextDiagnostics,
+      },
+    };
+  });
+  const readable = contexts.filter((context) => context.source !== null).length;
+  const uncertain = diagnostics.length > 0;
+  return {
+    ideaBytes,
+    sources,
+    contexts,
+    workspace: contexts.length || lifecycle.inventory.packages.length
+      ? 'populated' : uncertain ? 'unknown' : 'blank',
+    coverage: {
+      inventory: {
+        state: uncertain ? readable ? 'partial' : 'unavailable' : 'current',
+        ideas: contexts.length,
+        readable,
+        packages: lifecycle.inventory.packages.length,
+        diagnostics,
+      },
+      selected: { state: 'not-selected', ideaPath: null, diagnostics: [] },
+      // T009 supplies live availability through its provider; disk cannot prove
+      // that there are zero current requests, even in a blank workspace.
+      live: { state: 'unavailable', reason: 'Current requests require a live owner handoff.' },
+    },
+  };
 }
 
 /** @param {string | null} blockedBy */
@@ -700,6 +853,13 @@ function projectionBase() {
     diagnostics: [],
     sources: [],
     choices: [],
+    workspace: 'unknown',
+    contexts: [],
+    coverage: {
+      inventory: { state: 'unavailable', ideas: 0, readable: 0, packages: 0, diagnostics: [] },
+      selected: { state: 'not-selected', ideaPath: null, diagnostics: [] },
+      live: { state: 'unavailable', reason: 'Current requests require a live owner handoff.' },
+    },
     action: null,
   };
 }
@@ -744,6 +904,7 @@ function failedReadReason(diagnostics) {
  * @param {Record<string, unknown>} [facts]
  */
 function failedProjection(base, diagnostics, facts = {}) {
+  const conflicts = diagnostics.filter((diagnostic) => diagnostic.code === 'PROJECTION_READ_CONFLICT');
   return /** @type {ReturnType<typeof projectionBase>} */ (deepFreeze({
     ...base,
     ...facts,
@@ -758,6 +919,25 @@ function failedProjection(base, diagnostics, facts = {}) {
     phases: [],
     attention: attentionFrom(diagnostics),
     diagnostics,
+    contexts: base.contexts.map((context) => {
+      const affected = conflicts.filter((diagnostic) => (
+        diagnostic.path === '.' || diagnostic.path === context.ideaPath || diagnostic.path === context.specPath
+      ));
+      return affected.length
+        ? { ...context, coverage: { ...context.coverage, state: 'stale', diagnostics: [...context.coverage.diagnostics, ...affected] } }
+        : context;
+    }),
+    coverage: {
+      ...base.coverage,
+      inventory: conflicts.length
+        ? { ...base.coverage.inventory, state: 'partial', diagnostics: [...base.coverage.inventory.diagnostics, ...conflicts] }
+        : base.coverage.inventory,
+      selected: {
+        state: 'unavailable',
+        ideaPath: facts.selected?.ideaPath ?? base.selected?.ideaPath ?? null,
+        diagnostics,
+      },
+    },
     sources: [],
     action: REFRESH_ACTION,
   }));
@@ -939,7 +1119,7 @@ function trackedTaskCounts(executable) {
  */
 async function verifySelectedSources(root, sources, target, operation) {
   for (const source of sources) {
-    if (source.kind === 'inventory') continue;
+    if (source.kind === 'inventory' || source.role === 'discovery') continue;
     let current;
     if (source.kind === 'file') current = contentIdentity(readSafeFile(root, source.path));
     else if (source.kind === 'tracked') {
@@ -983,12 +1163,18 @@ async function verifySelectedSources(root, sources, target, operation) {
  * @param {ReturnType<typeof projectionOperation>} operation
  */
 async function completeProjection(root, projection, sources, target, operation) {
+  const failedBase = {
+    ...projectionBase(),
+    workspace: projection.workspace,
+    contexts: projection.contexts,
+    coverage: projection.coverage,
+  };
   try {
     const conflict = await verifySelectedSources(root, sources, target, operation);
     if (conflict) {
       const unavailable = conflict.code === 'TRACKED_AUTHORITY_UNAVAILABLE'
         || conflict.code === 'TRACKED_READINESS_UNAVAILABLE';
-      return failedProjection(projectionBase(), [conflict], {
+      return failedProjection(failedBase, [conflict], {
         selected: projection.selected,
         unansweredQuestions: projection.unansweredQuestions,
         ...(unavailable && conflict.code === 'TRACKED_READINESS_UNAVAILABLE'
@@ -997,12 +1183,42 @@ async function completeProjection(root, projection, sources, target, operation) 
       });
     }
   } catch {
-    return failedProjection(projectionBase(), [{
+    return failedProjection(failedBase, [{
       code: 'PROJECTION_READ_CONFLICT',
       severity: 'error',
       path: '.',
       message: 'Canonical repository state changed or became unavailable while the projection was being read.',
     }], { selected: projection.selected });
+  }
+  // A changed unselected ledger affects that excerpt, not selected execution.
+  // Check after the final awaited capture, with no further async publication gap.
+  // Structural inventory changes already reject the mixed read above.
+  for (const source of sources.filter((candidate) => candidate.role === 'discovery')) {
+    let diagnostic = null;
+    try {
+      if (contentIdentity(readSafeFile(root, source.path)) !== source.contentIdentity) {
+        diagnostic = {
+          code: 'PROJECTION_READ_CONFLICT', severity: 'error', path: source.path,
+          message: 'The idea changed while discovery was being read.',
+        };
+      }
+    } catch (error) {
+      diagnostic = projectionErrorDiagnostic(error);
+    }
+    if (!diagnostic) continue;
+    projection = {
+      ...projection,
+      contexts: projection.contexts.map((context) => context.ideaPath === source.path
+        ? { ...context, coverage: { ...context.coverage, state: 'stale', diagnostics: [...context.coverage.diagnostics, diagnostic] } }
+        : context),
+      coverage: {
+        ...projection.coverage,
+        inventory: {
+          ...projection.coverage.inventory, state: 'partial',
+          diagnostics: [...projection.coverage.inventory.diagnostics, diagnostic],
+        },
+      },
+    };
   }
   return deepFreeze({
     ...projection,
@@ -1011,6 +1227,12 @@ async function completeProjection(root, projection, sources, target, operation) 
     readAt: new Date().toISOString(),
     attemptedAt: null,
     sources,
+    coverage: {
+      ...projection.coverage,
+      selected: projection.selected
+        ? { state: 'current', ideaPath: projection.selected.ideaPath, diagnostics: [] }
+        : projection.coverage.selected,
+    },
   });
 }
 
@@ -1042,6 +1264,10 @@ function freshnessResult(state, projection, message, diagnostics = []) {
 /** @param {unknown} projection */
 export function initialProjectionFreshness(projection) {
   if (projection && typeof projection === 'object' && projection.complete === true) {
+    if (projection.coverage?.inventory?.state !== 'current') {
+      return freshnessResult('stale', projection, 'Discovery coverage is incomplete; readable contexts remain available.',
+        projection.coverage?.inventory?.diagnostics ?? []);
+    }
     return freshnessResult('current', projection, 'Every authoritative source matches the last complete read.');
   }
   return freshnessResult('unavailable', projection, 'No complete projection is available.');
@@ -1071,7 +1297,13 @@ async function checkProjectionFreshnessWithOperation({ root, projection }, opera
     return freshnessResult('unavailable', projection, 'No complete projection is available to check.');
   }
   try {
-    for (const source of projection.sources) {
+    // Finish all awaited acquisitions before checking local source identities.
+    // Each source is still checked once, without an async gap after file reads.
+    const sources = [
+      ...projection.sources.filter((source) => source.kind === 'tracked'),
+      ...projection.sources.filter((source) => source.kind !== 'tracked'),
+    ];
+    for (const source of sources) {
       let current;
       if (source.kind === 'inventory') {
         current = inventoryIdentity(selectLifecycleIdeaSummary({ root }).inventory);
@@ -1090,7 +1322,7 @@ async function checkProjectionFreshnessWithOperation({ root, projection }, opera
         );
       }
     }
-    return freshnessResult('current', projection, 'Every authoritative source matches the last complete read.');
+    return initialProjectionFreshness(projection);
   } catch {
     return freshnessResult(
       'unavailable',
@@ -1128,7 +1360,7 @@ export async function refreshNowProjection(input, options = {}) {
       return deepFreeze({
         replaced: true,
         projection: successor,
-        freshness: freshnessResult('current', successor, 'Refresh completed from one complete read.'),
+        freshness: initialProjectionFreshness(successor),
       });
     }
     const diagnostics = Array.isArray(successor.diagnostics) ? successor.diagnostics : [];
@@ -1166,30 +1398,266 @@ export async function readNowProjection(input, options = {}) {
 }
 
 /**
+ * Overview's private, read-only work index. This is deliberately NOT part of
+ * readNowProjection/freshness/refresh: those callers read selected packages only.
+ *
+ * contexts/coverage.inventory are the captured base inventory, including resolved
+ * ideas. items has one row per exact ideaPath + specPath, with lane, basis, group,
+ * nullable taskCounts, counted sources and scoped availability. It is not a
+ * backlog graph, a readiness authority, or a source of selected instructions.
+ * A failed enrichment leaves the healthy base inventory discoverable.
+ *
+ * @param {{root:string}} input
+ * @param {ProjectionOperationOptions} [options]
+ */
+export async function readWorkIndex({ root }, options = {}) {
+  const operation = projectionOperation(options);
+  const diagnostics = [];
+  let base = null;
+  let inventory = null;
+  let rootIdentity = null;
+  let sources = [];
+  let items = [];
+  const packageConsumers = new Map();
+  const unavailable = (item, reason, state = 'unavailable') => ({
+    ...item, group: null, taskCounts: null, availability: { state, reason },
+  });
+  try {
+    operation.signal.throwIfAborted();
+    const rootStat = fs.lstatSync(root);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error('unsafe root');
+    rootIdentity = contentIdentity(JSON.stringify([fs.realpathSync(root), rootStat.dev, rootStat.ino]));
+    const lifecycle = selectLifecycleIdeaSummary({ root });
+    inventory = inventorySource(lifecycle.inventory);
+    base = discoveryProjection(root, lifecycle);
+    sources = [inventory, ...[...base.ideaBytes].map(([name, bytes]) => fileSource('Idea', name, 'inventory', bytes))];
+    items = base.contexts.map(context => ({
+      ideaPath: context.ideaPath, specPath: context.specPath,
+      lane: context.kind === 'idea' ? 'definition' : null,
+      basis: 'not-established', group: null, taskCounts: null, sources: [],
+      availability: { state: 'unavailable', reason: 'Work status has not been established.' },
+    }));
+    let board;
+    try {
+      board = await queryTrackedIssues(root, operation);
+      sources.push(trackedSource('Tracked board', TRACKED_COMMAND, 'authority', board.identity));
+    } catch {
+      diagnostics.push(trackedUnavailableDiagnostic('TRACKED_AUTHORITY_UNAVAILABLE'));
+    }
+    if (board?.issues.length) {
+      items = items.map((item, index) => {
+        const context = base.contexts[index];
+        if (context.kind === 'idea') return item;
+        const matched = board.issues.filter(issue => exactIssueSpec(issue) === `spec: ${item.specPath}`)
+          .map(issue => ({ normalized: normalizeBeadsIssue(issue) }))
+          .filter(({ normalized }) => !normalized.isEpic);
+        const tracked = { ...item, lane: 'tracked', sources: [sources.at(-1)] };
+        if (!item.specPath || !matched.length) return unavailable(tracked, 'No exact executable work is recorded on the populated tracked board.');
+        if (matched.some(({ normalized }) => normalized.status === null)) {
+          return unavailable(tracked, 'Tracked work has an unsupported status.');
+        }
+        const counts = trackedTaskCounts(matched);
+        return { ...tracked, basis: 'tracked-board', taskCounts: counts,
+          group: counts.done === counts.total ? 'completed' : counts.blocked ? 'blocked'
+            : counts.inProgress ? 'active' : 'defined-awaiting-work',
+          availability: { state: 'current', reason: null } };
+      });
+    } else if (board) {
+      // Reuse the canonical backlog's metadata and grouping semantics, never its
+      // generated report or chronology/order. Bound and capture every package
+      // counted below before collection; verify the same bytes after acquisition.
+      const metadata = new Map();
+      let totalBytes = 0;
+      let oversized = false;
+      // The shared collector can also encounter a malformed claimant. Bound
+      // the entire captured package inventory before allowing its rich read.
+      for (const pkg of lifecycle.inventory.packages) {
+        for (const name of [pkg.specPath, `${pkg.directoryPath}/tasks.md`]) {
+          try {
+            const stat = fs.lstatSync(resolveMutationPath(root, name));
+            if (!stat.isFile()) continue;
+            totalBytes += stat.size;
+            oversized ||= stat.size > 8 * 1024 * 1024 || totalBytes > 32 * 1024 * 1024;
+          } catch { /* The collector scopes missing/unsafe package files. */ }
+        }
+      }
+      if (!oversized) {
+        for (const context of base.contexts) {
+          if (!context.specPath) continue;
+          const files = [];
+          try {
+            for (const name of [context.specPath, `${path.posix.dirname(context.specPath)}/tasks.md`]) {
+              const stat = fs.lstatSync(resolveMutationPath(root, name));
+              if (!stat.isFile() || stat.size > 8 * 1024 * 1024) {
+                oversized ||= stat.isFile();
+                throw new Error('bounded metadata unavailable');
+              }
+              const bytes = readSafeFile(root, name);
+              files.push(fileSource(name.endsWith('/tasks.md') ? 'Tasks' : 'Specification', name, 'work', bytes));
+            }
+            metadata.set(context.ideaPath, files);
+          } catch { metadata.set(context.ideaPath, null); }
+        }
+      }
+      // Missing/malformed packages are scoped by the canonical collector. An
+      // oversized input must not enter its otherwise unbounded rich read.
+      if (!oversized && !lifecycle.inventory.diagnostics.some(entry => entry.severity === 'error')) {
+        try {
+          const { collectLifecycleItems, deriveLifecycleModel } = await import('../../../skills/dude-lightweight-execution/backlog.mjs');
+          for (const source of sources.filter(source => source.kind === 'file')) {
+            if (contentIdentity(readSafeFile(root, source.path)) !== source.contentIdentity) throw new Error('base source changed');
+          }
+          const admitted = new Map(base.contexts.map(context => [context.ideaPath, context]));
+          const collected = collectLifecycleItems({ root }).filter(item => {
+            const context = admitted.get(item.ideaPath);
+            return context && item.specPath === context.specPath;
+          });
+          const model = deriveLifecycleModel({ items: collected });
+          const byIdentity = new Map(model.items.map(item => [item.ideaPath, item]));
+          for (const files of metadata.values()) if (files) sources.push(...files);
+          items = items.map(item => {
+            const recorded = byIdentity.get(item.ideaPath);
+            if (!recorded || recorded.unavailableDetail || recorded.authorityIssues.length
+              || (item.specPath && !metadata.get(item.ideaPath))) return item;
+            const counted = metadata.get(item.ideaPath) ?? [];
+            const current = { ...item, lane: recorded.defined && (recorded.taskCounts.done || recorded.taskCounts.active || recorded.taskCounts.blocked)
+              ? 'lightweight' : 'definition',
+              basis: 'canonical-lifecycle', group: recorded.group,
+              taskCounts: recorded.tasksAvailable ? {
+                total: recorded.taskCounts.total, open: recorded.taskCounts.open,
+                inProgress: recorded.taskCounts.active, blocked: recorded.taskCounts.blocked,
+                done: recorded.taskCounts.done,
+              } : null,
+              sources: counted, availability: { state: 'current', reason: null } };
+            // Only dependency-sensitive feature groups consume prerequisite
+            // package bytes. Model nodes already match exact admitted pairs;
+            // resolved/completed and own-blocked groups take precedence.
+            if (item.specPath && recorded.group !== 'completed' && !recorded.ownBlocked) {
+              for (const { type, from, to } of model.relationships.declared) {
+                if (type !== 'dependency' || to !== recorded || !from?.defined) continue;
+                const required = metadata.get(from.ideaPath);
+                if (!required) return unavailable(current, 'A prerequisite source could not be confirmed.', 'stale');
+                for (const source of required) {
+                  const consumers = packageConsumers.get(source.path) ?? new Set();
+                  consumers.add(item.ideaPath);
+                  packageConsumers.set(source.path, consumers);
+                }
+              }
+            }
+            return current;
+          });
+        } catch {
+          diagnostics.push({ code: 'WORK_INDEX_METADATA_UNAVAILABLE', severity: 'warning', path: '.',
+            message: 'Work metadata could not be read. The idea inventory is still available.' });
+        }
+      } else {
+        diagnostics.push({ code: 'WORK_INDEX_METADATA_UNAVAILABLE', severity: 'warning', path: '.',
+          message: 'The package inventory is unsafe or exceeds the bounded work read. Progress is unavailable.' });
+      }
+    }
+    // Draft/resolved lifecycle does not need an execution board or fake counts.
+    items = items.map((item, index) => {
+      const context = base.contexts[index];
+      if (context.coverage.state === 'unavailable') return unavailable(item, 'This record has unavailable source coverage.');
+      if (context.kind !== 'idea') return item;
+      return { ...item, lane: 'definition', basis: 'idea-ledger',
+        group: context.status === 'resolved' ? 'completed' : 'awaiting-definition',
+        taskCounts: null, availability: { state: 'current', reason: null } };
+    });
+    if (board) {
+      try {
+        if ((await queryTrackedIssues(root, operation)).identity !== board.identity) throw new Error('lane changed');
+      } catch {
+        items = items.map((item, index) => base.contexts[index].kind === 'idea' ? item
+          : unavailable(item, 'The execution authority changed during the read.', 'stale'));
+        diagnostics.push({ code: 'WORK_INDEX_AUTHORITY_CHANGED', severity: 'warning', path: '.',
+          message: 'Execution authority could not be confirmed. Work progress has been withheld.' });
+      }
+    }
+    // No asynchronous publication gap after source/inventory reconciliation.
+    for (const source of sources.filter(source => source.kind === 'file')) {
+      let current = false;
+      try { current = contentIdentity(readSafeFile(root, source.path)) === source.contentIdentity; } catch { /* scoped below */ }
+      if (current) continue;
+      // Open labels also consume incoming declarations from every idea ledger.
+      items = items.map(item => item.ideaPath === source.path || item.sources.some(s => s.path === source.path)
+        || packageConsumers.get(source.path)?.has(item.ideaPath)
+        || (base.ideaBytes.has(source.path) && item.basis === 'canonical-lifecycle'
+          && (item.group === 'next' || item.group === 'defined-awaiting-work'))
+        ? unavailable(item, 'A counted source changed during the read.', 'stale') : item);
+      if (base.ideaBytes.has(source.path)) {
+        base.contexts = base.contexts.map(context => context.ideaPath === source.path
+          ? { ...context, coverage: { ...context.coverage, state: 'stale' } } : context);
+        base.coverage.inventory = { ...base.coverage.inventory, state: 'partial' };
+      }
+    }
+    try {
+      const finalRoot = fs.lstatSync(root);
+      if (!finalRoot.isDirectory() || finalRoot.isSymbolicLink()
+        || finalRoot.dev !== rootStat.dev || finalRoot.ino !== rootStat.ino
+        || inventoryIdentity(selectLifecycleIdeaSummary({ root }).inventory) !== inventory.contentIdentity
+        || options.signal?.aborted) {
+        throw new Error('base inventory changed');
+      }
+    } catch {
+      // Losing coverage is not an observed replacement of the captured root.
+      // Enrichment failure alone does not invalidate a fresh base check.
+      items = items.map(item => unavailable(item, 'The base inventory could not be confirmed during the read.', 'stale'));
+      base.coverage.inventory = { ...base.coverage.inventory, state: 'stale' };
+      diagnostics.push({ code: 'WORK_INDEX_UNAVAILABLE', severity: 'warning', path: '.',
+        message: 'The base inventory could not be confirmed after the work read.' });
+    }
+  } catch {
+    diagnostics.push({ code: 'WORK_INDEX_UNAVAILABLE', severity: 'warning', path: '.',
+      message: 'The work index could not be read from this workspace.' });
+    items = items.map(item => unavailable(item, 'Work status could not be confirmed.'));
+  } finally { operation.dispose(); }
+  const partial = items.some(item => item.availability.state !== 'current') || diagnostics.length > 0;
+  return deepFreeze({
+    workspaceId: contentIdentity(path.resolve(root)), rootIdentity,
+    workspace: base?.workspace ?? 'unknown', inventoryIdentity: inventory?.contentIdentity ?? null,
+    contexts: base?.contexts ?? [], items, sources,
+    sourceIdentity: contentIdentity(JSON.stringify(sources)), readAt: new Date().toISOString(),
+    coverage: {
+      inventory: base?.coverage.inventory ?? { state: 'unavailable', diagnostics },
+      work: { state: !base ? 'unavailable' : partial ? 'partial' : 'current', diagnostics },
+    },
+  });
+}
+
+/**
  * @param {{root:string,target?:string}} input
  * @param {ReturnType<typeof projectionOperation>} operation
  */
 async function readNowProjectionWithOperation({ root, target }, operation) {
-  const base = projectionBase();
+  let base = projectionBase();
 
   try {
     const lifecycle = selectLifecycleIdeaSummary({ root, target });
     const { inventory } = lifecycle;
-    const inventoryDiagnostics = boundedDiagnostics(root, lifecycle.diagnostics);
-    if (inventoryDiagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
-      return failedProjection(base, inventoryDiagnostics);
-    }
+    const inventoryDiagnostics = boundedDiagnostics(root, lifecycle.diagnostics)
+      .filter((diagnostic) => diagnostic.code !== 'FEATURE_IDEAS_ROOT_MISSING');
+    const discovery = discoveryProjection(root, lifecycle);
     const choices = lifecycle.choices.map((candidate) => ({
       ideaPath: candidate.ideaPath,
       slug: candidate.slug,
       specPath: candidate.status === 'defined' ? candidate.specPath : null,
     }));
-    const completeBase = { ...base, choices };
+    base = {
+      ...base, choices,
+      workspace: discovery.workspace,
+      contexts: discovery.contexts,
+      coverage: discovery.coverage,
+    };
+    const completeBase = base;
     /** @type {Array<Record<string, any>>} */
-    const sources = [inventorySource(inventory)];
+    const sources = [inventorySource(inventory), ...discovery.sources];
 
     const { idea, owner, explicit } = lifecycle;
     if (!idea) {
+      if (explicit || (choices.length === 0 && inventoryDiagnostics.some((diagnostic) => diagnostic.severity === 'error'))) {
+        return failedProjection(base, inventoryDiagnostics);
+      }
       return await completeProjection(root, {
         ...completeBase,
         status: 'choose',
@@ -1207,7 +1675,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
       }, sources, target, operation);
     }
 
-    const ideaBytes = readSafeFile(root, idea.ideaPath);
+    const ideaBytes = discovery.ideaBytes.get(idea.ideaPath) ?? readSafeFile(root, idea.ideaPath);
     const coordinatorEvents = sectionEvents(ideaBytes, 'Coordinator Log');
     sources.push(fileSource('Idea', idea.ideaPath, 'identity', ideaBytes, {
       section: 'Coordinator Log',
@@ -1227,6 +1695,8 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
       specPath: owner?.specPath ?? null,
       explicit,
     };
+    // Later source reads can throw; retain the already-admitted identity.
+    base = { ...base, selected };
     const questions = countOpenQuestions(ideaBytes);
     const activity = coordinatorEvents.length > 0
       ? {

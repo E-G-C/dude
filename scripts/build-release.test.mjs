@@ -65,6 +65,23 @@ const RECOVERY_SOURCE_REL = 'src/skills/dude-work/recovery.mjs';
 const RECOVERY_TEST_SOURCE_REL = 'src/skills/dude-work/recovery.test.mjs';
 const RECOVERY_DEPLOY_REL = '.github/skills/dude-work/recovery.mjs';
 const RECOVERY_TEST_DEPLOY_REL = '.github/skills/dude-work/recovery.test.mjs';
+const REVIEW_UI_FILES = Object.freeze([
+  'NOTICE.txt',
+  'bridge.mjs',
+  'capture.mjs',
+  'engine.mjs',
+  'geometry.mjs',
+  'inspector.mjs',
+  'panel.mjs',
+  'shapes.mjs',
+  'styles.css',
+]);
+const REVIEW_LIB_FILES = Object.freeze([
+  'lib/review.mjs',
+  'lib/review/browser.mjs',
+  'lib/review/data.mjs',
+  'lib/review/png.mjs',
+]);
 const T007_PROJECTION_PAIRS = [
   ['src/skills/dude-bundle-import/SKILL.md', '.github/skills/dude-bundle-import/SKILL.md'],
   ['src/skills/dude-bundle-import/import.mjs', '.github/skills/dude-bundle-import/import.mjs'],
@@ -212,6 +229,8 @@ test('extension release planning accepts only the deployed runtime allowlist', (
     '.github/extensions/dude/ui/index.html',
     '.github/extensions/dude/ui/assets/app.js',
     '.github/extensions/dude/ui/assets/licenses/NOTICE.txt',
+    ...REVIEW_LIB_FILES.map((relative) => `.github/extensions/dude/${relative}`),
+    ...REVIEW_UI_FILES.map((filename) => `.github/extensions/dude/ui/review/${filename}`),
   ];
   const excluded = [
     'src/extensions/dude/extension.mjs',
@@ -225,9 +244,16 @@ test('extension release planning accepts only the deployed runtime allowlist', (
     '.github/extensions/dude/README.md',
     '.github/extensions/dude/extension.mjs.map',
     '.github/extensions/dude/lib/runtime.mjs.map',
+    '.github/extensions/dude/lib/review/unlisted.mjs',
+    '.github/extensions/dude/lib/review/nested/extra.mjs',
     '.github/extensions/dude/ui/assets/app.js.map',
     '.github/extensions/dude/lib/node_modules/dependency/index.mjs',
     '.github/extensions/dude/ui/assets/node_modules/dependency/index.js',
+    '.github/extensions/dude/ui/review/unlisted.mjs',
+    '.github/extensions/dude/ui/review/nested/extra.mjs',
+    '.github/extensions/dude/ui/review/engine.test.mjs',
+    '.github/extensions/dude/ui/review/package.json',
+    '.github/extensions/dude/ui/review/node_modules/dependency/index.mjs',
     '.github/extensions/other/extension.mjs',
     '.github/extensions/dude-preview/extension.mjs',
   ];
@@ -253,14 +279,29 @@ test('listCoreSourceFiles maps only extension runtime source files by relative p
       'src/extensions/dude/ui/index.html': '<!doctype html>\n',
       'src/extensions/dude/ui/assets/app.js': 'app\n',
       'src/extensions/dude/ui/assets/licenses/NOTICE.txt': 'notice\n',
+      ...Object.fromEntries(REVIEW_LIB_FILES.map((relative) => [
+        `src/extensions/dude/${relative}`,
+        `${relative} review runtime\n`,
+      ])),
+      ...Object.fromEntries(REVIEW_UI_FILES.map((filename) => [
+        `src/extensions/dude/ui/review/${filename}`,
+        `${filename} review static\n`,
+      ])),
     };
     const excluded = {
       'src/extensions/dude/canvas-server.test.mjs': 'test\n',
       'src/extensions/dude/lib/nested/runtime.test.mjs': 'test\n',
       'src/extensions/dude/lib/runtime.mjs.map': 'map\n',
       'src/extensions/dude/lib/node_modules/dependency/index.mjs': 'dependency\n',
+      'src/extensions/dude/lib/review/unlisted.mjs': 'unlisted review helper\n',
+      'src/extensions/dude/lib/review/nested/extra.mjs': 'nested unlisted review helper\n',
       'src/extensions/dude/frontend/app.jsx': 'frontend\n',
       'src/extensions/dude/ui/preview.html': 'preview\n',
+      'src/extensions/dude/ui/review/unlisted.mjs': 'unlisted review static\n',
+      'src/extensions/dude/ui/review/nested/extra.mjs': 'nested review static\n',
+      'src/extensions/dude/ui/review/review.test.mjs': 'review test\n',
+      'src/extensions/dude/ui/review/package.json': '{}\n',
+      'src/extensions/dude/ui/review/node_modules/dependency/index.mjs': 'dependency\n',
       'src/extensions/dude/ui/assets/app.js.map': 'map\n',
       'src/extensions/dude/ui/assets/node_modules/dependency/index.js': 'dependency\n',
       'src/extensions/other/extension.mjs': 'other extension\n',
@@ -336,6 +377,42 @@ test('buildRelease preserves unrelated source bytes and excludes source tests', 
         `${deployRel} must be byte-identical to ${sourceRel}`,
       );
     }
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test('T011 release stages exact published Canvas runtime bytes without frontend, tests, or build tooling', () => {
+  // Arrange
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-rel-t011-canvas-'));
+  const runtime = [
+    'extension.mjs',
+    'lib/canvas-server.mjs',
+    'lib/projection.mjs',
+    'lib/needs-you.mjs',
+    'lib/review.mjs',
+    'ui/index.html',
+    'ui/assets/app.js',
+    'ui/assets/app.js.LEGAL.txt',
+    ...REVIEW_UI_FILES.map((filename) => `ui/review/${filename}`),
+  ];
+  try {
+    // Act
+    buildRelease({ repoRoot, outDir, ref: 'v0.0.0-t011-fixture' });
+
+    // Assert
+    for (const relative of runtime) {
+      assert.deepEqual(
+        fs.readFileSync(path.join(outDir, '.github/extensions/dude', ...relative.split('/'))),
+        fs.readFileSync(path.join(repoRoot, 'src/extensions/dude', ...relative.split('/'))),
+        `.github/extensions/dude/${relative}`,
+      );
+    }
+    const staged = listRelativeFiles(outDir);
+    assert.equal(staged.some((relative) => relative.startsWith('.github/extensions/dude/frontend/')), false);
+    assert.equal(staged.some((relative) => relative.endsWith('.test.mjs')), false);
+    assert.equal(staged.includes('scripts/dude-canvas-ui/build.mjs'), false);
+    assert.equal(staged.includes('scripts/dude-canvas-ui/package-lock.json'), false);
   } finally {
     fs.rmSync(outDir, { recursive: true, force: true });
   }
@@ -658,6 +735,39 @@ test('buildRelease is byte-stable across repeated valid disposable outputs', () 
       assert.deepEqual(fs.readFileSync(path.join(first, ...deployRel.split('/'))), expected, deployRel);
       assert.deepEqual(fs.readFileSync(path.join(second, ...deployRel.split('/'))), expected, deployRel);
     }
+    assert.deepEqual(
+      extensionSources
+        .map(({ deployRel }) => deployRel)
+        .filter((relPath) => relPath.startsWith('.github/extensions/dude/ui/review/'))
+        .map((relPath) => path.posix.basename(relPath))
+        .sort(),
+      [...REVIEW_UI_FILES],
+      'release planning carries exactly the nine adopted Review static files',
+    );
+    assert.deepEqual(
+      extensionSources
+        .map(({ deployRel }) => deployRel)
+        .filter((relPath) => relPath === '.github/extensions/dude/lib/review.mjs'
+          || relPath.startsWith('.github/extensions/dude/lib/review/'))
+        .map((relPath) => relPath.replace('.github/extensions/dude/', ''))
+        .sort(),
+      [...REVIEW_LIB_FILES],
+      'release planning carries exactly the four adopted Review adapter files',
+    );
+    const noticePath = '.github/extensions/dude/ui/review/NOTICE.txt';
+    const notice = fs.readFileSync(path.join(first, ...noticePath.split('/')), 'utf8');
+    assert.equal(
+      notice,
+      fs.readFileSync(path.join(repoRoot, 'src/extensions/dude/ui/review/NOTICE.txt'), 'utf8'),
+      'the complete adopted notice is copied byte-for-byte',
+    );
+    for (const required of [
+      'MIT License',
+      'Copyright (c) 2026 Enrique Gonzalez',
+      'Permission is hereby granted, free of charge',
+      'THE SOFTWARE IS PROVIDED "AS IS"',
+      'There is no runtime connection to the source repository.',
+    ]) assert.match(notice, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 
     const staged = listRelativeFiles(first);
     assert.deepEqual(

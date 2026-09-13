@@ -1,1490 +1,486 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { StrictMode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  Accordion,
-  AccordionHeader,
-  AccordionItem,
-  AccordionPanel,
-  Badge,
-  Body1,
-  Breadcrumb,
-  BreadcrumbDivider,
-  BreadcrumbItem,
-  Button,
-  Caption1,
-  Card,
-  Combobox,
-  Divider,
-  Field,
-  FluentProvider,
-  MessageBar,
-  MessageBarBody,
-  MessageBarTitle,
-  Option,
-  Subtitle2,
-  Text,
-  Title3,
+  AriaLiveAnnouncer, Badge, Button, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader,
+  DataGridHeaderCell, DataGridRow, Field, FluentProvider, Input, List, ListItem,
+  ProgressBar, Spinner, Tab, TabList, TableCellLayout, Text, Toolbar, ToolbarButton,
 } from '@fluentui/react-components';
-
+import { ArrowClockwiseRegular, ArrowLeftRegular, CommentRegular, SearchRegular } from '@fluentui/react-icons';
 import { mergeClasses, useCanvasStyles } from './styles.js';
-import {
-  darkTheme,
-  layout,
-  lightTheme,
-  useHostAppearance,
-} from './theme.js';
+import { darkTheme, lightTheme, useHostAppearance } from './theme.js';
+import { NeedsYou, NewIdea, Notice, previewEligibility, SelectField } from './needs-you.jsx';
+import { loadReviewEngine, ReviewHistory, ReviewWorkspace } from './review.jsx';
+import { requestKey, useCanvasData } from './use-canvas-data.js';
 
-const LIFECYCLE = Object.freeze(['Idea', 'Defined', 'In progress', 'Verified']);
-const SURFACES = Object.freeze([
-  Object.freeze({ label: 'Now', open: true, glyph: 'now' }),
-  Object.freeze({ label: 'Work', open: false, glyph: 'work' }),
-  Object.freeze({ label: 'Artifacts', open: false, glyph: 'document' }),
-  Object.freeze({ label: 'Review', open: false, glyph: 'review' }),
-  Object.freeze({ label: 'Memory', open: false, glyph: 'memory' }),
-  Object.freeze({ label: 'Team', open: false, glyph: 'team' }),
-]);
-const CHOOSER_POSITIONING = Object.freeze({
-  position: 'below',
-  align: 'start',
-  offset: Object.freeze({
-    crossAxis: 0,
-    mainAxis: layout.chooserSummaryPx,
-  }),
-});
+const TABS = [['overview', 'Overview'], ['context', 'Context'], ['needs', 'Needs you'], ['new', 'New idea']];
+const GROUPS = {
+  active: 'In progress', blocked: 'Blocked', next: 'Next by recorded dependencies',
+  'awaiting-definition': 'Awaiting definition', 'defined-awaiting-work': 'Defined',
+  'prioritized-later': 'Recorded for later', completed: 'Completed',
+};
+const DEFAULT_FINDER = { query: '', scope: 'open' };
 
-async function readInitialProjection(signal) {
-  const response = await fetch('/api/projection', { cache: 'no-store', signal });
-  if (!response.ok) throw new Error('projection request failed');
-  return response.json();
+function contextTitle(context) { return context.title || 'Title unavailable'; }
+function sameContext(left, right) {
+  return Boolean(left && right && left.ideaPath === right.ideaPath && left.specPath === right.specPath);
+}
+function progressText(row) {
+  return row.tasks ? `${row.tasks.done} of ${row.tasks.total} tasks` : 'Progress not established';
+}
+function rowsFor(data) {
+  const contexts = data.index?.contexts || data.projection?.contexts || [];
+  const items = !data.issues.index && data.index
+    ? new Map(data.index.items.map(item => [item.ideaPath, item])) : new Map();
+  return contexts.map(context => {
+    const candidate = items.get(context.ideaPath);
+    const item = sameContext(context, candidate) && candidate.availability.state === 'current' ? candidate : null;
+    return { context, ideaPath: context.ideaPath, title: contextTitle(context), group: item?.group,
+      status: context.status === 'resolved' ? 'Resolved idea' : item ? GROUPS[item.group] || 'Status unavailable' : 'Work status unavailable',
+      open: item?.group ? item.group !== 'completed' : null,
+      tasks: item?.taskCounts || null, reason: candidate?.availability.reason,
+      lane: item?.lane, sources: item?.sources || [] };
+  }).sort((a, b) => a.title.localeCompare(b.title, 'en', { sensitivity: 'base' }) || a.ideaPath.localeCompare(b.ideaPath));
+}
+function currentOrientation(data, context) {
+  const projection = data.projection;
+  if (!sameContext(projection?.selected, context) || !projection.complete || data.selecting
+    || data.issues.orientation || data.freshness?.state !== 'current') return null;
+  // Never combine an old selected instruction with a newer counted task file.
+  const row = data.index?.items.find(item => sameContext(item, context));
+  if (data.issues.index || (row && row.availability.state !== 'current')) return null;
+  if (row?.sources.some(source => !projection.sources.some(candidate => candidate.path === source.path
+    && candidate.contentIdentity === source.contentIdentity))) return null;
+  if (row?.lane === 'tracked' && !projection.sources.some(source => source.kind === 'tracked'
+    && row.sources.some(candidate => candidate.command === source.command && candidate.contentIdentity === source.contentIdentity))) return null;
+  return projection;
+}
+function instruction(projection) {
+  return projection?.next?.source?.description || projection?.next?.description || null;
 }
 
-async function readFreshness(signal) {
-  const response = await fetch('/api/freshness', { cache: 'no-store', signal });
-  if (!response.ok) throw new Error('freshness request failed');
-  return response.json();
+function WorkName({ row }) {
+  const s = useCanvasStyles();
+  return <span className={s.tight}><Text weight="semibold">{row.title}</Text>
+    <Text className={s.eyebrow}>{row.context.slug}</Text></span>;
 }
-
-async function refreshProjection(target, signal) {
-  const response = await fetch('/api/refresh', {
-    body: JSON.stringify(target ? { target } : {}),
-    cache: 'no-store',
-    headers: { 'Content-Type': 'application/json' },
-    method: 'POST',
-    signal,
-  });
-  if (!response.ok) throw new Error('refresh request failed');
-  return response.json();
+function WorkProgress({ row }) {
+  const s = useCanvasStyles();
+  return <span className={s.progressCell}><Text>{progressText(row)}</Text>
+    {row.tasks?.total > 0 && row.tasks.done < row.tasks.total
+      && <ProgressBar value={row.tasks.done} max={row.tasks.total} aria-hidden="true" />}</span>;
 }
+const COLUMNS = [
+  createTableColumn({ columnId: 'name', renderHeaderCell: () => 'Name',
+    renderCell: row => <TableCellLayout><WorkName row={row} /></TableCellLayout> }),
+  createTableColumn({ columnId: 'status', renderHeaderCell: () => 'Status',
+    renderCell: row => <TableCellLayout>{row.status}</TableCellLayout> }),
+  createTableColumn({ columnId: 'progress', renderHeaderCell: () => 'Progress',
+    renderCell: row => <TableCellLayout><WorkProgress row={row} /></TableCellLayout> }),
+];
 
-function Glyph({ name, className }) {
-  const paths = {
-    chevron: <path d="m9 5 3 3-3 3" />,
-    check: <path d="m4.5 8 2.25 2.25L11.75 5" />,
-    clock: (
-      <>
-        <circle cx="8" cy="8" r="5.5" />
-        <path d="M8 5v3.25l2 1.25" />
-      </>
-    ),
-    document: (
-      <>
-        <path d="M4.5 2.5h4L11.5 5v8.5h-7z" />
-        <path d="M8.5 2.5V5h3M6.5 8h3M6.5 10.5h3" />
-      </>
-    ),
-    memory: (
-      <>
-        <path d="M3 3.5h4.25A1.75 1.75 0 0 1 9 5.25V13H4.75A1.75 1.75 0 0 0 3 14.75z" />
-        <path d="M13 3.5H8.75A1.75 1.75 0 0 0 7 5.25" />
-      </>
-    ),
-    keyboard: (
-      <>
-        <rect x="2.1" y="4.3" width="11.8" height="7.4" rx="1.3" />
-        <path d="M4.5 6.7h.01M6.6 6.7h.01M8.8 6.7h.01M11 6.7h.01M4.5 8.8h.01M11 8.8h.01M6.4 10.1h3.2" />
-      </>
-    ),
-    now: (
-      <>
-        <circle cx="8" cy="8" r="5.5" />
-        <circle cx="8" cy="8" r="1.5" />
-      </>
-    ),
-    refresh: (
-      <>
-        <path d="M12.5 5.5V2.75M12.5 2.75H9.75" />
-        <path d="M12.1 4.1A5.5 5.5 0 1 0 13 9" />
-      </>
-    ),
-    review: (
-      <>
-        <path d="M3 3h10v10H3z" />
-        <path d="m5.5 8 1.5 1.5L10.75 6" />
-      </>
-    ),
-    team: (
-      <>
-        <circle cx="6" cy="6" r="2" />
-        <circle cx="11.5" cy="6.5" r="1.5" />
-        <path d="M2.75 12.5c.5-2 1.6-3 3.25-3s2.75 1 3.25 3M9.5 10c1.8-.4 3 .45 3.75 2.5" />
-      </>
-    ),
-    warning: (
-      <>
-        <path d="M8 2.25 14 13H2z" />
-        <path d="M8 6v3M8 11.25v.1" />
-      </>
-    ),
-    window: (
-      <>
-        <rect x="2.25" y="3" width="11.5" height="10" rx="1.3" />
-        <path d="M2.25 6h11.5" />
-      </>
-    ),
-    work: (
-      <>
-        <path d="M3 4.5h10v8H3zM6 4.5V3h4v1.5" />
-        <path d="M3 8h10" />
-      </>
-    ),
-  };
-  return (
-    <svg
-      aria-hidden="true"
-      className={className}
-      fill="none"
-      focusable="false"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.5"
-      viewBox="0 0 16 16"
-    >
-      {paths[name] ?? paths.document}
-    </svg>
-  );
-}
-
-function selectedLabel(projection) {
-  return projection?.selected?.title || projection?.selected?.slug || null;
-}
-
-function canonicalFeatureIdentifier(ideaPath) {
-  if (typeof ideaPath !== 'string') return null;
-  const match = /^\.dude\/ideas\/((?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2})-[a-z0-9][a-z0-9-]*)\.md$/.exec(ideaPath);
-  return match?.[1] ?? null;
-}
-
-function selectableFeatureChoices(choices) {
-  return choices
-    .map((choice) => ({
-      choice,
-      identifier: canonicalFeatureIdentifier(choice.ideaPath),
-    }))
-    .filter(({ choice, identifier }) => (
-      identifier !== null && typeof choice.slug === 'string'
-    ));
-}
-
-function nextAuthorityReason(authority) {
-  if (authority === 'tracked') {
-    return 'The active work tracker identifies this as the next safe step.';
-  }
-  if (authority === 'lightweight') {
-    return 'The canonical task board identifies this as the next safe step.';
-  }
-  return 'The current authority identifies this as the next safe step.';
-}
-
-function taskSummary(tasks) {
-  if (!tasks) return null;
-  return `${tasks.done} done · ${tasks.inProgress} in progress · ${tasks.blocked} blocked · ${tasks.open} open`;
-}
-
-function formatReadTime(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return value;
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date);
-}
-
-function formatNextStep(description) {
-  const withoutInlineCodeDelimiters = description.replace(/(`+)([^`\r\n]+)\1/g, '$2');
-  const scaffolded = /^After task,/i.test(description);
-  const hasStructuredTail = /[:;](?=\s)|[.!?](?=\s)/.test(description);
-  if (!scaffolded && !hasStructuredTail && !/[\r\n]/.test(description) && description.length <= 96) {
-    return { headline: withoutInlineCodeDelimiters, condensed: false };
-  }
-
-  const source = scaffolded ? description.replace(/^After task,\s*/i, '') : description;
-  const boundary = source.search(/[:;](?=\s)|[.!?](?=\s|$)/);
-  const includesSentencePunctuation = boundary >= 0 && /[.!?]/.test(source[boundary]);
-  const clause = (boundary < 0
-    ? source
-    : source.slice(0, boundary + (includesSentencePunctuation ? 1 : 0))).trim();
-  const globCandidate = clause.replace(/[.!?]$/, '');
-  const unsafe = clause.length === 0
-    || clause.length > 80
-    || clause.includes('`')
-    || /[*?[\]{}]/.test(globCandidate)
-    || /\bT\d{3}(?:@[a-z0-9._-]+)?\b/i.test(clause)
-    || /\b(?:FR|SC)-\d+\b/i.test(clause)
-    || /\b(?:sha(?:1|256|512):)?[a-f0-9]{7,64}\b/i.test(clause);
-  if (unsafe) return { headline: withoutInlineCodeDelimiters, condensed: false };
-
-  const capitalized = clause[0].toUpperCase() + clause.slice(1);
-  return {
-    headline: /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`,
-    condensed: true,
-  };
-}
-
-function machineReadableDate(value) {
-  return value.endsWith(' UTC') ? value.slice(0, -4) : value;
-}
-
-/**
- * Authoritative all-task completion only: a complete read of a selected feature
- * whose recorded task counts are non-empty and entirely done, with no recorded
- * blocker and no next step. Absent counts, an unread tracker, a resolved idea
- * without a package, and "no canonical task is ready" are never completion.
- */
-function completionSummary(projection, view) {
-  if (view.mode !== 'feature' || projection?.status !== 'ok') return null;
-  if (projection.stage !== 'Verified') return null;
-  if (projection.next) return null;
-  if (Array.isArray(projection.blockers) && projection.blockers.length > 0) return null;
-  const tasks = projection.tasks;
-  if (!tasks || typeof tasks.total !== 'number' || typeof tasks.done !== 'number') return null;
-  if (tasks.total < 1 || tasks.done !== tasks.total) return null;
-  return tasks.total === 1
-    ? 'The 1 task for this feature is complete.'
-    : `All ${tasks.total} tasks for this feature are complete.`;
-}
-
-function currentPhase(projection) {
-  return projection?.phases?.find((phase) => phase.state === 'current')?.name ?? null;
-}
-
-function lifecycleStates(stage) {
-  if (stage === 'Idea') return ['current', 'upcoming', 'upcoming', 'upcoming'];
-  if (stage === 'Defined') return ['complete', 'complete', 'unknown', 'unknown'];
-  if (stage === 'In progress' || stage === 'Blocked') {
-    return ['complete', 'complete', 'current', 'upcoming'];
-  }
-  if (stage === 'Verified') return ['complete', 'complete', 'complete', 'complete'];
-  if (stage === 'Completed without a package') return ['complete', 'unknown', 'unknown', 'complete'];
-  return ['unknown', 'unknown', 'unknown', 'unknown'];
-}
-
-function deriveView(projection, freshness, busy) {
-  if (!projection) {
-    return {
-      mode: busy ? 'loading' : 'unavailable',
-      title: busy ? 'Reading repository state' : 'Repository state unavailable',
-      stage: null,
-    };
-  }
-  if (projection.status === 'choose') {
-    const choices = Array.isArray(projection.choices) ? projection.choices : [];
-    return {
-      choices,
-      mode: choices.length > 0 ? 'choose' : 'empty',
-      stage: null,
-      title: choices.length > 0 ? 'Choose a feature' : 'No features found',
-    };
-  }
-  if (projection.status !== 'ok') {
-    return {
-      mode: 'unavailable',
-      stage: projection.stage ?? null,
-      title: selectedLabel(projection) || 'Repository state unavailable',
-    };
-  }
-  return {
-    mode: 'feature',
-    stage: projection.stage ?? null,
-    title: selectedLabel(projection) || 'Feature title withheld',
-  };
-}
-
-function clientUnavailable(previous, projection) {
-  return {
-    checkedAt: new Date().toISOString(),
-    diagnostics: [],
-    message: 'The Dude canvas server could not be reached. The last complete view is preserved.',
-    nextAction: {
-      kind: 'refresh',
-      label: 'Refresh from repository',
-      method: 'POST',
-      path: '/api/refresh',
-    },
-    readAt: previous?.readAt ?? projection?.readAt ?? null,
-    state: 'unavailable',
-  };
-}
-
-function ContextContent({ label, styles }) {
-  return (
-    <>
-      <Glyph className={styles.icon} name="document" />
-      <span className={styles.contextText}>
-        <span className={styles.contextCaption}>Feature</span>
-        <span className={styles.contextName}>{label}</span>
-      </span>
-    </>
-  );
-}
-
-function FeatureChooser({
-  choices,
-  onSelect,
-  selected,
-  styles,
-  busy = false,
-}) {
-  const [query, setQuery] = useState(null);
-  const [open, setOpen] = useState(false);
-  const [pendingIdentifier, setPendingIdentifier] = useState(null);
-  const [failedIdentifier, setFailedIdentifier] = useState(null);
-  const inputRef = useRef(null);
-  const listboxRef = useRef(null);
-  const selectedOptionRef = useRef(null);
-  const pointerOpeningRef = useRef(false);
-  const committedSlug = typeof selected?.slug === 'string' ? selected.slug : null;
-  const committedIdentifier = canonicalFeatureIdentifier(selected?.ideaPath);
-  const displayedValue = query ?? pendingIdentifier ?? committedIdentifier ?? '';
-  const normalizedQuery = (query ?? '').trim().toLowerCase();
-  const selectableChoices = selectableFeatureChoices(choices);
-  const committedChoice = committedSlug && committedIdentifier
-    ? selectableChoices.find(({ choice, identifier }) => (
-        choice.slug === committedSlug && identifier === committedIdentifier
-      ))
-    : null;
-  const selectedOptions = committedChoice ? [committedChoice.choice.slug] : [];
-  const matchingChoices = selectableChoices.filter(
-    ({ choice, identifier }) => identifier.toLowerCase().includes(normalizedQuery)
-      || choice.slug.toLowerCase().includes(normalizedQuery),
-  );
-  const selectedSummary = committedChoice ? ` ${committedIdentifier} is selected.` : '';
-  const matchSummary = query === null || !normalizedQuery
-    ? `${selectableChoices.length} features.${selectedSummary} Scroll or type to narrow them.`
-    : `${matchingChoices.length} of ${selectableChoices.length} features match "${query}".${committedChoice ? ` ${committedIdentifier} stays selected.` : ''}`;
-  const failureSummary = failedIdentifier
-    ? `${failedIdentifier} could not be opened. ${committedIdentifier
-      ? `${committedIdentifier} is still the open feature.`
-      : 'No feature is open.'}`
-    : null;
-
-  const beginBrowse = useCallback(() => {
-    if (busy || open) return;
-    setQuery(null);
-    setOpen(true);
-  }, [busy, open]);
-
-  const closeChooser = useCallback(() => {
-    setOpen(false);
-    setQuery(null);
+function WorkFinder({ rows, finder, onFinder, scroll, onOpen }) {
+  const s = useCanvasStyles(), id = useId();
+  const size = useRef(null), list = useRef(null), applied = useRef(null);
+  const [compact, setCompact] = useState(() => window.matchMedia('(max-width: 700px)').matches);
+  useLayoutEffect(() => {
+    const observer = new ResizeObserver(([entry]) => setCompact(entry.contentRect.width < 620));
+    observer.observe(size.current);
+    return () => observer.disconnect();
   }, []);
-
-  const beginPointerOpen = useCallback((event) => {
-    if (busy || listboxRef.current?.contains(event.target)) return;
-    pointerOpeningRef.current = true;
-    setFailedIdentifier(null);
-    beginBrowse();
-  }, [beginBrowse, busy]);
-
-  const endPointerOpen = useCallback(() => {
-    pointerOpeningRef.current = false;
-  }, []);
-
-  useEffect(() => {
-    if (!open || query !== null) return undefined;
-    const frame = window.requestAnimationFrame(() => {
-      const input = inputRef.current;
-      if (input && document.activeElement === input) {
-        input.setSelectionRange(0, input.value.length);
-      }
-      selectedOptionRef.current?.scrollIntoView({ block: 'nearest' });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [committedIdentifier, open, query]);
-
-  return (
-    <div className={styles.chooser}>
-      <Field
-        className={styles.contextField}
-        hint={open
-          ? {
-              'aria-live': 'polite',
-              className: styles.chooserSummaryBand,
-              children: (
-                <span className={styles.chooserSummary} title={failureSummary ?? undefined}>
-                  {failureSummary ?? matchSummary}
-                </span>
-              ),
-              role: 'status',
-            }
-          : undefined}
-        label="Feature"
-        orientation="horizontal"
-      >
-        <Combobox
-          aria-busy={busy}
-          aria-disabled={busy}
-          className={styles.chooserControl}
-          disableAutoFocus
-          freeform
-          input={{
-            'aria-autocomplete': 'list',
-            'aria-invalid': failedIdentifier ? true : undefined,
-            autoComplete: 'off',
-            onFocus: beginBrowse,
-            onKeyDownCapture: (event) => {
-              if (busy || event.key !== 'Tab') return;
-              setFailedIdentifier(null);
-              setOpen(false);
-              setQuery(null);
-              event.stopPropagation();
-            },
-            spellCheck: false,
-          }}
-          inlinePopup
-          listbox={matchingChoices.length > 0
-            ? {
-                'aria-label': 'Features',
-                className: styles.chooserListbox,
-                ref: listboxRef,
-              }
-            : null}
-          onChange={(event) => {
-            if (busy) return;
-            setFailedIdentifier(null);
-            setQuery(event.target.value);
-          }}
-          onKeyDown={(event) => {
-            if (busy) return;
-            const typing = event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
-            if (query === null && (typing || event.key === 'Backspace' || event.key === 'Delete')) {
-              setFailedIdentifier(null);
-              setQuery('');
-              event.currentTarget.value = '';
-              if (event.key === 'Backspace' || event.key === 'Delete') {
-                event.preventDefault();
-              }
-              return;
-            }
-            if (event.key !== 'Escape') return;
-            setFailedIdentifier(null);
-            if (query !== null) {
-              event.preventDefault();
-              event.stopPropagation();
-              setQuery(null);
-              setOpen(false);
-              window.requestAnimationFrame(() => setOpen(true));
-            }
-          }}
-          onOpenChange={(_event, data) => {
-            if (busy) return;
-            if (data.open || pointerOpeningRef.current) {
-              beginBrowse();
-            } else {
-              closeChooser();
-            }
-          }}
-          onOptionSelect={async (_event, data) => {
-            if (busy) return;
-            if (typeof data.optionValue !== 'string') return;
-            const selectedChoice = selectableChoices.find(
-              ({ choice }) => choice.slug === data.optionValue,
-            );
-            if (!selectedChoice) return;
-            setFailedIdentifier(null);
-            setQuery(null);
-            setOpen(false);
-            setPendingIdentifier(selectedChoice.identifier);
-            const accepted = await onSelect(
-              selectedChoice.choice.slug,
-              selectedChoice.identifier,
-            );
-            setPendingIdentifier(null);
-            if (accepted) return;
-            setFailedIdentifier(selectedChoice.identifier);
-            setQuery(null);
-            setOpen(true);
-            window.requestAnimationFrame(() => inputRef.current?.focus());
-          }}
-          open={open}
-          placeholder={`Choose from ${selectableChoices.length} features`}
-          positioning={CHOOSER_POSITIONING}
-          ref={inputRef}
-          root={{
-            'aria-disabled': busy,
-            onClick: endPointerOpen,
-            onClickCapture: beginPointerOpen,
-            onMouseDown: endPointerOpen,
-            onMouseDownCapture: beginPointerOpen,
-          }}
-          selectedOptions={selectedOptions}
-          value={displayedValue}
-        >
-          {matchingChoices.length > 0
-            ? matchingChoices.map(({ choice, identifier }) => (
-                <Option
-                  className={styles.chooserOption}
-                  key={choice.ideaPath}
-                  ref={choice === committedChoice?.choice ? selectedOptionRef : undefined}
-                  text={identifier}
-                  value={choice.slug}
-                >
-                  <span className={styles.chooserOptionText}>{identifier}</span>
-                </Option>
-              ))
-            : null}
-        </Combobox>
-        {open && matchingChoices.length === 0 ? (
-          <Caption1 block className={styles.chooserEmpty}>
-            {`No features match "${query}".`}
-          </Caption1>
-        ) : null}
-      </Field>
+  const fallback = finder.scope !== 'all' && rows.some(row => row.open === null);
+  const scope = fallback ? 'all' : finder.scope;
+  const query = finder.query.trim().toLocaleLowerCase();
+  const visible = rows.filter(row => (scope === 'all' || row.open === (scope === 'open'))
+    && (!query || [row.context.title, row.context.slug, row.ideaPath, row.context.specPath]
+      .some(value => value?.toLocaleLowerCase().includes(query))));
+  const result = `${finder.scope}|${finder.query}`;
+  useLayoutEffect(() => {
+    if (!list.current) return;
+    if (applied.current === null) list.current.scrollTop = scroll.current;
+    else if (applied.current !== result) { list.current.scrollTop = 0; scroll.current = 0; }
+    applied.current = result;
+  }, [result, scroll, compact, visible.length]);
+  const columns = { name: s.columnName, status: s.columnStatus, progress: s.columnProgress };
+  const label = row => `${row.title}. ${row.status}. ${progressText(row)}. ${row.ideaPath}`;
+  const resolved = rows.filter(row => row.open === false && row.context.status === 'resolved').length;
+  const completed = rows.filter(row => row.open === false && row.context.kind === 'feature').length;
+  return <section ref={size} className={s.stack} aria-labelledby={id}>
+    <h2 id={id} className={s.subheading}>Work</h2>
+    <div className={s.workControls}>
+      <Field label="Search work"><Input className={s.control} value={finder.query} contentBefore={<SearchRegular />}
+        placeholder="Title, slug, or source path" onChange={(_, input) => onFinder({ ...finder, query: input.value })} /></Field>
+      <SelectField label="Show" value={finder.scope} options={[[ 'open', 'Open' ], [ 'closed', 'Closed' ], [ 'all', 'All' ]]}
+        onChange={scope => onFinder({ ...finder, scope })} />
     </div>
-  );
-}
-
-function CommandBar({
-  busy,
-  choices,
-  contextLabel,
-  onRefresh,
-  onSelect,
-  selected,
-  styles,
-}) {
-  const chooser = choices.length > 0;
-  return (
-    <header className={styles.commandBar}>
-      <p className={styles.brand}>
-        <span aria-hidden="true" className={styles.brandMark}>
-          <Glyph className={styles.smallIcon} name="window" />
-        </span>
-        Dude <span className={styles.brandSub}>Now</span>
-      </p>
-      <span aria-hidden="true" className={styles.commandRule} />
-      <div className={styles.context}>
-        {chooser ? (
-          <FeatureChooser
-            busy={busy}
-            choices={choices}
-            onSelect={onSelect}
-            selected={selected}
-            styles={styles}
-          />
-        ) : (
-          <div className={styles.contextIdentity}>
-            <ContextContent label={contextLabel} styles={styles} />
-          </div>
-        )}
-      </div>
-      <div className={styles.toolbar}>
-        <Button
-          aria-busy={busy}
-          aria-disabled={busy}
-          appearance="secondary"
-          className={styles.refreshButton}
-          icon={<Glyph className={styles.icon} name="refresh" />}
-          onClick={onRefresh}
-        >
-          Refresh
-        </Button>
-      </div>
-    </header>
-  );
-}
-
-function ActivityRail({ announce, styles }) {
-  return (
-    <nav aria-label="Surfaces" className={styles.rail}>
-      <ul className={styles.railList}>
-        {SURFACES.map((surface) => (
-          <li
-            className={styles.railItem}
-            key={surface.label}
-            title={surface.open ? undefined : `${surface.label} — arrives in a later cycle`}
-          >
-            <Button
-              aria-current={surface.open ? 'page' : undefined}
-              aria-label={surface.open
-                ? 'Now, the open surface'
-                : `${surface.label} — arrives in a later cycle`}
-              className={mergeClasses(
-                styles.railButton,
-                surface.open ? styles.railCurrent : styles.railButtonLater,
-              )}
-              disabled={!surface.open}
-              icon={<Glyph className={styles.icon} name={surface.glyph} />}
-              onClick={surface.open
-                ? () => announce('Now is already the open surface.')
-                : undefined}
-              title={surface.open ? 'Now — the open surface' : undefined}
-            />
-            {!surface.open ? (
-              <span aria-hidden="true" className={styles.railLater}>
-                <Glyph className={styles.smallIcon} name="clock" />
-              </span>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
-}
-
-function BreadcrumbStrip({ view, styles }) {
-  const parts = ['Dude', 'Features', view.title, 'Now'];
-  return (
-    <div className={styles.workStrip}>
-      <Breadcrumb aria-label="Breadcrumb" className={styles.breadcrumb}>
-        {parts.map((part, index) => (
-          <React.Fragment key={`${part}-${index}`}>
-            <BreadcrumbItem aria-current={index === parts.length - 1 ? 'page' : undefined}>
-              <Text className={styles.breadcrumbText} size={200} weight={index === parts.length - 1 ? 'semibold' : 'regular'}>
-                {part}
-              </Text>
-            </BreadcrumbItem>
-            {index < parts.length - 1 ? <BreadcrumbDivider /> : null}
-          </React.Fragment>
-        ))}
-      </Breadcrumb>
+    {fallback && <Notice title="Showing all records while work status is incomplete">
+      Your {finder.scope === 'closed' ? 'Closed' : 'Open'} selection is retained. Unknown records are included so missing progress cannot hide work.
+    </Notice>}
+    <div className={s.tight}>
+      <Text className={s.eyebrow} role="status">{visible.length} of {rows.length} recorded ideas and features · alphabetical, not priority order</Text>
+      {!!(resolved || completed) && <Text className={s.eyebrow}>Closed records include {completed} completed features and {resolved} resolved ideas.
+        Resolved ideas were not necessarily implemented.</Text>}
+      <Text className={s.eyebrow}>Click a row or focus it and press Enter to open its exact record in Context.</Text>
     </div>
-  );
-}
-
-function IdentityStrip({ headingRef, projection, view, styles }) {
-  const selected = projection?.selected;
-  const identifier = canonicalFeatureIdentifier(selected?.ideaPath);
-  const note = view.mode === 'choose'
-    ? 'No feature was supplied and more than one is active, so nothing is selected until you choose one.'
-    : view.mode === 'empty'
-      ? 'The repository has no available feature to select.'
-      : view.mode === 'unavailable'
-        ? 'Unsupported values are withheld until one complete read succeeds.'
-        : null;
-  const badge = view.stage || (view.mode === 'choose' ? 'Nothing selected' : view.mode === 'empty' ? 'Nothing to show' : 'Stage withheld');
-  const badgeAppearance = view.stage === 'Blocked' ? 'filled' : 'outline';
-  const badgeColor = view.stage === 'Blocked' ? 'danger' : 'informative';
-
-  return (
-    <div className={styles.identity}>
-      <Subtitle2 as="h2" className={styles.identityTitle} id="feature-heading" ref={headingRef} tabIndex={-1}>
-        {view.title}
-      </Subtitle2>
-      <Badge appearance={badgeAppearance} color={badgeColor}>
-        {badge}
-      </Badge>
-      {selected ? (
-        <code className={styles.identityKey}>{identifier ?? 'Identifier unavailable'}</code>
-      ) : null}
-      {note ? <Body1 as="p" className={styles.identityNote}>{note}</Body1> : null}
+    <div ref={list} className={s.workScroll} data-work-scroll onScroll={event => { scroll.current = event.currentTarget.scrollTop; }}>
+      {!visible.length ? <div className={s.empty}><Text weight="semibold">No matching work</Text>
+        <Text>Change the search or Show selection. Nothing has been removed.</Text></div>
+        : compact ? <List navigationMode="items" aria-label="Recorded work">
+          {visible.map(row => <ListItem key={row.ideaPath} className={s.workItem} data-work-path={row.ideaPath}
+            aria-label={label(row)} onAction={() => onOpen(row.context)}>
+            <span className={s.workItemText}><WorkName row={row} />
+              <Text className={s.eyebrow}>{row.status} · {progressText(row)}</Text></span>
+          </ListItem>)}
+        </List> : <DataGrid items={visible} columns={COLUMNS} getRowId={row => row.ideaPath}
+          focusMode="composite" aria-label="Recorded work">
+          <DataGridHeader className={s.workHeader}><DataGridRow>
+            {({ columnId, renderHeaderCell }) => <DataGridHeaderCell focusMode="none"
+              className={mergeClasses(s.workCell, columns[columnId])}>{renderHeaderCell()}</DataGridHeaderCell>}
+          </DataGridRow></DataGridHeader>
+          <DataGridBody>{({ item, rowId }) => <DataGridRow key={rowId} className={s.workRow}
+            data-work-path={item.ideaPath} aria-label={label(item)} onClick={() => onOpen(item.context)}
+            onKeyDown={event => {
+              if (event.key !== 'Enter' || event.target !== event.currentTarget) return;
+              event.preventDefault(); onOpen(item.context);
+            }}>
+            {({ columnId, renderCell }) => <DataGridCell focusMode="none" className={mergeClasses(s.workCell, columns[columnId])}>
+              <div className={s.cellLayout}>{renderCell(item)}</div>
+            </DataGridCell>}
+          </DataGridRow>}</DataGridBody>
+        </DataGrid>}
     </div>
-  );
+  </section>;
 }
 
-function SectionHead({ children, aside, id, styles }) {
-  return (
-    <div className={styles.sectionHead}>
-      <h3 className={styles.sectionTitle} id={id}>{children}</h3>
-      {aside ? <Caption1 className={styles.caption}>{aside}</Caption1> : null}
-    </div>
-  );
+function ReviewEntry({ context, data, onReview }) {
+  const s = useCanvasStyles(), eligible = previewEligibility(context, data);
+  return eligible.records.length
+    ? <Button className={s.back} appearance="primary" icon={<CommentRegular />}
+      data-review-entry={eligible.records.length === 1 ? eligible.records[0].requestHandle : 'choices'}
+      onClick={() => onReview(eligible.records)}>Review design{eligible.records.length > 1 ? ' requests' : ''}</Button>
+    : <Text className={s.eyebrow}>{eligible.reason}</Text>;
 }
 
-function UnavailableRegion({ children, styles }) {
-  return (
-    <div className={styles.unavailableRegion}>
-      <Glyph className={styles.icon} name="warning" />
-      <Body1>{children}</Body1>
-    </div>
-  );
-}
-
-function FocalRegion({ projection, view, choices, styles }) {
-  if (view.mode === 'choose') {
-    const selectableChoices = selectableFeatureChoices(choices);
-    return (
-      <section aria-labelledby="choose-heading" className={styles.region}>
-        <SectionHead id="choose-heading" styles={styles}>Select a feature</SectionHead>
-        <Body1 as="p" className={styles.instructionLead}>
-          The feature list is the Feature box in the command bar at the top of this window.
-          It is the only place a feature is chosen.
-        </Body1>
-        <ol className={styles.instructionSteps}>
-          <li>Click the Feature box, or Tab to it: the list opens on the first click, already showing options.</li>
-          <li>Scroll the list to reach any feature, or type a number or name to filter it—for example, 052 or dude.</li>
-          <li>Arrow keys move the highlight; Home and End jump to the ends of the list.</li>
-          <li>Enter opens the highlighted feature. Escape clears the search, then closes the list.</li>
-        </ol>
-        <div className={styles.instructionFacts}>
-          <div className={styles.fact}>
-            <span className={styles.factLabel}>In the list</span>
-            <span className={styles.factValue}>{selectableChoices.length} features from the complete projected inventory</span>
-          </div>
-          <div className={styles.fact}>
-            <span className={styles.factLabel}>Order</span>
-            <span className={styles.factValue}>The order the idea files are read. Nothing is promoted by recency, number, or last use.</span>
-          </div>
-          <div className={styles.fact}>
-            <span className={styles.factLabel}>Canonical identifier</span>
-            <span className={styles.factValue}>Number and name exactly as filed; the slug remains the internal target.</span>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  const next = projection?.next?.description ?? null;
-  const complete = next ? null : completionSummary(projection, view);
-  const why = next
-    ? nextAuthorityReason(projection?.authority)
-    : complete
-      ? null
-      : projection?.nextReason ?? null;
-  const phase = complete ? null : currentPhase(projection);
-  const unavailable = !next && !complete;
-  const formattedNext = next ? formatNextStep(next) : null;
-  const headline = formattedNext?.headline || (complete
-    ? 'All tasks complete'
-    : view.mode === 'empty'
-      ? 'No Dude features were found in this repository.'
-      : view.mode === 'loading'
-        ? 'Reading the current projection…'
-        : 'Next step unavailable');
-  const detail = complete || (view.mode === 'empty'
-    ? 'There is no selected project state from which to show a stage, step, or blocker.'
-    : view.mode === 'loading'
-      ? 'The view will appear only after one complete read.'
-      : projection?.blockers?.length
-        ? `${projection.blockers.length} authoritative blocker${projection.blockers.length === 1 ? ' is' : 's are'} recorded.`
-        : null);
-
-  return (
-    <section aria-labelledby="next-heading" className={styles.region}>
-      <Card
-        appearance="outline"
-        className={mergeClasses(
-          styles.focalCard,
-          complete && styles.focalComplete,
-          unavailable && styles.focalUnavailable,
-        )}
-      >
-        <h3
-          className={mergeClasses(
-            styles.eyebrow,
-            complete && styles.eyebrowComplete,
-            unavailable && styles.eyebrowUnavailable,
-          )}
-          id="next-heading"
-        >
-          <Glyph className={styles.icon} name={complete ? 'check' : unavailable ? 'warning' : 'chevron'} />
-          {complete ? 'Complete' : 'Next step'}
-        </h3>
-        <Title3 as="p" className={styles.focalHeadline}>{headline}</Title3>
-        {formattedNext?.condensed ? (
-          <Caption1 block as="p" className={styles.focalCondensedCue}>
-            Full next-step text is available in Evidence.
-          </Caption1>
-        ) : null}
-        {detail ? <Body1 as="p" className={styles.focalDetail}>{detail}</Body1> : null}
-        {phase || why ? <Divider /> : null}
-        {phase || why ? (
-          <div className={styles.focalFacts}>
-            {phase ? (
-              <div className={styles.fact}>
-                <span className={styles.factLabel}>Current phase</span>
-                <span className={styles.factValue}>{phase}</span>
-              </div>
-            ) : null}
-            {why ? (
-              <div className={styles.fact}>
-                <span className={styles.factLabel}>Why</span>
-                <span className={styles.factValue}>{why}</span>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </Card>
-    </section>
-  );
-}
-
-function LifecycleRegion({ projection, view, styles }) {
-  const stage = projection?.stage ?? null;
-  if (!stage) {
-    if (view.mode !== 'choose') return null;
-    return (
-      <section aria-labelledby="lifecycle-heading" className={styles.region}>
-        <SectionHead id="lifecycle-heading" styles={styles}>Lifecycle</SectionHead>
-        <UnavailableRegion styles={styles}>
-          No feature is selected, so there is no lifecycle to show. Opening a feature shows where it stands.
-        </UnavailableRegion>
-      </section>
-    );
-  }
-  const states = lifecycleStates(stage);
-  const tasks = projection.tasks;
-  const segments = tasks ? [
-    ['done', tasks.done, styles.segmentDone],
-    ['in progress', tasks.inProgress, styles.segmentDoing],
-    ['blocked', tasks.blocked, styles.segmentBlocked],
-    ['open', tasks.open, styles.segmentOpen],
-  ] : [];
-
-  return (
-    <section aria-labelledby="lifecycle-heading" className={styles.region}>
-      <SectionHead id="lifecycle-heading" styles={styles}>Lifecycle</SectionHead>
-      <ol className={styles.lifecycleList}>
-        {LIFECYCLE.map((label, index) => {
-          const state = states[index];
-          const markerClass = state === 'complete'
-            ? styles.stepComplete
-            : state === 'current'
-              ? styles.stepCurrent
-              : state === 'unknown'
-                ? styles.stepUnknown
-                : null;
-          const stateLabel = state === 'complete'
-            ? 'Complete'
-            : state === 'current'
-              ? 'Current'
-              : state === 'unknown'
-                ? 'Unavailable'
-                : 'Not started';
-          return (
-            <li
-              aria-current={state === 'current' ? 'step' : undefined}
-              className={styles.lifecycleItem}
-              key={label}
-            >
-              <span aria-hidden="true" className={mergeClasses(styles.stepMarker, markerClass)}>
-                {state === 'complete' ? <Glyph className={styles.smallIcon} name="check" /> : index + 1}
-              </span>
-              <span className={mergeClasses(styles.stepText, state === 'current' && styles.stepTextCurrent)}>
-                {label}<span className={styles.stepState}>{stateLabel}</span>
-              </span>
-            </li>
-          );
+function Overview({ data, rows, finder, onFinder, scroll, onOpen, onNew, onReview }) {
+  const s = useCanvasStyles();
+  const inventory = data.index?.coverage.inventory || data.projection?.coverage.inventory;
+  const blank = data.index?.workspace === 'blank' && inventory?.state === 'current' && !rows.length;
+  const current = rows.filter(row => ['active', 'blocked', 'next'].includes(row.group));
+  return <div className={s.overview}>
+    <header className={s.between}><div className={s.detailHeader}>
+      <h1 className={s.title} tabIndex={-1}>Overview</h1>
+      {data.index?.readAt && <Text className={s.eyebrow}>Recorded work · read <time dateTime={data.index.readAt}>
+        {new Date(data.index.readAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+      </time></Text>}
+    </div><Button onClick={onNew}>New idea</Button></header>
+    {data.loading ? <Spinner label="Reading repository state" /> : blank ? <section className={s.stack}>
+      <h2 className={s.subheading}>Welcome to Dude</h2>
+      <p className={s.lead}>Describe what you want to make. The coordinator can capture it as a draft idea without a spec or task board.</p>
+      <Button className={s.back} appearance="primary" onClick={onNew}>Write a new idea</Button>
+    </section> : !rows.length ? <Notice intent="warning" title="Workspace inventory is unavailable">
+      This is not a confirmed blank workspace. No all-clear or missing-feature guess has been made.
+    </Notice> : <>
+      {(data.issues.index || inventory?.state !== 'current' || data.index?.coverage.work.state !== 'current')
+        && <Notice intent="warning" title="Some recorded work could not be confirmed">
+          {data.issues.index || 'Readable records remain available. Missing sources have no invented progress or closed-work status.'}
+        </Notice>}
+      {current.length ? <div className={s.stack}>
+        {current.slice(0, 3).map(row => {
+          const orientation = currentOrientation(data, row.context);
+          return <section className={s.focal} key={row.ideaPath} aria-label={`Current work: ${row.title}`}>
+            <div className={s.between}><Text className={s.eyebrow}>Current work</Text>
+              <Badge appearance="tint" color={row.group === 'blocked' ? 'warning' : 'informative'}>{row.status}</Badge></div>
+            <h2 className={s.title}>{row.title}</h2>
+            <div className={s.focalProgress}><Text>{progressText(row)}{row.tasks ? ' complete' : ''}</Text>
+              {row.tasks?.total > 0 && <ProgressBar value={row.tasks.done} max={row.tasks.total}
+                aria-label={`${row.title}: ${row.tasks.done} of ${row.tasks.total} recorded tasks complete`} />}</div>
+            <div className={s.focalStep}>
+              {instruction(orientation) ? <><Text weight="semibold">Current task instruction</Text>
+                <p className={s.prose}>{instruction(orientation)}</p></>
+                : <p className={s.prose}>Open this record in Context for its captured intent and current task instructions.</p>}
+              <ReviewEntry context={row.context} data={data} onReview={onReview} />
+              <Button className={s.back} onClick={() => onOpen(row.context)}>Open in Context</Button>
+            </div>
+          </section>;
         })}
-      </ol>
-      {tasks ? (
-        <div className={styles.progress}>
-          <div aria-hidden="true" className={styles.progressTrack}>
-            {segments.filter(([, count]) => count > 0).map(([label, count, className]) => (
-              <span
-                className={mergeClasses(styles.progressSegment, className)}
-                key={label}
-                style={{ flexGrow: count }}
-              />
-            ))}
-          </div>
-          <ul className={styles.legend}>
-            {segments.map(([label, count]) => (
-              <li className={styles.legendItem} key={label}>
-                <span className={styles.legendCount}>{count}</span> {label}
-              </li>
-            ))}
-          </ul>
-          <Caption1 block className={styles.caption}>{tasks.total} tasks make up this feature.</Caption1>
-        </div>
-      ) : null}
-    </section>
-  );
+        {current.length > 3 && <Text className={s.eyebrow}>Other current records appear in Work below.</Text>}
+      </div> : data.index?.coverage.work.state === 'current' && <Notice title="No recorded work is in progress">
+        Ideas and defined work remain available in the finder below. This is not a statement about current human requests.
+      </Notice>}
+      <WorkFinder rows={rows} finder={finder} onFinder={onFinder} scroll={scroll} onOpen={onOpen} />
+    </>}
+  </div>;
 }
 
-function phaseCount(phase) {
-  const parts = [`${phase.done} of ${phase.total} done`];
-  if (phase.inProgress) parts.push(`${phase.inProgress} in progress`);
-  if (phase.blocked) parts.push(`${phase.blocked} blocked`);
-  if (phase.open) parts.push(`${phase.open} open`);
-  return parts.join(' · ');
-}
-
-function PhasesRegion({ projection, view, styles }) {
-  const phases = Array.isArray(projection?.phases) ? projection.phases : [];
-  return (
-    <section aria-labelledby="phases-heading" className={styles.region}>
-      <SectionHead id="phases-heading" styles={styles}>Phases</SectionHead>
-      {phases.length > 0 ? (
-        <>
-          <ol className={styles.phaseList}>
-            {phases.map((phase, index) => (
-              <li
-                aria-current={phase.state === 'current' ? 'step' : undefined}
-                className={mergeClasses(styles.phaseRow, phase.state === 'current' && styles.phaseCurrent)}
-                key={`${phase.name}-${index}`}
-              >
-                <span className={mergeClasses(
-                  styles.phaseMark,
-                  phase.state === 'done' && styles.stepComplete,
-                  phase.state === 'current' && styles.stepCurrent,
-                )}>
-                  <Glyph className={styles.smallIcon} name={phase.state === 'done' ? 'check' : 'now'} />
-                </span>
-                <Body1 as="p" className={styles.phaseName}>
-                  {phase.name}
-                  {phase.state === 'current' ? <Badge color="brand">Current phase</Badge> : null}
-                </Body1>
-                <span aria-hidden="true" className={styles.phaseDistribution}>
-                  {[
-                    ['done', phase.done, styles.segmentDone],
-                    ['doing', phase.inProgress, styles.segmentDoing],
-                    ['blocked', phase.blocked, styles.segmentBlocked],
-                    ['open', phase.open, styles.segmentOpen],
-                  ].filter(([, count]) => count > 0).map(([label, count, className]) => (
-                    <span
-                      className={mergeClasses(styles.progressSegment, className)}
-                      key={label}
-                      style={{ flexGrow: count }}
-                    />
-                  ))}
-                </span>
-                <p className={styles.phaseCount}>{phaseCount(phase)}</p>
-              </li>
-            ))}
-          </ol>
-          <Caption1 block className={styles.caption}>
-            This is a progress summary; individual task keys remain in Source details.
-          </Caption1>
-        </>
-      ) : (
-        <UnavailableRegion styles={styles}>
-          {view.mode === 'choose'
-            ? 'No feature is selected, so there is no phase breakdown to show.'
-            : 'No source-backed phase breakdown is available from this authority.'}
-        </UnavailableRegion>
-      )}
-    </section>
-  );
-}
-
-function ActivityRegion({ projection, view, styles }) {
-  const recent = Array.isArray(projection?.activity?.recent) ? projection.activity.recent : [];
-  const latest = projection?.latestEvent;
-  const events = latest
-    ? [latest, ...recent.filter((event) => event.date !== latest.date || event.text !== latest.text)]
-    : recent;
-  return (
-    <section aria-labelledby="activity-heading" className={styles.region}>
-      <SectionHead aside="Most recent first" id="activity-heading" styles={styles}>Activity</SectionHead>
-      {events.length > 0 ? (
-        <>
-          <ol className={styles.trail}>
-            {events.map((event, index) => (
-              <li className={styles.trailItem} key={`${event.date}-${event.text}-${index}`}>
-                <span aria-hidden="true" className={mergeClasses(styles.trailNode, index === 0 && styles.trailNodeCurrent)} />
-                <p className={styles.trailDate}>
-                  <time dateTime={machineReadableDate(event.date)}>{event.date}</time>
-                </p>
-                <Body1 as="p" className={styles.trailText}>{event.text}</Body1>
-              </li>
-            ))}
-          </ol>
-          <Caption1 block className={styles.caption}>
-            Showing source-backed lifecycle events. Exact source details remain in the evidence dock.
-          </Caption1>
-        </>
-      ) : (
-        <UnavailableRegion styles={styles}>
-          {view.mode === 'choose'
-            ? 'No feature is selected, so there is no recorded history to show.'
-            : 'No source-backed lifecycle activity is available.'}
-        </UnavailableRegion>
-      )}
-    </section>
-  );
-}
-
-function attentionItems(projection, freshness, view) {
-  const items = [];
-  const state = freshness?.state;
-  if (state && state !== 'current') {
-    const titles = {
-      changed: 'Repository changes detected',
-      conflict: 'Refresh conflict',
-      stale: 'Showing the last complete read',
-      unavailable: 'Current read unavailable',
-    };
-    items.push({
-      intent: state === 'unavailable' || state === 'conflict' ? 'error' : 'warning',
-      message: `${freshness.message} Use Refresh from repository as the safe next action.`,
-      title: titles[state] || 'Freshness needs attention',
-    });
-  }
-  for (const attention of projection?.attention ?? []) {
-    items.push({
-      intent: attention.severity === 'error' ? 'error' : 'warning',
-      message: attention.message,
-      title: attention.severity === 'error' ? 'Repository state unavailable' : 'Repository attention',
-    });
-  }
-  for (const blocker of projection?.blockers ?? []) {
-    items.push({
-      intent: 'error',
-      message: blocker.reason,
-      title: 'Authoritative blocker',
-    });
-  }
-  if (projection?.status === 'unavailable' && items.length === 0) {
-    items.push({
-      intent: 'error',
-      message: `${projection.nextReason || 'A complete projection is not available.'} Use Refresh from repository as the safe next action.`,
-      title: 'Projection unavailable',
-    });
-  }
-  if (view.mode === 'empty' && items.length === 0) {
-    items.push({
-      intent: 'info',
-      message: 'No feature is available. Capture an idea in the Copilot session, then use Refresh from repository.',
-      title: 'Nothing to show yet',
-    });
-  }
-  if (Number.isInteger(projection?.unansweredQuestions) && projection.unansweredQuestions > 0) {
-    items.push({
-      intent: 'info',
-      message: `${projection.unansweredQuestions} unanswered question${projection.unansweredQuestions === 1 ? ' is' : 's are'} recorded.`,
-      title: 'Open questions',
-    });
-  }
-  return items;
-}
-
-function AttentionSection({ projection, freshness, view, styles }) {
-  const items = attentionItems(projection, freshness, view);
-  const questions = projection?.unansweredQuestions;
-  const noBlockers = projection?.complete && projection?.status === 'ok'
-    && projection.blockers?.length === 0;
-  if (items.length === 0 && !noBlockers && !Number.isInteger(questions)) return null;
-  return (
-    <section aria-labelledby="attention-heading" className={styles.dockSection}>
-      <h3 className={styles.sectionTitle} id="attention-heading">Attention</h3>
-      {items.length > 0 ? (
-        <div className={styles.messageStack}>
-          {items.map((item, index) => (
-            <MessageBar
-              icon={<Glyph className={styles.icon} name={item.intent === 'error' ? 'warning' : 'clock'} />}
-              intent={item.intent}
-              key={`${item.title}-${index}`}
-              layout="multiline"
-            >
-              <MessageBarBody>
-                <MessageBarTitle>{item.title}</MessageBarTitle>
-                {item.message}
-              </MessageBarBody>
-            </MessageBar>
-          ))}
-        </div>
-      ) : null}
-      {noBlockers ? (
-        <Body1 as="p" className={styles.statusSummary}>
-          <Glyph className={styles.icon} name="check" /> No blockers are recorded.
-        </Body1>
-      ) : null}
-      {Number.isInteger(questions) ? (
-        <Caption1 block className={styles.caption}>
-          {questions} unanswered question{questions === 1 ? '' : 's'}
-        </Caption1>
-      ) : null}
-    </section>
-  );
-}
-
-function FreshnessSection({ busy, freshness, projection, styles }) {
-  const state = freshness?.state ?? 'unavailable';
-  const label = busy
-    ? 'Reading repository sources'
-    : state === 'current'
-      ? 'Current complete read'
-      : state === 'changed'
-        ? 'Repository changed'
-        : state === 'stale'
-          ? 'Preserved complete read'
-          : state === 'conflict'
-            ? 'Read conflict'
-            : 'Read unavailable';
-  const message = busy
-    ? 'Sources are being read. The current complete view remains in place.'
-    : freshness?.message;
-  const readAt = formatReadTime(freshness?.readAt ?? projection?.readAt);
-  return (
-    <section aria-labelledby="freshness-heading" className={styles.dockSection}>
-      <h3 className={styles.sectionTitle} id="freshness-heading">Freshness</h3>
-      <Body1 as="p" className={styles.statusSummary}>
-        <Glyph className={styles.icon} name={busy || state === 'current' ? 'clock' : 'warning'} />
-        {label}
-      </Body1>
-      {message ? <Caption1 block className={styles.caption}>{message}</Caption1> : null}
-      {readAt ? <Caption1 block className={styles.caption}>Last complete read: {readAt}</Caption1> : null}
-      <Caption1 block className={styles.caption}>Refresh is in the command bar.</Caption1>
-    </section>
-  );
-}
-
-function PropertiesSection({ projection, view, freshness, styles }) {
-  const rows = [];
-  if (view.mode === 'choose' || view.mode === 'empty') {
-    rows.push(['Features', `${selectableFeatureChoices(view.choices ?? []).length} available`]);
-    rows.push(['Selected', 'None']);
-  } else {
-    rows.push(['Stage', projection?.stage ?? 'Withheld']);
-    rows.push(['Phase', currentPhase(projection) ?? 'Not available']);
-    rows.push([
-      'Questions',
-      Number.isInteger(projection?.unansweredQuestions)
-        ? `${projection.unansweredQuestions} unanswered`
-        : 'Withheld',
-    ]);
-    rows.push([
-      'Blockers',
-      projection?.complete ? `${projection.blockers?.length ?? 0} recorded` : 'Withheld',
-    ]);
-    rows.push(['Tasks', taskSummary(projection?.tasks) ?? 'Not available from this authority']);
-  }
-  const readAt = formatReadTime(freshness?.readAt ?? projection?.readAt);
-  if (readAt) rows.push(['Last read', readAt]);
-
-  return (
-    <section aria-labelledby="properties-heading" className={styles.dockSection}>
-      <h3 className={styles.sectionTitle} id="properties-heading">Properties</h3>
-      <dl className={styles.properties}>
-        {rows.map(([label, value]) => (
-          <React.Fragment key={label}>
-            <dt>{label}</dt><dd>{value}</dd>
-          </React.Fragment>
-        ))}
-      </dl>
-    </section>
-  );
-}
-
-function SurfacesSection({ styles }) {
-  return (
-    <section aria-labelledby="surfaces-heading" className={styles.dockSection}>
-      <h3 className={styles.sectionTitle} id="surfaces-heading">Surfaces</h3>
-      <ul className={styles.surfaces}>
-        {SURFACES.map((surface) => (
-          <li className={mergeClasses(styles.surface, surface.open && styles.surfaceOpen)} key={surface.label}>
-            <Glyph className={styles.icon} name={surface.open ? 'now' : 'clock'} />
-            {surface.label}
-            <span className={styles.surfaceWhen}>{surface.open ? 'Open' : 'Later'}</span>
-          </li>
-        ))}
-      </ul>
-      <Caption1 block className={styles.caption}>
-        Now is the only surface in this cycle. The others arrive later and cannot be opened yet.
-      </Caption1>
-    </section>
-  );
-}
-
-function sourceDescription(source) {
-  const parts = [];
-  if (source.path) parts.push(source.path);
-  if (source.paths) parts.push(source.paths.join(', '));
-  if (source.command) parts.push(source.command);
-  if (source.role) parts.push(`role: ${source.role}`);
-  if (source.contentIdentity) parts.push(source.contentIdentity);
-  if (source.details) parts.push(JSON.stringify(source.details));
-  return parts.join(' · ');
-}
-
-function sourceRows(projection, freshness) {
-  const rows = [];
-  if (projection?.selected) {
-    rows.push(['Selected slug', projection.selected.slug]);
-    rows.push(['Idea path', projection.selected.ideaPath]);
-    if (projection.selected.specPath) rows.push(['Specification path', projection.selected.specPath]);
-    rows.push(['Selection', projection.selected.explicit ? 'Exact supplied target' : 'Single unambiguous feature']);
-  }
-  if (projection?.authority) rows.push(['Authority', projection.authority]);
-  if (projection?.next?.source) rows.push(['Next source', JSON.stringify(projection.next.source)]);
-  for (const blocker of projection?.blockers ?? []) {
-    rows.push([
-      blocker.classification ? `Blocker — ${blocker.classification}` : 'Blocker source',
-      JSON.stringify(blocker.source),
-    ]);
-  }
-  for (const diagnostic of projection?.diagnostics ?? []) {
-    rows.push([`Diagnostic — ${diagnostic.code}`, `${diagnostic.path}: ${diagnostic.message}`]);
-  }
-  for (const diagnostic of freshness?.diagnostics ?? []) {
-    rows.push([`Freshness diagnostic — ${diagnostic.code}`, diagnostic.message ?? JSON.stringify(diagnostic)]);
-  }
-  for (const source of projection?.sources ?? []) {
-    rows.push([`Source — ${source.label}`, sourceDescription(source)]);
-  }
-  return rows.filter(([, value]) => value !== null && value !== undefined && value !== '');
-}
-
-function EvidenceSection({ projection, freshness, styles }) {
-  const rows = sourceRows(projection, freshness);
-  return (
-    <section aria-labelledby="evidence-heading" className={styles.dockSection}>
-      <h3 className={styles.sectionTitle} id="evidence-heading">Evidence</h3>
-      <Accordion collapsible>
-        <AccordionItem value="source-details">
-          <AccordionHeader>Source details</AccordionHeader>
-          <AccordionPanel className={styles.accordionPanel}>
-            {rows.length > 0 ? (
-              <dl className={styles.sourceList}>
-                {rows.map(([label, value], index) => (
-                  <React.Fragment key={`${label}-${index}`}>
-                    <dt>{label}</dt>
-                    <dd><code className={styles.sourceCode}>{value}</code></dd>
-                  </React.Fragment>
-                ))}
-              </dl>
-            ) : (
-              <Caption1 block className={styles.caption}>No exact source detail is available.</Caption1>
-            )}
-          </AccordionPanel>
-        </AccordionItem>
-      </Accordion>
-    </section>
-  );
-}
-
-function DetailsDock({ busy, freshness, projection, view, styles }) {
-  return (
-    <aside aria-label="Details" className={styles.dock}>
-      <div className={styles.dockBody}>
-        <h2 className={styles.visuallyHidden}>Details</h2>
-        <AttentionSection freshness={freshness} projection={projection} styles={styles} view={view} />
-        <FreshnessSection busy={busy} freshness={freshness} projection={projection} styles={styles} />
-        <PropertiesSection freshness={freshness} projection={projection} styles={styles} view={view} />
-        <SurfacesSection styles={styles} />
-        <EvidenceSection freshness={freshness} projection={projection} styles={styles} />
-      </div>
-    </aside>
-  );
-}
-
-function StatusBar({ busy, freshness, projection, view, styles }) {
-  const summary = taskSummary(projection?.tasks) || 'Task detail unavailable';
-  const freshnessLabel = busy
-    ? 'Reading sources · current complete view preserved'
-    : freshness?.state === 'current'
-      ? 'Current complete read'
-      : freshness?.state === 'changed'
-        ? 'Repository changed'
-        : freshness?.state === 'stale'
-          ? 'Complete read preserved'
-          : freshness?.state === 'conflict'
-            ? 'Read conflict'
-            : 'Read unavailable';
-  return (
-    <footer aria-label="Status" className={styles.statusBar}>
-      <span className={styles.statusSegment}>
-        <Glyph className={styles.smallIcon} name="now" />
-        <span className={styles.statusStrong}>{view.stage || 'Stage withheld'}</span>
-      </span>
-      <span className={styles.statusSegment}>
-        <Glyph className={styles.smallIcon} name="work" />
-        {summary}
-      </span>
-      <span className={mergeClasses(styles.statusSegment, styles.statusKeyboard, styles.statusPush)}>
-        <Glyph className={styles.smallIcon} name="keyboard" />
-        <span><kbd>Tab</kbd> moves · <kbd>Enter</kbd> activates</span>
-      </span>
-      <span className={styles.statusSegment}>
-        <Glyph className={styles.smallIcon} name={busy || freshness?.state === 'current' ? 'clock' : 'warning'} />
-        {freshnessLabel}
-      </span>
-      <span className={styles.statusSegment}>
-        <Glyph className={styles.smallIcon} name={projection?.complete ? 'check' : 'warning'} />
-        {projection?.complete ? 'Complete projection' : 'Projection unavailable'}
-      </span>
-    </footer>
-  );
+function Context({ selection, data, rows, onBack, onReview, onHistory }) {
+  const s = useCanvasStyles();
+  const row = rows.find(row => sameContext(row.context, selection));
+  const context = row?.context;
+  const orientation = currentOrientation(data, context);
+  const [historyResult, setHistoryResult] = useState(null);
+  const canReadHistory = Boolean(context?.specPath && context.coverage.state !== 'unavailable');
+  const history = canReadHistory && sameContext(historyResult?.scope, context) ? historyResult : null;
+  useEffect(() => {
+    // Keep same-owner choices mounted while a background reread is pending.
+    if (!canReadHistory) { setHistoryResult(null); return; }
+    const controller = new AbortController();
+    const scope = { kind: 'feature', ideaPath: context.ideaPath, specPath: context.specPath };
+    data.readHistory(scope, null, controller.signal)
+      .then(value => { if (!controller.signal.aborted) setHistoryResult(value); })
+      .catch(error => { if (!controller.signal.aborted) setHistoryResult({ scope, error: error.message }); });
+    return () => controller.abort();
+  }, [context?.ideaPath, context?.specPath, canReadHistory, data.index?.readAt, data.readHistory]);
+  return <div className={s.measure}>
+    <Button className={s.back} icon={<ArrowLeftRegular />} onClick={onBack}>Back to Overview</Button>
+    {!selection ? <>
+      <h1 className={s.title} tabIndex={-1}>No record is selected</h1>
+      <p className={s.lead}>Open a recorded idea or feature in Overview to see its context.</p>
+    </> : !context ? <>
+      <h1 className={s.title} tabIndex={-1}>{contextTitle(selection)}</h1>
+      <Text className={s.code}>{selection.ideaPath}</Text>
+      <Notice intent="warning" title="The selected source is unavailable">
+        Its exact identity is retained. No other record has been selected and no previous feature's instruction is shown here.
+      </Notice>
+    </> : <>
+      <header className={s.detailHeader}>
+        <Text className={s.eyebrow}>{context.kind === 'feature' ? 'Defined feature' : context.status === 'resolved' ? 'Resolved idea' : 'Draft idea'}</Text>
+        <h1 className={s.title} tabIndex={-1}>{contextTitle(context)}</h1>
+        <Text className={s.code}>{context.ideaPath}{context.specPath ? `\n${context.specPath}` : ''}</Text>
+      </header>
+      <div className={s.row}><Text weight="semibold">{row.status}</Text><Text>{progressText(row)}</Text></div>
+      {context.status === 'resolved' && <Notice title="Resolved in the source" intent="success">
+        This idea is retained for discovery. Resolution does not mean it was implemented, and browsing it does not reopen work.
+      </Notice>}
+      {row.group === 'completed' && context.kind === 'feature' && <Notice title="Recorded feature work is complete" intent="success">
+        All recorded tasks are complete in the authoritative lane. No further task is invented.
+      </Notice>}
+      {data.selecting ? <Spinner label="Reading this exact context" /> : !orientation && context.kind === 'feature'
+        ? <Notice title="Current instruction unavailable" intent="warning">
+          {data.issues.orientation || 'The selected source and execution authority could not be confirmed together. Refresh to reread; unrelated records remain available.'}
+        </Notice> : instruction(orientation) ? <section className={s.stack}>
+          <h2 className={s.subheading}>Current task instruction</h2><p className={s.instruction}>{instruction(orientation)}</p>
+        </section> : orientation?.nextReason && <p className={s.prose}>{orientation.nextReason}</p>}
+      <ReviewEntry context={context} data={data} onReview={onReview} />
+      <section className={s.stack}><h2 className={s.subheading}>{context.status === 'draft' ? 'What you wanted to do' : 'Captured intent'}</h2>
+        <p className={s.prose}>{context.intent?.text || 'The captured intent could not be read.'}</p>
+        {context.intent?.truncated && <Text className={s.eyebrow}>Excerpt only. The exact idea ledger holds the original.</Text>}
+      </section>
+      {!!context.dispositions.length && <section className={s.stack}><h2 className={s.subheading}>Recorded owner dispositions</h2>
+        {context.dispositions.map((disposition, index) => <div className={s.scope} key={index}>
+          <Text weight="semibold">{disposition.source.section}</Text><p className={s.prose}>{disposition.text}</p>
+          <Text className={s.code}>{disposition.source.path}</Text>
+          <Text className={s.eyebrow}>Attributed source text, not an inferred current request.{disposition.truncated ? ' Excerpt only.' : ''}</Text>
+        </div>)}
+      </section>}
+      {!!orientation?.blockers.length && <section className={s.stack}><h2 className={s.subheading}>Recorded blockers</h2>
+        {orientation.blockers.map((blocker, index) => <p className={s.prose} key={index}>{blocker.reason}</p>)}
+        <Text className={s.eyebrow}>These are recorded work blockers. Only a current owner-qualified request belongs in Needs you.</Text>
+      </section>}
+      {!!orientation?.phases.length && <section className={s.stack}><h2 className={s.subheading}>Recorded task progress</h2>
+        {orientation.phases.map((phase, index) => <div className={s.row} key={index}><Text>{phase.name}</Text>
+          <Text className={s.eyebrow}>{phase.done} of {phase.total} tasks complete</Text></div>)}
+      </section>}
+      {history?.error && <Notice intent="warning" title="Review history unavailable">{history.error}</Notice>}
+      {history?.coverage?.state === 'partial' && <Notice intent="warning" title="Review history is partial">{history.coverage.reason}</Notice>}
+      {!!history?.items?.length && <section className={s.stack}><h2 className={s.subheading}>Review history</h2>
+        {history.items.map(item => <Button className={s.requestOption} key={item.submissionId}
+          onClick={() => onHistory(history.scope, item.submissionId)}>
+          <span className={s.tight}><Text>Open sealed feedback · {item.submissionId}</Text>
+            <Text className={s.code}>{item.preview.artifact.revision}</Text></span>
+        </Button>)}
+      </section>}
+      {!!orientation?.activity?.recent.length && <section className={s.stack}><h2 className={s.subheading}>Recorded activity</h2>
+        {orientation.activity.recent.map((event, index) => <div className={s.tight} key={index}>
+          <Text className={s.eyebrow}>{event.date}</Text><p className={s.prose}>{event.text}</p>
+        </div>)}
+      </section>}
+    </>}
+  </div>;
 }
 
 function App() {
-  const styles = useCanvasStyles();
-  const appearance = useHostAppearance();
-  const [projection, setProjection] = useState(null);
-  const [freshness, setFreshness] = useState(null);
-  const [busy, setBusy] = useState(true);
-  const busyRef = useRef(true);
-  const requestEpochRef = useRef(0);
-  const freshnessControllerRef = useRef(null);
-  const headingRef = useRef(null);
-  const pendingFeatureFocusRef = useRef(false);
-  const liveRegionRef = useRef(null);
-
-  const announce = useCallback((message) => {
-    if (liveRegionRef.current) liveRegionRef.current.textContent = message;
+  const s = useCanvasStyles(), theme = useHostAppearance();
+  const [tab, setTab] = useState('overview'), [selection, setSelection] = useState(null);
+  const [selectedRequest, setSelectedRequest] = useState(null), [finder, setFinder] = useState(DEFAULT_FINDER);
+  const [idea, setIdea] = useState(''), [drafts, setDrafts] = useState({});
+  const [review, setReview] = useState(null), [reviewActive, setReviewActive] = useState(false);
+  const [reviewed, setReviewed] = useState(null), [history, setHistory] = useState(null), [message, setMessage] = useState('');
+  const data = useCanvasData(selection);
+  const root = useRef(null), scroll = useRef(0), main = useRef(null), focusNext = useRef(null), opening = useRef(false);
+  const reviewReturn = useRef(null), historyRead = useRef(null), latestData = useRef(data);
+  latestData.current = data;
+  const rows = rowsFor(data);
+  const cancelHistory = useCallback(() => {
+    historyRead.current?.abort();
+    historyRead.current = null;
   }, []);
-
   useEffect(() => {
-    const controller = new AbortController();
-    readInitialProjection(controller.signal).then((payload) => {
-      setProjection(payload.projection);
-      setFreshness(payload.freshness);
-      announce('Repository state read.');
-    }).catch((error) => {
-      if (error.name !== 'AbortError') {
-        setFreshness((previous) => clientUnavailable(previous, null));
-        announce('Repository state is unavailable. Use Refresh from repository.');
-      }
-    }).finally(() => {
-      if (!controller.signal.aborted) {
-        busyRef.current = false;
-        setBusy(false);
-      }
-    });
-    return () => controller.abort();
-  }, [announce]);
-
-  const checkFreshness = useCallback(() => {
-    freshnessControllerRef.current?.abort();
-    const controller = new AbortController();
-    freshnessControllerRef.current = controller;
-    const epoch = requestEpochRef.current;
-    readFreshness(controller.signal).then((payload) => {
-      if (requestEpochRef.current === epoch) setFreshness(payload.freshness);
-    }).catch((error) => {
-      if (error.name !== 'AbortError' && requestEpochRef.current === epoch) {
-        setFreshness((previous) => clientUnavailable(previous, projection));
-      }
-    });
-  }, [projection]);
-
-  useEffect(() => {
-    const onFocus = () => checkFreshness();
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') checkFreshness();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVisibility);
-      freshnessControllerRef.current?.abort();
-    };
-  }, [checkFreshness]);
-
-  const runRefresh = useCallback(async (target = null, focusFeature = false, identifier = null) => {
-    if (busyRef.current) return false;
-    busyRef.current = true;
-    setBusy(true);
-    freshnessControllerRef.current?.abort();
-    requestEpochRef.current += 1;
-    const epoch = requestEpochRef.current;
-    const controller = new AbortController();
-    announce(identifier ? `Reading ${identifier}.` : 'Reading repository sources.');
-    try {
-      const payload = await refreshProjection(target, controller.signal);
-      if (requestEpochRef.current !== epoch) return;
-      if (payload.replaced === true) {
-        if (focusFeature) pendingFeatureFocusRef.current = true;
-        setProjection(payload.projection);
-        setFreshness(payload.freshness);
-        announce(identifier ? `Opened ${identifier}.` : 'One complete projection replaced the previous view.');
-        return true;
-      } else {
-        setFreshness(payload.freshness);
-        const committedIdentifier = canonicalFeatureIdentifier(projection?.selected?.ideaPath);
-        announce(identifier
-          ? `${identifier} could not be opened. ${committedIdentifier
-            ? `${committedIdentifier} is still the open feature.`
-            : 'No feature is open.'}`
-          : 'The complete projection was preserved. Review freshness details, then refresh.');
-        return false;
-      }
-    } catch (error) {
-      if (error.name !== 'AbortError' && requestEpochRef.current === epoch) {
-        setFreshness((previous) => clientUnavailable(previous, projection));
-        const committedIdentifier = canonicalFeatureIdentifier(projection?.selected?.ideaPath);
-        announce(identifier
-          ? `${identifier} could not be opened. ${committedIdentifier
-            ? `${committedIdentifier} is still the open feature.`
-            : 'No feature is open.'}`
-          : 'The Dude canvas server is unavailable. The complete projection was preserved.');
-      }
-      return false;
-    } finally {
-      if (requestEpochRef.current === epoch) {
-        busyRef.current = false;
-        setBusy(false);
-      }
+    if (root.current && data.rootKey && root.current !== data.rootKey) {
+      cancelHistory();
+      setTab('overview'); setSelection(null); setSelectedRequest(null); setFinder(DEFAULT_FINDER);
+      setIdea(''); setDrafts({}); setReview(null); setReviewActive(false); setReviewed(null); setHistory(null);
+      reviewReturn.current = null;
+      scroll.current = 0; focusNext.current = 'heading';
     }
-  }, [announce, projection]);
-
+    if (data.rootKey) root.current = data.rootKey;
+  }, [data.rootKey, cancelHistory]);
   useEffect(() => {
-    if (!pendingFeatureFocusRef.current || !projection?.selected) return;
-    pendingFeatureFocusRef.current = false;
-    headingRef.current?.focus();
-  }, [projection]);
-
-  const view = useMemo(
-    () => deriveView(projection, freshness, busy),
-    [projection, freshness, busy],
-  );
-  const choices = projection?.complete === true && Array.isArray(projection.choices)
-    ? projection.choices
-    : [];
-  const contextLabel = selectedLabel(projection)
-    || (view.mode === 'choose' ? 'No feature selected' : 'No feature available');
-
-  return (
-    <FluentProvider className={styles.app} theme={appearance === 'dark' ? darkTheme : lightTheme}>
-      <div className={styles.shell}>
-        <h1 className={styles.visuallyHidden}>Dude — Now</h1>
-        <p
-          aria-live="polite"
-          className={styles.visuallyHidden}
-          ref={liveRegionRef}
-          role="status"
-        />
-        <CommandBar
-          busy={busy}
-          choices={choices}
-          contextLabel={contextLabel}
-          onRefresh={() => runRefresh()}
-          onSelect={(slug, identifier) => runRefresh(slug, true, identifier)}
-          selected={projection?.selected}
-          styles={styles}
-        />
-        <div className={styles.shellBody}>
-          <ActivityRail announce={announce} styles={styles} />
-          <main aria-label="Now" className={styles.work}>
-            <div className={styles.workBody}>
-              <BreadcrumbStrip styles={styles} view={view} />
-              <IdentityStrip headingRef={headingRef} projection={projection} styles={styles} view={view} />
-              <FocalRegion
-                choices={choices}
-                projection={projection}
-                styles={styles}
-                view={view}
-              />
-              <LifecycleRegion projection={projection} styles={styles} view={view} />
-              <PhasesRegion projection={projection} styles={styles} view={view} />
-              <ActivityRegion projection={projection} styles={styles} view={view} />
-            </div>
-          </main>
-          <DetailsDock busy={busy} freshness={freshness} projection={projection} styles={styles} view={view} />
-        </div>
-        <StatusBar busy={busy} freshness={freshness} projection={projection} styles={styles} view={view} />
-      </div>
-    </FluentProvider>
-  );
+    window.addEventListener('pagehide', cancelHistory);
+    return () => {
+      cancelHistory();
+      window.removeEventListener('pagehide', cancelHistory);
+    };
+  }, [cancelHistory]);
+  useLayoutEffect(() => {
+    const destination = focusNext.current;
+    if (!destination || reviewActive || history) return;
+    focusNext.current = null;
+    const panel = main.current?.querySelector('[role="tabpanel"]:not([hidden])');
+    if (destination.kind === 'review-return') {
+      const returning = destination.returning;
+      if (panel) panel.scrollTop = returning?.scroll || 0;
+      const node = returning?.selector ? panel?.querySelector(`[data-review-entry="${CSS.escape(returning.selector)}"]`) : returning?.element;
+      if (node?.isConnected && !node.disabled) node.focus({ preventScroll: true });
+      else document.getElementById(`dude-tab-${returning?.tab || 'needs'}`)?.focus();
+      return;
+    }
+    const node = destination === 'idea' ? panel?.querySelector('textarea')
+      : destination === 'row' && selection ? panel?.querySelector(`[data-work-path="${CSS.escape(selection.ideaPath)}"]`)
+        : panel?.querySelector('h1');
+    if (node) { if (node.tagName === 'H1') node.tabIndex = -1; node.focus({ preventScroll: true }); }
+  }, [tab, selection, selectedRequest, reviewActive, history]);
+  const openWork = context => {
+    cancelHistory();
+    setSelection({ ideaPath: context.ideaPath, specPath: context.specPath, title: context.title });
+    focusNext.current = 'heading'; setTab('context');
+  };
+  const newIdea = () => { cancelHistory(); focusNext.current = 'idea'; setTab('new'); };
+  const openReview = async (record, restore = false) => {
+    cancelHistory();
+    if (opening.current) {
+      if (restore) throw new Error('A review is already opening. Your markup is retained.');
+      return;
+    }
+    const key = requestKey(data.needs, record);
+    const returnElement = document.activeElement;
+    const returning = restore ? reviewReturn.current : { tab, selector: returnElement?.getAttribute('data-review-entry'),
+      element: returnElement, scroll: main.current?.querySelector('[role="tabpanel"]:not([hidden])')?.scrollTop || 0 };
+    if (!restore && review?.key === key) { reviewReturn.current = returning; setHistory(null); setReviewActive(true); return; }
+    opening.current = true;
+    if (!restore) setMessage('');
+    const rootKey = data.rootKey;
+    const isCurrent = () => rootKey === latestData.current.rootKey && !latestData.current.issues.needs
+      && latestData.current.needs?.coverage.state !== 'unavailable'
+      && latestData.current.needs?.requests.some(item =>
+        requestKey(latestData.current.needs, item) === key && item.phase === 'pending');
+    try {
+      if (!isCurrent()) throw new Error('The request is no longer current. Your markup is retained.');
+      const [opened, module] = await Promise.all([data.openReview(record), loadReviewEngine()]);
+      if (!isCurrent()) {
+        throw new Error('The request changed before Review could open. Return to the current owner context.');
+      }
+      if (restore && opened.submissionId !== review?.review.submissionId) {
+        throw new Error('The saved submission did not match. Your original markup is retained.');
+      }
+      reviewReturn.current = returning;
+      setSelectedRequest(key);
+      setReview({ key, record, review: opened, module, restoreRequested: restore });
+      setReviewed(null); setHistory(null); setReviewActive(true);
+    } catch (error) {
+      // Recovery errors belong to the existing Review notice, not a new row
+      // above the frame. The old engine stays mounted if opening fails.
+      if (restore) throw error;
+      setMessage(error.message);
+    }
+    finally { opening.current = false; data.reconcile(); }
+  };
+  const reviewEntry = records => {
+    cancelHistory();
+    if (records.length === 1) void openReview(records[0]);
+    else { setSelectedRequest(null); focusNext.current = 'heading'; setTab('needs'); }
+  };
+  const returnReview = () => {
+    cancelHistory();
+    const returning = reviewReturn.current;
+    focusNext.current = { kind: 'review-return', returning };
+    setReviewActive(false); setTab(returning?.tab || 'needs');
+  };
+  const onReviewed = useCallback((key, valid) => {
+    setReviewed(previous => valid ? key : previous === key ? null : previous);
+    if (!valid) setDrafts(previous => previous[key]?.approval
+      ? { ...previous, [key]: { ...previous[key], approval: false } } : previous);
+  }, []);
+  const openHistory = async (scope, submissionId) => {
+    cancelHistory();
+    const controller = new AbortController();
+    historyRead.current = controller;
+    const rootKey = data.rootKey;
+    const returning = { fromReview: reviewActive, returnElement: document.activeElement };
+    const current = () => historyRead.current === controller && !controller.signal.aborted
+      && rootKey === latestData.current.rootKey;
+    try {
+      const record = await data.readHistory(scope, submissionId, controller.signal);
+      if (!current()) return;
+      setHistory({ record, ...returning });
+      setReviewActive(false);
+    } catch (error) {
+      if (current()) setMessage(error.message);
+    } finally {
+      if (historyRead.current === controller) historyRead.current = null;
+    }
+  };
+  const returnHistory = () => {
+    cancelHistory();
+    const prior = history; setHistory(null); setReviewActive(prior.fromReview);
+    requestAnimationFrame(() => prior.returnElement?.isConnected && prior.returnElement.focus({ preventScroll: true }));
+  };
+  const unavailable = data.issues.needs || data.needs?.coverage.state === 'unavailable';
+  // Fluent forwards provider classes to portals. Keep viewport layout on the
+  // child so dropdowns/drawers do not inherit a page-sized background or height.
+  return <FluentProvider theme={theme === 'dark' ? darkTheme : lightTheme}>
+    <AriaLiveAnnouncer><div className={mergeClasses(s.page, s.app)}>
+      <header><div className={s.titlebar}><Text weight="semibold">Dude</Text>
+        <Text className={s.eyebrow}>{data.needs ? 'Joined workspace' : 'Workspace'}</Text></div>
+      {!reviewActive && !history && <nav className={s.commands} aria-label="Workspace navigation">
+        <TabList className={s.viewTabs} aria-label="Workspace views" size="small" selectedValue={tab} selectTabOnFocus={false}
+          onTabSelect={(_, input) => { cancelHistory(); setTab(input.value); }}>
+          {TABS.map(([value, label]) => <Tab key={value} value={value} id={`dude-tab-${value}`}
+            aria-controls={`dude-panel-${value}`}>{label}</Tab>)}
+        </TabList>
+        <Toolbar aria-label="Workspace actions"><ToolbarButton icon={<ArrowClockwiseRegular />}
+          aria-busy={data.loading || data.selecting} onClick={data.refresh}>Refresh</ToolbarButton></Toolbar>
+      </nav>}</header>
+      {message && <Notice intent="warning" title="Action unavailable">{message}</Notice>}
+      {data.authorityChanged && <Notice title="The joined provider changed">
+        Earlier session receipts no longer establish current authority. Nothing was resent. Saved ideas and sealed feedback remain in their canonical sources.
+      </Notice>}
+      <main ref={main} className={s.product}>
+        {!reviewActive && !history && TABS.map(([value]) => <div key={value} id={`dude-panel-${value}`} role="tabpanel"
+          aria-labelledby={`dude-tab-${value}`} hidden={value !== tab} className={s.detail}>
+          {value !== tab ? null : value === 'overview' ? <Overview data={data} rows={rows} finder={finder}
+            onFinder={setFinder} scroll={scroll} onOpen={openWork} onNew={newIdea} onReview={reviewEntry} />
+            : value === 'context' ? <Context key={data.rootKey} selection={selection} data={data} rows={rows}
+              onBack={() => { cancelHistory(); focusNext.current = 'row'; setTab('overview'); }} onReview={reviewEntry} onHistory={openHistory} />
+              : value === 'needs' ? <NeedsYou data={data} selected={selectedRequest} drafts={drafts}
+                onDraft={(key, value) => setDrafts(previous => ({ ...previous, [key]: value }))}
+                onSelect={key => { cancelHistory(); setSelectedRequest(key); focusNext.current = 'heading'; }}
+                onReview={openReview} reviewedKey={reviewed} onNew={newIdea} />
+                : <NewIdea value={idea} onChange={setIdea} data={data}
+                  onCancel={() => { cancelHistory(); focusNext.current = 'heading'; setTab('needs'); }} />}
+        </div>)}
+        {review && <ReviewWorkspace key={review.review.submissionId} entry={review} active={reviewActive && !history}
+          theme={theme} data={data} onReturn={returnReview} onReviewed={onReviewed} onHistory={openHistory}
+          onRestore={record => openReview(record, true)} />}
+        {history && <ReviewHistory record={history.record} onReturn={returnHistory} />}
+      </main>
+      <footer className={s.footer}>
+        <span>{data.loading ? 'Reading workspace…' : data.issues.index ? 'Work coverage unavailable'
+          : `Work coverage: ${data.index?.coverage.work.state || 'unavailable'}`}</span>
+        <span>{unavailable || !data.needs ? 'Current request coverage unavailable'
+          : `Current request coverage: ${data.needs.coverage.state}`}</span>
+        <span>{data.connected ? 'Connected' : 'Reconnecting; no automatic resend'}</span>
+      </footer>
+    </div></AriaLiveAnnouncer>
+  </FluentProvider>;
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(<StrictMode><App /></StrictMode>);
