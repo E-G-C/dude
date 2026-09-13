@@ -112,7 +112,7 @@ const MAX_SOURCE_ENTRIES = 64;
 const MAX_RETAINED_DESCRIPTORS = 64;
 const MAX_ERROR_JSON_BYTES = 8_192;
 const MAX_PACKET_ITEMS = 16;
-const MAX_PACKET_BYTES = 65_536;
+const MAX_PACKET_BYTES = 131_072;
 const MAX_REGISTRY_ENTRIES = 64;
 const MAX_RUNTIME_RESULT_DEPTH = 32;
 const MAX_RUNTIME_RESULT_ENTRIES = 4096;
@@ -725,7 +725,7 @@ function extractCoordinatorLog(text) {
 }
 
 const COORDINATOR_LOG_HEADING = /^ {0,3}##[ \t]+Coordinator Log(?:[ \t]+#+)?[ \t]*$/;
-const COORDINATOR_LOG_EVENT_START = /^- \d{4}-\d{2}-\d{2}(?:[ \t]|$)/;
+const COORDINATOR_LOG_EVENT_START = /^- \d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))?(?:[ \t]|$)/;
 const STANDALONE_HTML_COMMENT = /^[ \t]*<!--.*-->[ \t]*$/;
 
 /** @param {string} text */

@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "submissionId": "e933d0c4-3481-4dca-9546-5c80e8eaa374",
+  "scope": {
+    "kind": "feature",
+    "ideaPath": ".dude/ideas/057-dude-canvas-needs-you.md",
+    "specPath": ".dude/specs/057-dude-canvas-needs-you/spec.md"
+  },
+  "preview": {
+    "artifact": {
+      "path": ".dude/specs/057-dude-canvas-needs-you/design/needs-you-workspace.html",
+      "revision": "sha256:6cd15f3e695e9129356f70f6b55e0ad7b7e12023b6a2926da4dec29dced5d5ee"
+    },
+    "assets": [
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/needs-you-workspace.js",
+        "revision": "sha256:c4af6948b7b08c29430eea4e9dac4804e1ece432a467fd330f235084e0829bfd"
+      },
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/overview-snapshots.js",
+        "revision": "sha256:967d5283282424263e3c40d4deb864e699f00aa7bd69b21b5d0d81448def71c2"
+      },
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/workspace-snapshots.js",
+        "revision": "sha256:b426d55f2bafe52ade76dd501a72bec075a19decaa08c3848bb9d91c8c0e48ea"
+      }
+    ]
+  },
+  "requestRef": "t012-final-desktop-smoke",
+  "requestRevision": "t012-host-smoke-reopened-20260912",
+  "state": {
+    "annotations": [
+      {
+        "id": "9a27bfb9-e60b-42a0-937c-5285a6032100",
+        "tool": "box",
+        "x1": 350.15234375,
+        "y1": 446.0859375,
+        "x2": 195.51953125,
+        "y2": 401.56640625,
+        "comment": "Comment number 1",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "button.fui-Button.r1f29ykk:nth-of-type(2)",
+          "selectorMatches": 1,
+          "tag": "button",
+          "text": "Open in Context",
+          "rect": {
+            "x": 199.89,
+            "y": 410,
+            "width": 134.52,
+            "height": 32
+          },
+          "styles": {
+            "color": "rgb(36, 36, 36)",
+            "background-color": "rgb(255, 255, 255)",
+            "background-image": "none",
+            "font-family": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif",
+            "font-size": "14px",
+            "font-weight": "600",
+            "line-height": "20px",
+            "letter-spacing": "normal",
+            "text-align": "center",
+            "display": "flex",
+            "position": "static",
+            "width": "134.515625px",
+            "height": "32px",
+            "margin": "0px",
+            "padding": "5px 12px",
+            "gap": "normal",
+            "border": "1px solid rgb(97, 97, 97)",
+            "border-radius": "4px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "hidden",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": [
+          {
+            "selector": "main.___1a25q2q.fz7g6wx",
+            "scrollLeft": 0,
+            "scrollTop": 0
+          }
+        ]
+      },
+      {
+        "id": "1ea75bcf-539d-4a06-90fb-3d5229ff340a",
+        "tool": "arrow",
+        "x1": 696.28125,
+        "y1": 151.8671875,
+        "x2": 793.12890625,
+        "y2": 160.2578125,
+        "comment": "Idea numner 2",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "header.___1j3tb0w.f22iagw",
+          "selectorMatches": 1,
+          "tag": "header",
+          "text": "OverviewRecorded snapshot · Sep 6, 2026 at 9:59 PM · Not live activityNew idea",
+          "rect": {
+            "x": 24,
+            "y": 135,
+            "width": 875,
+            "height": 52
+          },
+          "styles": {
+            "color": "rgb(36, 36, 36)",
+            "background-color": "rgba(0, 0, 0, 0)",
+            "background-image": "none",
+            "font-family": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif",
+            "font-size": "14px",
+            "font-weight": "400",
+            "line-height": "20px",
+            "letter-spacing": "normal",
+            "text-align": "left",
+            "display": "flex",
+            "position": "static",
+            "width": "875px",
+            "height": "52px",
+            "margin": "0px",
+            "padding": "0px",
+            "gap": "12px",
+            "border": "0px none rgb(36, 36, 36)",
+            "border-radius": "0px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": [
+          {
+            "selector": "main.___1a25q2q.fz7g6wx",
+            "scrollLeft": 0,
+            "scrollTop": 0
+          }
+        ]
+      }
+    ],
+    "notes": "",
+    "tool": "select",
+    "selectedId": "1ea75bcf-539d-4a06-90fb-3d5229ff340a",
+    "caret": {
+      "id": "1ea75bcf-539d-4a06-90fb-3d5229ff340a",
+      "field": "comment",
+      "start": 13,
+      "end": 13,
+      "direction": "none"
+    },
+    "view": {
+      "viewport": {
+        "width": 923,
+        "height": 728,
+        "scrollX": 0,
+        "scrollY": 0,
+        "deviceScale": 2,
+        "theme": "light",
+        "documentWidth": 923,
+        "documentHeight": 728
+      },
+      "signature": "sha256:c836d45fbaf3855a5d002a5cec96db22dee2307499e88b28532ccde01a48c5a3",
+      "scrolls": [
+        {
+          "selector": "main.___1a25q2q.fz7g6wx",
+          "scrollLeft": 0,
+          "scrollTop": 0
+        }
+      ]
+    },
+    "palette": {
+      "stroke": "#d13438",
+      "background": "#ffffff",
+      "foreground": "#242424",
+      "highlightFill": "#fef7b2",
+      "highlightStroke": "#fde300",
+      "selection": "#0f6cbd",
+      "fontFamily": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif"
+    }
+  }
+}

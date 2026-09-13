@@ -2022,6 +2022,91 @@ test('upgrade status, plan, and apply reject missing canonical metadata with cur
       }
     });
 
+    test('core inventory scanning owns only exact Dude extension regular files', () => {
+      // Arrange
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-up-extension-scan-'));
+      try {
+        const owned = [
+          '.github/extensions/dude/extension.mjs',
+          '.github/extensions/dude/lib/canvas-server.mjs',
+          '.github/extensions/dude/lib/nested/projection.mjs',
+          '.github/extensions/dude/ui/assets/app.js',
+          '.github/extensions/dude/ui/assets/licenses/NOTICE.txt',
+          '.github/extensions/dude/ui/index.html',
+        ];
+        for (const relativePath of [
+          ...owned,
+          '.github/extensions/dude-preview/extension.mjs',
+          '.github/extensions/dude-local/extension.mjs',
+          '.github/extensions/other/deep/extension.mjs',
+          'src/extensions/dude/extension.mjs',
+          'scripts/dude-canvas-ui/build.mjs',
+        ]) write(root, relativePath, 'x\n');
+
+        // Act
+        const scanned = scanCoreInventoryPaths(root, 'fixture workspace');
+
+        // Assert
+        assert.deepEqual(scanned, [...owned].sort());
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('extension inventory scanner rejects unsafe exact destination shapes', () => {
+      const fixtures = [
+        {
+          label: 'symlinked extensions root',
+          setup: (root) => {
+            write(root, 'target.txt', 'target\n');
+            fs.mkdirSync(path.join(root, '.github'), { recursive: true });
+            fs.symlinkSync(path.join(root, 'target.txt'), path.join(root, '.github/extensions'), 'file');
+          },
+        },
+        {
+          label: 'wrong-type exact Dude root',
+          setup: (root) => write(root, '.github/extensions/dude', 'not a directory\n'),
+        },
+        {
+          label: 'symlinked exact Dude root',
+          setup: (root) => {
+            write(root, 'target.txt', 'target\n');
+            fs.mkdirSync(path.join(root, '.github/extensions'), { recursive: true });
+            fs.symlinkSync(path.join(root, 'target.txt'), path.join(root, '.github/extensions/dude'), 'file');
+          },
+        },
+        {
+          label: 'symlinked exact Dude descendant',
+          setup: (root) => {
+            write(root, 'target.txt', 'target\n');
+            write(root, '.github/extensions/dude/extension.mjs', 'runtime\n');
+            fs.symlinkSync(
+              path.join(root, 'target.txt'),
+              path.join(root, '.github/extensions/dude/lib'),
+              'file',
+            );
+          },
+        },
+      ];
+
+      for (const { label, setup } of fixtures) {
+        // Arrange
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-up-extension-type-'));
+        try {
+          setup(root);
+
+          // Act + Assert
+          assert.throws(
+            () => scanCoreInventoryPaths(root, 'fixture workspace'),
+            /fixture workspace (?:contains symbolic link|type changed)/,
+            label,
+          );
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+    });
+
     test('direct core inventory scanning still refuses symlinks and incompatible file types', () => {
       // Arrange + Act + Assert: direct agent files and their root must be real.
       for (const relativePath of [
@@ -2127,6 +2212,164 @@ test('upgrade status, plan, and apply reject missing canonical metadata with cur
         }
       } finally {
         fs.rmSync(fixture.base, { recursive: true, force: true });
+      }
+    });
+
+    test('upgrade plans, applies, and rolls back only the exact Dude extension tree', () => {
+      // Arrange
+      const unrelated = {
+        '.github/extensions/other/deep/sentinel.txt': 'other extension\n',
+        '.github/extensions/dude-preview/extension.mjs': 'preview extension\n',
+        '.github/extensions/project-owned.txt': 'project extension file\n',
+      };
+      const fixture = makeDirectTopologyFixture({
+        local: {
+          '.github/extensions/dude/extension.mjs': 'local extension\n',
+          '.github/extensions/dude/lib/obsolete.mjs': 'remove extension runtime\n',
+          ...unrelated,
+        },
+        upstream: {
+          '.github/extensions/dude/extension.mjs': 'upstream extension\n',
+          '.github/extensions/dude/lib/current.mjs': 'new extension runtime\n',
+          '.github/extensions/dude/ui/index.html': '<!doctype html>\n',
+        },
+      });
+      const planPath = path.join(fixture.base, 'extension-plan.json');
+      try {
+        const unrelatedBefore = snapshotPath(path.join(fixture.localRoot, '.github/extensions/other'));
+        const previewBefore = snapshotPath(path.join(fixture.localRoot, '.github/extensions/dude-preview'));
+        const rootFileBefore = snapshotPath(path.join(fixture.localRoot, '.github/extensions/project-owned.txt'));
+
+        // Act
+        const planned = planDirectTopologyFixture(fixture, { out: planPath });
+        assert.equal(planned.status, 10, `${planned.stdout}${planned.stderr}`);
+        const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+        const applied = applyDirectTopologyFixture(fixture, planPath);
+
+        // Assert
+        assert.deepEqual(
+          plan.buckets.replace
+            .map((entry) => entry.path)
+            .filter((entry) => entry.startsWith('.github/extensions/')),
+          ['.github/extensions/dude/extension.mjs'],
+        );
+        assert.deepEqual(
+          plan.buckets.add
+            .map((entry) => entry.path)
+            .filter((entry) => entry.startsWith('.github/extensions/')),
+          [
+            '.github/extensions/dude/lib/current.mjs',
+            '.github/extensions/dude/ui/index.html',
+          ],
+        );
+        assert.deepEqual(
+          plan.buckets.remove
+            .map((entry) => entry.path)
+            .filter((entry) => entry.startsWith('.github/extensions/')),
+          ['.github/extensions/dude/lib/obsolete.mjs'],
+        );
+        assert.equal(
+          JSON.stringify(plan).includes('.github/extensions/other/deep/sentinel.txt'),
+          false,
+          'unrelated extensions never enter persisted upgrade state',
+        );
+        assert.equal(applied.status, 0, `${applied.stdout}${applied.stderr}`);
+        assert.equal(
+          readDirectFile(fixture.localRoot, '.github/extensions/dude/extension.mjs'),
+          'upstream extension\n',
+        );
+        assert.equal(
+          readDirectFile(fixture.localRoot, '.github/extensions/dude/lib/current.mjs'),
+          'new extension runtime\n',
+        );
+        assert.equal(readDirectFile(fixture.localRoot, '.github/extensions/dude/lib/obsolete.mjs'), null);
+        assert.deepEqual(snapshotPath(path.join(fixture.localRoot, '.github/extensions/other')), unrelatedBefore);
+        assert.deepEqual(snapshotPath(path.join(fixture.localRoot, '.github/extensions/dude-preview')), previewBefore);
+        assert.deepEqual(snapshotPath(path.join(fixture.localRoot, '.github/extensions/project-owned.txt')), rootFileBefore);
+
+        const appliedPayload = JSON.parse(applied.stdout);
+        const rollback = rollbackDirectTopologyFixture(fixture, appliedPayload.safety_tag);
+        assert.equal(rollback.status, 0, `${rollback.stdout}${rollback.stderr}`);
+        assert.equal(
+          readDirectFile(fixture.localRoot, '.github/extensions/dude/extension.mjs'),
+          'local extension\n',
+        );
+        assert.equal(
+          readDirectFile(fixture.localRoot, '.github/extensions/dude/lib/obsolete.mjs'),
+          'remove extension runtime\n',
+        );
+        assert.equal(readDirectFile(fixture.localRoot, '.github/extensions/dude/lib/current.mjs'), null);
+        assert.deepEqual(snapshotPath(path.join(fixture.localRoot, '.github/extensions/other')), unrelatedBefore);
+        assert.deepEqual(snapshotPath(path.join(fixture.localRoot, '.github/extensions/dude-preview')), previewBefore);
+        assert.deepEqual(snapshotPath(path.join(fixture.localRoot, '.github/extensions/project-owned.txt')), rootFileBefore);
+      } finally {
+        fs.rmSync(fixture.base, { recursive: true, force: true });
+      }
+    });
+
+    test('current upgrade rejects unsafe Dude destinations before branch or file mutation', () => {
+      const shapes = [
+        {
+          label: 'wrong-type exact Dude root',
+          setup: (fixture) => write(fixture.localRoot, '.github/extensions/dude', 'not a directory\n'),
+        },
+        {
+          label: 'symlinked exact Dude root',
+          setup: (fixture) => {
+            write(fixture.localRoot, 'target.txt', 'target\n');
+            fs.mkdirSync(path.join(fixture.localRoot, '.github/extensions'), { recursive: true });
+            fs.symlinkSync(
+              path.join(fixture.localRoot, 'target.txt'),
+              path.join(fixture.localRoot, '.github/extensions/dude'),
+              'file',
+            );
+          },
+        },
+        {
+          label: 'symlinked exact Dude runtime descendant',
+          setup: (fixture) => {
+            write(fixture.localRoot, 'target.txt', 'target\n');
+            write(fixture.localRoot, '.github/extensions/dude/extension.mjs', 'local runtime\n');
+            fs.symlinkSync(
+              path.join(fixture.localRoot, 'target.txt'),
+              path.join(fixture.localRoot, '.github/extensions/dude/lib'),
+              'file',
+            );
+          },
+        },
+      ];
+
+      for (const { label, setup } of shapes) {
+        // Arrange
+        const fixture = makeDirectTopologyFixture({
+          upstream: {
+            '.github/extensions/dude/extension.mjs': 'upstream runtime\n',
+            '.github/extensions/dude/lib/runtime.mjs': 'upstream nested runtime\n',
+          },
+        });
+        const planPath = path.join(fixture.base, `${label.replaceAll(' ', '-')}.json`);
+        try {
+          setup(fixture);
+          git(fixture.localRoot, ['add', '--all']);
+          git(fixture.localRoot, ['commit', '-q', '-m', `add ${label}`]);
+          const planned = planDirectTopologyFixture(fixture, { out: planPath });
+          assert.equal(planned.status, 10, `${planned.stdout}${planned.stderr}`);
+          const before = snapshotMutationBoundary(fixture.localRoot);
+
+          // Act
+          const applied = applyDirectTopologyFixture(fixture, planPath);
+
+          // Assert
+          assert.equal(applied.status, 40, `${applied.stdout}${applied.stderr}`);
+          assert.match(
+            `${applied.stdout}${applied.stderr}`,
+            /reviewed local (?:state changed: add|workspace (?:contains symbolic link|type changed))/,
+            label,
+          );
+          assert.deepEqual(snapshotMutationBoundary(fixture.localRoot), before, `${label}: apply changed the workspace`);
+        } finally {
+          fs.rmSync(fixture.base, { recursive: true, force: true });
+        }
       }
     });
 
@@ -2242,3 +2485,123 @@ test('upgrade status, plan, and apply reject missing canonical metadata with cur
         fs.rmSync(fixture.base, { recursive: true, force: true });
       }
     });
+
+test('public upgrade surfaces state exact core ownership and matching-ref plan authority', () => {
+  const surfaces = new Map([
+    ['source skill', fs.readFileSync(new URL('./SKILL.md', import.meta.url), 'utf8')],
+    [
+      'deployed skill',
+      fs.readFileSync(
+        new URL('../../../.github/skills/dude-bundle-upgrade/SKILL.md', import.meta.url),
+        'utf8',
+      ),
+    ],
+    [
+      'seeded manifest',
+      fs.readFileSync(new URL('../../../.dude/metadata/bundle-manifest.md', import.meta.url), 'utf8'),
+    ],
+    [
+      'upgrading guide',
+      fs.readFileSync(new URL('../../../docs/upgrading.md', import.meta.url), 'utf8'),
+    ],
+    [
+      'command reference',
+      fs.readFileSync(new URL('../../../docs/commands.md', import.meta.url), 'utf8'),
+    ],
+  ]);
+
+  for (const [label, content] of surfaces) {
+    const prose = content.replace(/^>\s?/gm, '').replace(/\s+/g, ' ');
+    for (const corePath of [
+      '.github/agents/dude.agent.md',
+      '.github/agents/dude-<slug>.agent.md',
+      '.github/skills/dude-<slug>/**',
+      '.github/instructions/dude.instructions.md',
+      '.github/extensions/dude/**',
+    ]) {
+      assert.ok(content.includes(corePath), `${label}: missing exact core category ${corePath}`);
+    }
+    assert.ok(content.includes('dude-local-*'), `${label}: missing local-tier exclusion`);
+    assert.ok(content.includes('dude-pack-*'), `${label}: missing pack-tier exclusion`);
+    assert.ok(
+      content.includes('.github/extensions/dude-preview/**')
+        && content.includes('.github/extensions/dude-local/**'),
+      `${label}: missing near-match extension examples`,
+    );
+    assert.match(
+      prose,
+      /(?:siblings|other names)[\s\S]{0,600}project-owned and preserved/i,
+      `${label}: other extension trees must be preserved`,
+    );
+    assert.match(
+      prose,
+      /only (?:upstream\/)?core-owned extension tree/i,
+      `${label}: Dude runtime must be the sole core extension tree`,
+    );
+    assert.ok(
+      content.includes('`upgrade.mjs status`'),
+      `${label}: missing the internal upgrader status phase`,
+    );
+    assert.match(
+      prose,
+      /(?:distinct|separate) from (?:the )?global `@dude status`|(?:global )?`@dude status`[^.]{0,180}(?:does not check|lane-orientation)/i,
+      `${label}: internal upgrader status must be distinct from global @dude status`,
+    );
+    assert.match(
+      prose,
+      /status[\s\S]{0,500}(?:not byte-completeness proof|does not establish byte completeness|proves neither[^.]{0,100}bytes)/i,
+      `${label}: status must not claim byte completeness`,
+    );
+    assert.match(
+      prose,
+      /(?:matching|equal) refs?[\s\S]{0,220}(?:Add, Replace, or Remove|Add\/Replace\/Remove)/i,
+      `${label}: matching refs may still have file operations`,
+    );
+    assert.ok(content.includes('confirm upgrade'), `${label}: file operations require confirmation`);
+    assert.match(
+      prose,
+      /(?:`(?:upgrade\.mjs )?plan`|`plan`)[^.]{0,120}authoritative|authoritative[^.]{0,120}(?:`(?:upgrade\.mjs )?plan`|`plan`)/i,
+      `${label}: plan must be the byte-difference authority`,
+    );
+    assert.match(
+      prose,
+      /true no-op[\s\S]{0,400}(?:manifest|metadata)[\s\S]{0,400}(?:empty|no file operations|operations and metadata are unchanged)/i,
+      `${label}: a no-op requires matching metadata and no file operations`,
+    );
+    assert.doesNotMatch(content, /\banything else\b/i, `${label}: false exhaustive fallback`);
+  }
+
+  const source = surfaces.get('source skill');
+  const deployed = surfaces.get('deployed skill');
+  assert.ok(source);
+  assert.ok(deployed);
+  assert.equal(deployed, source, 'source and deployed upgrade skills must be byte-identical');
+
+  const commandReference = surfaces.get('command reference');
+  assert.ok(commandReference);
+  const commandSectionStart = commandReference.indexOf('### Upgrading the bundle');
+  const commandSectionEnd = commandReference.indexOf('\n### ', commandSectionStart + 4);
+  assert.ok(commandSectionStart >= 0 && commandSectionEnd > commandSectionStart);
+  const commandSection = commandReference.slice(commandSectionStart, commandSectionEnd);
+  const commandExamples = [...commandSection.matchAll(/```(?:text|bash)?\n([\s\S]*?)```/g)]
+    .map((match) => match[1])
+    .join('\n');
+  assert.doesNotMatch(
+    commandExamples,
+    /(?:^|\n)\s*@dude status(?:\s|$)/,
+    'the upgrade command examples must not present global @dude status as an upgrade step',
+  );
+
+  const workflow = source.slice(source.indexOf('## Workflow'), source.indexOf('## Rollback'));
+  assert.match(
+    workflow,
+    /continue to Step 2 even when the result is `up_to_date`[\s\S]*matching ref is not byte-completeness evidence/,
+  );
+  assert.match(workflow, /safe historical workflow is an explicit second\s+`@dude upgrade`/);
+  assert.match(workflow, /fresh exact plan[\s\S]*fresh `confirm\s+upgrade`/);
+  assert.match(
+    workflow,
+    /Never call an internal planner as a hidden\s+follow-up, reuse the first persisted plan, or auto-apply the second plan/,
+  );
+  assert.match(workflow, /exact current core is installed and stop without an\s+apply/);
+});

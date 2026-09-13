@@ -1,15 +1,46 @@
 ---
 name: "dude-bundle-upgrade"
-description: "Use when the user wants to upgrade the Dude bundle itself, pull the newest base bundle from its source repo, refresh shipped agents/skills/instructions while preserving project memory and active work, refresh all installed packs after an upgrade, or roll back a recent upgrade. Triggers: @dude upgrade, @dude upgrade --all, @dude upgrade --dry-run, @dude upgrade --rollback, upgrade dude, update dude bundle, pull latest dude. Do NOT use for a standalone optional-pack install, removal, refresh, or refresh preview (dude-compose), or importing a single external agent or skill (dude-bundle-import)."
+description: "Use when the user wants to upgrade the Dude bundle itself, pull the newest core bundle from its source repo, refresh shipped agents/skills/instructions/runtime while preserving project memory and active work, refresh all installed packs after an upgrade, or roll back a recent upgrade. Triggers: @dude upgrade, @dude upgrade --all, @dude upgrade --dry-run, @dude upgrade --rollback, upgrade dude, update dude bundle, pull latest dude. Do NOT use for a standalone optional-pack install, removal, refresh, or refresh preview (dude-compose), or importing a single external agent or skill (dude-bundle-import)."
 ---
 
 # Bundle Upgrade
 
-Pull the newest base Dude bundle from its source repo and overlay it onto this project, replacing only base-owned engine files (default agents, default skills, and the bundle instructions under `.github/`). The core phase preserves project-local ideas, definition specs, memory, execution state, project skills, project-custom agents and skills, `.github/copilot-instructions.md`, root files, repository docs, and Beads. With the explicit `--all` option, a later pack phase refreshes only packs already recorded as installed. Only the exceptions named in [Boundaries](#boundaries) may change.
+Pull the newest core Dude bundle from its source repo and reconcile only the
+core-owned paths listed below. The core phase preserves project-local ideas,
+definition specs, memory, execution state, project skills, project-custom
+agents and skills, other extension trees, `.github/copilot-instructions.md`,
+root files, repository docs, and Beads. With the explicit `--all` option, a
+later pack phase refreshes only packs already recorded as installed. Only the
+exceptions named in [Boundaries](#boundaries) may change.
 
 Upgrades are preview-then-confirm. The `upgrade.mjs` script handles status, plan, core apply, post-core pack work, and rollback; the LLM orchestrates the conversation, surfaces the report, and translates confirmation phrases into apply invocations. Nothing is written to the working tree before the user confirms the reviewed core plan.
 
-> **Base files are upstream-owned.** Every file matching the dude base namespace convention (the `dude.agent.md` / `dude-<slug>.agent.md` agents, `dude-<slug>` skill directories, and the `dude.instructions.md` instructions file) is owned by upstream and is silently overwritten on apply. Editing a base file in place is unsupported \u2014 those edits will be lost on the next upgrade. To customize a default agent or skill, copy it under the reserved `dude-local-<slug>` namespace and edit there. See [Reserved Project Namespace](#reserved-project-namespace).
+> **Core files are upstream-owned.** A core upgrade reconciles exactly these
+> categories:
+>
+> - canonical default agents at `.github/agents/dude.agent.md` and
+>   `.github/agents/dude-<slug>.agent.md`, excluding `dude-local-*` and
+>   `dude-pack-*` agents;
+> - canonical core Dude skill directories named `dude-<slug>` directly under
+>   `.github/skills/`, excluding `dude-local-*`, `dude-pack-*`, and
+>   `.github/skills/project/**`;
+> - `.github/instructions/dude.instructions.md`; and
+> - the exact deployed runtime tree `.github/extensions/dude/**`.
+>
+> Apply may add, replace, or remove files in those categories. The runtime path
+> above is the only core-owned extension tree. Siblings and near matches such as
+> `.github/extensions/dude-preview/**`, `.github/extensions/dude-local/**`, and
+> every other named extension tree are project-owned and preserved.
+> `src/extensions/dude/**` remains project-owned source content and is not a
+> deployed core target.
+>
+> Editing a core path in place is unsupported because apply can discard the
+> edit. Copy a default agent or skill under the reserved
+> `dude-local-<slug>` agent or skill namespace for customization. That
+> convention is not an extension-runtime override: do not edit
+> `.github/extensions/dude/**` in place or copy it under a `dude-local-`
+> extension name as a persistent customization. See
+> [Reserved Project Namespace](#reserved-project-namespace).
 
 ## Purpose
 
@@ -18,7 +49,7 @@ Make engine updates routine, safe, and reversible. The user runs `@dude upgrade`
 ## When To Run
 
 - User asks to upgrade, update, refresh, or pull the latest Dude bundle.
-- `@dude status` reports an upgrade is available and the user opts in.
+- User requests an upgrade preview or a complete same-ref byte check or repair.
 - A coordinator-maintenance request asks to align with an upstream ref or version.
 
 Do **not** run on routine project work. This skill is coordinator-maintenance, equivalent to `dude-lint` in scope and authority.
@@ -27,7 +58,9 @@ Do **not** run on routine project work. This skill is coordinator-maintenance, e
 
 Accepted invocation forms:
 
-- `@dude upgrade` — fetch the upstream ref recorded in the manifest and apply after confirmation.
+- `@dude upgrade` — fetch the upstream ref recorded in the manifest, verify its
+  complete current core inventory even when the installed ref already matches,
+  and apply any reviewed changes after confirmation.
 - `@dude upgrade --all` — complete the reviewed core upgrade, then preview and optionally refresh every installed pack.
 - `@dude upgrade --dry-run` — produce the upgrade report only, write nothing.
 - `@dude upgrade --all --dry-run` — produce only the ordinary reviewed core report; authoritative pack preview requires the applied upgraded engine.
@@ -35,24 +68,28 @@ Accepted invocation forms:
 - `@dude upgrade --source <url-or-local-path>` — override the source repo for this run.
 - `@dude upgrade --rollback` — restore from the most recent pre-upgrade safety tag.
 
-Plain upgrade stays core-only. `--all` does not add a status mode, change
-rollback, or alter `--ref`, `--source`, or `--skip-removals` behavior for the
-core phase.
+Plain upgrade stays core-only. `--all` does not add a user-facing status mode,
+change rollback, or alter `--ref`, `--source`, or `--skip-removals` behavior for
+the core phase.
 
 ### Release channel
 
-The manifest `source_ref` is an upgrade channel. For remote sources, released bundles use the sentinel `latest`, which resolves to the newest **stable** `vX.Y.Z` tag (pre-releases like `v1.0.0-rc1` are ignored) on every run. A concrete `vX.Y.Z` pins to one release, and a branch name such as `main` tracks that branch's HEAD. A local-path source must use an explicit branch or tag; `latest` is rejected with that guidance. Use `--ref` to override the channel for a single run. When a remote `latest` channel has no release tags, `status` reports "no releases published yet" and `plan` declines with nothing to do.
+The manifest `source_ref` is an upgrade channel. For remote sources, released bundles use the sentinel `latest`, which resolves to the newest **stable** `vX.Y.Z` tag (pre-releases like `v1.0.0-rc1` are ignored) on every run. A concrete `vX.Y.Z` pins to one release, and a branch name such as `main` tracks that branch's HEAD. A local-path source must use an explicit branch or tag; `latest` is rejected with that guidance. Use `--ref` to override the channel for a single run. When a remote `latest` channel has no release tags, the upgrade workflow's `upgrade.mjs status` phase reports "no releases published yet" and stops before `plan`.
 
 ## Script Contract
 
 The `upgrade.mjs` engine handles fetch, classification, validation, and reporting. The LLM never re-derives this work. It runs on Node (>= 20 LTS) and shares the namespace/ownership classifier in `.github/skills/dude-engine/lib/ownership.mjs` with `dude-lint`. `plan` emits a canonical schema-v1 authorization envelope; `apply` validates that exact envelope and executes its persisted buckets without reclassification.
 
+Here, `status` means the upgrade workflow's internal `upgrade.mjs status`
+phase. It is distinct from global `@dude status`, the read-only workflow
+lane-orientation command; global status does not check upgrade availability.
+
 ### Subcommands
 
 | Subcommand | Purpose | Writes? |
 |---|---|---|
-| `status`   | Compare local manifest against upstream manifest. Cheap availability check. | No |
-| `plan`     | Fetch full upstream tree, classify every file, persist a plan JSON for apply. | No (cache only) |
+| `status`   | Compare local and candidate refs for orientation; do not inspect file bytes. | No |
+| `plan`     | Fetch the full upstream tree, compare the complete core inventory and bytes, and persist a plan JSON for apply. | No (cache only) |
 | `apply`    | Apply a persisted plan: safety tag + branch, file ops, manifest rewrite, log append, lint, commit. | Yes |
 | `packs-preview` | Preview installed-pack refreshes after the matching core commit. | No |
 | `packs-apply` | Refresh previewed installed packs after separate confirmation. | Yes |
@@ -97,7 +134,15 @@ node .github/skills/dude-bundle-upgrade/upgrade.mjs rollback [--tag <name>] [--f
 }
 ```
 
-`status` compares the locally recorded `installed_ref` against the selected remote release or literal ref. For a remote `latest` channel it lists release tags with `git ls-remote --tags <source>` and picks the highest stable `vX.Y.Z`; a pinned tag or branch is compared by name. Local paths reject `latest` and require an explicit branch or tag. The status command does not classify file deltas; run `plan` for the full per-file picture.
+`upgrade.mjs status` compares the locally recorded `installed_ref` against the
+selected remote release or literal ref. For a remote `latest` channel it lists
+release tags with `git ls-remote --tags <source>` and picks the highest stable
+`vX.Y.Z`; a pinned tag or branch is compared by name. Local paths reject
+`latest` and require an explicit branch or tag. This phase may report
+`up_to_date` when core bytes are missing or different, so matching refs are not
+byte-completeness proof. `plan` is authoritative for the complete core
+inventory and per-file bytes. Matching refs can still produce Add, Replace, or
+Remove operations.
 
 `plan` JSON:
 
@@ -157,17 +202,42 @@ Plans are persisted to `$TMPDIR/dude-upgrade-cache/plans/<plan_id>.json` so a la
 
 ## Workflow
 
-### Step 1 — Status (script)
+### Step 1 — Ref orientation (`upgrade.mjs status`)
 
-Run `upgrade.mjs status --format json` and parse the result. If `status` is `up_to_date`, report and stop. If `offline`, report and offer the user a re-try. Otherwise continue to Step 2.
+Run `upgrade.mjs status --format json` and parse the result. On `error`, report
+the detail and stop. If `offline`, report and offer the user a re-try. If
+it reports `no releases published yet`, report that result and stop. Otherwise,
+continue to Step 2 even when the result is `up_to_date`: this phase compares
+release refs only, and a matching ref is not byte-completeness evidence.
 
 ### Step 2 — Plan (script)
 
-Run `upgrade.mjs plan --format json` (pass `--ref` / `--source` if the user provided overrides). Read the persisted plan from `plans/<plan_id>.json` so subsequent steps reference the same plan_id.
+Run `upgrade.mjs plan --format json` (pass `--ref` / `--source` if the user
+provided overrides). This full byte comparison is authoritative even when
+the internal status phase reported `up_to_date`. Read the persisted plan from
+`plans/<plan_id>.json` so subsequent steps reference the same plan_id.
 
 Summarize the plan for the user using the `summary` counts plus a short bulleted list per non-empty bucket. Show file paths. For `replace` entries, include `[+a / -b]` line stats from `added_lines` / `removed_lines`.
 
-An empty file-operation summary is a true no-op only when the planned `source_repo`, `source_ref`, and `installed_ref` values already equal the current manifest values. When those values differ, `plan` exits 10 and `apply` performs the reviewed metadata manifest, log, branch, and commit transition even though Add/Replace/Remove are empty. A true no-op apply still requires confirmation and validates all reviewed evidence; it returns without creating a safety tag, branch, log entry, manifest write, or target write.
+An empty file-operation summary is a true no-op only when the planned
+`source_repo`, `source_ref`, and `installed_ref` values already equal the
+current manifest values. When those values differ, `plan` exits 10 and `apply`
+performs the reviewed metadata manifest, log, branch, and commit transition
+even though Add/Replace/Remove are empty. When both operations and metadata are
+unchanged, report that the exact current core is installed and stop without an
+apply. If a true no-op apply is invoked directly, it still requires confirmation
+and validates all reviewed evidence; it returns without creating a safety tag,
+branch, log entry, manifest write, or target write.
+
+A same-ref plan may legitimately find Add, Replace, or Remove operations. This
+is the supported repair and forward-bootstrap path. In particular, a consumer
+whose older installed ownership engine could not enumerate a core path category
+introduced by the candidate may finish its first reviewed apply with matching
+refs but incomplete bytes. The safe historical workflow is an explicit second
+`@dude upgrade`: the newly installed procedure continues past matching-ref
+status, creates and displays a fresh exact plan, and requires a fresh `confirm
+upgrade` before applying it. Never call an internal planner as a hidden
+follow-up, reuse the first persisted plan, or auto-apply the second plan.
 
 If `--dry-run`, stop here. With `--all`, explain that no authoritative pack
 preview exists yet because it must be prepared by the upgraded engine after the
@@ -183,7 +253,13 @@ Wait for one of:
 
 Plain "yes" / "ok" / "go" do not satisfy the gate.
 
-Before confirming, surface a single warning summarizing local edits that will be discarded. Compare each Replace/Remove path against its fetched upstream copy: anything that differs is local divergence about to be overwritten. The user should either rename those files to `dude-local-<slug>` first or accept the loss.
+Before confirming, surface a single warning summarizing local edits that will
+be discarded. Compare each Replace/Remove path against its fetched upstream
+copy: anything that differs is local divergence about to be overwritten. A
+default agent or skill customization can be copied to its corresponding
+`dude-local-<slug>` agent or skill path. Do not present that namespace as a
+home for executable extension runtime; edits under `.github/extensions/dude/**`
+must instead be accepted as replaceable or removed before upgrade.
 
 ### Step 4 — Apply (script)
 
@@ -306,7 +382,7 @@ The script:
 4. Appends a rollback entry to `upgrade-log.md` (left uncommitted; the user decides whether to commit or discard it).
 5. Runs `dude-lint` and reports the restored sha plus the lint result.
 
-The **already-merged** path (creating a rollback commit on the target branch by restoring base-owned files from the safety tag, rather than force-pushing) is not yet automated. For now: invoke `rollback` from a fresh branch off the target, then merge that rollback branch via a normal PR. Force-push is never used.
+The **already-merged** path (creating a rollback commit on the target branch by restoring core-owned files from the safety tag, rather than force-pushing) is not yet automated. For now: invoke `rollback` from a fresh branch off the target, then merge that rollback branch via a normal PR. Force-push is never used.
 
 For `--all`, the same pre-core safety tag remains the rollback boundary for the
 core commit and any aggregate pack commit. There is no pack-only or alternate
@@ -319,16 +395,26 @@ Project-local agents and skills should use the reserved `dude-local-` namespace:
 - agents: `.github/agents/dude-local-<slug>.agent.md`
 - skills: `.github/skills/dude-local-<slug>/SKILL.md`
 
-Upstream/base Dude artifacts must never use `dude-local-` names. The upgrade engine treats any path whose name matches `dude-local-*` as project-owned and excludes it from base ownership.
+Upstream core agents and skills must never use `dude-local-` names. The upgrade
+engine treats agent and skill names matching `dude-local-*` as project-owned
+and excludes them from core ownership.
 
-The namespace is the **primary** safety mechanism for keeping project work across upgrades. If you fork a base agent or skill by copying it under `dude-local-<slug>`, your copy is project-owned and is never touched by upgrade. Editing the original base file is unsupported and your changes will be lost on the next upgrade.
+The namespace is the **primary** safety mechanism for keeping project agent and
+skill work across upgrades. If you fork a core agent or skill by copying it
+under `dude-local-<slug>`, your copy is project-owned and is never touched by
+upgrade. Editing the original core file is unsupported and your changes will be
+lost on the next upgrade. This convention does not define an extension-runtime
+fork or override.
 
-Unprefixed user-created artifacts (an agent file or top-level skill directory that is neither `dude.agent.md` nor matches `dude-<slug>` / `dude-local-<slug>`) surface as `advisory` entries in the plan and are still preserved. Rename them into `dude-local-` when practical.
+Unprefixed user-created agents and top-level skill directories outside the
+canonical core, pack, and `dude-local-` names surface as `advisory` entries in
+the plan and are still preserved. Rename them into `dude-local-` when
+practical.
 
 ## Ownership Boundary For Generated Agent Profiles
 
 Each core agent source has one generated destination:
-`.github/agents/<stem>.agent.md`. The path is base-owned when its stem is
+`.github/agents/<stem>.agent.md`. The path is core-owned when its stem is
 `dude` or `dude-<slug>`. A `dude-pack-<pack>-<slug>` profile is pack-owned, a
 `dude-local-<slug>` profile is project-owned, and any other stem is preserved as
 project content.
@@ -354,24 +440,26 @@ fresh plan.
 
 ## File Classification (reference)
 
-The script classifies every base-owned file into one of the buckets below. Base
-ownership is derived from the namespace convention (see
-[Manifest Shape](#manifest-shape)): the engine enumerates the local and upstream
-trees directly and treats `.github/agents/dude.agent.md`,
-`.github/agents/dude-<slug>.agent.md`, skill directories named
-`dude-<slug>/**`, and `.github/instructions/dude.instructions.md` as
-base-owned. The reserved `dude-local-<slug>` namespace is excluded. There is no
-manifest `files` array; the manifest is metadata only.
+The script classifies every core-owned file into one of the buckets below. The
+engine derives the set from the local and upstream trees: canonical
+`.github/agents/dude.agent.md` and
+`.github/agents/dude-<slug>.agent.md` agents, canonical
+`dude-<slug>` skill directories directly under `.github/skills/`, the exact
+`.github/instructions/dude.instructions.md` file, and the exact deployed
+`.github/extensions/dude/**` tree. Agent and skill names in the
+`dude-local-*` and `dude-pack-*` tiers are excluded, as is the `project` skill.
+No other extension tree is included. There is no manifest `files` array; the
+manifest is metadata only.
 
 Classification is done by **byte comparison** of local disk content vs the fetched upstream tree.
 
 | Bucket | Behavior |
 |---|---|
-| Replace | Base path on both sides; local on-disk bytes differ from upstream. Overwrite local with upstream. Any local edits are discarded. |
-| Add | Base path only in the upstream tree. Copy upstream in. |
-| Remove | Base path only in the local tree (upstream dropped it). Delete local file (unless `--skip-removals`). |
-| Advisory | Project-owned agent or skill outside both the base and `dude-local-` namespaces. Preserved; flagged. |
-| Up to date | Base path on both sides; bytes match. Skip silently. |
+| Replace | Core path on both sides; local on-disk bytes differ from upstream. Overwrite local with upstream. Any local edits are discarded. |
+| Add | Core path only in the upstream tree. Copy upstream in. |
+| Remove | Core path only in the local tree (upstream dropped it). Delete local file (unless `--skip-removals`). |
+| Advisory | Project-owned agent or skill outside the canonical core, pack, and local names. Preserved; flagged. |
+| Up to date | Core path on both sides; bytes match. Skip silently. |
 
 ## Boundaries
 
@@ -390,6 +478,8 @@ Classification is done by **byte comparison** of local disk content vs the fetch
   preserved through every upgrade.
 - Never delete or modify `.github/skills/project/`.
 - Never modify `.github/copilot-instructions.md`.
+- Never modify an extension tree other than the exact core-owned
+  `.github/extensions/dude/**` tree.
 - Never touch `.dude/ideas/`, `.dude/specs/`, `.dude/memory/`, `.dude/state/`, Beads, or product source.
 - Never apply or roll back on a dirty working tree. Commit or stash changes first.
 - Path containment and symbolic-link checks assume a locally controlled workspace without concurrent hostile mutation. They detect observed drift but do not claim race-free protection from adversarial transient replacement.
@@ -425,13 +515,20 @@ external or manual recovery; there is no in-bundle migration workflow.
 }
 ```
 
-Base ownership is derived from the **namespace convention** by the engine on each run:
+The manifest does not register file ownership. On each run, the engine derives
+the exact core set from these categories:
 
 ```text
 .github/agents/dude.agent.md
-.github/agents/dude-<slug>.agent.md         # <slug> must NOT start with "local-"
-.github/skills/dude-<slug>/**               # <slug> must NOT start with "local-"
+.github/agents/dude-<slug>.agent.md         # excludes dude-local-* and dude-pack-*
+.github/skills/dude-<slug>/**               # excludes dude-local-*, dude-pack-*, and project
 .github/instructions/dude.instructions.md
+.github/extensions/dude/**
 ```
 
-Anything else is project-owned and never touched by upgrade. The reserved `dude-local-<slug>` namespace is explicitly project-owned and excluded from base enumeration.
+Only that exact extension tree is core-owned; sibling, near-match, and other
+named extension trees are project-owned and preserved. The agent and skill
+`dude-local-*` tier is project-owned, the `dude-pack-*` tier remains
+pack-owned, and the `project` skill is project-owned. The engine enumerates
+these paths from the live trees; the metadata-only manifest never carries a
+`files` array.

@@ -11,7 +11,7 @@ const SOURCE_KEYS = Object.freeze([
 ]);
 const STEM_RE = /^[a-z][a-z0-9-]*$/;
 const COPILOT_TOOLS = new Set([
-  'read', 'edit', 'search', 'execute', 'todo', 'agent', 'workiq/*', 'workiq2/*',
+  'read', 'edit', 'search', 'execute', 'todo', 'agent', 'dude_needs_you', 'workiq/*', 'workiq2/*',
 ]);
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */

@@ -185,13 +185,13 @@ export function scanCoreInventoryPaths(root, label) {
     return true;
   };
   /** @param {string} relativeDirectory */
-  const walkSkill = (relativeDirectory) => {
+  const walkCoreDirectory = (relativeDirectory) => {
     const absoluteDirectory = path.join(root, ...relativeDirectory.split('/'));
     for (const name of fs.readdirSync(absoluteDirectory).sort(codeUnitCompare)) {
       const relativePath = `${relativeDirectory}/${name}`;
       const stat = safeLstat(relativePath);
       if (!stat) continue;
-      if (stat.isDirectory()) walkSkill(relativePath);
+      if (stat.isDirectory()) walkCoreDirectory(relativePath);
       else if (stat.isFile()) results.push(relativePath);
       else throw new Error(`${label} type changed: ${relativePath}`);
     }
@@ -220,7 +220,16 @@ export function scanCoreInventoryPaths(root, label) {
       if (classifyPath(`${relativeDirectory}/`) !== TIER.CORE) continue;
       const stat = safeLstat(relativeDirectory);
       if (!stat?.isDirectory()) throw new Error(`${label} type changed: ${relativeDirectory}`);
-      walkSkill(relativeDirectory);
+      walkCoreDirectory(relativeDirectory);
+    }
+  }
+
+  if (requireDirectory('.github/extensions')) {
+    const dudeExtensionDirectory = '.github/extensions/dude';
+    const stat = safeLstat(dudeExtensionDirectory);
+    if (stat) {
+      if (!stat.isDirectory()) throw new Error(`${label} type changed: ${dudeExtensionDirectory}`);
+      walkCoreDirectory(dudeExtensionDirectory);
     }
   }
 

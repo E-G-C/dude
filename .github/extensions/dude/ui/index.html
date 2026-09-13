@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Dude</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        background: #f5f5f5;
+      }
+      html,
+      body,
+      #root {
+        min-width: 0;
+        min-height: 100%;
+        margin: 0;
+      }
+      body {
+        background: #f5f5f5;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root,
+        body {
+          background: #141414;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+    <script type="module" src="/assets/app.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>Dude requires JavaScript to display recorded work and current owner requests.</noscript>
+    <script>
+      (() => {
+        let reported = "";
+        const report = () => {
+          const width = Math.round(window.innerWidth);
+          const height = Math.round(window.innerHeight);
+          const size = width + "\u00d7" + height;
+          if (size === reported) return;
+          reported = size;
+          fetch("/api/viewport", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ width, height }),
+          }).catch(() => {});
+        };
+
+        window.addEventListener("resize", report);
+        report();
+      })();
+    </script>
+  </body>
+</html>

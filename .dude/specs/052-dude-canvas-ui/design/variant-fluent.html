@@ -1,0 +1,1232 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dude Now cockpit — Fluent 2</title>
+  <!--
+    ============================================================================
+    Dude "Now" cockpit — Microsoft Fluent 2 variant
+    ============================================================================
+    Self-contained: no network, no CDN, no webfont, no build step, no React.
+    Segoe UI is requested first and falls back to the platform UI font off
+    Windows, which is expected and is how FluentProvider behaves too.
+
+    Component mapping (what a real @fluentui/react-components build renders):
+      panel .................. <Card>                       (shadow8, radius 4)
+      panel header ........... <CardHeader>
+      "Change feature" ....... <Button as="a" appearance="secondary">  32px tall
+      "Refresh" .............. <Button appearance="secondary">       32px tall
+      feature identity ....... <Text as="h2"> Title3 + Caption1 monospace
+      lifecycle stepper ...... <Badge size="large" shape="circular"> 24px + rule
+      Stage .................. <Badge size="large" appearance="filled">
+      attention rows ......... <MessageBar intent="warning|success|error">
+      "Source details" ....... disclosure equivalent to <Accordion> / <AccordionItem>
+      chooser rows ........... interactive <Card> per feature
+
+    ---------------------------------------------------------------------------
+    WCAG 2.2 AA — verified and disclosed
+    ---------------------------------------------------------------------------
+    PASSES (contrast ratios computed against the actual painted background):
+      light  #242424 on #ffffff .............. 15.0:1   body text
+      light  #616161 on #ffffff ...............  5.9:1   Caption1 / Foreground3
+      light  #0f6cbd on #ffffff ...............  5.0:1   brand text
+      light  #ffffff on #0f6cbd ...............  5.0:1   brand Badge / step 2
+      light  #ffffff on #107c10 ...............  5.4:1   complete step Badge
+      light  #ffffff on #d13438 ...............  4.9:1   Blocked Badge
+      light  #bc2f32 on #fdf3f4 ...............  5.4:1   error MessageBar title
+      light  #0e700e on #f1faf1 ...............  5.9:1   success text
+      light  #817400 on #fffef5 ...............  4.7:1   warning icon
+      dark   #ffffff on #292929 .............. 14.9:1   body text
+      dark   #adadad on #292929 ...............  6.5:1   Caption1 / Foreground3
+      dark   #479ef5 on #292929 ...............  5.2:1   brand text
+      dark   #ffffff on #115ea3 ...............  6.7:1   brand Badge / step 2
+      dark   #e37d80 on #3b2325 ...............  5.2:1   error MessageBar title
+      dark   #54b054 on #123312 ...............  5.1:1   success text
+      dark   #c8cc00 on #333100 ...............  7.7:1   warning icon
+      focus  #000000 on #ffffff / #ffffff on #292929 ... 21:1 / 14.9:1
+
+    KNOWN STOCK-FLUENT FAILURE — reported, NOT silently substituted:
+      colorNeutralStroke1 is Fluent's default Button and Card border. Against
+      its own adjacent surface it does not reach the 3:1 required by WCAG 1.4.11
+      (Non-text Contrast):
+          light  #d1d1d1 on #ffffff ............ 1.5:1   FAILS 3:1
+          dark   #666666 on #292929 ............ 2.5:1   FAILS 3:1
+      This is Fluent 2's shipped value, so it is kept verbatim rather than
+      swapped for colorNeutralStrokeAccessible (#616161 / #adadad), which would
+      pass. Mitigations already in place: every control is identified by its
+      visible label text, has a 3:1+ hover state, and takes the 21:1 / 14.9:1
+      focus indicator. Chooser rows additionally darken their border to
+      colorNeutralStrokeAccessible on hover. A production build should raise
+      this at the theme level, not per component.
+
+    Other AA provisions:
+      - No meaning by colour alone. Every state carries a distinct SHAPE and the
+        literal WORD: complete = green circle + check + "Idea"; current = blue
+        circle + numeral + ring + aria-current="step"; Stage = diamond glyph +
+        "Defined" vs warning triangle + "Blocked"; MessageBars pair a unique
+        icon outline (?, check, !) with their full text.
+      - Every interactive target is >= 24x24 CSS px: buttons are 32px tall with
+        a 32px min-width, the disclosure summary is 32px min-height, and chooser
+        rows are far larger.
+      - Focus indicator is 2px colorStrokeFocus2 with a 2px offset, never
+        removed or thinned. Tab order is DOM order; no traps; no autofocus.
+      - prefers-reduced-motion: reduce collapses every transition.
+    ---------------------------------------------------------------------------
+  -->
+  <style>
+    /*
+      Fluent 2 design tokens, verbatim from @fluentui/tokens (webLightTheme /
+      webDarkTheme). FluentProvider emits theme tokens as CSS custom properties
+      named exactly like the TypeScript token keys, so the names below match
+      one-for-one what a real @fluentui/react-components app would expose.
+    */
+
+    /* Global (theme-invariant) tokens */
+    :root {
+      --spacingHorizontalNone: 0;
+      --spacingHorizontalXXS: 2px;
+      --spacingHorizontalXS: 4px;
+      --spacingHorizontalSNudge: 6px;
+      --spacingHorizontalS: 8px;
+      --spacingHorizontalMNudge: 10px;
+      --spacingHorizontalM: 12px;
+      --spacingHorizontalL: 16px;
+      --spacingHorizontalXL: 20px;
+      --spacingHorizontalXXL: 24px;
+      --spacingHorizontalXXXL: 32px;
+
+      --spacingVerticalNone: 0;
+      --spacingVerticalXXS: 2px;
+      --spacingVerticalXS: 4px;
+      --spacingVerticalSNudge: 6px;
+      --spacingVerticalS: 8px;
+      --spacingVerticalMNudge: 10px;
+      --spacingVerticalM: 12px;
+      --spacingVerticalL: 16px;
+      --spacingVerticalXL: 20px;
+      --spacingVerticalXXL: 24px;
+      --spacingVerticalXXXL: 32px;
+
+      --fontSizeBase100: 10px;
+      --fontSizeBase200: 12px;
+      --fontSizeBase300: 14px;
+      --fontSizeBase400: 16px;
+      --fontSizeBase500: 20px;
+      --fontSizeBase600: 24px;
+
+      --lineHeightBase100: 14px;
+      --lineHeightBase200: 16px;
+      --lineHeightBase300: 20px;
+      --lineHeightBase400: 22px;
+      --lineHeightBase500: 28px;
+      --lineHeightBase600: 32px;
+
+      --borderRadiusNone: 0;
+      --borderRadiusSmall: 2px;
+      --borderRadiusMedium: 4px;
+      --borderRadiusLarge: 6px;
+      --borderRadiusXLarge: 8px;
+      --borderRadiusCircular: 10000px;
+
+      --strokeWidthThin: 1px;
+      --strokeWidthThick: 2px;
+      --strokeWidthThicker: 3px;
+      --strokeWidthThickest: 4px;
+
+      --fontWeightRegular: 400;
+      --fontWeightMedium: 500;
+      --fontWeightSemibold: 600;
+
+      --durationFaster: 100ms;
+      --durationNormal: 200ms;
+
+      --fontFamilyBase: 'Segoe UI', 'Segoe UI Web (West European)', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif;
+      --fontFamilyMonospace: Consolas, 'Courier New', Courier, monospace;
+    }
+
+    /*
+      PRODUCT CONSTANTS — deliberately NOT Fluent tokens.
+
+      Fluent 2 has no design token for either of the two things below. A real
+      implementation expresses them through component APIs and layout props,
+      not through the token pipeline:
+
+        1. Panel width        --panel-width
+                              The Dude cockpit surface is a fixed 380px panel.
+                              In Fluent that is a Drawer/Card layout decision
+                              (e.g. <OverlayDrawer size="small">), a product
+                              constraint rather than a theme value.
+
+        2. Control sizes      --button-height-medium, --badge-size-large,
+                              --icon-size-12 / -16 / -20
+                              Fluent's medium Button is 32px tall, its Badge
+                              sizes are 16/20/24/32px, and its icons ship at
+                              12/16/20/24px. React consumers select these with
+                              size="medium" / size="large" and by icon name
+                              suffix (<Checkmark20Regular>). The numbers live
+                              inside the component styles and are never
+                              exposed as tokens.
+
+      Manufacturing these out of token arithmetic would misrepresent Fluent, so
+      they are declared once, named for what they are.
+    */
+    :root {
+      --panel-width: 380px;
+      --button-height-medium: 32px;
+      --badge-size-large: 24px;
+      --icon-size-12: 12px;
+      --icon-size-16: 16px;
+      --icon-size-20: 20px;
+    }
+
+    .theme-light {
+      --colorNeutralBackground1: #ffffff;
+      --colorNeutralBackground1Hover: #f5f5f5;
+      --colorNeutralBackground2: #fafafa;
+      --colorNeutralBackground3: #f5f5f5;
+      --colorNeutralBackground4: #f0f0f0;
+
+      --colorNeutralForeground1: #242424;
+      --colorNeutralForeground2: #424242;
+      --colorNeutralForeground3: #616161;
+      --colorNeutralForeground4: #707070;
+      --colorNeutralForegroundOnBrand: #ffffff;
+
+      --colorNeutralStroke1: #d1d1d1;
+      --colorNeutralStroke2: #e0e0e0;
+      --colorNeutralStrokeAccessible: #616161;
+
+      --colorBrandBackground: #0f6cbd;
+      --colorBrandBackgroundHover: #115ea3;
+      --colorBrandForeground1: #0f6cbd;
+      --colorBrandForeground2: #115ea3;
+      --colorCompoundBrandStroke: #0f6cbd;
+
+      --colorPaletteRedForeground1: #bc2f32;
+      --colorPaletteRedBackground1: #fdf3f4;
+      --colorPaletteRedBorder1: #f1bbbc;
+      --colorPaletteRedBorder2: #d13438;
+
+      --colorPaletteGreenForeground1: #0e700e;
+      --colorPaletteGreenBackground1: #f1faf1;
+      --colorPaletteGreenBorder1: #9fd89f;
+      --colorPaletteGreenBorder2: #107c10;
+
+      --colorPaletteYellowForeground1: #817400;
+      --colorPaletteYellowBackground1: #fffef5;
+      --colorPaletteYellowBorder1: #fde300;
+
+      --colorStrokeFocus2: #000000;
+
+      --shadow4: 0 0 2px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.14);
+      --shadow8: 0 0 2px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(0, 0, 0, 0.14);
+    }
+
+    .theme-dark {
+      --colorNeutralBackground1: #292929;
+      --colorNeutralBackground1Hover: #3d3d3d;
+      --colorNeutralBackground2: #1f1f1f;
+      --colorNeutralBackground3: #141414;
+      --colorNeutralBackground4: #0a0a0a;
+
+      --colorNeutralForeground1: #ffffff;
+      --colorNeutralForeground2: #d6d6d6;
+      --colorNeutralForeground3: #adadad;
+      --colorNeutralForeground4: #999999;
+      --colorNeutralForegroundOnBrand: #ffffff;
+
+      --colorNeutralStroke1: #666666;
+      --colorNeutralStroke2: #525252;
+      --colorNeutralStrokeAccessible: #adadad;
+
+      --colorBrandBackground: #115ea3;
+      --colorBrandBackgroundHover: #0f6cbd;
+      --colorBrandForeground1: #479ef5;
+      --colorBrandForeground2: #62abf5;
+      --colorCompoundBrandStroke: #479ef5;
+
+      --colorPaletteRedForeground1: #e37d80;
+      --colorPaletteRedBackground1: #3b2325;
+      --colorPaletteRedBorder1: #6e3033;
+      --colorPaletteRedBorder2: #d13438;
+
+      --colorPaletteGreenForeground1: #54b054;
+      --colorPaletteGreenBackground1: #123312;
+      --colorPaletteGreenBorder1: #218121;
+      --colorPaletteGreenBorder2: #107c10;
+
+      --colorPaletteYellowForeground1: #c8cc00;
+      --colorPaletteYellowBackground1: #333100;
+      --colorPaletteYellowBorder1: #817400;
+
+      --colorStrokeFocus2: #ffffff;
+
+      --shadow4: 0 0 2px rgba(0, 0, 0, 0.24), 0 2px 4px rgba(0, 0, 0, 0.28);
+      --shadow8: 0 0 2px rgba(0, 0, 0, 0.24), 0 4px 8px rgba(0, 0, 0, 0.28);
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      margin: 0;
+      padding: var(--spacingVerticalXXXL) var(--spacingHorizontalL);
+      font-family: var(--fontFamilyBase);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightRegular);
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground4);
+    }
+
+    /* ---------- Focus: Fluent's 2px focus indicator ---------- */
+    a:focus-visible,
+    button:focus-visible,
+    summary:focus-visible {
+      outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2);
+      outline-offset: var(--spacingHorizontalXXS);
+      border-radius: var(--borderRadiusMedium);
+    }
+
+    /* ---------- Showcase scaffolding (outside the panel) ---------- */
+    .fui-showcase {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: center;
+      gap: var(--spacingHorizontalXXXL);
+      margin: 0 auto;
+    }
+
+    .fui-surface {
+      flex: 0 1 auto;
+      max-width: 100%;
+      min-width: 0;
+      padding: var(--spacingVerticalXXL) var(--spacingHorizontalXXL);
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground3);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      border-radius: var(--borderRadiusXLarge);
+    }
+
+    /* Type ramp: Subtitle2 */
+    .fui-surface-heading {
+      margin: 0 0 var(--spacingVerticalXL);
+      font-size: var(--fontSizeBase400);
+      line-height: var(--lineHeightBase400);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .fui-frame {
+      margin: 0;
+    }
+
+    .fui-frame + .fui-frame {
+      margin-top: var(--spacingVerticalXXXL);
+    }
+
+    /* Type ramp: Caption1Strong */
+    .fui-frame-label {
+      margin-bottom: var(--spacingVerticalS);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /* ---------- Card ---------- */
+    .fui-card {
+      width: var(--panel-width);
+      max-width: 100%;
+      overflow: hidden;
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      border-radius: var(--borderRadiusMedium);
+      box-shadow: var(--shadow8);
+    }
+
+    .fui-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--spacingHorizontalS);
+      padding: var(--spacingVerticalS) var(--spacingHorizontalM) var(--spacingVerticalS) var(--spacingHorizontalL);
+      background-color: var(--colorNeutralBackground2);
+      border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+
+    /* Type ramp: Subtitle2 */
+    .fui-product {
+      font-size: var(--fontSizeBase400);
+      line-height: var(--lineHeightBase400);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .fui-card-body {
+      padding: var(--spacingVerticalL) var(--spacingHorizontalL) var(--spacingVerticalS);
+    }
+
+    /* ---------- Button ---------- */
+    .fui-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--spacingHorizontalS);
+      height: var(--button-height-medium);
+      min-width: var(--button-height-medium);
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalM);
+      font-family: var(--fontFamilyBase);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      border-radius: var(--borderRadiusMedium);
+      text-decoration: none;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: background-color var(--durationFaster) ease, border-color var(--durationFaster) ease;
+    }
+
+    .fui-button-secondary {
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke1);
+    }
+
+    .fui-button-secondary:hover {
+      background-color: var(--colorNeutralBackground1Hover);
+    }
+
+    /* ---------- Identity ---------- */
+    .fui-identity {
+      padding-bottom: var(--spacingVerticalL);
+      border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+
+    /* Type ramp: Title3 */
+    .fui-title3 {
+      margin: 0 0 var(--spacingVerticalXXS);
+      font-size: var(--fontSizeBase500);
+      line-height: var(--lineHeightBase500);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .fui-identifier {
+      margin: 0;
+      font-family: var(--fontFamilyMonospace);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+      overflow-wrap: anywhere;
+    }
+
+    /* ---------- Stepper (Badge size="large" markers) ---------- */
+    .fui-stepper {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin: var(--spacingVerticalL) var(--spacingHorizontalNone);
+      padding: var(--spacingVerticalNone);
+      list-style: none;
+    }
+
+    .fui-step {
+      position: relative;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--spacingVerticalXS);
+      text-align: center;
+    }
+
+    .fui-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: calc(var(--badge-size-large) / 2);
+      left: calc(50% + (var(--badge-size-large) / 2) + var(--spacingHorizontalXS));
+      right: calc(-50% + (var(--badge-size-large) / 2) + var(--spacingHorizontalXS));
+      height: var(--strokeWidthThick);
+      border-radius: var(--borderRadiusCircular);
+      background-color: var(--colorNeutralStroke1);
+    }
+
+    .fui-step.is-complete:not(:last-child)::after {
+      background-color: var(--colorPaletteGreenBorder2);
+    }
+
+    .fui-step-badge {
+      position: relative;
+      z-index: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: var(--badge-size-large);
+      height: var(--badge-size-large);
+      border-radius: var(--borderRadiusCircular);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground3);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke1);
+    }
+
+    .fui-step-glyph {
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
+    }
+
+    .fui-step.is-complete .fui-step-badge {
+      color: var(--colorNeutralForegroundOnBrand);
+      background-color: var(--colorPaletteGreenBorder2);
+      border-color: var(--colorPaletteGreenBorder2);
+    }
+
+    .fui-step.is-current .fui-step-badge {
+      color: var(--colorNeutralForegroundOnBrand);
+      background-color: var(--colorBrandBackground);
+      border-color: var(--colorBrandBackground);
+      box-shadow: 0 0 0 var(--strokeWidthThick) var(--colorNeutralBackground1), 0 0 0 var(--strokeWidthThicker) var(--colorCompoundBrandStroke);
+    }
+
+    /* Type ramp: Caption1 */
+    .fui-step-label {
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+    }
+
+    .fui-step.is-complete .fui-step-label {
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorPaletteGreenForeground1);
+    }
+
+    .fui-step.is-current .fui-step-label {
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    /* ---------- Fields ---------- */
+    .fui-field {
+      padding: var(--spacingVerticalL) var(--spacingHorizontalNone);
+      border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+
+    /* Type ramp: Caption1Strong */
+    .fui-field-label {
+      display: block;
+      margin-bottom: var(--spacingVerticalS);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /* Type ramp: Body1 */
+    .fui-field-value {
+      margin: var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .fui-body-strong {
+      font-weight: var(--fontWeightSemibold);
+    }
+
+    /* Type ramp: Caption1 */
+    .fui-why {
+      margin: var(--spacingVerticalS) var(--spacingHorizontalNone) var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .fui-why-label {
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    /* ---------- Badge ---------- */
+    .fui-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--spacingHorizontalXS);
+      height: var(--badge-size-large);
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalS);
+      border-radius: var(--borderRadiusCircular);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      white-space: nowrap;
+    }
+
+    .fui-badge-glyph {
+      flex: 0 0 auto;
+      width: var(--icon-size-12);
+      height: var(--icon-size-12);
+    }
+
+    .fui-badge-brand {
+      color: var(--colorNeutralForegroundOnBrand);
+      background-color: var(--colorBrandBackground);
+      border: var(--strokeWidthThin) solid var(--colorBrandBackground);
+    }
+
+    .fui-badge-danger {
+      color: var(--colorNeutralForegroundOnBrand);
+      background-color: var(--colorPaletteRedBorder2);
+      border: var(--strokeWidthThin) solid var(--colorPaletteRedBorder2);
+    }
+
+    .fui-badge-outline {
+      color: var(--colorNeutralForeground2);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+    }
+
+    /* ---------- MessageBar ---------- */
+    .fui-attention {
+      display: grid;
+      gap: var(--spacingVerticalS);
+    }
+
+    .fui-messagebar {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: start;
+      gap: var(--spacingHorizontalS);
+      padding: var(--spacingVerticalS) var(--spacingHorizontalM);
+      border-radius: var(--borderRadiusMedium);
+      border: var(--strokeWidthThin) solid transparent;
+    }
+
+    .fui-messagebar-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .fui-icon {
+      width: var(--icon-size-20);
+      height: var(--icon-size-20);
+    }
+
+    /* Type ramp: Body1 */
+    .fui-messagebar-body {
+      margin: var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .fui-messagebar-title {
+      margin: var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    /* Type ramp: Caption1 */
+    .fui-messagebar-text {
+      margin: var(--spacingVerticalXXS) var(--spacingHorizontalNone) var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .fui-messagebar-warning {
+      background-color: var(--colorPaletteYellowBackground1);
+      border-color: var(--colorPaletteYellowBorder1);
+    }
+
+    .fui-messagebar-warning .fui-messagebar-icon {
+      color: var(--colorPaletteYellowForeground1);
+    }
+
+    .fui-messagebar-success {
+      background-color: var(--colorPaletteGreenBackground1);
+      border-color: var(--colorPaletteGreenBorder1);
+    }
+
+    .fui-messagebar-success .fui-messagebar-icon {
+      color: var(--colorPaletteGreenForeground1);
+    }
+
+    .fui-messagebar-danger {
+      background-color: var(--colorPaletteRedBackground1);
+      border-color: var(--colorPaletteRedBorder1);
+    }
+
+    .fui-messagebar-danger .fui-messagebar-icon {
+      color: var(--colorPaletteRedForeground1);
+    }
+
+    .fui-messagebar-danger .fui-messagebar-title {
+      color: var(--colorPaletteRedForeground1);
+    }
+
+    /* ---------- Freshness row ---------- */
+    .fui-freshness {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--spacingHorizontalS);
+      padding: var(--spacingVerticalM) var(--spacingHorizontalNone);
+      border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+
+    /* Type ramp: Caption1 */
+    .fui-caption {
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /* ---------- Accordion-style disclosure ---------- */
+    .fui-details {
+      border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+
+    .fui-summary {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      min-height: var(--button-height-medium);
+      padding: var(--spacingVerticalS) var(--spacingHorizontalNone);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+      border-radius: var(--borderRadiusMedium);
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .fui-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .fui-chevron {
+      flex: 0 0 auto;
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
+      color: var(--colorNeutralForeground3);
+      transition: transform var(--durationFaster) ease;
+    }
+
+    .fui-details[open] .fui-chevron {
+      transform: rotate(90deg);
+    }
+
+    /* Type ramp: Caption1 */
+    .fui-source-list {
+      display: grid;
+      gap: var(--spacingVerticalS);
+      margin: var(--spacingVerticalNone);
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalNone) var(--spacingVerticalM) var(--spacingHorizontalXXL);
+      list-style: none;
+      font-family: var(--fontFamilyMonospace);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+      overflow-wrap: anywhere;
+    }
+
+    /* ---------- Chooser (interactive Cards) ---------- */
+    /* Type ramp: Body1 */
+    .fui-chooser-intro {
+      margin: var(--spacingVerticalNone) var(--spacingHorizontalNone) var(--spacingVerticalL);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .fui-choice-list {
+      display: grid;
+      gap: var(--spacingVerticalS);
+      margin: var(--spacingVerticalNone) var(--spacingHorizontalNone) var(--spacingVerticalL);
+      padding: var(--spacingVerticalNone);
+      list-style: none;
+    }
+
+    .fui-choice {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: var(--spacingVerticalXS) var(--spacingHorizontalS);
+      padding: var(--spacingVerticalM) var(--spacingHorizontalM);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke1);
+      border-radius: var(--borderRadiusMedium);
+      box-shadow: var(--shadow4);
+      text-decoration: none;
+      transition: background-color var(--durationFaster) ease, border-color var(--durationFaster) ease;
+    }
+
+    .fui-choice:hover {
+      background-color: var(--colorNeutralBackground1Hover);
+      border-color: var(--colorNeutralStrokeAccessible);
+    }
+
+    /* Type ramp: Body1Strong */
+    .fui-choice-title {
+      min-width: 0;
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    /* Type ramp: Caption1 */
+    .fui-choice-id {
+      grid-column: 1 / -1;
+      font-family: var(--fontFamilyMonospace);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+      overflow-wrap: anywhere;
+    }
+
+    /* ---------- Narrow viewports (verified down to 320px) ---------- */
+    @media (max-width: 480px) {
+      body {
+        padding: var(--spacingVerticalL) var(--spacingHorizontalS);
+      }
+
+      .fui-surface {
+        padding: var(--spacingVerticalL) var(--spacingHorizontalM);
+      }
+
+      .fui-card-header {
+        padding: var(--spacingVerticalS) var(--spacingHorizontalS) var(--spacingVerticalS) var(--spacingHorizontalM);
+      }
+
+      .fui-card-body {
+        padding: var(--spacingVerticalM) var(--spacingHorizontalM) var(--spacingVerticalS);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        transition-duration: 1ms !important;
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body class="theme-light">
+  <main class="fui-showcase">
+    <section class="fui-surface theme-light" aria-labelledby="light-heading">
+      <h1 class="fui-surface-heading" id="light-heading">Fluent 2 · Light</h1>
+
+      <figure class="fui-frame">
+        <figcaption class="fui-frame-label">Normal</figcaption>
+        <article class="fui-card" id="light-normal" aria-labelledby="light-normal-title">
+          <header class="fui-card-header">
+            <span class="fui-product">Dude</span>
+            <a class="fui-button fui-button-secondary" href="#light-chooser">Change feature</a>
+          </header>
+          <div class="fui-card-body">
+            <section class="fui-identity">
+              <h2 class="fui-title3" id="light-normal-title">Dude Canvas UI</h2>
+              <p class="fui-identifier">052-dude-canvas-ui</p>
+            </section>
+            <ol class="fui-stepper" aria-label="Lifecycle">
+              <li class="fui-step is-complete">
+                <span class="fui-step-badge" aria-hidden="true"><svg class="fui-step-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 8.3l2.7 2.7L12 5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                <span class="fui-step-label">Idea</span>
+              </li>
+              <li class="fui-step is-current" aria-current="step">
+                <span class="fui-step-badge" aria-hidden="true">2</span>
+                <span class="fui-step-label">Defined</span>
+              </li>
+              <li class="fui-step">
+                <span class="fui-step-badge" aria-hidden="true">3</span>
+                <span class="fui-step-label">Work</span>
+              </li>
+              <li class="fui-step">
+                <span class="fui-step-badge" aria-hidden="true">4</span>
+                <span class="fui-step-label">Verified</span>
+              </li>
+            </ol>
+            <section class="fui-field">
+              <span class="fui-field-label">Stage</span>
+              <p class="fui-field-value"><span class="fui-badge fui-badge-brand"><svg class="fui-badge-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 2.4l5.6 5.6L8 13.6 2.4 8z" fill="currentColor"/></svg><span>Defined</span></span></p>
+            </section>
+            <section class="fui-field">
+              <span class="fui-field-label">Next step</span>
+              <p class="fui-field-value fui-body-strong">Review D1-D3 research, then accept it</p>
+              <p class="fui-why"><span class="fui-why-label">Why:</span> All 13 tasks are open and none has started. This review gates every mock and code task.</p>
+            </section>
+            <section class="fui-field">
+              <span class="fui-field-label">Attention</span>
+              <div class="fui-attention">
+                <div class="fui-messagebar fui-messagebar-warning">
+                  <span class="fui-messagebar-icon" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M7.7 7.6a2.35 2.35 0 1 1 3.15 2.25c-.62.24-.95.72-.95 1.35v.35" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="10" cy="14.05" r="1" fill="currentColor"/></svg></span>
+                  <p class="fui-messagebar-body">1 unanswered question</p>
+                </div>
+                <div class="fui-messagebar fui-messagebar-success">
+                  <span class="fui-messagebar-icon" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.3 10.3l2.55 2.55 5-5.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <p class="fui-messagebar-body">No blockers</p>
+                </div>
+              </div>
+            </section>
+            <div class="fui-freshness">
+              <span class="fui-caption">Read just now</span>
+              <button class="fui-button fui-button-secondary" type="button" onclick="window.location.reload()">Refresh</button>
+            </div>
+            <details class="fui-details">
+              <summary class="fui-summary"><svg class="fui-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 3.4L10.6 8 6 12.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Source details</span></summary>
+              <ul class="fui-source-list">
+                <li>Authority: Definition Only</li>
+                <li>Idea: .dude/ideas/052-dude-canvas-ui.md</li>
+                <li>Spec: .dude/specs/052-dude-canvas-ui/spec.md</li>
+                <li>Tasks: .dude/specs/052-dude-canvas-ui/tasks.md</li>
+                <li>Tasks: 13 open, 0 started</li>
+              </ul>
+            </details>
+          </div>
+        </article>
+      </figure>
+
+      <figure class="fui-frame">
+        <figcaption class="fui-frame-label">Blocked</figcaption>
+        <article class="fui-card" id="light-blocked" aria-labelledby="light-blocked-title">
+          <header class="fui-card-header">
+            <span class="fui-product">Dude</span>
+            <a class="fui-button fui-button-secondary" href="#light-chooser">Change feature</a>
+          </header>
+          <div class="fui-card-body">
+            <section class="fui-identity">
+              <h2 class="fui-title3" id="light-blocked-title">Dude Canvas UI</h2>
+              <p class="fui-identifier">052-dude-canvas-ui</p>
+            </section>
+            <ol class="fui-stepper" aria-label="Lifecycle">
+              <li class="fui-step is-complete">
+                <span class="fui-step-badge" aria-hidden="true"><svg class="fui-step-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 8.3l2.7 2.7L12 5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                <span class="fui-step-label">Idea</span>
+              </li>
+              <li class="fui-step is-current" aria-current="step">
+                <span class="fui-step-badge" aria-hidden="true">2</span>
+                <span class="fui-step-label">Defined</span>
+              </li>
+              <li class="fui-step">
+                <span class="fui-step-badge" aria-hidden="true">3</span>
+                <span class="fui-step-label">Work</span>
+              </li>
+              <li class="fui-step">
+                <span class="fui-step-badge" aria-hidden="true">4</span>
+                <span class="fui-step-label">Verified</span>
+              </li>
+            </ol>
+            <section class="fui-field">
+              <span class="fui-field-label">Stage</span>
+              <p class="fui-field-value"><span class="fui-badge fui-badge-danger"><svg class="fui-badge-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M7.13 2.3a1 1 0 0 1 1.74 0l5.05 8.9a1 1 0 0 1-.87 1.5H2.95a1 1 0 0 1-.87-1.5z" fill="currentColor"/><path d="M8 5.9v3.1" fill="none" stroke="var(--colorNeutralForegroundOnBrand)" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="10.9" r=".85" fill="var(--colorNeutralForegroundOnBrand)"/></svg><span>Blocked</span></span></p>
+            </section>
+            <section class="fui-field">
+              <span class="fui-field-label">Next step</span>
+              <p class="fui-field-value fui-body-strong">Choose a tracked feature, or restore tracking for this one</p>
+              <p class="fui-why"><span class="fui-why-label">Why:</span> Execution authority is tracked, and no tracked issue matches this feature.</p>
+            </section>
+            <section class="fui-field">
+              <span class="fui-field-label">Attention</span>
+              <div class="fui-attention">
+                <div class="fui-messagebar fui-messagebar-danger">
+                  <span class="fui-messagebar-icon" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 5.7v5.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="13.9" r="1.05" fill="currentColor"/></svg></span>
+                  <div class="fui-messagebar-body">
+                    <p class="fui-messagebar-title">contract-mismatch</p>
+                    <p class="fui-messagebar-text">Tracked board is authoritative for other work; this feature has no tracked issue.</p>
+                  </div>
+                </div>
+                <div class="fui-messagebar fui-messagebar-warning">
+                  <span class="fui-messagebar-icon" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M7.7 7.6a2.35 2.35 0 1 1 3.15 2.25c-.62.24-.95.72-.95 1.35v.35" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="10" cy="14.05" r="1" fill="currentColor"/></svg></span>
+                  <p class="fui-messagebar-body">1 unanswered question</p>
+                </div>
+              </div>
+            </section>
+            <div class="fui-freshness">
+              <span class="fui-caption">Read 4 minutes ago</span>
+              <button class="fui-button fui-button-secondary" type="button" onclick="window.location.reload()">Refresh</button>
+            </div>
+            <details class="fui-details">
+              <summary class="fui-summary"><svg class="fui-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 3.4L10.6 8 6 12.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Source details</span></summary>
+              <ul class="fui-source-list">
+                <li>Authority: Definition Only</li>
+                <li>Idea: .dude/ideas/052-dude-canvas-ui.md</li>
+                <li>Spec: .dude/specs/052-dude-canvas-ui/spec.md</li>
+                <li>Tasks: .dude/specs/052-dude-canvas-ui/tasks.md</li>
+                <li>Tasks: 13 open, 0 started</li>
+              </ul>
+            </details>
+          </div>
+        </article>
+      </figure>
+
+      <figure class="fui-frame">
+        <figcaption class="fui-frame-label">Choose a feature</figcaption>
+        <article class="fui-card" id="light-chooser" aria-labelledby="light-chooser-title">
+          <header class="fui-card-header">
+            <span class="fui-product">Dude</span>
+            <a class="fui-button fui-button-secondary" href="#light-chooser">Change feature</a>
+          </header>
+          <div class="fui-card-body">
+            <p class="fui-chooser-intro" id="light-chooser-title">Several features are active. Choose one.</p>
+            <ul class="fui-choice-list">
+                <li>
+                  <a class="fui-choice" href="#light-normal">
+                    <span class="fui-choice-title">Dude Canvas UI</span>
+                    <span class="fui-badge fui-badge-outline">Defined</span>
+                    <span class="fui-choice-id">052-dude-canvas-ui</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="fui-choice" href="#light-normal">
+                    <span class="fui-choice-title">Design-Stage Critique</span>
+                    <span class="fui-badge fui-badge-outline">Idea</span>
+                    <span class="fui-choice-id">053-design-stage-critique</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="fui-choice" href="#light-normal">
+                    <span class="fui-choice-title">Backlog Report</span>
+                    <span class="fui-badge fui-badge-outline">Work</span>
+                    <span class="fui-choice-id">025-backlog-report</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="fui-choice" href="#light-normal">
+                    <span class="fui-choice-title">Persistent Design Mockups</span>
+                    <span class="fui-badge fui-badge-outline">Verified</span>
+                    <span class="fui-choice-id">044-persistent-design-mockups</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="fui-choice" href="#light-normal">
+                    <span class="fui-choice-title">Theme-Agnostic Design Workflow</span>
+                    <span class="fui-badge fui-badge-outline">Verified</span>
+                    <span class="fui-choice-id">032-theme-agnostic-design-workflow</span>
+                  </a>
+                </li>
+            </ul>
+          </div>
+        </article>
+      </figure>
+    </section>
+
+    <section class="fui-surface theme-dark" aria-labelledby="dark-heading">
+      <h1 class="fui-surface-heading" id="dark-heading">Fluent 2 · Dark</h1>
+
+      <figure class="fui-frame">
+        <figcaption class="fui-frame-label">Normal</figcaption>
+        <article class="fui-card" id="dark-normal" aria-labelledby="dark-normal-title">
+          <header class="fui-card-header">
+            <span class="fui-product">Dude</span>
+            <a class="fui-button fui-button-secondary" href="#dark-chooser">Change feature</a>
+          </header>
+          <div class="fui-card-body">
+            <section class="fui-identity">
+              <h2 class="fui-title3" id="dark-normal-title">Dude Canvas UI</h2>
+              <p class="fui-identifier">052-dude-canvas-ui</p>
+            </section>
+            <ol class="fui-stepper" aria-label="Lifecycle">
+              <li class="fui-step is-complete">
+                <span class="fui-step-badge" aria-hidden="true"><svg class="fui-step-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 8.3l2.7 2.7L12 5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                <span class="fui-step-label">Idea</span>
+              </li>
+              <li class="fui-step is-current" aria-current="step">
+                <span class="fui-step-badge" aria-hidden="true">2</span>
+                <span class="fui-step-label">Defined</span>
+              </li>
+              <li class="fui-step">
+                <span class="fui-step-badge" aria-hidden="true">3</span>
+                <span class="fui-step-label">Work</span>
+              </li>
+              <li class="fui-step">
+                <span class="fui-step-badge" aria-hidden="true">4</span>
+                <span class="fui-step-label">Verified</span>
+              </li>
+            </ol>
+            <section class="fui-field">
+              <span class="fui-field-label">Stage</span>
+              <p class="fui-field-value"><span class="fui-badge fui-badge-brand"><svg class="fui-badge-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 2.4l5.6 5.6L8 13.6 2.4 8z" fill="currentColor"/></svg><span>Defined</span></span></p>
+            </section>
+            <section class="fui-field">
+              <span class="fui-field-label">Next step</span>
+              <p class="fui-field-value fui-body-strong">Review D1-D3 research, then accept it</p>
+              <p class="fui-why"><span class="fui-why-label">Why:</span> All 13 tasks are open and none has started. This review gates every mock and code task.</p>
+            </section>
+            <section class="fui-field">
+              <span class="fui-field-label">Attention</span>
+              <div class="fui-attention">
+                <div class="fui-messagebar fui-messagebar-warning">
+                  <span class="fui-messagebar-icon" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M7.7 7.6a2.35 2.35 0 1 1 3.15 2.25c-.62.24-.95.72-.95 1.35v.35" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="10" cy="14.05" r="1" fill="currentColor"/></svg></span>
+                  <p class="fui-messagebar-body">1 unanswered question</p>
+                </div>
+                <div class="fui-messagebar fui-messagebar-success">
+                  <span class="fui-messagebar-icon" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.3 10.3l2.55 2.55 5-5.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <p class="fui-messagebar-body">No blockers</p>
+                </div>
+              </div>
+            </section>
+            <div class="fui-freshness">
+              <span class="fui-caption">Read just now</span>
+              <button class="fui-button fui-button-secondary" type="button" onclick="window.location.reload()">Refresh</button>
+            </div>
+            <details class="fui-details">
+              <summary class="fui-summary"><svg class="fui-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 3.4L10.6 8 6 12.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Source details</span></summary>
+              <ul class="fui-source-list">
+                <li>Authority: Definition Only</li>
+                <li>Idea: .dude/ideas/052-dude-canvas-ui.md</li>
+                <li>Spec: .dude/specs/052-dude-canvas-ui/spec.md</li>
+                <li>Tasks: .dude/specs/052-dude-canvas-ui/tasks.md</li>
+                <li>Tasks: 13 open, 0 started</li>
+              </ul>
+            </details>
+          </div>
+        </article>
+      </figure>
+
+      <figure class="fui-frame">
+        <figcaption class="fui-frame-label">Blocked</figcaption>
+        <article class="fui-card" id="dark-blocked" aria-labelledby="dark-blocked-title">
+          <header class="fui-card-header">
+            <span class="fui-product">Dude</span>
+            <a class="fui-button fui-button-secondary" href="#dark-chooser">Change feature</a>
+          </header>
+          <div class="fui-card-body">
+            <section class="fui-identity">
+              <h2 class="fui-title3" id="dark-blocked-title">Dude Canvas UI</h2>
+              <p class="fui-identifier">052-dude-canvas-ui</p>
+            </section>
+            <ol class="fui-stepper" aria-label="Lifecycle">
+              <li class="fui-step is-complete">
+                <span class="fui-step-badge" aria-hidden="true"><svg class="fui-step-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 8.3l2.7 2.7L12 5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                <span class="fui-step-label">Idea</span>
+              </li>
+              <li class="fui-step is-current" aria-current="step">
+                <span class="fui-step-badge" aria-hidden="true">2</span>
+                <span class="fui-step-label">Defined</span>
+              </li>
+              <li class="fui-step">
+                <span class="fui-step-badge" aria-hidden="true">3</span>
+                <span class="fui-step-label">Work</span>
+              </li>
+              <li class="fui-step">
+                <span class="fui-step-badge" aria-hidden="true">4</span>
+                <span class="fui-step-label">Verified</span>
+              </li>
+            </ol>
+            <section class="fui-field">
+              <span class="fui-field-label">Stage</span>
+              <p class="fui-field-value"><span class="fui-badge fui-badge-danger"><svg class="fui-badge-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M7.13 2.3a1 1 0 0 1 1.74 0l5.05 8.9a1 1 0 0 1-.87 1.5H2.95a1 1 0 0 1-.87-1.5z" fill="currentColor"/><path d="M8 5.9v3.1" fill="none" stroke="var(--colorNeutralForegroundOnBrand)" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="10.9" r=".85" fill="var(--colorNeutralForegroundOnBrand)"/></svg><span>Blocked</span></span></p>
+            </section>
+            <section class="fui-field">
+              <span class="fui-field-label">Next step</span>
+              <p class="fui-field-value fui-body-strong">Choose a tracked feature, or restore tracking for this one</p>
+              <p class="fui-why"><span class="fui-why-label">Why:</span> Execution authority is tracked, and no tracked issue matches this feature.</p>
+            </section>
+            <section class="fui-field">
+              <span class="fui-field-label">Attention</span>
+              <div class="fui-attention">
+                <div class="fui-messagebar fui-messagebar-danger">
+                  <span class="fui-messagebar-icon" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 5.7v5.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="13.9" r="1.05" fill="currentColor"/></svg></span>
+                  <div class="fui-messagebar-body">
+                    <p class="fui-messagebar-title">contract-mismatch</p>
+                    <p class="fui-messagebar-text">Tracked board is authoritative for other work; this feature has no tracked issue.</p>
+                  </div>
+                </div>
+                <div class="fui-messagebar fui-messagebar-warning">
+                  <span class="fui-messagebar-icon" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M7.7 7.6a2.35 2.35 0 1 1 3.15 2.25c-.62.24-.95.72-.95 1.35v.35" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="10" cy="14.05" r="1" fill="currentColor"/></svg></span>
+                  <p class="fui-messagebar-body">1 unanswered question</p>
+                </div>
+              </div>
+            </section>
+            <div class="fui-freshness">
+              <span class="fui-caption">Read 4 minutes ago</span>
+              <button class="fui-button fui-button-secondary" type="button" onclick="window.location.reload()">Refresh</button>
+            </div>
+            <details class="fui-details">
+              <summary class="fui-summary"><svg class="fui-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 3.4L10.6 8 6 12.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Source details</span></summary>
+              <ul class="fui-source-list">
+                <li>Authority: Definition Only</li>
+                <li>Idea: .dude/ideas/052-dude-canvas-ui.md</li>
+                <li>Spec: .dude/specs/052-dude-canvas-ui/spec.md</li>
+                <li>Tasks: .dude/specs/052-dude-canvas-ui/tasks.md</li>
+                <li>Tasks: 13 open, 0 started</li>
+              </ul>
+            </details>
+          </div>
+        </article>
+      </figure>
+
+      <figure class="fui-frame">
+        <figcaption class="fui-frame-label">Choose a feature</figcaption>
+        <article class="fui-card" id="dark-chooser" aria-labelledby="dark-chooser-title">
+          <header class="fui-card-header">
+            <span class="fui-product">Dude</span>
+            <a class="fui-button fui-button-secondary" href="#dark-chooser">Change feature</a>
+          </header>
+          <div class="fui-card-body">
+            <p class="fui-chooser-intro" id="dark-chooser-title">Several features are active. Choose one.</p>
+            <ul class="fui-choice-list">
+                <li>
+                  <a class="fui-choice" href="#dark-normal">
+                    <span class="fui-choice-title">Dude Canvas UI</span>
+                    <span class="fui-badge fui-badge-outline">Defined</span>
+                    <span class="fui-choice-id">052-dude-canvas-ui</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="fui-choice" href="#dark-normal">
+                    <span class="fui-choice-title">Design-Stage Critique</span>
+                    <span class="fui-badge fui-badge-outline">Idea</span>
+                    <span class="fui-choice-id">053-design-stage-critique</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="fui-choice" href="#dark-normal">
+                    <span class="fui-choice-title">Backlog Report</span>
+                    <span class="fui-badge fui-badge-outline">Work</span>
+                    <span class="fui-choice-id">025-backlog-report</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="fui-choice" href="#dark-normal">
+                    <span class="fui-choice-title">Persistent Design Mockups</span>
+                    <span class="fui-badge fui-badge-outline">Verified</span>
+                    <span class="fui-choice-id">044-persistent-design-mockups</span>
+                  </a>
+                </li>
+                <li>
+                  <a class="fui-choice" href="#dark-normal">
+                    <span class="fui-choice-title">Theme-Agnostic Design Workflow</span>
+                    <span class="fui-badge fui-badge-outline">Verified</span>
+                    <span class="fui-choice-id">032-theme-agnostic-design-workflow</span>
+                  </a>
+                </li>
+            </ul>
+          </div>
+        </article>
+      </figure>
+    </section>
+  </main>
+</body>
+</html>

@@ -6,7 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { inventoryDefinedFeatures, resolveFeatureOwner } from './feature.mjs';
+import {
+  inventoryDefinedFeatures,
+  inventoryLifecycleIdentities,
+  resolveFeatureOwner,
+  resolveIdeaSelector,
+  selectLifecycleIdeaSummary,
+} from './feature.mjs';
 
 const MODULE = fileURLToPath(new URL('./feature.mjs', import.meta.url));
 
@@ -57,6 +63,28 @@ function snapshot(root) {
   }
   visit(root, '');
   return entries;
+}
+
+/**
+ * Instrument synchronous reads before the operation starts, so a bounded
+ * inventory cannot be mistaken for one that was only observed afterwards.
+ * @template T
+ * @param {() => T} operation
+ * @returns {{ result: T, readPaths: string[] }}
+ */
+function observeReadPaths(operation) {
+  const originalReadFileSync = fs.readFileSync;
+  /** @type {string[]} */
+  const readPaths = [];
+  fs.readFileSync = function observedRead(file, ...args) {
+    readPaths.push(path.resolve(String(file)));
+    return originalReadFileSync.call(fs, file, ...args);
+  };
+  try {
+    return { result: operation(), readPaths };
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+  }
 }
 
 test('inventory returns exact records sorted by specPath then ideaPath', () => {
@@ -623,5 +651,325 @@ test('resolve returns the owner by exact spec_path when depends-on is present', 
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('summary selection exposes one ordered eligible chooser inventory for exact, automatic, and ambiguous paths without package-document reads', () => {
+  const root = temporaryRoot();
+  const automaticRoot = temporaryRoot();
+  try {
+    // Arrange
+    define(root, '001', 'selected');
+    write(root, '.dude/ideas/002-draft.md', ledger('draft', '', 'draft'));
+    define(root, '003', 'other');
+    write(root, '.dude/ideas/004-resolved.md', ledger('resolved', '', 'resolved'));
+    write(root, '.dude/specs/001-selected/tasks.md', '- [ ] T001@aaaaaaaa Selected task\n');
+    write(root, '.dude/specs/003-other/tasks.md', '- [ ] T001@bbbbbbbb Other task\n');
+    define(automaticRoot, '005', 'only');
+    const packageDocuments = [
+      '.dude/specs/001-selected/spec.md',
+      '.dude/specs/001-selected/tasks.md',
+      '.dude/specs/003-other/spec.md',
+      '.dude/specs/003-other/tasks.md',
+    ].map((relativePath) => path.resolve(root, relativePath)).concat([
+      path.resolve(automaticRoot, '.dude/specs/005-only/spec.md'),
+      path.resolve(automaticRoot, '.dude/specs/005-only/tasks.md'),
+    ]);
+
+    // Act
+    const observed = observeReadPaths(() => ({
+      ambiguous: selectLifecycleIdeaSummary({ root }),
+      automatic: selectLifecycleIdeaSummary({ root: automaticRoot }),
+      automaticExact: selectLifecycleIdeaSummary({ root: automaticRoot, target: 'only' }),
+      exact: selectLifecycleIdeaSummary({
+        root,
+        target: '.dude/ideas/001-selected.md',
+      }),
+    }));
+
+    // Assert
+    assert.deepEqual(observed.result.exact.idea, {
+      ideaPath: '.dude/ideas/001-selected.md',
+      number: '001',
+      numberValue: 1,
+      slug: 'selected',
+      status: 'defined',
+      specPath: '.dude/specs/001-selected/spec.md',
+    });
+    assert.deepEqual(observed.result.exact.owner, {
+      ideaPath: '.dude/ideas/001-selected.md',
+      specPath: '.dude/specs/001-selected/spec.md',
+    });
+    assert.equal(observed.result.exact.explicit, true);
+    assert.equal(observed.result.ambiguous.idea, null);
+    assert.equal(observed.result.ambiguous.explicit, false);
+    assert.equal(observed.result.automatic.idea?.slug, 'only');
+    assert.equal(observed.result.automatic.explicit, false);
+    const eligiblePaths = [
+      '.dude/ideas/001-selected.md',
+      '.dude/ideas/002-draft.md',
+      '.dude/ideas/003-other.md',
+    ];
+    assert.deepEqual(
+      observed.result.exact.choices.map((choice) => choice.ideaPath),
+      eligiblePaths,
+      'eligible choices retain safe source order',
+    );
+    assert.deepEqual(
+      observed.result.ambiguous.choices,
+      observed.result.exact.choices,
+      'exact and ambiguous success expose the same navigation inventory',
+    );
+    assert.deepEqual(
+      observed.result.automatic.choices.map((choice) => choice.ideaPath),
+      ['.dude/ideas/005-only.md'],
+      'automatic selection retains its sole eligible navigation choice',
+    );
+    assert.deepEqual(
+      observed.result.automatic.choices,
+      observed.result.automaticExact.choices,
+      'automatic and exact success expose the same eligible inventory',
+    );
+    assert.equal(
+      observed.result.exact.choices.some((choice) => choice.slug === 'resolved'),
+      false,
+      'resolved ideas are never navigation choices',
+    );
+    for (const result of Object.values(observed.result)) {
+      assert.deepEqual(result.diagnostics, [], 'a safe summary has no diagnostics');
+    }
+    assert.deepEqual(
+      observed.readPaths.filter((candidate) => packageDocuments.includes(candidate)),
+      [],
+      'summary selection must defer all package documents until its caller selects an owner',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(automaticRoot, { recursive: true, force: true });
+  }
+});
+
+test('summary selection fails closed for affected invalid ownership and retains a valid chooser', () => {
+  const cases = [
+    {
+      name: 'duplicate defined owner',
+      arrange(root) {
+        define(root, '001', 'alpha');
+        write(root, '.dude/ideas/002-beta.md', ledger('defined', '.dude/specs/001-alpha/spec.md', 'beta'));
+      },
+      target: 'alpha',
+      codes: ['FEATURE_OWNER_DUPLICATE', 'FEATURE_OWNER_IDENTITY_MISMATCH'],
+    },
+    {
+      name: 'defined idea without a package',
+      arrange(root) {
+        write(root, '.dude/ideas/001-orphan.md', ledger('defined', '.dude/specs/001-orphan/spec.md', 'orphan'));
+      },
+      target: 'orphan',
+      codes: ['FEATURE_OWNER_NOT_FOUND'],
+    },
+    {
+      name: 'idea and package identity mismatch',
+      arrange(root) {
+        write(root, '.dude/specs/002-package/spec.md', '# package\n');
+        write(root, '.dude/ideas/001-owner.md', ledger('defined', '.dude/specs/002-package/spec.md', 'owner'));
+      },
+      target: 'owner',
+      codes: ['FEATURE_OWNER_IDENTITY_MISMATCH'],
+    },
+    {
+      name: 'ambiguous exact slug selector',
+      arrange(root) {
+        write(root, '.dude/ideas/001-duplicate.md', ledger('draft', '', 'duplicate'));
+        write(root, '.dude/ideas/002-duplicate.md', ledger('draft', '', 'duplicate'));
+      },
+      target: 'duplicate',
+      codes: ['FEATURE_IDEA_SLUG_DUPLICATE'],
+    },
+  ];
+
+  // Arrange, Act, Assert
+  for (const fixture of cases) {
+    const root = temporaryRoot();
+    try {
+      fixture.arrange(root);
+      const result = selectLifecycleIdeaSummary({ root, target: fixture.target });
+      assert.equal(result.idea, null, fixture.name);
+      assert.equal(result.owner, null, fixture.name);
+      for (const code of fixture.codes) {
+        assert.ok(result.diagnostics.some((diagnostic) => diagnostic.code === code), `${fixture.name}: ${code}`);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  const root = temporaryRoot();
+  try {
+    write(root, '.dude/ideas/001-alpha.md', ledger('draft', '', 'alpha'));
+    write(root, '.dude/ideas/002-beta.md', ledger('draft', '', 'beta'));
+
+    const result = selectLifecycleIdeaSummary({ root });
+
+    assert.equal(result.explicit, false);
+    assert.equal(result.idea, null);
+    assert.equal(result.owner, null);
+    assert.deepEqual(result.diagnostics, []);
+    assert.deepEqual(result.choices.map((choice) => choice.ideaPath), [
+      '.dude/ideas/001-alpha.md',
+      '.dude/ideas/002-beta.md',
+    ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('full-inventory APIs retain strict package-document validation after bounded selection was added', () => {
+  const root = temporaryRoot();
+  try {
+    // Arrange
+    define(root, '001', 'valid');
+    fs.mkdirSync(path.join(root, '.dude/specs/002-missing-spec'), { recursive: true });
+
+    // Act
+    const full = inventoryLifecycleIdentities({ root });
+    const selector = resolveIdeaSelector({ root, slug: 'valid' });
+    const owner = resolveFeatureOwner({ root, specPath: '.dude/specs/001-valid/spec.md' });
+
+    // Assert
+    assert.ok(full.diagnostics.some((diagnostic) => (
+      diagnostic.code === 'FEATURE_PACKAGE_SPEC_MISSING'
+      && diagnostic.path === '.dude/specs/002-missing-spec/spec.md'
+    )));
+    assert.equal(selector.idea, null, 'strict selector must refuse a globally incomplete package inventory');
+    assert.ok(selector.diagnostics.some((diagnostic) => diagnostic.code === 'FEATURE_PACKAGE_SPEC_MISSING'));
+    assert.equal(owner.owner, null, 'strict owner resolver must refuse a globally incomplete package inventory');
+    assert.ok(owner.diagnostics.some((diagnostic) => diagnostic.code === 'FEATURE_PACKAGE_SPEC_MISSING'));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 Canvas summary scopes unrelated malformed ledgers and orphan packages while workflow readers remain strict', () => {
+  // Arrange
+  const root = temporaryRoot();
+  try {
+    define(root, '001', 'healthy');
+    const ideaPath = '.dude/ideas/001-healthy.md';
+    const specPath = '.dude/specs/001-healthy/spec.md';
+    const malformedPath = '.dude/ideas/002-malformed.md';
+    write(root, malformedPath, 'not frontmatter\n');
+    write(root, '.dude/specs/003-orphan/spec.md', '# Orphan\n');
+    const before = snapshot(root);
+
+    // Act
+    const observed = observeReadPaths(() => ({
+      exactSlug: selectLifecycleIdeaSummary({ root, target: 'healthy' }),
+      exactPath: selectLifecycleIdeaSummary({ root, target: ideaPath }),
+      omitted: selectLifecycleIdeaSummary({ root }),
+    }));
+    const strictSelector = resolveIdeaSelector({ root, slug: 'healthy' });
+    const strictOwner = resolveFeatureOwner({ root, specPath });
+
+    // Assert
+    for (const selected of [observed.result.exactSlug, observed.result.exactPath]) {
+      assert.equal(selected.idea?.ideaPath, ideaPath);
+      assert.deepEqual(selected.owner, { ideaPath, specPath });
+      assert.deepEqual(selected.contexts.map((context) => context.idea.ideaPath), [ideaPath]);
+      assert.deepEqual(selected.contexts[0].diagnostics, []);
+      assert.deepEqual(selected.choices.map((idea) => idea.ideaPath), [ideaPath]);
+      assert.ok(selected.diagnostics.some((diagnostic) => (
+        diagnostic.path === malformedPath && diagnostic.code === 'FEATURE_FRONTMATTER_MALFORMED'
+      )));
+      assert.ok(selected.diagnostics.some((diagnostic) => diagnostic.code === 'FEATURE_OWNER_NOT_FOUND'));
+    }
+    assert.equal(observed.result.omitted.idea, null, 'one healthy choice from incomplete inventory is not a sole-candidate selection');
+    assert.equal(observed.result.omitted.owner, null);
+    assert.deepEqual(observed.result.omitted.choices, observed.result.exactSlug.choices);
+    assert.deepEqual(observed.readPaths.filter((file) => file.startsWith(path.join(root, '.dude/specs/'))), []);
+    assert.equal(strictSelector.idea, null, 'Canvas summary does not relax the mutation selector');
+    assert.equal(strictOwner.owner, null, 'Canvas summary does not relax exact workflow ownership');
+    assert.ok(strictSelector.diagnostics.some((diagnostic) => diagnostic.code === 'FEATURE_FRONTMATTER_MALFORMED'));
+    assert.ok(strictOwner.diagnostics.some((diagnostic) => diagnostic.code === 'FEATURE_FRONTMATTER_MALFORMED'));
+    assert.deepEqual(snapshot(root), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 duplicate identities taint every affected summary context without suppressing an unrelated healthy owner', () => {
+  const fixtures = [
+    {
+      name: 'duplicate exact ownership',
+      arrange(root) {
+        define(root, '001', 'owned');
+        write(root, '.dude/ideas/002-claimant.md', ledger('defined', '.dude/specs/001-owned/spec.md', 'claimant'));
+      },
+      paths: ['.dude/ideas/001-owned.md', '.dude/ideas/002-claimant.md'],
+      code: 'FEATURE_OWNER_DUPLICATE',
+    },
+    {
+      name: 'duplicate idea slug',
+      arrange(root) {
+        write(root, '.dude/ideas/001-shared.md', ledger('draft', '', 'shared'));
+        write(root, '.dude/ideas/002-shared.md', ledger('draft', '', 'shared'));
+      },
+      paths: ['.dude/ideas/001-shared.md', '.dude/ideas/002-shared.md'],
+      code: 'FEATURE_IDEA_SLUG_DUPLICATE',
+    },
+    {
+      name: 'duplicate idea lifecycle number',
+      arrange(root) {
+        write(root, '.dude/ideas/001-first.md', ledger('draft', '', 'first'));
+        write(root, '.dude/ideas/001-second.md', ledger('draft', '', 'second'));
+      },
+      paths: ['.dude/ideas/001-first.md', '.dude/ideas/001-second.md'],
+      code: 'FEATURE_IDEA_NUMBER_DUPLICATE',
+    },
+    {
+      name: 'duplicate package lifecycle number',
+      arrange(root) {
+        define(root, '001', 'first');
+        write(root, '.dude/specs/001-second/spec.md', '# Colliding package\n');
+      },
+      paths: ['.dude/ideas/001-first.md'],
+      code: 'FEATURE_PACKAGE_NUMBER_DUPLICATE',
+    },
+  ];
+  // Synchronous fixtures use no shared process mocks.
+  for (const fixture of fixtures) {
+    // Arrange
+    const root = temporaryRoot();
+    try {
+      fixture.arrange(root);
+      define(root, '009', 'healthy');
+      const healthyPath = '.dude/ideas/009-healthy.md';
+      const before = snapshot(root);
+
+      // Act
+      const result = selectLifecycleIdeaSummary({ root, target: 'healthy' });
+      const affected = fixture.paths.map((target) => selectLifecycleIdeaSummary({ root, target }));
+      const strict = resolveFeatureOwner({ root, specPath: '.dude/specs/009-healthy/spec.md' });
+
+      // Assert
+      assert.equal(result.idea?.ideaPath, healthyPath, fixture.name);
+      assert.deepEqual(result.choices.map((choice) => choice.ideaPath), [healthyPath], fixture.name);
+      assert.deepEqual(result.contexts.find((context) => context.idea.ideaPath === healthyPath).diagnostics, []);
+      for (const ideaPath of fixture.paths) {
+        const context = result.contexts.find((candidate) => candidate.idea.ideaPath === ideaPath);
+        assert.ok(context, `${fixture.name}: retain affected source identity for diagnosis`);
+        assert.equal(context.owner, null, fixture.name);
+        assert.ok(context.diagnostics.some((diagnostic) => diagnostic.code === fixture.code), `${fixture.name}: ${ideaPath}`);
+      }
+      for (const refused of affected) {
+        assert.equal(refused.idea, null, fixture.name);
+        assert.equal(refused.owner, null, fixture.name);
+        assert.deepEqual(refused.choices.map((choice) => choice.ideaPath), [healthyPath], fixture.name);
+      }
+      assert.equal(strict.owner, null, `${fixture.name}: workflow owner gates remain globally strict`);
+      assert.deepEqual(snapshot(root), before);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   }
 });

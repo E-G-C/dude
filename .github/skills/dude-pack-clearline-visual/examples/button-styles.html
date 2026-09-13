@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Clearline buttons</title>
+  <link rel="stylesheet" href="../tokens/clearline.css" />
+  <style>
+    body { margin: var(--cl-space-0); padding: var(--cl-space-6); }
+    .group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--cl-space-3);
+      margin-bottom: var(--cl-space-5);
+    }
+    h2 { margin-bottom: var(--cl-space-2); }
+  </style>
+</head>
+<body class="cl-brand">
+  <h2 class="cl-h2">Default 40 px controls</h2>
+  <p>Buttons and inputs have a 40 px outer height, including borders and padding.</p>
+  <div class="group">
+    <button class="cl-btn cl-btn-primary">Primary</button>
+    <button class="cl-btn cl-btn-secondary">Secondary</button>
+    <button class="cl-btn cl-btn-subtle">Subtle</button>
+  </div>
+
+  <h2 class="cl-h2">Focus state</h2>
+  <p style="color: var(--cl-text-muted);">Tab into each button to inspect the focus ring.</p>
+  <div class="group">
+    <button class="cl-btn cl-btn-primary">Primary</button>
+    <button class="cl-btn cl-btn-secondary">Secondary</button>
+  </div>
+
+  <h2 class="cl-h2">Compact control</h2>
+  <div class="group">
+    <button class="cl-btn cl-btn-primary" style="height: var(--cl-control-height-compact);">Save</button>
+    <button class="cl-btn cl-btn-secondary" style="height: var(--cl-control-height-compact);">Cancel</button>
+  </div>
+
+  <h2 class="cl-h2">Input boundary</h2>
+  <div class="group">
+    <input class="cl-input" aria-label="Project name" value="Clearline" />
+  </div>
+</body>
+</html>

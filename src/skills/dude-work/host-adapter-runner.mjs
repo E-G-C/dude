@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
+import { types as utilTypes } from 'node:util';
 
 import { resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
 import { readTaskState } from '../dude-engine/lib/task-state.mjs';
@@ -64,6 +65,60 @@ const RUNNER_OWNED_EXCHANGE_REASONS = new Set([
   'challenge-response-invalid',
   'exchange-context-lost',
 ]);
+const EXCHANGE_FAILURE_DETAIL = 'exchange-failed';
+const CHALLENGE_ENVELOPE_INVALID_DETAIL = 'challenge-response-envelope';
+
+// A model-produced Assessment is untrusted input, so a rejection may report only
+// this runner-owned failure class. Validator messages, rejected target text,
+// evidence bytes, and hashes never reach a result.
+const ASSESSMENT_INVALID_DETAIL = 'Assessment: invalid-contract';
+
+/**
+ * Capture only top-level enumerable data properties without invoking caller
+ * accessors. Payload values remain raw so their authoritative validator is the
+ * first consumer.
+ * @param {unknown} value @param {string[]} required @param {string[]} optional
+ * @param {string} label
+ */
+function captureExactDataRecord(value, required, optional, label) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)
+    || utilTypes.isProxy(value)) {
+    throw new TypeError(`${label} must be a plain data object`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${label} must be a plain data object`);
+  }
+  const allowed = new Set([...required, ...optional]);
+  const captured = {};
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== 'string' || !allowed.has(key)) {
+      throw new TypeError(`${label} contains an unknown field`);
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !('value' in descriptor)) {
+      throw new TypeError(`${label} fields must be enumerable data properties`);
+    }
+    captured[key] = descriptor.value;
+  }
+  for (const key of required) {
+    if (!Object.hasOwn(captured, key)) throw new TypeError(`${label} is missing a field`);
+  }
+  return captured;
+}
+
+/** @param {unknown} failure */
+function exchangeFailureReason(failure) {
+  if (failure === null || typeof failure !== 'object' || utilTypes.isProxy(failure)) {
+    return 'exchange-context-lost';
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(failure, 'code');
+  return descriptor && 'value' in descriptor
+    && typeof descriptor.value === 'string'
+    && RUNNER_OWNED_EXCHANGE_REASONS.has(descriptor.value)
+    ? descriptor.value
+    : 'exchange-context-lost';
+}
 
 /** @param {string} specPath */
 function tasksPathForSpec(specPath) {
@@ -359,7 +414,7 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
     throw new TypeError('HostAdapterRunnerRequest.state must use autonomous policy');
   }
-  let initialAssessment = Object.hasOwn(request, 'assessment') ? clone(request.assessment) : null;
+  let initialAssessment = Object.hasOwn(request, 'assessment') ? request.assessment : null;
   let initialSpecialistResult = Object.hasOwn(request, 'specialistResult')
     ? clone(request.specialistResult)
     : null;
@@ -383,8 +438,8 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   const steps = [];
   /** @type {unknown[]} */
   const currentRun = [];
-  /** @type {{verification:Record<string, unknown>[],review:Record<string, unknown>[]}} */
-  const observedStreams = { verification: [], review: [] };
+  /** @type {{verification:Record<string, unknown>[],review:Record<string, unknown>[],lint:Record<string, unknown>[]}} */
+  const observedStreams = { verification: [], review: [], lint: [] };
   /** @type {string|null} */
   let occurrenceIdentity = null;
   /** @type {ReturnType<typeof createHostAdapter>|null} */
@@ -528,21 +583,54 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   });
   const runtimeInput = () => {
     const input = transportInput(rawInput());
-    if (observedStreams.verification.length > 0 || observedStreams.review.length > 0) {
-      input.verification = observedStreams.verification;
-      input.review = observedStreams.review;
+    for (const field of ['verification', 'review', 'lint']) {
+      if (observedStreams[field].length > 0) input[field] = observedStreams[field];
     }
     return input;
   };
 
-  /** @param {unknown} value @param {Record<string, unknown>} inspection */
-  const boundAssessment = (value, inspection) => {
+  /**
+   * Classify one untrusted Assessment against the outstanding target and the
+   * exact current Inspection. `validateAssessment` is the first consumer and
+   * sole authority. After it accepts the raw value, `structuredClone` captures
+   * one inert representation and that exact representation is fully revalidated
+   * before acceptance. Staleness is claimed only when the raw validation failure
+   * is the known hash mismatch and replacing only that field in an inert
+   * representation makes the whole Assessment valid.
+   * @param {unknown} value @param {Record<string, unknown>} inspection
+   * @returns {{status:'valid',assessment:Record<string, unknown>}
+   *   |{status:'stale'}|{status:'invalid',detail:string}}
+   */
+  const classifyAssessment = (value, inspection) => {
+    let valid = true;
     try {
       validateAssessment(target, inspection, value);
-      return /** @type {Record<string, unknown>} */ (clone(value));
     } catch {
-      return null;
+      valid = false;
     }
+    if (valid) {
+      try {
+        const captured = structuredClone(value);
+        validateAssessment(target, inspection, captured);
+        return { status: 'valid', assessment: /** @type {Record<string, unknown>} */ (captured) };
+      } catch {
+        return { status: 'invalid', detail: ASSESSMENT_INVALID_DETAIL };
+      }
+    }
+    try {
+      // Standalone validation proves the raw Assessment has no defect except a
+      // possible binding mismatch. Cloning then rebinding only evidenceHash
+      // proves whether that mismatch is the sole defect without inspecting the
+      // untrusted thrown value or invoking an Assessment accessor.
+      validateAssessment(value);
+      const rebound = /** @type {Record<string, unknown>} */ (structuredClone(value));
+      rebound.evidenceHash = inspection.evidenceHash;
+      validateAssessment(target, inspection, rebound);
+      return { status: 'stale' };
+    } catch {
+      // Any structural, cloning, or rebound failure is malformed, not stale.
+    }
+    return { status: 'invalid', detail: ASSESSMENT_INVALID_DETAIL };
   };
 
   /** @param {unknown} value */
@@ -621,13 +709,10 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     try {
       responseValue = await /** @type {Function} */ (dependencies.exchange)(clone(challenge));
     } catch (error) {
-      const code = error && typeof error === 'object' && Object.hasOwn(error, 'code')
-        ? /** @type {Record<string, unknown>} */ (error).code
-        : null;
       return {
         terminal: orphan(
-          typeof code === 'string' && RUNNER_OWNED_EXCHANGE_REASONS.has(code) ? code : 'exchange-context-lost',
-          error instanceof Error ? error.message : String(error),
+          exchangeFailureReason(error),
+          EXCHANGE_FAILURE_DETAIL,
         ),
       };
     }
@@ -636,16 +721,17 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     }
     let response;
     try {
-      response = exactRecord(
+      response = captureExactDataRecord(
         responseValue,
-        Object.keys(/** @type {Record<string, unknown>} */ (responseValue)),
+        ['version', 'type', 'challengeIdentity', 'kind'],
+        ['assessment', 'specialistResult', 'review'],
         'HostAdapterChallengeResponse',
       );
-    } catch (error) {
+    } catch {
       return {
         terminal: orphan(
           'challenge-response-invalid',
-          error instanceof Error ? error.message : String(error),
+          CHALLENGE_ENVELOPE_INVALID_DETAIL,
         ),
       };
     }
@@ -670,11 +756,11 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
           'HostAdapterChallengeCancel',
         );
         if (response.version !== 1) throw new TypeError('cancel version must be 1');
-      } catch (error) {
+      } catch {
         return {
           terminal: orphan(
             'challenge-response-invalid',
-            error instanceof Error ? error.message : String(error),
+            CHALLENGE_ENVELOPE_INVALID_DETAIL,
           ),
         };
       }
@@ -699,17 +785,17 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
       if (response.version !== 1 || response.type !== 'challenge-response') {
         throw new TypeError('challenge response must use version 1 and type challenge-response');
       }
-    } catch (error) {
+    } catch {
       return {
         terminal: orphan(
           'challenge-response-invalid',
-          error instanceof Error ? error.message : String(error),
+          CHALLENGE_ENVELOPE_INVALID_DETAIL,
         ),
       };
     }
     consumedChallenges.add(challenge.challengeIdentity);
     outstandingChallenge = null;
-    return { value: clone(response[field]) };
+    return { value: response[field] };
   };
 
   const refreshInspection = (step) => {
@@ -893,25 +979,26 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   /** @param {boolean} allowInitial */
   const requestAssessment = async (allowInitial) => {
     if (allowInitial && initialAssessment !== null) {
-      const candidate = boundAssessment(
+      const candidate = classifyAssessment(
         initialAssessment,
         /** @type {Record<string, unknown>} */ (currentInspection),
       );
       initialAssessment = null;
-      if (candidate !== null) return { value: candidate, initial: true };
+      if (candidate.status === 'valid') return { value: candidate.assessment, initial: true };
       initialSpecialistResult = null;
     }
     const response = await exchange('assessment', {
       modelPacket: modelPacket(currentInspection),
     });
     if (response.terminal) return response;
-    const assessment = boundAssessment(
+    const assessment = classifyAssessment(
       response.value,
       /** @type {Record<string, unknown>} */ (currentInspection),
     );
-    return assessment === null
+    if (assessment.status === 'valid') return { value: assessment.assessment, initial: false };
+    return assessment.status === 'stale'
       ? { terminal: orphan('challenge-response-stale', 'assessment') }
-      : { value: assessment, initial: false };
+      : { terminal: orphan('challenge-response-invalid', assessment.detail) };
   };
 
   /** @param {boolean} allowInitial @param {Record<string, unknown>} assessment */
@@ -961,6 +1048,7 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
           );
           appendUniqueRows(observedStreams.verification, input.verification);
           appendUniqueRows(observedStreams.review, input.review);
+          appendUniqueRows(observedStreams.lint, input.lint);
         }
         const output = /** @type {Function} */ (baseRuntime.invoke)(command, lowLevelRequest);
         if (output && typeof output === 'object'
@@ -1160,6 +1248,7 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
         const recordInput = runtimeInput();
         delete recordInput.verification;
         delete recordInput.review;
+        delete recordInput.lint;
         const outcome = runSemantic(
           `attempt:${attemptOrdinal}:record-attempt-result`,
           'record-attempt-result',

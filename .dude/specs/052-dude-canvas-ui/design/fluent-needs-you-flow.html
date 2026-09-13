@@ -1,0 +1,1980 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dude — Needs you flow (Fluent 2 interactive prototype)</title>
+  <!--
+    ============================================================================
+    Dude "Needs you" decision flow — Microsoft Fluent 2, interactive prototype
+    ============================================================================
+    Supporting design artifact for 052-dude-canvas-ui. NOT product source and
+    NOT the canonical preview_path. This file shows a DIFFERENT product
+    perspective from the read-only "Now" cockpit in variant-fluent.html: the
+    future interaction flow where purpose-built graphical components replace
+    routine chat iteration over the SAME active agent session.
+
+    Scope note: explicitly future product direction. It does not expand feature
+    052's I1 implementation scope.
+
+    Self-contained: no network, no CDN, no webfont, no external CSS, no React,
+    no build step. Inline SVG only. The single external URL in this file is the
+    SVG XML namespace, which is an identifier, not a fetch.
+
+    ---------------------------------------------------------------------------
+    Component mapping — what a real @fluentui/react-components v9 build renders
+    ---------------------------------------------------------------------------
+      theme wrapper .............. <FluentProvider theme={webLightTheme|webDarkTheme}>
+      panel ...................... <Card>                     (shadow8, radius 4)
+      panel header ............... <CardHeader>
+      "Now" back affordance ...... <Button appearance="subtle" icon={<ArrowLeft20Regular/>}>
+      screen titles .............. <Text as="h2"> Title3 / Subtitle2
+      summary + stop + saved ..... <MessageBar intent="info|warning|success">
+      recommendation block ....... <MessageBar intent="info"> with <MessageBarBody>
+      queue rows ................. interactive <Card onClick> inside a <List>/<ListItem>
+      "1 of 5", "Brainstorm" ..... <Badge size="medium" appearance="outline|tint">
+      "Question 1 of 5" .......... <Badge size="large" appearance="filled" color="brand">
+      "Recommended" .............. <Badge size="medium" appearance="outline" color="brand">
+      option chooser ............. <RadioGroup> + <Radio> (real fieldset/legend)
+      free-text answer ........... <Textarea> + <Field>
+      "What Dude will send" ...... <Accordion collapsible> / <AccordionItem> disclosure
+      busy indicator ............. <Spinner size="medium" label=...>
+      rules between regions ...... <Divider>
+      Send / Back / Stop / Next .. <Button appearance="primary|secondary">
+
+    ---------------------------------------------------------------------------
+    WCAG 2.2 AA — decisions taken here
+    ---------------------------------------------------------------------------
+    RESOLVED (this file deliberately does NOT repeat the known stock-Fluent
+    defect disclosed in variant-fluent.html): every INTERACTIVE control boundary
+    that is required to identify the control uses colorNeutralStrokeAccessible
+    (#616161 light / #adadad dark), not stock colorNeutralStroke1 (#d1d1d1 /
+    #666666, which measures 1.5:1 and 2.5:1 against its own surface and fails
+    WCAG 1.4.11 Non-text Contrast at 3:1). That applies to secondary/subtle
+    buttons, queue rows, radio option rows, the radio indicator itself, the
+    textarea, and the disclosure summary.
+      light  #616161 on #ffffff .............. 5.9:1   PASSES 3:1
+      dark   #adadad on #292929 ..............  6.5:1   PASSES 3:1
+    colorNeutralStroke1 / Stroke2 remain in use ONLY for decorative rules and
+    dividers, where 1.4.11 does not apply.
+
+    Contrast, computed against the actual painted background (values inherited
+    verbatim from the approved variant-fluent.html token blocks):
+      light  #242424 on #ffffff .............. 15.0:1   body text
+      light  #616161 on #ffffff ...............  5.9:1   Caption1 / Foreground3
+      light  #424242 on #ffffff ...............  9.7:1   Body1 / Foreground2
+      light  #0f6cbd on #ffffff ...............  5.0:1   brand text
+      light  #ffffff on #0f6cbd ...............  5.0:1   brand Badge, primary Button
+      light  #0e700e on #f1faf1 ...............  5.9:1   success text
+      light  #817400 on #fffef5 ...............  4.7:1   warning icon
+      light  #424242 on #f5f5f5 ...............  8.8:1   info MessageBar body
+      dark   #ffffff on #292929 .............. 14.9:1   body text
+      dark   #adadad on #292929 ...............  6.5:1   Caption1 / Foreground3
+      dark   #479ef5 on #292929 ...............  5.2:1   brand text
+      dark   #ffffff on #115ea3 ...............  6.7:1   brand Badge, primary Button
+      dark   #54b054 on #123312 ...............  5.1:1   success text
+      dark   #c8cc00 on #333100 ...............  7.7:1   warning icon
+      dark   #d6d6d6 on #141414 ..............  11.6:1   info MessageBar body
+      focus  #000000 on #ffffff / #ffffff on #292929 ... 21:1 / 14.9:1
+
+    Other AA provisions:
+      - No meaning by colour alone. Activity steps carry a distinct SHAPE and
+        the literal WORD ("Done" / "Working" / "Waiting"); MessageBars pair a
+        unique icon outline with full text; the selected radio shows a dot.
+      - Every interactive target is >= 24x24 CSS px. Buttons are 32px tall with
+        32px min-width; queue rows, radio rows and the disclosure summary are
+        larger.
+      - Focus indicator is 2px colorStrokeFocus2 with a 2px offset, never
+        removed or thinned. Tab order is DOM order. No trap, no autofocus on
+        load; screen changes move focus to the new screen heading (tabindex=-1).
+      - Async progression is announced through a polite live region; nothing is
+        described as saved before the Result screen.
+      - prefers-reduced-motion: reduce collapses transitions, stops the spinner
+        animation, and DISABLES auto-advance in favour of an explicit button.
+      - Long source paths wrap (overflow-wrap: anywhere); the panel is 380px and
+        degrades to full width at 360px with no horizontal scroll.
+    ---------------------------------------------------------------------------
+  -->
+  <style>
+    /*
+      Fluent 2 design tokens, copied verbatim from the approved
+      variant-fluent.html (which takes them from @fluentui/tokens
+      webLightTheme / webDarkTheme). FluentProvider emits theme tokens as CSS
+      custom properties named exactly like the TypeScript token keys, so these
+      names match one-for-one what a real @fluentui/react-components app
+      exposes. No token value is approximated or invented here.
+    */
+
+    /* Global (theme-invariant) tokens */
+    :root {
+      --spacingHorizontalNone: 0;
+      --spacingHorizontalXXS: 2px;
+      --spacingHorizontalXS: 4px;
+      --spacingHorizontalSNudge: 6px;
+      --spacingHorizontalS: 8px;
+      --spacingHorizontalMNudge: 10px;
+      --spacingHorizontalM: 12px;
+      --spacingHorizontalL: 16px;
+      --spacingHorizontalXL: 20px;
+      --spacingHorizontalXXL: 24px;
+      --spacingHorizontalXXXL: 32px;
+
+      --spacingVerticalNone: 0;
+      --spacingVerticalXXS: 2px;
+      --spacingVerticalXS: 4px;
+      --spacingVerticalSNudge: 6px;
+      --spacingVerticalS: 8px;
+      --spacingVerticalMNudge: 10px;
+      --spacingVerticalM: 12px;
+      --spacingVerticalL: 16px;
+      --spacingVerticalXL: 20px;
+      --spacingVerticalXXL: 24px;
+      --spacingVerticalXXXL: 32px;
+
+      --fontSizeBase100: 10px;
+      --fontSizeBase200: 12px;
+      --fontSizeBase300: 14px;
+      --fontSizeBase400: 16px;
+      --fontSizeBase500: 20px;
+      --fontSizeBase600: 24px;
+
+      --lineHeightBase100: 14px;
+      --lineHeightBase200: 16px;
+      --lineHeightBase300: 20px;
+      --lineHeightBase400: 22px;
+      --lineHeightBase500: 28px;
+      --lineHeightBase600: 32px;
+
+      --borderRadiusNone: 0;
+      --borderRadiusSmall: 2px;
+      --borderRadiusMedium: 4px;
+      --borderRadiusLarge: 6px;
+      --borderRadiusXLarge: 8px;
+      --borderRadiusCircular: 10000px;
+
+      --strokeWidthThin: 1px;
+      --strokeWidthThick: 2px;
+      --strokeWidthThicker: 3px;
+      --strokeWidthThickest: 4px;
+
+      --fontWeightRegular: 400;
+      --fontWeightMedium: 500;
+      --fontWeightSemibold: 600;
+
+      --durationFaster: 100ms;
+      --durationNormal: 200ms;
+
+      --fontFamilyBase: 'Segoe UI', 'Segoe UI Web (West European)', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif;
+      --fontFamilyMonospace: Consolas, 'Courier New', Courier, monospace;
+    }
+
+    /*
+      PRODUCT CONSTANTS — deliberately NOT Fluent tokens, carried over from the
+      approved variant with the same reasoning:
+
+        1. Panel width       --panel-width
+                             The Dude canvas surface is a fixed 380px panel. In
+                             Fluent that is a Drawer/Card layout decision, a
+                             product constraint rather than a theme value.
+
+        2. Control sizes     --button-height-medium, --badge-size-large,
+                             --badge-size-medium, --icon-size-*
+                             Fluent's medium Button is 32px tall, its Badge
+                             sizes are 16/20/24/32px, and its icons ship at
+                             12/16/20/24px. React consumers select these with
+                             size="medium" / size="large" and by icon name
+                             suffix. The numbers live inside component styles
+                             and are never exposed as tokens.
+    */
+    :root {
+      --panel-width: 380px;
+      --button-height-medium: 32px;
+      --badge-size-large: 24px;
+      --badge-size-medium: 20px;
+      --radio-indicator: 16px;
+      --icon-size-12: 12px;
+      --icon-size-16: 16px;
+      --icon-size-20: 20px;
+      --spinner-size-medium: 32px;
+    }
+
+    .theme-light {
+      --colorNeutralBackground1: #ffffff;
+      --colorNeutralBackground1Hover: #f5f5f5;
+      --colorNeutralBackground2: #fafafa;
+      --colorNeutralBackground3: #f5f5f5;
+      --colorNeutralBackground4: #f0f0f0;
+
+      --colorNeutralForeground1: #242424;
+      --colorNeutralForeground2: #424242;
+      --colorNeutralForeground3: #616161;
+      --colorNeutralForeground4: #707070;
+      --colorNeutralForegroundOnBrand: #ffffff;
+
+      --colorNeutralStroke1: #d1d1d1;
+      --colorNeutralStroke2: #e0e0e0;
+      --colorNeutralStrokeAccessible: #616161;
+
+      --colorBrandBackground: #0f6cbd;
+      --colorBrandBackgroundHover: #115ea3;
+      --colorBrandForeground1: #0f6cbd;
+      --colorBrandForeground2: #115ea3;
+      --colorCompoundBrandStroke: #0f6cbd;
+
+      --colorPaletteRedForeground1: #bc2f32;
+      --colorPaletteRedBackground1: #fdf3f4;
+      --colorPaletteRedBorder1: #f1bbbc;
+      --colorPaletteRedBorder2: #d13438;
+
+      --colorPaletteGreenForeground1: #0e700e;
+      --colorPaletteGreenBackground1: #f1faf1;
+      --colorPaletteGreenBorder1: #9fd89f;
+      --colorPaletteGreenBorder2: #107c10;
+
+      --colorPaletteYellowForeground1: #817400;
+      --colorPaletteYellowBackground1: #fffef5;
+      --colorPaletteYellowBorder1: #fde300;
+
+      --colorStrokeFocus2: #000000;
+
+      --shadow4: 0 0 2px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.14);
+      --shadow8: 0 0 2px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(0, 0, 0, 0.14);
+    }
+
+    .theme-dark {
+      --colorNeutralBackground1: #292929;
+      --colorNeutralBackground1Hover: #3d3d3d;
+      --colorNeutralBackground2: #1f1f1f;
+      --colorNeutralBackground3: #141414;
+      --colorNeutralBackground4: #0a0a0a;
+
+      --colorNeutralForeground1: #ffffff;
+      --colorNeutralForeground2: #d6d6d6;
+      --colorNeutralForeground3: #adadad;
+      --colorNeutralForeground4: #999999;
+      --colorNeutralForegroundOnBrand: #ffffff;
+
+      --colorNeutralStroke1: #666666;
+      --colorNeutralStroke2: #525252;
+      --colorNeutralStrokeAccessible: #adadad;
+
+      --colorBrandBackground: #115ea3;
+      --colorBrandBackgroundHover: #0f6cbd;
+      --colorBrandForeground1: #479ef5;
+      --colorBrandForeground2: #62abf5;
+      --colorCompoundBrandStroke: #479ef5;
+
+      --colorPaletteRedForeground1: #e37d80;
+      --colorPaletteRedBackground1: #3b2325;
+      --colorPaletteRedBorder1: #6e3033;
+      --colorPaletteRedBorder2: #d13438;
+
+      --colorPaletteGreenForeground1: #54b054;
+      --colorPaletteGreenBackground1: #123312;
+      --colorPaletteGreenBorder1: #218121;
+      --colorPaletteGreenBorder2: #107c10;
+
+      --colorPaletteYellowForeground1: #c8cc00;
+      --colorPaletteYellowBackground1: #333100;
+      --colorPaletteYellowBorder1: #817400;
+
+      --colorStrokeFocus2: #ffffff;
+
+      --shadow4: 0 0 2px rgba(0, 0, 0, 0.24), 0 2px 4px rgba(0, 0, 0, 0.28);
+      --shadow8: 0 0 2px rgba(0, 0, 0, 0.24), 0 4px 8px rgba(0, 0, 0, 0.28);
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      margin: 0;
+      padding: var(--spacingVerticalXXL) var(--spacingHorizontalL) var(--spacingVerticalXXXL);
+      font-family: var(--fontFamilyBase);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightRegular);
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground4);
+    }
+
+    /* ---------- Focus: Fluent's 2px focus indicator ---------- */
+    a:focus-visible,
+    button:focus-visible,
+    summary:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible,
+    [tabindex]:focus-visible {
+      outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2);
+      outline-offset: var(--spacingHorizontalXXS);
+      border-radius: var(--borderRadiusMedium);
+    }
+
+    .fui-visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* ======================================================================
+       OUTSIDE THE PRODUCT — prototype scaffolding.
+       Nothing in .demo-* exists in Dude. It is styled deliberately unlike the
+       Fluent panel so it cannot be mistaken for product chrome.
+       ====================================================================== */
+    .demo-shell {
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    .demo-title {
+      margin: 0 0 var(--spacingVerticalXS);
+      font-size: var(--fontSizeBase500);
+      line-height: var(--lineHeightBase500);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .demo-lede {
+      margin: 0 0 var(--spacingVerticalL);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .demo-banner {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      margin: 0 0 var(--spacingVerticalM);
+      padding: var(--spacingVerticalS) var(--spacingHorizontalM);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThick) dashed var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium);
+    }
+
+    .demo-bar {
+      margin: 0 0 var(--spacingVerticalXXL);
+      padding: var(--spacingVerticalM);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThick) dashed var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium);
+    }
+
+    .demo-bar-label {
+      display: block;
+      margin-bottom: var(--spacingVerticalM);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--colorNeutralForeground3);
+    }
+
+    .demo-group {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+    }
+
+    .demo-group + .demo-group {
+      margin-top: var(--spacingVerticalM);
+    }
+
+    .demo-group-name {
+      flex: 0 0 auto;
+      min-width: 56px;
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+    }
+
+    .demo-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--spacingHorizontalXS);
+      min-height: var(--button-height-medium);
+      min-width: var(--button-height-medium);
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalM);
+      font-family: var(--fontFamilyBase);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium);
+      cursor: pointer;
+    }
+
+    .demo-button:hover {
+      background-color: var(--colorNeutralBackground1Hover);
+    }
+
+    .demo-button[aria-pressed="true"] {
+      color: var(--colorNeutralForegroundOnBrand);
+      background-color: var(--colorBrandBackground);
+      border-color: var(--colorBrandBackground);
+    }
+
+    .demo-note {
+      margin: var(--spacingVerticalM) 0 0;
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+    }
+
+    .demo-stage {
+      display: flex;
+      justify-content: center;
+    }
+
+    .demo-footnote {
+      max-width: var(--panel-width);
+      margin: var(--spacingVerticalL) auto 0;
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+      overflow-wrap: anywhere;
+    }
+
+    /* ======================================================================
+       INSIDE THE PRODUCT — Fluent 2 panel
+       ====================================================================== */
+
+    /* Card */
+    .fui-card {
+      width: var(--panel-width);
+      max-width: 100%;
+      overflow: hidden;
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      border-radius: var(--borderRadiusMedium);
+      box-shadow: var(--shadow8);
+    }
+
+    /* CardHeader */
+    .fui-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--spacingHorizontalS);
+      padding: var(--spacingVerticalS) var(--spacingHorizontalM) var(--spacingVerticalS) var(--spacingHorizontalL);
+      background-color: var(--colorNeutralBackground2);
+      border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+
+    /* Type ramp: Subtitle2 */
+    .fui-product {
+      font-size: var(--fontSizeBase400);
+      line-height: var(--lineHeightBase400);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .fui-card-body {
+      padding: var(--spacingVerticalL) var(--spacingHorizontalL) var(--spacingVerticalL);
+    }
+
+    /* ---------- Button ---------- */
+    .fui-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--spacingHorizontalS);
+      min-height: var(--button-height-medium);
+      min-width: var(--button-height-medium);
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalM);
+      font-family: var(--fontFamilyBase);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      border-radius: var(--borderRadiusMedium);
+      text-decoration: none;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: background-color var(--durationFaster) ease, border-color var(--durationFaster) ease;
+    }
+
+    /*
+      Interactive boundary: colorNeutralStrokeAccessible, not the stock
+      colorNeutralStroke1, because the border is what identifies a secondary
+      button as a control. See the WCAG note in the file header.
+    */
+    .fui-button-secondary {
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+    }
+
+    .fui-button-secondary:hover {
+      background-color: var(--colorNeutralBackground1Hover);
+    }
+
+    .fui-button-primary {
+      color: var(--colorNeutralForegroundOnBrand);
+      background-color: var(--colorBrandBackground);
+      border: var(--strokeWidthThin) solid var(--colorBrandBackground);
+    }
+
+    .fui-button-primary:hover {
+      background-color: var(--colorBrandBackgroundHover);
+      border-color: var(--colorBrandBackgroundHover);
+    }
+
+    /* Fluent subtle Button: no resting border, hover fill. Identified by its
+       label text plus icon, so no boundary is required to identify it. */
+    .fui-button-subtle {
+      color: var(--colorNeutralForeground2);
+      background-color: transparent;
+      border: var(--strokeWidthThin) solid transparent;
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalS);
+      font-size: var(--fontSizeBase200);
+    }
+
+    .fui-button-subtle:hover {
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground1Hover);
+      border-color: var(--colorNeutralStrokeAccessible);
+    }
+
+    .fui-button-glyph {
+      flex: 0 0 auto;
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
+    }
+
+    .fui-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--spacingHorizontalS);
+      margin-top: var(--spacingVerticalL);
+    }
+
+    .fui-actions .fui-button {
+      flex: 1 1 auto;
+    }
+
+    /* ---------- Type ramp ---------- */
+    /* Title3 */
+    .fui-title3 {
+      margin: 0 0 var(--spacingVerticalXXS);
+      font-size: var(--fontSizeBase500);
+      line-height: var(--lineHeightBase500);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    /* Subtitle2 */
+    .fui-subtitle2 {
+      margin: 0;
+      font-size: var(--fontSizeBase400);
+      line-height: var(--lineHeightBase400);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    /* Body1 */
+    .fui-body1 {
+      margin: 0;
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .fui-body1-muted {
+      color: var(--colorNeutralForeground2);
+    }
+
+    /* Caption1 */
+    .fui-caption {
+      margin: 0;
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+    }
+
+    .fui-caption-strong {
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .fui-mono {
+      font-family: var(--fontFamilyMonospace);
+      overflow-wrap: anywhere;
+    }
+
+    /* ---------- Divider ---------- */
+    /* Decorative rule: colorNeutralStroke2 is correct here; 1.4.11 does not
+       apply to non-interactive, non-essential separators. */
+    .fui-divider {
+      height: var(--strokeWidthThin);
+      margin: var(--spacingVerticalL) var(--spacingHorizontalNone);
+      background-color: var(--colorNeutralStroke2);
+      border: 0;
+    }
+
+    /* ---------- Badge ---------- */
+    .fui-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--spacingHorizontalXS);
+      height: var(--badge-size-large);
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalS);
+      border-radius: var(--borderRadiusCircular);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      white-space: nowrap;
+    }
+
+    .fui-badge-medium {
+      height: var(--badge-size-medium);
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalSNudge);
+    }
+
+    .fui-badge-glyph {
+      flex: 0 0 auto;
+      width: var(--icon-size-12);
+      height: var(--icon-size-12);
+    }
+
+    .fui-badge-brand {
+      color: var(--colorNeutralForegroundOnBrand);
+      background-color: var(--colorBrandBackground);
+      border: var(--strokeWidthThin) solid var(--colorBrandBackground);
+    }
+
+    .fui-badge-outline {
+      color: var(--colorNeutralForeground2);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+    }
+
+    .fui-badge-outline-brand {
+      color: var(--colorBrandForeground1);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorCompoundBrandStroke);
+    }
+
+    /* ---------- MessageBar ---------- */
+    .fui-messagebar {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: start;
+      gap: var(--spacingHorizontalS);
+      padding: var(--spacingVerticalS) var(--spacingHorizontalM);
+      border-radius: var(--borderRadiusMedium);
+      border: var(--strokeWidthThin) solid transparent;
+    }
+
+    .fui-messagebar + .fui-messagebar {
+      margin-top: var(--spacingVerticalS);
+    }
+
+    .fui-messagebar-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .fui-icon {
+      width: var(--icon-size-20);
+      height: var(--icon-size-20);
+    }
+
+    .fui-messagebar-title {
+      margin: 0;
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .fui-messagebar-text {
+      margin: var(--spacingVerticalXXS) 0 0;
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+    }
+
+    /* Fluent MessageBar intent="info": neutral surface + neutral icon. */
+    .fui-messagebar-info {
+      background-color: var(--colorNeutralBackground3);
+      border-color: var(--colorNeutralStroke1);
+    }
+
+    .fui-messagebar-info .fui-messagebar-icon {
+      color: var(--colorNeutralForeground2);
+    }
+
+    .fui-messagebar-warning {
+      background-color: var(--colorPaletteYellowBackground1);
+      border-color: var(--colorPaletteYellowBorder1);
+    }
+
+    .fui-messagebar-warning .fui-messagebar-icon {
+      color: var(--colorPaletteYellowForeground1);
+    }
+
+    .fui-messagebar-success {
+      background-color: var(--colorPaletteGreenBackground1);
+      border-color: var(--colorPaletteGreenBorder1);
+    }
+
+    .fui-messagebar-success .fui-messagebar-icon {
+      color: var(--colorPaletteGreenForeground1);
+    }
+
+    .fui-messagebar-success .fui-messagebar-title {
+      color: var(--colorPaletteGreenForeground1);
+    }
+
+    /* ======================================================================
+       SIGNATURE IDEA — the finite queue spine.
+       Pending decisions are drawn as one continuous, countable line with five
+       stops, not as a grid of cards. On Decision / Working / Result the same
+       line collapses into a five-stop ribbon at the top so the current
+       decision keeps its place in a queue that visibly ends.
+       ====================================================================== */
+    .fui-queue {
+      position: relative;
+      margin: var(--spacingVerticalL) 0 0;
+      padding: 0 0 0 var(--spacingHorizontalXXL);
+      list-style: none;
+    }
+
+    /* the spine */
+    .fui-queue::before {
+      content: "";
+      position: absolute;
+      top: var(--spacingVerticalXL);
+      bottom: var(--spacingVerticalXL);
+      left: var(--spacingHorizontalMNudge);
+      width: var(--strokeWidthThick);
+      border-radius: var(--borderRadiusCircular);
+      background-color: var(--colorNeutralStroke1);
+    }
+
+    .fui-queue-item {
+      position: relative;
+    }
+
+    .fui-queue-item + .fui-queue-item {
+      margin-top: var(--spacingVerticalS);
+    }
+
+    /* stop marker on the spine */
+    .fui-queue-item::before {
+      content: "";
+      position: absolute;
+      top: var(--spacingVerticalL);
+      left: calc(-1 * var(--spacingHorizontalL));
+      width: var(--spacingHorizontalMNudge);
+      height: var(--spacingHorizontalMNudge);
+      border-radius: var(--borderRadiusCircular);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThick) solid var(--colorNeutralStrokeAccessible);
+    }
+
+    /* Interactive Card row. Its boundary identifies the control, so it uses
+       colorNeutralStrokeAccessible. */
+    .fui-queue-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      gap: var(--spacingVerticalS) var(--spacingHorizontalS);
+      width: 100%;
+      padding: var(--spacingVerticalM);
+      text-align: left;
+      font-family: var(--fontFamilyBase);
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium);
+      box-shadow: var(--shadow4);
+      cursor: pointer;
+      transition: background-color var(--durationFaster) ease, border-color var(--durationFaster) ease;
+    }
+
+    .fui-queue-row:hover {
+      background-color: var(--colorNeutralBackground1Hover);
+      border-color: var(--colorCompoundBrandStroke);
+    }
+
+    .fui-queue-meta {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--spacingHorizontalXS) var(--spacingHorizontalS);
+    }
+
+    .fui-queue-ordinal {
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground3);
+    }
+
+    .fui-queue-question {
+      grid-column: 1 / -1;
+      margin: 0;
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .fui-queue-source {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalXS);
+      font-family: var(--fontFamilyMonospace);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+      overflow-wrap: anywhere;
+    }
+
+    .fui-queue-chevron {
+      flex: 0 0 auto;
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /* Collapsed five-stop ribbon used on Decision / Working / Result */
+    .fui-ribbon {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalXS);
+      margin: var(--spacingVerticalM) 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .fui-ribbon-stop {
+      flex: 1 1 auto;
+      height: var(--spacingVerticalXS);
+      border-radius: var(--borderRadiusCircular);
+      background-color: var(--colorNeutralStroke1);
+    }
+
+    .fui-ribbon-stop.is-current {
+      height: var(--spacingVerticalSNudge);
+      background-color: var(--colorCompoundBrandStroke);
+    }
+
+    /* ---------- Breadcrumb ---------- */
+    .fui-breadcrumb {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--spacingHorizontalXS);
+      margin-bottom: var(--spacingVerticalS);
+    }
+
+    .fui-breadcrumb-sep {
+      color: var(--colorNeutralForeground3);
+    }
+
+    .fui-breadcrumb-current {
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground2);
+      overflow-wrap: anywhere;
+    }
+
+    .fui-screen-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+    }
+
+    /* ---------- Question ---------- */
+    .fui-question {
+      margin: var(--spacingVerticalM) 0 var(--spacingVerticalL);
+      font-size: var(--fontSizeBase400);
+      line-height: var(--lineHeightBase400);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .fui-rec-label {
+      display: block;
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: var(--colorNeutralForeground3);
+    }
+
+    .fui-rec-text {
+      margin: var(--spacingVerticalXXS) 0 var(--spacingVerticalS);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .fui-rec-text:last-child {
+      margin-bottom: 0;
+    }
+
+    .fui-not-saved {
+      margin: var(--spacingVerticalS) 0 0;
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-style: normal;
+      color: var(--colorNeutralForeground3);
+    }
+
+    /* ---------- RadioGroup / Radio ---------- */
+    .fui-fieldset {
+      margin: var(--spacingVerticalL) 0 0;
+      padding: 0;
+      border: 0;
+    }
+
+    .fui-legend {
+      padding: 0;
+      margin-bottom: var(--spacingVerticalS);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /* Interactive boundary -> colorNeutralStrokeAccessible. */
+    .fui-radio {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: start;
+      gap: var(--spacingHorizontalS);
+      padding: var(--spacingVerticalM);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium);
+      cursor: pointer;
+      transition: background-color var(--durationFaster) ease, border-color var(--durationFaster) ease;
+    }
+
+    .fui-radio + .fui-radio {
+      margin-top: var(--spacingVerticalS);
+    }
+
+    .fui-radio:hover {
+      background-color: var(--colorNeutralBackground1Hover);
+    }
+
+    .fui-radio:has(input:checked) {
+      border-color: var(--colorCompoundBrandStroke);
+      box-shadow: inset 0 0 0 var(--strokeWidthThin) var(--colorCompoundBrandStroke);
+    }
+
+    .fui-radio input {
+      appearance: none;
+      -webkit-appearance: none;
+      flex: 0 0 auto;
+      width: var(--radio-indicator);
+      height: var(--radio-indicator);
+      margin: var(--spacingVerticalXXS) 0 0;
+      border-radius: var(--borderRadiusCircular);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      background-color: var(--colorNeutralBackground1);
+      cursor: pointer;
+    }
+
+    .fui-radio input:checked {
+      border: var(--strokeWidthThick) solid var(--colorCompoundBrandStroke);
+      background-color: var(--colorNeutralBackground1);
+      box-shadow: inset 0 0 0 var(--strokeWidthThicker) var(--colorNeutralBackground1), inset 0 0 0 var(--radio-indicator) var(--colorCompoundBrandStroke);
+    }
+
+    .fui-radio-text {
+      min-width: 0;
+    }
+
+    .fui-radio-title {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .fui-radio-sub {
+      margin: var(--spacingVerticalXXS) 0 0;
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+    }
+
+    /* ---------- Field + Textarea ---------- */
+    .fui-field {
+      margin-top: var(--spacingVerticalM);
+    }
+
+    .fui-field-label {
+      display: block;
+      margin-bottom: var(--spacingVerticalXS);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground2);
+    }
+
+    /* Interactive boundary -> colorNeutralStrokeAccessible on all four sides. */
+    .fui-textarea {
+      display: block;
+      width: 100%;
+      min-height: 72px;
+      padding: var(--spacingVerticalS) var(--spacingHorizontalM);
+      font-family: var(--fontFamilyBase);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      border-bottom: var(--strokeWidthThick) solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium);
+      resize: vertical;
+    }
+
+    .fui-textarea:focus {
+      border-bottom-color: var(--colorCompoundBrandStroke);
+    }
+
+    .fui-inline-error {
+      margin: var(--spacingVerticalXS) 0 0;
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorPaletteRedForeground1);
+    }
+
+    /* ---------- Accordion / disclosure ---------- */
+    .fui-details {
+      margin-top: var(--spacingVerticalL);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium);
+    }
+
+    .fui-summary {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      min-height: var(--button-height-medium);
+      padding: var(--spacingVerticalS) var(--spacingHorizontalM);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+      border-radius: var(--borderRadiusMedium);
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .fui-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .fui-chevron {
+      flex: 0 0 auto;
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
+      color: var(--colorNeutralForeground3);
+      transition: transform var(--durationFaster) ease;
+    }
+
+    .fui-details[open] .fui-chevron {
+      transform: rotate(90deg);
+    }
+
+    .fui-send-preview {
+      margin: 0;
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalM) var(--spacingVerticalM);
+      font-family: var(--fontFamilyMonospace);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    /* ---------- Spinner + activity list ---------- */
+    .fui-busy {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalM);
+      margin: var(--spacingVerticalL) 0 0;
+    }
+
+    .fui-spinner {
+      flex: 0 0 auto;
+      width: var(--spinner-size-medium);
+      height: var(--spinner-size-medium);
+    }
+
+    .fui-spinner-track {
+      stroke: var(--colorNeutralStroke1);
+    }
+
+    .fui-spinner-tail {
+      stroke: var(--colorCompoundBrandStroke);
+      transform-origin: 50% 50%;
+      animation: fui-spin 1.4s linear infinite;
+    }
+
+    @keyframes fui-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .fui-activity {
+      margin: var(--spacingVerticalL) 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .fui-activity-item {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: start;
+      gap: var(--spacingHorizontalM);
+      padding-bottom: var(--spacingVerticalM);
+      position: relative;
+    }
+
+    .fui-activity-item:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: var(--spacingVerticalXXL);
+      bottom: var(--spacingVerticalXS);
+      left: calc(var(--icon-size-20) / 2 - 1px);
+      width: var(--strokeWidthThick);
+      border-radius: var(--borderRadiusCircular);
+      background-color: var(--colorNeutralStroke1);
+    }
+
+    .fui-activity-mark {
+      position: relative;
+      z-index: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: var(--icon-size-20);
+      height: var(--icon-size-20);
+      border-radius: var(--borderRadiusCircular);
+      background-color: var(--colorNeutralBackground1);
+    }
+
+    .is-done .fui-activity-mark {
+      color: var(--colorPaletteGreenForeground1);
+    }
+
+    .is-current .fui-activity-mark {
+      color: var(--colorBrandForeground1);
+    }
+
+    .is-waiting .fui-activity-mark {
+      color: var(--colorNeutralForeground3);
+    }
+
+    .fui-activity-text {
+      min-width: 0;
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .is-current .fui-activity-text {
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .fui-activity-state {
+      display: block;
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightRegular);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /* ---------- Result ---------- */
+    .fui-changed {
+      margin: var(--spacingVerticalS) 0 0;
+      padding-left: var(--spacingHorizontalXL);
+    }
+
+    .fui-changed li {
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .fui-changed li + li {
+      margin-top: var(--spacingVerticalXS);
+    }
+
+    .fui-source-row {
+      display: grid;
+      gap: var(--spacingVerticalXXS);
+      margin-top: var(--spacingVerticalS);
+      padding: var(--spacingVerticalS) var(--spacingHorizontalM);
+      background-color: var(--colorNeutralBackground2);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      border-radius: var(--borderRadiusMedium);
+    }
+
+    .fui-section-label {
+      display: block;
+      margin-top: var(--spacingVerticalL);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground3);
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    /* ---------- Narrow viewports (works at 360px and below) ---------- */
+    @media (max-width: 420px) {
+      body {
+        padding: var(--spacingVerticalL) var(--spacingHorizontalS) var(--spacingVerticalXXL);
+      }
+
+      .fui-card-header {
+        padding: var(--spacingVerticalS) var(--spacingHorizontalS);
+      }
+
+      .fui-card-body {
+        padding: var(--spacingVerticalM) var(--spacingHorizontalM);
+      }
+
+      .fui-queue {
+        padding-left: var(--spacingHorizontalXL);
+      }
+
+      .fui-actions .fui-button {
+        flex: 1 1 100%;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        transition-duration: 1ms !important;
+        scroll-behavior: auto !important;
+      }
+
+      /* The spinner keeps its shape but stops moving; auto-advance is also
+         disabled in script and replaced with an explicit button. */
+      .fui-spinner-tail {
+        animation: none !important;
+      }
+    }
+  </style>
+</head>
+<body class="theme-light">
+  <div class="demo-shell">
+    <!-- ================= OUTSIDE THE PRODUCT ================= -->
+    <h1 class="demo-title">Dude &ldquo;Needs you&rdquo; flow — Fluent 2</h1>
+    <p class="demo-lede">
+      Future product direction for <span class="fui-mono">052-dude-canvas-ui</span>: purpose-built
+      decision components replacing routine chat iteration over the same active agent session.
+      Not part of the I1 implementation scope.
+    </p>
+
+    <p class="demo-banner">
+      <svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 9v5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="6.1" r="1.05" fill="currentColor"/></svg>
+      <span>Interactive prototype — no project files are changed.</span>
+    </p>
+
+    <section class="demo-bar" aria-labelledby="demo-bar-label">
+      <span class="demo-bar-label" id="demo-bar-label">Prototype controls — not part of Dude</span>
+
+      <div class="demo-group">
+        <span class="demo-group-name" id="demo-theme-label">Theme</span>
+        <div role="group" aria-labelledby="demo-theme-label" class="demo-group">
+          <button class="demo-button" type="button" data-theme="light" aria-pressed="true">Light</button>
+          <button class="demo-button" type="button" data-theme="dark" aria-pressed="false">Dark</button>
+        </div>
+      </div>
+
+      <div class="demo-group">
+        <span class="demo-group-name" id="demo-screen-label">Screen</span>
+        <div role="group" aria-labelledby="demo-screen-label" class="demo-group">
+          <button class="demo-button" type="button" data-jump="queue" aria-pressed="true">Queue</button>
+          <button class="demo-button" type="button" data-jump="decision" aria-pressed="false">Decision</button>
+          <button class="demo-button" type="button" data-jump="working" aria-pressed="false">Agent working</button>
+          <button class="demo-button" type="button" data-jump="result" aria-pressed="false">Result</button>
+        </div>
+      </div>
+
+      <p class="demo-note">
+        Jumping to a screen inspects it directly. Inside the panel the same screens are reachable
+        through the product&rsquo;s own controls.
+      </p>
+    </section>
+
+    <!-- ================= THE PRODUCT PANEL ================= -->
+    <main class="demo-stage">
+      <!-- Card + CardHeader -->
+      <section class="fui-card" aria-label="Dude panel">
+        <header class="fui-card-header">
+          <span class="fui-product">Dude</span>
+          <!-- Button appearance="subtle" with ArrowLeft icon: back to the Now cockpit -->
+          <button class="fui-button fui-button-subtle" type="button" id="backToNow">
+            <svg class="fui-button-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M9.6 3.4L5 8l4.6 4.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Now</span>
+          </button>
+        </header>
+
+        <div class="fui-card-body">
+
+          <!-- ============ SCREEN 1: QUEUE ============ -->
+          <section class="fui-screen" id="screen-queue" aria-labelledby="queue-title">
+            <h2 class="fui-title3" id="queue-title" tabindex="-1">Needs you</h2>
+
+            <!-- MessageBar intent="info" -->
+            <div class="fui-messagebar fui-messagebar-info" style="margin-top: var(--spacingVerticalM);">
+              <span class="fui-messagebar-icon" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 9v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="10" cy="6.1" r="1" fill="currentColor"/></svg></span>
+              <div>
+                <p class="fui-messagebar-title">5 decisions waiting</p>
+                <p class="fui-messagebar-text">These answers unblock definition work.</p>
+              </div>
+            </div>
+
+            <!-- List of interactive Cards, hung off the finite queue spine -->
+            <ul class="fui-queue" id="queueList" aria-label="Decisions waiting"></ul>
+          </section>
+
+          <!-- ============ SCREEN 2: DECISION ============ -->
+          <section class="fui-screen" id="screen-decision" aria-labelledby="decision-title" hidden>
+            <!-- MessageBar intent="warning": shown only after Stop -->
+            <div class="fui-messagebar fui-messagebar-warning" id="stoppedBar" hidden>
+              <span class="fui-messagebar-icon" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M7.1 2.6h5.8L17.4 7.1v5.8L12.9 17.4H7.1L2.6 12.9V7.1z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M10 6.4v4.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="13.7" r="1.05" fill="currentColor"/></svg></span>
+              <div>
+                <p class="fui-messagebar-title">The agent turn was stopped.</p>
+                <p class="fui-messagebar-text">Check the source before sending again.</p>
+              </div>
+            </div>
+
+            <nav class="fui-breadcrumb" aria-label="Breadcrumb">
+              <button class="fui-button fui-button-subtle" type="button" data-goto="queue">
+                <svg class="fui-button-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M9.6 3.4L5 8l4.6 4.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>Needs you</span>
+              </button>
+              <span class="fui-breadcrumb-sep" aria-hidden="true">/</span>
+              <span class="fui-breadcrumb-current" aria-current="page">Design-Stage Critique</span>
+            </nav>
+
+            <div class="fui-screen-head">
+              <!-- Badge size="large" appearance="filled" color="brand" -->
+              <span class="fui-badge fui-badge-brand" id="decisionBadge">Question 1 of 5</span>
+            </div>
+
+            <!-- the queue, collapsed: the current decision keeps its place -->
+            <ul class="fui-ribbon" id="decisionRibbon" aria-hidden="true"></ul>
+
+            <h2 class="fui-question" id="decision-title" tabindex="-1"></h2>
+
+            <!-- MessageBar intent="info": the recommendation carried in the source -->
+            <div id="recommendationBlock" hidden>
+              <div class="fui-messagebar fui-messagebar-info">
+                <span class="fui-messagebar-icon" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 9v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="10" cy="6.1" r="1" fill="currentColor"/></svg></span>
+                <div>
+                  <span class="fui-rec-label">Recommendation in the source</span>
+                  <p class="fui-rec-text">Use an agent in the design pack because the capability is design-lane-specific and that pack already owns the workflow, gate, and mockup conventions.</p>
+                  <span class="fui-rec-label">Competing argument</span>
+                  <p class="fui-rec-text">Co-locating both critics in the rubber-duck pack keeps all adversarial-review capability together.</p>
+                </div>
+              </div>
+              <p class="fui-not-saved">Recommended by Dude; not saved until you send.</p>
+            </div>
+
+            <!-- RadioGroup + Radio, as a real fieldset/legend (question 1 only) -->
+            <fieldset class="fui-fieldset" id="optionGroup" hidden>
+              <legend class="fui-legend">Choose the owning pack</legend>
+
+              <label class="fui-radio">
+                <input type="radio" name="q1" value="design-pack" checked>
+                <span class="fui-radio-text">
+                  <span class="fui-radio-title">
+                    <span>Design pack</span>
+                    <span class="fui-badge fui-badge-medium fui-badge-outline-brand">Recommended</span>
+                  </span>
+                  <span class="fui-radio-sub">Add a design-critic agent beside the existing design workflow.</span>
+                </span>
+              </label>
+
+              <label class="fui-radio">
+                <input type="radio" name="q1" value="rubber-duck-pack">
+                <span class="fui-radio-text">
+                  <span class="fui-radio-title"><span>Rubber Duck pack</span></span>
+                  <span class="fui-radio-sub">Keep both adversarial-review agents together.</span>
+                </span>
+              </label>
+
+              <label class="fui-radio">
+                <input type="radio" name="q1" value="workflow-step-only">
+                <span class="fui-radio-text">
+                  <span class="fui-radio-title"><span>Workflow step only</span></span>
+                  <span class="fui-radio-sub">Add no agent; make critique a step in the design skill.</span>
+                </span>
+              </label>
+
+              <label class="fui-radio">
+                <input type="radio" name="q1" value="something-else">
+                <span class="fui-radio-text">
+                  <span class="fui-radio-title"><span>Something else</span></span>
+                  <span class="fui-radio-sub">Describe a different owner in your own words.</span>
+                </span>
+              </label>
+
+              <!-- Field + Textarea, revealed by the "Something else" option -->
+              <div class="fui-field" id="otherField" hidden>
+                <label class="fui-field-label" for="otherText">Your answer</label>
+                <textarea class="fui-textarea" id="otherText" rows="3" placeholder="Describe the owner you have in mind."></textarea>
+              </div>
+            </fieldset>
+
+            <!-- Field + Textarea for questions 2-5. No recommendation is shown
+                 for these, because the prototype must not invent one. -->
+            <div class="fui-field" id="freeformField" hidden>
+              <label class="fui-field-label" for="freeformText">Your answer</label>
+              <textarea class="fui-textarea" id="freeformText" rows="3" placeholder="Type your answer."></textarea>
+            </div>
+
+            <p class="fui-inline-error" id="answerError" role="alert" hidden>Write an answer before sending.</p>
+
+            <!-- Accordion / disclosure: the exact message that would reach the session -->
+            <details class="fui-details">
+              <summary class="fui-summary">
+                <svg class="fui-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 3.4L10.6 8 6 12.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>What Dude will send</span>
+              </summary>
+              <pre class="fui-send-preview" id="sendPreview"></pre>
+            </details>
+
+            <div class="fui-actions">
+              <button class="fui-button fui-button-primary" type="button" id="sendAnswer">Send answer</button>
+              <button class="fui-button fui-button-secondary" type="button" data-goto="queue">Back</button>
+            </div>
+            <p class="fui-caption" style="margin-top: var(--spacingVerticalS);">Nothing changes until the agent confirms the write.</p>
+          </section>
+
+          <!-- ============ SCREEN 3: AGENT WORKING ============ -->
+          <section class="fui-screen" id="screen-working" aria-labelledby="working-title" hidden>
+            <nav class="fui-breadcrumb" aria-label="Breadcrumb">
+              <button class="fui-button fui-button-subtle" type="button" data-goto="queue">
+                <svg class="fui-button-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M9.6 3.4L5 8l4.6 4.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>Needs you</span>
+              </button>
+              <span class="fui-breadcrumb-sep" aria-hidden="true">/</span>
+              <span class="fui-breadcrumb-current" aria-current="page">Design-Stage Critique</span>
+            </nav>
+
+            <div class="fui-screen-head">
+              <span class="fui-badge fui-badge-brand" id="workingBadge">Question 1 of 5</span>
+            </div>
+            <ul class="fui-ribbon" id="workingRibbon" aria-hidden="true"></ul>
+
+            <!-- Spinner size="medium" -->
+            <div class="fui-busy">
+              <svg class="fui-spinner" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                <circle class="fui-spinner-track" cx="16" cy="16" r="13" fill="none" stroke-width="3"/>
+                <circle class="fui-spinner-tail" cx="16" cy="16" r="13" fill="none" stroke-width="3" stroke-linecap="round" stroke-dasharray="26 82"/>
+              </svg>
+              <h2 class="fui-subtitle2" id="working-title" tabindex="-1">Dude is applying your answer</h2>
+            </div>
+
+            <!-- Activity list: shape + word, never colour alone -->
+            <ol class="fui-activity" id="activityList">
+              <li class="fui-activity-item is-done">
+                <span class="fui-activity-mark" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" focusable="false"><circle cx="10" cy="10" r="9" fill="currentColor"/><path d="M6 10.3l2.6 2.6 5.3-5.5" fill="none" stroke="var(--colorNeutralBackground1)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                <span class="fui-activity-text">Answer sent to the active session<span class="fui-activity-state">Done</span></span>
+              </li>
+              <li class="fui-activity-item is-current">
+                <span class="fui-activity-mark" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="10" r="3.4" fill="currentColor"/></svg></span>
+                <span class="fui-activity-text">Spec Lead is updating the idea<span class="fui-activity-state">Working</span></span>
+              </li>
+              <li class="fui-activity-item is-waiting">
+                <span class="fui-activity-mark" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="3 3"/><path d="M6.8 10h6.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+                <span class="fui-activity-text">Refreshing assumptions and lifecycle history<span class="fui-activity-state">Waiting</span></span>
+              </li>
+              <li class="fui-activity-item is-waiting">
+                <span class="fui-activity-mark" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="3 3"/><path d="M6.8 10h6.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+                <span class="fui-activity-text">Re-reading the authoritative file<span class="fui-activity-state">Waiting</span></span>
+              </li>
+            </ol>
+
+            <p class="fui-caption" style="margin-top: var(--spacingVerticalM);">The canvas will display the file result, not infer success from chat text.</p>
+
+            <!-- Polite live region for the async progression -->
+            <p class="fui-visually-hidden" id="workingLive" aria-live="polite"></p>
+
+            <div class="fui-actions">
+              <!-- Maps to the verified SDK capability session.abort(). Secondary,
+                   not danger: stopping a turn is recoverable, not destructive. -->
+              <button class="fui-button fui-button-secondary" type="button" id="stopTurn">Stop</button>
+              <!-- Shown only under prefers-reduced-motion, where auto-advance is off -->
+              <button class="fui-button fui-button-primary" type="button" id="showResult" hidden>Show simulated result</button>
+            </div>
+          </section>
+
+          <!-- ============ SCREEN 4: RESULT ============ -->
+          <section class="fui-screen" id="screen-result" aria-labelledby="result-title" hidden>
+            <!-- MessageBar intent="success" -->
+            <div class="fui-messagebar fui-messagebar-success">
+              <span class="fui-messagebar-icon" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.1" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.3 10.3l2.55 2.55 5-5.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <div>
+                <p class="fui-messagebar-title">Answer saved</p>
+              </div>
+            </div>
+
+            <!-- The whole screen is marked simulated: the real ledger question
+                 is still unanswered and this file changes nothing. -->
+            <div class="fui-messagebar fui-messagebar-warning">
+              <span class="fui-messagebar-icon" aria-hidden="true"><svg class="fui-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M9.13 3.3a1 1 0 0 1 1.74 0l6.05 10.6a1 1 0 0 1-.87 1.5H3.95a1 1 0 0 1-.87-1.5z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M10 7.9v3.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="10" cy="13.4" r="1" fill="currentColor"/></svg></span>
+              <div>
+                <p class="fui-messagebar-title">Simulated result — no project file was changed</p>
+                <p class="fui-messagebar-text">This question is still unanswered in the real ledger.</p>
+              </div>
+            </div>
+
+            <div class="fui-screen-head" style="margin-top: var(--spacingVerticalL);">
+              <h2 class="fui-title3" id="result-title" tabindex="-1">Design pack selected</h2>
+              <span class="fui-badge fui-badge-medium fui-badge-outline">Simulated</span>
+            </div>
+
+            <span class="fui-section-label">What changed</span>
+            <ul class="fui-changed" id="changedList">
+              <li id="changedFirst">Question 1 now has an answer.</li>
+              <li>Related assumptions were refreshed.</li>
+              <li>A lifecycle event was appended.</li>
+            </ul>
+
+            <span class="fui-section-label">Verified from</span>
+            <div class="fui-source-row">
+              <span class="fui-caption fui-mono">.dude/ideas/053-design-stage-critique.md</span>
+              <span class="fui-caption fui-caption-strong">Read just now</span>
+            </div>
+
+            <!-- Divider -->
+            <hr class="fui-divider">
+
+            <span class="fui-caption fui-caption-strong" id="nextLabel">Next question</span>
+            <p class="fui-body1 fui-body1-muted" id="nextPreview" style="margin-top: var(--spacingVerticalXS);">Should critique cover design only, or other pre-completion stages?</p>
+
+            <div class="fui-actions">
+              <button class="fui-button fui-button-primary" type="button" id="nextQuestion">Next question</button>
+              <button class="fui-button fui-button-secondary" type="button" data-goto="queue">Back to queue</button>
+            </div>
+          </section>
+
+        </div>
+      </section>
+    </main>
+
+    <p class="demo-footnote">
+      Capability envelope this flow assumes (verified for 052): canvas iframe &rarr; loopback HTTP &rarr;
+      extension &rarr; <span class="fui-mono">session.sendAndWait</span>; SSE/HTTP returns state;
+      <span class="fui-mono">session.abort()</span> backs Stop; the agent applies the user-owned answer under
+      brainstorm authority; the canvas re-reads the file. Everything here is simulated locally.
+    </p>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      var SOURCE_PATH = '.dude/ideas/053-design-stage-critique.md';
+      var FEATURE = 'Design-Stage Critique';
+      var FEATURE_ID = '053-design-stage-critique';
+
+      /*
+        Real, current content from the source ledger: five unanswered questions.
+        Question 1 carries the recommendation and competing argument that exist
+        in the file. Questions 2-5 carry their summaries only — no
+        recommendation is fabricated for them.
+      */
+      var QUESTIONS = [
+        {
+          n: 1,
+          text: 'Which pack owns it: a new agent in the design pack, which currently has none; a second agent in the rubber-duck pack alongside the completion-bound retrospective; or a step inside the dude-pack-design-workflow skill with no new agent?',
+          hasRecommendation: true
+        },
+        { n: 2, text: 'Should critique cover design only, or other pre-completion stages?', hasRecommendation: false },
+        { n: 3, text: 'Should critique run automatically or on demand?', hasRecommendation: false },
+        { n: 4, text: 'Should critique findings be saved?', hasRecommendation: false },
+        { n: 5, text: 'Should critique review only the mock or its surrounding context?', hasRecommendation: false }
+      ];
+
+      var OPTION_TEXT = {
+        'design-pack': 'Design pack — add a design-critic agent beside the existing design workflow.',
+        'rubber-duck-pack': 'Rubber Duck pack — keep both adversarial-review agents together.',
+        'workflow-step-only': 'Workflow step only — add no agent; make critique a step in the design skill.',
+        'something-else': 'Something else'
+      };
+
+      var OPTION_HEADING = {
+        'design-pack': 'Design pack selected',
+        'rubber-duck-pack': 'Rubber Duck pack selected',
+        'workflow-step-only': 'Workflow step only selected',
+        'something-else': 'Your own answer selected'
+      };
+
+      var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+      var $ = function (id) { return document.getElementById(id); };
+      var screens = {
+        queue: $('screen-queue'),
+        decision: $('screen-decision'),
+        working: $('screen-working'),
+        result: $('screen-result')
+      };
+      var headings = {
+        queue: $('queue-title'),
+        decision: $('decision-title'),
+        working: $('working-title'),
+        result: $('result-title')
+      };
+
+      var currentQuestion = 1;
+      var currentScreen = 'queue';
+      var workTimer = null;
+
+      /* ---------- Queue: five rows on one finite spine ---------- */
+      function buildQueue() {
+        var list = $('queueList');
+        list.innerHTML = '';
+
+        QUESTIONS.forEach(function (q) {
+          var li = document.createElement('li');
+          li.className = 'fui-queue-item';
+
+          var row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'fui-queue-row';
+          row.setAttribute('data-question', String(q.n));
+
+          var meta = document.createElement('span');
+          meta.className = 'fui-queue-meta';
+
+          var ordinal = document.createElement('span');
+          ordinal.className = 'fui-queue-ordinal';
+          ordinal.textContent = q.n + ' of 5';
+          meta.appendChild(ordinal);
+
+          var stage = document.createElement('span');
+          stage.className = 'fui-badge fui-badge-medium fui-badge-outline';
+          stage.textContent = 'Brainstorm';
+          meta.appendChild(stage);
+
+          if (q.hasRecommendation) {
+            var rec = document.createElement('span');
+            rec.className = 'fui-badge fui-badge-medium fui-badge-outline-brand';
+            rec.textContent = 'Recommendation available';
+            meta.appendChild(rec);
+          }
+
+          var question = document.createElement('span');
+          question.className = 'fui-queue-question';
+          question.textContent = q.text;
+
+          var feature = document.createElement('span');
+          feature.className = 'fui-queue-ordinal';
+          feature.textContent = FEATURE;
+
+          var chevron = document.createElement('span');
+          chevron.className = 'fui-queue-chevron';
+          chevron.setAttribute('aria-hidden', 'true');
+          chevron.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" focusable="false"><path d="M6 3.4L10.6 8 6 12.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+          var source = document.createElement('span');
+          source.className = 'fui-queue-source';
+          source.appendChild(document.createTextNode(FEATURE_ID));
+          source.appendChild(chevron);
+
+          row.appendChild(meta);
+          row.appendChild(question);
+          row.appendChild(feature);
+          row.appendChild(source);
+
+          row.addEventListener('click', function () {
+            openDecision(q.n, false);
+          });
+
+          li.appendChild(row);
+          list.appendChild(li);
+        });
+      }
+
+      /* ---------- Collapsed five-stop ribbon ---------- */
+      function buildRibbon(el, active) {
+        el.innerHTML = '';
+        QUESTIONS.forEach(function (q) {
+          var stop = document.createElement('li');
+          stop.className = 'fui-ribbon-stop' + (q.n === active ? ' is-current' : '');
+          el.appendChild(stop);
+        });
+      }
+
+      /* ---------- The exact message that would reach the session ---------- */
+      function selectedOptionValue() {
+        var checked = document.querySelector('input[name="q1"]:checked');
+        return checked ? checked.value : 'design-pack';
+      }
+
+      function currentAnswerText() {
+        if (currentQuestion === 1) {
+          var value = selectedOptionValue();
+          if (value === 'something-else') {
+            var typed = $('otherText').value.trim();
+            return typed ? 'Something else — ' + typed : '';
+          }
+          return OPTION_TEXT[value];
+        }
+        return $('freeformText').value.trim();
+      }
+
+      function updateSendPreview() {
+        var q = QUESTIONS[currentQuestion - 1];
+        var answer = currentAnswerText();
+        var lines = [
+          'Answer open question ' + q.n + ' in ' + SOURCE_PATH + '.',
+          '',
+          'Question: ' + q.text,
+          'My answer: ' + (answer || '(not written yet)'),
+          '',
+          'Record this as my answer under brainstorm authority, refresh the related',
+          'assumptions, append a lifecycle event, then re-read ' + SOURCE_PATH,
+          'and show me what the file now says.'
+        ];
+        $('sendPreview').textContent = lines.join('\n');
+      }
+
+      /* ---------- Screen switching ---------- */
+      function setScreen(name, moveFocus) {
+        Object.keys(screens).forEach(function (key) {
+          screens[key].hidden = (key !== name);
+        });
+        currentScreen = name;
+
+        Array.prototype.forEach.call(document.querySelectorAll('[data-jump]'), function (btn) {
+          btn.setAttribute('aria-pressed', String(btn.getAttribute('data-jump') === name));
+        });
+
+        if (moveFocus !== false && headings[name]) {
+          headings[name].focus();
+        }
+      }
+
+      function clearWorkTimer() {
+        if (workTimer) {
+          window.clearTimeout(workTimer);
+          workTimer = null;
+        }
+      }
+
+      /* ---------- Decision ---------- */
+      function openDecision(n, stopped) {
+        clearWorkTimer();
+        currentQuestion = n;
+        var q = QUESTIONS[n - 1];
+
+        $('decisionBadge').textContent = 'Question ' + n + ' of 5';
+        $('decision-title').textContent = q.text;
+        buildRibbon($('decisionRibbon'), n);
+
+        $('recommendationBlock').hidden = !q.hasRecommendation;
+        $('optionGroup').hidden = !q.hasRecommendation;
+        $('freeformField').hidden = q.hasRecommendation;
+        $('answerError').hidden = true;
+        $('stoppedBar').hidden = !stopped;
+
+        if (q.hasRecommendation) {
+          syncOtherField();
+        }
+
+        updateSendPreview();
+        setScreen('decision', true);
+      }
+
+      function syncOtherField() {
+        var isOther = selectedOptionValue() === 'something-else';
+        $('otherField').hidden = !isOther;
+      }
+
+      /* ---------- Agent working ---------- */
+      function startWorking() {
+        clearWorkTimer();
+        $('workingBadge').textContent = 'Question ' + currentQuestion + ' of 5';
+        buildRibbon($('workingRibbon'), currentQuestion);
+        $('workingLive').textContent =
+          'Answer sent to the active session: done. Spec Lead is updating the idea: working. ' +
+          'Refreshing assumptions and lifecycle history: waiting. Re-reading the authoritative file: waiting.';
+
+        var reduced = reduceMotion.matches;
+        $('showResult').hidden = !reduced;
+        setScreen('working', true);
+
+        if (!reduced) {
+          workTimer = window.setTimeout(function () {
+            workTimer = null;
+            if (currentScreen === 'working') {
+              openResult();
+            }
+          }, 1800);
+        }
+      }
+
+      /* ---------- Result ---------- */
+      function openResult() {
+        clearWorkTimer();
+        var heading = currentQuestion === 1
+          ? OPTION_HEADING[selectedOptionValue()]
+          : 'Answer recorded for question ' + currentQuestion;
+
+        $('result-title').textContent = heading;
+        $('changedFirst').textContent = 'Question ' + currentQuestion + ' now has an answer.';
+
+        var next = QUESTIONS[currentQuestion];
+        if (next) {
+          $('nextLabel').textContent = 'Next question';
+          $('nextPreview').textContent = next.text;
+          $('nextQuestion').hidden = false;
+        } else {
+          $('nextLabel').textContent = 'Queue';
+          $('nextPreview').textContent = 'That was the last open question in this queue.';
+          $('nextQuestion').hidden = true;
+        }
+
+        setScreen('result', true);
+      }
+
+      /* ---------- Wiring ---------- */
+      buildQueue();
+
+      Array.prototype.forEach.call(document.querySelectorAll('[data-goto="queue"]'), function (btn) {
+        btn.addEventListener('click', function () {
+          clearWorkTimer();
+          $('stoppedBar').hidden = true;
+          setScreen('queue', true);
+        });
+      });
+
+      $('backToNow').addEventListener('click', function () {
+        clearWorkTimer();
+        $('stoppedBar').hidden = true;
+        setScreen('queue', true);
+      });
+
+      Array.prototype.forEach.call(document.querySelectorAll('input[name="q1"]'), function (input) {
+        input.addEventListener('change', function () {
+          syncOtherField();
+          updateSendPreview();
+        });
+      });
+
+      $('otherText').addEventListener('input', updateSendPreview);
+      $('freeformText').addEventListener('input', updateSendPreview);
+
+      $('sendAnswer').addEventListener('click', function () {
+        if (!currentAnswerText()) {
+          $('answerError').hidden = false;
+          var field = (currentQuestion === 1) ? $('otherText') : $('freeformText');
+          field.focus();
+          return;
+        }
+        $('answerError').hidden = true;
+        $('stoppedBar').hidden = true;
+        startWorking();
+      });
+
+      /* Stop maps to session.abort(). It never silently retries: it returns to
+         the decision with an explicit stopped message. */
+      $('stopTurn').addEventListener('click', function () {
+        clearWorkTimer();
+        openDecision(currentQuestion, true);
+      });
+
+      $('showResult').addEventListener('click', openResult);
+      $('nextQuestion').addEventListener('click', function () {
+        openDecision(Math.min(currentQuestion + 1, QUESTIONS.length), false);
+      });
+
+      /* ---------- Prototype controls (outside the product) ---------- */
+      function setTheme(mode) {
+        document.body.classList.toggle('theme-dark', mode === 'dark');
+        document.body.classList.toggle('theme-light', mode !== 'dark');
+        Array.prototype.forEach.call(document.querySelectorAll('[data-theme]'), function (btn) {
+          btn.setAttribute('aria-pressed', String(btn.getAttribute('data-theme') === mode));
+        });
+      }
+
+      Array.prototype.forEach.call(document.querySelectorAll('[data-theme]'), function (btn) {
+        btn.addEventListener('click', function () {
+          setTheme(btn.getAttribute('data-theme'));
+        });
+      });
+
+      Array.prototype.forEach.call(document.querySelectorAll('[data-jump]'), function (btn) {
+        btn.addEventListener('click', function () {
+          var target = btn.getAttribute('data-jump');
+          clearWorkTimer();
+          if (target === 'queue') {
+            $('stoppedBar').hidden = true;
+            setScreen('queue', true);
+          } else if (target === 'decision') {
+            openDecision(currentQuestion, false);
+          } else if (target === 'working') {
+            startWorking();
+          } else {
+            openResult();
+          }
+        });
+      });
+
+      /* Default to the host preference, then let the demo toggle override. */
+      setTheme(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      updateSendPreview();
+      buildRibbon($('decisionRibbon'), currentQuestion);
+      buildRibbon($('workingRibbon'), currentQuestion);
+      setScreen('queue', false);
+    })();
+  </script>
+</body>
+</html>

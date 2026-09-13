@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Now cockpit — visual system comparison</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    background: Canvas;
+    color: CanvasText;
+  }
+  header { max-width: 68ch; margin-bottom: 24px; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  h2 { font-size: 15px; margin: 0; }
+  p { margin: 0 0 8px; }
+  .lede { color: GrayText; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    gap: 16px;
+    align-items: start;
+  }
+  .col { border: 1px solid GrayText; border-radius: 6px; overflow: hidden; }
+  .col > .head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; padding: 10px 12px; border-bottom: 1px solid GrayText;
+  }
+  .col > .head a { font-size: 13px; }
+  .note { padding: 8px 12px; font-size: 13px; color: GrayText; border-bottom: 1px solid GrayText; }
+  iframe { display: block; width: 100%; height: 1400px; border: 0; background: Canvas; }
+  footer { margin-top: 24px; max-width: 68ch; color: GrayText; font-size: 13px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Now cockpit — visual system comparison</h1>
+  <p class="lede">
+    The same panel, the same content, the same three states, at the same 380px width.
+    Only the visual system differs. Every value shown is real state from this repository.
+  </p>
+  <p class="lede">
+    Each column shows three states — normal, blocked, and choose-a-feature — in both light and dark.
+    If a panel below does not render, open it directly with its link.
+  </p>
+</header>
+
+<div class="grid">
+  <section class="col">
+    <div class="head">
+      <h2>Clearline</h2>
+      <a href="variant-clearline.html" target="_blank" rel="noopener">Open full page</a>
+    </div>
+    <p class="note">Calm neutrals, one focal accent, Inter, 8-point grid.</p>
+    <iframe src="variant-clearline.html" title="Clearline variant of the Now cockpit"></iframe>
+  </section>
+
+  <section class="col">
+    <div class="head">
+      <h2>Strata</h2>
+      <a href="variant-strata.html" target="_blank" rel="noopener">Open full page</a>
+    </div>
+    <p class="note">Plane-and-rule layering, no shadows, pigment palette.</p>
+    <iframe src="variant-strata.html" title="Strata variant of the Now cockpit"></iframe>
+  </section>
+
+  <section class="col">
+    <div class="head">
+      <h2>Fluent 2</h2>
+      <a href="variant-fluent.html" target="_blank" rel="noopener">Open full page</a>
+    </div>
+    <p class="note">Real <code>@fluentui/tokens</code> values, 4px radius, Segoe UI.</p>
+    <iframe src="variant-fluent.html" title="Fluent 2 variant of the Now cockpit"></iframe>
+  </section>
+</div>
+
+<footer>
+  <p>
+    Adopting Fluent also decides the component library and forces React.
+    Clearline and Strata are CSS token systems, so either composes with any framework.
+  </p>
+</footer>
+</body>
+</html>

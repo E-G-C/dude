@@ -1,0 +1,239 @@
+{
+  "version": 1,
+  "submissionId": "d39da5ad-6a5d-4a52-8f3c-c9f3ae1df3d5",
+  "scope": {
+    "kind": "feature",
+    "ideaPath": ".dude/ideas/057-dude-canvas-needs-you.md",
+    "specPath": ".dude/specs/057-dude-canvas-needs-you/spec.md"
+  },
+  "preview": {
+    "artifact": {
+      "path": ".dude/specs/057-dude-canvas-needs-you/design/needs-you-workspace.html",
+      "revision": "sha256:6cd15f3e695e9129356f70f6b55e0ad7b7e12023b6a2926da4dec29dced5d5ee"
+    },
+    "assets": [
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/workspace-snapshots.js",
+        "revision": "sha256:b426d55f2bafe52ade76dd501a72bec075a19decaa08c3848bb9d91c8c0e48ea"
+      },
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/overview-snapshots.js",
+        "revision": "sha256:967d5283282424263e3c40d4deb864e699f00aa7bd69b21b5d0d81448def71c2"
+      },
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/needs-you-workspace.js",
+        "revision": "sha256:c4af6948b7b08c29430eea4e9dac4804e1ece432a467fd330f235084e0829bfd"
+      }
+    ]
+  },
+  "requestRef": "ship-057-movable-tools",
+  "requestRevision": "movable-tools-20260909-2",
+  "state": {
+    "annotations": [
+      {
+        "id": "8cf1db8e-919d-4f74-a057-d7b460698efb",
+        "tool": "comment",
+        "x1": 1088.78515625,
+        "y1": 516.171875,
+        "x2": 1088.78515625,
+        "y2": 516.171875,
+        "comment": "",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "#_r_5_-heading",
+          "selectorMatches": 1,
+          "tag": "h2",
+          "text": "Work",
+          "rect": {
+            "x": 24,
+            "y": 478,
+            "width": 1120,
+            "height": 22
+          },
+          "styles": {
+            "color": "rgb(36, 36, 36)",
+            "background-color": "rgba(0, 0, 0, 0)",
+            "background-image": "none",
+            "font-family": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif",
+            "font-size": "16px",
+            "font-weight": "600",
+            "line-height": "22px",
+            "letter-spacing": "normal",
+            "text-align": "left",
+            "display": "block",
+            "position": "static",
+            "width": "1120px",
+            "height": "22px",
+            "margin": "0px",
+            "padding": "0px",
+            "gap": "normal",
+            "border": "0px none rgb(36, 36, 36)",
+            "border-radius": "0px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": [
+          {
+            "selector": "main.___1a25q2q.fz7g6wx",
+            "scrollLeft": 0,
+            "scrollTop": 0
+          }
+        ]
+      },
+      {
+        "id": "459db741-010e-4a65-b3f9-bc2f25fa2d3f",
+        "tool": "comment",
+        "x1": 1104.7890625,
+        "y1": 238,
+        "x2": 1104.7890625,
+        "y2": 238,
+        "comment": "",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "div.fui-Badge.r1iycov",
+          "selectorMatches": 1,
+          "tag": "div",
+          "text": "In progress",
+          "rect": {
+            "x": 1049.38,
+            "y": 223,
+            "width": 78.63,
+            "height": 20
+          },
+          "styles": {
+            "color": "rgb(97, 97, 97)",
+            "background-color": "rgb(240, 240, 240)",
+            "background-image": "none",
+            "font-family": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif",
+            "font-size": "12px",
+            "font-weight": "600",
+            "line-height": "16px",
+            "letter-spacing": "normal",
+            "text-align": "left",
+            "display": "flex",
+            "position": "relative",
+            "width": "78.625px",
+            "height": "20px",
+            "margin": "0px",
+            "padding": "0px 6px",
+            "gap": "normal",
+            "border": "0px none rgb(224, 224, 224)",
+            "border-radius": "10000px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": [
+          {
+            "selector": "main.___1a25q2q.fz7g6wx",
+            "scrollLeft": 0,
+            "scrollTop": 0
+          }
+        ]
+      },
+      {
+        "id": "4fa88358-7849-483b-8d66-105d36b1d168",
+        "tool": "comment",
+        "x1": 1112.265625,
+        "y1": 241.49609375,
+        "x2": 1112.265625,
+        "y2": 241.49609375,
+        "comment": "",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "div.fui-Badge.r1iycov",
+          "selectorMatches": 1,
+          "tag": "div",
+          "text": "In progress",
+          "rect": {
+            "x": 1049.38,
+            "y": 223,
+            "width": 78.63,
+            "height": 20
+          },
+          "styles": {
+            "color": "rgb(97, 97, 97)",
+            "background-color": "rgb(240, 240, 240)",
+            "background-image": "none",
+            "font-family": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif",
+            "font-size": "12px",
+            "font-weight": "600",
+            "line-height": "16px",
+            "letter-spacing": "normal",
+            "text-align": "left",
+            "display": "flex",
+            "position": "relative",
+            "width": "78.625px",
+            "height": "20px",
+            "margin": "0px",
+            "padding": "0px 6px",
+            "gap": "normal",
+            "border": "0px none rgb(224, 224, 224)",
+            "border-radius": "10000px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": [
+          {
+            "selector": "main.___1a25q2q.fz7g6wx",
+            "scrollLeft": 0,
+            "scrollTop": 0
+          }
+        ]
+      }
+    ],
+    "notes": "",
+    "tool": "comment",
+    "selectedId": null,
+    "caret": null,
+    "view": {
+      "viewport": {
+        "width": 1501,
+        "height": 728,
+        "scrollX": 0,
+        "scrollY": 0,
+        "deviceScale": 2,
+        "theme": "light",
+        "documentWidth": 1501,
+        "documentHeight": 728
+      },
+      "signature": "sha256:1b24dd260b5599956bf0db1b770af3bcd97b582c950148476f1bd57cfbb09bfe",
+      "scrolls": [
+        {
+          "selector": "main.___1a25q2q.fz7g6wx",
+          "scrollLeft": 0,
+          "scrollTop": 0
+        }
+      ]
+    },
+    "palette": {
+      "stroke": "#d13438",
+      "background": "#ffffff",
+      "foreground": "#242424",
+      "highlightFill": "#fef7b2",
+      "highlightStroke": "#fde300",
+      "selection": "#0f6cbd",
+      "fontFamily": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif"
+    }
+  }
+}

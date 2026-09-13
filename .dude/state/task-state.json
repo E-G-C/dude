@@ -221,9 +221,12 @@
       "T001@62726964": "x",
       "T002@63686b70": "x",
       "T003@696e7467": "x",
-      "T004@72756e72": "x"
+      "T004@72756e72": "x",
+      "T007@6d726b72": "x",
+      "T009@6c696e74": "x",
+      "T010@7061636b": "x"
     },
-    "updated_at": "2026-08-04T15:21:37.685Z"
+    "updated_at": "2026-09-03T01:08:49.899Z"
   },
   ".dude/specs/019-specialist-attestation-producer/tasks.md": {
     "glyphs": {
@@ -458,5 +461,44 @@
       "T005@51a0d005": "x"
     },
     "updated_at": "2026-08-31T20:34:19.527Z"
+  },
+  ".dude/specs/052-dude-canvas-ui/tasks.md": {
+    "glyphs": {
+      "T001@052d1d3a": "x",
+      "T005@052bake5": "x",
+      "T006@052duck6": "x",
+      "T007@052aprv7": "x",
+      "T002@052open2": "x",
+      "T003@052read3": "x",
+      "T014@052host4": "x",
+      "T008@052proj8": "x",
+      "T009@052core9": "x",
+      "T010@052now10": "x",
+      "T011@052a11y1": "x",
+      "T012@052dog12": "x",
+      "T013@052rel13": "x"
+    },
+    "updated_at": "2026-09-04T21:58:56.242Z"
+  },
+  ".dude/specs/055-canvas-acceptance-reliability/tasks.md": {
+    "glyphs": {
+      "T001@055ci001": "x",
+      "T002@055real2": "x",
+      "T003@055grid3": "x"
+    },
+    "updated_at": "2026-09-05T03:43:01.000Z"
+  },
+  ".dude/specs/057-dude-canvas-needs-you/tasks.md": {
+    "glyphs": {
+      "T007@a57c0707": "x",
+      "T008@a57c0808": "x",
+      "T003@a57c0303": "x",
+      "T009@a57c0909": "x",
+      "T010@a57c1010": "x",
+      "T011@a57c1111": "x",
+      "T013@a57c1313": "x",
+      "T012@a57c1212": "x"
+    },
+    "updated_at": "2026-09-13T14:34:48.344Z"
   }
 }

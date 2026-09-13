@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "submissionId": "e15ede68-feae-4ba6-bed1-0ef890ecefdd",
+  "scope": {
+    "kind": "feature",
+    "ideaPath": ".dude/ideas/057-dude-canvas-needs-you.md",
+    "specPath": ".dude/specs/057-dude-canvas-needs-you/spec.md"
+  },
+  "preview": {
+    "artifact": {
+      "path": ".dude/specs/057-dude-canvas-needs-you/design/needs-you-workspace.html",
+      "revision": "sha256:6cd15f3e695e9129356f70f6b55e0ad7b7e12023b6a2926da4dec29dced5d5ee"
+    },
+    "assets": [
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/workspace-snapshots.js",
+        "revision": "sha256:b426d55f2bafe52ade76dd501a72bec075a19decaa08c3848bb9d91c8c0e48ea"
+      },
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/overview-snapshots.js",
+        "revision": "sha256:967d5283282424263e3c40d4deb864e699f00aa7bd69b21b5d0d81448def71c2"
+      },
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/needs-you-workspace.js",
+        "revision": "sha256:c4af6948b7b08c29430eea4e9dac4804e1ece432a467fd330f235084e0829bfd"
+      }
+    ]
+  },
+  "requestRef": "ship-057-desktop-defects",
+  "requestRevision": "desktop-defects-20260910-2",
+  "state": {
+    "annotations": [
+      {
+        "id": "c215152a-0c90-4130-927c-e2c4f9593f3e",
+        "tool": "box",
+        "x1": 22.390625,
+        "y1": 136.671875,
+        "x2": 527.125,
+        "y2": 465.6796875,
+        "comment": "",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "#_r_4_",
+          "selectorMatches": 1,
+          "tag": "span",
+          "text": "2 of 7 tasks complete",
+          "rect": {
+            "x": 43,
+            "y": 295,
+            "width": 360,
+            "height": 20
+          },
+          "styles": {
+            "color": "rgb(255, 255, 255)",
+            "background-color": "rgba(0, 0, 0, 0)",
+            "background-image": "none",
+            "font-family": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif",
+            "font-size": "14px",
+            "font-weight": "400",
+            "line-height": "20px",
+            "letter-spacing": "normal",
+            "text-align": "start",
+            "display": "block",
+            "position": "static",
+            "width": "360px",
+            "height": "20px",
+            "margin": "0px",
+            "padding": "0px",
+            "gap": "normal",
+            "border": "0px none rgb(255, 255, 255)",
+            "border-radius": "0px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": [
+          {
+            "selector": "main.___1a25q2q.fz7g6wx",
+            "scrollLeft": 0,
+            "scrollTop": 0
+          }
+        ]
+      },
+      {
+        "id": "80ed3705-23c0-45f4-a40f-c74d44e02fce",
+        "tool": "comment",
+        "x1": 496.05859375,
+        "y1": 164.609375,
+        "x2": 496.05859375,
+        "y2": 164.609375,
+        "comment": "",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "header.___1j3tb0w.f22iagw",
+          "selectorMatches": 1,
+          "tag": "header",
+          "text": "OverviewRecorded snapshot · Sep 6, 2026 at 9:59 PM · Not live activityNew idea",
+          "rect": {
+            "x": 24,
+            "y": 135,
+            "width": 877,
+            "height": 52
+          },
+          "styles": {
+            "color": "rgb(255, 255, 255)",
+            "background-color": "rgba(0, 0, 0, 0)",
+            "background-image": "none",
+            "font-family": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif",
+            "font-size": "14px",
+            "font-weight": "400",
+            "line-height": "20px",
+            "letter-spacing": "normal",
+            "text-align": "left",
+            "display": "flex",
+            "position": "static",
+            "width": "877px",
+            "height": "52px",
+            "margin": "0px",
+            "padding": "0px",
+            "gap": "12px",
+            "border": "0px none rgb(255, 255, 255)",
+            "border-radius": "0px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": [
+          {
+            "selector": "main.___1a25q2q.fz7g6wx",
+            "scrollLeft": 0,
+            "scrollTop": 0
+          }
+        ]
+      }
+    ],
+    "notes": "",
+    "tool": "select",
+    "selectedId": "80ed3705-23c0-45f4-a40f-c74d44e02fce",
+    "caret": {
+      "id": "80ed3705-23c0-45f4-a40f-c74d44e02fce",
+      "field": "comment",
+      "start": 0,
+      "end": 0,
+      "direction": "none"
+    },
+    "view": {
+      "viewport": {
+        "width": 925,
+        "height": 728,
+        "scrollX": 0,
+        "scrollY": 0,
+        "deviceScale": 2,
+        "theme": "dark",
+        "documentWidth": 925,
+        "documentHeight": 728
+      },
+      "signature": "sha256:c48db3daafcd6f9ae677bd56c8c24a7bef78dbeef2fdb76ddad779cfbf3f250c",
+      "scrolls": [
+        {
+          "selector": "main.___1a25q2q.fz7g6wx",
+          "scrollLeft": 0,
+          "scrollTop": 0
+        }
+      ]
+    },
+    "palette": {
+      "stroke": "#e37d80",
+      "background": "#292929",
+      "foreground": "#ffffff",
+      "highlightFill": "#817400",
+      "highlightStroke": "#fdea3d",
+      "selection": "#479ef5",
+      "fontFamily": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif"
+    }
+  }
+}

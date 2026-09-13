@@ -1,0 +1,296 @@
+{
+  "version": 1,
+  "submissionId": "cd632948-9269-407b-b13f-86b02acce78f",
+  "scope": {
+    "kind": "feature",
+    "ideaPath": ".dude/ideas/057-dude-canvas-needs-you.md",
+    "specPath": ".dude/specs/057-dude-canvas-needs-you/spec.md"
+  },
+  "preview": {
+    "artifact": {
+      "path": ".dude/specs/057-dude-canvas-needs-you/design/needs-you-workspace.html",
+      "revision": "sha256:6cd15f3e695e9129356f70f6b55e0ad7b7e12023b6a2926da4dec29dced5d5ee"
+    },
+    "assets": [
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/workspace-snapshots.js",
+        "revision": "sha256:b426d55f2bafe52ade76dd501a72bec075a19decaa08c3848bb9d91c8c0e48ea"
+      },
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/overview-snapshots.js",
+        "revision": "sha256:967d5283282424263e3c40d4deb864e699f00aa7bd69b21b5d0d81448def71c2"
+      },
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/needs-you-workspace.js",
+        "revision": "sha256:c4af6948b7b08c29430eea4e9dac4804e1ece432a467fd330f235084e0829bfd"
+      }
+    ]
+  },
+  "requestRef": "ship-057-desktop-final",
+  "requestRevision": "desktop-final-20260909-1",
+  "state": {
+    "annotations": [
+      {
+        "id": "56bb7217-9c8f-441e-a8d9-1e1be0b52dfe",
+        "tool": "arrow",
+        "x1": 817.5078125,
+        "y1": 292.48849946695094,
+        "x2": 931.47265625,
+        "y2": 201.78110341151387,
+        "comment": "",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "section.___106ytpf.f22iagw",
+          "selectorMatches": 1,
+          "tag": "section",
+          "text": "WorkSearch workShowOpen4 of 57 recorded ideas and features · alphabetical, not priority orderClosed work includes 49 completed features and 4 resolved ideas. Resolved ideas were not necessarily implemented.Select a row and press Enter, or click it, to open that record in Context.NameStatusProgressDesign-Stage CritiqueDraft ideaProgress not recordedDude Canvas Needs YouIn progress2 of 7 tasksMockup Opens in ReviewDraft ideaProgress not recordedShip Orphan CleanupRecorded as deferredDraft ideaProgress not recorded",
+          "rect": {
+            "x": 24,
+            "y": 102,
+            "width": 1120,
+            "height": 415
+          },
+          "styles": {
+            "color": "rgb(36, 36, 36)",
+            "background-color": "rgba(0, 0, 0, 0)",
+            "background-image": "none",
+            "font-family": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif",
+            "font-size": "14px",
+            "font-weight": "400",
+            "line-height": "20px",
+            "letter-spacing": "normal",
+            "text-align": "left",
+            "display": "flex",
+            "position": "static",
+            "width": "1120px",
+            "height": "415px",
+            "margin": "0px",
+            "padding": "0px",
+            "gap": "12px",
+            "border": "0px none rgb(36, 36, 36)",
+            "border-radius": "0px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": [
+          {
+            "selector": "main.___1a25q2q.fz7g6wx",
+            "scrollLeft": 0,
+            "scrollTop": 376
+          }
+        ]
+      },
+      {
+        "id": "1a7d3c3e-29b3-460a-963c-a188e7d164f7",
+        "tool": "comment",
+        "x1": 950.53125,
+        "y1": 231.94011194029852,
+        "x2": 950.53125,
+        "y2": 231.94011194029852,
+        "comment": "",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "div.___d6oa7s0.f22iagw:nth-of-type(2) > span.fui-Text.___pyqrqi0:nth-of-type(2)",
+          "selectorMatches": 1,
+          "tag": "span",
+          "text": "Closed work includes 49 completed features and 4 resolved ideas. Resolved ideas were not necessarily implemented.",
+          "rect": {
+            "x": 24,
+            "y": 226,
+            "width": 1120,
+            "height": 16
+          },
+          "styles": {
+            "color": "rgb(66, 66, 66)",
+            "background-color": "rgba(0, 0, 0, 0)",
+            "background-image": "none",
+            "font-family": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif",
+            "font-size": "12px",
+            "font-weight": "400",
+            "line-height": "16px",
+            "letter-spacing": "normal",
+            "text-align": "start",
+            "display": "block",
+            "position": "static",
+            "width": "1120px",
+            "height": "16px",
+            "margin": "0px",
+            "padding": "0px",
+            "gap": "normal",
+            "border": "0px none rgb(66, 66, 66)",
+            "border-radius": "0px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": [
+          {
+            "selector": "main.___1a25q2q.fz7g6wx",
+            "scrollLeft": 0,
+            "scrollTop": 376
+          }
+        ]
+      },
+      {
+        "id": "bee3820a-9c11-4eab-91fb-81a9f14a911e",
+        "tool": "comment",
+        "x1": 962.01171875,
+        "y1": 259.8539845415778,
+        "x2": 962.01171875,
+        "y2": 259.8539845415778,
+        "comment": "",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "span.fui-Text.___pyqrqi0:nth-of-type(3)",
+          "selectorMatches": 1,
+          "tag": "span",
+          "text": "Select a row and press Enter, or click it, to open that record in Context.",
+          "rect": {
+            "x": 24,
+            "y": 246,
+            "width": 1120,
+            "height": 16
+          },
+          "styles": {
+            "color": "rgb(66, 66, 66)",
+            "background-color": "rgba(0, 0, 0, 0)",
+            "background-image": "none",
+            "font-family": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif",
+            "font-size": "12px",
+            "font-weight": "400",
+            "line-height": "16px",
+            "letter-spacing": "normal",
+            "text-align": "start",
+            "display": "block",
+            "position": "static",
+            "width": "1120px",
+            "height": "16px",
+            "margin": "0px",
+            "padding": "0px",
+            "gap": "normal",
+            "border": "0px none rgb(66, 66, 66)",
+            "border-radius": "0px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": [
+          {
+            "selector": "main.___1a25q2q.fz7g6wx",
+            "scrollLeft": 0,
+            "scrollTop": 376
+          }
+        ]
+      },
+      {
+        "id": "c8ae2b0f-acec-4075-a03a-21cf5cebe901",
+        "tool": "comment",
+        "x1": 949.98046875,
+        "y1": 228.56655117270788,
+        "x2": 949.98046875,
+        "y2": 228.56655117270788,
+        "comment": "",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "div.___d6oa7s0.f22iagw:nth-of-type(2) > span.fui-Text.___pyqrqi0:nth-of-type(2)",
+          "selectorMatches": 1,
+          "tag": "span",
+          "text": "Closed work includes 49 completed features and 4 resolved ideas. Resolved ideas were not necessarily implemented.",
+          "rect": {
+            "x": 24,
+            "y": 226,
+            "width": 1120,
+            "height": 16
+          },
+          "styles": {
+            "color": "rgb(66, 66, 66)",
+            "background-color": "rgba(0, 0, 0, 0)",
+            "background-image": "none",
+            "font-family": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif",
+            "font-size": "12px",
+            "font-weight": "400",
+            "line-height": "16px",
+            "letter-spacing": "normal",
+            "text-align": "start",
+            "display": "block",
+            "position": "static",
+            "width": "1120px",
+            "height": "16px",
+            "margin": "0px",
+            "padding": "0px",
+            "gap": "normal",
+            "border": "0px none rgb(66, 66, 66)",
+            "border-radius": "0px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": [
+          {
+            "selector": "main.___1a25q2q.fz7g6wx",
+            "scrollLeft": 0,
+            "scrollTop": 376
+          }
+        ]
+      }
+    ],
+    "notes": "still a mess\n",
+    "tool": "comment",
+    "selectedId": "c8ae2b0f-acec-4075-a03a-21cf5cebe901",
+    "caret": null,
+    "view": {
+      "viewport": {
+        "width": 1478,
+        "height": 586,
+        "scrollX": 0,
+        "scrollY": 0,
+        "deviceScale": 2,
+        "theme": "light",
+        "documentWidth": 1478,
+        "documentHeight": 586
+      },
+      "signature": "sha256:3634e40ed2bca0bd582cd3d6eff7c01d6b5835aeb0e3722d3bc5ecf4883d2f2d",
+      "scrolls": [
+        {
+          "selector": "main.___1a25q2q.fz7g6wx",
+          "scrollLeft": 0,
+          "scrollTop": 0
+        }
+      ]
+    },
+    "palette": {
+      "stroke": "#d13438",
+      "background": "#ffffff",
+      "foreground": "#242424",
+      "highlightFill": "#fef7b2",
+      "highlightStroke": "#fde300",
+      "selection": "#0f6cbd",
+      "fontFamily": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif"
+    }
+  }
+}

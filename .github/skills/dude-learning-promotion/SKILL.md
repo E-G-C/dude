@@ -1,6 +1,6 @@
 ---
 name: "dude-learning-promotion"
-description: "Use when Dude overcomes a non-trivial challenge, discovers a reusable pattern, or should promote a solved problem into a reusable skill to avoid the same issue in the future. Do NOT use to record a plain decision, preference, or project fact (dude-memory-ledger), or to author the skill file itself (dude-skill-authoring)."
+description: "Use when Dude solves a non-trivial challenge, review or delivery reveals a reusable prevention rule, the user asks to synthesize session learning, or a solved pattern may merit memory or skill promotion. Do NOT use to record a plain decision, preference, or project fact (dude-memory-ledger), or to author the skill file itself (dude-skill-authoring)."
 ---
 
 ## Purpose
@@ -15,6 +15,7 @@ Consider promotion when:
 
 - a specialist reports a workaround, root cause, or non-obvious fix
 - a review reveals a repeated preventable issue
+- implementation, failed approaches, review corrections, and delivery together reveal a reusable lesson
 - the user explicitly says the team should remember how a problem was solved
 - the same kind of challenge is likely to recur in this project
 
@@ -25,6 +26,38 @@ After Dude solves a challenge, decide whether the outcome is:
 - one-off and local
 - durable but still narrow
 - broadly reusable as a skill
+
+## Bounded Synthesis
+
+When a trigger calls for synthesis rather than classification of one isolated
+lesson, make one bounded pass before choosing a handling route:
+
+1. Use only relevant available evidence from implementation, failed approaches,
+   review corrections, verification, and delivery. Do not reconstruct missing
+   events or scan unrelated sessions.
+2. Separate proven causes and fixes from hypotheses, assumptions, and unresolved
+   defects. Do not promote the latter as established guidance.
+3. For each candidate, extract the cause, the prevention rule, and when the rule
+   should be reused. Keep a merely suspected cause or open defect explicitly
+   scoped if it is worth retaining at all.
+4. Compare candidates with existing memory and skills, consolidate overlap, then
+   apply the existing handling route and retention owner below. Synthesis grants
+   no new write owner.
+5. Report each candidate as `retained`, `proposed`, `already-covered`, or
+   `not-retained`, with its destination or concise reason. This report is not
+   another ledger or status system.
+
+An explicit user request is enough to run this pass, but does not transfer
+recovery authority. `dude-work` remains the sole owner of recovery retention and
+autonomous learning governance; normal completion closeout remains read-only
+and may report only an existing retention disposition.
+
+An optional feature retrospective is advisory evidence scoped to the feature
+and evidence available at its single completion dispatch. A positive or
+no-findings retrospective is not exhaustive analysis of later failures or the
+whole session. Do not dispatch it again for synthesis. This pass adds no command,
+automatic session scanner, close hook, approval gate, required worksheet, or
+mandatory artifact.
 
 ## Handling
 
@@ -56,9 +89,6 @@ Before promotion:
 
 To prevent skill sprawl:
 
-- When creating a new skill, check whether an existing skill can be extended
-  instead.
-- If two skills substantially overlap, merge them into one.
 - Skills that have not been useful across at least two tasks should be
   candidates for removal or demotion back to a lesson.
 - Keep the total skill count manageable — if the roster grows past ~15

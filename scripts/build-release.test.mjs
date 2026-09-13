@@ -15,6 +15,7 @@ import {
   seedManifest,
   parseManifestDocument,
   buildRelease,
+  listCoreSourceFiles,
   listCoreOutputs,
   parseArgs,
   PROFILE_STUB,
@@ -64,6 +65,23 @@ const RECOVERY_SOURCE_REL = 'src/skills/dude-work/recovery.mjs';
 const RECOVERY_TEST_SOURCE_REL = 'src/skills/dude-work/recovery.test.mjs';
 const RECOVERY_DEPLOY_REL = '.github/skills/dude-work/recovery.mjs';
 const RECOVERY_TEST_DEPLOY_REL = '.github/skills/dude-work/recovery.test.mjs';
+const REVIEW_UI_FILES = Object.freeze([
+  'NOTICE.txt',
+  'bridge.mjs',
+  'capture.mjs',
+  'engine.mjs',
+  'geometry.mjs',
+  'inspector.mjs',
+  'panel.mjs',
+  'shapes.mjs',
+  'styles.css',
+]);
+const REVIEW_LIB_FILES = Object.freeze([
+  'lib/review.mjs',
+  'lib/review/browser.mjs',
+  'lib/review/data.mjs',
+  'lib/review/png.mjs',
+]);
 const T007_PROJECTION_PAIRS = [
   ['src/skills/dude-bundle-import/SKILL.md', '.github/skills/dude-bundle-import/SKILL.md'],
   ['src/skills/dude-bundle-import/import.mjs', '.github/skills/dude-bundle-import/import.mjs'],
@@ -156,6 +174,7 @@ function historicalSource(sourcePath) {
 function writeHistoricalUpgradeInstall(root) {
   const historicalFiles = [
     'src/skills/dude-bundle-upgrade/upgrade.mjs',
+    'src/skills/dude-bundle-upgrade/SKILL.md',
     'src/skills/dude-engine/lib/ownership.mjs',
     'src/skills/dude-engine/lib/release-channel.mjs',
     'src/skills/dude-engine/lib/workspace-paths.mjs',
@@ -198,6 +217,121 @@ test('isReleaseFile keeps current core files and excludes dropped, pack, local, 
   assert.equal(isReleaseFile('.github/skills/project/SKILL.md'), false);
   assert.equal(isReleaseFile('.dude/metadata/bundle-manifest.md'), false);
   assert.equal(isReleaseFile('.github/workflows/ci.yml'), false);
+});
+
+test('extension release planning accepts only the deployed runtime allowlist', () => {
+  // Arrange: source paths are intentionally not ownership paths. The planner
+  // must classify only their `.github/extensions/dude` destinations.
+  const included = [
+    '.github/extensions/dude/extension.mjs',
+    '.github/extensions/dude/lib/canvas-server.mjs',
+    '.github/extensions/dude/lib/nested/runtime.cjs',
+    '.github/extensions/dude/ui/index.html',
+    '.github/extensions/dude/ui/assets/app.js',
+    '.github/extensions/dude/ui/assets/licenses/NOTICE.txt',
+    ...REVIEW_LIB_FILES.map((relative) => `.github/extensions/dude/${relative}`),
+    ...REVIEW_UI_FILES.map((filename) => `.github/extensions/dude/ui/review/${filename}`),
+  ];
+  const excluded = [
+    'src/extensions/dude/extension.mjs',
+    'src/extensions/dude/lib/canvas-server.mjs',
+    '.github/extensions/dude/canvas-server.test.mjs',
+    '.github/extensions/dude/lib/nested/runtime.test.js',
+    '.github/extensions/dude/ui/assets/app.test.js',
+    '.github/extensions/dude/frontend/app.jsx',
+    '.github/extensions/dude/ui/preview.html',
+    '.github/extensions/dude/ui/theme.css',
+    '.github/extensions/dude/README.md',
+    '.github/extensions/dude/extension.mjs.map',
+    '.github/extensions/dude/lib/runtime.mjs.map',
+    '.github/extensions/dude/lib/review/unlisted.mjs',
+    '.github/extensions/dude/lib/review/nested/extra.mjs',
+    '.github/extensions/dude/ui/assets/app.js.map',
+    '.github/extensions/dude/lib/node_modules/dependency/index.mjs',
+    '.github/extensions/dude/ui/assets/node_modules/dependency/index.js',
+    '.github/extensions/dude/ui/review/unlisted.mjs',
+    '.github/extensions/dude/ui/review/nested/extra.mjs',
+    '.github/extensions/dude/ui/review/engine.test.mjs',
+    '.github/extensions/dude/ui/review/package.json',
+    '.github/extensions/dude/ui/review/node_modules/dependency/index.mjs',
+    '.github/extensions/other/extension.mjs',
+    '.github/extensions/dude-preview/extension.mjs',
+  ];
+
+  // Act + Assert
+  for (const relPath of included) assert.equal(isReleaseFile(relPath), true, relPath);
+  for (const relPath of excluded) assert.equal(isReleaseFile(relPath), false, relPath);
+  assert.equal(
+    isReleaseFile('.github\\extensions\\dude\\ui\\assets\\nested\\app.js'),
+    true,
+    'separators normalize only at the deployed boundary',
+  );
+});
+
+test('listCoreSourceFiles maps only extension runtime source files by relative path', () => {
+  // Arrange
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-rel-extension-source-'));
+  try {
+    const runtime = {
+      'src/extensions/dude/extension.mjs': 'extension\n',
+      'src/extensions/dude/lib/runtime.mjs': 'runtime\n',
+      'src/extensions/dude/lib/nested/runtime.json': '{}\n',
+      'src/extensions/dude/ui/index.html': '<!doctype html>\n',
+      'src/extensions/dude/ui/assets/app.js': 'app\n',
+      'src/extensions/dude/ui/assets/licenses/NOTICE.txt': 'notice\n',
+      ...Object.fromEntries(REVIEW_LIB_FILES.map((relative) => [
+        `src/extensions/dude/${relative}`,
+        `${relative} review runtime\n`,
+      ])),
+      ...Object.fromEntries(REVIEW_UI_FILES.map((filename) => [
+        `src/extensions/dude/ui/review/${filename}`,
+        `${filename} review static\n`,
+      ])),
+    };
+    const excluded = {
+      'src/extensions/dude/canvas-server.test.mjs': 'test\n',
+      'src/extensions/dude/lib/nested/runtime.test.mjs': 'test\n',
+      'src/extensions/dude/lib/runtime.mjs.map': 'map\n',
+      'src/extensions/dude/lib/node_modules/dependency/index.mjs': 'dependency\n',
+      'src/extensions/dude/lib/review/unlisted.mjs': 'unlisted review helper\n',
+      'src/extensions/dude/lib/review/nested/extra.mjs': 'nested unlisted review helper\n',
+      'src/extensions/dude/frontend/app.jsx': 'frontend\n',
+      'src/extensions/dude/ui/preview.html': 'preview\n',
+      'src/extensions/dude/ui/review/unlisted.mjs': 'unlisted review static\n',
+      'src/extensions/dude/ui/review/nested/extra.mjs': 'nested review static\n',
+      'src/extensions/dude/ui/review/review.test.mjs': 'review test\n',
+      'src/extensions/dude/ui/review/package.json': '{}\n',
+      'src/extensions/dude/ui/review/node_modules/dependency/index.mjs': 'dependency\n',
+      'src/extensions/dude/ui/assets/app.js.map': 'map\n',
+      'src/extensions/dude/ui/assets/node_modules/dependency/index.js': 'dependency\n',
+      'src/extensions/other/extension.mjs': 'other extension\n',
+      'scripts/dude-canvas-ui/package.json': '{}\n',
+      'scripts/dude-canvas-ui/package-lock.json': '{}\n',
+      'scripts/dude-canvas-ui/build.mjs': 'build\n',
+    };
+    for (const [relPath, bytes] of Object.entries({ ...runtime, ...excluded })) w(root, relPath, bytes);
+
+    // Act
+    const planned = listCoreSourceFiles(root)
+      .filter(({ deployRel }) => deployRel.startsWith('.github/extensions/'));
+
+    // Assert
+    assert.deepEqual(
+      planned.map(({ deployRel }) => deployRel).sort(),
+      Object.keys(runtime)
+        .map((relPath) => relPath.replace(/^src\//, '.github/'))
+        .sort(),
+    );
+    for (const { abs, deployRel } of planned) {
+      assert.deepEqual(
+        fs.readFileSync(abs),
+        fs.readFileSync(path.join(root, ...deployRel.replace(/^\.github\//, 'src/').split('/'))),
+        deployRel,
+      );
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('seedManifest forces the release channel and safely preserves the manifest envelope', () => {
@@ -243,6 +377,42 @@ test('buildRelease preserves unrelated source bytes and excludes source tests', 
         `${deployRel} must be byte-identical to ${sourceRel}`,
       );
     }
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test('T011 release stages exact published Canvas runtime bytes without frontend, tests, or build tooling', () => {
+  // Arrange
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-rel-t011-canvas-'));
+  const runtime = [
+    'extension.mjs',
+    'lib/canvas-server.mjs',
+    'lib/projection.mjs',
+    'lib/needs-you.mjs',
+    'lib/review.mjs',
+    'ui/index.html',
+    'ui/assets/app.js',
+    'ui/assets/app.js.LEGAL.txt',
+    ...REVIEW_UI_FILES.map((filename) => `ui/review/${filename}`),
+  ];
+  try {
+    // Act
+    buildRelease({ repoRoot, outDir, ref: 'v0.0.0-t011-fixture' });
+
+    // Assert
+    for (const relative of runtime) {
+      assert.deepEqual(
+        fs.readFileSync(path.join(outDir, '.github/extensions/dude', ...relative.split('/'))),
+        fs.readFileSync(path.join(repoRoot, 'src/extensions/dude', ...relative.split('/'))),
+        `.github/extensions/dude/${relative}`,
+      );
+    }
+    const staged = listRelativeFiles(outDir);
+    assert.equal(staged.some((relative) => relative.startsWith('.github/extensions/dude/frontend/')), false);
+    assert.equal(staged.some((relative) => relative.endsWith('.test.mjs')), false);
+    assert.equal(staged.includes('scripts/dude-canvas-ui/build.mjs'), false);
+    assert.equal(staged.includes('scripts/dude-canvas-ui/package-lock.json'), false);
   } finally {
     fs.rmSync(outDir, { recursive: true, force: true });
   }
@@ -549,23 +719,104 @@ test('buildRelease is byte-stable across repeated valid disposable outputs', () 
       fs.readFileSync(path.join(second, '.github/skills/dude-engine/config/agent-models.json')),
       fs.readFileSync(path.join(repoRoot, 'src/config/agent-models.json')),
     );
+
+    const extensionSources = listCoreSourceFiles(repoRoot)
+      .filter(({ deployRel }) => deployRel.startsWith('.github/extensions/dude/'));
+    const extensionOutputs = listCoreOutputs(repoRoot)
+      .filter(({ relPath }) => relPath.startsWith('.github/extensions/dude/'));
+    assert.ok(extensionSources.length > 0, 'the checked-in runtime has extension files to release');
+    assert.deepEqual(
+      extensionOutputs.map(({ relPath }) => relPath),
+      extensionSources.map(({ deployRel }) => deployRel).sort(),
+      'release output has exactly the source-planned extension runtime files',
+    );
+    for (const { abs, deployRel } of extensionSources) {
+      const expected = fs.readFileSync(abs);
+      assert.deepEqual(fs.readFileSync(path.join(first, ...deployRel.split('/'))), expected, deployRel);
+      assert.deepEqual(fs.readFileSync(path.join(second, ...deployRel.split('/'))), expected, deployRel);
+    }
+    assert.deepEqual(
+      extensionSources
+        .map(({ deployRel }) => deployRel)
+        .filter((relPath) => relPath.startsWith('.github/extensions/dude/ui/review/'))
+        .map((relPath) => path.posix.basename(relPath))
+        .sort(),
+      [...REVIEW_UI_FILES],
+      'release planning carries exactly the nine adopted Review static files',
+    );
+    assert.deepEqual(
+      extensionSources
+        .map(({ deployRel }) => deployRel)
+        .filter((relPath) => relPath === '.github/extensions/dude/lib/review.mjs'
+          || relPath.startsWith('.github/extensions/dude/lib/review/'))
+        .map((relPath) => relPath.replace('.github/extensions/dude/', ''))
+        .sort(),
+      [...REVIEW_LIB_FILES],
+      'release planning carries exactly the four adopted Review adapter files',
+    );
+    const noticePath = '.github/extensions/dude/ui/review/NOTICE.txt';
+    const notice = fs.readFileSync(path.join(first, ...noticePath.split('/')), 'utf8');
+    assert.equal(
+      notice,
+      fs.readFileSync(path.join(repoRoot, 'src/extensions/dude/ui/review/NOTICE.txt'), 'utf8'),
+      'the complete adopted notice is copied byte-for-byte',
+    );
+    for (const required of [
+      'MIT License',
+      'Copyright (c) 2026 Enrique Gonzalez',
+      'Permission is hereby granted, free of charge',
+      'THE SOFTWARE IS PROVIDED "AS IS"',
+      'There is no runtime connection to the source repository.',
+    ]) assert.match(notice, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+
+    const staged = listRelativeFiles(first);
+    assert.deepEqual(
+      staged.filter((relPath) => (
+        /(?:^|\/)(?:frontend|node_modules)(?:\/|$)/.test(relPath)
+        || /(?:^|\/)(?:package(?:-lock)?\.json|build\.mjs)$/.test(relPath)
+        || /\.test\.[^/]+$/.test(relPath)
+        || relPath.endsWith('.map')
+      )),
+      [],
+      'a consumer release contains runtime bytes, not source, tests, metadata, or tooling',
+    );
+    const implementation = fs.readFileSync(path.join(repoRoot, 'scripts/build-release.mjs'), 'utf8');
+    assert.doesNotMatch(
+      implementation,
+      /from ['"]node:(?:child_process|http|https|net|tls)['"]/,
+      'the release assembler has no process or network mechanism to install or build',
+    );
   } finally {
     fs.rmSync(sandbox, { recursive: true, force: true });
   }
 });
 
-test('the last pre-feature installed upgrader installs candidate engine config and reaches upgraded compose add', async () => {
+test('the supported historical upgrade flow bootstraps every current extension byte in two reviewed invocations', async () => {
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-historical-bootstrap-'));
   const candidate = path.join(sandbox, 'candidate');
   const workspace = path.join(sandbox, 'workspace');
   const cache = path.join(sandbox, 'cache');
-  const planPath = path.join(sandbox, 'historical-plan.json');
+  const historicalPlanPath = path.join(sandbox, 'historical-plan.json');
+  const bootstrapPlanPath = path.join(sandbox, 'same-ref-bootstrap-plan.json');
+  const noOpPlanPath = path.join(sandbox, 'same-ref-no-op-plan.json');
   try {
     buildRelease({ repoRoot, outDir: candidate, ref: 'v9.9.9' });
     initializeRepository(candidate, 'bootstrap');
 
     fs.mkdirSync(workspace);
     writeHistoricalUpgradeInstall(workspace);
+    const unrelatedExtensions = {
+      '.github/extensions/other/deep/sentinel.txt': 'other extension bytes\n',
+      '.github/extensions/dude-preview/extension.mjs': 'preview extension bytes\n',
+      '.github/extensions/project-owned.txt': 'project extension root bytes\n',
+    };
+    for (const [relPath, bytes] of Object.entries(unrelatedExtensions)) w(workspace, relPath, bytes);
+    const unrelatedExtensionBytes = new Map(
+      Object.keys(unrelatedExtensions).map((relPath) => [
+        relPath,
+        fs.readFileSync(path.join(workspace, ...relPath.split('/'))),
+      ]),
+    );
     w(workspace, '.github/agents/dude.agent.md', 'historical core profile\n');
     w(
       workspace,
@@ -594,6 +845,26 @@ test('the last pre-feature installed upgrader installs candidate engine config a
       encoding: 'utf8',
       env: { ...process.env, TMPDIR: cache },
     };
+
+    // First explicit @dude upgrade, using the exact historical installed
+    // procedure and engine: status -> reviewed plan -> literal confirmation.
+    const historicalStatus = spawnSync(process.execPath, [
+      historicalUpgrade,
+      'status',
+      '--source',
+      candidate,
+      '--ref',
+      'bootstrap',
+      '--format',
+      'json',
+    ], common);
+    assert.equal(
+      historicalStatus.status,
+      0,
+      (historicalStatus.stdout || '') + (historicalStatus.stderr || ''),
+    );
+    assert.equal(JSON.parse(historicalStatus.stdout).status, 'upgrade_available');
+
     const planned = spawnSync(process.execPath, [
       historicalUpgrade,
       'plan',
@@ -604,10 +875,10 @@ test('the last pre-feature installed upgrader installs candidate engine config a
       '--format',
       'json',
       '--out',
-      planPath,
+      historicalPlanPath,
     ], common);
     assert.equal(planned.status, 10, (planned.stdout || '') + (planned.stderr || ''));
-    const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+    const plan = JSON.parse(fs.readFileSync(historicalPlanPath, 'utf8'));
     const expectedHistoricalAdds = [
       '.github/skills/dude-engine/lib/agent-model-map.mjs',
       '.github/skills/dude-engine/lib/agent-projection.mjs',
@@ -624,7 +895,7 @@ test('the last pre-feature installed upgrader installs candidate engine config a
       historicalUpgrade,
       'apply',
       '--plan',
-      planPath,
+      historicalPlanPath,
       '--confirm',
       'confirm-upgrade',
       '--format',
@@ -638,6 +909,149 @@ test('the last pre-feature installed upgrader installs candidate engine config a
         `historical upgrader did not install candidate bytes for ${relPath}`,
       );
     }
+
+    // The historical engine has now atomically installed the candidate's
+    // current procedure/engine and advanced installed_ref, but its historical
+    // ownership scanner could not authorize the newly introduced extension.
+    const currentUpgrade = path.join(workspace, '.github/skills/dude-bundle-upgrade/upgrade.mjs');
+    const extensionPaths = listRelativeFiles(candidate)
+      .filter((relPath) => relPath.startsWith('.github/extensions/dude/'));
+    assert.ok(extensionPaths.length > 0, 'release candidate contains Dude runtime files');
+    assert.equal(fs.existsSync(path.join(workspace, '.github/extensions/dude')), false);
+    assert.deepEqual(
+      fs.readFileSync(currentUpgrade),
+      fs.readFileSync(path.join(candidate, '.github/skills/dude-bundle-upgrade/upgrade.mjs')),
+      'first apply installed the candidate current upgrade engine',
+    );
+    assert.deepEqual(
+      fs.readFileSync(path.join(workspace, '.github/skills/dude-bundle-upgrade/SKILL.md')),
+      fs.readFileSync(path.join(candidate, '.github/skills/dude-bundle-upgrade/SKILL.md')),
+      'first apply installed the candidate current upgrade procedure',
+    );
+
+    // Second explicit @dude upgrade, now following the installed current
+    // procedure. Matching-ref status is informational and proceeds to a fresh,
+    // independently confirmed same-ref plan; there is no internal planner call.
+    const bootstrapStatus = spawnSync(process.execPath, [
+      currentUpgrade,
+      'status',
+      '--source',
+      candidate,
+      '--ref',
+      'bootstrap',
+      '--format',
+      'json',
+    ], common);
+    assert.equal(
+      bootstrapStatus.status,
+      0,
+      (bootstrapStatus.stdout || '') + (bootstrapStatus.stderr || ''),
+    );
+    assert.equal(JSON.parse(bootstrapStatus.stdout).status, 'up_to_date');
+
+    const currentPlanned = spawnSync(process.execPath, [
+      currentUpgrade,
+      'plan',
+      '--source',
+      candidate,
+      '--ref',
+      'bootstrap',
+      '--format',
+      'json',
+      '--out',
+      bootstrapPlanPath,
+    ], common);
+    assert.equal(currentPlanned.status, 10, (currentPlanned.stdout || '') + (currentPlanned.stderr || ''));
+    const currentPlan = JSON.parse(fs.readFileSync(bootstrapPlanPath, 'utf8'));
+    assert.equal(currentPlan.from_ref, 'bootstrap');
+    assert.equal(currentPlan.to_ref, 'bootstrap');
+    assert.deepEqual(
+      [
+        ...currentPlan.buckets.add,
+        ...currentPlan.buckets.remove,
+        ...currentPlan.buckets.replace,
+      ].map((entry) => entry.path).sort(),
+      extensionPaths,
+      'the fresh same-ref plan authorizes only the missing Dude extension runtime',
+    );
+    assert.deepEqual(
+      currentPlan.buckets.add
+        .map((entry) => entry.path)
+        .filter((relPath) => relPath.startsWith('.github/extensions/')),
+      extensionPaths,
+      'current planner adds every and only candidate Dude runtime byte',
+    );
+    assert.doesNotMatch(
+      JSON.stringify(currentPlan),
+      /\b(?:migration|installer|registry)\b/i,
+      'extension bootstrap has no alternate migration or installer state',
+    );
+    const currentApplied = spawnSync(process.execPath, [
+      currentUpgrade,
+      'apply',
+      '--plan',
+      bootstrapPlanPath,
+      '--confirm',
+      'confirm-upgrade',
+      '--format',
+      'json',
+    ], common);
+    assert.equal(currentApplied.status, 0, (currentApplied.stdout || '') + (currentApplied.stderr || ''));
+    assert.deepEqual(
+      listRelativeFiles(workspace)
+        .filter((relPath) => relPath.startsWith('.github/extensions/dude/')),
+      extensionPaths,
+      'supported flow installs every and only candidate Dude extension runtime path',
+    );
+    for (const relPath of extensionPaths) {
+      assert.deepEqual(
+        fs.readFileSync(path.join(workspace, ...relPath.split('/'))),
+        fs.readFileSync(path.join(candidate, ...relPath.split('/'))),
+        `current upgrader did not install candidate runtime bytes for ${relPath}`,
+      );
+    }
+    for (const [relPath, bytes] of unrelatedExtensionBytes) {
+      assert.deepEqual(fs.readFileSync(path.join(workspace, ...relPath.split('/'))), bytes, relPath);
+    }
+
+    // A subsequent normal @dude upgrade repeats status then full planning. It
+    // proves byte completeness and stops at a true no-op without another apply.
+    const finalStatus = spawnSync(process.execPath, [
+      currentUpgrade,
+      'status',
+      '--source',
+      candidate,
+      '--ref',
+      'bootstrap',
+      '--format',
+      'json',
+    ], common);
+    assert.equal(finalStatus.status, 0, (finalStatus.stdout || '') + (finalStatus.stderr || ''));
+    assert.equal(JSON.parse(finalStatus.stdout).status, 'up_to_date');
+    const finalPlan = spawnSync(process.execPath, [
+      currentUpgrade,
+      'plan',
+      '--source',
+      candidate,
+      '--ref',
+      'bootstrap',
+      '--format',
+      'json',
+      '--out',
+      noOpPlanPath,
+    ], common);
+    assert.equal(finalPlan.status, 0, (finalPlan.stdout || '') + (finalPlan.stderr || ''));
+    const noOpPlan = JSON.parse(fs.readFileSync(noOpPlanPath, 'utf8'));
+    assert.deepEqual(
+      {
+        add: noOpPlan.summary.add,
+        remove: noOpPlan.summary.remove,
+        replace: noOpPlan.summary.replace,
+      },
+      { add: 0, remove: 0, replace: 0 },
+      'the supported follow-up plan is a true no-op',
+    );
+    assert.equal(git(workspace, ['status', '--porcelain']).stdout, '');
 
     writeBootstrapPack(workspace);
     const composePath = path.join(workspace, '.github/skills/dude-compose/compose.mjs');

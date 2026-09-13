@@ -14,6 +14,7 @@
  *           .github/agents/dude-<slug>.agent.md     (NOT dude-local-*, NOT dude-pack-*)
  *           .github/skills/dude-<slug>/**           (NOT dude-local-*, NOT dude-pack-*)
  *           .github/instructions/dude.instructions.md
+ *           .github/extensions/dude/**
  *
  *   pack    installed capability packs; owned per-pack, preserved by core upgrade
  *           .github/agents/dude-pack-<pack>-<slug>.agent.md
@@ -64,6 +65,10 @@ function normalize(relPath) {
  */
 export function classifyPath(relPath) {
   const p = normalize(relPath);
+
+  if (p === '.github/extensions/dude' || p.startsWith('.github/extensions/dude/')) {
+    return TIER.CORE;
+  }
 
   // The always-on bundle instructions file is the only core instruction file.
   if (p === '.github/instructions/dude.instructions.md') return TIER.CORE;
@@ -159,7 +164,7 @@ export function belongsToPack(relPath, packName) {
  */
 function isDir(abs) {
   try {
-    return fs.statSync(abs).isDirectory();
+    return fs.lstatSync(abs).isDirectory();
   } catch {
     return false;
   }
@@ -171,7 +176,7 @@ function isDir(abs) {
  */
 function isFile(abs) {
   try {
-    return fs.statSync(abs).isFile();
+    return fs.lstatSync(abs).isFile();
   } catch {
     return false;
   }
@@ -236,6 +241,15 @@ export function enumerateCorePaths(root) {
         // is relative (e.g. `.`), because path.join collapses the `./`.
         results.push(path.relative(root, abs).split(path.sep).join('/'));
       }
+    }
+  }
+
+  // The deployed Dude extension is one exact core-owned tree. Source extension
+  // files and every other deployed extension remain project-owned.
+  const dudeExtensionDir = path.join(root, '.github/extensions/dude');
+  if (isDir(dudeExtensionDir)) {
+    for (const abs of walkFiles(dudeExtensionDir)) {
+      results.push(path.relative(root, abs).split(path.sep).join('/'));
     }
   }
 

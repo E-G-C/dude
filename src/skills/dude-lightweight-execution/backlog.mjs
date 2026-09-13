@@ -532,7 +532,7 @@ export function collectLifecycleItems({ root }) {
       ownerSpecPath && tasksAvailable && parsedTasks.length > 0 && parsedTasks.every((task) => task.state === "done"),
     );
     const ownBlocked = Boolean(ownerSpecPath) && tasksAvailable && parsedTasks.some((task) => (
-      task.state === "blocked" || (task.blockedBy !== null && task.state !== "done")
+      task.state === "blocked" || (Boolean(task.blockedBy) && task.state !== "done")
     ));
     const hasInProgress = Boolean(ownerSpecPath)
       && tasksAvailable

@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **1**
+- Ideas awaiting definition: **7**
 - Defined awaiting work: **0**
-- Completed: **50**
+- Completed: **54**
 
 ## Current
 
@@ -20,7 +20,13 @@ No current work to diagram.
 
 ### Ideas awaiting definition
 
-- `048` · `backlog-canvas` — Backlog Canvas (`.dude/ideas/048-backlog-canvas.md`)
+- `053` · `design-stage-critique` — Design-Stage Critique (`.dude/ideas/053-design-stage-critique.md`)
+- `054` · `mockup-opens-in-review` — Mockup Opens in Review (`.dude/ideas/054-mockup-opens-in-review.md`)
+- `056` · `ship-orphan-cleanup` — Ship Orphan Cleanup (`.dude/ideas/056-ship-orphan-cleanup.md`)
+- `058` · `outcome-aligned-intake` — Outcome-Aligned Intake (`.dude/ideas/058-outcome-aligned-intake.md`)
+- `059` · `annotation-direct-manipulation` — Annotation Direct Manipulation (`.dude/ideas/059-annotation-direct-manipulation.md`)
+- `060` · `recoverable-work-handoffs` — Recoverable Work Handoffs (`.dude/ideas/060-recoverable-work-handoffs.md`)
+- `061` · `work-inspection-source-capacity` — Work Inspection Source Capacity (`.dude/ideas/061-work-inspection-source-capacity.md`)
 
 ## Completed
 
@@ -71,9 +77,13 @@ No current work to diagram.
 - `045` · `chronological-idea-numbering` — Chronological Idea Numbering (`.dude/ideas/045-chronological-idea-numbering.md`)
 - `046` · `good-enough-delivery` — Good Enough Delivery (`.dude/ideas/046-good-enough-delivery.md`)
 - `047` · `core-dogfood-preview` — Core Dogfood Preview (`.dude/ideas/047-core-dogfood-preview.md`)
+- `048` · `backlog-canvas` — Backlog Canvas (`.dude/ideas/048-backlog-canvas.md`)
 - `049` · `visual-systems-pack` — Visual Systems Pack (`.dude/ideas/049-visual-systems-pack.md`)
 - `050` · `completion-closeout-report` — Completion Closeout Report (`.dude/ideas/050-completion-closeout-report.md`)
 - `051` · `retrospective-rubber-duck-pack` — Retrospective Rubber Duck Pack (`.dude/ideas/051-retrospective-rubber-duck-pack.md`)
+- `052` · `dude-canvas-ui` — Dude Canvas UI (`.dude/ideas/052-dude-canvas-ui.md`)
+- `055` · `canvas-acceptance-reliability` — Canvas Acceptance Reliability (`.dude/ideas/055-canvas-acceptance-reliability.md`)
+- `057` · `dude-canvas-needs-you` — Dude Canvas Needs You (`.dude/ideas/057-dude-canvas-needs-you.md`)
 
 ## Dependency and order notes
 

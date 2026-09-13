@@ -51,4 +51,12 @@ Durable project and process decisions that Dude should preserve.
 - Tag-driven release versioning is the project standard for both GitHub Actions and Azure Pipelines: derive the package version from the `v*` tag before packaging, and sync `package.json` plus `package-lock.json` back to the default branch (direct push when allowed, PR fallback when branch protection blocks it).
 
 ### Current-Only Supersessions
+
+Earlier sections retain historical decisions. This section and the current
+owning skills determine active behavior. `dude-work` owns current budgets,
+recovery, and stop rules; older summaries do not override it. This repository's
+core-bundle release format is described in [context.md](context.md). Package
+version write-back applies to npm projects using the release pack, not to the
+Dude source manifest.
+
 - Current-only workflow: `@dude brainstorm <idea>` is the sole intake command and creates or refreshes a canonical numbered idea ledger; `@dude define <slug>` promotes that exact ledger with the same lifecycle number. The supported lifecycle verbs are `brainstorm`, `define`, `track`, `work`, `flag`, `status`, `diff`, and `self-check`, with no active compatibility aliases; project state uses only canonical `.dude/` surfaces, and unsupported older Dude layouts require external/manual recovery rather than an in-bundle migration or reconciliation path.

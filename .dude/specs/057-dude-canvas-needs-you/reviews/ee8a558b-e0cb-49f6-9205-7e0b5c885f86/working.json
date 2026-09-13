@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "submissionId": "ee8a558b-e0cb-49f6-9205-7e0b5c885f86",
+  "scope": {
+    "kind": "feature",
+    "ideaPath": ".dude/ideas/057-dude-canvas-needs-you.md",
+    "specPath": ".dude/specs/057-dude-canvas-needs-you/spec.md"
+  },
+  "preview": {
+    "artifact": {
+      "path": ".dude/specs/057-dude-canvas-needs-you/design/needs-you-workspace.html",
+      "revision": "sha256:6cd15f3e695e9129356f70f6b55e0ad7b7e12023b6a2926da4dec29dced5d5ee"
+    },
+    "assets": [
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/workspace-snapshots.js",
+        "revision": "sha256:b426d55f2bafe52ade76dd501a72bec075a19decaa08c3848bb9d91c8c0e48ea"
+      },
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/overview-snapshots.js",
+        "revision": "sha256:967d5283282424263e3c40d4deb864e699f00aa7bd69b21b5d0d81448def71c2"
+      },
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/needs-you-workspace.js",
+        "revision": "sha256:c4af6948b7b08c29430eea4e9dac4804e1ece432a467fd330f235084e0829bfd"
+      }
+    ]
+  },
+  "requestRef": "ship-057-fresh-annotate",
+  "requestRevision": "fresh-annotate-20260911-4",
+  "state": {
+    "annotations": [
+      {
+        "id": "7e0d8167-ef73-452e-85b1-b9308f77aadb",
+        "tool": "comment",
+        "x1": 515.05859375,
+        "y1": 319.515625,
+        "x2": 515.05859375,
+        "y2": 319.515625,
+        "comment": "comment 1",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "#field-_r_6___control",
+          "selectorMatches": 1,
+          "tag": "input",
+          "text": "",
+          "rect": {
+            "x": 57,
+            "y": 308,
+            "width": 655,
+            "height": 30
+          },
+          "styles": {
+            "color": "rgb(36, 36, 36)",
+            "background-color": "rgba(0, 0, 0, 0)",
+            "background-image": "none",
+            "font-family": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif",
+            "font-size": "14px",
+            "font-weight": "400",
+            "line-height": "20px",
+            "letter-spacing": "normal",
+            "text-align": "start",
+            "display": "block",
+            "position": "static",
+            "width": "655px",
+            "height": "30px",
+            "margin": "0px",
+            "padding": "0px 12px 0px 2px",
+            "gap": "normal",
+            "border": "0px none rgb(128, 128, 128)",
+            "border-radius": "0px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": [
+          {
+            "selector": "main.___1a25q2q.fz7g6wx",
+            "scrollLeft": 0,
+            "scrollTop": 231
+          }
+        ]
+      },
+      {
+        "id": "738301a3-a5de-429b-b405-ab1e0722527a",
+        "tool": "comment",
+        "x1": 586.703125,
+        "y1": 165.37890625,
+        "x2": 586.703125,
+        "y2": 165.37890625,
+        "comment": "why is it required?",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "div.___14x85oy.f22iagw:nth-of-type(3)",
+          "selectorMatches": 1,
+          "tag": "div",
+          "text": "Review the workspace layoutThe design is open for review. Context holds the full task instructions.Review designOpen in Context",
+          "rect": {
+            "x": 43,
+            "y": 99,
+            "width": 906,
+            "height": 109
+          },
+          "styles": {
+            "color": "rgb(36, 36, 36)",
+            "background-color": "rgba(0, 0, 0, 0)",
+            "background-image": "none",
+            "font-family": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif",
+            "font-size": "14px",
+            "font-weight": "400",
+            "line-height": "20px",
+            "letter-spacing": "normal",
+            "text-align": "left",
+            "display": "flex",
+            "position": "static",
+            "width": "906px",
+            "height": "109px",
+            "margin": "0px",
+            "padding": "12px 0px 0px",
+            "gap": "8px",
+            "border": "",
+            "border-radius": "0px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": [
+          {
+            "selector": "main.___1a25q2q.fz7g6wx",
+            "scrollLeft": 0,
+            "scrollTop": 234
+          }
+        ]
+      }
+    ],
+    "notes": "what goes here?\n",
+    "tool": "select",
+    "selectedId": "738301a3-a5de-429b-b405-ab1e0722527a",
+    "caret": {
+      "id": "738301a3-a5de-429b-b405-ab1e0722527a",
+      "field": "comment",
+      "start": 19,
+      "end": 19,
+      "direction": "none"
+    },
+    "view": {
+      "viewport": {
+        "width": 989,
+        "height": 728,
+        "scrollX": 0,
+        "scrollY": 0,
+        "deviceScale": 2,
+        "theme": "light",
+        "documentWidth": 989,
+        "documentHeight": 728
+      },
+      "signature": "sha256:7802a57b372f08298548a936e16b449e8c203e7e516de6fcd3b3a103212f18be",
+      "scrolls": [
+        {
+          "selector": "main.___1a25q2q.fz7g6wx",
+          "scrollLeft": 0,
+          "scrollTop": 0
+        }
+      ]
+    },
+    "palette": {
+      "stroke": "#d13438",
+      "background": "#ffffff",
+      "foreground": "#242424",
+      "highlightFill": "#fef7b2",
+      "highlightStroke": "#fde300",
+      "selection": "#0f6cbd",
+      "fontFamily": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif"
+    }
+  }
+}

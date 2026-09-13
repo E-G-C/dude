@@ -6,3 +6,6 @@
 
 # macOS Finder metadata
 .DS_Store
+
+# Private canvas UI maintainer dependencies
+/scripts/dude-canvas-ui/node_modules/

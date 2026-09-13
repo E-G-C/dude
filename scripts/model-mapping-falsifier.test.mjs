@@ -101,6 +101,11 @@ function isGitPath(relative) {
   return relative === '.git' || relative.startsWith('.git/');
 }
 
+/** @param {string} relative */
+function isNodeModulesPath(relative) {
+  return relative.split('/').includes('node_modules');
+}
+
 /**
  * Copy the whole working tree except VCS internals. The destination is always
  * under the OS temporary directory and is removed in the enclosing finally.
@@ -453,8 +458,8 @@ function runGeneratedCompose(root, command, pack) {
 
 /**
  * Enumerate only independently authored files. Generated `.github`, workflow
- * history under `.dude`, release output, and the one canonical config authority
- * are deliberately outside this test-local scan.
+ * history under `.dude`, dependency installations, release output, and the one
+ * canonical config authority are deliberately outside this test-local scan.
  * @param {string} root
  */
 function authoredFilesForAuthorityScan(root) {
@@ -463,7 +468,7 @@ function authoredFilesForAuthorityScan(root) {
 
   /** @param {string} absolute @param {string} relative */
   const scan = (absolute, relative) => {
-    if (relative === CANONICAL_CONFIG) return;
+    if (relative === CANONICAL_CONFIG || isNodeModulesPath(relative)) return;
     const stat = fs.lstatSync(absolute);
     if (stat.isSymbolicLink()) {
       assert.fail(`authority scan refuses symlinked authored path: ${relative}`);
@@ -511,6 +516,36 @@ function scanConcreteModelAuthority(root, identifiers) {
   }
   return { files, findings };
 }
+
+test('authority scan ignores dependency symlinks but rejects authored symlinks', () => {
+  // Arrange: a scoped dependency installation and an authored source subtree.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-authority-scan-'));
+  try {
+    fs.mkdirSync(at(root, 'scripts/dude-canvas-ui/node_modules/.bin'), { recursive: true });
+    fs.symlinkSync(
+      '../esbuild/bin/esbuild',
+      at(root, 'scripts/dude-canvas-ui/node_modules/.bin/esbuild'),
+    );
+    fs.mkdirSync(at(root, 'src'), { recursive: true });
+    fs.writeFileSync(at(root, 'src/authored.mjs'), 'export {};\n', 'utf8');
+
+    // Act / Assert: the dependency tree is not an authored scan input.
+    assert.deepEqual(authoredFilesForAuthorityScan(root), ['src/authored.mjs']);
+
+    // Act / Assert: a similarly named authored subtree remains fail-closed.
+    fs.mkdirSync(at(root, 'src/node_modules-not-a-dependency'), { recursive: true });
+    fs.symlinkSync(
+      '../authored.mjs',
+      at(root, 'src/node_modules-not-a-dependency/authored-link.mjs'),
+    );
+    assert.throws(
+      () => authoredFilesForAuthorityScan(root),
+      /authority scan refuses symlinked authored path: src\/node_modules-not-a-dependency\/authored-link\.mjs/,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 /**
  * Snapshot canonical inputs other than the intentionally edited mapping. Build,

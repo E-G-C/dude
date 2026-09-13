@@ -1,0 +1,3300 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dude — Now workspace (Fluent 2, responsive)</title>
+  <!--
+    Inline empty-data icon. The browser otherwise requests /favicon.ico and logs
+    a 404. This declaration is a data URL, so it keeps the prototype's
+    external-resource-free constraint intact: nothing is fetched.
+  -->
+  <link rel="icon" href="data:,">
+  <script>
+    /*
+      PRE-PAINT RESOLUTION — host colour scheme and query-parameter overrides.
+
+      A real build reads the host's theme and hands FluentProvider either
+      webLightTheme or webDarkTheme. The prototype does the same thing with the
+      only signal a standalone page has: prefers-color-scheme. The class is set
+      on <html> here, in <head>, so the token block below resolves the correct
+      theme in the first style pass instead of flashing light.
+
+      The prototype also accepts query parameters so a reviewer can link
+      straight to a fixture:
+
+        ?state=current|chooser|blocked|stale|empty|malformed|mismatch
+        ?theme=light|dark
+        ?controls=open|closed
+
+      ?theme is applied here, before first paint, for the same reason. Nothing
+      is persisted: there is no storage and no cookie. The host preference is
+      the default for this page load and an explicit choice overrides it for
+      the rest of the page's lifetime only.
+    */
+    (function () {
+      try {
+        var query = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+        if (query && query.matches) {
+          document.documentElement.classList.add('proto-host-dark');
+        }
+      } catch (error) {
+        /* No matchMedia: the light default in the token block stands. */
+      }
+      try {
+        var theme = new URLSearchParams(window.location.search).get('theme');
+        if (theme === 'dark' || theme === 'light') {
+          document.documentElement.setAttribute('data-proto-theme', theme);
+        }
+      } catch (error) {
+        /* No URLSearchParams: the host preference stands. */
+      }
+    }());
+  </script>
+  <!--
+    ==========================================================================
+    Dude Canvas UI — canonical primary mock (052-dude-canvas-ui)
+    preview_path: .dude/specs/052-dude-canvas-ui/design/fluent-responsive-workspace.html
+    revision: visual approval (T007@052aprv7)
+    ==========================================================================
+
+    WHAT THIS IS
+      A standalone, self-contained interactive HTML prototype of the read-only
+      I1 "Now" workspace. It is NOT React product source. It exists so the
+      responsive composition, Fluent anatomy, and every source-backed state can
+      be inspected and corrected before any product code is written.
+
+      No network, no CDN, no webfont, no fetch, no build step, no logo.
+      Every icon is inline SVG. Segoe UI is requested first and falls back to
+      the platform UI font, exactly as FluentProvider behaves off Windows.
+
+    WHAT IT IS NOT
+      Not Needs You. Not Sharpie/Review. Not a dashboard. Not a command list.
+      Nothing here mutates Dude state, sends a message, runs a command, answers
+      a question, approves, or stops work.
+
+    --------------------------------------------------------------------------
+    CRITIQUE DISPOSITION — what changed in this revision
+    --------------------------------------------------------------------------
+    1. BREAKPOINT COMPRESSION / PERMANENT RAILS — accepted.
+       The permanent Features rail is gone. "Change feature" now lives in the
+       product header at EVERY width and opens a real searchable chooser.
+       <main> is full width at every viewport width, so it has no width
+       discontinuity at any boundary at all. Recomposition happens INSIDE main.
+       Rails are workflow-specific slots (a later Needs You queue, a later Work
+       task list); I1 Now reserves none of them.
+
+    2. NEXT STEP MUST LEAD — accepted.
+       A compact one-line identity strip is followed immediately by the next
+       step as the visual headline. Current phase and "Why" are subordinate
+       supporting text. Lifecycle and progress are condensed and sit below at
+       narrow widths and beside the headline at wide widths. Authority
+       mechanics (lane names, canonical task vocabulary, specification
+       identity, task keys, glyph hashes, raw paths) appear ONLY inside
+       Evidence -> Source details. Primary trust language is the plain phrase
+       "Project state verified".
+
+    3. REAL CHOOSER AT 53-FEATURE SCALE — accepted.
+       A seventh fixture, "Chooser", shows the no-selection case with no
+       preselection and no recency inference. The chooser is a genuine
+       combobox + listbox composite: ONE tab stop (the search input), roving
+       aria-activedescendant, windowed rendering over the real 53-item
+       inventory read from .dude/ideas/*.md frontmatter, a live result count,
+       Arrow/Home/End/PageUp/PageDown movement, Enter to open, Escape to clear
+       or close. The same component is what the header popover renders, so
+       there is never one tab stop per feature.
+
+    4. CURRENT DATA MUST BE CURRENT — accepted.
+       The canonical fixture is task T007: 3 done, 1 in progress,
+       9 open, 13 total. The headline is the real in-progress action.
+
+    5. COMPACT ABSENCE — accepted.
+       "No questions" and "No blockers" are no longer two success MessageBars.
+       They are one calm status summary line with two compact facts.
+       MessageBars are reserved for real attention, error, and blocked states.
+       Freshness stays visible. The lifecycle event and raw source paths are
+       demoted into Evidence -> Source details.
+
+    6. DEMO CONTROLS MUST NOT DOMINATE — accepted.
+       Prototype controls are a compact collapsible drawer, collapsed by
+       default, clearly outside the product. The product starts about 40 CSS px
+       from the top of the viewport. Query parameters address every fixture
+       directly. No min-height:100vh remains, so there is no nested scrolling.
+
+    7. FLATTER FLUENT TOPOLOGY — accepted.
+       Identity, lifecycle, attention, freshness, and evidence are flat
+       sections separated by Fluent Dividers. Elevation is kept only where
+       Fluent semantics justify it: the Popover surface (shadow16) and the one
+       focal current-work surface (shadow4 plus a brand accent edge).
+
+    --------------------------------------------------------------------------
+    RESPONSIVE ARCHITECTURE — full available width, never a centred shell
+    --------------------------------------------------------------------------
+    The product workspace has NO max-width. It fills the host canvas. Only
+    prose is bounded, by --layout-measure-prose (68ch), inside fluid regions.
+
+    Page padding is a constant 16px per side at every width, so:
+
+        main width  ==  viewport width - 32     at EVERY width
+
+    There is no width at which <main> loses room to a rail. That is the direct
+    fix for the reported 759->760 (719->404) and 1079->1080 (723->444)
+    compressions: neither boundary exists any more, and no replacement
+    boundary takes width away from main.
+
+    Composition is expressed with CONTAINER queries, not viewport media
+    queries, because every threshold is about how much room a region actually
+    has, not about a device class. Fluent UI v9 supports container queries in
+    Griffel, so this is implementable as authored.
+
+      WORKSPACE container (.dw-main, container-name: workspace)
+        below 928px    one column:
+                       identity strip -> next step -> lifecycle/progress ->
+                       attention -> freshness -> evidence.
+                       The context sections below the fold use
+                       repeat(auto-fit, minmax(280px, 1fr)), so they fill the
+                       full width in 1, 2, or 3 columns with no breakpoint and
+                       without ever compressing the primary work region.
+
+        >= 928px       two regions: [ work | context ].
+                       work    = minmax(600px, 1fr)
+                       context = minmax(300px, 340px)
+                       column gap 24px.
+                       Derivation: 600 + 24 + 300 = 924 minimum honest fit;
+                       928 is taken for 4px of slack, which is viewport 960.
+                       The context column carries the condensed lifecycle and
+                       progress FIRST, so lifecycle/progress is genuinely
+                       side-by-side with the next step, then attention,
+                       freshness, and evidence.
+
+      FOCAL container (.dw-focal, container-name: focal)
+        >= 968px       the focal surface itself recomposes into
+                       [ headline + detail | current phase + why ].
+                       A container query measures the CONTENT box, so this is
+                       the room inside the card's 20px padding and 4px accent.
+                       Honest minimum fit is 490 (prose measure) + 24 + 260 =
+                       774; 968 is taken instead so the headline column lands
+                       at 607px rather than at its 490px floor. In one-column
+                       composition the focal content box never reaches 968, so
+                       this first applies at viewport 1409 - very wide canvases
+                       use their width instead of stretching one line of prose.
+
+      LIFECYCLE container (.dw-life, container-name: life)
+        >= 488px       the four-step stepper lays out horizontally.
+                       Below that it is a vertical list, never a horizontal
+                       scroller. In one-column composition the lifecycle
+                       container is the full main width, so this is viewport
+                       520 - the same boundary as the previous revision.
+                       In two-region composition the lifecycle sits in the
+                       300-340px context column and stays vertical, which is
+                       the condensed form the critique asked for.
+
+    MEASURED CONTINUITY (Chromium 150, headless, deviceScaleFactor 1)
+      viewport   359  360  519  520  759  760  959  960  1080 1408 1409 1440
+      main       327  328  487  488  727  728  927  928  1048 1376 1377 1408
+      work       327  328  487  488  727  728  927  600   684 1012 1013 1044
+      headline   282  283  442  443  682  683  882  555   639  967  607  627
+
+    main NEVER decreases, at any width from 320 to 1920: it is exactly
+    viewport - 32 everywhere, so no boundary can compress it. There are exactly
+    two downward steps in the whole page, and both are recompositions in which
+    content LEAVES the column that narrows:
+
+      viewport 960   work 927 -> 600. Attention, freshness, and evidence leave
+                     the work column for the context column. 600px is the
+                     derived floor, not an accident, and work then increases
+                     monotonically for ever after.
+      viewport 1409  headline 967 -> 607. The current phase and why text leave
+                     the headline column for the supporting column. 607px is
+                     well above the 490px prose measure, so no prose line is
+                     lost, and the headline column then increases again.
+
+    Neither the reported 759->760 (719->404) nor the reported 1079->1080
+    (723->444) boundary exists any more, and no replacement boundary takes
+    width away from main.
+
+    --------------------------------------------------------------------------
+    COMPONENT MAPPING — what a real @fluentui/react-components v9 build renders
+    --------------------------------------------------------------------------
+      #app root ................ <FluentProvider theme={webLightTheme|webDarkTheme}>
+      prototype drawer ......... OUTSIDE the provider's product tree; kept in
+                                 Fluent anatomy only so it does not fight the
+                                 theme. Disclosure = <Button> with aria-expanded.
+                                 Theme control = <Switch>. State control =
+                                 <RadioGroup layout="horizontal"> + <Radio>.
+      product header ........... <Toolbar>-height header row, <Divider> beneath.
+      "Change feature" ......... <Button appearance="secondary"> + <Popover> /
+                                 <PopoverSurface> containing the chooser.
+      chooser .................. <Combobox freeform> anatomy: <SearchBox>-style
+                                 input with role="combobox" + <Listbox> with
+                                 role="listbox"/"option" and
+                                 aria-activedescendant. One tab stop. The
+                                 window over the option list is what a real
+                                 build would delegate to a virtualiser; here it
+                                 is done directly and disclosed as such.
+      feature identity ......... <Text> Body1Strong + <Badge>
+      Stage / trust ............ <Badge size="medium" appearance="filled|outline">
+      next step ................ <Card size="large"> with a brand accent edge -
+                                 the single elevated product surface
+      lifecycle stepper ........ <Badge shape="circular"> markers joined by
+                                 rules; ARIA <ol> + aria-current="step"
+      task progress ............ composed meter. Fluent's <ProgressBar> is
+                                 single-value, so three proportional bars share
+                                 one 4px (--strokeWidthThickest, = ProgressBar
+                                 "large") track. Disclosed as a composition,
+                                 not claimed as a stock component. The bar is
+                                 aria-hidden; the legend carries the text.
+      attention ................ compact status summary, or <MessageBar
+                                 intent="warning|error|info"> when there is a
+                                 real attention state
+      Refresh .................. <Button appearance="secondary" icon={ArrowClockwise}>
+      freshness announcement ... <Text role="status" aria-live="polite">
+      "Source details" ......... <Accordion collapsible> / <AccordionItem>
+                                 (native <details>/<summary> here)
+      "Copy" ................... <Button appearance="secondary" icon={Copy}>
+      separators ............... <Divider>
+      icons .................... @fluentui/react-icons, inline SVG here
+
+    --------------------------------------------------------------------------
+    WCAG 2.2 AA
+    --------------------------------------------------------------------------
+    Interactive boundaries use --colorNeutralStrokeAccessible, NOT the stock
+    --colorNeutralStroke1. Measured:
+      light  #616161 on #ffffff .... 5.9:1   PASSES 3:1 non-text contrast
+      dark   #adadad on #292929 .... 6.5:1   PASSES
+      (stock Stroke1 would be 1.5:1 light / 2.5:1 dark and FAILS, so it is used
+       for decorative rules only, together with Stroke2.)
+    A busy control (aria-disabled, still focusable) keeps that accessible
+    boundary. Only a truly inert control uses `disabled`: it leaves the tab
+    order, states its reason in words, and is then exempt under WCAG 1.4.11.
+    No focusable control is ever left behind a low-contrast boundary.
+
+    Measured in Chromium against the actually painted surfaces:
+      Refresh Button boundary ....... light 5.68:1   dark 8.21:1
+      SearchBox boundary ............ light 6.19:1   dark 6.48:1
+      Listbox (composite) boundary .. light 6.19:1   dark 6.48:1
+      Stage Badge boundary .......... light 4.94:1   dark 6.62:1
+        (the boundary uses --colorCompoundBrandStroke; the brand FILL alone
+         would be 2.8:1 against the dark page surface)
+      Focus indicator ............... light 21:1     dark 14.9:1
+
+    Text contrast, measured in Chromium against the actual painted background:
+      light  headline / body ....... 15.5:1
+      light  supporting Caption1 ...  10.1:1
+      light  Caption1 / Foreground3 .. 5.7:1
+      light  brand eyebrow ..........  5.4:1
+      light  white on brand Badge ...  5.4:1
+      light  white on complete step ..  5.4:1
+      light  #bc2f32 on #fdf3f4 .....  5.4:1   error MessageBar title
+      light  complete step label ....  5.8:1
+      dark   headline / body ....... 14.6:1
+      dark   supporting Caption1 ....  10.0:1
+      dark   Caption1 / Foreground3 ..  8.2:1
+      dark   brand eyebrow ..........  5.2:1
+      dark   white on brand Badge ...  6.7:1
+      dark   complete step label ....  6.8:1
+      dark   #e37d80 on #3b2325 .....  5.2:1   error MessageBar title
+
+    Also:
+      - No meaning by colour alone. Every state carries a distinct SHAPE and the
+        literal WORD: lifecycle complete = check glyph; current = numeral in a
+        filled ring + aria-current="step" + the word "Current"; not started =
+        hollow numeral; unavailable = dashed ring + em-dash + "Unavailable".
+        Progress segments pair a unique glyph and the words done / in progress /
+        open. MessageBars pair a unique icon outline with full text.
+      - Every interactive target is >= 24x24 CSS px. Product Buttons are 32px
+        medium Buttons; prototype-drawer controls are 28px; chooser options are
+        60px. All are expressed as min-height so zoom grows them.
+      - Focus is 2px --colorStrokeFocus2 at 2px offset, never removed.
+      - Landmarks: region (prototype drawer, labelled and dashed-separated),
+        banner (product header), main ("Now workspace"), complementary
+        ("Lifecycle and context"). One h1 in the product, h2 per region.
+      - aria-live="polite" announces the refresh narrative, chooser result
+        counts, selection, and copy result.
+      - prefers-reduced-motion: reduce collapses every transition.
+      - 200% browser zoom halves the CSS viewport, so the layout simply steps
+        down a composition; nothing is lost.
+
+    --------------------------------------------------------------------------
+    PROVENANCE — every value below is source-backed
+    --------------------------------------------------------------------------
+    Real workspace state at revision time (task T007@052aprv7 in progress),
+    read from .dude/specs/052-dude-canvas-ui/tasks.md:
+      T001 done, T005 done, T006 done, T007 in progress, 9 open, 13 tasks in total;
+      current phase "Responsive Fluent Design And Approval" (the exact Phase 2
+      heading); 0 unanswered questions; no blockers; read just now.
+    The latest lifecycle event is the last line of the Revision Log in
+    .dude/specs/052-dude-canvas-ui/spec.md.
+    The chooser inventory is the complete set of 53 direct .dude/ideas/*.md
+    files, with title, slug, status, and spec_path copied verbatim from each
+    file's frontmatter. Nothing is invented: where a fact was not read, the
+    prototype says so instead of guessing.
+
+    STATE FIXTURES — one fluid workspace, seven projections, no extra frames.
+      Current            the real state above.
+      Chooser            no feature selected; the real 53-item chooser.
+      Blocked            an authoritative feature blocker, contract-mismatch.
+      Stale              last complete projection preserved, refresh failed.
+      Empty              no .dude/ state.
+      Malformed          .dude/ideas/052-dude-canvas-ui.md frontmatter unsafe.
+      Tracking mismatch  the bare SC-003 acceptance case.
+
+    "Blocked" vs "Tracking mismatch" are categorically different projections:
+      - Blocked IS a feature blocker. Stage reads Blocked, primary orientation
+        carries the plain reason, the user-facing category "Contract mismatch",
+        and the recovery action, while the exact classification code and its
+        source line move to Evidence -> Source details per FR-011. Execution
+        facts stay readable and the real task progress stays visible. It is
+        drawn with Fluent's error MessageBar anatomy: outlined error icon +
+        the literal word "Blocked" + text.
+      - Tracking mismatch is NOT a blocker. Primary orientation says only that
+        the feature is not available in the active work tracker and offers a
+        plain choice; the authoritative tracker explanation and paths stay in
+        Source details. The feature stays selected, definition facts stay
+        visible, and every execution fact is withheld per FR-007 rather than
+        being substituted from markdown. It carries no classification and no
+        recovery action, and states "Not a feature blocker" outright.
+      Neither fixture is a restatement of the other.
+
+    FUNCTIONAL REALISM — what selecting another feature may show
+      This is a static prototype. Selecting any feature other than
+      052-dude-canvas-ui renders ONLY what its own frontmatter actually says:
+      title, slug, idea status, the exact idea path, and the exact spec path
+      when one is recorded. Its task state was never loaded, so no stage
+      beyond the frontmatter status, no next step, no progress, no blocker and
+      no question count is shown or implied. The product says the next step is
+      unavailable in plain language; the fact that task detail was not loaded
+      is a secondary source disclosure inside Source details, not a product
+      MessageBar.
+
+    THEME
+      The default theme is the host's, read once per page load from
+      prefers-color-scheme and applied in <head> before the first paint, the
+      way a real build hands FluentProvider webLightTheme or webDarkTheme.
+      ?theme= overrides it before first paint; the prototype Switch overrides
+      it for the rest of the page lifetime. Nothing is stored.
+
+    FOCUS ACROSS RERENDER
+      Every update replaces innerHTML, so the focused node is destroyed. Focus
+      intent is captured before the update and restored afterwards: Refresh
+      returns to the rebuilt Refresh button, chooser selection closes the
+      popover and lands on the selected feature's heading, and Escape returns
+      focus to the trigger. Focus never falls to <body>, and it is never taken
+      for a background change the user did not ask for.
+  -->
+  <style>
+    /*
+      Fluent 2 design tokens, verbatim from @fluentui/tokens (webLightTheme /
+      webDarkTheme). FluentProvider emits theme tokens as CSS custom properties
+      named exactly like the TypeScript token keys, so the names below match
+      one-for-one what a real @fluentui/react-components app would expose.
+    */
+
+    /* Global (theme-invariant) tokens */
+    :root {
+      --spacingHorizontalNone: 0;
+      --spacingHorizontalXXS: 2px;
+      --spacingHorizontalXS: 4px;
+      --spacingHorizontalSNudge: 6px;
+      --spacingHorizontalS: 8px;
+      --spacingHorizontalMNudge: 10px;
+      --spacingHorizontalM: 12px;
+      --spacingHorizontalL: 16px;
+      --spacingHorizontalXL: 20px;
+      --spacingHorizontalXXL: 24px;
+      --spacingHorizontalXXXL: 32px;
+
+      --spacingVerticalNone: 0;
+      --spacingVerticalXXS: 2px;
+      --spacingVerticalXS: 4px;
+      --spacingVerticalSNudge: 6px;
+      --spacingVerticalS: 8px;
+      --spacingVerticalMNudge: 10px;
+      --spacingVerticalM: 12px;
+      --spacingVerticalL: 16px;
+      --spacingVerticalXL: 20px;
+      --spacingVerticalXXL: 24px;
+      --spacingVerticalXXXL: 32px;
+
+      --fontSizeBase100: 10px;
+      --fontSizeBase200: 12px;
+      --fontSizeBase300: 14px;
+      --fontSizeBase400: 16px;
+      --fontSizeBase500: 20px;
+      --fontSizeBase600: 24px;
+
+      --lineHeightBase100: 14px;
+      --lineHeightBase200: 16px;
+      --lineHeightBase300: 20px;
+      --lineHeightBase400: 22px;
+      --lineHeightBase500: 28px;
+      --lineHeightBase600: 32px;
+
+      --borderRadiusNone: 0;
+      --borderRadiusSmall: 2px;
+      --borderRadiusMedium: 4px;
+      --borderRadiusLarge: 6px;
+      --borderRadiusXLarge: 8px;
+      --borderRadiusCircular: 10000px;
+
+      --strokeWidthThin: 1px;
+      --strokeWidthThick: 2px;
+      --strokeWidthThicker: 3px;
+      --strokeWidthThickest: 4px;
+
+      --fontWeightRegular: 400;
+      --fontWeightMedium: 500;
+      --fontWeightSemibold: 600;
+
+      --durationFaster: 100ms;
+      --durationNormal: 200ms;
+
+      --fontFamilyBase: 'Segoe UI', 'Segoe UI Web (West European)', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif;
+      --fontFamilyMonospace: Consolas, 'Courier New', Courier, monospace;
+    }
+
+    /*
+      PRODUCT / LAYOUT CONSTANTS — deliberately NOT Fluent tokens.
+
+      Fluent 2 ships no token for a column width, a threshold, a control
+      height, an icon size, or a reading measure. A real implementation
+      expresses these through component APIs and layout props. Manufacturing
+      them out of token arithmetic would misrepresent Fluent, so they are
+      declared once and named for what they are.
+
+      Every value is derived from content fit, and the derivation is written
+      next to it. Thresholds live in @container rules because custom properties
+      cannot be used in a container/media condition.
+    */
+    :root {
+      /* page gutter, constant at every width: main == viewport - 32 */
+      --layout-page-pad: 16px;
+      /* 68ch of Fluent Body1; the readable bound for every prose block */
+      --layout-measure-prose: 68ch;
+      /* prose measure rounded up; the floor for the focal headline column */
+      --layout-headline-min: 490px;
+      /* the derived floor for the work region when context sits beside it */
+      --layout-work-min: 600px;
+      /* context column: fits a MessageBar, the Refresh row, and source rows */
+      --layout-context-min: 300px;
+      --layout-context-max: 340px;
+      /* supporting column inside the focal surface */
+      --layout-support-min: 260px;
+      /* one chooser option: 12 + 20 (title) + 16 (meta) + 12 */
+      --chooser-row: 60px;
+      --button-height-medium: 32px;
+      --button-height-compact: 28px;
+      --badge-size-large: 24px;
+      --icon-size-12: 12px;
+      --icon-size-16: 16px;
+      --icon-size-20: 20px;
+      --icon-size-24: 24px;
+    }
+
+    /*
+      THEME SELECTION
+
+        .theme-light / .theme-dark        an explicit prototype choice, made by
+                                          the Theme switch. Wins for the rest of
+                                          the page lifetime; nothing is stored.
+        .theme-system                     no explicit choice yet. Light by
+                                          default, dark when <html> carries
+                                          .proto-host-dark, which the <head>
+                                          script sets from prefers-color-scheme
+                                          before first paint.
+        [data-proto-theme] on <html>      a ?theme= query parameter, also
+                                          applied before first paint.
+
+      Specificity is ordered so the query parameter outranks the host
+      preference and the explicit switch outranks both.
+    */
+    .theme-light,
+    .theme-system,
+    html[data-proto-theme="light"] .theme-system {
+      --colorNeutralBackground1: #ffffff;
+      --colorNeutralBackground1Hover: #f5f5f5;
+      --colorNeutralBackground2: #fafafa;
+      --colorNeutralBackground3: #f5f5f5;
+      --colorNeutralBackground4: #f0f0f0;
+
+      --colorNeutralForeground1: #242424;
+      --colorNeutralForeground2: #424242;
+      --colorNeutralForeground3: #616161;
+      --colorNeutralForeground4: #707070;
+      --colorNeutralForegroundOnBrand: #ffffff;
+
+      --colorNeutralStroke1: #d1d1d1;
+      --colorNeutralStroke2: #e0e0e0;
+      --colorNeutralStrokeAccessible: #616161;
+      --colorNeutralStrokeDisabled: #e0e0e0;
+      --colorNeutralForegroundDisabled: #bdbdbd;
+      --colorNeutralBackgroundDisabled: #f0f0f0;
+
+      --colorBrandBackground: #0f6cbd;
+      --colorBrandBackgroundHover: #115ea3;
+      --colorBrandForeground1: #0f6cbd;
+      --colorBrandForeground2: #115ea3;
+      --colorCompoundBrandStroke: #0f6cbd;
+
+      --colorPaletteRedForeground1: #bc2f32;
+      --colorPaletteRedBackground1: #fdf3f4;
+      --colorPaletteRedBorder1: #f1bbbc;
+      --colorPaletteRedBorder2: #d13438;
+
+      --colorPaletteGreenForeground1: #0e700e;
+      --colorPaletteGreenBackground1: #f1faf1;
+      --colorPaletteGreenBorder1: #9fd89f;
+      --colorPaletteGreenBorder2: #107c10;
+
+      --colorPaletteYellowForeground1: #817400;
+      --colorPaletteYellowBackground1: #fffef5;
+      --colorPaletteYellowBorder1: #fde300;
+
+      --colorStrokeFocus2: #000000;
+
+      --shadow4: 0 0 2px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.14);
+      --shadow8: 0 0 2px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(0, 0, 0, 0.14);
+      --shadow16: 0 0 2px rgba(0, 0, 0, 0.12), 0 8px 16px rgba(0, 0, 0, 0.14);
+    }
+
+    .theme-dark,
+    .proto-host-dark .theme-system,
+    html[data-proto-theme="dark"] .theme-system {
+      --colorNeutralBackground1: #292929;
+      --colorNeutralBackground1Hover: #3d3d3d;
+      --colorNeutralBackground2: #1f1f1f;
+      --colorNeutralBackground3: #141414;
+      --colorNeutralBackground4: #0a0a0a;
+
+      --colorNeutralForeground1: #ffffff;
+      --colorNeutralForeground2: #d6d6d6;
+      --colorNeutralForeground3: #adadad;
+      --colorNeutralForeground4: #999999;
+      --colorNeutralForegroundOnBrand: #ffffff;
+
+      --colorNeutralStroke1: #666666;
+      --colorNeutralStroke2: #525252;
+      --colorNeutralStrokeAccessible: #adadad;
+      --colorNeutralStrokeDisabled: #424242;
+      --colorNeutralForegroundDisabled: #5c5c5c;
+      --colorNeutralBackgroundDisabled: #141414;
+
+      --colorBrandBackground: #115ea3;
+      --colorBrandBackgroundHover: #0f6cbd;
+      --colorBrandForeground1: #479ef5;
+      --colorBrandForeground2: #62abf5;
+      --colorCompoundBrandStroke: #479ef5;
+
+      --colorPaletteRedForeground1: #e37d80;
+      --colorPaletteRedBackground1: #3b2325;
+      --colorPaletteRedBorder1: #6e3033;
+      --colorPaletteRedBorder2: #d13438;
+
+      --colorPaletteGreenForeground1: #54b054;
+      --colorPaletteGreenBackground1: #123312;
+      --colorPaletteGreenBorder1: #218121;
+      --colorPaletteGreenBorder2: #107c10;
+
+      --colorPaletteYellowForeground1: #c8cc00;
+      --colorPaletteYellowBackground1: #333100;
+      --colorPaletteYellowBorder1: #817400;
+
+      --colorStrokeFocus2: #ffffff;
+
+      --shadow4: 0 0 2px rgba(0, 0, 0, 0.24), 0 2px 4px rgba(0, 0, 0, 0.28);
+      --shadow8: 0 0 2px rgba(0, 0, 0, 0.24), 0 4px 8px rgba(0, 0, 0, 0.28);
+      --shadow16: 0 0 2px rgba(0, 0, 0, 0.24), 0 8px 16px rgba(0, 0, 0, 0.28);
+    }
+
+    /* ====================================================================
+       Base. No min-height:100vh anywhere: the page is exactly as tall as its
+       content, so the host never gets a second nested scrollbar.
+       ==================================================================== */
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      margin: var(--spacingVerticalNone);
+      font-family: var(--fontFamilyBase);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightRegular);
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground3);
+    }
+
+    /* Fluent's 2px focus indicator, never removed or thinned. */
+    a:focus-visible,
+    button:focus-visible,
+    input:focus-visible,
+    summary:focus-visible,
+    [tabindex]:focus-visible,
+    [data-proto-focus="visible"] {
+      outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2);
+      outline-offset: var(--spacingHorizontalXXS);
+      border-radius: var(--borderRadiusMedium);
+    }
+
+    .u-visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: var(--spacingVerticalNone);
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .u-icon-sprite {
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+    }
+
+    /* Fluent <Divider> — decorative rule, never an interactive boundary. */
+    .fui-divider {
+      height: var(--strokeWidthThin);
+      margin: var(--spacingVerticalNone);
+      border: 0;
+      background-color: var(--colorNeutralStroke2);
+    }
+
+    /* ====================================================================
+       Prototype drawer — OUTSIDE the product, collapsed by default.
+       Collapsed height is one 28px control plus 2x6px padding = 40px, so the
+       product begins ~40 CSS px from the top of the viewport.
+       ==================================================================== */
+    .proto {
+      color: var(--colorNeutralForeground2);
+      background-color: var(--colorNeutralBackground4);
+      border-bottom: var(--strokeWidthThin) dashed var(--colorNeutralStrokeAccessible);
+    }
+
+    .proto-rail {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      padding: var(--spacingVerticalSNudge) var(--spacingHorizontalL);
+    }
+
+    .proto-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--spacingHorizontalXS);
+      min-height: var(--button-height-compact);
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalS);
+      font-family: var(--fontFamilyBase);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium);
+      cursor: pointer;
+    }
+
+    .proto-toggle:hover { background-color: var(--colorNeutralBackground1Hover); }
+
+    .proto-toggle .fui-chevron {
+      width: var(--icon-size-12);
+      height: var(--icon-size-12);
+    }
+
+    .proto-toggle[aria-expanded="true"] .fui-chevron { transform: rotate(90deg); }
+
+    .proto-now {
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+      overflow-wrap: anywhere;
+    }
+
+    .proto-panel {
+      display: grid;
+      gap: var(--spacingVerticalS);
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalL) var(--spacingVerticalS);
+    }
+
+    .proto-panel[hidden] { display: none; }
+
+    .proto-group {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      min-width: 0;
+    }
+
+    .proto-group-label {
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .proto-hint {
+      margin: var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+    }
+
+    .proto-hint code {
+      font-family: var(--fontFamilyMonospace);
+      color: var(--colorNeutralForeground2);
+    }
+
+    /* Fluent Switch anatomy */
+    .fui-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      min-height: var(--button-height-compact);
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalXS);
+      font-family: var(--fontFamilyBase);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground1);
+      background: none;
+      border: none;
+      border-radius: var(--borderRadiusMedium);
+      cursor: pointer;
+    }
+
+    .fui-switch-track {
+      position: relative;
+      flex: 0 0 auto;
+      width: 40px;
+      height: var(--spacingVerticalXXL);
+      border-radius: var(--borderRadiusCircular);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      transition: background-color var(--durationFaster) ease, border-color var(--durationFaster) ease;
+    }
+
+    .fui-switch[aria-checked="true"] .fui-switch-track {
+      background-color: var(--colorBrandBackground);
+      /*
+        The outer boundary of a selected control must stay >= 3:1 against the
+        surface behind it. In the dark theme the brand FILL is only 2.9:1
+        against the prototype drawer, so the boundary uses the compound brand
+        stroke, which Fluent ships for exactly this purpose.
+      */
+      border-color: var(--colorCompoundBrandStroke);
+    }
+
+    .fui-switch-thumb {
+      position: absolute;
+      top: var(--spacingVerticalXS);
+      left: var(--spacingHorizontalXS);
+      width: var(--icon-size-12);
+      height: var(--icon-size-12);
+      border-radius: var(--borderRadiusCircular);
+      background-color: var(--colorNeutralStrokeAccessible);
+      transition: transform var(--durationFaster) ease, background-color var(--durationFaster) ease;
+    }
+
+    .fui-switch[aria-checked="true"] .fui-switch-thumb {
+      background-color: var(--colorNeutralForegroundOnBrand);
+      transform: translateX(var(--spacingHorizontalL));
+    }
+
+    /* Fluent RadioGroup rendered as compact selectable chips */
+    .fui-radiogroup {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--spacingHorizontalXS);
+    }
+
+    .fui-radio {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--spacingHorizontalXS);
+      min-height: var(--button-height-compact);
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalMNudge);
+      font-family: var(--fontFamilyBase);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium);
+      cursor: pointer;
+      transition: background-color var(--durationFaster) ease;
+    }
+
+    .fui-radio:hover { background-color: var(--colorNeutralBackground1Hover); }
+
+    .fui-radio[aria-checked="true"] {
+      color: var(--colorNeutralForegroundOnBrand);
+      background-color: var(--colorBrandBackground);
+      border-color: var(--colorCompoundBrandStroke);
+    }
+
+    .fui-radio-mark {
+      width: var(--icon-size-12);
+      height: var(--icon-size-12);
+      opacity: 0;
+    }
+
+    .fui-radio[aria-checked="true"] .fui-radio-mark { opacity: 1; }
+
+    /* ====================================================================
+       Product shell — fluid, no max-width.
+       #app carries the only page gutter, so main == viewport - 32 at every
+       width and no boundary can ever take width away from it.
+       ==================================================================== */
+    .fui-provider {
+      display: block;
+      padding: var(--spacingVerticalM) var(--layout-page-pad) var(--spacingVerticalXXXL);
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground3);
+    }
+
+    /* ---------- Product header: present at EVERY width ---------- */
+    .dw-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--spacingHorizontalS);
+      padding-bottom: var(--spacingVerticalM);
+    }
+
+    /* Type ramp: Subtitle2 */
+    .dw-product {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      margin: var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase400);
+      line-height: var(--lineHeightBase400);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .dw-product-mark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: var(--icon-size-24);
+      height: var(--icon-size-24);
+      border-radius: var(--borderRadiusMedium);
+      color: var(--colorBrandForeground1);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+
+    .dw-product-sub {
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightRegular);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /* ---------- Fluent Button ---------- */
+    .fui-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--spacingHorizontalS);
+      min-height: var(--button-height-medium);
+      min-width: var(--button-height-medium);
+      padding: var(--spacingVerticalXS) var(--spacingHorizontalM);
+      font-family: var(--fontFamilyBase);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      border-radius: var(--borderRadiusMedium);
+      text-decoration: none;
+      cursor: pointer;
+      transition: background-color var(--durationFaster) ease, border-color var(--durationFaster) ease;
+    }
+
+    .fui-button-secondary {
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground1);
+      /* Interactive boundary: accessible stroke, not stock Stroke1. */
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+    }
+
+    .fui-button-secondary:hover { background-color: var(--colorNeutralBackground1Hover); }
+
+    /*
+      TWO DISTINCT UNAVAILABLE TREATMENTS, chosen by why the control is
+      unavailable. Neither relies on a border colour as its only cue.
+
+      aria-disabled="true"  Temporarily busy (Refresh, while one read runs).
+                            It MUST stay focusable, or keyboard focus is
+                            destroyed in the middle of the user's own action.
+                            It is therefore still an interactive component, so
+                            its required boundary keeps
+                            --colorNeutralStrokeAccessible (>= 3:1 in both
+                            themes) and the state is carried by the visible
+                            label plus aria-busy.
+
+      :disabled             Genuinely inert (nothing to choose). Removed from
+                            the tab order, so no focus indicator can ever land
+                            on it, and its label states the reason in words.
+                            Only here is the stock Fluent disabled stroke used:
+                            WCAG 1.4.11 exempts inactive components, and the
+                            control is not reachable by any input method.
+    */
+    .fui-button[aria-disabled="true"] {
+      color: var(--colorNeutralForeground3);
+      background-color: var(--colorNeutralBackground3);
+      border-color: var(--colorNeutralStrokeAccessible);
+      cursor: progress;
+    }
+
+    .fui-button:disabled {
+      color: var(--colorNeutralForegroundDisabled);
+      background-color: var(--colorNeutralBackgroundDisabled);
+      border-color: var(--colorNeutralStrokeDisabled);
+      cursor: not-allowed;
+    }
+
+    .fui-button:disabled:hover { background-color: var(--colorNeutralBackgroundDisabled); }
+
+    .fui-button-icon {
+      flex: 0 0 auto;
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
+    }
+
+    /* ---------- Fluent Popover ---------- */
+    .dw-popover-anchor { position: relative; }
+
+    .fui-popover-surface {
+      position: absolute;
+      z-index: 10;
+      top: calc(100% + var(--spacingVerticalXS));
+      right: 0;
+      width: min(420px, calc(100vw - var(--spacingHorizontalXXXL)));
+      display: grid;
+      gap: var(--spacingVerticalS);
+      padding: var(--spacingVerticalM);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      border-radius: var(--borderRadiusMedium);
+      /* Elevation kept: Fluent Popover semantics justify it. */
+      box-shadow: var(--shadow16);
+    }
+
+    .fui-popover-surface[hidden] { display: none; }
+
+    /* ====================================================================
+       WORKSPACE — the only structural composition in the product.
+       .dw-main is the query container; it is always the full page width.
+       ==================================================================== */
+    .dw-main {
+      container-type: inline-size;
+      container-name: workspace;
+      display: block;
+      min-width: 0;
+    }
+
+    .dw-workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      align-items: start;
+      gap: var(--spacingVerticalL);
+      min-width: 0;
+    }
+
+    .dw-idbar { grid-column: 1 / -1; }
+
+    .dw-work,
+    .dw-context {
+      display: grid;
+      gap: var(--spacingVerticalL);
+      align-content: start;
+      min-width: 0;
+    }
+
+    /*
+      Two-region composition.
+      600 (work floor) + 24 (gap) + 300 (context floor) = 924 honest fit.
+      928 is taken for slack, which is viewport 960.
+      At and above it the attention, freshness, and evidence content LEAVES the
+      work column, which is why the work column can settle at its 600px floor
+      without losing anything it still has to show.
+    */
+    @container workspace (min-width: 928px) {
+      .dw-workspace {
+        grid-template-columns:
+          minmax(var(--layout-work-min), 1fr)
+          minmax(var(--layout-context-min), var(--layout-context-max));
+        column-gap: var(--spacingHorizontalXXL);
+      }
+
+      .dw-context {
+        padding-left: var(--spacingHorizontalXXL);
+        border-left: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      }
+    }
+
+    /* ---------- Compact identity strip ---------- */
+    .dw-idbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--spacingHorizontalXS) var(--spacingHorizontalM);
+      padding-bottom: var(--spacingVerticalM);
+      border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+
+    /* Type ramp: Body1Strong — deliberately smaller than the next-step headline */
+    .dw-feature-title {
+      margin: var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+      overflow-wrap: anywhere;
+    }
+
+    .dw-idbar-note {
+      flex: 1 1 100%;
+      margin: var(--spacingVerticalNone);
+      max-width: var(--layout-measure-prose);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /* Plain-language trust chip. No lane, package, or task vocabulary. */
+    .dw-trust {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--spacingHorizontalXS);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .dw-trust svg {
+      flex: 0 0 auto;
+      width: var(--icon-size-12);
+      height: var(--icon-size-12);
+      color: var(--colorPaletteGreenForeground1);
+    }
+
+    .dw-trust.is-caution svg { color: var(--colorPaletteYellowForeground1); }
+    .dw-trust.is-error svg { color: var(--colorPaletteRedForeground1); }
+
+    /* ---------- Fluent Badge ---------- */
+    .fui-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--spacingHorizontalXS);
+      min-height: var(--badge-size-large);
+      padding: var(--spacingVerticalXXS) var(--spacingHorizontalS);
+      border-radius: var(--borderRadiusCircular);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+    }
+
+    .fui-badge-glyph {
+      flex: 0 0 auto;
+      width: var(--icon-size-12);
+      height: var(--icon-size-12);
+    }
+
+    .fui-badge-brand {
+      color: var(--colorNeutralForegroundOnBrand);
+      background-color: var(--colorBrandBackground);
+      /*
+        The badge sits directly on the page surface now that identity is a flat
+        strip. In the dark theme the brand FILL is only 2.8:1 against that
+        surface, so the boundary uses the compound brand stroke, which Fluent
+        ships for exactly this purpose.
+      */
+      border: var(--strokeWidthThin) solid var(--colorCompoundBrandStroke);
+    }
+
+    .fui-badge-outline {
+      color: var(--colorNeutralForeground2);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+    }
+
+    .fui-badge-danger {
+      color: var(--colorNeutralForegroundOnBrand);
+      background-color: var(--colorPaletteRedBorder2);
+      border: var(--strokeWidthThin) solid var(--colorPaletteRedBorder2);
+    }
+
+    .fui-badge-subtle {
+      color: var(--colorNeutralForeground3);
+      background-color: var(--colorNeutralBackground2);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+    }
+
+    /* ====================================================================
+       NEXT STEP — the focal surface. It leads, and it is the one place in the
+       product where elevation is kept.
+       ==================================================================== */
+    .dw-focal {
+      container-type: inline-size;
+      container-name: focal;
+      display: grid;
+      gap: var(--spacingVerticalM);
+      padding: var(--spacingVerticalXL) var(--spacingHorizontalXL);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      /* Brand accent edge: the one focal signal on the page. */
+      border-left: var(--strokeWidthThickest) solid var(--colorCompoundBrandStroke);
+      border-radius: var(--borderRadiusMedium);
+      box-shadow: var(--shadow4);
+      min-width: 0;
+    }
+
+    .dw-focal.is-unavailable {
+      border-left-color: var(--colorNeutralStrokeAccessible);
+      box-shadow: none;
+    }
+
+    /* Type ramp: Caption1Strong */
+    .dw-eyebrow {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalXS);
+      margin: var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      text-transform: uppercase;
+      letter-spacing: var(--spacingHorizontalXXS);
+      color: var(--colorBrandForeground1);
+    }
+
+    .dw-focal.is-unavailable .dw-eyebrow { color: var(--colorNeutralForeground3); }
+
+    .dw-eyebrow svg {
+      flex: 0 0 auto;
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
+    }
+
+    .dw-focal-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--spacingVerticalM);
+      align-items: start;
+      min-width: 0;
+    }
+
+    .dw-focal-lead,
+    .dw-focal-support {
+      display: grid;
+      gap: var(--spacingVerticalS);
+      align-content: start;
+      min-width: 0;
+    }
+
+    /*
+      The focal surface recomposes only once, and only where the step is worth
+      it. A container query measures the CONTENT box, so this threshold is the
+      room actually available inside the card's 20px padding and 4px accent.
+
+      Honest minimum fit: 490 (68ch prose measure, rounded up) + 24 (gap) + 260
+      (supporting column) = 774. The threshold is deliberately set higher, at
+      968, so the headline column lands at 607px rather than at its 490px
+      floor. In one-column composition the focal content box never reaches 968,
+      so this never fires there; it first applies at viewport 1409, where the
+      supporting phase and why text move out of the headline column.
+    */
+    @container focal (min-width: 968px) {
+      .dw-focal-grid {
+        grid-template-columns:
+          minmax(var(--layout-headline-min), 1.8fr)
+          minmax(var(--layout-support-min), 1fr);
+        column-gap: var(--spacingHorizontalXXL);
+      }
+      .dw-focal-support {
+        padding-left: var(--spacingHorizontalXXL);
+        border-left: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      }
+    }
+
+    /* Type ramp: Title2 — the largest type in the product, by design. */
+    .dw-headline {
+      margin: var(--spacingVerticalNone);
+      max-width: var(--layout-measure-prose);
+      font-size: var(--fontSizeBase600);
+      line-height: var(--lineHeightBase600);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+      overflow-wrap: anywhere;
+    }
+
+    .dw-focal.is-unavailable .dw-headline {
+      font-size: var(--fontSizeBase500);
+      line-height: var(--lineHeightBase500);
+      color: var(--colorNeutralForeground2);
+    }
+
+    /* Type ramp: Body1 — bounded measure inside a fluid region */
+    .dw-focal-detail {
+      margin: var(--spacingVerticalNone);
+      max-width: var(--layout-measure-prose);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      color: var(--colorNeutralForeground1);
+    }
+
+    /* Type ramp: Caption1Strong — subordinate supporting labels */
+    .dw-support-label {
+      margin: var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      text-transform: uppercase;
+      letter-spacing: var(--spacingHorizontalXXS);
+      color: var(--colorNeutralForeground3);
+    }
+
+    .dw-support-value {
+      margin: var(--spacingVerticalNone);
+      max-width: var(--layout-measure-prose);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .dw-support-text {
+      margin: var(--spacingVerticalNone);
+      max-width: var(--layout-measure-prose);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+    }
+
+    /* ---------- Empty-state command ---------- */
+    .dw-command {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+    }
+
+    .dw-command code {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: var(--spacingVerticalS) var(--spacingHorizontalM);
+      font-family: var(--fontFamilyMonospace);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground1);
+      background-color: var(--colorNeutralBackground2);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      border-radius: var(--borderRadiusMedium);
+      overflow-wrap: anywhere;
+    }
+
+    /* ====================================================================
+       Flat sections — identity, lifecycle, attention, freshness, evidence.
+       No cards, no stacked shadows: a heading, a rule, and content.
+       ==================================================================== */
+    .dw-section {
+      display: grid;
+      gap: var(--spacingVerticalS);
+      align-content: start;
+      padding-top: var(--spacingVerticalM);
+      border-top: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      min-width: 0;
+    }
+
+    .dw-section-heading {
+      margin: var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      text-transform: uppercase;
+      letter-spacing: var(--spacingHorizontalXXS);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /* Type ramp: Caption1 */
+    .dw-caption {
+      margin: var(--spacingVerticalNone);
+      max-width: var(--layout-measure-prose);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /*
+      The context flow fills whatever width it is given with no threshold at
+      all: one column inside the 300-340px context column, two or three
+      columns when it sits under a full-width work region.
+    */
+    .dw-context-flow {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: var(--spacingVerticalL) var(--spacingHorizontalXXL);
+      align-items: start;
+      min-width: 0;
+    }
+
+    /* ====================================================================
+       Lifecycle stepper + progress — condensed, supporting, never leading.
+       ==================================================================== */
+    .dw-life {
+      container-type: inline-size;
+      container-name: life;
+    }
+
+    .fui-stepper {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--spacingVerticalNone);
+      margin: var(--spacingVerticalXS) var(--spacingHorizontalNone) var(--spacingVerticalNone);
+      padding: var(--spacingVerticalNone);
+      list-style: none;
+    }
+
+    /* Narrow container: vertical stepper, never a horizontal scroller. */
+    .fui-step {
+      position: relative;
+      display: grid;
+      grid-template-columns: var(--badge-size-large) minmax(0, 1fr);
+      align-items: start;
+      gap: var(--spacingVerticalNone) var(--spacingHorizontalM);
+      padding-bottom: var(--spacingVerticalS);
+      text-align: left;
+    }
+
+    .fui-step:last-child { padding-bottom: var(--spacingVerticalNone); }
+
+    .fui-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: var(--badge-size-large);
+      bottom: var(--spacingVerticalXXS);
+      left: calc(var(--badge-size-large) / 2 - var(--strokeWidthThin));
+      width: var(--strokeWidthThick);
+      border-radius: var(--borderRadiusCircular);
+      background-color: var(--colorNeutralStroke1);
+    }
+
+    .fui-step.is-complete:not(:last-child)::after {
+      background-color: var(--colorPaletteGreenBorder2);
+    }
+
+    .fui-step-badge {
+      position: relative;
+      z-index: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: var(--badge-size-large);
+      height: var(--badge-size-large);
+      border-radius: var(--borderRadiusCircular);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground3);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+    }
+
+    .fui-step-glyph {
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
+    }
+
+    .fui-step.is-complete .fui-step-badge {
+      color: var(--colorNeutralForegroundOnBrand);
+      background-color: var(--colorPaletteGreenBorder2);
+      border-color: var(--colorPaletteGreenBorder2);
+    }
+
+    .fui-step.is-current .fui-step-badge {
+      color: var(--colorNeutralForegroundOnBrand);
+      background-color: var(--colorBrandBackground);
+      border-color: var(--colorBrandBackground);
+      box-shadow: 0 0 0 var(--strokeWidthThick) var(--colorNeutralBackground3), 0 0 0 var(--strokeWidthThicker) var(--colorCompoundBrandStroke);
+    }
+
+    .fui-step.is-unknown .fui-step-badge {
+      border-style: dashed;
+      color: var(--colorNeutralForeground3);
+      background-color: var(--colorNeutralBackground2);
+    }
+
+    /* Type ramp: Caption1 */
+    .fui-step-label {
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .fui-step.is-complete .fui-step-label {
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorPaletteGreenForeground1);
+    }
+
+    .fui-step.is-current .fui-step-label {
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .fui-step-state {
+      display: block;
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightRegular);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /*
+      4 steps x 112px of label ("Not started" is the widest) = 448 honest fit;
+      488 is taken for slack. In one-column composition the lifecycle container
+      is the full main width, so this is viewport 520.
+    */
+    @container life (min-width: 488px) {
+      .fui-stepper { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .fui-step {
+        grid-template-columns: minmax(0, 1fr);
+        justify-items: center;
+        gap: var(--spacingVerticalXS);
+        padding-bottom: var(--spacingVerticalNone);
+        text-align: center;
+      }
+      .fui-step:not(:last-child)::after {
+        top: calc(var(--badge-size-large) / 2 - var(--strokeWidthThin));
+        bottom: auto;
+        left: calc(50% + (var(--badge-size-large) / 2) + var(--spacingHorizontalXS));
+        right: calc(-50% + (var(--badge-size-large) / 2) + var(--spacingHorizontalXS));
+        width: auto;
+        height: var(--strokeWidthThick);
+      }
+    }
+
+    /* ---------- Progress, tied to the stage, never a percentage ---------- */
+    .dw-progress {
+      display: grid;
+      gap: var(--spacingVerticalS);
+      margin-top: var(--spacingVerticalM);
+    }
+
+    /*
+      Composed meter. Fluent's ProgressBar is single-value, so three
+      proportional bars share one 4px track (--strokeWidthThickest is
+      ProgressBar "large"). Segment growth is set from data.
+    */
+    .dw-meter {
+      display: flex;
+      gap: var(--spacingHorizontalXXS);
+      height: var(--strokeWidthThickest);
+      border-radius: var(--borderRadiusCircular);
+      overflow: hidden;
+    }
+
+    .dw-meter-seg {
+      flex-grow: var(--seg, 1);
+      flex-basis: 0;
+      min-width: var(--spacingHorizontalXXS);
+      border-radius: var(--borderRadiusCircular);
+    }
+
+    .dw-meter-seg.is-done { background-color: var(--colorPaletteGreenBorder2); }
+    .dw-meter-seg.is-doing { background-color: var(--colorBrandBackground); }
+    .dw-meter-seg.is-open { background-color: var(--colorNeutralStroke1); }
+
+    .dw-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--spacingHorizontalXS) var(--spacingHorizontalL);
+      margin: var(--spacingVerticalNone);
+      padding: var(--spacingVerticalNone);
+      list-style: none;
+    }
+
+    .dw-legend li {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalXS);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .dw-legend svg {
+      flex: 0 0 auto;
+      width: var(--icon-size-12);
+      height: var(--icon-size-12);
+    }
+
+    .dw-legend .is-done svg { color: var(--colorPaletteGreenForeground1); }
+    .dw-legend .is-doing svg { color: var(--colorBrandForeground1); }
+    .dw-legend .is-open svg { color: var(--colorNeutralForeground3); }
+
+    .dw-legend-count { font-weight: var(--fontWeightSemibold); color: var(--colorNeutralForeground1); }
+
+    /* ====================================================================
+       Attention — a calm compact summary when nothing needs the user, and
+       real Fluent MessageBars only when something actually does.
+       ==================================================================== */
+    .dw-status-summary {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      margin: var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .dw-status-summary svg {
+      flex: 0 0 auto;
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
+      color: var(--colorPaletteGreenForeground1);
+    }
+
+    .dw-status-facts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--spacingHorizontalXS) var(--spacingHorizontalL);
+      margin: var(--spacingVerticalNone);
+      padding: var(--spacingVerticalNone);
+      list-style: none;
+    }
+
+    .dw-status-facts li {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalXS);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .dw-status-facts svg {
+      flex: 0 0 auto;
+      width: var(--icon-size-12);
+      height: var(--icon-size-12);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /* ---------- Fluent MessageBar ---------- */
+    .fui-attention {
+      display: grid;
+      gap: var(--spacingVerticalS);
+    }
+
+    .fui-messagebar {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: start;
+      gap: var(--spacingHorizontalS);
+      padding: var(--spacingVerticalS) var(--spacingHorizontalM);
+      border-radius: var(--borderRadiusMedium);
+      border: var(--strokeWidthThin) solid transparent;
+    }
+
+    .fui-messagebar-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .fui-icon {
+      width: var(--icon-size-20);
+      height: var(--icon-size-20);
+    }
+
+    /* Type ramp: Body1Strong */
+    .fui-messagebar-title {
+      margin: var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    /* Type ramp: Caption1 */
+    .fui-messagebar-text {
+      margin: var(--spacingVerticalXXS) var(--spacingHorizontalNone) var(--spacingVerticalNone);
+      max-width: var(--layout-measure-prose);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .fui-messagebar-meta {
+      margin: var(--spacingVerticalXS) var(--spacingHorizontalNone) var(--spacingVerticalNone);
+      font-family: var(--fontFamilyMonospace);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+      overflow-wrap: anywhere;
+    }
+
+    .fui-messagebar-warning {
+      background-color: var(--colorPaletteYellowBackground1);
+      border-color: var(--colorPaletteYellowBorder1);
+    }
+    .fui-messagebar-warning .fui-messagebar-icon { color: var(--colorPaletteYellowForeground1); }
+
+    .fui-messagebar-error {
+      background-color: var(--colorPaletteRedBackground1);
+      border-color: var(--colorPaletteRedBorder1);
+    }
+    .fui-messagebar-error .fui-messagebar-icon { color: var(--colorPaletteRedForeground1); }
+    .fui-messagebar-error .fui-messagebar-title { color: var(--colorPaletteRedForeground1); }
+
+    .fui-messagebar-info {
+      background-color: var(--colorNeutralBackground2);
+      border-color: var(--colorNeutralStroke2);
+    }
+    .fui-messagebar-info .fui-messagebar-icon { color: var(--colorNeutralForeground3); }
+
+    /* ---------- Freshness ---------- */
+    .dw-freshness-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--spacingHorizontalS);
+    }
+
+    .dw-freshness-state {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--spacingHorizontalXS);
+      min-width: 0;
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .dw-freshness-state svg {
+      flex: 0 0 auto;
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
+      color: var(--colorNeutralForeground3);
+    }
+
+    .dw-freshness-state.is-failed svg { color: var(--colorPaletteYellowForeground1); }
+
+    /* ---------- Fluent Accordion-style disclosure (Evidence) ---------- */
+    .fui-accordion { display: block; }
+
+    .fui-accordion-header {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      min-height: var(--button-height-medium);
+      padding: var(--spacingVerticalXS) var(--spacingHorizontalNone);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+      border-radius: var(--borderRadiusMedium);
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .fui-accordion-header::-webkit-details-marker { display: none; }
+
+    .fui-chevron {
+      flex: 0 0 auto;
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
+      color: var(--colorNeutralForeground3);
+      transition: transform var(--durationFaster) ease;
+    }
+
+    .fui-accordion[open] > .fui-accordion-header .fui-chevron { transform: rotate(90deg); }
+
+    .dw-evidence-body {
+      display: grid;
+      gap: var(--spacingVerticalM);
+      padding: var(--spacingVerticalXS) var(--spacingHorizontalNone) var(--spacingVerticalS);
+    }
+
+    .dw-source-list {
+      display: grid;
+      gap: var(--spacingVerticalS);
+      margin: var(--spacingVerticalNone);
+      padding: var(--spacingVerticalNone);
+    }
+
+    .dw-source-list dt {
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground3);
+    }
+
+    .dw-source-list dd {
+      margin: var(--spacingVerticalNone);
+      font-family: var(--fontFamilyMonospace);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground1);
+      overflow-wrap: anywhere;
+    }
+
+    .dw-event {
+      display: grid;
+      gap: var(--spacingVerticalXS);
+      padding-left: var(--spacingHorizontalM);
+      border-left: var(--strokeWidthThick) solid var(--colorNeutralStroke1);
+    }
+
+    .dw-event-text {
+      margin: var(--spacingVerticalNone);
+      max-width: var(--layout-measure-prose);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground1);
+    }
+
+    .dw-event-source {
+      margin: var(--spacingVerticalNone);
+      font-family: var(--fontFamilyMonospace);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+      overflow-wrap: anywhere;
+    }
+
+    /* ====================================================================
+       CHOOSER — one Fluent Combobox/Listbox composite. ONE tab stop.
+       Used both inside the header Popover and as the no-selection fixture.
+       ==================================================================== */
+    .dw-chooser {
+      display: grid;
+      gap: var(--spacingVerticalS);
+      min-width: 0;
+    }
+
+    .dw-chooser-label {
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground3);
+    }
+
+    /* Fluent SearchBox anatomy */
+    .fui-searchbox {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      min-height: var(--button-height-medium);
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalM);
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      /* Fluent Input's compound brand underline */
+      border-bottom: var(--strokeWidthThick) solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium);
+    }
+
+    .fui-searchbox:focus-within { border-bottom-color: var(--colorCompoundBrandStroke); }
+
+    .fui-searchbox svg {
+      flex: 0 0 auto;
+      width: var(--icon-size-16);
+      height: var(--icon-size-16);
+      color: var(--colorNeutralForeground3);
+    }
+
+    .fui-searchbox-input {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: var(--spacingVerticalXS) var(--spacingHorizontalNone);
+      font-family: var(--fontFamilyBase);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      color: var(--colorNeutralForeground1);
+      background: none;
+      border: none;
+    }
+
+    .fui-searchbox-input:focus { outline: none; }
+    .fui-searchbox-input::placeholder { color: var(--colorNeutralForeground3); }
+
+    /*
+      Windowed scroller. The listbox holds at most WINDOW option elements at a
+      time; the untenanted space above and below is expressed as padding on the
+      listbox, so the scrollbar still describes all 53 rows. Row height is a
+      layout constant so the window arithmetic is exact.
+    */
+    .dw-chooser-scroll {
+      max-height: calc(var(--chooser-row) * 5);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      background-color: var(--colorNeutralBackground1);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);
+      border-radius: var(--borderRadiusMedium);
+    }
+
+    .dw-chooser-list {
+      margin: var(--spacingVerticalNone);
+      padding: var(--spacingVerticalNone);
+      list-style: none;
+    }
+
+    .dw-option {
+      display: grid;
+      align-content: center;
+      gap: var(--spacingVerticalNone);
+      height: var(--chooser-row);
+      padding: var(--spacingVerticalM) var(--spacingHorizontalM);
+      border-bottom: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      cursor: pointer;
+      min-width: 0;
+    }
+
+    .dw-option:last-child { border-bottom: none; }
+    .dw-option:hover { background-color: var(--colorNeutralBackground1Hover); }
+
+    /*
+      The active option is never colour-only: it carries a brand left edge, a
+      background change, and the literal word "Highlighted" for assistive
+      technology through aria-activedescendant plus aria-selected.
+    */
+    .dw-option.is-active {
+      background-color: var(--colorNeutralBackground2);
+      border-left: var(--strokeWidthThicker) solid var(--colorCompoundBrandStroke);
+      padding-left: var(--spacingHorizontalMNudge);
+    }
+
+    .dw-option-title {
+      display: flex;
+      align-items: center;
+      gap: var(--spacingHorizontalS);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+      min-width: 0;
+    }
+
+    .dw-option-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dw-option-title .fui-badge {
+      flex: 0 0 auto;
+      min-height: var(--spacingVerticalXL);
+      padding: 0 var(--spacingHorizontalSNudge);
+      font-size: var(--fontSizeBase100);
+      line-height: var(--lineHeightBase100);
+      text-transform: uppercase;
+      letter-spacing: var(--spacingHorizontalXXS);
+    }
+
+    .dw-option-meta {
+      font-family: var(--fontFamilyMonospace);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dw-chooser-empty {
+      margin: var(--spacingVerticalNone);
+      padding: var(--spacingVerticalM) var(--spacingHorizontalM);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      color: var(--colorNeutralForeground2);
+    }
+
+    .dw-preview {
+      display: grid;
+      gap: var(--spacingVerticalXS);
+      padding: var(--spacingVerticalM) var(--spacingHorizontalM);
+      background-color: var(--colorNeutralBackground2);
+      border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+      border-radius: var(--borderRadiusMedium);
+    }
+
+    .dw-preview-key {
+      margin: var(--spacingVerticalNone);
+      font-family: var(--fontFamilyMonospace);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground3);
+      overflow-wrap: anywhere;
+    }
+
+    .dw-preview-title {
+      margin: var(--spacingVerticalNone);
+      font-size: var(--fontSizeBase300);
+      line-height: var(--lineHeightBase300);
+      font-weight: var(--fontWeightSemibold);
+      color: var(--colorNeutralForeground1);
+      overflow-wrap: anywhere;
+    }
+
+    .dw-steps {
+      display: grid;
+      gap: var(--spacingVerticalXS);
+      margin: var(--spacingVerticalNone);
+      padding: var(--spacingVerticalNone) var(--spacingHorizontalNone) var(--spacingVerticalNone) var(--spacingHorizontalXL);
+    }
+
+    .dw-steps li {
+      max-width: var(--layout-measure-prose);
+      font-size: var(--fontSizeBase200);
+      line-height: var(--lineHeightBase200);
+      color: var(--colorNeutralForeground2);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        transition-duration: 1ms !important;
+        animation-duration: 1ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Inline icon sprite. Approximates @fluentui/react-icons; no external file. -->
+  <svg class="u-icon-sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-check" viewBox="0 0 20 20"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 20 20"><path d="M10 3.2l7 12.4H3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 8v3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="10" cy="13.7" r=".95" fill="currentColor"/></symbol>
+    <symbol id="i-error" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M7.4 7.4l5.2 5.2M12.6 7.4l-5.2 5.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-info" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 9.2v5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="10" cy="6.4" r=".95" fill="currentColor"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 20 20"><path d="M16.2 10a6.2 6.2 0 11-1.9-4.45" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M15.9 2.8v3.3h-3.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 20 20"><path d="M8 5l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 20 20"><rect x="7" y="3.2" width="9.6" height="9.6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M13 15.3v.2a1.6 1.6 0 01-1.6 1.6H5a1.6 1.6 0 01-1.6-1.6V8.6A1.6 1.6 0 015 7h.3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-circle" viewBox="0 0 20 20"><circle cx="10" cy="10" r="6.4" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
+    <symbol id="i-half" viewBox="0 0 20 20"><circle cx="10" cy="10" r="6.4" fill="none" stroke="currentColor" stroke-width="1.75"/><path d="M10 3.6a6.4 6.4 0 010 12.8z" fill="currentColor"/></symbol>
+    <symbol id="i-dash" viewBox="0 0 20 20"><path d="M5.5 10h9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 20 20"><path d="M4 10h11M11 6l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 5.9V10l2.8 1.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-focus" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="2.6" fill="currentColor"/></symbol>
+    <symbol id="i-mark" viewBox="0 0 20 20"><path d="M4.5 5.5h11M4.5 10h11M4.5 14.5h6.5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 20 20"><path d="M6 3.4h5l4 4v9.2H6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M11 3.4v4h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 20 20"><circle cx="8.8" cy="8.8" r="5.4" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12.8 12.8l3.9 3.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  </svg>
+
+  <!--
+    Prototype drawer. Deliberately outside the product tree, dashed-separated,
+    and COLLAPSED by default so the product is the approval view. Its collapsed
+    height is 40 CSS px. Query parameters address every fixture directly.
+  -->
+  <div class="proto theme-system" id="proto-bar" role="region" aria-label="Prototype controls, not part of Dude">
+    <div class="proto-rail">
+      <button type="button" class="proto-toggle" id="proto-toggle" aria-expanded="false" aria-controls="proto-panel">
+        <svg class="fui-chevron" aria-hidden="true" focusable="false"><use href="#i-chevron"></use></svg>
+        Prototype controls
+      </button>
+      <span class="proto-now" id="proto-now">Not part of Dude</span>
+    </div>
+
+    <div class="proto-panel" id="proto-panel" hidden>
+      <div class="proto-group">
+        <span class="proto-group-label" id="theme-label">Theme</span>
+        <!-- Fluent <Switch> -->
+        <button type="button" class="fui-switch" id="theme-switch" role="switch" aria-checked="false" aria-labelledby="theme-label theme-state">
+          <span class="fui-switch-track" aria-hidden="true"><span class="fui-switch-thumb"></span></span>
+          <span id="theme-state">Light</span>
+        </button>
+      </div>
+
+      <div class="proto-group">
+        <span class="proto-group-label" id="state-label">State</span>
+        <!-- Fluent <RadioGroup layout="horizontal"> + <Radio> -->
+        <div class="fui-radiogroup" role="radiogroup" aria-labelledby="state-label" id="state-group">
+          <button type="button" class="fui-radio" role="radio" aria-checked="true" data-state="current" tabindex="0"><svg class="fui-radio-mark" aria-hidden="true" focusable="false"><use href="#i-check"></use></svg>Current</button>
+          <button type="button" class="fui-radio" role="radio" aria-checked="false" data-state="chooser" tabindex="-1"><svg class="fui-radio-mark" aria-hidden="true" focusable="false"><use href="#i-check"></use></svg>Chooser</button>
+          <button type="button" class="fui-radio" role="radio" aria-checked="false" data-state="blocked" tabindex="-1"><svg class="fui-radio-mark" aria-hidden="true" focusable="false"><use href="#i-check"></use></svg>Blocked</button>
+          <button type="button" class="fui-radio" role="radio" aria-checked="false" data-state="stale" tabindex="-1"><svg class="fui-radio-mark" aria-hidden="true" focusable="false"><use href="#i-check"></use></svg>Stale</button>
+          <button type="button" class="fui-radio" role="radio" aria-checked="false" data-state="empty" tabindex="-1"><svg class="fui-radio-mark" aria-hidden="true" focusable="false"><use href="#i-check"></use></svg>Empty</button>
+          <button type="button" class="fui-radio" role="radio" aria-checked="false" data-state="malformed" tabindex="-1"><svg class="fui-radio-mark" aria-hidden="true" focusable="false"><use href="#i-check"></use></svg>Malformed</button>
+          <button type="button" class="fui-radio" role="radio" aria-checked="false" data-state="mismatch" tabindex="-1"><svg class="fui-radio-mark" aria-hidden="true" focusable="false"><use href="#i-check"></use></svg>Tracking mismatch</button>
+        </div>
+      </div>
+
+      <p class="proto-hint">Resize the canvas to inspect the composition. Query parameters: <code>?state=chooser&amp;theme=dark&amp;controls=open</code></p>
+    </div>
+  </div>
+
+  <!-- =====================  PRODUCT  ===================== -->
+  <!-- Maps to <FluentProvider theme={webLightTheme | webDarkTheme}> -->
+  <div class="fui-provider theme-system" id="app">
+    <h1 class="u-visually-hidden">Dude — Now workspace</h1>
+    <p id="live-region" role="status" aria-live="polite" class="u-visually-hidden"></p>
+
+    <!-- Product header. Present at EVERY width. No rail ever replaces it. -->
+    <header class="dw-header">
+      <p class="dw-product">
+        <span class="dw-product-mark" aria-hidden="true"><svg class="fui-button-icon" focusable="false"><use href="#i-mark"></use></svg></span>
+        Dude
+        <span class="dw-product-sub">Now</span>
+      </p>
+      <div class="dw-popover-anchor">
+        <!-- Fluent <Button appearance="secondary"> + <Popover>/<PopoverSurface> -->
+        <button type="button" class="fui-button fui-button-secondary" id="change-feature" aria-expanded="false" aria-haspopup="dialog" aria-controls="feature-popover">
+          <svg class="fui-button-icon" aria-hidden="true" focusable="false"><use href="#i-doc"></use></svg>
+          <span id="change-feature-label">Change feature</span>
+        </button>
+        <div class="fui-popover-surface" id="feature-popover" role="dialog" aria-label="Choose a feature" hidden>
+          <div id="popover-chooser"></div>
+        </div>
+      </div>
+    </header>
+    <hr class="fui-divider">
+
+    <main class="dw-main" aria-label="Now workspace">
+      <div class="dw-workspace" id="workspace"></div>
+    </main>
+  </div>
+
+  <script>
+  /*
+    Prototype behaviour only. Nothing here writes to the repository, sends a
+    message, runs a command, or mutates Dude state. The three product controls
+    that do work — Refresh, feature selection, and Source details — are all
+    inside the read-only I1 capability envelope.
+  */
+  (function () {
+    'use strict';
+
+    var SELECTED = '052';
+
+    /*
+      REAL INVENTORY — all 53 direct .dude/ideas/*.md files.
+      title, slug, status, and spec are copied verbatim from each file's
+      frontmatter; idea is the exact path on disk. Nothing is inferred, and no
+      item, status, or path is invented. These are static data literals in a
+      static prototype: a real build reads the same fields at runtime.
+    */
+    var IDEAS = [
+            { n: '001', title: 'Brainstorm ideas intake', slug: 'brainstorm-ideas-intake', status: 'defined', idea: '.dude/ideas/001-brainstorm-ideas-intake.md', spec: '.dude/specs/001-brainstorm-ideas-intake/spec.md' },
+      { n: '002', title: 'Remove Legacy Compatibility From The Bundle', slug: 'remove-legacy-compatibility', status: 'defined', idea: '.dude/ideas/002-remove-legacy-compatibility.md', spec: '.dude/specs/002-remove-legacy-compatibility/spec.md' },
+      { n: '003', title: 'Guarded Directory Artifact Import', slug: 'guarded-directory-artifact-import', status: 'defined', idea: '.dude/ideas/003-guarded-directory-artifact-import.md', spec: '.dude/specs/003-guarded-directory-artifact-import/spec.md' },
+      { n: '004', title: 'Pre-work Log Learning', slug: 'pre-work-log-learning', status: 'defined', idea: '.dude/ideas/004-pre-work-log-learning.md', spec: '.dude/specs/004-pre-work-log-learning/spec.md' },
+      { n: '005', title: 'Autonomous Work Modes', slug: 'autonomous-work-modes', status: 'defined', idea: '.dude/ideas/005-autonomous-work-modes.md', spec: '.dude/specs/005-autonomous-work-modes/spec.md' },
+      { n: '006', title: 'Simplify Context Footprint Audit', slug: 'simplify-context-footprint-audit', status: 'defined', idea: '.dude/ideas/006-simplify-context-footprint-audit.md', spec: '.dude/specs/006-simplify-context-footprint-audit/spec.md' },
+      { n: '007', title: 'Technical Docs Pack Remediation', slug: 'technical-docs-pack-remediation', status: 'defined', idea: '.dude/ideas/007-technical-docs-pack-remediation.md', spec: '.dude/specs/007-technical-docs-pack-remediation/spec.md' },
+      { n: '008', title: 'Automatic Core Dogfood Promotion', slug: 'automatic-core-dogfood-promotion', status: 'defined', idea: '.dude/ideas/008-automatic-core-dogfood-promotion.md', spec: '.dude/specs/008-automatic-core-dogfood-promotion/spec.md' },
+      { n: '009', title: 'Autonomous Learning Governance', slug: 'autonomous-learning-governance', status: 'defined', idea: '.dude/ideas/009-autonomous-learning-governance.md', spec: '.dude/specs/009-autonomous-learning-governance/spec.md' },
+      { n: '010', title: 'Core Autonomous Event Round Trip', slug: 'core-autonomous-event-round-trip', status: 'defined', idea: '.dude/ideas/010-core-autonomous-event-round-trip.md', spec: '.dude/specs/010-core-autonomous-event-round-trip/spec.md' },
+      { n: '011', title: 'Historical Core Dogfood Fixture Repair', slug: 'historical-core-dogfood-fixture-repair', status: 'defined', idea: '.dude/ideas/011-historical-core-dogfood-fixture-repair.md', spec: '.dude/specs/011-historical-core-dogfood-fixture-repair/spec.md' },
+      { n: '012', title: 'Core Dogfood Close Simplification', slug: 'core-dogfood-close-simplification', status: 'defined', idea: '.dude/ideas/012-core-dogfood-close-simplification.md', spec: '.dude/specs/012-core-dogfood-close-simplification/spec.md' },
+      { n: '013', title: 'Unattended Work Continuity', slug: 'unattended-work-continuity', status: 'defined', idea: '.dude/ideas/013-unattended-work-continuity.md', spec: '.dude/specs/013-unattended-work-continuity/spec.md' },
+      { n: '014', title: 'Autonomous Review Escalation Precedence', slug: 'autonomous-review-escalation-precedence', status: 'defined', idea: '.dude/ideas/014-autonomous-review-escalation-precedence.md', spec: '.dude/specs/014-autonomous-review-escalation-precedence/spec.md' },
+      { n: '015', title: 'Automatic Unchanged-Intent Redefinition', slug: 'automatic-unchanged-intent-redefinition', status: 'defined', idea: '.dude/ideas/015-automatic-unchanged-intent-redefinition.md', spec: '.dude/specs/015-automatic-unchanged-intent-redefinition/spec.md' },
+      { n: '016', title: 'Simplify Work Command', slug: 'simplify-work-command', status: 'defined', idea: '.dude/ideas/016-simplify-work-command.md', spec: '.dude/specs/016-simplify-work-command/spec.md' },
+      { n: '017', title: 'Ship Command', slug: 'ship-command', status: 'defined', idea: '.dude/ideas/017-ship-command.md', spec: '.dude/specs/017-ship-command/spec.md' },
+      { n: '018', title: 'Autonomous RunState Continuity', slug: 'autonomous-runstate-continuity', status: 'defined', idea: '.dude/ideas/018-autonomous-runstate-continuity.md', spec: '.dude/specs/018-autonomous-runstate-continuity/spec.md' },
+      { n: '019', title: 'Specialist Attestation Producer', slug: 'specialist-attestation-producer', status: 'defined', idea: '.dude/ideas/019-specialist-attestation-producer.md', spec: '.dude/specs/019-specialist-attestation-producer/spec.md' },
+      { n: '020', title: 'Task-Scoped Skill Resolution', slug: 'task-scoped-skill-resolution', status: 'defined', idea: '.dude/ideas/020-task-scoped-skill-resolution.md', spec: '.dude/specs/020-task-scoped-skill-resolution/spec.md' },
+      { n: '021', title: 'Add A Topology-First Reset When Review Revisions Expand Enforcement Scope', slug: 'topology-first-enforcement-reset', status: 'defined', idea: '.dude/ideas/021-topology-first-enforcement-reset.md', spec: '.dude/specs/021-topology-first-enforcement-reset/spec.md' },
+      { n: '022', title: 'Runner Reason-Code And Coverage Fix', slug: 'runner-reason-code-coverage-fix', status: 'defined', idea: '.dude/ideas/022-runner-reason-code-coverage-fix.md', spec: '.dude/specs/022-runner-reason-code-coverage-fix/spec.md' },
+      { n: '023', title: 'First-Definition Publish', slug: 'first-definition-publish', status: 'defined', idea: '.dude/ideas/023-first-definition-publish.md', spec: '.dude/specs/023-first-definition-publish/spec.md' },
+      { n: '024', title: 'Feature Focus Order', slug: 'feature-focus-order', status: 'defined', idea: '.dude/ideas/024-feature-focus-order.md', spec: '.dude/specs/024-feature-focus-order/spec.md' },
+      { n: '025', title: 'Backlog Report', slug: 'backlog-report', status: 'defined', idea: '.dude/ideas/025-backlog-report.md', spec: '.dude/specs/025-backlog-report/spec.md' },
+      { n: '026', title: 'Remove Unused Authority Surfaces', slug: 'remove-unused-authority-surfaces', status: 'defined', idea: '.dude/ideas/026-remove-unused-authority-surfaces.md', spec: '.dude/specs/026-remove-unused-authority-surfaces/spec.md' },
+      { n: '027', title: 'Backlog Report Usability', slug: 'backlog-report-usability', status: 'defined', idea: '.dude/ideas/027-backlog-report-usability.md', spec: '.dude/specs/027-backlog-report-usability/spec.md' },
+      { n: '028', title: 'Agent Orchestration Metadata', slug: 'agent-orchestration-metadata', status: 'defined', idea: '.dude/ideas/028-agent-orchestration-metadata.md', spec: '.dude/specs/028-agent-orchestration-metadata/spec.md' },
+      { n: '029', title: 'Bounded Owner Log Projection', slug: 'bounded-owner-log-projection', status: 'defined', idea: '.dude/ideas/029-bounded-owner-log-projection.md', spec: '.dude/specs/029-bounded-owner-log-projection/spec.md' },
+      { n: '030', title: 'Backlog Lifecycle Sync', slug: 'backlog-lifecycle-sync', status: 'defined', idea: '.dude/ideas/030-backlog-lifecycle-sync.md', spec: '.dude/specs/030-backlog-lifecycle-sync/spec.md' },
+      { n: '031', title: 'Transactional Pack Refresh', slug: 'transactional-pack-refresh', status: 'defined', idea: '.dude/ideas/031-transactional-pack-refresh.md', spec: '.dude/specs/031-transactional-pack-refresh/spec.md' },
+      { n: '032', title: 'Theme-Agnostic And Technology-Independent Design Workflow', slug: 'theme-agnostic-design-workflow', status: 'defined', idea: '.dude/ideas/032-theme-agnostic-design-workflow.md', spec: '.dude/specs/032-theme-agnostic-design-workflow/spec.md' },
+      { n: '033', title: 'Conversational Brainstorm Intake Recognition', slug: 'conversational-brainstorm-intake', status: 'defined', idea: '.dude/ideas/033-conversational-brainstorm-intake.md', spec: '.dude/specs/033-conversational-brainstorm-intake/spec.md' },
+      { n: '034', title: 'GitHub Issue Work Intake', slug: 'github-issue-work-intake', status: 'defined', idea: '.dude/ideas/034-github-issue-work-intake.md', spec: '.dude/specs/034-github-issue-work-intake/spec.md' },
+      { n: '035', title: 'Pack Catalog Re-fetch', slug: 'pack-catalog-refetch', status: 'defined', idea: '.dude/ideas/035-pack-catalog-refetch.md', spec: '.dude/specs/035-pack-catalog-refetch/spec.md' },
+      { n: '036', title: 'Upgrade Pack Guidance Correction', slug: 'upgrade-pack-guidance-correction', status: 'defined', idea: '.dude/ideas/036-upgrade-pack-guidance-correction.md', spec: '.dude/specs/036-upgrade-pack-guidance-correction/spec.md' },
+      { n: '037', title: 'Simplify Pack Updates', slug: 'simplify-pack-updates', status: 'defined', idea: '.dude/ideas/037-simplify-pack-updates.md', spec: '.dude/specs/037-simplify-pack-updates/spec.md' },
+      { n: '038', title: 'Bulk Pack Refresh', slug: 'bulk-pack-refresh', status: 'defined', idea: '.dude/ideas/038-bulk-pack-refresh.md', spec: '.dude/specs/038-bulk-pack-refresh/spec.md' },
+      { n: '039', title: 'Ship Checkpoint Autonomy', slug: 'ship-checkpoint-autonomy', status: 'defined', idea: '.dude/ideas/039-ship-checkpoint-autonomy.md', spec: '.dude/specs/039-ship-checkpoint-autonomy/spec.md' },
+      { n: '040', title: 'Recovery Continuation', slug: 'recovery-continuation', status: 'defined', idea: '.dude/ideas/040-recovery-continuation.md', spec: '.dude/specs/040-recovery-continuation/spec.md' },
+      { n: '041', title: 'Pack Discovery Metadata', slug: 'pack-discovery-metadata', status: 'defined', idea: '.dude/ideas/041-pack-discovery-metadata.md', spec: '.dude/specs/041-pack-discovery-metadata/spec.md' },
+      { n: '042', title: 'Pack Visual Neutrality', slug: 'pack-visual-neutrality', status: 'defined', idea: '.dude/ideas/042-pack-visual-neutrality.md', spec: '.dude/specs/042-pack-visual-neutrality/spec.md' },
+      { n: '043', title: 'GitHub Issue Intake Guidance', slug: 'github-issue-intake-guidance', status: 'defined', idea: '.dude/ideas/043-github-issue-intake-guidance.md', spec: '.dude/specs/043-github-issue-intake-guidance/spec.md' },
+      { n: '044', title: 'Persistent Design Mockups', slug: 'persistent-design-mockups', status: 'defined', idea: '.dude/ideas/044-persistent-design-mockups.md', spec: '.dude/specs/044-persistent-design-mockups/spec.md' },
+      { n: '045', title: 'Chronological Idea Numbering', slug: 'chronological-idea-numbering', status: 'defined', idea: '.dude/ideas/045-chronological-idea-numbering.md', spec: '.dude/specs/045-chronological-idea-numbering/spec.md' },
+      { n: '046', title: 'Good Enough Delivery', slug: 'good-enough-delivery', status: 'resolved', idea: '.dude/ideas/046-good-enough-delivery.md', spec: null },
+      { n: '047', title: 'Core Dogfood Preview', slug: 'core-dogfood-preview', status: 'resolved', idea: '.dude/ideas/047-core-dogfood-preview.md', spec: null },
+      { n: '048', title: 'Backlog Canvas', slug: 'backlog-canvas', status: 'resolved', idea: '.dude/ideas/048-backlog-canvas.md', spec: null },
+      { n: '049', title: 'Visual Systems Pack', slug: 'visual-systems-pack', status: 'resolved', idea: '.dude/ideas/049-visual-systems-pack.md', spec: null },
+      { n: '050', title: 'Completion Closeout Report', slug: 'completion-closeout-report', status: 'defined', idea: '.dude/ideas/050-completion-closeout-report.md', spec: '.dude/specs/050-completion-closeout-report/spec.md' },
+      { n: '051', title: 'Retrospective Rubber Duck Pack', slug: 'retrospective-rubber-duck-pack', status: 'defined', idea: '.dude/ideas/051-retrospective-rubber-duck-pack.md', spec: '.dude/specs/051-retrospective-rubber-duck-pack/spec.md' },
+      { n: '052', title: 'Dude Canvas UI', slug: 'dude-canvas-ui', status: 'defined', idea: '.dude/ideas/052-dude-canvas-ui.md', spec: '.dude/specs/052-dude-canvas-ui/spec.md' },
+      { n: '053', title: 'Design-Stage Critique', slug: 'design-stage-critique', status: 'draft', idea: '.dude/ideas/053-design-stage-critique.md', spec: null }
+    ];
+
+    function ideaByNumber(n) {
+      for (var i = 0; i < IDEAS.length; i += 1) {
+        if (IDEAS[i].n === n) { return IDEAS[i]; }
+      }
+      return null;
+    }
+
+    /* Plain human-facing stage word for a frontmatter status. */
+    function stageWord(f) {
+      return f.status === 'draft' ? 'Idea'
+        : f.status === 'resolved' ? 'Resolved'
+        : 'Defined';
+    }
+
+    /* Human-facing identifier: number + slug, never a file path. */
+    function featureKey(f) {
+      return f.n + '-' + f.slug;
+    }
+
+    /*
+      Plain lifecycle vocabulary. No lane names, no package identity, no task
+      keys, no glyph hashes: those belong to Evidence -> Source details.
+    */
+    var LIFECYCLE = ['Idea', 'Defined', 'In progress', 'Verified'];
+
+    function steps(a, b, c, d) {
+      return [
+        { label: LIFECYCLE[0], state: a },
+        { label: LIFECYCLE[1], state: b },
+        { label: LIFECYCLE[2], state: c },
+        { label: LIFECYCLE[3], state: d }
+      ];
+    }
+
+    /* Read from .dude/specs/052-dude-canvas-ui/tasks.md. T007 is in progress. */
+    var TASKS = {
+      done: 3,
+      doing: 1,
+      open: 9,
+      total: 13,
+      lede: '13 tasks make up this feature.'
+    };
+
+    /* Latest lifecycle event: last line of the spec's Revision Log. */
+    var LATEST_EVENT = {
+      text: 'Re-definition selected Fluent 2 with Fluent UI React and replaced narrow-first assumptions with an unapproved fluid full-width responsive direction.',
+      source: '.dude/specs/052-dude-canvas-ui/spec.md — Revision Log, 2026-09-01 UTC'
+    };
+
+    var LIGHTWEIGHT_SOURCES = [
+      ['Idea', '.dude/ideas/052-dude-canvas-ui.md'],
+      ['Specification', '.dude/specs/052-dude-canvas-ui/spec.md'],
+      ['Tasks', '.dude/specs/052-dude-canvas-ui/tasks.md'],
+      ['Current task', 'T007@052aprv7 — Phase 2: Responsive Fluent Design And Approval'],
+      ['Preview', '.dude/specs/052-dude-canvas-ui/design/fluent-responsive-workspace.html'],
+      ['Authority', 'Lightweight Execution — canonical task units in tasks.md are authoritative; no tracked import is active']
+    ];
+
+    var TRACKED_SOURCES = [
+      ['Idea', '.dude/ideas/052-dude-canvas-ui.md'],
+      ['Specification', '.dude/specs/052-dude-canvas-ui/spec.md'],
+      ['Tasks', '.dude/specs/052-dude-canvas-ui/tasks.md — not authoritative while tracked execution is active'],
+      ['Tracked board', 'bd (read-only) — no issue matches this specification identity'],
+      ['Authority', 'Tracked Execution — globally authoritative']
+    ];
+
+    var VERIFIED_TRUST = { text: 'Project state verified', kind: 'ok' };
+
+    var NO_ATTENTION = {
+      summary: 'Nothing needs you.',
+      bars: [],
+      facts: ['0 unanswered questions', 'No blockers recorded']
+    };
+
+    /* ---------------------------------------------------------------- */
+    /* State fixtures                                                    */
+    /* ---------------------------------------------------------------- */
+    var STATES = {};
+
+    STATES.current = function () {
+      return {
+        mode: 'feature',
+        identity: {
+          title: 'Dude Canvas UI',
+          note: null,
+          stage: { text: 'In progress', kind: 'brand', icon: 'i-half' },
+          trust: VERIFIED_TRUST
+        },
+        focal: {
+          eyebrow: 'Next step',
+          headline: 'Review the responsive Fluent direction',
+          detail: 'Inspect the full-width layout, then approve it or request changes.',
+          unavailable: false,
+          phase: 'Responsive Fluent Design And Approval',
+          why: 'The responsive mock and design critique are complete. Your visual approval gates every source-code task.',
+          command: null
+        },
+        lifecycle: { steps: steps('complete', 'complete', 'current', 'todo'), note: null },
+        progress: TASKS,
+        progressNote: null,
+        attention: NO_ATTENTION,
+        freshness: { state: 'current', label: 'Read just now', detail: 'Every source was read completely.' },
+        evidence: { rows: LIGHTWEIGHT_SOURCES, event: LATEST_EVENT, eventNote: null }
+      };
+    };
+
+    /*
+      BLOCKED — an authoritative feature blocker recorded against this
+      feature's own work. Execution facts stay readable and still shown, which
+      is what makes it categorically different from "Tracking mismatch", where
+      no blocker exists and execution facts are withheld instead.
+    */
+    STATES.blocked = function () {
+      var p = STATES.current();
+      p.identity.stage = { text: 'Blocked', kind: 'danger', icon: 'i-error' };
+      p.identity.trust = { text: 'Project state verified', kind: 'ok' };
+      p.focal = {
+        eyebrow: 'Next step',
+        headline: 'Inspect the contract mismatch before continuing',
+        detail: 'This step is blocked. No later step is offered while a blocker stands against it.',
+        unavailable: false,
+        phase: 'Responsive Fluent Design And Approval',
+        why: 'The feature definition does not match the active work tracker.',
+        command: null
+      };
+      p.lifecycle.note = 'The current stage is blocked. The recorded blocker must clear before it can advance.';
+      p.attention = {
+        summary: null,
+        bars: [{
+          intent: 'error',
+          icon: 'i-error',
+          title: 'Blocked',
+          text: 'The feature definition does not match the active work tracker.',
+          meta: ['Category: Contract mismatch', 'Exact classification and source are in Evidence \u2192 Source details.']
+        }],
+        facts: ['0 unanswered questions']
+      };
+      /* FR-011: the exact classification code and source stay available, one
+         disclosure away, instead of sitting in primary orientation. */
+      p.evidence = {
+        rows: LIGHTWEIGHT_SOURCES.concat([
+          ['Blocker classification', 'contract-mismatch'],
+          ['Technical reason', 'The projection contract differs from the current tracked authority.'],
+          ['Blocker source', '.dude/specs/052-dude-canvas-ui/tasks.md']
+        ]),
+        event: LATEST_EVENT,
+        eventNote: null
+      };
+      return p;
+    };
+
+    STATES.stale = function () {
+      var p = STATES.current();
+      p.identity.trust = { text: 'Showing the last verified read', kind: 'caution' };
+      p.freshness = { state: 'failed', label: 'Refresh failed', detail: 'The task list changed while it was being read.' };
+      p.attention = {
+        summary: null,
+        bars: [{
+          intent: 'warning',
+          icon: 'i-warning',
+          title: 'Showing the last complete read',
+          text: 'This view is preserved in full. No field was replaced from a partial read. Refresh is the safe next action.'
+        }],
+        facts: ['0 unanswered questions', 'No blockers recorded']
+      };
+      p.evidence = {
+        rows: LIGHTWEIGHT_SOURCES.concat([
+          ['Refresh diagnostic', '.dude/specs/052-dude-canvas-ui/tasks.md — changed mid-read (read-conflict)']
+        ]),
+        event: LATEST_EVENT,
+        eventNote: null
+      };
+      return p;
+    };
+
+    STATES.empty = function () {
+      return {
+        mode: 'empty',
+        identity: null,
+        focal: {
+          eyebrow: 'Nothing to show',
+          headline: 'No Dude features were found in this repository.',
+          detail: 'There is no project state to read, so no stage, step, or blocker can be shown.',
+          unavailable: true,
+          phase: null,
+          why: 'Capture the first idea in your Copilot session. This canvas is read-only and cannot run the command.',
+          command: { text: '@dude brainstorm <idea>', note: 'Copy the command and run it in your Copilot session.' }
+        },
+        lifecycle: null,
+        progress: null,
+        progressNote: null,
+        attention: {
+          summary: null,
+          bars: [{ intent: 'info', icon: 'i-info', title: 'Nothing to show yet', text: 'No idea, specification, or task file was found.', meta: 'The exact path that was checked is in Evidence \u2192 Source details.' }],
+          facts: []
+        },
+        freshness: { state: 'current', label: 'Read just now', detail: 'The read completed; nothing is recorded here yet.' },
+        evidence: {
+          rows: [
+            ['Project state', '.dude/ — not found'],
+            ['Diagnostic', 'The .dude/ directory does not exist in this repository, so no source file was read.']
+          ],
+          event: null,
+          eventNote: 'No lifecycle events exist in this repository.'
+        }
+      };
+    };
+
+    STATES.malformed = function () {
+      return {
+        mode: 'feature',
+        identity: {
+          title: 'Feature title unavailable',
+          note: 'The title is unavailable. The identifier is read from the file path only.',
+          stage: { text: 'Stage unavailable', kind: 'outline', icon: 'i-dash' },
+          trust: { text: 'Project state could not be read', kind: 'error' }
+        },
+        focal: {
+          eyebrow: 'Next step',
+          headline: 'Next step unavailable',
+          detail: 'Stage and progress are withheld rather than guessed from a file that did not read safely.',
+          unavailable: true,
+          phase: null,
+          why: 'A feature file could not be read safely. Inspect the feature file, correct its frontmatter, then refresh.',
+          command: null
+        },
+        lifecycle: { steps: steps('unknown', 'unknown', 'unknown', 'unknown'), note: 'Lifecycle is withheld: the owning file could not be read.' },
+        progress: null,
+        progressNote: 'Progress is withheld.',
+        attention: {
+          summary: null,
+          bars: [{ intent: 'error', icon: 'i-error', title: 'Feature state could not be read', text: 'A feature file could not be read safely.', meta: 'Inspect the feature file, correct its frontmatter, then refresh. The exact file is in Evidence \u2192 Source details.' }],
+          facts: []
+        },
+        freshness: { state: 'current', label: 'Read just now', detail: 'The read completed and reported this condition.' },
+        evidence: {
+          rows: [
+            ['Idea', '.dude/ideas/052-dude-canvas-ui.md — frontmatter unreadable'],
+            ['Diagnostic', 'Frontmatter could not be parsed, so no field was guessed from the rest of the file.'],
+            ['Specification', 'Withheld until exactly one owner reads safely']
+          ],
+          event: null,
+          eventNote: 'No lifecycle event can be attributed while the owning source is unreadable.'
+        }
+      };
+    };
+
+    /*
+      TRACKING MISMATCH — the bare SC-003 acceptance case, and explicitly NOT a
+      blocker. The tracked board is globally authoritative and holds no issue
+      for this specification identity, so the feature stays selected and its
+      definition facts stay visible while every execution fact is withheld.
+    */
+    STATES.mismatch = function () {
+      var p = STATES.current();
+      p.identity.stage = { text: 'Defined', kind: 'outline', icon: 'i-check' };
+      p.identity.trust = { text: 'Project state verified', kind: 'ok' };
+      p.focal = {
+        eyebrow: 'Next step',
+        headline: 'Next step unavailable',
+        detail: 'This feature stays selected and its definition facts stay visible.',
+        unavailable: true,
+        phase: null,
+        why: 'This feature is not available in the active work tracker. Choose another feature, or inspect tracking for this one.',
+        command: null
+      };
+      p.lifecycle = { steps: steps('complete', 'complete', 'unknown', 'unknown'), note: 'The current stage is unavailable while this feature is not available in the active work tracker.' };
+      p.progress = null;
+      p.progressNote = 'Progress is unavailable. No other feature\u2019s work is attributed here.';
+      p.attention = {
+        summary: null,
+        bars: [
+          { intent: 'warning', icon: 'i-warning', title: 'Not available in the active work tracker', text: 'This feature is not available in the active work tracker.', meta: 'Choose another feature, or inspect tracking for this one.' },
+          { intent: 'info', icon: 'i-info', title: 'Not a feature blocker', text: 'This is attention only. No blocker is recorded for this feature.' }
+        ],
+        facts: ['0 unanswered questions']
+      };
+      p.evidence = { rows: TRACKED_SOURCES, event: LATEST_EVENT, eventNote: null };
+      return p;
+    };
+
+    /*
+      CHOOSER — no feature is selected, nothing is preselected, and no recency,
+      chronology, or lifecycle-number inference is made. The list is the real
+      53-item inventory.
+    */
+    STATES.chooser = function () {
+      return {
+        mode: 'chooser',
+        identity: null,
+        focal: null,
+        lifecycle: null,
+        progress: null,
+        progressNote: null,
+        attention: null,
+        instruction: {
+          title: 'How this list works',
+          steps: [
+            'Type to narrow all 53 features by title, identifier, or stage.',
+            'Arrow keys highlight a result; Home, End, Page Up, and Page Down move further.',
+            'Press Enter to open the highlighted feature. Nothing opens until you do.',
+            'Press Escape to clear the search.'
+          ]
+        },
+        freshness: { state: 'current', label: 'Read just now', detail: 'The feature list was read completely.' },
+        evidence: {
+          rows: [
+            ['Features', '53 idea files read'],
+            ['Fields read', 'title, slug, status, spec_path'],
+            ['Paths', 'Exact idea and specification paths are shown under the selected feature\u2019s Source details.'],
+            ['Selection', 'No exact target was supplied and more than one feature is active, so a chooser is shown instead of a guess.']
+          ],
+          event: null,
+          eventNote: 'No feature is selected, so no lifecycle event is attributed.'
+        }
+      };
+    };
+
+    /*
+      ANOTHER FEATURE SELECTED — frontmatter only.
+      Its task state was never loaded, so nothing beyond title, slug, status,
+      and exact paths is shown or implied. The product says the next step is
+      unavailable in plain language; the fact that task detail was not loaded
+      is a secondary disclosure inside Source details.
+    */
+    function frontmatterProjection(f) {
+      var stage = stageWord(f);
+      var st = f.status === 'draft'
+        ? steps('current', 'todo', 'todo', 'todo')
+        : f.status === 'resolved'
+          ? steps('complete', 'unknown', 'unknown', 'complete')
+          : steps('complete', 'complete', 'unknown', 'unknown');
+      var rows = [
+        ['Idea', f.idea],
+        ['Recorded status', f.status],
+        ['Specification', f.spec ? f.spec : 'No specification path is recorded in this feature\u2019s frontmatter'],
+        ['Tasks', 'Not loaded for this feature in this preview']
+      ];
+      return {
+        mode: 'feature',
+        identity: {
+          title: f.title,
+          note: null,
+          stage: { text: stage, kind: 'outline', icon: f.status === 'draft' ? 'i-circle' : 'i-check' },
+          trust: { text: 'Project state verified', kind: 'ok' }
+        },
+        focal: {
+          eyebrow: 'Next step',
+          headline: 'Next step unavailable',
+          detail: null,
+          unavailable: true,
+          phase: null,
+          why: 'Step detail for this feature was not read, so nothing is shown in its place.',
+          command: null
+        },
+        lifecycle: { steps: st, note: 'Only the recorded status is known for this feature.' },
+        progress: null,
+        progressNote: 'Progress was not read for this feature.',
+        attention: {
+          summary: null,
+          bars: [],
+          facts: ['Questions and blockers were not read for this feature']
+        },
+        freshness: { state: 'current', label: 'Read just now', detail: 'Recorded title, slug, status, and paths were read.' },
+        evidence: { rows: rows, event: null, eventNote: 'No lifecycle event was read for this feature.' }
+      };
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Rendering helpers                                                 */
+    /* ---------------------------------------------------------------- */
+    function esc(value) {
+      return String(value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function icon(id, cls) {
+      return '<svg class="' + cls + '" aria-hidden="true" focusable="false"><use href="#' + id + '"><\/use><\/svg>';
+    }
+
+    var STEP_WORD = { complete: 'Complete', current: 'Current', todo: 'Not started', unknown: 'Unavailable' };
+
+    function stepper(list) {
+      var items = list.map(function (s, i) {
+        var glyph = s.state === 'complete' ? icon('i-check', 'fui-step-glyph')
+          : s.state === 'unknown' ? icon('i-dash', 'fui-step-glyph')
+          : String(i + 1);
+        return '<li class="fui-step is-' + s.state + '"' + (s.state === 'current' ? ' aria-current="step"' : '') + '>' +
+          '<span class="fui-step-badge" aria-hidden="true">' + glyph + '<\/span>' +
+          '<span class="fui-step-label">' + esc(s.label) +
+            '<span class="fui-step-state">' + STEP_WORD[s.state] + '<\/span>' +
+          '<\/span><\/li>';
+      }).join('');
+      return '<ol class="fui-stepper">' + items + '<\/ol>';
+    }
+
+    function meter(p) {
+      var legend =
+        '<li class="is-done">' + icon('i-check', '') + '<span class="dw-legend-count">' + p.done + '<\/span> done<\/li>' +
+        '<li class="is-doing">' + icon('i-half', '') + '<span class="dw-legend-count">' + p.doing + '<\/span> in progress<\/li>' +
+        '<li class="is-open">' + icon('i-circle', '') + '<span class="dw-legend-count">' + p.open + '<\/span> open<\/li>';
+      return '<div class="dw-progress">' +
+        '<div class="dw-meter" aria-hidden="true">' +
+          '<span class="dw-meter-seg is-done" style="--seg:' + p.done + '"><\/span>' +
+          '<span class="dw-meter-seg is-doing" style="--seg:' + p.doing + '"><\/span>' +
+          '<span class="dw-meter-seg is-open" style="--seg:' + p.open + '"><\/span>' +
+        '<\/div>' +
+        '<ul class="dw-legend">' + legend + '<\/ul>' +
+        '<p class="dw-caption">' + esc(p.lede) + '<\/p>' +
+      '<\/div>';
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Chooser — ONE Fluent Combobox/Listbox composite, ONE tab stop     */
+    /* ---------------------------------------------------------------- */
+    /*
+      53 features must never become 53 tab stops. The search input is the only
+      tabbable node; the listbox is navigated with aria-activedescendant, which
+      is the Fluent v9 Combobox/Listbox behaviour.
+
+      Long-list behaviour is demonstrated with a real window: at most WINDOW
+      option elements exist at any moment, and the space above and below is
+      expressed as padding on the listbox so the scrollbar still describes the
+      whole result set. ROW matches --chooser-row exactly, so the arithmetic is
+      not an approximation.
+    */
+    function createChooser(host, opts) {
+      var id = opts.id;
+      var WINDOW = 12;
+      var ROW = 60;
+
+      var query = '';
+      var active = -1;
+      var lastKey = '';
+      var filtered = IDEAS.slice();
+      var suppressScroll = 0;
+
+      host.innerHTML =
+        '<div class="dw-chooser">' +
+          '<label class="dw-chooser-label" for="' + id + '-input">Search features<\/label>' +
+          '<div class="fui-searchbox">' + icon('i-search', '') +
+            '<input class="fui-searchbox-input" id="' + id + '-input" type="text" role="combobox"' +
+              ' aria-expanded="true" aria-controls="' + id + '-listbox" aria-autocomplete="list"' +
+              ' aria-describedby="' + id + '-count ' + id + '-hint" autocomplete="off" spellcheck="false"' +
+              ' placeholder="Search ' + IDEAS.length + ' features">' +
+          '<\/div>' +
+          '<p class="dw-caption" id="' + id + '-count" role="status" aria-live="polite"><\/p>' +
+          '<div class="dw-chooser-scroll" id="' + id + '-scroll" tabindex="-1">' +
+            '<ul class="dw-chooser-list" id="' + id + '-listbox" role="listbox" aria-label="Features"><\/ul>' +
+            '<p class="dw-chooser-empty" id="' + id + '-empty" hidden><\/p>' +
+          '<\/div>' +
+          '<p class="dw-caption" id="' + id + '-hint">Arrow keys highlight a result. Enter opens the highlighted feature. Escape clears the search.<\/p>' +
+        '<\/div>';
+
+      var input = document.getElementById(id + '-input');
+      var listbox = document.getElementById(id + '-listbox');
+      var scroll = document.getElementById(id + '-scroll');
+      var count = document.getElementById(id + '-count');
+      var empty = document.getElementById(id + '-empty');
+
+      function matches(f) {
+        if (!query) { return true; }
+        var hay = (featureKey(f) + ' ' + f.title + ' ' + f.slug + ' ' + f.status + ' ' + stageWord(f)).toLowerCase();
+        return hay.indexOf(query.toLowerCase()) !== -1;
+      }
+
+      function optionHtml(f, index) {
+        var isActive = index === active;
+        var current = opts.currentNumber && opts.currentNumber() === f.n;
+        return '<li class="dw-option' + (isActive ? ' is-active' : '') + '"' +
+            ' id="' + id + '-opt-' + index + '" role="option"' +
+            ' aria-selected="' + (isActive ? 'true' : 'false') + '" data-index="' + index + '">' +
+          '<span class="dw-option-title">' +
+            '<span class="dw-option-name">' + esc(f.title) + '<\/span>' +
+            '<span class="fui-badge fui-badge-subtle">' + esc(stageWord(f)) + '<\/span>' +
+            (current ? '<span class="fui-badge fui-badge-outline">Current<\/span>' : '') +
+          '<\/span>' +
+          '<span class="dw-option-meta">' + esc(featureKey(f)) + '<\/span>' +
+        '<\/li>';
+      }
+
+      function paint() {
+        var total = filtered.length;
+        var maxStart = Math.max(0, total - WINDOW);
+        var start = Math.floor(scroll.scrollTop / ROW) - 2;
+        if (start < 0) { start = 0; }
+        if (start > maxStart) { start = maxStart; }
+        var end = Math.min(total, start + WINDOW);
+
+        /* Scrolling the highlight out of the window drops the highlight
+           rather than leaving aria-activedescendant pointing at nothing. */
+        if (active >= 0 && (active < start || active >= end)) { active = -1; }
+
+        var html = '';
+        for (var i = start; i < end; i += 1) { html += optionHtml(filtered[i], i); }
+        listbox.style.paddingTop = (start * ROW) + 'px';
+        listbox.style.paddingBottom = ((total - end) * ROW) + 'px';
+        listbox.innerHTML = html;
+
+        empty.hidden = total !== 0;
+        if (total === 0) { empty.textContent = 'No features match ' + JSON.stringify(query) + '.'; }
+
+        input.setAttribute('aria-activedescendant', active >= 0 ? id + '-opt-' + active : '');
+      }
+
+      function updateCount() {
+        count.textContent = !query
+          ? IDEAS.length + ' features. Nothing is selected.'
+          : filtered.length + ' of ' + IDEAS.length + ' features match ' + JSON.stringify(query) + '.';
+      }
+
+      function refilter() {
+        filtered = IDEAS.filter(matches);
+        active = -1;
+        suppressScroll += 1;
+        scroll.scrollTop = 0;
+        paint();
+        updateCount();
+        if (opts.onActive) { opts.onActive(null); }
+      }
+
+      function ensureVisible() {
+        var top = active * ROW;
+        var bottom = top + ROW;
+        var view = scroll.clientHeight;
+        if (top < scroll.scrollTop) {
+          suppressScroll += 1;
+          scroll.scrollTop = top;
+        } else if (bottom > scroll.scrollTop + view) {
+          suppressScroll += 1;
+          scroll.scrollTop = bottom - view;
+        }
+      }
+
+      function setActive(index) {
+        if (!filtered.length) { return; }
+        if (index < 0) { index = 0; }
+        if (index > filtered.length - 1) { index = filtered.length - 1; }
+        active = index;
+        ensureVisible();
+        paint();
+        if (opts.onActive) { opts.onActive(filtered[active]); }
+      }
+
+      function move(delta) {
+        if (!filtered.length) { return; }
+        if (active < 0) { setActive(delta > 0 ? 0 : filtered.length - 1); return; }
+        setActive(active + delta);
+      }
+
+      function choose() {
+        if (active < 0) {
+          announce('Use the arrow keys to highlight a feature, then press Enter to open it.');
+          return;
+        }
+        opts.onSelect(filtered[active], lastKey !== '');
+      }
+
+      input.addEventListener('input', function () {
+        query = input.value.trim();
+        refilter();
+      });
+
+      input.addEventListener('keydown', function (event) {
+        lastKey = event.key;
+        if (event.key === 'ArrowDown') { event.preventDefault(); move(1); return; }
+        if (event.key === 'ArrowUp') { event.preventDefault(); move(-1); return; }
+        if (event.key === 'PageDown') { event.preventDefault(); move(5); return; }
+        if (event.key === 'PageUp') { event.preventDefault(); move(-5); return; }
+        if (event.key === 'Home') { event.preventDefault(); setActive(0); return; }
+        if (event.key === 'End') { event.preventDefault(); setActive(filtered.length - 1); return; }
+        if (event.key === 'Enter') { event.preventDefault(); choose(); return; }
+        if (event.key === 'Escape') {
+          if (query) {
+            event.preventDefault();
+            event.stopPropagation();
+            input.value = '';
+            query = '';
+            refilter();
+            announce('Search cleared. ' + IDEAS.length + ' features.');
+            return;
+          }
+          if (active >= 0) {
+            event.preventDefault();
+            event.stopPropagation();
+            active = -1;
+            paint();
+            if (opts.onActive) { opts.onActive(null); }
+          }
+          /* Otherwise the document-level handler closes the popover and
+             returns focus to its trigger. */
+        }
+      });
+
+      scroll.addEventListener('scroll', function () {
+        if (suppressScroll > 0) { suppressScroll -= 1; return; }
+        paint();
+      });
+
+      listbox.addEventListener('mousedown', function (event) {
+        /* Keep focus on the single tab stop instead of blurring to the list. */
+        event.preventDefault();
+      });
+
+      listbox.addEventListener('click', function (event) {
+        var node = event.target.closest ? event.target.closest('[data-index]') : null;
+        if (!node) { return; }
+        lastKey = '';
+        opts.onSelect(filtered[Number(node.getAttribute('data-index'))], false);
+      });
+
+      paint();
+      updateCount();
+
+      return {
+        focus: function () { input.focus(); },
+        reset: function () {
+          input.value = '';
+          query = '';
+          refilter();
+        }
+      };
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Workspace rendering                                               */
+    /* ---------------------------------------------------------------- */
+    function identityHtml(p) {
+      if (p.mode === 'chooser') {
+        return '<div class="dw-idbar">' +
+          '<h2 class="dw-feature-title" id="dw-feature-h" tabindex="-1">Choose a feature<\/h2>' +
+          '<span class="dw-trust">' + icon('i-check', '') + 'Project state verified<\/span>' +
+          '<p class="dw-idbar-note">No feature was supplied and more than one is active, so nothing is selected until you choose one.<\/p>' +
+        '<\/div>';
+      }
+      if (!p.identity) { return ''; }
+      var id = p.identity;
+      var trustClass = id.trust.kind === 'ok' ? 'dw-trust'
+        : id.trust.kind === 'caution' ? 'dw-trust is-caution' : 'dw-trust is-error';
+      var trustIcon = id.trust.kind === 'ok' ? 'i-check'
+        : id.trust.kind === 'caution' ? 'i-clock' : 'i-error';
+      return '<div class="dw-idbar">' +
+        '<h2 class="dw-feature-title" id="dw-feature-h" tabindex="-1">' + esc(id.title) + '<\/h2>' +
+        '<span class="fui-badge fui-badge-' + id.stage.kind + '">' + icon(id.stage.icon, 'fui-badge-glyph') + esc(id.stage.text) + '<\/span>' +
+        '<span class="' + trustClass + '">' + icon(trustIcon, '') + esc(id.trust.text) + '<\/span>' +
+        (id.note ? '<p class="dw-idbar-note">' + esc(id.note) + '<\/p>' : '') +
+      '<\/div>';
+    }
+
+    function focalHtml(p) {
+      if (p.mode === 'chooser') {
+        return '<section class="dw-focal" aria-labelledby="dw-focal-h">' +
+          '<h2 class="dw-eyebrow" id="dw-focal-h" tabindex="-1">' + icon('i-search', '') + '<span>Select a feature<\/span><\/h2>' +
+          '<div id="page-chooser"><\/div>' +
+        '<\/section>';
+      }
+      var f = p.focal;
+      var support = '';
+      if (f.phase) {
+        support += '<p class="dw-support-label">Current phase<\/p>' +
+          '<p class="dw-support-value">' + esc(f.phase) + '<\/p>';
+      }
+      if (f.why) {
+        support += '<p class="dw-support-label">Why<\/p>' +
+          '<p class="dw-support-text">' + esc(f.why) + '<\/p>';
+      }
+      var command = f.command
+        ? '<div class="dw-command">' +
+            '<code>' + esc(f.command.text) + '<\/code>' +
+            '<button type="button" class="fui-button fui-button-secondary" data-action="copy" data-copy="' + esc(f.command.text) + '">' +
+              icon('i-copy', 'fui-button-icon') + 'Copy command<\/button>' +
+          '<\/div>' +
+          '<p class="dw-caption">' + esc(f.command.note) + '<\/p>'
+        : '';
+
+      return '<section class="dw-focal' + (f.unavailable ? ' is-unavailable' : '') + '" aria-labelledby="dw-focal-h">' +
+        '<h2 class="dw-eyebrow" id="dw-focal-h" tabindex="-1">' + icon(f.unavailable ? 'i-dash' : 'i-arrow', '') + '<span>' + esc(f.eyebrow) + '<\/span><\/h2>' +
+        '<div class="dw-focal-grid">' +
+          '<div class="dw-focal-lead">' +
+            '<p class="dw-headline">' + esc(f.headline) + '<\/p>' +
+            (f.detail ? '<p class="dw-focal-detail">' + esc(f.detail) + '<\/p>' : '') +
+            command +
+          '<\/div>' +
+          (support ? '<div class="dw-focal-support">' + support + '<\/div>' : '') +
+        '<\/div>' +
+      '<\/section>';
+    }
+
+    function attentionHtml(p) {
+      if (!p.attention) { return ''; }
+      var a = p.attention;
+      var body = '';
+      if (a.summary) {
+        body += '<p class="dw-status-summary">' + icon('i-check', '') + esc(a.summary) + '<\/p>';
+      }
+      if (a.bars.length) {
+        body += '<div class="fui-attention">' + a.bars.map(function (bar) {
+          var metas = bar.meta == null ? [] : (Object.prototype.toString.call(bar.meta) === '[object Array]' ? bar.meta : [bar.meta]);
+          return '<div class="fui-messagebar fui-messagebar-' + bar.intent + '">' +
+            '<span class="fui-messagebar-icon">' + icon(bar.icon, 'fui-icon') + '<\/span>' +
+            '<div><p class="fui-messagebar-title">' + esc(bar.title) + '<\/p>' +
+            '<p class="fui-messagebar-text">' + esc(bar.text) + '<\/p>' +
+            metas.map(function (m) { return '<p class="fui-messagebar-meta">' + esc(m) + '<\/p>'; }).join('') +
+            '<\/div><\/div>';
+        }).join('') + '<\/div>';
+      }
+      if (a.facts.length) {
+        body += '<ul class="dw-status-facts">' + a.facts.map(function (fact) {
+          return '<li>' + icon('i-check', '') + esc(fact) + '<\/li>';
+        }).join('') + '<\/ul>';
+      }
+      return '<section class="dw-section" aria-labelledby="dw-attention-h">' +
+        '<h2 class="dw-section-heading" id="dw-attention-h">Attention<\/h2>' + body +
+      '<\/section>';
+    }
+
+    function contextHtml(p) {
+      var out = '';
+
+      if (p.lifecycle) {
+        out += '<section class="dw-section dw-life" aria-labelledby="dw-life-h">' +
+          '<h2 class="dw-section-heading" id="dw-life-h">Lifecycle<\/h2>' +
+          (p.lifecycle.note ? '<p class="dw-caption">' + esc(p.lifecycle.note) + '<\/p>' : '') +
+          stepper(p.lifecycle.steps) +
+          (p.progress ? meter(p.progress) : '') +
+          (p.progressNote ? '<p class="dw-caption">' + esc(p.progressNote) + '<\/p>' : '') +
+        '<\/section>';
+      }
+
+      out += '<div class="dw-context-flow">';
+
+      if (p.instruction) {
+        out += '<section class="dw-section" aria-labelledby="dw-how-h">' +
+          '<h2 class="dw-section-heading" id="dw-how-h">' + esc(p.instruction.title) + '<\/h2>' +
+          '<ol class="dw-steps">' + p.instruction.steps.map(function (s) {
+            return '<li>' + esc(s) + '<\/li>';
+          }).join('') + '<\/ol>' +
+          '<div id="chooser-preview"><\/div>' +
+        '<\/section>';
+      }
+
+      out += attentionHtml(p);
+
+      var fresh = p.freshness;
+      out += '<section class="dw-section" aria-labelledby="dw-fresh-h">' +
+        '<h2 class="dw-section-heading" id="dw-fresh-h">Freshness<\/h2>' +
+        '<div class="dw-freshness-row">' +
+          '<span class="dw-freshness-state' + (fresh.state === 'failed' ? ' is-failed' : '') + '" id="freshness-state">' +
+            icon(fresh.state === 'failed' ? 'i-warning' : 'i-clock', '') +
+            '<span id="freshness-label">' + esc(fresh.label) + '<\/span>' +
+          '<\/span>' +
+          '<button type="button" class="fui-button fui-button-secondary" data-action="refresh" id="refresh-button">' +
+            icon('i-refresh', 'fui-button-icon') + 'Refresh<\/button>' +
+        '<\/div>' +
+        '<p class="dw-caption" id="freshness-detail">' + esc(fresh.detail) + '<\/p>' +
+      '<\/section>';
+
+      var rows = p.evidence.rows.map(function (row) {
+        return '<dt>' + esc(row[0]) + '<\/dt><dd>' + esc(row[1]) + '<\/dd>';
+      }).join('');
+
+      out += '<section class="dw-section" aria-labelledby="dw-evidence-h">' +
+        '<h2 class="dw-section-heading" id="dw-evidence-h">Evidence<\/h2>' +
+        '<details class="fui-accordion">' +
+          '<summary class="fui-accordion-header">' + icon('i-chevron', 'fui-chevron') + 'Source details<\/summary>' +
+          '<div class="dw-evidence-body">' +
+            '<dl class="dw-source-list">' + rows + '<\/dl>' +
+            (p.evidence.event
+              ? '<div class="dw-event"><p class="dw-event-text">' + esc(p.evidence.event.text) + '<\/p>' +
+                '<p class="dw-event-source">' + esc(p.evidence.event.source) + '<\/p><\/div>'
+              : '<p class="dw-caption">' + esc(p.evidence.eventNote) + '<\/p>') +
+          '<\/div>' +
+        '<\/details>' +
+      '<\/section>';
+
+      out += '<\/div>';
+      return out;
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Application state                                                 */
+    /* ---------------------------------------------------------------- */
+    var STATE_LABEL = {
+      current: 'Current',
+      chooser: 'Chooser',
+      blocked: 'Blocked',
+      stale: 'Stale',
+      empty: 'Empty',
+      malformed: 'Malformed',
+      mismatch: 'Tracking mismatch'
+    };
+
+    var stateId = 'current';
+    var selectedNumber = SELECTED;
+    var busy = false;
+    var pageChooser = null;
+
+    function projection() {
+      if (stateId === 'chooser') { return STATES.chooser(); }
+      if (stateId === 'empty') { return STATES.empty(); }
+      if (selectedNumber !== SELECTED) {
+        var f = ideaByNumber(selectedNumber);
+        if (f) { return frontmatterProjection(f); }
+      }
+      return STATES[stateId]();
+    }
+
+    function renderChooserPreview(f) {
+      var host = document.getElementById('chooser-preview');
+      if (!host) { return; }
+      if (!f) { host.innerHTML = ''; return; }
+      host.innerHTML = '<div class="dw-preview">' +
+        '<p class="dw-preview-title">' + esc(f.title) + '<\/p>' +
+        '<p class="dw-caption">Stage: ' + esc(stageWord(f)) + '<\/p>' +
+        '<p class="dw-preview-key">' + esc(featureKey(f)) + '<\/p>' +
+        '<p class="dw-caption">Highlighted only. Press Enter to open it.<\/p>' +
+      '<\/div>';
+    }
+
+    function render() {
+      var p = projection();
+      document.getElementById('workspace').innerHTML =
+        identityHtml(p) +
+        '<div class="dw-work">' + focalHtml(p) + '<\/div>' +
+        '<aside class="dw-context" aria-label="Lifecycle and context">' + contextHtml(p) + '<\/aside>';
+
+      pageChooser = null;
+      if (p.mode === 'chooser') {
+        pageChooser = createChooser(document.getElementById('page-chooser'), {
+          id: 'page',
+          currentNumber: function () { return null; },
+          onSelect: function (f, viaKeyboard) { selectFeature(f, viaKeyboard); },
+          onActive: renderChooserPreview
+        });
+      }
+
+      /*
+        Nothing to choose => a real inert button: `disabled`, out of the tab
+        order, and labelled with the reason in words. It is never left
+        focusable behind a low-contrast border.
+      */
+      var noFeatures = p.mode === 'empty';
+      var hadFocus = document.activeElement === changeButton;
+      changeButton.removeAttribute('aria-disabled');
+      changeButton.disabled = noFeatures;
+      document.getElementById('change-feature-label').textContent =
+        noFeatures ? 'No features to choose' : 'Change feature';
+      if (noFeatures) {
+        closePopover(false);
+        if (hadFocus) { moveFocus(document.getElementById('dw-focal-h'), keyboardIntent); }
+      }
+
+      document.getElementById('proto-now').textContent =
+        'Fixture: ' + STATE_LABEL[stateId] +
+        (stateId !== 'chooser' && selectedNumber && selectedNumber !== SELECTED ? ' · feature ' + selectedNumber : '');
+    }
+
+    function announce(message) {
+      document.getElementById('live-region').textContent = message;
+    }
+
+    function selectFeature(f, viaKeyboard) {
+      if (!f) { return; }
+      selectedNumber = f.n;
+      /* Fixtures other than Current describe 052 only. */
+      if (stateId === 'chooser' || (f.n !== SELECTED && stateId !== 'current')) {
+        stateId = 'current';
+        syncRadios();
+      }
+      closePopover(false);
+      render();
+      var target = document.getElementById('dw-feature-h') || document.getElementById('dw-focal-h');
+      if (!target || !moveFocus(target, viaKeyboard || keyboardIntent)) {
+        moveFocus(changeButton, viaKeyboard || keyboardIntent);
+      }
+      announce('Opened ' + f.title + '.');
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Focus continuity across DOM replacement                           */
+    /* ---------------------------------------------------------------- */
+    /*
+      Every product update replaces innerHTML, which destroys whatever node had
+      focus and drops focus to <body>. A keyboard user would silently lose their
+      place. So the prototype records what the user was doing and puts focus
+      back on the equivalent node afterwards.
+
+      Two rules keep this honest:
+        - focus is only MOVED when the user's own action replaced the node they
+          were using; background updates never steal it;
+        - the ring is only made visible when the action was keyboard-driven.
+    */
+    var keyboardIntent = false;
+    document.addEventListener('keydown', function () { keyboardIntent = true; }, true);
+    document.addEventListener('mousedown', function () { keyboardIntent = false; }, true);
+    document.addEventListener('touchstart', function () { keyboardIntent = false; }, true);
+
+    function moveFocus(node, visible) {
+      if (!node || node.disabled) { return false; }
+      node.focus();
+      if (document.activeElement !== node) { return false; }
+      if (visible) {
+        node.setAttribute('data-proto-focus', 'visible');
+        var drop = function () {
+          node.removeAttribute('data-proto-focus');
+          node.removeEventListener('blur', drop);
+        };
+        node.addEventListener('blur', drop);
+      }
+      return true;
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Prototype drawer                                                  */
+    /* ---------------------------------------------------------------- */
+    var protoToggle = document.getElementById('proto-toggle');
+    var protoPanel = document.getElementById('proto-panel');
+
+    function setDrawer(open) {
+      protoPanel.hidden = !open;
+      protoToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    protoToggle.addEventListener('click', function () {
+      setDrawer(protoToggle.getAttribute('aria-expanded') !== 'true');
+    });
+
+    /* ---------------------------------------------------------------- */
+    /* Theme (prototype control)                                         */
+    /* ---------------------------------------------------------------- */
+    var themeSwitch = document.getElementById('theme-switch');
+    var themeStateLabel = document.getElementById('theme-state');
+    var hostDarkQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    var themeChosenExplicitly = false;
+
+    function queryTheme() {
+      return document.documentElement.getAttribute('data-proto-theme');
+    }
+
+    function effectiveDark() {
+      var forced = queryTheme();
+      if (forced) { return forced === 'dark'; }
+      return !!(hostDarkQuery && hostDarkQuery.matches);
+    }
+
+    /* Switch state only: the .theme-system rule is still painting the theme. */
+    function syncThemeControl(dark) {
+      themeSwitch.setAttribute('aria-checked', dark ? 'true' : 'false');
+      themeStateLabel.textContent = dark ? 'Dark' : 'Light';
+    }
+
+    /* An explicit choice pins the theme for this page lifetime only. */
+    function applyExplicitTheme(dark) {
+      themeChosenExplicitly = true;
+      ['app', 'proto-bar'].forEach(function (id) {
+        var node = document.getElementById(id);
+        node.classList.remove('theme-system');
+        node.classList.toggle('theme-dark', dark);
+        node.classList.toggle('theme-light', !dark);
+      });
+      syncThemeControl(dark);
+    }
+
+    themeSwitch.addEventListener('click', function () {
+      var dark = themeSwitch.getAttribute('aria-checked') !== 'true';
+      applyExplicitTheme(dark);
+      announce(dark ? 'Dark theme.' : 'Light theme.');
+    });
+
+    if (hostDarkQuery) {
+      var followHost = function () {
+        document.documentElement.classList.toggle('proto-host-dark', hostDarkQuery.matches);
+        if (!themeChosenExplicitly && !queryTheme()) { syncThemeControl(hostDarkQuery.matches); }
+      };
+      if (hostDarkQuery.addEventListener) {
+        hostDarkQuery.addEventListener('change', followHost);
+      } else if (hostDarkQuery.addListener) {
+        hostDarkQuery.addListener(followHost);
+      }
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* State radio group (prototype control)                             */
+    /* ---------------------------------------------------------------- */
+    var radios = Array.prototype.slice.call(document.querySelectorAll('#state-group [role="radio"]'));
+
+    function syncRadios() {
+      radios.forEach(function (r) {
+        var on = r.getAttribute('data-state') === stateId;
+        r.setAttribute('aria-checked', on ? 'true' : 'false');
+        r.tabIndex = on ? 0 : -1;
+      });
+    }
+
+    function selectState(next, focusIt) {
+      stateId = next;
+      selectedNumber = next === 'chooser' ? null : SELECTED;
+      syncRadios();
+      render();
+      if (focusIt) {
+        radios.filter(function (r) { return r.getAttribute('data-state') === stateId; })[0].focus();
+      }
+    }
+
+    radios.forEach(function (radio, index) {
+      radio.addEventListener('click', function () { selectState(radio.getAttribute('data-state'), false); });
+      radio.addEventListener('keydown', function (event) {
+        var delta = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1
+          : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
+        if (!delta) { return; }
+        event.preventDefault();
+        var next = radios[(index + delta + radios.length) % radios.length];
+        selectState(next.getAttribute('data-state'), true);
+      });
+    });
+
+    /* ---------------------------------------------------------------- */
+    /* Feature popover — the same chooser component, at every width       */
+    /* ---------------------------------------------------------------- */
+    var popover = document.getElementById('feature-popover');
+    var changeButton = document.getElementById('change-feature');
+
+    var popoverChooser = createChooser(document.getElementById('popover-chooser'), {
+      id: 'pop',
+      currentNumber: function () { return selectedNumber; },
+      onSelect: function (f, viaKeyboard) { selectFeature(f, viaKeyboard); },
+      onActive: null
+    });
+
+    function openPopover() {
+      if (changeButton.disabled) { return; }
+      popover.hidden = false;
+      changeButton.setAttribute('aria-expanded', 'true');
+      popoverChooser.reset();
+      popoverChooser.focus();
+    }
+
+    function closePopover(returnFocus) {
+      if (popover.hidden) { return; }
+      popover.hidden = true;
+      changeButton.setAttribute('aria-expanded', 'false');
+      /* Escape and the toggle both hand focus back to the trigger. */
+      if (returnFocus) { moveFocus(changeButton, keyboardIntent); }
+    }
+
+    changeButton.addEventListener('click', function () {
+      if (popover.hidden) { openPopover(); } else { closePopover(true); }
+    });
+
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') { closePopover(true); }
+    });
+
+    document.addEventListener('click', function (event) {
+      if (popover.hidden) { return; }
+      if (popover.contains(event.target) || changeButton.contains(event.target)) { return; }
+      closePopover(false);
+    });
+
+    /* ---------------------------------------------------------------- */
+    /* Product controls: Refresh and copy                                */
+    /* ---------------------------------------------------------------- */
+    function refresh() {
+      if (busy) { return; }
+      busy = true;
+      var button = document.getElementById('refresh-button');
+      /*
+        The button stays focusable while busy (aria-disabled, not disabled), so
+        the keyboard user is not thrown out of their own action mid-read. The
+        completed read replaces the whole context region, so focus intent is
+        captured now and restored to the replacement node afterwards.
+      */
+      var hadFocus = document.activeElement === button;
+      var showRing = hadFocus && keyboardIntent;
+      button.setAttribute('aria-disabled', 'true');
+      button.setAttribute('aria-busy', 'true');
+      document.getElementById('freshness-label').textContent = 'Reading sources\u2026';
+      document.getElementById('freshness-detail').textContent = 'The visible view stays in place until one complete read succeeds.';
+      announce('Reading sources.');
+
+      window.setTimeout(function () {
+        busy = false;
+        var swapped = stateId === 'stale';
+        if (swapped) {
+          /* A successful refresh swaps exactly one complete projection. */
+          stateId = 'current';
+          syncRadios();
+        }
+        render();
+        if (hadFocus) { moveFocus(document.getElementById('refresh-button'), showRing); }
+        announce(swapped
+          ? 'Read just now. One complete view replaced the preserved one.'
+          : 'Read just now.');
+      }, 900);
+    }
+
+    function copyText(text, button) {
+      var done = function (ok) {
+        button.lastChild.nodeValue = ok ? 'Copied' : 'Copy failed';
+        announce(ok ? 'Copied ' + text : 'Copy failed. Select the command text instead.');
+        window.setTimeout(function () {
+          if (button.isConnected) { button.lastChild.nodeValue = 'Copy command'; }
+        }, 2000);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+        return;
+      }
+      try {
+        var area = document.createElement('textarea');
+        area.value = text;
+        document.body.appendChild(area);
+        area.select();
+        done(document.execCommand('copy'));
+        document.body.removeChild(area);
+      } catch (error) {
+        done(false);
+      }
+    }
+
+    document.addEventListener('click', function (event) {
+      var action = event.target.closest ? event.target.closest('[data-action]') : null;
+      if (!action) { return; }
+      if (action.getAttribute('aria-disabled') === 'true') { return; }
+      if (action.getAttribute('data-action') === 'refresh') { refresh(); }
+      if (action.getAttribute('data-action') === 'copy') { copyText(action.getAttribute('data-copy'), action); }
+    });
+
+    /* ---------------------------------------------------------------- */
+    /* Boot — query parameters, then first render                        */
+    /* ---------------------------------------------------------------- */
+    (function boot() {
+      var params;
+      try { params = new URLSearchParams(window.location.search); } catch (error) { params = null; }
+      if (params) {
+        var wanted = params.get('state');
+        if (wanted && STATES[wanted]) {
+          stateId = wanted;
+          selectedNumber = wanted === 'chooser' ? null : SELECTED;
+        }
+        if (params.get('controls') === 'open') { setDrawer(true); }
+      }
+      syncRadios();
+      /* Host preference is the first-load default; the CSS already painted it. */
+      syncThemeControl(effectiveDark());
+      render();
+    }());
+  }());
+  </script>
+</body>
+</html>

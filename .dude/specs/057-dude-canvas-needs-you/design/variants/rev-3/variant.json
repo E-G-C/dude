@@ -1,0 +1,17 @@
+{
+  "variant": "rev-3",
+  "authority": "inert comparison only; current preview_path remains the primary HTML",
+  "primary": ".dude/specs/057-dude-canvas-needs-you/design/needs-you-workspace.html",
+  "preservedAt": "2026-09-05T23:45:22.608Z",
+  "reason": "User requested preservation for comparison before information-architecture redesign; no design approval.",
+  "files": [
+    {
+      "path": "needs-you-workspace.html",
+      "sha256": "57cf9c49a7626d6d81511524d463b557ea30ece9f8538fdf3d79ee79cc4d633d"
+    },
+    {
+      "path": "assets/workspace-snapshots.js",
+      "sha256": "b426d55f2bafe52ade76dd501a72bec075a19decaa08c3848bb9d91c8c0e48ea"
+    }
+  ]
+}
