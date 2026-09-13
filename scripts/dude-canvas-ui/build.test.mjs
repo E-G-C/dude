@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import { gzipSync } from 'node:zlib';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -40,6 +40,7 @@ const PACKAGE_SECTION_END = '----- END BUNDLED PACKAGE LICENSE -----';
 const SCOPED_DEPENDENCY_SKIP = 'requires installed scoped dependencies; run `npm ci --prefix scripts/dude-canvas-ui` (intentionally outside recursive tests)';
 const COMBOBOX_PACKAGE_MARKER = '@fluentui/react-combobox/package.json';
 const COMBOBOX_RENDERER_DEPENDENCY = '@fluentui/react-combobox/lib/components/Combobox/renderCombobox.js';
+const APP_GZIP_BUDGET_BYTES = 358_400;
 
 /** @param {string} relative */
 function read(relative) {
@@ -49,6 +50,35 @@ function read(relative) {
 /** @param {Buffer | string} bytes */
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+/**
+ * Assert the portable gzip contract without pinning one compressor's DEFLATE
+ * choices or OS marker.
+ * @param {Buffer} compressed
+ * @param {Buffer} repeated
+ * @param {Buffer} source
+ * @param {string} label
+ */
+function assertPortableGzip(compressed, repeated, source, label) {
+  assert.deepEqual(
+    [...compressed.subarray(0, 3)],
+    [0x1f, 0x8b, 0x08],
+    `${label} uses the gzip container and DEFLATE method`,
+  );
+  assert.equal(compressed[3], 0, `${label} carries no optional name, comment, or header metadata`);
+  assert.deepEqual(
+    [...compressed.subarray(4, 8)],
+    [0, 0, 0, 0],
+    `${label} carries no variable modification time`,
+  );
+  assert.equal(compressed[8], 2, `${label} records maximum compression`);
+  assert.ok(compressed.equals(repeated), `${label} is deterministic for repeated input`);
+  assert.ok(gunzipSync(compressed).equals(source), `${label} decodes to the exact app.js bytes`);
+  assert.ok(
+    compressed.length <= APP_GZIP_BUDGET_BYTES,
+    `${label} is ${compressed.length} bytes; budget is ${APP_GZIP_BUDGET_BYTES} bytes`,
+  );
 }
 
 /** @param {string} directory */
@@ -736,8 +766,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   const deployedFiles = filesBelow(DEPLOYED_ASSET_ROOT);
   const reviewFiles = filesBelow(REVIEW_ROOT);
   const deployedReviewFiles = filesBelow(DEPLOYED_REVIEW_ROOT);
-  const application = fs.readFileSync(path.join(ASSET_ROOT, 'app.js'), 'utf8');
-  const legal = fs.readFileSync(path.join(ASSET_ROOT, 'app.js.LEGAL.txt'), 'utf8');
+  const applicationBytes = fs.readFileSync(path.join(ASSET_ROOT, 'app.js'));
+  const legalBytes = fs.readFileSync(path.join(ASSET_ROOT, 'app.js.LEGAL.txt'));
+  const application = applicationBytes.toString('utf8');
+  const legal = legalBytes.toString('utf8');
   const html = read('src/extensions/dude/ui/index.html');
 
   // Act + Assert
@@ -765,19 +797,15 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
     'There is no runtime connection to the source repository.',
   ]) assert.match(reviewNotice, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.ok(application.length > 100_000, 'the application bundle must contain the browser runtime');
-  const gzipBytes = gzipSync(application, { level: 9 }).length;
-  assert.equal(Buffer.byteLength(application), 879_549, 'committed app.js raw byte size');
+  const gzip = gzipSync(applicationBytes, { level: 9 });
+  const repeatedGzip = gzipSync(applicationBytes, { level: 9 });
+  assert.equal(applicationBytes.length, 879_549, 'committed app.js raw byte size');
   assert.equal(
-    sha256(application),
+    sha256(applicationBytes),
     '8c6e3fe19edef61cff5489a0e0e26d4167e933a9124c22b43a6b9d9e410b74a5',
     'committed app.js raw SHA-256',
   );
-  assert.equal(
-    gzipBytes,
-    245_819,
-    'gzip -9 -n equivalent app.js byte size',
-  );
-  assert.equal(gzipBytes < 350 * 1024, true, 'gzip budget comparison');
+  assertPortableGzip(gzip, repeatedGzip, applicationBytes, 'Node zlib level-9 app.js');
   assert.doesNotMatch(application, /sourceMappingURL/);
   assert.doesNotMatch(application, /(?:^|[;\n])\s*import\s*(?:[\w*{]|['"])/);
   assert.match(legal, /Bundled license information/);
@@ -786,9 +814,9 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.match(legal, /keyborg\/dist\/index\.js/);
   assert.match(legal, /MIT License/i);
   assert.match(legal, /Third-party package licenses \(metafile-derived\)/);
-  assert.equal(Buffer.byteLength(legal), 79_762, 'complete legal notice byte size');
+  assert.equal(legalBytes.length, 79_762, 'complete legal notice byte size');
   assert.equal(
-    sha256(legal),
+    sha256(legalBytes),
     '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387cf70ba7a6d869',
     'complete legal notice SHA-256',
   );
@@ -1030,27 +1058,16 @@ test('shipped runtime gzip -9 -n budget and complete legal notice are auditable'
   const gzip = spawnSync('gzip', ['-9', '-n', '-c', path.join(ASSET_ROOT, 'app.js')], {
     encoding: null,
   });
-  const legalGzip = spawnSync('gzip', ['-9', '-n', '-c', path.join(ASSET_ROOT, 'app.js.LEGAL.txt')], {
+  const repeatedGzip = spawnSync('gzip', ['-9', '-n', '-c', path.join(ASSET_ROOT, 'app.js')], {
     encoding: null,
   });
 
   // Act + Assert
   assert.equal(gzip.error, undefined, 'gzip must be available for the release budget');
   assert.equal(gzip.status, 0, Buffer.from(gzip.stderr ?? '').toString('utf8'));
-  assert.equal(legalGzip.error, undefined, 'gzip must be available for the legal inventory measurement');
-  assert.equal(legalGzip.status, 0, Buffer.from(legalGzip.stderr ?? '').toString('utf8'));
-  assert.equal(gzip.stdout.length, 245_819, 'exact app.js gzip -9 -n bytes');
-  assert.equal(
-    sha256(gzip.stdout),
-    '54b725b2b7784f902d354025ae10dc2fc2d01a06ffa30f23d04d04b3fd51e7c7',
-    'exact app.js gzip -9 -n SHA-256',
-  );
-  assert.equal(legalGzip.stdout.length, 3_382, 'exact legal inventory gzip -9 -n bytes');
-  assert.equal(358_400 - gzip.stdout.length, 112_581, 'current gzip budget headroom');
-  assert.ok(
-    gzip.stdout.length <= 358_400,
-    `app.js gzip -9 -n is ${gzip.stdout.length} bytes; budget is 358400 bytes`,
-  );
+  assert.equal(repeatedGzip.error, undefined, 'gzip must remain available for the deterministic repeat');
+  assert.equal(repeatedGzip.status, 0, Buffer.from(repeatedGzip.stderr ?? '').toString('utf8'));
+  assertPortableGzip(gzip.stdout, repeatedGzip.stdout, application, 'system gzip -9 -n app.js');
   assert.match(legal.toString('utf8'), /Bundled license information/);
   assert.match(legal.toString('utf8'), /React/);
   assert.match(legal.toString('utf8'), /MIT License/i);
@@ -1061,6 +1078,7 @@ test('shipped runtime gzip -9 -n budget and complete legal notice are auditable'
       rawSha256: sha256(application),
       gzip9nBytes: gzip.stdout.length,
       gzip9nSha256: sha256(gzip.stdout),
+      gzip9nHeadroom: APP_GZIP_BUDGET_BYTES - gzip.stdout.length,
     },
     legal: {
       bytes: legal.length,

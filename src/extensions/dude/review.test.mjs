@@ -1879,8 +1879,19 @@ test('a cached negative capture descriptor retains child_exit detail and does no
     'let count = 0;',
     'try { count = JSON.parse(fs.readFileSync(receipt, "utf8")).count; } catch {}',
     "const profile = process.argv.find((value) => value.startsWith('--user-data-dir='))?.slice(16) ?? null;",
-    'fs.writeFileSync(receipt, JSON.stringify({ count: count + 1, pid: process.pid, profile }));',
-    'process.exit(23);',
+    'let wire = Buffer.alloc(0);',
+    'const bytes = Buffer.alloc(4096);',
+    'const read = () => fs.read(3, bytes, 0, bytes.length, null, (error, size) => {',
+    '  if (error) throw error;',
+    '  if (size === 0) throw new Error("startup command pipe closed before its NUL terminator");',
+    '  wire = Buffer.concat([wire, bytes.subarray(0, size)]);',
+    '  const split = wire.indexOf(0);',
+    '  if (split === -1) { read(); return; }',
+    '  const command = JSON.parse(wire.subarray(0, split).toString("utf8"));',
+    '  fs.writeFileSync(receipt, JSON.stringify({ count: count + 1, pid: process.pid, profile, command }));',
+    '  process.exit(23);',
+    '});',
+    'read();',
     '',
   ].join('\n'), { mode: 0o755 });
   const originalPath = process.env.PATH;
@@ -1903,6 +1914,11 @@ test('a cached negative capture descriptor retains child_exit detail and does no
     assert.deepEqual(second.capture, expected);
     const probe = JSON.parse(fs.readFileSync(receipt, 'utf8'));
     assert.equal(probe.count, 1, 'the provider lifetime caches its first negative preflight');
+    assert.deepEqual(
+      probe.command,
+      { id: 1, method: 'Browser.getVersion', params: {} },
+      'the owned child exits only after receiving the complete startup command',
+    );
     assert.equal(fs.existsSync(probe.profile), false, 'the one failed probe removed its owned profile');
     assert.equal(
       fs.existsSync(path.join(
