@@ -1,0 +1,1874 @@
+/**
+ * T008 rev-8 · unapproved, memory-only design artifact.
+ *
+ * This is a new React composition, not an adapter around a previous mock DOM.
+ * Publication/build is coordinator-owned. No fetch, SDK, filesystem, storage,
+ * capture, or send path exists here. Both snapshot assets are read-only input.
+ *
+ * Source map:
+ * - Inventory/intent/dispositions/next instruction: DUDE_MOCK_DATA (T003).
+ * - Work status/progress/history: DUDE_OVERVIEW_DATA, bound to that base
+ *   snapshot and selected root, merged onto the base inventory by exact idea
+ *   path. Base inventory stays discoverable when the merge cannot be trusted.
+ * - Example requests: exact 057 spec § Request Coverage and idea § Session Scenarios.
+ * - Typography observation: .dude/memory/context.md, Canvas typography flag.
+ * - Theme: existing Canvas web themes + accessible neutral-stroke aliases.
+ * - Navigation: one Overview work list is the only work finder; activating a
+ *   row opens that exact record in Context. There is no second picker.
+ * - Review document: the same Overview/CommandBar components as
+ *   the proposal, frozen to the workspace snapshot. No DOM clone,
+ *   remote page, essay masquerading as a mock, or HTML string insertion.
+ */
+import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import {
+  FluentProvider, webLightTheme, webDarkTheme, tokens, makeStyles, mergeClasses, useRestoreFocusTarget,
+  Button, Toolbar, ToolbarGroup, ToolbarButton, ToolbarDivider,
+  ToolbarRadioGroup, ToolbarRadioButton, TabList, Tab, Listbox, Option,
+  Combobox, Dropdown, Field, Input, Textarea, RadioGroup, Radio, Checkbox,
+  MessageBar, MessageBarBody, MessageBarTitle, Text, Badge, Spinner,
+  Accordion, AccordionItem, AccordionHeader, AccordionPanel, Tooltip,
+  OverlayDrawer, DrawerHeader, DrawerHeaderTitle, DrawerBody,
+  Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions,
+  ProgressBar, List, ListItem,
+  DataGrid, DataGridHeader, DataGridHeaderCell, DataGridBody, DataGridRow,
+  DataGridCell, TableCellLayout, createTableColumn,
+} from '@fluentui/react-components';
+import {
+  AddRegular, ArrowClockwiseRegular, ArrowLeftRegular,
+  CursorRegular, CommentRegular, SquareRegular, CircleRegular, ArrowUpRightRegular,
+  LineRegular, HighlightRegular, ArrowUndoRegular, ArrowRedoRegular,
+  DismissRegular, SearchRegular, DeleteRegular,
+  DocumentRegular, LightbulbRegular,
+} from '@fluentui/react-icons';
+
+const OWNER = '.dude/ideas/057-dude-canvas-needs-you.md';
+const SPEC = '.dude/specs/057-dude-canvas-needs-you/spec.md';
+const ARTIFACT = '.dude/specs/057-dude-canvas-needs-you/design/needs-you-workspace.html';
+const REVISION = 'rev-8.2';
+const DATA = globalThis.DUDE_MOCK_DATA;
+const OVERVIEW_DATA = globalThis.DUDE_OVERVIEW_DATA;
+// Publication pins the unchanged base asset; the overview must declare that binding.
+const OVERVIEW_BASE_SHA256 = 'b426d55f2bafe52ade76dd501a72bec075a19decaa08c3848bb9d91c8c0e48ea';
+const SNAPSHOTS = DATA?.snapshots;
+const SNAPSHOT_ERROR = snapshotLoadError(DATA);
+const CURRENT = SNAPSHOT_ERROR ? null : SNAPSHOTS.workspace.projection;
+const SOURCE_ASSETS = ['assets/workspace-snapshots.js', 'assets/overview-snapshots.js', 'assets/needs-you-workspace.js'];
+
+// Validate the fields this static composition consumes. Empty context arrays
+// are valid data; a missing or malformed required snapshot is not a blank repo.
+function snapshotLoadError(data) {
+  if (!data) return 'Required snapshot data was not loaded.';
+  const malformed = 'Required snapshot data is malformed or incomplete.';
+  if (data.previewOnly !== true || !data.snapshots || typeof data.generatedAt !== 'string') return malformed;
+  for (const key of ['workspace', 'blank', 'savedIdea']) {
+    const snapshot = data.snapshots[key], p = snapshot?.projection;
+    if (!snapshot || typeof snapshot.label !== 'string' || typeof snapshot.fixture !== 'boolean'
+      || !p || !['blank', 'populated', 'unknown'].includes(p.workspace)
+      || !Array.isArray(p.contexts) || !Array.isArray(p.choices) || !Array.isArray(p.sources)
+      || typeof p.coverage?.inventory?.state !== 'string' || typeof p.coverage?.live?.state !== 'string') return malformed;
+    if (p.next != null && typeof p.next.description !== 'string') return malformed;
+    if (p.selected != null && typeof p.selected.ideaPath !== 'string') return malformed;
+    if (p.sources.some(source => !source || typeof source.kind !== 'string')) return malformed;
+    if (p.contexts.some(c => !c || typeof c.ideaPath !== 'string' || typeof c.title !== 'string'
+      || typeof c.slug !== 'string' || !['idea', 'feature'].includes(c.kind)
+      || !['draft', 'defined', 'resolved'].includes(c.status)
+      || !(c.specPath === null || typeof c.specPath === 'string')
+      || (c.intent != null && typeof c.intent.text !== 'string')
+      || !Array.isArray(c.dispositions) || c.dispositions.some(d => !d || typeof d.text !== 'string'))) return malformed;
+  }
+  return null;
+}
+
+// One recorded lifecycle group per record, with the plain label the list shows.
+// `open` means the record is not finished; it is not a priority or a queue order.
+const WORK_GROUPS = {
+  blocked: { label: 'Blocked', open: true },
+  active: { label: 'In progress', open: true },
+  next: { label: 'Planned next', open: true },
+  'defined-awaiting-work': { label: 'Not started', open: true },
+  'prioritized-later': { label: 'Planned for later', open: true },
+  'awaiting-definition': { label: 'Draft idea', open: true },
+  completed: { label: 'Completed', open: false },
+};
+// A recorded-idea-inventory read can see whether a package exists. It cannot
+// establish execution state, so those two groups are all it may claim.
+const INVENTORY_GROUPS = ['awaiting-definition', 'defined-awaiting-work'];
+const CURRENT_GROUPS = [['blocked', 'blocked'], ['active', 'active'], ['next', 'next']];
+const PLANNED_GROUPS = [
+  ['awaitingDefinition', 'awaiting-definition'],
+  ['definedAwaitingWork', 'defined-awaiting-work'],
+  ['prioritizedLater', 'prioritized-later'],
+];
+
+// Validate only this read-only work index. Failure must not disable discovery:
+// Overview falls back to the base inventory with work status marked unavailable.
+function workIndexError(data, snapshotKey, projection) {
+  const malformed = 'The recorded work status could not be read.';
+  const mismatch = 'The recorded work status does not match this workspace snapshot.';
+  const count = value => Number.isSafeInteger(value) && value >= 0;
+  const nullableCount = value => value === null || count(value);
+  const date = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
+  if (!data) return 'The recorded work status was not loaded.';
+  if (data.previewOnly !== true || !date(data.generatedAt) || !data.snapshots
+    || Object.keys(data.snapshots).length !== 3
+    || !['workspace', 'blank', 'savedIdea'].every(key => Object.hasOwn(data.snapshots, key))) return malformed;
+  if (data.baseGeneratedAt !== DATA.generatedAt || data.baseSnapshotSha256 !== OVERVIEW_BASE_SHA256) return mismatch;
+  const snapshot = data.snapshots[snapshotKey];
+  if (!snapshot || snapshot.scope !== snapshotKey || !projection || inventoryUnavailable(projection)) return mismatch;
+  const { state, basis, summary, current, planned, items } = snapshot;
+  const workRead = state === 'current';
+  if (!['current', 'empty', 'inventory-only'].includes(state) || !date(snapshot.readAt)
+    || !summary || !nullableCount(summary.completedPackages) || !nullableCount(summary.resolvedIdeas)
+    || !planned || !Array.isArray(items)) return malformed;
+  if (workRead ? snapshotKey !== 'workspace' || basis !== 'canonical-lightweight-snapshot'
+    : basis !== 'recorded-idea-inventory') return mismatch;
+  if (state === 'empty' && !confirmedBlank(projection)) return mismatch;
+  if (state === 'inventory-only' && confirmedBlank(projection)) return mismatch;
+  if (!workRead && (current !== null || summary.completedPackages !== null
+    || summary.resolvedIdeas !== null)) return malformed;
+  const seen = new Set();
+  for (const item of items) {
+    if (!item || typeof item.ideaPath !== 'string' || typeof item.title !== 'string'
+      || typeof item.status !== 'string' || typeof item.defined !== 'boolean'
+      || typeof item.resolved !== 'boolean' || !Object.hasOwn(WORK_GROUPS, item.group)
+      || !(item.orderPosition === null || count(item.orderPosition))) return malformed;
+    if (item.taskCounts !== null) {
+      const tasks = item.taskCounts;
+      if (!workRead || !tasks || !['open', 'active', 'blocked', 'done', 'total'].every(key => count(tasks[key]))
+        || tasks.done > tasks.total) return malformed;
+    }
+    if (!workRead && !INVENTORY_GROUPS.includes(item.group)) return mismatch;
+    const matches = projection.contexts.filter(context => context.ideaPath === item.ideaPath);
+    if (matches.length !== 1 || seen.has(item.ideaPath)) return mismatch;
+    const context = matches[0];
+    if (context.title !== item.title || context.status !== item.status
+      || item.defined !== (context.kind === 'feature' && !!context.specPath)
+      || item.resolved !== (context.status === 'resolved')) return mismatch;
+    seen.add(item.ideaPath);
+  }
+  // A partial index would silently hide recorded work behind a richer-looking
+  // list, so the merge must cover the whole base inventory or be rejected.
+  if (seen.size !== projection.contexts.length) return mismatch;
+  // The retained grouped arrays must agree with the flat index they summarise.
+  const grouped = [
+    ...CURRENT_GROUPS.map(([key, group]) => [current?.[key], group]),
+    ...PLANNED_GROUPS.map(([key, group]) => [planned[key], group]),
+  ];
+  for (const [rows, group] of grouped) {
+    if (rows != null && !Array.isArray(rows)) return malformed;
+    const listed = (rows || []).map(row => row?.ideaPath);
+    const indexed = items.filter(item => item.group === group).map(item => item.ideaPath);
+    if (listed.length !== indexed.length || listed.some(path => !indexed.includes(path))) return mismatch;
+  }
+  if (workRead) {
+    if (!current) return malformed;
+    // Resolved ideas are terminal history, never delivered features.
+    if (items.filter(item => item.group === 'completed' && !item.resolved).length !== summary.completedPackages
+      || items.filter(item => item.resolved).length !== summary.resolvedIdeas) return mismatch;
+  }
+  return null;
+}
+
+// Explicit source statements, not classifications inferred from intent/blank answers.
+const RECORDED_BOUNDARIES = {
+  '.dude/ideas/052-dude-canvas-ui.md': { title: 'Related work remains closed', text: '052 is not reopened by Needs You.', source: `${SPEC} § Scope And Surfaces`, terminal: true },
+  '.dude/ideas/055-canvas-acceptance-reliability.md': { title: 'Related work remains closed', text: '055 is not reopened by Needs You.', source: `${SPEC} § Scope And Surfaces`, terminal: true },
+  '.dude/ideas/056-ship-orphan-cleanup.md': { title: 'Recorded as deferred', text: 'The cleanup idea remains discoverable without an urgent request.', source: '.dude/memory/context.md · Future Canvas rediscovery', terminal: false, deferred: true },
+};
+
+function accessibleTheme(base) {
+  return {
+    ...base,
+    colorNeutralStroke1: base.colorNeutralStrokeAccessible,
+    colorNeutralStroke1Hover: base.colorNeutralStrokeAccessibleHover,
+    colorNeutralStroke1Pressed: base.colorNeutralStrokeAccessiblePressed,
+    colorNeutralStroke1Selected: base.colorNeutralStrokeAccessibleSelected,
+  };
+}
+const THEMES = { light: accessibleTheme(webLightTheme), dark: accessibleTheme(webDarkTheme) };
+
+// Fixed numbers below describe viewport breakpoints, document/shape geometry,
+// and minimum hit areas. Fluent tokens own visual rhythm, color, and type.
+const useStyles = makeStyles({
+  page: {
+    minHeight: '100dvh', backgroundColor: tokens.colorNeutralBackground2,
+    color: tokens.colorNeutralForeground1,
+    '@media (prefers-reduced-motion: reduce)': {
+      '& *, & *::before, & *::after': { animationDuration: '0s', transitionDuration: '0s', scrollBehavior: 'auto' },
+    },
+  },
+  app: { display: 'flex', flexDirection: 'column', height: '100dvh', minHeight: '480px', minWidth: 0 },
+  titlebar: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalS, padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
+  title: { margin: 0, fontSize: tokens.fontSizeBase500, lineHeight: tokens.lineHeightBase500, fontWeight: tokens.fontWeightSemibold },
+  subheading: { margin: 0, fontSize: tokens.fontSizeBase400, lineHeight: tokens.lineHeightBase400, fontWeight: tokens.fontWeightSemibold },
+  eyebrow: { color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200 },
+  quiet: { color: tokens.colorNeutralForeground2 },
+  row: { display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, flexWrap: 'wrap', minWidth: 0 },
+  between: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: tokens.spacingHorizontalM, flexWrap: 'wrap' },
+  stack: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0 },
+  tight: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, minWidth: 0 },
+  grow: { flexGrow: 1, minWidth: 0 },
+  commands: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    flexShrink: 0, gap: tokens.spacingHorizontalXS, flexWrap: 'wrap',
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  viewTabs: { flexShrink: 0, minWidth: 0, maxWidth: '100%', flexWrap: 'wrap' },
+  viewActions: { flexShrink: 0 },
+  product: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0, containerType: 'inline-size' },
+  statusStrip: {
+    display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalXS, flexWrap: 'wrap', flexShrink: 0,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1, color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200,
+  },
+  requestList: { gap: tokens.spacingVerticalS },
+  option: {
+    minHeight: '52px', alignItems: 'center', whiteSpace: 'normal', overflowWrap: 'anywhere',
+    paddingTop: tokens.spacingVerticalS, paddingBottom: tokens.spacingVerticalS,
+  },
+  optionContent: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, minWidth: 0 },
+  optionTitle: { fontWeight: tokens.fontWeightSemibold },
+  detail: {
+    flex: 1, minWidth: 0, overflowY: 'auto', backgroundColor: tokens.colorNeutralBackground1,
+    padding: tokens.spacingHorizontalXXL,
+    '@container (max-width: 700px)': { padding: tokens.spacingHorizontalL },
+  },
+  measure: { maxWidth: '76ch', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL },
+  overview: { width: '100%', maxWidth: '1120px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXL },
+  overviewTitle: { overflowWrap: 'anywhere' },
+  focal: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
+    padding: tokens.spacingHorizontalL, backgroundColor: tokens.colorNeutralBackground1,
+    borderRadius: tokens.borderRadiusMedium, boxShadow: tokens.shadow4,
+    borderLeft: `${tokens.strokeWidthThicker} solid ${tokens.colorBrandStroke1}`,
+  },
+  focalProgress: { maxWidth: '360px', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, minWidth: 0 },
+  focalStep: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS, minWidth: 0,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, paddingTop: tokens.spacingVerticalM,
+  },
+  workControls: {
+    display: 'flex', flexWrap: 'wrap', alignItems: 'end', gap: tokens.spacingHorizontalM,
+    '& > *:first-child': { flex: '2 1 260px', minWidth: 0 },
+    '& > *:nth-child(2)': { flex: '1 1 180px', minWidth: 0, maxWidth: '240px' },
+  },
+  workScroll: {
+    maxHeight: 'min(560px, 60dvh)', overflowY: 'auto', minWidth: 0,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusMedium,
+  },
+  workHeader: { position: 'sticky', top: 0, zIndex: 1, backgroundColor: tokens.colorNeutralBackground2 },
+  workCell: { paddingTop: tokens.spacingVerticalS, paddingBottom: tokens.spacingVerticalS, overflowWrap: 'anywhere' },
+  workRow: { cursor: 'pointer' },
+  workItem: { minHeight: '48px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalM,
+    paddingTop: tokens.spacingVerticalS, paddingBottom: tokens.spacingVerticalS,
+    paddingLeft: tokens.spacingHorizontalM, paddingRight: tokens.spacingHorizontalM,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '&:last-child': { borderBottomWidth: 0 } },
+  workItemText: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, minWidth: 0, flexGrow: 1 },
+  columnName: { flex: '2.6 1 0px' },
+  columnStatus: { flex: '1 1 0px' },
+  columnProgress: { flex: '1.2 1 0px' },
+  progressCell: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, minWidth: 0, width: '100%' },
+  overviewDocument: { height: 'auto' },
+  overviewDocumentContent: { flex: 'none' },
+  detailHeader: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
+  lead: { margin: 0, fontSize: tokens.fontSizeBase400, lineHeight: tokens.lineHeightBase400 },
+  prose: { margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300 },
+  instruction: {
+    margin: 0, padding: tokens.spacingHorizontalL, backgroundColor: tokens.colorNeutralBackground2,
+    borderRadius: tokens.borderRadiusMedium, fontSize: tokens.fontSizeBase300,
+    lineHeight: tokens.lineHeightBase400, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere',
+  },
+  empty: { padding: tokens.spacingHorizontalL, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM },
+  footer: { padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`, borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}` },
+  back: { alignSelf: 'flex-start' },
+  disclosure: { borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}` },
+  control: { minWidth: 0, width: '100%' },
+  actions: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalS, paddingTop: tokens.spacingVerticalS },
+  code: { fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', margin: 0 },
+  scope: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS,
+    borderLeft: `${tokens.strokeWidthThick} solid ${tokens.colorBrandStroke1}`,
+    padding: tokens.spacingHorizontalM, backgroundColor: tokens.colorNeutralBackground2,
+  },
+  harness: { flexShrink: 0, borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground3 },
+  harnessBody: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL, maxHeight: '42dvh', overflowY: 'auto', paddingBottom: tokens.spacingVerticalM },
+  harnessGrid: { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalM, '& > *': { flex: '1 1 160px', minWidth: 0 } },
+  viewport: { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, width: '100%', alignSelf: 'center', backgroundColor: tokens.colorNeutralBackground1 },
+  width360: { maxWidth: '360px', boxShadow: tokens.shadow8 },
+  width768: { maxWidth: '768px', boxShadow: tokens.shadow8 },
+  width1440: { maxWidth: '1440px', boxShadow: tokens.shadow8 },
+  notice: { margin: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`, flexShrink: 0 },
+  drawer: { width: 'min(440px, 100vw)', maxWidth: '100vw' },
+  drawerBody: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL, paddingBottom: tokens.spacingVerticalXL, overflowWrap: 'anywhere' },
+  dialog: { width: 'min(620px, calc(100vw - 32px))', maxHeight: '90dvh', overflowY: 'auto' },
+  cellLayout: { minWidth: 0, width: '100%', whiteSpace: 'normal' },
+  hidden: { display: 'none' },
+  review: { flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', containerType: 'inline-size' },
+  reviewTitle: { padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`, backgroundColor: tokens.colorNeutralBackground1 },
+  drawingToolbar: {
+    flexShrink: 0, display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalS,
+    padding: tokens.spacingHorizontalS, backgroundColor: tokens.colorNeutralBackground2,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  drawingTools: { flexWrap: 'wrap', minWidth: 0, maxWidth: '100%' },
+  toolLabel: { '@container (max-width: 1000px)': { display: 'none' } },
+  toolButton: { minWidth: '36px', minHeight: '36px' },
+  picker: { display: 'flex', alignItems: 'end', flexWrap: 'wrap', gap: tokens.spacingHorizontalS, padding: tokens.spacingHorizontalS },
+  pickerField: { flex: '1 1 180px', minWidth: 0, maxWidth: '440px' },
+  canvasScroll: {
+    flex: 1, minHeight: '200px', minWidth: 0, overflow: 'auto', padding: tokens.spacingHorizontalL,
+    backgroundColor: tokens.colorNeutralBackground3,
+    '@container (max-width: 700px)': { padding: tokens.spacingHorizontalS },
+  },
+  canvas: { position: 'relative', minHeight: '600px', backgroundColor: tokens.colorNeutralBackground1, boxShadow: tokens.shadow8 },
+  drawMode: { touchAction: 'none', cursor: 'crosshair', userSelect: 'none' },
+  selectMode: { touchAction: 'pan-y' },
+  document: { minHeight: '600px', pointerEvents: 'none', '& *': { caretColor: 'transparent' } },
+  subject: { height: '740px', minHeight: '600px', overflow: 'hidden', display: 'flex', flexDirection: 'column' },
+  sourceDetail: { overflowY: 'visible' },
+  overlay: { position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' },
+  shape: { stroke: tokens.colorPaletteRedBorder2, fill: 'none', strokeWidth: 2 },
+  marker: { fill: tokens.colorNeutralBackground1, stroke: tokens.colorPaletteRedBorder2, strokeWidth: 2 },
+  markerText: { fill: tokens.colorNeutralForeground1, fontSize: tokens.fontSizeBase200, fontFamily: tokens.fontFamilyBase, fontWeight: tokens.fontWeightSemibold },
+  arrowHead: { fill: tokens.colorPaletteRedBorder2 },
+  highlight: { fill: tokens.colorPaletteYellowBackground2, fillOpacity: 0.45, stroke: tokens.colorPaletteYellowBorder2, strokeWidth: 2 },
+  target: { fill: 'none', stroke: tokens.colorBrandStroke1, strokeWidth: 2, strokeDasharray: '6 3' },
+  comments: { borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, flexShrink: 0, maxHeight: '36dvh', overflowY: 'auto', backgroundColor: tokens.colorNeutralBackground1 },
+  commentLayout: { display: 'flex', gap: tokens.spacingHorizontalL, padding: tokens.spacingHorizontalM, alignItems: 'flex-start' },
+  commentList: { flex: '0 0 220px', maxHeight: '190px', overflowY: 'auto', minWidth: 0 },
+  commentEditor: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
+  drawerComments: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
+    '& > *': { width: '100%', minWidth: 0, flexBasis: 'auto' } },
+  geometry: { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalS, '& > *': { flex: '1 1 80px', minWidth: 0 } },
+  live: { position: 'absolute', width: '1px', height: '1px', padding: 0, overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap' },
+});
+
+const EXAMPLES = [
+  { id: 'onboarding', title: 'What would you like to make?', type: 'New idea', subject: 'A workspace without a feature',
+    scope: 'Session only · no captured idea or selected feature',
+    why: 'Describe the outcome you want. The coordinator can capture a draft without creating a spec or starting work.',
+    source: 'Request Coverage · No feature yet; Session Scenarios · blank-slate and pre-selection', owner: 'Coordinator role (example)' },
+  { id: 'fact', title: 'Should the Sharpie repository stay unchanged?', type: 'Clarification', subject: 'HTML annotation adoption',
+    scope: 'Recorded 052 clarification · reference scenario',
+    why: 'This decides whether adoption is a local copy or ongoing work in another repository. Technical research stays with the agent.',
+    source: 'Request Coverage · Factual intent clarification; Session Scenarios · 052 clarification', owner: 'Definition owner role (example)' },
+  { id: 'preview', title: 'Is the next action clear in this layout?', type: 'Design review', subject: 'Dude Canvas Needs You',
+    scope: 'Dude Canvas Needs You · exactly owned design artifact', contextPath: OWNER,
+    why: `Review the actual ${REVISION} proposal. Feedback asks for a design revision; approval is a separate decision.`,
+    source: 'Request Coverage · Specific preview approval or revision; FR-017, FR-019–022', owner: 'Design owner through coordinator (example)' },
+  { id: 'manual_observation', title: 'What appears after reopening Canvas?', type: 'Host observation', subject: 'Canvas host reload',
+    scope: 'Historical 052/055 session observation · reference scenario',
+    why: 'In this historical scenario, the host-only reopen follows the agent’s automated checks. Report what you see; the owner diagnoses it.',
+    source: 'Request Coverage · Manual host action; Session Scenarios · 052/055 relaunch and reopen', owner: 'Requesting verification owner (example)' },
+  { id: 'permission', title: 'Remove one claim and checkpoint pair?', type: 'Permission', subject: 'Exact-pair cleanup',
+    scope: 'Historical operation-specific request · reference scenario',
+    why: 'Removal affects only the named pair. Consent does not establish safety or execute cleanup.',
+    source: 'Request Coverage · Exact operation-specific consent; Session Scenarios · September 4 T001@055ci001', owner: 'Work operation owner role (example)' },
+  { id: 'scope_choice', title: 'Keep orphan cleanup separate from browser reliability?', type: 'Scope choice', subject: 'Browser reliability and orphan cleanup',
+    scope: 'Recorded 052/056 scope discussion · reference scenario',
+    why: 'Choose which outcome to pursue. Keeping the cleanup idea separate leaves browser reliability as the immediate scope.',
+    source: 'Request Coverage · Genuine priority, recovery, or scope choice; Session Scenarios · 052 stops / 056 deferral', owner: 'Coordinator / Work owner role (example)' },
+];
+const STATES = [
+  ['current', 'Current request'], ['responding', 'Responding'], ['awaiting', 'Awaiting acknowledgment'],
+  ['accepted', 'Accepted'], ['applied', 'Applied'], ['declined', 'Declined'], ['deferred', 'Deferred'],
+  ['completed', 'Successful completion'], ['stale', 'Stale context'], ['unavailable', 'Unavailable'],
+];
+const STATE_COPY = {
+  current: ['info', 'Ready for a response', 'This is a labelled request example, not a current owner handoff.'],
+  responding: ['info', 'Unsent response', 'Your input stays in this tab while you review the example.'],
+  awaiting: ['info', 'Awaiting acknowledgment', 'Example: delivery was reported; application is not confirmed. Do not resend while the outcome is uncertain.'],
+  accepted: ['success', 'Response accepted', 'Example: the owner accepted the response. Application still needs a fresh source read.'],
+  applied: ['success', 'Response applied', 'Example: the owner acknowledged application and reread its source. There is no new question to answer.'],
+  declined: ['warning', 'Response declined', 'Example: the owner needs more specific evidence. Keep the response; a fresh request is required before trying again.'],
+  deferred: ['info', 'Deferred by the owner', 'Example: a source-backed disposition keeps this discoverable. It is not urgent or resolved.'],
+  completed: ['success', 'Request complete', 'Example: nothing further is requested. Keep this result available without reopening the form.'],
+  stale: ['warning', 'The request changed', 'Retain the response, but obtain the current owner context before acting.'],
+  unavailable: ['warning', 'Owner context unavailable', 'The request cannot accept a response. Other ideas remain available.'],
+};
+const TOOLS = [
+  ['select', 'Select', CursorRegular, 'V'], ['comment', 'Comment', CommentRegular, 'C'],
+  ['box', 'Box', SquareRegular, 'B'], ['circle', 'Circle', CircleRegular, 'O'],
+  ['arrow', 'Arrow', ArrowUpRightRegular, 'A'], ['line', 'Line', LineRegular, 'L'],
+  ['highlight', 'Highlight', HighlightRegular, 'H'],
+];
+const isTerminal = state => ['accepted', 'applied', 'completed'].includes(state);
+const hasInput = value => Object.values(value || {}).some(v => typeof v === 'string' ? v.length > 0 : v === true);
+
+function SelectField({ label, value, options, onChange, disabled = false, reviewKey }) {
+  const s = useStyles();
+  const entries = options.map(o => Array.isArray(o) ? o : [o, o]);
+  return <Field label={label} data-review-key={reviewKey}>
+    <Dropdown className={s.control} disabled={disabled} value={entries.find(([key]) => key === value)?.[1] || value}
+      selectedOptions={[value]} onOptionSelect={(_, d) => onChange(d.optionValue)}>
+      {entries.map(([key, text]) => <Option key={key} value={key} text={text}>{text}</Option>)}
+    </Dropdown>
+  </Field>;
+}
+
+function Notice({ title, children, intent = 'info', className }) {
+  return <MessageBar intent={intent} className={className}>
+    <MessageBarBody>{title && <MessageBarTitle>{title}</MessageBarTitle>}{children}</MessageBarBody>
+  </MessageBar>;
+}
+
+function SnapshotLoadFailure() {
+  const s = useStyles();
+  const theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  return <FluentProvider theme={THEMES[theme]} applyStylesToPortals={false}>
+    <div className={mergeClasses(s.page, s.app)}>
+      <header className={s.titlebar}><Text weight="semibold">Dude Canvas</Text>
+        <Text className={s.eyebrow}>Snapshot unavailable · Design study {REVISION}</Text></header>
+      <main className={s.detail}>
+        <div className={s.measure}>
+          <h1 className={s.title}>Workspace inventory could not be loaded</h1>
+          <Notice intent="error" title={SNAPSHOT_ERROR}>
+            Inventory counts and source contexts are unavailable. This is not a blank workspace or a no-current-requests result.
+          </Notice>
+          <p className={s.prose}>Restore the required snapshot asset and reload the design study. This page has not captured, deleted, or changed any work.</p>
+          <code className={s.code}>assets/workspace-snapshots.js</code>
+          <Text className={s.eyebrow}>Live handoff is also unavailable in this static mock.</Text>
+        </div>
+      </main>
+    </div>
+  </FluentProvider>;
+}
+
+function Disclosure({ title, children }) {
+  const s = useStyles();
+  return <Accordion collapsible className={s.disclosure}>
+    <AccordionItem value="content">
+      <AccordionHeader>{title}</AccordionHeader>
+      <AccordionPanel>{children}</AccordionPanel>
+    </AccordionItem>
+  </Accordion>;
+}
+
+// Routine prototype facts stay in one quiet line so a MessageBar keeps meaning
+// something. Refresh reports its result here, where it is announced politely.
+function StatusStrip({ children }) {
+  const s = useStyles();
+  return <div className={s.statusStrip} role="status" data-review-key="status-strip">{children}</div>;
+}
+
+// Request details belong to Needs you; context and idea input are separate
+// existing views. This is derived presentation, not another navigation state.
+function currentWorkspaceView(view) {
+  return view === 'request' ? 'needs' : view;
+}
+
+function CommandBar({ view, viewId, onOverview, onContext, onNeeds, onNew, onRefresh, readOnly = false }) {
+  const s = useStyles();
+  const current = currentWorkspaceView(view);
+  return <div className={s.commands} data-review-key="commands">
+    <TabList className={s.viewTabs} aria-label="Workspace views" size="small"
+      selectedValue={current} selectTabOnFocus={false}
+      onTabSelect={(_, data) => {
+        if (readOnly) return;
+        if (data.value === 'overview') onOverview();
+        if (data.value === 'context') onContext();
+        if (data.value === 'needs') onNeeds();
+        if (data.value === 'new') onNew();
+      }}>
+      <Tab value="overview" id={`${viewId}-tab-overview`} aria-controls={`${viewId}-panel-overview`}
+        data-review-key="command-overview">Overview</Tab>
+      <Tab value="context" id={`${viewId}-tab-context`}
+        aria-controls={`${viewId}-panel-context`} data-review-key="command-context">Context</Tab>
+      <Tab value="needs" id={`${viewId}-tab-needs`} aria-controls={`${viewId}-panel-needs`}
+        data-review-key="command-needs">Needs you</Tab>
+      <Tab value="new" id={`${viewId}-tab-new`} aria-controls={`${viewId}-panel-new`}
+        data-review-key="command-new">New idea</Tab>
+    </TabList>
+    <Toolbar aria-label="Workspace actions" className={s.viewActions}>
+      <ToolbarGroup>
+        <ToolbarButton icon={<ArrowClockwiseRegular />} onClick={readOnly ? undefined : onRefresh} data-review-key="command-refresh">Refresh</ToolbarButton>
+      </ToolbarGroup>
+    </Toolbar>
+  </div>;
+}
+
+function WorkspaceViewPanels({ view, viewId, children }) {
+  const current = currentWorkspaceView(view);
+  return ['overview', 'context', 'needs', 'new'].map(value => <div key={value} role="tabpanel"
+    id={`${viewId}-panel-${value}`}
+    aria-labelledby={`${viewId}-tab-${value}`}
+    hidden={value !== current} tabIndex={value === current ? 0 : undefined}>
+    {value === current ? children : null}
+  </div>);
+}
+
+// Presentation helpers never infer disposition from arbitrary source prose.
+function contextKind(context) {
+  return context.kind === 'feature' ? 'Feature' : 'Idea';
+}
+function contextState(context) {
+  const boundary = RECORDED_BOUNDARIES[context.ideaPath];
+  if (context.status === 'resolved') return 'Resolved';
+  if (boundary?.terminal) return `Closed · ${context.status}`;
+  if (boundary?.deferred) return `Deferred · ${context.status}`;
+  return context.status === 'draft' ? 'Draft' : 'Defined';
+}
+function alphabeticContexts(contexts) {
+  return [...contexts].sort((a, b) => a.title.localeCompare(b.title, 'en', { sensitivity: 'base' })
+    || a.ideaPath.localeCompare(b.ideaPath, 'en'));
+}
+function matchesContext(context, query) {
+  const q = query.trim().toLocaleLowerCase();
+  return !q || [context.title, context.slug, context.ideaPath, context.specPath]
+    .filter(Boolean).some(text => text.toLocaleLowerCase().includes(q));
+}
+function inventoryUnavailable(projection) {
+  return projection.coverage.inventory.state === 'unavailable'
+    || (projection.workspace === 'unknown' && projection.contexts.length === 0);
+}
+function confirmedBlank(projection) {
+  return projection.workspace === 'blank' && projection.coverage.inventory.state === 'current'
+    && projection.contexts.length === 0;
+}
+
+// The one place that decides whether canonical design review may be offered.
+// Overview and Context both call it, so neither surface can bypass the other.
+const REVIEW_PREREQUISITES = {
+  missing: 'Restore the exact canonical mock before opening Review.',
+  owner: 'Resolve the exact spec owner before opening writable Review.',
+  draft: 'Define the draft explicitly before creating its mock or review storage.',
+};
+function reviewablyCanonical(context) {
+  if (!context || context.ideaPath !== OWNER) return false;
+  return !(context.status === 'resolved' || RECORDED_BOUNDARIES[context.ideaPath]?.terminal
+    || ['closed', 'complete', 'completed'].includes(context.status));
+}
+function reviewPrerequisite(condition) {
+  return REVIEW_PREREQUISITES[condition] || null;
+}
+
+// One presentation shape for the single work list. Recorded work status is
+// merged onto the base inventory only for an exactly matching record; when the
+// index is unusable the base inventory still lists every recorded context with
+// its status explicitly unavailable.
+function workRows(projection, index) {
+  const items = index ? new Map(index.items.map(item => [item.ideaPath, item])) : null;
+  const rows = alphabeticContexts(projection.contexts).map(context => {
+    const item = items?.get(context.ideaPath) || null;
+    return {
+      context, ideaPath: context.ideaPath, title: context.title,
+      status: item ? item.resolved ? 'Resolved' : WORK_GROUPS[item.group].label : contextState(context),
+      group: item?.group || null,
+      open: item ? WORK_GROUPS[item.group].open : null,
+      tasks: item?.taskCounts || null,
+      note: RECORDED_BOUNDARIES[context.ideaPath]?.title || null,
+      detail: null,
+    };
+  });
+  // Exact idea paths stay the internal navigation identity. Add a visible
+  // qualifier only where two recorded titles would otherwise read the same.
+  const repeated = new Set();
+  const seen = new Set();
+  for (const row of rows) {
+    const key = row.title.toLocaleLowerCase();
+    if (seen.has(key)) repeated.add(key); else seen.add(key);
+  }
+  return repeated.size ? rows.map(row => repeated.has(row.title.toLocaleLowerCase())
+    ? { ...row, detail: row.context.slug } : row) : rows;
+}
+function workProgress(row) {
+  return row.tasks ? `${row.tasks.done} of ${row.tasks.total} tasks` : 'Progress not recorded';
+}
+function workRowLabel(row) {
+  return `${row.title}. ${row.status}. ${workProgress(row)}.`;
+}
+
+const WORK_SCOPES = [['open', 'Open'], ['history', 'Closed'], ['all', 'All']];
+// Presentation only: what the finder is showing, not a stored query or a queue.
+const FINDER_DEFAULT = { query: '', scope: 'open' };
+function scopedWorkRows(rows, scope) {
+  if (scope === 'open') return rows.filter(row => row.open === true);
+  if (scope === 'history') return rows.filter(row => row.open === false);
+  return rows;
+}
+
+function SourceIdentity({ context }) {
+  const s = useStyles();
+  return <span className={s.code}>{context.ideaPath}</span>;
+}
+
+function WorkNameCell({ row }) {
+  const s = useStyles();
+  return <span className={s.tight}>
+    <Text weight="semibold">{row.title}</Text>
+    {row.detail && <Text className={s.eyebrow}>{row.detail}</Text>}
+    {row.note && <Text className={s.eyebrow}>{row.note}</Text>}
+  </span>;
+}
+function WorkProgressCell({ row }) {
+  const s = useStyles();
+  const partial = row.tasks && row.tasks.total > 0 && row.tasks.done < row.tasks.total;
+  return <span className={s.progressCell}>
+    <Text>{workProgress(row)}</Text>
+    {partial && <ProgressBar value={row.tasks.done} max={row.tasks.total} aria-hidden="true" />}
+  </span>;
+}
+const WORK_COLUMNS = [
+  createTableColumn({ columnId: 'name', renderHeaderCell: () => 'Name',
+    renderCell: row => <TableCellLayout><WorkNameCell row={row} /></TableCellLayout> }),
+  createTableColumn({ columnId: 'status', renderHeaderCell: () => 'Status',
+    renderCell: row => <TableCellLayout>{row.status}</TableCellLayout> }),
+  createTableColumn({ columnId: 'progress', renderHeaderCell: () => 'Progress',
+    renderCell: row => <TableCellLayout><WorkProgressCell row={row} /></TableCellLayout> }),
+];
+
+// The single work finder. One search box, one scope Dropdown, one destination:
+// activating a row opens that exact recorded context. There is no candidate
+// step, no second picker, and no popup.
+//
+// App owns query/scope/inner scroll so Overview -> Context -> Back returns to
+// the same result instead of snapping to the default. Passing neither prop
+// leaves the finder uncontrolled at its fixed defaults, which is what the inert
+// review document uses: it must not inherit whatever the reader searched for.
+function WorkList({ rows, projection, workStatus, history, onOpen, readOnly = false, finder, onFinder, scrollRef }) {
+  const s = useStyles();
+  const listId = useId();
+  const [localFinder, setLocalFinder] = useState(FINDER_DEFAULT);
+  const localScroll = useRef(0);
+  const { query, scope } = finder || localFinder;
+  const update = onFinder || setLocalFinder;
+  const retained = scrollRef || localScroll;
+  const scrollNode = useRef(null);
+  const appliedResult = useRef(null);
+  const [compact, setCompact] = useState(() => matchMedia('(max-width: 700px)').matches);
+  const sizeRef = useRef(null);
+  useLayoutEffect(() => {
+    const node = sizeRef.current;
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) => setCompact(entry.contentRect.width < 620));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  // Offer a scope choice only where the recorded data can answer it. Without a
+  // finished record there is nothing that "Open work" and "All work" separate.
+  const scopedAvailable = rows.some(row => row.open === false);
+  // A scope the current data cannot answer falls back to the whole inventory
+  // for this render. The chosen scope is kept, so restored status restores it.
+  const active = scopedAvailable ? scope : 'all';
+  const visible = scopedWorkRows(rows, active).filter(row => matchesContext(row.context, query));
+  const columnClasses = { name: s.columnName, status: s.columnStatus, progress: s.columnProgress };
+  const historyCaption = active === 'history' && history
+    ? `${visible.length} of ${scopedWorkRows(rows, 'history').length} closed records · ${history.completedPackages} completed features and ${history.resolvedIdeas} resolved ideas`
+    : `${visible.length} of ${rows.length} recorded ideas and features · alphabetical, not priority order`;
+  const open = readOnly ? undefined : onOpen;
+  const result = `${active}\u0000${query}`;
+  useLayoutEffect(() => {
+    const node = scrollNode.current;
+    if (!node) return;
+    // First mount restores the retained position; a different result starts new.
+    if (appliedResult.current === null) node.scrollTop = retained.current;
+    else if (appliedResult.current !== result) { node.scrollTop = 0; retained.current = 0; }
+    appliedResult.current = result;
+  }, [result, retained]);
+  return <section ref={sizeRef} className={s.stack} aria-labelledby={`${listId}-heading`}>
+    <h2 id={`${listId}-heading`} className={s.subheading} data-review-key="overview-work-heading">Work</h2>
+    {workStatus && <Notice intent="warning" title="Recorded work status is unavailable">
+      {workStatus} Every recorded idea and feature is still listed here, without task progress or closed-work counts.
+    </Notice>}
+    <div className={s.workControls}>
+      <Field label="Search work" data-review-key="overview-search">
+        <Input className={s.control} value={query} contentBefore={<SearchRegular />}
+          placeholder="Title, slug, or source path" onChange={(_, d) => update({ query: d.value, scope })} />
+      </Field>
+      {scopedAvailable && <SelectField label="Show" value={active} options={WORK_SCOPES}
+        reviewKey="overview-show" onChange={value => update({ query, scope: value })} />}
+    </div>
+    <div className={s.tight}>
+      <Text className={s.eyebrow} data-review-key="overview-work-count">{historyCaption}</Text>
+      {history && active !== 'history' && <Text className={s.eyebrow} data-review-key="overview-history-count">
+        Closed work includes {history.completedPackages} completed features and {history.resolvedIdeas} resolved ideas.
+        Resolved ideas were not necessarily implemented.
+      </Text>}
+      {!!visible.length && <Text className={s.eyebrow}>Select a row and press Enter, or click it, to open that record in Context.</Text>}
+    </div>
+    {!visible.length ? <div className={mergeClasses(s.empty, s.workScroll)}>
+      <Text weight="semibold">{confirmedBlank(projection) ? 'No captured ideas yet' : 'No matching work'}</Text>
+      <Text>{confirmedBlank(projection) ? 'Use New idea to describe what you want to make.'
+        : 'Change the search or the Show selection. Nothing has been removed.'}</Text>
+    </div> : <div ref={scrollNode} className={s.workScroll}
+      onScroll={event => { retained.current = event.currentTarget.scrollTop; }}>
+      {compact ? <List navigationMode="items" aria-label="Recorded work">
+        {visible.map((row, index) => <ListItem key={row.ideaPath} value={index} id={`${listId}-row-${index}`}
+          className={s.workItem} aria-label={workRowLabel(row)} data-review-key={`work-row-${row.ideaPath}`}
+          onAction={open && (() => open(row.ideaPath))}>
+          <span className={s.workItemText}>
+            <Text weight="semibold">{row.title}</Text>
+            <Text className={s.eyebrow}>{row.status} · {workProgress(row)}</Text>
+            {row.detail && <Text className={s.eyebrow}>{row.detail}</Text>}
+            {row.note && <Text className={s.eyebrow}>{row.note}</Text>}
+          </span>
+        </ListItem>)}
+      </List> : <DataGrid aria-label="Recorded work" items={visible} columns={WORK_COLUMNS}
+        getRowId={row => row.ideaPath} focusMode="composite">
+        {/* Cells hold plain text only. Keeping them out of the focus order makes
+            the row the single navigable unit, so arrows move and Enter opens. */}
+        <DataGridHeader className={s.workHeader}><DataGridRow>
+          {({ columnId, renderHeaderCell }) => <DataGridHeaderCell focusMode="none"
+            className={mergeClasses(s.workCell, columnClasses[columnId])}>
+            {renderHeaderCell()}
+          </DataGridHeaderCell>}
+        </DataGridRow></DataGridHeader>
+        <DataGridBody>{({ item, rowId }) => <DataGridRow key={rowId} className={s.workRow}
+          aria-label={workRowLabel(item)} data-review-key={`work-row-${item.ideaPath}`}
+          onClick={open && (() => open(item.ideaPath))}
+          onKeyDown={event => {
+            // Arrow keys move focus only. Enter on the focused row is the one
+            // explicit activation, so nothing opens while you are still looking.
+            if (!open || event.key !== 'Enter' || event.target !== event.currentTarget) return;
+            event.preventDefault();
+            open(item.ideaPath);
+          }}>
+          {({ columnId, renderCell }) => <DataGridCell focusMode="none"
+            className={mergeClasses(s.workCell, columnClasses[columnId])}>
+            <div className={s.cellLayout}>{renderCell(item)}</div>
+          </DataGridCell>}
+        </DataGridRow>}</DataGridBody>
+      </DataGrid>}
+    </div>}
+  </section>;
+}
+
+function NeedsYou({ examples, noRequestsExample, query, onQuery, selected, onSelect, drafts, responseState }) {
+  const s = useStyles();
+  const rows = examples && !noRequestsExample ? EXAMPLES.filter(r =>
+    [r.title, r.subject, r.scope].some(text => text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))) : [];
+  return <div className={s.measure}>
+    <header className={s.detailHeader}>
+      <Text className={s.eyebrow}>Workspace-wide · independent of Context selection</Text>
+      <h1 className={s.title}>Needs you{examples ? ' · examples' : ''}</h1>
+      <p className={s.lead}>{examples ? 'Choose an example request to try its response.'
+        : 'Requests appear here when an active owner asks for your input.'}</p>
+    </header>
+    {examples && !noRequestsExample && <Field label="Search example requests">
+      <Input value={query} contentBefore={<SearchRegular />} onChange={(_, d) => onQuery(d.value)} />
+    </Field>}
+    {rows.length ? <Listbox className={s.requestList} aria-label="Example requests"
+      selectedOptions={selected ? [selected] : []} onOptionSelect={(_, d) => onSelect(d.optionValue)}>
+      {rows.map(r => <Option key={r.id} value={r.id} text={r.title} className={s.option}>
+        <span className={s.optionContent}>
+          <span className={s.optionTitle}>{r.title}</span>
+          <span>{r.type} · {r.scope}</span>
+          <span className={s.eyebrow}>{r.id === selected ? `Example: ${STATES.find(([key]) => key === responseState)?.[1]}` : 'Example request'}
+            {hasInput(drafts[r.id]) ? ' · Unsent response' : ''}</span>
+        </span>
+      </Option>)}
+    </Listbox> : <section className={s.stack}>
+      {!examples && <Notice intent="warning" title="Live requests are unavailable">
+        This static study has no owner handoff, so it cannot show a current request or establish that nothing needs you.
+      </Notice>}
+      <h2 className={s.subheading}>{noRequestsExample ? 'Example: no current requests'
+        : examples ? 'No matching example' : 'Nothing can be requested here'}</h2>
+      <p className={s.prose}>{noRequestsExample ? 'The simulated scope is fully read. Overview lists the recorded ideas and deferred work.'
+        : examples ? 'Try a different search.'
+          : 'The snapshot does not contain an admitted request feed. Overview lists the recorded work.'}</p>
+    </section>}
+  </div>;
+}
+
+// The focal region of the landing: what is being worked on now, and the one
+// existing action it actually offers. Review is offered only where the exact
+// canonical design record satisfies the same prerequisite Context enforces.
+function CurrentWork({ row, onOpen, onReview, reviewCondition, readOnly }) {
+  const s = useStyles();
+  const titleId = useId();
+  const progressId = useId();
+  const tasks = row.tasks;
+  const canonical = reviewablyCanonical(row.context);
+  const blocked = canonical ? reviewPrerequisite(reviewCondition) : null;
+  return <section className={s.focal} aria-labelledby={titleId} data-review-key={`overview-current-${row.ideaPath}`}>
+    <div className={s.between}>
+      <Text className={s.eyebrow}>Current work</Text>
+      <Badge appearance="tint" color={row.group === 'blocked' ? 'warning' : 'informative'}>{row.status}</Badge>
+    </div>
+    <h2 id={titleId} className={mergeClasses(s.title, s.overviewTitle)}>{row.title}</h2>
+    <div className={s.focalProgress}>
+      <Text id={progressId}>{tasks === null ? 'Task progress is not recorded for this record.'
+        : `${tasks.done} of ${tasks.total} tasks complete`}</Text>
+      {tasks !== null && tasks.total > 0 && <ProgressBar value={tasks.done} max={tasks.total}
+        aria-labelledby={`${titleId} ${progressId}`} aria-valuetext={`${tasks.done} of ${tasks.total} recorded tasks complete`} />}
+    </div>
+    <div className={s.focalStep}>
+      {canonical ? <>
+        <Text weight="semibold">Review the workspace layout</Text>
+        <Text className={s.quiet}>The design is open for review. Context holds the full task instructions.</Text>
+      </> : <Text className={s.quiet}>Open this record in Context for its captured intent and full task instructions.</Text>}
+      {blocked ? <Notice intent="warning" title="Simulated Review prerequisite">{blocked}</Notice> : null}
+      <div className={s.actions}>
+        {canonical && !blocked && <Button appearance="primary" icon={<CommentRegular />}
+          data-review-key="overview-review" onClick={readOnly ? undefined : onReview}>Review design</Button>}
+        <Button appearance={canonical && !blocked ? 'secondary' : 'primary'} aria-label={`Open ${row.title} in Context`}
+          onClick={readOnly ? undefined : () => onOpen(row.ideaPath)}>Open in Context</Button>
+      </div>
+    </div>
+  </section>;
+}
+
+function Overview({ snapshotKey, projection, onOpen, onNew, onReview, reviewCondition = 'editing',
+  finder, onFinder, finderScroll, readOnly = false }) {
+  const s = useStyles();
+  const sectionId = useId();
+  const unavailable = inventoryUnavailable(projection);
+  const error = unavailable ? null : workIndexError(OVERVIEW_DATA, snapshotKey, projection);
+  const index = error || unavailable ? null : OVERVIEW_DATA.snapshots[snapshotKey];
+  const rows = unavailable ? [] : workRows(projection, index);
+  const currentRows = index?.current
+    ? CURRENT_GROUPS.flatMap(([key]) => index.current[key]
+      .map(entry => rows.find(row => row.ideaPath === entry.ideaPath)).filter(Boolean))
+    : [];
+  const history = index?.state === 'current' ? index.summary : null;
+  return <div className={s.overview} data-review-key="overview">
+    <header className={s.between}>
+      <div className={s.detailHeader}>
+        <h1 className={s.title}>Overview</h1>
+        {index && <Text className={s.eyebrow}>
+          {SNAPSHOTS[snapshotKey].fixture ? 'Example snapshot' : 'Recorded snapshot'} · <time dateTime={index.readAt}>
+            {new Date(index.readAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+          </time> · Not live activity
+        </Text>}
+      </div>
+      <Button onClick={readOnly ? undefined : onNew} data-review-key="overview-new">New idea</Button>
+    </header>
+    {unavailable ? <Notice intent="error" title="Workspace inventory could not be read">
+      No recorded idea or feature can be listed from this source. This is not a blank workspace, and nothing has been removed.
+    </Notice> : confirmedBlank(projection) ? <section className={s.stack} aria-labelledby={`${sectionId}-empty`}>
+      <h2 id={`${sectionId}-empty`} className={s.subheading}>No recorded ideas or features yet</h2>
+      <p className={s.lead}>Describe what you want to make and the coordinator can capture it as a draft idea.</p>
+      <div className={s.actions}><Button appearance="primary" onClick={readOnly ? undefined : onNew}>New idea</Button></div>
+    </section> : <>
+      {currentRows.length ? <div className={s.stack} data-review-key="overview-current">
+        {currentRows.slice(0, 3).map(row => <CurrentWork key={row.ideaPath} row={row} onOpen={onOpen}
+          onReview={onReview} reviewCondition={reviewCondition} readOnly={readOnly} />)}
+        {currentRows.length > 3 && <Text className={s.eyebrow}>The remaining current records appear in the list below.</Text>}
+      </div> : index ? <Notice title={index.state === 'current' ? 'Nothing is in progress' : 'Work status is not recorded here'}>
+        {index.state === 'current' ? 'No record in this snapshot is marked as started. The list below holds everything that is recorded.'
+          : 'This snapshot records captured ideas only, so no record can be shown as started.'}
+      </Notice> : null}
+      <WorkList rows={rows} projection={projection} onOpen={onOpen} readOnly={readOnly}
+        history={history} workStatus={error} finder={finder} onFinder={onFinder} scrollRef={finderScroll} />
+    </>}
+  </div>;
+}
+
+function ContextDetail({ context, projection, snapshotKey, onReview, onOverview, readOnly = false, reviewCondition = 'editing' }) {
+  const s = useStyles();
+  const back = <Button className={s.back} icon={<ArrowLeftRegular />}
+    data-review-key="context-back" onClick={readOnly ? undefined : onOverview}>Back to Overview</Button>;
+  if (!context) return <div className={s.measure}>
+    {back}
+    <h1 className={s.title}>No record is selected</h1>
+    <p className={s.lead}>Overview lists every recorded idea and feature. Open one there and its detail appears here.</p>
+    <div className={s.actions}>
+      <Button appearance="primary" onClick={readOnly ? undefined : onOverview}>Go to Overview</Button>
+    </div>
+  </div>;
+  const canonical = context.ideaPath === OWNER;
+  const boundary = RECORDED_BOUNDARIES[context.ideaPath];
+  const resolved = context.status === 'resolved';
+  const draft = context.kind === 'idea' && context.status === 'draft' && !context.specPath;
+  const defined = context.kind === 'feature' && context.status === 'defined' && !!context.specPath;
+  const terminal = resolved || ['closed', 'complete', 'completed'].includes(context.status) || boundary?.terminal;
+  const index = workIndexError(OVERVIEW_DATA, snapshotKey, projection) ? null : OVERVIEW_DATA.snapshots[snapshotKey];
+  const recorded = index?.items.find(item => item.ideaPath === context.ideaPath) || null;
+  const blocked = reviewablyCanonical(context) ? reviewPrerequisite(reviewCondition) : null;
+  return <div className={s.measure}>
+    {back}
+    <header className={s.detailHeader}>
+      <Text className={s.eyebrow} data-review-key="context-kind">{terminal ? `${contextKind(context)} · ${contextState(context)}`
+        : draft ? 'Draft idea' : defined ? 'Defined feature' : context.kind === 'feature' ? 'Feature context' : 'Idea context'}</Text>
+      <h1 className={s.title} data-review-key="context-title">{context.title}</h1>
+      <SourceIdentity context={context} />
+      {canonical && <p className={s.lead} data-review-key="context-purpose">Find what needs your input. Respond without losing the work you were doing.</p>}
+    </header>
+    {recorded && <div className={s.row} data-review-key="context-work-status">
+      <Text weight="semibold">{recorded.resolved ? 'Resolved' : WORK_GROUPS[recorded.group].label}</Text>
+      <Text className={s.quiet}>{recorded.taskCounts
+        ? `${recorded.taskCounts.done} of ${recorded.taskCounts.total} tasks complete`
+        : 'Task progress is not recorded for this record.'}</Text>
+    </div>}
+    {canonical && !terminal && <section className={s.stack}>
+      <div className={s.between}>
+        <h2 className={s.subheading} data-review-key="next-heading">Review the workspace layout</h2>
+        <Badge appearance="tint" color="informative">Exploring · {REVISION}</Badge>
+      </div>
+      <p className={s.prose} data-review-key="next-summary">The design is open for review. Try finding work in the Overview list, open a record here, then mark the parts of this proposal that need to change.</p>
+      {blocked ? <Notice intent="warning" title="Simulated Review prerequisite">{blocked}</Notice>
+        : <div className={s.actions} data-review-key="review-entry">
+        <Button appearance="primary" icon={<CommentRegular />} onClick={readOnly ? undefined : onReview}>Review this layout</Button>
+        <Text className={s.eyebrow}>Design artifact · no live approval request</Text>
+      </div>}
+      <Disclosure title="Full task instructions">
+        <p className={s.instruction} data-review-key="task-instruction">{projection.next?.description || CURRENT.next?.description}</p>
+        <Text className={s.eyebrow}>Canonical task text from the recorded snapshot. The short heading above is a display summary.</Text>
+      </Disclosure>
+    </section>}
+    {boundary ? <div className={s.scope}>
+      <Text weight="semibold">{boundary.title}</Text><Text>{boundary.text}</Text><Text className={s.eyebrow}>{boundary.source}</Text>
+    </div> : terminal && <Notice intent="success" title={resolved ? 'Resolved in the source' : 'Closed in the source'}>
+      {resolved ? `This idea is closed.${!context.specPath ? ' No active feature package is recorded.' : ''} No reopen or Define action is offered.`
+        : 'This entry is retained for discovery. It does not reopen work.'}
+    </Notice>}
+    <section className={s.stack}>
+      <h2 className={s.subheading}>{context.status === 'draft' ? 'What you wanted to do' : 'Captured intent'}</h2>
+      <p className={s.prose} data-review-key="captured-intent">{context.intent?.text || 'No intent excerpt in this snapshot.'}</p>
+      {context.intent?.truncated && <Text className={s.eyebrow}>Only an excerpt is shown. The recorded idea file above holds the original.</Text>}
+    </section>
+    {draft && !terminal && <Disclosure title="Before visual review">
+      <p className={s.prose}>Define this idea explicitly before reviewing a canonical mock. This draft has no exactly owned design package; no artboard or review storage is created.</p>
+    </Disclosure>}
+    {!!context.dispositions?.length && <Disclosure title="Recorded owner dispositions">
+      <div className={s.stack}>{context.dispositions.map((d, i) => <section className={s.stack} key={`${d.source?.section}-${i}`}>
+        <Text weight="semibold">{d.source?.section || 'Source excerpt'}</Text>
+        <p className={s.prose}>{d.text}</p>
+        <Text className={s.eyebrow}>{d.truncated ? 'Excerpt only. ' : ''}Attributed source text, not an inferred current request.</Text>
+      </section>)}</div>
+    </Disclosure>}
+    {canonical && !readOnly && <Disclosure title="Recorded design observation">
+      <div className={s.stack}>
+        <p className={s.prose}>The full Next step instruction was disproportionately large and bold. This proposal gives the subject a heading and keeps complete instructions at body size.</p>
+        <Text className={s.eyebrow}>Read-only, source-backed typography flag · .dude/memory/context.md. It is not unsaved input and cannot be saved as another idea.</Text>
+      </div>
+    </Disclosure>}
+  </div>;
+}
+
+function WorkspaceDocument() {
+  const s = useStyles();
+  const viewId = useId();
+  return <div className={mergeClasses(s.subject, s.product, s.overviewDocument)} aria-label={`Read-only ${REVISION} workspace proposal`}>
+    <div className={s.titlebar} data-review-key="workspace-heading"><Text weight="semibold">Dude Canvas</Text><Text className={s.eyebrow}>Needs you workspace</Text></div>
+    <CommandBar view="overview" viewId={viewId} readOnly />
+    <StatusStrip>Recorded snapshot · Live requests unavailable · Nothing here is sent or saved</StatusStrip>
+    <div className={mergeClasses(s.detail, s.sourceDetail, s.overviewDocumentContent)}>
+      <WorkspaceViewPanels view="overview" viewId={viewId}>
+        <Overview snapshotKey="workspace" projection={CURRENT} readOnly />
+      </WorkspaceViewPanels>
+    </div>
+  </div>;
+}
+
+function RequestForm({ request, value, onChange, responseState, permission, reviewCondition, onReview, onApprove, onPrepared, onDefer }) {
+  const s = useStyles();
+  const deferFocusTarget = useRestoreFocusTarget();
+  const [attempted, setAttempted] = useState(false);
+  const editable = responseState === 'current' || responseState === 'responding';
+  const reviewUnavailable = ['missing', 'owner', 'draft'].includes(reviewCondition);
+  const set = (key, val) => { onChange({ ...value, [key]: val }); };
+  const target = permission === 'applicable-b' ? 'EXAMPLE-B' : 'EXAMPLE-A';
+  const phrase = `remove ${target} claim and checkpoint`;
+  const invalid = request.id === 'onboarding' ? !value.intent?.trim()
+    : request.id === 'fact' ? !value.answer?.trim()
+      : request.id === 'manual_observation' ? !value.outcome || !value.observation?.trim()
+        : request.id === 'scope_choice' ? !value.choice
+          : request.id === 'permission' ? value.phrase !== phrase : false;
+  const required = key => attempted && !value[key]?.trim() ? { validationState: 'error', validationMessage: 'Enter a response before preparing it.' } : {};
+  const prepare = e => {
+    e.preventDefault();
+    setAttempted(true);
+    if (invalid) {
+      const form = e.currentTarget;
+      requestAnimationFrame(() => form.querySelector('[aria-invalid="true"]')?.focus());
+      return;
+    }
+    onPrepared({
+      title: request.id === 'permission' ? 'Permission response prepared' : request.id === 'onboarding' ? 'Idea capture prepared' : 'Response prepared',
+      description: request.id === 'permission' ? `Only the ${target} claim and checkpoint pair is in scope. This simulated confirmation grants no real permission.`
+        : request.id === 'onboarding' ? 'The coordinator would match or capture this intent through brainstorm. No idea has been saved.'
+          : 'The requesting owner would receive this response for evaluation. Nothing has been sent or applied.',
+      payload: { class: request.id, example: true, ...value },
+    });
+  };
+  return <div className={s.measure}>
+    <header className={s.detailHeader}>
+      <Text className={s.eyebrow}>Example request · {request.type} · {request.subject}</Text>
+      <h1 className={s.title}>{request.title}</h1>
+      <Text>Source context: {request.scope}</Text>
+      <p className={s.lead}>{request.why}</p>
+    </header>
+    {responseState !== 'current' && <Notice intent={STATE_COPY[responseState][0]} title={`Simulated · ${STATE_COPY[responseState][1]}`}>{STATE_COPY[responseState][2]}</Notice>}
+    {!editable ? <div className={s.stack}>
+      {hasInput(value) && <Disclosure title="Retained response"><pre className={s.code}>{JSON.stringify(value, null, 2)}</pre></Disclosure>}
+      {!isTerminal(responseState) && <Text className={s.quiet}>Use Preview controls to inspect a fresh-request example. This state does not revive the prior request.</Text>}
+    </div> : <form className={s.stack} onSubmit={prepare} noValidate>
+      {request.id === 'onboarding' && <>
+        <Field label="What outcome do you want?" required {...required('intent')}>
+          <Textarea value={value.intent || ''} onChange={(_, d) => set('intent', d.value)} rows={5} resize="vertical" />
+        </Field>
+        <Disclosure title="Remaining onboarding question (example)">
+          <Field label="What should happen after capture?">
+            <RadioGroup value={value.next || ''} onChange={(_, d) => set('next', d.value)}>
+              <Radio value="define" label="Define the idea first" />
+              <Radio value="implement" label="Ask the coordinator about implementation" />
+            </RadioGroup>
+          </Field>
+          <Text className={s.eyebrow}>Only ask this if the entered intent has not already answered it. Capture itself authorizes neither option.</Text>
+        </Disclosure>
+      </>}
+      {request.id === 'fact' && <>
+        <Field label="Your answer" required {...required('answer')}>
+          <Textarea value={value.answer || ''} onChange={(_, d) => set('answer', d.value)} rows={4} resize="vertical"
+            placeholder="Describe the repository boundary you want." />
+        </Field>
+        <Text className={s.eyebrow}>The recorded decision was to copy the HTML subset and leave the external repository untouched. This form replays the interaction, not an unanswered question.</Text>
+      </>}
+      {request.id === 'preview' && <>
+        <div className={s.scope}>
+          <Text weight="semibold">Needs You workspace · {REVISION}</Text>
+          <code className={s.code}>{ARTIFACT}</code>
+          <Text>Approval would apply only to this design revision, not production implementation.</Text>
+        </div>
+        {reviewUnavailable ? <Notice intent="warning" title="Review prerequisite">
+          {reviewCondition === 'missing' ? 'Example: the canonical mock is missing. Restore the exact artifact before Review.'
+            : reviewCondition === 'owner' ? 'Example: ownership is ambiguous. Resolve the exact spec owner before opening writable Review.'
+              : 'Example: this draft needs explicit definition and an exactly owned mock before Review.'}
+        </Notice> : <div className={s.actions}>
+          <Button appearance="primary" icon={<CommentRegular />} onClick={onReview}>Open Review</Button>
+          <Button onClick={onApprove} disabled={reviewCondition === 'drift'}>Approval…</Button>
+          <Button {...deferFocusTarget} type="button" onClick={onDefer}>Continue later…</Button>
+        </div>}
+      </>}
+      {request.id === 'manual_observation' && <>
+        <div className={s.scope}>
+          <Text weight="semibold">Historical host-step example · 052/055</Text>
+          <Text>There is no current installed-build revision or host instruction in this snapshot. Do not restart your host for this example.</Text>
+          <ol>
+            <li>In an admitted request, verify the exact owner-named installed revision.</li>
+            <li>Reopen the same Canvas only when the host step is authorized outside an active Work invocation.</li>
+            <li>Report the first visible content and anything unexpected.</li>
+          </ol>
+        </div>
+        <Field label="What happened?" required validationState={attempted && !value.outcome ? 'error' : 'none'}
+          validationMessage={attempted && !value.outcome ? 'Choose an outcome.' : undefined}>
+          <RadioGroup value={value.outcome || ''} onChange={(_, d) => set('outcome', d.value)}>
+            <Radio value="completed" label="Completed the named steps" />
+            <Radio value="problem" label="Encountered a problem" />
+            <Radio value="observation" label="Observation only" />
+          </RadioGroup>
+        </Field>
+        <Field label="What did you see?" required {...required('observation')}>
+          <Textarea value={value.observation || ''} onChange={(_, d) => set('observation', d.value)} rows={4} resize="vertical" />
+        </Field>
+      </>}
+      {request.id === 'permission' && <>
+        <div className={s.scope}>
+          <Text weight="semibold">{permission === 'missing' ? 'Historical pair · T001@055ci001' : `Applicable contract example · ${target}`}</Text>
+          <Text>Targets: the claim and its matching checkpoint, and no other records.</Text>
+          <Text>Effect: remove this pair. The operation owner must revalidate safety and decide whether a fresh claim is allowed. No invocation is revived.</Text>
+        </div>
+        {permission === 'missing' ? <Notice intent="warning" title="Technical eligibility is unavailable">
+          The historical “none active” statement is testimony, not proof that the supervisor is absent. The stop remains. There is no useful confirmation to type.
+        </Notice> : <>
+          <Text className={s.eyebrow}>Form demonstration only: assume the example owner has supplied current exact-pair and supervisor-absence evidence. No such technical proof is asserted for this workspace.</Text>
+          <Field label={`Type exactly: ${phrase}`} required validationState={attempted && invalid ? 'error' : 'none'}
+            validationMessage={attempted && invalid ? 'The literal input must match exactly, including spaces and case.' : undefined}>
+            <Input value={value.phrase || ''} onChange={(_, d) => set('phrase', d.value)} autoComplete="off" spellCheck={false} />
+          </Field>
+        </>}
+      </>}
+      {request.id === 'scope_choice' && <>
+        <Field label="Choose an outcome" required validationState={attempted && !value.choice ? 'error' : 'none'}
+          validationMessage={attempted && !value.choice ? 'Choose one outcome.' : undefined}>
+          <RadioGroup value={value.choice || ''} onChange={(_, d) => set('choice', d.value)}>
+            <Radio value="separate" label="Keep cleanup separate; continue the browser-reliability scope" />
+            <Radio value="revisit" label="Revisit scope with the coordinator before continuing" />
+          </RadioGroup>
+        </Field>
+        <Field label="Anything the owner should consider?">
+          <Textarea value={value.note || ''} onChange={(_, d) => set('note', d.value)} rows={3} resize="vertical" />
+        </Field>
+        <Text className={s.eyebrow}>The recorded 056 idea stays discoverable. This example adds no Resume permission and cannot reopen closed 052 or 055 work.</Text>
+      </>}
+      {(request.id !== 'preview' || reviewUnavailable) && <div className={s.actions}>
+        {request.id !== 'preview' && !(request.id === 'permission' && permission === 'missing') &&
+          <Button appearance="primary" type="submit">{request.id === 'onboarding' ? 'Prepare idea capture'
+            : request.id === 'manual_observation' ? 'Prepare observation' : request.id === 'permission' ? 'Prepare this permission' : 'Prepare response'}</Button>}
+        <Button {...deferFocusTarget} type="button" onClick={onDefer}>Continue later…</Button>
+      </div>}
+    </form>}
+    <Disclosure title="Request context">
+      <div className={s.stack}>
+        <Text>{request.owner}</Text>
+        <p className={s.prose}>{SPEC} § {request.source}</p>
+        <Text className={s.eyebrow}>Examples are based on accepted coverage and recorded scenarios. They are not current requests, assigned owners, eligibility evidence, or live receipt states.</Text>
+      </div>
+    </Disclosure>
+  </div>;
+}
+
+function NewIdea({ value, onChange, onCancel }) {
+  const s = useStyles();
+  const [action, setAction] = useState(null);
+  const invalid = action !== null && !value.intent?.trim();
+  return <form className={s.measure} noValidate onSubmit={e => {
+    e.preventDefault();
+    setAction(e.nativeEvent.submitter?.value === 'save' ? 'save' : 'submit');
+    if (!value.intent?.trim()) e.currentTarget.querySelector('textarea')?.focus();
+  }}>
+    <header className={s.detailHeader}><Text className={s.eyebrow}>New idea · unsaved in this tab</Text>
+      <h1 className={s.title}>What would you like to make?</h1>
+      <p className={s.lead}>Describe your idea, then Submit for brainstorming or Save a draft for later.</p>
+    </header>
+    <Field label="Your idea" required validationState={invalid ? 'error' : 'none'}
+      validationMessage={invalid ? 'Describe your idea before submitting or saving.' : undefined}>
+      <Textarea rows={7} resize="vertical" value={value.intent || ''} onChange={(_, d) => {
+        setAction(null); onChange({ intent: d.value });
+      }} />
+    </Field>
+    <div className={s.actions}>
+      <Button appearance="primary" type="submit">Submit</Button>
+      <Button type="submit" value="save">Save</Button>
+      <Button type="button" onClick={onCancel}>Cancel</Button>
+    </div>
+    <div className={s.tight}>
+      <Text className={s.eyebrow}>Cancel keeps your text in this tab until you reload or close it.</Text>
+      <Text className={s.eyebrow}>Prototype only: nothing is submitted or saved.</Text>
+      <div role="status">
+        {action && !invalid && <Notice title={action === 'submit' ? 'Submit preview' : 'Save preview'}>
+          {action === 'submit'
+            ? 'This would send your idea to Dude for brainstorming. Nothing was submitted or saved.'
+            : 'This would capture a draft for later without continuing the discussion. Nothing was submitted or saved.'}
+        </Notice>}
+      </div>
+    </div>
+  </form>;
+}
+
+function PreparationDialog({ result, onClose }) {
+  const s = useStyles();
+  return <Dialog open={!!result} onOpenChange={(_, d) => !d.open && onClose()}>
+    <DialogSurface className={s.dialog}><DialogBody>
+      <DialogTitle>{result?.title}</DialogTitle>
+      <DialogContent className={s.stack}>
+        <Notice title="Prepared · not sent">{result?.description}</Notice>
+        {result?.report && <p className={s.prose}>{result.report}</p>}
+        {result?.payload && <Disclosure title="Prepared response (literal input)"><pre className={s.code}>{JSON.stringify(result.payload, null, 2)}</pre></Disclosure>}
+      </DialogContent>
+      <DialogActions><Button appearance="primary" onClick={onClose}>Keep editing</Button></DialogActions>
+    </DialogBody></DialogSurface>
+  </Dialog>;
+}
+
+function IntentDialog({ kind, text, onClose, onPrepared, onSave, sourceBacked }) {
+  const s = useStyles();
+  const [intent, setIntent] = useState(text || '');
+  const [error, setError] = useState(false);
+  return <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+    <DialogSurface className={s.dialog}><DialogBody>
+      <DialogTitle>{kind === 'save' ? 'Save selected intent as an idea' : 'Continue this later?'}</DialogTitle>
+      <DialogContent className={s.stack}>
+        {kind === 'save' ? <>
+          <Text>Choose the intent to capture through brainstorm. The owner would check for an existing match; capture would not define or start work.</Text>
+          <Field label="Intent to retain" required validationState={error ? 'error' : 'none'} validationMessage={error ? 'Enter the intent you want captured.' : undefined}>
+            <Textarea autoFocus value={intent} onChange={(_, d) => setIntent(d.value)} rows={5} resize="vertical" />
+          </Field>
+        </> : <Text>{sourceBacked
+          ? 'The agent would mark this for later using its existing record. Nothing changes until the agent confirms it.'
+          : "This idea hasn't been saved. Save it as an idea to keep it for later, or keep it open in this tab. Unsaved text will be lost if you reload or close the tab."}</Text>}
+        {kind === 'defer' && <Text className={s.eyebrow}>Prototype only: nothing is saved or sent.</Text>}
+      </DialogContent>
+      <DialogActions fluid>
+        <Button onClick={onClose}>Cancel</Button>
+        {kind === 'defer' && !sourceBacked && <Button onClick={onSave}>Save as idea…</Button>}
+        <Button appearance="primary" onClick={() => {
+          if (kind === 'save' && !intent.trim()) { setError(true); return; }
+          onPrepared({ title: kind === 'save' ? 'Idea capture prepared' : 'Preview: continue later',
+            description: kind === 'save' ? 'Not saved. Capture requires owner acknowledgment and a reread of the canonical idea.'
+              : sourceBacked ? 'Nothing has changed yet. The agent would mark this for later using its existing record.' : 'Nothing was saved or sent. Your text is still only in this tab.',
+            payload: kind === 'save' ? { action: 'save_as_idea', intent }
+              : { action: 'defer', sourceBacked, ...(!sourceBacked ? { intent } : {}) } });
+          onClose();
+        }}>{kind === 'save' ? 'Prepare capture' : 'Continue later'}</Button>
+      </DialogActions>
+    </DialogBody></DialogSurface>
+  </Dialog>;
+}
+
+function ApprovalDialog({ onClose, onPrepared, reviewed, stale }) {
+  const s = useStyles();
+  const [confirmed, setConfirmed] = useState(false);
+  return <Dialog open onOpenChange={(_, d) => !d.open && onClose()}>
+    <DialogSurface className={s.dialog}><DialogBody>
+      <DialogTitle>Approval of {REVISION}</DialogTitle>
+      <DialogContent className={s.stack}>
+        <div className={s.scope}><Text weight="semibold">Dude Canvas Needs You · {REVISION}</Text><code className={s.code}>{ARTIFACT}</code>
+          <Text>Only this mock revision is in scope. Sending annotations is not approval; future revisions inherit nothing.</Text></div>
+        {!reviewed || stale ? <Notice intent="warning" title="Review this revision first">{stale ? 'Source or layout binding changed. Fresh review is required.' : 'Open Review before preparing an approval response.'}</Notice>
+          : <Checkbox checked={confirmed} onChange={(_, d) => setConfirmed(d.checked === true)} label={`I intend to approve this exact ${REVISION} design in the example`} />}
+        <Text className={s.eyebrow}>The real approval checkpoint remains with the coordinator. This form cannot approve the design or authorize production edits.</Text>
+      </DialogContent>
+      <DialogActions><Button onClick={onClose}>Cancel</Button><Button appearance="primary" disabled={!reviewed || stale || !confirmed}
+        onClick={() => { onPrepared({ title: 'Approval response prepared', description: 'Not approved or sent. The coordinator must obtain and record explicit approval through the existing design-owner path.',
+          payload: { class: 'preview', decision: 'approve', revision: REVISION, artifact: ARTIFACT, example: true } }); onClose(); }}>Prepare approval</Button></DialogActions>
+    </DialogBody></DialogSurface>
+  </Dialog>;
+}
+
+function PreviewHarness({ settings, onChange, onNewExample }) {
+  const s = useStyles();
+  return <aside className={s.harness} aria-label="Prototype preview controls">
+    <Accordion collapsible>
+      <AccordionItem value="preview">
+        <AccordionHeader>Preview controls · {REVISION} · unapproved</AccordionHeader>
+        <AccordionPanel className={s.harnessBody}>
+          <Text>Simulation only. Product data and response examples are separate; changing a state does not send, save, or acknowledge anything.</Text>
+          <div className={s.harnessGrid}>
+            <SelectField label="Snapshot" value={settings.snapshot} onChange={v => onChange('snapshot', v)}
+              options={Object.entries(SNAPSHOTS).map(([key, value]) => [key, value.label])} />
+            <SelectField label="Requests" value={settings.mode} onChange={v => onChange('mode', v)}
+              options={[['actual', 'Actual snapshot'], ['examples', 'Labelled request examples']]} />
+            <SelectField label="Theme" value={settings.theme} onChange={v => onChange('theme', v)} options={['light', 'dark']} />
+            <SelectField label="Viewport" value={settings.width} onChange={v => onChange('width', v)}
+              options={[['fluid', 'Fit window'], ['360', '360 px'], ['768', '768 px'], ['1440', '1440 px']]} />
+          </div>
+          <div className={s.harnessGrid}>
+            <SelectField label="Coverage view" value={settings.coverage} onChange={v => onChange('coverage', v)}
+              options={[['actual', 'Actual source coverage'], ['loading', 'Example: loading'], ['current', 'Example: no current requests'], ['partial', 'Example: partial'], ['stale', 'Example: stale'], ['unavailable', 'Example: unavailable']]} />
+            <SelectField label="Response state (examples)" value={settings.response} onChange={v => onChange('response', v)} options={STATES} />
+            <SelectField label="Permission scenario" value={settings.permission} onChange={v => onChange('permission', v)}
+              options={[['missing', 'Historical: eligibility missing'], ['applicable-a', 'Applicable contract example A'], ['applicable-b', 'Changed target: example B']]} />
+            <SelectField label="Review scenario" value={settings.review} onChange={v => onChange('review', v)}
+              options={[['editing', 'Editing'], ['capture', 'Capture failure'], ['sealed', 'Sealed evidence example'], ['drift', 'Source / asset drift'],
+                ['missing', 'Missing mock'], ['owner', 'Ambiguous owner'], ['draft', 'Define first']]} />
+          </div>
+          <Button onClick={onNewExample}>Open unsaved idea input</Button>
+          <Text className={s.eyebrow}>Coverage and response states prefixed “Example” never replace the snapshot’s live-unavailable evidence. Smaller viewport settings constrain this surface; they do not resize the browser.</Text>
+        </AccordionPanel>
+      </AccordionItem>
+    </Accordion>
+  </aside>;
+}
+
+// Geometry is document-root-relative. Lines retain both endpoints and direction.
+function shapeBetween(type, a, b) {
+  return { type, x: Math.min(a.x, b.x), y: Math.min(a.y, b.y),
+    w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y), x1: a.x, y1: a.y, x2: b.x, y2: b.y };
+}
+function shapeFromBounds(annotation, change) {
+  const a = { ...annotation, ...change };
+  if (a.type === 'line' || a.type === 'arrow') {
+    const reverseX = annotation.x1 > annotation.x2, reverseY = annotation.y1 > annotation.y2;
+    return { ...a, x1: reverseX ? a.x + a.w : a.x, x2: reverseX ? a.x : a.x + a.w,
+      y1: reverseY ? a.y + a.h : a.y, y2: reverseY ? a.y : a.y + a.h };
+  }
+  return a;
+}
+function shapeContains(a, point) {
+  const tolerance = 8;
+  if (a.type === 'comment') return Math.hypot(point.x - a.x, point.y - a.y) <= 16;
+  if (a.type === 'line' || a.type === 'arrow') {
+    const dx = a.x2 - a.x1, dy = a.y2 - a.y1;
+    const t = Math.max(0, Math.min(1, ((point.x - a.x1) * dx + (point.y - a.y1) * dy) / (dx * dx + dy * dy || 1)));
+    return Math.hypot(point.x - a.x1 - t * dx, point.y - a.y1 - t * dy) <= tolerance;
+  }
+  if (a.type === 'circle') {
+    const rx = Math.max(1, a.w / 2), ry = Math.max(1, a.h / 2);
+    return Math.abs(Math.hypot((point.x - a.x - rx) / rx, (point.y - a.y - ry) / ry) - 1) <= tolerance / Math.min(rx, ry);
+  }
+  const inside = point.x >= a.x - tolerance && point.x <= a.x + a.w + tolerance &&
+    point.y >= a.y - tolerance && point.y <= a.y + a.h + tolerance;
+  return inside && (a.type === 'highlight' || Math.min(Math.abs(point.x - a.x), Math.abs(point.x - a.x - a.w),
+    Math.abs(point.y - a.y), Math.abs(point.y - a.y - a.h)) <= tolerance);
+}
+function visibleWithinDocument(element, root) {
+  const b = element.getBoundingClientRect();
+  if (!b.width || !b.height) return false;
+  // A clipped list row must not become an invisible target in the picker.
+  let parent = element.parentElement;
+  while (parent) {
+    const style = getComputedStyle(parent), clip = parent.getBoundingClientRect();
+    if (parent === root || ['hidden', 'auto', 'scroll', 'clip'].includes(style.overflowY)) {
+      if (b.top < clip.top - 1 || b.bottom > clip.bottom + 1) return false;
+    }
+    if (parent === root || ['hidden', 'auto', 'scroll', 'clip'].includes(style.overflowX)) {
+      if (b.left < clip.left - 1 || b.right > clip.right + 1) return false;
+    }
+    if (parent === root) break;
+    parent = parent.parentElement;
+  }
+  return true;
+}
+function anchorCapture(element, root) {
+  const key = element?.getAttribute('data-review-key');
+  if (!key || !root?.contains(element)) return null;
+  const selector = `#review-document [data-review-key="${CSS.escape(key)}"]`;
+  const matches = root.querySelectorAll(`[data-review-key="${CSS.escape(key)}"]`).length;
+  if (matches !== 1) return null;
+  const box = element.getBoundingClientRect(), base = root.getBoundingClientRect();
+  const style = getComputedStyle(element);
+  return { selector, key, matches, text: element.textContent,
+    style: { fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight, lineHeight: style.lineHeight, color: style.color, backgroundColor: style.backgroundColor },
+    bounds: { x: box.left - base.left, y: box.top - base.top, w: box.width, h: box.height } };
+}
+
+function AnnotationShape({ annotation: a, index }) {
+  const s = useStyles();
+  if (a.type === 'comment') return <g>
+    <circle className={s.marker} cx={a.x} cy={a.y} r="12" />
+    <text className={s.markerText} x={a.x} y={a.y} textAnchor="middle" dominantBaseline="central">{index + 1}</text>
+  </g>;
+  if (a.type === 'box' || a.type === 'highlight') return <rect className={a.type === 'box' ? s.shape : s.highlight} x={a.x} y={a.y} width={a.w} height={a.h} rx="2" />;
+  if (a.type === 'circle') return <ellipse className={s.shape} cx={a.x + a.w / 2} cy={a.y + a.h / 2} rx={Math.max(1, a.w / 2)} ry={Math.max(1, a.h / 2)} />;
+  const angle = Math.atan2(a.y2 - a.y1, a.x2 - a.x1), size = 10;
+  const points = `${a.x2},${a.y2} ${a.x2 - size * Math.cos(angle - 0.5)},${a.y2 - size * Math.sin(angle - 0.5)} ${a.x2 - size * Math.cos(angle + 0.5)},${a.y2 - size * Math.sin(angle + 0.5)}`;
+  return <g><line className={s.shape} x1={a.x1} y1={a.y1} x2={a.x2} y2={a.y2} />{a.type === 'arrow' && <polygon className={s.arrowHead} points={points} />}</g>;
+}
+
+function AnnotationInspector({ items, selected, onSelect, onEdit, onBeginEdit, onDelete,
+  noteRef, selectionMemory, onRememberSelection, active, stale, mobile }) {
+  const s = useStyles();
+  const a = items.find(item => item.id === selected);
+  const annotationId = a?.id;
+  useLayoutEffect(() => {
+    const note = noteRef.current;
+    if (!active || !note || !annotationId) return;
+    const remembered = selectionMemory.current;
+    if (remembered?.id === annotationId) {
+      note.focus({ preventScroll: true });
+      note.setSelectionRange(remembered.start, remembered.end, remembered.direction);
+    }
+    // Keep the actual node: a mobile drawer clears its ref when it unmounts.
+    return () => onRememberSelection(note, annotationId);
+  }, [active, annotationId, noteRef, selectionMemory, onRememberSelection]);
+  return <div className={mobile ? s.drawerComments : s.commentLayout}>
+    <Listbox aria-label="Annotations" className={s.commentList} selectedOptions={selected ? [selected] : []} onOptionSelect={(_, d) => onSelect(d.optionValue)}>
+      {items.map((item, i) => <Option className={s.option} key={item.id} value={item.id} text={`${i + 1}. ${item.type}`}>
+        <span className={s.optionContent}><span>{i + 1}. {item.type.charAt(0).toUpperCase() + item.type.slice(1)}</span>
+          <span className={s.eyebrow}>{item.note ? item.note.split('\n')[0].slice(0, 64) : 'No comment yet'}</span></span>
+      </Option>)}
+    </Listbox>
+    {a ? <div className={s.commentEditor}>
+      <div className={s.between}><Text weight="semibold">Annotation {items.indexOf(a) + 1} · {a.type}</Text>
+        <Button appearance="subtle" icon={<DeleteRegular />} onClick={() => onDelete(a.id)} disabled={stale}>Delete selected</Button></div>
+      <Field label="Comment">
+        <Textarea key={a.id} ref={noteRef} className={s.control} value={a.note} onFocus={onBeginEdit} onChange={(_, d) => onEdit(a.id, { note: d.value })}
+          rows={3} resize="vertical" readOnly={stale} />
+      </Field>
+      <Disclosure title="Text, style & geometry">
+        <div className={s.stack}>
+          {a.anchor && <>
+            <Text className={s.eyebrow}>Unique captured target · {a.anchor.matches} match</Text>
+            <code className={s.code}>{a.anchor.selector}</code>
+            <Disclosure title="Captured text and computed style"><pre className={s.code}>{JSON.stringify({ text: a.anchor.text, style: a.anchor.style }, null, 2)}</pre></Disclosure>
+            <Field label="Suggested replacement text">
+              <Textarea className={s.control} value={a.replacement || ''} onFocus={onBeginEdit} onChange={(_, d) => onEdit(a.id, { replacement: d.value })} rows={2} readOnly={stale} />
+            </Field>
+            <Field label="Suggested style change">
+              <Input className={s.control} value={a.styleNote || ''} onFocus={onBeginEdit} onChange={(_, d) => onEdit(a.id, { styleNote: d.value })} readOnly={stale} />
+            </Field>
+          </>}
+          <Text className={s.eyebrow}>Geometry in CSS pixels from the reviewed document root. Suggestions do not edit the source.</Text>
+          <div className={s.geometry}>{(a.type === 'comment' ? ['x', 'y'] : ['x', 'y', 'w', 'h']).map(key =>
+            <Field label={{ x: 'X', y: 'Y', w: 'Width', h: 'Height' }[key]} key={key}>
+              <Input className={s.control} type="number" min={0} value={String(Math.round(a[key] || 0))} readOnly={stale} onFocus={onBeginEdit}
+                onChange={(_, d) => { const n = Number(d.value); if (d.value !== '' && Number.isFinite(n) && n >= 0) onEdit(a.id, shapeFromBounds(a, { [key]: n })); }} />
+            </Field>)}</div>
+        </div>
+      </Disclosure>
+    </div> : <Text className={s.quiet}>Choose an annotation to edit its comment.</Text>}
+  </div>;
+}
+
+function ReviewEditor({ active, onReturn, condition, onConditionReset, theme, onPrepared, onStaleChange }) {
+  const s = useStyles();
+  const [tool, setTool] = useState('select');
+  const [items, setItems] = useState([]);
+  const [past, setPast] = useState([]);
+  const [future, setFuture] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [targets, setTargets] = useState([]);
+  const [targetKey, setTargetKey] = useState('');
+  const [targetQuery, setTargetQuery] = useState('');
+  const [targetCapture, setTargetCapture] = useState(null);
+  const [draft, setDraft] = useState(null);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [mobile, setMobile] = useState(false);
+  const [invalidated, setInvalidated] = useState(false);
+  const [archives, setArchives] = useState([]);
+  const [message, setMessage] = useState('');
+  const [binding, setBinding] = useState(null);
+  const wrapperRef = useRef(null), rootRef = useRef(null), scrollRef = useRef(null), noteRef = useRef(null);
+  const counter = useRef(0), drag = useRef(null), itemsRef = useRef(items), sizeRef = useRef(null);
+  const focusMemory = useRef(null), themeRef = useRef(theme), activeRef = useRef(active);
+  const rememberSelection = useCallback((note, id) => {
+    if (!note || !id) return;
+    focusMemory.current = { id, start: note.selectionStart, end: note.selectionEnd, direction: note.selectionDirection };
+  }, []);
+  function changeCommentsOpen(open) {
+    if (!open) rememberSelection(noteRef.current, selected);
+    setCommentsOpen(open);
+  }
+  const stale = invalidated || condition === 'drift';
+  itemsRef.current = items;
+  activeRef.current = active;
+  useEffect(() => { onStaleChange(stale); }, [stale, onStaleChange]);
+
+  function sourceBinding() {
+    const root = rootRef.current, box = root?.getBoundingClientRect();
+    return { artifact: ARTIFACT, revision: REVISION, owner: OWNER, spec: SPEC, assets: SOURCE_ASSETS,
+      snapshotReadAt: CURRENT.readAt, theme,
+      viewport: { width: Math.round(box?.width || 0), height: Math.round(box?.height || 0) },
+      scroll: { top: scrollRef.current?.scrollTop || 0, left: scrollRef.current?.scrollLeft || 0 },
+      captureMode: 'DOM inspection only; no PNG capture, file hashes, or seal' };
+  }
+  function inspectTargets() {
+    const root = rootRef.current;
+    if (!root) return;
+    setTargets([...root.querySelectorAll('[data-review-key]')].filter(el => visibleWithinDocument(el, root))
+      .map(el => ({ key: el.getAttribute('data-review-key'),
+        label: (el.getAttribute('aria-label') || el.textContent).trim().replace(/\s+/g, ' ').slice(0, 90) || 'Workspace control' })));
+  }
+  useLayoutEffect(() => {
+    if (!active) return;
+    const node = rootRef.current;
+    const resize = new ResizeObserver(() => {
+      if (!activeRef.current) return;
+      const box = node.getBoundingClientRect();
+      if (!box.width) return;
+      const size = [Math.round(box.width), Math.round(box.height)];
+      setMobile((wrapperRef.current?.clientWidth || box.width) <= 700);
+      if (sizeRef.current && size.some((v, i) => v !== sizeRef.current[i]) && itemsRef.current.length) setInvalidated(true);
+      sizeRef.current = size;
+      inspectTargets();
+    });
+    resize.observe(node);
+    const frame = requestAnimationFrame(() => {
+      inspectTargets();
+      if (!binding) setBinding(sourceBinding());
+      // The editor restores its own range when mounted; a closed drawer stays closed.
+      if (!commentsOpen) scrollRef.current?.focus({ preventScroll: true });
+    });
+    return () => { resize.disconnect(); cancelAnimationFrame(frame); };
+  }, [active]);
+  useEffect(() => {
+    if (themeRef.current !== theme && itemsRef.current.length) setInvalidated(true);
+    themeRef.current = theme;
+  }, [theme]);
+  useEffect(() => {
+    if (condition === 'drift') setInvalidated(true);
+  }, [condition]);
+
+  const commit = next => {
+    setPast(p => [...p, items]);
+    setFuture([]);
+    setItems(next);
+    if (!items.length) setBinding(sourceBinding());
+  };
+  const beginEdit = () => { if (!stale) { setPast(p => [...p, itemsRef.current]); setFuture([]); } };
+  const edit = (id, changes) => { if (!stale) setItems(all => all.map(a => a.id === id ? { ...a, ...changes } : a)); };
+  const undo = () => {
+    if (stale || !past.length) return;
+    const restored = past[past.length - 1];
+    setFuture(f => [items, ...f]); setItems(restored); setPast(p => p.slice(0, -1));
+    if (!restored.some(a => a.id === selected)) setSelected(restored.at(-1)?.id || null);
+    setMessage('Annotation change undone.');
+  };
+  const redo = () => {
+    if (stale || !future.length) return;
+    setPast(p => [...p, items]); setItems(future[0]); setFuture(f => f.slice(1));
+    if (!future[0].some(a => a.id === selected)) setSelected(future[0].at(-1)?.id || null);
+    setMessage('Annotation change restored.');
+  };
+  function selectTarget(key) {
+    setTargetKey(key);
+    setTargetQuery(targets.find(t => t.key === key)?.label || '');
+    const el = rootRef.current?.querySelector(`[data-review-key="${CSS.escape(key)}"]`);
+    const capture = anchorCapture(el, rootRef.current);
+    setTargetCapture(capture);
+    // Scroll only the outer document viewport; never change the frozen source's
+    // internal list/layout after capturing its geometry.
+    if (capture && scrollRef.current) {
+      const viewport = scrollRef.current;
+      if (capture.bounds.y < viewport.scrollTop) viewport.scrollTop = capture.bounds.y;
+      else if (capture.bounds.y + capture.bounds.h > viewport.scrollTop + viewport.clientHeight)
+        viewport.scrollTop = Math.max(0, capture.bounds.y + capture.bounds.h - viewport.clientHeight);
+    }
+  }
+  function addAnnotation(shape, anchor = null) {
+    if (stale) return;
+    const id = `annotation-${++counter.current}`;
+    commit([...items, { ...shape, id, note: '', anchor }]);
+    setSelected(id);
+    setMessage(`${shape.type} added. Tool remains ${tool}.`);
+    if (shape.type === 'comment') {
+      setCommentsOpen(true);
+      requestAnimationFrame(() => noteRef.current?.focus());
+    }
+  }
+  const addComment = () => {
+    const el = rootRef.current?.querySelector(`[data-review-key="${CSS.escape(targetKey)}"]`);
+    const capture = anchorCapture(el, rootRef.current);
+    if (!capture) { setMessage('Select one unique element before adding a comment.'); return; }
+    addAnnotation({ type: 'comment', x: capture.bounds.x + Math.min(16, capture.bounds.w / 2), y: capture.bounds.y + Math.min(16, capture.bounds.h / 2) }, capture);
+  };
+  const remove = id => { if (!stale) { commit(items.filter(a => a.id !== id)); setSelected(items.find(a => a.id !== id)?.id || null); } };
+  const point = e => {
+    const b = rootRef.current.getBoundingClientRect();
+    return { x: Math.max(0, Math.min(b.width, e.clientX - b.left)), y: Math.max(0, Math.min(b.height, e.clientY - b.top)) };
+  };
+  function targetAt(p) {
+    const root = rootRef.current, base = root.getBoundingClientRect();
+    return [...root.querySelectorAll('[data-review-key]')].reverse().find(el => {
+      if (!visibleWithinDocument(el, root)) return false;
+      const b = el.getBoundingClientRect();
+      return p.x + base.left >= b.left && p.x + base.left <= b.right && p.y + base.top >= b.top && p.y + base.top <= b.bottom;
+    });
+  }
+  function pointerDown(e) {
+    if (stale || e.button !== 0 || !e.isPrimary) return;
+    const p = point(e);
+    if (tool === 'select' || tool === 'comment') {
+      // Touch scrolling must not create a comment on pointerdown.
+      drag.current = { kind: 'pick', tool, start: p, pointerId: e.pointerId };
+      return;
+    }
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { start: p, pointerId: e.pointerId };
+    setDraft(shapeBetween(tool, p, p));
+  }
+  function pointerMove(e) {
+    if (drag.current?.pointerId === e.pointerId && drag.current.kind !== 'pick') setDraft(shapeBetween(tool, drag.current.start, point(e)));
+  }
+  function pointerUp(e) {
+    if (drag.current?.pointerId !== e.pointerId) return;
+    if (drag.current.kind === 'pick') {
+      const gesture = drag.current, p = point(e);
+      drag.current = null;
+      if (stale || Math.hypot(p.x - gesture.start.x, p.y - gesture.start.y) > 8) return;
+      if (gesture.tool === 'select') {
+        const hit = [...items].reverse().find(a => shapeContains(a, p));
+        if (hit) { setSelected(hit.id); setCommentsOpen(true); return; }
+      }
+      const el = targetAt(p);
+      if (el) {
+        selectTarget(el.getAttribute('data-review-key'));
+        if (gesture.tool === 'comment') addAnnotation({ type: 'comment', x: p.x, y: p.y }, anchorCapture(el, rootRef.current));
+      }
+      return;
+    }
+    const shape = shapeBetween(tool, drag.current.start, point(e));
+    if (Math.hypot(shape.w, shape.h) >= 4) addAnnotation(shape);
+    drag.current = null; setDraft(null);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  }
+  function keyboard(e) {
+    if (e.target.closest('input,textarea,[contenteditable="true"],[role="combobox"]')) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'Escape') { setTool('select'); drag.current = null; setDraft(null); return; }
+    if (e.key === 'Delete' && selected) { e.preventDefault(); remove(selected); return; }
+    if (e.target.closest('button,[role="listbox"],[role="option"],[role="menuitem"]')) return;
+    const match = TOOLS.find(t => t[3].toLowerCase() === e.key.toLowerCase());
+    if (match) { e.preventDefault(); setTool(match[0]); }
+  }
+  function returnToWorkspace() {
+    rememberSelection(noteRef.current, selected);
+    onReturn();
+  }
+  function prepareFeedback() {
+    if (!items.length) { setMessage('Add a comment or drawing before preparing feedback.'); return; }
+    if (stale) { setMessage('Source binding changed. Old markup cannot be prepared for the new view.'); return; }
+    const root = rootRef.current;
+    for (const a of items) {
+      if (a.x < 0 || a.y < 0 || a.x + (a.w || 0) > root.clientWidth || a.y + (a.h || 0) > root.clientHeight) {
+        setSelected(a.id); setCommentsOpen(true);
+        setMessage('The selected annotation extends beyond the reviewed document. Adjust its geometry before preparing feedback.');
+        return;
+      }
+      if (!a.anchor) continue;
+      const matches = root.querySelectorAll(`[data-review-key="${CSS.escape(a.anchor.key)}"]`);
+      if (matches.length !== 1 || matches[0].textContent !== a.anchor.text) { setInvalidated(true); return; }
+    }
+    const noComment = items.find(a => a.type === 'comment' && !a.note.trim() && !a.replacement?.trim() && !a.styleNote?.trim());
+    if (noComment) { setSelected(noComment.id); setCommentsOpen(true); setMessage('Add a comment or a text/style suggestion for the selected annotation.'); return; }
+    onPrepared({ title: condition === 'capture' ? 'Capture failed · markup retained' : 'Feedback prepared',
+      description: 'Semantic markup is retained in this tab. This static artifact cannot capture a source-aligned PNG, seal evidence, or send feedback. The owner would need both the report and actual image; this is not a completed submission or approval.',
+      report: `Requested change: revise ${ARTIFACT} (${REVISION}). Do not treat this feedback as approval or production-edit authority.\n\n` +
+        items.map((a, i) => `${i + 1}. ${a.type}\n${a.note || '(Drawing feedback)'}${a.replacement ? `\nSuggested text: ${a.replacement}` : ''}${a.styleNote ? `\nSuggested style: ${a.styleNote}` : ''}${a.anchor ? `\nTarget: ${a.anchor.selector}` : `\nDocument geometry: ${a.x}, ${a.y}; ${a.w} × ${a.h}`}`).join('\n\n'),
+      payload: { class: 'preview', decision: 'request_revision', binding, viewed: sourceBinding(), annotations: items } });
+  }
+  function freshReview() {
+    if (items.length) setArchives(a => [...a, { binding, annotations: items }]);
+    setItems([]); setPast([]); setFuture([]); setSelected(null); setTargetCapture(null);
+    setTargetKey(''); setTargetQuery(''); setInvalidated(false); setBinding(sourceBinding()); onConditionReset();
+    setMessage('Fresh local review started. Previous markup remains historical and was not retargeted.');
+  }
+  const inspector = <AnnotationInspector items={items} selected={selected} onSelect={setSelected}
+    onEdit={edit} onBeginEdit={beginEdit} onDelete={remove} noteRef={noteRef} selectionMemory={focusMemory}
+    onRememberSelection={rememberSelection} active={active && commentsOpen} stale={stale} mobile={mobile} />;
+  return <section ref={wrapperRef} className={mergeClasses(s.review, !active && s.hidden)} aria-label="Review editor" onKeyDown={keyboard}>
+    <div className={mergeClasses(s.between, s.reviewTitle)}>
+      <div className={s.row}><Button icon={<ArrowLeftRegular />} onClick={returnToWorkspace}>Back to workspace</Button>
+        <div className={s.tight}><Text weight="semibold">Needs You workspace</Text><Text className={s.eyebrow}>Review · {REVISION} · markup in this tab</Text></div></div>
+      <Button appearance="primary" onClick={prepareFeedback} disabled={stale}>Prepare feedback</Button>
+    </div>
+    <Toolbar aria-label="Drawing tools" className={s.drawingToolbar} checkedValues={{ tool: [tool] }}
+      onCheckedValueChange={(_, d) => { if (d.name === 'tool') setTool(d.checkedItems[0] || 'select'); }}>
+      <ToolbarRadioGroup aria-label="Drawing tool" className={s.drawingTools}>
+        {TOOLS.map(([key, label, Icon, shortcut]) => <Tooltip key={key} content={`${label} (${shortcut})`} relationship="description">
+          <ToolbarRadioButton className={s.toolButton} name="tool" value={key} icon={<Icon />} aria-label={label} disabled={stale}>
+            <span className={s.toolLabel}>{label}</span>
+          </ToolbarRadioButton>
+        </Tooltip>)}
+      </ToolbarRadioGroup>
+      <ToolbarDivider />
+      <ToolbarGroup>
+        <Tooltip content="Undo annotation change (Ctrl/Cmd+Z)" relationship="description"><ToolbarButton icon={<ArrowUndoRegular />} aria-label="Undo annotation change" onClick={undo} disabled={!past.length || stale} /></Tooltip>
+        <Tooltip content="Redo annotation change (Ctrl/Cmd+Shift+Z)" relationship="description"><ToolbarButton icon={<ArrowRedoRegular />} aria-label="Redo annotation change" onClick={redo} disabled={!future.length || stale} /></Tooltip>
+      </ToolbarGroup>
+      <div className={s.grow} />
+      <ToolbarButton icon={<CommentRegular />} onClick={() => changeCommentsOpen(!commentsOpen)}>Comments ({items.length})</ToolbarButton>
+    </Toolbar>
+    {stale ? <Notice className={s.notice} intent="warning" title="Source binding changed">
+      Old markup is retained and cannot be applied to this view. <Button size="small" onClick={freshReview}>Start fresh review</Button>
+    </Notice> : condition === 'capture' ? <Notice className={s.notice} intent="warning" title="Capture failure example">
+      Markup stays editable. No valid PNG means no submission.
+    </Notice> : condition === 'sealed' ? <div className={s.notice}><Disclosure title="Sealed evidence example · no files created">
+      <div className={s.stack}><Text>A submitted report and PNG would be immutable, with provenance written last. Reopening them would restore evidence, not a live request.</Text>
+        <code className={s.code}>{'<exact target spec>/reviews/<provider-allocated-id>/{report.md, annotated.png, provenance.json}'}</code>
+        <Text className={s.eyebrow}>This is a contract illustration, not a claimed seal, image, file link, or delivery receipt.</Text></div>
+    </Disclosure></div> : null}
+    <div className={s.picker}>
+      <Field label="Choose an element" className={s.pickerField}>
+        <Combobox className={s.control} placeholder="Search visible elements" value={targetQuery} selectedOptions={targetKey ? [targetKey] : []}
+          onChange={e => { setTargetQuery(e.target.value); setTargetKey(''); setTargetCapture(null); }}
+          onOptionSelect={(_, d) => d.optionValue && selectTarget(d.optionValue)} disabled={stale}>
+          {targets.filter(t => !targetQuery || targetKey || t.label.toLowerCase().includes(targetQuery.toLowerCase())).map(t =>
+            <Option key={t.key} value={t.key} text={t.label}>{t.label}</Option>)}
+        </Combobox>
+      </Field>
+      <Button icon={<AddRegular />} disabled={!targetKey || stale} onClick={addComment}>Add comment</Button>
+      {!['select', 'comment'].includes(tool) && <Button disabled={stale} onClick={() => {
+        const w = rootRef.current.clientWidth;
+        addAnnotation(shapeBetween(tool, { x: w / 4, y: 120 }, { x: Math.min(w - 16, w * 3 / 4), y: 220 }));
+        setCommentsOpen(true);
+      }}>Add {tool} at center</Button>}
+    </div>
+    <div ref={scrollRef} className={s.canvasScroll} tabIndex={0} aria-label="Reviewed workspace document. Use drawing tools or Choose an element to annotate.">
+      <div className={mergeClasses(s.canvas, !['select', 'comment'].includes(tool) ? s.drawMode : s.selectMode)}
+        onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}
+        onPointerCancel={() => { drag.current = null; setDraft(null); }}>
+        <div ref={rootRef} id="review-document" className={s.document} inert aria-hidden="true"><WorkspaceDocument /></div>
+        <svg aria-hidden="true" className={s.overlay}>
+          {targetCapture && !stale && <rect className={s.target} x={targetCapture.bounds.x} y={targetCapture.bounds.y} width={targetCapture.bounds.w} height={targetCapture.bounds.h} />}
+          {items.map((a, index) => <AnnotationShape key={a.id} annotation={a} index={index} />)}
+          {items.filter(a => a.id === selected).map(a => <rect key={`selection-${a.id}`} className={s.target}
+            x={a.type === 'comment' ? a.x - 16 : a.x - 4} y={a.type === 'comment' ? a.y - 16 : a.y - 4}
+            width={a.type === 'comment' ? 32 : a.w + 8} height={a.type === 'comment' ? 32 : a.h + 8} />)}
+          {draft && <AnnotationShape annotation={draft} index={items.length} />}
+        </svg>
+      </div>
+    </div>
+    {commentsOpen && !mobile && <section className={s.comments} aria-label="Comments">
+      <div className={mergeClasses(s.between, s.footer)}><Text weight="semibold">Annotations</Text>
+        <Button appearance="subtle" icon={<DismissRegular />} aria-label="Hide comments" onClick={() => changeCommentsOpen(false)} /></div>
+      {items.length ? inspector : <div className={s.empty}>Select an element and add a comment, or draw on the workspace.</div>}
+    </section>}
+    <OverlayDrawer open={active && commentsOpen && mobile} onOpenChange={(_, d) => changeCommentsOpen(d.open)} position="end" className={s.drawer}>
+      <DrawerHeader><DrawerHeaderTitle action={<Button appearance="subtle" icon={<DismissRegular />} aria-label="Close comments" onClick={() => changeCommentsOpen(false)} />}>Annotations</DrawerHeaderTitle></DrawerHeader>
+      <DrawerBody className={s.drawerBody}>{items.length ? inspector : <Text>Select an element and add a comment, or draw on the workspace.</Text>}</DrawerBody>
+    </OverlayDrawer>
+    <div className={s.footer}>
+      <Text className={s.eyebrow}>{message || `${tool.charAt(0).toUpperCase() + tool.slice(1)} tool · Choose an element is the keyboard alternative to pointing. Native text Undo stays in the text field.`}</Text>
+      <Disclosure title="Review source & retained history">
+        <div className={s.stack}><pre className={s.code}>{JSON.stringify(binding, null, 2)}</pre>
+          <Text className={s.eyebrow}>This is a frozen rendering of the proposal’s own workspace components. No faithful-page PNG or source hash is claimed. Resize or theme drift invalidates existing coordinates.</Text>
+          {archives.map((archive, i) => <Disclosure key={i} title={`Historical local markup ${i + 1} · not retargeted`}><pre className={s.code}>{JSON.stringify(archive, null, 2)}</pre></Disclosure>)}
+        </div>
+      </Disclosure>
+    </div>
+    <div role="status" aria-live="polite" className={s.live}>{message}</div>
+  </section>;
+}
+
+function App() {
+  const s = useStyles();
+  const viewId = useId();
+  const [settings, setSettings] = useState({ snapshot: 'workspace', mode: 'actual', theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+    width: 'fluid', coverage: 'actual', response: 'current', permission: 'missing', review: 'editing' });
+  // The selected work record and the workspace-wide request view are
+  // independent. The Overview list owns its own search and scope state.
+  const [contextId, setContextId] = useState(CURRENT.selected?.explicit ? CURRENT.selected.ideaPath : null);
+  const [view, setView] = useState(confirmedBlank(CURRENT) ? 'new' : 'overview');
+  const [requestId, setRequestId] = useState(null);
+  const [requestQuery, setRequestQuery] = useState('');
+  const [drafts, setDrafts] = useState({});
+  const [prepared, setPrepared] = useState(null);
+  const [intentDialog, setIntentDialog] = useState(null);
+  const [approval, setApproval] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewMounted, setReviewMounted] = useState(false);
+  const [reviewed, setReviewed] = useState(false);
+  const [reviewStale, setReviewStale] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState('');
+  // Where the work finder is looking. Presentation only, kept in this tab so
+  // Overview -> Context -> Back returns to the same result; reset per root.
+  const [finder, setFinder] = useState(FINDER_DEFAULT);
+  const detailRef = useRef(null), entryRef = useRef(null), detailScroll = useRef(0), finderScroll = useRef(0);
+  const snapshot = SNAPSHOTS[settings.snapshot], projection = snapshot.projection;
+  const context = projection.contexts.find(c => c.ideaPath === contextId);
+  const request = settings.mode === 'examples' && settings.coverage !== 'current' && view === 'request'
+    ? EXAMPLES.find(r => r.id === requestId) : null;
+  const draftKey = view === 'new' ? 'new' : request?.id;
+  const value = drafts[draftKey] || {};
+  const updateDraft = next => { if (draftKey) setDrafts(all => ({ ...all, [draftKey]: next })); };
+
+  const openReview = () => {
+    entryRef.current = document.activeElement;
+    detailScroll.current = detailRef.current?.scrollTop || 0;
+    setReviewMounted(true); setReviewOpen(true); setReviewed(true);
+  };
+  const returnReview = () => {
+    setReviewOpen(false);
+    requestAnimationFrame(() => {
+      if (detailRef.current) detailRef.current.scrollTop = detailScroll.current;
+      entryRef.current?.focus({ preventScroll: true });
+    });
+  };
+  function focusWorkspace() {
+    requestAnimationFrame(() => {
+      detailRef.current?.focus({ preventScroll: true });
+      if (detailRef.current) detailRef.current.scrollTop = 0;
+    });
+  }
+  function commitContext(id) {
+    if (inventoryUnavailable(projection) || !projection.contexts.some(c => c.ideaPath === id)) return;
+    setContextId(id); setView('context');
+    if (detailRef.current) detailRef.current.scrollTop = 0;
+    // Opening a context is navigation only; previously entered answers remain
+    // keyed to their original request and are never applied to this context.
+  }
+  function openOverview() {
+    setView('overview'); focusWorkspace();
+  }
+  function openContext() {
+    setView('context'); focusWorkspace();
+  }
+  function openOverviewContext(id) {
+    if (inventoryUnavailable(projection) || projection.contexts.filter(c => c.ideaPath === id).length !== 1) return;
+    commitContext(id); focusWorkspace();
+  }
+  function openNeeds() {
+    setView('needs'); focusWorkspace();
+  }
+  function openRequest(id) {
+    if (!EXAMPLES.some(r => r.id === id)) return;
+    setRequestId(id); setView('request'); focusWorkspace();
+  }
+  function newIdea() {
+    setView('new'); focusWorkspace();
+  }
+  function changeSetting(key, val) {
+    setSettings(old => ({ ...old, [key]: val, ...(key === 'response' ? { mode: 'examples' } : {}) }));
+    if (key === 'snapshot') {
+      setReviewOpen(false); setRequestQuery('');
+      // A different recorded root gets a fresh finder; a found result from one
+      // root must never carry into another.
+      setFinder(FINDER_DEFAULT); finderScroll.current = 0;
+      const p = SNAPSHOTS[val].projection;
+      setContextId(p.selected?.explicit ? p.selected.ideaPath : null);
+      setView(confirmedBlank(p) ? 'new' : 'overview');
+      focusWorkspace();
+    }
+    if (key === 'mode') {
+      setReviewOpen(false); setRequestQuery(''); openNeeds();
+    }
+    if (key === 'response') {
+      setReviewOpen(false); openRequest(requestId || 'preview');
+    }
+    if (key === 'coverage' && val === 'current' && view === 'request') {
+      setView('needs');
+    }
+    // Literal permission is bound to the scenario's exact target, never reused.
+    if (key === 'permission') setDrafts(all => ({ ...all, permission: { ...all.permission, phrase: '' } }));
+    if (key === 'review' && val === 'drift') setReviewStale(true);
+    if ((key === 'width' || key === 'theme') && reviewMounted) {
+      setSettings(old => ({ ...old, review: 'drift' }));
+      setReviewStale(true); setReviewed(false);
+    }
+  }
+  // Routine prototype facts live in a quiet strip. A MessageBar is reserved for
+  // a condition that changes what the reader can trust or do right now.
+  const coverageAlert = settings.coverage === 'actual' ? null : {
+    loading: 'Example: refreshing coverage. The last readable inventory and unsent input remain available.',
+    current: 'Example: no current requests in a fully read scope. Captured ideas and recorded dispositions remain discoverable.',
+    partial: 'Example: one source scope could not be read. Healthy contexts remain available; this is not an all-clear.',
+    stale: 'Example: the selected source is stale. Preserve input and get fresh owner context before acting.',
+    unavailable: 'Example: live coverage was lost. Saved sources remain readable; pending-session requests are not restored.',
+  }[settings.coverage];
+  const strip = [
+    snapshot.fixture ? 'Example snapshot' : 'Recorded snapshot',
+    settings.mode === 'examples' ? 'Request examples are on' : 'Live requests unavailable',
+    'Nothing here is sent or saved',
+  ].join(' · ');
+  return <FluentProvider theme={THEMES[settings.theme]} applyStylesToPortals={false}>
+    <div className={mergeClasses(s.page, s.app)}>
+      <header className={s.titlebar}><div className={s.row}><DocumentRegular /><Text weight="semibold">Dude Canvas</Text></div>
+        <Text className={s.eyebrow}>{settings.mode === 'examples' ? 'Example requests' : snapshot.fixture ? 'Fixture preview' : 'Repository snapshot'} · Design study {REVISION}</Text></header>
+      <div className={mergeClasses(s.viewport, settings.width !== 'fluid' && s[`width${settings.width}`])}>
+        <section className={mergeClasses(s.product, reviewOpen && s.hidden)} aria-label="Needs you workspace">
+          <CommandBar view={view} viewId={viewId} onContext={openContext}
+            onOverview={openOverview} onNeeds={openNeeds} onNew={newIdea} onRefresh={() => {
+            setRefreshMessage('Loaded snapshot reread. No live read was performed; selection and unsent input are unchanged.');
+          }} />
+          <StatusStrip>{refreshMessage || strip}</StatusStrip>
+          {coverageAlert && <Notice className={s.notice}
+            intent={['partial', 'stale', 'unavailable'].includes(settings.coverage) ? 'warning' : 'info'}
+            title={settings.coverage === 'loading' ? <Spinner size="tiny" label="Loading example" /> : undefined}>
+            {coverageAlert}
+          </Notice>}
+          <main ref={detailRef} tabIndex={-1} className={s.detail}>
+            <WorkspaceViewPanels view={view} viewId={viewId}>
+            <div className={s.stack}>
+              {view === 'request' && <Button className={s.back} icon={<ArrowLeftRegular />} onClick={openNeeds}>Back to Needs you</Button>}
+              {view === 'new' ? <NewIdea value={value} onChange={updateDraft} onCancel={openNeeds} />
+                : view === 'overview' ? <Overview snapshotKey={settings.snapshot} projection={projection}
+                  onOpen={openOverviewContext} onNew={newIdea} onReview={openReview} reviewCondition={settings.review}
+                  finder={finder} onFinder={setFinder} finderScroll={finderScroll} />
+                : request ? <RequestForm key={`${request.id}-${settings.permission}`} request={request} value={value} onChange={updateDraft}
+                  responseState={settings.response} permission={settings.permission} reviewCondition={settings.review}
+                  onReview={openReview} onApprove={() => setApproval(true)} onPrepared={setPrepared}
+                  onDefer={() => setIntentDialog('defer')} />
+                  : view === 'context' ? inventoryUnavailable(projection) ? <Notice intent="error" title="Workspace inventory unavailable">
+                    The source cannot establish a current context. This is not a blank workspace.
+                  </Notice> : <ContextDetail context={context} projection={projection} snapshotKey={settings.snapshot}
+                    onReview={openReview} onOverview={openOverview} reviewCondition={settings.review} />
+                    : <NeedsYou examples={settings.mode === 'examples'} noRequestsExample={settings.coverage === 'current'}
+                      query={requestQuery} onQuery={setRequestQuery} selected={requestId} onSelect={openRequest}
+                      drafts={drafts} responseState={settings.response} />}
+            </div>
+            </WorkspaceViewPanels>
+          </main>
+          {hasInput(drafts.new) && view !== 'new' && <div className={s.footer}><Button appearance="subtle" icon={<LightbulbRegular />} onClick={newIdea}>Return to unsaved idea</Button></div>}
+        </section>
+        {reviewMounted && <ReviewEditor active={reviewOpen} onReturn={returnReview} condition={settings.review}
+          onConditionReset={() => { setSettings(old => ({ ...old, review: 'editing' })); setReviewStale(false); }}
+          theme={settings.theme} onPrepared={setPrepared} onStaleChange={setReviewStale} />}
+      </div>
+      <PreviewHarness settings={settings} onChange={(key, val) => { setRefreshMessage(''); changeSetting(key, val); }} onNewExample={() => { setReviewOpen(false); newIdea(); }} />
+      <PreparationDialog result={prepared} onClose={() => setPrepared(null)} />
+      {intentDialog && <IntentDialog kind={intentDialog} text={value.intent} sourceBacked={view !== 'new' && request?.id !== 'onboarding'}
+        onClose={() => setIntentDialog(null)} onSave={() => setIntentDialog('save')} onPrepared={setPrepared} />}
+      {approval && <ApprovalDialog onClose={() => setApproval(false)} onPrepared={setPrepared} reviewed={reviewed}
+        stale={reviewStale || settings.review === 'drift'} />}
+    </div>
+  </FluentProvider>;
+}
+
+createRoot(document.getElementById('root')).render(SNAPSHOT_ERROR ? <SnapshotLoadFailure /> : <App />);

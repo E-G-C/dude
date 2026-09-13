@@ -1,0 +1,31 @@
+{
+  "variant": "rev-5.5",
+  "authority": "inert comparison; current preview_path remains primary",
+  "preservedAt": "2026-09-06T18:03:37.456Z",
+  "files": [
+    {
+      "path": "needs-you-workspace.html",
+      "sha256": "65e82f1fcb9b8317e130c6582cece62d911ee19b0c8dff8ac1e8896ed2c7a7a0"
+    },
+    {
+      "path": "needs-you-workspace.jsx",
+      "sha256": "eda6139a4b6b291ba8fb80a468175443d51324bf8b9daa96d499591637d1d9b0"
+    },
+    {
+      "path": "assets/workspace-snapshots.js",
+      "sha256": "b426d55f2bafe52ade76dd501a72bec075a19decaa08c3848bb9d91c8c0e48ea"
+    },
+    {
+      "path": "assets/needs-you-workspace.js",
+      "sha256": "7bab998db308bbd15f28c7e8bfb9d5b9ae67bed400d701634aec430a8182d057"
+    },
+    {
+      "path": "assets/needs-you-workspace.js.LEGAL.txt",
+      "sha256": "4d973c9ac80db0a75c13f6f0a4a39ead6c403ee22b45c584fc6b8409b0660c60"
+    },
+    {
+      "path": "index.html",
+      "sha256": "385d8313db5e137d680b7d2e44607827ead95d15d80bb2ba452c98c5e31d99f0"
+    }
+  ]
+}

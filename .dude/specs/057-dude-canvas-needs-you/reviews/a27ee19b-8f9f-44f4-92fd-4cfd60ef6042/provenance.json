@@ -1,0 +1,87 @@
+{
+  "version": 2,
+  "submissionId": "a27ee19b-8f9f-44f4-92fd-4cfd60ef6042",
+  "scope": {
+    "kind": "feature",
+    "ideaPath": ".dude/ideas/057-dude-canvas-needs-you.md",
+    "specPath": ".dude/specs/057-dude-canvas-needs-you/spec.md"
+  },
+  "requestRef": "t012-desktop-acceptance-after-t013",
+  "requestRevision": "rev-8.2",
+  "preview": {
+    "artifact": {
+      "path": ".dude/specs/057-dude-canvas-needs-you/design/needs-you-workspace.html",
+      "revision": "sha256:6cd15f3e695e9129356f70f6b55e0ad7b7e12023b6a2926da4dec29dced5d5ee"
+    },
+    "assets": [
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/needs-you-workspace.js",
+        "revision": "sha256:c4af6948b7b08c29430eea4e9dac4804e1ece432a467fd330f235084e0829bfd"
+      },
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/overview-snapshots.js",
+        "revision": "sha256:967d5283282424263e3c40d4deb864e699f00aa7bd69b21b5d0d81448def71c2"
+      },
+      {
+        "path": ".dude/specs/057-dude-canvas-needs-you/design/assets/workspace-snapshots.js",
+        "revision": "sha256:b426d55f2bafe52ade76dd501a72bec075a19decaa08c3848bb9d91c8c0e48ea"
+      }
+    ]
+  },
+  "workingRevision": "sha256:81ee882cad7c2dc66c2227c26f0f7759ba4aa5d8ff3e6a1bdf01323dc48282d8",
+  "annotationRevision": "sha256:570fb5494540e1e6b8e865138039f3fc9565b1bc6eab9c2919458fccee5c4798",
+  "reportRevision": "sha256:49b7de9bab8194d4c1836c558644967d370cc0813034b38b5d378e5f9e0f9edb",
+  "imageRevision": "sha256:cf59190fed754cd464bff0af8da2b0e0d661136de72b825699a28720b1585040",
+  "revisionText": null,
+  "capture": {
+    "mode": "fresh-viewport",
+    "browser": "Edg/133.0.3065.69",
+    "colorSpace": "srgb",
+    "warnings": [
+      "This is a fresh source rendering, not a recording of native host pixels. For anchored marks, target identity, geometry, visibility, and clipping were checked against the reviewed viewport; computed styles are host observations, not cross-renderer proof."
+    ],
+    "width": 1926,
+    "height": 1456,
+    "viewport": {
+      "width": 963,
+      "height": 728,
+      "scrollX": 0,
+      "scrollY": 0,
+      "deviceScale": 2,
+      "theme": "dark",
+      "documentWidth": 963,
+      "documentHeight": 728
+    },
+    "beforeSignature": "sha256:f2e5a05d9a937c8d21e25b8b323e7932b7ac4c7e053b2ac6fcc4389658f8080a",
+    "afterSignature": "sha256:f2e5a05d9a937c8d21e25b8b323e7932b7ac4c7e053b2ac6fcc4389658f8080a",
+    "scrolls": [
+      {
+        "selector": "main.___1a25q2q.fz7g6wx",
+        "scrollLeft": 0,
+        "scrollTop": 232
+      }
+    ],
+    "sourceImageRevision": "sha256:32d866a532299e5c4e9e67044c3ed1e16ae51cd043da8aadde80e0ce72b8b29c",
+    "overlayRevision": "sha256:a11d40d8b2c1281388dcf4baf5eaf926f52040c963175890f2cbda854ffca79e",
+    "selectors": [
+      {
+        "annotationId": "df467a38-52fb-4dbe-bc75-9247532bfa8a",
+        "selector": "button.fui-Button.r1f29ykk:nth-of-type(2)",
+        "matches": 1,
+        "elementRevision": "sha256:c2c4cef260cc81dabb85d7ddb8ad2243751e54b280b32ac7fde060bf1e2e6553"
+      },
+      {
+        "annotationId": "54bd57da-6c36-434b-88e6-a256807e13ea",
+        "selector": "#field-_r_7___control",
+        "matches": 1,
+        "elementRevision": "sha256:b0e763a5e5422ca8117b290beb029d44f08040b4ebf2ad15a4fbdc2955ce43bc"
+      },
+      {
+        "annotationId": "066a3d73-9301-4ef7-9a6c-e9de1917a2af",
+        "selector": "#_r_5_-heading",
+        "matches": 1,
+        "elementRevision": "sha256:d6f394ba85425a2a1436fdec9cf8843e955ef27154011c103ca92e2b77b2bf68"
+      }
+    ]
+  }
+}
