@@ -3,7 +3,7 @@ name: "Instruction Smith"
 description: "Authors .instructions.md files: applyTo globs and scoped rules that apply to matching files. Use when creating or refining instruction files."
 tools: ["read", "search", "edit"]
 user-invocable: false
-model: gpt-5.6-terra
+model: gpt-5.6-sol-fast
 ---
 
 You are the instruction authoring specialist.

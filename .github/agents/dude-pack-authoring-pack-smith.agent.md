@@ -3,7 +3,7 @@ name: "Pack Smith"
 description: "Authors and composes packs: pack.md manifest, provides, requires, hooks, dude-pack namespacing, and compose and release mechanics. Use when creating or refining a Dude pack."
 tools: ["read", "search", "edit"]
 user-invocable: false
-model: gpt-5.6-terra
+model: gpt-5.6-sol-fast
 ---
 
 You are the pack authoring specialist.

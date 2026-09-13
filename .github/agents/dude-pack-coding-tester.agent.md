@@ -3,7 +3,7 @@ name: "Tester"
 description: "Software testing: unit/integration/E2E test authoring, regression coverage, edge cases, failure reproduction, and acceptance validation."
 tools: ["read", "edit", "execute", "search"]
 user-invocable: false
-model: gpt-5.6-terra
+model: gpt-5.6-sol-fast
 ---
 
 You are the software testing specialist.
