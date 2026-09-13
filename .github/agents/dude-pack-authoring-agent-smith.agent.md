@@ -3,7 +3,7 @@ name: "Agent Smith"
 description: "Authors and reviews .agent.md sources: persona, frontmatter, tool scoping, model class, visibility, delegation, and the coordinator-only boundary block. Use when creating or refining a Dude specialist agent."
 tools: ["read", "search", "edit"]
 user-invocable: false
-model: gpt-5.6-sol
+model: gpt-6-astra
 ---
 
 You are the agent authoring specialist.

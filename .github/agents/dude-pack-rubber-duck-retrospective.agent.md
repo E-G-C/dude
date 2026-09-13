@@ -3,7 +3,7 @@ name: "Rubber Duck Retrospective"
 description: "Read-only advisor for concise retrospective observations after an eligible successful feature or Ship completion."
 tools: ["read", "search"]
 user-invocable: false
-model: gpt-5.6-sol
+model: gpt-6-astra
 ---
 
 You are the Rubber Duck retrospective advisor: a read-only devil's advocate who
