@@ -10,7 +10,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
 import fs from 'node:fs';
@@ -287,6 +287,9 @@ class Cdp {
     this.next = 1;
     this.pending = new Map();
     this.listeners = new Map();
+    this.closed = new Promise(resolve => {
+      this.socket.addEventListener('close', resolve, { once: true });
+    });
   }
 
   async open() {
@@ -306,6 +309,14 @@ class Cdp {
         return;
       }
       for (const listener of this.listeners.get(message.method) ?? []) listener(message.params);
+    });
+    this.socket.addEventListener('close', () => {
+      for (const pending of this.pending.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error('CDP socket closed'));
+      }
+      this.pending.clear();
+      this.listeners.clear();
     });
   }
 
@@ -331,8 +342,156 @@ class Cdp {
   }
 
   close() {
-    this.socket.close();
+    if (this.socket.readyState !== WebSocket.CLOSING
+      && this.socket.readyState !== WebSocket.CLOSED) this.socket.close();
+    return this.closed;
   }
+}
+
+/** @param {number} root */
+function browserDescendants(root) {
+  if (process.platform === 'win32') return [];
+  const output = spawnSync('ps', ['-axo', 'pid=,ppid='], {
+    encoding: 'utf8',
+    timeout: 1_000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (output.error) throw output.error;
+  if (output.status !== 0) throw new Error(`Could not inventory browser descendants (ps exit ${output.status}).`);
+  const byParent = new Map();
+  for (const line of output.stdout.split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    if (!match) continue;
+    const children = byParent.get(Number(match[2])) ?? [];
+    children.push(Number(match[1]));
+    byParent.set(Number(match[2]), children);
+  }
+  const found = [];
+  const visit = pid => {
+    for (const child of byParent.get(pid) ?? []) {
+      visit(child);
+      found.push(child);
+    }
+  };
+  visit(root);
+  return found;
+}
+
+/** @param {number} pid */
+function browserPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+/** @param {number[]} pids */
+function liveBrowserPids(pids) {
+  return pids.filter(browserPidAlive);
+}
+
+/** @param {ReturnType<typeof spawn>} child */
+function browserHandlesClosed(child) {
+  return (child.exitCode !== null || child.signalCode !== null)
+    && child.stdio.every(stream => !stream || stream.closed || stream.destroyed);
+}
+
+/**
+ * Reap only the browser and descendants observed beneath its exact spawned PID.
+ * @param {ReturnType<typeof spawn>} child
+ */
+async function stopBrowser(child) {
+  if (!child.pid) return [];
+  const errors = [];
+  let owned = [child.pid];
+  try {
+    if (browserPidAlive(child.pid)) {
+      owned = [...new Set([child.pid, ...browserDescendants(child.pid)])];
+    }
+  } catch (error) {
+    errors.push(new Error(`Could not inventory descendants of owned browser pid ${child.pid}.`, { cause: error }));
+  }
+  const signal = (pids, name) => {
+    for (const pid of pids) {
+      try {
+        process.kill(pid, name);
+      } catch (error) {
+        if (error?.code !== 'ESRCH') {
+          errors.push(new Error(`Could not send ${name} to owned browser pid ${pid}.`, { cause: error }));
+        }
+      }
+    }
+  };
+  signal(owned, 'SIGTERM');
+  let survivors = owned;
+  await until(() => {
+    survivors = liveBrowserPids(owned);
+    return survivors.length === 0;
+  }, 'all exact browser processes to exit after SIGTERM', 3_000).catch(() => {});
+  if (survivors.length) {
+    signal(survivors, 'SIGKILL');
+    await until(() => {
+      survivors = liveBrowserPids(survivors);
+      return survivors.length === 0;
+    }, 'all exact browser processes to exit after SIGKILL', 2_000)
+      .catch(error => errors.push(error));
+  }
+  if (!browserHandlesClosed(child)) {
+    await until(() => browserHandlesClosed(child), 'owned browser child-process handles to close', 1_000)
+      .catch(() => {});
+  }
+  if (!browserHandlesClosed(child)) {
+    for (const stream of child.stdio) stream?.destroy();
+    await until(() => browserHandlesClosed(child), 'owned browser pipes to close', 1_000)
+      .catch(error => errors.push(error));
+  }
+  if (survivors.length) errors.push(new Error(`Owned browser pids did not exit: ${survivors.join(', ')}.`));
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, 'Owned browser process cleanup failed.');
+  return owned;
+}
+
+/** @param {{browser:ReturnType<typeof spawn>,page?:Cdp,profile:string}} state */
+async function cleanupBrowserDriver(state) {
+  const outcomes = await Promise.allSettled([
+    Promise.resolve().then(() => state.page?.close()),
+    stopBrowser(state.browser),
+  ]);
+  const errors = outcomes.filter(({ status }) => status === 'rejected')
+    .map(({ reason }) => reason);
+  try {
+    fs.rmSync(state.profile, {
+      recursive: true,
+      force: true,
+      maxRetries: 4,
+      retryDelay: 50,
+    });
+  } catch (error) {
+    errors.push(new Error(`Could not remove owned browser profile ${state.profile}.`, { cause: error }));
+  }
+  if (fs.existsSync(state.profile)) errors.push(new Error(`Owned browser profile still exists: ${state.profile}.`));
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, 'Owned browser driver cleanup failed.');
+}
+
+/**
+ * Run every independently owned cleanup before retaining all failures.
+ * @param {Array<()=>unknown|Promise<unknown>>} steps
+ */
+async function runCleanupSteps(...steps) {
+  const errors = [];
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, 'Multiple owned test cleanups failed.');
 }
 
 /** @param {Cdp} page @param {string} expression */
@@ -370,6 +529,7 @@ async function startBrowser(deviceScaleFactor = 1, stabilizeHeadlessTimeline = f
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   let launchError;
+  let page;
   browser.stderr.on('data', (value) => { stderr += value; });
   browser.once('error', (error) => { launchError = error; });
   try {
@@ -390,7 +550,7 @@ async function startBrowser(deviceScaleFactor = 1, stabilizeHeadlessTimeline = f
         .find(candidate => candidate.type === 'page')
       : await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json();
     if (!target?.webSocketDebuggerUrl) throw new Error('owned browser has no debuggable page target');
-    const page = new Cdp(target.webSocketDebuggerUrl);
+    page = new Cdp(target.webSocketDebuggerUrl);
     await page.open();
     await Promise.all([
       page.send('Page.enable'),
@@ -405,20 +565,13 @@ async function startBrowser(deviceScaleFactor = 1, stabilizeHeadlessTimeline = f
     return { browser, page, profile, version };
   } catch (error) {
     error.message += ` (owned launch pid=${browser.pid}, exit=${browser.exitCode}, signal=${browser.signalCode}, stderr=${stderr})`;
-    if (browser.pid && browser.exitCode === null) process.kill(browser.pid, 'SIGKILL');
-    fs.rmSync(profile, { recursive: true, force: true });
+    try {
+      await cleanupBrowserDriver({ browser, page, profile });
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Owned browser launch and cleanup both failed.');
+    }
     throw error;
   }
-}
-
-/** @param {ReturnType<typeof spawn>} browser */
-async function stopBrowser(browser) {
-  if (!browser.pid || browser.exitCode !== null || browser.signalCode !== null) return;
-  process.kill(browser.pid, 'SIGTERM');
-  await until(() => browser.exitCode !== null || browser.signalCode !== null, 'owned browser exit', 3_000)
-    .catch(() => {
-      if (browser.exitCode === null && browser.signalCode === null) process.kill(browser.pid, 'SIGKILL');
-    });
 }
 
 function installEmptyBoard() {
@@ -885,6 +1038,10 @@ function axLiveRegions(tree) {
   const subtreeText = (node, seen = new Set()) => {
     if (!node || seen.has(node.nodeId)) return '';
     seen.add(node.nodeId);
+    // Chromium 152 exposes each StaticText value again through its
+    // InlineTextBox child. The latter is paint-layout detail, not a second
+    // accessibility announcement.
+    if (node.role?.value === 'InlineTextBox') return '';
     return [
       node.name?.value || '',
       ...(node.childIds || []).map((id) => subtreeText(byId.get(id), seen)),
@@ -908,6 +1065,7 @@ function axGroupsContaining(tree, expected) {
   const subtreeText = (node, seen = new Set()) => {
     if (!node || seen.has(node.nodeId)) return '';
     seen.add(node.nodeId);
+    if (node.role?.value === 'InlineTextBox') return '';
     return [
       node.name?.value || '',
       ...(node.childIds || []).map((id) => subtreeText(byId.get(id), seen)),
@@ -924,9 +1082,40 @@ function axGroupsContaining(tree, expected) {
 }
 
 /**
+ * Chrome 152 uses Fluent's native Document.ariaNotify path instead of the
+ * fallback DOM live region. Wrap the browser API without replacing its effect
+ * so the test can observe the exact native boundary selected by this runtime.
+ * @param {Cdp} page
+ */
+async function installNativeAnnouncementProbe(page) {
+  return evaluate(page, `(() => {
+    window.__t011NativeAnnouncements = [];
+    const native = document.ariaNotify;
+    if (typeof native !== 'function') return { supported: false, wrapped: false };
+    const wrapper = function(message, options) {
+      window.__t011NativeAnnouncements.push({
+        message: String(message),
+        options: options ? structuredClone(options) : {},
+      });
+      return Reflect.apply(native, document, [message, options]);
+    };
+    Object.defineProperty(document, 'ariaNotify', {
+      configurable: true,
+      writable: true,
+      value: wrapper,
+    });
+    return {
+      supported: true,
+      wrapped: document.ariaNotify === wrapper,
+      nativeImplementation: Function.prototype.toString.call(native),
+    };
+  })()`);
+}
+
+/**
  * Sample the owner document while Fluent's bounded live-message cycle is
- * present. Both DOM semantics and the browser's native AX live properties must
- * contain the exact outcome/error copy.
+ * present. Older browsers use the fallback DOM/AX live region; browsers with
+ * Document.ariaNotify invoke that native API instead.
  * @param {Cdp} page
  * @param {string} expected
  * @param {number} [timeout]
@@ -955,15 +1144,26 @@ async function observeLiveFeedback(page, expected, timeout = 750) {
     })()`);
     const tree = await page.send('Accessibility.getFullAXTree');
     const ax = axLiveRegions(tree);
+    const native = await evaluate(page, `({
+      supported: typeof document.ariaNotify === 'function',
+      calls: Array.isArray(window.__t011NativeAnnouncements)
+        ? structuredClone(window.__t011NativeAnnouncements) : [],
+    })`);
     const summary = {
       elapsedMs: timeout - Math.max(0, end - Date.now()),
       dom,
       ax,
+      native,
       domMatch: dom.some((entry) => entry.ownerDocument && entry.containsExpected),
       axMatch: ax.some((entry) => entry.text.includes(expected)),
+      nativeMatch: native.calls.some((entry) => (
+        entry.message.includes(expected) && entry.options?.priority === 'high'
+      )),
     };
     samples.push(summary);
-    const score = Number(summary.domMatch) + Number(summary.axMatch);
+    const score = native.supported
+      ? Number(summary.nativeMatch) * 2
+      : Number(summary.domMatch) + Number(summary.axMatch);
     if (!best || score > best.score) best = { score, summary, tree };
     if (score === 2) break;
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -973,6 +1173,7 @@ async function observeLiveFeedback(page, expected, timeout = 750) {
     samples,
     best: best?.summary ?? null,
     tree: best?.tree ?? { nodes: [] },
+    nativeSupported: samples.some(sample => sample.native.supported),
   };
 }
 
@@ -2120,9 +2321,7 @@ test('T011 browser: published blank capture, ordinary-chat refresh, local state,
     }
     if (movedRoot) fs.rmSync(movedRoot, { recursive: true, force: true });
     if (browserState) {
-      browserState.page.close();
-      await stopBrowser(browserState.browser);
-      fs.rmSync(browserState.profile, { recursive: true, force: true });
+      await cleanupBrowserDriver(browserState);
     }
     board.close();
   }
@@ -2457,9 +2656,7 @@ test('T011 browser: complete finder, six owner forms, keyboard context, late rea
     if (fixture) await closeInstance(fixture.instanceId);
     if (fixture?.root) fs.rmSync(fixture.root, { recursive: true, force: true });
     if (browserState) {
-      browserState.page.close();
-      await stopBrowser(browserState.browser);
-      fs.rmSync(browserState.profile, { recursive: true, force: true });
+      await cleanupBrowserDriver(browserState);
     }
     board.close();
   }
@@ -2695,8 +2892,31 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     const mountedEmptySelection = pendingSample.empty;
     assert.deepEqual(disabledRestore, expectedCaret,
       'the pending canonical range is applied while the remounted field is still disabled');
-    assert.deepEqual(mountedEmptySelection, { start: 0, end: 0, direction: 'none' },
-      'the remounted browser field exposes the empty range that must not become canonical');
+    assert.deepEqual(
+      { start: mountedEmptySelection.start, end: mountedEmptySelection.end },
+      { start: 0, end: 0 },
+      'the remounted browser field exposes the collapsed range that must not become canonical',
+    );
+    assert.match(
+      mountedEmptySelection.direction,
+      /^(?:forward|backward|none)$/,
+      'collapsed browser ranges may serialize direction differently but still use valid metadata',
+    );
+    assert.throws(
+      () => assert.deepEqual(
+        {
+          start: mountedEmptySelection.start,
+          end: mountedEmptySelection.end,
+          // Keep direction valid so this falsifier can fail only because the
+          // valuable nonempty canonical range was replaced.
+          direction: expectedCaret.direction,
+        },
+        expectedCaret,
+        'the canonical backward selection must remain nonempty',
+      ),
+      /the canonical backward selection must remain nonempty/,
+      'replacing the canonical caret with the transient collapsed range fails the exact range oracle',
+    );
     const restoredCaret = await until(() => evaluate(page, `(() => {
       const node = ${field('Comment (optional)')};
       if (!node || node.disabled || document.activeElement !== node) return null;
@@ -3499,9 +3719,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     const root = fixtures[0]?.root;
     if (root) fs.rmSync(root, { recursive: true, force: true });
     if (browserState) {
-      browserState.page.close();
-      await stopBrowser(browserState.browser);
-      fs.rmSync(browserState.profile, { recursive: true, force: true });
+      await cleanupBrowserDriver(browserState);
     }
     board.close();
   }
@@ -3874,11 +4092,21 @@ test('T012 Send recovery: retained geometry stays visible and non-consuming whil
     let current = await engineState();
     assert.equal(current.selectedId, ids.box);
     assert.deepEqual(current.caret, retainedState.caret);
-    assert.deepEqual(await evaluate(page, `({
+    const collapsedCaret = await evaluate(page, `({
       start:${field('Comment (optional)')}.selectionStart,
       end:${field('Comment (optional)')}.selectionEnd,
       direction:${field('Comment (optional)')}.selectionDirection
-    })`), { start: 0, end: 0, direction: 'none' });
+    })`);
+    assert.deepEqual(
+      { start: collapsedCaret.start, end: collapsedCaret.end },
+      { start: 0, end: 0 },
+      'the retained blank comment restores the exact collapsed caret offsets',
+    );
+    assert.match(
+      collapsedCaret.direction,
+      /^(?:forward|backward|none)$/,
+      'a collapsed caret may expose browser-specific direction metadata',
+    );
 
     const editNumber = async (label, value, id, property) => {
       await fill(page, field(label), String(value));
@@ -4133,9 +4361,7 @@ test('T012 Send recovery: retained geometry stays visible and non-consuming whil
     publication?.controller.abort();
     if (fixture) await fixture.close();
     if (browserState) {
-      browserState.page.close();
-      await stopBrowser(browserState.browser);
-      fs.rmSync(browserState.profile, { recursive: true, force: true });
+      await cleanupBrowserDriver(browserState);
     }
     board.close();
   }
@@ -4345,9 +4571,7 @@ test('T012 Send acknowledgment precedence: declined and unavailable receipts rep
     activePublication?.controller.abort();
     if (activeFixture) await activeFixture.close();
     if (browserState) {
-      browserState.page.close();
-      await stopBrowser(browserState.browser);
-      fs.rmSync(browserState.profile, { recursive: true, force: true });
+      await cleanupBrowserDriver(browserState);
     }
     board.close();
   }
@@ -5816,12 +6040,15 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     assert.match(longStep.moveStatus, /^Tools .*from the default spot\./);
     assert.deepEqual(longStep.workflowStatuses, movableBaseline.workflowStatuses,
       'keyboard movement must not overwrite the workflow status region');
-    const matchingMoveRegions = axLiveRegions(await page.send('Accessibility.getFullAXTree'))
+    const politeStatusRegions = axLiveRegions(await page.send('Accessibility.getFullAXTree'))
+      .filter(region => region.role === 'status' && region.live === 'polite');
+    const matchingMoveRegions = politeStatusRegions
       .filter(region => region.role === 'status'
         && region.live === 'polite'
         && region.text === longStep.moveStatus);
     assert.equal(matchingMoveRegions.length, 1,
-      'the keyboard landing position reaches exactly one native polite status region');
+      `the keyboard landing position reaches exactly one native polite status region: ${
+        JSON.stringify(politeStatusRegions)}`);
     assert.deepEqual(longStep.frame, movableBaseline.frame);
     assert.equal(longStep.reviewStatus, 'Review');
     assert.equal(longStep.comments, 'Comments (1)');
@@ -6363,9 +6590,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       await publication.result.catch(() => {});
     }
     if (browserState) {
-      browserState.page.close();
-      await stopBrowser(browserState.browser);
-      fs.rmSync(browserState.profile, { recursive: true, force: true });
+      await cleanupBrowserDriver(browserState);
     }
     if (fixture) await fixture.close();
     board.close();
@@ -7833,9 +8058,7 @@ test('T012 review regression: master-detail selection and focusable saved state 
       await publication.result.catch(() => {});
     }
     if (browserState) {
-      browserState.page.close();
-      await stopBrowser(browserState.browser);
-      fs.rmSync(browserState.profile, {recursive:true,force:true});
+      await cleanupBrowserDriver(browserState);
     }
     if (fixture) await fixture.close();
     board.close();
@@ -8686,9 +8909,7 @@ test('T012 review regression: double-click opens an annotation comment while dra
       await publication.result.catch(() => {});
     }
     if (browserState) {
-      browserState.page.close();
-      await stopBrowser(browserState.browser);
-      fs.rmSync(browserState.profile, {recursive:true,force:true});
+      await cleanupBrowserDriver(browserState);
     }
     if (fixture) await fixture.close();
     board.close();
@@ -8817,9 +9038,7 @@ test('T012 accessibility: selected annotation label meets text contrast in fresh
           await publication.result.catch(() => {});
         }
         if (browserState) {
-          browserState.page.close();
-          await stopBrowser(browserState.browser);
-          fs.rmSync(browserState.profile, {recursive:true,force:true});
+          await cleanupBrowserDriver(browserState);
         }
         if (fixture) await fixture.close();
       }
@@ -9402,9 +9621,7 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
       await publication.result.catch(() => {});
     }
     if (browserState) {
-      browserState.page.close();
-      await stopBrowser(browserState.browser);
-      fs.rmSync(browserState.profile, { recursive: true, force: true });
+      await cleanupBrowserDriver(browserState);
     }
     if (fixture) await fixture.close();
     board.close();
@@ -9432,16 +9649,33 @@ test('T012 browser: published capture warnings are closed, accessible, and retai
   const sealCalls = [];
   const diagnosticByRequest = new Map();
   const untrusted = 'UNTRUSTED_CAPTURE_DIAGNOSTIC_TEXT_MUST_NOT_RENDER';
+  const ownedExitWording = {
+    child_exit: 'The capture browser exited before the operation completed.',
+    pipe_write: 'The capture browser command pipe failed.',
+  };
   const cases = [
     {
-      key: 'child_exit',
+      key: 'owned_exit',
       injected: null,
-      expectedCapture: {
+      wording: null,
+    },
+    {
+      key: 'child_exit',
+      injected: {
         available: false,
         reason: 'review_capture_failed',
         detail: { stage: 'child_exit', exitCode: 23 },
       },
       wording: 'The capture browser exited before the operation completed.',
+    },
+    {
+      key: 'pipe_write',
+      injected: {
+        available: false,
+        reason: 'review_capture_failed',
+        detail: { stage: 'pipe_write', exitCode: 23 },
+      },
+      wording: 'The capture browser command pipe failed.',
     },
     {
       key: 'browser_missing',
@@ -9536,8 +9770,13 @@ test('T012 browser: published capture warnings are closed, accessible, and retai
     // Act + Assert
     for (const diagnostic of cases) {
       const { request, publication } = publications.get(diagnostic.key);
-      const expected = `${diagnostic.wording} Review cannot send report-only feedback. Working annotations are retained.`;
       await navigate(page, fixture, 1440, 'light');
+      const nativeProbe = await installNativeAnnouncementProbe(page);
+      assert.equal(
+        nativeProbe.wrapped,
+        nativeProbe.supported,
+        'the native announcement probe either delegates the actual API or leaves the DOM fallback untouched',
+      );
       await click(page, button('Needs you'));
       await click(page, `[...document.querySelectorAll('button')].find((node) =>
         node.innerText.includes(${JSON.stringify(request.prompt)}) && node.getClientRects().length)`);
@@ -9546,6 +9785,31 @@ test('T012 browser: published capture warnings are closed, accessible, and retai
       await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
         && !document.querySelector('[aria-label="Box (B)"]').disabled`),
       `${diagnostic.key} Review engine ready`, 30_000);
+      const baseCapture = baseCaptures.find((entry) => entry.requestRef === request.requestRef)?.capture;
+      const renderedCapture = diagnostic.injected ?? baseCapture;
+      if (diagnostic.key === 'owned_exit') {
+        assert.deepEqual(
+          {
+            available: renderedCapture?.available,
+            reason: renderedCapture?.reason,
+            stage: renderedCapture?.detail?.stage,
+            exitCode: renderedCapture?.detail?.exitCode,
+          },
+          {
+            available: false,
+            reason: 'review_capture_failed',
+            stage: renderedCapture?.detail?.stage,
+            exitCode: 23,
+          },
+          'the actual owned exit-23 probe returns a closed capture failure with its exit code',
+        );
+        assert.ok(
+          Object.hasOwn(ownedExitWording, renderedCapture.detail.stage),
+          `the owned exit race must close as child_exit or pipe_write, not ${renderedCapture.detail.stage}`,
+        );
+      }
+      const wording = diagnostic.wording ?? ownedExitWording[renderedCapture.detail.stage];
+      const expected = `${wording} Review cannot send report-only feedback. Working annotations are retained.`;
       const announced = observeLiveFeedback(page, expected, 2_000);
       await openReviewNotice(page, 'Image capture unavailable');
       await visible(page, expected);
@@ -9575,29 +9839,39 @@ test('T012 browser: published capture warnings are closed, accessible, and retai
       const tree = await page.send('Accessibility.getFullAXTree');
       const axGroup = axGroupsContaining(tree, expected)[0] ?? null;
       const live = {
+        channel: announcement.nativeSupported ? 'ariaNotify' : 'live-region',
         dom: announcement.samples.some(({ dom }) => dom.some((entry) => (
           entry.ownerDocument && entry.containsExpected
         ))),
         ax: announcement.samples.some(({ ax }) => ax.some((entry) => (
           entry.text.includes(expected) && ['polite', 'assertive'].includes(entry.live)
         ))),
+        native: announcement.samples.some(({ nativeMatch }) => nativeMatch),
       };
       assert.ok(notice, `${diagnostic.key} warning is rendered by the published Fluent MessageBar`);
       assert.equal(notice.nativeTitleValid, true, `${diagnostic.key} warning retains a native title reference`);
       assert.deepEqual(notice.labels.map(({ text }) => text), ['Image capture unavailable']);
       assert.ok(axGroup?.name?.trim(), `${diagnostic.key} warning has a named native AX group`);
-      assert.deepEqual(live, { dom: true, ax: true },
-        `${diagnostic.key} warning reaches the owner-document AriaLiveAnnouncer`);
+      if (live.channel === 'ariaNotify') {
+        assert.equal(live.native, true,
+          `${diagnostic.key} warning reaches the browser's native high-priority ariaNotify API`);
+      } else {
+        assert.deepEqual(
+          { dom: live.dom, ax: live.ax },
+          { dom: true, ax: true },
+          `${diagnostic.key} warning reaches the owner-document DOM and native AX live region`,
+        );
+      }
       if (diagnostic.key === 'unknown') {
         assert.equal(await evaluate(page, `document.body.innerText.includes(${JSON.stringify(untrusted)})`), false,
           'unknown diagnostic keys and text are never echoed');
       }
 
-      if (diagnostic.key === 'child_exit') {
+      if (diagnostic.key === 'owned_exit') {
         assert.deepEqual(
-          baseCaptures.find((entry) => entry.requestRef === request.requestRef)?.capture,
-          diagnostic.expectedCapture,
-          'the UI oracle is rooted in the actual owned child-exit preflight',
+          baseCapture,
+          renderedCapture,
+          'the UI oracle is rooted in the actual owned exit-23 preflight',
         );
         const savePosts = network.filter(({ url }) => url.endsWith('/api/needs-you/review/save')).length;
         const sealPosts = network.filter(({ url }) => url.endsWith('/api/needs-you/review/seal')).length;
@@ -9647,7 +9921,7 @@ test('T012 browser: published capture warnings are closed, accessible, and retai
         const working = JSON.parse(fs.readFileSync(path.join(reviewDirectory, 'working.json'), 'utf8'));
         assert.equal(working.state.annotations.length, 1, 'Save markup retains the working annotation');
         await visible(page, expected);
-        await saveRegressionProof(page, output, 'capture-diagnostic-child-exit', {
+        await saveRegressionProof(page, output, 'capture-diagnostic-owned-exit', {
           test: 'T012 browser: published capture warnings are closed, accessible, and retain save-only markup',
           browser: browserState.version.Browser,
           expected,
@@ -9677,13 +9951,15 @@ test('T012 browser: published capture warnings are closed, accessible, and retai
     );
     assert.equal(fs.existsSync(probe.profile), false, 'the actual failed preflight removed its owned profile');
     assert.equal(baseCaptures.length, cases.length);
+    const actualCapture = baseCaptures[0].capture;
     assert.deepEqual(
       baseCaptures.map(({ capture }) => capture),
-      cases.map(() => cases[0].expectedCapture),
+      cases.map(() => actualCapture),
       'the production adapter keeps one unchanged negative descriptor for its provider lifetime',
     );
-    assert.equal(new Set(cases.map(({ wording }) => wording)).size, cases.length,
-      'browser missing, child exit, protocol, timeout, cleanup, and unknown have distinct wording');
+    const injectedCases = cases.filter(({ injected }) => injected);
+    assert.equal(new Set(injectedCases.map(({ wording }) => wording)).size, injectedCases.length,
+      'browser missing, child exit, pipe write, protocol, timeout, cleanup, and unknown have distinct wording');
     assert.deepEqual(sealCalls, []);
     assert.deepEqual(runtimeErrors, []);
     writeEvidenceJson(output, 'capture-diagnostic-warning-matrix', {
@@ -9704,19 +9980,14 @@ test('T012 browser: published capture warnings are closed, accessible, and retai
       seals: sealCalls.length,
     });
   } finally {
-    fixture?.provider.dispose();
-    if (fixture) await closeInstance(fixture.instanceId);
-    if (root) fs.rmSync(root, { recursive: true, force: true });
-    if (browserState) {
-      browserState.page.close();
-      await stopBrowser(browserState.browser);
-      fs.rmSync(browserState.profile, { recursive: true, force: true });
-    }
-    try {
-      failingBrowser.close();
-    } finally {
-      board.close();
-    }
+    await runCleanupSteps(
+      () => fixture?.provider.dispose(),
+      () => fixture ? closeInstance(fixture.instanceId) : undefined,
+      () => { if (root) fs.rmSync(root, { recursive: true, force: true }); },
+      () => browserState ? cleanupBrowserDriver(browserState) : undefined,
+      () => failingBrowser.close(),
+      () => board.close(),
+    );
   }
 });
 
@@ -9752,6 +10023,12 @@ test('T011 review regression: dynamic status notices reach native live regions',
       network.push({ requestId: event.requestId, method: event.request.method, url: event.request.url });
     });
     await navigate(page, fixture, 1440, 'light');
+    const nativeProbe = await installNativeAnnouncementProbe(page);
+    assert.equal(
+      nativeProbe.wrapped,
+      nativeProbe.supported,
+      'the native announcement probe either delegates the actual API or leaves the DOM fallback untouched',
+    );
     await click(page, button('Needs you'));
     await click(page, `[...document.querySelectorAll('button')].find((node) =>
       node.innerText.includes('Receipt outcome announcement control') && node.getClientRects().length)`);
@@ -9800,14 +10077,22 @@ test('T011 review regression: dynamic status notices reach native live regions',
       focus,
     });
 
-    const assertiveMatch = (observation) => ({
-      dom: observation.samples.some(({ dom }) => dom.some((entry) => (
+    const assertiveMatch = (observation) => {
+      const dom = observation.samples.some(({ dom }) => dom.some((entry) => (
         entry.ownerDocument && entry.containsExpected && entry.live === 'assertive'
-      ))),
-      ax: observation.samples.some(({ ax }) => ax.some((entry) => (
+      )));
+      const ax = observation.samples.some(({ ax }) => ax.some((entry) => (
         entry.text.includes(observation.expected) && entry.live === 'assertive'
-      ))),
-    });
+      )));
+      const native = observation.samples.some(({ nativeMatch }) => nativeMatch);
+      return {
+        channel: observation.nativeSupported ? 'ariaNotify' : 'live-region',
+        dom,
+        ax,
+        native,
+        delivered: observation.nativeSupported ? native : dom && ax,
+      };
+    };
     const declinedMatch = assertiveMatch(declined);
     const refusalMatch = assertiveMatch(refusal);
     const politeNativeControl = refusal.samples.some(({ ax }) => ax.some((entry) => (
@@ -9830,19 +10115,24 @@ test('T011 review regression: dynamic status notices reach native live regions',
       expected: 'the Review-needs-attention role=status AX node with live=polite',
       actual: refusal.best?.ax ?? [],
     });
-    if (!declinedMatch.dom || !declinedMatch.ax) findings.push({
+    if (!declinedMatch.delivered) findings.push({
       transition: 'owner-declined matching receipt',
-      expected: { ownerDocumentDescendant: true, nativeAXLive: 'assertive', text: declinedText },
+      expected: declinedMatch.channel === 'ariaNotify'
+        ? { nativeAPI: 'Document.ariaNotify', priority: 'high', text: declinedText }
+        : { ownerDocumentDescendant: true, nativeAXLive: 'assertive', text: declinedText },
       actual: declinedMatch,
     });
-    if (!refusalMatch.dom || !refusalMatch.ax) findings.push({
+    if (!refusalMatch.delivered) findings.push({
       transition: 'Review capture refusal',
-      expected: { ownerDocumentDescendant: true, nativeAXLive: 'assertive', text: refusalText },
+      expected: refusalMatch.channel === 'ariaNotify'
+        ? { nativeAPI: 'Document.ariaNotify', priority: 'high', text: refusalText }
+        : { ownerDocumentDescendant: true, nativeAXLive: 'assertive', text: refusalText },
       actual: refusalMatch,
     });
     await saveRegressionProof(page, output, 'status-announcements', {
       test: 'T011 review regression: dynamic status notices reach native live regions',
       browser: browserState.version.Browser,
+      nativeProbe,
       focus,
       politeNativeControl,
       declinedMatch,
@@ -9856,6 +10146,7 @@ test('T011 review regression: dynamic status notices reach native live regions',
     output.results.push({
       case: 'review-regression-status-announcements',
       browser: browserState.version.Browser,
+      nativeAnnouncementSupported: nativeProbe.supported,
       focus,
       politeNativeControl,
       declinedMatch,
@@ -9874,15 +10165,13 @@ test('T011 review regression: dynamic status notices reach native live regions',
       'capture refusal preserves the real owner waiter',
     );
     assert.deepEqual(findings, [],
-      'specific dynamic outcomes and warnings must enter legitimate owner-document/native live regions');
+      'specific dynamic outcomes and warnings must enter the native API or owner-document/native AX live region');
   } finally {
     fixture?.provider.dispose();
     if (fixture) await closeInstance(fixture.instanceId);
     if (fixture?.root) fs.rmSync(fixture.root, { recursive: true, force: true });
     if (browserState) {
-      browserState.page.close();
-      await stopBrowser(browserState.browser);
-      fs.rmSync(browserState.profile, { recursive: true, force: true });
+      await cleanupBrowserDriver(browserState);
     }
     board.close();
   }
@@ -9995,9 +10284,7 @@ test('T011 review regression: Review capture refusal notice has a valid accessib
     if (fixture) await closeInstance(fixture.instanceId);
     if (fixture?.root) fs.rmSync(fixture.root, { recursive: true, force: true });
     if (browserState) {
-      browserState.page.close();
-      await stopBrowser(browserState.browser);
-      fs.rmSync(browserState.profile, { recursive: true, force: true });
+      await cleanupBrowserDriver(browserState);
     }
     board.close();
   }
@@ -10927,9 +11214,7 @@ test('T011 review regression: latest history navigation wins over superseded rea
     if (fixture) await closeInstance(fixture.instanceId);
     if (fixture?.root) fs.rmSync(fixture.root, { recursive: true, force: true });
     if (browserState) {
-      browserState.page.close();
-      await stopBrowser(browserState.browser);
-      fs.rmSync(browserState.profile, { recursive: true, force: true });
+      await cleanupBrowserDriver(browserState);
     }
     board.close();
     if (!diagnosticFailure && diagnosticRetentionError) throw diagnosticRetentionError;

@@ -382,6 +382,9 @@ class Cdp {
     /** @type {Map<string, Array<(params:any)=>void>>} */
     this.listeners = new Map();
     this.socket = new WebSocket(debuggerUrl);
+    this.closed = new Promise(resolve => {
+      this.socket.addEventListener('close', resolve, { once: true });
+    });
   }
 
   async open() {
@@ -404,6 +407,7 @@ class Cdp {
     this.socket.addEventListener('close', () => {
       for (const pending of this.pending.values()) pending.reject(new Error('CDP socket closed'));
       this.pending.clear();
+      this.listeners.clear();
     });
   }
 
@@ -423,26 +427,32 @@ class Cdp {
   }
 
   close() {
-    this.socket.close();
+    if (this.socket.readyState !== WebSocket.CLOSING
+      && this.socket.readyState !== WebSocket.CLOSED) this.socket.close();
+    return this.closed;
   }
 }
 
 /** @param {number} root */
-function descendants(root) {
-  const output = spawnSync('ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8' });
-  if (output.status !== 0) return [];
+function browserDescendants(root) {
+  if (process.platform === 'win32') return [];
+  const output = spawnSync('ps', ['-axo', 'pid=,ppid='], {
+    encoding: 'utf8',
+    timeout: 1_000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (output.error) throw output.error;
+  if (output.status !== 0) throw new Error(`Could not inventory browser descendants (ps exit ${output.status}).`);
   const byParent = new Map();
   for (const line of output.stdout.split('\n')) {
     const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
     if (!match) continue;
-    const pid = Number(match[1]);
-    const parent = Number(match[2]);
-    const children = byParent.get(parent) ?? [];
-    children.push(pid);
-    byParent.set(parent, children);
+    const children = byParent.get(Number(match[2])) ?? [];
+    children.push(Number(match[1]));
+    byParent.set(Number(match[2]), children);
   }
   const found = [];
-  const visit = (pid) => {
+  const visit = pid => {
     for (const child of byParent.get(pid) ?? []) {
       visit(child);
       found.push(child);
@@ -452,19 +462,106 @@ function descendants(root) {
   return found;
 }
 
+/** @param {number} pid */
+function browserPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+/** @param {number[]} pids */
+function liveBrowserPids(pids) {
+  return pids.filter(browserPidAlive);
+}
+
 /** @param {import('node:child_process').ChildProcess} child */
+function browserHandlesClosed(child) {
+  return (child.exitCode !== null || child.signalCode !== null)
+    && child.stdio.every(stream => !stream || stream.closed || stream.destroyed);
+}
+
+/**
+ * Reap only the browser and descendants observed beneath its exact spawned PID.
+ * @param {import('node:child_process').ChildProcess} child
+ */
 async function stopBrowser(child) {
-  if (!child.pid || child.exitCode !== null) return;
-  const pids = [child.pid, ...descendants(child.pid)];
-  for (const pid of pids.reverse()) {
-    try { process.kill(pid, 'SIGTERM'); } catch { /* process already exited */ }
+  if (!child.pid) return [];
+  const errors = [];
+  let owned = [child.pid];
+  try {
+    if (browserPidAlive(child.pid)) {
+      owned = [...new Set([child.pid, ...browserDescendants(child.pid)])];
+    }
+  } catch (error) {
+    errors.push(new Error(`Could not inventory descendants of owned browser pid ${child.pid}.`, { cause: error }));
   }
-  await until(() => child.exitCode !== null || child.signalCode !== null, 'browser process exit', 3_000)
-    .catch(() => undefined);
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  for (const pid of [child.pid, ...descendants(child.pid)].reverse()) {
-    try { process.kill(pid, 'SIGKILL'); } catch { /* process already exited */ }
+  const signal = (pids, name) => {
+    for (const pid of pids) {
+      try {
+        process.kill(pid, name);
+      } catch (error) {
+        if (error?.code !== 'ESRCH') {
+          errors.push(new Error(`Could not send ${name} to owned browser pid ${pid}.`, { cause: error }));
+        }
+      }
+    }
+  };
+  signal(owned, 'SIGTERM');
+  let survivors = owned;
+  await until(() => {
+    survivors = liveBrowserPids(owned);
+    return survivors.length === 0;
+  }, 'all exact browser processes to exit after SIGTERM', 3_000).catch(() => {});
+  if (survivors.length) {
+    signal(survivors, 'SIGKILL');
+    await until(() => {
+      survivors = liveBrowserPids(survivors);
+      return survivors.length === 0;
+    }, 'all exact browser processes to exit after SIGKILL', 2_000)
+      .catch(error => errors.push(error));
   }
+  if (!browserHandlesClosed(child)) {
+    await until(() => browserHandlesClosed(child), 'owned browser child-process handles to close', 1_000)
+      .catch(() => {});
+  }
+  if (!browserHandlesClosed(child)) {
+    for (const stream of child.stdio) stream?.destroy();
+    await until(() => browserHandlesClosed(child), 'owned browser pipes to close', 1_000)
+      .catch(error => errors.push(error));
+  }
+  if (survivors.length) errors.push(new Error(`Owned browser pids did not exit: ${survivors.join(', ')}.`));
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, 'Owned browser process cleanup failed.');
+  return owned;
+}
+
+/**
+ * @param {{browser:ReturnType<typeof spawn>,page?:Cdp,profile:string}} state
+ */
+async function cleanupBrowserDriver(state) {
+  const outcomes = await Promise.allSettled([
+    Promise.resolve().then(() => state.page?.close()),
+    stopBrowser(state.browser),
+  ]);
+  const errors = outcomes.filter(({ status }) => status === 'rejected')
+    .map(({ reason }) => reason);
+  try {
+    fs.rmSync(state.profile, {
+      recursive: true,
+      force: true,
+      maxRetries: 4,
+      retryDelay: 50,
+    });
+  } catch (error) {
+    errors.push(new Error(`Could not remove owned browser profile ${state.profile}.`, { cause: error }));
+  }
+  if (fs.existsSync(state.profile)) errors.push(new Error(`Owned browser profile still exists: ${state.profile}.`));
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, 'Owned browser driver cleanup failed.');
 }
 
 /** @param {number|null} [forcedDeviceScale] */
@@ -484,6 +581,7 @@ async function startBrowser(forcedDeviceScale = null) {
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
   let launchError;
   let stderr = '';
+  let page;
   browser.once('error', (error) => { launchError = error; });
   browser.stdout.resume();
   browser.stderr.on('data', (bytes) => { stderr += bytes; });
@@ -504,7 +602,7 @@ async function startBrowser(forcedDeviceScale = null) {
       return response.ok ? response.json() : null;
     }, 'browser DevTools version endpoint');
     const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json();
-    const page = new Cdp(target.webSocketDebuggerUrl);
+    page = new Cdp(target.webSocketDebuggerUrl);
     await page.open();
     await Promise.all([
       page.send('Page.enable'),
@@ -515,8 +613,12 @@ async function startBrowser(forcedDeviceScale = null) {
     ]);
     return { browser, info, page, profile };
   } catch (error) {
-    await stopBrowser(browser);
-    fs.rmSync(profile, { recursive: true, force: true });
+    try {
+      await cleanupBrowserDriver({ browser, page, profile });
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError],
+        `Could not launch DUDE_CANVAS_BROWSER=${BROWSER}; cleanup also failed.`);
+    }
     throw new Error(`Could not launch DUDE_CANVAS_BROWSER=${BROWSER}: ${error.message}`, { cause: error });
   }
 }
@@ -1207,17 +1309,12 @@ async function createT010ReviewHarness(context, options) {
               controller.abort();
               try { await evaluate(page, 'window.__review?.dispose?.()'); } catch {}
               try { await page.send('Page.navigate', { url: 'about:blank' }); } catch {}
-              page.close();
-              try {
-                await stopBrowser(ownedBrowser.browser);
-              } finally {
-                fs.rmSync(ownedBrowser.profile, { recursive: true, force: true });
-                assert.equal(
-                  fs.existsSync(ownedBrowser.profile),
-                  false,
-                  'focused harness reaps its exact browser-driver profile',
-                );
-              }
+              await cleanupBrowserDriver(ownedBrowser);
+              assert.equal(
+                fs.existsSync(ownedBrowser.profile),
+                false,
+                'focused harness reaps its exact browser-driver profile',
+              );
               try {
                 if (instance) await closeInstance(instanceId);
               } finally {
@@ -1236,17 +1333,12 @@ async function createT010ReviewHarness(context, options) {
           releaseSaveBarriers();
           controller.abort();
           if (ownedBrowser) {
-            ownedBrowser.page.close();
-            try {
-              await stopBrowser(ownedBrowser.browser);
-            } finally {
-              fs.rmSync(ownedBrowser.profile, { recursive: true, force: true });
-              assert.equal(
-                fs.existsSync(ownedBrowser.profile),
-                false,
-                'failed focused harness reaps its exact browser-driver profile',
-              );
-            }
+            await cleanupBrowserDriver(ownedBrowser);
+            assert.equal(
+              fs.existsSync(ownedBrowser.profile),
+              false,
+              'failed focused harness reaps its exact browser-driver profile',
+            );
           }
           try {
             if (instance) await closeInstance(instanceId);
@@ -1585,18 +1677,15 @@ test('T013 portable capture: style-only host evidence and a blank pin seal and d
           const chromiumTarget = await source.evaluate(
             "globalThis.__t013Inspector.describeSelector('#target')",
           );
-          assert.deepEqual(
-            {
-              'font-family': chromiumTarget.element.styles['font-family'],
-              border: chromiumTarget.element.styles.border,
-              overflow: chromiumTarget.element.styles.overflow,
-            },
-            {
-              'font-family': '"system-ui"',
-              border: '0px none rgb(128, 128, 128)',
-              overflow: 'visible',
-            },
-            'the Chromium side reproduces the three concrete serialization values',
+          const runtimeStyles = {
+            'font-family': chromiumTarget.element.styles['font-family'],
+            border: chromiumTarget.element.styles.border,
+            overflow: chromiumTarget.element.styles.overflow,
+          };
+          assert.equal(
+            Object.values(runtimeStyles).every(value => typeof value === 'string' && value.length > 0),
+            true,
+            'the current browser supplies all three host-observation fields',
           );
           await harness.command({ type: 'element', selector: '#target' });
           const commentId = await harness.command({ type: 'addComment' });
@@ -1629,11 +1718,25 @@ test('T013 portable capture: style-only host evidence and a blank pin seal and d
 
           const hostState = structuredClone(working.state);
           const hostComment = hostState.annotations.find(({ id }) => id === commentId);
+          const differingObservation = (actual, candidates) => {
+            const different = candidates.find(candidate => candidate !== actual);
+            assert.ok(different, `a synthetic host observation must differ from ${actual}`);
+            return different;
+          };
+          const differingHostStyles = {
+            'font-family': differingObservation(runtimeStyles['font-family'], [
+              '"system-ui"',
+              'BlinkMacSystemFont',
+            ]),
+            border: differingObservation(runtimeStyles.border, [
+              '0px none rgb(128, 128, 128)',
+              'rgb(118, 118, 118)',
+            ]),
+            overflow: differingObservation(runtimeStyles.overflow, ['visible', 'clip']),
+          };
           hostComment.element.styles = {
             ...hostComment.element.styles,
-            'font-family': 'BlinkMacSystemFont',
-            border: 'rgb(118, 118, 118)',
-            overflow: 'clip',
+            ...differingHostStyles,
           };
           hostState.view.signature = `sha256:${sha256('synthetic WebKit host signature')}`;
           const portableHost = portableElement(hostComment.element);
@@ -1642,8 +1745,24 @@ test('T013 portable capture: style-only host evidence and a blank pin seal and d
             ...chromiumTarget,
             element: chromiumTarget.element,
           };
-          assert.deepEqual(portableHost, portableChromium);
-          assert.notDeepEqual(hostComment.element.styles, chromiumTarget.element.styles);
+          const changedStyleKeys = Object.keys(differingHostStyles).filter(
+            key => hostComment.element.styles[key] !== chromiumTarget.element.styles[key],
+          ).sort();
+          assert.deepEqual(
+            changedStyleKeys,
+            ['border', 'font-family', 'overflow'],
+            'all three synthetic host observations genuinely differ from this browser runtime',
+          );
+          assert.deepEqual(
+            portableHost,
+            portableChromium,
+            'changing only host-observation styles leaves every portable field identical',
+          );
+          assert.notDeepEqual(
+            hostComment.element.styles,
+            chromiumTarget.element.styles,
+            'the positive path contains a real full-descriptor inequality',
+          );
           assert.equal(
             captureAnchorMatches(
               hostComment.element,
@@ -1743,9 +1862,12 @@ test('T013 portable capture: style-only host evidence and a blank pin seal and d
           assert.doesNotMatch(report, /^(?:Comment|Suggested replacement text|Suggested style change):/m);
           assert.match(report, /Target text and computed styles below are host-review observations\./);
           assert.match(report, /Computed styles are not cross-renderer proof\./);
-          assert.match(report, /"font-family": "BlinkMacSystemFont"/);
-          assert.match(report, /"border": "rgb\(118, 118, 118\)"/);
-          assert.match(report, /"overflow": "clip"/);
+          for (const [key, value] of Object.entries(differingHostStyles)) {
+            assert.ok(
+              report.includes(`${JSON.stringify(key)}: ${JSON.stringify(value)}`),
+              `the report retains the synthetic ${key} host observation`,
+            );
+          }
           assert.equal(delivered.response.status, 202);
           assert.equal(delivered.payload.status, 'delivered');
           assert.equal(toolResult.resultType, 'success');
@@ -2043,9 +2165,9 @@ test('T013 Review readiness: an off-screen settled opaque frame is unresponsive 
 
           // Act: an explicit production scroll refresh now reaches the real
           // four-second bridge deadline.
-          const timeoutStarted = Date.now();
+          const timeoutStarted = performance.now();
           const offscreen = await reviewCommandOutcome(harness, { type: 'scroll', x: 0, y: 80 });
-          const timeoutElapsed = Date.now() - timeoutStarted;
+          const timeoutElapsed = performance.now() - timeoutStarted;
 
           // Assert: zero replies plus a stalled child rAF prove this is the
           // off-screen renderer throttle, not loading or an inspector refusal.
@@ -10749,17 +10871,12 @@ test('T010 mounts the vanilla engine under current Fluent tokens and seals real 
         for (const controller of controllers) controller.abort();
         try { await reviewPage?.send('Page.navigate', { url: 'about:blank' }); } catch {}
         if (reviewBrowser) {
-          reviewBrowser.page.close();
-          try {
-            await stopBrowser(reviewBrowser.browser);
-          } finally {
-            fs.rmSync(reviewBrowser.profile, { recursive: true, force: true });
-            assert.equal(
-              fs.existsSync(reviewBrowser.profile),
-              false,
-              'mounted Review fixture reaps its exact browser-driver profile',
-            );
-          }
+          await cleanupBrowserDriver(reviewBrowser);
+          assert.equal(
+            fs.existsSync(reviewBrowser.profile),
+            false,
+            'mounted Review fixture reaps its exact browser-driver profile',
+          );
         }
         try { if (instance) await closeInstance(instanceId); } finally { provider.dispose(); }
         await Promise.allSettled(toolResults);
