@@ -8898,6 +8898,67 @@ test('bounded verification dispatch keeps the catalog Tester runner-first and ev
   ]) assert.ok(evidence.includes(requirement), requirement);
 });
 
+test('release manager PR-first delivery requires integration and preserves operation authority', () => {
+  const source = read('library/packs/release/agents/dude-pack-release-manager.agent.md');
+  const heading = '### PR-first change delivery';
+  const requirements = [
+    'For preflight-only work, name pending PR/base-integration steps rather than reporting overall release readiness.',
+    "Resolve the intended integration base from the user's target or the repository default branch.",
+    'Apply this flow to source/core-bundle changes even without npm version write-back;',
+    'commit only in-scope changes on a working/topic branch separate from the base, then push that branch to its resolved remote and confirm the remote head SHA.',
+    'Find/reuse the open PR for that exact head repository/branch and base, or create one; return its actual URL.',
+    'Do not duplicate PRs, bypass protections, or push directly to the base instead.',
+    'Submit requested native GitHub approval only as an authorized, eligible reviewer distinct from the PR author.',
+    'Agent review is not a submitted GitHub approval:',
+    'do not bypass self-approval restrictions or use another identity without authority.',
+    'Merge only when authorized and applicable checks/review gates are satisfied.',
+    'After merge, resolve the actual resulting commit in the integration branch, including squash/rebase cases;',
+    'PR-only or "no release" instructions stop before tagging/publication;',
+    'opening or approving a PR does not authorize merge or release.',
+    'For a requested stable release, verify the integrated commit before building, tagging, or publishing from it.',
+    'Treat an explicitly requested different release target as a deliberate exception: state it and verify its exact commit, never infer permission.',
+  ];
+  const assertDelivery = (document) => {
+    const body = normalizeMarkdownBlock(markdownSection(document, heading));
+    for (const requirement of requirements) assert.ok(body.includes(requirement), requirement);
+    assert.ok(body.indexOf('commit only in-scope changes') < body.indexOf('then push that branch'));
+    assert.ok(body.indexOf('then push that branch') < body.indexOf('Find/reuse the open PR'));
+  };
+  assertDelivery(source);
+  const config = loadAgentModelConfig(path.join(ROOT, 'src', 'config', 'agent-models.json'));
+  const projected = renderCopilotAgent(
+    parseAgentSource(Buffer.from(source), { stem: 'dude-pack-release-manager', config }),
+    config,
+  );
+  assertDelivery(projected.toString('utf8'));
+  const section = normalizeMarkdownBlock(markdownSection(source, heading));
+  assertDelivery(`${heading}\n\n${section.replaceAll(' ', '\n')}\n`);
+  for (const requirement of requirements) {
+    const moved = `${heading}\n\n${section.replace(requirement, '')}\n\n## Elsewhere\n\n${requirement}\n`;
+    assert.throws(() => assertDelivery(moved), undefined, `moving this guard outside its owning section must fail: ${requirement}`);
+  }
+});
+
+test('release manager PR-first delivery keeps package write-back and documented CI scope separate', () => {
+  const source = read('library/packs/release/agents/dude-pack-release-manager.agent.md');
+  const writeback = normalizeMarkdownBlock(markdownSection(source, '### Package-version write-back'));
+  for (const requirement of [
+    'package-version synchronization when repository policy requires a PR or a direct workflow push is blocked',
+    'For automated package-version-only write-back, prefer a direct workflow push only when repository policy allows it and the token has explicit permission;',
+    'This exception never applies to source/product-change delivery.',
+    'Do not introduce manual npm bumps or invent package-version write-back for core-bundle projects.',
+  ]) assert.ok(writeback.includes(requirement), requirement);
+  const docs = normalizeMarkdownBlock(markdownSection(read('docs/commands.md'), '### Releases and CI'));
+  for (const requirement of [
+    'it reuses or creates a PR into the requested or repository-default base and reports its actual URL',
+    'Preflight-only work must report pending PR and base-integration steps',
+    'Native GitHub approval requires an eligible reviewer other than the PR author',
+    'Opening or approving a PR does not authorize merge or publication',
+    '`no release` requests stop before tagging/publication',
+    'the tag workflow below does not enforce base-branch ancestry',
+  ]) assert.ok(docs.includes(requirement), requirement);
+});
+
 test('T009 current runtime projection is exact, generated, and consumer-tooling-free', () => {
   // Arrange
   const sourceRoot = 'src/extensions/dude';

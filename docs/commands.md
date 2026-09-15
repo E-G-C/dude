@@ -1483,6 +1483,21 @@ browser suites: `build.test.mjs`, `browser.test.mjs`, and
 evidence from its runner-temp output parent even after failure. The
 dependency-free jobs keep their optional skips.
 
+Release Manager uses PR-first delivery for source changes, including core-bundle
+projects without package-version write-back. After an authorized commit and
+topic-branch push, it reuses or creates a PR into the requested or repository-default
+base and reports its actual URL. A branch push or published tag does not prove
+that the base contains those changes. Preflight-only work must report pending
+PR and base-integration steps.
+
+Native GitHub approval requires an eligible reviewer other than the PR author;
+an independent agent verdict is reported separately. Merge needs authorization
+and the applicable checks/review gates. For an authorized stable release, verify
+the resulting integrated commit, including squash/rebase merges, before tagging.
+Opening or approving a PR does not authorize merge or publication. PR-only or
+`no release` requests stop before tagging/publication. These are agent procedures;
+the tag workflow below does not enforce base-branch ancestry.
+
 `.github/workflows/release.yml` runs on a `v*` tag: it gates on the
 bundle checks, builds the core bundle with `scripts/build-release.mjs`, and
 publishes a `dude-bundle-<tag>.zip` to a GitHub Release. Unzip it at a repo root
