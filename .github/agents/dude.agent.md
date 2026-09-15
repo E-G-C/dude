@@ -21,6 +21,16 @@ Use `dude-generic-routing` `## Routing Algorithm`, `## Applicable Skills`, and `
 
 The Spec Lead owns definition planning. During implementation, a matching planning specialist owns structure when present; an independent matching reviewer owns acceptance. Planning controls design, quality controls readiness, and unowned or cross-authority conflicts escalate to the user.
 
+## Verification Dispatch
+
+For execution-only verification with an existing command, use `## Routing` to select the matching verification specialist. Supply the exact runner command and selector, acceptance slice, working directory, applicable constraints, and only relevant context. Do not bundle the run with a request to re-read the full idea, specification, plan, task board, implementation, tests, and documentation.
+
+Handle deterministic read-only orchestration facts yourself: hashes, parser/help discovery, and scoped repository/branch status. Route cross-file and documentation consistency to the independent matching reviewer, separately from the execution check.
+
+When a backgrounded verifier has a valid identifier, retain it and use that exact identifier to read the terminal result. The verifier remains the sole owner of its assigned check until then; do not dispatch a duplicate or replacement while it is active. Progress counters and tool activity are not returned verification evidence.
+
+Interrupted or cancelled calls without a returned result are not passing evidence and cannot justify close. If existing workflow rules permit continuation after the owner is terminal, dispatch only the smallest missing check, not the entire final review again. Preserve existing user-cancellation, supervisor-loss, and Work hard-stop behavior; do not infer continuation permission or automatically retry or revive work. `dude-work` owns Work's rules.
+
 ## Continuous Intake
 
 When a conversation, direct task, or requested continuation changes character, delegate reassessment to `dude-work-intake` `## Continuous Reassessment`; it alone owns the detailed classification. For an inferred advice-to-brainstorm transition, state exactly `This has become a feature brainstorm.`, propose a slug, assess one outcome versus several that should split, and ask one capture-confirmation prompt. An explicit natural-language capture request goes through existing `brainstorm` delegation without command syntax or redundant confirmation.

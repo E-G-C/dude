@@ -7484,8 +7484,8 @@ function completionDispositionV2(completion, verification, review) {
     if (completion.outcome !== 'blocked') invalid('completion v2 outcome', 'must be blocked for rejected review');
     return 'review-rejected';
   }
-  if (completion.outcome !== 'succeeded') {
-    invalid('completion v2 outcome', 'must be succeeded for accepted trusted evidence');
+  if (completion.outcome !== 'succeeded' && completion.outcome !== 'no-change') {
+    invalid('completion v2 outcome', 'must be succeeded or no-change for accepted trusted evidence');
   }
   return 'accepted';
 }

@@ -438,6 +438,23 @@ close events. `@dude work` itself only appends coordinator execution events. It
 never imports features, auto-commits, or creates a new lane, board, or persisted
 recovery state.
 
+When an existing command covers a verification slice, Dude sends the verification
+specialist that exact runner, selector, working directory, and relevant
+constraints. The specialist runs it before broader file scans and expands only
+for a failure or an assigned evidence gap. Dude gathers orchestration facts such
+as hashes and repository state; the independent reviewer handles cross-file and
+documentation consistency. A backgrounded verifier keeps sole ownership of its
+check. An interruption without a returned result supplies no passing evidence;
+only existing continuation rules can authorize a new dispatch, limited to the
+smallest missing check.
+
+Autonomous completion through the host adapter accepts `outcome: "no-change"`
+with an empty `changedTargets` list when fresh verification passes and independent
+review accepts the result. It settles through the same receipt and close path as
+`succeeded`, without relabeling the result or requesting a replacement specialist.
+A `no-change` result that claims changed files is rejected. Failed verification,
+rejected review, and other contradictory outcomes still prevent acceptance.
+
 Before every task start or resume, and again after every block or failure, Work
 inspects all available current-format history exactly bound to that task and
 feature. Under `autonomous`, that Inspection additionally acquires exactly one
@@ -1465,6 +1482,21 @@ browser suites: `build.test.mjs`, `browser.test.mjs`, and
 `t011-browser.test.mjs` under `scripts/dude-canvas-ui/`. It uploads retained
 evidence from its runner-temp output parent even after failure. The
 dependency-free jobs keep their optional skips.
+
+Release Manager uses PR-first delivery for source changes, including core-bundle
+projects without package-version write-back. After an authorized commit and
+topic-branch push, it reuses or creates a PR into the requested or repository-default
+base and reports its actual URL. A branch push or published tag does not prove
+that the base contains those changes. Preflight-only work must report pending
+PR and base-integration steps.
+
+Native GitHub approval requires an eligible reviewer other than the PR author;
+an independent agent verdict is reported separately. Merge needs authorization
+and the applicable checks/review gates. For an authorized stable release, verify
+the resulting integrated commit, including squash/rebase merges, before tagging.
+Opening or approving a PR does not authorize merge or publication. PR-only or
+`no release` requests stop before tagging/publication. These are agent procedures;
+the tag workflow below does not enforce base-branch ancestry.
 
 `.github/workflows/release.yml` runs on a `v*` tag: it gates on the
 bundle checks, builds the core bundle with `scripts/build-release.mjs`, and
