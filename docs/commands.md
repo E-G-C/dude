@@ -438,6 +438,23 @@ close events. `@dude work` itself only appends coordinator execution events. It
 never imports features, auto-commits, or creates a new lane, board, or persisted
 recovery state.
 
+When an existing command covers a verification slice, Dude sends the verification
+specialist that exact runner, selector, working directory, and relevant
+constraints. The specialist runs it before broader file scans and expands only
+for a failure or an assigned evidence gap. Dude gathers orchestration facts such
+as hashes and repository state; the independent reviewer handles cross-file and
+documentation consistency. A backgrounded verifier keeps sole ownership of its
+check. An interruption without a returned result supplies no passing evidence;
+only existing continuation rules can authorize a new dispatch, limited to the
+smallest missing check.
+
+Autonomous completion through the host adapter accepts `outcome: "no-change"`
+with an empty `changedTargets` list when fresh verification passes and independent
+review accepts the result. It settles through the same receipt and close path as
+`succeeded`, without relabeling the result or requesting a replacement specialist.
+A `no-change` result that claims changed files is rejected. Failed verification,
+rejected review, and other contradictory outcomes still prevent acceptance.
+
 Before every task start or resume, and again after every block or failure, Work
 inspects all available current-format history exactly bound to that task and
 feature. Under `autonomous`, that Inspection additionally acquires exactly one

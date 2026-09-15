@@ -5885,6 +5885,214 @@ function focusedCancelResponse(challenge) {
   };
 }
 
+/**
+ * @typedef {{
+ *   result:Record<string, unknown>,
+ *   specialistResult:Record<string, unknown>,
+ *   checkpoint:ReturnType<typeof memoryCheckpointStore>,
+ *   runtimeErrors:string[],
+ *   captures:{completion:Record<string, unknown>,input:Record<string, unknown>}[],
+ *   exchangeKinds:string[],
+ * }} FocusedTrustedCompletionRun
+ */
+
+/**
+ * Run one real specialist result through the public runner, retaining the exact
+ * completion sent to `runCommand` and rethrowing any runtime validation error.
+ * @param {string} root
+ * @param {string} label
+ * @param {(assessment:Record<string, unknown>)=>Record<string, unknown>} makeSpecialistResult
+ * @returns {Promise<FocusedTrustedCompletionRun>}
+ */
+async function runFocusedTrustedCompletion(root, label, makeSpecialistResult) {
+  writeSealedTaskState(root);
+  const request = focusedRunnerRequest(root);
+  const specialistResult = makeSpecialistResult(request.assessment);
+  request.specialistResult = specialistResult;
+  const checkpoint = memoryCheckpointStore();
+  /** @type {string[]} */
+  const runtimeErrors = [];
+  /** @type {{completion:Record<string, unknown>,input:Record<string, unknown>}[]} */
+  const captures = [];
+  /** @type {string[]} */
+  const exchangeKinds = [];
+
+  const result = await runHostAdapter(request, {
+    checkpoint: checkpoint.port,
+    runtime: {
+      identity: sha256(`runner-trusted-completion-outcome:${label}`),
+      invoke(command, lowLevelRequest) {
+        if (command === 'complete' && lowLevelRequest.mode === 'capture') {
+          captures.push({
+            completion: clone(lowLevelRequest.completion),
+            input: clone(lowLevelRequest.input),
+          });
+        }
+        try {
+          return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+        } catch (error) {
+          runtimeErrors.push(error instanceof Error ? error.message : String(error));
+          throw error;
+        }
+      },
+    },
+    exchange(challenge) {
+      exchangeKinds.push(challenge.kind);
+      assert.equal(challenge.kind, 'specialist-pair', `${label}: replacement challenge kind`);
+      return focusedCancelResponse(challenge);
+    },
+  });
+
+  return { result, specialistResult, checkpoint, runtimeErrors, captures, exchangeKinds };
+}
+
+/** @param {Record<string, unknown>} capture */
+function focusedCapturedEnvelope(capture) {
+  const bytes = /** @type {Record<string, unknown>} */ (capture.bytes);
+  return JSON.parse(
+    Buffer.from(/** @type {string} */ (bytes.base64), 'base64').toString('utf8'),
+  ).records[0].substantive;
+}
+
+/** @param {Record<string, unknown>} result */
+function focusedRunnerAcceptedState(result) {
+  return JSON.parse(
+    Buffer.from(/** @type {string} */ (result.stateBase64), 'base64').toString('utf8'),
+  );
+}
+
+/**
+ * @param {string} root
+ * @param {string} label
+ * @param {FocusedTrustedCompletionRun} observed
+ * @param {'succeeded'|'no-change'} outcome
+ */
+function assertFocusedTrustedCompletionSettled(root, label, observed, outcome) {
+  assert.deepEqual(
+    observed.runtimeErrors,
+    [],
+    `${label}: ${observed.runtimeErrors.join(' | ')}`,
+  );
+  assert.deepEqual(observed.exchangeKinds, [], `${label}: no replacement exchange`);
+  assert.equal(observed.result.outcome, 'ended', `${label}:${observed.result.reason}`);
+  assert.equal(observed.result.reason, 'task-settled', label);
+  assert.equal(observed.result.haltReport, null, label);
+  assert.equal(observed.captures.length, 1, `${label}: one trusted completion capture`);
+
+  const capture = observed.captures[0];
+  assert.equal(capture.completion.outcome, outcome, `${label}: outcome stays exact`);
+  assert.deepEqual(capture.completion.operations, observed.specialistResult.operations, label);
+  assert.deepEqual(capture.completion.changedTargets, observed.specialistResult.changedTargets, label);
+  const verificationCaptures = /** @type {Record<string, unknown>[]} */ (capture.input.verification);
+  const reviewCaptures = /** @type {Record<string, unknown>[]} */ (capture.input.review);
+  const verification = normalizeVerificationEnvelopeV2(
+    focusedCapturedEnvelope(verificationCaptures[0]),
+  );
+  const review = normalizeIndependentReviewEnvelopeV2(
+    focusedCapturedEnvelope(reviewCaptures[0]),
+    verification,
+  );
+  assert.deepEqual(
+    {
+      attemptIdentity: capture.completion.attemptIdentity,
+      resultIdentity: capture.completion.resultIdentity,
+      verificationEnvelopeIdentity: capture.completion.verificationEnvelopeIdentity,
+      reviewEnvelopeIdentity: capture.completion.reviewEnvelopeIdentity,
+      findingIdentities: capture.completion.findingIdentities,
+    },
+    {
+      attemptIdentity: verification.attemptIdentity,
+      resultIdentity: verification.resultIdentity,
+      verificationEnvelopeIdentity: verification.envelopeIdentity,
+      reviewEnvelopeIdentity: review.envelopeIdentity,
+      findingIdentities: review.findings.map((finding) => finding.findingIdentity),
+    },
+    `${label}: trusted identities stay exact`,
+  );
+
+  const state = focusedRunnerAcceptedState(observed.result);
+  assert.deepEqual(state.pending, [], `${label}: pending attempt clears`);
+  assert.equal(state.completed.length, 1, `${label}: one completed target`);
+  assert.equal(
+    state.completed[0].resultHash,
+    capture.completion.resultIdentity,
+    `${label}: completed result identity`,
+  );
+  assert.equal(
+    state.completed[0].evidenceHash,
+    verification.inspectedEvidenceHash,
+    `${label}: completed evidence identity`,
+  );
+  assert.ok(
+    observed.result.steps.some((step) => (
+      step.step === 'commit-lane-receipt' && step.reason === 'lane-receipt-committed'
+    )),
+    `${label}: committed lane receipt`,
+  );
+  assert.match(
+    fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'),
+    new RegExp(`- \\[x\\] ${TARGET.taskKey}`),
+    label,
+  );
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(root, TASK_STATE_PATH), 'utf8'))[TASKS_PATH]
+      .glyphs[TARGET.taskKey],
+    'x',
+    `${label}: supported final snapshot glyph`,
+  );
+  assert.deepEqual(
+    observed.checkpoint.pair,
+    { claim: null, checkpoint: null },
+    `${label}: checkpoint cleanup`,
+  );
+}
+
+/**
+ * @param {string} root
+ * @param {string} label
+ * @param {FocusedTrustedCompletionRun} observed
+ * @param {string} outcome
+ * @param {RegExp} expectedError
+ */
+function assertFocusedTrustedCompletionRejected(root, label, observed, outcome, expectedError) {
+  assert.equal(observed.runtimeErrors.length, 2, `${label}: initial call and offered correction`);
+  for (const error of observed.runtimeErrors) assert.match(error, expectedError, label);
+  assert.equal(observed.captures.length, 2, `${label}: both rejected captures observed`);
+  for (const capture of observed.captures) {
+    assert.equal(capture.completion.outcome, outcome, `${label}: rejected outcome stays exact`);
+  }
+  assert.deepEqual(observed.exchangeKinds, ['specialist-pair'], `${label}: replacement is cancelled`);
+  assert.equal(observed.result.outcome, 'ended', `${label}:${observed.result.reason}`);
+  assert.equal(observed.result.reason, 'cancelled', label);
+  assert.equal(observed.result.haltReport, null, label);
+
+  const state = focusedRunnerAcceptedState(observed.result);
+  assert.deepEqual(state.completed, [], `${label}: rejected target is not completed`);
+  assert.equal(state.pending.length, 1, `${label}: authorized attempt remains pending`);
+  assert.deepEqual(state.pending[0].target, TARGET, `${label}: exact pending target`);
+  assert.equal(
+    observed.result.steps.some((step) => step.step === 'commit-lane-receipt'),
+    false,
+    `${label}: no lane receipt is committed`,
+  );
+  assert.match(
+    fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'),
+    new RegExp(`- \\[~\\] ${TARGET.taskKey}`),
+    label,
+  );
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(root, TASK_STATE_PATH), 'utf8'))[TASKS_PATH]
+      .glyphs[TARGET.taskKey],
+    '~',
+    `${label}: pending snapshot glyph`,
+  );
+  assert.deepEqual(
+    observed.checkpoint.pair,
+    { claim: null, checkpoint: null },
+    `${label}: cancellation cleans checkpoint ownership`,
+  );
+}
+
 const FEATURE_029_PACKET_BYTES = 131_072;
 
 /**
@@ -6296,6 +6504,68 @@ nodeTest('issue #21: the autonomous runner creates an absent optional snapshot t
     assert.deepEqual(fs.readFileSync(path.join(root, IDEA_PATH)), ownerBefore, 'unmodified owner stays exact');
   });
 });
+
+for (const outcome of /** @type {const} */ (['succeeded', 'no-change'])) {
+  nodeTest(`runner trusted completion outcomes: ${outcome} with trusted evidence settles without replacement exchange`, async () => {
+    await withSealedWorkspace(async (root) => {
+      const observed = await runFocusedTrustedCompletion(root, outcome, (assessment) => ({
+        ...focusedSpecialistPair(assessment, outcome),
+        outcome,
+      }));
+      assertFocusedTrustedCompletionSettled(root, outcome, observed, outcome);
+    });
+  });
+}
+
+/**
+ * @type {{
+ *   label:string,
+ *   outcome:string,
+ *   makeResult:(assessment:Record<string, unknown>)=>Record<string, unknown>,
+ *   expectedError:RegExp,
+ * }[]}
+ */
+const rejectedTrustedCompletionCases = [
+  {
+    label: 'no-change with an authorized changed file',
+    outcome: 'no-change',
+    makeResult: (assessment) => ({
+      ...focusedSpecialistPair(assessment, 'changed-file'),
+      changedTargets: [MATERIAL_INPUTS.targets[0]],
+    }),
+    expectedError: /^completion v2 does not match the exact pending action and result route$/,
+  },
+  {
+    label: 'no-change with failed verification',
+    outcome: 'no-change',
+    makeResult: (assessment) => focusedFailedSpecialistPair(assessment, 'failed-verification'),
+    expectedError: /^completion v2 outcome must be failed for failed verification$/,
+  },
+  {
+    label: 'no-change with rejected review',
+    outcome: 'no-change',
+    makeResult: (assessment) => focusedSpecialistPair(assessment, 'rejected-review', 'rejected'),
+    expectedError: /^completion v2 outcome must be blocked for rejected review$/,
+  },
+  {
+    label: 'blocked with passed verification and accepted review',
+    outcome: 'blocked',
+    makeResult: (assessment) => focusedSpecialistPair(assessment, 'trusted-success'),
+    expectedError: /^completion v2 outcome must be succeeded(?: or no-change)? for accepted trusted evidence$/,
+  },
+];
+
+for (const { label, outcome, makeResult, expectedError } of rejectedTrustedCompletionCases) {
+  nodeTest(`runner trusted completion outcomes: ${label} is rejected by its existing guard`, async () => {
+    await withSealedWorkspace(async (root) => {
+      const observed = await runFocusedTrustedCompletion(root, label.replaceAll(' ', '-'), (assessment) => ({
+        ...makeResult(assessment),
+        outcome,
+      }));
+      assertFocusedTrustedCompletionRejected(root, label, observed, outcome, expectedError);
+    });
+  });
+}
 
 nodeTest('issue #21: an unsafe snapshot halts autonomously with an actionable existing evidence reason', async () => {
   await withSealedWorkspace(async (root) => {

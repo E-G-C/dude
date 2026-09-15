@@ -8847,6 +8847,57 @@ function isDudeRuntimeSource(sourceRelative) {
     || rel.startsWith('ui/review/');
 }
 
+test('bounded verification dispatch keeps coordinator ownership and continuation gates explicit', () => {
+  const heading = '## Verification Dispatch';
+  const source = read('src/agents/dude.agent.md');
+  const section = normalizeMarkdownBlock(markdownSection(source, heading));
+  const requirements = [
+    'use `## Routing` to select the matching verification specialist',
+    'exact runner command and selector, acceptance slice, working directory',
+    'Do not bundle the run with a request to re-read the full idea',
+    'Handle deterministic read-only orchestration facts yourself',
+    'Route cross-file and documentation consistency to the independent matching reviewer',
+    'use that exact identifier to read the terminal result',
+    'do not dispatch a duplicate or replacement while it is active',
+    'Progress counters and tool activity are not returned verification evidence',
+    'Interrupted or cancelled calls without a returned result are not passing evidence and cannot justify close',
+    'If existing workflow rules permit continuation after the owner is terminal',
+    'dispatch only the smallest missing check',
+    'do not infer continuation permission or automatically retry or revive work',
+    "`dude-work` owns Work's rules",
+  ];
+  for (const requirement of requirements) {
+    assert.ok(section.includes(requirement), requirement);
+    const withoutRule = source.replace(requirement, '');
+    assert.equal(
+      normalizeMarkdownBlock(markdownSection(withoutRule, heading)).includes(requirement),
+      false,
+      `removing ${requirement} cannot be masked by another section`,
+    );
+  }
+  assert.equal(markdownSection(read('.github/agents/dude.agent.md'), heading), markdownSection(source, heading));
+  assert.doesNotMatch(section, /@dude-pack-/);
+});
+
+test('bounded verification dispatch keeps the catalog Tester runner-first and evidence-bounded', () => {
+  const source = read('library/packs/coding/agents/dude-pack-coding-tester.agent.md');
+  const section = normalizeMarkdownBlock(markdownSection(source, '## Existing Runner Fast Path'));
+  for (const requirement of [
+    'satisfy applicable safety, approval, and authority gates',
+    'run the exact command and any supplied selector in the stated working directory',
+    'Run before scanning surrounding implementation, tests, documentation, or whole packages',
+    'Return promptly when the result proves the assigned acceptance slice',
+    'Expand investigation only on an actual failure or an explicitly assigned uncovered gap',
+    'Keep ordinary investigation for test authoring, failure reproductions, and unspecified runners',
+  ]) assert.ok(section.includes(requirement), requirement);
+  const evidence = normalizeMarkdownBlock(markdownSection(source, '## Return format'));
+  for (const requirement of [
+    'the exact command, observed exit status, selected pass/fail/skip counts as reported by the runner',
+    'relevant failure output, and remaining evidence gaps',
+    'Do not self-approve',
+  ]) assert.ok(evidence.includes(requirement), requirement);
+});
+
 test('T009 current runtime projection is exact, generated, and consumer-tooling-free', () => {
   // Arrange
   const sourceRoot = 'src/extensions/dude';
