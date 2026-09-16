@@ -1,0 +1,416 @@
+{
+  "subject": "FINAL independent bounded verification — Feature 062 NEW task-inspection design mock",
+  "verdict": "FAIL FOR USER DESIGN PREVIEW",
+  "mock": {
+    "path": ".dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+    "bytes": 528621,
+    "sha256": "b6f409d27f404569ebab27cb47a3f4713eebbc6a4d9c4988d53f14453cd2cc56"
+  },
+  "browser": "Edg/133.0.3065.69",
+  "origin": "http://127.0.0.1:61609",
+  "runAt": "2026-09-14T23:20:41.327Z",
+  "scope": "Static task-inspection preview and direct regressions only; no implementation, live API/provider, user approval, task closure, native host, or full product/240-suite claim.",
+  "blockingFindings": [
+    {
+      "id": "TASK-FILTER-EMPTY-HIDES-PHASE-TOTALS",
+      "severity": "blocking",
+      "location": "Tasks > Done filter on repository 062",
+      "repro": "Open repository-facts 062 with T003 inspected; activate Done.",
+      "expected": "Keep five unfiltered phase-total rows visible while showing zero matching task rows.",
+      "step": "filter-return",
+      "check": "empty Done filter keeps the unfiltered phase totals visibly present",
+      "observed": {
+        "rows": 0,
+        "phases": 0,
+        "detail": false,
+        "active": "done",
+        "identity": "Working on 062 Dude Canvas Workspace Integration.",
+        "finderHidden": true,
+        "next": "NO NEXT STEP\n\nNo canonical task execution evidence exists yet.",
+        "text": "TASKS\nAll\n5\nPending\n5\nIn progress\n0\nBlocked\n0\nDone\n0\n\nShowing 0 of 5 recorded tasks · Done only. Phase totals are unchanged by this filter.\n\nNo tasks match this filter\n\n5 recorded tasks remain in this package; only the done filter is empty. Choose All to see them again.\n\nRows, phase headings and totals all come from one read of .dude/specs/062-dude-canvas-workspace-integration/tasks.md (content identity a3cb207d0f83, 9170 bytes), captured 2026-09-14 22:46 UTC with the product’s own canonical parser. The generated board, the terminal execution history and archived units in that file are not tasks and are not counted here. A recorded status is what the file holds, not evidence that an agent is working now."
+      }
+    },
+    {
+      "id": "BLOCKED-NEXT-CONTRADICTS-READINESS",
+      "severity": "blocking",
+      "location": "Prototype data: Example blocked work > 062 Now",
+      "repro": "Open ?view=now&select=062&data=blocked.",
+      "expected": "Explain the approval/execution gate without denying T001 dependency readiness.",
+      "step": "blocked-and-coverage",
+      "check": "blocked Next does not deny visible T001 dependency readiness",
+      "observed": {
+        "t001": "Revise and compare the integrated mock at `.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html` with read-only selected-task drill-down, then obtain explicit approval of its current revision through the existing design workflow.\nT001@a062c1d4\nNot started\nReady by recorded task dependencies\n[Shared]",
+        "t002": "Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.\nT002@b062d2e5\nBlocked\nBlocker reason recorded\n[US1]\nReading",
+        "next": "NO NEXT STEP\n\nNo canonical task is ready.",
+        "lifecycle": "LIFECYCLE AND PROGRESS\nEXAMPLE EXECUTION STATE\nCaptured\nDone\nDefined\nDone\nWork\nBlocked\nVerified\nNot started\n\n0 of 5 canonical tasks complete, 1 blocked. These counts are part of the example execution state, recomputed from the same controlled task states the rows below use. Recorded in this repository at the last complete read: Defined, 0 of 5 canonical tasks complete and 5 open. No canonical task execution evidence exists yet.",
+        "detail": "TASK DETAIL · READ ONLY\nClose\n\nT002@b062d2e5 · 062-dude-canvas-workspace-integration\n\nEXAMPLE TASK STATE This selection shows this task as Blocked. The repository records it as Not started. The recorded unit below is unchanged.\n\nRecorded status\n\nBlocked. Blocked is the recorded task state, separate from waiting on a dependency.\n\nPhase\n\nPhase 2: Find And Select Work In The Approved Shell · [US1]\n\nDependencies\n\nT001@a062c1d4\nNot started\n\nExplicit blocker\n\nThe combined mock has no explicit current-revision approval, so shell work cannot start.\n\nVerification and review results\n\nNot exposed by this source. The readers behind this view return canonical task text, state, dependencies and blockers. They expose no task-bound test or review outcome, so none is shown. Acceptance wording inside the unit, a Done glyph, this feature’s activity and design-review history are not results for this task.\n\nRecorded unit\n\n- [ ] T002@b062d2e5 [US1] Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.\n    deps: T001@a062c1d4\n\n    Retain Open/Closed/All and complete discovery while moving the sole finder to the command-bar workspace. Add capture-number labels and numeric presentation order from validated context paths, including compact rows. Keep exact selection, pending reads, query/scope/scroll return, working rail destinations, status chrome, and partial/empty states distinct. Do not change inventory or request contracts.\n\n    Acceptance: SC-001/006 and the applicable visual criteria pass on the built surface, including one-activation results, full-list keyboard reachability, no implicit selection, and source-identity failure cases. Follow the plan's per-slice build and comparison checks.\n\nThe whole canonical unit from .dude/specs/062-dude-canvas-workspace-integration/tasks.md, including every line after a blank line and any example it quotes. It is shown as text and never run: markup, code fences and task-shaped examples inside it stay inert, and an example line is not another task. Its leading - [ ] is the state marker recorded in the file, not a control here. The box scrolls when the unit is taller than the pane.\n\nRead 2026-09-13 21:30 local · task source captured 2026-09-14 22:46 UTC · content identity a3cb207d0f83. This preview is frozen: it rereads nothing and follows no agent.",
+        "filters": [
+          "All 5",
+          "Pending 4",
+          "In progress 0",
+          "Blocked 1",
+          "Done 0"
+        ]
+      }
+    }
+  ],
+  "reviewContinuation": {
+    "result": "8/8",
+    "checks": [
+      {
+        "name": "pointer markup/save/wheel pan are trusted and produce retained local state",
+        "pass": true,
+        "detail": {
+          "before": {
+            "pan": [
+              21,
+              0
+            ],
+            "maxLeft": 21,
+            "frame": [
+              860,
+              400
+            ],
+            "anno": [
+              1,
+              "292px",
+              "176px"
+            ],
+            "status": "Markup saved in this tab · 1 annotation. Local example markup only: nothing is written to a file, a session or a review submission.",
+            "sent": false,
+            "selected": "Working on 062 Dude Canvas Workspace Integration.",
+            "rail": 48,
+            "panel": false
+          }
+        }
+      },
+      {
+        "name": "48→208 wide rail preserves pinned frame, pan, markup, context, and sends nothing",
+        "pass": true,
+        "detail": {
+          "before": {
+            "pan": [
+              21,
+              0
+            ],
+            "maxLeft": 21,
+            "frame": [
+              860,
+              400
+            ],
+            "anno": [
+              1,
+              "292px",
+              "176px"
+            ],
+            "status": "Markup saved in this tab · 1 annotation. Local example markup only: nothing is written to a file, a session or a review submission.",
+            "sent": false,
+            "selected": "Working on 062 Dude Canvas Workspace Integration.",
+            "rail": 48,
+            "panel": false
+          },
+          "expanded": {
+            "pan": [
+              21,
+              0
+            ],
+            "maxLeft": 181,
+            "frame": [
+              860,
+              400
+            ],
+            "anno": [
+              1,
+              "292px",
+              "176px"
+            ],
+            "status": "Markup saved in this tab · 1 annotation. Local example markup only: nothing is written to a file, a session or a review submission.",
+            "sent": false,
+            "selected": "Working on 062 Dude Canvas Workspace Integration.",
+            "rail": 208,
+            "panel": false
+          }
+        }
+      },
+      {
+        "name": "Review side-panel redraw restores the same pinned frame/pan/markup",
+        "pass": true,
+        "detail": {
+          "expanded": {
+            "pan": [
+              21,
+              0
+            ],
+            "maxLeft": 181,
+            "frame": [
+              860,
+              400
+            ],
+            "anno": [
+              1,
+              "292px",
+              "176px"
+            ],
+            "status": "Markup saved in this tab · 1 annotation. Local example markup only: nothing is written to a file, a session or a review submission.",
+            "sent": false,
+            "selected": "Working on 062 Dude Canvas Workspace Integration.",
+            "rail": 208,
+            "panel": false
+          },
+          "panel": {
+            "pan": [
+              21,
+              0
+            ],
+            "maxLeft": 181,
+            "frame": [
+              860,
+              400
+            ],
+            "anno": [
+              1,
+              "292px",
+              "176px"
+            ],
+            "status": "Markup saved in this tab · 1 annotation. Local example markup only: nothing is written to a file, a session or a review submission.",
+            "sent": false,
+            "selected": "Working on 062 Dude Canvas Workspace Integration.",
+            "rail": 208,
+            "panel": true
+          }
+        }
+      },
+      {
+        "name": "ordinary Review return preserves context/pan/markup without send or approval",
+        "pass": true,
+        "detail": {
+          "panel": {
+            "pan": [
+              21,
+              0
+            ],
+            "maxLeft": 181,
+            "frame": [
+              860,
+              400
+            ],
+            "anno": [
+              1,
+              "292px",
+              "176px"
+            ],
+            "status": "Markup saved in this tab · 1 annotation. Local example markup only: nothing is written to a file, a session or a review submission.",
+            "sent": false,
+            "selected": "Working on 062 Dude Canvas Workspace Integration.",
+            "rail": 208,
+            "panel": true
+          },
+          "returned": {
+            "pan": [
+              21,
+              0
+            ],
+            "maxLeft": 181,
+            "frame": [
+              860,
+              400
+            ],
+            "anno": [
+              1,
+              "292px",
+              "176px"
+            ],
+            "status": "Markup saved in this tab · 1 annotation. Local example markup only: nothing is written to a file, a session or a review submission.",
+            "sent": false,
+            "selected": "Working on 062 Dude Canvas Workspace Integration.",
+            "rail": 208,
+            "panel": true
+          }
+        }
+      },
+      {
+        "name": "actual pointer clicks and wheel reached the rendered controls",
+        "pass": true,
+        "detail": [
+          {
+            "type": "click",
+            "trusted": true,
+            "target": "box"
+          },
+          {
+            "type": "click",
+            "trusted": true,
+            "target": "box"
+          },
+          {
+            "type": "click",
+            "trusted": true,
+            "target": "save"
+          },
+          {
+            "type": "wheel",
+            "trusted": true,
+            "dx": 40,
+            "dy": 0
+          },
+          {
+            "type": "click",
+            "trusted": true,
+            "target": "rail-toggle"
+          },
+          {
+            "type": "click",
+            "trusted": true,
+            "target": "comments"
+          },
+          {
+            "type": "click",
+            "trusted": true,
+            "target": "1"
+          },
+          {
+            "type": "click",
+            "trusted": true,
+            "target": "preview-062-1"
+          }
+        ]
+      },
+      {
+        "name": "no console/page error or external resource request occurred",
+        "pass": true,
+        "detail": {
+          "consoleErrors": [],
+          "pageErrors": [],
+          "requests": [
+            "http://127.0.0.1:61609/workspace-integration.html?view=review&select=062&data=progress&request=preview-062-1&theme=dark"
+          ]
+        }
+      },
+      {
+        "name": "review screenshot",
+        "pass": true,
+        "detail": {
+          "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-r4-review-retained-960-dark.png",
+          "bytes": 164925,
+          "sha256": "acd7f841738f06988ad995bb44e4c384c477b41f4230be1baeb169fad72800c9",
+          "viewport": {
+            "width": 960,
+            "height": 900,
+            "theme": "dark"
+          }
+        }
+      },
+      {
+        "name": "artifact and real task glyph bytes remain unchanged",
+        "pass": true,
+        "detail": {
+          "mockSha256": "b6f409d27f404569ebab27cb47a3f4713eebbc6a4d9c4988d53f14453cd2cc56",
+          "tasksSha256": "a3cb207d0f834b76060123754e3cc663d267ac20c8a202de7c945808a3b3f5c8"
+        }
+      }
+    ]
+  },
+  "completedMatrix": {
+    "sourceAndParser": "First report freshly compared all 65 frozen rows across 002/021/052/057/062 to parseVisibleTasks visibility-offset units; r3 freshly reconfirmed 062 exact-owner/no-diagnostic/five-todo readiness.",
+    "interaction": "Pointer task/filter/rail/review, native keyDown Enter with text and unmodifiedText CR, keyboard source scrolling to end, Tab trap/Escape, Clear/feature change, ordinary return, unsent request, and Review pan/markup return.",
+    "render": "1440 light/dark, 960 light/dark, and 360 light/dark with long identity/body, dock/in-flow placement, overflow, target/name/focus, contrast, and no external requests.",
+    "resultCoverage": "Done remains state; inspector says Not exposed by this source, with no Passed badge or task mutation controls."
+  },
+  "sourceCoverageGap": "002 embedded frozen inventory still contains the old hidden Phase 10 1/6 rollup (phase sum 41); rendered task inspection correctly uses exact TASK_SOURCE 36/36 and Phase 10 1/1. The stale inventory object was documented, not accepted.",
+  "testDiagnostic": {
+    "reproduced": "On Edge 133, native ArrowRight horizontal pan caused the next CDP mouseMoved command to hit the helper 4-second deadline.",
+    "controlledComparison": "The same exact Review flow with actual pointer-wheel horizontal pan completed; pointer tool/stage/save/rail/panel/back/reopen events were trusted and state remained stable.",
+    "classification": "Test input/control-channel mechanism, not a preview finding. No sleep/retry was used as an acceptance oracle."
+  },
+  "limits": [
+    "The planned additive selected-task projection is not implemented; this frozen mock was not required to call a live API.",
+    "Current canonical captures contain HTML-like angle-bracket tokens but no fenced block or literal <script> payload; exact inert text/child-node behavior was checked without manufactured source.",
+    "No live agent, task mutation, provider response, approval, product acceptance, or task close."
+  ],
+  "evidence": [
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-verification.json",
+      "bytes": 257320,
+      "sha256": "3a0dcd015a9c1861032f578abfaa01c4dcd3eec6a01447c9eb8376aeb0f86e1f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-verification-r2.json",
+      "bytes": 187377,
+      "sha256": "257fa1694ee36bc9e30f45ace4eb86d994fadd16e1d134d77570c45c096b04b9"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-verification-r3.json",
+      "bytes": 45686,
+      "sha256": "a98686da21c6167bdbec0eb8233d2e49ad4fc0d5de0c80c32f10d131845a4f32"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-repository-T003-1440-light.png",
+      "bytes": 327358,
+      "sha256": "0e4ce5c803bccf1ca8bdaf7c2cbd373937888b5f9720300a95d73758a18d684f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-completed-052-1440-light.png",
+      "bytes": 386772,
+      "sha256": "4392d01426f22db47862a93bb9299f820e70777be310c65fef88223f8bc635de"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-progress-distinct-1440-dark.png",
+      "bytes": 385814,
+      "sha256": "bc720eba3ac2d6320ee8d3cbb4e38f9ddb820aaa0985d72f6f8720679b4cac84"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-blocked-contradiction-1440-light.png",
+      "bytes": 314028,
+      "sha256": "de92b6a86dae9f4fe064eefe34102997c1a9313c2a23cf97d9c697467dee20f5"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-002-phase10-1440-light.png",
+      "bytes": 274317,
+      "sha256": "c9b54515409f4b19c61883449e67debea41dd08ddf3aed69f9cd171de5f22325"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-inflow-960-light.png",
+      "bytes": 178917,
+      "sha256": "da7b5e1cc12076082e6cbb6e592b696aae8add80683b2b62f4eb038e2254392c"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-unavailable-960-dark.png",
+      "bytes": 174229,
+      "sha256": "3da69ce29a96ded7e6551464c0c7f2c038fd8f205afdd9819963c2f128574ff0"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-long-021-360-light.png",
+      "bytes": 113969,
+      "sha256": "b6a4c53dfaa56ce0ff3140c652a4406ba09def4bc6c34f427350d832ae5c0cff"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-overlay-360-dark.png",
+      "bytes": 73049,
+      "sha256": "9fde9626b7adab8306ecc0758665b93d09ab94bce0dd9b8897b83266604e04d3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-r3-empty-done-1440-light.png",
+      "bytes": 269841,
+      "sha256": "27c9b8f7bb1b6d5834bbbb09a7c22d02c061c3d0d5248f8f74cebc5f6442984c"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-r3-overlay-panel-360-dark.png",
+      "bytes": 73049,
+      "sha256": "9fde9626b7adab8306ecc0758665b93d09ab94bce0dd9b8897b83266604e04d3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-r3-unsent-960-light.png",
+      "bytes": 153821,
+      "sha256": "3f0546cdce9c1a8de87b8c9e4ac33b03db45c05e86a3985de11a7ba8bb12ad53"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-r4-review-retained-960-dark.png",
+      "bytes": 164925,
+      "sha256": "acd7f841738f06988ad995bb44e4c384c477b41f4230be1baeb169fad72800c9"
+    }
+  ],
+  "unchanged": {
+    "artifact": true,
+    "tasks062": true
+  }
+}

@@ -1,0 +1,1423 @@
+{
+  "kind": "Focused author observation only. Not independent review, design approval, workflow completion, or product/native-host acceptance.",
+  "preview": {
+    "path": ".dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+    "sha256": "ca164ca808c61bef78304212217234b25147b8fddef3a387f268102dbe304180",
+    "bytes": 567736,
+    "requiredAssets": [],
+    "toolbarUrl": "http://127.0.0.1:61609/workspace-integration.html?view=review&select=062&request=preview-062-1&theme=light",
+    "selfContained": "Inline Fluent tokens, shipped v9 SVG paths and MIT notice; no build, dependency, network, or additional asset required."
+  },
+  "startingPreview": {
+    "path": ".dude/specs/062-dude-canvas-workspace-integration/design/variants/rev-9/workspace-integration.html",
+    "sha256": "2831148e5c1fa524900a3e29111ee77532100fca4688ecf9fc819dd9d6355cee"
+  },
+  "sourceMapping": {
+    "component": "Shipped ReviewWorkspace rendered unchanged under its FluentProvider; only the isolated fixture mountReview seam supplies inert ready state. No artifact, provider, or review submission is opened.",
+    "anatomy": [
+      "Button grip",
+      "Toolbar",
+      "seven ToolbarToggleButton equivalents",
+      "ToolbarDivider",
+      "Undo/Redo ToolbarButton equivalents",
+      "Button orientation switch",
+      "Menu / MenuPopover / MenuList / MenuItem / MenuDivider equivalents"
+    ],
+    "geometry": "60px vertical palette, 36px slots, 20px icons, 24px grip, 2px gaps/padding, 8px home insets; vertical internal scrolling and horizontal wrapping, pinned grip and orientation.",
+    "theme": "Existing Fluent light/dark tokens and shadow16; added source-exact colorSubtleBackgroundHover/Selected aliases, no brand-ramp change.",
+    "behavior": "Actual offsetLeft/Top/Width/Height and stage client bounds; transform-only drag, 16px/Shift48px keys, four real corners, Home/Enter/Space and menu reset. Source home anchoring on orientation.",
+    "files": {
+      "src/extensions/dude/frontend/review.jsx": "f9e5cc93aa8f6812679a396be7236c728ef65648e1d6702444da473d515a49b7",
+      "src/extensions/dude/frontend/styles.js": "022a9e916674841f72c9b596a71353b069cb0e04c8b3ce698de7e9f09ada9880",
+      "src/extensions/dude/frontend/theme.js": "5ea6de69561e8affbcc35933ef17c797491e6c481caac2f1323fff03db20618f",
+      "src/extensions/dude/ui/review/engine.mjs": "556f07ac8ee5d4a067ffcb03b8dad1eb1ad3550a81b994046ea5ffe2ab764972",
+      "src/extensions/dude/ui/review/geometry.mjs": "8db05db60811ef8f6a4c1f7bbe78bbc30465ff6d4e8441ef74171d967d8edb77",
+      "src/extensions/dude/ui/assets/app.js": "8c6e3fe19edef61cff5489a0e0e26d4167e933a9124c22b43a6b9d9e410b74a5",
+      "src/extensions/dude/ui/assets/app.js.LEGAL.txt": "3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387cf70ba7a6d869"
+    },
+    "glyphs": [
+      {
+        "label": "Select (V)",
+        "id": "i-cursor",
+        "orientation": "vertical",
+        "exactShippedPath": true
+      },
+      {
+        "label": "Comment (C)",
+        "id": "i-tool-comment",
+        "orientation": "vertical",
+        "exactShippedPath": true
+      },
+      {
+        "label": "Box (B)",
+        "id": "i-square",
+        "orientation": "vertical",
+        "exactShippedPath": true
+      },
+      {
+        "label": "Circle (O)",
+        "id": "i-tool-circle",
+        "orientation": "vertical",
+        "exactShippedPath": true
+      },
+      {
+        "label": "Arrow (A)",
+        "id": "i-arrow-up-right",
+        "orientation": "vertical",
+        "exactShippedPath": true
+      },
+      {
+        "label": "Line (L)",
+        "id": "i-line",
+        "orientation": "vertical",
+        "exactShippedPath": true
+      },
+      {
+        "label": "Highlight (H)",
+        "id": "i-highlight",
+        "orientation": "vertical",
+        "exactShippedPath": true
+      },
+      {
+        "label": "Undo annotation",
+        "id": "i-undo",
+        "orientation": "vertical",
+        "exactShippedPath": true
+      },
+      {
+        "label": "Redo annotation",
+        "id": "i-redo",
+        "orientation": "vertical",
+        "exactShippedPath": true
+      },
+      {
+        "label": "Move tools",
+        "id": "i-grip-horizontal",
+        "orientation": "vertical",
+        "exactShippedPath": true
+      },
+      {
+        "label": "Switch tools to horizontal",
+        "id": "i-panel-bottom",
+        "orientation": "vertical",
+        "exactShippedPath": true
+      },
+      {
+        "label": "Move tools",
+        "id": "i-grip-vertical",
+        "orientation": "horizontal",
+        "exactShippedPath": true
+      },
+      {
+        "label": "Switch tools to vertical",
+        "id": "i-panel-left",
+        "orientation": "horizontal",
+        "exactShippedPath": true
+      }
+    ]
+  },
+  "mockLimits": [
+    "Static HTML mirrors the shipped Fluent anatomy and glyphs; it does not import or mount production React/Review components.",
+    "Each stage click places one local example shape. Line and local Undo/Redo were added; no direct-manipulation or engine redesign.",
+    "Prepared annotations remain read-only examples. The existing input/caret check uses the existing request field, not a newly invented Review editor.",
+    "Save, provider delivery, approval and receipts remain explicitly simulated. All observed target requests were local preview GETs; no API/agent/submission contact.",
+    "Isolated headless Edge at DPR1; no claim about native host, capture delivery, screenshot pixel equivalence, full application acceptance, or the existing product test suites."
+  ],
+  "reviewOnlyLayoutSupport": "Bounded flex stage with no page scroll. Long prototype/status/source prose stays in existing out-of-flow disclosures; palette actions update local markup without destroying the fixed 860x400 example frame.",
+  "focusedComparisons": [
+    {
+      "width": 1440,
+      "height": 900,
+      "theme": "light",
+      "vertical": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-1440x900-light.png"
+      },
+      "horizontal": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-1440x900-light.png"
+      }
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "theme": "dark",
+      "vertical": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-1440x900-dark.png"
+      },
+      "horizontal": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-1440x900-dark.png"
+      }
+    },
+    {
+      "width": 960,
+      "height": 800,
+      "theme": "light",
+      "vertical": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-960x800-light.png"
+      },
+      "horizontal": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-960x800-light.png"
+      }
+    },
+    {
+      "width": 960,
+      "height": 800,
+      "theme": "dark",
+      "vertical": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-960x800-dark.png"
+      },
+      "horizontal": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-960x800-dark.png"
+      }
+    },
+    {
+      "width": 360,
+      "height": 780,
+      "theme": "light",
+      "vertical": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-360x780-light.png"
+      },
+      "horizontal": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-360x780-light.png"
+      }
+    },
+    {
+      "width": 360,
+      "height": 780,
+      "theme": "dark",
+      "vertical": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-360x780-dark.png"
+      },
+      "horizontal": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-360x780-dark.png"
+      }
+    },
+    {
+      "width": 1000,
+      "height": 300,
+      "theme": "light",
+      "vertical": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-1000x300-light.png"
+      },
+      "horizontal": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-1000x300-light.png"
+      }
+    },
+    {
+      "width": 1000,
+      "height": 300,
+      "theme": "dark",
+      "vertical": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-1000x300-dark.png"
+      },
+      "horizontal": {
+        "geometryEqual": true,
+        "styleDifferences": [],
+        "screenshot": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-1000x300-dark.png"
+      }
+    }
+  ],
+  "nativeObservations": {
+    "browser": "Edg/133.0.3065.69",
+    "deviceScaleFactor": 1,
+    "viewportThemeCases": 8,
+    "supplementalCases": 4,
+    "observedAsExpected": 290,
+    "mismatches": [],
+    "scope": [
+      "seven ordered tool labels/hints",
+      "Line repeated use and truthful Undo/Redo outcomes",
+      "pointer grip drag vs drawing",
+      "all four pointer corner destinations and reset",
+      "16px/Shift48px/Home/Enter/Space",
+      "both orientations and source home placement",
+      "menu Delete/tool-key propagation boundary",
+      "stage dismissal does not mark",
+      "stage Ctrl+Z/Ctrl+Shift+Z",
+      "native wheel at tool scroll end and full focused target",
+      "reachable pinned grip/orientation",
+      "resize clamping without marker rebasing",
+      "narrow navigation inert boundary and Tab containment",
+      "same request/revision tool, Undo/Redo, markup and pan on return",
+      "existing literal input and caret range"
+    ],
+    "panReturns": [
+      {
+        "width": 1440,
+        "height": 900,
+        "theme": "light",
+        "before": {
+          "left": 0,
+          "top": 0
+        },
+        "after": {
+          "left": 0,
+          "top": 0
+        }
+      },
+      {
+        "width": 1440,
+        "height": 900,
+        "theme": "dark",
+        "before": {
+          "left": 0,
+          "top": 0
+        },
+        "after": {
+          "left": 0,
+          "top": 0
+        }
+      },
+      {
+        "width": 960,
+        "height": 800,
+        "theme": "light",
+        "before": {
+          "left": 0,
+          "top": 0
+        },
+        "after": {
+          "left": 0,
+          "top": 0
+        }
+      },
+      {
+        "width": 960,
+        "height": 800,
+        "theme": "dark",
+        "before": {
+          "left": 0,
+          "top": 0
+        },
+        "after": {
+          "left": 0,
+          "top": 0
+        }
+      },
+      {
+        "width": 360,
+        "height": 780,
+        "theme": "light",
+        "before": {
+          "left": 160,
+          "top": 100
+        },
+        "after": {
+          "left": 160,
+          "top": 100
+        }
+      },
+      {
+        "width": 360,
+        "height": 780,
+        "theme": "dark",
+        "before": {
+          "left": 160,
+          "top": 100
+        },
+        "after": {
+          "left": 160,
+          "top": 100
+        }
+      },
+      {
+        "width": 1000,
+        "height": 300,
+        "theme": "light",
+        "before": {
+          "left": 0,
+          "top": 100
+        },
+        "after": {
+          "left": 0,
+          "top": 100
+        }
+      },
+      {
+        "width": 1000,
+        "height": 300,
+        "theme": "dark",
+        "before": {
+          "left": 0,
+          "top": 100
+        },
+        "after": {
+          "left": 0,
+          "top": 100
+        }
+      }
+    ],
+    "caret": {
+      "before": {
+        "value": "Literal toolbar notes: V C B O A L H. No submission.",
+        "start": 5,
+        "end": 8
+      },
+      "after": {
+        "value": "Literal toolbar notes: V C B O A L H. No submission.",
+        "start": 5,
+        "end": 8,
+        "focused": true
+      }
+    },
+    "sourceReport": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final.json",
+    "supplementalReport": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-supplemental-final.json"
+  },
+  "preservation": {
+    "protectedFilesChecked": 386,
+    "protectedChanges": [],
+    "protectedSections": {
+      "snapshot": true,
+      "taskSource": true,
+      "taskCssIncludingExactSelectedCountOverride": true,
+      "taskAndFinderAndRequestFunctionsBeforeToolbar": true,
+      "taskSelectorAndReturnEventHandlers": true
+    },
+    "details": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-before.json",
+    "workflow": "No spec, plan, task, idea, metadata/log, production, dependency, memory, agent/model instruction, or earlier evidence edits."
+  },
+  "authoringFindings": [
+    "The original side-strip mismatch predates the selected task-count contrast fix.",
+    "A 300px pane needs a bounded stage and a full 36px internal tool target; external prototype prose cannot consume its height.",
+    "An author helper copied Windows virtual-key values into macOS nativeVirtualKeyCode and omitted ordinary character text; native letter delivery hid the Edge frame. Separate no-native and with-text controls restored real frame progress. Final probes omit OS-mismatched native codes and supply text (including Enter carriage return); no mock guards were changed.",
+    "An overstrict 12px helper scroll clearance rejected an already visible Back button. Final helper uses actual geometry and hit testing with native wheel delivery.",
+    "Earlier failed helper attempts and superseded comparison crops are preserved, not removed or represented as passing."
+  ],
+  "validation": {
+    "parsedScripts": 2,
+    "errors": []
+  },
+  "browserCleanup": [
+    "isolated browser closed and owned profile removed",
+    "isolated browser closed and owned profile removed",
+    "isolated browser closed and owned profile removed"
+  ],
+  "evidenceFiles": [
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-before-1000x300-dark.png",
+      "sha256": "46a3af230a2a9e0111bc1ec318d7be551b71fa57d07f1e2f56c2f5de126c56e4"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-before-1440x900-light.png",
+      "sha256": "8653ab745295dac23db001eb36ed61f6cd6326318862485c714a53be980b1a5a"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-before.json",
+      "sha256": "e1e509ff4c34094e59a913c77e733bdbe1567fe31056c243fd1cc36374ffadf7"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-calibration-r2.json",
+      "sha256": "2a81cd9804698e64d676cafe14984f73bb9e5d3e2b29b420182c15d9547614c5"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-calibration.json",
+      "sha256": "4a575b4075c6f7c5360fde956476db155f42fbd7ddfc7202f2f961b8a80a3790"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-horizontal-1000x300-dark.png",
+      "sha256": "629b2c7c6326c1d085882c6f21c7edc1413d926b5f9e44f6c3baf9c3d1e05768"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-horizontal-1000x300-light.png",
+      "sha256": "ab4ee20ccc69f1cc0d4035303868411ba2f5c240c2124af786389d1b57cc50f3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-horizontal-1440x900-dark.png",
+      "sha256": "9f685065fb44662f112206d76ba4c5944b66e509216e2ae95d6ac7bc99c616f6"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-horizontal-1440x900-light.png",
+      "sha256": "eeb716fe0d9323741887bdf7223d5f5241d85b3868808d9772faec04882fc68a"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-horizontal-360x780-dark.png",
+      "sha256": "d34d6a84ca32f60d0fe1057e77d59010c08b38c2f3f87659b23d47c7b08450cd"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-horizontal-360x780-light.png",
+      "sha256": "58249944cf58888b0de176798820b24a937ec18c44ff6e938693be3897d8c71c"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-horizontal-960x800-dark.png",
+      "sha256": "c419fd9228148071c4845a2b24e16442beaa958557bd880c06ea161312215bcb"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-horizontal-960x800-light.png",
+      "sha256": "52096552e876b057631210a44dca055f6a27e305d103009c9dc48fc992b786bc"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-vertical-1000x300-dark.png",
+      "sha256": "586748f1cbb8c8a335ecf0092a5920b0e8fa9a9a2ed7904d416da7fe2655818f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-vertical-1000x300-light.png",
+      "sha256": "f730616b8a35454c9953ecf99235d389930e0676b527a68b98cbce8bb21b4c7f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-vertical-1440x900-dark.png",
+      "sha256": "10747e3f3f06ce6f051dd99931cabb33a3d0b9e74c8095e1a2dc997611ec7591"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-vertical-1440x900-light.png",
+      "sha256": "16e834ff38c22d788632bc7fca954ca31d2c65c66beab3637ec8955bab861cb7"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-vertical-360x780-dark.png",
+      "sha256": "e19963106adfc89c6b5b1ad0837bb05487ed9723eaa7a4688e48f4fcc7ccce7e"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-vertical-360x780-light.png",
+      "sha256": "59d059ddbd04b6635dd4aea0e6df8fdad860af20852659b8870c60536ae92042"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-vertical-960x800-dark.png",
+      "sha256": "18a591f5b93901fd5978f909a9254ff14cf79b50c3949a066eb063ea030e4163"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final-vertical-960x800-light.png",
+      "sha256": "3709a3f9ff2d2c7927434415c2f8d9e0beadc591092541c0cd55eb80754cb270"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-final.json",
+      "sha256": "2c22844ff1e44b2adfddf8bbc464bf3dc48bb57baa82e85702a9585c94381a14"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-1000x300-dark.png",
+      "sha256": "03be73c887aa92d335a1a0537eb4c0327ea23b71176e616efee0197672782d53"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-1000x300-light.png",
+      "sha256": "5d4b29ac09a573287ee36ad0955295ec6969a130969c25e611e49c57624a3806"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-1440x900-dark.png",
+      "sha256": "aa6f570ae1a2b1ecde0f0105e015f2170a42fed5512cf305b37f0ca458551830"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-1440x900-light.png",
+      "sha256": "75c635a19e0463912a30bffddbd4ff030bf7ae64bdc0ebfc3fc951ab75c56fd7"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-360x780-dark.png",
+      "sha256": "b9dc3c61854db648ea3e37f055aeef616bdd7668cd6ed87a35c24418096927f9"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-360x780-light.png",
+      "sha256": "af234d0557eea848a7f0621b2273ac04e19bc57a0f5bbb27b47591c0db10e788"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-960x800-dark.png",
+      "sha256": "0e0736e79b68ca7b334294716d7fb9af29f9548ad9584530d4efd045970b01d4"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-horizontal-960x800-light.png",
+      "sha256": "5afd1bcad0d647674e4d2cc69851a8342d2b7cc030d6fc65224fa7633c3b5529"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-1000x300-dark.png",
+      "sha256": "3f4f2566410ed24c5e3656a4a720cf55f3ce0ad1436b67e22ec98cc8ab88a60b"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-1000x300-light.png",
+      "sha256": "819182186220211ce1de4aa4ac87d32df09f3f10194c1314ede83da4dbd3fff5"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-1440x900-dark.png",
+      "sha256": "ccc9d0d0cf24677586f0dcfc6ede5cfe16999ea027406716241a2b04ca9aed2b"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-1440x900-light.png",
+      "sha256": "23a17999e1170aec9f1ef7f36b46c586aab10731bdcd347a3f57850f50b2c676"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-360x780-dark.png",
+      "sha256": "cc7688c3ce6ce957dcc824e84204f232859ac2db0d35f2549db5a3a1a57748f8"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-360x780-light.png",
+      "sha256": "b8f7583c520f84681f1376650a92a2655457662e7e985f2124e386bbfbfbb9f7"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-960x800-dark.png",
+      "sha256": "e13aeccdb13f00e1a3b9b6f1733d3b7af1394146d6d53ccc99b0f9db69d8cdac"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused-vertical-960x800-light.png",
+      "sha256": "0674ce7bd7ba6a7d26b3a60f6381f0b17766c339e585496b983b4bcbdb372252"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-focused.json",
+      "sha256": "ca583f9924479e95484ba699a536e7114c01fdf9142b2b563dcaadf6e4ff812d"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-horizontal-1000x300-dark.png",
+      "sha256": "fb6eedcf673090017cf3fb4e3a45055b8cea7e6811e29d4f0200c3853cfd8594"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-horizontal-1000x300-light.png",
+      "sha256": "8c32cd88d4d7e726100600d044587af3d78b574b88b911767bca39fee6770fc3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-horizontal-1440x900-dark.png",
+      "sha256": "b306c8ded0fdd2d64f72d2e314cf710741e73dbb89b37a1bb7a5d22672d6a69f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-horizontal-1440x900-light.png",
+      "sha256": "342dadabed8d431679e857688457ca99f14f7f8650c23a301098f389e23d4df4"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-horizontal-360x780-dark.png",
+      "sha256": "f2c938ada04b7ca01628eb59bd1002f79926c34e9b8e02dec758129bc01e4486"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-horizontal-360x780-light.png",
+      "sha256": "5e3e002af7c3af86792b5f4cd88ac8ad300f5bd4feb9b7d2cac351e601a06413"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-horizontal-960x800-dark.png",
+      "sha256": "7564558364b6a104b85bdbde1f3da8df8a1592f50e7ec4a64f7f5d292fa7f95c"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-horizontal-960x800-light.png",
+      "sha256": "09b2c31ea7f113baa1c84964d12374756791eed459c5a6d7d07255a3311209aa"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-vertical-1000x300-dark.png",
+      "sha256": "6ff67b370236064094b40d4cad362b4ee14b9cbe01a193f092d8cbf0ccdd40ec"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-vertical-1000x300-light.png",
+      "sha256": "1cba5ee5f275d3323951b538aa94f8c7aa5d6b2ddc3415ea6083e59bcbbeb390"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-vertical-1440x900-dark.png",
+      "sha256": "9e4f26a129d7504f24fb39fcfd6899ad82358555251c139908285a7df28e8fc8"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-vertical-1440x900-light.png",
+      "sha256": "8f8725110afb920c838b7ac84a2743b619d6105215b349ea569fa18a3d5dbd7c"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-vertical-360x780-dark.png",
+      "sha256": "0bc5040b1827d4ce39eeddb8542f052830bf75b3ceaba18f2fb820c287f17249"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-vertical-360x780-light.png",
+      "sha256": "4a202bc6409867088358d3c73f2524a57459a875d6a585710768e6fa2444253c"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-vertical-960x800-dark.png",
+      "sha256": "8223ef502346349315ea1428846fb2651e5f2b9d4a5d8df1fd199f8b22b6b31c"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison-vertical-960x800-light.png",
+      "sha256": "e859adbaa8a830a9e44d806d18c004e749873f78f9057e23a7b4e0f96ee184b3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-comparison.json",
+      "sha256": "5d869c1b327343bcd1ffa301ebd6df25ba0187d5d9159fca85b82450beeb1cc7"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-horizontal-1000x300-dark.png",
+      "sha256": "b1efe627c4110a182ccde99844090de0858747c41dbf808f9de63a311456d112"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-horizontal-1000x300-light.png",
+      "sha256": "ad94667a78527b8d5997b4117eadc8ba05ad119856cf7489785160bda7eca7eb"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-horizontal-1440x900-dark.png",
+      "sha256": "5675c611b468874763e705fc646aaf453f150b915b51cc09aec6af8791a74d92"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-horizontal-1440x900-light.png",
+      "sha256": "917fab74f33650ffd0f273a46d97eabac42d23e90082f3cdaf0e0feaf8d3ca7c"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-horizontal-360x780-dark.png",
+      "sha256": "72dc0bd4f862dfb75a941c0fdb952571b29fe4612059a384da829a2fa208b2de"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-horizontal-360x780-light.png",
+      "sha256": "e0424b97079683642eb9e71d0518e4a636ec656d1765340dbaa03ef9b8d7f2fb"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-horizontal-960x800-dark.png",
+      "sha256": "5ebad61e2dc5b34cc9494de0fe2133b431dd383480b414d90f7666ecd9791077"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-horizontal-960x800-light.png",
+      "sha256": "edc71d91cef046e3304e0d9dab139496b7e91af6ac56d17a43b1954f142deaa4"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-menu-1000x300-dark.png",
+      "sha256": "b47dcb3b2b48889b19c93c741bd4fe8f9217c692e57a582d58aca6015d634b03"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-menu-1000x300-light.png",
+      "sha256": "85e97a71ea424e0f8634072b4124d297e995f017e2b47a27b351cd0fb2d971f2"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-menu-1440x900-dark.png",
+      "sha256": "ae47d3f76b50141bf3e1dd4427bccd6918ec9294b97c261580b9fcf25827224a"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-menu-1440x900-light.png",
+      "sha256": "a116a90d0f4a8f2549ce562a791a6ad01a30b3ed98760d0118c5a232177be50b"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-menu-360x780-dark.png",
+      "sha256": "9b80b54e6891453645d86b1d5e45e234dbb9d94e2db957615f42cf3257332343"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-menu-360x780-light.png",
+      "sha256": "3ed61a602928824b2d2881d7b1921ade41c9a3fe9a0e79a4fa694f2577c74ff4"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-menu-960x800-dark.png",
+      "sha256": "0c9b31e2d4a5980cf730c1f6a364c100b6bdcebb0411f8faa7e516be20d18a13"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-menu-960x800-light.png",
+      "sha256": "5668271b7222011e2d94a4fb203cd0c93362b13a23b05a513f4e8b7d4499c8b8"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-vertical-1000x300-dark.png",
+      "sha256": "36fc15d5d310577aaa9a7ed0fd1ca1d45b7bc201f5018310ca2094debb1d78c7"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-vertical-1000x300-light.png",
+      "sha256": "2c38ca53576ee4b8f3d40654ac401dbfafa64beff80280b7b2196183deb5cc94"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-vertical-1440x900-dark.png",
+      "sha256": "804c3d169d4b94168cbc7861ae1016fce4ac2b9eb1b50453f1a1bb37dae6c1d3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-vertical-1440x900-light.png",
+      "sha256": "9d77802bd48019dc13c2c0f953cf0795581293517723f561e6da99518fd20d81"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-vertical-360x780-dark.png",
+      "sha256": "80f71d829165018fcd909aaa138da3d5f75db3860e6c3d4a3a247bc21cc35fc7"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-vertical-360x780-light.png",
+      "sha256": "0c5439054f78cf9924083fa52b5b155817fc4dad67302791379dbd386f5b52bf"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-vertical-960x800-dark.png",
+      "sha256": "d514f52222e4bf39d640de21da67e300144fb5b6c94460abf78a21e78c3c19e6"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1-vertical-960x800-light.png",
+      "sha256": "0e4c3143436b1666e5cce99b9331b1613c12ea5a30bf4e6bfef11dbcae4adfa3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-geometry-r1.json",
+      "sha256": "97ee0361e898ae94f24b76931acc14ad5d790f5ccb5de9f5713d8fce585b8f6d"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-icon-reference.json",
+      "sha256": "1f1e240210d22b9d5b763a19e0288d6577be6c9766397d149683f9c80e9c0c05"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-key-diagnostic-no-native.json",
+      "sha256": "c863b4bd566ece8e5a5d1e2a79ccce5293d627e2d42b32a180235879e493ab67"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-key-diagnostic-r1.json",
+      "sha256": "f5670fb185e8f7a3ed635f73c0a43a2e9f38648b87430bfb52319defa15c6026"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-key-diagnostic-with-text.json",
+      "sha256": "0d841b9ec1e1f825305888ee3042b4d93b4fb02f11b6b2983b8e3356d70c39c8"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-corner-menu-1000x300-dark.png",
+      "sha256": "1f05a759dacecbfee137c175a49e0463174be5096c07c2cfe775428d62917f93"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-corner-menu-1000x300-light.png",
+      "sha256": "3b8a49da2b77048724a68ea5404eac01f1cd471d8585fee3350a02c6c691775f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-corner-menu-1440x900-dark.png",
+      "sha256": "1caa73e8b7d2418a9e9372c08818b7228c73e6a7b176ea4e60560a67c02d82b9"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-corner-menu-1440x900-light.png",
+      "sha256": "d88f475a1c6ae969c4f0f07b7a73020bffe98d3ba8c9aa670d51fa24b5d2819b"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-corner-menu-360x780-dark.png",
+      "sha256": "56ccdca7a98186235867bdcb7cf4ff4d78287dda0092001350d32c2ec791b122"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-corner-menu-360x780-light.png",
+      "sha256": "0b76ef6866ac9206f59dd52abb5994fb96273b6ba08cf94ec1242cbdcadd803e"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-corner-menu-960x800-dark.png",
+      "sha256": "724dbce1ac837755e86b21da84f000b165af428ae8095df627a0431e4d73ed02"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-corner-menu-960x800-light.png",
+      "sha256": "1edf075216fa191d35d853579c8c0840dff4170d51ed18395a7b4bd13a97bd8a"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-horizontal-1000x300-dark.png",
+      "sha256": "7bffe693d2491262994f9b5d10a443ddecb2910c55abfd6afe0c52f7a784a847"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-horizontal-1000x300-light.png",
+      "sha256": "afc165f8b7d9f7d54509411104712e5c0b31ae836557bf89ba80749f4453b311"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-horizontal-1440x900-dark.png",
+      "sha256": "dc79086cce79078ce7230bf0fe742d283653a0c58bef2299a93d2dbdc7410dab"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-horizontal-1440x900-light.png",
+      "sha256": "648e0d4e02470dad80613b9243069784f68d6aef12e02d5689215f766590d556"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-horizontal-360x780-dark.png",
+      "sha256": "b99607930940e77781e80f0e503d90f84a42a67fc3e95a5ee86db049a9c92650"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-horizontal-360x780-light.png",
+      "sha256": "a381a01d05caad718018bd1d5dadd2fc77fbaca0e54be8c1ae7f6ab12442fb2f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-horizontal-960x800-dark.png",
+      "sha256": "43e30b72b1384ba09673b95be5a23474063cc2f07aba548d3b18d0e126a3c1af"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-horizontal-960x800-light.png",
+      "sha256": "e8eb8e429ff0a07211a74258022a59d90771c0e201d50d3c5aac715dd1384de2"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-line-undo-redo-1000x300-dark.png",
+      "sha256": "c4d07b40ea33fd1af82c81bcb28cbe13df5e2b95777b8e82f3f7d313f59b8bd4"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-line-undo-redo-1000x300-light.png",
+      "sha256": "a9bbe43f29dc2a7f4b86ce13b6f252868bc9aa7bb9f5bb453c47de952bbb1664"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-line-undo-redo-1440x900-dark.png",
+      "sha256": "249d07dcd4c63b9fbb1fafa3ed2452f31c8780e3ac62f47baa5b48141d9e9a00"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-line-undo-redo-1440x900-light.png",
+      "sha256": "87dc5f06eed18ffab65fba1b349b15e794fa70bef4ede085135e99fac8c1caa5"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-line-undo-redo-360x780-dark.png",
+      "sha256": "d46e016c18fd26e30785e97dc70645824ac61b59d3fc4bf67caa1fcecfafe53f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-line-undo-redo-360x780-light.png",
+      "sha256": "3a4fa204d558a1d006521f24c98b938b7a8d08b60aacd6fbcf11cb569541d9a3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-line-undo-redo-960x800-dark.png",
+      "sha256": "294f143e498adff12e284f8b3ca79b1d50867c0138eb71ae98752c0b4ed9140d"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-line-undo-redo-960x800-light.png",
+      "sha256": "0e032ece43d67ba69f7b9cb537fe01aaad24149a784149d4197beda241fbe59a"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-moved-1000x300-dark.png",
+      "sha256": "212a12e5c3b230e0a6c9f134bb7926ef22d8f062e0f0dde071a9a5781090259e"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-moved-1000x300-light.png",
+      "sha256": "19c2c0682725d85307dcc51d4724bda2006cc61d10a257368a1f3732cab2fdad"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-moved-360x780-dark.png",
+      "sha256": "25ee937ed5627c0eb82d412c23db3411759c3d1571dbde051bc5cd4ceb7984f5"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-moved-360x780-light.png",
+      "sha256": "9b2707cb52c09d94244f71bba38dc664376b64326fd1f95fcae0067fc158aeb4"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-returned-pan-1000x300-dark.png",
+      "sha256": "f4aa4cf1012805ed80ca650b06735943c90faabfe9d95649efee4a0dea271443"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-returned-pan-1000x300-light.png",
+      "sha256": "43f5b3b012174161dc551b1f6fa37f2df701605c0333ddc94fb3e370b4145a6e"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-returned-pan-360x780-dark.png",
+      "sha256": "2f3e1e3df997915a5895959596b08319e23e86c9ee905b3028cefa7c80106258"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-returned-pan-360x780-light.png",
+      "sha256": "ec1d6209e40fe6994ac859fc403b298fdfdfa3129336150a25981c1768a15212"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-scroll-end-focus-1000x300-dark.png",
+      "sha256": "443cd36acaceb1f4326b49fb737b405f7dfddfccf0517f7e6504173963f7d528"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-scroll-end-focus-1000x300-light.png",
+      "sha256": "45206e002873194203d5aa10c2915907ba164da10f895a46f67bbbd12b88e230"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-scroll-end-focus-360x780-dark.png",
+      "sha256": "c20bd2dfade68da680f877fd048c59142ed88747adc43f0e81b13f0e3295d70f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-scroll-end-focus-360x780-light.png",
+      "sha256": "ff32fcf656875f90a3ba3782e51391adc52e5f985838a5b19e843d431898790f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-vertical-1000x300-dark.png",
+      "sha256": "efcd1e6e39c95228cfed02e396d6a758819e0c5762b4fb80eeab955a9c81a605"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-vertical-1000x300-light.png",
+      "sha256": "198e5abee55135cae864c17fbe7af5a79314b2c4ee524bcda7ac41151d06857d"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-vertical-1440x900-dark.png",
+      "sha256": "7bc3cedb8535e441eca1e0f6ab412867e47098224d79d380ede819dbca895a29"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-vertical-1440x900-light.png",
+      "sha256": "a892c572c0b04d109407677871350026d2afca2f180719c82e2b5fb6c2778f74"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-vertical-360x780-dark.png",
+      "sha256": "7600566b048f48c8c8b6152bde7f660ce57b534c5be21bad88b411a72740a66c"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-vertical-360x780-light.png",
+      "sha256": "10e571f518253785358cca0b5c55ade7e2c82c1d226ebbb4bf9dbc2d026afca4"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-vertical-960x800-dark.png",
+      "sha256": "f572ad07b1348797202c73fd48ea33648c2a21c93ad082bb375827966f3d761f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final-vertical-960x800-light.png",
+      "sha256": "cd6ab37ce02460ee98fce107c7b998b9d44637c4ccdd077654dfa8aff81ad2af"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-final.json",
+      "sha256": "a59360180e2c97aca7674780a0d9a83fcf24558ad8a7d0920245f91c1f41fb93"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r1-vertical-1440x900-light.png",
+      "sha256": "9d77802bd48019dc13c2c0f953cf0795581293517723f561e6da99518fd20d81"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r1.json",
+      "sha256": "845c62ba9e8bd5e3725812b8227cefdac84741413af1186d91039031c6919f8b"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-corner-menu-1000x300-dark.png",
+      "sha256": "15e5821d7f9dda5e049541fb7611e0daf91cb28a804ea1c6bfb6d122cf28270e"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-corner-menu-1000x300-light.png",
+      "sha256": "5e637da2ae512b6b8f582bbc35fe14d31040a58b5621279c7da1836220e3fbc6"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-corner-menu-1440x900-dark.png",
+      "sha256": "655bb2d94f82b7c6ca1a42326c43506793b6e9a40c35a9d12ba87fe04acc342a"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-corner-menu-1440x900-light.png",
+      "sha256": "7f6e7005178b1535efedb3751850031c9280b62e928db45addd9a93bad6f5d2b"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-corner-menu-360x780-dark.png",
+      "sha256": "18ad1a4824025288d7fe0ef8076e9a61d7d7f6bc5d49da5be5778b28ba26db0f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-corner-menu-360x780-light.png",
+      "sha256": "fbef7ffaaa85b4c96964bcc35f4ccb3d554a6bd0ba7d140ef2a2096015f7b870"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-corner-menu-960x800-dark.png",
+      "sha256": "cc895d76fe1d2cf52ade9ddf89eb89c3b5f6e199378ebf8b29596a752196967b"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-corner-menu-960x800-light.png",
+      "sha256": "4cba5af966d1d12fb187ffd30aa1db5848571d20e4779ddb81c0851fee1d7dcc"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-horizontal-1000x300-dark.png",
+      "sha256": "10861ecfa0dc0b4b318e79747cd814681e10bde1c2103e784eca630d8e73ef36"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-horizontal-1000x300-light.png",
+      "sha256": "9287aab60ecbc05112e6da160afa41700b2cfa1fec815aedade1ff3fbfa48b3f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-horizontal-1440x900-dark.png",
+      "sha256": "0d361634ce19ff425a46f8dcdf231bb6e881fb865fdcf9be5d0f27c2f37267a2"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-horizontal-1440x900-light.png",
+      "sha256": "e260b13065469bae8fac1bb97af6794987b4846752d57c2e0a039ab727fa4df7"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-horizontal-360x780-dark.png",
+      "sha256": "8036dd7984de1266bd8e712cfc0deb83f3d3e04ca16490ecf5830d52ad77f618"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-horizontal-360x780-light.png",
+      "sha256": "40ccf4d1da11d6acf4780e361a2122a247df721273a0199a11945ae122456069"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-horizontal-960x800-dark.png",
+      "sha256": "b5a1ce0a3cd2c96df47c0de8425239c9f6f841cc4bb494bf41f5d5623ba3ebca"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-horizontal-960x800-light.png",
+      "sha256": "253372d1d5d4bcfb90332395fee32c253361a97a7f05d1c97d5faae66e6707cc"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-line-undo-redo-1000x300-dark.png",
+      "sha256": "1dc2673d3b1a2ed481b1cafb536a7060fd637105c3f42632f75629315874be13"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-line-undo-redo-1000x300-light.png",
+      "sha256": "caa224d9c6bab5fcd6b5e85417cff9d5ade106c6bf76a5180eff8ca49dea4790"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-line-undo-redo-1440x900-dark.png",
+      "sha256": "b52adaaae997eb22a343228f0309c738adac0175702e54becfd77b20e37fb561"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-line-undo-redo-1440x900-light.png",
+      "sha256": "bc2a042cf454e67b3547d66d2cff4a3f9fb9c9e0e2c72166d79dadaf51412cbb"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-line-undo-redo-360x780-dark.png",
+      "sha256": "1bbc64f20362b36d65d8647a4a551e59df9185d418c5156745c2e4fc9b7187d5"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-line-undo-redo-360x780-light.png",
+      "sha256": "a0f945b1a79be030f7206a135a4a0791e5e063834c832c9cb72dc5041533eebf"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-line-undo-redo-960x800-dark.png",
+      "sha256": "622a599388b15f53019dc2a9f8ba9cfc0467f087963bcdc5516f6dafec34b815"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-line-undo-redo-960x800-light.png",
+      "sha256": "12d4d353ec333f551d11fd85914544c6fe8dcb3018148e865a0ea4e7254e6efd"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-moved-1000x300-dark.png",
+      "sha256": "da20219722bc6350104d8b30635ff84d3a997cfeddfd9ffb300cc67beb9cb0d3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-moved-1000x300-light.png",
+      "sha256": "c807cf9d745a9831ff65b4e1a3f6da2860b740b2c8c6d7e573021fe592ac791a"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-moved-360x780-dark.png",
+      "sha256": "22ca69f2ca613f52a0cf961637f92078ebb8975d4b30f9a2220d571ac8202ce4"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-moved-360x780-light.png",
+      "sha256": "a294ce6e7da7a8628a42bf0f065a80d8fd18f9123e3cdda966457c919a5aabe9"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-returned-pan-1000x300-dark.png",
+      "sha256": "351bbe7ed37265ebc4940b2a73fdb113dd65d467a421cb022ceb83f2ea99c8d5"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-returned-pan-1000x300-light.png",
+      "sha256": "66ec14c957d6305fca778c58d28f00002b0a8ef64b0a0b3a7acc6a8a1db5bb5e"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-returned-pan-360x780-dark.png",
+      "sha256": "d236015a6a9d1e74ad32550e5cea5ef9f2dc38fedefbcc7ed01943067d63c475"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-returned-pan-360x780-light.png",
+      "sha256": "2284dca34525a55f4230eb56913f7bf46747e97788a6ae34f7c3e0ea89137b2a"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-scroll-end-focus-1000x300-dark.png",
+      "sha256": "8b5c993ee07a873f39faaa8612ec1a63659a7bc3ac5ce3968262b4644573924f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-scroll-end-focus-1000x300-light.png",
+      "sha256": "142dd73b5917c4033a7dadd844e94a040530284ab8c6bca1219ffcb6abc04b57"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-scroll-end-focus-360x780-dark.png",
+      "sha256": "1f5e9687fc019b9fa82e743e7da04ecb35148377d468cb4fa9f2437dc0caaeb8"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-scroll-end-focus-360x780-light.png",
+      "sha256": "c423e9dde32b0b3bc2239d40d30b75a08d1079d32d1adb7f8c713bcbf1d78a36"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-vertical-1000x300-dark.png",
+      "sha256": "a01ddd866ce51aa1e42ed8b235497824a5195102e1d577e33724d86bffd43e99"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-vertical-1000x300-light.png",
+      "sha256": "23966807a77440ba1afa80059d73b21a66b2eb3f095a44624a95a4c3767c0ace"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-vertical-1440x900-dark.png",
+      "sha256": "804c3d169d4b94168cbc7861ae1016fce4ac2b9eb1b50453f1a1bb37dae6c1d3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-vertical-1440x900-light.png",
+      "sha256": "9d77802bd48019dc13c2c0f953cf0795581293517723f561e6da99518fd20d81"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-vertical-360x780-dark.png",
+      "sha256": "2dc6291987b366a0ed2e49aaeff0f25390fd89a6e99e26d0ce9d2e6912b06161"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-vertical-360x780-light.png",
+      "sha256": "acbbd0657dd762503831b9e7e2fd3a231caffab2630d968a8437e658b4252f70"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-vertical-960x800-dark.png",
+      "sha256": "d514f52222e4bf39d640de21da67e300144fb5b6c94460abf78a21e78c3c19e6"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2-vertical-960x800-light.png",
+      "sha256": "0e4c3143436b1666e5cce99b9331b1613c12ea5a30bf4e6bfef11dbcae4adfa3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r2.json",
+      "sha256": "86fd0db878483dd4874f350a9399a18eeb6fb34938070f801a9fb743e0890d60"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-corner-menu-1000x300-dark.png",
+      "sha256": "15e5821d7f9dda5e049541fb7611e0daf91cb28a804ea1c6bfb6d122cf28270e"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-corner-menu-1000x300-light.png",
+      "sha256": "5e637da2ae512b6b8f582bbc35fe14d31040a58b5621279c7da1836220e3fbc6"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-corner-menu-1440x900-dark.png",
+      "sha256": "655bb2d94f82b7c6ca1a42326c43506793b6e9a40c35a9d12ba87fe04acc342a"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-corner-menu-1440x900-light.png",
+      "sha256": "7f6e7005178b1535efedb3751850031c9280b62e928db45addd9a93bad6f5d2b"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-corner-menu-360x780-dark.png",
+      "sha256": "18ad1a4824025288d7fe0ef8076e9a61d7d7f6bc5d49da5be5778b28ba26db0f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-corner-menu-360x780-light.png",
+      "sha256": "fbef7ffaaa85b4c96964bcc35f4ccb3d554a6bd0ba7d140ef2a2096015f7b870"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-corner-menu-960x800-dark.png",
+      "sha256": "cc895d76fe1d2cf52ade9ddf89eb89c3b5f6e199378ebf8b29596a752196967b"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-corner-menu-960x800-light.png",
+      "sha256": "4cba5af966d1d12fb187ffd30aa1db5848571d20e4779ddb81c0851fee1d7dcc"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-horizontal-1000x300-dark.png",
+      "sha256": "10861ecfa0dc0b4b318e79747cd814681e10bde1c2103e784eca630d8e73ef36"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-horizontal-1000x300-light.png",
+      "sha256": "9287aab60ecbc05112e6da160afa41700b2cfa1fec815aedade1ff3fbfa48b3f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-horizontal-1440x900-dark.png",
+      "sha256": "0d361634ce19ff425a46f8dcdf231bb6e881fb865fdcf9be5d0f27c2f37267a2"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-horizontal-1440x900-light.png",
+      "sha256": "e260b13065469bae8fac1bb97af6794987b4846752d57c2e0a039ab727fa4df7"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-horizontal-360x780-dark.png",
+      "sha256": "8036dd7984de1266bd8e712cfc0deb83f3d3e04ca16490ecf5830d52ad77f618"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-horizontal-360x780-light.png",
+      "sha256": "40ccf4d1da11d6acf4780e361a2122a247df721273a0199a11945ae122456069"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-horizontal-960x800-dark.png",
+      "sha256": "b5a1ce0a3cd2c96df47c0de8425239c9f6f841cc4bb494bf41f5d5623ba3ebca"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-horizontal-960x800-light.png",
+      "sha256": "253372d1d5d4bcfb90332395fee32c253361a97a7f05d1c97d5faae66e6707cc"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-line-undo-redo-1000x300-dark.png",
+      "sha256": "1dc2673d3b1a2ed481b1cafb536a7060fd637105c3f42632f75629315874be13"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-line-undo-redo-1000x300-light.png",
+      "sha256": "caa224d9c6bab5fcd6b5e85417cff9d5ade106c6bf76a5180eff8ca49dea4790"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-line-undo-redo-1440x900-dark.png",
+      "sha256": "b52adaaae997eb22a343228f0309c738adac0175702e54becfd77b20e37fb561"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-line-undo-redo-1440x900-light.png",
+      "sha256": "bc2a042cf454e67b3547d66d2cff4a3f9fb9c9e0e2c72166d79dadaf51412cbb"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-line-undo-redo-360x780-dark.png",
+      "sha256": "1bbc64f20362b36d65d8647a4a551e59df9185d418c5156745c2e4fc9b7187d5"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-line-undo-redo-360x780-light.png",
+      "sha256": "a0f945b1a79be030f7206a135a4a0791e5e063834c832c9cb72dc5041533eebf"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-line-undo-redo-960x800-dark.png",
+      "sha256": "622a599388b15f53019dc2a9f8ba9cfc0467f087963bcdc5516f6dafec34b815"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-line-undo-redo-960x800-light.png",
+      "sha256": "12d4d353ec333f551d11fd85914544c6fe8dcb3018148e865a0ea4e7254e6efd"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-moved-1000x300-dark.png",
+      "sha256": "da20219722bc6350104d8b30635ff84d3a997cfeddfd9ffb300cc67beb9cb0d3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-moved-1000x300-light.png",
+      "sha256": "c807cf9d745a9831ff65b4e1a3f6da2860b740b2c8c6d7e573021fe592ac791a"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-moved-360x780-dark.png",
+      "sha256": "22ca69f2ca613f52a0cf961637f92078ebb8975d4b30f9a2220d571ac8202ce4"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-moved-360x780-light.png",
+      "sha256": "a294ce6e7da7a8628a42bf0f065a80d8fd18f9123e3cdda966457c919a5aabe9"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-returned-pan-1000x300-dark.png",
+      "sha256": "351bbe7ed37265ebc4940b2a73fdb113dd65d467a421cb022ceb83f2ea99c8d5"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-returned-pan-1000x300-light.png",
+      "sha256": "66ec14c957d6305fca778c58d28f00002b0a8ef64b0a0b3a7acc6a8a1db5bb5e"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-returned-pan-360x780-dark.png",
+      "sha256": "d236015a6a9d1e74ad32550e5cea5ef9f2dc38fedefbcc7ed01943067d63c475"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-returned-pan-360x780-light.png",
+      "sha256": "81c6f712ece4deb22ff3d33ed391dd5f1e815e0477660a4105b807988a76c60b"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-scroll-end-focus-1000x300-dark.png",
+      "sha256": "8b5c993ee07a873f39faaa8612ec1a63659a7bc3ac5ce3968262b4644573924f"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-scroll-end-focus-1000x300-light.png",
+      "sha256": "142dd73b5917c4033a7dadd844e94a040530284ab8c6bca1219ffcb6abc04b57"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-scroll-end-focus-360x780-dark.png",
+      "sha256": "1f5e9687fc019b9fa82e743e7da04ecb35148377d468cb4fa9f2437dc0caaeb8"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-scroll-end-focus-360x780-light.png",
+      "sha256": "c423e9dde32b0b3bc2239d40d30b75a08d1079d32d1adb7f8c713bcbf1d78a36"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-vertical-1000x300-dark.png",
+      "sha256": "a01ddd866ce51aa1e42ed8b235497824a5195102e1d577e33724d86bffd43e99"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-vertical-1000x300-light.png",
+      "sha256": "23966807a77440ba1afa80059d73b21a66b2eb3f095a44624a95a4c3767c0ace"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-vertical-1440x900-dark.png",
+      "sha256": "804c3d169d4b94168cbc7861ae1016fce4ac2b9eb1b50453f1a1bb37dae6c1d3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-vertical-1440x900-light.png",
+      "sha256": "9d77802bd48019dc13c2c0f953cf0795581293517723f561e6da99518fd20d81"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-vertical-360x780-dark.png",
+      "sha256": "2dc6291987b366a0ed2e49aaeff0f25390fd89a6e99e26d0ce9d2e6912b06161"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-vertical-360x780-light.png",
+      "sha256": "acbbd0657dd762503831b9e7e2fd3a231caffab2630d968a8437e658b4252f70"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-vertical-960x800-dark.png",
+      "sha256": "d514f52222e4bf39d640de21da67e300144fb5b6c94460abf78a21e78c3c19e6"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3-vertical-960x800-light.png",
+      "sha256": "0e4c3143436b1666e5cce99b9331b1613c12ea5a30bf4e6bfef11dbcae4adfa3"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-observe-r3.json",
+      "sha256": "f8d76a2d798d41995b8ac0e0e8e33d47e16c672b3abf257ef4986eefb22752eb"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-horizontal-1000x300-dark.png",
+      "sha256": "3c32f9171d2157e8357f343aa283895f638a7732a313374cc816a50dc01cbdef"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-horizontal-1000x300-light.png",
+      "sha256": "7cb16bbcd9f712d88abd20bfc43f05f412e5e5b066795b684bf4380792a5e3c9"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-horizontal-1440x900-dark.png",
+      "sha256": "dfba11f04d5a0c37108ff18687b034087721ecc0acf958bc15406149f00d54c8"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-horizontal-1440x900-light.png",
+      "sha256": "e978dfa9a2fe3d0407b220f3e7523a9f931c65810268bd5edbb63ebc46c45cf9"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-horizontal-360x780-dark.png",
+      "sha256": "777bc704af51d0bf69e888d95e1f0ae852150fd9b7a786413e38fe6b75131cf8"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-horizontal-360x780-light.png",
+      "sha256": "8d78db1542cdb0dafdc132840ebe1303acdf1c807bd3a36a606270bf6ae187c0"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-horizontal-960x800-dark.png",
+      "sha256": "277180671fe8330fe099144a8df49f004070eb94def1064296a1855a4e35cc49"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-horizontal-960x800-light.png",
+      "sha256": "52e2bfa78459af07cd9efa4b252096237f403c2858ba38b6c7bfc9044086f3c7"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-menu-1000x300-dark.png",
+      "sha256": "6a3f5cdc99daa239a486f2c1f831c9aed5b735b874414b260d722869c9a9d13e"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-menu-1000x300-light.png",
+      "sha256": "3a7ec0c703ecde30953c1acc24b1af2d2ca9fd6d399708019d40efbda03f0eca"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-menu-1440x900-dark.png",
+      "sha256": "e7022e414c28a0361237cc19432a65e6250c0d65e50b659cb5156135802ea010"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-menu-1440x900-light.png",
+      "sha256": "c9b9e7f6a5535a1d396addc8cb60ec499fc294c3c646801b14482fe8ad0740b5"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-menu-360x780-dark.png",
+      "sha256": "558a956632fa95aa607191f6dfe8b85bd136e061f4ce256a4ce1fc6cc3d26ef7"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-menu-360x780-light.png",
+      "sha256": "10f4f17c01574e8445bacaae16cb90e94625853254a30e10b62a4d5593f55a75"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-menu-960x800-dark.png",
+      "sha256": "e85c1c336796e02cf2e97693b45d21a12fbc34d304485d17b28cfa2d4e8e3801"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-menu-960x800-light.png",
+      "sha256": "169ee1f9ffdc2fafdd27dc31f3226cccc09be03d072e18e3f1b641a3692fa252"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-vertical-1000x300-dark.png",
+      "sha256": "95f0ba2043f7c614796799c96224f954db14c6cf0640acefed040b9125c9a5dd"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-vertical-1000x300-light.png",
+      "sha256": "65f7d9201ed0d620256d69e01c3fda482d43a74090ffd8731965f6a357b925c4"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-vertical-1440x900-dark.png",
+      "sha256": "12468f01fc27764ccb7c09a191efa78293931bbd112c924e02f89e7aeaf70bd0"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-vertical-1440x900-light.png",
+      "sha256": "b1eb96f54c0dac9f30a2e862ef490839ae6ae43b3cf350ff64b468864b7d3428"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-vertical-360x780-dark.png",
+      "sha256": "466510e15618b53f4b4203694f253d135465402c5019baca3ae932775cf52eff"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-vertical-360x780-light.png",
+      "sha256": "ff78da1c583d564f0a75dc817697abf61730b3ca9b727391f87bf0734f851d22"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-vertical-960x800-dark.png",
+      "sha256": "44542e16428dbbeb0cd183932f8808a93c086be3084f818a40dd5c8f69b66947"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference-vertical-960x800-light.png",
+      "sha256": "78e3c5d9f53a67baa091885e01f7f324d88ffb60741ceb74a6ca25e6500f1972"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-reference.json",
+      "sha256": "52c72eb13951e1ec2b43e8b6ce958c4a888ecb68dd8e5add6ebf5c180b426c13"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-supplemental-final.json",
+      "sha256": "92056bbb4c2ee01b2749c1adf0a8272cf69d8a55cf4955bf0c1cbd507e9adcd8"
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/toolbar-062-author-supplemental-r1.json",
+      "sha256": "63fb3e98c3a6624ab09abaf449e898593dfee336e19140cc93b043eb25db0de0"
+    }
+  ],
+  "unresolvedToolbarIssueObserved": false
+}

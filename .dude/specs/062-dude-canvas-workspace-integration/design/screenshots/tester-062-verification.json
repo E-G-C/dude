@@ -1,0 +1,5645 @@
+{
+  "meta": {
+    "startedAt": "2026-09-14T02:24:44.630Z",
+    "root": "/Users/eg/work/dude",
+    "exactMock": "/Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+    "baseline": "/Users/eg/work/dude/.dude/specs/052-dude-canvas-ui/design/fluent-desktop-workspace.html",
+    "expectedMockSha256": "0683d7ab8c51a9f3a58ac34e7a0d9c73a6bdfd34923676bb9cd3fed952cbbaaf",
+    "initialMockSha256": "0683d7ab8c51a9f3a58ac34e7a0d9c73a6bdfd34923676bb9cd3fed952cbbaaf",
+    "initialMockBytes": 294393,
+    "baselineSha256": "d491b002154088f4cc6cac4773a6745ac2f9a02b5f78b5a593c3c88335169d70",
+    "node": "v26.8.1",
+    "boundary": {
+      "renderer": "isolated headless browser over CDP pipe",
+      "deviceScaleFactor": 1,
+      "sharedProfile": false,
+      "realCanvasContacted": false
+    },
+    "browser": "Edg/133.0.3065.69",
+    "canonicalAuthorScreenshots": {
+      "beforeCount": 21,
+      "afterCount": 21,
+      "unchanged": true
+    },
+    "finalMockSha256": "0683d7ab8c51a9f3a58ac34e7a0d9c73a6bdfd34923676bb9cd3fed952cbbaaf",
+    "finalMockBytes": 294393,
+    "finishedAt": "2026-09-14T02:25:22.289Z"
+  },
+  "summary": {
+    "checks": 218,
+    "passed": 204,
+    "failed": 14,
+    "findings": 14,
+    "fatal": null
+  },
+  "categorySummary": {
+    "source": {
+      "checks": 5,
+      "passed": 3,
+      "failed": 2
+    },
+    "geometry": {
+      "checks": 51,
+      "passed": 51,
+      "failed": 0
+    },
+    "accessibility": {
+      "checks": 43,
+      "passed": 43,
+      "failed": 0
+    },
+    "contrast": {
+      "checks": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "finder": {
+      "checks": 29,
+      "passed": 29,
+      "failed": 0
+    },
+    "baseline": {
+      "checks": 15,
+      "passed": 15,
+      "failed": 0
+    },
+    "capability": {
+      "checks": 7,
+      "passed": 3,
+      "failed": 4
+    },
+    "keyboard": {
+      "checks": 6,
+      "passed": 5,
+      "failed": 1
+    },
+    "boundary": {
+      "checks": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    "walkthrough": {
+      "checks": 4,
+      "passed": 4,
+      "failed": 0
+    },
+    "review": {
+      "checks": 3,
+      "passed": 3,
+      "failed": 0
+    },
+    "focus": {
+      "checks": 3,
+      "passed": 0,
+      "failed": 3
+    },
+    "state": {
+      "checks": 2,
+      "passed": 1,
+      "failed": 1
+    },
+    "requests": {
+      "checks": 12,
+      "passed": 11,
+      "failed": 1
+    },
+    "capture": {
+      "checks": 7,
+      "passed": 7,
+      "failed": 0
+    },
+    "honesty": {
+      "checks": 6,
+      "passed": 4,
+      "failed": 2
+    },
+    "history": {
+      "checks": 2,
+      "passed": 2,
+      "failed": 0
+    },
+    "immutability": {
+      "checks": 2,
+      "passed": 2,
+      "failed": 0
+    }
+  },
+  "sourceComparison": {
+    "capturedAt": "2026-09-13 21:30 local",
+    "snapshotRecords": 62,
+    "currentContexts": 62,
+    "currentItems": 62,
+    "currentCoverage": {
+      "inventory": {
+        "state": "current",
+        "ideas": 62,
+        "readable": 62,
+        "packages": 51,
+        "diagnostics": []
+      },
+      "work": {
+        "state": "current",
+        "diagnostics": []
+      }
+    },
+    "discoveryMismatches": [],
+    "frozen062": {
+      "group": "defined-awaiting-work",
+      "lane": "definition",
+      "tasks": {
+        "done": 0,
+        "open": 5,
+        "active": 0,
+        "blocked": 0,
+        "total": 5
+      },
+      "stage": "Defined",
+      "questions": 0
+    },
+    "current062": {
+      "authority": "definition",
+      "stage": "Defined",
+      "tasks": null,
+      "phases": [],
+      "unansweredQuestions": 2,
+      "activity": {
+        "total": 2,
+        "recent": [
+          {
+            "date": "2026-09-14 UTC",
+            "text": "design handoff: The first-definition transaction published the independently reviewed core trio with zero lint failures and the exact owner confirmed. Routed the exploring mock to FluentUI at `.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html`, bounded to 062 design artifacts and the defined 052/057 integration. Production source and canonical task states remain unchanged; Work has not begun and visual approval is still required."
+          },
+          {
+            "date": "2026-09-14T01:12:16Z",
+            "text": "define: Staged the first-definition core trio and prospective owner transition for `.dude/specs/062-dude-canvas-workspace-integration/spec.md`; design remains exploring with future preview `.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html`, pending combined-mock comparison and explicit current-revision user approval before product UI changes. This records definition staging, not publication, lint, execution, or approval."
+          }
+        ]
+      }
+    },
+    "frozen052": {
+      "group": "completed",
+      "lane": "lightweight",
+      "tasks": {
+        "done": 13,
+        "open": 0,
+        "active": 0,
+        "blocked": 0,
+        "total": 13
+      },
+      "stage": "Verified",
+      "questions": 0
+    },
+    "current052": {
+      "authority": "lightweight",
+      "stage": "Verified",
+      "tasks": {
+        "total": 13,
+        "open": 0,
+        "inProgress": 0,
+        "blocked": 0,
+        "done": 13
+      },
+      "phases": [
+        {
+          "name": "D1-D3 Definition Review",
+          "total": 1,
+          "open": 0,
+          "inProgress": 0,
+          "blocked": 0,
+          "done": 1,
+          "state": "done"
+        },
+        {
+          "name": "Responsive Fluent Design And Approval",
+          "total": 3,
+          "open": 0,
+          "inProgress": 0,
+          "blocked": 0,
+          "done": 3,
+          "state": "done"
+        },
+        {
+          "name": "I0 Architecture-Risk Proof",
+          "total": 3,
+          "open": 0,
+          "inProgress": 0,
+          "blocked": 0,
+          "done": 3,
+          "state": "done"
+        },
+        {
+          "name": "Foundational Projection And Core Path",
+          "total": 2,
+          "open": 0,
+          "inProgress": 0,
+          "blocked": 0,
+          "done": 2,
+          "state": "done"
+        },
+        {
+          "name": "Read-Only Now Cockpit",
+          "total": 1,
+          "open": 0,
+          "inProgress": 0,
+          "blocked": 0,
+          "done": 1,
+          "state": "done"
+        },
+        {
+          "name": "Verification, Dogfood, And Release",
+          "total": 3,
+          "open": 0,
+          "inProgress": 0,
+          "blocked": 0,
+          "done": 3,
+          "state": "done"
+        }
+      ],
+      "unansweredQuestions": 0
+    },
+    "sourceBackedProgressInstruction": {
+      "frozen": "Create and compare the integrated mock at `.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html`, then obtain explicit approval of its current revision through the existing design workflow. Use the spec's single proposed direction and confirm each action against the target implementation owner's existing capability envelope. Show no-selection Overview, the numbered finder, selected Now, all retained response/capture paths, focused Review, and valid return in one mock. Compare preserved/moved/adapted/deferred treatments with 052, preserve explored revisions under 062, and inspect widths/themes, keyboard/focus, and readable instructions before requesting approval.",
+      "currentT001": "Create and compare the integrated mock at `.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html`, then obtain explicit approval of its current revision through the existing design workflow. Use the spec's single proposed direction and confirm each action against the target implementation owner's existing capability envelope. Show no-selection Overview, the numbered finder, selected Now, all retained response/capture paths, focused Review, and valid return in one mock. Compare preserved/moved/adapted/deferred treatments with 052, preserve explored revisions under 062, and inspect widths/themes, keyboard/focus, and readable instructions before requesting approval.",
+      "exactAfterWhitespaceNormalization": true
+    },
+    "recordsWithUnlabelledTruncatedActivityCandidates": [
+      "002",
+      "003",
+      "007",
+      "008",
+      "009",
+      "010",
+      "011",
+      "012",
+      "018",
+      "019",
+      "026",
+      "028",
+      "029",
+      "030",
+      "039",
+      "040",
+      "041",
+      "042",
+      "052",
+      "055",
+      "056",
+      "057",
+      "059",
+      "060",
+      "061",
+      "062"
+    ]
+  },
+  "renderMatrix": [
+    {
+      "theme": "light",
+      "viewport": {
+        "key": "1440",
+        "width": 1440,
+        "height": 900
+      },
+      "view": "overview",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "controls": {
+        "count": 72,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 62,
+        "first": "001",
+        "last": "062",
+        "scope": "all",
+        "wideStatusDisplay": "block",
+        "compactDisplay": "none"
+      },
+      "focal": null,
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 53,
+          "right": 1440,
+          "bottom": 53,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 53,
+          "width": 1440,
+          "height": 45,
+          "right": 1440,
+          "bottom": 98,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 59,
+          "width": 560,
+          "height": 32,
+          "right": 727.328125,
+          "bottom": 91,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 98,
+          "width": 48,
+          "height": 776,
+          "right": 48,
+          "bottom": 874,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 98,
+          "width": 1052,
+          "height": 776,
+          "right": 1100,
+          "bottom": 874,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 1100,
+          "y": 98,
+          "width": 340,
+          "height": 776,
+          "right": 1440,
+          "bottom": 874,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 1440,
+          "height": 26,
+          "right": 1440,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": null,
+        "focal": null,
+        "lifecycle": null,
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "light",
+      "viewport": {
+        "key": "1440",
+        "width": 1440,
+        "height": 900
+      },
+      "view": "now",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "controls": {
+        "count": 12,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 0,
+        "first": null,
+        "last": null,
+        "scope": "open",
+        "wideStatusDisplay": null,
+        "compactDisplay": null
+      },
+      "focal": {
+        "characters": 701,
+        "clipped": false,
+        "fontSize": "14px",
+        "lineHeight": "20px"
+      },
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 53,
+          "right": 1440,
+          "bottom": 53,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 53,
+          "width": 1440,
+          "height": 50,
+          "right": 1440,
+          "bottom": 103,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 61.5,
+          "width": 560,
+          "height": 32,
+          "right": 727.328125,
+          "bottom": 93.5,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 103,
+          "width": 48,
+          "height": 1173,
+          "right": 48,
+          "bottom": 1276,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 103,
+          "width": 1052,
+          "height": 1173,
+          "right": 1100,
+          "bottom": 1276,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 1100,
+          "y": 103,
+          "width": 340,
+          "height": 1173,
+          "right": 1440,
+          "bottom": 1276,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 1440,
+          "height": 26,
+          "right": 1440,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 128,
+          "width": 1052,
+          "height": 59,
+          "right": 1100,
+          "bottom": 187,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 199,
+          "width": 1020,
+          "height": 279,
+          "right": 1084,
+          "bottom": 478,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 624,
+          "width": 207.5625,
+          "height": 16,
+          "right": 271.5625,
+          "bottom": 640,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 64,
+          "y": 768,
+          "width": 60.984375,
+          "height": 16,
+          "right": 124.984375,
+          "bottom": 784,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 64,
+          "y": 1039,
+          "width": 72.359375,
+          "height": 16,
+          "right": 136.359375,
+          "bottom": 1055,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "light",
+      "viewport": {
+        "key": "768",
+        "width": 768,
+        "height": 900
+      },
+      "view": "overview",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 768,
+        "scroll": 768
+      },
+      "controls": {
+        "count": 73,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 62,
+        "first": "001",
+        "last": "062",
+        "scope": "all",
+        "wideStatusDisplay": "block",
+        "compactDisplay": "none"
+      },
+      "focal": null,
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 768,
+          "height": 105,
+          "right": 768,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 768,
+          "height": 45,
+          "right": 768,
+          "bottom": 150,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 490.921875,
+          "height": 32,
+          "right": 658.25,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 150,
+          "width": 48,
+          "height": 980,
+          "right": 48,
+          "bottom": 1130,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 150,
+          "width": 720,
+          "height": 715,
+          "right": 768,
+          "bottom": 865,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 865,
+          "width": 720,
+          "height": 265,
+          "right": 768,
+          "bottom": 1130,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 768,
+          "height": 26,
+          "right": 768,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": null,
+        "focal": null,
+        "lifecycle": null,
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "light",
+      "viewport": {
+        "key": "768",
+        "width": 768,
+        "height": 900
+      },
+      "view": "now",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 768,
+        "scroll": 768
+      },
+      "controls": {
+        "count": 13,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 0,
+        "first": null,
+        "last": null,
+        "scope": "open",
+        "wideStatusDisplay": null,
+        "compactDisplay": null
+      },
+      "focal": {
+        "characters": 701,
+        "clipped": false,
+        "fontSize": "14px",
+        "lineHeight": "20px"
+      },
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 768,
+          "height": 105,
+          "right": 768,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 768,
+          "height": 90,
+          "right": 768,
+          "bottom": 195,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 560,
+          "height": 32,
+          "right": 727.328125,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 195,
+          "width": 48,
+          "height": 1824,
+          "right": 48,
+          "bottom": 2019,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 195,
+          "width": 720,
+          "height": 1209,
+          "right": 768,
+          "bottom": 1404,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 1404,
+          "width": 720,
+          "height": 615,
+          "right": 768,
+          "bottom": 2019,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 768,
+          "height": 26,
+          "right": 768,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 220,
+          "width": 720,
+          "height": 59,
+          "right": 768,
+          "bottom": 279,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 291,
+          "width": 688,
+          "height": 295,
+          "right": 752,
+          "bottom": 586,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 732,
+          "width": 207.5625,
+          "height": 16,
+          "right": 271.5625,
+          "bottom": 748,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 64,
+          "y": 876,
+          "width": 60.984375,
+          "height": 16,
+          "right": 124.984375,
+          "bottom": 892,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 64,
+          "y": 1167,
+          "width": 72.359375,
+          "height": 16,
+          "right": 136.359375,
+          "bottom": 1183,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "light",
+      "viewport": {
+        "key": "720",
+        "width": 720,
+        "height": 900
+      },
+      "view": "overview",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 720,
+        "scroll": 720
+      },
+      "controls": {
+        "count": 73,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 62,
+        "first": "001",
+        "last": "062",
+        "scope": "all",
+        "wideStatusDisplay": "none",
+        "compactDisplay": "flex"
+      },
+      "focal": null,
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 720,
+          "height": 105,
+          "right": 720,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 720,
+          "height": 45,
+          "right": 720,
+          "bottom": 150,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 442.921875,
+          "height": 32,
+          "right": 610.25,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 150,
+          "width": 48,
+          "height": 996,
+          "right": 48,
+          "bottom": 1146,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 150,
+          "width": 672,
+          "height": 731,
+          "right": 720,
+          "bottom": 881,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 881,
+          "width": 672,
+          "height": 265,
+          "right": 720,
+          "bottom": 1146,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 857,
+          "width": 720,
+          "height": 43,
+          "right": 720,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": null,
+        "focal": null,
+        "lifecycle": null,
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "light",
+      "viewport": {
+        "key": "720",
+        "width": 720,
+        "height": 900
+      },
+      "view": "now",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 720,
+        "scroll": 720
+      },
+      "controls": {
+        "count": 13,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 0,
+        "first": null,
+        "last": null,
+        "scope": "open",
+        "wideStatusDisplay": null,
+        "compactDisplay": null
+      },
+      "focal": {
+        "characters": 701,
+        "clipped": false,
+        "fontSize": "14px",
+        "lineHeight": "20px"
+      },
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 720,
+          "height": 105,
+          "right": 720,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 720,
+          "height": 90,
+          "right": 720,
+          "bottom": 195,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 540.671875,
+          "height": 32,
+          "right": 708,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 195,
+          "width": 48,
+          "height": 1912,
+          "right": 48,
+          "bottom": 2107,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 195,
+          "width": 672,
+          "height": 1297,
+          "right": 720,
+          "bottom": 1492,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 1492,
+          "width": 672,
+          "height": 615,
+          "right": 720,
+          "bottom": 2107,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 857,
+          "width": 720,
+          "height": 43,
+          "right": 720,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 220,
+          "width": 672,
+          "height": 79,
+          "right": 720,
+          "bottom": 299,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 311,
+          "width": 640,
+          "height": 295,
+          "right": 704,
+          "bottom": 606,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 752,
+          "width": 207.5625,
+          "height": 16,
+          "right": 271.5625,
+          "bottom": 768,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 64,
+          "y": 896,
+          "width": 60.984375,
+          "height": 16,
+          "right": 124.984375,
+          "bottom": 912,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 64,
+          "y": 1255,
+          "width": 72.359375,
+          "height": 16,
+          "right": 136.359375,
+          "bottom": 1271,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "light",
+      "viewport": {
+        "key": "360",
+        "width": 360,
+        "height": 800
+      },
+      "view": "overview",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 360,
+        "scroll": 360
+      },
+      "controls": {
+        "count": 73,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 62,
+        "first": "001",
+        "last": "062",
+        "scope": "all",
+        "wideStatusDisplay": "none",
+        "compactDisplay": "flex"
+      },
+      "focal": null,
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 360,
+          "height": 137,
+          "right": 360,
+          "bottom": 137,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 137,
+          "width": 360,
+          "height": 109,
+          "right": 360,
+          "bottom": 246,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 12,
+          "y": 171,
+          "width": 336,
+          "height": 32,
+          "right": 348,
+          "bottom": 203,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 246,
+          "width": 360,
+          "height": 85,
+          "right": 360,
+          "bottom": 331,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 0,
+          "y": 331,
+          "width": 360,
+          "height": 755,
+          "right": 360,
+          "bottom": 1086,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 0,
+          "y": 1086,
+          "width": 360,
+          "height": 398,
+          "right": 360,
+          "bottom": 1484,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 1484,
+          "width": 360,
+          "height": 61,
+          "right": 360,
+          "bottom": 1545,
+          "display": "flex",
+          "position": "static"
+        },
+        "identity": null,
+        "focal": null,
+        "lifecycle": null,
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "light",
+      "viewport": {
+        "key": "360",
+        "width": 360,
+        "height": 800
+      },
+      "view": "now",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 360,
+        "scroll": 360
+      },
+      "controls": {
+        "count": 13,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 0,
+        "first": null,
+        "last": null,
+        "scope": "open",
+        "wideStatusDisplay": null,
+        "compactDisplay": null
+      },
+      "focal": {
+        "characters": 701,
+        "clipped": false,
+        "fontSize": "14px",
+        "lineHeight": "20px"
+      },
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 360,
+          "height": 137,
+          "right": 360,
+          "bottom": 137,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 137,
+          "width": 360,
+          "height": 154,
+          "right": 360,
+          "bottom": 291,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 12,
+          "y": 171,
+          "width": 336,
+          "height": 32,
+          "right": 348,
+          "bottom": 203,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 291,
+          "width": 360,
+          "height": 85,
+          "right": 360,
+          "bottom": 376,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 0,
+          "y": 376,
+          "width": 360,
+          "height": 2045,
+          "right": 360,
+          "bottom": 2421,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 0,
+          "y": 2421,
+          "width": 360,
+          "height": 936,
+          "right": 360,
+          "bottom": 3357,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 3357,
+          "width": 360,
+          "height": 61,
+          "right": 360,
+          "bottom": 3418,
+          "display": "flex",
+          "position": "static"
+        },
+        "identity": {
+          "x": 0,
+          "y": 419,
+          "width": 360,
+          "height": 119,
+          "right": 360,
+          "bottom": 538,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 16,
+          "y": 550,
+          "width": 328,
+          "height": 535,
+          "right": 344,
+          "bottom": 1085,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 16,
+          "y": 1247,
+          "width": 207.5625,
+          "height": 16,
+          "right": 223.5625,
+          "bottom": 1263,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 16,
+          "y": 1523,
+          "width": 60.984375,
+          "height": 16,
+          "right": 76.984375,
+          "bottom": 1539,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 16,
+          "y": 2068,
+          "width": 72.359375,
+          "height": 16,
+          "right": 88.359375,
+          "bottom": 2084,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "light",
+      "viewport": {
+        "key": "zoom200",
+        "width": 720,
+        "height": 450,
+        "equivalent": "1440x900 at 200% zoom"
+      },
+      "view": "overview",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 720,
+        "scroll": 720
+      },
+      "controls": {
+        "count": 73,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 62,
+        "first": "001",
+        "last": "062",
+        "scope": "all",
+        "wideStatusDisplay": "none",
+        "compactDisplay": "flex"
+      },
+      "focal": null,
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 720,
+          "height": 105,
+          "right": 720,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 720,
+          "height": 45,
+          "right": 720,
+          "bottom": 150,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 442.921875,
+          "height": 32,
+          "right": 610.25,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 150,
+          "width": 48,
+          "height": 744,
+          "right": 48,
+          "bottom": 894,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 150,
+          "width": 672,
+          "height": 479,
+          "right": 720,
+          "bottom": 629,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 629,
+          "width": 672,
+          "height": 265,
+          "right": 720,
+          "bottom": 894,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 407,
+          "width": 720,
+          "height": 43,
+          "right": 720,
+          "bottom": 450,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": null,
+        "focal": null,
+        "lifecycle": null,
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "light",
+      "viewport": {
+        "key": "zoom200",
+        "width": 720,
+        "height": 450,
+        "equivalent": "1440x900 at 200% zoom"
+      },
+      "view": "now",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 720,
+        "scroll": 720
+      },
+      "controls": {
+        "count": 13,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 0,
+        "first": null,
+        "last": null,
+        "scope": "open",
+        "wideStatusDisplay": null,
+        "compactDisplay": null
+      },
+      "focal": {
+        "characters": 701,
+        "clipped": false,
+        "fontSize": "14px",
+        "lineHeight": "20px"
+      },
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 720,
+          "height": 105,
+          "right": 720,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 720,
+          "height": 90,
+          "right": 720,
+          "bottom": 195,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 540.671875,
+          "height": 32,
+          "right": 708,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 195,
+          "width": 48,
+          "height": 1912,
+          "right": 48,
+          "bottom": 2107,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 195,
+          "width": 672,
+          "height": 1297,
+          "right": 720,
+          "bottom": 1492,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 1492,
+          "width": 672,
+          "height": 615,
+          "right": 720,
+          "bottom": 2107,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 407,
+          "width": 720,
+          "height": 43,
+          "right": 720,
+          "bottom": 450,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 220,
+          "width": 672,
+          "height": 79,
+          "right": 720,
+          "bottom": 299,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 311,
+          "width": 640,
+          "height": 295,
+          "right": 704,
+          "bottom": 606,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 752,
+          "width": 207.5625,
+          "height": 16,
+          "right": 271.5625,
+          "bottom": 768,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 64,
+          "y": 896,
+          "width": 60.984375,
+          "height": 16,
+          "right": 124.984375,
+          "bottom": 912,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 64,
+          "y": 1255,
+          "width": 72.359375,
+          "height": 16,
+          "right": 136.359375,
+          "bottom": 1271,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "dark",
+      "viewport": {
+        "key": "1440",
+        "width": 1440,
+        "height": 900
+      },
+      "view": "overview",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "controls": {
+        "count": 72,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 62,
+        "first": "001",
+        "last": "062",
+        "scope": "all",
+        "wideStatusDisplay": "block",
+        "compactDisplay": "none"
+      },
+      "focal": null,
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 53,
+          "right": 1440,
+          "bottom": 53,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 53,
+          "width": 1440,
+          "height": 45,
+          "right": 1440,
+          "bottom": 98,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 59,
+          "width": 560,
+          "height": 32,
+          "right": 727.328125,
+          "bottom": 91,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 98,
+          "width": 48,
+          "height": 776,
+          "right": 48,
+          "bottom": 874,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 98,
+          "width": 1052,
+          "height": 776,
+          "right": 1100,
+          "bottom": 874,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 1100,
+          "y": 98,
+          "width": 340,
+          "height": 776,
+          "right": 1440,
+          "bottom": 874,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 1440,
+          "height": 26,
+          "right": 1440,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": null,
+        "focal": null,
+        "lifecycle": null,
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "dark",
+      "viewport": {
+        "key": "1440",
+        "width": 1440,
+        "height": 900
+      },
+      "view": "now",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 1440,
+        "scroll": 1440
+      },
+      "controls": {
+        "count": 12,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 0,
+        "first": null,
+        "last": null,
+        "scope": "open",
+        "wideStatusDisplay": null,
+        "compactDisplay": null
+      },
+      "focal": {
+        "characters": 701,
+        "clipped": false,
+        "fontSize": "14px",
+        "lineHeight": "20px"
+      },
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 53,
+          "right": 1440,
+          "bottom": 53,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 53,
+          "width": 1440,
+          "height": 50,
+          "right": 1440,
+          "bottom": 103,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 61.5,
+          "width": 560,
+          "height": 32,
+          "right": 727.328125,
+          "bottom": 93.5,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 103,
+          "width": 48,
+          "height": 1173,
+          "right": 48,
+          "bottom": 1276,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 103,
+          "width": 1052,
+          "height": 1173,
+          "right": 1100,
+          "bottom": 1276,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 1100,
+          "y": 103,
+          "width": 340,
+          "height": 1173,
+          "right": 1440,
+          "bottom": 1276,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 1440,
+          "height": 26,
+          "right": 1440,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 128,
+          "width": 1052,
+          "height": 59,
+          "right": 1100,
+          "bottom": 187,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 199,
+          "width": 1020,
+          "height": 279,
+          "right": 1084,
+          "bottom": 478,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 624,
+          "width": 207.5625,
+          "height": 16,
+          "right": 271.5625,
+          "bottom": 640,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 64,
+          "y": 768,
+          "width": 60.984375,
+          "height": 16,
+          "right": 124.984375,
+          "bottom": 784,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 64,
+          "y": 1039,
+          "width": 72.359375,
+          "height": 16,
+          "right": 136.359375,
+          "bottom": 1055,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "dark",
+      "viewport": {
+        "key": "768",
+        "width": 768,
+        "height": 900
+      },
+      "view": "overview",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 768,
+        "scroll": 768
+      },
+      "controls": {
+        "count": 73,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 62,
+        "first": "001",
+        "last": "062",
+        "scope": "all",
+        "wideStatusDisplay": "block",
+        "compactDisplay": "none"
+      },
+      "focal": null,
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 768,
+          "height": 105,
+          "right": 768,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 768,
+          "height": 45,
+          "right": 768,
+          "bottom": 150,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 490.921875,
+          "height": 32,
+          "right": 658.25,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 150,
+          "width": 48,
+          "height": 980,
+          "right": 48,
+          "bottom": 1130,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 150,
+          "width": 720,
+          "height": 715,
+          "right": 768,
+          "bottom": 865,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 865,
+          "width": 720,
+          "height": 265,
+          "right": 768,
+          "bottom": 1130,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 768,
+          "height": 26,
+          "right": 768,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": null,
+        "focal": null,
+        "lifecycle": null,
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "dark",
+      "viewport": {
+        "key": "768",
+        "width": 768,
+        "height": 900
+      },
+      "view": "now",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 768,
+        "scroll": 768
+      },
+      "controls": {
+        "count": 13,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 0,
+        "first": null,
+        "last": null,
+        "scope": "open",
+        "wideStatusDisplay": null,
+        "compactDisplay": null
+      },
+      "focal": {
+        "characters": 701,
+        "clipped": false,
+        "fontSize": "14px",
+        "lineHeight": "20px"
+      },
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 768,
+          "height": 105,
+          "right": 768,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 768,
+          "height": 90,
+          "right": 768,
+          "bottom": 195,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 560,
+          "height": 32,
+          "right": 727.328125,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 195,
+          "width": 48,
+          "height": 1824,
+          "right": 48,
+          "bottom": 2019,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 195,
+          "width": 720,
+          "height": 1209,
+          "right": 768,
+          "bottom": 1404,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 1404,
+          "width": 720,
+          "height": 615,
+          "right": 768,
+          "bottom": 2019,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 768,
+          "height": 26,
+          "right": 768,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 220,
+          "width": 720,
+          "height": 59,
+          "right": 768,
+          "bottom": 279,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 291,
+          "width": 688,
+          "height": 295,
+          "right": 752,
+          "bottom": 586,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 732,
+          "width": 207.5625,
+          "height": 16,
+          "right": 271.5625,
+          "bottom": 748,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 64,
+          "y": 876,
+          "width": 60.984375,
+          "height": 16,
+          "right": 124.984375,
+          "bottom": 892,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 64,
+          "y": 1167,
+          "width": 72.359375,
+          "height": 16,
+          "right": 136.359375,
+          "bottom": 1183,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "dark",
+      "viewport": {
+        "key": "720",
+        "width": 720,
+        "height": 900
+      },
+      "view": "overview",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 720,
+        "scroll": 720
+      },
+      "controls": {
+        "count": 73,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 62,
+        "first": "001",
+        "last": "062",
+        "scope": "all",
+        "wideStatusDisplay": "none",
+        "compactDisplay": "flex"
+      },
+      "focal": null,
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 720,
+          "height": 105,
+          "right": 720,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 720,
+          "height": 45,
+          "right": 720,
+          "bottom": 150,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 442.921875,
+          "height": 32,
+          "right": 610.25,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 150,
+          "width": 48,
+          "height": 996,
+          "right": 48,
+          "bottom": 1146,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 150,
+          "width": 672,
+          "height": 731,
+          "right": 720,
+          "bottom": 881,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 881,
+          "width": 672,
+          "height": 265,
+          "right": 720,
+          "bottom": 1146,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 857,
+          "width": 720,
+          "height": 43,
+          "right": 720,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": null,
+        "focal": null,
+        "lifecycle": null,
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "dark",
+      "viewport": {
+        "key": "720",
+        "width": 720,
+        "height": 900
+      },
+      "view": "now",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 720,
+        "scroll": 720
+      },
+      "controls": {
+        "count": 13,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 0,
+        "first": null,
+        "last": null,
+        "scope": "open",
+        "wideStatusDisplay": null,
+        "compactDisplay": null
+      },
+      "focal": {
+        "characters": 701,
+        "clipped": false,
+        "fontSize": "14px",
+        "lineHeight": "20px"
+      },
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 720,
+          "height": 105,
+          "right": 720,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 720,
+          "height": 90,
+          "right": 720,
+          "bottom": 195,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 540.671875,
+          "height": 32,
+          "right": 708,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 195,
+          "width": 48,
+          "height": 1912,
+          "right": 48,
+          "bottom": 2107,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 195,
+          "width": 672,
+          "height": 1297,
+          "right": 720,
+          "bottom": 1492,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 1492,
+          "width": 672,
+          "height": 615,
+          "right": 720,
+          "bottom": 2107,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 857,
+          "width": 720,
+          "height": 43,
+          "right": 720,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 220,
+          "width": 672,
+          "height": 79,
+          "right": 720,
+          "bottom": 299,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 311,
+          "width": 640,
+          "height": 295,
+          "right": 704,
+          "bottom": 606,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 752,
+          "width": 207.5625,
+          "height": 16,
+          "right": 271.5625,
+          "bottom": 768,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 64,
+          "y": 896,
+          "width": 60.984375,
+          "height": 16,
+          "right": 124.984375,
+          "bottom": 912,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 64,
+          "y": 1255,
+          "width": 72.359375,
+          "height": 16,
+          "right": 136.359375,
+          "bottom": 1271,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "dark",
+      "viewport": {
+        "key": "360",
+        "width": 360,
+        "height": 800
+      },
+      "view": "overview",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 360,
+        "scroll": 360
+      },
+      "controls": {
+        "count": 73,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 62,
+        "first": "001",
+        "last": "062",
+        "scope": "all",
+        "wideStatusDisplay": "none",
+        "compactDisplay": "flex"
+      },
+      "focal": null,
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 360,
+          "height": 137,
+          "right": 360,
+          "bottom": 137,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 137,
+          "width": 360,
+          "height": 109,
+          "right": 360,
+          "bottom": 246,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 12,
+          "y": 171,
+          "width": 336,
+          "height": 32,
+          "right": 348,
+          "bottom": 203,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 246,
+          "width": 360,
+          "height": 85,
+          "right": 360,
+          "bottom": 331,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 0,
+          "y": 331,
+          "width": 360,
+          "height": 755,
+          "right": 360,
+          "bottom": 1086,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 0,
+          "y": 1086,
+          "width": 360,
+          "height": 398,
+          "right": 360,
+          "bottom": 1484,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 1484,
+          "width": 360,
+          "height": 61,
+          "right": 360,
+          "bottom": 1545,
+          "display": "flex",
+          "position": "static"
+        },
+        "identity": null,
+        "focal": null,
+        "lifecycle": null,
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "dark",
+      "viewport": {
+        "key": "360",
+        "width": 360,
+        "height": 800
+      },
+      "view": "now",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 360,
+        "scroll": 360
+      },
+      "controls": {
+        "count": 13,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 0,
+        "first": null,
+        "last": null,
+        "scope": "open",
+        "wideStatusDisplay": null,
+        "compactDisplay": null
+      },
+      "focal": {
+        "characters": 701,
+        "clipped": false,
+        "fontSize": "14px",
+        "lineHeight": "20px"
+      },
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 360,
+          "height": 137,
+          "right": 360,
+          "bottom": 137,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 137,
+          "width": 360,
+          "height": 154,
+          "right": 360,
+          "bottom": 291,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 12,
+          "y": 171,
+          "width": 336,
+          "height": 32,
+          "right": 348,
+          "bottom": 203,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 291,
+          "width": 360,
+          "height": 85,
+          "right": 360,
+          "bottom": 376,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 0,
+          "y": 376,
+          "width": 360,
+          "height": 2045,
+          "right": 360,
+          "bottom": 2421,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 0,
+          "y": 2421,
+          "width": 360,
+          "height": 936,
+          "right": 360,
+          "bottom": 3357,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 3357,
+          "width": 360,
+          "height": 61,
+          "right": 360,
+          "bottom": 3418,
+          "display": "flex",
+          "position": "static"
+        },
+        "identity": {
+          "x": 0,
+          "y": 419,
+          "width": 360,
+          "height": 119,
+          "right": 360,
+          "bottom": 538,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 16,
+          "y": 550,
+          "width": 328,
+          "height": 535,
+          "right": 344,
+          "bottom": 1085,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 16,
+          "y": 1247,
+          "width": 207.5625,
+          "height": 16,
+          "right": 223.5625,
+          "bottom": 1263,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 16,
+          "y": 1523,
+          "width": 60.984375,
+          "height": 16,
+          "right": 76.984375,
+          "bottom": 1539,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 16,
+          "y": 2068,
+          "width": 72.359375,
+          "height": 16,
+          "right": 88.359375,
+          "bottom": 2084,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "dark",
+      "viewport": {
+        "key": "zoom200",
+        "width": 720,
+        "height": 450,
+        "equivalent": "1440x900 at 200% zoom"
+      },
+      "view": "overview",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 720,
+        "scroll": 720
+      },
+      "controls": {
+        "count": 73,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 62,
+        "first": "001",
+        "last": "062",
+        "scope": "all",
+        "wideStatusDisplay": "none",
+        "compactDisplay": "flex"
+      },
+      "focal": null,
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 720,
+          "height": 105,
+          "right": 720,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 720,
+          "height": 45,
+          "right": 720,
+          "bottom": 150,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 442.921875,
+          "height": 32,
+          "right": 610.25,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 150,
+          "width": 48,
+          "height": 744,
+          "right": 48,
+          "bottom": 894,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 150,
+          "width": 672,
+          "height": 479,
+          "right": 720,
+          "bottom": 629,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 629,
+          "width": 672,
+          "height": 265,
+          "right": 720,
+          "bottom": 894,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 407,
+          "width": 720,
+          "height": 43,
+          "right": 720,
+          "bottom": 450,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": null,
+        "focal": null,
+        "lifecycle": null,
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "dark",
+      "viewport": {
+        "key": "zoom200",
+        "width": 720,
+        "height": 450,
+        "equivalent": "1440x900 at 200% zoom"
+      },
+      "view": "now",
+      "horizontalOverflow": false,
+      "pageWidth": {
+        "client": 720,
+        "scroll": 720
+      },
+      "controls": {
+        "count": 13,
+        "unnamed": 0,
+        "undersized": 0
+      },
+      "contrastViolations": [],
+      "finder": {
+        "rows": 0,
+        "first": null,
+        "last": null,
+        "scope": "open",
+        "wideStatusDisplay": null,
+        "compactDisplay": null
+      },
+      "focal": {
+        "characters": 701,
+        "clipped": false,
+        "fontSize": "14px",
+        "lineHeight": "20px"
+      },
+      "regions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 720,
+          "height": 105,
+          "right": 720,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 720,
+          "height": 90,
+          "right": 720,
+          "bottom": 195,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 540.671875,
+          "height": 32,
+          "right": 708,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 195,
+          "width": 48,
+          "height": 1912,
+          "right": 48,
+          "bottom": 2107,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 195,
+          "width": 672,
+          "height": 1297,
+          "right": 720,
+          "bottom": 1492,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 1492,
+          "width": 672,
+          "height": 615,
+          "right": 720,
+          "bottom": 2107,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 407,
+          "width": 720,
+          "height": 43,
+          "right": 720,
+          "bottom": 450,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 220,
+          "width": 672,
+          "height": 79,
+          "right": 720,
+          "bottom": 299,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 311,
+          "width": 640,
+          "height": 295,
+          "right": 704,
+          "bottom": 606,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 752,
+          "width": 207.5625,
+          "height": 16,
+          "right": 271.5625,
+          "bottom": 768,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 64,
+          "y": 896,
+          "width": 60.984375,
+          "height": 16,
+          "right": 124.984375,
+          "bottom": 912,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 64,
+          "y": 1255,
+          "width": 72.359375,
+          "height": 16,
+          "right": 136.359375,
+          "bottom": 1271,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    }
+  ],
+  "baselineComparison": [
+    {
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "tokenMismatches": [],
+      "horizontalOverflow": {
+        "baseline": false,
+        "integrated": false
+      },
+      "baselineRegions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 41,
+          "right": 1440,
+          "bottom": 41,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 41,
+          "width": 1440,
+          "height": 45,
+          "right": 1440,
+          "bottom": 86,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 129.625,
+          "y": 47,
+          "width": 420,
+          "height": 32,
+          "right": 549.625,
+          "bottom": 79,
+          "display": "block",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 86,
+          "width": 48,
+          "height": 1131,
+          "right": 48,
+          "bottom": 1217,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 86,
+          "width": 1052,
+          "height": 1131,
+          "right": 1100,
+          "bottom": 1217,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 1100,
+          "y": 86,
+          "width": 340,
+          "height": 1131,
+          "right": 1440,
+          "bottom": 1217,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 1440,
+          "height": 26,
+          "right": 1440,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 111,
+          "width": 1052,
+          "height": 39,
+          "right": 1100,
+          "bottom": 150,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 162,
+          "width": 1020,
+          "height": 191,
+          "right": 1084,
+          "bottom": 353,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 378,
+          "width": 82.65625,
+          "height": 16,
+          "right": 146.65625,
+          "bottom": 394,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      },
+      "integratedRegions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 53,
+          "right": 1440,
+          "bottom": 53,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 53,
+          "width": 1440,
+          "height": 50,
+          "right": 1440,
+          "bottom": 103,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 61.5,
+          "width": 560,
+          "height": 32,
+          "right": 727.328125,
+          "bottom": 93.5,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 103,
+          "width": 48,
+          "height": 976,
+          "right": 48,
+          "bottom": 1079,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 103,
+          "width": 1052,
+          "height": 976,
+          "right": 1100,
+          "bottom": 1079,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 1100,
+          "y": 103,
+          "width": 340,
+          "height": 976,
+          "right": 1440,
+          "bottom": 1079,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 1440,
+          "height": 26,
+          "right": 1440,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 128,
+          "width": 1052,
+          "height": 39,
+          "right": 1100,
+          "bottom": 167,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 179,
+          "width": 1020,
+          "height": 70,
+          "right": 1084,
+          "bottom": 249,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 274,
+          "width": 207.5625,
+          "height": 16,
+          "right": 271.5625,
+          "bottom": 290,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 64,
+          "y": 418,
+          "width": 60.984375,
+          "height": 16,
+          "right": 124.984375,
+          "bottom": 434,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 64,
+          "y": 730,
+          "width": 72.359375,
+          "height": 16,
+          "right": 136.359375,
+          "bottom": 746,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "light",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "tokenMismatches": [],
+      "horizontalOverflow": {
+        "baseline": false,
+        "integrated": false
+      },
+      "baselineRegions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 768,
+          "height": 41,
+          "right": 768,
+          "bottom": 41,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 41,
+          "width": 768,
+          "height": 45,
+          "right": 768,
+          "bottom": 86,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 129.625,
+          "y": 47,
+          "width": 420,
+          "height": 32,
+          "right": 549.625,
+          "bottom": 79,
+          "display": "block",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 86,
+          "width": 48,
+          "height": 1619,
+          "right": 48,
+          "bottom": 1705,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 86,
+          "width": 720,
+          "height": 1131,
+          "right": 768,
+          "bottom": 1217,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 1217,
+          "width": 720,
+          "height": 488,
+          "right": 768,
+          "bottom": 1705,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 768,
+          "height": 26,
+          "right": 768,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 111,
+          "width": 720,
+          "height": 39,
+          "right": 768,
+          "bottom": 150,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 162,
+          "width": 688,
+          "height": 191,
+          "right": 752,
+          "bottom": 353,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 378,
+          "width": 82.65625,
+          "height": 16,
+          "right": 146.65625,
+          "bottom": 394,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      },
+      "integratedRegions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 768,
+          "height": 105,
+          "right": 768,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 768,
+          "height": 90,
+          "right": 768,
+          "bottom": 195,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 560,
+          "height": 32,
+          "right": 727.328125,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 195,
+          "width": 48,
+          "height": 1470,
+          "right": 48,
+          "bottom": 1665,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 195,
+          "width": 720,
+          "height": 996,
+          "right": 768,
+          "bottom": 1191,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 1191,
+          "width": 720,
+          "height": 474,
+          "right": 768,
+          "bottom": 1665,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 768,
+          "height": 26,
+          "right": 768,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 220,
+          "width": 720,
+          "height": 59,
+          "right": 768,
+          "bottom": 279,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 291,
+          "width": 688,
+          "height": 70,
+          "right": 752,
+          "bottom": 361,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 386,
+          "width": 207.5625,
+          "height": 16,
+          "right": 271.5625,
+          "bottom": 402,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 64,
+          "y": 530,
+          "width": 60.984375,
+          "height": 16,
+          "right": 124.984375,
+          "bottom": 546,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 64,
+          "y": 842,
+          "width": 72.359375,
+          "height": 16,
+          "right": 136.359375,
+          "bottom": 858,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "light",
+      "viewport": {
+        "width": 360,
+        "height": 800
+      },
+      "tokenMismatches": [],
+      "horizontalOverflow": {
+        "baseline": false,
+        "integrated": false
+      },
+      "baselineRegions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 360,
+          "height": 41,
+          "right": 360,
+          "bottom": 41,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 41,
+          "width": 360,
+          "height": 73,
+          "right": 360,
+          "bottom": 114,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 12,
+          "y": 75,
+          "width": 238.25,
+          "height": 32,
+          "right": 250.25,
+          "bottom": 107,
+          "display": "block",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 114,
+          "width": 360,
+          "height": 49,
+          "right": 360,
+          "bottom": 163,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 0,
+          "y": 163,
+          "width": 360,
+          "height": 1667,
+          "right": 360,
+          "bottom": 1830,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 0,
+          "y": 1830,
+          "width": 360,
+          "height": 796,
+          "right": 360,
+          "bottom": 2626,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 2626,
+          "width": 360,
+          "height": 43,
+          "right": 360,
+          "bottom": 2669,
+          "display": "flex",
+          "position": "static"
+        },
+        "identity": {
+          "x": 0,
+          "y": 188,
+          "width": 360,
+          "height": 59,
+          "right": 360,
+          "bottom": 247,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 16,
+          "y": 259,
+          "width": 328,
+          "height": 295,
+          "right": 344,
+          "bottom": 554,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 16,
+          "y": 579,
+          "width": 82.65625,
+          "height": 16,
+          "right": 98.65625,
+          "bottom": 595,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      },
+      "integratedRegions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 360,
+          "height": 137,
+          "right": 360,
+          "bottom": 137,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 137,
+          "width": 360,
+          "height": 154,
+          "right": 360,
+          "bottom": 291,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 12,
+          "y": 171,
+          "width": 336,
+          "height": 32,
+          "right": 348,
+          "bottom": 203,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 291,
+          "width": 360,
+          "height": 85,
+          "right": 360,
+          "bottom": 376,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 0,
+          "y": 376,
+          "width": 360,
+          "height": 1636,
+          "right": 360,
+          "bottom": 2012,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 0,
+          "y": 2012,
+          "width": 360,
+          "height": 772,
+          "right": 360,
+          "bottom": 2784,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 2784,
+          "width": 360,
+          "height": 61,
+          "right": 360,
+          "bottom": 2845,
+          "display": "flex",
+          "position": "static"
+        },
+        "identity": {
+          "x": 0,
+          "y": 401,
+          "width": 360,
+          "height": 95,
+          "right": 360,
+          "bottom": 496,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 16,
+          "y": 508,
+          "width": 328,
+          "height": 70,
+          "right": 344,
+          "bottom": 578,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 16,
+          "y": 603,
+          "width": 207.5625,
+          "height": 16,
+          "right": 223.5625,
+          "bottom": 619,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 16,
+          "y": 851,
+          "width": 60.984375,
+          "height": 16,
+          "right": 76.984375,
+          "bottom": 867,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 16,
+          "y": 1443,
+          "width": 72.359375,
+          "height": 16,
+          "right": 88.359375,
+          "bottom": 1459,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "tokenMismatches": [],
+      "horizontalOverflow": {
+        "baseline": false,
+        "integrated": false
+      },
+      "baselineRegions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 41,
+          "right": 1440,
+          "bottom": 41,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 41,
+          "width": 1440,
+          "height": 45,
+          "right": 1440,
+          "bottom": 86,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 129.625,
+          "y": 47,
+          "width": 420,
+          "height": 32,
+          "right": 549.625,
+          "bottom": 79,
+          "display": "block",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 86,
+          "width": 48,
+          "height": 1131,
+          "right": 48,
+          "bottom": 1217,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 86,
+          "width": 1052,
+          "height": 1131,
+          "right": 1100,
+          "bottom": 1217,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 1100,
+          "y": 86,
+          "width": 340,
+          "height": 1131,
+          "right": 1440,
+          "bottom": 1217,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 1440,
+          "height": 26,
+          "right": 1440,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 111,
+          "width": 1052,
+          "height": 39,
+          "right": 1100,
+          "bottom": 150,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 162,
+          "width": 1020,
+          "height": 191,
+          "right": 1084,
+          "bottom": 353,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 378,
+          "width": 82.65625,
+          "height": 16,
+          "right": 146.65625,
+          "bottom": 394,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      },
+      "integratedRegions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 53,
+          "right": 1440,
+          "bottom": 53,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 53,
+          "width": 1440,
+          "height": 50,
+          "right": 1440,
+          "bottom": 103,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 61.5,
+          "width": 560,
+          "height": 32,
+          "right": 727.328125,
+          "bottom": 93.5,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 103,
+          "width": 48,
+          "height": 976,
+          "right": 48,
+          "bottom": 1079,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 103,
+          "width": 1052,
+          "height": 976,
+          "right": 1100,
+          "bottom": 1079,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 1100,
+          "y": 103,
+          "width": 340,
+          "height": 976,
+          "right": 1440,
+          "bottom": 1079,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 1440,
+          "height": 26,
+          "right": 1440,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 128,
+          "width": 1052,
+          "height": 39,
+          "right": 1100,
+          "bottom": 167,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 179,
+          "width": 1020,
+          "height": 70,
+          "right": 1084,
+          "bottom": 249,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 274,
+          "width": 207.5625,
+          "height": 16,
+          "right": 271.5625,
+          "bottom": 290,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 64,
+          "y": 418,
+          "width": 60.984375,
+          "height": 16,
+          "right": 124.984375,
+          "bottom": 434,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 64,
+          "y": 730,
+          "width": 72.359375,
+          "height": 16,
+          "right": 136.359375,
+          "bottom": 746,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "dark",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "tokenMismatches": [],
+      "horizontalOverflow": {
+        "baseline": false,
+        "integrated": false
+      },
+      "baselineRegions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 768,
+          "height": 41,
+          "right": 768,
+          "bottom": 41,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 41,
+          "width": 768,
+          "height": 45,
+          "right": 768,
+          "bottom": 86,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 129.625,
+          "y": 47,
+          "width": 420,
+          "height": 32,
+          "right": 549.625,
+          "bottom": 79,
+          "display": "block",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 86,
+          "width": 48,
+          "height": 1619,
+          "right": 48,
+          "bottom": 1705,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 86,
+          "width": 720,
+          "height": 1131,
+          "right": 768,
+          "bottom": 1217,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 1217,
+          "width": 720,
+          "height": 488,
+          "right": 768,
+          "bottom": 1705,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 768,
+          "height": 26,
+          "right": 768,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 111,
+          "width": 720,
+          "height": 39,
+          "right": 768,
+          "bottom": 150,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 162,
+          "width": 688,
+          "height": 191,
+          "right": 752,
+          "bottom": 353,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 378,
+          "width": 82.65625,
+          "height": 16,
+          "right": 146.65625,
+          "bottom": 394,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      },
+      "integratedRegions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 768,
+          "height": 105,
+          "right": 768,
+          "bottom": 105,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 105,
+          "width": 768,
+          "height": 90,
+          "right": 768,
+          "bottom": 195,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 167.328125,
+          "y": 111,
+          "width": 560,
+          "height": 32,
+          "right": 727.328125,
+          "bottom": 143,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 195,
+          "width": 48,
+          "height": 1470,
+          "right": 48,
+          "bottom": 1665,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 48,
+          "y": 195,
+          "width": 720,
+          "height": 996,
+          "right": 768,
+          "bottom": 1191,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 48,
+          "y": 1191,
+          "width": 720,
+          "height": 474,
+          "right": 768,
+          "bottom": 1665,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 874,
+          "width": 768,
+          "height": 26,
+          "right": 768,
+          "bottom": 900,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "identity": {
+          "x": 48,
+          "y": 220,
+          "width": 720,
+          "height": 59,
+          "right": 768,
+          "bottom": 279,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 64,
+          "y": 291,
+          "width": 688,
+          "height": 70,
+          "right": 752,
+          "bottom": 361,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 64,
+          "y": 386,
+          "width": 207.5625,
+          "height": 16,
+          "right": 271.5625,
+          "bottom": 402,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 64,
+          "y": 530,
+          "width": 60.984375,
+          "height": 16,
+          "right": 124.984375,
+          "bottom": 546,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 64,
+          "y": 842,
+          "width": 72.359375,
+          "height": 16,
+          "right": 136.359375,
+          "bottom": 858,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    },
+    {
+      "theme": "dark",
+      "viewport": {
+        "width": 360,
+        "height": 800
+      },
+      "tokenMismatches": [],
+      "horizontalOverflow": {
+        "baseline": false,
+        "integrated": false
+      },
+      "baselineRegions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 360,
+          "height": 41,
+          "right": 360,
+          "bottom": 41,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 41,
+          "width": 360,
+          "height": 73,
+          "right": 360,
+          "bottom": 114,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 12,
+          "y": 75,
+          "width": 238.25,
+          "height": 32,
+          "right": 250.25,
+          "bottom": 107,
+          "display": "block",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 114,
+          "width": 360,
+          "height": 49,
+          "right": 360,
+          "bottom": 163,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 0,
+          "y": 163,
+          "width": 360,
+          "height": 1667,
+          "right": 360,
+          "bottom": 1830,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 0,
+          "y": 1830,
+          "width": 360,
+          "height": 796,
+          "right": 360,
+          "bottom": 2626,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 2626,
+          "width": 360,
+          "height": 43,
+          "right": 360,
+          "bottom": 2669,
+          "display": "flex",
+          "position": "static"
+        },
+        "identity": {
+          "x": 0,
+          "y": 188,
+          "width": 360,
+          "height": 59,
+          "right": 360,
+          "bottom": 247,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 16,
+          "y": 259,
+          "width": 328,
+          "height": 295,
+          "right": 344,
+          "bottom": 554,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 16,
+          "y": 579,
+          "width": 82.65625,
+          "height": 16,
+          "right": 98.65625,
+          "bottom": 595,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": null,
+        "activity": null,
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      },
+      "integratedRegions": {
+        "prototype": {
+          "x": 0,
+          "y": 0,
+          "width": 360,
+          "height": 137,
+          "right": 360,
+          "bottom": 137,
+          "display": "block",
+          "position": "static"
+        },
+        "bar": {
+          "x": 0,
+          "y": 137,
+          "width": 360,
+          "height": 154,
+          "right": 360,
+          "bottom": 291,
+          "display": "flex",
+          "position": "sticky"
+        },
+        "finder": {
+          "x": 12,
+          "y": 171,
+          "width": 336,
+          "height": 32,
+          "right": 348,
+          "bottom": 203,
+          "display": "flex",
+          "position": "relative"
+        },
+        "rail": {
+          "x": 0,
+          "y": 291,
+          "width": 360,
+          "height": 85,
+          "right": 360,
+          "bottom": 376,
+          "display": "flex",
+          "position": "static"
+        },
+        "work": {
+          "x": 0,
+          "y": 376,
+          "width": 360,
+          "height": 1636,
+          "right": 360,
+          "bottom": 2012,
+          "display": "block",
+          "position": "static"
+        },
+        "dock": {
+          "x": 0,
+          "y": 2012,
+          "width": 360,
+          "height": 772,
+          "right": 360,
+          "bottom": 2784,
+          "display": "block",
+          "position": "static"
+        },
+        "status": {
+          "x": 0,
+          "y": 2784,
+          "width": 360,
+          "height": 61,
+          "right": 360,
+          "bottom": 2845,
+          "display": "flex",
+          "position": "static"
+        },
+        "identity": {
+          "x": 0,
+          "y": 401,
+          "width": 360,
+          "height": 95,
+          "right": 360,
+          "bottom": 496,
+          "display": "flex",
+          "position": "static"
+        },
+        "focal": {
+          "x": 16,
+          "y": 508,
+          "width": 328,
+          "height": 70,
+          "right": 344,
+          "bottom": 578,
+          "display": "grid",
+          "position": "static"
+        },
+        "lifecycle": {
+          "x": 16,
+          "y": 603,
+          "width": 207.5625,
+          "height": 16,
+          "right": 223.5625,
+          "bottom": 619,
+          "display": "block",
+          "position": "static"
+        },
+        "phases": {
+          "x": 16,
+          "y": 851,
+          "width": 60.984375,
+          "height": 16,
+          "right": 76.984375,
+          "bottom": 867,
+          "display": "block",
+          "position": "static"
+        },
+        "activity": {
+          "x": 16,
+          "y": 1443,
+          "width": 72.359375,
+          "height": 16,
+          "right": 88.359375,
+          "bottom": 1459,
+          "display": "block",
+          "position": "static"
+        },
+        "review": null,
+        "stage": null,
+        "stageFrame": null
+      }
+    }
+  ],
+  "walkthrough": {
+    "actions": [
+      {
+        "kind": "key",
+        "label": "Escape",
+        "modifiers": 0
+      },
+      {
+        "kind": "click",
+        "label": "Activate finder once from Now"
+      },
+      {
+        "kind": "click",
+        "label": "Focus open finder for Escape check"
+      },
+      {
+        "kind": "key",
+        "label": "Escape",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "click",
+        "label": "Finder before scope"
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Typeahead All scope",
+        "modifiers": 0
+      },
+      {
+        "kind": "click",
+        "label": "Finder from Overview"
+      },
+      {
+        "kind": "key",
+        "label": "ArrowDown",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "End",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Enter",
+        "modifiers": 0
+      },
+      {
+        "kind": "click",
+        "label": "Overview"
+      },
+      {
+        "kind": "click",
+        "label": "Open 062 again"
+      },
+      {
+        "kind": "click",
+        "label": "Review design"
+      },
+      {
+        "kind": "click",
+        "label": "Open review"
+      },
+      {
+        "kind": "click",
+        "label": "Send simulated feedback in complete walkthrough"
+      },
+      {
+        "kind": "click",
+        "label": "Back after walkthrough feedback"
+      },
+      {
+        "kind": "click",
+        "label": "All requests after walkthrough feedback"
+      },
+      {
+        "kind": "click",
+        "label": "Back to discovery after walkthrough feedback"
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Tab",
+        "modifiers": 0
+      },
+      {
+        "kind": "click",
+        "label": "Box annotation tool"
+      },
+      {
+        "kind": "click",
+        "label": "Reviewed stage after choosing Box"
+      },
+      {
+        "kind": "click",
+        "label": "Save markup"
+      },
+      {
+        "kind": "click",
+        "label": "Undo annotation"
+      },
+      {
+        "kind": "click",
+        "label": "Comments and notes"
+      },
+      {
+        "kind": "click",
+        "label": "Back from review"
+      },
+      {
+        "kind": "click",
+        "label": "Reopen review"
+      },
+      {
+        "kind": "click",
+        "label": "focus [data-draft=\"text\"]"
+      },
+      {
+        "kind": "text",
+        "selector": "[data-draft=\"text\"]",
+        "characters": 34
+      },
+      {
+        "kind": "key",
+        "label": "ArrowLeft",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "ArrowLeft",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "ArrowLeft",
+        "modifiers": 0
+      },
+      {
+        "kind": "click",
+        "label": "Switch to preview request"
+      },
+      {
+        "kind": "click",
+        "label": "Open Review with another request draft retained"
+      },
+      {
+        "kind": "click",
+        "label": "Return from Review"
+      },
+      {
+        "kind": "click",
+        "label": "Return to factual clarification"
+      },
+      {
+        "kind": "click",
+        "label": "Send simulated feedback"
+      },
+      {
+        "kind": "click",
+        "label": "Back after feedback"
+      },
+      {
+        "kind": "click",
+        "label": "All requests after feedback"
+      },
+      {
+        "kind": "click",
+        "label": "Back to discovery"
+      },
+      {
+        "kind": "click",
+        "label": "Open Clarification"
+      },
+      {
+        "kind": "click",
+        "label": "focus [data-draft=\"text\"]"
+      },
+      {
+        "kind": "text",
+        "selector": "[data-draft=\"text\"]",
+        "characters": 35
+      },
+      {
+        "kind": "click",
+        "label": "Send factual response"
+      },
+      {
+        "kind": "click",
+        "label": "Open Getting started"
+      },
+      {
+        "kind": "click",
+        "label": "Define and implement"
+      },
+      {
+        "kind": "click",
+        "label": "Send onboarding response"
+      },
+      {
+        "kind": "click",
+        "label": "Open Host observation"
+      },
+      {
+        "kind": "click",
+        "label": "focus [data-draft=\"text\"]"
+      },
+      {
+        "kind": "text",
+        "selector": "[data-draft=\"text\"]",
+        "characters": 36
+      },
+      {
+        "kind": "key",
+        "label": "Focus observation result",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "End",
+        "modifiers": 0
+      },
+      {
+        "kind": "click",
+        "label": "Include exact file revision"
+      },
+      {
+        "kind": "click",
+        "label": "Send observation"
+      },
+      {
+        "kind": "click",
+        "label": "Open Permission"
+      },
+      {
+        "kind": "click",
+        "label": "focus [data-draft=\"confirm\"]"
+      },
+      {
+        "kind": "text",
+        "selector": "[data-draft=\"confirm\"]",
+        "characters": 27
+      },
+      {
+        "kind": "click",
+        "label": "Grant exact operation"
+      },
+      {
+        "kind": "click",
+        "label": "Send exact permission"
+      },
+      {
+        "kind": "click",
+        "label": "Open Scope choice"
+      },
+      {
+        "kind": "click",
+        "label": "Choose wide scope"
+      },
+      {
+        "kind": "click",
+        "label": "focus [data-draft=\"text\"]"
+      },
+      {
+        "kind": "text",
+        "selector": "[data-draft=\"text\"]",
+        "characters": 37
+      },
+      {
+        "kind": "click",
+        "label": "Send scope choice"
+      },
+      {
+        "kind": "click",
+        "label": "Open blank permission"
+      },
+      {
+        "kind": "click",
+        "label": "Attempt blank permission submission"
+      },
+      {
+        "kind": "click",
+        "label": "focus [data-draft=\"captureText\"]"
+      },
+      {
+        "kind": "text",
+        "selector": "[data-draft=\"captureText\"]",
+        "characters": 40
+      },
+      {
+        "kind": "click",
+        "label": "Save as idea"
+      },
+      {
+        "kind": "click",
+        "label": "Defer session request"
+      },
+      {
+        "kind": "click",
+        "label": "focus [data-draft=\"idea\"]"
+      },
+      {
+        "kind": "text",
+        "selector": "[data-draft=\"idea\"]",
+        "characters": 29
+      },
+      {
+        "kind": "click",
+        "label": "Cancel new idea"
+      },
+      {
+        "kind": "click",
+        "label": "Return to New idea"
+      },
+      {
+        "kind": "click",
+        "label": "Submit new idea"
+      },
+      {
+        "kind": "click",
+        "label": "focus [data-draft=\"idea\"]"
+      },
+      {
+        "kind": "text",
+        "selector": "[data-draft=\"idea\"]",
+        "characters": 32
+      },
+      {
+        "kind": "click",
+        "label": "Save new idea for later"
+      },
+      {
+        "kind": "click",
+        "label": "Narrow Review design"
+      },
+      {
+        "kind": "click",
+        "label": "Narrow Open review"
+      },
+      {
+        "kind": "wheel",
+        "selector": ".stage-scroll",
+        "deltaX": 420,
+        "deltaY": 0
+      },
+      {
+        "kind": "click",
+        "label": "Narrow Back from review"
+      },
+      {
+        "kind": "click",
+        "label": "Narrow Reopen review"
+      },
+      {
+        "kind": "click",
+        "label": "Refresh"
+      },
+      {
+        "kind": "click",
+        "label": "Review design for history"
+      },
+      {
+        "kind": "click",
+        "label": "Open review for history"
+      },
+      {
+        "kind": "click",
+        "label": "Open review details"
+      },
+      {
+        "kind": "click",
+        "label": "Open sealed feedback"
+      },
+      {
+        "kind": "click",
+        "label": "Back from sealed history"
+      },
+      {
+        "kind": "click",
+        "label": "focus #finder-input"
+      },
+      {
+        "kind": "key",
+        "label": "Meta+A",
+        "modifiers": 4
+      },
+      {
+        "kind": "key",
+        "label": "Backspace",
+        "modifiers": 0
+      },
+      {
+        "kind": "text",
+        "selector": "#finder-input",
+        "characters": 3
+      },
+      {
+        "kind": "key",
+        "label": "ArrowDown",
+        "modifiers": 0
+      },
+      {
+        "kind": "key",
+        "label": "Enter",
+        "modifiers": 0
+      }
+    ],
+    "clicks": 68,
+    "keys": 42,
+    "textEntries": 9,
+    "assertions": {
+      "initial": {
+        "viewTitle": "Overview",
+        "scope": "open",
+        "selectionVisible": false,
+        "finderCount": 1
+      }
+    }
+  },
+  "requestClasses": [
+    {
+      "handle": "fact-061-4",
+      "class": "Clarification",
+      "contextPresent": true,
+      "actionResult": {
+        "pass": true,
+        "expected": "Awaiting acknowledgment"
+      },
+      "selectedIdentity": {
+        "visible": true,
+        "text": "SELECTED\n062 Dude Canvas Workspace Integration\nClear"
+      }
+    },
+    {
+      "handle": "onboarding-session-1",
+      "class": "Getting started",
+      "contextPresent": true,
+      "actionResult": {
+        "pass": true,
+        "expected": "Awaiting acknowledgment"
+      },
+      "selectedIdentity": {
+        "visible": true,
+        "text": "SELECTED\n062 Dude Canvas Workspace Integration\nClear"
+      }
+    },
+    {
+      "handle": "observation-052-9",
+      "class": "Host observation",
+      "contextPresent": true,
+      "actionResult": {
+        "pass": true,
+        "expected": "Awaiting acknowledgment"
+      },
+      "selectedIdentity": {
+        "visible": true,
+        "text": "SELECTED\n062 Dude Canvas Workspace Integration\nClear"
+      }
+    },
+    {
+      "handle": "permission-057-2",
+      "class": "Permission",
+      "contextPresent": true,
+      "actionResult": {
+        "pass": true,
+        "expected": "Awaiting acknowledgment"
+      },
+      "selectedIdentity": {
+        "visible": true,
+        "text": "SELECTED\n062 Dude Canvas Workspace Integration\nClear"
+      }
+    },
+    {
+      "handle": "scope-058-1",
+      "class": "Scope choice",
+      "contextPresent": true,
+      "actionResult": {
+        "pass": true,
+        "expected": "Awaiting acknowledgment"
+      },
+      "selectedIdentity": {
+        "visible": true,
+        "text": "SELECTED\n062 Dude Canvas Workspace Integration\nClear"
+      }
+    }
+  ],
+  "captureFlows": [
+    {
+      "flow": "Save as idea",
+      "outcomeExcerpt": "All requests\nGetting started\n\nDo you want to implement work now, or only define it?\n\nGetting started\nAdvisory request\nEXAMPLE REQUEST\n\nTHIS REQUEST IS ABOUT\n\nThis session · no canonical idea\n\nThis session · no canonical idea\n\nYou are browsing 062 · Dude Canvas Workspace Integration. Answering this request does not chan"
+    },
+    {
+      "flow": "Defer",
+      "outcomeExcerpt": "All requests\nGetting started\n\nDo you want to implement work now, or only define it?\n\nGetting started\nAdvisory request\nEXAMPLE REQUEST\n\nTHIS REQUEST IS ABOUT\n\nThis session · no canonical idea\n\nThis session · no canonical idea\n\nYou are browsing 062 · Dude Canvas Workspace Integration. Answering this request does not chan"
+    },
+    {
+      "flow": "New idea Submit",
+      "outcomeExcerpt": "New idea\n\nWhat would you like to make? Describe the outcome in your own words. Submit captures it and continues brainstorming. Save captures it for later, without further discussion, definition or execution.\n\nYour idea\nSubmit\nSave\nCancel\n\nCapture requested, continuing brainstorm\nEXAMPLE · NOTHING WAS SENT\n\nIn the produ"
+    },
+    {
+      "flow": "New idea Save",
+      "outcomeExcerpt": "New idea\n\nWhat would you like to make? Describe the outcome in your own words. Submit captures it and continues brainstorming. Save captures it for later, without further discussion, definition or execution.\n\nYour idea\nSubmit\nSave\nCancel\n\nCapture requested for later\nEXAMPLE · NOTHING WAS SENT\n\nIn the product, a saved r"
+    }
+  ],
+  "scenarioChecks": [
+    {
+      "scenario": "progress",
+      "prototypeLine": "Prototype data: Work in progress, six requests waiting. Discovery and Now use this repository's frozen records; requests, blockers, review and error states are controlled examples.",
+      "nowExcerpt": "Dude\nFeatures\n062 · Dude Canvas Workspace Integration\nNow\nDude Canvas Workspace Integration\nIn progress\n062-dude-canvas-workspace-integration\n\nDefined feature · .dude/specs/062-dude-canvas-workspace-integration/spec.md\n\nNEXT STEP\n\nCreate and compare the integrated mock at `.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html`, then obtain explicit approval of its current revision through the existing design workflow. Use the spec's single proposed direction and confirm each action against the target implementation owner's existing capability envelope. Show no-selection Overview, the numbered finder, selected Now, all retained response/capture paths, focused Rev",
+      "dockExcerpt": "SELECTED RECORD\nNumber\n062\nKind\nDefined feature\nStatus\nIn progress\nStage\nIn progress\nAuthority\ncanonical task work\nTasks\n0 of 5 tasks\nOpen questions\n0\nCAPTURED INTENT\n\nThe user describes the current UI as \"not totally terrible,\" but could not recognize the cockpit after approving 052's mock. They believe their later approval covered a subset of the original idea. > I was kind of lost when the agent took that turn. How do we correct course? I want to reuse all the work, obviously. They want future Canvas UI work to referenc…\n\nExcerpt only. The exact idea ledger holds the original.\n\nSOURCES\nIdea\n.dude/ideas/062-dude-canvas-workspace-integration.md\nSpecification\n.dude/specs/062-dude-canvas-work"
+    },
+    {
+      "scenario": "repository",
+      "prototypeLine": "Prototype data: Repository facts only, idle session. Discovery and Now use this repository's frozen records; requests, blockers, review and error states are controlled examples.",
+      "nowExcerpt": "Dude\nFeatures\n062 · Dude Canvas Workspace Integration\nNow\nDude Canvas Workspace Integration\nDefined\n062-dude-canvas-workspace-integration\n\nDefined feature · .dude/specs/062-dude-canvas-workspace-integration/spec.md\n\nNO NEXT STEP\n\nNo canonical task execution evidence exists yet.\n\nLIFECYCLE AND PROGRESS\nCaptured\nDone\nDefined\nDefined\nWork\nNot started\nVerified\nNot started\n\n0 of 5 canonical tasks complete.\n\nPHASES\nPhase 1: Establish The Integrated Design\n0 of 1\nPhase 2: Find And Select Work In The Approved Shell\n0 of 1\nPhase 3: Restore Selected-Feature Now Orientation\n0 of 1\nPhase 4: Complete The Context-Preserving Interaction Loop\n0 of 1\nPhase 5: Verify The Installed Walkthrough\n0 of 1\n\nPhases a",
+      "dockExcerpt": "SELECTED RECORD\nNumber\n062\nKind\nDefined feature\nStatus\nDefined\nStage\nDefined\nAuthority\ndefinition\nTasks\n0 of 5 tasks\nOpen questions\n0\nCAPTURED INTENT\n\nThe user describes the current UI as \"not totally terrible,\" but could not recognize the cockpit after approving 052's mock. They believe their later approval covered a subset of the original idea. > I was kind of lost when the agent took that turn. How do we correct course? I want to reuse all the work, obviously. They want future Canvas UI work to referenc…\n\nExcerpt only. The exact idea ledger holds the original.\n\nSOURCES\nIdea\n.dude/ideas/062-dude-canvas-workspace-integration.md\nSpecification\n.dude/specs/062-dude-canvas-workspace-integration"
+    },
+    {
+      "scenario": "blocked",
+      "prototypeLine": "Prototype data: Blocked work. Discovery and Now use this repository's frozen records; requests, blockers, review and error states are controlled examples.",
+      "nowExcerpt": "Dude\nFeatures\n062 · Dude Canvas Workspace Integration\nNow\nDude Canvas Workspace Integration\nBlocked\n062-dude-canvas-workspace-integration\n\nDefined feature · .dude/specs/062-dude-canvas-workspace-integration/spec.md\n\nNO NEXT STEP\n\nNo canonical task is ready.\n\nBLOCKERS\nEXAMPLE\n\nThe combined mock has no explicit current-revision approval, so shell work cannot start.\n\n.dude/specs/062-dude-canvas-workspace-integration/tasks.md · T002@b062d2e5 · human-input\n\nThese are recorded work blockers. Only a current owner-qualified request appears in Needs you.\n\nReview design\nEXAMPLE REQUEST\n\nA current owner-qualified preview request is waiting for this exact record. Review opens from here; it is not a stan",
+      "dockExcerpt": "SELECTED RECORD\nNumber\n062\nKind\nDefined feature\nStatus\nBlocked\nStage\nBlocked\nAuthority\ncanonical task work\nTasks\n0 of 5 tasks\nOpen questions\n0\nCAPTURED INTENT\n\nThe user describes the current UI as \"not totally terrible,\" but could not recognize the cockpit after approving 052's mock. They believe their later approval covered a subset of the original idea. > I was kind of lost when the agent took that turn. How do we correct course? I want to reuse all the work, obviously. They want future Canvas UI work to referenc…\n\nExcerpt only. The exact idea ledger holds the original.\n\nSOURCES\nIdea\n.dude/ideas/062-dude-canvas-workspace-integration.md\nSpecification\n.dude/specs/062-dude-canvas-workspace-in"
+    },
+    {
+      "scenario": "unavailable",
+      "prototypeLine": "Prototype data: Execution authority unavailable. Discovery and Now use this repository's frozen records; requests, blockers, review and error states are controlled examples.",
+      "nowExcerpt": "Dude\nFeatures\n062 · Dude Canvas Workspace Integration\nNow\nDude Canvas Workspace Integration\nDefined\n062-dude-canvas-workspace-integration\n\nDefined feature · .dude/specs/062-dude-canvas-workspace-integration/spec.md\n\nNEXT STEP UNAVAILABLE\n\nThe selected source and execution authority could not be confirmed together. Refresh to reread; unrelated records remain available.\n\nThe selected record is still 062-dude-canvas-workspace-integration. No other record's instruction, progress or blockers are shown in its place.\n\nLIFECYCLE AND PROGRESS\n\nProgress is withheld while the execution authority for this record cannot be confirmed.\n\nPHASES\n\nPhase progress is withheld with the rest of this record's exec",
+      "dockExcerpt": "SELECTED RECORD\nNumber\n062\nKind\nDefined feature\nStatus\nDefined\nStage\nDefined\nAuthority\ndefinition\nTasks\n0 of 5 tasks\nOpen questions\n0\nCAPTURED INTENT\n\nThe user describes the current UI as \"not totally terrible,\" but could not recognize the cockpit after approving 052's mock. They believe their later approval covered a subset of the original idea. > I was kind of lost when the agent took that turn. How do we correct course? I want to reuse all the work, obviously. They want future Canvas UI work to referenc…\n\nExcerpt only. The exact idea ledger holds the original.\n\nSOURCES\nIdea\n.dude/ideas/062-dude-canvas-workspace-integration.md\nSpecification\n.dude/specs/062-dude-canvas-workspace-integration"
+    }
+  ],
+  "accessibility": [
+    {
+      "label": "Default Overview",
+      "nodes": 281,
+      "interactive": 18,
+      "unnamed": []
+    },
+    {
+      "label": "Review",
+      "nodes": 234,
+      "interactive": 23,
+      "unnamed": []
+    },
+    {
+      "label": "Needs you request list",
+      "nodes": 242,
+      "interactive": 16,
+      "unnamed": []
+    }
+  ],
+  "failedChecks": [
+    {
+      "name": "Frozen 062 open-question count agrees with current canonical projection",
+      "category": "source"
+    },
+    {
+      "name": "Truncated Coordinator Log activity is visibly identified as excerpt data",
+      "category": "source"
+    },
+    {
+      "name": "Escape is delivered, closes finder and leaves focus on the finder",
+      "category": "keyboard"
+    },
+    {
+      "name": "Choosing a drawing tool and activating the stage simulates creating markup",
+      "category": "capability"
+    },
+    {
+      "name": "Save markup produces visible local saved-state feedback",
+      "category": "capability"
+    },
+    {
+      "name": "Undo annotation produces a visible local result",
+      "category": "capability"
+    },
+    {
+      "name": "Back from Review restores focus to the Review launcher",
+      "category": "focus"
+    },
+    {
+      "name": "Unsent request caret/focus is restored on return",
+      "category": "focus"
+    },
+    {
+      "name": "Feedback action leaves focus on a useful status or return control",
+      "category": "focus"
+    },
+    {
+      "name": "Permission simulation rejects blank confirmation and unchecked grant",
+      "category": "requests"
+    },
+    {
+      "name": "Default progress override is visibly identified as a controlled execution example",
+      "category": "honesty"
+    },
+    {
+      "name": "Unavailable scenario does not expose task progress after saying progress is withheld",
+      "category": "honesty"
+    },
+    {
+      "name": "Review return preserves the reviewed internal viewport",
+      "category": "state"
+    },
+    {
+      "name": "Refresh has a visible local simulation or status",
+      "category": "capability"
+    }
+  ],
+  "passedChecks": [
+    "Frozen discovery has 62 records and current inventory has 62 readable contexts",
+    "Frozen discovery identity/status/task rows match the current source reader",
+    "Progress-example Next instruction exactly matches current T001 body",
+    "Overview 1440 light: no page-level horizontal overflow",
+    "Overview 1440 light: visible controls have names",
+    "Overview 1440 light: active pointer targets are at least 24 CSS px",
+    "Overview 1440 light: sampled rendered text meets WCAG AA contrast",
+    "Overview 1440 light: rendered rows remain in ascending capture-number order",
+    "Now 062 1440 light: no page-level horizontal overflow",
+    "Now 062 1440 light: visible controls have names",
+    "Now 062 1440 light: active pointer targets are at least 24 CSS px",
+    "Now 062 1440 light: sampled rendered text meets WCAG AA contrast",
+    "Now 062 1440 light: long Next instruction is present and not clipped",
+    "Now 062 1440 light: identity and Next precede phases/activity",
+    "Now 062 1440 light: shell composition matches its responsive band",
+    "Now 062 1440 light: numbered row anatomy uses the expected full/compact mode",
+    "Overview 768 light: no page-level horizontal overflow",
+    "Overview 768 light: visible controls have names",
+    "Overview 768 light: active pointer targets are at least 24 CSS px",
+    "Overview 768 light: sampled rendered text meets WCAG AA contrast",
+    "Overview 768 light: rendered rows remain in ascending capture-number order",
+    "Now 062 768 light: no page-level horizontal overflow",
+    "Now 062 768 light: visible controls have names",
+    "Now 062 768 light: active pointer targets are at least 24 CSS px",
+    "Now 062 768 light: sampled rendered text meets WCAG AA contrast",
+    "Now 062 768 light: long Next instruction is present and not clipped",
+    "Now 062 768 light: identity and Next precede phases/activity",
+    "Now 062 768 light: shell composition matches its responsive band",
+    "Now 062 768 light: numbered row anatomy uses the expected full/compact mode",
+    "Overview 720 light: no page-level horizontal overflow",
+    "Overview 720 light: visible controls have names",
+    "Overview 720 light: active pointer targets are at least 24 CSS px",
+    "Overview 720 light: sampled rendered text meets WCAG AA contrast",
+    "Overview 720 light: rendered rows remain in ascending capture-number order",
+    "Now 062 720 light: no page-level horizontal overflow",
+    "Now 062 720 light: visible controls have names",
+    "Now 062 720 light: active pointer targets are at least 24 CSS px",
+    "Now 062 720 light: sampled rendered text meets WCAG AA contrast",
+    "Now 062 720 light: long Next instruction is present and not clipped",
+    "Now 062 720 light: identity and Next precede phases/activity",
+    "Now 062 720 light: shell composition matches its responsive band",
+    "Now 062 720 light: numbered row anatomy uses the expected full/compact mode",
+    "Overview 360 light: no page-level horizontal overflow",
+    "Overview 360 light: visible controls have names",
+    "Overview 360 light: active pointer targets are at least 24 CSS px",
+    "Overview 360 light: sampled rendered text meets WCAG AA contrast",
+    "Overview 360 light: rendered rows remain in ascending capture-number order",
+    "Now 062 360 light: no page-level horizontal overflow",
+    "Now 062 360 light: visible controls have names",
+    "Now 062 360 light: active pointer targets are at least 24 CSS px",
+    "Now 062 360 light: sampled rendered text meets WCAG AA contrast",
+    "Now 062 360 light: long Next instruction is present and not clipped",
+    "Now 062 360 light: identity and Next precede phases/activity",
+    "Now 062 360 light: shell composition matches its responsive band",
+    "Now 062 360 light: numbered row anatomy uses the expected full/compact mode",
+    "Overview zoom200 light: no page-level horizontal overflow",
+    "Overview zoom200 light: visible controls have names",
+    "Overview zoom200 light: active pointer targets are at least 24 CSS px",
+    "Overview zoom200 light: sampled rendered text meets WCAG AA contrast",
+    "Overview zoom200 light: rendered rows remain in ascending capture-number order",
+    "Now 062 zoom200 light: no page-level horizontal overflow",
+    "Now 062 zoom200 light: visible controls have names",
+    "Now 062 zoom200 light: active pointer targets are at least 24 CSS px",
+    "Now 062 zoom200 light: sampled rendered text meets WCAG AA contrast",
+    "Now 062 zoom200 light: long Next instruction is present and not clipped",
+    "Now 062 zoom200 light: identity and Next precede phases/activity",
+    "Now 062 zoom200 light: shell composition matches its responsive band",
+    "Now 062 zoom200 light: numbered row anatomy uses the expected full/compact mode",
+    "Overview 1440 dark: no page-level horizontal overflow",
+    "Overview 1440 dark: visible controls have names",
+    "Overview 1440 dark: active pointer targets are at least 24 CSS px",
+    "Overview 1440 dark: sampled rendered text meets WCAG AA contrast",
+    "Overview 1440 dark: rendered rows remain in ascending capture-number order",
+    "Now 062 1440 dark: no page-level horizontal overflow",
+    "Now 062 1440 dark: visible controls have names",
+    "Now 062 1440 dark: active pointer targets are at least 24 CSS px",
+    "Now 062 1440 dark: sampled rendered text meets WCAG AA contrast",
+    "Now 062 1440 dark: long Next instruction is present and not clipped",
+    "Now 062 1440 dark: identity and Next precede phases/activity",
+    "Now 062 1440 dark: shell composition matches its responsive band",
+    "Now 062 1440 dark: numbered row anatomy uses the expected full/compact mode",
+    "Overview 768 dark: no page-level horizontal overflow",
+    "Overview 768 dark: visible controls have names",
+    "Overview 768 dark: active pointer targets are at least 24 CSS px",
+    "Overview 768 dark: sampled rendered text meets WCAG AA contrast",
+    "Overview 768 dark: rendered rows remain in ascending capture-number order",
+    "Now 062 768 dark: no page-level horizontal overflow",
+    "Now 062 768 dark: visible controls have names",
+    "Now 062 768 dark: active pointer targets are at least 24 CSS px",
+    "Now 062 768 dark: sampled rendered text meets WCAG AA contrast",
+    "Now 062 768 dark: long Next instruction is present and not clipped",
+    "Now 062 768 dark: identity and Next precede phases/activity",
+    "Now 062 768 dark: shell composition matches its responsive band",
+    "Now 062 768 dark: numbered row anatomy uses the expected full/compact mode",
+    "Overview 720 dark: no page-level horizontal overflow",
+    "Overview 720 dark: visible controls have names",
+    "Overview 720 dark: active pointer targets are at least 24 CSS px",
+    "Overview 720 dark: sampled rendered text meets WCAG AA contrast",
+    "Overview 720 dark: rendered rows remain in ascending capture-number order",
+    "Now 062 720 dark: no page-level horizontal overflow",
+    "Now 062 720 dark: visible controls have names",
+    "Now 062 720 dark: active pointer targets are at least 24 CSS px",
+    "Now 062 720 dark: sampled rendered text meets WCAG AA contrast",
+    "Now 062 720 dark: long Next instruction is present and not clipped",
+    "Now 062 720 dark: identity and Next precede phases/activity",
+    "Now 062 720 dark: shell composition matches its responsive band",
+    "Now 062 720 dark: numbered row anatomy uses the expected full/compact mode",
+    "Overview 360 dark: no page-level horizontal overflow",
+    "Overview 360 dark: visible controls have names",
+    "Overview 360 dark: active pointer targets are at least 24 CSS px",
+    "Overview 360 dark: sampled rendered text meets WCAG AA contrast",
+    "Overview 360 dark: rendered rows remain in ascending capture-number order",
+    "Now 062 360 dark: no page-level horizontal overflow",
+    "Now 062 360 dark: visible controls have names",
+    "Now 062 360 dark: active pointer targets are at least 24 CSS px",
+    "Now 062 360 dark: sampled rendered text meets WCAG AA contrast",
+    "Now 062 360 dark: long Next instruction is present and not clipped",
+    "Now 062 360 dark: identity and Next precede phases/activity",
+    "Now 062 360 dark: shell composition matches its responsive band",
+    "Now 062 360 dark: numbered row anatomy uses the expected full/compact mode",
+    "Overview zoom200 dark: no page-level horizontal overflow",
+    "Overview zoom200 dark: visible controls have names",
+    "Overview zoom200 dark: active pointer targets are at least 24 CSS px",
+    "Overview zoom200 dark: sampled rendered text meets WCAG AA contrast",
+    "Overview zoom200 dark: rendered rows remain in ascending capture-number order",
+    "Now 062 zoom200 dark: no page-level horizontal overflow",
+    "Now 062 zoom200 dark: visible controls have names",
+    "Now 062 zoom200 dark: active pointer targets are at least 24 CSS px",
+    "Now 062 zoom200 dark: sampled rendered text meets WCAG AA contrast",
+    "Now 062 zoom200 dark: long Next instruction is present and not clipped",
+    "Now 062 zoom200 dark: identity and Next precede phases/activity",
+    "Now 062 zoom200 dark: shell composition matches its responsive band",
+    "Now 062 zoom200 dark: numbered row anatomy uses the expected full/compact mode",
+    "Full rows show separate Status/Progress columns at 1440",
+    "Compact rows retain number/name/status/progress at 360",
+    "052 comparison 1440 light: copied Fluent tokens match",
+    "052 comparison 1440 light: both rendered pages avoid horizontal overflow",
+    "052 comparison 1440 light: compact command bar, 48px rail, bounded dock and status geometry is retained",
+    "052 comparison 768 light: copied Fluent tokens match",
+    "052 comparison 768 light: both rendered pages avoid horizontal overflow",
+    "052 comparison 360 light: copied Fluent tokens match",
+    "052 comparison 360 light: both rendered pages avoid horizontal overflow",
+    "052 comparison 1440 dark: copied Fluent tokens match",
+    "052 comparison 1440 dark: both rendered pages avoid horizontal overflow",
+    "052 comparison 1440 dark: compact command bar, 48px rail, bounded dock and status geometry is retained",
+    "052 comparison 768 dark: copied Fluent tokens match",
+    "052 comparison 768 dark: both rendered pages avoid horizontal overflow",
+    "052 comparison 360 dark: copied Fluent tokens match",
+    "052 comparison 360 dark: both rendered pages avoid horizontal overflow",
+    "Built-in Compare view contains preserved/moved/adapted/deferred treatments",
+    "Built-in Compare view introduces no product action beyond closing the prototype dialog",
+    "Built-in Compare view explicitly defers excluded capabilities",
+    "Compare dialog closes with Escape",
+    "One finder activation from Now exposes actual options",
+    "Exact no-query default is Overview/Open with no implicit selection",
+    "Exactly one finder search and one finder scope control exist",
+    "Exact mock is self-contained in the rendered browser",
+    "Default Overview: accessibility tree has no unnamed interactive controls",
+    "Default Overview: Tab traverses multiple controls without a focus trap",
+    "All scope exposes all 62 frozen records in numeric order",
+    "ArrowDown enters the first result without selecting it",
+    "End reaches record 062 and scrolls the 62-row list without committing it",
+    "Enter commits exact record 062 and opens Now",
+    "Return to Overview preserves All scope, nonzero list position and committed identity",
+    "Unique contextual Review entry exposes exact request scope, human reason and unblock",
+    "Complete walkthrough feedback is visibly simulated without approval or real delivery",
+    "Uninterrupted walkthrough returns to discovery with selected 062 and All scope",
+    "Review: accessibility tree has no unnamed interactive controls",
+    "Review: Tab traverses multiple controls without a focus trap",
+    "Review tool selection has a local selected-state simulation",
+    "Review detail disclosure opens, restores focus and does not resize the pinned frame",
+    "Review return retains selected tool, disclosure state and browsing identity",
+    "Unsent request text survives switching through Review",
+    "Feedback simulation distinguishes preparation from delivery/approval",
+    "Complete walkthrough returns to discovery with selected 062 and All scope",
+    "Needs you exposes exactly the six retained request classes",
+    "Needs you request list: accessibility tree has no unnamed interactive controls",
+    "Clarification: request context, scope, human reason and unblock are visible",
+    "Clarification: local response simulation produces a labelled non-delivery outcome",
+    "Getting started: request context, scope, human reason and unblock are visible",
+    "Getting started: local response simulation produces a labelled non-delivery outcome",
+    "Host observation: request context, scope, human reason and unblock are visible",
+    "Host observation: local response simulation produces a labelled non-delivery outcome",
+    "Permission: request context, scope, human reason and unblock are visible",
+    "Permission: local response simulation produces a labelled non-delivery outcome",
+    "Scope choice: request context, scope, human reason and unblock are visible",
+    "Scope choice: local response simulation produces a labelled non-delivery outcome",
+    "Save as idea has a distinct labelled capture simulation",
+    "Defer has a distinct no-idea simulation",
+    "New idea is safely gated while another request waits",
+    "Cancel returns to Needs you without a submission",
+    "Cancel retains the unsent draft in the tab",
+    "New idea Submit visibly simulates continuing brainstorm without claiming a real save",
+    "New idea Save visibly simulates capture for later without claiming a real save",
+    "Repository-only scenario shows canonical Defined/no-execution state",
+    "Blocked scenario labels its blocker as an Example",
+    "Unavailable scenario withholds progress and keeps 062 identity",
+    "Completed 052 renders Verified/no-next with complete source-backed progress",
+    "Narrow Review confines horizontal pan to its internal stage",
+    "Sealed history is labelled example/read-only and has no send/approval action",
+    "History Back returns to Review without consuming the request",
+    "Keyboard commit changes only on explicit Enter and retains the typed query",
+    "All 21 canonical author screenshots remained byte-identical",
+    "Exact mock hash and byte size remained unchanged"
+  ],
+  "findings": [
+    {
+      "id": "F062-SOURCE-QUESTIONS",
+      "severity": "high",
+      "location": "Now > Properties and evidence > Selected record > Open questions",
+      "steps": [
+        "Open the exact mock with ?view=now&select=062&data=repository.",
+        "Expand Properties and evidence if the dock is collapsed.",
+        "Compare “Open questions” with the canonical 062 idea/projection."
+      ],
+      "observed": "The mock reports 0; the canonical projection reports 2 unanswered questions from the two blank Answer slots.",
+      "expected": "Frozen repository fields must agree with their source or be explicitly unavailable."
+    },
+    {
+      "id": "F062-ACTIVITY-EXCERPTS",
+      "severity": "medium",
+      "location": "Now > Activity",
+      "steps": [
+        "Open a completed record such as 052 in Now.",
+        "Read the Activity entries ending in an ellipsis.",
+        "Inspect the Activity caption and entry labels."
+      ],
+      "observed": "26 records contain truncated Activity strings ending in “…”; the rendered Activity region calls them recorded entries but does not label them excerpts.",
+      "expected": "Source-provided excerpts must be visibly identified as excerpts."
+    },
+    {
+      "id": "F062-ESCAPE-REOPENS",
+      "severity": "high",
+      "location": "Command-bar finder opened from Now",
+      "steps": [
+        "Open Now for 062 with the finder closed.",
+        "Activate the finder input once.",
+        "Press Escape once."
+      ],
+      "observed": "A trusted Escape keydown reaches the document from INPUT#finder-input, but the result panel remains open.",
+      "expected": "One Escape should dismiss the unfiltered finder and retain focus/selection without reopening it."
+    },
+    {
+      "id": "F062-DEAD-REVIEW-TOOLS",
+      "severity": "high",
+      "location": "Review > Annotation tools and reviewed stage",
+      "steps": [
+        "Enter Review from the 062 preview request.",
+        "Activate Box, Circle, Arrow, Highlight, or Comment.",
+        "Click the reviewed stage."
+      ],
+      "observed": "The tool receives selected styling, but stage activation creates no markup, comment, or other local result; the pre-drawn annotations never change.",
+      "expected": "Every drawn actionable control needs a working local simulation, even though the mock must not contact the real provider."
+    },
+    {
+      "id": "F062-DEAD-SAVE-MARKUP",
+      "severity": "high",
+      "location": "Review > Save markup",
+      "steps": [
+        "Enter Review.",
+        "Activate “Save markup”."
+      ],
+      "observed": "The view is redrawn with no visible saved state, receipt, disabled state, or other feedback.",
+      "expected": "The actionable Save markup control needs a working, clearly simulated local outcome."
+    },
+    {
+      "id": "F062-DEAD-UNDO",
+      "severity": "medium",
+      "location": "Review > Annotation tools > Undo annotation",
+      "steps": [
+        "Enter Review.",
+        "Activate “Undo annotation”."
+      ],
+      "observed": "The control only redraws the unchanged view; no annotation or status changes.",
+      "expected": "A drawn Undo action needs a working local simulation or should not be presented as actionable."
+    },
+    {
+      "id": "F062-FOCUS-RETURN",
+      "severity": "high",
+      "location": "Review > Back",
+      "steps": [
+        "Open the 062 preview request.",
+        "Open Review.",
+        "Activate Back."
+      ],
+      "observed": "Focus lands on H1#view-title (“Design review”), not on the Review launcher.",
+      "expected": "Return should restore a useful focus target in the request that launched Review."
+    },
+    {
+      "id": "F062-CARET-RETURN",
+      "severity": "high",
+      "location": "Needs you request draft after Review/request switching",
+      "steps": [
+        "Type an unsent factual response and move the caret inside it.",
+        "Open the 062 preview request and Review.",
+        "Return to the factual request."
+      ],
+      "observed": "Text is retained, but focus=false and caret 0:0; before navigation it was 31:31.",
+      "expected": "Relevant unsent text, focus, and caret should remain useful on valid return."
+    },
+    {
+      "id": "F062-FOCUS-SEND",
+      "severity": "medium",
+      "location": "Review > Send feedback",
+      "steps": [
+        "Enter Review.",
+        "Activate “Send feedback”."
+      ],
+      "observed": "The focused button is destroyed by redraw and focus falls to the document body; the new status is not focused or announced by an explicit live region.",
+      "expected": "A simulated submission should place focus on a useful control/status and communicate the result."
+    },
+    {
+      "id": "F062-PERMISSION-GATE",
+      "severity": "high",
+      "location": "Needs you > Permission > Send permission",
+      "steps": [
+        "Open the Permission example.",
+        "Leave the required literal confirmation empty and the grant checkbox unchecked.",
+        "Activate “Send permission”."
+      ],
+      "observed": "The mock immediately shows “Awaiting acknowledgment” as if a permission response were prepared.",
+      "expected": "The local simulation must enforce the exact-confirmation and explicit-grant gate that the form describes."
+    },
+    {
+      "id": "F062-PROGRESS-LABEL",
+      "severity": "high",
+      "location": "Default progress scenario > prototype state line and 062 Now",
+      "steps": [
+        "Open the exact mock with ?view=now&select=062 (or use the default progress scenario).",
+        "Observe “In progress”, 0 of 5 complete / 1 in progress, and the focal T001 instruction.",
+        "Read the always-visible prototype state line with the drawer collapsed."
+      ],
+      "observed": "The state line says Discovery and Now use frozen repository records and only names requests, blockers, review, and error states as controlled examples. It does not identify the altered execution/progress state as an example, although canonical 062 is Defined with all tasks open and Work has not begun.",
+      "expected": "The controlled progress state must be visibly distinguished while retaining the source-backed T001 instruction."
+    },
+    {
+      "id": "F062-UNAVAILABLE-PROGRESS-LEAK",
+      "severity": "medium",
+      "location": "Authority unavailable > Properties and evidence > Selected record",
+      "steps": [
+        "Open ?view=now&select=062&data=unavailable.",
+        "Read “Progress is withheld” in the work area.",
+        "Read the Tasks property in the open dock."
+      ],
+      "observed": "The main work area withholds progress, but the dock simultaneously reports “Tasks 0 of 5 tasks.”",
+      "expected": "Unavailable execution facts need one consistent treatment; unsupported progress must not reappear in the dock."
+    },
+    {
+      "id": "F062-REVIEW-VIEWPORT",
+      "severity": "high",
+      "location": "Narrow Review internal stage after Back/reopen",
+      "steps": [
+        "At 360 CSS px, enter Review for 062.",
+        "Pan the reviewed stage horizontally.",
+        "Back out, then reopen the same unchanged request/revision."
+      ],
+      "observed": "The stage resets from scrollLeft 420 to 0.",
+      "expected": "Valid return should preserve the reviewed viewport for the unchanged request/revision."
+    },
+    {
+      "id": "F062-DEAD-REFRESH",
+      "severity": "low",
+      "location": "Persistent command bar > Refresh",
+      "steps": [
+        "Activate Refresh in any view."
+      ],
+      "observed": "The mock redraws identical content with no visible local status; focus also falls off the replaced button.",
+      "expected": "The drawn action should visibly simulate a local refresh outcome or be identified as non-interactive prototype chrome."
+    }
+  ],
+  "screenshots": [
+    {
+      "path": "/Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-062-overview-default-1440-light.png",
+      "bytes": 191678,
+      "sha256": "1dd91e2b457aaf980ff8acc5cc4956354659a712a87fea13c6e9ea164c0931a3",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "devicePixelRatio": 1
+      },
+      "url": "file:///Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html?theme=light&scope=all"
+    },
+    {
+      "path": "/Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-062-overview-zoom200-equivalent-light.png",
+      "bytes": 80871,
+      "sha256": "1e84333e13987e6b438c1756c0bb4a0bdca7df902b1e74ec4353f6bfdb162456",
+      "viewport": {
+        "width": 720,
+        "height": 450,
+        "devicePixelRatio": 1
+      },
+      "url": "file:///Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html?theme=light&scope=all"
+    },
+    {
+      "path": "/Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-062-now-062-360-dark.png",
+      "bytes": 89972,
+      "sha256": "1e86acadeeddc915c0c74c3993d534f6e4b6a024560c62ca425dcb6731d7b4cb",
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "devicePixelRatio": 1
+      },
+      "url": "file:///Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html?theme=dark&view=now&select=062&data=progress"
+    },
+    {
+      "path": "/Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-062-actual-052-baseline-1440-light.png",
+      "bytes": 187227,
+      "sha256": "2e0817665f9945b06952b053f7c9ac7b20591483e9d1283b0a250109d6a8c5ef",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "devicePixelRatio": 1
+      },
+      "url": "file:///Users/eg/work/dude/.dude/specs/052-dude-canvas-ui/design/fluent-desktop-workspace.html?theme=light&state=current"
+    },
+    {
+      "path": "/Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-062-compare-with-052-1440-light.png",
+      "bytes": 205027,
+      "sha256": "e35f8335944d7dbcd056fcf0d359cf6e702e9e73c2e4f473202252b3403ec18c",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "devicePixelRatio": 1
+      },
+      "url": "file:///Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html?theme=light&compare=1"
+    },
+    {
+      "path": "/Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-062-review-walkthrough-1440-light.png",
+      "bytes": 120727,
+      "sha256": "fdecc6918627b1c8b444a876904a3ffb46a220dfe218d074eb5d47e7a5a640ae",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "devicePixelRatio": 1
+      },
+      "url": "file:///Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html"
+    },
+    {
+      "path": "/Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-062-review-working-1440-light.png",
+      "bytes": 156178,
+      "sha256": "e41d0d1158d1c1bc078211354b1ae23399065f8fbdeb15a365b23f64b09634c5",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "devicePixelRatio": 1
+      },
+      "url": "file:///Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html?theme=light&view=review&request=preview-062-1&select=062&scope=all"
+    },
+    {
+      "path": "/Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-062-review-internal-pan-360-dark.png",
+      "bytes": 55666,
+      "sha256": "ca8d66abca971845d6409ddf61cbb2bf4d06aadec683535c03e4a2f462cf3d7d",
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "devicePixelRatio": 1
+      },
+      "url": "file:///Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html?theme=dark&view=now&select=062&data=progress"
+    }
+  ],
+  "console": []
+}

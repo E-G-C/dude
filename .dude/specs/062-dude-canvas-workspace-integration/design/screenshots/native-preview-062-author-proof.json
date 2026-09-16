@@ -1,0 +1,47 @@
+{
+  "generatedBy": "author probe (not independent verification)",
+  "canonical": {
+    "path": ".dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+    "sha256": "1508fe1efaf6a5228784dee8c140a569927bf27eb1dfc9244679b6ae80ec2962",
+    "bytes": 523545
+  },
+  "admission": {
+    "ready": true,
+    "notice": null,
+    "viewBox": "0 0 990 723",
+    "frame": {
+      "w": 990,
+      "h": 723
+    }
+  },
+  "transientUnsupported": false,
+  "gesture": {
+    "zeroDistanceClickAddedAnnotations": 0,
+    "dragMoves": 7,
+    "allEventsTrusted": true,
+    "savedGeometry": {
+      "x1": 140,
+      "y1": 110,
+      "x2": 430,
+      "y2": 300
+    },
+    "requestedGeometry": {
+      "x1": 140,
+      "y1": 110,
+      "x2": 430,
+      "y2": 300
+    }
+  },
+  "comment": {
+    "text": "Author proof: corrected 062 admitted and annotated natively.",
+    "caretId": null
+  },
+  "workingFile": ".dude/specs/904-author-proof-native-review/reviews/b9c9ff00-4b53-485b-a4ce-68a5b80caf89/working.json",
+  "runtimeErrors": 0,
+  "notProven": [
+    "062 chrome does not yet enclose Review; T004/T005 still owe that integration.",
+    "059's out-and-back double-press recognizer defect is untouched and still open.",
+    "Seal, report, PNG delivery, acknowledgment, refusal, viewport, accessibility and keyboard matrices are the independent Tester’s.",
+    "No user request, approval, task transition or closure is established."
+  ]
+}

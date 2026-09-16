@@ -91,6 +91,7 @@ const FIXED_RESOURCE_LIMITS = Object.freeze({
   cliRequestBytes: 6_291_456,
   sourceBodyBytes: 1_048_576,
   inspectionBodyBytes: 4_194_304,
+  ideaInventoryEntries: 999,
   sourceEntries: 64,
   retainedDescriptors: 64,
   errorJsonBytes: 8_192,
@@ -1903,13 +1904,12 @@ test('T008: source entry 64 is accepted and entry 65 refuses before body access,
   });
 });
 
-test('T008 regression: direct-ledger entry 65 stops the directory stream before later names or bodies', () => {
+test('T008 regression: direct-ledger entry 1,000 stops the directory stream before later names or bodies', () => {
   withWorkspace((root) => {
     const tasksPath = path.join(root, path.dirname(SPEC_PATH), 'tasks.md');
     fs.writeFileSync(tasksPath, tasksBytes());
     const ideasRoot = path.join(root, '.dude/ideas');
-    const sourceEntryTail = 2;
-    const crossingIndex = FIXED_RESOURCE_LIMITS.sourceEntries - sourceEntryTail;
+    const crossingIndex = FIXED_RESOURCE_LIMITS.ideaInventoryEntries;
     const exactNames = Array.from(
       { length: crossingIndex },
       (_, index) => `idea-${String(index + 1).padStart(3, '0')}.md`,
@@ -1949,14 +1949,14 @@ test('T008 regression: direct-ledger entry 65 stops the directory stream before 
     const crossingEntry = {
       get name() {
         crossingNameAccesses += 1;
-        throw new Error('source-entry crossing had its name accessed');
+        throw new Error('inventory crossing had its name accessed');
       },
     };
     let laterNameAccesses = 0;
     const laterNameTrap = {
       get name() {
         laterNameAccesses += 1;
-        throw new Error('entry after the source-entry crossing had its name accessed');
+        throw new Error('entry after the inventory crossing had its name accessed');
       },
     };
     let directoryOpens = 0;
@@ -2017,7 +2017,7 @@ test('T008 regression: direct-ledger entry 65 stops the directory stream before 
     assert.deepEqual(
       {
         refused: refusal instanceof Error,
-        resourceRefusal: refusal instanceof Error && /source entr|64|resource/i.test(refusal.message),
+        resourceRefusal: refusal instanceof Error && /idea inventor|999|resource/i.test(refusal.message),
         directoryOpens,
         readSyncCalls,
         exactNameAccesses,
@@ -2041,29 +2041,30 @@ test('T008 regression: direct-ledger entry 65 stops the directory stream before 
         ledgerOpenCalls: 0,
         closeSyncCalls: 1,
       },
-      'direct-ledger overflow must stop and close at the first source-entry crossing',
+      'direct-ledger overflow must stop and close at the first inventory crossing',
     );
   });
 });
 
 for (const fixture of [
   {
-    name: 'mixed direct-ledger children share the total source-entry ceiling',
+    name: 'mixed direct-ledger children share the total inventory ceiling',
     child(index) {
       const suffix = String(index + 1).padStart(3, '0');
-      if (index % 3 === 0) return { kind: 'markdown', name: `idea-${suffix}.md` };
-      if (index % 3 === 1) return { kind: 'file', name: `note-${suffix}.txt` };
-      return { kind: 'directory', name: `folder-${suffix}` };
+      if (index % 4 === 0) return { kind: 'markdown', name: `idea-${suffix}.md` };
+      if (index % 4 === 1) return { kind: 'file', name: `note-${suffix}.txt` };
+      if (index % 4 === 2) return { kind: 'directory', name: `folder-${suffix}` };
+      return { kind: 'symlink', name: `link-${suffix}` };
     },
     expectedMarkdown: true,
   },
   {
-    name: 'unsupported-only direct-ledger children share the total source-entry ceiling',
+    name: 'unsupported-only direct-ledger children share the total inventory ceiling',
     child(index) {
       const suffix = String(index + 1).padStart(3, '0');
-      return index % 2 === 0
-        ? { kind: 'file', name: `note-${suffix}.txt` }
-        : { kind: 'directory', name: `folder-${suffix}` };
+      if (index % 3 === 0) return { kind: 'file', name: `note-${suffix}.txt` };
+      if (index % 3 === 1) return { kind: 'directory', name: `folder-${suffix}` };
+      return { kind: 'symlink', name: `link-${suffix}` };
     },
     expectedMarkdown: false,
   },
@@ -2073,8 +2074,7 @@ for (const fixture of [
       const tasksPath = path.join(root, path.dirname(SPEC_PATH), 'tasks.md');
       fs.writeFileSync(tasksPath, tasksBytes());
       const ideasRoot = path.join(root, '.dude/ideas');
-      const sourceEntryTail = 2;
-      const allowedCount = FIXED_RESOURCE_LIMITS.sourceEntries - sourceEntryTail;
+      const allowedCount = FIXED_RESOURCE_LIMITS.ideaInventoryEntries;
       const allowedChildren = Array.from({ length: allowedCount }, (_, index) => fixture.child(index));
       const crossingChild = { kind: 'directory', name: 'crossing-folder' };
       const laterChild = { kind: 'file', name: 'later-note.txt' };
@@ -2085,10 +2085,13 @@ for (const fixture of [
       );
       assert.ok(allowedChildren.some(({ kind }) => kind === 'file'));
       assert.ok(allowedChildren.some(({ kind }) => kind === 'directory'));
+      assert.ok(allowedChildren.some(({ kind }) => kind === 'symlink'));
       for (const [index, child] of allChildren.entries()) {
         const childPath = path.join(ideasRoot, child.name);
         if (child.kind === 'directory') {
           fs.mkdirSync(childPath);
+        } else if (child.kind === 'symlink') {
+          fs.symlinkSync(tasksPath, childPath);
         } else if (child.kind === 'markdown') {
           const bytes = index === 0
             ? ideaBytes()
@@ -2121,7 +2124,7 @@ for (const fixture of [
       const crossingEntry = {
         get name() {
           crossingNameAccesses += 1;
-          throw new Error('source-entry crossing had its name accessed');
+          throw new Error('inventory crossing had its name accessed');
         },
       };
       let laterNameAccesses = 0;
@@ -2212,7 +2215,7 @@ for (const fixture of [
       assert.deepEqual(
         {
           refused: refusal instanceof Error,
-          resourceRefusal: refusal instanceof Error && /source entr|64|resource/i.test(refusal.message),
+          resourceRefusal: refusal instanceof Error && /idea inventor|999|resource/i.test(refusal.message),
           directoryOpens,
           readSyncCalls,
           observedNameAccesses,
@@ -2246,13 +2249,12 @@ for (const fixture of [
   });
 }
 
-test('T008 regression: source-entry refusal survives a directory close failure', () => {
+test('T008 regression: inventory refusal survives a directory close failure', () => {
   withWorkspace((root) => {
     const tasksPath = path.join(root, path.dirname(SPEC_PATH), 'tasks.md');
     fs.writeFileSync(tasksPath, tasksBytes());
     const ideasRoot = path.join(root, '.dude/ideas');
-    const sourceEntryTail = 3;
-    const allowedCount = FIXED_RESOURCE_LIMITS.sourceEntries - sourceEntryTail;
+    const allowedCount = FIXED_RESOURCE_LIMITS.ideaInventoryEntries;
     const allowedEntries = Array.from(
       { length: allowedCount },
       (_, index) => ({ name: `idea-${String(index + 1).padStart(3, '0')}.md` }),
@@ -2311,7 +2313,7 @@ test('T008 regression: source-entry refusal survives a directory close failure',
     assert.deepEqual(
       {
         refused: refusal instanceof Error,
-        resourceRefusal: refusal instanceof Error && /source entr|64|resource/i.test(refusal.message),
+        resourceRefusal: refusal instanceof Error && /idea inventor|999|resource/i.test(refusal.message),
         closeFailureEscaped: refusal === closeFailure,
         readSyncCalls,
         closeSyncCalls,
@@ -24005,4 +24007,1162 @@ test('Feature 030: autonomous inspect rejects a resolved spec path without addin
       true,
     );
   });
+});
+
+// --- Feature 061: work inspection source capacity --------------------------
+
+/** @param {number} index */
+function feature061DraftIdeaBytes(index) {
+  const suffix = String(index).padStart(3, '0');
+  return Buffer.from([
+    '---',
+    `title: Capacity draft ${suffix}`,
+    `slug: capacity-draft-${suffix}`,
+    'status: draft',
+    '---',
+    '',
+    '## Idea',
+    '',
+    `Inventory fixture ${suffix}.`,
+    '',
+  ].join('\n'));
+}
+
+/**
+ * @param {number} count
+ * @param {Record<string, unknown>} [target]
+ * @param {boolean} [lateDuplicate]
+ */
+function feature061IdeaInventory(count, target = TARGET, lateDuplicate = false) {
+  assert.ok(count >= 1 && count <= FIXED_RESOURCE_LIMITS.ideaInventoryEntries);
+  const records = [{
+    path: IDEA_PATH,
+    bytes: ideaBytes(/** @type {string} */ (target.specPath)),
+  }];
+  for (let lifecycle = 1; records.length < count; lifecycle += 1) {
+    if (lifecycle === 4) continue;
+    const suffix = String(lifecycle).padStart(3, '0');
+    records.push({
+      path: `.dude/ideas/${suffix}-capacity-draft-${suffix}.md`,
+      bytes: lateDuplicate && records.length === count - 1
+        ? ideaBytes(
+          /** @type {string} */ (target.specPath),
+          '- 2026-09-15 late duplicate owner\n',
+        )
+        : feature061DraftIdeaBytes(lifecycle),
+    });
+  }
+  return records;
+}
+
+/** @param {Record<string, unknown>} target @param {string} label */
+function feature061FixtureStreams(target, label) {
+  return {
+    currentRun: [capture(target, 'succeeded', [{ fixture: label, source: 'current-run' }])],
+    verification: [capture(target, 'passed', [{ fixture: label, source: 'verification' }])],
+    review: [capture(target, 'accepted', [{ fixture: label, source: 'review' }])],
+    lint: [capture(target, 'passed', [{ fixture: label, source: 'lint' }])],
+    session: {
+      target: clone(target),
+      availability: 'available',
+      bytes: Buffer.from(`fixture session:${label}`),
+    },
+  };
+}
+
+/** @param {() => unknown} run @param {string} label */
+function feature061Thrown(run, label) {
+  try {
+    run();
+  } catch (error) {
+    return error;
+  }
+  assert.fail(`${label} did not throw`);
+}
+
+/** @param {Record<string, unknown>} inspection */
+function feature061AvailableItemCount(inspection) {
+  return /** @type {Record<string, unknown>[]} */ (inspection.items)
+    .filter((item) => (
+      !['missing', 'nontext', 'overflow'].includes(/** @type {string} */ (item.status))
+      && Object.hasOwn(item, 'text')
+    )).length;
+}
+
+test('Feature 061: raw, workspace, and CLI inspection admit 60, 63, 200, and 999 ideas independently of evidence sources', () => {
+  const capacityDiagnostic = runtimeFunction('capacityDiagnostic');
+  const stages = [60, 63, 200, FIXED_RESOURCE_LIMITS.ideaInventoryEntries];
+
+  for (const count of stages) {
+    for (const policyMode of ['guarded', 'autonomous']) {
+      const raw = transitionRaw(TARGET, {
+        directIdeas: feature061IdeaInventory(count),
+        ...feature061FixtureStreams(TARGET, `raw-${policyMode}-${count}`),
+      });
+      const prepared = withPolicyPlan(TARGET, raw, policyMode);
+      const inspection = buildInspection(
+        TARGET,
+        collectEvidence(TARGET, prepared, undefined, policyMode),
+      );
+      const ownerItems = inspection.items.filter((item) => item.source === 'owner-log');
+      assert.equal(ownerItems.length, 1, `${policyMode} raw inventory ${count}`);
+      assert.equal(ownerItems[0].status, 'present', `${policyMode} raw inventory ${count}`);
+      assert.equal(JSON.parse(ownerItems[0].text).ideaPath, IDEA_PATH);
+      assert.equal(inspection.overflow, false, `${policyMode} raw inventory ${count}`);
+      assert.deepEqual(inspection.blockers, [], `${policyMode} raw inventory ${count}`);
+      assert.ok(modelPacket(inspection), `${policyMode} raw inventory ${count}`);
+    }
+  }
+
+  const rawBodyTrap = new Proxy({}, {
+    get() {
+      throw new Error('raw idea body was traversed after the inventory crossing');
+    },
+    ownKeys() {
+      throw new Error('raw idea shape was traversed after the inventory crossing');
+    },
+  });
+  const rawOverflow = transitionRaw(TARGET, {
+    directIdeas: Array.from(
+      { length: FIXED_RESOURCE_LIMITS.ideaInventoryEntries + 1 },
+      () => rawBodyTrap,
+    ),
+  });
+  for (const policyMode of ['guarded', 'autonomous']) {
+    const error = feature061Thrown(
+      () => collectEvidence(
+        TARGET,
+        withPolicyPlan(TARGET, rawOverflow, policyMode),
+        undefined,
+        policyMode,
+      ),
+      `${policyMode} raw inventory 1,000`,
+    );
+    assert.ok(error instanceof TypeError);
+    assert.match(error.message, /999 direct idea inventory entries/);
+    assert.deepEqual(capacityDiagnostic(error), {
+      budget: 'idea-inventory-entries',
+      limit: 999,
+      required: 1000,
+      source: '.dude/ideas',
+      target: canonicalTarget(TARGET),
+    });
+  }
+
+  withWorkspace((root) => {
+    const ideasRoot = path.join(root, '.dude/ideas');
+    const tasksPath = path.join(root, path.dirname(SPEC_PATH), 'tasks.md');
+    const planPath = path.join(root, path.dirname(SPEC_PATH), 'plan.md');
+    fs.writeFileSync(tasksPath, transitionTasksBytes([{ id: TASK_KEY, glyph: '~' }]));
+    fs.writeFileSync(planPath, noRegistryPlanBytes(SPEC_PATH));
+    const inventory = feature061IdeaInventory(FIXED_RESOURCE_LIMITS.ideaInventoryEntries);
+    let written = 0;
+
+    for (const count of stages) {
+      while (written < count) {
+        const record = inventory[written];
+        fs.writeFileSync(path.join(root, record.path), record.bytes);
+        written += 1;
+      }
+      assert.equal(fs.readdirSync(ideasRoot).length, count);
+      for (const policyMode of ['guarded', 'autonomous']) {
+        const input = publicInspectionInput(root, TARGET, {
+          policyMode,
+          ...feature061FixtureStreams(TARGET, `workspace-${policyMode}-${count}`),
+        });
+        const inspection = inspect(input);
+        assert.equal(
+          inspection.items.find((item) => item.source === 'owner-log')?.status,
+          'present',
+          `${policyMode} workspace inventory ${count}`,
+        );
+        assert.equal(inspection.overflow, false, `${policyMode} workspace inventory ${count}`);
+        assert.deepEqual(inspection.blockers, [], `${policyMode} workspace inventory ${count}`);
+        if (count === 63 || count === FIXED_RESOURCE_LIMITS.ideaInventoryEntries) {
+          const cli = runRecoveryCli('inspect', {
+            trigger: 'explicit-inspection',
+            input: cliInput(input),
+          });
+          assert.equal(cli.status, 0, `${policyMode} CLI inventory ${count}: ${cli.stderr}`);
+          const cliInspection = JSON.parse(cli.stdout).inspection;
+          assert.equal(
+            cliInspection.items.find((item) => item.source === 'owner-log')?.status,
+            'present',
+            `${policyMode} CLI inventory ${count}`,
+          );
+          assert.equal(cliInspection.overflow, false, `${policyMode} CLI inventory ${count}`);
+        }
+      }
+    }
+
+    const last = inventory.at(-1);
+    assert.ok(last);
+    fs.writeFileSync(path.join(root, last.path), ideaBytes(
+      SPEC_PATH,
+      '- 2026-09-15 late duplicate owner\n',
+    ));
+    const originalOpen = fs.openSync;
+    let directIdeaBodyOpens = 0;
+    Reflect.set(fs, 'openSync', (file, ...args) => {
+      if (typeof file !== 'number'
+        && path.dirname(path.resolve(String(file))) === ideasRoot) {
+        directIdeaBodyOpens += 1;
+      }
+      return originalOpen.call(fs, file, ...args);
+    });
+    let duplicateInspection;
+    try {
+      duplicateInspection = inspect(publicInspectionInput(root));
+    } finally {
+      Reflect.set(fs, 'openSync', originalOpen);
+    }
+    const duplicateOwner = duplicateInspection.items.find((item) => item.source === 'owner-log');
+    assert.equal(duplicateOwner?.status, 'conflict');
+    assert.ok(duplicateInspection.blockers.some((blocker) => (
+      blocker.code === 'ambiguous-state' && blocker.subject === 'owner-log'
+    )));
+    assert.equal(
+      directIdeaBodyOpens,
+      FIXED_RESOURCE_LIMITS.ideaInventoryEntries,
+      'a main owner does not shortcut the late duplicate-owner scan',
+    );
+    fs.writeFileSync(path.join(root, last.path), last.bytes);
+
+    const rawLateDuplicate = buildInspection(TARGET, collectEvidence(TARGET, transitionRaw(TARGET, {
+      directIdeas: feature061IdeaInventory(
+        FIXED_RESOURCE_LIMITS.ideaInventoryEntries,
+        TARGET,
+        true,
+      ),
+    })));
+    assert.equal(
+      rawLateDuplicate.items.find((item) => item.source === 'owner-log')?.status,
+      'conflict',
+    );
+
+    fs.writeFileSync(path.join(ideasRoot, 'overflow-entry.txt'), 'must not be acquired\n');
+    assert.equal(
+      fs.readdirSync(ideasRoot).length,
+      FIXED_RESOURCE_LIMITS.ideaInventoryEntries + 1,
+    );
+    for (const policyMode of ['guarded', 'autonomous']) {
+      const input = publicInspectionInput(root, TARGET, {
+        policyMode,
+        ...feature061FixtureStreams(TARGET, `overflow-${policyMode}`),
+      });
+      const directError = feature061Thrown(
+        () => inspect(input),
+        `${policyMode} workspace inventory 1,000`,
+      );
+      assert.ok(directError instanceof TypeError);
+      assert.match(directError.message, /999 direct idea inventory entries/);
+      assert.deepEqual(capacityDiagnostic(directError), {
+        budget: 'idea-inventory-entries',
+        limit: 999,
+        required: 1000,
+        source: '.dude/ideas',
+        target: canonicalTarget(TARGET),
+      });
+
+      const cli = runRecoveryCli('inspect', {
+        trigger: 'explicit-inspection',
+        input: cliInput(input),
+      });
+      const cliError = parseCanonicalCliError(cli, `${policyMode} CLI inventory 1,000`);
+      assert.equal(cli.status, 1);
+      assert.equal(cliError.code, 'recovery-resource-limit');
+      assert.equal(
+        cliError.message,
+        `Recovery request exceeds the fixed idea-inventory-entries limit of 999: `
+          + `1000 required for .dude/ideas at ${targetKey(TARGET)}. `
+          + 'Ask the source owner to correct that input within the existing limits, retaining the '
+          + 'required evidence and inventory, before a fresh inspection.',
+      );
+    }
+  });
+});
+
+test('Feature 061: authorization reserves exact autonomous source and model headroom without changing refused state', () => {
+  const autonomousState = () => emptyState({
+    mode: 'autonomous',
+    overall: 10,
+    recovery: 10,
+    recover: true,
+  });
+  const authorize = (
+    raw,
+    action = 'execute-task',
+    mode = 'ordinary',
+    state = autonomousState(),
+    target = TARGET,
+    dependencies = undefined,
+  ) => ({
+    state,
+    result: authorizeAttempt(
+      state,
+      target,
+      raw,
+      transitionAssessment(action),
+      mode,
+      dependencies,
+    ),
+  });
+  const repeatedCurrent = capture(TARGET, 'failed', [{ deduped: 'current-run' }]);
+
+  const source62 = transitionRaw(TARGET, {
+    currentRun: Array.from({ length: 58 }, () => repeatedCurrent),
+  });
+  const admitted62 = authorize(source62);
+  assert.equal(admitted62.result.authorized, true);
+  assert.equal(admitted62.result.reason, 'authorized');
+  assert.equal(admitted62.result.state.overallUsed, 1);
+  assert.equal(admitted62.result.state.pending.length, 1);
+  assert.equal(admitted62.state.overallUsed, 0);
+  assert.deepEqual(admitted62.state.pending, []);
+
+  const source63 = transitionRaw(TARGET, {
+    currentRun: Array.from({ length: 59 }, () => repeatedCurrent),
+  });
+  const refused63 = authorize(source63);
+  assert.deepEqual(Object.keys(refused63.result).sort(), [
+    'authorized', 'blocker', 'capacity', 'reason', 'state',
+  ]);
+  assert.equal(refused63.result.authorized, false);
+  assert.equal(refused63.result.reason, 'evidence-incomplete');
+  assert.strictEqual(refused63.result.state, refused63.state);
+  assert.deepEqual(refused63.result.capacity, {
+    budget: 'source-entries',
+    limit: 64,
+    required: 65,
+    source: 'review',
+    target: canonicalTarget(TARGET),
+  });
+  assert.deepEqual(refused63.result.blocker, {
+    code: 'evidence-incomplete',
+    subject: 'capacity:source-entries:review:65',
+    evidenceHash: bindAssessment(
+      TARGET,
+      withPolicyPlan(TARGET, source63, 'autonomous'),
+      transitionAssessment('execute-task'),
+      undefined,
+      'autonomous',
+    ).evidenceHash,
+  });
+  assert.equal(canonicalJson(refused63.state), canonicalJson(emptyState({
+    mode: 'autonomous', overall: 10, recovery: 10, recover: true,
+  })));
+
+  const noCurrentRun = transitionRaw(TARGET, {
+    currentRun: [],
+    verification: Array.from(
+      { length: 58 },
+      () => capture(TARGET, 'passed', [{ deduped: 'verification' }]),
+    ),
+  });
+  const missingCurrentRun = authorize(noCurrentRun);
+  assert.deepEqual(missingCurrentRun.result.capacity, {
+    budget: 'source-entries',
+    limit: 64,
+    required: 65,
+    source: 'current-run',
+    target: canonicalTarget(TARGET),
+  });
+  assert.strictEqual(missingCurrentRun.result.state, missingCurrentRun.state);
+
+  const lintRequired = authorize(
+    source62,
+    'address-test',
+    'recovery',
+  );
+  assert.deepEqual(lintRequired.result.capacity, {
+    budget: 'source-entries',
+    limit: 64,
+    required: 65,
+    source: 'lint',
+    target: canonicalTarget(TARGET),
+  });
+  assert.strictEqual(lintRequired.result.state, lintRequired.state);
+  assert.deepEqual(lintRequired.state.recoveryUsed, []);
+
+  const priorPairs = transitionRaw(TARGET, {
+    currentRun: [repeatedCurrent],
+    verification: Array.from(
+      { length: 29 },
+      () => capture(TARGET, 'passed', [{ retained: 'old-verification' }]),
+    ),
+    review: Array.from(
+      { length: 29 },
+      () => capture(TARGET, 'accepted', [{ retained: 'old-review' }]),
+    ),
+  });
+  const priorPairRefusal = authorize(priorPairs);
+  assert.deepEqual(priorPairRefusal.result.capacity, {
+    budget: 'source-entries',
+    limit: 64,
+    required: 65,
+    source: 'review',
+    target: canonicalTarget(TARGET),
+  });
+  assert.strictEqual(priorPairRefusal.result.state, priorPairRefusal.state);
+
+  const unavailableSession = authorize(transitionRaw(TARGET, {
+    currentRun: Array.from({ length: 58 }, () => repeatedCurrent),
+    session: { target: clone(TARGET), availability: 'unavailable' },
+  }));
+  assert.deepEqual(unavailableSession.result.capacity, {
+    budget: 'source-entries',
+    limit: 64,
+    required: 65,
+    source: 'review',
+    target: canonicalTarget(TARGET),
+  });
+  assert.equal(admitted62.result.authorized, true, 'an absent session reserves no source');
+
+  const uniqueCurrent = (count) => Array.from(
+    { length: count },
+    (_, index) => capture(TARGET, 'failed', [{ modelItem: index }]),
+  );
+  const modelRaw = (currentRunCount) => transitionRaw(TARGET, {
+    currentRun: uniqueCurrent(currentRunCount),
+    verification: [capture(TARGET, 'passed', [{ modelItem: 'verification' }])],
+    review: [capture(TARGET, 'accepted', [{ modelItem: 'review' }])],
+    lint: [],
+  });
+  const inspectAutonomous = (raw) => buildInspection(
+    TARGET,
+    collectEvidence(
+      TARGET,
+      withPolicyPlan(TARGET, raw, 'autonomous'),
+      undefined,
+      'autonomous',
+    ),
+  );
+  const model14Inspection = inspectAutonomous(modelRaw(7));
+  assert.equal(feature061AvailableItemCount(model14Inspection), 14);
+  assert.equal(modelPacket(model14Inspection)?.items.length, 14);
+  assert.equal(authorize(modelRaw(7)).result.authorized, true, '14 + 2 model items fits 16');
+
+  const model15Inspection = inspectAutonomous(modelRaw(8));
+  assert.equal(feature061AvailableItemCount(model15Inspection), 15);
+  assert.equal(modelPacket(model15Inspection)?.items.length, 15);
+  const model17 = authorize(modelRaw(8));
+  assert.deepEqual(model17.result.capacity, {
+    budget: 'model-packet-items',
+    limit: 16,
+    required: 17,
+    source: 'model-packet',
+    target: canonicalTarget(TARGET),
+  });
+  assert.strictEqual(model17.result.state, model17.state);
+
+  const emptyPlaceholderRaw = transitionRaw(TARGET, {
+    currentRun: uniqueCurrent(9),
+    verification: [],
+    review: [],
+    lint: [],
+  });
+  const model16Inspection = inspectAutonomous(emptyPlaceholderRaw);
+  assert.equal(feature061AvailableItemCount(model16Inspection), 16);
+  assert.equal(modelPacket(model16Inspection)?.items.length, 16);
+  assert.equal(
+    authorize(emptyPlaceholderRaw).result.authorized,
+    true,
+    'fresh captures replace empty verification/review placeholders without adding model items',
+  );
+
+  const guardedState = emptyState({ mode: 'guarded', overall: 10 });
+  const guarded64 = transitionRaw(TARGET, {
+    currentRun: Array.from({ length: 61 }, () => repeatedCurrent),
+  });
+  const guarded = authorize(
+    guarded64,
+    'execute-task',
+    'ordinary',
+    guardedState,
+  );
+  assert.equal(guarded.result.authorized, true, 'guarded inline completion reserves no captures');
+  assert.equal(guarded.state.overallUsed, 0);
+  assert.deepEqual(guarded.state.pending, []);
+
+  const trackedTarget = {
+    specPath: SPEC_PATH,
+    lane: 'tracked',
+    issueId: 'dude-000',
+    taskKey: TASK_KEY,
+  };
+  const trackedCase = (issueCount) => {
+    const captures = Array.from(
+      { length: issueCount },
+      (_, index) => trackedCapture(
+        `dude-${String(index).padStart(3, '0')}`,
+        index === 0 ? TASK_KEY : null,
+      ),
+    );
+    const raw = {
+      ...trackedRawInputs(captures),
+      currentRun: [capture(trackedTarget, 'failed', [{ tracked: 'current-run' }])],
+    };
+    const dependencies = {
+      normalizeTrackedEvidence: () => trackedProjection(trackedTarget, [captures[0]]),
+    };
+    return authorize(
+      raw,
+      'execute-task',
+      'ordinary',
+      autonomousState(),
+      trackedTarget,
+      dependencies,
+    );
+  };
+  assert.equal(trackedCase(57).result.authorized, true, 'tracked source 62 plus pair fits');
+  const tracked63 = trackedCase(58);
+  assert.deepEqual(tracked63.result.capacity, {
+    budget: 'source-entries',
+    limit: 64,
+    required: 65,
+    source: 'review',
+    target: canonicalTarget(trackedTarget),
+  });
+  assert.strictEqual(tracked63.result.state, tracked63.state);
+
+  const prepared63 = withPolicyPlan(TARGET, source63, 'autonomous');
+  const validAssessment = bindAssessment(
+    TARGET,
+    prepared63,
+    transitionAssessment('execute-task'),
+    undefined,
+    'autonomous',
+  );
+  const staleState = autonomousState();
+  const stale = authorizeRuntimeAttempt(
+    staleState,
+    TARGET,
+    prepared63,
+    { ...validAssessment, evidenceHash: sha256('stale-before-capacity') },
+    'ordinary',
+  );
+  assert.equal(stale.reason, 'evidence-drift');
+  assert.equal(Object.hasOwn(stale, 'capacity'), false);
+  assert.strictEqual(stale.state, staleState);
+
+  const exhaustedState = clone(admitted62.result.state);
+  exhaustedState.policy.overall = 1;
+  validateRunState(exhaustedState);
+  const exhausted = authorizeRuntimeAttempt(
+    exhaustedState,
+    TARGET,
+    prepared63,
+    validAssessment,
+    'ordinary',
+  );
+  assert.equal(exhausted.reason, 'overall-exhausted');
+  assert.equal(Object.hasOwn(exhausted, 'capacity'), false);
+  assert.strictEqual(exhausted.state, exhaustedState);
+});
+
+test('Feature 061 regression: CLI returns admission refusal data but throws acquisition overflow', () => {
+  withWorkspace((root) => {
+    const tasksPath = `${SPEC_PATH.slice(0, -'spec.md'.length)}tasks.md`;
+    const planPath = `${SPEC_PATH.slice(0, -'spec.md'.length)}plan.md`;
+    fs.writeFileSync(path.join(root, IDEA_PATH), ideaBytes());
+    fs.writeFileSync(
+      path.join(root, tasksPath),
+      transitionTasksBytes([{ id: TASK_KEY, glyph: '~' }]),
+    );
+    fs.writeFileSync(path.join(root, planPath), noRegistryPlanBytes(SPEC_PATH));
+
+    const state = emptyState({
+      mode: 'autonomous',
+      overall: 10,
+      recovery: 10,
+      recover: true,
+    });
+    const stateBefore = canonicalJson(state);
+    const observedPaths = [IDEA_PATH, SPEC_PATH, tasksPath, planPath];
+    const bytesBefore = new Map(observedPaths.map((relativePath) => [
+      relativePath,
+      fs.readFileSync(path.join(root, relativePath)),
+    ]));
+    const entriesBefore = fs.readdirSync(root, { recursive: true }).sort();
+    const repeated = capture(TARGET, 'failed', [{ deduped: 'cli-capacity-boundary' }]);
+    const admissionInput = publicInspectionInput(root, TARGET, {
+      policyMode: 'autonomous',
+      currentRun: Array.from({ length: 59 }, () => repeated),
+    });
+    const admissionInspection = inspect(admissionInput);
+    assert.equal(admissionInspection.overflow, false);
+    assert.ok(modelPacket(admissionInspection), 'admission must reach source headroom');
+    const assessmentValue = transitionAssessment('execute-task', {
+      evidenceHash: admissionInspection.evidenceHash,
+    });
+
+    const admission = runRecoveryCli('authorize', {
+      trigger: 'resume',
+      state,
+      input: cliInput(admissionInput),
+      assessment: assessmentValue,
+      mode: 'ordinary',
+    });
+    assert.equal(admission.status, 0, admission.stderr);
+    assert.equal(admission.stderr, '');
+    assert.notEqual(admission.stdout, '');
+    const admittedPayload = JSON.parse(admission.stdout);
+    assert.deepEqual(Object.keys(admittedPayload), ['inspection', 'authorization']);
+    assert.equal(admittedPayload.inspection.evidenceHash, assessmentValue.evidenceHash);
+    assert.deepEqual(admittedPayload.authorization, {
+      authorized: false,
+      reason: 'evidence-incomplete',
+      state,
+      blocker: {
+        code: 'evidence-incomplete',
+        subject: 'capacity:source-entries:review:65',
+        evidenceHash: assessmentValue.evidenceHash,
+      },
+      capacity: {
+        budget: 'source-entries',
+        limit: 64,
+        required: 65,
+        source: 'review',
+        target: canonicalTarget(TARGET),
+      },
+    });
+
+    const exactAcquisitionLimit = publicInspectionInput(root, TARGET, {
+      policyMode: 'autonomous',
+      currentRun: Array.from({ length: 60 }, () => repeated),
+    });
+    assert.equal(
+      inspect(exactAcquisitionLimit).evidenceHash,
+      assessmentValue.evidenceHash,
+      'the incoming Assessment remains valid at the acquisition boundary',
+    );
+    const acquisition = runRecoveryCli('authorize', {
+      trigger: 'resume',
+      state,
+      input: cliInput(publicInspectionInput(root, TARGET, {
+        policyMode: 'autonomous',
+        currentRun: Array.from({ length: 61 }, () => repeated),
+      })),
+      assessment: assessmentValue,
+      mode: 'ordinary',
+    });
+    const acquisitionError = parseCanonicalCliError(
+      acquisition,
+      'source acquisition overflow',
+    );
+    const expectedMessage = 'Recovery request exceeds the fixed source-entries limit of 64: '
+      + `65 required for current-run at ${targetKey(TARGET)}. `
+      + 'Ask the source owner to correct that input within the existing limits, retaining the '
+      + 'required evidence and inventory, before a fresh inspection.';
+    assert.equal(acquisition.status, 1);
+    assert.deepEqual(
+      { code: acquisitionError.code, message: acquisitionError.message },
+      { code: 'recovery-resource-limit', message: expectedMessage },
+    );
+    assert.equal(
+      acquisition.stderr,
+      canonicalJson({
+        error: {
+          code: 'recovery-resource-limit',
+          message: expectedMessage,
+        },
+      }),
+    );
+
+    assert.equal(canonicalJson(state), stateBefore);
+    assert.deepEqual(fs.readdirSync(root, { recursive: true }).sort(), entriesBefore);
+    for (const [relativePath, bytes] of bytesBefore) {
+      assert.deepEqual(fs.readFileSync(path.join(root, relativePath)), bytes, relativePath);
+    }
+  });
+});
+
+test('Feature 061: diagnostics report all seven closed budgets with exact limits and measured demand', () => {
+  const capacityDiagnostic = runtimeFunction('capacityDiagnostic');
+  const validateCapacityDiagnostic = runtimeFunction('validateCapacityDiagnostic');
+  const closed = [
+    ['idea-inventory-entries', 999, '.dude/ideas'],
+    ['source-entries', 64, 'current-run'],
+    ['source-body-bytes', 1_048_576, 'current-run'],
+    ['inspection-body-bytes', 4_194_304, 'current-run'],
+    ['cli-request-bytes', 6_291_456, 'cli-request'],
+    ['retained-descriptors', 64, 'current-run'],
+    ['model-packet-items', 16, 'model-packet'],
+  ];
+  for (const [budget, limit, source] of closed) {
+    const diagnostic = {
+      budget,
+      limit,
+      required: /** @type {number} */ (limit) + 1,
+      source,
+      target: canonicalTarget(TARGET),
+    };
+    assert.deepEqual(validateCapacityDiagnostic(diagnostic), diagnostic, budget);
+  }
+  for (const invalid of [
+    { budget: 'unknown', limit: 1, required: 2, source: 'current-run', target: null },
+    { budget: 'source-entries', limit: 65, required: 65, source: 'current-run', target: null },
+    { budget: 'source-entries', limit: 64, required: -1, source: 'current-run', target: null },
+    { budget: 'source-entries', limit: 64, required: 65, source: 'secret/path', target: null },
+    { budget: 'source-entries', limit: 64, required: 65, source: 'current-run', target: { lane: 'guarded' } },
+    {
+      budget: 'source-entries',
+      limit: 64,
+      required: 65,
+      source: 'current-run',
+      target: null,
+      extra: true,
+    },
+  ]) {
+    assert.equal(validateCapacityDiagnostic(invalid), null);
+  }
+
+  const inventoryError = feature061Thrown(
+    () => collectEvidence(TARGET, transitionRaw(TARGET, {
+      directIdeas: Array.from(
+        { length: 1000 },
+        (_, index) => ({
+          path: `.dude/ideas/${String(index).padStart(4, '0')}.md`,
+          bytes: index === 0 ? ideaBytes() : feature061DraftIdeaBytes(index),
+        }),
+      ),
+    })),
+    'raw inventory diagnostic',
+  );
+  assert.ok(inventoryError instanceof TypeError);
+  assert.match(inventoryError.message, /exceeds the resource limit of 999 direct idea inventory entries/);
+  assert.deepEqual(capacityDiagnostic(inventoryError), {
+    budget: 'idea-inventory-entries',
+    limit: 999,
+    required: 1000,
+    source: '.dude/ideas',
+    target: canonicalTarget(TARGET),
+  });
+
+  const sourceError = feature061Thrown(
+    () => collectEvidence(TARGET, transitionRaw(TARGET, {
+      currentRun: Array.from(
+        { length: 62 },
+        () => capture(TARGET, 'failed', [{ source: 'deduped' }]),
+      ),
+    })),
+    'source-entry diagnostic',
+  );
+  assert.ok(sourceError instanceof TypeError);
+  assert.match(sourceError.message, /resource limit of 64 total source entries/);
+  assert.deepEqual(capacityDiagnostic(sourceError), {
+    budget: 'source-entries',
+    limit: 64,
+    required: 65,
+    source: 'current-run',
+    target: canonicalTarget(TARGET),
+  });
+
+  const baseCapture = capture(TARGET, 'failed', [{ source: 'oversized' }]);
+  const bodyError = feature061Thrown(
+    () => collectEvidence(TARGET, transitionRaw(TARGET, {
+      currentRun: [{
+        ...baseCapture,
+        bytes: Buffer.alloc(FIXED_RESOURCE_LIMITS.sourceBodyBytes + 1),
+      }],
+    })),
+    'source-body diagnostic',
+  );
+  assert.ok(bodyError instanceof TypeError);
+  assert.match(bodyError.message, /individual source body resource limit of 1048576 bytes/);
+  assert.deepEqual(capacityDiagnostic(bodyError), {
+    budget: 'source-body-bytes',
+    limit: 1_048_576,
+    required: 1_048_577,
+    source: 'current-run',
+    target: canonicalTarget(TARGET),
+  });
+
+  const aggregateBase = transitionRaw(TARGET);
+  const workspaceBytes = aggregateBase.directIdeas.reduce(
+    (total, entry) => total + entry.bytes.byteLength,
+    aggregateBase.tasks.bytes.byteLength,
+  );
+  const aggregateCaptures = splitBodyBytes(
+    FIXED_RESOURCE_LIMITS.inspectionBodyBytes + 1 - workspaceBytes,
+    4,
+  ).map((byteLength, index) => (
+    sizedCapture(TARGET, 'failed', byteLength, `feature-061-aggregate-${index}`)
+  ));
+  assert.ok(aggregateCaptures.every(({ bytes }) => (
+    bytes.byteLength <= FIXED_RESOURCE_LIMITS.sourceBodyBytes
+  )));
+  const aggregateError = feature061Thrown(
+    () => collectEvidence(TARGET, {
+      ...aggregateBase,
+      currentRun: aggregateCaptures,
+    }),
+    'aggregate-body diagnostic',
+  );
+  assert.ok(aggregateError instanceof TypeError);
+  assert.match(aggregateError.message, /aggregate inspection body resource limit of 4194304 bytes/);
+  assert.deepEqual(capacityDiagnostic(aggregateError), {
+    budget: 'inspection-body-bytes',
+    limit: 4_194_304,
+    required: 4_194_305,
+    source: 'current-run',
+    target: canonicalTarget(TARGET),
+  });
+
+  const descriptorError = feature061Thrown(
+    () => buildInspection(
+      TARGET,
+      Array.from(
+        { length: 65 },
+        (_, index) => evidence('current-run', `feature-061-descriptor-${index}`),
+      ),
+    ),
+    'retained-descriptor diagnostic',
+  );
+  assert.ok(descriptorError instanceof TypeError);
+  assert.match(descriptorError.message, /retained descriptor 65 exceeds the resource limit of 64/);
+  assert.deepEqual(capacityDiagnostic(descriptorError), {
+    budget: 'retained-descriptors',
+    limit: 64,
+    required: 65,
+    source: 'current-run',
+    target: null,
+  });
+
+  const modelState = emptyState({
+    mode: 'autonomous', overall: 10, recovery: 10, recover: true,
+  });
+  const modelRaw = transitionRaw(TARGET, {
+    currentRun: Array.from(
+      { length: 8 },
+      (_, index) => capture(TARGET, 'failed', [{ modelItem: index }]),
+    ),
+    verification: [capture(TARGET, 'passed', [{ modelItem: 'verification' }])],
+    review: [capture(TARGET, 'accepted', [{ modelItem: 'review' }])],
+    lint: [],
+  });
+  const modelRefusal = authorizeAttempt(
+    modelState,
+    TARGET,
+    modelRaw,
+    transitionAssessment('execute-task'),
+    'ordinary',
+  );
+  assert.deepEqual(modelRefusal.capacity, {
+    budget: 'model-packet-items',
+    limit: 16,
+    required: 17,
+    source: 'model-packet',
+    target: canonicalTarget(TARGET),
+  });
+
+  const cli = runRecoveryCli(
+    'complete',
+    sizedCanonicalCompleteRequest(FIXED_RESOURCE_LIMITS.cliRequestBytes + 1),
+  );
+  const cliError = parseCanonicalCliError(cli, 'CLI request capacity diagnostic');
+  assert.equal(cli.status, 1);
+  assert.equal(cliError.code, 'recovery-resource-limit');
+  assert.equal(
+    cliError.message,
+    'Recovery request exceeds the fixed cli-request-bytes limit of 6291456: '
+      + '6291457 required for cli-request at no established canonical target. '
+      + 'Ask the source owner to correct that input within the existing limits, retaining the '
+      + 'required evidence and inventory, before a fresh inspection.',
+  );
+});
+
+test('Feature 061 regression: capacity budgets reject non-strings without caller coercion', () => {
+  const validateCapacityDiagnostic = runtimeFunction('validateCapacityDiagnostic');
+  const coercions = [];
+  const budgets = [
+    ['array', ['source-entries']],
+    ['toString', {
+      toString() {
+        coercions.push('toString');
+        return 'source-entries';
+      },
+    }],
+    ['valueOf', {
+      toString() {
+        coercions.push('valueOf:toString');
+        return {};
+      },
+      valueOf() {
+        coercions.push('valueOf');
+        return 'source-entries';
+      },
+    }],
+    ['throwing toString', {
+      toString() {
+        coercions.push('throwing toString');
+        throw new Error('capacity budget toString invoked');
+      },
+    }],
+    ['throwing valueOf', {
+      toString() {
+        coercions.push('throwing valueOf:toString');
+        return {};
+      },
+      valueOf() {
+        coercions.push('throwing valueOf');
+        throw new Error('capacity budget valueOf invoked');
+      },
+    }],
+    ['Symbol.toPrimitive', {
+      [Symbol.toPrimitive]() {
+        coercions.push('Symbol.toPrimitive');
+        return 'source-entries';
+      },
+    }],
+    ['throwing Symbol.toPrimitive', {
+      [Symbol.toPrimitive]() {
+        coercions.push('throwing Symbol.toPrimitive');
+        throw new Error('capacity budget Symbol.toPrimitive invoked');
+      },
+    }],
+    ['number', 1],
+    ['null', null],
+    ['undefined', undefined],
+    ['boxed string', Object('source-entries')],
+  ];
+
+  const outcomes = budgets.map(([name, budget]) => {
+    try {
+      const diagnostic = validateCapacityDiagnostic({
+        budget,
+        limit: 64,
+        required: 65,
+        source: 'review',
+        target: canonicalTarget(TARGET),
+      });
+      return [name, diagnostic === null ? 'null' : 'accepted'];
+    } catch {
+      return [name, 'threw'];
+    }
+  });
+
+  assert.deepEqual(outcomes, budgets.map(([name]) => [name, 'null']));
+  assert.deepEqual(coercions, []);
+});
+
+test('Feature 061: capacity branding ignores public code and message lookalikes without reading accessors', () => {
+  const capacityDiagnostic = runtimeFunction('capacityDiagnostic');
+  let codeReads = 0;
+  let messageReads = 0;
+  const lookalike = new TypeError();
+  Object.defineProperty(lookalike, 'code', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      codeReads += 1;
+      return 'recovery-resource-limit';
+    },
+  });
+  Object.defineProperty(lookalike, 'message', {
+    configurable: true,
+    enumerable: false,
+    get() {
+      messageReads += 1;
+      return 'SECRET: exceeds the resource limit of 64 total source entries';
+    },
+  });
+  assert.deepEqual(
+    { diagnostic: capacityDiagnostic(lookalike), codeReads, messageReads },
+    { diagnostic: null, codeReads: 0, messageReads: 0 },
+  );
+});
+
+test('Feature 061: capacity branding cannot be forged by a TypeError Proxy that guesses the private symbol', () => {
+  const capacityDiagnostic = runtimeFunction('capacityDiagnostic');
+  const forgedProjection = {
+    budget: 'source-entries',
+    limit: 64,
+    required: 65,
+    source: 'review',
+    target: canonicalTarget(TARGET),
+  };
+  let symbolReads = 0;
+  const lookalike = new Proxy(new TypeError('forged capacity'), {
+    get(target, key, receiver) {
+      if (typeof key === 'symbol') {
+        symbolReads += 1;
+        return forgedProjection;
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  assert.deepEqual(
+    { diagnostic: capacityDiagnostic(lookalike), symbolReads },
+    { diagnostic: null, symbolReads: 0 },
+  );
+
+  const actualError = feature061Thrown(
+    () => collectEvidence(TARGET, transitionRaw(TARGET, {
+      currentRun: Array.from(
+        { length: 62 },
+        () => capture(TARGET, 'failed', [{ actual: 'capacity-refusal' }]),
+      ),
+    })),
+    'actual branded capacity error',
+  );
+  assert.deepEqual(capacityDiagnostic(actualError), {
+    ...forgedProjection,
+    source: 'current-run',
+  });
+  let actualProxyTraps = 0;
+  const proxiedActual = new Proxy(/** @type {object} */ (actualError), {
+    get() {
+      actualProxyTraps += 1;
+      throw new Error('proxied actual capacity error was read');
+    },
+    getPrototypeOf() {
+      actualProxyTraps += 1;
+      throw new Error('proxied actual capacity prototype was read');
+    },
+    ownKeys() {
+      actualProxyTraps += 1;
+      throw new Error('proxied actual capacity keys were read');
+    },
+  });
+  assert.deepEqual(
+    { diagnostic: capacityDiagnostic(proxiedActual), actualProxyTraps },
+    { diagnostic: null, actualProxyTraps: 0 },
+  );
+});
+
+test('Feature 061: capacity shape validation rejects accessor-backed fields without invoking them', () => {
+  const validateCapacityDiagnostic = runtimeFunction('validateCapacityDiagnostic');
+  const accessorBacked = {
+    budget: 'source-entries',
+    limit: 64,
+    required: 65,
+    source: 'review',
+    target: canonicalTarget(TARGET),
+  };
+  let budgetReads = 0;
+  Object.defineProperty(accessorBacked, 'budget', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      budgetReads += 1;
+      return 'source-entries';
+    },
+  });
+  assert.deepEqual(
+    { diagnostic: validateCapacityDiagnostic(accessorBacked), budgetReads },
+    { diagnostic: null, budgetReads: 0 },
+  );
+
+  const accessorTarget = canonicalTarget(TARGET);
+  let targetReads = 0;
+  Object.defineProperty(accessorTarget, 'taskKey', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      targetReads += 1;
+      return TARGET.taskKey;
+    },
+  });
+  assert.deepEqual(
+    {
+      diagnostic: validateCapacityDiagnostic({
+        budget: 'source-entries',
+        limit: 64,
+        required: 65,
+        source: 'review',
+        target: accessorTarget,
+      }),
+      targetReads,
+    },
+    { diagnostic: null, targetReads: 0 },
+  );
+
+  let targetProxyTraps = 0;
+  const proxiedTarget = new Proxy(canonicalTarget(TARGET), {
+    get() {
+      targetProxyTraps += 1;
+      throw new Error('proxied capacity target was read');
+    },
+    getPrototypeOf() {
+      targetProxyTraps += 1;
+      throw new Error('proxied capacity target prototype was read');
+    },
+    ownKeys() {
+      targetProxyTraps += 1;
+      throw new Error('proxied capacity target keys were read');
+    },
+  });
+  assert.deepEqual(
+    {
+      diagnostic: validateCapacityDiagnostic({
+        budget: 'source-entries',
+        limit: 64,
+        required: 65,
+        source: 'review',
+        target: proxiedTarget,
+      }),
+      targetProxyTraps,
+    },
+    { diagnostic: null, targetProxyTraps: 0 },
+  );
+});
+
+test('Feature 061: actual 062 source inspection is read-only and fixture streams are not completion evidence', () => {
+  const target = {
+    specPath: '.dude/specs/062-dude-canvas-workspace-integration/spec.md',
+    lane: 'lightweight',
+    taskKey: 'T001@a062c1d4',
+  };
+  const protectedPaths = [
+    '.dude/ideas/062-dude-canvas-workspace-integration.md',
+    target.specPath,
+    '.dude/specs/062-dude-canvas-workspace-integration/plan.md',
+    '.dude/specs/062-dude-canvas-workspace-integration/tasks.md',
+    '.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html',
+    '.dude/state/task-state.json',
+  ];
+  const before = new Map(protectedPaths.map((relativePath) => [
+    relativePath,
+    fs.readFileSync(path.join(REPO_ROOT, relativePath)),
+  ]));
+  const directIdeaCount = fs.readdirSync(path.join(REPO_ROOT, '.dude/ideas')).length;
+  assert.ok(
+    directIdeaCount >= 63 && directIdeaCount <= FIXED_RESOURCE_LIMITS.ideaInventoryEntries,
+    `actual source inventory is ${directIdeaCount}`,
+  );
+
+  const inspection = inspect(publicInspectionInput(REPO_ROOT, target, {
+    policyMode: 'autonomous',
+    ...feature061FixtureStreams(target, 'not-real-062-tester-or-reviewer-evidence'),
+  }));
+  assert.equal(inspection.target.taskKey, target.taskKey);
+  assert.equal(inspection.overflow, false);
+  assert.deepEqual(inspection.blockers, []);
+  for (const source of [
+    'owner-log',
+    'task-history',
+    'definition-plan',
+    'lane-history',
+    'current-run',
+    'review',
+    'verification',
+    'lint',
+    'session',
+  ]) {
+    assert.equal(
+      inspection.items.find((item) => item.source === source)?.status,
+      'present',
+      source,
+    );
+  }
+  assert.ok(modelPacket(inspection));
+
+  for (const [relativePath, bytes] of before) {
+    assert.deepEqual(
+      fs.readFileSync(path.join(REPO_ROOT, relativePath)),
+      bytes,
+      `${relativePath} stays byte-identical after read-only inspection`,
+    );
+  }
 });

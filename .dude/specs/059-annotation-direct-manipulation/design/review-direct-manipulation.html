@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>059 design proof — Review annotation direct manipulation</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        background: #f5f5f5;
+      }
+      html,
+      body,
+      #root {
+        min-width: 0;
+        min-height: 100%;
+        margin: 0;
+      }
+      body {
+        background: #f5f5f5;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root,
+        body {
+          background: #141414;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+      .dude-design-start {
+        box-sizing: border-box;
+        max-width: 72ch;
+        margin: 0;
+        padding: 32px;
+        font: 16px/1.6 system-ui, sans-serif;
+        color: #10243a;
+      }
+      .dude-design-start code {
+        display: block;
+        margin: 12px 0 20px;
+        padding: 12px;
+        overflow-wrap: anywhere;
+        background: rgba(16, 36, 58, 0.06);
+        font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        .dude-design-start {
+          color: #eaf2fa;
+        }
+        .dude-design-start code {
+          background: rgba(234, 242, 250, 0.1);
+        }
+      }
+    </style>
+    <script type="module" src="/design/host.js"></script>
+  </head>
+  <body>
+    <div id="root">
+      <div class="dude-design-start">
+        <h1>Review direct-manipulation design proof</h1>
+        <p>
+          This page is the outer Review host for feature 059. It runs the actual
+          <code>ReviewWorkspace</code> component and the actual <code>mountReview</code> annotation,
+          history, and save owner against an isolated fixture review, so it needs the design driver
+          that serves this document, the design-local <code>/review/</code> modules, and the real
+          provider and Review adapter routes. Opened straight from disk it has no origin to talk to,
+          which is why this text is all it can honestly show.
+        </p>
+        <p>Start it from the repository root, then open the URL it prints:</p>
+        <code>node .dude/specs/059-annotation-direct-manipulation/design/prototype/serve-preview.mjs</code>
+        <p>
+          Everything the running page shows belongs to a disposable fixture workspace created by
+          that driver. Save writes fixture work; Send seals and delivers fixture feedback. This is
+          not the user's live review. Nothing reaches a live owner, approves a design, or
+          acknowledges a response.
+        </p>
+      </div>
+    </div>
+    <noscript>This design proof runs the real Review interface, which requires JavaScript.</noscript>
+  </body>
+</html>

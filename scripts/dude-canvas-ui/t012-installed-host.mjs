@@ -55,8 +55,19 @@ const SPEC_PATH = `.dude/specs/${REVIEW_ID}-${REVIEW_SLUG}/spec.md`;
 const DESIGN_ROOT = `.dude/specs/${REVIEW_ID}-${REVIEW_SLUG}/design`;
 const MOCK_PATH = `${DESIGN_ROOT}/mock.html`;
 const CSS_PATH = `${DESIGN_ROOT}/mock.css`;
-const SOURCE_APP_SHA256 = '8c6e3fe19edef61cff5489a0e0e26d4167e933a9124c22b43a6b9d9e410b74a5';
+const SOURCE_APP_SHA256 = '12f499b0703b89b2f79880ba80b750ffd43fc141253846a24310797422df89b3';
 const SOURCE_LEGAL_SHA256 = '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387cf70ba7a6d869';
+/**
+ * The Review gesture behavior lives in these static modules, not in the bundled
+ * frontend, so the frontend hash alone cannot show which engine an installed
+ * run used. They are pinned here and re-checked against the bytes the installed
+ * Canvas server actually serves.
+ */
+const SOURCE_REVIEW_MODULES = Object.freeze({
+  'ui/review/engine.mjs': '578e21f8223574bd0adbdaf9d56eae2a33595ff78ba02c316e26b4626c6855af',
+  'ui/review/geometry.mjs': 'e3e000908c5ee2f033448215eec606cae2931b062d0f3d75d049844c4a8f4def',
+  'ui/review/styles.css': '20e3430b0e0111584f2c4d06352f69182cdeb3eff522db1a088d858fc23871af',
+});
 const APPROVED_HASHES = Object.freeze({
   '.dude/specs/057-dude-canvas-needs-you/design/needs-you-workspace.html':
     '6cd15f3e695e9129356f70f6b55e0ad7b7e12023b6a2926da4dec29dced5d5ee',
@@ -1699,6 +1710,62 @@ async function choose(page, label, option) {
     node.textContent.trim() === ${JSON.stringify(option)} && node.getClientRects().length)`);
 }
 
+/** Two animation frames, so a rendered result is read after the engine painted it. */
+function settle(page) {
+  return evaluate(page,
+    'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+}
+
+/** @param {Cdp} page @param {{x:number,y:number}} point */
+async function movePointer(page, point) {
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
+  await settle(page);
+}
+
+/**
+ * One press, the listed moves, and a release at the last point. An out-and-back
+ * gesture is the same call with its origin repeated last.
+ * @param {Cdp} page @param {{x:number,y:number}[]} path
+ */
+async function dragPointer(page, path) {
+  const [from, ...rest] = path;
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x, y: from.y });
+  await page.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1,
+  });
+  let previous = from;
+  for (const to of rest) {
+    for (let step = 1; step <= 4; step += 1) {
+      await page.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: previous.x + (to.x - previous.x) * step / 4,
+        y: previous.y + (to.y - previous.y) * step / 4,
+        button: 'left',
+        buttons: 1,
+      });
+    }
+    previous = to;
+  }
+  await page.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased', x: previous.x, y: previous.y, button: 'left', buttons: 0, clickCount: 1,
+  });
+  await settle(page);
+}
+
+/** @param {Cdp} page @param {{x:number,y:number}} point @param {number} [clicks] */
+async function pressPointer(page, point, clicks = 1) {
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
+  for (let clickCount = 1; clickCount <= clicks; clickCount += 1) {
+    await page.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed', x: point.x, y: point.y, button: 'left', buttons: 1, clickCount,
+    });
+    await page.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x: point.x, y: point.y, button: 'left', buttons: 0, clickCount,
+    });
+  }
+  await settle(page);
+}
+
 /** @param {Cdp} page @param {string} text */
 function visible(page, text) {
   return until(() => evaluate(page, `document.body.innerText.includes(${JSON.stringify(text)})`),
@@ -2123,6 +2190,30 @@ async function readNeedsYou(canvasUrl) {
   return response.json();
 }
 
+/**
+ * The bytes this installed Canvas actually serves for the frontend bundle and
+ * the Review engine it loads. Installed-file parity alone cannot show that the
+ * running server read those files, so the gesture proof below rests on these.
+ * @param {string} canvasUrl
+ */
+async function servedIdentity(canvasUrl) {
+  const served = {};
+  for (const [route, expected] of [
+    ['/assets/app.js', SOURCE_APP_SHA256],
+    ...Object.entries(SOURCE_REVIEW_MODULES).map(([relative, expected]) => (
+      [`/${relative.slice('ui/'.length)}`, expected]
+    )),
+  ]) {
+    const response = await fetch(new URL(route, canvasUrl), { signal: AbortSignal.timeout(10_000) });
+    assert.equal(response.status, 200, `installed Canvas did not serve ${route}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const actual = sha256(bytes);
+    assert.equal(actual, expected, `served ${route} is not the current source`);
+    served[route] = { bytes: bytes.length, sha256: actual };
+  }
+  return served;
+}
+
 /** @param {string} root */
 function installedParity(root) {
   const runtime = [
@@ -2156,6 +2247,9 @@ function installedParity(root) {
   }
   assert.equal(pairs['ui/assets/app.js'], SOURCE_APP_SHA256);
   assert.equal(pairs['ui/assets/app.js.LEGAL.txt'], SOURCE_LEGAL_SHA256);
+  for (const [relative, expected] of Object.entries(SOURCE_REVIEW_MODULES)) {
+    assert.equal(pairs[relative], expected, `installed Review module is not the current source: ${relative}`);
+  }
   const forbidden = [
     '.github/extensions/dude/frontend',
     '.github/extensions/dude/needs-you.test.mjs',
@@ -2200,8 +2294,293 @@ async function driveBlankCapture(page, canvasUrl, intent) {
   return { network, screenshot: await screenshot(page, `blank-${sha256(intent).slice(0, 8)}`) };
 }
 
-/** @param {Cdp} page @param {string} version @param {string} prompt */
-async function driveReviewRound(page, version, prompt) {
+const SAVED_MARKUP_DESCRIPTION =
+  'Markup is already saved. Your work is kept as you go, so there is nothing waiting to save.';
+
+/** @param {Cdp} page @param {string} label */
+function awaitSavedMarkup(page, label) {
+  return until(() => evaluate(page, `(() => {
+    const node = ${button('Save markup')};
+    if (!node?.matches('[aria-disabled="true"]')) return false;
+    return (node.getAttribute('aria-describedby') || '').split(/\\s+/).filter(Boolean)
+      .map(id => document.getElementById(id)?.textContent.replace(/\\s+/g, ' ').trim() || '')
+      .filter(Boolean).join(' ') === ${JSON.stringify(SAVED_MARKUP_DESCRIPTION)};
+  })()`), label);
+}
+
+/** @param {{left:number,top:number,right:number,bottom:number}} a @param {typeof a} b */
+function sameBox(a, b, tolerance = 0.5) {
+  return Boolean(a && b) && ['left', 'top', 'right', 'bottom']
+    .every((edge) => Math.abs(a[edge] - b[edge]) <= tolerance);
+}
+
+/**
+ * Bounded installed proof of the current Review gesture, driven with real
+ * browser input against the engine this installed Canvas actually served.
+ *
+ * With a drawing tool armed, the already-selected mark keeps its handles for
+ * resizing and its border for moving, two unmoved border presses open its
+ * comment through the existing Comments path, and every other press still
+ * draws. The out-and-back drag is the decisive history check: its geometry ends
+ * equal to its origin, so no history entry may be recorded and the pending redo
+ * must survive. The round's own two annotations and their exact saved
+ * coordinates are restored through the existing Undo control before the caller
+ * continues, so nothing here changes what is sent.
+ *
+ * @param {Cdp} page @param {string} root @param {string} version
+ */
+async function driveArmedManipulation(page, root, version) {
+  const reviews = path.join(root, ...path.posix.dirname(SPEC_PATH).split('/'), 'reviews');
+  const submissions = fs.existsSync(reviews)
+    ? fs.readdirSync(reviews).filter((name) => (
+      fs.existsSync(path.join(reviews, name, 'working.json'))
+    ))
+    : [];
+  assert.equal(submissions.length, 1,
+    'the armed gesture proof reads exactly one installed working state');
+  const workingPath = path.join(reviews, submissions[0], 'working.json');
+  const workingState = () => JSON.parse(fs.readFileSync(workingPath, 'utf8')).state;
+  const tool = (label) => `document.querySelector('[data-review-tools] [aria-label=${
+    JSON.stringify(label)}]')`;
+  const overlayTool = () => evaluate(page,
+    `document.querySelector('.dude-review-overlay')?.dataset.tool ?? null`);
+  const overlayAction = () => evaluate(page, `(() => {
+    const overlay = document.querySelector('.dude-review-overlay');
+    return {action:overlay.dataset.action ?? null, cursor:getComputedStyle(overlay).cursor};
+  })()`);
+  const annotationCount = () => evaluate(page,
+    `document.querySelectorAll('.dude-review-overlay g[data-annotation]').length`);
+  // Read the mark where it is painted, so every press lands on what a reviewer
+  // actually sees rather than on recomputed coordinates.
+  const paintedBox = (id = null) => evaluate(page, `(() => {
+    const wanted = ${JSON.stringify(id)};
+    const groups = [...document.querySelectorAll('.dude-review-overlay g[data-annotation]')]
+      .filter((node) => node.querySelector('rect'));
+    const group = wanted ? groups.find((node) => node.dataset.annotation === wanted) : groups[0];
+    if (!group) return null;
+    const rect = group.querySelector('rect');
+    const box = rect.getBBox();
+    const ctm = rect.getScreenCTM();
+    const at = (x, y) => {
+      const point = new DOMPoint(x, y).matrixTransform(ctm);
+      return {x:point.x, y:point.y};
+    };
+    const topLeft = at(box.x, box.y), bottomRight = at(box.x + box.width, box.y + box.height);
+    return {id:group.dataset.annotation, left:topLeft.x, top:topLeft.y,
+      right:bottomRight.x, bottom:bottomRight.y};
+  })()`);
+  const paintedHandle = (name) => evaluate(page, `(() => {
+    const node = document.querySelector('.dude-review-overlay [data-handle=${name}]');
+    if (!node) return null;
+    const box = node.getBBox();
+    const point = new DOMPoint(box.x + box.width / 2, box.y + box.height / 2)
+      .matrixTransform(node.getScreenCTM());
+    return {x:point.x, y:point.y};
+  })()`);
+  const commentsOpen = () => evaluate(page,
+    `Boolean(document.querySelector('[aria-label="Close comments"]'))`);
+  const markedRow = () => evaluate(page,
+    `document.querySelector('[data-annotation-id][aria-current="true"]')?.dataset.annotationId ?? null`);
+  const focusedComment = () => evaluate(page, `(() => {
+    const node = ${field('Comment (optional)')};
+    return Boolean(node) && !node.disabled && document.activeElement === node;
+  })()`);
+  const historyControls = () => evaluate(page, `(() => {
+    const usable = (label) => {
+      const node = document.querySelector('[aria-label="' + label + '"]');
+      return node ? !node.matches(':disabled,[aria-disabled="true"]') : null;
+    };
+    return {undo:usable('Undo annotation'), redo:usable('Redo annotation')};
+  })()`);
+  const round = (point) => ({ x: Math.round(point.x), y: Math.round(point.y) });
+  // Every press is proved to land on the annotation overlay first, so no
+  // assertion rests on a guess about where the palette or the mock's own
+  // content sits.
+  const overlayPoint = async (target, label) => {
+    const point = round(target);
+    assert.equal(await evaluate(page, `Boolean(document.elementFromPoint(${point.x}, ${point.y})
+      ?.closest('.dude-review-overlay'))`), true, `${label} must land on the reviewed overlay`);
+    return point;
+  };
+  const clickUndo = () => click(page, `document.querySelector('[aria-label="Undo annotation"]')`);
+
+  await click(page, tool('Select (V)'));
+  await until(async () => await overlayTool() === 'select', 'installed Select tool armed');
+  const origin = await paintedBox();
+  assert.ok(origin, 'the installed round drew one rectangular mark to manipulate');
+  assert.ok(origin.right - origin.left >= 160 && origin.bottom - origin.top >= 120,
+    `the mark must hold an interior drawing away from its border: ${JSON.stringify(origin)}`);
+  await pressPointer(page, await overlayPoint({
+    x: (origin.left + origin.right) / 2, y: (origin.top + origin.bottom) / 2,
+  }, 'the selecting press'));
+  await until(() => workingState().selectedId === origin.id,
+    'the installed working state records the pressed mark as selected');
+  const saved = workingState();
+  assert.equal(saved.annotations.length, 2, 'the armed proof starts from this round\'s own two marks');
+  await click(page, tool('Box (B)'));
+  await until(async () => await overlayTool() === 'box',
+    'installed Box tool armed over the selected mark');
+
+  // The hover cursor answers to the same classification the next press uses, so
+  // it is read from real pointer movement over the served overlay.
+  const hoverCursor = async (target, expected, label) => {
+    const point = await overlayPoint(target, label);
+    let observed = null;
+    await until(async () => {
+      await movePointer(page, point);
+      observed = await overlayAction();
+      return observed.action === expected.action && observed.cursor === expected.cursor;
+    }, label);
+    return observed;
+  };
+  const cornerHandle = await until(() => paintedHandle('nw'),
+    'the selected mark keeps a painted corner handle while the drawing tool is armed');
+  const cursors = {
+    border: await hoverCursor(
+      { x: origin.left, y: (origin.top + origin.bottom) / 2 },
+      { action: 'move', cursor: 'move' },
+      'a move cursor on the armed selected border',
+    ),
+    corner: await hoverCursor(
+      cornerHandle,
+      { action: 'nwse-resize', cursor: 'nwse-resize' },
+      'a diagonal resize cursor on the armed selected corner handle',
+    ),
+    interior: await hoverCursor(
+      { x: (origin.left + origin.right) / 2, y: (origin.top + origin.bottom) / 2 },
+      { action: null, cursor: 'crosshair' },
+      'the drawing cursor inside the selected mark',
+    ),
+  };
+  assert.equal(await annotationCount(), 2, 'hovering the armed affordances draws nothing');
+  assert.ok(sameBox(await paintedBox(origin.id), origin), 'and changes no geometry');
+
+  const borderPoint = await overlayPoint(
+    { x: origin.left, y: (origin.top + origin.bottom) / 2 }, 'the armed border move');
+  await dragPointer(page, [borderPoint, await overlayPoint(
+    { x: borderPoint.x + 30, y: borderPoint.y }, 'the armed border move release')]);
+  const moved = await until(async () => {
+    const next = await paintedBox(origin.id);
+    return next && Math.abs(next.left - (origin.left + 30)) <= 1.5
+      && Math.abs(next.right - (origin.right + 30)) <= 1.5
+      && Math.abs(next.top - origin.top) <= 1.5 && Math.abs(next.bottom - origin.bottom) <= 1.5
+      ? next : null;
+  }, 'the armed border drag moves the whole selected mark');
+  assert.equal(await annotationCount(), 2, 'the armed border move draws nothing');
+  assert.equal(await overlayTool(), 'box', 'and leaves the drawing tool armed');
+
+  const cornerPoint = await overlayPoint(await until(() => paintedHandle('nw'),
+    'the moved mark repaints its corner handle before the armed resize'), 'the armed handle resize');
+  const resizeTo = await overlayPoint(
+    { x: cornerPoint.x - 16, y: cornerPoint.y - 12 }, 'the armed handle resize release');
+  await dragPointer(page, [cornerPoint, resizeTo]);
+  const resized = await until(async () => {
+    const next = await paintedBox(origin.id);
+    return next && Math.abs(next.left - resizeTo.x) <= 1.5 && Math.abs(next.top - resizeTo.y) <= 1.5
+      && Math.abs(next.right - moved.right) <= 0.5 && Math.abs(next.bottom - moved.bottom) <= 0.5
+      ? next : null;
+  }, 'the armed handle drag resizes that same mark from its pressed corner');
+  assert.equal(await annotationCount(), 2, 'the armed handle resize draws nothing');
+  assert.equal(await overlayTool(), 'box', 'and leaves the drawing tool armed');
+
+  const commentPoint = await overlayPoint(
+    { x: resized.left, y: (resized.top + resized.bottom) / 2 }, 'the armed border comment gesture');
+  await pressPointer(page, commentPoint, 2);
+  await until(async () => await commentsOpen() && await focusedComment(),
+    'two unmoved presses on the armed border open that mark\'s focused comment field');
+  assert.equal(await markedRow(), origin.id, 'the opened comment belongs to the pressed mark');
+  assert.equal(await annotationCount(), 2, 'the armed border gesture draws nothing');
+  assert.ok(sameBox(await paintedBox(origin.id), resized), 'and moves nothing');
+  assert.equal(await overlayTool(), 'box', 'the drawing tool is still armed');
+  await click(page, `document.querySelector('[aria-label="Close comments"]')`);
+  await until(async () => !(await commentsOpen()),
+    'installed Comments closed after the armed border gesture');
+  assert.ok(sameBox(await paintedBox(origin.id), resized),
+    'the reviewed frame kept the mark where it was painted through the comment gesture');
+
+  await dragPointer(page, [
+    await overlayPoint({ x: resized.left + 40, y: resized.top + 40 }, 'the interior drawing'),
+    await overlayPoint({ x: resized.left + 120, y: resized.top + 90 },
+      'the interior drawing release'),
+  ]);
+  const drawnWhileArmed = await until(async () => {
+    const count = await annotationCount();
+    return count === 3 ? count : null;
+  }, 'a press inside the selected mark, away from its border, still draws');
+  assert.ok(sameBox(await paintedBox(origin.id), resized),
+    'drawing inside the selected mark leaves that mark unchanged');
+  assert.equal(await commentsOpen(), false, 'the interior drawing opens no comment');
+
+  // Out and back: the drag ends exactly where it started, so the engine records
+  // no geometry history and the redo entry left by this undo must survive it.
+  await clickUndo();
+  await until(async () => await annotationCount() === 2,
+    'Undo removes the mark drawn inside the selection');
+  const beforeOutAndBack = await until(async () => {
+    const controls = await historyControls();
+    return controls.undo && controls.redo ? controls : null;
+  }, 'installed Undo and Redo settle before the out-and-back drag');
+  await click(page, tool('Select (V)'));
+  await until(async () => await overlayTool() === 'select',
+    'installed Select tool armed to reselect the mark after Undo');
+  await pressPointer(page, await overlayPoint({
+    x: (resized.left + resized.right) / 2, y: (resized.top + resized.bottom) / 2,
+  }, 'the reselecting press'));
+  await until(() => workingState().selectedId === origin.id,
+    'the restored mark is selected again before the out-and-back drag');
+  await click(page, tool('Box (B)'));
+  await until(async () => await overlayTool() === 'box',
+    'installed Box tool re-armed for the out-and-back drag');
+  const outAndBack = await overlayPoint(
+    { x: resized.left, y: (resized.top + resized.bottom) / 2 }, 'the out-and-back drag');
+  await dragPointer(page, [
+    outAndBack,
+    await overlayPoint({ x: outAndBack.x + 40, y: outAndBack.y + 25 }, 'the out-and-back excursion'),
+    outAndBack,
+  ]);
+  assert.ok(sameBox(await paintedBox(origin.id), resized),
+    'the out-and-back armed drag returns the mark to its origin');
+  assert.equal(await commentsOpen(), false, 'and opens no comment');
+  const afterOutAndBack = await until(async () => {
+    const controls = await historyControls();
+    return controls.undo ? controls : null;
+  }, 'installed history controls settle after the out-and-back drag');
+  assert.deepEqual(afterOutAndBack, { undo: true, redo: true },
+    'a net-equal out-and-back records no history entry, so the pending redo survives');
+
+  await clickUndo();
+  await until(async () => {
+    const next = await paintedBox(origin.id);
+    return sameBox(next, moved);
+  }, 'Undo reverts the armed resize');
+  await clickUndo();
+  await until(async () => {
+    const next = await paintedBox(origin.id);
+    return sameBox(next, origin);
+  }, 'Undo reverts the armed move');
+  const restored = await until(() => {
+    const state = workingState();
+    return state.annotations.length === 2
+      && JSON.stringify(state.annotations) === JSON.stringify(saved.annotations) ? state : null;
+  }, `installed Review ${version} markup restored to its own saved annotations`);
+  await awaitSavedMarkup(page, `installed Review ${version} saved after the armed gesture proof`);
+  return {
+    annotationId: origin.id,
+    cursors,
+    origin,
+    moved,
+    resized,
+    beforeOutAndBack,
+    afterOutAndBack,
+    drawnWhileArmed,
+    restoredAnnotations: restored.annotations.length,
+    restoredSelectedId: restored.selectedId,
+    tool: await overlayTool(),
+  };
+}
+
+/** @param {Cdp} page @param {string} version @param {string} prompt @param {string|null} [gestureRoot] */
+async function driveReviewRound(page, version, prompt, gestureRoot = null) {
   await visible(page, prompt);
   await click(page, `[...document.querySelectorAll('button')].find((node) =>
     node.innerText.includes(${JSON.stringify(prompt)}) && node.getClientRects().length)`);
@@ -2259,6 +2638,9 @@ async function driveReviewRound(page, version, prompt) {
       .filter(Boolean).join(' ')
       === 'Markup is already saved. Your work is kept as you go, so there is nothing waiting to save.';
   })()`), `installed Review ${version} saved markup`);
+  const armedManipulation = gestureRoot
+    ? await driveArmedManipulation(page, gestureRoot, version)
+    : null;
   const beforeReturn = {
     comments: await evaluate(page, `[...document.querySelectorAll('button')]
       .find((node) => /^Comments \\(2\\)$/.test(node.innerText.trim()))?.innerText.trim()`),
@@ -2289,6 +2671,7 @@ async function driveReviewRound(page, version, prompt) {
   return {
     version,
     comment,
+    armedManipulation,
     beforeReturn,
     returnFocus,
     workingScreenshot,
@@ -2370,7 +2753,7 @@ try {
       diagnostic: appScripting.exitCode === 0 ? null : appScripting.stderr.trim(),
     },
     supportedIsolatedPanelAutomation: false,
-    reason: 'The SDK control host reports ui.canvases=false and canvas.open returns provider metadata plus a URL, not a desktop panel handle. The installed app command accepts no session/canvas argument, and the app exposes no scripting dictionary. Attaching to the foreground app could change the active parent session.',
+    reason: 'The SDK control host reports ui.canvases=false and canvas.open returns provider metadata plus a URL, not a desktop panel handle. The installed app command accepts no session/canvas argument, so no CLI selector reaches one panel, and native embedding stays unverified here. A nonzero scriptingDictionary exit records only that the probe did not complete, with its diagnostic, and is not evidence that the app lacks a dictionary. Attaching to the foreground app could change the active parent session.',
     remainingSmoke: [
       'Open the Dude panel in the disposable installed workspace.',
       'Confirm usable current panel sizing, current light/dark theme, and keyboard focus entry.',
@@ -2391,6 +2774,10 @@ try {
       bytes: sourceBytes('src/extensions/dude/ui/assets/app.js.LEGAL.txt').length,
       sha256: SOURCE_LEGAL_SHA256,
     },
+    review: Object.fromEntries(Object.entries(SOURCE_REVIEW_MODULES).map(([relative, expected]) => [
+      relative,
+      { bytes: sourceBytes(`src/extensions/dude/${relative}`).length, sha256: expected },
+    ])),
     extension: sha256(sourceBytes('src/extensions/dude/extension.mjs')),
   };
   browserState = await startBrowser();
@@ -2517,6 +2904,7 @@ try {
   });
   browserState.page.on('Runtime.exceptionThrown', (event) => runtimeErrors.push(event));
   await navigate(browserState.page, host.canvas.url, 1440);
+  const served = await servedIdentity(host.canvas.url);
   const initialMessageId = await host.session.send({
     prompt: 'T012 installed Review: publish revision A and follow the bounded A→B→C fixture sequence.',
   });
@@ -2529,6 +2917,7 @@ try {
     browserState.page,
     'A',
     'Annotate exact installed revision A',
+    root,
   );
   await until(() => model.state.phase === 'waiting-b' || model.state.modelError,
     'same owner revision B request', 45_000);
@@ -2623,6 +3012,7 @@ try {
     data,
     releaseFiles: release.files.length,
     parity,
+    served,
     exactOwner: owner.owner,
     ownerDiagnostics: owner.diagnostics,
     initialMessageId,
@@ -2639,6 +3029,7 @@ try {
     sameOwner: 'dude-spec-lead',
     currentRevision: model.state.revisions.C,
     realModelReasoning: false,
+    armedManipulationEvidence: 'revision A drove the current gesture with real browser input on the served engine: armed-tool handle resize, border move, two unmoved border presses opening Comments, interior drawing, and a net-equal out-and-back that recorded no history; the round\'s own saved annotations were restored before sending',
     ownerRoute: 'selected installed Dude session projection published each waiter, delegated A→B and B→C to the installed Spec Lead through task, and acknowledged only after the owner view/edit/view result; the model fixture made no canonical write',
     desktopAppRendererObserved: false,
   };

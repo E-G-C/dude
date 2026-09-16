@@ -35,3 +35,11 @@
 }
 .dude-review-overlay[data-tool="select"] { cursor: default; }
 .dude-review-overlay:not([data-tool="select"]) { cursor: crosshair; }
+/* The transient action the engine classified under the pointer wins over the
+   tool's default, so a selected handle, border, or stroke says what the next
+   press will actually do. */
+.dude-review-overlay[data-action="move"] { cursor: move; }
+.dude-review-overlay[data-action="nwse-resize"] { cursor: nwse-resize; }
+.dude-review-overlay[data-action="nesw-resize"] { cursor: nesw-resize; }
+.dude-review-overlay[data-action="ew-resize"] { cursor: ew-resize; }
+.dude-review-overlay[data-action="ns-resize"] { cursor: ns-resize; }

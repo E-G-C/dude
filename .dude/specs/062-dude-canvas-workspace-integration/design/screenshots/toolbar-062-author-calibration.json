@@ -1,0 +1,168 @@
+{
+  "kind": "focused author observation, not independent acceptance",
+  "mode": "calibration",
+  "browser": "Edg/133.0.3065.69",
+  "deviceScaleFactor": 1,
+  "preview": "http://127.0.0.1:61609/workspace-integration.html",
+  "previewSha256": "2831148e5c1fa524900a3e29111ee77532100fca4688ecf9fc819dd9d6355cee",
+  "cases": [
+    {
+      "width": 360,
+      "height": 780,
+      "layout": {
+        "#proto-bar": {
+          "x": 0,
+          "y": 0,
+          "w": 360,
+          "h": 290,
+          "text": "Prototype — not part of Dude\n      \n        \n        Prototype\n      \n      \n        \n        Compare with 052\n      \n      Prototype data: Example wo"
+        },
+        ".proto-rail": {
+          "x": 0,
+          "y": 0,
+          "w": 360,
+          "h": 268,
+          "text": "Prototype — not part of Dude\n      \n        \n        Prototype\n      \n      \n        \n        Compare with 052\n      \n      Prototype data: Example wo"
+        },
+        ".proto-edge": {
+          "x": 0,
+          "y": 268,
+          "w": 360,
+          "h": 20,
+          "text": "The Dude window starts below this line"
+        },
+        "#proto-state": {
+          "x": 12,
+          "y": 90,
+          "w": 336,
+          "h": 160,
+          "text": "Prototype data: Example work in progress, six example requests waiting. Discovery and Now still read this repository’s frozen records. This selection "
+        },
+        ".shell-bar": {
+          "x": 0,
+          "y": 290,
+          "w": 360,
+          "h": 118,
+          "text": "Dude\n        Workspace\n      \n      \n\n      \n      \n        \n        \n        \n          Working on\n          062Dude Canvas Workspace Integration\n   "
+        },
+        ".shell-rail": {
+          "x": 0,
+          "y": 408,
+          "w": 360,
+          "h": 49,
+          "text": "Close\n        \n        OverviewNowNeeds you6New idea"
+        },
+        ".review-bar": {
+          "x": 0,
+          "y": 457,
+          "w": 360,
+          "h": 73,
+          "text": "BackDoes this combined workspace match the cockpit you approved for 052?Reviewrev-3Example review"
+        },
+        ".review-actions": {
+          "x": 0,
+          "y": 530,
+          "w": 360,
+          "h": 157,
+          "text": "Save markupComments (2)Notes and moreSend feedbackApprove this revision.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration."
+        },
+        ".review-side": {
+          "x": 0,
+          "y": 1246,
+          "w": 360,
+          "h": 49,
+          "text": "Comments, notes and sealed evidenceAnnotation 1 · boxThe status bar should keep read freshness visible at this width.Annotation 2 · commentNext reads "
+        },
+        ".shell-status": {
+          "x": 0,
+          "y": 1295,
+          "w": 360,
+          "h": 61,
+          "text": "Work coverage: currentCurrent request coverage: currentConnectedLast complete read 2026-09-13 21:30 local"
+        }
+      }
+    },
+    {
+      "width": 1000,
+      "height": 300,
+      "layout": {
+        "#proto-bar": {
+          "x": 0,
+          "y": 0,
+          "w": 1000,
+          "h": 158,
+          "text": "Prototype — not part of Dude\n      \n        \n        Prototype\n      \n      \n        \n        Compare with 052\n      \n      Prototype data: Example wo"
+        },
+        ".proto-rail": {
+          "x": 0,
+          "y": 0,
+          "w": 1000,
+          "h": 136,
+          "text": "Prototype — not part of Dude\n      \n        \n        Prototype\n      \n      \n        \n        Compare with 052\n      \n      Prototype data: Example wo"
+        },
+        ".proto-edge": {
+          "x": 0,
+          "y": 136,
+          "w": 1000,
+          "h": 20,
+          "text": "The Dude window starts below this line"
+        },
+        "#proto-state": {
+          "x": 12,
+          "y": 54,
+          "w": 976,
+          "h": 64,
+          "text": "Prototype data: Example work in progress, six example requests waiting. Discovery and Now still read this repository’s frozen records. This selection "
+        },
+        ".shell-bar": {
+          "x": 0,
+          "y": 158,
+          "w": 1000,
+          "h": 54,
+          "text": "Dude\n        Workspace\n      \n      \n\n      \n      \n        \n        \n        \n          Working on\n          062Dude Canvas Workspace Integration\n   "
+        },
+        ".shell-rail": {
+          "x": 0,
+          "y": 212,
+          "w": 48,
+          "h": 690,
+          "text": "Navigation\n        \n        OverviewNowNeeds you6New idea"
+        },
+        ".review-bar": {
+          "x": 48,
+          "y": 212,
+          "w": 952,
+          "h": 45,
+          "text": "BackDoes this combined workspace match the cockpit you approved for 052?Reviewrev-3Example review"
+        },
+        ".review-actions": {
+          "x": 48,
+          "y": 257,
+          "w": 952,
+          "h": 69,
+          "text": "Save markupComments (2)Notes and moreSend feedbackApprove this revision.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration."
+        },
+        ".review-side": {
+          "x": 48,
+          "y": 853,
+          "w": 952,
+          "h": 49,
+          "text": "Comments, notes and sealed evidenceAnnotation 1 · boxThe status bar should keep read freshness visible at this width.Annotation 2 · commentNext reads "
+        },
+        ".shell-status": {
+          "x": 0,
+          "y": 274,
+          "w": 1000,
+          "h": 26,
+          "text": "Work coverage: currentCurrent request coverage: currentConnectedLast complete read 2026-09-13 21:30 local"
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "failure": {
+    "message": "{\"exceptionId\":1,\"text\":\"Uncaught\",\"lineNumber\":1,\"columnNumber\":86,\"scriptId\":\"9\",\"stackTrace\":{\"callFrames\":[{\"functionName\":\"pick\",\"scriptId\":\"9\",\"url\":\"\",\"lineNumber\":1,\"columnNumber\":86},{\"functionName\":\"\",\"scriptId\":\"9\",\"url\":\"\",\"lineNumber\":9,\"columnNumber\":75},{\"functionName\":\"\",\"scriptId\":\"9\",\"url\":\"\",\"lineNumber\":11,\"columnNumber\":8}]},\"exception\":{\"type\":\"object\",\"subtype\":\"error\",\"className\":\"TypeError\",\"description\":\"TypeError: Cannot read properties of null (reading 'outerHTML')\\n    at pick (<anonymous>:2:87)\\n    at <anonymous>:10:76\\n    at <anonymous>:12:9\",\"objectId\":\"-1319690303768615967.1.2\"}}",
+    "stack": "Error: {\"exceptionId\":1,\"text\":\"Uncaught\",\"lineNumber\":1,\"columnNumber\":86,\"scriptId\":\"9\",\"stackTrace\":{\"callFrames\":[{\"functionName\":\"pick\",\"scriptId\":\"9\",\"url\":\"\",\"lineNumber\":1,\"columnNumber\":86},{\"functionName\":\"\",\"scriptId\":\"9\",\"url\":\"\",\"lineNumber\":9,\"columnNumber\":75},{\"functionName\":\"\",\"scriptId\":\"9\",\"url\":\"\",\"lineNumber\":11,\"columnNumber\":8}]},\"exception\":{\"type\":\"object\",\"subtype\":\"error\",\"className\":\"TypeError\",\"description\":\"TypeError: Cannot read properties of null (reading 'outerHTML')\\n    at pick (<anonymous>:2:87)\\n    at <anonymous>:10:76\\n    at <anonymous>:12:9\",\"objectId\":\"-1319690303768615967.1.2\"}}\n    at evaluate (file:///Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/toolbar-062-author-probe.mjs:24:38)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async file:///Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/toolbar-062-author-probe.mjs:211:32"
+  },
+  "cleanup": "isolated browser closed and owned profile removed"
+}

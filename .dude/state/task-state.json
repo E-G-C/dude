@@ -500,5 +500,20 @@
       "T012@a57c1212": "x"
     },
     "updated_at": "2026-09-13T14:34:48.344Z"
+  },
+  ".dude/specs/059-annotation-direct-manipulation/tasks.md": {
+    "glyphs": {
+      "T001@59a10f01": "x",
+      "T002@59a10f02": "x",
+      "T003@59a10f03": "x",
+      "T004@59a10f04": "x"
+    },
+    "updated_at": "2026-09-16T10:19:22.255Z"
+  },
+  ".dude/specs/061-work-inspection-source-capacity/tasks.md": {
+    "glyphs": {
+      "T001@61c8a4e2": "x"
+    },
+    "updated_at": "2026-09-15T12:29:43.586Z"
   }
 }

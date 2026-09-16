@@ -1,0 +1,459 @@
+{
+  "revision": null,
+  "prefix": "single-search-062-author",
+  "browser": "Edg/133.0.3065.69",
+  "mock": ".dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+  "fatal": null,
+  "passed": 43,
+  "total": 43,
+  "failures": [],
+  "checks": [
+    {
+      "name": "0 a fresh launch still opens Overview on Open with the one search",
+      "pass": true,
+      "detail": {
+        "scope": "open",
+        "rowCount": 8
+      }
+    },
+    {
+      "name": "1 launch Overview shows the one search with no selection",
+      "pass": true,
+      "detail": {
+        "rows": 62,
+        "view": "overview"
+      }
+    },
+    {
+      "name": "2 launch Overview lists every record in scope",
+      "pass": true,
+      "detail": {
+        "rowCount": 62
+      }
+    },
+    {
+      "name": "3 pointer activation opens 002 in Now with Working on",
+      "pass": true,
+      "detail": {
+        "view": "now",
+        "number": "002"
+      }
+    },
+    {
+      "name": "4 Now hides search and scope while selected",
+      "pass": true,
+      "detail": {
+        "finderDisplay": "none"
+      }
+    },
+    {
+      "name": "5 Overview return keeps the 002 selection",
+      "pass": true,
+      "detail": {
+        "number": "002"
+      }
+    },
+    {
+      "name": "6 Overview hides search and scope while selected",
+      "pass": true,
+      "detail": {
+        "searchVisible": false,
+        "scopeVisible": false,
+        "finderDisplay": "none"
+      }
+    },
+    {
+      "name": "7 selected Overview shows only the selected record",
+      "pass": true,
+      "detail": {
+        "rows": [
+          "002"
+        ]
+      }
+    },
+    {
+      "name": "8 selected Overview drops the Nothing-is-selected claim",
+      "pass": true,
+      "detail": {
+        "headLead": "Filtered to the work you are on: 002 Remove Legacy Compatibility From The Bundle. There is one work search, so choosing different work means clearing this filter first, with Clear in the command bar. Nothing is closed or discarded by clearing."
+      }
+    },
+    {
+      "name": "9 selected Overview counts state the selected-work filter",
+      "pass": true,
+      "detail": {
+        "meta": [
+          "1 of 62 recorded ideas and features · selected work filter · 002",
+          "The other 61 recorded ideas and features are filtered out of this list, not removed. Clear brings the one search back with an empty search and All records.",
+          "Open this row, or focus it and press Enter, to return to Now for this record."
+        ]
+      }
+    },
+    {
+      "name": "10 no popup or focusable search field while selected",
+      "pass": true,
+      "detail": {
+        "popHidden": true,
+        "inputFocusable": false,
+        "activeId": "view-title"
+      }
+    },
+    {
+      "name": "11 the selected Overview row reopens the same Now",
+      "pass": true,
+      "detail": {
+        "view": "now",
+        "number": "002"
+      }
+    },
+    {
+      "name": "12 Clear returns Overview with no selection and the search focused",
+      "pass": true,
+      "detail": {
+        "activeId": "finder-input",
+        "view": "overview"
+      }
+    },
+    {
+      "name": "13 Clear empties the query and selects All records",
+      "pass": true,
+      "detail": {
+        "query": "",
+        "scope": "all",
+        "rowCount": 62
+      }
+    },
+    {
+      "name": "14 Clear resets the lookup scroll and roving row",
+      "pass": true,
+      "detail": {
+        "scrollTop": 0,
+        "rovingRow": "001"
+      }
+    },
+    {
+      "name": "15 typing narrows the Overview lookup",
+      "pass": true,
+      "detail": {
+        "rowCount": 1,
+        "rows": [
+          "002"
+        ]
+      }
+    },
+    {
+      "name": "16 ArrowDown from the search reaches the result rows",
+      "pass": true,
+      "detail": {
+        "activeId": "002"
+      }
+    },
+    {
+      "name": "17 native Enter on a row commits that record",
+      "pass": true,
+      "detail": {
+        "view": "now",
+        "number": "002"
+      }
+    },
+    {
+      "name": "18 typed-query Overview return stays single-selector",
+      "pass": true,
+      "detail": {
+        "rowCount": 1,
+        "searchVisible": false
+      }
+    },
+    {
+      "name": "19 Clear after a typed query empties it and shows All records",
+      "pass": true,
+      "detail": {
+        "query": "",
+        "scope": "all",
+        "rowCount": 62,
+        "scrollTop": 0
+      }
+    },
+    {
+      "name": "20 Clear leaves focus in the same search input",
+      "pass": true,
+      "detail": {
+        "activeId": "finder-input"
+      }
+    },
+    {
+      "name": "21 a different record is reachable straight after Clear",
+      "pass": true,
+      "detail": {
+        "number": "021"
+      }
+    },
+    {
+      "name": "22 a committed closed record keeps the single selector on Overview",
+      "pass": true,
+      "detail": {
+        "rows": [
+          "001"
+        ],
+        "number": "001"
+      }
+    },
+    {
+      "name": "23 closed selected Overview counts stay truthful",
+      "pass": true,
+      "detail": {
+        "meta": [
+          "1 of 62 recorded ideas and features · selected work filter · 001",
+          "The other 61 recorded ideas and features are filtered out of this list, not removed. Clear brings the one search back with an empty search and All records.",
+          "Open this row, or focus it and press Enter, to return to Now for this record."
+        ]
+      }
+    },
+    {
+      "name": "24 the closed record still opens its own Now",
+      "pass": true,
+      "detail": {
+        "number": "001"
+      }
+    },
+    {
+      "name": "25 960px selected Overview keeps one selector and no page overflow",
+      "pass": true,
+      "detail": {
+        "overflowX": 0,
+        "rowCount": 1
+      }
+    },
+    {
+      "name": "26 360px selected Overview keeps one selector and no page overflow",
+      "pass": true,
+      "detail": {
+        "overflowX": 0,
+        "rowCount": 1
+      }
+    },
+    {
+      "name": "27 Clear at 360px focuses the same visible search",
+      "pass": true,
+      "detail": {
+        "activeId": "finder-input",
+        "query": ""
+      }
+    },
+    {
+      "name": "28 requests for other scopes stay listed while work is selected",
+      "pass": true,
+      "detail": {
+        "requests": [
+          "preview-062-1",
+          "fact-061-4",
+          "onboarding-session-1",
+          "permission-057-2",
+          "observation-052-9",
+          "scope-058-1"
+        ]
+      }
+    },
+    {
+      "name": "29 a cross-scope request opens with Browsing and keeps its own scope",
+      "pass": true,
+      "detail": {
+        "caption": "Browsing",
+        "number": "062"
+      }
+    },
+    {
+      "name": "30 the unsent response draft holds its text",
+      "pass": true,
+      "detail": {
+        "drafts": [
+          "text=draft kept"
+        ]
+      }
+    },
+    {
+      "name": "31 Overview from a request keeps the selection and one selector",
+      "pass": true,
+      "detail": {
+        "rows": [
+          "062"
+        ]
+      }
+    },
+    {
+      "name": "32 unrelated current requests are all still listed after that return",
+      "pass": true,
+      "detail": {
+        "requests": [
+          "preview-062-1",
+          "fact-061-4",
+          "onboarding-session-1",
+          "permission-057-2",
+          "observation-052-9",
+          "scope-058-1"
+        ]
+      }
+    },
+    {
+      "name": "33 the unsent draft and caret key survive the Overview round trip",
+      "pass": true,
+      "detail": {
+        "drafts": [
+          "text=draft kept"
+        ]
+      }
+    },
+    {
+      "name": "34 local example markup is placed on the reviewed stage and it pans",
+      "pass": true,
+      "detail": {
+        "annoCount": 3,
+        "pan": {
+          "left": 21,
+          "top": 0
+        }
+      }
+    },
+    {
+      "name": "35 Review return through Overview keeps the single selector",
+      "pass": true,
+      "detail": {
+        "rows": [
+          "062"
+        ]
+      }
+    },
+    {
+      "name": "36 Review markup and pinned viewport return unchanged",
+      "pass": true,
+      "detail": {
+        "annoCount": 3,
+        "stagePan": {
+          "left": 21,
+          "top": 0
+        },
+        "before": {
+          "annos": 3,
+          "pan": {
+            "left": 21,
+            "top": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "37 no scope control, finder button or extra work row is reachable while selected",
+      "pass": true,
+      "detail": {
+        "scopeControls": 0,
+        "finderButtons": 0,
+        "rowButtons": 1,
+        "tabbable": 10,
+        "finderTabbable": 0
+      }
+    },
+    {
+      "name": "38 native Enter on Clear performs the same single reset",
+      "pass": true,
+      "detail": {
+        "activeId": "finder-input",
+        "query": "",
+        "rowCount": 62
+      }
+    },
+    {
+      "name": "38b the keyboard alone reaches different work after Clear",
+      "pass": true,
+      "detail": {
+        "number": "001",
+        "searchVisible": false
+      }
+    },
+    {
+      "name": "39 the comparison states the single-search and Clear behaviour",
+      "pass": true,
+      "detail": {
+        "open": true,
+        "excerpt": " This revision against the 052 baseline Close Baseline: .dude/specs/052-dude-canvas-ui/design/fluent-desktop-workspace.html. Retained interactions: .dude/specs/"
+      }
+    },
+    {
+      "name": "40 Clear opens the finder without discarding the unfiled idea",
+      "pass": true,
+      "detail": {
+        "activeId": "finder-input"
+      }
+    },
+    {
+      "name": "41 the New idea draft is still there after Clear",
+      "pass": true,
+      "detail": {
+        "drafts": [
+          "idea=unfiled idea"
+        ]
+      }
+    }
+  ],
+  "screenshots": [
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/single-search-062-author-overview-selected-002-1440.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/single-search-062-author-after-clear-overview-1440.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/single-search-062-author-keyboard-now-typed-query-1440.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/single-search-062-author-overview-selected-closed-001-1440.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/single-search-062-author-overview-selected-002-960-light.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/single-search-062-author-overview-selected-002-360-dark.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/single-search-062-author-after-clear-overview-360-dark.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/single-search-062-author-request-draft-after-overview-1440.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/single-search-062-author-review-return-after-overview-960-light.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/single-search-062-author-keyboard-different-record-after-clear-1440.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/single-search-062-author-compare-with-052-single-search-1440.png"
+  ],
+  "notes": [
+    {
+      "step": "overview-with-002-selected",
+      "snapshot": {
+        "view": "overview",
+        "title": "Overview",
+        "searchVisible": false,
+        "scopeVisible": false,
+        "finderDisplay": "none",
+        "workingOnVisible": true,
+        "caption": "Working on",
+        "number": "002",
+        "name": "Remove Legacy Compatibility From The Bundle",
+        "popHidden": true,
+        "popVisible": false,
+        "popRows": [],
+        "ariaExpanded": "false",
+        "inputFocusable": false,
+        "query": "",
+        "scopeValue": "all",
+        "rows": [
+          "002"
+        ],
+        "rowCount": 1,
+        "selectedRows": [
+          "002"
+        ],
+        "rovingRow": "002",
+        "nothingSelected": false,
+        "headLead": "Filtered to the work you are on: 002 Remove Legacy Compatibility From The Bundle. There is one work search, so choosing different work means clearing this filter first, with Clear in the command bar. Nothing is closed or discarded by clearing.",
+        "meta": [
+          "1 of 62 recorded ideas and features · selected work filter · 002",
+          "The other 61 recorded ideas and features are filtered out of this list, not removed. Clear brings the one search back with an empty search and All records.",
+          "Open this row, or focus it and press Enter, to return to Now for this record."
+        ],
+        "workText": "OverviewNew ideaFiltered to the work you are on: 002 Remove Legacy Compatibility From The Bundle. There is one work search, so choosing different work means clearing this filter first, with Clear in the command bar. Nothing is closed or discarded by clearing.1 of 62 recorded ideas and features · selected work filter · 002The other 61 recorded ideas and features are filtered out of this list, not removed. Clear brings the one search back with an empty search and All records.Open this row, or focus it and press Enter, to return to Now for this record.No.NameStatusProgress002Remove Legacy Compatibility From The Bundleremove-legacy-compatibilityCompleted·36 of 36 tasksCompleted36 of 36 tasks62 ideas and 50 defined packages were read from this repository when the mock was captured. Discovery and Now show those recorded facts, and that recorded inventory is unchanged by the selected-work filter above.",
+        "scrollTop": 0,
+        "activeId": "view-title",
+        "activeTag": "H1",
+        "activeInsideFinder": false,
+        "activeVisible": true,
+        "needsRequests": [],
+        "drafts": [],
+        "overflowX": 0,
+        "annoCount": 0,
+        "stagePan": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "revision": "sha256:43f0f5d14fad72f5e522423536e3f845128e2cadb209796728fc19274981ea46",
+  "checks": [
+    {
+      "name": "960: redundant Switch work control absent",
+      "passed": true
+    },
+    {
+      "name": "960: Clear removes context and focuses search",
+      "passed": true
+    },
+    {
+      "name": "960: Clear retains query and scope",
+      "passed": true
+    },
+    {
+      "name": "960: no stale selected header",
+      "passed": true
+    },
+    {
+      "name": "960: next selection becomes primary context",
+      "passed": true
+    }
+  ],
+  "screenshots": [
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/coordinator-clear-062-working-on-054-960-light.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/coordinator-clear-062-after-clear-960-light.png"
+  ],
+  "boundary": "Independent isolated-browser check of the offline mock; no native-host or product acceptance.",
+  "browser": "Edg/133.0.3065.69",
+  "error": "Timed out: document.activeElement.id===\"finder-input\" && document.getElementById(\"selected-identity\").hidden",
+  "summary": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0,
+    "error": "Timed out: document.activeElement.id===\"finder-input\" && document.getElementById(\"selected-identity\").hidden"
+  }
+}

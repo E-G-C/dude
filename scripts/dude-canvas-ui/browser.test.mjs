@@ -2934,7 +2934,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          '8c6e3fe19edef61cff5489a0e0e26d4167e933a9124c22b43a6b9d9e410b74a5',
+          '12f499b0703b89b2f79880ba80b750ffd43fc141253846a24310797422df89b3',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -9499,6 +9499,578 @@ test('T010 review regression: click-only selection persists across unchanged-sou
           collect(failures, () => assert.equal(reopened.selectedId, seeded.firstId));
           collect(failures, () => assert.deepEqual(reopened.annotations, annotationsAtCommit));
           assert.deepEqual(failures, [], failures.join('\n'));
+        } finally {
+          await harness.close();
+        }
+      });
+
+test('T010 review regression: armed drawing tools reach selected handles and borders while other locations still draw', {
+        timeout: 240_000,
+        concurrency: false,
+      }, async (context) => {
+        if (!t010BrowserReady(context)) return;
+        const profileOwnership = trackT010ReviewProfiles();
+        context.after(() => profileOwnership.finish(
+          'direct-manipulation regression leaves no exact Review profile created by this test process',
+        ));
+        const evidence = createT010Evidence(context, 't010-direct-manipulation');
+        const html = [
+          '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">',
+          '<style>html,body{margin:0;min-height:100%;background:#ffffff;color:#242424;font:16px system-ui}',
+          'main{padding:24px}</style>',
+          '<main><h1>Direct manipulation fixture</h1><p>Marks are adjusted without changing tools.</p></main>',
+          '',
+        ].join('\n');
+        const harness = await createT010ReviewHarness(context, {
+          number: '716',
+          slug: 'direct-manipulation',
+          html,
+          width: 1000,
+          height: 700,
+          profileOwnership,
+        });
+        try {
+          const readState = () => evaluate(harness.page, 'window.__review.getState()');
+          const geometryOf = (state) => Object.fromEntries(state.annotations.map((a) => [
+            a.id, { x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 },
+          ]));
+          const commentOpens = () => evaluate(harness.page, `window.__reviewMessages
+            .filter(message => message.code === 'review_comment_open').length`);
+          const idle = () => until(async () => {
+            const state = await readState();
+            return state.busy ? null : state;
+          }, 'the engine is idle before the next probe');
+
+          // Arrange: one selected shape of each type, placed apart so a probe
+          // can only answer for the shape it belongs to.
+          const opening = await readState();
+          const viewport = opening.view.viewport;
+          assert.ok(viewport.width >= 700 && viewport.height >= 430,
+            `the routing matrix needs the recorded fixture viewport: ${JSON.stringify(viewport)}`);
+          const layout = [
+            { tool: 'box', x1: 40, y1: 40, x2: 200, y2: 150 },
+            { tool: 'circle', x1: 260, y1: 40, x2: 420, y2: 150 },
+            { tool: 'highlight', x1: 480, y1: 40, x2: 640, y2: 150 },
+            { tool: 'line', x1: 40, y1: 260, x2: 200, y2: 360 },
+            { tool: 'arrow', x1: 260, y1: 260, x2: 420, y2: 360 },
+          ];
+          const shapes = [];
+          for (const shape of layout) {
+            await harness.command({ type: 'tool', tool: shape.tool });
+            const id = await harness.command({ type: 'addAtCenter' });
+            await harness.command({ type: 'edit', id, changes: {
+              x1: shape.x1, y1: shape.y1, x2: shape.x2, y2: shape.y2,
+            } });
+            shapes.push({ ...shape, id });
+          }
+          assert.equal((await harness.command({ type: 'save' })).status, 'saved');
+          const segment = (shape) => ['line', 'arrow'].includes(shape.tool);
+          const handlePoint = (shape) => ({ x: shape.x1, y: shape.y1 });
+          const borderPoint = (shape) => (segment(shape)
+            ? { x: (shape.x1 + shape.x2) / 2, y: (shape.y1 + shape.y2) / 2 }
+            : { x: shape.x1, y: (shape.y1 + shape.y2) / 2 });
+          const interiorPoint = (shape) => ({ x: shape.x1 + 40, y: shape.y1 + 30 });
+          const drawingSpace = { x: viewport.width - 120, y: viewport.height - 80 };
+
+          // Real pointer delivery in the same document CSS pixels the engine uses.
+          const frame = await evaluate(harness.page, `(() => {
+            const rect = document.querySelector('.dude-review-overlay').getBoundingClientRect();
+            return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+          })()`);
+          const client = ({ x, y }) => ({
+            x: frame.left + (x - viewport.scrollX) * frame.width / viewport.width,
+            y: frame.top + (y - viewport.scrollY) * frame.height / viewport.height,
+          });
+          const hover = (point) => harness.page.send('Input.dispatchMouseEvent', {
+            type: 'mouseMoved', ...client(point), button: 'none', buttons: 0,
+          });
+          const pressAt = (point) => harness.page.send('Input.dispatchMouseEvent', {
+            type: 'mousePressed', ...client(point), button: 'left', buttons: 1, clickCount: 1,
+          });
+          const moveTo = (point) => harness.page.send('Input.dispatchMouseEvent', {
+            type: 'mouseMoved', ...client(point), button: 'left', buttons: 1,
+          });
+          const releaseAt = (point) => harness.page.send('Input.dispatchMouseEvent', {
+            type: 'mouseReleased', ...client(point), button: 'left', buttons: 0, clickCount: 1,
+          });
+          const clickAt = async (point) => {
+            await hover(point);
+            await pressAt(point);
+            await releaseAt(point);
+          };
+          const overlayAction = () => evaluate(harness.page, `(() => {
+            const overlay = document.querySelector('.dude-review-overlay');
+            return { action: overlay.dataset.action ?? null, cursor: getComputedStyle(overlay).cursor };
+          })()`);
+          // Real trusted presses, so a pair is proved to be inside the existing
+          // 500 ms / 4 px bounds instead of assumed to be.
+          await evaluate(harness.page, `(() => {
+            window.__t059Presses = [];
+            document.addEventListener('pointerdown', event => {
+              if (!event.isTrusted || !event.target.closest?.('.dude-review-overlay')) return;
+              window.__t059Presses.push({ at: event.timeStamp, x: event.clientX, y: event.clientY });
+            }, { capture: true });
+          })()`);
+          const pressCount = () => evaluate(harness.page, 'window.__t059Presses.length');
+          const pairMetrics = async (start) => {
+            const presses = await evaluate(harness.page, `window.__t059Presses.slice(${start})`);
+            return {
+              count: presses.length,
+              elapsed: presses.length === 2 ? presses[1].at - presses[0].at : null,
+              distance: presses.length === 2
+                ? Math.hypot(presses[1].x - presses[0].x, presses[1].y - presses[0].y) : null,
+            };
+          };
+          const assertPair = (metrics, description) => {
+            assert.equal(metrics.count, 2, `${description} contains exactly two trusted presses`);
+            assert.ok(metrics.elapsed >= 0 && metrics.elapsed <= 500,
+              `${description} stays inside 500 ms: ${JSON.stringify(metrics)}`);
+            assert.ok(metrics.distance <= 4,
+              `${description} stays inside 4 px: ${JSON.stringify(metrics)}`);
+          };
+          // Each arrangement starts beyond the existing pairing window, so one
+          // case cannot become half of the next one's gesture.
+          const separate = () => new Promise((resolve) => { setTimeout(resolve, 650); });
+          const actionAt = async (point, expected, description) => {
+            let observed = null;
+            await until(async () => {
+              await hover(point);
+              observed = await overlayAction();
+              return observed.action === expected.action && observed.cursor === expected.cursor;
+            }, description);
+            return observed;
+          };
+          // An out-and-back gesture must be seen moving before it returns, so
+          // final equality cannot hide that the mark was actually manipulated.
+          const outAndBack = async (start, away) => {
+            await hover(start);
+            await pressAt(start);
+            await moveTo(away);
+            const during = await until(async () => {
+              const state = await readState();
+              return state.busy ? state : null;
+            }, 'the held gesture is observed in flight');
+            await moveTo(start);
+            await releaseAt(start);
+            return during;
+          };
+
+          // Act + Assert: five armed drawing tools against five selected shapes.
+          const matrix = [];
+          for (const armed of ['box', 'circle', 'arrow', 'line', 'highlight']) {
+            await harness.command({ type: 'tool', tool: armed });
+            for (const shape of shapes) {
+              await harness.command({ type: 'select', id: shape.id });
+              const before = await idle();
+              const cursors = {
+                handle: await actionAt(handlePoint(shape), { action: 'nwse-resize', cursor: 'nwse-resize' },
+                  `${armed} shows a resize cursor on the selected ${shape.tool} handle`),
+                border: await actionAt(borderPoint(shape), { action: 'move', cursor: 'move' },
+                  `${armed} shows a move cursor on the selected ${shape.tool} border`),
+                drawing: await actionAt(drawingSpace, { action: null, cursor: 'crosshair' },
+                  `${armed} shows the drawing cursor away from the selected ${shape.tool}`),
+              };
+              assert.deepEqual(geometryOf(before), geometryOf(await readState()),
+                `hovering the selected ${shape.tool} with ${armed} armed changes no geometry`);
+
+              const start = handlePoint(shape);
+              const held = await outAndBack(start, { x: start.x + 14, y: start.y + 11 });
+              const heldGeometry = geometryOf(held);
+              assert.notDeepEqual(heldGeometry[shape.id], geometryOf(before)[shape.id],
+                `${armed} armed on the selected ${shape.tool} handle resizes that shape`);
+              for (const other of shapes.filter(({ id }) => id !== shape.id)) {
+                assert.deepEqual(heldGeometry[other.id], geometryOf(before)[other.id],
+                  `resizing the selected ${shape.tool} leaves the ${other.tool} untouched`);
+              }
+              const after = await idle();
+              assert.deepEqual(geometryOf(after), geometryOf(before),
+                `returning the ${shape.tool} handle to its origin restores its exact geometry`);
+              assert.equal(after.annotations.length, shapes.length,
+                `manipulating the selected ${shape.tool} with ${armed} armed creates no annotation`);
+              assert.equal(after.tool, armed, `${armed} stays armed after the adjustment`);
+              assert.equal(after.selectedId, shape.id, `and the ${shape.tool} stays selected`);
+              matrix.push({
+                armed,
+                selected: shape.tool,
+                cursors,
+                resized: heldGeometry[shape.id],
+                restored: geometryOf(after)[shape.id],
+              });
+            }
+          }
+          assert.equal(matrix.length, 25, 'every armed tool is exercised against every selected shape type');
+
+          // Assert: the remaining corner and endpoint cursors name their own directions.
+          const box = shapes[0];
+          const line = shapes[3];
+          await harness.command({ type: 'tool', tool: 'highlight' });
+          await harness.command({ type: 'select', id: box.id });
+          await idle();
+          const cornerCursor = await actionAt({ x: box.x2, y: box.y1 },
+            { action: 'nesw-resize', cursor: 'nesw-resize' }, 'the opposite corner names its own diagonal');
+          await harness.command({ type: 'select', id: line.id });
+          await idle();
+          const endpointCursor = await actionAt({ x: line.x2, y: line.y2 },
+            { action: 'nwse-resize', cursor: 'nwse-resize' }, 'a segment endpoint follows the stroke direction');
+
+          // Assert: a selected border or stroke moves only its own shape, and
+          // that committed adjustment is exactly one undo/redo step.
+          const moves = [];
+          for (const [index, shape] of shapes.entries()) {
+            const armed = ['circle', 'arrow', 'line', 'highlight', 'box'][index];
+            await harness.command({ type: 'tool', tool: armed });
+            await harness.command({ type: 'select', id: shape.id });
+            const before = await idle();
+            const start = borderPoint(shape);
+            const target = { x: start.x + 18, y: start.y + 12 };
+            await hover(start);
+            await pressAt(start);
+            await moveTo(target);
+            await releaseAt(target);
+            const moved = await until(async () => {
+              const state = await readState();
+              return !state.busy && state.annotations.some((a) => a.id === shape.id
+                && a.x1 === before.annotations.find((b) => b.id === shape.id).x1 + 18) ? state : null;
+            }, `${armed} armed moves the selected ${shape.tool} from its border`);
+            const beforeShape = geometryOf(before)[shape.id];
+            assert.deepEqual(geometryOf(moved)[shape.id], {
+              x1: beforeShape.x1 + 18, y1: beforeShape.y1 + 12,
+              x2: beforeShape.x2 + 18, y2: beforeShape.y2 + 12,
+            }, `the whole ${shape.tool} translates without changing its dimensions`);
+            for (const other of shapes.filter(({ id }) => id !== shape.id)) {
+              assert.deepEqual(geometryOf(moved)[other.id], geometryOf(before)[other.id],
+                `moving the ${shape.tool} leaves the ${other.tool} untouched`);
+            }
+            assert.equal(moved.annotations.length, shapes.length, 'the move creates no annotation');
+            assert.equal(moved.tool, armed, 'and leaves the drawing tool armed');
+            const undone = await harness.command({ type: 'undo' });
+            assert.deepEqual(geometryOf(undone)[shape.id], beforeShape,
+              `one undo restores the geometry preceding the ${shape.tool} move`);
+            const redone = await harness.command({ type: 'redo' });
+            assert.deepEqual(geometryOf(redone)[shape.id], geometryOf(moved)[shape.id],
+              'and one redo restores that adjustment');
+            await harness.command({ type: 'undo' });
+            moves.push({ armed, selected: shape.tool, before: beforeShape, moved: geometryOf(moved)[shape.id] });
+          }
+
+          // Assert: interiors away from the border and handles still draw.
+          const draws = [];
+          for (const armed of ['box', 'circle', 'arrow', 'line', 'highlight']) {
+            await harness.command({ type: 'tool', tool: armed });
+            await harness.command({ type: 'select', id: box.id });
+            const before = await idle();
+            const from = interiorPoint(box);
+            const to = { x: from.x + 60, y: from.y + 50 };
+            await hover(from);
+            await pressAt(from);
+            await moveTo(to);
+            await releaseAt(to);
+            const drawn = await until(async () => {
+              const state = await readState();
+              return !state.busy && state.annotations.length === before.annotations.length + 1 ? state : null;
+            }, `${armed} draws inside the selected shape`);
+            const created = drawn.annotations.at(-1);
+            assert.equal(created.tool, armed, 'the interior drawing uses the armed tool');
+            assert.equal(drawn.selectedId, created.id, 'and keeps the existing new-selection behavior');
+            assert.deepEqual(geometryOf(drawn)[box.id], geometryOf(before)[box.id],
+              'while the shape it was drawn inside is unchanged');
+            await harness.command({ type: 'delete', id: created.id });
+            draws.push({ armed, created: { x1: created.x1, y1: created.y1, x2: created.x2, y2: created.y2 } });
+          }
+
+          // Assert: an unselected mark and a bare number badge are not grab targets.
+          const circle = shapes[1];
+          await harness.command({ type: 'tool', tool: 'box' });
+          await harness.command({ type: 'select', id: box.id });
+          const beforeUnselected = await idle();
+          const unselectedRing = borderPoint(circle);
+          const unselectedBadge = { x: circle.x1 - 9, y: circle.y1 - 9 };
+          const unselectedCursors = {
+            ring: await actionAt(unselectedRing, { action: null, cursor: 'crosshair' },
+              'an unselected ring offers no drawing-mode grab'),
+            badge: await actionAt(unselectedBadge, { action: null, cursor: 'crosshair' },
+              'and neither does its number badge'),
+          };
+          await hover(unselectedBadge);
+          await pressAt(unselectedBadge);
+          await moveTo({ x: unselectedBadge.x + 50, y: unselectedBadge.y + 40 });
+          await releaseAt({ x: unselectedBadge.x + 50, y: unselectedBadge.y + 40 });
+          const overBadge = await until(async () => {
+            const state = await readState();
+            return !state.busy && state.annotations.length === shapes.length + 1 ? state : null;
+          }, 'a press on an unselected badge draws the armed shape instead of grabbing it');
+          assert.deepEqual(geometryOf(overBadge)[circle.id], geometryOf(beforeUnselected)[circle.id],
+            'the unselected circle is unchanged');
+          assert.notEqual(overBadge.selectedId, circle.id, 'and was never selected by that press');
+          await harness.command({ type: 'delete', id: overBadge.annotations.at(-1).id });
+
+          // Assert: two unmoved border presses open that shape's comment once,
+          // while every manipulated or drawing-only press opens none.
+          await harness.command({ type: 'tool', tool: 'highlight' });
+          await harness.command({ type: 'select', id: box.id });
+          const beforeComments = await idle();
+          const commentsBefore = await commentOpens();
+          const border = borderPoint(box);
+          await separate();
+          const qualifyingStart = await pressCount();
+          await clickAt(border);
+          await clickAt(border);
+          assertPair(await pairMetrics(qualifyingStart), 'the qualifying border pair');
+          const opened = await until(async () => {
+            const state = await readState();
+            return !state.busy && await commentOpens() === commentsBefore + 1 ? state : null;
+          }, 'two unmoved border presses open the selected shape comment');
+          assert.equal(opened.selectedId, box.id, 'the opened comment belongs to the pressed shape');
+          assert.equal(opened.tool, 'highlight', 'and the drawing tool stays armed');
+          assert.equal(opened.annotations.length, shapes.length, 'no annotation is added');
+          assert.deepEqual(geometryOf(opened), geometryOf(beforeComments), 'and no geometry changes');
+          const lastMessage = await evaluate(harness.page, 'window.__reviewMessages.at(-1)');
+          assert.equal(lastMessage.code, 'review_comment_open');
+          assert.equal(lastMessage.error, false);
+
+          const negatives = {};
+          await separate();
+          const firstOutAndBackStart = await pressCount();
+          const heldFirst = await outAndBack(border, { x: border.x + 22, y: border.y + 16 });
+          assert.notDeepEqual(geometryOf(heldFirst)[box.id], geometryOf(beforeComments)[box.id],
+            'the first out-and-back press genuinely moved the shape');
+          await idle();
+          await clickAt(border);
+          await idle();
+          assertPair(await pairMetrics(firstOutAndBackStart), 'the out-and-back press and the press after it');
+          negatives.firstPressOutAndBack = await commentOpens();
+          assert.equal(negatives.firstPressOutAndBack, commentsBefore + 1,
+            'a single press after an out-and-back first press opens no comment');
+
+          await separate();
+          const secondOutAndBackStart = await pressCount();
+          await clickAt(border);
+          const heldSecond = await outAndBack(border, { x: border.x + 22, y: border.y + 16 });
+          assert.notDeepEqual(geometryOf(heldSecond)[box.id], geometryOf(beforeComments)[box.id],
+            'the second press genuinely moved the shape');
+          await idle();
+          assertPair(await pairMetrics(secondOutAndBackStart), 'the unmoved press and the moving second press');
+          negatives.secondPressOutAndBack = await commentOpens();
+          assert.equal(negatives.secondPressOutAndBack, commentsBefore + 1,
+            'a moved second press opens no comment');
+          const primedStart = await pressCount();
+          await clickAt(border);
+          await idle();
+          negatives.pressAfterMovedSecond = await commentOpens();
+          assert.equal(negatives.pressAfterMovedSecond, commentsBefore + 1,
+            'and it cannot prime the single press that follows it');
+          assert.equal((await pairMetrics(primedStart)).count, 1,
+            'that following press is one further trusted press');
+
+          await separate();
+          const handlePairStart = await pressCount();
+          await clickAt(handlePoint(box));
+          await clickAt(handlePoint(box));
+          await idle();
+          assertPair(await pairMetrics(handlePairStart), 'the handle pair');
+          negatives.handlePair = await commentOpens();
+          assert.equal(negatives.handlePair, commentsBefore + 1, 'a handle pair opens no comment');
+          await separate();
+          const drawingPairStart = await pressCount();
+          await clickAt(drawingSpace);
+          await clickAt(drawingSpace);
+          await idle();
+          assertPair(await pairMetrics(drawingPairStart), 'the drawing-space pair');
+          negatives.drawingSpacePair = await commentOpens();
+          assert.equal(negatives.drawingSpacePair, commentsBefore + 1,
+            'and neither does a drawing-only pair');
+
+          // Arrange: a real 2x1-pixel move remains inside the comment pair's
+          // 4 px proximity bound, so the geometry change itself must
+          // disqualify the following single press.
+          await separate();
+          await harness.command({ type: 'tool', tool: 'box' });
+          await harness.command({ type: 'select', id: box.id });
+          const tinyBefore = await idle();
+          const tinyBeforeGeometry = geometryOf(tinyBefore)[box.id];
+          const tinyStart = borderPoint(box);
+          const tinyEnd = { x: tinyStart.x + 2, y: tinyStart.y + 1 };
+          const tinyPressStart = await pressCount();
+
+          // Act: commit the tiny move, then press once on the moved border
+          // while both native gesture bounds still qualify.
+          await hover(tinyStart);
+          await pressAt(tinyStart);
+          await moveTo(tinyEnd);
+          await releaseAt(tinyEnd);
+          const tinyCommitted = await until(async () => {
+            const state = await readState();
+            const geometry = geometryOf(state)[box.id];
+            return !state.busy && geometry.x1 === tinyBeforeGeometry.x1 + 2
+              && geometry.y1 === tinyBeforeGeometry.y1 + 1 ? state : null;
+          }, 'the tiny effective move is committed');
+          await clickAt(tinyEnd);
+          const tinyAfterFollower = await idle();
+          const tinyPair = await pairMetrics(tinyPressStart);
+
+          // Assert: the move is committed and saved, but neither it nor the
+          // following single press opens Comments. One undo and redo traverse
+          // exactly this effective geometry change.
+          assertPair(tinyPair, 'the tiny move and its following press');
+          assert.deepEqual(geometryOf(tinyCommitted)[box.id], {
+            x1: tinyBeforeGeometry.x1 + 2,
+            y1: tinyBeforeGeometry.y1 + 1,
+            x2: tinyBeforeGeometry.x2 + 2,
+            y2: tinyBeforeGeometry.y2 + 1,
+          }, 'the 2x1-pixel move changes every box coordinate exactly once');
+          negatives.tinyMotion = await commentOpens();
+          assert.equal(negatives.tinyMotion, commentsBefore + 1,
+            'a tiny effective move cannot prime its following single press');
+          const tinySaved = await harness.command({ type: 'save' });
+          assert.equal(tinySaved.status, 'saved');
+          const tinyPersisted = harness.readWorking().state.annotations
+            .find(({ id }) => id === box.id);
+          assert.deepEqual(
+            { x1: tinyPersisted.x1, y1: tinyPersisted.y1, x2: tinyPersisted.x2, y2: tinyPersisted.y2 },
+            geometryOf(tinyAfterFollower)[box.id],
+            'the committed tiny move, rather than a pointer preview, reaches working storage',
+          );
+          const tinyUndone = await harness.command({ type: 'undo' });
+          assert.deepEqual(geometryOf(tinyUndone)[box.id], tinyBeforeGeometry,
+            'one undo restores the geometry before the tiny move');
+          const tinyRedone = await harness.command({ type: 'redo' });
+          assert.deepEqual(geometryOf(tinyRedone)[box.id], geometryOf(tinyCommitted)[box.id],
+            'one redo restores the tiny committed move');
+          await harness.command({ type: 'undo' });
+
+          const afterComments = await idle();
+          assert.deepEqual(geometryOf(afterComments), geometryOf(beforeComments),
+            'every nonqualifying gesture ends at its starting geometry');
+          assert.equal(afterComments.annotations.length, shapes.length,
+            'and adds no annotation');
+
+          // Assert: net-equal manipulation adds no history step and keeps redo.
+          await harness.command({ type: 'tool', tool: 'box' });
+          await harness.command({ type: 'select', id: box.id });
+          const committedStart = geometryOf(await idle())[box.id];
+          const moveStart = borderPoint(box);
+          const moveTarget = { x: moveStart.x + 24, y: moveStart.y + 18 };
+          await hover(moveStart);
+          await pressAt(moveStart);
+          await moveTo(moveTarget);
+          await releaseAt(moveTarget);
+          const committedMove = await until(async () => {
+            const state = await readState();
+            return !state.busy && geometryOf(state)[box.id].x1 === committedStart.x1 + 24 ? state : null;
+          }, 'the committed move is applied');
+          assert.equal(committedMove.canUndo, true, 'the committed move records one history step');
+          const committedGeometry = geometryOf(committedMove)[box.id];
+          const undoneMove = await harness.command({ type: 'undo' });
+          assert.deepEqual(geometryOf(undoneMove)[box.id], committedStart,
+            'one undo restores the preceding geometry');
+          assert.equal(undoneMove.canRedo, true, 'and leaves the adjustment available to redo');
+          const netEqual = await outAndBack(borderPoint(box), { x: borderPoint(box).x + 20, y: borderPoint(box).y + 14 });
+          assert.notDeepEqual(geometryOf(netEqual)[box.id], committedStart,
+            'the net-equal gesture genuinely moved the shape in flight');
+          const afterNetEqual = await idle();
+          assert.deepEqual(geometryOf(afterNetEqual)[box.id], committedStart,
+            'a net-equal adjustment ends at its starting geometry');
+          assert.equal(afterNetEqual.canRedo, true,
+            'it adds no history step, so the existing redo opportunity survives');
+          const redoneMove = await harness.command({ type: 'redo' });
+          assert.deepEqual(geometryOf(redoneMove)[box.id], committedGeometry,
+            'and that redo still restores the earlier adjustment');
+          await harness.command({ type: 'undo' });
+
+          // Assert: a working save during a pointer preview keeps committed geometry.
+          assert.equal((await harness.command({ type: 'save' })).status, 'saved');
+          const committedBeforePreview = (await idle()).annotations;
+          const previewStart = borderPoint(box);
+          await hover(previewStart);
+          await pressAt(previewStart);
+          await moveTo({ x: previewStart.x + 30, y: previewStart.y + 24 });
+          const preview = await until(async () => {
+            const state = await readState();
+            return state.busy ? state : null;
+          }, 'the pointer preview is in flight');
+          await harness.command({ type: 'notes', text: 'Committed geometry survives a preview save.' });
+          assert.equal((await harness.command({ type: 'save' })).status, 'saved');
+          const persistedDuringPreview = harness.readWorking();
+          assert.deepEqual(persistedDuringPreview.state.annotations, committedBeforePreview,
+            'the working save keeps the last committed geometry, not the preview');
+          assert.equal(persistedDuringPreview.state.notes, 'Committed geometry survives a preview save.',
+            'while the metadata change it was asked to save is persisted');
+          await moveTo(previewStart);
+          await releaseAt(previewStart);
+          const afterPreview = await idle();
+          assert.deepEqual(afterPreview.annotations, committedBeforePreview,
+            'and the returned preview commits nothing');
+
+          // Assert: a review that stops accepting edits stops promising one.
+          await harness.command({ type: 'select', id: box.id });
+          await idle();
+          const availableCursor = await actionAt(borderPoint(box), { action: 'move', cursor: 'move' },
+            'the selected border offers a move before availability is lost');
+          await evaluate(harness.page, 'window.__review.update({ unavailable: true })');
+          const unavailableCursor = await until(async () => {
+            const observed = await overlayAction();
+            const state = await readState();
+            return !state.editable && observed.action === null ? { observed, state } : null;
+          }, 'the transient action cursor clears when the update path refuses editing');
+          assert.equal(unavailableCursor.observed.cursor, 'crosshair',
+            'the resting pointer falls back to the plain armed-tool cursor');
+
+          // Assert: the same refresh happens when a live operation reports the loss.
+          const reopen = await harness.postJson('/api/needs-you/review/open', {
+            requestHandle: harness.record.requestHandle,
+            revision: harness.request.revision,
+            submissionId: harness.opened.submissionId,
+          });
+          assert.equal(reopen.response.status, 202);
+          await harness.mount(reopen.payload);
+          await harness.command({ type: 'tool', tool: 'box' });
+          await harness.command({ type: 'select', id: box.id });
+          await idle();
+          const reportedBefore = await actionAt(borderPoint(box), { action: 'move', cursor: 'move' },
+            'the remounted review offers the same move before the provider is lost');
+          harness.provider.dispose();
+          await harness.command({ type: 'notes', text: 'This metadata change cannot be saved.' });
+          const reportedAfter = await until(async () => {
+            const state = await readState();
+            const observed = await overlayAction();
+            return !state.editable && state.error && observed.action === null ? { state, observed } : null;
+          }, 'the reported availability loss refreshes the resting action cursor', 15_000);
+          assert.equal(reportedAfter.state.status, 'unavailable',
+            'the reported loss marks the review unavailable');
+          assert.equal(reportedAfter.observed.cursor, 'crosshair',
+            'and leaves only the plain armed-tool cursor behind');
+
+          evidence.json('direct-manipulation-result.json', {
+            case: context.name,
+            browser: harness.browser.info.Browser,
+            viewport,
+            matrix,
+            cursors: { corner: cornerCursor, endpoint: endpointCursor, unselected: unselectedCursors },
+            moves,
+            draws,
+            comments: {
+              opened: commentsBefore + 1,
+              negatives,
+              tinyMotion: {
+                pair: tinyPair,
+                before: tinyBeforeGeometry,
+                committed: geometryOf(tinyCommitted)[box.id],
+                savedWorkingRevision: tinySaved.workingRevision,
+              },
+            },
+            history: { committedStart, committedGeometry },
+            previewSave: {
+              notes: persistedDuringPreview.state.notes,
+              annotations: persistedDuringPreview.state.annotations.map(({ id, x1, y1, x2, y2 }) => ({ id, x1, y1, x2, y2 })),
+            },
+            availability: {
+              beforeUpdate: availableCursor,
+              afterUpdate: unavailableCursor.observed,
+              beforeReport: reportedBefore,
+              afterReport: reportedAfter.observed,
+              reportedCode: reportedAfter.state.error?.code ?? null,
+            },
+          });
         } finally {
           await harness.close();
         }

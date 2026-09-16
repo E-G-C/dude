@@ -1,0 +1,1657 @@
+{
+  "subject": "T001@a062c1d4 complete-current-mock freshness verification",
+  "verdict": "PASS",
+  "result": "59/59 focused checks passed",
+  "runAt": "2026-09-15T02:26:10.227Z",
+  "browser": "Edg/133.0.3065.69",
+  "boundary": "Fresh isolated headless Edge/CDP top-level file render of the exact frozen static mock; no product/provider/session/native-host/user-browser action.",
+  "mock": {
+    "path": ".dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+    "bytes": 530390,
+    "sha256": "e4b7e16b9a97baddfe5a0c22ebfdf4abaf299986b74883db8f8c952e4b11d038",
+    "expectedBytes": 530390,
+    "expectedSha256": "e4b7e16b9a97baddfe5a0c22ebfdf4abaf299986b74883db8f8c952e4b11d038",
+    "selfContained": true
+  },
+  "approval": {
+    "exactOwner": ".dude/ideas/062-dude-canvas-workspace-integration.md",
+    "designStatus": "approved",
+    "userReplyAt": "2026-09-14T22:10:52.581-04:00",
+    "userReply": "yes let's go with the complete current 062 mock for implementation",
+    "scope": "Complete current 062 mock: workspace/search-filter/rail/read-only task inspection. Settings 063 and Kanban excluded; 052 overall vision retained."
+  },
+  "taskSource": {
+    "path": ".dude/specs/062-dude-canvas-workspace-integration/tasks.md",
+    "bytes": 9170,
+    "sha256": "a3cb207d0f834b76060123754e3cc663d267ac20c8a202de7c945808a3b3f5c8",
+    "keys": [
+      "T001@a062c1d4",
+      "T002@b062d2e5",
+      "T003@c062e3f6",
+      "T004@d062f4a7",
+      "T005@e062a5b8"
+    ],
+    "states": [
+      "todo",
+      "todo",
+      "todo",
+      "todo",
+      "todo"
+    ],
+    "workBegun": false
+  },
+  "coverage": {
+    "frozenInventoryRecords": 62,
+    "capturedTaskFeatures": [
+      "002",
+      "021",
+      "052",
+      "057",
+      "062"
+    ],
+    "capturedTaskUnits": 65,
+    "limit": "All other packages explicitly use not-captured/no-package coverage; this offline preview is not production data."
+  },
+  "scope": [
+    "One combined journey: All -> 062 planned rows -> native-Enter T003 detail -> Done -> All -> selected Overview -> current preview request -> local Review save/reopen -> Now -> invalid permission rejection -> Clear -> 052 Done.",
+    "Focused blocked-state congruence, 1440 light and 360 dark geometry/control names, native narrow rail Tab/Shift+Tab/Escape, 052 baseline/current comparison, exact-byte immutability."
+  ],
+  "notTested": [
+    "Production implementation, provider/session transport, native Copilot host, installed bundle, product/browser suites, Settings 063, and Kanban.",
+    "This report does not grant Work admission, production readiness, task closure, visual self-approval, commit, push, or release."
+  ],
+  "screenshots": [
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/approval-062-final-wide-1440-light.png",
+      "bytes": 374316,
+      "sha256": "719214ab29e467d15703ae8b8f7c6dbef94f443a8527644dbe690464daae886e",
+      "dimensions": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/approval-062-final-narrow-360-dark.png",
+      "bytes": 101521,
+      "sha256": "102fd171357d897f5b82687ac673121f0e5c133194ca16b0dd74fe6a92a66963",
+      "dimensions": {
+        "width": 360,
+        "height": 800
+      }
+    }
+  ],
+  "runtimeErrors": [],
+  "failedRequests": [],
+  "failures": [],
+  "checks": [
+    {
+      "step": "static-preflight",
+      "name": "canonical mock matches the approved exact bytes and SHA-256",
+      "pass": true,
+      "detail": {
+        "bytes": 530390,
+        "sha256": "e4b7e16b9a97baddfe5a0c22ebfdf4abaf299986b74883db8f8c952e4b11d038"
+      }
+    },
+    {
+      "step": "static-preflight",
+      "name": "mock is self-contained with no external asset reference",
+      "pass": true,
+      "detail": {
+        "attributes": [],
+        "css": []
+      }
+    },
+    {
+      "step": "static-preflight",
+      "name": "canonical exact owner resolves uniquely with no diagnostics",
+      "pass": true,
+      "detail": {
+        "owner": {
+          "ideaPath": ".dude/ideas/062-dude-canvas-workspace-integration.md",
+          "specPath": ".dude/specs/062-dude-canvas-workspace-integration/spec.md"
+        },
+        "diagnostics": []
+      }
+    },
+    {
+      "step": "static-preflight",
+      "name": "spec records approved whole-current-mock direction and exact preview path",
+      "pass": true,
+      "detail": [
+        "design_status: approved",
+        "approved_direction: \"Complete current 062 mock: 052 workspace continuity, 057 interactions, single search/Working on/Clear, expandable rail, and read-only task inspection.\"",
+        "preview_path: .dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html"
+      ]
+    },
+    {
+      "step": "static-preflight",
+      "name": "settlement and literal approval evidence bind the unchanged complete current mock",
+      "pass": true,
+      "detail": {
+        "timestamp": "2026-09-14T22:10:52.581-04:00",
+        "reply": "yes let's go with the complete current 062 mock for implementation",
+        "hash": "e4b7e16b9a97baddfe5a0c22ebfdf4abaf299986b74883db8f8c952e4b11d038"
+      }
+    },
+    {
+      "step": "static-preflight",
+      "name": "plan keeps task inspection as planned read-only enrichment rather than shipped data",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "static-preflight",
+      "name": "current canonical parser sees the same five warning-free todo task units",
+      "pass": true,
+      "detail": {
+        "keys": [
+          "T001@a062c1d4",
+          "T002@b062d2e5",
+          "T003@c062e3f6",
+          "T004@d062f4a7",
+          "T005@e062a5b8"
+        ],
+        "states": [
+          "todo",
+          "todo",
+          "todo",
+          "todo",
+          "todo"
+        ],
+        "warnings": [],
+        "bytes": 9170,
+        "sha256": "a3cb207d0f834b76060123754e3cc663d267ac20c8a202de7c945808a3b3f5c8"
+      }
+    },
+    {
+      "step": "static-preflight",
+      "name": "unchanged task dependency chain remains T001 -> T002 -> T003 -> T004 -> T005",
+      "pass": true,
+      "detail": [
+        {
+          "key": "T001@a062c1d4",
+          "deps": []
+        },
+        {
+          "key": "T002@b062d2e5",
+          "deps": [
+            "T001@a062c1d4"
+          ]
+        },
+        {
+          "key": "T003@c062e3f6",
+          "deps": [
+            "T002@b062d2e5"
+          ]
+        },
+        {
+          "key": "T004@d062f4a7",
+          "deps": [
+            "T003@c062e3f6"
+          ]
+        },
+        {
+          "key": "T005@e062a5b8",
+          "deps": [
+            "T004@d062f4a7"
+          ]
+        }
+      ]
+    },
+    {
+      "step": "static-preflight",
+      "name": "T001 body and acceptance retain the approved bounded design-verification scope",
+      "pass": true,
+      "detail": {
+        "chars": 1835
+      }
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "isolated real top-level frame rendered the exact local mock at 1440 light",
+      "pass": true,
+      "detail": {
+        "href": "file:///Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html?theme=light&data=repository&scope=all&view=overview",
+        "title": "Dude — Canvas workspace integration (062, exploring)",
+        "width": 1440,
+        "height": 1000,
+        "visibility": "visible",
+        "browser": "Edg/133.0.3065.69"
+      }
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "declared frozen task coverage is exactly five features and 65 canonical units",
+      "pass": true,
+      "detail": {
+        "records": 62,
+        "captured": [
+          "002",
+          "021",
+          "052",
+          "057",
+          "062"
+        ],
+        "counts": {
+          "002": 36,
+          "021": 3,
+          "052": 13,
+          "057": 8,
+          "062": 5
+        },
+        "totalUnits": 65,
+        "notCapturedCount": 46,
+        "noPackageCount": 11,
+        "notCapturedAllHaveTaskPaths": true,
+        "identity062": "a3cb207d0f83",
+        "bytes062": 9170,
+        "states062": [
+          "todo",
+          "todo",
+          "todo",
+          "todo",
+          "todo"
+        ],
+        "keys062": [
+          "T001@a062c1d4",
+          "T002@b062d2e5",
+          "T003@c062e3f6",
+          "T004@d062f4a7",
+          "T005@e062a5b8"
+        ]
+      }
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "embedded 062 capture still binds the exact unchanged current task bytes and units",
+      "pass": true,
+      "detail": {
+        "embeddedIdentity": "a3cb207d0f83",
+        "currentIdentity": "a3cb207d0f83",
+        "embeddedBytes": 9170,
+        "currentBytes": 9170
+      }
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "all five embedded mock units exactly equal the current canonical units",
+      "pass": true,
+      "detail": [
+        {
+          "key": "T001@a062c1d4",
+          "embeddedChars": 1835,
+          "currentChars": 1835,
+          "exact": true
+        },
+        {
+          "key": "T002@b062d2e5",
+          "embeddedChars": 971,
+          "currentChars": 971,
+          "exact": true
+        },
+        {
+          "key": "T003@c062e3f6",
+          "embeddedChars": 2231,
+          "currentChars": 2231,
+          "exact": true
+        },
+        {
+          "key": "T004@d062f4a7",
+          "embeddedChars": 1148,
+          "currentChars": 1148,
+          "exact": true
+        },
+        {
+          "key": "T005@e062a5b8",
+          "embeddedChars": 1884,
+          "currentChars": 1884,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "All finder begins unselected with one search and all 62 records reachable",
+      "pass": true,
+      "detail": {
+        "title": "Overview",
+        "query": "",
+        "scope": "all",
+        "rows": [
+          "001",
+          "062",
+          62
+        ],
+        "identityHidden": true,
+        "prototype": "Prototype — not part of Dude Prototype Compare with 052 Prototype data: Repository facts only, idle session. Discovery and Now read this repository’s frozen records, and no execution state is replaced: 062 shows its 5 planned canonical tasks exactly as the file records them. The request feed is empty because this selection simulates an idle session. Appearance Host Light Dark Prototype data Example work in progress + requests Repository facts only Example blocked work Example authority unavailable Discovery and Now always read this repository's frozen records, and the frozen 062 record is Defined with all five canonical tasks not started. Its task rows, phase totals and unit text were captured from tasks.md with the product's own parser. Every selection except Repository facts only replaces that record's execution state — stage, next step, or a named task's recorded state — with a controlled example, recomputes the counts beside it from that same example, and supplies the example request feed, exactly as the product would receive them from a live session. The Dude window starts below this line",
+        "resources": []
+      }
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "visible prototype boundary declares frozen/example data and not-product status",
+      "pass": true,
+      "detail": "Prototype — not part of Dude Prototype Compare with 052 Prototype data: Repository facts only, idle session. Discovery and Now read this repository’s frozen records, and no execution state is replaced: 062 shows its 5 planned canonical tasks exactly as the file records them. The request feed is empty because this selection simulates an idle session. Appearance Host Light Dark Prototype data Exampl"
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "render loaded no HTTP(S) resource or supporting asset",
+      "pass": true,
+      "detail": []
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "fresh finder and 062 row expose usable accessibility names",
+      "pass": true,
+      "detail": [
+        {
+          "role": "combobox",
+          "name": "Search recorded work by number, title, slug or source path",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "062. Dude Canvas Workspace Integration. Defined. 0 of 5 tasks.",
+          "focused": false
+        }
+      ]
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "All -> 062 opens Now with five planned not-started rows and five 0-of-1 phases",
+      "pass": true,
+      "detail": {
+        "rows": [
+          "T001@a062c1d4. Phase 1: Establish The Integrated Design. Not started. Ready by recorded task dependencies. Revise and compare the integrated mock at `.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html` with read-only selected-task drill-down, then obtain explicit approval of its current revision through the existing design workflow.",
+          "T002@b062d2e5. Phase 2: Find And Select Work In The Approved Shell. Not started. Waiting on dependencies. Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.",
+          "T003@c062e3f6. Phase 3: Restore Selected-Feature Now Orientation. Not started. Waiting on dependencies. Enrich `src/extensions/dude/lib/projection.mjs` with read-only selected-task descriptors and compose approved Next, phase-grouped Tasks/detail, Activity, and the properties/evidence dock in… Row text is an excerpt; open this task to read the whole recorded unit.",
+          "T004@d062f4a7. Phase 4: Complete The Context-Preserving Interaction Loop. Not started. Waiting on dependencies. Integrate existing Needs You, New idea, and Review entry/return with Now in `src/extensions/dude/frontend/{app.jsx,needs-you.jsx,review.jsx,styles.js}`, retaining the data-hook and Review-engine contracts.",
+          "T005@e062a5b8. Phase 5: Verify The Installed Walkthrough. Not started. Waiting on dependencies. Verify the integrated built and installed walkthrough, including read-only task drill-down, with `scripts/dude-canvas-ui/` acceptance, source/generated parity, and release checks; update `docs/commands.md` for the approved navigation and task-data limits."
+        ],
+        "filters": [
+          {
+            "value": "all",
+            "text": "All5",
+            "pressed": "true",
+            "label": "All, 5 tasks, showing",
+            "rect": [
+              64,
+              637,
+              45.203125,
+              28
+            ]
+          },
+          {
+            "value": "todo",
+            "text": "Pending5",
+            "pressed": "false",
+            "label": "Pending, 5 tasks",
+            "rect": [
+              113.203125,
+              637,
+              75.53125,
+              28
+            ]
+          },
+          {
+            "value": "in-progress",
+            "text": "In progress0",
+            "pressed": "false",
+            "label": "In progress, 0 tasks",
+            "rect": [
+              192.734375,
+              637,
+              92.96875,
+              28
+            ]
+          },
+          {
+            "value": "blocked",
+            "text": "Blocked0",
+            "pressed": "false",
+            "label": "Blocked, 0 tasks",
+            "rect": [
+              289.703125,
+              637,
+              74.75,
+              28
+            ]
+          },
+          {
+            "value": "done",
+            "text": "Done0",
+            "pressed": "false",
+            "label": "Done, 0 tasks",
+            "rect": [
+              368.453125,
+              637,
+              59.234375,
+              28
+            ]
+          }
+        ],
+        "phases": [
+          {
+            "name": "Phase 1: Establish The Integrated Design",
+            "count": "0 of 1"
+          },
+          {
+            "name": "Phase 2: Find And Select Work In The Approved Shell",
+            "count": "0 of 1"
+          },
+          {
+            "name": "Phase 3: Restore Selected-Feature Now Orientation",
+            "count": "0 of 1"
+          },
+          {
+            "name": "Phase 4: Complete The Context-Preserving Interaction Loop",
+            "count": "0 of 1"
+          },
+          {
+            "name": "Phase 5: Verify The Installed Walkthrough",
+            "count": "0 of 1"
+          }
+        ],
+        "meter": "0 of 5 canonical tasks complete."
+      }
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "planned-state surface makes no live-agent or production-data claim",
+      "pass": true,
+      "detail": "its.T005@e062a5b8Not startedWaiting on dependencies[Shared]Rows, phase headings and totals all come from one read of .dude/specs/062-dude-canvas-workspace-integration/tasks.md (content identity a3cb207d0f83, 9170 bytes), captured 2026-09-14 22:46 UTC with the product’s own canonical parser. The generated board, the terminal execution history and archived units in that file are not tasks and are not counted here. A recorded status is what the file holds, not evidence that an agent is working now."
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "T003 row received keyboard focus before activation",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "native Enter opens T003 full current canonical body in the desktop dock",
+      "pass": true,
+      "detail": {
+        "inDock": true,
+        "renderedChars": 2231,
+        "canonicalChars": 2231
+      }
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "T003 source is read-only inert text, preserved and unclamped",
+      "pass": true,
+      "detail": {
+        "text": "Task detail · read onlyCloseT003@c062e3f6 · 062-dude-canvas-workspace-integrationRecorded statusNot started · Waiting on dependencies. Not started is recorded work that has not begun. Dependency readiness is not permission to run it.PhasePhase 3: Restore Selected-Feature Now Orientation · [US2]DependenciesT002@b062d2e5Not startedExplicit blockerNo blocker reason is recorded for this task. An unmet dependency is not one.Verification and review resultsNot exposed by this source. The readers behind this view return canonical task text, state, dependencies and blockers. They expose no task-bound test or review outcome, so none is shown. Acceptance wording inside the unit, a Done glyph, this feature’s activity and design-review history are not results for this task.Recorded unit- [ ] T003@c062e3f6 [US2] Enrich `src/extensions/dude/lib/projection.mjs` with read-only selected-task descriptors and compose approved Next, phase-grouped Tasks/detail, Activity, and the properties/evidence dock in `src/extensions/dude/frontend/{app.jsx,styles.js}`; extend projection and scoped browser acceptance. deps: T002@b062d2e5 Use existing canonical parsing/visibility offsets to expose the whole file-backed unit, including paragraphs after blank lines and acceptance/context; do not substitute `description` or `extraMeta`, add a task regex parser, or change engine grammar. Exclude generated/archived/history content and discovered mirror bleed. Return planned rows/counts/phases for defined all-open sources without inventing execution. Reuse complete Beads list/status/readiness/blocker readers with exact imported task mapping or explicit unavailability, never markdown fallback. Missing imported phase/body or result data remains visibly unexposed. Carry rows and rollups through the selected feature's existing read/source verification and data-hook epochs, not inventory bodies, a new endpoint, or a second store. Render full source as inert wrapping text. Keep Pending/ready-by-dependencies/waiting/explicitly blocked distinct; highlight recorded in-progress without agent inference. Show no synthetic test/review verdict from Done, acceptance criteria, generic files, or feature history. Use local row selection/filter/disclosure only, bound to the exact feature/key and current read; Clear, filtering, source changes, and switching work cannot leak old detail or retarget requests. Acceptance: SC-002/007 and VSC-001/002 pass for draft, 062 all-open, completed 052, controlled mixed states, malformed/missing source, unmapped/duplicate tracked keys, selected-B/tracked-A, and racing refresh/selection. Extend `src/extensions/dude/{projection,work-index}.test.mjs` and `scripts/dude-canvas-ui/{browser,t011-browser}.test.mjs` to prove full-body extraction, inert markup, phase/count agreement, selected-only data exposure, unavailable-result copy, read-only controls, and safe focus/return. Keep existing bounds, source/authority and Review contracts, and approved 052 adaptations unchanged.The whole canonical unit from .dude/specs/062-dude-canvas-workspace-integration/tasks.md, including every line after a blank line and any example it quotes. It is shown as text and never run: markup, code fences and task-shaped examples inside it stay inert, and an example line is not another task. Its leading - [ ] is the state marker recorded in the file, not a control here. The box scrolls when the unit is taller than the pane.Read 2026-09-13 21:30 local · task source captured 2026-09-14 22:46 UTC · content identity a3cb207d0f83. This preview is frozen: it rereads nothing and follows no agent.",
+        "inDock": true,
+        "inWork": false,
+        "sourceText": "- [ ] T003@c062e3f6 [US2] Enrich `src/extensions/dude/lib/projection.mjs` with read-only selected-task descriptors and compose approved Next, phase-grouped Tasks/detail, Activity, and the properties/evidence dock in `src/extensions/dude/frontend/{app.jsx,styles.js}`; extend projection and scoped browser acceptance.\n    deps: T002@b062d2e5\n\n    Use existing canonical parsing/visibility offsets to expose the whole file-backed unit, including paragraphs after blank lines and acceptance/context; do not substitute `description` or `extraMeta`, add a task regex parser, or change engine grammar. Exclude generated/archived/history content and discovered mirror bleed. Return planned rows/counts/phases for defined all-open sources without inventing execution. Reuse complete Beads list/status/readiness/blocker readers with exact imported task mapping or explicit unavailability, never markdown fallback. Missing imported phase/body or result data remains visibly unexposed.\n\n    Carry rows and rollups through the selected feature's existing read/source verification and data-hook epochs, not inventory bodies, a new endpoint, or a second store. Render full source as inert wrapping text. Keep Pending/ready-by-dependencies/waiting/explicitly blocked distinct; highlight recorded in-progress without agent inference. Show no synthetic test/review verdict from Done, acceptance criteria, generic files, or feature history. Use local row selection/filter/disclosure only, bound to the exact feature/key and current read; Clear, filtering, source changes, and switching work cannot leak old detail or retarget requests.\n\n    Acceptance: SC-002/007 and VSC-001/002 pass for draft, 062 all-open, completed 052, controlled mixed states, malformed/missing source, unmapped/duplicate tracked keys, selected-B/tracked-A, and racing refresh/selection. Extend `src/extensions/dude/{projection,work-index}.test.mjs` and `scripts/dude-canvas-ui/{browser,t011-browser}.test.mjs` to prove full-body extraction, inert markup, phase/count agreement, selected-only data exposure, unavailable-result copy, read-only controls, and safe focus/return. Keep existing bounds, source/authority and Review contracts, and approved 052 adaptations unchanged.",
+        "sourceChildren": 0,
+        "whiteSpace": "pre-wrap",
+        "lineClamp": "none",
+        "overflowY": "auto",
+        "tabIndex": 0,
+        "role": "region",
+        "scrollTop": 0,
+        "maxScroll": 938,
+        "controls": [
+          "Close"
+        ]
+      }
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "full docked T003 body is keyboard-reachable through its end",
+      "pass": true,
+      "detail": {
+        "top": 938,
+        "max": 938,
+        "active": true,
+        "pageDowns": 5
+      }
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "captured final wide 1440 light evidence",
+      "pass": true,
+      "detail": {
+        "bytes": 374316,
+        "sha256": "719214ab29e467d15703ae8b8f7c6dbef94f443a8527644dbe690464daae886e",
+        "dimensions": {
+          "width": 1440,
+          "height": 1000
+        }
+      }
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "Done filter keeps every unfiltered phase total while showing zero matching rows",
+      "pass": true,
+      "detail": {
+        "rows": 0,
+        "filters": [
+          {
+            "value": "all",
+            "text": "All5",
+            "pressed": "false",
+            "label": "All, 5 tasks",
+            "rect": [
+              64,
+              486,
+              43.71875,
+              28
+            ]
+          },
+          {
+            "value": "todo",
+            "text": "Pending5",
+            "pressed": "false",
+            "label": "Pending, 5 tasks",
+            "rect": [
+              111.71875,
+              486,
+              75.53125,
+              28
+            ]
+          },
+          {
+            "value": "in-progress",
+            "text": "In progress0",
+            "pressed": "false",
+            "label": "In progress, 0 tasks",
+            "rect": [
+              191.25,
+              486,
+              92.96875,
+              28
+            ]
+          },
+          {
+            "value": "blocked",
+            "text": "Blocked0",
+            "pressed": "false",
+            "label": "Blocked, 0 tasks",
+            "rect": [
+              288.21875,
+              486,
+              74.75,
+              28
+            ]
+          },
+          {
+            "value": "done",
+            "text": "Done0",
+            "pressed": "true",
+            "label": "Done, 0 tasks, showing",
+            "rect": [
+              366.96875,
+              486,
+              60.5625,
+              28
+            ]
+          }
+        ],
+        "phases": [
+          {
+            "name": "Phase 1: Establish The Integrated Design",
+            "count": "0 of 1"
+          },
+          {
+            "name": "Phase 2: Find And Select Work In The Approved Shell",
+            "count": "0 of 1"
+          },
+          {
+            "name": "Phase 3: Restore Selected-Feature Now Orientation",
+            "count": "0 of 1"
+          },
+          {
+            "name": "Phase 4: Complete The Context-Preserving Interaction Loop",
+            "count": "0 of 1"
+          },
+          {
+            "name": "Phase 5: Verify The Installed Walkthrough",
+            "count": "0 of 1"
+          }
+        ],
+        "active": "done"
+      }
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "All restores all five rows without changing selected work or Next",
+      "pass": true,
+      "detail": {
+        "rows": 5,
+        "identity": "Working on 062 Dude Canvas Workspace Integration.",
+        "next": "No next stepNo canonical task execution evidence exists yet.T001@a062c1d4 is ready by recorded task dependencies, from the same read as the rows below. Dependency readiness is not admission to Work, an approval, or evidence that an agent is running it, so it is not offered here as a step to take."
+      }
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "ordinary Overview return retains selected 062 with no parallel search",
+      "pass": true,
+      "detail": {
+        "title": "Overview",
+        "identity": "Working on 062 Dude Canvas Workspace Integration.",
+        "finderHidden": true,
+        "scopeHidden": true,
+        "rows": [
+          "062"
+        ],
+        "text": "OverviewNew ideaFiltered to the work you are on: 062 Dude Canvas Workspace Integration. There is one work search, so choosing different work means clearing this filter first, with Clear in the command bar. Nothing is closed or discarded by clearing.1 of 62 recorded ideas and features · selected work filter · 062The other 61 recorded ideas and features are filtered out of this list, not removed. Clear brings the one search back with an empty search and All records.Open this row, or focus it and press Enter, to return to Now for this record.No.NameStatusProgress062Dude Canvas Workspace Integrationdude-canvas-workspace-integrationDefined·0 of 5 tasksDefined0 of 5 tasks62 ideas and 50 defined packages were read from this repository when the mock was captured. Discovery and Now show those recorded facts, and that recorded inventory is unchanged by the selected-work filter above."
+      }
+    },
+    {
+      "step": "wide-repository-journey",
+      "name": "same-record Overview return preserves the inspected T003 state",
+      "pass": true,
+      "detail": {
+        "detailKey": true
+      }
+    },
+    {
+      "step": "request-review-return",
+      "name": "Now exposes exactly one current preview request for selected 062",
+      "pass": true,
+      "detail": [
+        {
+          "handle": "preview-062-1",
+          "text": "Review design"
+        }
+      ]
+    },
+    {
+      "step": "request-review-return",
+      "name": "selected-feature request names exact 062 scope without changing browsing context",
+      "pass": true,
+      "detail": {
+        "title": "Design review",
+        "scope": "Design reviewBlocking clarification in this contextExample requestThis request is about062 · Dude Canvas Workspace Integration.dude/specs/062-dude-canvas-workspace-integration/spec.mdWhy your input is neededOnly you can say whether the restored composition reads as the desktop application you recognised, so the design cannot be approved from agent inspection.What this unblocksEvery product task in this package stays closed until the current combined revision is approved.",
+        "response": "Canonical artifact under review.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.htmlrev-3 · content identity 4c1f…a907Open Review to mark up this exact revision. Feedback and approval are separate actions: sending annotated feedback never approves, and approval applies only to the revision currently shown.Open reviewApprove this revisionDefer",
+        "openReviewCount": 1,
+        "identity": "Working on 062 Dude Canvas Workspace Integration."
+      }
+    },
+    {
+      "step": "request-review-return",
+      "name": "Review opens as a focused local child simulation with nothing sent",
+      "pass": true,
+      "detail": {
+        "title": "Does this combined workspace match the cockpit you approved for 052?",
+        "stage": true,
+        "dockHidden": true,
+        "local": 0,
+        "sent": 0,
+        "status": "Choose a tool, then activate the stage to place an example annotation. Local example markup only: nothing is written to a file, a session or a review submission."
+      }
+    },
+    {
+      "step": "request-review-return",
+      "name": "Review controls have explicit accessible names",
+      "pass": true,
+      "detail": [
+        {
+          "role": "button",
+          "name": "Comments (2)",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "Send feedback",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "Approve this revision",
+          "focused": false
+        },
+        {
+          "role": "group",
+          "name": "Reviewed mock, pans inside this stage",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "Select (V)",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "Comment (C)",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "Box (B)",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "Circle (O)",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "Arrow (A)",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "Highlight (H)",
+          "focused": false
+        }
+      ]
+    },
+    {
+      "step": "request-review-return",
+      "name": "one local box annotation is added without provider/session action",
+      "pass": true,
+      "detail": {
+        "local": 1,
+        "saveDisabled": false,
+        "sent": 0,
+        "status": "1 local annotation added. Save markup and Undo act on these. Local example markup only: nothing is written to a file, a session or a review submission."
+      }
+    },
+    {
+      "step": "request-review-return",
+      "name": "Save markup remains tab-local and does not claim a send or approval",
+      "pass": true,
+      "detail": {
+        "local": 1,
+        "sent": 0,
+        "status": "Markup saved in this tab · 1 annotation. Local example markup only: nothing is written to a file, a session or a review submission."
+      }
+    },
+    {
+      "step": "request-review-return",
+      "name": "valid Review reopen retains saved local markup and still sends nothing",
+      "pass": true,
+      "detail": {
+        "local": 1,
+        "sent": 0,
+        "status": "Markup saved in this tab · 1 annotation. Local example markup only: nothing is written to a file, a session or a review submission."
+      }
+    },
+    {
+      "step": "request-review-return",
+      "name": "Review return retains selected 062 and its exact T003 inspection",
+      "pass": true,
+      "detail": {
+        "identity": "Working on 062 Dude Canvas Workspace Integration.",
+        "detail": true
+      }
+    },
+    {
+      "step": "request-review-return",
+      "name": "invalid permission remains rejected with exact fields focused and no send",
+      "pass": true,
+      "detail": {
+        "invalid": [
+          {
+            "draft": "confirm",
+            "focused": true
+          },
+          {
+            "draft": "grant",
+            "focused": false
+          }
+        ],
+        "alerts": [
+          "Type the confirmation exactly: refresh dude-pack-fluent-ui",
+          "Select the grant checkbox to confirm this operation on these exact targets."
+        ],
+        "sent": 0,
+        "text": "Exact operationcompose refresh dude-pack-fluent-uiExact targets.github/dude-pack-fluent-ui/.github/copilot-instructions.mdCanvas cannot run this operation itself. Permission is handed to the same joined owner, which performs it.Type the literal confirmationRequired text: refresh dude-pack-fluent-uiType the confirmation exactly: refresh dude-pack-fluent-uiI grant permission for this operation on these exact targets.Select the grant checkbox to confirm this operation on these exact targets.Nothing was prepared and nothing was sent. Decline and Defer stay available without a grant.Send permissionDeclineDefer",
+        "identity": "Browsing 062 Dude Canvas Workspace Integration. The open request has its own scope, stated with the request."
+      }
+    },
+    {
+      "step": "request-review-return",
+      "name": "Clear yields empty All finder focused at its starting position in one activation",
+      "pass": true,
+      "detail": {
+        "title": "Overview",
+        "identityHidden": true,
+        "finderHidden": false,
+        "query": "",
+        "scope": "all",
+        "focus": "finder-input",
+        "rows": 62,
+        "firstTabIndex": 0,
+        "scrollTop": 0
+      }
+    },
+    {
+      "step": "request-review-return",
+      "name": "completed 052 renders thirteen Done rows and agreeing phase totals",
+      "pass": true,
+      "detail": {
+        "rows": [
+          "T001@052d1d3a",
+          "T005@052bake5",
+          "T006@052duck6",
+          "T007@052aprv7",
+          "T002@052open2",
+          "T003@052read3",
+          "T014@052host4",
+          "T008@052proj8",
+          "T009@052core9",
+          "T010@052now10",
+          "T011@052a11y1",
+          "T012@052dog12",
+          "T013@052rel13"
+        ],
+        "filters": [
+          {
+            "value": "all",
+            "text": "All13",
+            "pressed": "true",
+            "label": "All, 13 tasks, showing",
+            "rect": [
+              64,
+              597,
+              53.09375,
+              28
+            ]
+          },
+          {
+            "value": "todo",
+            "text": "Pending0",
+            "pressed": "false",
+            "label": "Pending, 0 tasks",
+            "rect": [
+              121.09375,
+              597,
+              75.53125,
+              28
+            ]
+          },
+          {
+            "value": "in-progress",
+            "text": "In progress0",
+            "pressed": "false",
+            "label": "In progress, 0 tasks",
+            "rect": [
+              200.625,
+              597,
+              92.96875,
+              28
+            ]
+          },
+          {
+            "value": "blocked",
+            "text": "Blocked0",
+            "pressed": "false",
+            "label": "Blocked, 0 tasks",
+            "rect": [
+              297.59375,
+              597,
+              74.75,
+              28
+            ]
+          },
+          {
+            "value": "done",
+            "text": "Done13",
+            "pressed": "false",
+            "label": "Done, 13 tasks",
+            "rect": [
+              376.34375,
+              597,
+              66.796875,
+              28
+            ]
+          }
+        ],
+        "phases": [
+          {
+            "name": "Phase 1: D1-D3 Definition Review",
+            "count": "1 of 1"
+          },
+          {
+            "name": "Phase 2: Responsive Fluent Design And Approval",
+            "count": "3 of 3"
+          },
+          {
+            "name": "Phase 3: I0 Architecture-Risk Proof",
+            "count": "3 of 3"
+          },
+          {
+            "name": "Phase 4: Foundational Projection And Core Path",
+            "count": "2 of 2"
+          },
+          {
+            "name": "Phase 5: Read-Only Now Cockpit",
+            "count": "1 of 1"
+          },
+          {
+            "name": "Phase 6: Verification, Dogfood, And Release",
+            "count": "3 of 3"
+          }
+        ],
+        "meter": "13 of 13 canonical tasks complete."
+      }
+    },
+    {
+      "step": "request-review-return",
+      "name": "052 Done detail remains a recorded state with results explicitly unexposed",
+      "pass": true,
+      "detail": "Task detail · read onlyCloseT010@052now10 · 052-dude-canvas-uiRecorded statusDone. Done is the recorded task state. It is not by itself a verification or review result.PhasePhase 5: Read-Only Now Cockpit · [US1]DependenciesT009@052core9DoneExplicit blockerNo blocker reason is recorded for this task. An unmet dependency is not one.Verification and review resultsNot exposed by this source. The readers behind this view return canonical task text, state, dependencies and blockers. They expose no task-bound test or review outcome, so none is shown. Acceptance wording inside the unit, a Done glyph, this feature’s activity and design-review history are not results for this task.Recorded unit- [x] T010@052now10 [US1] After T009@052core9, add private scoped maintainer tooling at `scripts/dude-canvas-ui/{package.json,package-lock.json,build.mjs}` with one build script, Node `>=20`, matching React/"
+    },
+    {
+      "step": "request-review-return",
+      "name": "packages outside the five captured features explicitly say task units were not captured",
+      "pass": true,
+      "detail": {
+        "rows": 0,
+        "phases": 9,
+        "text": "TasksThe canonical units for .dude/specs/001-brainstorm-ideas-intake/tasks.md were not captured into this offline preview file, so this mock has no rows or unit text to show for them. The recorded phase totals below come from the frozen inventory read. In the product this record reads its own task source like every other one.Phase 1: Shared Workspace Contract1 of 1Phase 2: Migration And Lint Foundation2 of 2Phase 3: Brainstorm And Compatibility Entry Points2 of 2Phase 4: Lifecycle And Preservation Consumers2 of 2Phase 5: Coordinator-Owned Dogfood Cutover And Knowledge Reconciliation1 of 1Phase 6: Tracked Integration1 of 1Phase 7: Independent Domain Terminology1 of 1Phase 8: Documentation And Distribution2 of 2Phase 9: Verification And Handoff1 of 1Recorded phase headings and totals for .dude/specs/001-brainstorm-ideas-intake/tasks.md, in file order, from the frozen inventory read. This preview holds no rows or unit text for them."
+      }
+    },
+    {
+      "step": "blocked-and-responsive",
+      "name": "controlled blocked example has one congruent blocked row, phase, rollup, and explicit reason",
+      "pass": true,
+      "detail": {
+        "filters": [
+          {
+            "value": "all",
+            "text": "All5",
+            "pressed": "true",
+            "label": "All, 5 tasks, showing",
+            "rect": [
+              64,
+              933,
+              45.203125,
+              28
+            ]
+          },
+          {
+            "value": "todo",
+            "text": "Pending4",
+            "pressed": "false",
+            "label": "Pending, 4 tasks",
+            "rect": [
+              113.203125,
+              933,
+              75.53125,
+              28
+            ]
+          },
+          {
+            "value": "in-progress",
+            "text": "In progress0",
+            "pressed": "false",
+            "label": "In progress, 0 tasks",
+            "rect": [
+              192.734375,
+              933,
+              92.96875,
+              28
+            ]
+          },
+          {
+            "value": "blocked",
+            "text": "Blocked1",
+            "pressed": "false",
+            "label": "Blocked, 1 tasks",
+            "rect": [
+              289.703125,
+              933,
+              74.75,
+              28
+            ]
+          },
+          {
+            "value": "done",
+            "text": "Done0",
+            "pressed": "false",
+            "label": "Done, 0 tasks",
+            "rect": [
+              368.453125,
+              933,
+              59.234375,
+              28
+            ]
+          }
+        ],
+        "rows": [
+          {
+            "key": "T001@a062c1d4",
+            "label": "T001@a062c1d4. Phase 1: Establish The Integrated Design. Not started. Ready by recorded task dependencies. Revise and compare the integrated mock at `.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html` with read-only selected-task drill-down, then obtain explicit approval of its current revision through the existing design workflow.",
+            "className": "task-row is-todo",
+            "expanded": "false"
+          },
+          {
+            "key": "T002@b062d2e5",
+            "label": "T002@b062d2e5. Phase 2: Find And Select Work In The Approved Shell. Blocked. A blocker reason is recorded. Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.",
+            "className": "task-row is-blocked is-inspected",
+            "expanded": "true"
+          },
+          {
+            "key": "T003@c062e3f6",
+            "label": "T003@c062e3f6. Phase 3: Restore Selected-Feature Now Orientation. Not started. Waiting on dependencies. Enrich `src/extensions/dude/lib/projection.mjs` with read-only selected-task descriptors and compose approved Next, phase-grouped Tasks/detail, Activity, and the properties/evidence dock in… Row text is an excerpt; open this task to read the whole recorded unit.",
+            "className": "task-row is-todo",
+            "expanded": "false"
+          },
+          {
+            "key": "T004@d062f4a7",
+            "label": "T004@d062f4a7. Phase 4: Complete The Context-Preserving Interaction Loop. Not started. Waiting on dependencies. Integrate existing Needs You, New idea, and Review entry/return with Now in `src/extensions/dude/frontend/{app.jsx,needs-you.jsx,review.jsx,styles.js}`, retaining the data-hook and Review-engine contracts.",
+            "className": "task-row is-todo",
+            "expanded": "false"
+          },
+          {
+            "key": "T005@e062a5b8",
+            "label": "T005@e062a5b8. Phase 5: Verify The Installed Walkthrough. Not started. Waiting on dependencies. Verify the integrated built and installed walkthrough, including read-only task drill-down, with `scripts/dude-canvas-ui/` acceptance, source/generated parity, and release checks; update `docs/commands.md` for the approved navigation and task-data limits.",
+            "className": "task-row is-todo",
+            "expanded": "false"
+          }
+        ],
+        "phases": [
+          {
+            "name": "Phase 1: Establish The Integrated Design",
+            "count": "0 of 1"
+          },
+          {
+            "name": "Phase 2: Find And Select Work In The Approved Shell · blocked",
+            "count": "0 of 1"
+          },
+          {
+            "name": "Phase 3: Restore Selected-Feature Now Orientation",
+            "count": "0 of 1"
+          },
+          {
+            "name": "Phase 4: Complete The Context-Preserving Interaction Loop",
+            "count": "0 of 1"
+          },
+          {
+            "name": "Phase 5: Verify The Installed Walkthrough",
+            "count": "0 of 1"
+          }
+        ],
+        "meter": "0 of 5 canonical tasks complete, 1 blocked. These counts are part of the example execution state, recomputed from the same controlled task states the rows below use. Recorded in this repository at the last complete read: Defined, 0 of 5 canonical tasks complete and 5 open. No canonical task execution evidence exists yet."
+      }
+    },
+    {
+      "step": "blocked-and-responsive",
+      "name": "blocked Next separates readiness from Work admission, approval, and live-agent evidence",
+      "pass": true,
+      "detail": "No next stepExample execution stateThis example blocked state supplies no next execution action.T001@a062c1d4 is ready by recorded task dependencies, from the same read as the rows below. Dependency readiness is not admission to Work, an approval, or evidence that an agent is running it, so it is not offered here as a step to take."
+    },
+    {
+      "step": "blocked-and-responsive",
+      "name": "approved mock has no task mutation, Settings, or Kanban affordance",
+      "pass": true,
+      "detail": []
+    },
+    {
+      "step": "blocked-and-responsive",
+      "name": "real responsive event moved the dark 360 frame to in-flow full task detail",
+      "pass": true,
+      "detail": {
+        "responsive": {
+          "before": {
+            "width": 1440,
+            "narrow": false,
+            "events": 0
+          },
+          "observed": {
+            "width": 360,
+            "height": 800,
+            "narrow": true,
+            "events": 1,
+            "visibility": "visible"
+          }
+        },
+        "narrowGeometry": {
+          "width": 360,
+          "height": 800,
+          "narrowMedia": true,
+          "dark": true,
+          "scrollWidth": 360,
+          "clientWidth": 360,
+          "visibleOverflow": [],
+          "identity": "062Dude Canvas Workspace Integration",
+          "identityRect": {
+            "x": 16,
+            "y": 496,
+            "width": 328,
+            "height": 88,
+            "right": 344,
+            "bottom": 584
+          },
+          "workRect": {
+            "x": 0,
+            "y": 425,
+            "width": 360,
+            "height": 4468,
+            "right": 360,
+            "bottom": 4893
+          },
+          "detailRect": {
+            "x": 16,
+            "y": 2284,
+            "width": 328,
+            "height": 1362,
+            "right": 344,
+            "bottom": 3646
+          },
+          "detailInWork": true,
+          "detailInDock": false,
+          "toggleName": "Open navigation menu",
+          "toggleIcon": "#i-menu",
+          "overviewName": "Overview",
+          "overviewIcon": "#i-grid",
+          "filterTargets": [
+            {
+              "label": "All, 5 tasks, showing",
+              "width": 45.203125,
+              "height": 28
+            },
+            {
+              "label": "Pending, 4 tasks",
+              "width": 75.53125,
+              "height": 28
+            },
+            {
+              "label": "In progress, 0 tasks",
+              "width": 92.96875,
+              "height": 28
+            },
+            {
+              "label": "Blocked, 1 tasks",
+              "width": 74.75,
+              "height": 28
+            },
+            {
+              "label": "Done, 0 tasks",
+              "width": 59.234375,
+              "height": 28
+            }
+          ]
+        },
+        "detail": {
+          "text": "Task detail · read onlyCloseT002@b062d2e5 · 062-dude-canvas-workspace-integrationExample task state This selection shows this task as Blocked. The repository records it as Not started. The recorded unit below is unchanged.Recorded statusBlocked. Blocked is the recorded task state, separate from waiting on a dependency.PhasePhase 2: Find And Select Work In The Approved Shell · [US1]DependenciesT001@a062c1d4Not startedExplicit blockerThe combined mock has no explicit current-revision approval, so shell work cannot start.Verification and review resultsNot exposed by this source. The readers behind this view return canonical task text, state, dependencies and blockers. They expose no task-bound test or review outcome, so none is shown. Acceptance wording inside the unit, a Done glyph, this feature’s activity and design-review history are not results for this task.Recorded unit- [ ] T002@b062d2e5 [US1] Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`. deps: T001@a062c1d4 Retain Open/Closed/All and complete discovery while moving the sole finder to the command-bar workspace. Add capture-number labels and numeric presentation order from validated context paths, including compact rows. Keep exact selection, pending reads, query/scope/scroll return, working rail destinations, status chrome, and partial/empty states distinct. Do not change inventory or request contracts. Acceptance: SC-001/006 and the applicable visual criteria pass on the built surface, including one-activation results, full-list keyboard reachability, no implicit selection, and source-identity failure cases. Follow the plan's per-slice build and comparison checks.The whole canonical unit from .dude/specs/062-dude-canvas-workspace-integration/tasks.md, including every line after a blank line and any example it quotes. It is shown as text and never run: markup, code fences and task-shaped examples inside it stay inert, and an example line is not another task. Its leading - [ ] is the state marker recorded in the file, not a control here.Read 2026-09-13 21:30 local · task source captured 2026-09-14 22:46 UTC · content identity a3cb207d0f83. This preview is frozen: it rereads nothing and follows no agent.",
+          "inDock": false,
+          "inWork": true,
+          "sourceText": "- [ ] T002@b062d2e5 [US1] Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.\n    deps: T001@a062c1d4\n\n    Retain Open/Closed/All and complete discovery while moving the sole finder to the command-bar workspace. Add capture-number labels and numeric presentation order from validated context paths, including compact rows. Keep exact selection, pending reads, query/scope/scroll return, working rail destinations, status chrome, and partial/empty states distinct. Do not change inventory or request contracts.\n\n    Acceptance: SC-001/006 and the applicable visual criteria pass on the built surface, including one-activation results, full-list keyboard reachability, no implicit selection, and source-identity failure cases. Follow the plan's per-slice build and comparison checks.",
+          "sourceChildren": 0,
+          "whiteSpace": "pre-wrap",
+          "lineClamp": "none",
+          "overflowY": "visible",
+          "tabIndex": -1,
+          "role": null,
+          "scrollTop": 0,
+          "maxScroll": 0,
+          "controls": [
+            "Close"
+          ]
+        }
+      }
+    },
+    {
+      "step": "blocked-and-responsive",
+      "name": "360 dark geometry keeps identity, controls, and page inside the viewport",
+      "pass": true,
+      "detail": {
+        "width": 360,
+        "height": 800,
+        "narrowMedia": true,
+        "dark": true,
+        "scrollWidth": 360,
+        "clientWidth": 360,
+        "visibleOverflow": [],
+        "identity": "062Dude Canvas Workspace Integration",
+        "identityRect": {
+          "x": 16,
+          "y": 496,
+          "width": 328,
+          "height": 88,
+          "right": 344,
+          "bottom": 584
+        },
+        "workRect": {
+          "x": 0,
+          "y": 425,
+          "width": 360,
+          "height": 4468,
+          "right": 360,
+          "bottom": 4893
+        },
+        "detailRect": {
+          "x": 16,
+          "y": 2284,
+          "width": 328,
+          "height": 1362,
+          "right": 344,
+          "bottom": 3646
+        },
+        "detailInWork": true,
+        "detailInDock": false,
+        "toggleName": "Open navigation menu",
+        "toggleIcon": "#i-menu",
+        "overviewName": "Overview",
+        "overviewIcon": "#i-grid",
+        "filterTargets": [
+          {
+            "label": "All, 5 tasks, showing",
+            "width": 45.203125,
+            "height": 28
+          },
+          {
+            "label": "Pending, 4 tasks",
+            "width": 75.53125,
+            "height": 28
+          },
+          {
+            "label": "In progress, 0 tasks",
+            "width": 92.96875,
+            "height": 28
+          },
+          {
+            "label": "Blocked, 1 tasks",
+            "width": 74.75,
+            "height": 28
+          },
+          {
+            "label": "Done, 0 tasks",
+            "width": 59.234375,
+            "height": 28
+          }
+        ]
+      }
+    },
+    {
+      "step": "blocked-and-responsive",
+      "name": "rail menu toggle and Overview remain distinctly named and iconed",
+      "pass": true,
+      "detail": {
+        "width": 360,
+        "height": 800,
+        "narrowMedia": true,
+        "dark": true,
+        "scrollWidth": 360,
+        "clientWidth": 360,
+        "visibleOverflow": [],
+        "identity": "062Dude Canvas Workspace Integration",
+        "identityRect": {
+          "x": 16,
+          "y": 496,
+          "width": 328,
+          "height": 88,
+          "right": 344,
+          "bottom": 584
+        },
+        "workRect": {
+          "x": 0,
+          "y": 425,
+          "width": 360,
+          "height": 4468,
+          "right": 360,
+          "bottom": 4893
+        },
+        "detailRect": {
+          "x": 16,
+          "y": 2284,
+          "width": 328,
+          "height": 1362,
+          "right": 344,
+          "bottom": 3646
+        },
+        "detailInWork": true,
+        "detailInDock": false,
+        "toggleName": "Open navigation menu",
+        "toggleIcon": "#i-menu",
+        "overviewName": "Overview",
+        "overviewIcon": "#i-grid",
+        "filterTargets": [
+          {
+            "label": "All, 5 tasks, showing",
+            "width": 45.203125,
+            "height": 28
+          },
+          {
+            "label": "Pending, 4 tasks",
+            "width": 75.53125,
+            "height": 28
+          },
+          {
+            "label": "In progress, 0 tasks",
+            "width": 92.96875,
+            "height": 28
+          },
+          {
+            "label": "Blocked, 1 tasks",
+            "width": 74.75,
+            "height": 28
+          },
+          {
+            "label": "Done, 0 tasks",
+            "width": 59.234375,
+            "height": 28
+          }
+        ]
+      }
+    },
+    {
+      "step": "blocked-and-responsive",
+      "name": "360 dark task filters, blocked row, and rail controls have accessible names",
+      "pass": true,
+      "detail": [
+        {
+          "role": "StaticText",
+          "name": ". Discovery and Now still read this repository’s frozen records. This selection replaces 062’s recorded execution state with a controlled blocked example on T002@b062d2e5, alongside the example requests and blockers, and recomputes its counts and phase totals from that same set. The repository records 062 as Defined with all 5 canonical tasks not started and no execution evidence.",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "Open navigation menu",
+          "focused": false
+        },
+        {
+          "role": "StaticText",
+          "name": "Recorded in this repository at the last complete read: Defined, 0 of 5 canonical tasks complete and 5 open. No canonical task execution evidence exists yet.",
+          "focused": false
+        },
+        {
+          "role": "group",
+          "name": "Filter these tasks by recorded status",
+          "focused": false
+        },
+        {
+          "role": "StaticText",
+          "name": ".dude/specs/062-dude-canvas-workspace-integration/tasks.md · T002@b062d2e5 · human-input",
+          "focused": false
+        },
+        {
+          "role": "StaticText",
+          "name": "0 of 5 canonical tasks complete, 1 blocked. These counts are part of the example execution state, recomputed from the same controlled task states the rows below use. Recorded in this repository at the last complete read: Defined, 0 of 5 canonical tasks complete and 5 open. No canonical task execution evidence exists yet.",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "All, 5 tasks, showing",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "Pending, 4 tasks",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "In progress, 0 tasks",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "Blocked, 1 tasks",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "Done, 0 tasks",
+          "focused": false
+        },
+        {
+          "role": "StaticText",
+          "name": " of 5 recorded tasks. Phase totals below stay unfiltered.",
+          "focused": false
+        },
+        {
+          "role": "StaticText",
+          "name": ".dude/specs/062-dude-canvas-workspace-integration/tasks.md",
+          "focused": false
+        },
+        {
+          "role": "StaticText",
+          "name": " (content identity a3cb207d0f83, 9170 bytes), captured 2026-09-14 22:46 UTC with the product’s own canonical parser. The generated board, the terminal execution history and archived units in that file are not tasks and are not counted here. A recorded status is what the file holds, not evidence that an agent is working now. Recorded in this repository at the last complete read: Defined, 0 of 5 canonical tasks complete and 5 open. No canonical task execution evidence exists yet.",
+          "focused": false
+        },
+        {
+          "role": "StaticText",
+          "name": "Recorded in this repository at the last complete read: Defined, 0 of 5 canonical tasks complete and 5 open. No canonical task execution evidence exists yet.",
+          "focused": false
+        },
+        {
+          "role": "StaticText",
+          "name": "T002@b062d2e5",
+          "focused": false
+        },
+        {
+          "role": "StaticText",
+          "name": "0 of 5 tasks",
+          "focused": false
+        },
+        {
+          "role": "StaticText",
+          "name": ".dude/specs/062-dude-canvas-workspace-integration/tasks.md",
+          "focused": false
+        },
+        {
+          "role": "button",
+          "name": "T002@b062d2e5. Phase 2: Find And Select Work In The Approved Shell. Blocked. A blocker reason is recorded. Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.",
+          "focused": false
+        },
+        {
+          "role": "StaticText",
+          "name": "T002@b062d2e5",
+          "focused": false
+        },
+        {
+          "role": "StaticText",
+          "name": "- [ ] T002@b062d2e5 [US1] Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.\n    deps: T001@a062c1d4\n\n    Retain Open/Closed/All and complete discovery while moving the sole finder to the command-bar workspace. Add capture-number labels and numeric presentation order from validated context paths, including compact rows. Keep exact selection, pending reads, query/scope/scroll return, working rail destinations, status chrome, and partial/empty states distinct. Do not change inventory or request contracts.\n\n    Acceptance: SC-001/006 and the applicable visual criteria pass on the built surface, including one-activation results, full-list keyboard reachability, no implicit selection, and source-identity failure cases. Follow the plan's per-slice build and comparison checks.",
+          "focused": false
+        },
+        {
+          "role": "StaticText",
+          "name": ".dude/specs/062-dude-canvas-workspace-integration/tasks.md",
+          "focused": false
+        }
+      ]
+    },
+    {
+      "step": "blocked-and-responsive",
+      "name": "captured final narrow 360 dark evidence",
+      "pass": true,
+      "detail": {
+        "bytes": 101521,
+        "sha256": "102fd171357d897f5b82687ac673121f0e5c133194ca16b0dd74fe6a92a66963",
+        "dimensions": {
+          "width": 360,
+          "height": 800
+        }
+      }
+    },
+    {
+      "step": "blocked-and-responsive",
+      "name": "rail toggle received focus before native Enter",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "blocked-and-responsive",
+      "name": "native Enter opens a modal narrow rail overlay and inerts the full background",
+      "pass": true,
+      "detail": {
+        "expanded": "true",
+        "scrim": true,
+        "workInert": true,
+        "barInert": true,
+        "protoInert": true,
+        "focus": "overview",
+        "focusInRail": true
+      }
+    },
+    {
+      "step": "blocked-and-responsive",
+      "name": "native Tab and Shift+Tab remain contained in the narrow overlay",
+      "pass": true,
+      "detail": {
+        "forwardFocus": [
+          {
+            "id": "",
+            "rail": "now",
+            "inRail": true,
+            "inInert": false
+          },
+          {
+            "id": "",
+            "rail": "needs",
+            "inRail": true,
+            "inInert": false
+          },
+          {
+            "id": "",
+            "rail": "new",
+            "inRail": true,
+            "inInert": false
+          },
+          {
+            "id": "rail-toggle",
+            "rail": "",
+            "inRail": true,
+            "inInert": false
+          },
+          {
+            "id": "",
+            "rail": "overview",
+            "inRail": true,
+            "inInert": false
+          },
+          {
+            "id": "",
+            "rail": "now",
+            "inRail": true,
+            "inInert": false
+          }
+        ],
+        "backwardFocus": [
+          {
+            "id": "",
+            "rail": "overview",
+            "inRail": true,
+            "inInert": false
+          },
+          {
+            "id": "rail-toggle",
+            "rail": "",
+            "inRail": true,
+            "inInert": false
+          },
+          {
+            "id": "",
+            "rail": "new",
+            "inRail": true,
+            "inInert": false
+          },
+          {
+            "id": "",
+            "rail": "needs",
+            "inRail": true,
+            "inInert": false
+          },
+          {
+            "id": "",
+            "rail": "now",
+            "inRail": true,
+            "inInert": false
+          },
+          {
+            "id": "",
+            "rail": "overview",
+            "inRail": true,
+            "inInert": false
+          }
+        ]
+      }
+    },
+    {
+      "step": "blocked-and-responsive",
+      "name": "native Escape closes overlay, restores focus/background, and retains task detail",
+      "pass": true,
+      "detail": {
+        "expanded": "false",
+        "scrim": false,
+        "workInert": false,
+        "protoInert": false,
+        "focus": "rail-toggle",
+        "detail": true
+      }
+    },
+    {
+      "step": "052-comparison",
+      "name": "preserved 052 baseline freshly renders its command bar/rail/Next/lifecycle/phases/activity/dock/status structure",
+      "pass": true,
+      "detail": {
+        "bar": true,
+        "rail": true,
+        "focal": true,
+        "lifecycle": true,
+        "phases": true,
+        "activity": true,
+        "dock": true,
+        "status": true,
+        "overflowX": 0
+      }
+    },
+    {
+      "step": "052-comparison",
+      "name": "current comparison explicitly preserves, moves, adapts, and defers against 052/057",
+      "pass": true,
+      "detail": {
+        "headings": [
+          "Preserved from 052",
+          "Moved from 057",
+          "Adapted",
+          "Deferred or omitted",
+          "Walkthrough this mock supports"
+        ],
+        "current": {
+          "bar": true,
+          "rail": true,
+          "focal": true,
+          "lifecycle": true,
+          "tasks": true,
+          "activity": true,
+          "dock": true,
+          "status": true
+        },
+        "excerpt": "This revision against the 052 baseline Close Baseline: .dude/specs/052-dude-canvas-ui/design/fluent-desktop-workspace.html. Retained interactions: .dude/specs/057-dude-canvas-needs-you/design/needs-you-workspace.html. Neither file is modified by this mock. Preserved from 052 Persistent command barBrand, one context control, one refresh action, sticky above the window. Left activity railSame 48px rail at the same compact default, same icon targets, same current-destination marker. Focal Next regionSame bordered focal surface with the brand edge, first thing under the identity strip. Lifecycle and progressSame stepper and segmented meter, with truthful unavailable treatment. Phases and Activity in the centreSame phase rows and event trail, in the work column, not the dock. The phase rows are now the group headings inside Tasks rather than a separate region, so there is one account of phases, not two. Right properties and evidence dockSame docked aside, same property and source lists. Status barCoverage, connection and last complete read along the bottom edge. Fluid width and narrow collapseSame 720px and 1080px window thresholds; the shell fills the host. Moved from 057 The single work finder057's search and Open/Closed/All now sit in the command bar; its results use the workspace instead of a permanent sidebar. It is one search, on screen only while no record is committed: once work is committed the record keeps the chrome in every view and Clear on that record returns to the same search. Context contentIntent, dispositions, source detail and evidence moved into Now and its "
+      }
+    },
+    {
+      "step": "052-comparison",
+      "name": "combined proposal does not add Settings/Kanban or claim task detail is already production data",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "final-integrity",
+      "name": "browser run produced no console/runtime warning or error",
+      "pass": true,
+      "detail": []
+    },
+    {
+      "step": "final-integrity",
+      "name": "direct self-contained file render made no failed resource request",
+      "pass": true,
+      "detail": []
+    },
+    {
+      "step": "final-integrity",
+      "name": "mock, definition, task, owner, and preserved 052 bytes stayed unchanged during verification",
+      "pass": true,
+      "detail": {
+        "mock": "e4b7e16b9a97baddfe5a0c22ebfdf4abaf299986b74883db8f8c952e4b11d038",
+        "spec": "e0639459ccda79aeb1065366fe729fe27c06465479129c43c12f42e9c25380c7",
+        "plan": "9f3146a6b05ea7374a5fbb412f05127cca0faba59e4519fe20cacfd78cf23e79",
+        "tasks": "a3cb207d0f834b76060123754e3cc663d267ac20c8a202de7c945808a3b3f5c8",
+        "idea": "506a7377d588c5074ad1a1883bf8f2fd1ae59145821db86a02ccbc98b522041c",
+        "baseline052": "d491b002154088f4cc6cac4773a6745ac2f9a02b5f78b5a593c3c88335169d70"
+      }
+    }
+  ]
+}

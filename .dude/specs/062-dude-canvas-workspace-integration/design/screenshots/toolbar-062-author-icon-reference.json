@@ -1,0 +1,135 @@
+{
+  "kind": "focused author observation, not independent acceptance",
+  "mode": "icon-reference",
+  "browser": "Edg/133.0.3065.69",
+  "deviceScaleFactor": 1,
+  "preview": "http://127.0.0.1:61609/workspace-integration.html",
+  "previewSha256": "0df434e20054a6d84b0c0623ae16127281b4150664910fe8547da930d317de74",
+  "cases": [
+    {
+      "vertical": {
+        "Select (V)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M5 3.06a1 1 0 0 1 1.64-.77l11 9.06a1 1 0 0 1-.63 1.77h-5.6c-.43 0-.85.19-1.13.52L6.76 17.7A1 1 0 0 1 5 17.06zm12 9.06L6 3.06v14l3.52-4.08a2.5 2.5 0 0 1 1.9-.86z\" fill=\"currentColor\"></path>"
+        },
+        "Comment (C)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M10.48 13.84h4.92c.9 0 1.6-.71 1.6-1.56V5.57C17 4.7 16.3 4 15.4 4H4.6C3.7 4 3 4.71 3 5.57v6.7c0 .86.7 1.57 1.6 1.57h1.6V17zM6.8 17.8a1 1 0 0 1-1.4-.2 1 1 0 0 1-.2-.59v-2.17h-.6A2.6 2.6 0 0 1 2 12.28V5.57A2.6 2.6 0 0 1 4.6 3h10.8C16.84 3 18 4.15 18 5.57v6.7a2.6 2.6 0 0 1-2.6 2.57h-4.59z\" fill=\"currentColor\"></path>"
+        },
+        "Box (B)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M3 6a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3zm3-2a2 2 0 0 0-2 2v8c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z\" fill=\"currentColor\"></path>"
+        },
+        "Circle (O)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14m-8 7a8 8 0 1 1 16 0 8 8 0 0 1-16 0\" fill=\"currentColor\"></path>"
+        },
+        "Arrow (A)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M8.5 4a.5.5 0 1 1 0-1h8c.28 0 .5.22.5.5v8a.5.5 0 0 1-1 0V4.7L3.85 16.86a.5.5 0 0 1-.7-.7L15.29 4z\" fill=\"currentColor\"></path>"
+        },
+        "Line (L)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M17.85 2.15c.2.2.2.51 0 .7l-15 15a.5.5 0 0 1-.7-.7l15-15c.2-.2.5-.2.7 0\" fill=\"currentColor\"></path>"
+        },
+        "Highlight (H)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M3.5 2c.28 0 .5.22.5.5v4c0 .28.22.5.5.5h11a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 1 1 0v4c0 .65-.42 1.2-1 1.41V9a2 2 0 0 1-2 2v2.07a2 2 0 0 1-1.1 1.8l-6.18 3.08A.5.5 0 0 1 6 17.5V11a2 2 0 0 1-2-2V7.91c-.58-.2-1-.76-1-1.41v-4c0-.28.22-.5.5-.5M5 8v1a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8zm2 3v5.7l5.45-2.73a1 1 0 0 0 .55-.9V11z\" fill=\"currentColor\"></path>"
+        },
+        "Undo annotation": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M5 2.5a.5.5 0 0 0-1 0v4.9c0 .33.27.6.6.6h4.9a.5.5 0 0 0 0-1H5.9l3.48-3.02a4 4 0 0 1 5.25 6.04l-8.17 7.1a.5.5 0 0 0 .65.76l8.17-7.1a5 5 0 0 0-6.56-7.55L5 6.46z\" fill=\"currentColor\"></path>"
+        },
+        "Redo annotation": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M15 2.5a.5.5 0 0 1 1 0v4.9a.6.6 0 0 1-.6.6h-4.9a.5.5 0 0 1 0-1h3.6l-3.48-3.02a4 4 0 1 0-5.24 6.04l8.17 7.1a.5.5 0 1 1-.66.76l-8.17-7.1a5 5 0 1 1 6.56-7.55L15 6.46z\" fill=\"currentColor\"></path>"
+        },
+        "Move tools": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M15 7a1 1 0 1 0 2 0 1 1 0 0 0-2 0M9 7a1 1 0 1 0 2 0 1 1 0 0 0-2 0M4 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2m11 5a1 1 0 1 0 2 0 1 1 0 0 0-2 0m-5 1a1 1 0 1 1 0-2 1 1 0 0 1 0 2m-7-1a1 1 0 1 0 2 0 1 1 0 0 0-2 0\" fill=\"currentColor\"></path>"
+        },
+        "Switch tools to horizontal": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M5 3a3 3 0 0 0-3 3v7a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3V6a3 3 0 0 0-3-3zM3 6c0-1.1.9-2 2-2h10a2 2 0 0 1 2 2v5H3zm0 6h14v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" fill=\"currentColor\"></path>"
+        }
+      }
+    },
+    {
+      "horizontal": {
+        "Select (V)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M5 3.06a1 1 0 0 1 1.64-.77l11 9.06a1 1 0 0 1-.63 1.77h-5.6c-.43 0-.85.19-1.13.52L6.76 17.7A1 1 0 0 1 5 17.06zm12 9.06L6 3.06v14l3.52-4.08a2.5 2.5 0 0 1 1.9-.86z\" fill=\"currentColor\"></path>"
+        },
+        "Comment (C)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M10.48 13.84h4.92c.9 0 1.6-.71 1.6-1.56V5.57C17 4.7 16.3 4 15.4 4H4.6C3.7 4 3 4.71 3 5.57v6.7c0 .86.7 1.57 1.6 1.57h1.6V17zM6.8 17.8a1 1 0 0 1-1.4-.2 1 1 0 0 1-.2-.59v-2.17h-.6A2.6 2.6 0 0 1 2 12.28V5.57A2.6 2.6 0 0 1 4.6 3h10.8C16.84 3 18 4.15 18 5.57v6.7a2.6 2.6 0 0 1-2.6 2.57h-4.59z\" fill=\"currentColor\"></path>"
+        },
+        "Box (B)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M3 6a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3zm3-2a2 2 0 0 0-2 2v8c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z\" fill=\"currentColor\"></path>"
+        },
+        "Circle (O)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14m-8 7a8 8 0 1 1 16 0 8 8 0 0 1-16 0\" fill=\"currentColor\"></path>"
+        },
+        "Arrow (A)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M8.5 4a.5.5 0 1 1 0-1h8c.28 0 .5.22.5.5v8a.5.5 0 0 1-1 0V4.7L3.85 16.86a.5.5 0 0 1-.7-.7L15.29 4z\" fill=\"currentColor\"></path>"
+        },
+        "Line (L)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M17.85 2.15c.2.2.2.51 0 .7l-15 15a.5.5 0 0 1-.7-.7l15-15c.2-.2.5-.2.7 0\" fill=\"currentColor\"></path>"
+        },
+        "Highlight (H)": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M3.5 2c.28 0 .5.22.5.5v4c0 .28.22.5.5.5h11a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 1 1 0v4c0 .65-.42 1.2-1 1.41V9a2 2 0 0 1-2 2v2.07a2 2 0 0 1-1.1 1.8l-6.18 3.08A.5.5 0 0 1 6 17.5V11a2 2 0 0 1-2-2V7.91c-.58-.2-1-.76-1-1.41v-4c0-.28.22-.5.5-.5M5 8v1a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8zm2 3v5.7l5.45-2.73a1 1 0 0 0 .55-.9V11z\" fill=\"currentColor\"></path>"
+        },
+        "Undo annotation": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M5 2.5a.5.5 0 0 0-1 0v4.9c0 .33.27.6.6.6h4.9a.5.5 0 0 0 0-1H5.9l3.48-3.02a4 4 0 0 1 5.25 6.04l-8.17 7.1a.5.5 0 0 0 .65.76l8.17-7.1a5 5 0 0 0-6.56-7.55L5 6.46z\" fill=\"currentColor\"></path>"
+        },
+        "Redo annotation": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M15 2.5a.5.5 0 0 1 1 0v4.9a.6.6 0 0 1-.6.6h-4.9a.5.5 0 0 1 0-1h3.6l-3.48-3.02a4 4 0 1 0-5.24 6.04l8.17 7.1a.5.5 0 1 1-.66.76l-8.17-7.1a5 5 0 1 1 6.56-7.55L15 6.46z\" fill=\"currentColor\"></path>"
+        },
+        "Move tools": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M7 5a1 1 0 1 0 0-2 1 1 0 0 0 0 2m0 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2m1 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0m5-11a1 1 0 1 0 0-2 1 1 0 0 0 0 2m1 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0m-1 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2\" fill=\"currentColor\"></path>"
+        },
+        "Switch tools to vertical": {
+          "viewBox": "0 0 20 20",
+          "fill": "currentColor",
+          "body": "<path d=\"M15 4a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3zM8.5 15H15a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H8.5zM5 5a2 2 0 0 0-2 2v6c0 1.1.9 2 2 2h2.5V5z\" fill=\"currentColor\"></path>"
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "lastCommand": {
+    "method": "Runtime.evaluate",
+    "params": "{\"expression\":\"(() => Object.fromEntries(\\n      ['Select (V)','Comment (C)','Box (B)','Circle (O)','Arrow (A)','Line (L)','Highlight (H)',\\n        'Undo annotation','Redo annotation','Move tools','Switch tools to horizontal','Switch tools"
+  },
+  "requests": [],
+  "cleanup": "isolated browser closed and owned profile removed"
+}

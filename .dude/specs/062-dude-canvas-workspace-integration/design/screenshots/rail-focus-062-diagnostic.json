@@ -1,0 +1,2171 @@
+{
+  "subject": "062 navigation rail — narrow overlay keyboard containment defect, reproduced and fixed",
+  "finding": "ACCEPTED: at 360 with the narrow overlay open, Tab off the last destination left the document (body) and then landed on #proto-toggle behind #nav-scrim; Shift+Tab off the toggle reached #compare-open and #proto-toggle the same way. syncNav() made .shell-bar, #work-region, #dock-region and #status inert but omitted #proto-bar, and the keydown handler had no Tab/Shift+Tab containment.",
+  "fix": "syncNav() now toggles inert on #proto-bar with the other covered regions, so every route that closes the menu (Close control, Escape, dimmer, destination, breakpoint crossing) restores the whole background through the same line. The existing document keydown handler now wraps Tab/Shift+Tab across the visible enabled rail controls (navStops()) while state.navExpanded && navIsOverlay(), and pulls focus back if it has drifted outside. The wide inline pane is untouched and keeps the ordinary tab order.",
+  "mock": ".dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+  "baseline": ".dude/specs/062-dude-canvas-workspace-integration/design/variants/rev-6/workspace-integration.html",
+  "hashes": {
+    "baselineRev6Sha256": "2f4e0b2d6acafd18e4a713254e7a42adcb7a5f00881e0185b0e2892f918d6c8e",
+    "baselineBytes": 341721,
+    "canonicalBeforeSha256": "2f4e0b2d6acafd18e4a713254e7a42adcb7a5f00881e0185b0e2892f918d6c8e",
+    "canonicalBeforeBytes": 341721,
+    "canonicalAfterSha256": "8cc7689006697a2e55ba998743e30b56a1b817889b574bb925bce52ffaa57cfe",
+    "canonicalAfterBytes": 343392
+  },
+  "browser": "Edg/133.0.3065.69",
+  "runs": {
+    "before": {
+      "url": "http://127.0.0.1:61609/variants/rev-6/workspace-integration.html",
+      "result": "FAIL",
+      "totals": {
+        "checks": 17,
+        "failed": 4
+      },
+      "steps": [
+        {
+          "name": "loaded mock at 360",
+          "pass": null,
+          "detail": {
+            "title": "Dude — Canvas workspace integration (062, exploring)"
+          }
+        },
+        {
+          "name": "native Enter opens overlay, focus on current destination",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "overview",
+              "name": "Overview",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 424,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            "scrimVisible": true,
+            "protoBarInert": false,
+            "shellBarInert": true,
+            "workInert": true,
+            "statusInert": true,
+            "navExpandedAttr": "true",
+            "innerWidth": 360,
+            "overlayClass": true
+          }
+        },
+        {
+          "name": "Tab forward stays inside the open overlay",
+          "pass": false,
+          "detail": [
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "now",
+              "name": "Now",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 460,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "needs",
+              "name": "Needs you, 6 current requests",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 496,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "new",
+              "name": "New idea",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 532,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "rail": null,
+              "name": "Prototype — not part of Dude\n      \n    ",
+              "inRail": false,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 360,
+                "h": 1619
+              },
+              "hitId": "nav-scrim",
+              "hitCls": "nav-scrim"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "proto-toggle",
+              "cls": "proto-toggle",
+              "rail": null,
+              "name": "Prototype",
+              "inRail": false,
+              "inInert": false,
+              "inProto": true,
+              "rect": {
+                "x": 12,
+                "y": 42,
+                "w": 93,
+                "h": 28
+              },
+              "hitId": "nav-scrim",
+              "hitCls": "nav-scrim"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "compare-open",
+              "cls": "fui-button fui-button-secondary",
+              "rail": null,
+              "name": "Compare with 052",
+              "inRail": false,
+              "inInert": false,
+              "inProto": true,
+              "rect": {
+                "x": 113,
+                "y": 42,
+                "w": 153,
+                "h": 28
+              },
+              "hitId": "nav-scrim",
+              "hitCls": "nav-scrim"
+            }
+          ]
+        },
+        {
+          "name": "Escape closes, returns focus to the toggle, clears inertness",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Open navigation menu",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 12,
+                "y": 375,
+                "w": 32,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "[object SVGAnimatedString]"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "false",
+            "innerWidth": 360,
+            "overlayClass": false
+          }
+        },
+        {
+          "name": "Shift+Tab backward stays inside the open overlay",
+          "pass": false,
+          "detail": [
+            {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Close navigation menu",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 12,
+                "y": 375,
+                "w": 75,
+                "h": 32
+              },
+              "hitId": "rail-toggle-text",
+              "hitCls": "rail-toggle-text"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "compare-open",
+              "cls": "fui-button fui-button-secondary",
+              "rail": null,
+              "name": "Compare with 052",
+              "inRail": false,
+              "inInert": false,
+              "inProto": true,
+              "rect": {
+                "x": 113,
+                "y": 42,
+                "w": 153,
+                "h": 28
+              },
+              "hitId": "nav-scrim",
+              "hitCls": "nav-scrim"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "proto-toggle",
+              "cls": "proto-toggle",
+              "rail": null,
+              "name": "Prototype",
+              "inRail": false,
+              "inInert": false,
+              "inProto": true,
+              "rect": {
+                "x": 12,
+                "y": 42,
+                "w": 93,
+                "h": 28
+              },
+              "hitId": "nav-scrim",
+              "hitCls": "nav-scrim"
+            },
+            {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "rail": null,
+              "name": "Prototype — not part of Dude\n      \n    ",
+              "inRail": false,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 360,
+                "h": 1619
+              },
+              "hitId": "nav-scrim",
+              "hitCls": "nav-scrim"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "new",
+              "name": "New idea",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 532,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "needs",
+              "name": "Needs you, 6 current requests",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 496,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            }
+          ]
+        },
+        {
+          "name": "Tab containment holds with the prototype panel open",
+          "pass": false,
+          "detail": {
+            "panelOpen": true,
+            "focus": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "rail-button",
+                "rail": "now",
+                "name": "Now",
+                "inRail": true,
+                "inInert": false,
+                "inProto": false,
+                "rect": {
+                  "x": 21,
+                  "y": 740,
+                  "w": 250,
+                  "h": 32
+                },
+                "hitId": "",
+                "hitCls": "rail-button"
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "rail-button",
+                "rail": "needs",
+                "name": "Needs you, 6 current requests",
+                "inRail": true,
+                "inInert": false,
+                "inProto": false,
+                "rect": {
+                  "x": 21,
+                  "y": 748,
+                  "w": 250,
+                  "h": 32
+                },
+                "hitId": "",
+                "hitCls": "rail-button"
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "rail-button",
+                "rail": "new",
+                "name": "New idea",
+                "inRail": true,
+                "inInert": false,
+                "inProto": false,
+                "rect": {
+                  "x": 21,
+                  "y": 374,
+                  "w": 250,
+                  "h": 32
+                },
+                "hitId": "",
+                "hitCls": "rail-button"
+              },
+              {
+                "tag": "BODY",
+                "id": "",
+                "cls": "",
+                "rail": null,
+                "name": "Prototype — not part of Dude\n      \n    ",
+                "inRail": false,
+                "inInert": false,
+                "inProto": false,
+                "rect": {
+                  "x": 0,
+                  "y": -438,
+                  "w": 360,
+                  "h": 1899
+                },
+                "hitId": null,
+                "hitCls": null
+              },
+              {
+                "tag": "BUTTON",
+                "id": "proto-toggle",
+                "cls": "proto-toggle",
+                "rail": null,
+                "name": "Prototype",
+                "inRail": false,
+                "inInert": false,
+                "inProto": true,
+                "rect": {
+                  "x": 12,
+                  "y": 42,
+                  "w": 93,
+                  "h": 28
+                },
+                "hitId": "nav-scrim",
+                "hitCls": "nav-scrim"
+              },
+              {
+                "tag": "BUTTON",
+                "id": "compare-open",
+                "cls": "fui-button fui-button-secondary",
+                "rail": null,
+                "name": "Compare with 052",
+                "inRail": false,
+                "inInert": false,
+                "inProto": true,
+                "rect": {
+                  "x": 113,
+                  "y": 42,
+                  "w": 153,
+                  "h": 28
+                },
+                "hitId": "nav-scrim",
+                "hitCls": "nav-scrim"
+              },
+              {
+                "tag": "INPUT",
+                "id": "",
+                "cls": "u-visually-hidden",
+                "rail": null,
+                "name": "",
+                "inRail": false,
+                "inInert": false,
+                "inProto": true,
+                "rect": {
+                  "x": 101,
+                  "y": 250,
+                  "w": 1,
+                  "h": 1
+                },
+                "hitId": "nav-scrim",
+                "hitCls": "nav-scrim"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Shift+Tab containment holds with the prototype panel open",
+          "pass": false,
+          "detail": [
+            {
+              "tag": "BUTTON",
+              "id": "compare-open",
+              "cls": "fui-button fui-button-secondary",
+              "rail": null,
+              "name": "Compare with 052",
+              "inRail": false,
+              "inInert": false,
+              "inProto": true,
+              "rect": {
+                "x": 113,
+                "y": 42,
+                "w": 153,
+                "h": 28
+              },
+              "hitId": "nav-scrim",
+              "hitCls": "nav-scrim"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "proto-toggle",
+              "cls": "proto-toggle",
+              "rail": null,
+              "name": "Prototype",
+              "inRail": false,
+              "inInert": false,
+              "inProto": true,
+              "rect": {
+                "x": 12,
+                "y": 42,
+                "w": 93,
+                "h": 28
+              },
+              "hitId": "nav-scrim",
+              "hitCls": "nav-scrim"
+            },
+            {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "rail": null,
+              "name": "Prototype — not part of Dude\n      \n    ",
+              "inRail": false,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 360,
+                "h": 1899
+              },
+              "hitId": "nav-scrim",
+              "hitCls": "nav-scrim"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "new",
+              "name": "New idea",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 374,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "needs",
+              "name": "Needs you, 6 current requests",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 338,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "now",
+              "name": "Now",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 302,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "overview",
+              "name": "Overview",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 266,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            }
+          ]
+        },
+        {
+          "name": "closing the overlay restores the prototype bar",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Open navigation menu",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 12,
+                "y": 217,
+                "w": 32,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "[object SVGAnimatedString]"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "false",
+            "innerWidth": 360,
+            "overlayClass": false
+          }
+        },
+        {
+          "name": "dimmer closes and restores the background",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Open navigation menu",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 12,
+                "y": 217,
+                "w": 32,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "[object SVGAnimatedString]"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "false",
+            "innerWidth": 360,
+            "overlayClass": false,
+            "dimmerPoint": {
+              "x": 348,
+              "y": 390,
+              "hit": "nav-scrim"
+            }
+          }
+        },
+        {
+          "name": "named toggle closes and restores the background",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Open navigation menu",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 12,
+                "y": 217,
+                "w": 32,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "[object SVGAnimatedString]"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "false",
+            "innerWidth": 360,
+            "overlayClass": false
+          }
+        },
+        {
+          "name": "choosing a destination closes the overlay and restores the background",
+          "pass": true,
+          "detail": {
+            "beforeGo": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "now",
+              "name": "Now",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 302,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            "afterGo": {
+              "focus": {
+                "tag": "H1",
+                "id": "view-title",
+                "cls": "",
+                "rail": null,
+                "name": "Now",
+                "inRail": false,
+                "inInert": false,
+                "inProto": false,
+                "rect": {
+                  "x": 16,
+                  "y": 270,
+                  "w": 320,
+                  "h": 28
+                },
+                "hitId": "view-title",
+                "hitCls": ""
+              },
+              "scrimVisible": false,
+              "protoBarInert": false,
+              "shellBarInert": false,
+              "workInert": false,
+              "statusInert": false,
+              "navExpandedAttr": "false",
+              "innerWidth": 360,
+              "overlayClass": false,
+              "view": "now"
+            }
+          }
+        },
+        {
+          "name": "wide inline pane expands without a scrim or inertness",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Collapse navigation pane",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 8,
+                "y": 179,
+                "w": 191,
+                "h": 32
+              },
+              "hitId": "rail-toggle-text",
+              "hitCls": "rail-toggle-text"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "true",
+            "innerWidth": 1440,
+            "overlayClass": false
+          }
+        },
+        {
+          "name": "wide inline pane does not trap Tab",
+          "pass": true,
+          "detail": [
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "overview",
+              "name": "Overview",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 8,
+                "y": 228,
+                "w": 191,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "now",
+              "name": "Now",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 8,
+                "y": 264,
+                "w": 191,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "needs",
+              "name": "Needs you, 6 current requests",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 8,
+                "y": 300,
+                "w": 191,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "new",
+              "name": "New idea",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 8,
+                "y": 336,
+                "w": 191,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "fui-button fui-button-secondary",
+              "rail": "new",
+              "name": "New idea",
+              "inRail": false,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 986,
+                "y": 183,
+                "w": 98,
+                "h": 28
+              },
+              "hitId": "",
+              "hitCls": "fui-button fui-button-secondary"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "wrow",
+              "rail": null,
+              "name": "053. Design-Stage Critique. Awaiting definition. Progress not established.",
+              "inRail": false,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 208,
+                "y": 348,
+                "w": 892,
+                "h": 47
+              },
+              "hitId": "",
+              "hitCls": "wrow-name"
+            },
+            {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "rail": null,
+              "name": "Prototype — not part of Dude\n      \n    ",
+              "inRail": false,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 1440,
+                "h": 900
+              },
+              "hitId": "",
+              "hitCls": "proto-rail"
+            }
+          ]
+        },
+        {
+          "name": "desktop expanded pane converges closed at 719 with no stray overlay",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "rail": null,
+              "name": "Prototype — not part of Dude\n      \n    ",
+              "inRail": false,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 719,
+                "h": 1171
+              },
+              "hitId": "proto-toggle",
+              "hitCls": "proto-toggle"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "false",
+            "innerWidth": 719,
+            "overlayClass": false
+          }
+        },
+        {
+          "name": "719 uses overlay semantics with the whole background unreachable",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "overview",
+              "name": "Overview",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 260,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            "scrimVisible": true,
+            "protoBarInert": false,
+            "shellBarInert": true,
+            "workInert": true,
+            "statusInert": true,
+            "navExpandedAttr": "true",
+            "innerWidth": 719,
+            "overlayClass": true
+          }
+        },
+        {
+          "name": "open 719 to 720 converges to the inline pane with the background back",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "overview",
+              "name": "Overview",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 8,
+                "y": 260,
+                "w": 191,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "true",
+            "innerWidth": 720,
+            "overlayClass": false
+          }
+        },
+        {
+          "name": "selecting a record opens exactly that record and Overview then shows only it",
+          "pass": true,
+          "detail": {
+            "beforePick": {
+              "view": "overview",
+              "heading": "Overview",
+              "rows": [
+                "053",
+                "054",
+                "056",
+                "058",
+                "059",
+                "060",
+                "061",
+                "062"
+              ],
+              "query": "",
+              "scope": "open",
+              "finders": 1
+            },
+            "onNow": {
+              "view": "now",
+              "heading": "062Dude Canvas Workspace Integration",
+              "rows": [],
+              "query": "",
+              "scope": "open",
+              "finders": 1
+            },
+            "selectedOverview": {
+              "view": "overview",
+              "heading": "Overview",
+              "rows": [
+                "062"
+              ],
+              "query": "",
+              "scope": "open",
+              "finders": 1
+            }
+          }
+        },
+        {
+          "name": "the nav toggle never navigates or clears the selected-only Overview",
+          "pass": true,
+          "detail": {
+            "afterExpand": {
+              "view": "overview",
+              "heading": "Overview",
+              "rows": [
+                "062"
+              ],
+              "query": "",
+              "scope": "open",
+              "finders": 1
+            },
+            "afterCollapse": {
+              "view": "overview",
+              "heading": "Overview",
+              "rows": [
+                "062"
+              ],
+              "query": "",
+              "scope": "open",
+              "finders": 1
+            }
+          }
+        }
+      ]
+    },
+    "after": {
+      "url": "http://127.0.0.1:61609/workspace-integration.html",
+      "result": "PASS",
+      "totals": {
+        "checks": 17,
+        "failed": 0
+      },
+      "steps": [
+        {
+          "name": "loaded mock at 360",
+          "pass": null,
+          "detail": {
+            "title": "Dude — Canvas workspace integration (062, exploring)"
+          }
+        },
+        {
+          "name": "native Enter opens overlay, focus on current destination",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "overview",
+              "name": "Overview",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 424,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            "scrimVisible": true,
+            "protoBarInert": true,
+            "shellBarInert": true,
+            "workInert": true,
+            "statusInert": true,
+            "navExpandedAttr": "true",
+            "innerWidth": 360,
+            "overlayClass": true
+          }
+        },
+        {
+          "name": "Tab forward stays inside the open overlay",
+          "pass": true,
+          "detail": [
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "now",
+              "name": "Now",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 460,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "needs",
+              "name": "Needs you, 6 current requests",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 496,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "new",
+              "name": "New idea",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 532,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Close navigation menu",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 12,
+                "y": 375,
+                "w": 75,
+                "h": 32
+              },
+              "hitId": "rail-toggle-text",
+              "hitCls": "rail-toggle-text"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "overview",
+              "name": "Overview",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 424,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "now",
+              "name": "Now",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 460,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            }
+          ]
+        },
+        {
+          "name": "Escape closes, returns focus to the toggle, clears inertness",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Open navigation menu",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 12,
+                "y": 375,
+                "w": 32,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "[object SVGAnimatedString]"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "false",
+            "innerWidth": 360,
+            "overlayClass": false
+          }
+        },
+        {
+          "name": "Shift+Tab backward stays inside the open overlay",
+          "pass": true,
+          "detail": [
+            {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Close navigation menu",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 12,
+                "y": 375,
+                "w": 75,
+                "h": 32
+              },
+              "hitId": "rail-toggle-text",
+              "hitCls": "rail-toggle-text"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "new",
+              "name": "New idea",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 532,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "needs",
+              "name": "Needs you, 6 current requests",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 496,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "now",
+              "name": "Now",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 460,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "overview",
+              "name": "Overview",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 424,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Close navigation menu",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 12,
+                "y": 375,
+                "w": 75,
+                "h": 32
+              },
+              "hitId": "rail-toggle-text",
+              "hitCls": "rail-toggle-text"
+            }
+          ]
+        },
+        {
+          "name": "Tab containment holds with the prototype panel open",
+          "pass": true,
+          "detail": {
+            "panelOpen": true,
+            "focus": [
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "rail-button",
+                "rail": "now",
+                "name": "Now",
+                "inRail": true,
+                "inInert": false,
+                "inProto": false,
+                "rect": {
+                  "x": 21,
+                  "y": 740,
+                  "w": 250,
+                  "h": 32
+                },
+                "hitId": "",
+                "hitCls": "rail-button"
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "rail-button",
+                "rail": "needs",
+                "name": "Needs you, 6 current requests",
+                "inRail": true,
+                "inInert": false,
+                "inProto": false,
+                "rect": {
+                  "x": 21,
+                  "y": 748,
+                  "w": 250,
+                  "h": 32
+                },
+                "hitId": "",
+                "hitCls": "rail-button"
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "rail-button",
+                "rail": "new",
+                "name": "New idea",
+                "inRail": true,
+                "inInert": false,
+                "inProto": false,
+                "rect": {
+                  "x": 21,
+                  "y": 374,
+                  "w": 250,
+                  "h": 32
+                },
+                "hitId": "",
+                "hitCls": "rail-button"
+              },
+              {
+                "tag": "BUTTON",
+                "id": "rail-toggle",
+                "cls": "rail-button rail-toggle",
+                "rail": null,
+                "name": "Close navigation menu",
+                "inRail": true,
+                "inInert": false,
+                "inProto": false,
+                "rect": {
+                  "x": 12,
+                  "y": 217,
+                  "w": 75,
+                  "h": 32
+                },
+                "hitId": "rail-toggle-text",
+                "hitCls": "rail-toggle-text"
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "rail-button",
+                "rail": "overview",
+                "name": "Overview",
+                "inRail": true,
+                "inInert": false,
+                "inProto": false,
+                "rect": {
+                  "x": 21,
+                  "y": 266,
+                  "w": 250,
+                  "h": 32
+                },
+                "hitId": "",
+                "hitCls": "rail-button"
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "rail-button",
+                "rail": "now",
+                "name": "Now",
+                "inRail": true,
+                "inInert": false,
+                "inProto": false,
+                "rect": {
+                  "x": 21,
+                  "y": 302,
+                  "w": 250,
+                  "h": 32
+                },
+                "hitId": "",
+                "hitCls": "rail-button"
+              },
+              {
+                "tag": "BUTTON",
+                "id": "",
+                "cls": "rail-button",
+                "rail": "needs",
+                "name": "Needs you, 6 current requests",
+                "inRail": true,
+                "inInert": false,
+                "inProto": false,
+                "rect": {
+                  "x": 21,
+                  "y": 338,
+                  "w": 250,
+                  "h": 32
+                },
+                "hitId": "",
+                "hitCls": "rail-button"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Shift+Tab containment holds with the prototype panel open",
+          "pass": true,
+          "detail": [
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "now",
+              "name": "Now",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 302,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "overview",
+              "name": "Overview",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 266,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Close navigation menu",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 12,
+                "y": 217,
+                "w": 75,
+                "h": 32
+              },
+              "hitId": "rail-toggle-text",
+              "hitCls": "rail-toggle-text"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "new",
+              "name": "New idea",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 374,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "needs",
+              "name": "Needs you, 6 current requests",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 338,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "now",
+              "name": "Now",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 302,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "overview",
+              "name": "Overview",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 266,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            }
+          ]
+        },
+        {
+          "name": "closing the overlay restores the prototype bar",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Open navigation menu",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 12,
+                "y": 217,
+                "w": 32,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "[object SVGAnimatedString]"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "false",
+            "innerWidth": 360,
+            "overlayClass": false
+          }
+        },
+        {
+          "name": "dimmer closes and restores the background",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Open navigation menu",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 12,
+                "y": 217,
+                "w": 32,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "[object SVGAnimatedString]"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "false",
+            "innerWidth": 360,
+            "overlayClass": false,
+            "dimmerPoint": {
+              "x": 348,
+              "y": 390,
+              "hit": "nav-scrim"
+            }
+          }
+        },
+        {
+          "name": "named toggle closes and restores the background",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Open navigation menu",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 12,
+                "y": 217,
+                "w": 32,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "[object SVGAnimatedString]"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "false",
+            "innerWidth": 360,
+            "overlayClass": false
+          }
+        },
+        {
+          "name": "choosing a destination closes the overlay and restores the background",
+          "pass": true,
+          "detail": {
+            "beforeGo": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "now",
+              "name": "Now",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 302,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            "afterGo": {
+              "focus": {
+                "tag": "H1",
+                "id": "view-title",
+                "cls": "",
+                "rail": null,
+                "name": "Now",
+                "inRail": false,
+                "inInert": false,
+                "inProto": false,
+                "rect": {
+                  "x": 16,
+                  "y": 270,
+                  "w": 320,
+                  "h": 28
+                },
+                "hitId": "view-title",
+                "hitCls": ""
+              },
+              "scrimVisible": false,
+              "protoBarInert": false,
+              "shellBarInert": false,
+              "workInert": false,
+              "statusInert": false,
+              "navExpandedAttr": "false",
+              "innerWidth": 360,
+              "overlayClass": false,
+              "view": "now"
+            }
+          }
+        },
+        {
+          "name": "wide inline pane expands without a scrim or inertness",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "rail-toggle",
+              "cls": "rail-button rail-toggle",
+              "rail": null,
+              "name": "Collapse navigation pane",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 8,
+                "y": 179,
+                "w": 191,
+                "h": 32
+              },
+              "hitId": "rail-toggle-text",
+              "hitCls": "rail-toggle-text"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "true",
+            "innerWidth": 1440,
+            "overlayClass": false
+          }
+        },
+        {
+          "name": "wide inline pane does not trap Tab",
+          "pass": true,
+          "detail": [
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "overview",
+              "name": "Overview",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 8,
+                "y": 228,
+                "w": 191,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "now",
+              "name": "Now",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 8,
+                "y": 264,
+                "w": 191,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "needs",
+              "name": "Needs you, 6 current requests",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 8,
+                "y": 300,
+                "w": 191,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "new",
+              "name": "New idea",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 8,
+                "y": 336,
+                "w": 191,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "fui-button fui-button-secondary",
+              "rail": "new",
+              "name": "New idea",
+              "inRail": false,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 986,
+                "y": 183,
+                "w": 98,
+                "h": 28
+              },
+              "hitId": "",
+              "hitCls": "fui-button fui-button-secondary"
+            },
+            {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "wrow",
+              "rail": null,
+              "name": "053. Design-Stage Critique. Awaiting definition. Progress not established.",
+              "inRail": false,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 208,
+                "y": 348,
+                "w": 892,
+                "h": 47
+              },
+              "hitId": "",
+              "hitCls": "wrow-name"
+            },
+            {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "rail": null,
+              "name": "Prototype — not part of Dude\n      \n    ",
+              "inRail": false,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 1440,
+                "h": 900
+              },
+              "hitId": "",
+              "hitCls": "proto-rail"
+            }
+          ]
+        },
+        {
+          "name": "desktop expanded pane converges closed at 719 with no stray overlay",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BODY",
+              "id": "",
+              "cls": "",
+              "rail": null,
+              "name": "Prototype — not part of Dude\n      \n    ",
+              "inRail": false,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 719,
+                "h": 1171
+              },
+              "hitId": "proto-toggle",
+              "hitCls": "proto-toggle"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "false",
+            "innerWidth": 719,
+            "overlayClass": false
+          }
+        },
+        {
+          "name": "719 uses overlay semantics with the whole background unreachable",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "overview",
+              "name": "Overview",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 21,
+                "y": 260,
+                "w": 250,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            "scrimVisible": true,
+            "protoBarInert": true,
+            "shellBarInert": true,
+            "workInert": true,
+            "statusInert": true,
+            "navExpandedAttr": "true",
+            "innerWidth": 719,
+            "overlayClass": true
+          }
+        },
+        {
+          "name": "open 719 to 720 converges to the inline pane with the background back",
+          "pass": true,
+          "detail": {
+            "focus": {
+              "tag": "BUTTON",
+              "id": "",
+              "cls": "rail-button",
+              "rail": "overview",
+              "name": "Overview",
+              "inRail": true,
+              "inInert": false,
+              "inProto": false,
+              "rect": {
+                "x": 8,
+                "y": 260,
+                "w": 191,
+                "h": 32
+              },
+              "hitId": "",
+              "hitCls": "rail-button"
+            },
+            "scrimVisible": false,
+            "protoBarInert": false,
+            "shellBarInert": false,
+            "workInert": false,
+            "statusInert": false,
+            "navExpandedAttr": "true",
+            "innerWidth": 720,
+            "overlayClass": false
+          }
+        },
+        {
+          "name": "selecting a record opens exactly that record and Overview then shows only it",
+          "pass": true,
+          "detail": {
+            "beforePick": {
+              "view": "overview",
+              "heading": "Overview",
+              "rows": [
+                "053",
+                "054",
+                "056",
+                "058",
+                "059",
+                "060",
+                "061",
+                "062"
+              ],
+              "query": "",
+              "scope": "open",
+              "finders": 1
+            },
+            "onNow": {
+              "view": "now",
+              "heading": "062Dude Canvas Workspace Integration",
+              "rows": [],
+              "query": "",
+              "scope": "open",
+              "finders": 1
+            },
+            "selectedOverview": {
+              "view": "overview",
+              "heading": "Overview",
+              "rows": [
+                "062"
+              ],
+              "query": "",
+              "scope": "open",
+              "finders": 1
+            }
+          }
+        },
+        {
+          "name": "the nav toggle never navigates or clears the selected-only Overview",
+          "pass": true,
+          "detail": {
+            "afterExpand": {
+              "view": "overview",
+              "heading": "Overview",
+              "rows": [
+                "062"
+              ],
+              "query": "",
+              "scope": "open",
+              "finders": 1
+            },
+            "afterCollapse": {
+              "view": "overview",
+              "heading": "Overview",
+              "rows": [
+                "062"
+              ],
+              "query": "",
+              "scope": "open",
+              "finders": 1
+            }
+          }
+        }
+      ]
+    }
+  },
+  "focusCapture": {
+    "method": "overlay opened with native Enter (text \"\\r\"), then two native Shift+Tab presses from the named toggle",
+    "before": {
+      "screenshot": "rail-focus-062-before-escaped-focus-360-light.png",
+      "activeElement": "#proto-toggle",
+      "inPrototypeChrome": true,
+      "hitTest": "nav-scrim",
+      "protoBarInert": false
+    },
+    "after": {
+      "screenshot": "rail-focus-062-after-contained-focus-360-light.png",
+      "activeElement": "Needs you destination",
+      "inPrototypeChrome": false,
+      "hitTest": "the focused control itself",
+      "protoBarInert": true
+    }
+  },
+  "environmentNotes": [
+    "Edge marks the headless target visibilityState \"hidden\" after this focus sequence (the r6 report saw the same); a hidden page receives no resize or media-query change events, so every breakpoint observation calls Page.bringToFront and confirms document.visibilityState before reading the frame.",
+    "Breakpoint steps wait for the real innerWidth, the real media-query state and an actual change event on a passive observer. No synthetic change or resize event was dispatched."
+  ],
+  "screenshots": [
+    "rail-focus-062-after-720-inline-after-transition-light.png",
+    "rail-focus-062-after-after-escape-360-light.png",
+    "rail-focus-062-after-contained-focus-360-light.png",
+    "rail-focus-062-after-overlay-open-360-light.png",
+    "rail-focus-062-after-proto-panel-open-360-light.png",
+    "rail-focus-062-after-selected-after-toggle-1440-light.png",
+    "rail-focus-062-after-tab-wrap-360-light.png",
+    "rail-focus-062-after-wide-inline-not-trapped-1440-light.png",
+    "rail-focus-062-before-720-inline-after-transition-light.png",
+    "rail-focus-062-before-after-escape-360-light.png",
+    "rail-focus-062-before-escaped-focus-360-light.png",
+    "rail-focus-062-before-overlay-open-360-light.png",
+    "rail-focus-062-before-proto-panel-open-360-light.png",
+    "rail-focus-062-before-selected-after-toggle-1440-light.png",
+    "rail-focus-062-before-tab-wrap-360-light.png",
+    "rail-focus-062-before-wide-inline-not-trapped-1440-light.png"
+  ]
+}

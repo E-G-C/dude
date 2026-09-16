@@ -1,8 +1,8 @@
 ---
 title: Work Inspection Source Capacity
 slug: work-inspection-source-capacity
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/061-work-inspection-source-capacity/spec.md
 ---
 
 # Idea: Work Inspection Source Capacity
@@ -152,7 +152,46 @@ Base directory:
 - `tester/grouped-check-coverage-map.json`
 - `tester/verification-manifest.json`
 
+## Definition Disposition
+
+On 2026-09-15 the user explicitly requested: "take 061 through definition and
+repair first, as a prerequisite to implementing 062". The capture-only wording
+above remains historical intent. This first definition reuses the exact selected
+061 path, title, and slug; it allocates no identity and adds no dependency metadata.
+
+The coordinator freshly reported zero canonical diagnostics, 63 ideas, and 51
+packages. Its read-only Node 26.8.1 inspection of actual 062 task `T001@a062c1d4`
+under Lightweight/autonomous policy with empty current-run, review, verification,
+and lint streams threw the 64-total-source-entry error. Supplied idea/spec/tasks/
+task-state hashes were unchanged. This definition did not rerun that inspection.
+
+Plan sections 1-3 resolve the historical technical questions through researched
+definition-owner choices, not new user answers: a separate 999-direct-entry
+inventory bound with one owner source inside the unchanged 64-entry budget;
+per-attempt headroom derived from actual completion callers, including new
+verification/review and required lint/current-run entries; and bounded typed
+capacity diagnostics through existing CLI/host reporting. Full ownership,
+byte/model limits, optional-session policy, and unchanged refusal state remain.
+No new guardrail candidate or human clarification is needed.
+
+The staged core trio targets
+`.dude/specs/061-work-inspection-source-capacity/spec.md` with one open proposed
+task, `T001@61c8a4e2`. After publication and coordinator lint, repair uses normal
+non-Work Lightweight Execution, with fresh Tester evidence and independent
+Reviewer judgment before any coordinator close. It does not ask the blocked
+Work engine to authorize its own repair.
+
+This staging changes no repository or execution state. It grants no old-run
+restart or claim cleanup. Actual 062 is read-only for capacity verification;
+its mock/approval/contrast issue, 063 Settings, and 060/056 remain untouched.
+Generated delivery must use the plan's isolated builder and selective output
+application to preserve existing user edits.
+
 ## Coordinator Log
 
 - 2026-09-13T10:14:12.269-04:00 - First-capture brainstorm staged for `work-inspection-source-capacity` at the user's explicit request to record it for later. Preserved coordinator-attributed valid-evidence capacity findings and separation from 060 and 056; later definition questions remain unanswered. Draft status and empty spec_path; awaiting coordinator publication with no lifecycle number or package path assigned here. No workspace, execution-state, implementation, or cleanup changes performed by this capture.
+- 2026-09-15T10:09:21Z - First definition staged at the user's explicit request to define and repair 061 before implementing 062; preserved the selected numbered identity, all user-controlled sections, and prior log bytes. Proposed exact spec_path .dude/specs/061-work-inspection-source-capacity/spec.md and one new open task T001@61c8a4e2. Technical choices resolve accounting, completion headroom, and bounded diagnostics without invented user answers or new guardrails. Normal non-Work Lightweight repair follows publication and coordinator lint; no repository mutation, old Work restart, claim cleanup, implementation, verification, review, or close performed by this staging.
+- 2026-09-15 UTC - Published the independently reviewed first definition with zero lint failures, resolved its exact owner, and set T001@61c8a4e2 in progress through normal Lightweight execution with its derived board rendered. This user-authorized repair precedes 062; it starts no Work invocation and preserves 062, 063, and the existing instruction/model edits.
+- 2026-09-15T12:29:27Z - Final acceptance for T001@61c8a4e2: independent testing and review drove corrections to diagnostic provenance, inert validation, target/effect/hash attribution, scalar coercion, and CLI refusal guidance; Code Reviewer then approved. Fresh coordinator acceptance passed 21 focused checks and lint had zero failures; the broader 694-check run had only the known whole-core parity failure caused by the preserved user instruction edit. All four repair-owned generated outputs match source. Generated-runtime inspection of actual 062 with labeled fixture streams admitted every required evidence class without overflow, blockers, or authority-file changes; no real 062 result or Work authorization is claimed. The one advisory retrospective found no issues. The capacity repair is ready for coordinator close; 062's independent contrast refinement remains pending.
+- 2026-09-15 UTC - Closed T001@61c8a4e2 and completed Work Inspection Source Capacity through normal Lightweight execution after fresh verification and independent approval. The canonical task is done, its derived board is rendered, and post-close lint reports zero failures. No old Work invocation was resumed, no 062 task or approval state changed, and no commit or push was performed.
 <!-- dude:managed:end -->

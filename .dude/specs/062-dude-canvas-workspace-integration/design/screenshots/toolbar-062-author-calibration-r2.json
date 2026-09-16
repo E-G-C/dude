@@ -1,0 +1,450 @@
+{
+  "kind": "focused author observation, not independent acceptance",
+  "mode": "calibration-r2",
+  "browser": "Edg/133.0.3065.69",
+  "deviceScaleFactor": 1,
+  "preview": "http://127.0.0.1:61609/workspace-integration.html",
+  "previewSha256": "2831148e5c1fa524900a3e29111ee77532100fca4688ecf9fc819dd9d6355cee",
+  "cases": [
+    {
+      "width": 360,
+      "height": 780,
+      "layout": {
+        "#proto-bar": {
+          "x": 0,
+          "y": 0,
+          "w": 360,
+          "h": 290,
+          "text": "Prototype — not part of Dude\n      \n        \n        Prototype\n      \n      \n        \n        Compare with 052\n      \n      Prototype data: Example wo"
+        },
+        ".proto-rail": {
+          "x": 0,
+          "y": 0,
+          "w": 360,
+          "h": 268,
+          "text": "Prototype — not part of Dude\n      \n        \n        Prototype\n      \n      \n        \n        Compare with 052\n      \n      Prototype data: Example wo"
+        },
+        ".proto-edge": {
+          "x": 0,
+          "y": 268,
+          "w": 360,
+          "h": 20,
+          "text": "The Dude window starts below this line"
+        },
+        "#proto-state": {
+          "x": 12,
+          "y": 90,
+          "w": 336,
+          "h": 160,
+          "text": "Prototype data: Example work in progress, six example requests waiting. Discovery and Now still read this repository’s frozen records. This selection "
+        },
+        ".shell-bar": {
+          "x": 0,
+          "y": 290,
+          "w": 360,
+          "h": 118,
+          "text": "Dude\n        Workspace\n      \n      \n\n      \n      \n        \n        \n        \n          Working on\n          062Dude Canvas Workspace Integration\n   "
+        },
+        ".shell-rail": {
+          "x": 0,
+          "y": 408,
+          "w": 360,
+          "h": 49,
+          "text": "Close\n        \n        OverviewNowNeeds you6New idea"
+        },
+        ".review-bar": {
+          "x": 0,
+          "y": 457,
+          "w": 360,
+          "h": 73,
+          "text": "BackDoes this combined workspace match the cockpit you approved for 052?Reviewrev-3Example review"
+        },
+        ".review-actions": {
+          "x": 0,
+          "y": 530,
+          "w": 360,
+          "h": 157,
+          "text": "Save markupComments (2)Notes and moreSend feedbackApprove this revision.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration."
+        },
+        ".review-side": {
+          "x": 0,
+          "y": 1246,
+          "w": 360,
+          "h": 49,
+          "text": "Comments, notes and sealed evidenceAnnotation 1 · boxThe status bar should keep read freshness visible at this width.Annotation 2 · commentNext reads "
+        },
+        ".shell-status": {
+          "x": 0,
+          "y": 1295,
+          "w": 360,
+          "h": 61,
+          "text": "Work coverage: currentCurrent request coverage: currentConnectedLast complete read 2026-09-13 21:30 local"
+        }
+      }
+    },
+    {
+      "width": 1000,
+      "height": 300,
+      "layout": {
+        "#proto-bar": {
+          "x": 0,
+          "y": 0,
+          "w": 1000,
+          "h": 158,
+          "text": "Prototype — not part of Dude\n      \n        \n        Prototype\n      \n      \n        \n        Compare with 052\n      \n      Prototype data: Example wo"
+        },
+        ".proto-rail": {
+          "x": 0,
+          "y": 0,
+          "w": 1000,
+          "h": 136,
+          "text": "Prototype — not part of Dude\n      \n        \n        Prototype\n      \n      \n        \n        Compare with 052\n      \n      Prototype data: Example wo"
+        },
+        ".proto-edge": {
+          "x": 0,
+          "y": 136,
+          "w": 1000,
+          "h": 20,
+          "text": "The Dude window starts below this line"
+        },
+        "#proto-state": {
+          "x": 12,
+          "y": 54,
+          "w": 976,
+          "h": 64,
+          "text": "Prototype data: Example work in progress, six example requests waiting. Discovery and Now still read this repository’s frozen records. This selection "
+        },
+        ".shell-bar": {
+          "x": 0,
+          "y": 158,
+          "w": 1000,
+          "h": 54,
+          "text": "Dude\n        Workspace\n      \n      \n\n      \n      \n        \n        \n        \n          Working on\n          062Dude Canvas Workspace Integration\n   "
+        },
+        ".shell-rail": {
+          "x": 0,
+          "y": 212,
+          "w": 48,
+          "h": 690,
+          "text": "Navigation\n        \n        OverviewNowNeeds you6New idea"
+        },
+        ".review-bar": {
+          "x": 48,
+          "y": 212,
+          "w": 952,
+          "h": 45,
+          "text": "BackDoes this combined workspace match the cockpit you approved for 052?Reviewrev-3Example review"
+        },
+        ".review-actions": {
+          "x": 48,
+          "y": 257,
+          "w": 952,
+          "h": 69,
+          "text": "Save markupComments (2)Notes and moreSend feedbackApprove this revision.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration."
+        },
+        ".review-side": {
+          "x": 48,
+          "y": 853,
+          "w": 952,
+          "h": 49,
+          "text": "Comments, notes and sealed evidenceAnnotation 1 · boxThe status bar should keep read freshness visible at this width.Annotation 2 · commentNext reads "
+        },
+        ".shell-status": {
+          "x": 0,
+          "y": 274,
+          "w": 1000,
+          "h": 26,
+          "text": "Work coverage: currentCurrent request coverage: currentConnectedLast complete read 2026-09-13 21:30 local"
+        }
+      }
+    },
+    {
+      "theme": "light",
+      "styles": {
+        "[data-review-tools-grip]": {
+          "html": "<button type=\"button\" data-review-tools-grip=\"true\" class=\"fui-Button r1f29ykk ___1qh5lis fhovq9v f1p3nwhy f11589ue f1q5o8ev f1pdflbu fkfq4zb f1t94bn6 f1s2uweq fr80ssc f1ukrpxl fecsdlb fnwyq0v ft1hn21 fuxngvv fy5bs14 f1q1yqic fhvnf4x fb6swo4 f1klyf7k f232fm2 fwga7ee f1nhwcv0 f1gm6xmp f1xxsver f1v3eptx fivsta0 fd4bjan f3m6zum f17fgpbq f1mk8lai ft85np5 fy9rknc figsok6 fwrc4pm fazmxh fhl27e0 fi64zpg f1pha7fy f1h75gtv f1sdsnyy f1xqy1su fyjss3s foxkwyv fly5x3f frvgh55\" aria-label=\"Move tools\" aria-describedby=\"_r_1_\" title=\"Move tools. Click for positions, drag, or use arrow keys. Hold Shift for a longer step. Enter, Space, or Home resets.\" aria-haspopup=\"menu\" id=\"menu_r_a_\"><span class=\"fui-Button__icon rywnvv2 ___hix1za0 fe5j1ua fjamq6b f64fuq3 fbaiahx\"><svg fill=\"currentColor\" aria-hidden=\"true\" data-fui-icon=\"\" class=\"fui-Icon ___9ctc0p0 f1w7gpdv fez10in f1dd5bof\" width=\"1em\" height=\"1em\" viewBox=\"0 0 20 20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M15 7a1 1 0 1 0 2 0 1 1 0 0 0-2 0M9 7a1 1 0 1 0 2 0 1 1 0 0 0-2 0M4 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2m11 5a1 1 0 1 0 2 0 1 1 0 0 0-2 0m-5 1a1 1 0 1 1 0-2 1 1 0 0 1 0 2m-7-1a1 1 0 1 0 2 0 1 1 0 0 0-2 0\" fill=\"currentColor\"></path></svg></span></button>",
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(66, 66, 66)",
+            "width": "54px",
+            "height": "24px",
+            "border": "1px solid rgba(0, 0, 0, 0)",
+            "padding": "0px",
+            "margin": "0px",
+            "alignItems": "center",
+            "justifyContent": "center",
+            "minHeight": "24px",
+            "minWidth": "24px",
+            "maxWidth": "none",
+            "boxShadow": "none",
+            "borderRadius": "4px"
+          },
+          "icon": {
+            "color": "rgb(66, 66, 66)",
+            "width": "20px"
+          },
+          "before": "",
+          "after": ""
+        },
+        "[aria-label=\"Select (V)\"]": {
+          "html": "<button type=\"button\" class=\"fui-Button r1f29ykk fui-ToggleButton ___1ldntqc fq5gl1p f1p3nwhy f11589ue f1q5o8ev f1pdflbu f1eryozh f1t94bn6 f1s2uweq fr80ssc f1ukrpxl fecsdlb fnwyq0v ft1hn21 fuxngvv fy5bs14 f1q1yqic fhvnf4x fb6swo4 f1klyf7k f232fm2 fwga7ee f1nhwcv0 f1gm6xmp f1xxsver f1v3eptx fivsta0 fd4bjan f3m6zum f18ktai2 fuwdbr1 f44c6la f192inf7 f5tn483 f1vxd6vx f1ojsxk5 fxoiby5 f15q0o9g f1nz3ub2 fjq791v fkq2p2y f11odvng f1sehlss fqc85l4 f1h3a8gf fkiggi6 f8gmj8i f1ap8nzx f1igan7k fjag8bx f1ysmecq faulsx f79t15f fbtzoaq f8qmx7k fdmpsdn fgjsukj fi64zpg fpdz1er f8ljn23 fv9hx5d\" name=\"tool\" value=\"select\" aria-label=\"Select (V)\" title=\"Select (V)\" aria-pressed=\"true\"><span class=\"fui-Button__icon rywnvv2 fui-ToggleButton__icon ___13z9ww4 f1qj7y59 f1dd5bof\"><svg fill=\"currentColor\" aria-hidden=\"true\" data-fui-icon=\"\" class=\"fui-Icon ___9ctc0p0 f1w7gpdv fez10in f1dd5bof\" width=\"1em\" height=\"1em\" viewBox=\"0 0 20 20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M5 3.06a1 1 0 0 1 1.64-.77l11 9.06a1 1 0 0 1-.63 1.77h-5.6c-.43 0-.85.19-1.13.52L6.76 17.7A1 1 0 0 1 5 17.06zm12 9.06L6 3.06v14l3.52-4.08a2.5 2.5 0 0 1 1.9-.86z\" fill=\"currentColor\"></path></svg></span></button>",
+          "style": {
+            "backgroundColor": "rgb(235, 235, 235)",
+            "color": "rgb(36, 36, 36)",
+            "width": "36px",
+            "height": "36px",
+            "border": "1px solid rgba(0, 0, 0, 0)",
+            "padding": "5px",
+            "margin": "0px",
+            "alignItems": "center",
+            "justifyContent": "center",
+            "minHeight": "36px",
+            "minWidth": "36px",
+            "maxWidth": "32px",
+            "boxShadow": "none",
+            "borderRadius": "4px"
+          },
+          "icon": {
+            "color": "rgb(15, 108, 189)",
+            "width": "20px"
+          },
+          "before": "",
+          "after": ""
+        },
+        "[aria-label=\"Comment (C)\"]": {
+          "html": "<button type=\"button\" class=\"fui-Button r1f29ykk fui-ToggleButton ___1031dhw fhovq9v f1p3nwhy f11589ue f1q5o8ev f1pdflbu fkfq4zb f1t94bn6 f1s2uweq fr80ssc f1ukrpxl fecsdlb fnwyq0v ft1hn21 fuxngvv fy5bs14 f1q1yqic fhvnf4x fb6swo4 f1klyf7k f232fm2 fwga7ee f1nhwcv0 f1gm6xmp f1xxsver f1v3eptx fivsta0 fd4bjan f3m6zum f18ktai2 fuwdbr1 f44c6la fi64zpg fpdz1er f8ljn23 fv9hx5d\" name=\"tool\" value=\"comment\" aria-label=\"Comment (C)\" title=\"Comment (C)\" aria-pressed=\"false\"><span class=\"fui-Button__icon rywnvv2 fui-ToggleButton__icon ___s649vb0 f1dd5bof\"><svg fill=\"currentColor\" aria-hidden=\"true\" data-fui-icon=\"\" class=\"fui-Icon ___9ctc0p0 f1w7gpdv fez10in f1dd5bof\" width=\"1em\" height=\"1em\" viewBox=\"0 0 20 20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M10.48 13.84h4.92c.9 0 1.6-.71 1.6-1.56V5.57C17 4.7 16.3 4 15.4 4H4.6C3.7 4 3 4.71 3 5.57v6.7c0 .86.7 1.57 1.6 1.57h1.6V17zM6.8 17.8a1 1 0 0 1-1.4-.2 1 1 0 0 1-.2-.59v-2.17h-.6A2.6 2.6 0 0 1 2 12.28V5.57A2.6 2.6 0 0 1 4.6 3h10.8C16.84 3 18 4.15 18 5.57v6.7a2.6 2.6 0 0 1-2.6 2.57h-4.59z\" fill=\"currentColor\"></path></svg></span></button>",
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(66, 66, 66)",
+            "width": "36px",
+            "height": "36px",
+            "border": "1px solid rgba(0, 0, 0, 0)",
+            "padding": "5px",
+            "margin": "0px",
+            "alignItems": "center",
+            "justifyContent": "center",
+            "minHeight": "36px",
+            "minWidth": "36px",
+            "maxWidth": "32px",
+            "boxShadow": "none",
+            "borderRadius": "4px"
+          },
+          "icon": {
+            "color": "rgb(66, 66, 66)",
+            "width": "20px"
+          },
+          "before": "",
+          "after": ""
+        },
+        "[aria-label^=\"Switch tools to\"]": {
+          "html": "<button type=\"button\" class=\"fui-Button r1f29ykk ___1031dhw fhovq9v f1p3nwhy f11589ue f1q5o8ev f1pdflbu fkfq4zb f1t94bn6 f1s2uweq fr80ssc f1ukrpxl fecsdlb fnwyq0v ft1hn21 fuxngvv fy5bs14 f1q1yqic fhvnf4x fb6swo4 f1klyf7k f232fm2 fwga7ee f1nhwcv0 f1gm6xmp f1xxsver f1v3eptx fivsta0 fd4bjan f3m6zum f18ktai2 fuwdbr1 f44c6la fi64zpg fpdz1er f8ljn23 fv9hx5d\" aria-label=\"Switch tools to horizontal\" title=\"Switch tools to horizontal\"><span class=\"fui-Button__icon rywnvv2\"><svg fill=\"currentColor\" aria-hidden=\"true\" data-fui-icon=\"\" class=\"fui-Icon ___9ctc0p0 f1w7gpdv fez10in f1dd5bof\" width=\"1em\" height=\"1em\" viewBox=\"0 0 20 20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M5 3a3 3 0 0 0-3 3v7a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3V6a3 3 0 0 0-3-3zM3 6c0-1.1.9-2 2-2h10a2 2 0 0 1 2 2v5H3zm0 6h14v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" fill=\"currentColor\"></path></svg></span></button>",
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(66, 66, 66)",
+            "width": "36px",
+            "height": "36px",
+            "border": "1px solid rgba(0, 0, 0, 0)",
+            "padding": "5px",
+            "margin": "0px",
+            "alignItems": "center",
+            "justifyContent": "center",
+            "minHeight": "36px",
+            "minWidth": "36px",
+            "maxWidth": "32px",
+            "boxShadow": "none",
+            "borderRadius": "4px"
+          },
+          "icon": {
+            "color": "rgb(66, 66, 66)",
+            "width": "20px"
+          },
+          "before": "",
+          "after": ""
+        },
+        "[role=\"toolbar\"] [role=\"separator\"]": {
+          "html": "<div role=\"separator\" aria-orientation=\"horizontal\" class=\"fui-Divider ___5wx7xv0 f22iagw fe668z f1oic3e7 f122n59 f1ewtqcl f1063pyq fqerorx f10pi13n fk6fouc fy9rknc figsok6 fwrc4pm f17mccla fyl8oag f16vkdww fhsnbul f1gw3sf2 f1ly5f7u f1s3tz6t f1wl9k8s f13zj6fq fkfq4zb f1vccso1 f1geml7w f1r7kh1m fjml6kk f16j7guv fx01ahm fl8d8yv fj1a37q fly5x3f f163fonl f51yk4v f13rof3u f8rth92 f6czdpx f1iyka9k fzynn9s fekrn8e f1kyqvp9 fesgyo\"></div>",
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(66, 66, 66)",
+            "width": "54px",
+            "height": "1px",
+            "border": "0px none rgb(66, 66, 66)",
+            "padding": "0px 12px",
+            "margin": "0px",
+            "alignItems": "center",
+            "justifyContent": "normal",
+            "minHeight": "auto",
+            "minWidth": "auto",
+            "maxWidth": "none",
+            "boxShadow": "none",
+            "borderRadius": "0px"
+          },
+          "icon": null,
+          "before": "",
+          "after": ""
+        }
+      },
+      "menu": {
+        "html": "<div data-tabster=\"{&quot;restorer&quot;:{&quot;type&quot;:0},&quot;focusable&quot;:{&quot;ignoreKeydown&quot;:{&quot;Escape&quot;:true}}}\" role=\"presentation\" data-review-tools-menu=\"true\" class=\"fui-MenuPopover ___7a6mni0 ft85np5 fxugw4r f19n0e5 f1ewtqcl fl8fusi f1kaai3v f1p9o1ba f1ahpp82 f1hg901r fd3pd8h f9ggezi fk6fouc fkhj508 figsok6 f1i3iumi\" data-popper-placement=\"right-start\" style=\"position: absolute; left: 0px; top: 0px; margin: 0px; transform: translate(69px, 88px); --fui-positioning-slide-direction-x: -1px; --fui-positioning-slide-direction-y: 0px;\"><div data-tabster=\"{&quot;mover&quot;:{&quot;cyclic&quot;:true,&quot;direction&quot;:1,&quot;memorizeCurrent&quot;:true}}\" role=\"menu\" aria-labelledby=\"menu_r_a_\" aria-label=\"Tool positions\" class=\"fui-MenuList ___1cyqkw0 f22iagw f1vx9l62 f1t6b6ee f1l02sjl\"><i tabindex=\"0\" role=\"none\" data-tabster-dummy=\"\" aria-hidden=\"true\" style=\"position: fixed; height: 1px; width: 1px; opacity: 0.001; z-index: -1; content-visibility: hidden;\"></i><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Top left</span></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Top right</span></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Bottom left</span></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Bottom right</span></div><div role=\"presentation\" aria-hidden=\"true\" class=\"fui-MenuDivider ___3pxu8i0 f8dz51a f14z66ap f1facbz3\"></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Reset to default spot</span></div><i tabindex=\"0\" role=\"none\" data-tabster-dummy=\"\" aria-hidden=\"true\" style=\"position: fixed; height: 1px; width: 1px; opacity: 0.001; z-index: -1; content-visibility: hidden;\"></i></div></div>",
+        "style": {
+          "padding": "4px",
+          "border": "1px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "4px",
+          "boxShadow": "rgba(0, 0, 0, 0.12) 0px 0px 2px 0px, rgba(0, 0, 0, 0.14) 0px 8px 16px 0px",
+          "minWidth": "138px",
+          "maxWidth": "300px",
+          "width": "160.484px"
+        },
+        "list": {
+          "html": "<div data-tabster=\"{&quot;mover&quot;:{&quot;cyclic&quot;:true,&quot;direction&quot;:1,&quot;memorizeCurrent&quot;:true}}\" role=\"menu\" aria-labelledby=\"menu_r_a_\" aria-label=\"Tool positions\" class=\"fui-MenuList ___1cyqkw0 f22iagw f1vx9l62 f1t6b6ee f1l02sjl\"><i tabindex=\"0\" role=\"none\" data-tabster-dummy=\"\" aria-hidden=\"true\" style=\"position: fixed; height: 1px; width: 1px; opacity: 0.001; z-index: -1; content-visibility: hidden;\"></i><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Top left</span></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Top right</span></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Bottom left</span></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Bottom right</span></div><div role=\"presentation\" aria-hidden=\"true\" class=\"fui-MenuDivider ___3pxu8i0 f8dz51a f14z66ap f1facbz3\"></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Reset to default spot</span></div><i tabindex=\"0\" role=\"none\" data-tabster-dummy=\"\" aria-hidden=\"true\" style=\"position: fixed; height: 1px; width: 1px; opacity: 0.001; z-index: -1; content-visibility: hidden;\"></i></div>",
+          "padding": "0px"
+        }
+      }
+    },
+    {
+      "theme": "dark",
+      "styles": {
+        "[data-review-tools-grip]": {
+          "html": "<button type=\"button\" data-review-tools-grip=\"true\" class=\"fui-Button r1f29ykk ___1qh5lis fhovq9v f1p3nwhy f11589ue f1q5o8ev f1pdflbu fkfq4zb f1t94bn6 f1s2uweq fr80ssc f1ukrpxl fecsdlb fnwyq0v ft1hn21 fuxngvv fy5bs14 f1q1yqic fhvnf4x fb6swo4 f1klyf7k f232fm2 fwga7ee f1nhwcv0 f1gm6xmp f1xxsver f1v3eptx fivsta0 fd4bjan f3m6zum f17fgpbq f1mk8lai ft85np5 fy9rknc figsok6 fwrc4pm fazmxh fhl27e0 fi64zpg f1pha7fy f1h75gtv f1sdsnyy f1xqy1su fyjss3s foxkwyv fly5x3f frvgh55\" aria-label=\"Move tools\" aria-describedby=\"_r_1_\" title=\"Move tools. Click for positions, drag, or use arrow keys. Hold Shift for a longer step. Enter, Space, or Home resets.\" aria-haspopup=\"menu\" id=\"menu_r_a_\"><span class=\"fui-Button__icon rywnvv2 ___hix1za0 fe5j1ua fjamq6b f64fuq3 fbaiahx\"><svg fill=\"currentColor\" aria-hidden=\"true\" data-fui-icon=\"\" class=\"fui-Icon ___9ctc0p0 f1w7gpdv fez10in f1dd5bof\" width=\"1em\" height=\"1em\" viewBox=\"0 0 20 20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M15 7a1 1 0 1 0 2 0 1 1 0 0 0-2 0M9 7a1 1 0 1 0 2 0 1 1 0 0 0-2 0M4 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2m11 5a1 1 0 1 0 2 0 1 1 0 0 0-2 0m-5 1a1 1 0 1 1 0-2 1 1 0 0 1 0 2m-7-1a1 1 0 1 0 2 0 1 1 0 0 0-2 0\" fill=\"currentColor\"></path></svg></span></button>",
+          "style": {
+            "backgroundColor": "rgba(56, 56, 56, 0.02)",
+            "color": "rgb(215, 215, 215)",
+            "width": "54px",
+            "height": "24px",
+            "border": "1px solid rgba(0, 0, 0, 0)",
+            "padding": "0px",
+            "margin": "0px",
+            "alignItems": "center",
+            "justifyContent": "center",
+            "minHeight": "24px",
+            "minWidth": "24px",
+            "maxWidth": "none",
+            "boxShadow": "none",
+            "borderRadius": "4px"
+          },
+          "icon": {
+            "color": "rgb(71, 158, 245)",
+            "width": "20px"
+          },
+          "before": "",
+          "after": ""
+        },
+        "[aria-label=\"Select (V)\"]": {
+          "html": "<button type=\"button\" class=\"fui-Button r1f29ykk fui-ToggleButton ___1ldntqc fq5gl1p f1p3nwhy f11589ue f1q5o8ev f1pdflbu f1eryozh f1t94bn6 f1s2uweq fr80ssc f1ukrpxl fecsdlb fnwyq0v ft1hn21 fuxngvv fy5bs14 f1q1yqic fhvnf4x fb6swo4 f1klyf7k f232fm2 fwga7ee f1nhwcv0 f1gm6xmp f1xxsver f1v3eptx fivsta0 fd4bjan f3m6zum f18ktai2 fuwdbr1 f44c6la f192inf7 f5tn483 f1vxd6vx f1ojsxk5 fxoiby5 f15q0o9g f1nz3ub2 fjq791v fkq2p2y f11odvng f1sehlss fqc85l4 f1h3a8gf fkiggi6 f8gmj8i f1ap8nzx f1igan7k fjag8bx f1ysmecq faulsx f79t15f fbtzoaq f8qmx7k fdmpsdn fgjsukj fi64zpg fpdz1er f8ljn23 fv9hx5d\" name=\"tool\" value=\"select\" aria-label=\"Select (V)\" title=\"Select (V)\" aria-pressed=\"true\"><span class=\"fui-Button__icon rywnvv2 fui-ToggleButton__icon ___13z9ww4 f1qj7y59 f1dd5bof\"><svg fill=\"currentColor\" aria-hidden=\"true\" data-fui-icon=\"\" class=\"fui-Icon ___9ctc0p0 f1w7gpdv fez10in f1dd5bof\" width=\"1em\" height=\"1em\" viewBox=\"0 0 20 20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M5 3.06a1 1 0 0 1 1.64-.77l11 9.06a1 1 0 0 1-.63 1.77h-5.6c-.43 0-.85.19-1.13.52L6.76 17.7A1 1 0 0 1 5 17.06zm12 9.06L6 3.06v14l3.52-4.08a2.5 2.5 0 0 1 1.9-.86z\" fill=\"currentColor\"></path></svg></span></button>",
+          "style": {
+            "backgroundColor": "rgb(51, 51, 51)",
+            "color": "rgb(255, 255, 255)",
+            "width": "36px",
+            "height": "36px",
+            "border": "1px solid rgba(0, 0, 0, 0)",
+            "padding": "5px",
+            "margin": "0px",
+            "alignItems": "center",
+            "justifyContent": "center",
+            "minHeight": "36px",
+            "minWidth": "36px",
+            "maxWidth": "32px",
+            "boxShadow": "none",
+            "borderRadius": "4px"
+          },
+          "icon": {
+            "color": "rgb(71, 158, 245)",
+            "width": "20px"
+          },
+          "before": "",
+          "after": ""
+        },
+        "[aria-label=\"Comment (C)\"]": {
+          "html": "<button type=\"button\" class=\"fui-Button r1f29ykk fui-ToggleButton ___1031dhw fhovq9v f1p3nwhy f11589ue f1q5o8ev f1pdflbu fkfq4zb f1t94bn6 f1s2uweq fr80ssc f1ukrpxl fecsdlb fnwyq0v ft1hn21 fuxngvv fy5bs14 f1q1yqic fhvnf4x fb6swo4 f1klyf7k f232fm2 fwga7ee f1nhwcv0 f1gm6xmp f1xxsver f1v3eptx fivsta0 fd4bjan f3m6zum f18ktai2 fuwdbr1 f44c6la fi64zpg fpdz1er f8ljn23 fv9hx5d\" name=\"tool\" value=\"comment\" aria-label=\"Comment (C)\" title=\"Comment (C)\" aria-pressed=\"false\"><span class=\"fui-Button__icon rywnvv2 fui-ToggleButton__icon ___s649vb0 f1dd5bof\"><svg fill=\"currentColor\" aria-hidden=\"true\" data-fui-icon=\"\" class=\"fui-Icon ___9ctc0p0 f1w7gpdv fez10in f1dd5bof\" width=\"1em\" height=\"1em\" viewBox=\"0 0 20 20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M10.48 13.84h4.92c.9 0 1.6-.71 1.6-1.56V5.57C17 4.7 16.3 4 15.4 4H4.6C3.7 4 3 4.71 3 5.57v6.7c0 .86.7 1.57 1.6 1.57h1.6V17zM6.8 17.8a1 1 0 0 1-1.4-.2 1 1 0 0 1-.2-.59v-2.17h-.6A2.6 2.6 0 0 1 2 12.28V5.57A2.6 2.6 0 0 1 4.6 3h10.8C16.84 3 18 4.15 18 5.57v6.7a2.6 2.6 0 0 1-2.6 2.57h-4.59z\" fill=\"currentColor\"></path></svg></span></button>",
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(214, 214, 214)",
+            "width": "36px",
+            "height": "36px",
+            "border": "1px solid rgba(0, 0, 0, 0)",
+            "padding": "5px",
+            "margin": "0px",
+            "alignItems": "center",
+            "justifyContent": "center",
+            "minHeight": "36px",
+            "minWidth": "36px",
+            "maxWidth": "32px",
+            "boxShadow": "none",
+            "borderRadius": "4px"
+          },
+          "icon": {
+            "color": "rgb(214, 214, 214)",
+            "width": "20px"
+          },
+          "before": "",
+          "after": ""
+        },
+        "[aria-label^=\"Switch tools to\"]": {
+          "html": "<button type=\"button\" class=\"fui-Button r1f29ykk ___1031dhw fhovq9v f1p3nwhy f11589ue f1q5o8ev f1pdflbu fkfq4zb f1t94bn6 f1s2uweq fr80ssc f1ukrpxl fecsdlb fnwyq0v ft1hn21 fuxngvv fy5bs14 f1q1yqic fhvnf4x fb6swo4 f1klyf7k f232fm2 fwga7ee f1nhwcv0 f1gm6xmp f1xxsver f1v3eptx fivsta0 fd4bjan f3m6zum f18ktai2 fuwdbr1 f44c6la fi64zpg fpdz1er f8ljn23 fv9hx5d\" aria-label=\"Switch tools to horizontal\" title=\"Switch tools to horizontal\"><span class=\"fui-Button__icon rywnvv2\"><svg fill=\"currentColor\" aria-hidden=\"true\" data-fui-icon=\"\" class=\"fui-Icon ___9ctc0p0 f1w7gpdv fez10in f1dd5bof\" width=\"1em\" height=\"1em\" viewBox=\"0 0 20 20\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M5 3a3 3 0 0 0-3 3v7a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3V6a3 3 0 0 0-3-3zM3 6c0-1.1.9-2 2-2h10a2 2 0 0 1 2 2v5H3zm0 6h14v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" fill=\"currentColor\"></path></svg></span></button>",
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(214, 214, 214)",
+            "width": "36px",
+            "height": "36px",
+            "border": "1px solid rgba(0, 0, 0, 0)",
+            "padding": "5px",
+            "margin": "0px",
+            "alignItems": "center",
+            "justifyContent": "center",
+            "minHeight": "36px",
+            "minWidth": "36px",
+            "maxWidth": "32px",
+            "boxShadow": "none",
+            "borderRadius": "4px"
+          },
+          "icon": {
+            "color": "rgb(214, 214, 214)",
+            "width": "20px"
+          },
+          "before": "",
+          "after": ""
+        },
+        "[role=\"toolbar\"] [role=\"separator\"]": {
+          "html": "<div role=\"separator\" aria-orientation=\"horizontal\" class=\"fui-Divider ___5wx7xv0 f22iagw fe668z f1oic3e7 f122n59 f1ewtqcl f1063pyq fqerorx f10pi13n fk6fouc fy9rknc figsok6 fwrc4pm f17mccla fyl8oag f16vkdww fhsnbul f1gw3sf2 f1ly5f7u f1s3tz6t f1wl9k8s f13zj6fq fkfq4zb f1vccso1 f1geml7w f1r7kh1m fjml6kk f16j7guv fx01ahm fl8d8yv fj1a37q fly5x3f f163fonl f51yk4v f13rof3u f8rth92 f6czdpx f1iyka9k fzynn9s fekrn8e f1kyqvp9 fesgyo\"></div>",
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(214, 214, 214)",
+            "width": "54px",
+            "height": "1px",
+            "border": "0px none rgb(214, 214, 214)",
+            "padding": "0px 12px",
+            "margin": "0px",
+            "alignItems": "center",
+            "justifyContent": "normal",
+            "minHeight": "auto",
+            "minWidth": "auto",
+            "maxWidth": "none",
+            "boxShadow": "none",
+            "borderRadius": "0px"
+          },
+          "icon": null,
+          "before": "",
+          "after": ""
+        }
+      },
+      "menu": {
+        "html": "<div data-tabster=\"{&quot;restorer&quot;:{&quot;type&quot;:0},&quot;focusable&quot;:{&quot;ignoreKeydown&quot;:{&quot;Escape&quot;:true}}}\" role=\"presentation\" data-review-tools-menu=\"true\" class=\"fui-MenuPopover ___7a6mni0 ft85np5 fxugw4r f19n0e5 f1ewtqcl fl8fusi f1kaai3v f1p9o1ba f1ahpp82 f1hg901r fd3pd8h f9ggezi fk6fouc fkhj508 figsok6 f1i3iumi\" data-popper-placement=\"right-start\" style=\"position: absolute; left: 0px; top: 0px; margin: 0px; transform: translate(69px, 88px); --fui-positioning-slide-direction-x: -1px; --fui-positioning-slide-direction-y: 0px;\"><div data-tabster=\"{&quot;mover&quot;:{&quot;cyclic&quot;:true,&quot;direction&quot;:1,&quot;memorizeCurrent&quot;:true}}\" role=\"menu\" aria-labelledby=\"menu_r_a_\" aria-label=\"Tool positions\" class=\"fui-MenuList ___1cyqkw0 f22iagw f1vx9l62 f1t6b6ee f1l02sjl\"><i tabindex=\"0\" role=\"none\" data-tabster-dummy=\"\" aria-hidden=\"true\" style=\"position: fixed; height: 1px; width: 1px; opacity: 0.001; z-index: -1; content-visibility: hidden;\"></i><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Top left</span></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Top right</span></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Bottom left</span></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Bottom right</span></div><div role=\"presentation\" aria-hidden=\"true\" class=\"fui-MenuDivider ___3pxu8i0 f8dz51a f14z66ap f1facbz3\"></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Reset to default spot</span></div><i tabindex=\"0\" role=\"none\" data-tabster-dummy=\"\" aria-hidden=\"true\" style=\"position: fixed; height: 1px; width: 1px; opacity: 0.001; z-index: -1; content-visibility: hidden;\"></i></div></div>",
+        "style": {
+          "padding": "4px",
+          "border": "1px solid rgba(0, 0, 0, 0)",
+          "borderRadius": "4px",
+          "boxShadow": "rgba(0, 0, 0, 0.24) 0px 0px 2px 0px, rgba(0, 0, 0, 0.28) 0px 8px 16px 0px",
+          "minWidth": "138px",
+          "maxWidth": "300px",
+          "width": "160.484px"
+        },
+        "list": {
+          "html": "<div data-tabster=\"{&quot;mover&quot;:{&quot;cyclic&quot;:true,&quot;direction&quot;:1,&quot;memorizeCurrent&quot;:true}}\" role=\"menu\" aria-labelledby=\"menu_r_a_\" aria-label=\"Tool positions\" class=\"fui-MenuList ___1cyqkw0 f22iagw f1vx9l62 f1t6b6ee f1l02sjl\"><i tabindex=\"0\" role=\"none\" data-tabster-dummy=\"\" aria-hidden=\"true\" style=\"position: fixed; height: 1px; width: 1px; opacity: 0.001; z-index: -1; content-visibility: hidden;\"></i><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Top left</span></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Top right</span></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Bottom left</span></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Bottom right</span></div><div role=\"presentation\" aria-hidden=\"true\" class=\"fui-MenuDivider ___3pxu8i0 f8dz51a f14z66ap f1facbz3\"></div><div role=\"menuitem\" tabindex=\"0\" class=\"fui-MenuItem rfoezjv\"><span class=\"fui-MenuItem__content r1ls86vo\">Reset to default spot</span></div><i tabindex=\"0\" role=\"none\" data-tabster-dummy=\"\" aria-hidden=\"true\" style=\"position: fixed; height: 1px; width: 1px; opacity: 0.001; z-index: -1; content-visibility: hidden;\"></i></div>",
+          "padding": "0px"
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "cleanup": "isolated browser closed and owned profile removed"
+}

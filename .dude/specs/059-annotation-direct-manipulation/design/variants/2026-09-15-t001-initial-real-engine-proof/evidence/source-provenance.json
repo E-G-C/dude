@@ -1,0 +1,265 @@
+{
+  "generatedAt": "2026-09-15T21:46:41.933Z",
+  "repositoryHead": "9c26aebdc2e57b75dba675a7892368bdd9875147",
+  "canonicalEntrypoint": "design/review-direct-manipulation.html",
+  "sourceDerivedCopies": [
+    {
+      "designPath": "design/prototype/review/engine.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/engine.mjs",
+      "designRevision": "sha256:539f607f28598095144aac5f3f1dd4da0401ed9e01e8ef01993f80c1aa4b919c",
+      "sourceRevision": "sha256:556f07ac8ee5d4a067ffcb03b8dad1eb1ad3550a81b994046ea5ffe2ab764972",
+      "identical": false,
+      "diff": {
+        "added": 85,
+        "removed": 23
+      }
+    },
+    {
+      "designPath": "design/prototype/review/geometry.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/geometry.mjs",
+      "designRevision": "sha256:235d2c05039581c40429f41cdf9a0c8e2a63e946fc3da37b8c273691dbf943a9",
+      "sourceRevision": "sha256:8db05db60811ef8f6a4c1f7bbe78bbc30465ff6d4e8441ef74171d967d8edb77",
+      "identical": false,
+      "diff": {
+        "added": 49,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/shapes.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/shapes.mjs",
+      "designRevision": "sha256:0df6a9f23c62b80c2571e9bfdad7bd4d7d65935270c779ae4997394eb3f4f1af",
+      "sourceRevision": "sha256:0df6a9f23c62b80c2571e9bfdad7bd4d7d65935270c779ae4997394eb3f4f1af",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/inspector.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/inspector.mjs",
+      "designRevision": "sha256:4e3a09cbdc9bfad89accc7161f73c294b64a7347b5571b9291edd0db0ee623b0",
+      "sourceRevision": "sha256:4e3a09cbdc9bfad89accc7161f73c294b64a7347b5571b9291edd0db0ee623b0",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/panel.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/panel.mjs",
+      "designRevision": "sha256:02ccc01579b03836a3530d958c3606a7db73e9ea7637fa307298c1b835947916",
+      "sourceRevision": "sha256:02ccc01579b03836a3530d958c3606a7db73e9ea7637fa307298c1b835947916",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/capture.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/capture.mjs",
+      "designRevision": "sha256:34d78de45f96ba11f2d78cec95cc1ed1957cc8facaaf22ca4673c8822e88768d",
+      "sourceRevision": "sha256:34d78de45f96ba11f2d78cec95cc1ed1957cc8facaaf22ca4673c8822e88768d",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/bridge.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/bridge.mjs",
+      "designRevision": "sha256:fca42f64869e183767e1b8127c2a077239a351b0e4c9efd4297d6ce580268eab",
+      "sourceRevision": "sha256:fca42f64869e183767e1b8127c2a077239a351b0e4c9efd4297d6ce580268eab",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/styles.css",
+      "sourcePath": "src/extensions/dude/ui/review/styles.css",
+      "designRevision": "sha256:1e73e9a1e4558601cc5f164e9f3acf5412938ba130048b2d5b064bb8e9ab668f",
+      "sourceRevision": "sha256:c2f2d1c762d21c1abc9ceb5e88242b1b05cb9a64252ca0a4963e8252b5b18ee0",
+      "identical": false,
+      "diff": {
+        "added": 8,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/NOTICE.txt",
+      "sourcePath": "src/extensions/dude/ui/review/NOTICE.txt",
+      "designRevision": "sha256:ee4f325c692f81403ae0981320736904e618499113a785b24c7bf4f750f96ce7",
+      "sourceRevision": "sha256:ee4f325c692f81403ae0981320736904e618499113a785b24c7bf4f750f96ce7",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/frontend/review.jsx",
+      "sourcePath": "src/extensions/dude/frontend/review.jsx",
+      "designRevision": "sha256:bc2b6612afd45c6736242290feeefcc3ee15d994c0af557d8b50974265ba788f",
+      "sourceRevision": "sha256:f9e5cc93aa8f6812679a396be7236c728ef65648e1d6702444da473d515a49b7",
+      "identical": false,
+      "diff": {
+        "added": 2,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/frontend/needs-you.jsx",
+      "sourcePath": "src/extensions/dude/frontend/needs-you.jsx",
+      "designRevision": "sha256:721fc328e752d67507a2da90cb7081633b0497c6a85635ad161d8e5bfd2c907b",
+      "sourceRevision": "sha256:721fc328e752d67507a2da90cb7081633b0497c6a85635ad161d8e5bfd2c907b",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/frontend/styles.js",
+      "sourcePath": "src/extensions/dude/frontend/styles.js",
+      "designRevision": "sha256:022a9e916674841f72c9b596a71353b069cb0e04c8b3ce698de7e9f09ada9880",
+      "sourceRevision": "sha256:022a9e916674841f72c9b596a71353b069cb0e04c8b3ce698de7e9f09ada9880",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/frontend/theme.js",
+      "sourcePath": "src/extensions/dude/frontend/theme.js",
+      "designRevision": "sha256:5ea6de69561e8affbcc35933ef17c797491e6c481caac2f1323fff03db20618f",
+      "sourceRevision": "sha256:5ea6de69561e8affbcc35933ef17c797491e6c481caac2f1323fff03db20618f",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/frontend/use-canvas-data.js",
+      "sourcePath": "src/extensions/dude/frontend/use-canvas-data.js",
+      "designRevision": "sha256:32291e8b3f24108fa25f68c78b6d46cc568cae80d5cf55b5957f023b4c6b4b47",
+      "sourceRevision": "sha256:32291e8b3f24108fa25f68c78b6d46cc568cae80d5cf55b5957f023b4c6b4b47",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    }
+  ],
+  "designOnlyArtifacts": [
+    {
+      "path": "design/review-direct-manipulation.html",
+      "revision": "sha256:82fe71ee9ef4887c18a74289bca648af236b058ee4d23f81f7b2441a2ae96a66",
+      "bytes": 3000
+    },
+    {
+      "path": "design/prototype/host.jsx",
+      "revision": "sha256:0004c0caf286b26574eaf762b3241df28dbf505b8b9d768b05ddd6cff350d244",
+      "bytes": 7192
+    },
+    {
+      "path": "design/prototype/build-design-assets.mjs",
+      "revision": "sha256:47fa097a49ec64457f5726ac3e021ab0d21951b390825213db19525d96b2b74f",
+      "bytes": 5063
+    },
+    {
+      "path": "design/prototype/fixture-driver.mjs",
+      "revision": "sha256:8fe18d5880659af556954fbcaf9da0edc547dd60bf82abf23e564aba24adf5f4",
+      "bytes": 13487
+    },
+    {
+      "path": "design/prototype/serve-preview.mjs",
+      "revision": "sha256:b77385d20ceb9ecff801c8bdf19c18c100093755f6d2d57f2c6349be2f47015b",
+      "bytes": 945
+    },
+    {
+      "path": "design/prototype/record-provenance.mjs",
+      "revision": "sha256:e8d5f02c84c094859255f158ed1401e38989ae0a42781c0c0f481c10073b01f3",
+      "bytes": 4043
+    },
+    {
+      "path": "design/prototype/proof-harness.mjs",
+      "revision": "sha256:8887cfa69e96ea22ddae3f9106d22e7fedae1510c67113d9309f20f340964a7d",
+      "bytes": 13258
+    },
+    {
+      "path": "design/prototype/proof-direct-manipulation.mjs",
+      "revision": "sha256:a371b95761aa8d5341bfc2c05a6c3cdad65e3a24e14f7e4cd8814d1bcb5e86f8",
+      "bytes": 11669
+    },
+    {
+      "path": "design/prototype/proof-gestures.mjs",
+      "revision": "sha256:2b1c6b3839f41fee71e37a5ecb70a3ed987f51720e11179ab6d3121d76f55392",
+      "bytes": 36696
+    },
+    {
+      "path": "design/prototype/assets/host.js",
+      "revision": "sha256:fd259e8a4be1318123923a13cd0e37f02dbde2ed1916be5b70d83789685e95a7",
+      "bytes": 736932
+    },
+    {
+      "path": "design/prototype/assets/host.js.LEGAL.txt",
+      "revision": "sha256:a4c2748c7e8caaa345a8fd4baeedf3cd18a2ef01a946df06fe0ce8e340d4dc53",
+      "bytes": 70903
+    },
+    {
+      "path": "design/fixtures/reviewed-content/mock.html",
+      "revision": "sha256:298ce9ec02d7ba1f68b00751f7a8e0c5cecef6427a44a0f7197666d6efb14e81",
+      "bytes": 1088
+    },
+    {
+      "path": "design/fixtures/reviewed-content/mock.css",
+      "revision": "sha256:2728012595da123a03daf10d404778f949fbc07b89b18c329adf19bc2b081d3d",
+      "bytes": 1076
+    },
+    {
+      "path": "design/fixtures/reviewed-content/logo.svg",
+      "revision": "sha256:deec39c96de5a6ee5db07e656ff3d3b66d78649d84866fd83b8e62a42c13d5f7",
+      "bytes": 236
+    },
+    {
+      "path": "design/evidence/capability-declaration.md",
+      "revision": "sha256:757c9a2d65fec3f68e0f28100f6056eb6ce3e5d2ba07ff06ddc2dc2dc44a1080",
+      "bytes": 5348
+    }
+  ],
+  "retainedEvidence": [
+    {
+      "path": "design/evidence/proof-2026-09-15T21-46-04-284Z.json",
+      "revision": "sha256:0b65dba4012d77a8431b1632bbb00a98a3a781dba6d9d89042862477ea5e7472",
+      "bytes": 33288
+    },
+    {
+      "path": "design/screenshots/direct-manipulation-compact-dark-640x780.png",
+      "revision": "sha256:899e46173ffaf4cc06f79ffcd7868eeea02089c607a39c54752630bd99d4d156",
+      "bytes": 84926
+    },
+    {
+      "path": "design/screenshots/direct-manipulation-compact-light-640x780.png",
+      "revision": "sha256:7c5fa569318a7073d58ad33ae114fc644ff2d434d90e15f9605ac4aec0586a81",
+      "bytes": 84020
+    },
+    {
+      "path": "design/screenshots/direct-manipulation-desktop-dark-1280x900.png",
+      "revision": "sha256:df96a4acd9d9d75d6932ecf78ddc05cfba2aa3f07076e42c66f3ab20f94f938e",
+      "bytes": 96265
+    },
+    {
+      "path": "design/screenshots/direct-manipulation-desktop-light-1280x900.png",
+      "revision": "sha256:f785e867ca9db42951987bbae628a6bd43544a6e4234e5a10228a2bbcfd2110d",
+      "bytes": 95843
+    }
+  ]
+}

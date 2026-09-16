@@ -1,0 +1,1024 @@
+{
+  "subject": "062 navigation rail refinement — focused author observations",
+  "mock": ".dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+  "mockSha256": "2f4e0b2d6acafd18e4a713254e7a42adcb7a5f00881e0185b0e2892f918d6c8e",
+  "mockBytes": 341721,
+  "origin": "http://127.0.0.1:61609",
+  "runAt": "2026-09-14T19:31:32.891Z",
+  "scope": "Author observation of the rail change only. Not an independent verification run, not the 240-case suite, not approval.",
+  "result": "101/101",
+  "failures": [],
+  "screenshots": [
+    "rail-062-compact-overview-1440-light.png",
+    "rail-062-expanded-overview-1440-light.png",
+    "rail-062-toggle-focus-expanded-1440-light.png",
+    "rail-062-toggle-focus-collapsed-1440-light.png",
+    "rail-062-keyboard-now-expanded-1440-light.png",
+    "rail-062-expanded-now-selected-1440-dark.png",
+    "rail-062-expanded-overview-selected-1440-dark.png",
+    "rail-062-expanded-needs-draft-960-light.png",
+    "rail-062-expanded-review-1440-light.png",
+    "rail-062-expanded-review-pan-960-light.png",
+    "rail-062-compact-overview-360-light.png",
+    "rail-062-overlay-open-360-light.png",
+    "rail-062-overlay-after-escape-360-light.png",
+    "rail-062-overlay-destination-360-light.png",
+    "rail-062-overlay-open-selected-360-dark.png"
+  ],
+  "checks": [
+    {
+      "step": "A-1440-light-unselected",
+      "name": "compact is the default",
+      "pass": true,
+      "detail": "false"
+    },
+    {
+      "step": "A-1440-light-unselected",
+      "name": "toggle is a named pane control",
+      "pass": true,
+      "detail": {
+        "expanded": "false",
+        "label": "Expand navigation pane",
+        "title": "Expand navigation pane",
+        "controls": "rail-list",
+        "type": "button",
+        "current": null,
+        "icon": "#i-menu",
+        "text": "",
+        "rect": {
+          "x": 7.5,
+          "y": 179,
+          "w": 32,
+          "h": 32,
+          "right": 39.5,
+          "bottom": 211
+        },
+        "minTarget": 32
+      }
+    },
+    {
+      "step": "A-1440-light-unselected",
+      "name": "toggle controls the destination list",
+      "pass": true,
+      "detail": "rail-list"
+    },
+    {
+      "step": "A-1440-light-unselected",
+      "name": "toggle is not a destination",
+      "pass": true,
+      "detail": [
+        "overview",
+        "now",
+        "needs",
+        "new"
+      ]
+    },
+    {
+      "step": "A-1440-light-unselected",
+      "name": "toggle uses the hamburger glyph",
+      "pass": true,
+      "detail": "#i-menu"
+    },
+    {
+      "step": "A-1440-light-unselected",
+      "name": "Overview no longer wears a menu glyph",
+      "pass": true,
+      "detail": "#i-grid"
+    },
+    {
+      "step": "A-1440-light-unselected",
+      "name": "same four destinations",
+      "pass": true,
+      "detail": [
+        "Overview",
+        "Now",
+        "Needs you",
+        "New idea"
+      ]
+    },
+    {
+      "step": "A-1440-light-unselected",
+      "name": "compact rail keeps its 48px width",
+      "pass": true,
+      "detail": 48
+    },
+    {
+      "step": "A-1440-light-unselected",
+      "name": "compact labels are not drawn",
+      "pass": true,
+      "detail": [
+        false,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "step": "A-1440-light-unselected",
+      "name": "collapsed names survive without labels",
+      "pass": true,
+      "detail": [
+        "Overview",
+        "Now",
+        "Needs you, 6 current requests",
+        "New idea"
+      ]
+    },
+    {
+      "step": "A-1440-light-unselected",
+      "name": "active destination marked",
+      "pass": true,
+      "detail": [
+        "page",
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "step": "A-1440-light-unselected",
+      "name": "toggle target >= 24px",
+      "pass": true,
+      "detail": 32
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "pointer expands the pane",
+      "pass": true,
+      "detail": "true"
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "expanded name and title agree",
+      "pass": true,
+      "detail": "Collapse navigation pane"
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "visible toggle text is inside its name",
+      "pass": true,
+      "detail": "Navigation"
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "labels appear for the same four",
+      "pass": true,
+      "detail": [
+        "Overview",
+        "Now",
+        "Needs you",
+        "New idea"
+      ]
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "no label is clipped",
+      "pass": true,
+      "detail": [
+        false,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "names still match visible labels",
+      "pass": true,
+      "detail": [
+        "Overview",
+        "Now",
+        "Needs you, 6 current requests",
+        "New idea"
+      ]
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "badge does not sit on a label",
+      "pass": true,
+      "detail": [
+        null,
+        null,
+        {
+          "x": 171,
+          "y": 306,
+          "w": 20,
+          "h": 20,
+          "right": 191,
+          "bottom": 326
+        },
+        null
+      ]
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "pane width is the labelled pane",
+      "pass": true,
+      "detail": 208
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "active destination still marked",
+      "pass": true,
+      "detail": "rgb(15, 108, 189) 3px 0px 0px 0px inset"
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "toggle never navigated",
+      "pass": true,
+      "detail": [
+        "Overview",
+        "Overview"
+      ]
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "work lookup untouched",
+      "pass": true,
+      "detail": {
+        "searchPresent": true,
+        "textInputs": 1,
+        "value": "",
+        "scope": "open",
+        "popOpen": false
+      }
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "no second finder appeared",
+      "pass": true,
+      "detail": 1
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "selection state unchanged",
+      "pass": true,
+      "detail": {
+        "identityVisible": false,
+        "number": null,
+        "caption": null,
+        "clearPresent": true
+      }
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "central and right regions stay usable",
+      "pass": true,
+      "detail": {
+        "work": 892,
+        "dock": 340
+      }
+    },
+    {
+      "step": "A-expand-pointer",
+      "name": "no page overflow 1440 expanded",
+      "pass": true,
+      "detail": {
+        "scrollWidth": 1440,
+        "clientWidth": 1440
+      }
+    },
+    {
+      "step": "A-keyboard",
+      "name": "toggle is reachable by Tab",
+      "pass": true,
+      "detail": {
+        "steps": 3,
+        "focus": {
+          "id": "rail-toggle",
+          "rail": null,
+          "tag": "BUTTON",
+          "text": "Collapse navigation pane"
+        }
+      }
+    },
+    {
+      "step": "A-keyboard",
+      "name": "native Enter collapses",
+      "pass": true,
+      "detail": 48
+    },
+    {
+      "step": "A-keyboard",
+      "name": "focus stays on the toggle",
+      "pass": true,
+      "detail": {
+        "id": "rail-toggle",
+        "rail": null,
+        "tag": "BUTTON",
+        "text": "Expand navigation pane"
+      }
+    },
+    {
+      "step": "A-keyboard",
+      "name": "collapsed name announced",
+      "pass": true,
+      "detail": "Expand navigation pane"
+    },
+    {
+      "step": "A-keyboard",
+      "name": "native Space expands",
+      "pass": true,
+      "detail": 208
+    },
+    {
+      "step": "A-keyboard",
+      "name": "keyboard toggle changed nothing else",
+      "pass": true,
+      "detail": {
+        "searchPresent": true,
+        "textInputs": 1,
+        "value": "",
+        "scope": "open",
+        "popOpen": false
+      }
+    },
+    {
+      "step": "A-keyboard-destination",
+      "name": "Tab reaches a destination from the toggle",
+      "pass": true,
+      "detail": "now"
+    },
+    {
+      "step": "A-keyboard-destination",
+      "name": "keyboard choice opens that destination",
+      "pass": true,
+      "detail": "Now"
+    },
+    {
+      "step": "A-keyboard-destination",
+      "name": "focus follows to the view",
+      "pass": true,
+      "detail": {
+        "id": "view-title",
+        "rail": null,
+        "tag": "H1",
+        "text": "Now"
+      }
+    },
+    {
+      "step": "A-keyboard-destination",
+      "name": "pane stays expanded across navigation",
+      "pass": true,
+      "detail": "true"
+    },
+    {
+      "step": "A-keyboard-destination",
+      "name": "navigation kept the one search",
+      "pass": true,
+      "detail": {
+        "searchPresent": true,
+        "textInputs": 1,
+        "value": "",
+        "scope": "open",
+        "popOpen": false
+      }
+    },
+    {
+      "step": "B-1440-dark-selected",
+      "name": "committed work owns the chrome",
+      "pass": true,
+      "detail": {
+        "identityVisible": true,
+        "number": "062",
+        "caption": "Working on",
+        "clearPresent": true
+      }
+    },
+    {
+      "step": "B-1440-dark-selected",
+      "name": "expanding keeps the search away",
+      "pass": true,
+      "detail": {
+        "searchPresent": false,
+        "textInputs": 0,
+        "value": "",
+        "scope": "open",
+        "popOpen": false
+      }
+    },
+    {
+      "step": "B-1440-dark-selected",
+      "name": "expanding keeps the committed record",
+      "pass": true,
+      "detail": {
+        "identityVisible": true,
+        "number": "062",
+        "caption": "Working on",
+        "clearPresent": true
+      }
+    },
+    {
+      "step": "B-1440-dark-selected",
+      "name": "expanding did not change the view",
+      "pass": true,
+      "detail": [
+        "062Dude Canvas Workspace Integration",
+        "062Dude Canvas Workspace Integration"
+      ]
+    },
+    {
+      "step": "B-1440-dark-selected",
+      "name": "Clear is still the only reset",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "step": "B-1440-dark-selected",
+      "name": "no page overflow 1440 dark expanded with selection",
+      "pass": true,
+      "detail": {
+        "scrollWidth": 1440,
+        "clientWidth": 1440
+      }
+    },
+    {
+      "step": "B-overview-selected",
+      "name": "Overview with selection still shows only that record",
+      "pass": true,
+      "detail": [
+        "062"
+      ]
+    },
+    {
+      "step": "B-overview-selected",
+      "name": "Overview counts stay truthful",
+      "pass": true,
+      "detail": "1 of 62 recorded ideas and features · selected work filter · 062The other 61 recorded ideas and features are filtered out of this list, not removed. Clear brings the one search back with an empty sear"
+    },
+    {
+      "step": "B-overview-selected",
+      "name": "rail expansion did not clear the selection",
+      "pass": true,
+      "detail": {
+        "identityVisible": true,
+        "number": "062",
+        "caption": "Working on",
+        "clearPresent": true
+      }
+    },
+    {
+      "step": "B-overview-selected",
+      "name": "no search reappeared on Overview",
+      "pass": true,
+      "detail": {
+        "searchPresent": false,
+        "textInputs": 0,
+        "value": "",
+        "scope": "open",
+        "popOpen": false
+      }
+    },
+    {
+      "step": "B-overview-selected",
+      "name": "collapsing keeps the selection",
+      "pass": true,
+      "detail": {
+        "identityVisible": true,
+        "number": "062",
+        "caption": "Working on",
+        "clearPresent": true
+      }
+    },
+    {
+      "step": "C-960-draft",
+      "name": "draft typed into the open request",
+      "pass": true,
+      "detail": {
+        "value": "Draft kept across the pane toggle.",
+        "start": 34,
+        "focused": true
+      }
+    },
+    {
+      "step": "C-960-draft",
+      "name": "pane expands at 960",
+      "pass": true,
+      "detail": 208
+    },
+    {
+      "step": "C-960-draft",
+      "name": "unsent draft survives the toggle",
+      "pass": true,
+      "detail": {
+        "value": "Draft kept across the pane toggle.",
+        "start": 34,
+        "focused": false
+      }
+    },
+    {
+      "step": "C-960-draft",
+      "name": "work area still usable at 960",
+      "pass": true,
+      "detail": 752
+    },
+    {
+      "step": "C-960-draft",
+      "name": "no page overflow 960 expanded",
+      "pass": true,
+      "detail": {
+        "scrollWidth": 960,
+        "clientWidth": 960
+      }
+    },
+    {
+      "step": "C-960-draft",
+      "name": "collapse keeps the draft too",
+      "pass": true,
+      "detail": "Draft kept across the pane toggle."
+    },
+    {
+      "step": "D-review-1440",
+      "name": "review frame was not rebuilt",
+      "pass": true,
+      "detail": {
+        "left": 0,
+        "top": 0,
+        "probe": true,
+        "frames": 1,
+        "annos": 1
+      }
+    },
+    {
+      "step": "D-review-1440",
+      "name": "review keeps its focused width",
+      "pass": true,
+      "detail": {
+        "work": 1232,
+        "dock": false
+      }
+    },
+    {
+      "step": "D-review-1440",
+      "name": "no page overflow 1440 review expanded",
+      "pass": true,
+      "detail": {
+        "scrollWidth": 1440,
+        "clientWidth": 1440
+      }
+    },
+    {
+      "step": "D-review-1440",
+      "name": "collapse leaves review intact",
+      "pass": true,
+      "detail": {
+        "left": 0,
+        "top": 0,
+        "probe": true,
+        "frames": 1,
+        "annos": 1
+      }
+    },
+    {
+      "step": "D-review-pan-960",
+      "name": "review stage panned",
+      "pass": true,
+      "detail": {
+        "left": 21,
+        "top": 0,
+        "probe": true,
+        "frames": 1,
+        "annos": 1
+      }
+    },
+    {
+      "step": "D-review-pan-960",
+      "name": "pan is kept across the toggle",
+      "pass": true,
+      "detail": [
+        {
+          "left": 21,
+          "top": 0,
+          "probe": true,
+          "frames": 1,
+          "annos": 1
+        },
+        {
+          "left": 21,
+          "top": 0,
+          "probe": true,
+          "frames": 1,
+          "annos": 1
+        }
+      ]
+    },
+    {
+      "step": "D-review-pan-960",
+      "name": "panned frame was not rebuilt",
+      "pass": true,
+      "detail": {
+        "left": 21,
+        "top": 0,
+        "probe": true,
+        "frames": 1,
+        "annos": 1
+      }
+    },
+    {
+      "step": "D-review-pan-960",
+      "name": "no page overflow 960 review expanded",
+      "pass": true,
+      "detail": {
+        "scrollWidth": 960,
+        "clientWidth": 960
+      }
+    },
+    {
+      "step": "D-review-pan-960",
+      "name": "collapse keeps the pan",
+      "pass": true,
+      "detail": {
+        "left": 21,
+        "top": 0,
+        "probe": true,
+        "frames": 1,
+        "annos": 1
+      }
+    },
+    {
+      "step": "E-360-light",
+      "name": "narrow rail is one compact row",
+      "pass": true,
+      "detail": [
+        375,
+        375,
+        375,
+        375
+      ]
+    },
+    {
+      "step": "E-360-light",
+      "name": "narrow toggle names the menu",
+      "pass": true,
+      "detail": "Open navigation menu"
+    },
+    {
+      "step": "E-360-light",
+      "name": "narrow labels wait for the menu",
+      "pass": true,
+      "detail": [
+        false,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "step": "E-360-light",
+      "name": "no page overflow 360 compact",
+      "pass": true,
+      "detail": {
+        "scrollWidth": 360,
+        "clientWidth": 360
+      }
+    },
+    {
+      "step": "E-360-light",
+      "name": "narrow toggle opens an overlay menu",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "step": "E-360-light",
+      "name": "overlay close is explicitly named",
+      "pass": true,
+      "detail": {
+        "expanded": "true",
+        "label": "Close navigation menu",
+        "title": "Close navigation menu",
+        "controls": "rail-list",
+        "type": "button",
+        "current": null,
+        "icon": "#i-menu",
+        "text": "Close",
+        "rect": {
+          "x": 12,
+          "y": 375,
+          "w": 75.203125,
+          "h": 32,
+          "right": 87.203125,
+          "bottom": 407
+        },
+        "minTarget": 32
+      }
+    },
+    {
+      "step": "E-360-light",
+      "name": "overlay shows the four labels",
+      "pass": true,
+      "detail": [
+        "Overview",
+        "Now",
+        "Needs you",
+        "New idea"
+      ]
+    },
+    {
+      "step": "E-360-light",
+      "name": "overlay stays inside the window",
+      "pass": true,
+      "detail": {
+        "x": 16,
+        "y": 419,
+        "w": 260,
+        "h": 150,
+        "right": 276,
+        "bottom": 569
+      }
+    },
+    {
+      "step": "E-360-light",
+      "name": "focus moves into the menu",
+      "pass": true,
+      "detail": {
+        "id": "",
+        "rail": "overview",
+        "tag": "BUTTON",
+        "text": "Overview"
+      }
+    },
+    {
+      "step": "E-360-light",
+      "name": "nothing behind the overlay is reachable",
+      "pass": true,
+      "detail": {
+        "bar": true,
+        "work": true,
+        "dock": true,
+        "status": true
+      }
+    },
+    {
+      "step": "E-360-light",
+      "name": "overlay did not squeeze the content",
+      "pass": true,
+      "detail": [
+        360,
+        360
+      ]
+    },
+    {
+      "step": "E-360-light",
+      "name": "no page overflow 360 overlay open",
+      "pass": true,
+      "detail": {
+        "scrollWidth": 360,
+        "clientWidth": 360
+      }
+    },
+    {
+      "step": "E-360-light",
+      "name": "Escape closes the overlay",
+      "pass": true,
+      "detail": false
+    },
+    {
+      "step": "E-360-light",
+      "name": "focus returns to the named control",
+      "pass": true,
+      "detail": {
+        "id": "rail-toggle",
+        "rail": null,
+        "tag": "BUTTON",
+        "text": "Open navigation menu"
+      }
+    },
+    {
+      "step": "E-360-light",
+      "name": "nothing stays unreachable after close",
+      "pass": true,
+      "detail": {
+        "bar": false,
+        "work": false,
+        "dock": false,
+        "status": false
+      }
+    },
+    {
+      "step": "E-360-light",
+      "name": "Escape changed no work state",
+      "pass": true,
+      "detail": {
+        "searchPresent": true,
+        "textInputs": 1,
+        "value": "",
+        "scope": "open",
+        "popOpen": false
+      }
+    },
+    {
+      "step": "E-360-destination",
+      "name": "choosing from the overlay navigates once",
+      "pass": true,
+      "detail": "Needs you"
+    },
+    {
+      "step": "E-360-destination",
+      "name": "overlay closes behind the choice",
+      "pass": true,
+      "detail": {
+        "scrim": false,
+        "inert": {
+          "bar": false,
+          "work": false,
+          "dock": false,
+          "status": false
+        }
+      }
+    },
+    {
+      "step": "E-360-destination",
+      "name": "focus lands on the opened view",
+      "pass": true,
+      "detail": {
+        "id": "view-title",
+        "rail": null,
+        "tag": "H1",
+        "text": "Needs you"
+      }
+    },
+    {
+      "step": "E-360-dark-selected",
+      "name": "overlay with work selected shows no search",
+      "pass": true,
+      "detail": {
+        "searchPresent": false,
+        "textInputs": 0,
+        "value": "",
+        "scope": "open",
+        "popOpen": false
+      }
+    },
+    {
+      "step": "E-360-dark-selected",
+      "name": "overlay keeps the committed record",
+      "pass": true,
+      "detail": {
+        "identityVisible": true,
+        "number": "062",
+        "caption": "Working on",
+        "clearPresent": true
+      }
+    },
+    {
+      "step": "E-360-dark-selected",
+      "name": "the dimmer is what receives the click",
+      "pass": true,
+      "detail": {
+        "x": 344,
+        "y": 764,
+        "hit": true
+      }
+    },
+    {
+      "step": "E-360-dark-selected",
+      "name": "the dimmer closes the overlay",
+      "pass": true,
+      "detail": false
+    },
+    {
+      "step": "E-360-dark-selected",
+      "name": "dimmer close returns focus",
+      "pass": true,
+      "detail": {
+        "id": "rail-toggle",
+        "rail": null,
+        "tag": "BUTTON",
+        "text": "Open navigation menu"
+      }
+    },
+    {
+      "step": "E-360-dark-selected",
+      "name": "dimmer close kept the selection",
+      "pass": true,
+      "detail": {
+        "identityVisible": true,
+        "number": "062",
+        "caption": "Working on",
+        "clearPresent": true
+      }
+    },
+    {
+      "step": "F-thresholds",
+      "name": "pane expanded before the shrink",
+      "pass": true,
+      "detail": 208
+    },
+    {
+      "step": "F-thresholds",
+      "name": "shrinking to narrow leaves no stray overlay",
+      "pass": true,
+      "detail": {
+        "expanded": "false",
+        "mq": true,
+        "hits": [
+          true
+        ],
+        "clientWidth": 360,
+        "scrim": false,
+        "inert": {
+          "bar": false,
+          "work": false,
+          "dock": false,
+          "status": false
+        }
+      }
+    },
+    {
+      "step": "F-thresholds",
+      "name": "no page overflow 360 after shrink",
+      "pass": true,
+      "detail": {
+        "scrollWidth": 360,
+        "clientWidth": 360
+      }
+    },
+    {
+      "step": "F-thresholds",
+      "name": "pane expanded again at 960",
+      "pass": true,
+      "detail": 208
+    },
+    {
+      "step": "F-thresholds",
+      "name": "growing to desktop keeps the inline pane",
+      "pass": true,
+      "detail": 208
+    },
+    {
+      "step": "F-thresholds",
+      "name": "no page overflow 1440 after grow",
+      "pass": true,
+      "detail": {
+        "scrollWidth": 1440,
+        "clientWidth": 1440
+      }
+    },
+    {
+      "step": "F-width-sweep-expanded",
+      "name": "expanded fits 720px",
+      "pass": true,
+      "detail": {
+        "width": 720,
+        "scrollWidth": 720,
+        "clientWidth": 720,
+        "work": 512
+      }
+    },
+    {
+      "step": "F-width-sweep-expanded",
+      "name": "expanded fits 800px",
+      "pass": true,
+      "detail": {
+        "width": 800,
+        "scrollWidth": 800,
+        "clientWidth": 800,
+        "work": 592
+      }
+    },
+    {
+      "step": "F-width-sweep-expanded",
+      "name": "expanded fits 1080px",
+      "pass": true,
+      "detail": {
+        "width": 1080,
+        "scrollWidth": 1080,
+        "clientWidth": 1080,
+        "work": 532
+      }
+    },
+    {
+      "step": "F-width-sweep-expanded",
+      "name": "expanded fits 1100px",
+      "pass": true,
+      "detail": {
+        "width": 1100,
+        "scrollWidth": 1100,
+        "clientWidth": 1100,
+        "work": 552
+      }
+    },
+    {
+      "step": "F-width-sweep-expanded",
+      "name": "expanded fits 1200px",
+      "pass": true,
+      "detail": {
+        "width": 1200,
+        "scrollWidth": 1200,
+        "clientWidth": 1200,
+        "work": 652
+      }
+    },
+    {
+      "step": "F-width-sweep-expanded",
+      "name": "expanded fits 1440px",
+      "pass": true,
+      "detail": {
+        "width": 1440,
+        "scrollWidth": 1440,
+        "clientWidth": 1440,
+        "work": 892
+      }
+    }
+  ]
+}

@@ -13,6 +13,7 @@ import {
   approachHash,
   canonicalJson,
   canonicalTarget,
+  capacityDiagnostic,
   capturedBytesV1,
   classifyOutcomeReason,
   contentDescriptor,
@@ -9029,5 +9030,775 @@ nodeTest('Feature 022 T002 integration: a fallback terminal from the real safety
     assert.equal(result.haltReport.halted, true);
     assert.equal(result.haltReport.resolved, false);
     assert.equal(Object.hasOwn(result.haltReport, 'target'), false, 'the halt report gains no top-level target');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Feature 061: work inspection source capacity
+// ---------------------------------------------------------------------------
+
+/** @param {number} index */
+function feature061HostDraftBytes(index) {
+  const suffix = String(index).padStart(3, '0');
+  return Buffer.from([
+    '---',
+    `title: Host capacity draft ${suffix}`,
+    `slug: host-capacity-draft-${suffix}`,
+    'status: draft',
+    '---',
+    '',
+    '## Idea',
+    '',
+    `Host inventory fixture ${suffix}.`,
+    '',
+  ].join('\n'));
+}
+
+/** @param {Record<string, unknown>} target @param {number} count @param {string} label */
+function feature061RepeatedCapture(target, count, label) {
+  const captured = sealedCapture(target, 'failed', [{ label }]);
+  return Array.from({ length: count }, () => captured);
+}
+
+/** @param {string} root */
+function feature061SourceOverflowInput(root) {
+  return sealedTransportInput(sealedInspectionInput(root, {
+    currentRun: feature061RepeatedCapture(TARGET, 62, 'feature-061-source-overflow'),
+  }));
+}
+
+/** @param {number} index @param {number} expectedBytes */
+function feature061SizedDraftBytes(index, expectedBytes) {
+  const base = feature061HostDraftBytes(index);
+  assert.ok(base.byteLength <= expectedBytes, 'capacity draft exceeds its allocated body size');
+  return Buffer.concat([base, Buffer.alloc(expectedBytes - base.byteLength, 0x78)]);
+}
+
+/** @param {string} root @param {number} [remainingBytes] */
+function feature061FillInspectionBody(root, remainingBytes = 1) {
+  const limit = 4_194_304;
+  const chargedPaths = [
+    IDEA_PATH,
+    TASKS_PATH,
+    `${TARGET.specPath.slice(0, -'spec.md'.length)}plan.md`,
+    TARGET.specPath,
+  ];
+  const baselineBytes = chargedPaths.reduce(
+    (total, relativePath) => total + fs.statSync(path.join(root, relativePath)).size,
+    0,
+  );
+  const fillerBytes = limit - remainingBytes - baselineBytes;
+  const fillerCount = 4;
+  const baseSize = Math.floor(fillerBytes / fillerCount);
+  const sizes = Array.from(
+    { length: fillerCount },
+    (_, index) => baseSize + (index < fillerBytes % fillerCount ? 1 : 0),
+  );
+  assert.ok(sizes.every((size) => size <= 1_048_576), 'filler exceeds the individual body limit');
+  const ideasRoot = path.join(root, '.dude/ideas');
+  sizes.forEach((size, index) => {
+    const lifecycle = 900 + index;
+    fs.writeFileSync(
+      path.join(ideasRoot, `${lifecycle}-host-capacity-draft-${lifecycle}.md`),
+      feature061SizedDraftBytes(lifecycle, size),
+    );
+  });
+  const aggregateBytes = fs.readdirSync(ideasRoot).reduce(
+    (total, entry) => total + fs.statSync(path.join(ideasRoot, entry)).size,
+    0,
+  ) + chargedPaths.slice(1).reduce(
+    (total, relativePath) => total + fs.statSync(path.join(root, relativePath)).size,
+    0,
+  );
+  assert.equal(aggregateBytes, limit - remainingBytes);
+  return { aggregateBytes, limit };
+}
+
+nodeTest('Feature 061: host admission carries the exact source-headroom refusal without state, permit, or lane effects', () => {
+  withSealedWorkspace((root) => {
+    const state = emptyState('autonomous');
+    state.policy.overall = 10;
+    const rawInput = sealedInspectionInput(root, {
+      policyMode: 'autonomous',
+      currentRun: feature061RepeatedCapture(TARGET, 59, 'host-source-63'),
+    });
+    const inspection = inspect(rawInput);
+    assert.equal(inspection.overflow, false, 'deduplication keeps the source guard reachable');
+    assert.ok(modelPacket(inspection));
+    const input = sealedTransportInput(rawInput);
+    const assessment = {
+      evidenceHash: inspection.evidenceHash,
+      intent: 'unchanged',
+      action: 'execute-task',
+      materialInputs: clone(MATERIAL_INPUTS),
+      equivalence: 'distinct',
+      retention: 'transient',
+      summary: 'Exercise host source-headroom admission.',
+    };
+    const direct = runCommand('authorize', {
+      trigger: 'resume',
+      state,
+      input,
+      assessment,
+      mode: 'ordinary',
+    });
+    assert.deepEqual(direct.authorization.capacity, {
+      budget: 'source-entries',
+      limit: 64,
+      required: 65,
+      source: 'review',
+      target: canonicalTarget(TARGET),
+    });
+    assert.deepEqual(direct.authorization.blocker, {
+      code: 'evidence-incomplete',
+      subject: 'capacity:source-entries:review:65',
+      evidenceHash: inspection.evidenceHash,
+    });
+
+    let laneCalls = 0;
+    const adapter = createHostAdapter(sealedInitial({
+      state,
+      inspectionIdentity: sha256(canonicalJson(inspection)),
+    }), {
+      laneOwner: {
+        identity: sha256('feature-061-admission-lane-owner'),
+        apply() {
+          laneCalls += 1;
+          throw new Error('capacity refusal reached the lane owner');
+        },
+      },
+    });
+    const predecessor = adapter.snapshot();
+    const acceptedPredecessor = acceptedAuthorityTuple(predecessor);
+    const refused = adapter.run(sealedRequest(adapter, 'authorize-attempt', {
+      authorization: { input, assessment },
+    }));
+
+    assert.equal(refused.outcome, 'hard-stop');
+    assert.equal(refused.reason, 'evidence-incomplete');
+    assert.deepEqual(refused.capacity, direct.authorization.capacity);
+    assert.deepEqual(acceptedAuthorityTuple(refused.session), acceptedPredecessor);
+    assert.equal(refused.session.acceptedStateBytes, canonicalJson(state));
+    assert.equal(refused.session.acceptedRevision, 0);
+    assert.equal(refused.session.acceptedState.pending.length, 0);
+    assert.equal(laneCalls, 0);
+    assert.equal(Object.hasOwn(refused.session, 'capacity'), false);
+    assert.equal(canonicalJson(refused.session).includes('"capacity"'), false);
+    assert.doesNotThrow(() => validateHostAdapterResult(refused));
+
+    const sessionSmuggle = clone(refused);
+    sessionSmuggle.session.capacity = clone(refused.capacity);
+    assert.throws(
+      () => validateHostAdapterResult(sessionSmuggle),
+      /HostAdapterSession|unknown field|capacity/,
+    );
+
+    const wrongReason = clone(refused);
+    wrongReason.reason = 'runtime-threw';
+    wrongReason.session.disposition = 'runtime-threw';
+    assert.throws(
+      () => validateHostAdapterResult(wrongReason),
+      /capacity|unknown field/,
+    );
+  });
+});
+
+nodeTest('Feature 061: a post-evidence capacity refusal preserves the old pending authorization byte-for-byte', () => {
+  withSealedWorkspace((root) => {
+    const state = pendingState('autonomous');
+    state.policy.overall = 10;
+    state.policy.recover = true;
+    validateRunState(state);
+    const input = sealedRecordInput(root, {
+      currentRun: feature061RepeatedCapture(TARGET, 59, 'post-evidence-source-63'),
+    });
+    let laneCalls = 0;
+    const adapter = createHostAdapter(sealedInitial({ state }), {
+      laneOwner: {
+        identity: sha256('feature-061-post-evidence-lane-owner'),
+        apply() {
+          laneCalls += 1;
+          throw new Error('post-evidence capacity refusal reached the lane owner');
+        },
+      },
+    });
+    const predecessor = adapter.snapshot();
+    const acceptedPredecessor = acceptedAuthorityTuple(predecessor);
+    const refused = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
+      attemptResult: {
+        input,
+        result: specialistResult('feature-061-post-evidence', 'accepted'),
+      },
+    }));
+
+    assert.equal(refused.outcome, 'hard-stop');
+    assert.equal(refused.reason, 'evidence-incomplete');
+    assert.deepEqual(refused.capacity, {
+      budget: 'source-entries',
+      limit: 64,
+      required: 65,
+      source: 'verification',
+      target: canonicalTarget(TARGET),
+    });
+    assert.deepEqual(acceptedAuthorityTuple(refused.session), acceptedPredecessor);
+    assert.equal(refused.session.acceptedStateBytes, predecessor.acceptedStateBytes);
+    assert.equal(refused.session.acceptedRevision, predecessor.acceptedRevision);
+    assert.deepEqual(refused.session.acceptedState.pending, state.pending);
+    assert.equal(refused.session.acceptedState.overallUsed, 1);
+    assert.equal(laneCalls, 0);
+  });
+});
+
+nodeTest('Feature 061: unbranded resource lookalikes retain runtime-threw and never expose accessors or secrets', () => {
+  withSealedWorkspace((root) => {
+    const input = sealedInspectionInput(root);
+    const initialInspection = inspect(input);
+    const lookalike = new TypeError();
+    let codeReads = 0;
+    let messageReads = 0;
+    Object.defineProperty(lookalike, 'code', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        codeReads += 1;
+        return 'recovery-resource-limit';
+      },
+    });
+    Object.defineProperty(lookalike, 'message', {
+      configurable: true,
+      enumerable: false,
+      get() {
+        messageReads += 1;
+        return 'HOST_CAPACITY_SECRET: exceeds the resource limit of 64 total source entries';
+      },
+    });
+    const adapter = createHostAdapter(sealedInitial({
+      state: emptyState(),
+      inspectionIdentity: sha256(canonicalJson(initialInspection)),
+    }), {
+      runtime: {
+        identity: sha256('feature-061-unbranded-runtime'),
+        invoke() {
+          throw lookalike;
+        },
+      },
+    });
+    const predecessor = adapter.snapshot();
+    const refused = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input }));
+
+    assert.equal(refused.outcome, 'closed-refusal');
+    assert.equal(refused.reason, 'runtime-threw');
+    assert.equal(Object.hasOwn(refused, 'capacity'), false);
+    assert.equal(canonicalJson(refused).includes('HOST_CAPACITY_SECRET'), false);
+    assert.deepEqual({ codeReads, messageReads }, { codeReads: 0, messageReads: 0 });
+    assert.deepEqual(acceptedAuthorityTuple(refused.session), acceptedAuthorityTuple(predecessor));
+  });
+});
+
+nodeTest('Feature 061: an injected matching capacity is carried only with fresh exact no-effect proof', () => {
+  withSealedWorkspace((root) => {
+    const input = feature061SourceOverflowInput(root);
+    const initialInspection = inspect(sealedInspectionInput(root));
+    let runtimeCalls = 0;
+    const adapter = createHostAdapter(sealedInitial({
+      state: emptyState(),
+      inspectionIdentity: sha256(canonicalJson(initialInspection)),
+    }), {
+      runtime: {
+        identity: sha256('feature-061-proven-no-effect-runtime'),
+        invoke(command, lowLevelRequest) {
+          runtimeCalls += 1;
+          return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+        },
+      },
+    });
+    const predecessor = adapter.snapshot();
+
+    const refused = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input }));
+
+    assert.equal(runtimeCalls, 1);
+    assert.equal(refused.outcome, 'hard-stop');
+    assert.equal(refused.reason, 'evidence-incomplete');
+    assert.deepEqual(refused.capacity, {
+      budget: 'source-entries',
+      limit: 64,
+      required: 65,
+      source: 'current-run',
+      target: canonicalTarget(TARGET),
+    });
+    assert.deepEqual(acceptedAuthorityTuple(refused.session), acceptedAuthorityTuple(predecessor));
+    assert.equal(Object.hasOwn(refused.session, 'capacity'), false);
+  });
+});
+
+nodeTest('Feature 061: an injected copied-default runtime cannot claim matching capacity without no-effect proof', () => {
+  for (const mode of ['missing', 'effect-observed', 'indeterminate']) {
+    withSealedWorkspace((root) => {
+      const input = feature061SourceOverflowInput(root);
+      const initialInspection = inspect(sealedInspectionInput(root));
+      let runtimeCalls = 0;
+      const adapter = createHostAdapter(sealedInitial({
+        state: emptyState(),
+        inspectionIdentity: sha256(canonicalJson(initialInspection)),
+      }), {
+        runtime: {
+          identity: sha256('dude-work/recovery.runCommand:v1'),
+          invoke(command, lowLevelRequest) {
+            runtimeCalls += 1;
+            return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+          },
+        },
+        noEffectAuthority: refusingNoEffectAuthority(mode),
+      });
+      const predecessor = adapter.snapshot();
+
+      const refused = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input }));
+
+      assert.equal(runtimeCalls, 1, mode);
+      assert.equal(refused.outcome, 'hard-stop', mode);
+      assert.equal(refused.reason, 'runtime-threw', mode);
+      assert.equal(Object.hasOwn(refused, 'capacity'), false, mode);
+      assert.deepEqual(
+        acceptedAuthorityTuple(refused.session),
+        acceptedAuthorityTuple(predecessor),
+        mode,
+      );
+    });
+  }
+});
+
+nodeTest('Feature 061: a host capacity result rejects another target while retaining the targetless contract', () => {
+  withSealedWorkspace((root) => {
+    const initialInspection = inspect(sealedInspectionInput(root));
+    const adapter = createHostAdapter(sealedInitial({
+      state: emptyState(),
+      inspectionIdentity: sha256(canonicalJson(initialInspection)),
+    }));
+    const refused = adapter.run(sealedRequest(adapter, 'fresh-inspection', {
+      input: feature061SourceOverflowInput(root),
+    }));
+    assert.equal(refused.outcome, 'hard-stop');
+    assert.deepEqual(refused.capacity.target, canonicalTarget(TARGET));
+    assert.doesNotThrow(() => validateHostAdapterResult(refused));
+
+    const mismatched = clone(refused);
+    mismatched.capacity.target = canonicalTarget(SECOND_TARGET);
+    assert.throws(
+      () => validateHostAdapterResult(mismatched),
+      /must be null or the exact session target/,
+    );
+
+    const targetless = clone(refused);
+    targetless.capacity.target = null;
+    assert.equal(validateHostAdapterResult(targetless).capacity.target, null);
+  });
+});
+
+nodeTest('Feature 061 regression: host capacity budgets require non-coercible literal strings', () => {
+  withSealedWorkspace((root) => {
+    const initialInspection = inspect(sealedInspectionInput(root));
+    const adapter = createHostAdapter(sealedInitial({
+      state: emptyState(),
+      inspectionIdentity: sha256(canonicalJson(initialInspection)),
+    }));
+    const refused = adapter.run(sealedRequest(adapter, 'fresh-inspection', {
+      input: feature061SourceOverflowInput(root),
+    }));
+    assert.doesNotThrow(() => validateHostAdapterResult(refused));
+
+    for (const [budget, limit, source] of [
+      ['idea-inventory-entries', 999, '.dude/ideas'],
+      ['source-entries', 64, 'current-run'],
+      ['source-body-bytes', 1_048_576, 'current-run'],
+      ['inspection-body-bytes', 4_194_304, 'current-run'],
+      ['cli-request-bytes', 6_291_456, 'cli-request'],
+      ['retained-descriptors', 64, 'current-run'],
+      ['model-packet-items', 16, 'model-packet'],
+    ]) {
+      const candidate = clone(refused);
+      candidate.capacity = {
+        budget,
+        limit,
+        required: /** @type {number} */ (limit) + 1,
+        source,
+        target: canonicalTarget(TARGET),
+      };
+      assert.deepEqual(
+        validateHostAdapterResult(candidate).capacity,
+        candidate.capacity,
+        /** @type {string} */ (budget),
+      );
+    }
+
+    const coercions = [];
+    const budgets = [
+      ['array', ['source-entries']],
+      ['toString', {
+        toString() {
+          coercions.push('toString');
+          return 'source-entries';
+        },
+      }],
+      ['valueOf', {
+        toString() {
+          coercions.push('valueOf:toString');
+          return {};
+        },
+        valueOf() {
+          coercions.push('valueOf');
+          return 'source-entries';
+        },
+      }],
+      ['throwing toString', {
+        toString() {
+          coercions.push('throwing toString');
+          throw new Error('host capacity budget toString invoked');
+        },
+      }],
+      ['throwing valueOf', {
+        toString() {
+          coercions.push('throwing valueOf:toString');
+          return {};
+        },
+        valueOf() {
+          coercions.push('throwing valueOf');
+          throw new Error('host capacity budget valueOf invoked');
+        },
+      }],
+      ['Symbol.toPrimitive', {
+        [Symbol.toPrimitive]() {
+          coercions.push('Symbol.toPrimitive');
+          return 'source-entries';
+        },
+      }],
+      ['throwing Symbol.toPrimitive', {
+        [Symbol.toPrimitive]() {
+          coercions.push('throwing Symbol.toPrimitive');
+          throw new Error('host capacity budget Symbol.toPrimitive invoked');
+        },
+      }],
+      ['number', 1],
+      ['null', null],
+      ['undefined', undefined],
+      ['boxed string', Object('source-entries')],
+    ];
+
+    const outcomes = budgets.map(([name, budget]) => {
+      const candidate = clone(refused);
+      candidate.capacity.budget = budget;
+      try {
+        validateHostAdapterResult(candidate);
+        return [name, 'accepted'];
+      } catch {
+        return [name, 'rejected'];
+      }
+    });
+    assert.deepEqual(outcomes, budgets.map(([name]) => [name, 'rejected']));
+    assert.deepEqual(coercions, []);
+  });
+});
+
+nodeTest('Feature 061 regression: an injected runtime cannot claim the default identity to attribute another target capacity', () => {
+  withSealedWorkspace((root) => {
+    const input = sealedInspectionInput(root);
+    const initialInspection = inspect(input);
+    const wrongTarget = clone(SECOND_TARGET);
+    const wrongInput = sealedInspectionInput(root, {
+      target: wrongTarget,
+      currentRun: feature061RepeatedCapture(wrongTarget, 62, 'wrong-target-capacity'),
+    });
+    let injectedCalls = 0;
+    const adapter = createHostAdapter(sealedInitial({
+      state: emptyState(),
+      inspectionIdentity: sha256(canonicalJson(initialInspection)),
+    }), {
+      runtime: {
+        identity: sha256('dude-work/recovery.runCommand:v1'),
+        invoke() {
+          injectedCalls += 1;
+          return runCommand('inspect', {
+            trigger: 'explicit-inspection',
+            input: wrongInput,
+          });
+        },
+      },
+    });
+    const predecessor = adapter.snapshot();
+    const refused = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input }));
+
+    assert.deepEqual({
+      injectedCalls,
+      outcome: refused.outcome,
+      reason: refused.reason,
+      capacity: Object.hasOwn(refused, 'capacity') ? refused.capacity : null,
+      attributesWrongTarget: canonicalJson(refused).includes(SECOND_TARGET.taskKey),
+    }, {
+      injectedCalls: 1,
+      outcome: 'closed-refusal',
+      reason: 'runtime-threw',
+      capacity: null,
+      attributesWrongTarget: false,
+    });
+    assert.deepEqual(acceptedAuthorityTuple(refused.session), acceptedAuthorityTuple(predecessor));
+  });
+});
+
+nodeTest('Feature 061: initial runner body overflow reports bounded capacity with a null evidence hash', async () => {
+  await withSealedWorkspace(async (root) => {
+    const request = focusedRunnerRequest(root);
+    request.specialistResult = focusedSpecialistPair(
+      request.assessment,
+      'feature-061-initial-capacity',
+    );
+    const tasksPath = path.join(root, TASKS_PATH);
+    const ownerPath = path.join(root, IDEA_PATH);
+    const tasks = fs.readFileSync(tasksPath);
+    const owner = fs.readFileSync(ownerPath);
+    const oversizedTasks = Buffer.concat([
+      tasks,
+      Buffer.alloc(1_048_577 - tasks.byteLength, 0x20),
+    ]);
+    fs.writeFileSync(tasksPath, oversizedTasks);
+    const directError = (() => {
+      try {
+        inspect(sealedInspectionInput(root, { policyMode: 'autonomous' }));
+      } catch (error) {
+        return error;
+      }
+      assert.fail('oversized task history did not refuse direct inspection');
+    })();
+    const directCapacity = capacityDiagnostic(directError);
+    assert.deepEqual(directCapacity, {
+      budget: 'source-body-bytes',
+      limit: 1_048_576,
+      required: 1_048_577,
+      source: 'task-history',
+      target: canonicalTarget(TARGET),
+    });
+
+    const checkpoint = memoryCheckpointStore();
+    let exchangeCalls = 0;
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      exchange() {
+        exchangeCalls += 1;
+        throw new Error('pre-inspection capacity reached the exchange');
+      },
+    });
+
+    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(result.reason, 'evidence-incomplete');
+    assert.deepEqual(result.capacity, directCapacity);
+    assert.deepEqual(
+      JSON.parse(Buffer.from(result.stateBase64, 'base64').toString('utf8')),
+      request.state,
+    );
+    assert.equal(result.stateHash, sha256(canonicalJson(request.state)));
+    assert.equal(result.steps.length, 1);
+    assert.equal(result.steps[0].step, 'runner');
+    assert.equal(result.steps.some((step) => step.step === 'admitted'), false);
+    assert.deepEqual(result.haltReport, {
+      halted: true,
+      resolved: true,
+      reason: 'evidence-incomplete',
+      stopClass: 'hard-stop',
+      target: canonicalTarget(TARGET),
+      subject: 'capacity:source-body-bytes:task-history:1048577',
+      nextAction: 'request-human-input',
+      evidenceHash: null,
+    });
+    assert.equal(exchangeCalls, 0);
+    assert.deepEqual(checkpoint.calls, []);
+    assert.deepEqual(fs.readFileSync(tasksPath), oversizedTasks);
+    assert.deepEqual(fs.readFileSync(ownerPath), owner);
+  });
+});
+
+nodeTest('Feature 061: a late capture capacity refusal never borrows an older Inspection hash', async () => {
+  await withSealedWorkspace(async (root) => {
+    const boundary = feature061FillInspectionBody(root);
+    const request = focusedRunnerRequest(root);
+    request.specialistResult = focusedSpecialistPair(
+      request.assessment,
+      'feature-061-late-capture-capacity',
+    );
+    const priorEvidenceHash = request.assessment.evidenceHash;
+    const tasksPath = path.join(root, TASKS_PATH);
+    const ownerPath = path.join(root, IDEA_PATH);
+    const tasksBefore = fs.readFileSync(tasksPath);
+    const ownerBefore = fs.readFileSync(ownerPath);
+    const returnedInspectionHashes = [];
+    let captureReviewBytes = 0;
+    let laneCalls = 0;
+    const checkpoint = memoryCheckpointStore();
+
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('feature-061-late-capture-runtime'),
+        invoke(command, lowLevelRequest) {
+          if (command === 'complete' && lowLevelRequest.mode === 'capture') {
+            const review = lowLevelRequest.input.review;
+            if (Array.isArray(review) && review.length === 1) {
+              captureReviewBytes = Buffer.from(review[0].bytes.base64, 'base64').byteLength;
+            }
+          }
+          const value = runCommand(command, lowLevelRequest);
+          if (value && typeof value === 'object' && Object.hasOwn(value, 'inspection')) {
+            returnedInspectionHashes.push(value.inspection.evidenceHash);
+          }
+          return { status: 'returned', value };
+        },
+      },
+      laneOwner: {
+        identity: sha256('feature-061-late-capture-lane-owner'),
+        apply() {
+          laneCalls += 1;
+          throw new Error('late capacity refusal reached the lane owner');
+        },
+      },
+    });
+
+    assert.ok(returnedInspectionHashes.includes(priorEvidenceHash));
+    assert.ok(captureReviewBytes > 0);
+    const required = boundary.aggregateBytes + captureReviewBytes;
+    assert.ok(required > boundary.limit);
+    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(result.reason, 'evidence-incomplete');
+    assert.deepEqual(result.capacity, {
+      budget: 'inspection-body-bytes',
+      limit: boundary.limit,
+      required,
+      source: 'review',
+      target: canonicalTarget(TARGET),
+    });
+    const authorized = result.steps.find((step) => (
+      step.step === 'attempt:1:authorize-attempt' && step.reason === 'authorized'
+    ));
+    assert.ok(authorized, 'the attempt is authorized before the unknown capture bytes arrive');
+    assert.equal(result.stateHash, authorized.stateHash, 'the late refusal preserves accepted state');
+    assert.equal(result.steps.at(-1).step, 'attempt:1:record-attempt-result');
+    assert.equal(result.steps.at(-1).reason, 'evidence-incomplete');
+    assert.deepEqual(result.steps.at(-1).capacity, result.capacity);
+    assert.deepEqual(result.haltReport, {
+      halted: true,
+      resolved: true,
+      reason: 'evidence-incomplete',
+      stopClass: 'hard-stop',
+      target: canonicalTarget(TARGET),
+      subject: `capacity:inspection-body-bytes:review:${required}`,
+      nextAction: 'request-human-input',
+      evidenceHash: null,
+    });
+    assert.notEqual(result.haltReport.evidenceHash, priorEvidenceHash);
+    assert.equal(laneCalls, 0);
+    assert.deepEqual(fs.readFileSync(tasksPath), tasksBefore);
+    assert.deepEqual(fs.readFileSync(ownerPath), ownerBefore);
+  });
+});
+
+nodeTest('Feature 061: real runner completion settles one structured Tester/Reviewer pair with 63 ideas', async () => {
+  await withSealedWorkspace(async (root) => {
+    writeSealedTaskState(root);
+    const ideasRoot = path.join(root, '.dude/ideas');
+    for (let index = 1; index <= 63; index += 1) {
+      if (index === 18) continue;
+      const suffix = String(index).padStart(3, '0');
+      fs.writeFileSync(
+        path.join(ideasRoot, `${suffix}-host-capacity-draft-${suffix}.md`),
+        feature061HostDraftBytes(index),
+      );
+    }
+    assert.equal(fs.readdirSync(ideasRoot).length, 63);
+
+    const request = focusedRunnerRequest(root);
+    request.specialistResult = focusedSpecialistPair(
+      request.assessment,
+      'feature-061-real-completion',
+    );
+    const runtimeCalls = [];
+    const captureInputs = [];
+    const laneOperations = [];
+    const checkpoint = memoryCheckpointStore();
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('feature-061-real-completion-runtime'),
+        invoke(command, lowLevelRequest) {
+          runtimeCalls.push(`${command}:${lowLevelRequest.mode || 'ordinary'}`);
+          if (command === 'complete' && lowLevelRequest.mode === 'capture') {
+            captureInputs.push(clone(lowLevelRequest.input));
+          }
+          return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+        },
+      },
+      laneOwner: {
+        identity: sha256('feature-061-real-completion-lane-owner'),
+        apply(laneRequest) {
+          laneOperations.push({
+            operation: laneRequest.operation,
+            kind: laneRequest.mutation.kind,
+          });
+          return applyLightweightWorkRequest(laneRequest);
+        },
+      },
+    });
+
+    assert.equal(
+      result.outcome,
+      'ended',
+      `${result.reason}:${result.steps.map((step) => `${step.step}=${step.reason}`).join(',')}`,
+    );
+    assert.equal(result.reason, 'task-settled');
+    assert.equal(result.haltReport, null);
+    assert.equal(Object.hasOwn(result, 'capacity'), false);
+    assert.equal(captureInputs.length, 1);
+    assert.equal(captureInputs[0].verification.length, 1, 'one fresh Tester capture');
+    assert.equal(captureInputs[0].review.length, 1, 'one fresh independent Reviewer capture');
+    assert.equal(captureInputs[0].verification[0].state, 'passed');
+    assert.equal(captureInputs[0].review[0].state, 'accepted');
+    assert.deepEqual(captureInputs[0].lint, [], 'execute-task requires no lint capture');
+    for (const [step, reason] of [
+      ['attempt:1:authorize-attempt', 'authorized'],
+      ['attempt:1:record-attempt-result', 'occurrence-retention-required'],
+      ['attempt:1:settle-completion', 'completed'],
+      ['audit-run', 'run-audited'],
+      ['authorize-lane-effect', 'lane-permit-issued'],
+      ['apply-lane-effect', 'lane-mutation-applied'],
+      ['commit-lane-receipt', 'lane-receipt-committed'],
+      ['final-audit', 'run-audited'],
+      ['end', 'task-settled'],
+    ]) {
+      assert.ok(
+        result.steps.some((row) => row.step === step && row.reason === reason),
+        `${step}=${reason}`,
+      );
+    }
+    assert.ok(
+      result.steps.some((row) => row.step === 'attempt:1:completion:apply-projection:1'),
+      'completion projection is applied',
+    );
+    assert.ok(
+      result.steps.some((row) => row.step === 'attempt:1:completion:commit-projection:1'),
+      'completion projection receipt is committed',
+    );
+    assert.ok(runtimeCalls.includes('authorize:ordinary'));
+    assert.ok(runtimeCalls.includes('complete:capture'));
+    assert.ok(runtimeCalls.includes('complete:finalize'));
+    assert.ok(runtimeCalls.includes('audit:ordinary'));
+    assert.ok(laneOperations.some(({ operation, kind }) => (
+      operation === 'work-project' && kind === 'append-event'
+    )));
+    assert.ok(laneOperations.some(({ operation, kind }) => (
+      operation === 'work-set' && kind === 'task-completed'
+    )));
+    assert.equal(checkpoint.calls.filter((call) => call === 'claim').length, 1);
+    assert.equal(checkpoint.pair.checkpoint, null);
+    assert.match(fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'), new RegExp(`- \\[x\\] ${TARGET.taskKey}`));
+    assert.equal(
+      JSON.parse(fs.readFileSync(path.join(root, TASK_STATE_PATH), 'utf8'))[TASKS_PATH].glyphs[TARGET.taskKey],
+      'x',
+    );
+    assert.equal(fs.readdirSync(ideasRoot).length, 63);
   });
 });

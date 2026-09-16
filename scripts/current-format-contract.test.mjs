@@ -3060,6 +3060,56 @@ test('T008 Work detailed owner defines the sequential-v1 recovery trust boundary
   assert.deepEqual(failures, [], `${RECOVERY_POLICY_OWNER}: sequential-v1 recovery contract`);
 });
 
+test('Feature 061 capacity guidance keeps inventory, source, admission, and diagnostic contracts distinct', () => {
+  const work = markdownSection(read(RECOVERY_POLICY_OWNER), '## Inspection And Recovery');
+  const commands = markdownSection(read('docs/commands.md'), '### `@dude work`');
+
+  assert.match(
+    work,
+    /inventory has its own ceiling of 999 direct `\.dude\/ideas` children[\s\S]*1,000th entry refuses before its name or any candidate body is read/i,
+  );
+  assert.match(
+    work,
+    /However many ideas back it, exact ownership costs one owner source[\s\S]*independent 64-source-entry budget[\s\S]*autonomous `definition-plan` source[\s\S]*tracked issue acquisition[\s\S]*supplied capture[\s\S]*optional supplied session[\s\S]*before any capture is decoded or deduplicated/i,
+  );
+  assert.match(
+    work,
+    /Before that authorization charges an attempt, records a pending entry, or permits implementation dispatch[\s\S]*one new verification and one new independent review[\s\S]*one lint capture[\s\S]*one current-run capture[\s\S]*Guarded completion emits no new inspection capture[\s\S]*absent optional session is never reserved/i,
+  );
+  assert.match(
+    work,
+    /refusal returns `evidence-incomplete`[\s\S]*state, counters, pending entries, and completed tuples unchanged[\s\S]*no task or lane write[\s\S]*guarantees no future byte size/i,
+  );
+
+  for (const exact of [
+    '`6,291,456` bytes for the complete encoded CLI request',
+    '`1,048,576` bytes for each workspace file or decoded capture body',
+    '`4,194,304` aggregate decoded evidence bytes per inspection',
+    '`999` direct entries in the idea inventory',
+    '`64` total source entries per inspection',
+    '`64` total retained evidence descriptors per inspection',
+    '`8,192` UTF-8 bytes for a deterministic error response',
+    '`16` items and\n`131,072` canonical bytes',
+  ]) {
+    assert.ok(commands.includes(exact), `commands retain exact capacity text: ${exact}`);
+  }
+  assert.doesNotMatch(commands, /`65,536` canonical bytes/);
+  assert.match(
+    commands,
+    /capacity refusal names the exhausted budget, its fixed limit, the measured or[\s\S]*first-crossing demand[\s\S]*runtime-established facts/i,
+  );
+  assert.match(
+    commands,
+    /(?:admission|headroom)[\s\S]{0,600}(?:exit(?:s| status)?\s+`?(?:0|zero)`?|successful(?:ly)?)[\s\S]{0,600}(?:inspection[\s\S]{0,80}authorization|authorization[\s\S]{0,80}inspection)/i,
+  );
+  assert.match(
+    commands,
+    /(?:acquisition|exception)[\s\S]{0,600}leaves standard output empty, exits\s+nonzero/i,
+  );
+  assert.ok(commands.includes('`{"error":{"code","message"}}`'));
+  assert.match(commands, /code `recovery-resource-limit`/i);
+});
+
 test('T007 recovery-specific always-loaded prompt proxy is deterministic and bounded', () => {
   assert.deepEqual(
     [...new Set(RECOVERY_PROMPT_PROXY_SELECTORS.map(({ source }) => source))].sort(),

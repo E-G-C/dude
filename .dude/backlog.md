@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **0** (0 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **7**
-- Defined awaiting work: **0**
-- Completed: **54**
+- Ideas awaiting definition: **6**
+- Defined awaiting work: **1**
+- Completed: **56**
 
 ## Current
 
@@ -24,9 +24,12 @@ No current work to diagram.
 - `054` · `mockup-opens-in-review` — Mockup Opens in Review (`.dude/ideas/054-mockup-opens-in-review.md`)
 - `056` · `ship-orphan-cleanup` — Ship Orphan Cleanup (`.dude/ideas/056-ship-orphan-cleanup.md`)
 - `058` · `outcome-aligned-intake` — Outcome-Aligned Intake (`.dude/ideas/058-outcome-aligned-intake.md`)
-- `059` · `annotation-direct-manipulation` — Annotation Direct Manipulation (`.dude/ideas/059-annotation-direct-manipulation.md`)
 - `060` · `recoverable-work-handoffs` — Recoverable Work Handoffs (`.dude/ideas/060-recoverable-work-handoffs.md`)
-- `061` · `work-inspection-source-capacity` — Work Inspection Source Capacity (`.dude/ideas/061-work-inspection-source-capacity.md`)
+- `063` · `dude-canvas-settings` — Dude Canvas Settings (`.dude/ideas/063-dude-canvas-settings.md`)
+
+### Defined awaiting work
+
+- `062` · `dude-canvas-workspace-integration` — Dude Canvas Workspace Integration (`.dude/ideas/062-dude-canvas-workspace-integration.md`)
 
 ## Completed
 
@@ -84,6 +87,8 @@ No current work to diagram.
 - `052` · `dude-canvas-ui` — Dude Canvas UI (`.dude/ideas/052-dude-canvas-ui.md`)
 - `055` · `canvas-acceptance-reliability` — Canvas Acceptance Reliability (`.dude/ideas/055-canvas-acceptance-reliability.md`)
 - `057` · `dude-canvas-needs-you` — Dude Canvas Needs You (`.dude/ideas/057-dude-canvas-needs-you.md`)
+- `059` · `annotation-direct-manipulation` — Annotation Direct Manipulation (`.dude/ideas/059-annotation-direct-manipulation.md`)
+- `061` · `work-inspection-source-capacity` — Work Inspection Source Capacity (`.dude/ideas/061-work-inspection-source-capacity.md`)
 
 ## Dependency and order notes
 

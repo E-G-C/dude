@@ -1,0 +1,832 @@
+{
+  "subject": "062 read-only task drill-down — focused author observations on the revised mock",
+  "mock": ".dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+  "mockSha256": "b6f409d27f404569ebab27cb47a3f4713eebbc6a4d9c4988d53f14453cd2cc56",
+  "mockBytes": 528621,
+  "servedSha256": "b6f409d27f404569ebab27cb47a3f4713eebbc6a4d9c4988d53f14453cd2cc56",
+  "servedMatchesFile": true,
+  "origin": "http://127.0.0.1:61609",
+  "browser": "Edg/133.0.3065.69",
+  "runAt": "2026-09-14T23:03:12.035Z",
+  "scope": "Author observation of the task-inspection addition on a static offline preview. Not an independent verification run, not a rerun of the earlier suites, not native-host or product evidence, and not approval.",
+  "dataEnvelope": "Task rows, phase groups and unit text for records 002, 021, 052, 057 and 062 are frozen build-time captures taken with src/skills/dude-engine/lib/tasks.mjs parseVisibleTasks and its visibility byte-line offsets. In-progress and blocked task states are controlled examples on 062 real keys; all counts beside them are recomputed from the same controlled set. No live agent, tracker, endpoint or telemetry is involved.",
+  "result": "99/99",
+  "failures": [],
+  "screenshots": [
+    "task-inspection-062-A1-now-062-planned-1440-light.png",
+    "task-inspection-062-B1-inspect-T001-dock-1440-light.png",
+    "task-inspection-062-C1-keyboard-T003-dock-1440-light.png",
+    "task-inspection-062-D1-filter-done-empty-1440-light.png",
+    "task-inspection-062-E1-progress-inprogress-1440-light.png",
+    "task-inspection-062-E2-progress-inspect-T001-1440-light.png",
+    "task-inspection-062-F1-blocked-T002-1440-light.png",
+    "task-inspection-062-G1-unavailable-062-1440-light.png",
+    "task-inspection-062-H1-draft-061-no-package-1440-light.png",
+    "task-inspection-062-H2-uncaptured-001-1440-light.png",
+    "task-inspection-062-I1-completed-052-done-T010-1440-light.png",
+    "task-inspection-062-J1-inert-source-002-1440-light.png",
+    "task-inspection-062-K1-after-clear-reopen-062-1440-light.png",
+    "task-inspection-062-L1-inflow-inspector-960-light.png",
+    "task-inspection-062-M1-inspector-360-dark.png",
+    "task-inspection-062-N1-nav-overlay-360-dark.png",
+    "task-inspection-062-O1-return-from-needs-1440-light.png",
+    "task-inspection-062-Q1-021-360-light.png",
+    "task-inspection-062-Q2-057-done-rows-1440-light.png",
+    "task-inspection-062-R1-return-from-review-1440-light.png",
+    "task-inspection-062-P1-inspect-T005-1440-dark.png",
+    "task-inspection-062-P2-compare-with-052-1440-light.png"
+  ],
+  "consoleErrors": [],
+  "checks": [
+    {
+      "step": "A-repository-062-1440-light",
+      "name": "Tasks region present with five canonical rows",
+      "pass": true,
+      "detail": 5
+    },
+    {
+      "step": "A-repository-062-1440-light",
+      "name": "rows are 062 real keys in file order",
+      "pass": true,
+      "detail": [
+        "T001@a062c1d4",
+        "T002@b062d2e5",
+        "T003@c062e3f6",
+        "T004@d062f4a7",
+        "T005@e062a5b8"
+      ]
+    },
+    {
+      "step": "A-repository-062-1440-light",
+      "name": "every row is Not started",
+      "pass": true,
+      "detail": [
+        "T001@a062c1d4Not startedReady by recorded task dependencies[Shared]",
+        "T002@b062d2e5Not startedWaiting on dependencies[US1]",
+        "T003@c062e3f6Not startedWaiting on dependencies[US2]Row text shortened",
+        "T004@d062f4a7Not startedWaiting on dependencies[US3]",
+        "T005@e062a5b8Not startedWaiting on dependencies[Shared]"
+      ]
+    },
+    {
+      "step": "A-repository-062-1440-light",
+      "name": "T001 reads ready by recorded task dependencies",
+      "pass": true,
+      "detail": "T001@a062c1d4Not startedReady by recorded task dependencies[Shared]"
+    },
+    {
+      "step": "A-repository-062-1440-light",
+      "name": "T002..T005 read waiting on dependencies",
+      "pass": true,
+      "detail": [
+        "T002@b062d2e5Not startedWaiting on dependencies[US1]",
+        "T003@c062e3f6Not startedWaiting on dependencies[US2]Row text",
+        "T004@d062f4a7Not startedWaiting on dependencies[US3]",
+        "T005@e062a5b8Not startedWaiting on dependencies[Shared]"
+      ]
+    },
+    {
+      "step": "A-repository-062-1440-light",
+      "name": "five phase groups with 0 of 1 each",
+      "pass": true,
+      "detail": [
+        {
+          "name": "Phase 1: Establish The Integrated Design",
+          "count": "0 of 1",
+          "cls": "phase-row"
+        },
+        {
+          "name": "Phase 2: Find And Select Work In The Approved Shell",
+          "count": "0 of 1",
+          "cls": "phase-row"
+        },
+        {
+          "name": "Phase 3: Restore Selected-Feature Now Orientation",
+          "count": "0 of 1",
+          "cls": "phase-row"
+        },
+        {
+          "name": "Phase 4: Complete The Context-Preserving Interaction Loop",
+          "count": "0 of 1",
+          "cls": "phase-row"
+        },
+        {
+          "name": "Phase 5: Verify The Installed Walkthrough",
+          "count": "0 of 1",
+          "cls": "phase-row"
+        }
+      ]
+    },
+    {
+      "step": "A-repository-062-1440-light",
+      "name": "rollup agrees with rows",
+      "pass": true,
+      "detail": "0 of 5 canonical tasks complete."
+    },
+    {
+      "step": "A-repository-062-1440-light",
+      "name": "filter counts agree with rows",
+      "pass": true,
+      "detail": [
+        "All5",
+        "Pending5",
+        "In progress0",
+        "Blocked0",
+        "Done0"
+      ]
+    },
+    {
+      "step": "A-repository-062-1440-light",
+      "name": "no editable control inside Tasks",
+      "pass": true,
+      "detail": 0
+    },
+    {
+      "step": "A-repository-062-1440-light",
+      "name": "no Run/Retry/Stop/Mark done control anywhere",
+      "pass": true,
+      "detail": [
+        "All5",
+        "Pending5",
+        "In progress0",
+        "Blocked0",
+        "Done0",
+        "Revise and compare the integrated mock at `.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html` with read-only selected-task drill-down, then obtain explicit approval of its current revision through the existing design workflow.T001@a062c1d4Not startedReady by recorded task dependencies[Shared]",
+        "Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.T002@b062d2e5Not startedWaiting on dependencies[US1]",
+        "Enrich `src/extensions/dude/lib/projection.mjs` with read-only selected-task descriptors and compose approved Next, phase-grouped Tasks/detail, Activity, and the properties/evidence dock in `src/extensions/dude/frontend/{app.jsx,styles.js}`; extend projection and scoped browser acceptance.T003@c062e3f6Not startedWaiting on dependencies[US2]Row text shortened",
+        "Integrate existing Needs You, New idea, and Review entry/return with Now in `src/extensions/dude/frontend/{app.jsx,needs-you.jsx,review.jsx,styles.js}`, retaining the data-hook and Review-engine contracts.T004@d062f4a7Not startedWaiting on dependencies[US3]",
+        "Verify the integrated built and installed walkthrough, including read-only task drill-down, with `scripts/dude-canvas-ui/` acceptance, source/generated parity, and release checks; update `docs/commands.md` for the approved navigation and task-data limits.T005@e062a5b8Not startedWaiting on dependencies[Shared]"
+      ]
+    },
+    {
+      "step": "A-repository-062-1440-light",
+      "name": "planned package is not described as having no tasks",
+      "pass": true,
+      "detail": "TasksAll5Pending5In progress0Blocked0Done0Showing 5 of 5 recorded tasks. Phase totals below stay unfiltered.Phase 1: Est"
+    },
+    {
+      "step": "A-repository-062-1440-light",
+      "name": "provenance names the captured source file",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "A-repository-062-1440-light",
+      "name": "no console error",
+      "pass": true,
+      "detail": []
+    },
+    {
+      "step": "B-inspect-T001-pointer-1440-light",
+      "name": "one activation opens the detail",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "B-inspect-T001-pointer-1440-light",
+      "name": "detail renders in the desktop dock",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "step": "B-inspect-T001-pointer-1440-light",
+      "name": "row announces expanded and owns the panel",
+      "pass": true,
+      "detail": [
+        "true",
+        "task-detail"
+      ]
+    },
+    {
+      "step": "B-inspect-T001-pointer-1440-light",
+      "name": "full recorded unit is present, not a headline",
+      "pass": true,
+      "detail": {
+        "lines": 7,
+        "chars": 1835
+      }
+    },
+    {
+      "step": "B-inspect-T001-pointer-1440-light",
+      "name": "unit body is wrapping body text, not clamped and not a heading",
+      "pass": true,
+      "detail": {
+        "whiteSpace": "pre-wrap",
+        "clamp": "none",
+        "clamped": false,
+        "fontSize": "14px",
+        "headings": [
+          "H3:Task detail · read only"
+        ]
+      }
+    },
+    {
+      "step": "B-inspect-T001-pointer-1440-light",
+      "name": "the docked unit is a named region reachable by keyboard when it scrolls",
+      "pass": true,
+      "detail": {
+        "overflowY": "auto",
+        "tabIndex": 0,
+        "role": "region",
+        "scrollable": true
+      }
+    },
+    {
+      "step": "B-inspect-T001-pointer-1440-light",
+      "name": "source is inert text with no child elements",
+      "pass": true,
+      "detail": 0
+    },
+    {
+      "step": "B-inspect-T001-pointer-1440-light",
+      "name": "results coverage is not exposed by this source",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "B-inspect-T001-pointer-1440-light",
+      "name": "no verification pass or review verdict is claimed",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "B-inspect-T001-pointer-1440-light",
+      "name": "no dependency is recorded for T001",
+      "pass": true,
+      "detail": []
+    },
+    {
+      "step": "B-inspect-T001-pointer-1440-light",
+      "name": "no explicit blocker is recorded",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "B-inspect-T001-pointer-1440-light",
+      "name": "detail offers only Close",
+      "pass": true,
+      "detail": [
+        "BUTTON:Close"
+      ]
+    },
+    {
+      "step": "B-inspect-T001-pointer-1440-light",
+      "name": "selection did not disturb the committed record",
+      "pass": true,
+      "detail": "062 Dude Canvas Workspace Integration"
+    },
+    {
+      "step": "C-keyboard-T003-1440-light",
+      "name": "row takes keyboard focus",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "C-keyboard-T003-1440-light",
+      "name": "native Enter inspects that exact task",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "C-keyboard-T003-1440-light",
+      "name": "multiline body survives, including paragraphs after blank lines",
+      "pass": true,
+      "detail": {
+        "lines": 8,
+        "chars": 2231
+      }
+    },
+    {
+      "step": "C-keyboard-T003-1440-light",
+      "name": "recorded dependency is listed with its recorded state",
+      "pass": true,
+      "detail": [
+        "T002@b062d2e5Not started"
+      ]
+    },
+    {
+      "step": "C-keyboard-T003-1440-light",
+      "name": "focus stayed on the inspected row",
+      "pass": true,
+      "detail": "T003@c062e3f6"
+    },
+    {
+      "step": "C-keyboard-T003-1440-light",
+      "name": "T001 no longer claims to be expanded",
+      "pass": true,
+      "detail": "false"
+    },
+    {
+      "step": "D-filter-1440-light",
+      "name": "empty filter says the filter is empty, not that there are no tasks",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "D-filter-1440-light",
+      "name": "hidden inspected row dismissed its detail",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "D-filter-1440-light",
+      "name": "focus stayed on the filter that closed it",
+      "pass": true,
+      "detail": "done"
+    },
+    {
+      "step": "D-filter-1440-light",
+      "name": "phase totals are stated as unaffected by the filter",
+      "pass": true,
+      "detail": "Showing 0 of 5 recorded tasks · Done only. Phase totals are unchanged by this filter."
+    },
+    {
+      "step": "D-filter-1440-light",
+      "name": "committed record and one selector are unchanged by filtering",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "D-filter-1440-light",
+      "name": "All restores every row",
+      "pass": true,
+      "detail": 5
+    },
+    {
+      "step": "E-progress-example-1440-light",
+      "name": "one recorded in-progress row is highlighted with words, not colour alone",
+      "pass": true,
+      "detail": [
+        "T001@a062c1d4In progress[Shared]Recorded in progress",
+        "T002@b062d2e5Not startedWaiting on dependencies[US1]",
+        "T003@c062e3f6Not startedWaiting on dependencies[US2]Row text",
+        "T004@d062f4a7Not startedWaiting on dependencies[US3]",
+        "T005@e062a5b8Not startedWaiting on dependencies[Shared]"
+      ]
+    },
+    {
+      "step": "E-progress-example-1440-light",
+      "name": "in-progress highlight is distinct from inspection selection",
+      "pass": true,
+      "detail": "task-row is-doing"
+    },
+    {
+      "step": "E-progress-example-1440-light",
+      "name": "rollup agrees with the controlled rows",
+      "pass": true,
+      "detail": "0 of 5 canonical tasks complete, 1 in progress. These counts are part of the example execution state, recomputed from the same controlled task states the rows below use. Recorded in this repository at the last complete read: Defined, 0 of 5 canonical tasks complete and 5 open. No canonical task execution evidence exists yet."
+    },
+    {
+      "step": "E-progress-example-1440-light",
+      "name": "filter counts agree with the controlled rows",
+      "pass": true,
+      "detail": [
+        "All5",
+        "Pending4",
+        "In progress1",
+        "Blocked0",
+        "Done0"
+      ]
+    },
+    {
+      "step": "E-progress-example-1440-light",
+      "name": "phase 1 shows in progress and its total is unchanged",
+      "pass": true,
+      "detail": {
+        "name": "Phase 1: Establish The Integrated Design · in progress",
+        "count": "0 of 1",
+        "cls": "phase-row is-current"
+      }
+    },
+    {
+      "step": "E-progress-example-1440-light",
+      "name": "Next carries the whole recorded unit, not just a headline",
+      "pass": true,
+      "detail": 1530
+    },
+    {
+      "step": "E-progress-example-1440-light",
+      "name": "example task state is labelled",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "E-progress-example-1440-light",
+      "name": "controlled detail states the recorded repository state too",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "E-progress-example-1440-light",
+      "name": "in-progress detail denies a live-agent claim",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "F-blocked-example-1440-light",
+      "name": "one blocked row, four pending",
+      "pass": true,
+      "detail": [
+        "All5",
+        "Pending4",
+        "In progress0",
+        "Blocked1",
+        "Done0"
+      ]
+    },
+    {
+      "step": "F-blocked-example-1440-light",
+      "name": "blocked row is not described as waiting on dependencies",
+      "pass": true,
+      "detail": "T002@b062d2e5BlockedBlocker reason recorded[US1]Reading"
+    },
+    {
+      "step": "F-blocked-example-1440-light",
+      "name": "explicit blocker reason is shown in the detail",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "F-blocked-example-1440-light",
+      "name": "blocker stays separate from dependency waiting",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "F-blocked-example-1440-light",
+      "name": "phase 2 shows blocked",
+      "pass": true,
+      "detail": {
+        "name": "Phase 2: Find And Select Work In The Approved Shell · blocked",
+        "count": "0 of 1",
+        "cls": "phase-row is-current"
+      }
+    },
+    {
+      "step": "F-blocked-example-1440-light",
+      "name": "rollup agrees",
+      "pass": true,
+      "detail": "0 of 5 canonical tasks complete, 1 blocked. These counts are part of the example execution state, recomputed from the same controlled task states the rows below use. Recorded in this repository at the last complete read: Defined, 0 of 5 canonical tasks complete and 5 open. No canonical task execution evidence exists yet."
+    },
+    {
+      "step": "G-unavailable-1440-light",
+      "name": "task coverage is explicitly withheld, not an empty list",
+      "pass": true,
+      "detail": "TasksTask coverage is withheld with the rest of this record’s execution facts. No rows, totals or task detail are shown in their place, and no other record’s ta"
+    },
+    {
+      "step": "G-unavailable-1440-light",
+      "name": "no substitute task rows appear",
+      "pass": true,
+      "detail": 0
+    },
+    {
+      "step": "H-draft-and-uncaptured-1440-light",
+      "name": "a draft with no package says it has no task definitions",
+      "pass": true,
+      "detail": "TasksThis record is a captured idea with no defined package, so it has no task definitions. That is not an empty task list and not unreadable data."
+    },
+    {
+      "step": "H-draft-and-uncaptured-1440-light",
+      "name": "no-package is not presented as unavailable data",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "H-draft-and-uncaptured-1440-light",
+      "name": "an uncaptured package says so and keeps its recorded phase totals",
+      "pass": true,
+      "detail": 9
+    },
+    {
+      "step": "H-draft-and-uncaptured-1440-light",
+      "name": "uncaptured is not shown as an empty task list",
+      "pass": true,
+      "detail": 0
+    },
+    {
+      "step": "I-completed-052-1440-light",
+      "name": "completed package lists thirteen Done rows",
+      "pass": true,
+      "detail": {
+        "rows": 13,
+        "metas": [
+          "T001@052d1d3aDone[Shared]Row text shorte",
+          "T005@052bake5Done[US4]Row text shortened",
+          "T006@052duck6Done[US4]Row text shortened",
+          "T007@052aprv7Done[US4]Row text shortened",
+          "T002@052open2Done[Shared]Row text shorte",
+          "T003@052read3Done[Shared]Row text shorte",
+          "T014@052host4Done[Shared]Row text shorte",
+          "T008@052proj8Done[US1]Row text shortened",
+          "T009@052core9Done[Shared]Row text shorte",
+          "T010@052now10Done[US1]Row text shortened",
+          "T011@052a11y1Done[US2]Row text shortened",
+          "T012@052dog12Done[US1]Row text shortened",
+          "T013@052rel13Done[Shared]Row text shorte"
+        ]
+      }
+    },
+    {
+      "step": "I-completed-052-1440-light",
+      "name": "phase totals agree with the same read",
+      "pass": true,
+      "detail": [
+        "1 of 1",
+        "3 of 3",
+        "3 of 3",
+        "2 of 2",
+        "1 of 1",
+        "3 of 3"
+      ]
+    },
+    {
+      "step": "I-completed-052-1440-light",
+      "name": "rollup agrees",
+      "pass": true,
+      "detail": "13 of 13 canonical tasks complete."
+    },
+    {
+      "step": "I-completed-052-1440-light",
+      "name": "archived T004@052send4 is not a row",
+      "pass": true,
+      "detail": [
+        "T001@052d1d3a",
+        "T005@052bake5",
+        "T006@052duck6",
+        "T007@052aprv7",
+        "T002@052open2",
+        "T003@052read3",
+        "T014@052host4",
+        "T008@052proj8",
+        "T009@052core9",
+        "T010@052now10",
+        "T011@052a11y1",
+        "T012@052dog12",
+        "T013@052rel13"
+      ]
+    },
+    {
+      "step": "I-completed-052-1440-light",
+      "name": "long row titles are shortened in the row and say so",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "I-completed-052-1440-light",
+      "name": "a Done task shows recorded Done with no manufactured result",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "I-completed-052-1440-light",
+      "name": "the longest captured unit is shown whole and unclamped",
+      "pass": true,
+      "detail": {
+        "chars": 1536,
+        "clamped": false,
+        "lines": 2
+      }
+    },
+    {
+      "step": "J-inert-html-like-source",
+      "name": "html-like text inside a unit renders as text",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "J-inert-html-like-source",
+      "name": "no script was injected by task text",
+      "pass": true,
+      "detail": 2
+    },
+    {
+      "step": "J-inert-html-like-source",
+      "name": "board and history did not become extra rows",
+      "pass": true,
+      "detail": 36
+    },
+    {
+      "step": "J-inert-html-like-source",
+      "name": "rollup agrees with the captured rows",
+      "pass": true,
+      "detail": "36 of 36 canonical tasks complete."
+    },
+    {
+      "step": "K-context-safety-1440-light",
+      "name": "ordinary return keeps the selected record only",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "K-context-safety-1440-light",
+      "name": "returning to the same record keeps its task detail",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "K-context-safety-1440-light",
+      "name": "a different record shows its own tasks and no stale detail",
+      "pass": true,
+      "detail": {
+        "detail": null,
+        "rows": 13
+      }
+    },
+    {
+      "step": "K-context-safety-1440-light",
+      "name": "no 062 task text leaked into 052",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "K2-clear-drops-inspection-1440-light",
+      "name": "deep link restored the inspected task",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "K2-clear-drops-inspection-1440-light",
+      "name": "Clear ends the selection and focuses the one search",
+      "pass": true,
+      "detail": "finder-input"
+    },
+    {
+      "step": "K2-clear-drops-inspection-1440-light",
+      "name": "after Clear the record reopens with no retained task detail or filter",
+      "pass": true,
+      "detail": {
+        "detail": null,
+        "filter": [
+          "true",
+          "false",
+          "false",
+          "false",
+          "false"
+        ]
+      }
+    },
+    {
+      "step": "L-narrow-960-light",
+      "name": "below the dock threshold the inspector renders in the work column",
+      "pass": true,
+      "detail": {
+        "inWork": true,
+        "inDock": false
+      }
+    },
+    {
+      "step": "L-narrow-960-light",
+      "name": "it renders directly after its own row",
+      "pass": true,
+      "detail": "T001@a062c1d4"
+    },
+    {
+      "step": "L-narrow-960-light",
+      "name": "the in-flow unit is unbounded, not a scroll box",
+      "pass": true,
+      "detail": {
+        "overflowY": "visible",
+        "scrollable": false
+      }
+    },
+    {
+      "step": "L-narrow-960-light",
+      "name": "no page-level horizontal scrolling",
+      "pass": true,
+      "detail": 0
+    },
+    {
+      "step": "M-narrow-360-dark",
+      "name": "narrow width keeps the in-flow inspector under its row",
+      "pass": true,
+      "detail": "T002@b062d2e5"
+    },
+    {
+      "step": "M-narrow-360-dark",
+      "name": "narrow width shows the whole unit unbounded",
+      "pass": true,
+      "detail": "visible"
+    },
+    {
+      "step": "M-narrow-360-dark",
+      "name": "no page-level horizontal scrolling at 360",
+      "pass": true,
+      "detail": 0
+    },
+    {
+      "step": "N-nav-overlay-regression-360-dark",
+      "name": "narrow overlay still makes the whole background inert",
+      "pass": true,
+      "detail": {
+        "scrim": true,
+        "workInert": true,
+        "protoInert": true,
+        "expanded": "true"
+      }
+    },
+    {
+      "step": "N-nav-overlay-regression-360-dark",
+      "name": "Escape restores the background and the task detail survives",
+      "pass": true,
+      "detail": {
+        "workInert": false,
+        "focus": "rail-toggle",
+        "detail": true
+      }
+    },
+    {
+      "step": "O-request-return-1440-light",
+      "name": "opening Needs you keeps the committed record",
+      "pass": true,
+      "detail": {
+        "view": "Needs you",
+        "working": "062 Dude Canvas Workspace Integration",
+        "requests": 6
+      }
+    },
+    {
+      "step": "O-request-return-1440-light",
+      "name": "returning to Now keeps the same task detail",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "Q-other-captured-records",
+      "name": "021 shows its three captured Done rows at 360",
+      "pass": true,
+      "detail": {
+        "rows": 3,
+        "overflow": 0
+      }
+    },
+    {
+      "step": "Q-other-captured-records",
+      "name": "long identity still wraps beside the task rows",
+      "pass": true,
+      "detail": "021 Add A Topology-First Reset When Review Revisions Expand Enforcement Scope"
+    },
+    {
+      "step": "Q-other-captured-records",
+      "name": "057 shows its eight captured Done rows",
+      "pass": true,
+      "detail": {
+        "rows": 8,
+        "meter": "8 of 8 canonical tasks complete."
+      }
+    },
+    {
+      "step": "Q-other-captured-records",
+      "name": "a cross-scope request does not retarget the record",
+      "pass": true,
+      "detail": "057 Dude Canvas Needs You"
+    },
+    {
+      "step": "R-review-return-1440-light",
+      "name": "Review is still a focused child view with the dock set aside",
+      "pass": true,
+      "detail": {
+        "stage": true,
+        "dockHidden": true,
+        "detail": false,
+        "title": "Does this combined workspace match the cockpit you approved for 052?"
+      }
+    },
+    {
+      "step": "R-review-return-1440-light",
+      "name": "returning from Review keeps the same record and its task detail",
+      "pass": true,
+      "detail": "062 Dude Canvas Workspace Integration"
+    },
+    {
+      "step": "R-review-return-1440-light",
+      "name": "reading a task never sent or approved anything",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "P-dark-and-compare-1440",
+      "name": "dark theme renders the same detail",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "P-dark-and-compare-1440",
+      "name": "the comparison states the task drill-down adaptation",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "step": "P-dark-and-compare-1440",
+      "name": "the comparison does not claim the data is already shipped",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "step": "P-dark-and-compare-1440",
+      "name": "no console error across the whole run",
+      "pass": true,
+      "detail": []
+    }
+  ]
+}

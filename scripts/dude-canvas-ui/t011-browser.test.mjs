@@ -30,7 +30,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = '8c6e3fe19edef61cff5489a0e0e26d4167e933a9124c22b43a6b9d9e410b74a5';
+const PUBLISHED_APP_SHA256 = '12f499b0703b89b2f79880ba80b750ffd43fc141253846a24310797422df89b3';
 
 /** @param {string|Buffer} value */
 function hash(value) {
@@ -8191,7 +8191,7 @@ test('T012 review regression: double-click opens an annotation comment while dra
       overlay:{
         role:'group',
         name:'Reviewed HTML document. Use drawing tools or Choose an element to annotate.',
-        description:'With the Select tool, double-click an annotation or its number to write its comment. Enter does the same for the selected annotation.',
+        description:'With the Select tool, double-click an annotation or its number to write its comment. With a drawing tool, the selected annotation keeps its handles for resizing and its border for moving, and two presses on that border write its comment. Enter does the same for the selected annotation.',
       },
     }, 'pan and annotation-open instructions remain on their separate accessible surfaces');
     const descriptionTree = await page.send('Accessibility.getFullAXTree');
@@ -8533,11 +8533,26 @@ test('T012 review regression: double-click opens an annotation comment while dra
     await until(() => workingState()?.tool === 'box', 'box tool restored for the drawing check');
     await clickMouse(await at(700, 240), 2);
     await settle();
-    assert.equal(await commentsOpen(), false, 'a drawing tool double-press opens no comment');
+    assert.equal(await commentsOpen(), false,
+      'a drawing-tool double-press on empty space opens no comment');
     assert.equal(workingState().annotations.length, 2, 'and a zero-size double-press draws nothing');
     await dragMouse(await at(640, 60), await at(860, 160));
     await until(() => workingState()?.annotations?.length === 3,
       'drawing still works immediately after a double-press');
+    // That new box stays selected, and its corner handle now answers to a
+    // drawing-mode press. Clear the selection through the existing tools so the
+    // two overlapping badges can still be arranged from the same coordinates.
+    await revealFloatingTool(page, 'Select (V)');
+    await clickAtCurrentPosition(page, tool('Select (V)'));
+    await until(() => workingState()?.tool === 'select',
+      'select tool chosen to clear the selection before the badge fixture');
+    await clickMouse(await at(760, 330));
+    await until(() => workingState()?.selectedId === null,
+      'no annotation is selected while the overlapping-badge fixture is drawn');
+    await revealFloatingTool(page, 'Box (B)');
+    await clickAtCurrentPosition(page, tool('Box (B)'));
+    await until(() => workingState()?.tool === 'box', 'box tool re-armed for the second nearby box');
+    await settle();
     await dragMouse(await at(644, 64), await at(820, 145));
     await until(() => workingState()?.annotations?.length === 4,
       'a second nearby box supplies two genuinely overlapping badge discs');
@@ -8891,6 +8906,130 @@ test('T012 review regression: double-click opens an annotation comment while dra
       styleNote:markerAfterFields.styleNote,
     };
     await closeComments('the keyboard field gesture');
+
+    // Assert: with a drawing tool armed, the selected shape keeps working. Its
+    // handles resize, its border moves it, two unmoved border presses open its
+    // comment, and its interior still draws.
+    await revealFloatingTool(page, 'Select (V)');
+    await clickAtCurrentPosition(page, tool('Select (V)'));
+    await until(() => workingState()?.tool === 'select',
+      'select tool armed to choose the drawing-mode target');
+    const armedBounds = () => {
+      const shape = workingState().annotations.find(item => item.id === inner);
+      return {
+        left:Math.min(shape.x1, shape.x2), top:Math.min(shape.y1, shape.y2),
+        right:Math.max(shape.x1, shape.x2), bottom:Math.max(shape.y1, shape.y2),
+      };
+    };
+    const armedStart = armedBounds();
+    await clickMouse(await at(
+      (armedStart.left + armedStart.right) / 2,
+      (armedStart.top + armedStart.bottom) / 2,
+    ));
+    await until(() => workingState()?.selectedId === inner,
+      'the shape is selected before its drawing-mode affordances are used');
+    await revealFloatingTool(page, 'Box (B)');
+    await clickAtCurrentPosition(page, tool('Box (B)'));
+    await until(() => workingState()?.tool === 'box', 'box tool armed over the selected shape');
+    const annotationsArmed = workingState().annotations.length;
+    const overlayCursor = () => evaluate(page, `(() => {
+      const overlay = document.querySelector('.dude-review-overlay');
+      return {action:overlay.dataset.action ?? null, cursor:getComputedStyle(overlay).cursor};
+    })()`);
+    // The cursor answers to the same classification the next press uses, so it
+    // is read from real pointer movement over the live overlay.
+    const hoverCursor = async (point, expected, label) => {
+      let observed = null;
+      await until(async () => {
+        await page.send('Input.dispatchMouseEvent', {type:'mouseMoved', x:point.x, y:point.y});
+        await settle();
+        observed = await overlayCursor();
+        return observed.action === expected.action && observed.cursor === expected.cursor;
+      }, label);
+      return observed;
+    };
+    const borderPoint = await at(armedStart.left, (armedStart.top + armedStart.bottom) / 2);
+    const cornerPoint = await at(armedStart.left, armedStart.top);
+    const interiorPoint = await at(
+      (armedStart.left + armedStart.right) / 2,
+      (armedStart.top + armedStart.bottom) / 2,
+    );
+    const armedCursors = {
+      border:await hoverCursor(borderPoint, {action:'move', cursor:'move'},
+        'a move cursor on the selected border'),
+      corner:await hoverCursor(cornerPoint, {action:'nwse-resize', cursor:'nwse-resize'},
+        'a diagonal resize cursor on the selected corner handle'),
+      interior:await hoverCursor(interiorPoint, {action:null, cursor:'crosshair'},
+        'the drawing cursor inside the selected shape'),
+    };
+    assert.deepEqual(armedCursors, {
+      border:{action:'move', cursor:'move'},
+      corner:{action:'nwse-resize', cursor:'nwse-resize'},
+      interior:{action:null, cursor:'crosshair'},
+    }, 'the armed cursor describes the action each press would perform');
+    assert.equal(workingState().annotations.length, annotationsArmed,
+      'hovering the selected affordances adds no annotation');
+    assert.deepEqual(armedBounds(), armedStart, 'and changes no geometry');
+
+    await dragMouse(borderPoint, {x:borderPoint.x + 30, y:borderPoint.y});
+    await until(() => {
+      const next = armedBounds();
+      return next.left === armedStart.left + 30 && next.right === armedStart.right + 30
+        && next.top === armedStart.top && next.bottom === armedStart.bottom;
+    }, 'dragging the selected border with a drawing tool armed moves the whole shape');
+    const armedMoved = armedBounds();
+    assert.equal(workingState().annotations.length, annotationsArmed,
+      'the border move creates no annotation');
+    assert.equal(workingState().tool, 'box', 'and leaves the drawing tool armed');
+
+    const armedCorner = await at(armedMoved.left, armedMoved.top);
+    await dragMouse(armedCorner, {x:armedCorner.x - 16, y:armedCorner.y - 12});
+    await until(() => {
+      const next = armedBounds();
+      return next.left === armedMoved.left - 16 && next.top === armedMoved.top - 12
+        && next.right === armedMoved.right && next.bottom === armedMoved.bottom;
+    }, 'dragging the selected handle with a drawing tool armed resizes that shape');
+    const armedResized = armedBounds();
+    assert.equal(workingState().annotations.length, annotationsArmed,
+      'the handle resize creates no annotation');
+    assert.equal(workingState().tool, 'box', 'and leaves the drawing tool armed');
+
+    const armedBorder = await at(armedResized.left, (armedResized.top + armedResized.bottom) / 2);
+    const armedPairStart = await pressCount();
+    await clickMouse(armedBorder, 2);
+    const armedPairPresses = pairMetrics(await pressesSince(armedPairStart));
+    assert.equal(armedPairPresses.count, 2,
+      'the armed border gesture contains exactly two trusted presses');
+    assert.ok(armedPairPresses.elapsed >= 0 && armedPairPresses.elapsed <= 500,
+      `the armed border presses stay inside 500 ms: ${JSON.stringify(armedPairPresses)}`);
+    assert.ok(armedPairPresses.distance <= 4,
+      `the armed border presses stay inside 4 px: ${JSON.stringify(armedPairPresses)}`);
+    await until(async () => await commentsOpen() && await focusedComment(),
+      'two unmoved presses on the selected border open its focused comment field');
+    assert.equal(await markedRow(), inner, 'the opened comment belongs to the pressed shape');
+    assert.equal(workingState().annotations.length, annotationsArmed,
+      'the border gesture adds no annotation');
+    assert.deepEqual(armedBounds(), armedResized, 'and moves nothing');
+    assert.equal(workingState().tool, 'box', 'the drawing tool is still armed');
+    await closeComments('the armed border gesture');
+
+    const interiorFrom = await at(armedResized.left + 20, armedResized.top + 20);
+    const interiorTo = await at(armedResized.left + 60, armedResized.top + 50);
+    await dragMouse(interiorFrom, interiorTo);
+    await until(() => workingState()?.annotations?.length === annotationsArmed + 1,
+      'a press inside the selected shape, away from its border, still draws');
+    assert.deepEqual(armedBounds(), armedResized,
+      'drawing inside the selected shape leaves it unchanged');
+    assert.equal(await commentsOpen(), false, 'the interior drawing opens no comment');
+    observations.armedManipulation = {
+      cursors:armedCursors,
+      start:armedStart,
+      moved:armedMoved,
+      resized:armedResized,
+      pair:armedPairPresses,
+      drawn:workingState().annotations.length,
+      tool:workingState().tool,
+    };
 
     // Assert: no gesture moved, resized, or scrolled the pinned reviewed view.
     const after = await frameSnapshot();

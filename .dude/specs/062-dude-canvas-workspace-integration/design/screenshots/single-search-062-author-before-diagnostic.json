@@ -1,0 +1,482 @@
+{
+  "revision": null,
+  "prefix": "single-search-062-author-before",
+  "browser": "Edg/133.0.3065.69",
+  "mock": ".dude/specs/062-dude-canvas-workspace-integration/design/variants/rev-4/workspace-integration.html",
+  "fatal": "Error: no visible target for #work [data-open=\"021\"] :: {\"url\":\"?theme=light&scope=all\",\"view\":\"overview\",\"work\":\"OverviewNew ideaNothing is selected. Records are listed in capture order; the number records when a record was captured and nothing else.1 of 62 recorded ideas and features · All · capture order, olde\"}\n    at click (file:///Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/single-search-probe.mjs:107:13)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async file:///Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/single-search-probe.mjs:195:3",
+  "passed": 12,
+  "total": 20,
+  "failures": [
+    {
+      "name": "6 Overview hides search and scope while selected",
+      "pass": false,
+      "detail": {
+        "searchVisible": true,
+        "scopeVisible": true,
+        "finderDisplay": "flex"
+      }
+    },
+    {
+      "name": "7 selected Overview shows only the selected record",
+      "pass": false,
+      "detail": {
+        "rows": [
+          "001",
+          "002",
+          "003",
+          "004",
+          "005",
+          "006",
+          "007",
+          "008",
+          "009",
+          "010",
+          "011",
+          "012",
+          "013",
+          "014",
+          "015",
+          "016",
+          "017",
+          "018",
+          "019",
+          "020",
+          "021",
+          "022",
+          "023",
+          "024",
+          "025",
+          "026",
+          "027",
+          "028",
+          "029",
+          "030",
+          "031",
+          "032",
+          "033",
+          "034",
+          "035",
+          "036",
+          "037",
+          "038",
+          "039",
+          "040",
+          "041",
+          "042",
+          "043",
+          "044",
+          "045",
+          "046",
+          "047",
+          "048",
+          "049",
+          "050",
+          "051",
+          "052",
+          "053",
+          "054",
+          "055",
+          "056",
+          "057",
+          "058",
+          "059",
+          "060",
+          "061",
+          "062"
+        ]
+      }
+    },
+    {
+      "name": "8 selected Overview drops the Nothing-is-selected claim",
+      "pass": false,
+      "detail": {
+        "headLead": "Nothing is selected. Records are listed in capture order; the number records when a record was captured and nothing else."
+      }
+    },
+    {
+      "name": "9 selected Overview counts state the selected-work filter",
+      "pass": false,
+      "detail": {
+        "meta": [
+          "62 of 62 recorded ideas and features · All · capture order, oldest first",
+          "Closed records include 50 completed features and 4 resolved ideas. Resolved ideas were not necessarily implemented.",
+          "Choose a row, or focus it and press Enter, to open that exact record in Now."
+        ]
+      }
+    },
+    {
+      "name": "10 no popup or focusable search field while selected",
+      "pass": false,
+      "detail": {
+        "popHidden": true,
+        "inputFocusable": true,
+        "activeId": "view-title"
+      }
+    },
+    {
+      "name": "14 Clear resets the lookup scroll and roving row",
+      "pass": false,
+      "detail": {
+        "scrollTop": 0,
+        "rovingRow": "002"
+      }
+    },
+    {
+      "name": "18 typed-query Overview return stays single-selector",
+      "pass": false,
+      "detail": {
+        "rowCount": 1,
+        "searchVisible": true
+      }
+    },
+    {
+      "name": "19 Clear after a typed query empties it and shows All records",
+      "pass": false,
+      "detail": {
+        "query": "legacy",
+        "scope": "all",
+        "rowCount": 1,
+        "scrollTop": 0
+      }
+    }
+  ],
+  "checks": [
+    {
+      "name": "1 launch Overview shows the one search with no selection",
+      "pass": true,
+      "detail": {
+        "rows": 62,
+        "view": "overview"
+      }
+    },
+    {
+      "name": "2 launch Overview lists every record in scope",
+      "pass": true,
+      "detail": {
+        "rowCount": 62
+      }
+    },
+    {
+      "name": "3 pointer activation opens 002 in Now with Working on",
+      "pass": true,
+      "detail": {
+        "view": "now",
+        "number": "002"
+      }
+    },
+    {
+      "name": "4 Now hides search and scope while selected",
+      "pass": true,
+      "detail": {
+        "finderDisplay": "none"
+      }
+    },
+    {
+      "name": "5 Overview return keeps the 002 selection",
+      "pass": true,
+      "detail": {
+        "number": "002"
+      }
+    },
+    {
+      "name": "6 Overview hides search and scope while selected",
+      "pass": false,
+      "detail": {
+        "searchVisible": true,
+        "scopeVisible": true,
+        "finderDisplay": "flex"
+      }
+    },
+    {
+      "name": "7 selected Overview shows only the selected record",
+      "pass": false,
+      "detail": {
+        "rows": [
+          "001",
+          "002",
+          "003",
+          "004",
+          "005",
+          "006",
+          "007",
+          "008",
+          "009",
+          "010",
+          "011",
+          "012",
+          "013",
+          "014",
+          "015",
+          "016",
+          "017",
+          "018",
+          "019",
+          "020",
+          "021",
+          "022",
+          "023",
+          "024",
+          "025",
+          "026",
+          "027",
+          "028",
+          "029",
+          "030",
+          "031",
+          "032",
+          "033",
+          "034",
+          "035",
+          "036",
+          "037",
+          "038",
+          "039",
+          "040",
+          "041",
+          "042",
+          "043",
+          "044",
+          "045",
+          "046",
+          "047",
+          "048",
+          "049",
+          "050",
+          "051",
+          "052",
+          "053",
+          "054",
+          "055",
+          "056",
+          "057",
+          "058",
+          "059",
+          "060",
+          "061",
+          "062"
+        ]
+      }
+    },
+    {
+      "name": "8 selected Overview drops the Nothing-is-selected claim",
+      "pass": false,
+      "detail": {
+        "headLead": "Nothing is selected. Records are listed in capture order; the number records when a record was captured and nothing else."
+      }
+    },
+    {
+      "name": "9 selected Overview counts state the selected-work filter",
+      "pass": false,
+      "detail": {
+        "meta": [
+          "62 of 62 recorded ideas and features · All · capture order, oldest first",
+          "Closed records include 50 completed features and 4 resolved ideas. Resolved ideas were not necessarily implemented.",
+          "Choose a row, or focus it and press Enter, to open that exact record in Now."
+        ]
+      }
+    },
+    {
+      "name": "10 no popup or focusable search field while selected",
+      "pass": false,
+      "detail": {
+        "popHidden": true,
+        "inputFocusable": true,
+        "activeId": "view-title"
+      }
+    },
+    {
+      "name": "11 the selected Overview row reopens the same Now",
+      "pass": true,
+      "detail": {
+        "view": "now",
+        "number": "002"
+      }
+    },
+    {
+      "name": "12 Clear returns Overview with no selection and the search focused",
+      "pass": true,
+      "detail": {
+        "activeId": "finder-input",
+        "view": "overview"
+      }
+    },
+    {
+      "name": "13 Clear empties the query and selects All records",
+      "pass": true,
+      "detail": {
+        "query": "",
+        "scope": "all",
+        "rowCount": 62
+      }
+    },
+    {
+      "name": "14 Clear resets the lookup scroll and roving row",
+      "pass": false,
+      "detail": {
+        "scrollTop": 0,
+        "rovingRow": "002"
+      }
+    },
+    {
+      "name": "15 typing narrows the Overview lookup",
+      "pass": true,
+      "detail": {
+        "rowCount": 1,
+        "rows": [
+          "002"
+        ]
+      }
+    },
+    {
+      "name": "16 ArrowDown from the search reaches the result rows",
+      "pass": true,
+      "detail": {
+        "activeId": "002"
+      }
+    },
+    {
+      "name": "17 native Enter on a row commits that record",
+      "pass": true,
+      "detail": {
+        "view": "now",
+        "number": "002"
+      }
+    },
+    {
+      "name": "18 typed-query Overview return stays single-selector",
+      "pass": false,
+      "detail": {
+        "rowCount": 1,
+        "searchVisible": true
+      }
+    },
+    {
+      "name": "19 Clear after a typed query empties it and shows All records",
+      "pass": false,
+      "detail": {
+        "query": "legacy",
+        "scope": "all",
+        "rowCount": 1,
+        "scrollTop": 0
+      }
+    },
+    {
+      "name": "20 Clear leaves focus in the same search input",
+      "pass": true,
+      "detail": {
+        "activeId": "finder-input"
+      }
+    }
+  ],
+  "screenshots": [],
+  "notes": [
+    {
+      "step": "overview-with-002-selected",
+      "snapshot": {
+        "view": "overview",
+        "title": "Overview",
+        "searchVisible": true,
+        "scopeVisible": true,
+        "finderDisplay": "flex",
+        "workingOnVisible": true,
+        "caption": "Working on",
+        "number": "002",
+        "name": "Remove Legacy Compatibility From The Bundle",
+        "popHidden": true,
+        "popVisible": false,
+        "popRows": [],
+        "ariaExpanded": "false",
+        "inputFocusable": true,
+        "query": "",
+        "scopeValue": "all",
+        "rows": [
+          "001",
+          "002",
+          "003",
+          "004",
+          "005",
+          "006",
+          "007",
+          "008",
+          "009",
+          "010",
+          "011",
+          "012",
+          "013",
+          "014",
+          "015",
+          "016",
+          "017",
+          "018",
+          "019",
+          "020",
+          "021",
+          "022",
+          "023",
+          "024",
+          "025",
+          "026",
+          "027",
+          "028",
+          "029",
+          "030",
+          "031",
+          "032",
+          "033",
+          "034",
+          "035",
+          "036",
+          "037",
+          "038",
+          "039",
+          "040",
+          "041",
+          "042",
+          "043",
+          "044",
+          "045",
+          "046",
+          "047",
+          "048",
+          "049",
+          "050",
+          "051",
+          "052",
+          "053",
+          "054",
+          "055",
+          "056",
+          "057",
+          "058",
+          "059",
+          "060",
+          "061",
+          "062"
+        ],
+        "rowCount": 62,
+        "selectedRows": [
+          "002"
+        ],
+        "rovingRow": "002",
+        "nothingSelected": true,
+        "headLead": "Nothing is selected. Records are listed in capture order; the number records when a record was captured and nothing else.",
+        "meta": [
+          "62 of 62 recorded ideas and features · All · capture order, oldest first",
+          "Closed records include 50 completed features and 4 resolved ideas. Resolved ideas were not necessarily implemented.",
+          "Choose a row, or focus it and press Enter, to open that exact record in Now."
+        ],
+        "workText": "OverviewNew ideaNothing is selected. Records are listed in capture order; the number records when a record was captured and nothing else.62 of 62 recorded ideas and features · All · capture order, oldest firstClosed records include 50 completed features and 4 resolved ideas. Resolved ideas were not necessarily implemented.Choose a row, or focus it and press Enter, to open that exact record in Now.No.NameStatusProgress001Brainstorm ideas intakebrainstorm-ideas-intakeCompleted·13 of 13 tasksCompleted13 of 13 tasks002Remove Legacy Compatibility From The Bundleremove-legacy-compatibilityCompleted·36 of 36 tasksCompleted36 of 36 tasks003Guarded Directory Artifact Importguarded-directory-artifact-importCompleted·10 of 10 tasksCompleted10 of 10 tasks004Pre-work Log Learningpre-work-log-learningCompleted·8 of 8 tasksCompleted8 of 8 tasks005Autonomous Work Modesautonomous-work-modesCompleted·8 of 8 tasksCompleted8 of 8 tasks006Simplify Context Footprint Auditsimplify-context-footprint-auditCompleted·2 of 2 tasksCompleted2 of 2 tasks007Technical Docs Pack Remediationtechnical-docs-pack-remediationCompleted·9 of 9 tasksCompleted9 of 9 tasks008Automatic Core Dogfood Promotionautomatic-core-dogfood-promotionCompleted·7 of 7 tasksCompleted7 of 7 tasks009Autonomous Learning Governanceautonomous-learning-governanceCompleted·9 of 9 tasksCompleted9 of 9 tasks010Core Autonomous Event Round Tripco",
+        "scrollTop": 0,
+        "activeId": "view-title",
+        "activeTag": "H1",
+        "activeInsideFinder": false,
+        "activeVisible": true,
+        "needsRequests": [],
+        "drafts": [],
+        "overflowX": 0,
+        "annoCount": 0,
+        "stagePan": null
+      }
+    }
+  ]
+}

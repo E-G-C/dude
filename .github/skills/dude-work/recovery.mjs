@@ -109,6 +109,7 @@ const MAX_CLI_REQUEST_BYTES = 6_291_456;
 const MAX_SOURCE_BODY_BYTES = 1_048_576;
 const MAX_INSPECTION_BODY_BYTES = 4_194_304;
 const MAX_SOURCE_ENTRIES = 64;
+const MAX_IDEA_INVENTORY_ENTRIES = 999;
 const MAX_RETAINED_DESCRIPTORS = 64;
 const MAX_ERROR_JSON_BYTES = 8_192;
 const MAX_PACKET_ITEMS = 16;
@@ -168,6 +169,147 @@ const TRACKED_DETAIL_FIELDS = Object.freeze([
 /** @param {string} label @param {string} message @returns {never} */
 function invalid(label, message) {
   throw new TypeError(`${label} ${message}`);
+}
+
+/**
+ * Opaque in-process identity for every runtime-owned fixed-capacity refusal.
+ * The diagnostic is held beside the error rather than on it, so provenance is
+ * the identity of an error this module actually created. No property, getter,
+ * symbol, message, or `.code` can supply it, and a Proxy wrapping a genuine
+ * refusal is a different object that is never found here. Entries live exactly
+ * as long as their error, so this is neither a registry nor persistent state.
+ */
+const CAPACITY_DIAGNOSTICS = new WeakMap();
+
+/** The exact fixed ceiling each bounded capacity budget reports. */
+const CAPACITY_LIMITS = Object.freeze({
+  'idea-inventory-entries': MAX_IDEA_INVENTORY_ENTRIES,
+  'source-entries': MAX_SOURCE_ENTRIES,
+  'source-body-bytes': MAX_SOURCE_BODY_BYTES,
+  'inspection-body-bytes': MAX_INSPECTION_BODY_BYTES,
+  'cli-request-bytes': MAX_CLI_REQUEST_BYTES,
+  'retained-descriptors': MAX_RETAINED_DESCRIPTORS,
+  'model-packet-items': MAX_PACKET_ITEMS,
+});
+
+/**
+ * Closed subject domain: an existing evidence source category, or one of the
+ * fixed acquisition subjects. A filename, path, or caller label never appears.
+ */
+const CAPACITY_SOURCES = Object.freeze([
+  ...SOURCES,
+  '.dude/ideas',
+  'definition-spec',
+  'cli-request',
+  'model-packet',
+]);
+
+/**
+ * Project one bounded capacity fact. Returns `null` when the budget, source, or
+ * demand is not runtime-established, so nothing is ever fabricated.
+ * @param {unknown} budget @param {unknown} required @param {unknown} source @param {unknown} target
+ * @returns {{budget:string,limit:number,required:number,source:string,target:Record<string, unknown>|null}|null}
+ */
+function capacityProjection(budget, required, source, target) {
+  // The budget must already be a primitive string before it is ever used as a
+  // property key: `Object.hasOwn` and `[]` coerce, so an array or an object
+  // carrying `toString`/`Symbol.toPrimitive` would otherwise run caller code
+  // and be admitted as a known budget.
+  if (typeof budget !== 'string' || !Object.hasOwn(CAPACITY_LIMITS, budget)) return null;
+  if (typeof source !== 'string' || !CAPACITY_SOURCES.includes(source)) return null;
+  if (!Number.isSafeInteger(required) || required < 0) return null;
+  let boundTarget = null;
+  try {
+    boundTarget = target === null || target === undefined
+      ? null
+      : /** @type {Record<string, unknown>} */ (canonicalTarget(target));
+  } catch {
+    // A target that cannot be canonically established is reported as absent.
+    boundTarget = null;
+  }
+  return {
+    budget,
+    limit: CAPACITY_LIMITS[/** @type {keyof typeof CAPACITY_LIMITS} */ (budget)],
+    required,
+    source,
+    target: boundTarget,
+  };
+}
+
+/**
+ * Refuse one fixed acquisition budget with a runtime-owned capacity failure.
+ * The thrown value stays an ordinary `TypeError` carrying the existing fixed
+ * prose, so every current reader keeps working; only the private in-process
+ * identity of this exact error admits details.
+ * @param {string} budget @param {number} required @param {string} source @param {unknown} target
+ * @param {string} label @param {string} message @returns {never}
+ */
+function capacityRefusal(budget, required, source, target, label, message) {
+  const projection = capacityProjection(budget, required, source, target);
+  if (projection === null) invalid(label, message);
+  const error = new TypeError(`${label} ${message}`);
+  CAPACITY_DIAGNOSTICS.set(error, Object.freeze(projection));
+  throw error;
+}
+
+/**
+ * Revalidate one bounded capacity projection carried as data. The budget must be
+ * a known one, the limit exactly its fixed ceiling, the demand a safe integer,
+ * the source a member of the closed subject domain, and the target either null
+ * or the exact canonical form of a valid target. Anything else returns `null`.
+ * @param {unknown} value
+ * @returns {{budget:string,limit:number,required:number,source:string,target:Record<string, unknown>|null}|null}
+ */
+export function validateCapacityDiagnostic(value) {
+  try {
+    // Inert closed-data guard first: a Proxy, accessor, symbol key, or exotic
+    // prototype anywhere in the graph — including the nested target — is
+    // rejected before any field value is read, so validating a diagnostic
+    // never invokes caller code.
+    assertProxyFreeDataGraph(value, 'CapacityDiagnostic');
+  } catch {
+    return null;
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const fields = /** @type {Record<string, unknown>} */ (value);
+  const names = ['budget', 'limit', 'required', 'source', 'target'];
+  if (Object.keys(fields).length !== names.length
+    || !names.every((name) => Object.hasOwn(fields, name))) return null;
+  if (fields.target !== null) {
+    try {
+      if (canonicalJson(canonicalTarget(fields.target)) !== canonicalJson(fields.target)) return null;
+    } catch {
+      return null;
+    }
+  }
+  const projection = capacityProjection(
+    fields.budget,
+    fields.required,
+    fields.source,
+    fields.target,
+  );
+  if (projection === null || projection.limit !== fields.limit) return null;
+  return projection;
+}
+
+/**
+ * Read the bounded capacity diagnostic a runtime-owned resource refusal carries.
+ * Only the in-process identity of an error this module actually created admits
+ * one: a matching message, `.code`, or symbol lookalike returns `null`, a Proxy
+ * wrapping such an error returns `null` without its traps ever running, and so
+ * does a diagnostic that no longer revalidates.
+ * @param {unknown} error
+ * @returns {{budget:string,limit:number,required:number,source:string,target:Record<string, unknown>|null}|null}
+ */
+export function capacityDiagnostic(error) {
+  if (error === null || typeof error !== 'object') return null;
+  const carried = CAPACITY_DIAGNOSTICS.get(error);
+  return carried === undefined ? null : validateCapacityDiagnostic(carried);
+}
+
+/** Name one bounded capacity subject for a Blocker or halt report. @param {{budget:string,source:string,required:number}} capacity */
+export function capacitySubject(capacity) {
+  return `capacity:${capacity.budget}:${capacity.source}:${capacity.required}`;
 }
 
 /** @param {unknown} value @param {string} label */
@@ -587,26 +729,53 @@ function parseCanonicalJsonBytes(value, label) {
   return parsed;
 }
 
-/** @returns {{used:number}} */
-function createBodyBudget() {
-  return { used: 0 };
+/**
+ * One acquisition byte budget. It also carries the canonical target the current
+ * acquisition is bound to, so a byte refusal can name its safe subject without
+ * threading the target through every charge site.
+ * @param {unknown} [target] @returns {{used:number,target:Record<string, unknown>|null}}
+ */
+function createBodyBudget(target = null) {
+  let boundTarget = null;
+  try {
+    boundTarget = target === null || target === undefined
+      ? null
+      : /** @type {Record<string, unknown>} */ (canonicalTarget(target));
+  } catch {
+    boundTarget = null;
+  }
+  return { used: 0, target: boundTarget };
 }
 
-/** @param {number} byteLength @param {string} label @param {{used:number}} budget */
-function chargeBodyLength(byteLength, label, budget) {
+/** @param {number} byteLength @param {string} label @param {{used:number,target?:Record<string, unknown>|null}} budget @param {string} source */
+function chargeBodyLength(byteLength, label, budget, source) {
   if (byteLength > MAX_SOURCE_BODY_BYTES) {
-    invalid(label, `exceeds the individual source body resource limit of ${MAX_SOURCE_BODY_BYTES} bytes`);
+    capacityRefusal(
+      'source-body-bytes',
+      byteLength,
+      source,
+      budget.target ?? null,
+      label,
+      `exceeds the individual source body resource limit of ${MAX_SOURCE_BODY_BYTES} bytes`,
+    );
   }
   if (byteLength > MAX_INSPECTION_BODY_BYTES - budget.used) {
-    invalid(label, `exceeds the aggregate inspection body resource limit of ${MAX_INSPECTION_BODY_BYTES} bytes`);
+    capacityRefusal(
+      'inspection-body-bytes',
+      budget.used + byteLength,
+      source,
+      budget.target ?? null,
+      label,
+      `exceeds the aggregate inspection body resource limit of ${MAX_INSPECTION_BODY_BYTES} bytes`,
+    );
   }
   budget.used += byteLength;
 }
 
-/** @param {unknown} value @param {string} label @param {{used:number}} budget */
-function chargeByteSequence(value, label, budget) {
+/** @param {unknown} value @param {string} label @param {{used:number,target?:Record<string, unknown>|null}} budget @param {string} source */
+function chargeByteSequence(value, label, budget, source) {
   const bytes = byteSequence(value);
-  if (bytes) chargeBodyLength(bytes.byteLength, label, budget);
+  if (bytes) chargeBodyLength(bytes.byteLength, label, budget, source);
 }
 
 /** @param {Record<string, unknown>} raw */
@@ -1922,27 +2091,87 @@ function normalizeSession(value, target) {
   }
 }
 
-/** @param {Record<string, unknown>} value @param {number} directIdeaCount @param {string} label @param {string} [policyMode] */
-function assertSourceEntryLimit(value, directIdeaCount, label, policyMode = 'guarded') {
-  let count = directIdeaCount + 2;
+/** Evidence source category each supplied capture stream is charged against. */
+const CAPTURE_STREAM_SOURCES = Object.freeze({
+  currentRun: 'current-run',
+  review: 'review',
+  verification: 'verification',
+  lint: 'lint',
+});
+
+/**
+ * Charge and bound the total source entries one inspection acquires. The complete
+ * exact-owner inventory is one owner source however many direct ideas back it; the
+ * inventory's own entry ceiling is separate. Counting happens before any capture
+ * body is accessed, decoded, parsed, or deduplicated.
+ * @param {Record<string, unknown>} value @param {string} label @param {string} [policyMode]
+ * @param {unknown} [target]
+ * @returns {{sources:number,currentRun:number,review:number,verification:number,lint:number}}
+ */
+function assertSourceEntryLimit(value, label, policyMode = 'guarded', target = null) {
+  /** @type {{source:string,count:number}[]} */
+  const charges = [{ source: 'owner-log', count: 1 }, { source: 'task-history', count: 1 }];
+  if (policyMode === 'autonomous') charges.push({ source: 'definition-plan', count: 1 });
   const lane = assertRecord(value.lane, `${label}.lane`);
   if (lane.kind === 'tracked') {
     assertExactRecord(lane, ['kind', 'listBytes', 'issues'], [], `${label}.lane`);
-    count += assertDenseDataArrayLength(lane.issues, `${label}.lane.issues`);
+    charges.push({
+      source: 'lane-history',
+      count: 1 + assertDenseDataArrayLength(lane.issues, `${label}.lane.issues`),
+    });
   } else {
     assertExactRecord(lane, ['kind'], [], `${label}.lane`);
+    charges.push({ source: 'lane-history', count: 1 });
   }
+  const streams = { currentRun: 0, review: 0, verification: 0, lint: 0 };
   for (const field of ['currentRun', 'review', 'verification', 'lint']) {
-    if (Object.hasOwn(value, field)) {
-      count += assertDenseDataArrayLength(value[field], `${label}.${field}`);
+    if (!Object.hasOwn(value, field)) continue;
+    const length = assertDenseDataArrayLength(value[field], `${label}.${field}`);
+    streams[/** @type {keyof typeof streams} */ (field)] = length;
+    charges.push({
+      source: CAPTURE_STREAM_SOURCES[/** @type {keyof typeof CAPTURE_STREAM_SOURCES} */ (field)],
+      count: length,
+    });
+  }
+  if (Object.hasOwn(value, 'session')) charges.push({ source: 'session', count: 1 });
+  const sources = charges.reduce((total, charge) => total + charge.count, 0);
+  if (sources > MAX_SOURCE_ENTRIES) {
+    let running = 0;
+    let crossing = /** @type {string} */ (charges[charges.length - 1].source);
+    for (const charge of charges) {
+      running += charge.count;
+      if (running > MAX_SOURCE_ENTRIES) {
+        crossing = charge.source;
+        break;
+      }
     }
+    capacityRefusal(
+      'source-entries',
+      sources,
+      crossing,
+      target,
+      label,
+      `exceeds the resource limit of ${MAX_SOURCE_ENTRIES} total source entries`,
+    );
   }
-  if (Object.hasOwn(value, 'session')) count += 1;
-  if (policyMode === 'autonomous') count += 1;
-  if (count > MAX_SOURCE_ENTRIES) {
-    invalid(label, `exceeds the resource limit of ${MAX_SOURCE_ENTRIES} total source entries`);
-  }
-  return count - directIdeaCount;
+  return { sources, ...streams };
+}
+
+/**
+ * Bound the complete exact-owner inventory by its own ceiling. Every direct child
+ * counts, including unsupported files, directories, and symlinks.
+ * @param {number} entries @param {string} label @param {unknown} [target] @returns {void}
+ */
+function assertIdeaInventoryLimit(entries, label, target = null) {
+  if (entries <= MAX_IDEA_INVENTORY_ENTRIES) return;
+  capacityRefusal(
+    'idea-inventory-entries',
+    entries,
+    '.dude/ideas',
+    target,
+    label,
+    `exceeds the resource limit of ${MAX_IDEA_INVENTORY_ENTRIES} direct idea inventory entries`,
+  );
 }
 
 /**
@@ -1959,7 +2188,9 @@ function assertSourceEntryLimit(value, directIdeaCount, label, policyMode = 'gua
  */
 function chargePlanBody(value, label, budget) {
   const bytes = byteSequence(value);
-  if (bytes && bytes.byteLength <= MAX_SOURCE_BODY_BYTES) chargeBodyLength(bytes.byteLength, label, budget);
+  if (bytes && bytes.byteLength <= MAX_SOURCE_BODY_BYTES) {
+    chargeBodyLength(bytes.byteLength, label, budget, 'definition-plan');
+  }
 }
 
 function chargeRawInputBodies(raw, budget, workspaceCharged, capturesCharged, target) {
@@ -1967,10 +2198,10 @@ function chargeRawInputBodies(raw, budget, workspaceCharged, capturesCharged, ta
     const ideas = assertDenseDataArray(raw.directIdeas, 'rawInputs.directIdeas');
     for (let index = 0; index < ideas.length; index += 1) {
       const idea = assertExactRecord(ideas[index], ['path', 'bytes'], [], `rawInputs.directIdeas[${index}]`);
-      chargeByteSequence(idea.bytes, `rawInputs.directIdeas[${index}] workspace file source body`, budget);
+      chargeByteSequence(idea.bytes, `rawInputs.directIdeas[${index}] workspace file source body`, budget, '.dude/ideas');
     }
     const tasks = assertExactRecord(raw.tasks, ['path', 'bytes'], [], 'rawInputs.tasks');
-    chargeByteSequence(tasks.bytes, 'rawInputs.tasks workspace file source body', budget);
+    chargeByteSequence(tasks.bytes, 'rawInputs.tasks workspace file source body', budget, 'task-history');
     if (Object.hasOwn(raw, 'definitionPlan')) {
       const plan = assertExactRecord(raw.definitionPlan, ['path', 'bytes'], [], 'rawInputs.definitionPlan');
       chargePlanBody(plan.bytes, 'rawInputs.definitionPlan workspace file source body', budget);
@@ -1981,7 +2212,7 @@ function chargeRawInputBodies(raw, budget, workspaceCharged, capturesCharged, ta
   const lane = assertRecord(raw.lane, 'rawInputs.lane');
   if (lane.kind === 'tracked') {
     assertExactRecord(lane, ['kind', 'listBytes', 'issues'], [], 'rawInputs.lane');
-    chargeByteSequence(lane.listBytes, 'rawInputs.lane.listBytes captured source body', budget);
+    chargeByteSequence(lane.listBytes, 'rawInputs.lane.listBytes captured source body', budget, 'lane-history');
     const issues = assertDenseDataArray(lane.issues, 'rawInputs.lane.issues');
     for (let index = 0; index < issues.length; index += 1) {
       const issue = assertExactRecord(
@@ -1990,8 +2221,8 @@ function chargeRawInputBodies(raw, budget, workspaceCharged, capturesCharged, ta
         [],
         `rawInputs.lane.issues[${index}]`,
       );
-      chargeByteSequence(issue.detailBytes, `rawInputs.lane.issues[${index}].detailBytes captured source body`, budget);
-      chargeByteSequence(issue.historyBytes, `rawInputs.lane.issues[${index}].historyBytes captured source body`, budget);
+      chargeByteSequence(issue.detailBytes, `rawInputs.lane.issues[${index}].detailBytes captured source body`, budget, 'lane-history');
+      chargeByteSequence(issue.historyBytes, `rawInputs.lane.issues[${index}].historyBytes captured source body`, budget, 'lane-history');
     }
   }
   for (const field of ['currentRun', 'review', 'verification', 'lint']) {
@@ -2004,7 +2235,12 @@ function chargeRawInputBodies(raw, budget, workspaceCharged, capturesCharged, ta
         [],
         `rawInputs.${field}[${index}]`,
       );
-      chargeByteSequence(entry.bytes, `rawInputs.${field}[${index}].bytes captured source body`, budget);
+      chargeByteSequence(
+        entry.bytes,
+        `rawInputs.${field}[${index}].bytes captured source body`,
+        budget,
+        CAPTURE_STREAM_SOURCES[/** @type {keyof typeof CAPTURE_STREAM_SOURCES} */ (field)],
+      );
     }
   }
   if (Object.hasOwn(raw, 'session')) {
@@ -2017,7 +2253,7 @@ function chargeRawInputBodies(raw, budget, workspaceCharged, capturesCharged, ta
         // Malformed or unbound optional session evidence is not acquired.
       }
       if (exactTarget) {
-        chargeByteSequence(session.bytes, 'rawInputs.session.bytes captured source body', budget);
+        chargeByteSequence(session.bytes, 'rawInputs.session.bytes captured source body', budget, 'session');
       }
     }
   }
@@ -2027,7 +2263,7 @@ function chargeRawInputBodies(raw, budget, workspaceCharged, capturesCharged, ta
  * @param {unknown} targetValue
  * @param {unknown} rawValue
  * @param {unknown} [dependenciesValue]
- * @param {{ownerDiagnostics?:unknown[],budget?:{used:number},workspaceCharged?:boolean,capturesCharged?:boolean,policyMode?:string,definitionPlanStatus?:string,definitionSpec?:{path:string,bytes:Buffer|null},definitionSpecStatus?:string,definitionTaskSuffix?:Buffer}} [context]
+ * @param {{ownerDiagnostics?:unknown[],budget?:{used:number,target?:Record<string, unknown>|null},workspaceCharged?:boolean,capturesCharged?:boolean,policyMode?:string,definitionPlanStatus?:string,definitionSpec?:{path:string,bytes:Buffer|null},definitionSpecStatus?:string,definitionTaskSuffix?:Buffer,accounting?:Record<string, unknown>}} [context]
  */
 function collectEvidenceInternal(targetValue, rawValue, dependenciesValue, context = {}) {
   const dependencies = validateDependencies(dependenciesValue);
@@ -2050,8 +2286,11 @@ function collectEvidenceInternal(targetValue, rawValue, dependenciesValue, conte
     assertExactRecord(raw.definitionPlan, ['path', 'bytes'], [], 'rawInputs.definitionPlan');
   }
   const directIdeaCount = assertDenseDataArrayLength(raw.directIdeas, 'rawInputs.directIdeas');
-  assertSourceEntryLimit(raw, directIdeaCount, 'rawInputs', policyMode);
-  const budget = context.budget || createBodyBudget();
+  const accounting = assertSourceEntryLimit(raw, 'rawInputs', policyMode, target);
+  // The inventory has its own ceiling, checked before any entry is traversed.
+  assertIdeaInventoryLimit(directIdeaCount, 'rawInputs.directIdeas', target);
+  if (context.accounting) Object.assign(context.accounting, accounting);
+  const budget = context.budget || createBodyBudget(target);
   chargeRawInputBodies(
     raw,
     budget,
@@ -2169,8 +2408,8 @@ function sameFileSnapshot(left, right) {
     && left.ctimeNs === right.ctimeNs;
 }
 
-/** @param {string} root @param {string} relativePath @param {{used:number}} budget */
-function readWorkspaceFile(root, relativePath, budget) {
+/** @param {string} root @param {string} relativePath @param {{used:number,target?:Record<string, unknown>|null}} budget @param {string} source */
+function readWorkspaceFile(root, relativePath, budget, source) {
   const beforePath = inspectWorkspaceFilePath(root, relativePath);
   const noFollow = typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0;
   const nonblock = typeof fs.constants.O_NONBLOCK === 'number' ? fs.constants.O_NONBLOCK : 0;
@@ -2187,10 +2426,17 @@ function readWorkspaceFile(root, relativePath, budget) {
     let byteLength;
     try {
       if (beforeRead.size > BigInt(MAX_SOURCE_BODY_BYTES)) {
-        invalid('workspace file', `exceeds the individual source body resource limit of ${MAX_SOURCE_BODY_BYTES} bytes`);
+        capacityRefusal(
+          'source-body-bytes',
+          MAX_SOURCE_BODY_BYTES + 1,
+          source,
+          budget.target ?? null,
+          'workspace file',
+          `exceeds the individual source body resource limit of ${MAX_SOURCE_BODY_BYTES} bytes`,
+        );
       }
       byteLength = Number(beforeRead.size);
-      chargeBodyLength(byteLength, 'workspace file source body', budget);
+      chargeBodyLength(byteLength, 'workspace file source body', budget, source);
     } catch (error) {
       bodyLimitRefusal = true;
       throw error;
@@ -2230,8 +2476,8 @@ function readWorkspaceFile(root, relativePath, budget) {
   }
 }
 
-/** @param {string} root @param {{used:number}} budget @param {number} sourceEntryTail @param {(() => void) | undefined} [beforeBodyAcquisition] */
-function readDirectIdeas(root, budget, sourceEntryTail, beforeBodyAcquisition) {
+/** @param {string} root @param {{used:number,target?:Record<string, unknown>|null}} budget @param {(() => void) | undefined} [beforeBodyAcquisition] */
+function readDirectIdeas(root, budget, beforeBodyAcquisition) {
   /** @type {{path:string,bytes:Buffer}[]} */
   const directIdeas = [];
   /** @type {{code:string,path:string}[]} */
@@ -2283,7 +2529,7 @@ function readDirectIdeas(root, budget, sourceEntryTail, beforeBodyAcquisition) {
   /** @type {{entryName:string,ideaPath:string}[]} */
   const candidateEntries = [];
   let enumerationFailed = false;
-  let sourceEntryLimitExceeded = false;
+  let inventoryLimitExceeded = false;
   try {
     while (true) {
       let entry;
@@ -2294,16 +2540,22 @@ function readDirectIdeas(root, budget, sourceEntryTail, beforeBodyAcquisition) {
         break;
       }
       if (entry === null) break;
-      if (candidateEntries.length + 1 + sourceEntryTail > MAX_SOURCE_ENTRIES) {
-        sourceEntryLimitExceeded = true;
-        invalid('inspect input', `exceeds the resource limit of ${MAX_SOURCE_ENTRIES} total source entries`);
+      // Every direct child counts. The crossing entry refuses before its name is
+      // read, retained, classified, opened, or followed by any later entry.
+      if (candidateEntries.length + 1 > MAX_IDEA_INVENTORY_ENTRIES) {
+        inventoryLimitExceeded = true;
+        assertIdeaInventoryLimit(
+          MAX_IDEA_INVENTORY_ENTRIES + 1,
+          'inspect input',
+          budget.target ?? null,
+        );
       }
       const entryName = entry.name;
       const ideaPath = `.dude/ideas/${entryName}`;
       candidateEntries.push({ entryName, ideaPath });
     }
   } catch (error) {
-    if (sourceEntryLimitExceeded) {
+    if (inventoryLimitExceeded) {
       try { directory.closeSync(); } catch {}
     } else {
       directory.closeSync();
@@ -2355,7 +2607,7 @@ function readDirectIdeas(root, budget, sourceEntryTail, beforeBodyAcquisition) {
     }
     let bytes;
     try {
-      bytes = readWorkspaceFile(root, ideaPath, budget);
+      bytes = readWorkspaceFile(root, ideaPath, budget, '.dude/ideas');
     } catch (error) {
       if (error instanceof TypeError) throw error;
       diagnostics.push({ code: 'FEATURE_IDEA_UNREADABLE', path: ideaPath });
@@ -2430,10 +2682,10 @@ function readDirectIdeas(root, budget, sourceEntryTail, beforeBodyAcquisition) {
   return { directIdeas, diagnostics };
 }
 
-/** @param {string} root @param {string} tasksPath @param {{used:number}} budget */
+/** @param {string} root @param {string} tasksPath @param {{used:number,target?:Record<string, unknown>|null}} budget */
 function readTasks(root, tasksPath, budget) {
   try {
-    return { path: tasksPath, bytes: readWorkspaceFile(root, tasksPath, budget) };
+    return { path: tasksPath, bytes: readWorkspaceFile(root, tasksPath, budget, 'task-history') };
   } catch (error) {
     if (error instanceof TypeError) throw error;
     if (isMissingPath(error)) return { path: tasksPath, bytes: null };
@@ -2445,11 +2697,11 @@ function readTasks(root, tasksPath, budget) {
  * Fail-soft read of one definition file under the autonomous policy. Oversize is
  * a soft overflow, an aggregate-limit refusal still throws, and a missing or
  * unstable file surfaces as a status rather than an exception.
- * @param {string} root @param {string} relativePath @param {{used:number}} budget
- * @param {string} label
+ * @param {string} root @param {string} relativePath @param {{used:number,target?:Record<string, unknown>|null}} budget
+ * @param {string} label @param {string} source
  * @returns {{bytes:Buffer}|{bytes:null,status:string}}
  */
-function readAutonomousDefinitionFile(root, relativePath, budget, label) {
+function readAutonomousDefinitionFile(root, relativePath, budget, label, source) {
   let beforePath;
   try {
     beforePath = inspectWorkspaceFilePath(root, relativePath);
@@ -2472,7 +2724,7 @@ function readAutonomousDefinitionFile(root, relativePath, budget, label) {
     }
     if (beforeRead.size > BigInt(MAX_SOURCE_BODY_BYTES)) return { bytes: null, status: 'overflow' };
     const byteLength = Number(beforeRead.size);
-    chargeBodyLength(byteLength, `${label} workspace file source body`, budget);
+    chargeBodyLength(byteLength, `${label} workspace file source body`, budget, source);
     const bytes = Buffer.allocUnsafe(byteLength);
     let offset = 0;
     while (offset < byteLength) {
@@ -2527,12 +2779,12 @@ function acquireInspection(
     }
   }
   const policyMode = /** @type {string} */ (policyModeOverride ?? input.policyMode ?? 'guarded');
-  const sourceEntryTail = assertSourceEntryLimit(input, 0, 'inspect input', policyMode);
-  const budget = createBodyBudget();
+  const accounting = assertSourceEntryLimit(input, 'inspect input', policyMode, target);
+  const budget = createBodyBudget(target);
   let transportPreflighted = false;
   const preflightTransport = transport
     ? () => {
-        decodeTransportInput(input, 'inspect input');
+        decodeTransportInput(input, 'inspect input', true, target);
         transportPreflighted = true;
       }
     : undefined;
@@ -2541,7 +2793,6 @@ function acquireInspection(
     capturedIdeas = readDirectIdeas(
       /** @type {string} */ (input.root),
       budget,
-      sourceEntryTail,
       preflightTransport,
     );
   } catch (error) {
@@ -2571,6 +2822,7 @@ function acquireInspection(
       planPath,
       budget,
       'rawInputs.definitionPlan',
+      'definition-plan',
     );
     definitionPlan = { path: planPath, bytes: planRead.bytes };
     definitionPlanStatus = 'status' in planRead ? planRead.status : undefined;
@@ -2579,6 +2831,7 @@ function acquireInspection(
       specPath,
       budget,
       'definition prestate spec',
+      'definition-spec',
     );
     definitionSpec = { path: specPath, bytes: specRead.bytes };
     definitionSpecStatus = 'status' in specRead ? specRead.status : undefined;
@@ -2600,6 +2853,7 @@ function acquireInspection(
   return {
     root: /** @type {string} */ (input.root),
     target,
+    accounting,
     inspection: buildInspection(target, collectEvidenceInternal(target, rawInputs, dependencies, {
       ownerDiagnostics: capturedIdeas.diagnostics,
       budget,
@@ -2743,7 +2997,14 @@ function orderAndDedupeItems(value) {
     const key = canonicalJson(item);
     if (seen.has(key)) continue;
     if (ordered.length >= MAX_RETAINED_DESCRIPTORS) {
-      invalid('Inspection.items', `retained descriptor 65 exceeds the resource limit of ${MAX_RETAINED_DESCRIPTORS}`);
+      capacityRefusal(
+        'retained-descriptors',
+        MAX_RETAINED_DESCRIPTORS + 1,
+        /** @type {string} */ (item.source),
+        null,
+        'Inspection.items',
+        `retained descriptor 65 exceeds the resource limit of ${MAX_RETAINED_DESCRIPTORS}`,
+      );
     }
     seen.add(key);
     ordered.push({ ...item });
@@ -8891,6 +9152,53 @@ function definitionReconciliationRefusalV1(state, inspection, reason) {
 }
 
 /**
+ * Minimum next-completion entry demand for the attempt about to be authorized.
+ *
+ * Only current policy, the action's hardcoded required checks, and the fresh
+ * Inspection decide this. Autonomous completion emits one new verification and
+ * one new independent-review capture per attempt, one lint capture when the
+ * action requires lint, and one current-run capture when no current-run stream
+ * exists yet. Guarded completion emits no new inspection captures, and no
+ * absent optional session is ever reserved.
+ *
+ * Source demand counts one charged entry per new capture. Model-item demand is
+ * derived from the fresh normalized Inspection: replacing a present empty `[]`
+ * placeholder with its first capture adds no item, while appending a fresh
+ * result to a populated class adds one. Future specialist results are never
+ * assumed to deduplicate.
+ *
+ * @param {string} policyMode @param {string} action @param {Record<string, unknown>} inspection
+ * @param {{currentRun:number}} streams
+ */
+function completionEntryDemand(policyMode, action, inspection, streams) {
+  if (policyMode !== 'autonomous') return { sources: 0, items: 0, classes: [] };
+  const items = /** @type {Record<string, unknown>[]} */ (inspection.items);
+  /** @param {string} source */
+  const availableFor = (source) => items.filter((item) => item.source === source && isAvailable(item));
+  /** @param {string} source */
+  const appendItemDelta = (source) => {
+    const available = availableFor(source);
+    if (available.length === 0) return 1;
+    if (available.length === 1 && available[0].text === '[]') return 0;
+    return 1;
+  };
+  const requiresLint = requiredChecksForAction[
+    /** @type {keyof typeof requiredChecksForAction} */ (action)
+  ].includes('lint');
+  /** @type {string[]} */
+  const classes = ['verification', 'review', ...(requiresLint ? ['lint'] : [])];
+  // A present empty placeholder is replaced in place; only an absent class gains an item.
+  if (streams.currentRun === 0) classes.push('current-run');
+  return {
+    sources: classes.length,
+    items: classes.reduce((total, source) => total + (source === 'current-run'
+      ? (availableFor('current-run').length === 0 ? 1 : 0)
+      : appendItemDelta(source)), 0),
+    classes,
+  };
+}
+
+/**
  * Authorize one transient ordinary or recovery attempt.
  * @param {unknown} stateValue
  * @param {unknown} targetValue
@@ -8899,7 +9207,7 @@ function definitionReconciliationRefusalV1(state, inspection, reason) {
  * @param {unknown} mode
  * @param {unknown} [dependencies]
  */
-function authorizeInspectedAttempt(state, target, inspection, assessmentValue, mode, attemptPermitValue) {
+function authorizeInspectedAttempt(state, target, inspection, assessmentValue, mode, attemptPermitValue, accounting) {
   let consumed = null;
   if (attemptPermitValue !== undefined) {
     consumed = consumeAttemptPermitV2(state, target, inspection, attemptPermitValue);
@@ -9104,6 +9412,42 @@ function authorizeInspectedAttempt(state, target, inspection, assessmentValue, m
     return authorizationRefusal(state, 'recovery-exhausted');
   }
 
+  // Entry admission: the known captures this attempt's completion must produce
+  // have to fit before any counter, pending entry, or permit consumption changes.
+  if (accounting) {
+    const demand = completionEntryDemand(
+      /** @type {string} */ (policy.mode),
+      action,
+      inspection,
+      { currentRun: /** @type {number} */ (accounting.currentRun) },
+    );
+    const acquired = /** @type {number} */ (accounting.sources);
+    const requiredSources = acquired + demand.sources;
+    const requiredItems = /** @type {Record<string, unknown>[]} */ (inspection.items)
+      .filter(isAvailable).length + demand.items;
+    // Name the first mandatory completion capture that cannot be charged.
+    const crossing = demand.classes[Math.max(
+      0,
+      Math.min(demand.classes.length - 1, MAX_SOURCE_ENTRIES - acquired),
+    )];
+    const capacity = requiredSources > MAX_SOURCE_ENTRIES && crossing !== undefined
+      ? capacityProjection('source-entries', requiredSources, crossing, target)
+      : requiredItems > MAX_PACKET_ITEMS
+        ? capacityProjection('model-packet-items', requiredItems, 'model-packet', target)
+        : null;
+    if (capacity) {
+      const blocker = {
+        code: 'evidence-incomplete',
+        subject: capacitySubject(capacity),
+        evidenceHash: inspection.evidenceHash,
+      };
+      return {
+        ...authorizationRefusal(state, 'evidence-incomplete', blocker),
+        capacity,
+      };
+    }
+  }
+
   const nextRecoveryUsed = recoveryUsed.map((row) => ({ ...row }));
   if (mode === 'recovery') {
     const row = nextRecoveryUsed.find((entry) => entry.targetKey === key);
@@ -9193,8 +9537,14 @@ export function authorizeAttempt(stateValue, targetValue, rawInputs, assessmentV
   const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
   const target = /** @type {Record<string, unknown>} */ (validateTarget(targetValue));
   const policyMode = /** @type {string} */ (/** @type {Record<string, unknown>} */ (state.policy).mode);
-  const inspection = buildInspection(target, collectEvidence(target, rawInputs, dependencies, policyMode));
-  return authorizeInspectedAttempt(state, target, inspection, assessmentValue, mode);
+  // Only this call's own source accounting reaches admission; nothing is carried
+  // across calls or reconstructed from the normalized Inspection.
+  const accounting = {};
+  const inspection = buildInspection(target, collectEvidenceInternal(target, rawInputs, dependencies, {
+    policyMode,
+    accounting,
+  }));
+  return authorizeInspectedAttempt(state, target, inspection, assessmentValue, mode, undefined, accounting);
 }
 
 /** @param {string} action @param {Record<string, unknown>} target */
@@ -9549,7 +9899,7 @@ export function endsUnattendedLoop(outcome) {
  * classes; `'authorized'` is not a stop and never reaches this table.
  * @type {Readonly<Record<string, string>>}
  */
-const HALT_NEXT_ACTIONS = Object.freeze({
+export const HALT_NEXT_ACTIONS = Object.freeze({
   'hard-stop': 'request-human-input',
   'recoverable-checkpoint': 'inspect-and-recover',
   'budget-stop': 'raise-budget-or-end-run',
@@ -9815,11 +10165,18 @@ function validateTransportByteEnvelope(value, label) {
   return value;
 }
 
-/** @param {unknown} value @param {string} label */
-function preflightTransportBytes(value, label) {
+/** @param {unknown} value @param {string} label @param {string} source @param {unknown} [target] */
+function preflightTransportBytes(value, label, source, target = null) {
   if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
     if (value.byteLength > MAX_SOURCE_BODY_BYTES) {
-      invalid(`${label} captured source body`, `exceeds the individual source body resource limit of ${MAX_SOURCE_BODY_BYTES} bytes`);
+      capacityRefusal(
+        'source-body-bytes',
+        value.byteLength,
+        source,
+        target,
+        `${label} captured source body`,
+        `exceeds the individual source body resource limit of ${MAX_SOURCE_BODY_BYTES} bytes`,
+      );
     }
     return;
   }
@@ -9837,14 +10194,21 @@ function preflightTransportBytes(value, label) {
   const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
   const decodedLength = (encoded.length / 4) * 3 - padding;
   if (decodedLength > MAX_SOURCE_BODY_BYTES) {
-    invalid(`${label} captured source body`, `exceeds the individual source body resource limit of ${MAX_SOURCE_BODY_BYTES} bytes`);
+    capacityRefusal(
+      'source-body-bytes',
+      decodedLength,
+      source,
+      target,
+      `${label} captured source body`,
+      `exceeds the individual source body resource limit of ${MAX_SOURCE_BODY_BYTES} bytes`,
+    );
   }
 }
 
-/** @param {unknown} value @param {string} label @param {{used:number}} budget */
-function decodeTransportBytes(value, label, budget) {
+/** @param {unknown} value @param {string} label @param {{used:number,target?:Record<string, unknown>|null}} budget @param {string} source */
+function decodeTransportBytes(value, label, budget, source) {
   if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
-    chargeBodyLength(value.byteLength, `${label} captured source body`, budget);
+    chargeBodyLength(value.byteLength, `${label} captured source body`, budget, source);
     const internal = byteSequence(value);
     return Buffer.from(/** @type {Buffer} */ (internal));
   }
@@ -9853,7 +10217,7 @@ function decodeTransportBytes(value, label, budget) {
   if (!BASE64_PATTERN.test(encoded)) invalid(`${label} byte envelope.base64`, 'must be canonical padded RFC4648 base64');
   const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
   const decodedLength = (encoded.length / 4) * 3 - padding;
-  chargeBodyLength(decodedLength, `${label} captured source body`, budget);
+  chargeBodyLength(decodedLength, `${label} captured source body`, budget, source);
   const decoded = Buffer.from(encoded, 'base64');
   if (decoded.toString('base64') !== encoded) {
     invalid(`${label} byte envelope.base64`, 'must round-trip as canonical padded RFC4648 base64');
@@ -9861,8 +10225,8 @@ function decodeTransportBytes(value, label, budget) {
   return decoded;
 }
 
-/** @param {unknown} value @param {string} label @param {boolean} [preflight] */
-function decodeTransportInput(value, label, preflight = true) {
+/** @param {unknown} value @param {string} label @param {boolean} [preflight] @param {unknown} [target] */
+function decodeTransportInput(value, label, preflight = true, target = null) {
   const input = assertExactRecord(
     value,
     ['root', 'specPath', 'target', 'lane'],
@@ -9880,7 +10244,9 @@ function decodeTransportInput(value, label, preflight = true) {
   } else {
     assertExactRecord(lane, ['kind'], [], `${label}.lane`);
   }
-  assertSourceEntryLimit(input, 0, label, policyMode);
+  // Before the acquisition target is validated the request's own target is the
+  // only candidate; `capacityProjection` refuses anything that is not canonical.
+  assertSourceEntryLimit(input, label, policyMode, target ?? input.target);
   if (lane.kind === 'tracked') {
     const issues = assertDenseDataArray(lane.issues, `${label}.lane.issues`);
     for (let index = 0; index < issues.length; index += 1) {
@@ -9914,38 +10280,39 @@ function decodeTransportInput(value, label, preflight = true) {
   }
   if (!preflight) return input;
   if (lane.kind === 'tracked') {
-    preflightTransportBytes(lane.listBytes, `${label}.lane.listBytes`);
+    preflightTransportBytes(lane.listBytes, `${label}.lane.listBytes`, 'lane-history', target ?? input.target);
     const issues = assertDenseDataArray(lane.issues, `${label}.lane.issues`);
     for (let index = 0; index < issues.length; index += 1) {
       const issue = /** @type {Record<string, unknown>} */ (issues[index]);
-      preflightTransportBytes(issue.detailBytes, `${label}.lane.issues[${index}].detailBytes`);
-      preflightTransportBytes(issue.historyBytes, `${label}.lane.issues[${index}].historyBytes`);
+      preflightTransportBytes(issue.detailBytes, `${label}.lane.issues[${index}].detailBytes`, 'lane-history', target ?? input.target);
+      preflightTransportBytes(issue.historyBytes, `${label}.lane.issues[${index}].historyBytes`, 'lane-history', target ?? input.target);
     }
   }
   for (const field of ['currentRun', 'review', 'verification', 'lint']) {
     if (!Object.hasOwn(input, field)) continue;
     const entries = assertDenseDataArray(input[field], `${label}.${field}`);
+    const source = CAPTURE_STREAM_SOURCES[/** @type {keyof typeof CAPTURE_STREAM_SOURCES} */ (field)];
     for (let index = 0; index < entries.length; index += 1) {
       const capture = /** @type {Record<string, unknown>} */ (entries[index]);
-      preflightTransportBytes(capture.bytes, `${label}.${field}[${index}].bytes`);
+      preflightTransportBytes(capture.bytes, `${label}.${field}[${index}].bytes`, source, target ?? input.target);
     }
   }
   if (Object.hasOwn(input, 'session')) {
     const session = /** @type {Record<string, unknown>} */ (input.session);
     if (session.availability === 'available' && Object.hasOwn(session, 'bytes')) {
-      preflightTransportBytes(session.bytes, `${label}.session.bytes`);
+      preflightTransportBytes(session.bytes, `${label}.session.bytes`, 'session', target ?? input.target);
     }
   }
   return input;
 }
 
-/** @param {Record<string, unknown>} input @param {string} label @param {{used:number}} budget */
+/** @param {Record<string, unknown>} input @param {string} label @param {{used:number,target?:Record<string, unknown>|null}} budget */
 function materializeTransportInput(input, label, budget) {
   const lane = /** @type {Record<string, unknown>} */ (input.lane);
   let decodedLane;
   if (lane.kind === 'tracked') {
     const issues = assertDenseDataArray(lane.issues, `${label}.lane.issues`);
-    const listBytes = decodeTransportBytes(lane.listBytes, `${label}.lane.listBytes`, budget);
+    const listBytes = decodeTransportBytes(lane.listBytes, `${label}.lane.listBytes`, budget, 'lane-history');
     decodedLane = {
       kind: 'tracked',
       listBytes,
@@ -9955,11 +10322,13 @@ function materializeTransportInput(input, label, budget) {
           issue.detailBytes,
           `${label}.lane.issues[${index}].detailBytes`,
           budget,
+          'lane-history',
         );
         const historyBytes = decodeTransportBytes(
           issue.historyBytes,
           `${label}.lane.issues[${index}].historyBytes`,
           budget,
+          'lane-history',
         );
         return { detailBytes, historyBytes };
       }),
@@ -9976,9 +10345,10 @@ function materializeTransportInput(input, label, budget) {
   for (const field of ['currentRun', 'review', 'verification', 'lint']) {
     if (!Object.hasOwn(input, field)) continue;
     const entries = assertDenseDataArray(input[field], `${label}.${field}`);
+    const source = CAPTURE_STREAM_SOURCES[/** @type {keyof typeof CAPTURE_STREAM_SOURCES} */ (field)];
     decoded[field] = entries.map((entry, index) => {
       const capture = /** @type {Record<string, unknown>} */ (entry);
-      const bytes = decodeTransportBytes(capture.bytes, `${label}.${field}[${index}].bytes`, budget);
+      const bytes = decodeTransportBytes(capture.bytes, `${label}.${field}[${index}].bytes`, budget, source);
       return {
         target: capture.target,
         state: capture.state,
@@ -10003,7 +10373,7 @@ function materializeTransportInput(input, label, budget) {
       ...(Object.hasOwn(session, 'bytes')
         ? {
             bytes: acquireBytes
-              ? decodeTransportBytes(session.bytes, `${label}.session.bytes`, budget)
+              ? decodeTransportBytes(session.bytes, `${label}.session.bytes`, budget, 'session')
               : Buffer.alloc(0),
           }
         : {}),
@@ -13379,17 +13749,17 @@ function ordinaryLightweightReceiptPoststateV2(root, target, receipt) {
   }
   const tasksPath = `${/** @type {string} */ (target.specPath).slice(0, -'spec.md'.length)}tasks.md`;
   const expected = [
-    [tasksPath, receipt.tasksPoststateHash],
-    [TASK_STATE_PATH, receipt.taskStatePoststateHash],
-    [ownerPath, receipt.ownerPoststateHash],
+    [tasksPath, receipt.tasksPoststateHash, 'task-history'],
+    [TASK_STATE_PATH, receipt.taskStatePoststateHash, 'lane-history'],
+    [ownerPath, receipt.ownerPoststateHash, 'owner-log'],
   ];
-  const budget = createBodyBudget();
+  const budget = createBodyBudget(target);
   /** @type {Map<string, Buffer>} */
   const poststateBytes = new Map();
-  for (const [relativePath, expectedHash] of expected) {
+  for (const [relativePath, expectedHash, source] of expected) {
     let bytes;
     try {
-      bytes = readWorkspaceFile(root, /** @type {string} */ (relativePath), budget);
+      bytes = readWorkspaceFile(root, /** @type {string} */ (relativePath), budget, /** @type {string} */ (source));
     } catch {
       return 'inspection-stale';
     }
@@ -14078,6 +14448,7 @@ export function runCommand(commandValue, requestValue, dependencies) {
       request.assessment,
       request.mode,
       Object.hasOwn(request, 'attemptPermit') ? request.attemptPermit : undefined,
+      acquired.accounting,
     );
     return { inspection, authorization };
   }
@@ -14402,7 +14773,14 @@ function readCliRequest() {
   }
   const probe = Buffer.allocUnsafe(1);
   if (fs.readSync(0, probe, 0, 1, null) !== 0) {
-    invalid('CLI request stdin', `exceeds the resource limit of ${MAX_CLI_REQUEST_BYTES} bytes`);
+    capacityRefusal(
+      'cli-request-bytes',
+      MAX_CLI_REQUEST_BYTES + 1,
+      'cli-request',
+      null,
+      'CLI request stdin',
+      `exceeds the resource limit of ${MAX_CLI_REQUEST_BYTES} bytes`,
+    );
   }
   return bytes;
 }
@@ -15097,8 +15475,32 @@ export function boundedErrorJson(error) {
   return output;
 }
 
+/**
+ * Fixed capacity prose. Every value is runtime-established: the named budget, its
+ * fixed limit, the measured or first-crossing demand, the safe source subject, the
+ * validated canonical target, and the owner's next action.
+ * @param {{budget:string,limit:number,required:number,source:string,target:Record<string, unknown>|null}} capacity
+ */
+function capacityCliMessage(capacity) {
+  const target = capacity.target === null
+    ? 'no established canonical target'
+    : targetKey(capacity.target);
+  return `Recovery request exceeds the fixed ${capacity.budget} limit of ${capacity.limit}: `
+    + `${capacity.required} required for ${capacity.source} at ${target}. `
+    + 'Ask the source owner to correct that input within the existing limits, retaining the '
+    + 'required evidence and inventory, before a fresh inspection.';
+}
+
 /** @param {unknown} error */
 function fixedCliError(error) {
+  // Only the private brand admits capacity details; a matching message or `.code`
+  // falls through to the fixed generic prose below.
+  const capacity = capacityDiagnostic(error);
+  if (capacity) {
+    const capacityError = new Error(capacityCliMessage(capacity));
+    Object.defineProperty(capacityError, 'code', { value: 'recovery-resource-limit', enumerable: false });
+    return capacityError;
+  }
   const detail = error instanceof Error ? error.message : '';
   let code = 'recovery-invalid-request';
   let message = 'Recovery request is invalid.';

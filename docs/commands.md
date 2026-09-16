@@ -486,12 +486,56 @@ it is refused before further work:
 - `6,291,456` bytes for the complete encoded CLI request
 - `1,048,576` bytes for each workspace file or decoded capture body
 - `4,194,304` aggregate decoded evidence bytes per inspection
+- `999` direct entries in the idea inventory Work reads to establish exact ownership
 - `64` total source entries per inspection
 - `64` total retained evidence descriptors per inspection
 - `8,192` UTF-8 bytes for a deterministic error response
 
 These are separate from the model-facing packet's own limit of `16` items and
-`65,536` canonical bytes.
+`131,072` canonical bytes.
+
+The inventory ceiling and the source-entry ceiling are independent. Work counts
+every direct child of `.dude/ideas`, including unsupported files and directories,
+against the `999` inventory bound and refuses the first entry past it before
+reading that entry's name or any candidate body. Ordinary growth in that
+inventory never consumes evidence slots: however many ideas back it, complete
+exact ownership costs one owner source. The `64` source entries are the owner,
+task, and lane sources, the autonomous `definition-plan` source, each tracked
+issue acquisition, each supplied capture, and an optional supplied session,
+counted before any capture is decoded or deduplicated.
+
+Before authorization changes an attempt counter, records a pending
+authorization, or permits implementation dispatch, Work also checks that the
+captures the authorized attempt's own completion must produce still fit. Under
+`autonomous` that reservation is one new verification and one new independent
+review, plus one lint capture when the action requires lint and one current-run
+capture when no current-run stream exists yet. Guarded completion emits no new
+inspection capture and reserves nothing, and an unavailable optional session is
+never reserved. A refusal returns `evidence-incomplete` with the accepted state,
+counters, pending entries, and completed tuples unchanged and performs no task
+or lane write. This admission guarantees entry headroom only; every later
+acquisition still rechecks the byte ceilings.
+
+A capacity refusal names the exhausted budget, its fixed limit, the measured or
+first-crossing demand, the affected source or canonical target, and the owner's
+next action: correct that input within the existing limits, retaining the
+required evidence and inventory, then inspect again. The refusal reports
+runtime-established facts rather than evidence bodies or internal exception
+text, and it grants no retry, cleanup, claim takeover, learning resolution, or
+close authority.
+
+How that refusal reaches the CLI boundary depends on whether it stopped an
+acquisition or an admission. The headroom reservation above is an admission
+check, and the command that ran it exits zero because the inspection itself
+succeeded: `authorize` writes its ordinary `{"inspection","authorization"}`
+response to standard output, with `authorized` false, the reason
+`evidence-incomplete`, the `capacity` diagnostic, the matching
+`evidence-incomplete` blocker, and the accepted state unchanged. Read
+`authorized` rather than the exit status to learn whether the attempt may
+proceed. Acquisition is the exception that fails the command outright: when a
+ceiling stops Work from reading the request or a source at all, the CLI
+leaves standard output empty, exits nonzero, and writes one bounded
+`{"error":{"code","message"}}` response with the code `recovery-resource-limit`.
 
 Ordinary Work always performs that post-block inspection, reports the finding,
 and stops. Only `--recover-on-block` can authorize another attempt. Its overall
@@ -762,8 +806,14 @@ and neither one submits anything.
 Choose Select (V) to work with marks you already made. Pick one by its number
 badge, or anywhere inside a box or highlight, then double-click it to write its
 comment; Enter does the same for the selected annotation, and the Comments
-action opens the same list. While a drawing tool is armed, a press on the mock
-starts a new mark instead.
+action opens the same list.
+
+While a drawing tool stays armed, the mark that already shows handles keeps
+them for resizing, and its border or stroke moves it, so you can adjust that
+mark without switching back to Select. The pointer shows which action a press
+will take. Two presses on that border, without moving the mark between them,
+open the same comment field. Every other press still draws: inside the selected
+mark, over an unselected one, or anywhere else on the mock.
 
 The first annotation pins the reviewed viewport. After that, shrinking the host
 panel pans the pinned frame rather than reflowing the mock or rebasing existing
@@ -802,6 +852,32 @@ bounded query; keep it visible on screen, then try again. "The mock kept
 changing while its view was read" means the view moved mid-read, so try again.
 Your markup is retained in every case, and capture reports the same readiness
 wording when the fresh rendering has not settled.
+
+Capture owns the browser it launches and that browser's temporary profile, and
+it attempts to remove both before returning. It inventories helpers before the
+root browser exits and signals a helper only while its recorded process ID and
+`ps` start time still match. That start time has one-second resolution, so a
+differing start time rejects a recycled process ID while a reuse inside the same
+second stays indistinguishable; anything capture cannot confirm it owns is left
+running. Cleanup it cannot confirm is reported as a capture failure, never as
+success: Review says cleanup of the capture browser or its temporary profile
+could not be confirmed and keeps your markup.
+
+Where that failure leaves capture depends on when it happens. The current
+Review adapter instance caches the result of its open-time capability
+preflight, so a preflight that ends this way keeps capture unavailable in that
+instance until the Dude extension provider is reloaded; an open canceled before
+the preflight finishes caches nothing. A failure while sending does not change
+that cached capability, so an otherwise-current request can be sent again
+without a reload.
+
+When `ps` cannot report start times, an empty helper inventory or helpers that
+the operating system has already reaped can still finish cleanly. A recorded
+helper that remains live cannot be re-identified, so capture leaves it
+unsignalled and reports uncertainty after bounded cleanup. On Windows, the code
+falls back to ending the spawned browser PID's process tree when bounded
+shutdown has not reaped it; a failed fallback contributes cleanup uncertainty.
+That Windows path was not exercised in the documented Darwin acceptance.
 
 #### Reloading the development canvas
 

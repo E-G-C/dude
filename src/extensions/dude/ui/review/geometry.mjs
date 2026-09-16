@@ -179,6 +179,55 @@ export function hitTest(a, point, clip = null, tolerance = 8) {
   return contains(box, point, tolerance);
 }
 
+/**
+ * The drawing-mode grab predicate for the one selected shape: its own painted
+ * edge, ring, or stroke, and nothing else. A selected object answers on its
+ * border while the tool stays armed, the way Snagit lets a reviewer adjust the
+ * mark and keep drawing. Deliberately narrower than `hitTest`: no badge (a
+ * number is not a border), no whole box/highlight face (the interior stays
+ * drawing space), and no enclosing rectangle for a circle or segment.
+ *
+ * The same 8-pixel body tolerance and the existing +2 stroke allowance apply,
+ * so the reach a reviewer already feels with Select is unchanged. A shape
+ * thinner than two tolerances has no interior left; that is the existing
+ * minimum-size rule, not a new one.
+ */
+export function hitBoundary(a, point, tolerance = 8) {
+  if (a.tool === 'comment') return false;
+  if (SEGMENT_TOOLS.has(a.tool)) return distanceToSegment(point, a) <= tolerance + 2;
+  const box = bounds(a);
+  if (a.tool === 'circle') {
+    const rx = Math.max(1, box.width / 2), ry = Math.max(1, box.height / 2);
+    const distance = Math.hypot((point.x - box.x - rx) / rx, (point.y - box.y - ry) / ry);
+    return Math.abs(distance - 1) <= tolerance / Math.min(rx, ry);
+  }
+  return contains(box, point, tolerance) && !contains(box, point, -tolerance);
+}
+
+/** Whether a point lies inside the region that annotation may paint in. */
+export function withinClip(point, clip) {
+  if (!validClip(clip)) return false;
+  return point.x >= clip.left && point.x <= clip.right
+    && point.y >= clip.top && point.y <= clip.bottom;
+}
+
+/**
+ * The native cursor for one existing handle, so the pointer describes the
+ * resize it will actually perform. Corners follow the platform's diagonal
+ * pair; a segment endpoint follows its own direction, the way a drawing tool
+ * points a line's end handle along the line.
+ */
+export function cursorForHandle(a, name) {
+  if (name === 'p1' || name === 'p2') {
+    const degrees = ((Math.atan2(a.y2 - a.y1, a.x2 - a.x1) * 180 / Math.PI) % 180 + 180) % 180;
+    if (degrees < 22.5 || degrees >= 157.5) return 'ew-resize';
+    if (degrees < 67.5) return 'nwse-resize';
+    if (degrees < 112.5) return 'ns-resize';
+    return 'nesw-resize';
+  }
+  return name === 'nw' || name === 'se' ? 'nwse-resize' : 'nesw-resize';
+}
+
 export function handlesFor(a) {
   if (SEGMENT_TOOLS.has(a.tool)) return [{ name: 'p1', x: a.x1, y: a.y1 }, { name: 'p2', x: a.x2, y: a.y2 }];
   if (a.tool === 'comment') return [];

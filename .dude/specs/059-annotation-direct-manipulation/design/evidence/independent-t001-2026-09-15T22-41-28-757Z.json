@@ -1,0 +1,481 @@
+{
+  "task": "T001@59a10f01",
+  "startedAt": "2026-09-15T22:41:28.757Z",
+  "command": "node .dude/specs/059-annotation-direct-manipulation/design/prototype/verify-t001-adversarial.mjs",
+  "checks": [
+    {
+      "name": "geometry boundary and clip predicates",
+      "status": "passed",
+      "detail": {
+        "summary": "14 boundary, clip, interior, ellipse, segment, and directional-cursor predicates matched"
+      }
+    },
+    {
+      "name": "DPR 2 setup and pinned frame",
+      "status": "passed",
+      "detail": {
+        "summary": "mixed DPR 1/2 reproduced review_not_ready; synchronized DPR 2 drew, resized, and retained the pinned frame"
+      }
+    },
+    {
+      "name": "native routing, identity, and request guard",
+      "status": "passed",
+      "detail": {
+        "summary": "exact served assets, trusted native routing near ellipse/segment bands, older selection, and 403 guard passed"
+      }
+    },
+    {
+      "name": "gesture history, redo, and working saves",
+      "status": "passed",
+      "detail": {
+        "summary": "5 native gesture cases preserved comment exclusion, independent redo/history, and committed saves"
+      }
+    },
+    {
+      "name": "non-collapsed backward caret restoration",
+      "status": "passed",
+      "detail": {
+        "summary": "native keyboard restored non-collapsed backward range 20-26"
+      }
+    },
+    {
+      "name": "real Save and Send controls",
+      "status": "passed",
+      "detail": {
+        "summary": "native Save wrote working.json; native Send sealed report/PNG/provenance through the real provider and stopped awaiting acknowledgment"
+      }
+    }
+  ],
+  "counts": {
+    "groupsPlanned": 6,
+    "groupsExecuted": 6,
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0
+  },
+  "caseCounts": {
+    "geometryPredicates": 14,
+    "scaleVariants": 2,
+    "nativeRoutingCases": 5,
+    "gestureCases": 5,
+    "caretCases": 1,
+    "providerControlCases": 2
+  },
+  "observations": {
+    "geometryPredicates": {
+      "circleTop": true,
+      "circleNearInner": true,
+      "circlePastInnerBand": false,
+      "circleCenter": false,
+      "circleBoundingCorner": false,
+      "lineNearStroke": true,
+      "linePastStroke": false,
+      "arrowNearStroke": true,
+      "arrowPastStroke": false,
+      "boxEdge": true,
+      "boxInterior": false,
+      "clipEdge": true,
+      "clipOutside": false,
+      "endpointCursors": [
+        "ew-resize",
+        "nwse-resize",
+        "nwse-resize",
+        "nesw-resize"
+      ]
+    },
+    "deviceScale": {
+      "mixed": {
+        "before": {
+          "parentDeviceScale": 1,
+          "childDeviceScale": 2,
+          "cssViewport": {
+            "width": 768,
+            "height": 800
+          },
+          "frame": {
+            "width": 758,
+            "height": 623
+          },
+          "stage": {
+            "width": 760,
+            "height": 625
+          },
+          "reviewViewport": {
+            "width": 758,
+            "height": 623,
+            "scrollX": 0,
+            "scrollY": 0
+          },
+          "sandbox": "allow-scripts"
+        },
+        "refusal": {
+          "code": "review_not_ready",
+          "message": "The mock has not settled. Wait for its fonts, images, animations, and layout."
+        },
+        "annotationCount": 0,
+        "trustedPointerEvents": 9
+      },
+      "synchronized": {
+        "before": {
+          "parentDeviceScale": 2,
+          "childDeviceScale": 2,
+          "cssViewport": {
+            "width": 768,
+            "height": 800
+          },
+          "frame": {
+            "width": 758,
+            "height": 623
+          },
+          "stage": {
+            "width": 760,
+            "height": 625
+          },
+          "reviewViewport": {
+            "width": 758,
+            "height": 623,
+            "scrollX": 0,
+            "scrollY": 0
+          },
+          "sandbox": "allow-scripts"
+        },
+        "pinnedBeforeResize": {
+          "parentDeviceScale": 2,
+          "childDeviceScale": 2,
+          "cssViewport": {
+            "width": 768,
+            "height": 800
+          },
+          "frame": {
+            "width": 758,
+            "height": 623
+          },
+          "stage": {
+            "width": 760,
+            "height": 625
+          },
+          "reviewViewport": {
+            "width": 758,
+            "height": 623,
+            "scrollX": 0,
+            "scrollY": 0
+          },
+          "sandbox": "allow-scripts"
+        },
+        "pinnedAfterResize": {
+          "parentDeviceScale": 2,
+          "childDeviceScale": 2,
+          "cssViewport": {
+            "width": 640,
+            "height": 800
+          },
+          "frame": {
+            "width": 758,
+            "height": 623
+          },
+          "stage": {
+            "width": 632,
+            "height": 601
+          },
+          "reviewViewport": {
+            "width": 758,
+            "height": 623,
+            "scrollX": 0,
+            "scrollY": 0
+          },
+          "sandbox": "allow-scripts"
+        },
+        "afterManipulation": {
+          "parentDeviceScale": 2,
+          "childDeviceScale": 2,
+          "cssViewport": {
+            "width": 768,
+            "height": 800
+          },
+          "frame": {
+            "width": 758,
+            "height": 623
+          },
+          "stage": {
+            "width": 760,
+            "height": 625
+          },
+          "reviewViewport": {
+            "width": 758,
+            "height": 623,
+            "scrollX": 0,
+            "scrollY": 0
+          },
+          "sandbox": "allow-scripts"
+        },
+        "trustedPointerEvents": 18
+      }
+    },
+    "nativeRouting": {
+      "loadedAssets": {
+        "engine.mjs": "ea85f7f964e3b7817e1547faca9e8611d1f63dff03f108bb4048d18227b9256d",
+        "geometry.mjs": "235d2c05039581c40429f41cdf9a0c8e2a63e946fc3da37b8c273691dbf943a9",
+        "shapes.mjs": "0df6a9f23c62b80c2571e9bfdad7bd4d7d65935270c779ae4997394eb3f4f1af",
+        "inspector.mjs": "4e3a09cbdc9bfad89accc7161f73c294b64a7347b5571b9291edd0db0ee623b0",
+        "panel.mjs": "02ccc01579b03836a3530d958c3606a7db73e9ea7637fa307298c1b835947916",
+        "capture.mjs": "34d78de45f96ba11f2d78cec95cc1ed1957cc8facaaf22ca4673c8822e88768d",
+        "bridge.mjs": "fca42f64869e183767e1b8127c2a077239a351b0e4c9efd4297d6ce580268eab",
+        "styles.css": "1e73e9a1e4558601cc5f164e9f3acf5412938ba130048b2d5b064bb8e9ab668f",
+        "NOTICE.txt": "ee4f325c692f81403ae0981320736904e618499113a785b24c7bf4f750f96ce7",
+        "host": "fd259e8a4be1318123923a13cd0e37f02dbde2ed1916be5b70d83789685e95a7",
+        "document": "82fe71ee9ef4887c18a74289bca648af236b058ee4d23f81f7b2441a2ae96a66"
+      },
+      "circle": {
+        "nearRing": {
+          "point": {
+            "x": 350,
+            "y": 157
+          },
+          "cursor": "move"
+        },
+        "pastBand": {
+          "point": {
+            "x": 370,
+            "y": 174
+          },
+          "cursor": "crosshair"
+        },
+        "moved": {
+          "from": [
+            200,
+            150,
+            500,
+            350
+          ],
+          "to": [
+            220,
+            162,
+            520,
+            362
+          ]
+        },
+        "interiorDrew": "box"
+      },
+      "segment": {
+        "nearStroke": {
+          "point": {
+            "x": 370,
+            "y": 439
+          },
+          "cursor": "move"
+        },
+        "pastBand": {
+          "point": {
+            "x": 388,
+            "y": 452
+          },
+          "cursor": "crosshair"
+        },
+        "moved": {
+          "from": [
+            180,
+            430,
+            560,
+            430
+          ],
+          "to": [
+            198,
+            440,
+            578,
+            440
+          ]
+        },
+        "interiorDrew": "highlight"
+      },
+      "olderSelection": {
+        "selectedId": "5ccdc2e6-193d-45af-a9ba-a7de6371d50a",
+        "tool": "circle",
+        "handleCursor": "ew-resize",
+        "older": {
+          "from": [
+            150,
+            250,
+            470,
+            250
+          ],
+          "to": [
+            150,
+            250,
+            502,
+            272
+          ]
+        },
+        "newerUnchanged": [
+          650,
+          180,
+          850,
+          320
+        ]
+      },
+      "pointerEvents": {
+        "total": 90,
+        "trusted": 90
+      },
+      "foreignOriginStatus": 403
+    },
+    "adversarialGestures": [
+      {
+        "case": "first press out-and-back then one press",
+        "opened": false,
+        "inFlight": [
+          322,
+          240,
+          602,
+          430
+        ],
+        "final": [
+          280,
+          210,
+          560,
+          400
+        ],
+        "redoPreserved": true,
+        "savedGeometry": [
+          280,
+          210,
+          560,
+          400
+        ],
+        "inputs": 12,
+        "pressToPressMs": 74
+      },
+      {
+        "case": "unmoved first, second out-and-back, then one press",
+        "openedAfterSecond": false,
+        "openedAfterFollower": false,
+        "inFlight": [
+          320,
+          238,
+          600,
+          428
+        ],
+        "final": [
+          280,
+          210,
+          560,
+          400
+        ],
+        "redoPreserved": true,
+        "savedGeometry": [
+          280,
+          210,
+          560,
+          400
+        ],
+        "inputs": 15,
+        "pressToPressMs": [
+          26,
+          75
+        ]
+      },
+      {
+        "case": "2x1-pixel committed move then one press within pair radius",
+        "opened": false,
+        "from": [
+          280,
+          210,
+          560,
+          400
+        ],
+        "inFlight": [
+          282,
+          211,
+          562,
+          401
+        ],
+        "to": [
+          282,
+          211,
+          562,
+          401
+        ],
+        "oneUndoOneRedo": true,
+        "savedGeometry": [
+          282,
+          211,
+          562,
+          401
+        ]
+      },
+      {
+        "case": "same-point presses beyond 500ms",
+        "opened": false,
+        "pressToPressMs": 581
+      },
+      {
+        "case": "same-border presses 6px apart",
+        "opened": false,
+        "distancePx": 6,
+        "pressToPressMs": 30
+      }
+    ],
+    "adversarialGesturePointerEvents": {
+      "total": 28,
+      "trusted": 28
+    },
+    "caretRange": {
+      "placed": {
+        "start": 20,
+        "end": 26,
+        "direction": "backward",
+        "value": "Retain this backward range"
+      },
+      "restored": {
+        "start": 20,
+        "end": 26,
+        "direction": "backward",
+        "value": "Retain this backward range"
+      },
+      "selectedId": "0f3b6978-f129-4995-afef-80c04588a341"
+    },
+    "realControls": {
+      "submissionId": "252c5a79-646c-4b6e-97e3-0ba0da78b26b",
+      "savedGeometry": [
+        260,
+        210,
+        598,
+        420
+      ],
+      "provider": {
+        "phase": "awaiting_acknowledgment",
+        "responseAction": "annotations",
+        "acknowledgment": null
+      },
+      "feedback": "Feedback sent; awaiting acknowledgment\nThe report and image were delivered. Sending feedback did not approve the design.",
+      "sealed": {
+        "report": {
+          "bytes": 4208,
+          "sha256": "66dad22b87ea8e84f6b6a0fd4e5248cd46f7cc2f725b3bdab127c3da675939ee"
+        },
+        "image": {
+          "bytes": 73598,
+          "sha256": "19768264134a3292024f73617f8e122240c06000659c80404a091ec3f5206aad"
+        },
+        "provenance": {
+          "bytes": 2703,
+          "sha256": "61d83760476e418b5ec909647f5705c3e59a69fdf4e5c6dcbcbdbbf1a72266bb"
+        }
+      },
+      "trustedPointerEvents": 9
+    }
+  },
+  "artifacts": [
+    {
+      "path": ".dude/specs/059-annotation-direct-manipulation/design/screenshots/independent-2026-09-15T22-41-28-757Z-768-css-dpr2-light.png",
+      "sha256": "05c13a6fac35f30d4be78b7fec290dc98afaa92e1165199243f5a73fdc6c6792",
+      "bytes": 198743
+    },
+    {
+      "path": ".dude/specs/059-annotation-direct-manipulation/design/screenshots/independent-2026-09-15T22-41-28-757Z-sealed-annotated.png",
+      "sha256": "19768264134a3292024f73617f8e122240c06000659c80404a091ec3f5206aad",
+      "bytes": 73598
+    }
+  ],
+  "finishedAt": "2026-09-15T22:41:57.787Z",
+  "outcome": "passed"
+}

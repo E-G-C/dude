@@ -1,0 +1,129 @@
+{
+  "what": "Author check of the 062 mock after removing the Switch work control; Working on -> Clear -> Overview finder is the only switching path.",
+  "mock": "/Users/eg/work/dude/.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+  "browser": "Edg/133.0.3065.69",
+  "ranAt": "2026-09-14T16:36:16.189Z",
+  "scope": "Changed loop only (pointer + keyboard), 054 as in the review screenshot, 062, retained query/scope, 360 and 960 widths, one draft/review return. Not a full re-run of the earlier suites.",
+  "screenshots": [
+    "clear-062-now-054-working-on-960-light.png",
+    "clear-062-after-clear-overview-search-focused-960-light.png",
+    "clear-062-keyboard-clear-overview-960-light.png",
+    "clear-062-now-062-360-dark.png",
+    "clear-062-after-clear-overview-360-dark.png",
+    "clear-062-draft-return-after-clear-960-light.png"
+  ],
+  "passed": 16,
+  "total": 16,
+  "results": [
+    {
+      "name": "054 no Switch work control anywhere",
+      "pass": true,
+      "detail": "Working on 054Mockup Opens in Review Clear"
+    },
+    {
+      "name": "054 Working on remains prominent",
+      "pass": true,
+      "detail": "Working on"
+    },
+    {
+      "name": "054 finder collapsed, no empty bar slot",
+      "pass": true,
+      "detail": {
+        "finderVisible": false
+      }
+    },
+    {
+      "name": "pointer Clear returns to Overview finder",
+      "pass": true,
+      "detail": "Overview"
+    },
+    {
+      "name": "pointer Clear focuses the existing search field",
+      "pass": true,
+      "detail": "finder-input"
+    },
+    {
+      "name": "query and Show selection preserved, title not mixed in",
+      "pass": true,
+      "detail": {
+        "q": "review",
+        "scope": "all"
+      }
+    },
+    {
+      "name": "selection dropped, no Now content masquerading",
+      "pass": true,
+      "detail": []
+    },
+    {
+      "name": "list position kept (roving tabstop survives)",
+      "pass": true,
+      "detail": "054"
+    },
+    {
+      "name": "a new row selection re-establishes Now",
+      "pass": true,
+      "detail": "Working on 014Autonomous Review Escalation Precedence Clear"
+    },
+    {
+      "name": "keyboard Clear (Enter) reaches the same state",
+      "pass": true,
+      "detail": {
+        "activeId": "finder-input",
+        "q": "canvas"
+      }
+    },
+    {
+      "name": "keyboard continues into the result rows",
+      "pass": true,
+      "detail": "wrow"
+    },
+    {
+      "name": "Overview browsing without clearing is unrestricted",
+      "pass": true,
+      "detail": {
+        "caption": "Working on",
+        "rows": 8
+      }
+    },
+    {
+      "name": "360 keeps Working on and drops the switch control",
+      "pass": true,
+      "detail": "Working on 062Dude Canvas Workspace Integration Clear"
+    },
+    {
+      "name": "360 Clear opens the finder and focuses search",
+      "pass": true,
+      "detail": "finder-input"
+    },
+    {
+      "name": "Clear keeps the unsent draft and the request scope",
+      "pass": true,
+      "detail": {
+        "drafted": {
+          "ok": true,
+          "handle": "fact-061-4",
+          "value": "author check draft text",
+          "caption": "Browsing"
+        },
+        "returned": {
+          "value": "author check draft text",
+          "caret": [
+            5,
+            5
+          ],
+          "requests": 5
+        }
+      }
+    },
+    {
+      "name": "Find work still focuses the one finder; Escape only dismisses results",
+      "pass": true,
+      "detail": {
+        "opened": true,
+        "afterEscape": "finder-input",
+        "afterSecondEscape": "finder-input"
+      }
+    }
+  ]
+}

@@ -52,19 +52,44 @@ export function findBrowser() {
   }) ?? null;
 }
 
+/**
+ * One process snapshot: pid to parent and, where ps reports it, the start time
+ * it prints at one-second granularity. That start time is what keeps a recorded
+ * pid identifiable after its parent is gone: an observed start time that
+ * differs from the recorded one rejects a reused pid, while a pid the OS
+ * recycles inside the same second still reads as equal, so this narrows the
+ * reuse window rather than closing it. Hosts whose ps cannot report it still
+ * map parentage, which finds helpers now but cannot re-identify them once their
+ * parent is gone.
+ */
+function processTable() {
+  for (const format of ['pid=,ppid=,lstart=', 'pid=,ppid=']) {
+    const result = spawnSync('ps', ['-axo', format], { encoding: 'utf8', timeout: 1000, maxBuffer: 1024 * 1024 });
+    if (result.status !== 0) continue;
+    const table = new Map();
+    for (const line of result.stdout.split('\n')) {
+      const m = /^\s*(\d+)\s+(\d+)\s*(\S.*\S)?\s*$/.exec(line);
+      if (m) table.set(Number(m[1]), { parent: Number(m[2]), started: m[3] ?? null });
+    }
+    if (table.size) return table;
+  }
+  return null;
+}
+
+/** Owned helper identities below one root, deepest first. */
 function descendants(pid) {
   if (process.platform === 'win32') return [];
-  const result = spawnSync('ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8', timeout: 1000, maxBuffer: 1024 * 1024 });
-  if (result.status !== 0) return null;
+  const table = processTable();
+  if (!table) return null;
   const byParent = new Map();
-  for (const line of result.stdout.split('\n')) {
-    const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
-    if (!m) continue;
-    const parent = Number(m[2]), children = byParent.get(parent) ?? [];
-    children.push(Number(m[1])); byParent.set(parent, children);
+  for (const [child, row] of table) {
+    const children = byParent.get(row.parent) ?? [];
+    children.push(child); byParent.set(row.parent, children);
   }
   const found = [];
-  const visit = parent => { for (const child of byParent.get(parent) ?? []) { visit(child); found.push(child); } };
+  const visit = parent => {
+    for (const child of byParent.get(parent) ?? []) { visit(child); found.push({ pid: child, started: table.get(child).started }); }
+  };
   visit(pid);
   return found;
 }
@@ -152,51 +177,86 @@ export async function launchBrowser(signal, deviceScale = 1) {
   async function close() {
     if (closing) return closing;
     closing = (async () => {
-      let cleanupUncertain = false, owned = [];
+      let cleanupUncertain = false, owned = [], confirmed = new Set();
       signal.removeEventListener('abort', onAbort);
-      if (child.pid && child.exitCode === null && child.signalCode === null && !failure && !signal.aborted) {
-        // A normal browser shutdown may exit without replying to Browser.close.
-        await Promise.race([send('Browser.close').catch(() => {}), exited]);
+      const running = () => Boolean(child.pid) && child.exitCode === null && child.signalCode === null;
+      // Helpers are only discoverable while the main child still parents them.
+      // Once it exits they reparent, a later scan finds nothing, and the empty
+      // set would let removal race a helper that is still flushing the profile,
+      // so ownership is recorded before anything is asked to shut down. A scan
+      // that could not run is not an empty tree: with no observed helper set
+      // this cleanup stays bounded but can never report success.
+      if (running()) {
+        const inventory = descendants(child.pid);
+        if (inventory) owned = inventory; else cleanupUncertain = true;
       }
+      // A normal browser shutdown may exit without replying to Browser.close.
+      const graceful = running() && !failure && !signal.aborted;
+      if (graceful) await Promise.race([send('Browser.close').catch(() => {}), exited]);
       fail(captureError('cleanup'));
       const wait = async ms => {
         const deadline = Date.now() + ms;
         while (true) {
           // The main child's close does not cover helpers that have no CDP pipes.
-          owned = owned.filter(pid => {
-            try { process.kill(pid, 0); return true; } catch (error) {
+          // One snapshot serves the whole pass, so a host whose ps keeps failing
+          // cannot turn this into one scan per recorded helper.
+          let table = null, scanned = false;
+          const current = new Set();
+          owned = owned.filter(({ pid, started }) => {
+            try { process.kill(pid, 0); } catch (error) {
               if (error.code === 'ESRCH') return false;
-              cleanupUncertain = true; return true;
+              cleanupUncertain = true;
             }
+            // A live pid is not ownership on its own: ownership holds only while
+            // the table still reports the start time recorded for that pid, and
+            // a different start time is that pid already recycled. A missing
+            // recorded start, table, row, or start time is neither of those. It
+            // is an unknown, which is not an exit and not a licence to signal.
+            if (started === null) return true;
+            if (!scanned) { table = processTable(); scanned = true; }
+            const now = table?.get(pid)?.started ?? null;
+            if (now === null) return true;
+            if (now !== started) return false;
+            current.add(pid);
+            return true;
           });
-          if (!owned.length && (!child.pid || child.exitCode !== null || child.signalCode !== null)) return true;
+          confirmed = current;
+          if (!owned.length && !running()) return true;
           const remaining = deadline - Date.now();
           if (remaining <= 0) return false;
           await new Promise(resolve => setTimeout(resolve, Math.min(50, remaining)));
         }
       };
-      if (child.pid && child.exitCode === null && child.signalCode === null) {
-        const children = descendants(child.pid);
-        cleanupUncertain = children === null;
-        owned = [child.pid, ...(children ?? [])];
-        for (const pid of owned.slice().reverse()) {
-          try { process.kill(pid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') cleanupUncertain = true; }
+      const terminate = signalName => {
+        for (const { pid } of owned.slice().reverse()) {
+          // Every destructive signal needs the ownership the wait just observed
+          // for that exact pid; anything else is left alone and reported.
+          if (!confirmed.has(pid)) { cleanupUncertain = true; continue; }
+          try { process.kill(pid, signalName); } catch (error) { if (error.code !== 'ESRCH') cleanupUncertain = true; }
         }
-        if (!(await wait(1000))) {
-          if (process.platform === 'win32') {
-            const result = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { timeout: 2000, windowsHide: true, stdio: 'ignore' });
-            if (result.status !== 0) cleanupUncertain = true;
-          } else for (const pid of owned.slice().reverse()) {
-            try { process.kill(pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') cleanupUncertain = true; }
-          }
+        if (running()) {
+          try { process.kill(child.pid, signalName); } catch (error) { if (error.code !== 'ESRCH') cleanupUncertain = true; }
         }
+      };
+      // Owned helpers normally exit by themselves once the main child is gone,
+      // so a graceful close waits for the recorded set before signalling it.
+      let reaped = await wait(graceful ? 1000 : 0);
+      if (!reaped) {
+        terminate('SIGTERM');
+        reaped = await wait(1000);
+      }
+      if (!reaped) {
+        if (process.platform === 'win32' && child.pid) {
+          const result = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { timeout: 2000, windowsHide: true, stdio: 'ignore' });
+          if (result.status !== 0) cleanupUncertain = true;
+        } else terminate('SIGKILL');
       }
       child.stdio[3].destroy(); child.stdio[4].destroy();
       // Removal stays after the escalation because Windows cannot delete a file
       // an owned process still holds open, but it now runs even when the wait
       // timed out: leaking a temp directory is worse than reporting uncertainty,
       // and a POSIX unlink of an open file is safe.
-      const reaped = await wait(2000);
+      reaped = await wait(2000);
       const removed = removeProfile(profile);
       if (!reaped || !removed || cleanupUncertain) throw captureError('cleanup');
     })().catch(() => {

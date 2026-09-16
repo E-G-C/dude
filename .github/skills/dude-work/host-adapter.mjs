@@ -13,6 +13,7 @@ import {
   canonicalJson,
   completeAttempt,
   buildGovernanceEventV1,
+  capacityDiagnostic,
   deriveGovernanceRuntimeRequestV1,
   normalizeIndependentReviewEnvelopeV2,
   normalizeVerificationEnvelopeV2,
@@ -21,6 +22,7 @@ import {
   sha256,
   validateAssessment,
   validateAttemptAuthorizationPermitV1,
+  validateCapacityDiagnostic,
   validateInspection,
   validateLaneMutationPermitV1,
   validateLightweightAtomicReceiptV1,
@@ -686,14 +688,32 @@ export function validateHostAdapterResult(value) {
     ended: ['version', 'outcome', 'reason', 'session'],
   }[/** @type {string} */ (candidate.outcome)];
   // The one-shot notice is admissible on an accepted outcome only; every other
-  // outcome rejects it as an unknown field.
+  // outcome rejects it as an unknown field. The bounded capacity diagnostic is
+  // admissible only on the matching `evidence-incomplete` hard stop, and never
+  // inside session, RunState, or checkpoint data.
   const optional = candidate.outcome === NOTICE_OUTCOME
     ? ['product', 'recoveryNotice']
-    : candidate.outcome === 'effect-required' ? ['product'] : [];
+    : candidate.outcome === 'effect-required'
+      ? ['product']
+      : candidate.outcome === 'hard-stop' && candidate.reason === 'evidence-incomplete'
+        ? ['capacity']
+        : [];
   const result = exactRecord(safe, fields, optional, 'HostAdapterResult');
+  const capacity = Object.hasOwn(result, 'capacity')
+    ? validateCapacityDiagnostic(result.capacity)
+    : null;
+  if (Object.hasOwn(result, 'capacity') && capacity === null) {
+    invalid('HostAdapterResult.capacity', 'must be one bounded runtime-owned capacity diagnostic');
+  }
   if (result.version !== 1) invalid('HostAdapterResult.version', 'must be the literal 1');
   text(result.reason, 'HostAdapterResult.reason');
   const session = validateHostAdapterSession(result.session);
+  // A diagnostic may name no target, but it never attributes a bounded demand to
+  // a target other than this session's own.
+  if (capacity !== null && capacity.target !== null
+    && canonicalJson(capacity.target) !== canonicalJson(session.target)) {
+    invalid('HostAdapterResult.capacity.target', 'must be null or the exact session target');
+  }
   if (Object.hasOwn(result, 'product')) validateAdapterProduct(result.product, 'HostAdapterResult.product');
   if (Object.hasOwn(result, 'recoveryNotice')) {
     if (result.recoveryNotice === null) invalid('HostAdapterResult.recoveryNotice', 'must be omitted when absent');
@@ -767,12 +787,14 @@ function advanceHost(session, updates = {}) {
   return validateHostAdapterSession(next);
 }
 
-/** @param {Record<string, unknown>} session @param {string} reason */
-function hardStop(session, reason) {
+/** @param {Record<string, unknown>} session @param {string} reason @param {unknown} [capacity] */
+function hardStop(session, reason, capacity) {
+  const carried = capacity === undefined ? null : validateCapacityDiagnostic(capacity);
   return checkedResult({
     version: 1,
     outcome: 'hard-stop',
     reason,
+    ...(carried && reason === 'evidence-incomplete' ? { capacity: carried } : {}),
     session: advanceHost(session, { status: 'hard-stop', disposition: reason }),
   });
 }
@@ -1124,7 +1146,7 @@ function handleAuthorization(session, assessment, response, mode, permit) {
     : exactRecord(
       authorization,
       ['authorized', 'reason', 'state'],
-      ['blocker'],
+      ['blocker', 'capacity'],
       'recovery authorize response.authorization',
     );
   text(fields.reason, 'recovery authorize response.authorization.reason');
@@ -1132,6 +1154,9 @@ function handleAuthorization(session, assessment, response, mode, permit) {
   if (!successor) return hardStop(session, 'successor-malformed');
   if (authorization.authorized !== true) {
     if (successor.bytes !== session.acceptedStateBytes) return hardStop(session, 'refused-successor-mismatch');
+    if (Object.hasOwn(fields, 'capacity') && fields.reason !== 'evidence-incomplete') {
+      return hardStop(session, 'runtime-result-malformed');
+    }
     const incidentClass = {
       'evidence-drift': 'evidence-drift',
       'inspection-stale': 'evidence-drift',
@@ -1139,9 +1164,11 @@ function handleAuthorization(session, assessment, response, mode, permit) {
       'permit-target-mismatch': 'stale-permit',
       'permit-transition-mismatch': 'stale-permit',
     }[/** @type {string} */ (fields.reason)];
+    // The runtime's own admission diagnostic is preserved on its matching hard
+    // stop rather than being flattened into an opaque refusal.
     return incidentClass
       ? closedIncident(session, 'authorize-attempt', incidentClass, /** @type {string} */ (fields.reason))
-      : hardStop(session, /** @type {string} */ (fields.reason));
+      : hardStop(session, /** @type {string} */ (fields.reason), fields.capacity);
   }
   if (fields.reason !== 'authorized' || inspection.evidenceHash !== assessment.evidenceHash) {
     return hardStop(session, 'authorization-binding-mismatch');
@@ -2287,6 +2314,8 @@ class RuntimeIncident extends Error {
     this.incidentClass = incidentClass;
     this.observationIdentity = observationIdentity;
     this.provenNoEffect = false;
+    /** @type {Record<string, unknown>|null} */
+    this.capacity = null;
   }
 }
 
@@ -2331,6 +2360,10 @@ function trustedPorts(dependenciesValue, mode = 'admitted') {
     status: 'returned',
     value: runRecoveryCommand(command, request),
   });
+  // Default-port authority is the actual selection made here, never a caller
+  // supplied identity label: an injected port that copies the default hash is
+  // still injected and stays subject to rederivation and no-effect proof.
+  const runtimeIsDefault = !Object.hasOwn(dependencies, 'runtime');
   if (Object.hasOwn(dependencies, 'runtime')) {
     const runtime = exactRecord(dependencies.runtime, ['identity', 'invoke'], [], 'host adapter dependencies.runtime');
     hash(runtime.identity, 'host adapter dependencies.runtime.identity');
@@ -2393,6 +2426,7 @@ function trustedPorts(dependenciesValue, mode = 'admitted') {
     checkpoint,
     laneOwner,
     runtimeIdentity,
+    runtimeIsDefault,
     runtimeInvoke,
   });
 }
@@ -3590,6 +3624,43 @@ function classifyNoEffect(ports, probe, incident) {
     && result.effectIdentity === null;
 }
 
+/**
+ * Recognize one runtime-owned fixed-capacity acquisition refusal.
+ *
+ * Only the recovery runtime's own in-process identity admits a diagnostic. The
+ * default port is the recovery runtime itself — established by the actual port
+ * selection in `trustedPorts`, never by a caller-supplied identity label — so
+ * its refusal is runtime-owned by construction. Every injected port is rederived
+ * by rerunning the exact frozen command and request through the recovery
+ * runtime, and only a whole-diagnostic match, including target and demand, is
+ * admitted. Same shape or same identity label is not authority.
+ * @param {ReturnType<typeof trustedPorts>} ports @param {string} command
+ * @param {unknown} request @param {unknown} error
+ */
+function recognizedRuntimeCapacity(ports, command, request, error) {
+  const carried = capacityDiagnostic(error);
+  if (carried === null) return null;
+  if (ports.runtimeIsDefault) return carried;
+  try {
+    runRecoveryCommand(command, clone(request));
+  } catch (rederived) {
+    const owned = capacityDiagnostic(rederived);
+    if (owned && canonicalJson(owned) === canonicalJson(carried)) return owned;
+  }
+  return null;
+}
+
+/** @param {{budget:string,limit:number,required:number,source:string,target:Record<string, unknown>|null}} capacity */
+function capacityIncident(capacity) {
+  const refusal = new RuntimeIncident(
+    'tool-contract',
+    'evidence-incomplete',
+    runtimeObservationIdentity(null, 'thrown'),
+  );
+  refusal.capacity = capacity;
+  return refusal;
+}
+
 /** @param {ReturnType<typeof trustedPorts>} ports @param {Record<string, unknown>} probe @param {string} incidentClass @param {string} reason @param {unknown} observation @param {string} observationKind */
 function classifiedRuntimeIncident(ports, probe, incidentClass, reason, observation, observationKind) {
   const incident = new RuntimeIncident(
@@ -3630,8 +3701,17 @@ function invokeRuntime(ports, session, semanticOperation, command, request) {
   let output;
   try {
     output = ports.runtimeInvoke(command, lowLevelRequest);
-  } catch {
-    throw classifiedRuntimeIncident(
+  } catch (error) {
+    const capacity = recognizedRuntimeCapacity(ports, command, lowLevelRequest, error);
+    // Matching rederivation proves the capacity refusal is runtime-genuine; it
+    // proves nothing about what an injected port already did. The default port
+    // is the pure recovery read/reducer boundary, so its refusal is a hard stop
+    // with its own diagnostic. An injected port additionally has to clear the
+    // original captured no-effect probe: effectful or indeterminate stays a
+    // sanitized runtime failure with no capacity, and no refusal is ever
+    // retried or corrected. Unknown exceptions keep their existing behavior.
+    if (capacity && ports.runtimeIsDefault) throw capacityIncident(capacity);
+    const incident = classifiedRuntimeIncident(
       ports,
       probe,
       'tool-contract',
@@ -3639,6 +3719,8 @@ function invokeRuntime(ports, session, semanticOperation, command, request) {
       null,
       'thrown',
     );
+    if (capacity && incident.provenNoEffect) throw capacityIncident(capacity);
+    throw incident;
   }
   if (output === undefined || output === null || output === '') {
     throw classifiedRuntimeIncident(
@@ -3785,6 +3867,9 @@ function runOperation(session, requestValue, ports, host = null, ledger = create
     }
     return auditRun(workingSession, request, invoke);
   } catch (error) {
+    if (error instanceof RuntimeIncident && error.capacity) {
+      return hardStop(workingSession, 'evidence-incomplete', error.capacity);
+    }
     if (error instanceof RuntimeIncident && error.provenNoEffect) {
       return closedIncident(workingSession, /** @type {string} */ (request.operation), error.incidentClass, error.message);
     }

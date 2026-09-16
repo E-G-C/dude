@@ -34,8 +34,10 @@ import {
   clipHidesAnchor,
   constrainBox,
   constrainSegment,
+  cursorForHandle,
   evidencePoints,
   handlesFor,
+  hitBoundary,
   hitTest,
   insideClip,
   moveBy,
@@ -45,6 +47,7 @@ import {
   projectAnnotation,
   projectElement,
   resizeBy,
+  withinClip,
 } from './ui/review/geometry.mjs';
 import { imageIsStatic, validScrolls } from './ui/review/inspector.mjs';
 import { rememberCaret, restoreCaret } from './ui/review/panel.mjs';
@@ -593,6 +596,64 @@ test('a press answers to an annotation number where that number is painted, and 
   assert.equal(badgeAnchor(pin, free), null, 'the comment marker already draws its own number');
   assert.equal(hitTest(pin, { x: 425, y: 420 }, free), false, 'so no badge widens its radius');
   assert.equal(hitTest(box, { x: 210, y: 200 }, free), true, 'a box answers to its whole marked face');
+});
+
+test('drawing-mode grabs answer only to a selected shape boundary, ring, or stroke', () => {
+  // Arrange
+  const box = annotation({ x1: 120, y1: 140, x2: 300, y2: 260 });
+  const highlight = annotation({ tool: 'highlight', x1: 300, y1: 140, x2: 120, y2: 260 });
+  const circle = annotation({ tool: 'circle', x1: 120, y1: 140, x2: 320, y2: 300 });
+  const line = annotation({ tool: 'line', x1: 120, y1: 140, x2: 320, y2: 300 });
+  const arrow = annotation({ tool: 'arrow', x1: 120, y1: 140, x2: 320, y2: 140 });
+  const pin = annotation({ tool: 'comment', x1: 400, y1: 420, x2: 400, y2: 420 });
+  const thin = annotation({ x1: 200, y1: 200, x2: 206, y2: 206 });
+  const viewport = { scrollX: 0, scrollY: 0, width: 800, height: 600 };
+  const free = paintClip(viewport);
+
+  // Act + Assert: the painted edge answers, the face inside it does not.
+  assert.equal(hitBoundary(box, { x: 120, y: 200 }), true, 'the left edge is a move target');
+  assert.equal(hitBoundary(box, { x: 127, y: 200 }), true, 'the existing 8 px body tolerance is unchanged');
+  assert.equal(hitBoundary(box, { x: 129, y: 200 }), false, 'just inside that tolerance is drawing space');
+  assert.equal(hitBoundary(box, { x: 210, y: 200 }), false, 'a box face is not a drawing-mode grab target');
+  assert.equal(hitTest(box, { x: 210, y: 200 }, free), true, 'while Select still answers to that same face');
+  assert.equal(hitBoundary(box, { x: 210, y: 400 }), false, 'and the mark ends with its drawing');
+  assert.equal(hitBoundary(highlight, { x: 300, y: 200 }), true,
+    'a reversed highlight answers on its painted edge');
+  assert.equal(hitBoundary(highlight, { x: 210, y: 200 }), false, 'but not across its whole fill');
+  assert.equal(hitBoundary(box, badgeAnchor(box, free)), false, 'a number badge adds no drawing-mode target');
+  assert.equal(hitTest(box, badgeAnchor(box, free), free), true, 'though Select keeps answering to it');
+
+  // Act + Assert: a circle keeps its ring, and segments their stroke.
+  assert.equal(hitBoundary(circle, { x: 120, y: 220 }), true, 'a circle answers on its ring');
+  assert.equal(hitBoundary(circle, { x: 220, y: 220 }), false, 'never inside the enclosed area');
+  assert.equal(hitBoundary(circle, { x: 125, y: 145 }), false,
+    'and never on the enclosing rectangle corner it does not paint');
+  assert.equal(hitBoundary(line, { x: 220, y: 220 }), true, 'a line answers along its stroke');
+  assert.equal(hitBoundary(line, { x: 300, y: 160 }), false, 'not across its bounding box');
+  assert.equal(hitBoundary(arrow, { x: 220, y: 149 }), true,
+    'an arrow keeps the existing +2 stroke allowance');
+  assert.equal(hitBoundary(arrow, { x: 220, y: 151 }), false, 'and nothing past it');
+  assert.equal(hitBoundary(pin, { x: 400, y: 420 }), false, 'a comment pin gains no drawing-mode grab');
+  assert.equal(hitTest(pin, { x: 400, y: 420 }, free), true, 'its existing Select behavior is unchanged');
+  assert.equal(hitBoundary(thin, { x: 203, y: 203 }), true,
+    'a shape thinner than two tolerances has no interior left to draw in');
+
+  // Act + Assert: a grab must land where the affordance is actually painted.
+  const clipped = paintClip(viewport, { left: 100, top: 220, right: 420, bottom: 520 });
+  assert.equal(withinClip({ x: 210, y: 300 }, clipped), true, 'a visible point is inside its paint region');
+  assert.equal(withinClip({ x: 210, y: 200 }, clipped), false, 'a clipped-away point is not');
+  assert.equal(withinClip({ x: 210, y: 300 }, null), false, 'and an unusable region reaches nothing');
+
+  // Act + Assert: each handle names the resize it performs.
+  assert.deepEqual(handlesFor(box).map(h => cursorForHandle(box, h.name)),
+    ['nwse-resize', 'nesw-resize', 'nwse-resize', 'nesw-resize'],
+    'corners follow the platform diagonal pair');
+  assert.equal(cursorForHandle(arrow, 'p2'), 'ew-resize', 'a horizontal segment end resizes sideways');
+  assert.equal(cursorForHandle(annotation({ tool: 'line', x1: 0, y1: 0, x2: 0, y2: 100 }), 'p1'),
+    'ns-resize', 'a vertical segment end resizes up and down');
+  assert.equal(cursorForHandle(line, 'p1'), 'nwse-resize', 'and a diagonal follows its own direction');
+  assert.equal(cursorForHandle(annotation({ tool: 'line', x1: 0, y1: 100, x2: 100, y2: 0 }), 'p2'),
+    'nesw-resize', 'including the opposite diagonal');
 });
 
 test('server Send validation accepts optional blank numbered comment pins', () => {

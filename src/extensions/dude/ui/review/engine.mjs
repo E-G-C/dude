@@ -1,7 +1,7 @@
 // Annotation/history/keyboard fragments adapted from Sharpie.
 // Copyright (c) 2026 Enrique Gonzalez. MIT; see NOTICE.txt.
 import {
-  TOOLS, BOX_TOOLS, SEGMENT_TOOLS, bounds, handlesFor, hitTest, moveBy,
+  TOOLS, BOX_TOOLS, SEGMENT_TOOLS, bounds, handlesFor, hitTest, hitBoundary, cursorForHandle, withinClip, moveBy,
   resizeBy, constrainBox, constrainSegment, probePoint, projectAnnotation, anchorMatches, insideClip, clipHidesAnchor, paintClip,
 } from './geometry.mjs';
 import { validScrolls } from './inspector.mjs';
@@ -70,7 +70,7 @@ export function mountReview(container, { review, requestHandle, revision, theme,
   let viewportPinned = false;
   let frameLoaded = false, initializing = null, readinessTimer = null;
   let scrolling = null, refreshFrame = null, externalScroll = false, epoch = 0, pointed = null;
-  let lastPress = null;
+  let lastPress = null, hovered = null;
   let nativeDescriptionMap = new Map();
   const pending = new Map();
   const root = document.createElement('div');
@@ -92,7 +92,7 @@ export function mountReview(container, { review, requestHandle, revision, theme,
   iframe.setAttribute('aria-hidden', 'true');
   const overlay = el('svg', { tabindex: 0, role: 'group',
     'aria-label': 'Reviewed HTML document. Use drawing tools or Choose an element to annotate.' });
-  overlay.setAttribute('aria-description', 'With the Select tool, double-click an annotation or its number to write its comment. Enter does the same for the selected annotation.');
+  overlay.setAttribute('aria-description', 'With the Select tool, double-click an annotation or its number to write its comment. With a drawing tool, the selected annotation keeps its handles for resizing and its border for moving, and two presses on that border write its comment. Enter does the same for the selected annotation.');
   overlay.classList.add('dude-review-overlay');
   frame.append(iframe, overlay); root.append(css, frame); container.append(root);
 
@@ -184,6 +184,11 @@ export function mountReview(container, { review, requestHandle, revision, theme,
     if (['source_changed', 'owner_unavailable', 'identity_mismatch', 'review_source_changed'].includes(error.code)) markStale();
     if (['already_consumed', 'provider_unavailable', 'unknown_request', 'review_historical'].includes(error.code)) {
       editable = false; status = 'unavailable'; clearTimeout(saveTimer); cancelDrag();
+      // The same invariant as the update path: cancelDrag is a no-op under a
+      // resting pointer and message only emits, so the transient action cursor
+      // is refreshed here too. A refusal that already happened must not keep
+      // promising the move or resize the next press would refuse.
+      refreshAction();
     }
     message(error.message || MESSAGES.review_unavailable, true, error.code ?? 'review_unavailable');
   }
@@ -219,6 +224,9 @@ export function mountReview(container, { review, requestHandle, revision, theme,
   }
   function render() {
     overlay.dataset.tool = state.tool;
+    // The transient action cursor answers to the same state the next press
+    // would use, so every render refreshes or clears it.
+    refreshAction();
     // Keep the original evidence, but never paint it against changed geometry.
     // cancelDrag can be a no-op, so invalidation must clear the live SVG too.
     if (stale) { overlay.replaceChildren(); return; }
@@ -556,6 +564,58 @@ export function mountReview(container, { review, requestHandle, revision, theme,
       .find(a => hitTest(a, p, paintClip(state.view.viewport, clips.get(a.id))));
   }
   /**
+   * One classification for hover and for the next press, so the cursor can
+   * never promise an action the press would not perform.
+   *
+   * Snagit's selected-object convention: the object already showing handles
+   * keeps answering to them while a drawing tool stays armed, its border moves
+   * it, and everywhere else still draws. Only the current visible selection is
+   * eligible -- there is no scan of unselected marks for a drawing-mode grab,
+   * and no recency rule -- while Select keeps its existing whole-face, badge,
+   * and topmost behavior unchanged.
+   */
+  function targetAt(p) {
+    const { annotations, clips } = pointable();
+    const selected = annotations.find(a => a.id === state.selectedId);
+    const drawing = BOX_TOOLS.has(state.tool) || SEGMENT_TOOLS.has(state.tool);
+    // Select keeps its existing predicate. A drawing-mode grab must also land
+    // in the region its selected affordance is actually painted in, so a
+    // clipped-away handle or border cannot be reached from a visible pixel.
+    const reachable = Boolean(selected) && (state.tool === 'select'
+      || (drawing && withinClip(p, paintClip(state.view.viewport, clips.get(selected.id)))));
+    const handle = reachable
+      ? handlesFor(selected).find(h => Math.hypot(h.x - p.x, h.y - p.y) <= 9) : null;
+    if (handle) return { kind: 'resize', id: selected.id, handle: handle.name,
+      cursor: cursorForHandle(selected, handle.name) };
+    if (state.tool === 'select') {
+      const hit = markerAt(annotations, clips, p);
+      return hit ? { kind: 'move', id: hit.id, cursor: 'move' } : { kind: 'pick', cursor: null };
+    }
+    if (state.tool === 'comment') return { kind: 'pick', cursor: null };
+    if (reachable && hitBoundary(selected, p)) return { kind: 'move', id: selected.id, cursor: 'move' };
+    return { kind: 'create', cursor: null };
+  }
+  /**
+   * Paint the transient action cursor from that same answer. It is overlay
+   * presentation only: nothing is stored on an annotation, and a state that
+   * cannot be edited keeps the plain tool cursor rather than a misleading
+   * resize or move cue. render() refreshes it, so a tool, selection,
+   * visibility, or availability change cannot leave a stale promise behind.
+   */
+  function refreshAction() {
+    let action = null;
+    if (drag && (drag.kind === 'move' || drag.kind === 'resize')) {
+      const held = projected().find(a => a.id === drag.id);
+      action = drag.kind === 'move' ? 'move' : held ? cursorForHandle(held, drag.handle) : null;
+    } else if (hovered && !drag && !draft && active && ready && !resuming && editable && !stale && !sealing
+      && !pointerBusy && !scrolling && refreshFrame === null && !externalScroll
+      && state.view && withinFrame(hovered)) {
+      action = targetAt(point(hovered)).cursor;
+    }
+    if (action) overlay.dataset.action = action;
+    else delete overlay.dataset.action;
+  }
+  /**
    * Reveal one annotation's comment. Comments is the panel's surface, so the
    * engine names the annotation the way an added comment marker already does
    * instead of reaching into it. Selection is the engine's own answer; nothing
@@ -578,10 +638,10 @@ export function mountReview(container, { review, requestHandle, revision, theme,
    * drag that begins on the second press still moves the annotation, and a
    * press that dragged never primes the press after it.
    */
-  function doublePressed(hit, p, event) {
+  function doublePressed(id, p, event) {
     const previous = lastPress;
-    lastPress = hit ? { id: hit.id, at: event.timeStamp, x: p.x, y: p.y } : null;
-    return Boolean(hit && previous && previous.id === hit.id
+    lastPress = id ? { id, at: event.timeStamp, x: p.x, y: p.y } : null;
+    return Boolean(id && previous && previous.id === id
       && event.timeStamp - previous.at <= 500 && Math.hypot(p.x - previous.x, p.y - previous.y) <= 4);
   }
   function pointerDown(event) {
@@ -595,20 +655,19 @@ export function mountReview(container, { review, requestHandle, revision, theme,
     }
     overlay.focus({ preventScroll: true });
     const previousSelectedId = state.selectedId;
-    const p = point(event), { annotations, clips } = pointable();
+    const p = point(event);
     pointed = { x: p.x - state.view.viewport.scrollX, y: p.y - state.view.viewport.scrollY };
-    const selected = annotations.find(a => a.id === state.selectedId);
-    const handle = state.tool === 'select' && selected
-      ? handlesFor(selected).find(h => Math.hypot(h.x - p.x, h.y - p.y) <= 9) : null;
-    const hit = state.tool === 'select' ? markerAt(annotations, clips, p) : null;
-    const doubled = doublePressed(handle ? null : hit, p, event);
+    hovered = event;
+    const found = targetAt(p);
+    // A handle grab and a drawing-only press are not halves of a double press;
+    // only a press on an annotation's own body or border can pair.
+    const doubled = doublePressed(found.kind === 'move' ? found.id : null, p, event);
     const base = { pointerId: event.pointerId, start: p, before: clone(state.annotations) };
-    if (handle || hit) {
-      const a = handle ? selected : hit;
-      state.selectedId = a.id;
-      drag = { ...base, kind: handle ? 'resize' : 'move', handle: handle?.name, id: a.id, doubled,
-        origin: clone(state.annotations.find(original => original.id === a.id)) };
-    } else if (state.tool === 'select' || state.tool === 'comment') drag = { ...base, kind: 'pick', tool: state.tool };
+    if (found.kind === 'move' || found.kind === 'resize') {
+      state.selectedId = found.id;
+      drag = { ...base, kind: found.kind, handle: found.handle, id: found.id, doubled, manipulated: false,
+        origin: clone(state.annotations.find(original => original.id === found.id)) };
+    } else if (found.kind === 'pick') drag = { ...base, kind: 'pick', tool: state.tool };
     else {
       // ZoomIt order for arrows: the head anchors where the user pressed and the
       // tail follows the cursor. Stored geometry is unchanged -- the head is
@@ -625,7 +684,8 @@ export function mountReview(container, { review, requestHandle, revision, theme,
     if (!active || !ready || !state.view) return;
     let p = point(event);
     pointed = { x: p.x - state.view.viewport.scrollX, y: p.y - state.view.viewport.scrollY };
-    if (!drag || drag.pointerId !== event.pointerId || stale) return;
+    hovered = event;
+    if (!drag || drag.pointerId !== event.pointerId || stale) { refreshAction(); return; }
     if (drag.kind === 'create') {
       if (event.shiftKey) p = SEGMENT_TOOLS.has(draft.tool) ? constrainSegment(drag.start, p) : constrainBox(drag.start, p);
       if (drag.tail) { draft.x1 = p.x; draft.y1 = p.y; }
@@ -636,6 +696,9 @@ export function mountReview(container, { review, requestHandle, revision, theme,
       if (drag.kind === 'move') moveBy(current, p.x - drag.start.x, p.y - drag.start.y);
       else resizeBy(current, drag.handle, p);
       Object.assign(a, projectAnnotation(current, state.view.scrolls, true));
+      // Monotonic: once this press actually changed the mark's coordinates it
+      // stays manipulated, including a return to its origin.
+      if (!drag.manipulated && ['x1', 'y1', 'x2', 'y2'].some(k => a[k] !== drag.origin[k])) drag.manipulated = true;
     }
     render();
   }
@@ -645,6 +708,9 @@ export function mountReview(container, { review, requestHandle, revision, theme,
     let currentView = state.view;
     const current = drag, shape = draft, p = point(event);
     drag = null; draft = null; pointerBusy = true;
+    // Comment candidacy ends where manipulation begins, so a cancelled,
+    // refused, or net-equal adjustment cannot prime the next press.
+    if (current.manipulated) lastPress = null;
     if (overlay.hasPointerCapture(event.pointerId)) overlay.releasePointerCapture(event.pointerId);
     try {
       // Captured movement may show a bounded draft. Reject known-bad viewport
@@ -673,9 +739,6 @@ export function mountReview(container, { review, requestHandle, revision, theme,
         else { state.selectedId = null; changed(); }
       } else if (current.kind === 'move' || current.kind === 'resize') {
         if (!same(state.annotations, current.before)) {
-          // A press that dragged the annotation is not half of a double press,
-          // however it ends, so the next single press cannot open a comment.
-          lastPress = null;
           const moved = projectAnnotation(state.annotations.find(a => a.id === current.id), state.view.scrolls);
           requireValue([moved.x1, moved.x2, moved.y1, moved.y2].every(n => n >= 0 && n <= 1000000 && Number.isFinite(n)));
           requireValue(state.annotations.every(a => {
@@ -684,7 +747,10 @@ export function mountReview(container, { review, requestHandle, revision, theme,
               ? b.width >= 4 && b.height >= 4 : Math.hypot(b.width, b.height) >= 4);
           }));
           pushHistory(current.before); changed();
-        } else if (current.doubled) revealComment(current.id);
+        // Final equality still decides whether there is any geometry to
+        // record; manipulation decides, separately, whether this press may
+        // still open a comment.
+        } else if (current.doubled && !current.manipulated) revealComment(current.id);
       }
     } catch (error) {
       if (current.kind === 'move' || current.kind === 'resize') state.annotations = current.before;
@@ -849,6 +915,10 @@ export function mountReview(container, { review, requestHandle, revision, theme,
     if (next.unavailable) {
       if (editable) supersede();
       editable = false; status = 'unavailable'; clearTimeout(saveTimer); cancelDrag();
+      // cancelDrag is a no-op under a resting pointer, so the transient action
+      // cursor is refreshed here too: a state that now refuses editing must not
+      // keep promising the move or resize it would refuse.
+      refreshAction();
     }
     if (next.theme !== undefined && next.theme !== theme) {
       requireValue(['light', 'dark'].includes(next.theme));
@@ -938,6 +1008,7 @@ export function mountReview(container, { review, requestHandle, revision, theme,
   overlay.addEventListener('blur', cancelDrag, events);
   overlay.addEventListener('pointerdown', pointerDown, events);
   overlay.addEventListener('pointermove', pointerMove, events);
+  overlay.addEventListener('pointerleave', () => { hovered = null; refreshAction(); }, events);
   overlay.addEventListener('pointerup', event => { void pointerUp(event); }, events);
   overlay.addEventListener('pointercancel', cancelDrag, events);
   overlay.addEventListener('wheel', wheel, { ...events, passive: false });

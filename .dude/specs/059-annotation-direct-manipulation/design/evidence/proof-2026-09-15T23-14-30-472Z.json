@@ -1,0 +1,1480 @@
+{
+  "startedAt": "2026-09-15T23:14:30.472Z",
+  "checks": [
+    {
+      "name": "loaded code identity",
+      "detail": "nine review modules, bundle and canonical HTML match their design bytes"
+    },
+    {
+      "name": "real component surface",
+      "detail": "ReviewWorkspace, seven tools, sandboxed reviewed child"
+    },
+    {
+      "name": "US1 routing matrix",
+      "detail": "25 armed-tool/selected-shape cells: handle resize, border move, interior draw, matching cursors"
+    },
+    {
+      "name": "US1 selection scope",
+      "detail": "older selection manipulates; unselected border, badge-only and no-selection all draw"
+    },
+    {
+      "name": "US3 retained Select and Comment behaviour",
+      "detail": "whole-face move, topmost overlap, badge selection, non-resizable pin"
+    },
+    {
+      "name": "US2 comment recogniser",
+      "detail": "10 gesture cases: 2 open Comments, 8 open nothing"
+    },
+    {
+      "name": "US2 history and redo",
+      "detail": "one step for a changed adjustment, none for a net-equal one, redo preserved"
+    },
+    {
+      "name": "US2 committed-only working save",
+      "detail": "the real Review adapter wrote committed geometry during a live preview"
+    },
+    {
+      "name": "US3 keyboard alternatives",
+      "detail": "Enter opens Comments with focus and caret; typed text and numeric geometry edits apply"
+    },
+    {
+      "name": "rendered evidence",
+      "detail": "4 screenshots with matching cursors, frame geometry and accessible names"
+    },
+    {
+      "name": "accessibility observations",
+      "detail": "named review regions retained; overlay reached in 7 Tab presses with a visible focus ring"
+    }
+  ],
+  "counts": {
+    "passed": 11,
+    "failed": 0,
+    "matrixCells": 25
+  },
+  "observations": {
+    "browser": "Edg/133.0.3065.69",
+    "assets": {
+      "engine.mjs": {
+        "loaded": "ea85f7f964e3b7817e1547faca9e8611d1f63dff03f108bb4048d18227b9256d",
+        "designCopy": "ea85f7f964e3b7817e1547faca9e8611d1f63dff03f108bb4048d18227b9256d",
+        "currentSource": "556f07ac8ee5d4a067ffcb03b8dad1eb1ad3550a81b994046ea5ffe2ab764972",
+        "differsFromSource": true
+      },
+      "geometry.mjs": {
+        "loaded": "235d2c05039581c40429f41cdf9a0c8e2a63e946fc3da37b8c273691dbf943a9",
+        "designCopy": "235d2c05039581c40429f41cdf9a0c8e2a63e946fc3da37b8c273691dbf943a9",
+        "currentSource": "8db05db60811ef8f6a4c1f7bbe78bbc30465ff6d4e8441ef74171d967d8edb77",
+        "differsFromSource": true
+      },
+      "shapes.mjs": {
+        "loaded": "0df6a9f23c62b80c2571e9bfdad7bd4d7d65935270c779ae4997394eb3f4f1af",
+        "designCopy": "0df6a9f23c62b80c2571e9bfdad7bd4d7d65935270c779ae4997394eb3f4f1af",
+        "currentSource": "0df6a9f23c62b80c2571e9bfdad7bd4d7d65935270c779ae4997394eb3f4f1af",
+        "differsFromSource": false
+      },
+      "inspector.mjs": {
+        "loaded": "4e3a09cbdc9bfad89accc7161f73c294b64a7347b5571b9291edd0db0ee623b0",
+        "designCopy": "4e3a09cbdc9bfad89accc7161f73c294b64a7347b5571b9291edd0db0ee623b0",
+        "currentSource": "4e3a09cbdc9bfad89accc7161f73c294b64a7347b5571b9291edd0db0ee623b0",
+        "differsFromSource": false
+      },
+      "panel.mjs": {
+        "loaded": "02ccc01579b03836a3530d958c3606a7db73e9ea7637fa307298c1b835947916",
+        "designCopy": "02ccc01579b03836a3530d958c3606a7db73e9ea7637fa307298c1b835947916",
+        "currentSource": "02ccc01579b03836a3530d958c3606a7db73e9ea7637fa307298c1b835947916",
+        "differsFromSource": false
+      },
+      "capture.mjs": {
+        "loaded": "34d78de45f96ba11f2d78cec95cc1ed1957cc8facaaf22ca4673c8822e88768d",
+        "designCopy": "34d78de45f96ba11f2d78cec95cc1ed1957cc8facaaf22ca4673c8822e88768d",
+        "currentSource": "34d78de45f96ba11f2d78cec95cc1ed1957cc8facaaf22ca4673c8822e88768d",
+        "differsFromSource": false
+      },
+      "bridge.mjs": {
+        "loaded": "fca42f64869e183767e1b8127c2a077239a351b0e4c9efd4297d6ce580268eab",
+        "designCopy": "fca42f64869e183767e1b8127c2a077239a351b0e4c9efd4297d6ce580268eab",
+        "currentSource": "fca42f64869e183767e1b8127c2a077239a351b0e4c9efd4297d6ce580268eab",
+        "differsFromSource": false
+      },
+      "styles.css": {
+        "loaded": "1e73e9a1e4558601cc5f164e9f3acf5412938ba130048b2d5b064bb8e9ab668f",
+        "designCopy": "1e73e9a1e4558601cc5f164e9f3acf5412938ba130048b2d5b064bb8e9ab668f",
+        "currentSource": "c2f2d1c762d21c1abc9ceb5e88242b1b05cb9a64252ca0a4963e8252b5b18ee0",
+        "differsFromSource": true
+      },
+      "NOTICE.txt": {
+        "loaded": "ee4f325c692f81403ae0981320736904e618499113a785b24c7bf4f750f96ce7",
+        "designCopy": "ee4f325c692f81403ae0981320736904e618499113a785b24c7bf4f750f96ce7",
+        "currentSource": "ee4f325c692f81403ae0981320736904e618499113a785b24c7bf4f750f96ce7",
+        "differsFromSource": false
+      },
+      "design/host.js": {
+        "loaded": "fd259e8a4be1318123923a13cd0e37f02dbde2ed1916be5b70d83789685e95a7",
+        "designCopy": "fd259e8a4be1318123923a13cd0e37f02dbde2ed1916be5b70d83789685e95a7"
+      },
+      "review-direct-manipulation.html": {
+        "loaded": "a062753c5e4675e2974736737b1be8318549331b6f156b8976d9151123aa27b5",
+        "designCopy": "a062753c5e4675e2974736737b1be8318549331b6f156b8976d9151123aa27b5"
+      }
+    },
+    "mounted": {
+      "hasCommand": true,
+      "hasUpdate": true,
+      "workspace": true,
+      "host": true,
+      "tools": [
+        "Select (V)",
+        "Comment (C)",
+        "Box (B)",
+        "Circle (O)",
+        "Arrow (A)",
+        "Line (L)",
+        "Highlight (H)"
+      ],
+      "frame": true
+    },
+    "viewport": {
+      "width": 1270,
+      "height": 723,
+      "scrollX": 0,
+      "scrollY": 0,
+      "deviceScale": 1,
+      "theme": "light",
+      "documentWidth": 1270,
+      "documentHeight": 1400
+    },
+    "routingMatrix": [
+      {
+        "selected": "box",
+        "armed": "box",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            80,
+            120,
+            240,
+            230
+          ],
+          "to": [
+            80,
+            120,
+            264,
+            248
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            80,
+            120,
+            264,
+            248
+          ],
+          "to": [
+            100,
+            134,
+            284,
+            262
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "box",
+        "armed": "circle",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            80,
+            120,
+            240,
+            230
+          ],
+          "to": [
+            80,
+            120,
+            264,
+            248
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            80,
+            120,
+            264,
+            248
+          ],
+          "to": [
+            100,
+            134,
+            284,
+            262
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "box",
+        "armed": "arrow",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            80,
+            120,
+            240,
+            230
+          ],
+          "to": [
+            80,
+            120,
+            264,
+            248
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            80,
+            120,
+            264,
+            248
+          ],
+          "to": [
+            100,
+            134,
+            284,
+            262
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "box",
+        "armed": "line",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            80,
+            120,
+            240,
+            230
+          ],
+          "to": [
+            80,
+            120,
+            264,
+            248
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            80,
+            120,
+            264,
+            248
+          ],
+          "to": [
+            100,
+            134,
+            284,
+            262
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "box",
+        "armed": "highlight",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            80,
+            120,
+            240,
+            230
+          ],
+          "to": [
+            80,
+            120,
+            264,
+            248
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            80,
+            120,
+            264,
+            248
+          ],
+          "to": [
+            100,
+            134,
+            284,
+            262
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "circle",
+        "armed": "box",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            110,
+            140,
+            270,
+            250
+          ],
+          "to": [
+            110,
+            140,
+            294,
+            268
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            110,
+            140,
+            294,
+            268
+          ],
+          "to": [
+            130,
+            154,
+            314,
+            282
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "circle",
+        "armed": "circle",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            110,
+            140,
+            270,
+            250
+          ],
+          "to": [
+            110,
+            140,
+            294,
+            268
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            110,
+            140,
+            294,
+            268
+          ],
+          "to": [
+            130,
+            154,
+            314,
+            282
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "circle",
+        "armed": "arrow",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            110,
+            140,
+            270,
+            250
+          ],
+          "to": [
+            110,
+            140,
+            294,
+            268
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            110,
+            140,
+            294,
+            268
+          ],
+          "to": [
+            130,
+            154,
+            314,
+            282
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "circle",
+        "armed": "line",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            110,
+            140,
+            270,
+            250
+          ],
+          "to": [
+            110,
+            140,
+            294,
+            268
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            110,
+            140,
+            294,
+            268
+          ],
+          "to": [
+            130,
+            154,
+            314,
+            282
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "circle",
+        "armed": "highlight",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            110,
+            140,
+            270,
+            250
+          ],
+          "to": [
+            110,
+            140,
+            294,
+            268
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            110,
+            140,
+            294,
+            268
+          ],
+          "to": [
+            130,
+            154,
+            314,
+            282
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "arrow",
+        "armed": "box",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            290,
+            250,
+            140,
+            160
+          ],
+          "to": [
+            290,
+            250,
+            164,
+            178
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            290,
+            250,
+            164,
+            178
+          ],
+          "to": [
+            310,
+            264,
+            184,
+            192
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "arrow",
+        "armed": "circle",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            290,
+            250,
+            140,
+            160
+          ],
+          "to": [
+            290,
+            250,
+            164,
+            178
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            290,
+            250,
+            164,
+            178
+          ],
+          "to": [
+            310,
+            264,
+            184,
+            192
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "arrow",
+        "armed": "arrow",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            290,
+            250,
+            140,
+            160
+          ],
+          "to": [
+            290,
+            250,
+            164,
+            178
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            290,
+            250,
+            164,
+            178
+          ],
+          "to": [
+            310,
+            264,
+            184,
+            192
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "arrow",
+        "armed": "line",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            290,
+            250,
+            140,
+            160
+          ],
+          "to": [
+            290,
+            250,
+            164,
+            178
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            290,
+            250,
+            164,
+            178
+          ],
+          "to": [
+            310,
+            264,
+            184,
+            192
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "arrow",
+        "armed": "highlight",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            290,
+            250,
+            140,
+            160
+          ],
+          "to": [
+            290,
+            250,
+            164,
+            178
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            290,
+            250,
+            164,
+            178
+          ],
+          "to": [
+            310,
+            264,
+            184,
+            192
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "line",
+        "armed": "box",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            170,
+            180,
+            320,
+            270
+          ],
+          "to": [
+            170,
+            180,
+            344,
+            288
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            170,
+            180,
+            344,
+            288
+          ],
+          "to": [
+            190,
+            194,
+            364,
+            302
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "line",
+        "armed": "circle",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            170,
+            180,
+            320,
+            270
+          ],
+          "to": [
+            170,
+            180,
+            344,
+            288
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            170,
+            180,
+            344,
+            288
+          ],
+          "to": [
+            190,
+            194,
+            364,
+            302
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "line",
+        "armed": "arrow",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            170,
+            180,
+            320,
+            270
+          ],
+          "to": [
+            170,
+            180,
+            344,
+            288
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            170,
+            180,
+            344,
+            288
+          ],
+          "to": [
+            190,
+            194,
+            364,
+            302
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "line",
+        "armed": "line",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            170,
+            180,
+            320,
+            270
+          ],
+          "to": [
+            170,
+            180,
+            344,
+            288
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            170,
+            180,
+            344,
+            288
+          ],
+          "to": [
+            190,
+            194,
+            364,
+            302
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "line",
+        "armed": "highlight",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            170,
+            180,
+            320,
+            270
+          ],
+          "to": [
+            170,
+            180,
+            344,
+            288
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            170,
+            180,
+            344,
+            288
+          ],
+          "to": [
+            190,
+            194,
+            364,
+            302
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "highlight",
+        "armed": "box",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            200,
+            200,
+            360,
+            310
+          ],
+          "to": [
+            200,
+            200,
+            384,
+            328
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            200,
+            200,
+            384,
+            328
+          ],
+          "to": [
+            220,
+            214,
+            404,
+            342
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "highlight",
+        "armed": "circle",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            200,
+            200,
+            360,
+            310
+          ],
+          "to": [
+            200,
+            200,
+            384,
+            328
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            200,
+            200,
+            384,
+            328
+          ],
+          "to": [
+            220,
+            214,
+            404,
+            342
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "highlight",
+        "armed": "arrow",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            200,
+            200,
+            360,
+            310
+          ],
+          "to": [
+            200,
+            200,
+            384,
+            328
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            200,
+            200,
+            384,
+            328
+          ],
+          "to": [
+            220,
+            214,
+            404,
+            342
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "highlight",
+        "armed": "line",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            200,
+            200,
+            360,
+            310
+          ],
+          "to": [
+            200,
+            200,
+            384,
+            328
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            200,
+            200,
+            384,
+            328
+          ],
+          "to": [
+            220,
+            214,
+            404,
+            342
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      },
+      {
+        "selected": "highlight",
+        "armed": "highlight",
+        "handleCursor": "nwse-resize",
+        "handleAction": "nwse-resize",
+        "resized": {
+          "from": [
+            200,
+            200,
+            360,
+            310
+          ],
+          "to": [
+            200,
+            200,
+            384,
+            328
+          ]
+        },
+        "borderCursor": "move",
+        "moved": {
+          "from": [
+            200,
+            200,
+            384,
+            328
+          ],
+          "to": [
+            220,
+            214,
+            404,
+            342
+          ]
+        },
+        "interiorCursor": "crosshair",
+        "drawnInside": true
+      }
+    ],
+    "selectionRouting": {
+      "checks": [
+        {
+          "case": "older selection resize",
+          "from": [
+            120,
+            150,
+            300,
+            270
+          ],
+          "to": [
+            120,
+            150,
+            322,
+            286
+          ]
+        },
+        {
+          "case": "unselected border draws",
+          "added": true,
+          "unselectedUnchanged": true
+        },
+        {
+          "case": "badge-only draws",
+          "badgePoint": {
+            "x": 111,
+            "y": 141
+          }
+        },
+        {
+          "case": "no selection draws",
+          "added": true
+        }
+      ]
+    },
+    "t011Adaptation": {
+      "start": {
+        "x": 168,
+        "y": 192
+      },
+      "nearestHandlePx": 42.43,
+      "insetFromEdgePx": 30,
+      "handleReachPx": 9,
+      "borderBandPx": 8
+    },
+    "retainedSelect": {
+      "faceMove": {
+        "from": [
+          120,
+          150,
+          300,
+          270
+        ],
+        "to": [
+          138,
+          162,
+          318,
+          282
+        ]
+      },
+      "topmost": true,
+      "badgeSelect": true,
+      "pinNotDraggable": true
+    },
+    "gestures": [
+      {
+        "case": "qualifying border pair, drawing tool armed",
+        "opened": true,
+        "focus": "Comment (optional)",
+        "inputs": 6,
+        "pressToPressMs": 11
+      },
+      {
+        "case": "first press out and back, then one unmoved press",
+        "opened": false,
+        "inFlight": [
+          346,
+          254,
+          606,
+          434
+        ],
+        "start": [
+          300,
+          220,
+          560,
+          400
+        ],
+        "end": [
+          300,
+          220,
+          560,
+          400
+        ],
+        "inputs": 12,
+        "pressToPressMs": 60
+      },
+      {
+        "case": "unmoved press, moving second press, then one unmoved press",
+        "opened": false,
+        "inFlight": [
+          340,
+          250,
+          600,
+          430
+        ],
+        "inputs": 15,
+        "pressToPressMs": [
+          14,
+          59
+        ]
+      },
+      {
+        "case": "handle pair",
+        "opened": false,
+        "inputs": 6
+      },
+      {
+        "case": "out-and-back resize then one press",
+        "opened": false,
+        "inFlight": [
+          300,
+          220,
+          604,
+          432
+        ],
+        "inputs": 12
+      },
+      {
+        "case": "drawing-space pair",
+        "opened": false,
+        "inputs": 6
+      },
+      {
+        "case": "cancelled press then one press",
+        "opened": false,
+        "inputs": 7
+      },
+      {
+        "case": "two-pixel adjustment inside the pair tolerance",
+        "opened": false,
+        "inFlight": [
+          302,
+          222,
+          562,
+          402
+        ],
+        "inputs": 12
+      },
+      {
+        "case": "Select out-and-back then one press",
+        "opened": false,
+        "inFlight": [
+          344,
+          252,
+          604,
+          432
+        ],
+        "inputs": 12
+      },
+      {
+        "case": "Select unmoved pair",
+        "opened": true,
+        "inputs": 6
+      }
+    ],
+    "history": {
+      "afterRealMove": {
+        "canUndo": true,
+        "canRedo": false,
+        "geometry": [
+          330,
+          242,
+          590,
+          422
+        ]
+      },
+      "afterUndo": {
+        "canUndo": true,
+        "canRedo": true,
+        "geometry": [
+          300,
+          220,
+          560,
+          400
+        ]
+      },
+      "afterNetEqual": {
+        "canUndo": true,
+        "canRedo": true,
+        "geometry": [
+          300,
+          220,
+          560,
+          400
+        ],
+        "inFlight": [
+          338,
+          248,
+          598,
+          428
+        ]
+      },
+      "afterRedo": {
+        "canUndo": true,
+        "canRedo": false,
+        "geometry": [
+          330,
+          242,
+          590,
+          422
+        ]
+      }
+    },
+    "saves": {
+      "submissionId": "db08563a-2995-4506-9ca0-d48bc423ccf9",
+      "committed": [
+        330,
+        242,
+        590,
+        422
+      ],
+      "preview": [
+        372,
+        272,
+        632,
+        452
+      ],
+      "savedDuringPreview": [
+        330,
+        242,
+        590,
+        422
+      ],
+      "settled": [
+        372,
+        272,
+        632,
+        452
+      ],
+      "savedAfterRelease": [
+        372,
+        272,
+        632,
+        452
+      ]
+    },
+    "keyboard": {
+      "enter": {
+        "opened": true,
+        "focus": "Comment (optional)",
+        "caret": [
+          0,
+          0
+        ]
+      },
+      "literalComment": "Border is too tight",
+      "caret": {
+        "placed": [
+          14,
+          14
+        ],
+        "restored": [
+          14,
+          14
+        ]
+      },
+      "numeric": {
+        "before": [
+          372,
+          272,
+          632,
+          452
+        ],
+        "after": [
+          396,
+          272,
+          632,
+          452
+        ]
+      }
+    },
+    "screenshots": [
+      {
+        "label": "desktop-light",
+        "width": 1280,
+        "height": 900,
+        "theme": "light",
+        "file": "screenshots/direct-manipulation-desktop-light-1280x900.png",
+        "cursors": {
+          "handle": "nwse-resize",
+          "border": "move",
+          "drawing": "crosshair"
+        },
+        "geometry": {
+          "frame": {
+            "width": 1270,
+            "height": 723
+          },
+          "paletteInsideStage": true,
+          "toolsReachable": true,
+          "toolsEnabled": 7,
+          "overlayName": "Reviewed HTML document. Use drawing tools or Choose an element to annotate.",
+          "overlayDescription": "With the Select tool, double-click an annotation or its number to write its comment. With a drawing tool, the selected annotation keeps its handles for resizing and its border for moving, and two presses on that border write its comment. Enter does the same for the selected annotation.",
+          "commentsButton": "Comments (1)"
+        }
+      },
+      {
+        "label": "desktop-dark",
+        "width": 1280,
+        "height": 900,
+        "theme": "dark",
+        "file": "screenshots/direct-manipulation-desktop-dark-1280x900.png",
+        "cursors": {
+          "handle": "nwse-resize",
+          "border": "move",
+          "drawing": "crosshair"
+        },
+        "geometry": {
+          "frame": {
+            "width": 1270,
+            "height": 723
+          },
+          "paletteInsideStage": true,
+          "toolsReachable": true,
+          "toolsEnabled": 7,
+          "overlayName": "Reviewed HTML document. Use drawing tools or Choose an element to annotate.",
+          "overlayDescription": "With the Select tool, double-click an annotation or its number to write its comment. With a drawing tool, the selected annotation keeps its handles for resizing and its border for moving, and two presses on that border write its comment. Enter does the same for the selected annotation.",
+          "commentsButton": "Comments (1)"
+        }
+      },
+      {
+        "label": "compact-light",
+        "width": 640,
+        "height": 780,
+        "theme": "light",
+        "file": "screenshots/direct-manipulation-compact-light-640x780.png",
+        "cursors": {
+          "handle": "nwse-resize",
+          "border": "move",
+          "drawing": "crosshair"
+        },
+        "geometry": {
+          "frame": {
+            "width": 630,
+            "height": 579
+          },
+          "paletteInsideStage": true,
+          "toolsReachable": true,
+          "toolsEnabled": 7,
+          "overlayName": "Reviewed HTML document. Use drawing tools or Choose an element to annotate.",
+          "overlayDescription": "With the Select tool, double-click an annotation or its number to write its comment. With a drawing tool, the selected annotation keeps its handles for resizing and its border for moving, and two presses on that border write its comment. Enter does the same for the selected annotation.",
+          "commentsButton": "Comments (1)"
+        }
+      },
+      {
+        "label": "compact-dark",
+        "width": 640,
+        "height": 780,
+        "theme": "dark",
+        "file": "screenshots/direct-manipulation-compact-dark-640x780.png",
+        "cursors": {
+          "handle": "nwse-resize",
+          "border": "move",
+          "drawing": "crosshair"
+        },
+        "geometry": {
+          "frame": {
+            "width": 630,
+            "height": 579
+          },
+          "paletteInsideStage": true,
+          "toolsReachable": true,
+          "toolsEnabled": 7,
+          "overlayName": "Reviewed HTML document. Use drawing tools or Choose an element to annotate.",
+          "overlayDescription": "With the Select tool, double-click an annotation or its number to write its comment. With a drawing tool, the selected annotation keeps its handles for resizing and its border for moving, and two presses on that border write its comment. Enter does the same for the selected annotation.",
+          "commentsButton": "Comments (1)"
+        }
+      }
+    ],
+    "accessibility": {
+      "namedRegions": [
+        {
+          "role": "region",
+          "name": "Review workspace"
+        },
+        {
+          "role": "region",
+          "name": "Review viewport"
+        },
+        {
+          "role": "toolbar",
+          "name": "Annotation tools"
+        },
+        {
+          "role": "group",
+          "name": "Reviewed HTML document. Use drawing tools or Choose an element to annotate."
+        }
+      ],
+      "keyboardTabsToOverlay": 7,
+      "reachedByKeyboard": true,
+      "focusRing": {
+        "visible": true,
+        "outlineWidth": "2px",
+        "outlineColor": "rgb(255, 255, 255)"
+      }
+    }
+  }
+}

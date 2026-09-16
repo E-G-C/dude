@@ -143,6 +143,157 @@ async function removeOwnedBrowser(fixture) {
   }
 }
 
+/**
+ * Installs a test-owned ps executable beside the test-owned browser. The
+ * production module still reaches it through its ordinary PATH lookup.
+ *
+ * @param {ReturnType<typeof installOwnedBrowser>} fixture
+ * @param {'downgrade'|'mismatch'|'initial-pid-only'|'fail-after'} scenario
+ */
+function installOwnedPs(fixture, scenario) {
+  const psLog = `${fixture.control}.ps`;
+  const executable = path.join(path.dirname(fixture.executable), 'ps');
+  const source = [
+    `#!${process.execPath}`,
+    "const fs = require('node:fs');",
+    `const helperReceipt = ${JSON.stringify(fixture.helperReceipt)};`,
+    `const statePath = ${JSON.stringify(`${fixture.control}.ps-state`)};`,
+    `const psLog = ${JSON.stringify(psLog)};`,
+    `const scenario = ${JSON.stringify(scenario)};`,
+    "const format = process.argv.at(-1) ?? '';",
+    "const state = fs.existsSync(statePath) ? fs.readFileSync(statePath, 'utf8') : 'initial';",
+    'fs.appendFileSync(psLog, JSON.stringify({ state, format, at: Date.now() }) + "\\n");',
+    'const helper = JSON.parse(fs.readFileSync(helperReceipt, "utf8"));',
+    'const originalStart = "Mon Sep 15 20:00:00 2026";',
+    'const replacementStart = "Mon Sep 15 20:00:01 2026";',
+    'const row = (started, parent = helper.parentPid) => {',
+    '  process.stdout.write(`${helper.pid} ${parent}${started ? ` ${started}` : ""}\\n`);',
+    '  process.exit(0);',
+    '};',
+    'if (state === "initial") {',
+    '  if (scenario === "initial-pid-only") {',
+    '    if (format.includes("lstart")) process.exit(2);',
+    '    row(null);',
+    '  }',
+    '  if (format.includes("lstart")) row(originalStart);',
+    '  row(null);',
+    '}',
+    'if (scenario === "downgrade") {',
+    '  if (format.includes("lstart")) process.exit(2);',
+    '  row(null, 1);',
+    '}',
+    'if (scenario === "mismatch" || scenario === "initial-pid-only") {',
+    '  if (format.includes("lstart")) row(replacementStart, 1);',
+    '  row(null, 1);',
+    '}',
+    'process.exit(2);',
+    '',
+  ].join('\n');
+  fs.writeFileSync(executable, source, { mode: 0o755 });
+  return psLog;
+}
+
+/**
+ * A browser fixture with one real attached helper. Browser.close changes the
+ * fake-ps state before the root exits, while the helper remains alive for the
+ * test to observe and clean up.
+ *
+ * @param {{ writeProfile?: boolean }} [options]
+ */
+function installBrowserWithPersistentHelper(options = {}) {
+  const helperProgram = [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    'const [receipt, control, profile, writeProfileText] = process.argv.slice(1);',
+    'const writeProfile = writeProfileText === "true";',
+    'fs.writeFileSync(receipt, JSON.stringify({',
+    '  pid: process.pid, parentPid: process.ppid, readyAt: Date.now(),',
+    '}));',
+    'fs.appendFileSync(control, JSON.stringify({',
+    '  type: "helper_ready", pid: process.pid, parentPid: process.ppid, at: Date.now(),',
+    '}) + "\\n");',
+    'let writes = 0;',
+    'setInterval(() => {',
+    '  if (!writeProfile) return;',
+    '  if (!fs.existsSync(profile)) {',
+    '    fs.mkdirSync(profile, { recursive: true });',
+    '    fs.appendFileSync(control, JSON.stringify({',
+    '      type: "helper_recreated_profile", pid: process.pid, at: Date.now(),',
+    '    }) + "\\n");',
+    '  }',
+    '  writes += 1;',
+    '  fs.writeFileSync(path.join(profile, "persistent-helper.json"), JSON.stringify({ writes }));',
+    '}, 5);',
+  ].join('\n');
+  return installOwnedBrowser([
+    "const { spawn } = require('node:child_process');",
+    `const helperProgram = ${JSON.stringify(helperProgram)};`,
+    "const helperNull = fs.openSync('/dev/null', 'r+');",
+    'const helper = spawn(process.execPath, [',
+    `  '-e', helperProgram, helperReceipt, control, profile, '${Boolean(options.writeProfile)}',`,
+    "], { stdio: ['ignore', 'ignore', 'ignore', helperNull, helperNull] });",
+    'fs.closeSync(helperNull);',
+    'record.helperPid = helper.pid;',
+    'save();',
+    'function appendControl(type, detail = {}) {',
+    '  fs.appendFileSync(control, JSON.stringify({',
+    '    type, pid: process.pid, at: Date.now(), ...detail,',
+    '  }) + "\\n");',
+    '}',
+    'function withReadyHelper(action) {',
+    '  if (fs.existsSync(helperReceipt)) { action(); return; }',
+    '  setTimeout(() => withReadyHelper(action), 5);',
+    '}',
+    'readCommands((message) => {',
+    '  if (message.method === "Browser.getVersion") {',
+    '    withReadyHelper(() => reply({ id: message.id, result: { product: "Edg/133.0.0.0" } }));',
+    '  } else if (message.method === "Browser.close") {',
+    '    record.normalClose = true;',
+    '    save();',
+    '    fs.writeFileSync(control + ".ps-state", "after-close");',
+    '    appendControl("root_exit", { helperPid: helper.pid, profileExists: fs.existsSync(profile) });',
+    '    process.exit(0);',
+    '  }',
+    '});',
+    'setInterval(() => {}, 1_000);',
+  ].join('\n'));
+}
+
+/** @param {string} file */
+function lineEvents(file) {
+  if (!fs.existsSync(file)) return [];
+  const text = fs.readFileSync(file, 'utf8').trim();
+  return text ? text.split('\n').map(line => JSON.parse(line)) : [];
+}
+
+/**
+ * Refuses every destructive signal aimed at one known test-owned PID while
+ * preserving real signal-zero liveness probes.
+ *
+ * @param {number} pid
+ */
+function interceptDestructiveSignals(pid) {
+  const originalKill = process.kill;
+  /** @type {Array<{pid:number,signal:unknown,at:number}>} */
+  const attempts = [];
+  let installed = true;
+  process.kill = /** @type {typeof process.kill} */ ((target, signal) => {
+    if (target !== pid || signal === 0) return originalKill(target, signal);
+    attempts.push({ pid: target, signal, at: Date.now() });
+    const refused = new Error('test intercepted destructive signal');
+    /** @type {any} */ (refused).code = 'EPERM';
+    throw refused;
+  });
+  return {
+    attempts,
+    restore() {
+      if (!installed) return;
+      process.kill = originalKill;
+      installed = false;
+    },
+  };
+}
+
 test('initial Browser.getVersion accepts one reply after 4 seconds but before the 10-second startup bound', {
   skip: POSIX_ONLY,
   timeout: 15_000,
@@ -467,7 +618,11 @@ test('a normal Browser.close exit is successful rather than a child_exit diagnos
   timeout: 10_000,
   concurrency: false,
 }, async () => {
-  // Arrange
+  // Arrange: PATH keeps the real ps beside the owned executable, so cleanup can
+  // observe this root's (empty) owned helper set. This case is about the close
+  // outcome; refusal when no inventory can be taken at all is proven separately
+  // by 'normal close without descendant inventory cannot report successful
+  // cleanup'.
   const fixture = installOwnedBrowser([
     'readCommands((message) => {',
     '  if (message.method === "Browser.getVersion") {',
@@ -478,7 +633,7 @@ test('a normal Browser.close exit is successful rather than a child_exit diagnos
     '    process.exit(0);',
     '  }',
     '});',
-  ].join('\n'));
+  ].join('\n'), { includeOriginalPath: true });
   let browser;
   try {
     assert.equal(findBrowser(), fixture.executable);
@@ -496,6 +651,202 @@ test('a normal Browser.close exit is successful rather than a child_exit diagnos
   } finally {
     if (browser) await browser.close().catch(() => {});
     await removeOwnedBrowser(fixture);
+  }
+});
+
+test('preflight reaps the helper recorded before Browser.close when the owned root exits first', {
+  skip: POSIX_ONLY,
+  timeout: 15_000,
+  concurrency: false,
+}, async (context) => {
+  // Arrange: the owned root exits inside Browser.close without replying, which
+  // is what a real browser shutdown does, so no descendant scan taken after
+  // that point can still see its helpers. The helper keeps writing into the
+  // profile and recreates the directory whenever it disappears, which is the
+  // behaviour observed when a surviving Review helper reinstated an already
+  // removed profile about 52ms after cleanup reported success.
+  const helperFlushMs = 250;
+  const helperProgram = [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    'const [receipt, control, profile, flushText] = process.argv.slice(1);',
+    'const rootPid = process.ppid;',
+    'const flushMs = Number(flushText);',
+    'const flushFile = path.join(profile, "owned-helper-flush.json");',
+    'function append(type, detail = {}) {',
+    '  fs.appendFileSync(control, JSON.stringify({ type, pid: process.pid, at: Date.now(), ...detail }) + "\\n");',
+    '}',
+    'function rootAlive() {',
+    '  try { process.kill(rootPid, 0); return true; } catch (error) { return error.code !== "ESRCH"; }',
+    '}',
+    'let writes = 0;',
+    'let recreated = 0;',
+    'let rootGoneAt = null;',
+    'fs.writeFileSync(receipt, JSON.stringify({',
+    '  pid: process.pid, parentPid: rootPid, readyAt: Date.now(),',
+    '}));',
+    'append("helper_ready", { parentPid: rootPid, profileExists: fs.existsSync(profile) });',
+    'const timer = setInterval(() => {',
+    '  if (!fs.existsSync(profile)) {',
+    '    fs.mkdirSync(profile, { recursive: true });',
+    '    recreated += 1;',
+    '    append("helper_recreated_profile", { recreated, at: Date.now() });',
+    '  }',
+    '  writes += 1;',
+    '  fs.writeFileSync(flushFile, JSON.stringify({ writes, at: Date.now() }));',
+    '  if (rootAlive()) return;',
+    '  if (rootGoneAt === null) rootGoneAt = Date.now();',
+    '  if (Date.now() - rootGoneAt < flushMs) return;',
+    '  clearInterval(timer);',
+    '  append("helper_exit", {',
+    '    writes, recreated, afterRootMs: Date.now() - rootGoneAt, profileExists: fs.existsSync(profile),',
+    '  });',
+    '  process.exit(0);',
+    '}, 5);',
+  ].join('\n');
+  const fixture = installOwnedBrowser([
+    "const { spawn } = require('node:child_process');",
+    `const helperProgram = ${JSON.stringify(helperProgram)};`,
+    "const helperNull = fs.openSync('/dev/null', 'r+');",
+    'const helper = spawn(process.execPath, [',
+    `  '-e', helperProgram, helperReceipt, control, profile, '${helperFlushMs}',`,
+    "], { stdio: ['ignore', 'ignore', 'ignore', helperNull, helperNull] });",
+    'fs.closeSync(helperNull);',
+    'function appendControl(type, detail = {}) {',
+    '  fs.appendFileSync(control, JSON.stringify({ type, pid: process.pid, at: Date.now(), ...detail }) + "\\n");',
+    '}',
+    'record.helperPid = helper.pid;',
+    'save();',
+    'function withReadyHelper(action) {',
+    '  if (fs.existsSync(helperReceipt)) { action(); return; }',
+    '  setTimeout(() => withReadyHelper(action), 5);',
+    '}',
+    "process.on('SIGTERM', () => { appendControl('root_sigterm'); process.exit(0); });",
+    'readCommands((message) => {',
+    '  if (message.method === "Browser.getVersion") {',
+    '    withReadyHelper(() => reply({ id: message.id, result: { product: "Edg/133.0.0.0" } }));',
+    '  } else if (message.method === "Browser.close") {',
+    '    record.normalClose = true;',
+    '    save();',
+    '    let helperAlive = true;',
+    '    try { process.kill(helper.pid, 0); } catch { helperAlive = false; }',
+    '    appendControl("root_exit", {',
+    '      helperPid: helper.pid, helperAlive, profileExists: fs.existsSync(profile),',
+    '    });',
+    '    process.exit(0);',
+    '  }',
+    '});',
+    'setInterval(() => {}, 1_000);',
+  ].join('\n'), { includeOriginalPath: true });
+  const originalKill = process.kill;
+  const originalRmSync = fs.rmSync;
+  let killObserverInstalled = false;
+  let removeObserverInstalled = false;
+  /** @type {Array<{pid:number, signal:unknown}>} */
+  const signalled = [];
+  /** @type {string[]} */
+  const removals = [];
+  let result;
+  let failure;
+  let child;
+  try {
+    assert.equal(findBrowser(), fixture.executable);
+    // These observers keep the real signal and filesystem behaviour and record
+    // only which identities cleanup touched, so an unowned pid or path cannot
+    // be signalled or deleted unnoticed.
+    process.kill = /** @type {typeof process.kill} */ ((pid, signalName) => {
+      signalled.push({ pid, signal: signalName });
+      return originalKill(pid, signalName);
+    });
+    killObserverInstalled = true;
+    fs.rmSync = /** @type {typeof fs.rmSync} */ ((target, options) => {
+      if (typeof target === 'string') removals.push(target);
+      return originalRmSync(target, options);
+    });
+    removeObserverInstalled = true;
+
+    // Act
+    try {
+      result = await preflightCapture(new AbortController().signal);
+    } catch (error) {
+      failure = error;
+    }
+    process.kill = originalKill;
+    killObserverInstalled = false;
+    fs.rmSync = originalRmSync;
+    removeObserverInstalled = false;
+    child = childReceipt(fixture);
+    const helper = ownedHelperReceipt(fixture);
+    const helperAliveAtReturn = processIsAlive(helper.pid);
+    // A helper reinstates the directory within one 5ms tick, so this bounded
+    // observation window would expose a removal that beat the owned helper.
+    const settleDeadline = Date.now() + 300;
+    let profileReappeared = false;
+    while (Date.now() < settleDeadline) {
+      if (fs.existsSync(child.profile)) profileReappeared = true;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+
+    // Assert
+    const events = controlEvents(fixture);
+    const rootExit = events.find(event => event.type === 'root_exit');
+    const helperExit = events.find(event => event.type === 'helper_exit');
+    const recreations = events.filter(event => event.type === 'helper_recreated_profile');
+    assert.ok(rootExit, `the root did not report its own exit: ${JSON.stringify(events)}`);
+    assert.ok(helperExit, `the helper did not report exit: ${JSON.stringify(events)}`);
+    assert.equal(events.filter(event => event.type === 'root_sigterm').length, 0,
+      `the root must exit on Browser.close before any escalation: ${JSON.stringify(events)}`);
+    assert.equal(rootExit.helperAlive, true,
+      `the helper did not outlive its root: ${JSON.stringify(events)}`);
+    assert.ok(helperExit.afterRootMs >= helperFlushMs - 20,
+      `the helper did not keep running after its root: ${JSON.stringify(events)}`);
+    assert.ok(helperExit.writes >= 1,
+      `the helper never wrote into the owned profile: ${JSON.stringify(events)}`);
+    assert.deepEqual(signalled.filter(({ pid }) => pid !== child.pid && pid !== helper.pid), [],
+      `cleanup touched a process it does not own: ${JSON.stringify(signalled)}`);
+    assert.deepEqual(signalled.filter(({ signal: sent }) => sent !== 0), [],
+      `a helper that exits inside the graceful window must not be signalled: ${JSON.stringify(signalled)}`);
+    assert.deepEqual(removals, [child.profile],
+      `cleanup removed a path it does not own: ${JSON.stringify(removals)}`);
+    assert.deepEqual({
+      failure: failure instanceof ReviewError
+        ? { code: failure.code, detail: failure.detail }
+        : failure ? { name: failure.name, message: failure.message } : null,
+      result,
+      recordedHelperPid: child.helperPid,
+      helperParentPid: helper.parentPid,
+      normalClose: child.normalClose,
+      rootSawProfileAtExit: rootExit.profileExists,
+      helperSawProfileAtExit: helperExit.profileExists,
+      recreations: recreations.length,
+      helperAliveAtReturn,
+      rootAlive: processIsAlive(child.pid),
+      helperAlive: processIsAlive(helper.pid),
+      profileExistsAfterClose: fs.existsSync(child.profile),
+      profileReappeared,
+    }, {
+      failure: null,
+      result: { available: true, browser: 'Edg/133.0.0.0', mode: 'fresh-viewport' },
+      recordedHelperPid: helper.pid,
+      helperParentPid: child.pid,
+      normalClose: true,
+      rootSawProfileAtExit: true,
+      helperSawProfileAtExit: true,
+      recreations: 0,
+      helperAliveAtReturn: false,
+      rootAlive: false,
+      helperAlive: false,
+      profileExistsAfterClose: false,
+      profileReappeared: false,
+    }, `observed owned-process order: ${JSON.stringify(events)}`);
+    context.diagnostic(JSON.stringify({ events, signalled, removals }));
+  } finally {
+    if (removeObserverInstalled) fs.rmSync = originalRmSync;
+    if (killObserverInstalled) process.kill = originalKill;
+    await removeOwnedBrowser(fixture);
+    // Every assertion above already ran, so this only keeps a failed run from
+    // leaving the one profile this test owns behind.
+    if (child?.profile) fs.rmSync(child.profile, { recursive: true, force: true });
   }
 });
 
@@ -1022,5 +1373,341 @@ test('a browser executable that cannot be executed removes the profile its launc
     else process.env.PATH = originalPath;
     for (const profile of profiles) fs.rmSync(profile, { recursive: true, force: true });
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a changed start identity is treated as an unowned reused PID and is never signalled', {
+  skip: POSIX_ONLY,
+  timeout: 10_000,
+  concurrency: false,
+}, async () => {
+  // Arrange
+  const fixture = installBrowserWithPersistentHelper();
+  const psLog = installOwnedPs(fixture, 'mismatch');
+  const controlProfile = path.join(fixture.root, 'unowned-profile');
+  const controlMarker = path.join(controlProfile, 'marker.txt');
+  fs.mkdirSync(controlProfile);
+  fs.writeFileSync(controlMarker, 'leave this control intact');
+  let browser;
+  let interceptor;
+  let failure;
+  try {
+    assert.equal(findBrowser(), fixture.executable);
+    browser = await launchBrowser(new AbortController().signal);
+    const child = childReceipt(fixture);
+    const helper = ownedHelperReceipt(fixture);
+    interceptor = interceptDestructiveSignals(helper.pid);
+
+    // Act
+    try {
+      await browser.close();
+    } catch (error) {
+      failure = error;
+    }
+    interceptor.restore();
+
+    // Assert
+    const psEvents = lineEvents(psLog);
+    assert.deepEqual({
+      failure: failure instanceof ReviewError
+        ? { code: failure.code, stage: failure.detail?.stage, cleanupUncertain: failure.detail?.cleanupUncertain }
+        : failure ? { name: failure.name, message: failure.message } : null,
+      destructiveSignals: interceptor.attempts.map(({ signal }) => signal),
+      initialStrongIdentity: psEvents.some(event => event.state === 'initial' && event.format.includes('lstart')),
+      changedStrongIdentity: psEvents.some(event => event.state === 'after-close' && event.format.includes('lstart')),
+      rootAlive: processIsAlive(child.pid),
+      replacementPidAlive: processIsAlive(helper.pid),
+      ownedProfileExists: fs.existsSync(child.profile),
+      controlProfile: fs.readFileSync(controlMarker, 'utf8'),
+    }, {
+      failure: null,
+      destructiveSignals: [],
+      initialStrongIdentity: true,
+      changedStrongIdentity: true,
+      rootAlive: false,
+      replacementPidAlive: true,
+      ownedProfileExists: false,
+      controlProfile: 'leave this control intact',
+    });
+  } finally {
+    interceptor?.restore();
+    if (browser) await browser.close().catch(() => {});
+    await removeOwnedBrowser(fixture);
+  }
+});
+
+test('a recorded start identity becoming pid-only is uncertainty, not confirmed exit', {
+  skip: POSIX_ONLY,
+  timeout: 10_000,
+  concurrency: false,
+}, async () => {
+  // Arrange
+  const fixture = installBrowserWithPersistentHelper();
+  const psLog = installOwnedPs(fixture, 'downgrade');
+  const controlProfile = path.join(fixture.root, 'unowned-profile');
+  const controlMarker = path.join(controlProfile, 'marker.txt');
+  fs.mkdirSync(controlProfile);
+  fs.writeFileSync(controlMarker, 'leave this control intact');
+  let browser;
+  let interceptor;
+  let failure;
+  try {
+    assert.equal(findBrowser(), fixture.executable);
+    browser = await launchBrowser(new AbortController().signal);
+    const child = childReceipt(fixture);
+    const helper = ownedHelperReceipt(fixture);
+    interceptor = interceptDestructiveSignals(helper.pid);
+
+    // Act
+    try {
+      await browser.close();
+    } catch (error) {
+      failure = error;
+    }
+    interceptor.restore();
+
+    // Assert
+    const psEvents = lineEvents(psLog);
+    assert.deepEqual({
+      outcome: failure instanceof ReviewError
+        ? { code: failure.code, stage: failure.detail?.stage, cleanupUncertain: failure.detail?.cleanupUncertain }
+        : failure ? { name: failure.name, message: failure.message } : { resolved: true },
+      destructiveSignals: interceptor.attempts.map(({ signal }) => signal),
+      initialStrongIdentity: psEvents.some(event => event.state === 'initial' && event.format.includes('lstart')),
+      laterStartUnavailable: psEvents.some(event => event.state === 'after-close' && event.format.includes('lstart')),
+      laterPidOnlyFallback: psEvents.some(event => event.state === 'after-close' && !event.format.includes('lstart')),
+      rootAlive: processIsAlive(child.pid),
+      unconfirmedPidAlive: processIsAlive(helper.pid),
+      ownedProfileRemoved: !fs.existsSync(child.profile),
+      controlProfile: fs.readFileSync(controlMarker, 'utf8'),
+    }, {
+      outcome: {
+        code: 'review_capture_failed',
+        stage: 'cleanup',
+        cleanupUncertain: true,
+      },
+      destructiveSignals: [],
+      initialStrongIdentity: true,
+      laterStartUnavailable: true,
+      laterPidOnlyFallback: true,
+      rootAlive: false,
+      unconfirmedPidAlive: true,
+      ownedProfileRemoved: true,
+      controlProfile: 'leave this control intact',
+    }, `pid-only downgrade observations: ${JSON.stringify(psEvents)}`);
+  } finally {
+    interceptor?.restore();
+    if (browser) await browser.close().catch(() => {});
+    await removeOwnedBrowser(fixture);
+  }
+});
+
+test('pid-only inventory never authorizes escalation against a later process identity', {
+  skip: POSIX_ONLY,
+  timeout: 10_000,
+  concurrency: false,
+}, async () => {
+  // Arrange
+  const fixture = installBrowserWithPersistentHelper();
+  const psLog = installOwnedPs(fixture, 'initial-pid-only');
+  const controlProfile = path.join(fixture.root, 'unowned-profile');
+  const controlMarker = path.join(controlProfile, 'marker.txt');
+  fs.mkdirSync(controlProfile);
+  fs.writeFileSync(controlMarker, 'leave this control intact');
+  let browser;
+  let interceptor;
+  let failure;
+  try {
+    assert.equal(findBrowser(), fixture.executable);
+    browser = await launchBrowser(new AbortController().signal);
+    const child = childReceipt(fixture);
+    const helper = ownedHelperReceipt(fixture);
+    interceptor = interceptDestructiveSignals(helper.pid);
+
+    // Act
+    try {
+      await browser.close();
+    } catch (error) {
+      failure = error;
+    }
+    interceptor.restore();
+
+    // Assert
+    const psEvents = lineEvents(psLog);
+    assert.deepEqual({
+      outcome: failure instanceof ReviewError
+        ? { code: failure.code, stage: failure.detail?.stage, cleanupUncertain: failure.detail?.cleanupUncertain }
+        : failure ? { name: failure.name, message: failure.message } : { resolved: true },
+      destructiveSignals: interceptor.attempts.map(({ signal }) => signal),
+      lstartUnavailableAtInventory: psEvents.some(event => event.state === 'initial' && event.format.includes('lstart')),
+      pidOnlyInventoryUsed: psEvents.some(event => event.state === 'initial' && !event.format.includes('lstart')),
+      rootAlive: processIsAlive(child.pid),
+      replacementPidAlive: processIsAlive(helper.pid),
+      ownedProfileRemoved: !fs.existsSync(child.profile),
+      controlProfile: fs.readFileSync(controlMarker, 'utf8'),
+    }, {
+      outcome: {
+        code: 'review_capture_failed',
+        stage: 'cleanup',
+        cleanupUncertain: true,
+      },
+      destructiveSignals: [],
+      lstartUnavailableAtInventory: true,
+      pidOnlyInventoryUsed: true,
+      rootAlive: false,
+      replacementPidAlive: true,
+      ownedProfileRemoved: true,
+      controlProfile: 'leave this control intact',
+    }, `pid-only inventory observations: ${JSON.stringify(psEvents)}`);
+  } finally {
+    interceptor?.restore();
+    if (browser) await browser.close().catch(() => {});
+    await removeOwnedBrowser(fixture);
+  }
+});
+
+test('loss of process inventory before escalation cannot authorize helper signals', {
+  skip: POSIX_ONLY,
+  timeout: 10_000,
+  concurrency: false,
+}, async () => {
+  // Arrange
+  const fixture = installBrowserWithPersistentHelper();
+  const psLog = installOwnedPs(fixture, 'fail-after');
+  const controlProfile = path.join(fixture.root, 'unowned-profile');
+  const controlMarker = path.join(controlProfile, 'marker.txt');
+  fs.mkdirSync(controlProfile);
+  fs.writeFileSync(controlMarker, 'leave this control intact');
+  let browser;
+  let interceptor;
+  let failure;
+  try {
+    assert.equal(findBrowser(), fixture.executable);
+    browser = await launchBrowser(new AbortController().signal);
+    const child = childReceipt(fixture);
+    const helper = ownedHelperReceipt(fixture);
+    interceptor = interceptDestructiveSignals(helper.pid);
+
+    // Act
+    try {
+      await browser.close();
+    } catch (error) {
+      failure = error;
+    }
+    interceptor.restore();
+
+    // Assert
+    const psEvents = lineEvents(psLog);
+    assert.deepEqual({
+      outcome: failure instanceof ReviewError
+        ? { code: failure.code, stage: failure.detail?.stage, cleanupUncertain: failure.detail?.cleanupUncertain }
+        : failure ? { name: failure.name, message: failure.message } : { resolved: true },
+      destructiveSignals: interceptor.attempts.map(({ signal }) => signal),
+      initialStrongIdentity: psEvents.some(event => event.state === 'initial' && event.format.includes('lstart')),
+      laterInventoryAttempts: psEvents.filter(event => event.state === 'after-close').length > 0,
+      rootAlive: processIsAlive(child.pid),
+      unconfirmedPidAlive: processIsAlive(helper.pid),
+      ownedProfileRemoved: !fs.existsSync(child.profile),
+      controlProfile: fs.readFileSync(controlMarker, 'utf8'),
+    }, {
+      outcome: {
+        code: 'review_capture_failed',
+        stage: 'cleanup',
+        cleanupUncertain: true,
+      },
+      destructiveSignals: [],
+      initialStrongIdentity: true,
+      laterInventoryAttempts: true,
+      rootAlive: false,
+      unconfirmedPidAlive: true,
+      ownedProfileRemoved: true,
+      controlProfile: 'leave this control intact',
+    }, `inventory-loss observations: ${JSON.stringify({
+      count: psEvents.length,
+      first: psEvents.at(0),
+      last: psEvents.at(-1),
+    })}`);
+  } finally {
+    interceptor?.restore();
+    if (browser) await browser.close().catch(() => {});
+    await removeOwnedBrowser(fixture);
+  }
+});
+
+test('normal close without descendant inventory cannot report successful cleanup', {
+  skip: POSIX_ONLY,
+  timeout: 10_000,
+  concurrency: false,
+}, async (context) => {
+  // Arrange: PATH has the owned browser but no ps. Its real helper survives the
+  // root and keeps writing the owned profile, so the missing inventory is a
+  // concrete cleanup uncertainty rather than an empty-tree observation.
+  const fixture = installBrowserWithPersistentHelper({ writeProfile: true });
+  const controlProfile = path.join(fixture.root, 'unowned-profile');
+  const controlMarker = path.join(controlProfile, 'marker.txt');
+  fs.mkdirSync(controlProfile);
+  fs.writeFileSync(controlMarker, 'leave this control intact');
+  let browser;
+  let interceptor;
+  let failure;
+  let child;
+  try {
+    assert.equal(findBrowser(), fixture.executable);
+    assert.equal(fs.existsSync(path.join(path.dirname(fixture.executable), 'ps')), false);
+    browser = await launchBrowser(new AbortController().signal);
+    child = childReceipt(fixture);
+    const helper = ownedHelperReceipt(fixture);
+    interceptor = interceptDestructiveSignals(helper.pid);
+
+    // Act
+    try {
+      await browser.close();
+    } catch (error) {
+      failure = error;
+    }
+    interceptor.restore();
+    const observationDeadline = Date.now() + 300;
+    while (!controlEvents(fixture).some(event => event.type === 'helper_recreated_profile')
+      && Date.now() < observationDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+
+    // Assert
+    const childAfterClose = childReceipt(fixture);
+    const events = controlEvents(fixture);
+    const rootExit = events.find(event => event.type === 'root_exit');
+    assert.ok(rootExit, `the root did not establish normal-close ordering: ${JSON.stringify(events)}`);
+    assert.deepEqual({
+      outcome: failure instanceof ReviewError
+        ? { code: failure.code, stage: failure.detail?.stage, cleanupUncertain: failure.detail?.cleanupUncertain }
+        : failure ? { name: failure.name, message: failure.message } : { resolved: true },
+      destructiveSignals: interceptor.attempts.map(({ signal }) => signal),
+      normalClose: childAfterClose.normalClose,
+      rootAlive: processIsAlive(child.pid),
+      helperAlive: processIsAlive(helper.pid),
+      rootSawProfile: rootExit.profileExists,
+      controlProfile: fs.readFileSync(controlMarker, 'utf8'),
+    }, {
+      outcome: {
+        code: 'review_capture_failed',
+        stage: 'cleanup',
+        cleanupUncertain: true,
+      },
+      destructiveSignals: [],
+      normalClose: true,
+      rootAlive: false,
+      helperAlive: true,
+      rootSawProfile: true,
+      controlProfile: 'leave this control intact',
+    }, `missing-inventory observations: ${JSON.stringify(events)}`);
+    context.diagnostic(JSON.stringify({
+      events,
+      ownedProfileExistsAfterReturn: fs.existsSync(child.profile),
+    }));
+  } finally {
+    interceptor?.restore();
+    if (browser) await browser.close().catch(() => {});
+    await removeOwnedBrowser(fixture);
+    if (child?.profile) fs.rmSync(child.profile, { recursive: true, force: true });
   }
 });

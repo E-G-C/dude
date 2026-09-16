@@ -1,0 +1,450 @@
+{
+  "generatedAt": "2026-09-15T23:17:39.111Z",
+  "repositoryHead": "9c26aebdc2e57b75dba675a7892368bdd9875147",
+  "canonicalEntrypoint": "design/review-direct-manipulation.html",
+  "sourceDerivedCopies": [
+    {
+      "designPath": "design/prototype/review/engine.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/engine.mjs",
+      "designRevision": "sha256:ea85f7f964e3b7817e1547faca9e8611d1f63dff03f108bb4048d18227b9256d",
+      "sourceRevision": "sha256:556f07ac8ee5d4a067ffcb03b8dad1eb1ad3550a81b994046ea5ffe2ab764972",
+      "identical": false,
+      "diff": {
+        "added": 94,
+        "removed": 23
+      }
+    },
+    {
+      "designPath": "design/prototype/review/geometry.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/geometry.mjs",
+      "designRevision": "sha256:235d2c05039581c40429f41cdf9a0c8e2a63e946fc3da37b8c273691dbf943a9",
+      "sourceRevision": "sha256:8db05db60811ef8f6a4c1f7bbe78bbc30465ff6d4e8441ef74171d967d8edb77",
+      "identical": false,
+      "diff": {
+        "added": 49,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/shapes.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/shapes.mjs",
+      "designRevision": "sha256:0df6a9f23c62b80c2571e9bfdad7bd4d7d65935270c779ae4997394eb3f4f1af",
+      "sourceRevision": "sha256:0df6a9f23c62b80c2571e9bfdad7bd4d7d65935270c779ae4997394eb3f4f1af",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/inspector.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/inspector.mjs",
+      "designRevision": "sha256:4e3a09cbdc9bfad89accc7161f73c294b64a7347b5571b9291edd0db0ee623b0",
+      "sourceRevision": "sha256:4e3a09cbdc9bfad89accc7161f73c294b64a7347b5571b9291edd0db0ee623b0",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/panel.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/panel.mjs",
+      "designRevision": "sha256:02ccc01579b03836a3530d958c3606a7db73e9ea7637fa307298c1b835947916",
+      "sourceRevision": "sha256:02ccc01579b03836a3530d958c3606a7db73e9ea7637fa307298c1b835947916",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/capture.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/capture.mjs",
+      "designRevision": "sha256:34d78de45f96ba11f2d78cec95cc1ed1957cc8facaaf22ca4673c8822e88768d",
+      "sourceRevision": "sha256:34d78de45f96ba11f2d78cec95cc1ed1957cc8facaaf22ca4673c8822e88768d",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/bridge.mjs",
+      "sourcePath": "src/extensions/dude/ui/review/bridge.mjs",
+      "designRevision": "sha256:fca42f64869e183767e1b8127c2a077239a351b0e4c9efd4297d6ce580268eab",
+      "sourceRevision": "sha256:fca42f64869e183767e1b8127c2a077239a351b0e4c9efd4297d6ce580268eab",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/styles.css",
+      "sourcePath": "src/extensions/dude/ui/review/styles.css",
+      "designRevision": "sha256:1e73e9a1e4558601cc5f164e9f3acf5412938ba130048b2d5b064bb8e9ab668f",
+      "sourceRevision": "sha256:c2f2d1c762d21c1abc9ceb5e88242b1b05cb9a64252ca0a4963e8252b5b18ee0",
+      "identical": false,
+      "diff": {
+        "added": 8,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/review/NOTICE.txt",
+      "sourcePath": "src/extensions/dude/ui/review/NOTICE.txt",
+      "designRevision": "sha256:ee4f325c692f81403ae0981320736904e618499113a785b24c7bf4f750f96ce7",
+      "sourceRevision": "sha256:ee4f325c692f81403ae0981320736904e618499113a785b24c7bf4f750f96ce7",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/frontend/review.jsx",
+      "sourcePath": "src/extensions/dude/frontend/review.jsx",
+      "designRevision": "sha256:bc2b6612afd45c6736242290feeefcc3ee15d994c0af557d8b50974265ba788f",
+      "sourceRevision": "sha256:f9e5cc93aa8f6812679a396be7236c728ef65648e1d6702444da473d515a49b7",
+      "identical": false,
+      "diff": {
+        "added": 2,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/frontend/needs-you.jsx",
+      "sourcePath": "src/extensions/dude/frontend/needs-you.jsx",
+      "designRevision": "sha256:721fc328e752d67507a2da90cb7081633b0497c6a85635ad161d8e5bfd2c907b",
+      "sourceRevision": "sha256:721fc328e752d67507a2da90cb7081633b0497c6a85635ad161d8e5bfd2c907b",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/frontend/styles.js",
+      "sourcePath": "src/extensions/dude/frontend/styles.js",
+      "designRevision": "sha256:022a9e916674841f72c9b596a71353b069cb0e04c8b3ce698de7e9f09ada9880",
+      "sourceRevision": "sha256:022a9e916674841f72c9b596a71353b069cb0e04c8b3ce698de7e9f09ada9880",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/frontend/theme.js",
+      "sourcePath": "src/extensions/dude/frontend/theme.js",
+      "designRevision": "sha256:5ea6de69561e8affbcc35933ef17c797491e6c481caac2f1323fff03db20618f",
+      "sourceRevision": "sha256:5ea6de69561e8affbcc35933ef17c797491e6c481caac2f1323fff03db20618f",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    },
+    {
+      "designPath": "design/prototype/frontend/use-canvas-data.js",
+      "sourcePath": "src/extensions/dude/frontend/use-canvas-data.js",
+      "designRevision": "sha256:32291e8b3f24108fa25f68c78b6d46cc568cae80d5cf55b5957f023b4c6b4b47",
+      "sourceRevision": "sha256:32291e8b3f24108fa25f68c78b6d46cc568cae80d5cf55b5957f023b4c6b4b47",
+      "identical": true,
+      "diff": {
+        "added": 0,
+        "removed": 0
+      }
+    }
+  ],
+  "designOnlyArtifacts": [
+    {
+      "path": "design/review-direct-manipulation.html",
+      "revision": "sha256:a062753c5e4675e2974736737b1be8318549331b6f156b8976d9151123aa27b5",
+      "bytes": 3096
+    },
+    {
+      "path": "design/prototype/host.jsx",
+      "revision": "sha256:0004c0caf286b26574eaf762b3241df28dbf505b8b9d768b05ddd6cff350d244",
+      "bytes": 7192
+    },
+    {
+      "path": "design/prototype/build-design-assets.mjs",
+      "revision": "sha256:47fa097a49ec64457f5726ac3e021ab0d21951b390825213db19525d96b2b74f",
+      "bytes": 5063
+    },
+    {
+      "path": "design/prototype/fixture-driver.mjs",
+      "revision": "sha256:8fe18d5880659af556954fbcaf9da0edc547dd60bf82abf23e564aba24adf5f4",
+      "bytes": 13487
+    },
+    {
+      "path": "design/prototype/serve-preview.mjs",
+      "revision": "sha256:b77385d20ceb9ecff801c8bdf19c18c100093755f6d2d57f2c6349be2f47015b",
+      "bytes": 945
+    },
+    {
+      "path": "design/prototype/record-provenance.mjs",
+      "revision": "sha256:4e2a97862a33bdc61d0819e127c1d886546830502fab752da5e35065d3b477d8",
+      "bytes": 4128
+    },
+    {
+      "path": "design/prototype/proof-harness.mjs",
+      "revision": "sha256:8887cfa69e96ea22ddae3f9106d22e7fedae1510c67113d9309f20f340964a7d",
+      "bytes": 13258
+    },
+    {
+      "path": "design/prototype/proof-direct-manipulation.mjs",
+      "revision": "sha256:a371b95761aa8d5341bfc2c05a6c3cdad65e3a24e14f7e4cd8814d1bcb5e86f8",
+      "bytes": 11669
+    },
+    {
+      "path": "design/prototype/proof-gestures.mjs",
+      "revision": "sha256:2b1c6b3839f41fee71e37a5ecb70a3ed987f51720e11179ab6d3121d76f55392",
+      "bytes": 36696
+    },
+    {
+      "path": "design/prototype/proof-unavailable-cursor.mjs",
+      "revision": "sha256:d6054357dbb6c3ec505910b303d66fe0e64456d53a49183100d5e46c472ce35c",
+      "bytes": 12827
+    },
+    {
+      "path": "design/prototype/verify-t001-adversarial.mjs",
+      "revision": "sha256:5e9049e3b7d135bb68c77c129715133dfb7076eed7f501a95c53d5d2b08c5dd6",
+      "bytes": 43339
+    },
+    {
+      "path": "design/prototype/assets/host.js",
+      "revision": "sha256:fd259e8a4be1318123923a13cd0e37f02dbde2ed1916be5b70d83789685e95a7",
+      "bytes": 736932
+    },
+    {
+      "path": "design/prototype/assets/host.js.LEGAL.txt",
+      "revision": "sha256:a4c2748c7e8caaa345a8fd4baeedf3cd18a2ef01a946df06fe0ce8e340d4dc53",
+      "bytes": 70903
+    },
+    {
+      "path": "design/fixtures/reviewed-content/mock.html",
+      "revision": "sha256:298ce9ec02d7ba1f68b00751f7a8e0c5cecef6427a44a0f7197666d6efb14e81",
+      "bytes": 1088
+    },
+    {
+      "path": "design/fixtures/reviewed-content/mock.css",
+      "revision": "sha256:2728012595da123a03daf10d404778f949fbc07b89b18c329adf19bc2b081d3d",
+      "bytes": 1076
+    },
+    {
+      "path": "design/fixtures/reviewed-content/logo.svg",
+      "revision": "sha256:deec39c96de5a6ee5db07e656ff3d3b66d78649d84866fd83b8e62a42c13d5f7",
+      "bytes": 236
+    },
+    {
+      "path": "design/evidence/capability-declaration.md",
+      "revision": "sha256:e2f6b4bb9b2e272a9e5ac531fff9e2489704bae9f2f62c877292f7b282e8c6ed",
+      "bytes": 7620
+    }
+  ],
+  "retainedEvidence": [
+    {
+      "path": "design/evidence/independent-t001-2026-09-15T21-55-42-017Z.json",
+      "revision": "sha256:003d2250b64671d167802a4f7759e3729ed1b0b9de7147c76bc2b260f3963819",
+      "bytes": 12273
+    },
+    {
+      "path": "design/evidence/independent-t001-2026-09-15T22-19-04-134Z.json",
+      "revision": "sha256:f70ed3fbc29391bcb775096ebb41070c9828c7a54cce580390f5f41551af6598",
+      "bytes": 12273
+    },
+    {
+      "path": "design/evidence/independent-t001-2026-09-15T22-35-58-565Z.json",
+      "revision": "sha256:0f8f5f3f8ec622fb1a52d30249945bc1a14e0f768ab280f1d81162f4e684f0d0",
+      "bytes": 12273
+    },
+    {
+      "path": "design/evidence/independent-t001-2026-09-15T22-41-28-757Z.json",
+      "revision": "sha256:c9325c35907b41f76c9adedf880e6e1a46838e87e2b37c102dde31c7241a37b9",
+      "bytes": 12273
+    },
+    {
+      "path": "design/evidence/proof-2026-09-15T21-46-04-284Z.json",
+      "revision": "sha256:0b65dba4012d77a8431b1632bbb00a98a3a781dba6d9d89042862477ea5e7472",
+      "bytes": 33288
+    },
+    {
+      "path": "design/evidence/proof-2026-09-15T21-50-56-162Z.json",
+      "revision": "sha256:f583d373d8594acc1897bb41b860b2ea3c359b1ca11ba9bdb779e4497c52cfc1",
+      "bytes": 33412
+    },
+    {
+      "path": "design/evidence/proof-2026-09-15T22-18-24-191Z.json",
+      "revision": "sha256:200d42c1543e69f80d0b50d0861940ea8c0def545e9c22aa7be1b1747b83fafa",
+      "bytes": 33288
+    },
+    {
+      "path": "design/evidence/proof-2026-09-15T22-35-14-423Z.json",
+      "revision": "sha256:fae29a5f139d4a1f84dc32478b7ad6f8045255ea97f83933c684aa0e810e1d80",
+      "bytes": 33287
+    },
+    {
+      "path": "design/evidence/proof-2026-09-15T22-40-58-223Z.json",
+      "revision": "sha256:9e415ff40a62bc83ed615b27e77bc80ca7e8d48f5382dccc8dc2be0094b88e2b",
+      "bytes": 33288
+    },
+    {
+      "path": "design/evidence/proof-2026-09-15T23-14-30-472Z.json",
+      "revision": "sha256:f6d0e99be536994d8651a7aed1ec911d268511824c194af1110a07d2e6b44cf7",
+      "bytes": 33288
+    },
+    {
+      "path": "design/evidence/regression-unavailable-cursor-2026-09-15T22-15-51-968Z.json",
+      "revision": "sha256:ecc51c31a080a201fe638a455e5550774dd17f835aff899a02f942b972acda38",
+      "bytes": 2243
+    },
+    {
+      "path": "design/evidence/regression-unavailable-cursor-2026-09-15T22-16-26-750Z.json",
+      "revision": "sha256:4c1afc272617994ff207089a692b59f0820c043aef99fe2ed7f372dfc3d1a9a3",
+      "bytes": 10402
+    },
+    {
+      "path": "design/evidence/regression-unavailable-cursor-2026-09-15T22-17-10-045Z.json",
+      "revision": "sha256:905f573e7809197def1534e61f6b8fe3b4d5f93a0280a0f20d4425bb9f58895d",
+      "bytes": 10666
+    },
+    {
+      "path": "design/evidence/regression-unavailable-cursor-2026-09-15T22-33-55-026Z.json",
+      "revision": "sha256:48614b880766557be7ff43c4049f18880e305573e90495dff595d7a71a350dcf",
+      "bytes": 11631
+    },
+    {
+      "path": "design/evidence/regression-unavailable-cursor-2026-09-15T22-34-38-951Z.json",
+      "revision": "sha256:534bca633615e5807c391c70efd4076565cdbcef665a65b183106d014d4490e5",
+      "bytes": 15931
+    },
+    {
+      "path": "design/evidence/regression-unavailable-cursor-2026-09-15T22-40-50-620Z.json",
+      "revision": "sha256:1d15424ef25bb7e7abc9410fe439d1e747a687e085b5fcb4383b1c9700b53939",
+      "bytes": 15931
+    },
+    {
+      "path": "design/screenshots/direct-manipulation-compact-dark-640x780.png",
+      "revision": "sha256:2880fa092af95eff1a36c3f944f4f4215ca3bfb4ece11bc1abe0b3013f1104a4",
+      "bytes": 84925
+    },
+    {
+      "path": "design/screenshots/direct-manipulation-compact-light-640x780.png",
+      "revision": "sha256:f4d091ebe3d8eda6037806d74e75a291748867f56476b1ccd01e6e4684be1771",
+      "bytes": 84011
+    },
+    {
+      "path": "design/screenshots/direct-manipulation-desktop-dark-1280x900.png",
+      "revision": "sha256:07df405d09d0f2792692290fb1da0a46cb4b4fc7b49766de3294e942df2664cb",
+      "bytes": 96253
+    },
+    {
+      "path": "design/screenshots/direct-manipulation-desktop-light-1280x900.png",
+      "revision": "sha256:b7ba59afa763a7b7b57687f4ca85a95cb8cff62ee01c32c66295edee24fdd639",
+      "bytes": 95835
+    },
+    {
+      "path": "design/screenshots/independent-2026-09-15T21-55-42-017Z-768-css-dpr2-light.png",
+      "revision": "sha256:84b66dd02310652a8409461267c66938d739fecbdcf99d7e3d8cd2ab3283f623",
+      "bytes": 198715
+    },
+    {
+      "path": "design/screenshots/independent-2026-09-15T21-55-42-017Z-sealed-annotated.png",
+      "revision": "sha256:19768264134a3292024f73617f8e122240c06000659c80404a091ec3f5206aad",
+      "bytes": 73598
+    },
+    {
+      "path": "design/screenshots/independent-2026-09-15T22-19-04-134Z-768-css-dpr2-light.png",
+      "revision": "sha256:0244de4c349679bfc793929e126d01a8c4a40225131d802a9ce46ee34cb00020",
+      "bytes": 198700
+    },
+    {
+      "path": "design/screenshots/independent-2026-09-15T22-19-04-134Z-sealed-annotated.png",
+      "revision": "sha256:19768264134a3292024f73617f8e122240c06000659c80404a091ec3f5206aad",
+      "bytes": 73598
+    },
+    {
+      "path": "design/screenshots/independent-2026-09-15T22-35-58-565Z-768-css-dpr2-light.png",
+      "revision": "sha256:ffac6b864b5ab6ffcc96a63aa155fa745a4adda0acf229537e48cd1872caa63b",
+      "bytes": 198632
+    },
+    {
+      "path": "design/screenshots/independent-2026-09-15T22-35-58-565Z-sealed-annotated.png",
+      "revision": "sha256:19768264134a3292024f73617f8e122240c06000659c80404a091ec3f5206aad",
+      "bytes": 73598
+    },
+    {
+      "path": "design/screenshots/independent-2026-09-15T22-41-28-757Z-768-css-dpr2-light.png",
+      "revision": "sha256:05c13a6fac35f30d4be78b7fec290dc98afaa92e1165199243f5a73fdc6c6792",
+      "bytes": 198743
+    },
+    {
+      "path": "design/screenshots/independent-2026-09-15T22-41-28-757Z-sealed-annotated.png",
+      "revision": "sha256:19768264134a3292024f73617f8e122240c06000659c80404a091ec3f5206aad",
+      "bytes": 73598
+    },
+    {
+      "path": "design/screenshots/proof-2026-09-15T21-50-56-162Z-direct-manipulation-compact-dark-640x780.png",
+      "revision": "sha256:655f3443f45137c213e08afb96f9386eb25437629c80bef2e542106e7f1be2fc",
+      "bytes": 84915
+    },
+    {
+      "path": "design/screenshots/proof-2026-09-15T21-50-56-162Z-direct-manipulation-compact-light-640x780.png",
+      "revision": "sha256:3505e01153d0e9fade8b101cdf5fa8a4330ee3b69a029e614c52418dc1e93dcd",
+      "bytes": 84007
+    },
+    {
+      "path": "design/screenshots/proof-2026-09-15T21-50-56-162Z-direct-manipulation-desktop-dark-1280x900.png",
+      "revision": "sha256:7093106db4a104f39a5fd01f7135c034575f37a7a4026b5412020c13af5f18c0",
+      "bytes": 96270
+    },
+    {
+      "path": "design/screenshots/proof-2026-09-15T21-50-56-162Z-direct-manipulation-desktop-light-1280x900.png",
+      "revision": "sha256:b7ba59afa763a7b7b57687f4ca85a95cb8cff62ee01c32c66295edee24fdd639",
+      "bytes": 95835
+    },
+    {
+      "path": "design/screenshots/proof-2026-09-15T22-18-24-191Z-direct-manipulation-compact-dark-640x780.png",
+      "revision": "sha256:948cd881a6e631940f2f7792bd20ac0b10a0773fddfdd0d1cbf2e243043fab41",
+      "bytes": 84917
+    },
+    {
+      "path": "design/screenshots/proof-2026-09-15T22-18-24-191Z-direct-manipulation-compact-light-640x780.png",
+      "revision": "sha256:4d3a61cc55d98ae8743b01c6fe54e62ddf1e7a93225899106e536d0a4966d1b8",
+      "bytes": 84010
+    },
+    {
+      "path": "design/screenshots/proof-2026-09-15T22-18-24-191Z-direct-manipulation-desktop-dark-1280x900.png",
+      "revision": "sha256:4eaba56a27017e26a1fd33397e7fcfe86f3a9ff7f3c38cec540c6878c10f7c69",
+      "bytes": 96253
+    },
+    {
+      "path": "design/screenshots/proof-2026-09-15T22-18-24-191Z-direct-manipulation-desktop-light-1280x900.png",
+      "revision": "sha256:7151ab81f17b859be8a584c83c6a52728bd348c06bfbecbeed2797b9a2941b43",
+      "bytes": 95839
+    },
+    {
+      "path": "design/screenshots/proof-2026-09-15T22-35-14-423Z-direct-manipulation-compact-dark-640x780.png",
+      "revision": "sha256:69a847301f7a10e955677edd4dbebd5ceb56445b566f34fc1c18984c8a4b19f3",
+      "bytes": 84948
+    },
+    {
+      "path": "design/screenshots/proof-2026-09-15T22-35-14-423Z-direct-manipulation-compact-light-640x780.png",
+      "revision": "sha256:2da5778ece358736f58e4a290413d9c74c00b564cbfa914b9c50546c65c08caf",
+      "bytes": 84002
+    },
+    {
+      "path": "design/screenshots/proof-2026-09-15T22-35-14-423Z-direct-manipulation-desktop-dark-1280x900.png",
+      "revision": "sha256:9116950fcd4faf8d182104d9cd8a313015627a1e6b4682264fba747be60451b4",
+      "bytes": 96262
+    },
+    {
+      "path": "design/screenshots/proof-2026-09-15T22-35-14-423Z-direct-manipulation-desktop-light-1280x900.png",
+      "revision": "sha256:57fd385072edd980524a285b6c6aa18c47c0d85425eb49c29cbc5705f8f8f591",
+      "bytes": 95808
+    }
+  ]
+}

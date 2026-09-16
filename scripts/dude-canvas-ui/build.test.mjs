@@ -799,10 +799,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.ok(application.length > 100_000, 'the application bundle must contain the browser runtime');
   const gzip = gzipSync(applicationBytes, { level: 9 });
   const repeatedGzip = gzipSync(applicationBytes, { level: 9 });
-  assert.equal(applicationBytes.length, 879_549, 'committed app.js raw byte size');
+  assert.equal(applicationBytes.length, 879_766, 'committed app.js raw byte size');
   assert.equal(
     sha256(applicationBytes),
-    '8c6e3fe19edef61cff5489a0e0e26d4167e933a9124c22b43a6b9d9e410b74a5',
+    '12f499b0703b89b2f79880ba80b750ffd43fc141253846a24310797422df89b3',
     'committed app.js raw SHA-256',
   );
   assertPortableGzip(gzip, repeatedGzip, applicationBytes, 'Node zlib level-9 app.js');

@@ -1,0 +1,88 @@
+{
+  "revision": "sha256:43f0f5d14fad72f5e522423536e3f845128e2cadb209796728fc19274981ea46",
+  "checks": [
+    {
+      "name": "960: redundant Switch work control absent",
+      "passed": true
+    },
+    {
+      "name": "960: Clear removes context and focuses search",
+      "passed": true
+    },
+    {
+      "name": "960: Clear retains query and scope",
+      "passed": true
+    },
+    {
+      "name": "960: no stale selected header",
+      "passed": true
+    },
+    {
+      "name": "960: next selection becomes primary context",
+      "passed": true
+    },
+    {
+      "name": "960: keyboard Clear works and retains search",
+      "passed": true
+    },
+    {
+      "name": "960: no horizontal page overflow",
+      "passed": true
+    },
+    {
+      "name": "960: unsent New idea draft survives Clear",
+      "passed": true
+    },
+    {
+      "name": "360: redundant Switch work control absent",
+      "passed": true
+    },
+    {
+      "name": "360: Clear removes context and focuses search",
+      "passed": true
+    },
+    {
+      "name": "360: Clear retains query and scope",
+      "passed": true
+    },
+    {
+      "name": "360: no stale selected header",
+      "passed": true
+    },
+    {
+      "name": "360: next selection becomes primary context",
+      "passed": true
+    },
+    {
+      "name": "360: keyboard Clear works and retains search",
+      "passed": true
+    },
+    {
+      "name": "360: no horizontal page overflow",
+      "passed": true
+    },
+    {
+      "name": "360: unsent New idea draft survives Clear",
+      "passed": true
+    },
+    {
+      "name": "Canonical mock bytes unchanged during verification",
+      "passed": true
+    }
+  ],
+  "screenshots": [
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/coordinator-clear-062-r2-working-on-054-960-light.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/coordinator-clear-062-r2-after-clear-960-light.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/coordinator-clear-062-r2-working-on-054-360-dark.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/coordinator-clear-062-r2-after-clear-360-dark.png"
+  ],
+  "boundary": "Independent isolated-browser check of the offline mock; no native-host or product acceptance.",
+  "probeCorrection": "The first probe omitted Enter text. A controlled trace showed trusted keydown/keyup without keypress/click. Including carriage-return text delivered native keypress/click and activated Clear; no product change was needed.",
+  "browser": "Edg/133.0.3065.69",
+  "summary": {
+    "total": 17,
+    "passed": 17,
+    "failed": 0,
+    "error": null
+  }
+}

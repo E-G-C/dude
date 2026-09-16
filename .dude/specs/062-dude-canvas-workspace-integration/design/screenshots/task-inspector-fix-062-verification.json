@@ -1,0 +1,243 @@
+{
+  "subject": "Bounded revision of two Tester findings — Feature 062 task-inspection mock (reviser pass, not a verdict)",
+  "scope": "Only the two accepted Tester findings on the read-only task-inspection preview. No implementation, no backend, no product-readiness claim, no approval, no task closure, no new test suite, no full 99/240 repeat.",
+  "mock": {
+    "path": ".dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+    "bytes": 530390,
+    "sha256": "e4b7e16b9a97baddfe5a0c22ebfdf4abaf299986b74883db8f8c952e4b11d038"
+  },
+  "preimage": {
+    "path": "design/variants/rev-8/workspace-integration.html",
+    "sha256": "b6f409d27f404569ebab27cb47a3f4713eebbc6a4d9c4988d53f14453cd2cc56",
+    "note": "Unchanged; all eight variant revisions preserved byte-for-byte."
+  },
+  "browser": "Edg/133.0.3065.69",
+  "origin": "http://127.0.0.1:61609 (existing static preview server, design/ root, left running)",
+  "runAt": "2026-09-14T23:33:32.038Z",
+  "findings": [
+    {
+      "id": "BLOCKED-NEXT-CONTRADICTS-READINESS",
+      "disposition": "accepted",
+      "reproduced": true,
+      "rootCause": "The controlled blocked override carried nextReason \"No canonical task is ready.\" — an absolute readiness claim. The same render pass labels T001 \"Ready by recorded task dependencies\" from readinessText(), so one viewport asserted a fact and its negation. The mock already separates the two concepts in task detail (\"Dependency readiness is not permission to run it\"); only the Next reason used the wrong word.",
+      "change": "The blocked override now states what the example withholds — an execution action — and the shared \"No next step\" branch derives a dependency-readiness caption from the same taskDataFor() read the rows use, so the two cannot drift. No execution-readiness engine, no glyph or task-data mutation, no Work-admission or live-agent claim.",
+      "alsoChecked": "The generic fallback literal in the same branch was the identical unsupported claim (currently unreachable: all 62 snapshot records supply their own nextReason). Replaced with \"No next execution step is recorded for this record.\"",
+      "before": {
+        "nextHead": "No next step",
+        "nextDetail": "No canonical task is ready.",
+        "nextCaptions": []
+      },
+      "after": {
+        "nextHead": "No next stepExample execution state",
+        "nextDetail": "This example blocked state supplies no next execution action.",
+        "nextCaptions": [
+          "T001@a062c1d4 is ready by recorded task dependencies, from the same read as the rows below. Dependency readiness is not admission to Work, an approval, or evidence that an agent is running it, so it is not offered here as a step to take."
+        ]
+      },
+      "narrow360dark": {
+        "before": {
+          "nextHead": "No next step",
+          "nextDetail": "No canonical task is ready.",
+          "nextCaptions": []
+        },
+        "after": {
+          "nextHead": "No next stepExample execution state",
+          "nextDetail": "This example blocked state supplies no next execution action.",
+          "nextCaptions": [
+            "T001@a062c1d4 is ready by recorded task dependencies, from the same read as the rows below. Dependency readiness is not admission to Work, an approval, or evidence that an agent is running it, so it is not offered here as a step to take."
+          ]
+        }
+      },
+      "unchangedNextPaths": {
+        "progressScenarioNext": true,
+        "generic021": "All canonical tasks are complete.",
+        "generic057": "All canonical tasks are complete.",
+        "unavailable062Next": "The selected source and execution authority could not be confirmed together. Refresh to reread; unrelated records remain available."
+      }
+    },
+    {
+      "id": "TASK-FILTER-EMPTY-HIDES-PHASE-TOTALS",
+      "disposition": "accepted",
+      "reproduced": true,
+      "rootCause": "tasksHtml rendered the phase list only in the else-branch of \"no rows matched\", so an empty status filter removed the whole phase overview while the adjacent copy claimed phase totals were unchanged.",
+      "change": "The phase overview is now rendered unconditionally; the \"no rows matched\" block became an additive lead-in. Status filtering narrows rows under each heading only. Divergent copy collapsed to one honest sentence (\"Phase totals below stay unfiltered\"). No extra filter, option, or framework.",
+      "before": {
+        "rows": 0,
+        "phases": 0,
+        "phaseText": [],
+        "phaseEmptyNotes": [],
+        "showing": "Showing 0 of 5 recorded tasks · Done only. Phase totals are unchanged by this filter.",
+        "emptyLead": [
+          "No tasks match this filter5 recorded tasks remain in this package; only the done filter is empty. Choose All to see them again."
+        ],
+        "detailOpen": false,
+        "detailKey": null,
+        "focus": "task-filter-button|done|Done0",
+        "docOverflowX": 0,
+        "overflowing": []
+      },
+      "after": {
+        "rows": 0,
+        "phases": 5,
+        "phaseText": [
+          "Phase 1: Establish The Integrated Design0 of 1",
+          "Phase 2: Find And Select Work In The Approved Shell0 of 1",
+          "Phase 3: Restore Selected-Feature Now Orientation0 of 1",
+          "Phase 4: Complete The Context-Preserving Interaction Loop0 of 1",
+          "Phase 5: Verify The Installed Walkthrough0 of 1"
+        ],
+        "phaseEmptyNotes": [],
+        "showing": "Showing 0 of 5 recorded tasks · Done only. Phase totals below stay unfiltered.",
+        "emptyLead": [
+          "No tasks match this filter5 recorded tasks remain in this package; only the done filter is empty. The phase headings and totals below are unfiltered. Choose All to see the rows again."
+        ],
+        "detailOpen": false,
+        "detailKey": null,
+        "focus": "task-filter-button|done|Done0",
+        "docOverflowX": 0,
+        "overflowing": []
+      },
+      "totalsProvenUnfiltered": true,
+      "readabilityRefinement": "With every phase empty, five identical per-phase notes stacked (visible at 360). The per-phase note is now emitted only while other phases still show rows; the lead-in states it once and each heading keeps its own unfiltered count. Partial case verified intact: 1 matching row, 4 per-phase notes, 5 headings.",
+      "partialFilterCase": {
+        "rows": 1,
+        "phases": 5,
+        "phaseEmptyNotes": [
+          "No task in this phase matches the current filter. Its 1 recorded task is unchanged.",
+          "No task in this phase matches the current filter. Its 1 recorded task is unchanged.",
+          "No task in this phase matches the current filter. Its 1 recorded task is unchanged.",
+          "No task in this phase matches the current filter. Its 1 recorded task is unchanged."
+        ],
+        "showing": "Showing 1 of 5 recorded tasks · Blocked only. Phase totals below stay unfiltered."
+      }
+    }
+  ],
+  "focusAndDismissSemantics": {
+    "inspectT003then": {
+      "detailOpen": true,
+      "detailKey": "T003@c062e3f6",
+      "focus": "task-row is-todo is-inspected|T003@c062e3f6|Enrich `src/extensions/dude/lib/projection.mjs` wi"
+    },
+    "afterDoneFilter": {
+      "detailOpen": false,
+      "focus": "task-filter-button|done|Done0",
+      "note": "Inspector dismissed by reconcileTaskSelection; focus stays on the filter that closed it."
+    },
+    "restoreAllViaNativeEnter": {
+      "focusReceived": true,
+      "rows": 5,
+      "phases": 5,
+      "focus": "task-filter-button|all|All5",
+      "keyEvent": "keyDown Enter with text '\\r' / unmodifiedText '\\r'"
+    }
+  },
+  "emptyAndNarrowScenarios": {
+    "emptyDone1440": {
+      "rows": 0,
+      "phases": 5,
+      "docOverflowX": 0,
+      "overflowing": []
+    },
+    "emptyInProgress1440": {
+      "rows": 0,
+      "phases": 5,
+      "docOverflowX": 0,
+      "overflowing": []
+    },
+    "pendingCurrent1440": {
+      "rows": 5,
+      "phases": 5,
+      "docOverflowX": 0,
+      "overflowing": []
+    },
+    "emptyDone360": {
+      "rows": 0,
+      "phases": 5,
+      "docOverflowX": 0,
+      "overflowing": []
+    },
+    "emptyDone1440dark": {
+      "rows": 0,
+      "phases": 5,
+      "docOverflowX": 0,
+      "overflowing": []
+    },
+    "blocked360dark": {
+      "rows": 5,
+      "phases": 5,
+      "docOverflowX": 0,
+      "overflowing": []
+    },
+    "overflowNote": "No horizontal document overflow and no element scrollWidth overrun on any probed surface, before or after."
+  },
+  "preservedBehaviour": {
+    "frozenCapture": {
+      "packages": [
+        "002",
+        "021",
+        "052",
+        "057",
+        "062"
+      ],
+      "units": 65,
+      "capturedAt": "2026-09-14 22:46 UTC",
+      "identity062": "a3cb207d0f83",
+      "bytes062": 9170,
+      "fullBodies": true
+    },
+    "rollups": {
+      "002": {
+        "rows": 36,
+        "lifecycle": "36 of 36 canonical tasks complete.",
+        "phase10": [
+          "Phase 10: Final Repair Acceptance1 of 1"
+        ],
+        "filters": [
+          "All36",
+          "Pending0",
+          "In progress0",
+          "Blocked0",
+          "Done36"
+        ]
+      },
+      "021": {
+        "rows": 3,
+        "lifecycle": "3 of 3 canonical tasks complete."
+      },
+      "052": {
+        "rows": 13,
+        "lifecycle": "13 of 13 canonical tasks complete."
+      },
+      "057": {
+        "rows": 8,
+        "lifecycle": "8 of 8 canonical tasks complete."
+      }
+    },
+    "notCaptured001": {
+      "rows": 0,
+      "phaseRows": 9,
+      "note": "The canonical units for .dude/specs/001-brainstorm-ideas-intake/tasks.md were not captured into this offline preview file, so this mock has no rows or unit text to show for them. The recorded phase totals below come from the frozen inventory read. In the product this record reads its own task source like every other one."
+    },
+    "withheld062": {
+      "rows": 0,
+      "phaseRows": 0,
+      "note": "Task coverage is withheld with the rest of this record’s execution facts. No rows, totals or task detail are shown in their place, and no other record’s tasks are substituted."
+    },
+    "snapshotNotRefreshed": "Global SNAPSHOT and TASK_SOURCE untouched; task rollups still come from the captured set only. No new Passed labels, no view/task mutation, no work search, no Settings surface.",
+    "unchangedProbes": [
+      "progress",
+      "generic021",
+      "generic057"
+    ]
+  },
+  "screenshots": [
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/task-inspector-fix-062-all-restored-1440-light.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/task-inspector-fix-062-blocked-next-1440-light.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/task-inspector-fix-062-blocked-next-360-dark.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/task-inspector-fix-062-done-filter-phases-1440-dark.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/task-inspector-fix-062-done-filter-phases-1440-light.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/task-inspector-fix-062-done-filter-phases-360-light.png",
+    ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/task-inspector-fix-062-partial-blocked-filter-1440-light.png"
+  ],
+  "limits": "Reviser evidence only. Not a verdict, not an approval, not a readiness statement. An independent re-review is the coordinator's call."
+}

@@ -1,0 +1,39 @@
+{
+  "task": "T001@59a10f01 code review finding R1",
+  "startedAt": "2026-09-15T22:15:51.968Z",
+  "command": "node .dude/specs/059-annotation-direct-manipulation/design/prototype/proof-unavailable-cursor.mjs",
+  "checks": [
+    {
+      "name": "drawing tool armed over a selected handle",
+      "status": "failed",
+      "error": {
+        "message": "no action cursor outlives the editable state\n+ actual - expected\n\n+ 'nwse-resize'\n- null\n",
+        "stack": "AssertionError [ERR_ASSERTION]: no action cursor outlives the editable state\n+ actual - expected\n\n+ 'nwse-resize'\n- null\n\n    at runCase (file:///Users/eg/work/dude/.dude/specs/059-annotation-direct-manipulation/design/prototype/proof-unavailable-cursor.mjs:92:12)\n    at async main (file:///Users/eg/work/dude/.dude/specs/059-annotation-direct-manipulation/design/prototype/proof-unavailable-cursor.mjs:148:24)\n    at async file:///Users/eg/work/dude/.dude/specs/059-annotation-direct-manipulation/design/prototype/proof-unavailable-cursor.mjs:180:19"
+      }
+    },
+    {
+      "name": "Select over a selected border",
+      "status": "failed",
+      "error": {
+        "message": "no action cursor outlives the editable state\n\n'move' !== null\n",
+        "stack": "AssertionError [ERR_ASSERTION]: no action cursor outlives the editable state\n\n'move' !== null\n\n    at runCase (file:///Users/eg/work/dude/.dude/specs/059-annotation-direct-manipulation/design/prototype/proof-unavailable-cursor.mjs:92:12)\n    at async main (file:///Users/eg/work/dude/.dude/specs/059-annotation-direct-manipulation/design/prototype/proof-unavailable-cursor.mjs:148:24)\n    at async file:///Users/eg/work/dude/.dude/specs/059-annotation-direct-manipulation/design/prototype/proof-unavailable-cursor.mjs:180:19"
+      }
+    }
+  ],
+  "counts": {
+    "planned": 2,
+    "executed": 2,
+    "passed": 0,
+    "failed": 2
+  },
+  "observations": {
+    "browser": "Edg/133.0.3065.69",
+    "engineRevision": {
+      "loaded": null,
+      "designCopy": "539f607f28598095144aac5f3f1dd4da0401ed9e01e8ef01993f80c1aa4b919c",
+      "currentSource": "556f07ac8ee5d4a067ffcb03b8dad1eb1ad3550a81b994046ea5ffe2ab764972"
+    }
+  },
+  "finishedAt": "2026-09-15T22:15:59.269Z",
+  "outcome": "failed"
+}

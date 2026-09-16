@@ -1,0 +1,724 @@
+{
+  "subject": "Independent bounded Feature 062 task-inspection verification — focused completed follow-up",
+  "verdict": "FAIL FOR USER DESIGN PREVIEW",
+  "result": "17/20",
+  "mock": {
+    "path": ".dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+    "bytes": 528621,
+    "sha256": "b6f409d27f404569ebab27cb47a3f4713eebbc6a4d9c4988d53f14453cd2cc56"
+  },
+  "browser": "Edg/133.0.3065.69",
+  "origin": "http://127.0.0.1:61609",
+  "runAt": "2026-09-14T23:19:17.484Z",
+  "scope": "Task-inspection static-preview readiness and direct finder/rail/request/Review regressions only; not implementation, live API/provider, user approval, task closure, or the full product/240 suite.",
+  "findings": [
+    {
+      "id": "TASK-FILTER-EMPTY-HIDES-PHASE-TOTALS",
+      "severity": "blocking",
+      "location": "Tasks > Done filter on repository 062",
+      "repro": "Open repository-facts 062 with T003 inspected; activate Done.",
+      "expected": "Keep five unfiltered phase-total rows visible while showing zero matching task rows.",
+      "step": "filter-return",
+      "check": "empty Done filter keeps the unfiltered phase totals visibly present",
+      "observed": {
+        "rows": 0,
+        "phases": 0,
+        "detail": false,
+        "active": "done",
+        "identity": "Working on 062 Dude Canvas Workspace Integration.",
+        "finderHidden": true,
+        "next": "NO NEXT STEP\n\nNo canonical task execution evidence exists yet.",
+        "text": "TASKS\nAll\n5\nPending\n5\nIn progress\n0\nBlocked\n0\nDone\n0\n\nShowing 0 of 5 recorded tasks · Done only. Phase totals are unchanged by this filter.\n\nNo tasks match this filter\n\n5 recorded tasks remain in this package; only the done filter is empty. Choose All to see them again.\n\nRows, phase headings and totals all come from one read of .dude/specs/062-dude-canvas-workspace-integration/tasks.md (content identity a3cb207d0f83, 9170 bytes), captured 2026-09-14 22:46 UTC with the product’s own canonical parser. The generated board, the terminal execution history and archived units in that file are not tasks and are not counted here. A recorded status is what the file holds, not evidence that an agent is working now."
+      }
+    },
+    {
+      "id": "BLOCKED-NEXT-CONTRADICTS-READINESS",
+      "severity": "blocking",
+      "location": "Prototype data: Example blocked work > 062 Now",
+      "repro": "Open ?view=now&select=062&data=blocked.",
+      "expected": "Explain the approval/execution gate without denying T001 dependency readiness.",
+      "step": "blocked-and-coverage",
+      "check": "blocked Next does not deny visible T001 dependency readiness",
+      "observed": {
+        "t001": "Revise and compare the integrated mock at `.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html` with read-only selected-task drill-down, then obtain explicit approval of its current revision through the existing design workflow.\nT001@a062c1d4\nNot started\nReady by recorded task dependencies\n[Shared]",
+        "t002": "Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.\nT002@b062d2e5\nBlocked\nBlocker reason recorded\n[US1]\nReading",
+        "next": "NO NEXT STEP\n\nNo canonical task is ready.",
+        "lifecycle": "LIFECYCLE AND PROGRESS\nEXAMPLE EXECUTION STATE\nCaptured\nDone\nDefined\nDone\nWork\nBlocked\nVerified\nNot started\n\n0 of 5 canonical tasks complete, 1 blocked. These counts are part of the example execution state, recomputed from the same controlled task states the rows below use. Recorded in this repository at the last complete read: Defined, 0 of 5 canonical tasks complete and 5 open. No canonical task execution evidence exists yet.",
+        "detail": "TASK DETAIL · READ ONLY\nClose\n\nT002@b062d2e5 · 062-dude-canvas-workspace-integration\n\nEXAMPLE TASK STATE This selection shows this task as Blocked. The repository records it as Not started. The recorded unit below is unchanged.\n\nRecorded status\n\nBlocked. Blocked is the recorded task state, separate from waiting on a dependency.\n\nPhase\n\nPhase 2: Find And Select Work In The Approved Shell · [US1]\n\nDependencies\n\nT001@a062c1d4\nNot started\n\nExplicit blocker\n\nThe combined mock has no explicit current-revision approval, so shell work cannot start.\n\nVerification and review results\n\nNot exposed by this source. The readers behind this view return canonical task text, state, dependencies and blockers. They expose no task-bound test or review outcome, so none is shown. Acceptance wording inside the unit, a Done glyph, this feature’s activity and design-review history are not results for this task.\n\nRecorded unit\n\n- [ ] T002@b062d2e5 [US1] Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.\n    deps: T001@a062c1d4\n\n    Retain Open/Closed/All and complete discovery while moving the sole finder to the command-bar workspace. Add capture-number labels and numeric presentation order from validated context paths, including compact rows. Keep exact selection, pending reads, query/scope/scroll return, working rail destinations, status chrome, and partial/empty states distinct. Do not change inventory or request contracts.\n\n    Acceptance: SC-001/006 and the applicable visual criteria pass on the built surface, including one-activation results, full-list keyboard reachability, no implicit selection, and source-identity failure cases. Follow the plan's per-slice build and comparison checks.\n\nThe whole canonical unit from .dude/specs/062-dude-canvas-workspace-integration/tasks.md, including every line after a blank line and any example it quotes. It is shown as text and never run: markup, code fences and task-shaped examples inside it stay inert, and an example line is not another task. Its leading - [ ] is the state marker recorded in the file, not a control here. The box scrolls when the unit is taller than the pane.\n\nRead 2026-09-13 21:30 local · task source captured 2026-09-14 22:46 UTC · content identity a3cb207d0f83. This preview is frozen: it rereads nothing and follows no agent.",
+        "filters": [
+          "All 5",
+          "Pending 4",
+          "In progress 0",
+          "Blocked 1",
+          "Done 0"
+        ]
+      }
+    },
+    {
+      "id": "FOCUSED-VERIFICATION-INFRASTRUCTURE",
+      "severity": "blocking",
+      "location": "review-retention",
+      "repro": "Run focused isolated session review-retention.",
+      "expected": "The short-lived browser session completes.",
+      "observed": {
+        "label": "review-retention",
+        "result": "failed",
+        "durationMs": 6210,
+        "operation": "review-retention:Input.dispatchMouseEvent",
+        "error": {
+          "name": "Error",
+          "message": "Capture timed out. Your markup is retained; nothing was sent.",
+          "stack": "Error: Capture timed out. Your markup is retained; nothing was sent.\n    at Timeout._onTimeout (file:///Users/eg/work/dude/.github/extensions/dude/lib/review/browser.mjs:145:36)\n    at listOnTimeout (node:internal/timers:685:17)\n    at process.processTimers (node:internal/timers:618:7)"
+        }
+      }
+    }
+  ],
+  "failedChecks": [
+    {
+      "step": "filter-return",
+      "name": "empty Done filter keeps the unfiltered phase totals visibly present",
+      "pass": false,
+      "detail": {
+        "rows": 0,
+        "phases": 0,
+        "detail": false,
+        "active": "done",
+        "identity": "Working on 062 Dude Canvas Workspace Integration.",
+        "finderHidden": true,
+        "next": "NO NEXT STEP\n\nNo canonical task execution evidence exists yet.",
+        "text": "TASKS\nAll\n5\nPending\n5\nIn progress\n0\nBlocked\n0\nDone\n0\n\nShowing 0 of 5 recorded tasks · Done only. Phase totals are unchanged by this filter.\n\nNo tasks match this filter\n\n5 recorded tasks remain in this package; only the done filter is empty. Choose All to see them again.\n\nRows, phase headings and totals all come from one read of .dude/specs/062-dude-canvas-workspace-integration/tasks.md (content identity a3cb207d0f83, 9170 bytes), captured 2026-09-14 22:46 UTC with the product’s own canonical parser. The generated board, the terminal execution history and archived units in that file are not tasks and are not counted here. A recorded status is what the file holds, not evidence that an agent is working now."
+      }
+    },
+    {
+      "step": "blocked-and-coverage",
+      "name": "blocked Next does not deny visible T001 dependency readiness",
+      "pass": false,
+      "detail": {
+        "t001": "Revise and compare the integrated mock at `.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html` with read-only selected-task drill-down, then obtain explicit approval of its current revision through the existing design workflow.\nT001@a062c1d4\nNot started\nReady by recorded task dependencies\n[Shared]",
+        "t002": "Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.\nT002@b062d2e5\nBlocked\nBlocker reason recorded\n[US1]\nReading",
+        "next": "NO NEXT STEP\n\nNo canonical task is ready.",
+        "lifecycle": "LIFECYCLE AND PROGRESS\nEXAMPLE EXECUTION STATE\nCaptured\nDone\nDefined\nDone\nWork\nBlocked\nVerified\nNot started\n\n0 of 5 canonical tasks complete, 1 blocked. These counts are part of the example execution state, recomputed from the same controlled task states the rows below use. Recorded in this repository at the last complete read: Defined, 0 of 5 canonical tasks complete and 5 open. No canonical task execution evidence exists yet.",
+        "detail": "TASK DETAIL · READ ONLY\nClose\n\nT002@b062d2e5 · 062-dude-canvas-workspace-integration\n\nEXAMPLE TASK STATE This selection shows this task as Blocked. The repository records it as Not started. The recorded unit below is unchanged.\n\nRecorded status\n\nBlocked. Blocked is the recorded task state, separate from waiting on a dependency.\n\nPhase\n\nPhase 2: Find And Select Work In The Approved Shell · [US1]\n\nDependencies\n\nT001@a062c1d4\nNot started\n\nExplicit blocker\n\nThe combined mock has no explicit current-revision approval, so shell work cannot start.\n\nVerification and review results\n\nNot exposed by this source. The readers behind this view return canonical task text, state, dependencies and blockers. They expose no task-bound test or review outcome, so none is shown. Acceptance wording inside the unit, a Done glyph, this feature’s activity and design-review history are not results for this task.\n\nRecorded unit\n\n- [ ] T002@b062d2e5 [US1] Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.\n    deps: T001@a062c1d4\n\n    Retain Open/Closed/All and complete discovery while moving the sole finder to the command-bar workspace. Add capture-number labels and numeric presentation order from validated context paths, including compact rows. Keep exact selection, pending reads, query/scope/scroll return, working rail destinations, status chrome, and partial/empty states distinct. Do not change inventory or request contracts.\n\n    Acceptance: SC-001/006 and the applicable visual criteria pass on the built surface, including one-activation results, full-list keyboard reachability, no implicit selection, and source-identity failure cases. Follow the plan's per-slice build and comparison checks.\n\nThe whole canonical unit from .dude/specs/062-dude-canvas-workspace-integration/tasks.md, including every line after a blank line and any example it quotes. It is shown as text and never run: markup, code fences and task-shaped examples inside it stay inert, and an example line is not another task. Its leading - [ ] is the state marker recorded in the file, not a control here. The box scrolls when the unit is taller than the pane.\n\nRead 2026-09-13 21:30 local · task source captured 2026-09-14 22:46 UTC · content identity a3cb207d0f83. This preview is frozen: it rereads nothing and follows no agent.",
+        "filters": [
+          "All 5",
+          "Pending 4",
+          "In progress 0",
+          "Blocked 1",
+          "Done 0"
+        ]
+      }
+    },
+    {
+      "step": "browser-boundary",
+      "name": "all focused sessions completed and cleaned up",
+      "pass": false,
+      "detail": [
+        {
+          "label": "filter-return",
+          "result": "completed",
+          "durationMs": 2232
+        },
+        {
+          "label": "request-return",
+          "result": "completed",
+          "durationMs": 1600
+        },
+        {
+          "label": "blocked-and-coverage",
+          "result": "completed",
+          "durationMs": 2028
+        },
+        {
+          "label": "narrow-overlay",
+          "result": "completed",
+          "durationMs": 1894
+        },
+        {
+          "label": "long-title",
+          "result": "completed",
+          "durationMs": 1372
+        },
+        {
+          "label": "unsent-wide-rail",
+          "result": "completed",
+          "durationMs": 1617
+        },
+        {
+          "label": "review-retention",
+          "result": "failed",
+          "durationMs": 6210,
+          "operation": "review-retention:Input.dispatchMouseEvent",
+          "error": {
+            "name": "Error",
+            "message": "Capture timed out. Your markup is retained; nothing was sent.",
+            "stack": "Error: Capture timed out. Your markup is retained; nothing was sent.\n    at Timeout._onTimeout (file:///Users/eg/work/dude/.github/extensions/dude/lib/review/browser.mjs:145:36)\n    at listOnTimeout (node:internal/timers:685:17)\n    at process.processTimers (node:internal/timers:618:7)"
+          }
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "step": "fresh-source",
+      "name": "artifact is the supplied exact revision",
+      "pass": true,
+      "detail": {
+        "bytes": 528621,
+        "sha256": "b6f409d27f404569ebab27cb47a3f4713eebbc6a4d9c4988d53f14453cd2cc56"
+      }
+    },
+    {
+      "step": "fresh-source",
+      "name": "exact-owner resolver remains unique with no diagnostics",
+      "pass": true,
+      "detail": {
+        "owner": {
+          "ideaPath": ".dude/ideas/062-dude-canvas-workspace-integration.md",
+          "specPath": ".dude/specs/062-dude-canvas-workspace-integration/spec.md"
+        },
+        "diagnostics": []
+      }
+    },
+    {
+      "step": "fresh-source",
+      "name": "062 parser still returns five todo tasks, no warnings, only T001 dependency-ready",
+      "pass": true,
+      "detail": {
+        "tasks": [
+          {
+            "id": "T001@a062c1d4",
+            "state": "todo",
+            "deps": [],
+            "blockedBy": null
+          },
+          {
+            "id": "T002@b062d2e5",
+            "state": "todo",
+            "deps": [
+              "T001@a062c1d4"
+            ],
+            "blockedBy": null
+          },
+          {
+            "id": "T003@c062e3f6",
+            "state": "todo",
+            "deps": [
+              "T002@b062d2e5"
+            ],
+            "blockedBy": null
+          },
+          {
+            "id": "T004@d062f4a7",
+            "state": "todo",
+            "deps": [
+              "T003@c062e3f6"
+            ],
+            "blockedBy": null
+          },
+          {
+            "id": "T005@e062a5b8",
+            "state": "todo",
+            "deps": [
+              "T004@d062f4a7"
+            ],
+            "blockedBy": null
+          }
+        ],
+        "warnings": [],
+        "ready": [
+          "T001@a062c1d4"
+        ]
+      }
+    },
+    {
+      "step": "filter-return",
+      "name": "filter hiding T003 dismisses detail, retains filter focus/feature/Next",
+      "pass": true,
+      "detail": {
+        "before": {
+          "identity": "Working on 062 Dude Canvas Workspace Integration.",
+          "next": "NO NEXT STEP\n\nNo canonical task execution evidence exists yet.",
+          "detail": "T003@c062e3f6"
+        },
+        "empty": {
+          "rows": 0,
+          "phases": 0,
+          "detail": false,
+          "active": "done",
+          "identity": "Working on 062 Dude Canvas Workspace Integration.",
+          "finderHidden": true,
+          "next": "NO NEXT STEP\n\nNo canonical task execution evidence exists yet.",
+          "text": "TASKS\nAll\n5\nPending\n5\nIn progress\n0\nBlocked\n0\nDone\n0\n\nShowing 0 of 5 recorded tasks · Done only. Phase totals are unchanged by this filter.\n\nNo tasks match this filter\n\n5 recorded tasks remain in this package; only the done filter is empty. Choose All to see them again.\n\nRows, phase headings and totals all come from one read of .dude/specs/062-dude-canvas-workspace-integration/tasks.md (content identity a3cb207d0f83, 9170 bytes), captured 2026-09-14 22:46 UTC with the product’s own canonical parser. The generated board, the terminal execution history and archived units in that file are not tasks and are not counted here. A recorded status is what the file holds, not evidence that an agent is working now."
+        }
+      }
+    },
+    {
+      "step": "filter-return",
+      "name": "empty Done filter keeps the unfiltered phase totals visibly present",
+      "pass": false,
+      "detail": {
+        "rows": 0,
+        "phases": 0,
+        "detail": false,
+        "active": "done",
+        "identity": "Working on 062 Dude Canvas Workspace Integration.",
+        "finderHidden": true,
+        "next": "NO NEXT STEP\n\nNo canonical task execution evidence exists yet.",
+        "text": "TASKS\nAll\n5\nPending\n5\nIn progress\n0\nBlocked\n0\nDone\n0\n\nShowing 0 of 5 recorded tasks · Done only. Phase totals are unchanged by this filter.\n\nNo tasks match this filter\n\n5 recorded tasks remain in this package; only the done filter is empty. Choose All to see them again.\n\nRows, phase headings and totals all come from one read of .dude/specs/062-dude-canvas-workspace-integration/tasks.md (content identity a3cb207d0f83, 9170 bytes), captured 2026-09-14 22:46 UTC with the product’s own canonical parser. The generated board, the terminal execution history and archived units in that file are not tasks and are not counted here. A recorded status is what the file holds, not evidence that an agent is working now."
+      }
+    },
+    {
+      "step": "filter-return",
+      "name": "selected-only Overview and ordinary same-feature return retain valid inspection",
+      "pass": true,
+      "detail": {
+        "overview": {
+          "rows": [
+            "062"
+          ],
+          "searchHidden": true,
+          "copy": "Overview\nNew idea\n\nFiltered to the work you are on: 062 Dude Canvas Workspace Integration. There is one work search, so choosing different work means clearing this filter first, with Clear in the command bar. Nothing is closed or discarded by clearing.\n\n1 of 62 recorded ideas and features · selected work filter · 062\nThe other 61 recorded ideas and features are filtered out of this list, not removed. Clear brings the one search back with an empty search and All records.\nOpen this row, or focus it and press Enter, to return to Now for this record.\nNO.\nNAME\nSTATUS\nPROGRESS\n062\nDude Canvas Workspace Integration\ndude-canvas-workspace-integration\nDefined\n0 of 5 tasks\n\n62 ideas and 50 defined packages were read from this repository when the mock was captured. Discovery and Now show those recorded facts, and that recorded inventory is unchanged by the selected-work filter above."
+        },
+        "returned": {
+          "detailKey": "T003@c062e3f6",
+          "selected": "Working on 062 Dude Canvas Workspace Integration.",
+          "allPressed": "true"
+        }
+      }
+    },
+    {
+      "step": "filter-return",
+      "name": "Clear drops local inspection/filter and focuses empty All finder",
+      "pass": true,
+      "detail": {
+        "active": "finder-input",
+        "query": "",
+        "scope": "all",
+        "rows": 62,
+        "detail": false
+      }
+    },
+    {
+      "step": "request-return",
+      "name": "populated independent Needs You survives task inspection and same-feature return",
+      "pass": true,
+      "detail": {
+        "needs": {
+          "requests": 6,
+          "identity": "Working on 062 Dude Canvas Workspace Integration."
+        },
+        "returned": {
+          "detail": "T003@c062e3f6",
+          "identity": "Working on 062 Dude Canvas Workspace Integration."
+        }
+      }
+    },
+    {
+      "step": "blocked-and-coverage",
+      "name": "blocked example rows/counts/reason agree and remain explicitly Example",
+      "pass": true,
+      "detail": {
+        "t001": "Revise and compare the integrated mock at `.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html` with read-only selected-task drill-down, then obtain explicit approval of its current revision through the existing design workflow.\nT001@a062c1d4\nNot started\nReady by recorded task dependencies\n[Shared]",
+        "t002": "Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.\nT002@b062d2e5\nBlocked\nBlocker reason recorded\n[US1]\nReading",
+        "next": "NO NEXT STEP\n\nNo canonical task is ready.",
+        "lifecycle": "LIFECYCLE AND PROGRESS\nEXAMPLE EXECUTION STATE\nCaptured\nDone\nDefined\nDone\nWork\nBlocked\nVerified\nNot started\n\n0 of 5 canonical tasks complete, 1 blocked. These counts are part of the example execution state, recomputed from the same controlled task states the rows below use. Recorded in this repository at the last complete read: Defined, 0 of 5 canonical tasks complete and 5 open. No canonical task execution evidence exists yet.",
+        "detail": "TASK DETAIL · READ ONLY\nClose\n\nT002@b062d2e5 · 062-dude-canvas-workspace-integration\n\nEXAMPLE TASK STATE This selection shows this task as Blocked. The repository records it as Not started. The recorded unit below is unchanged.\n\nRecorded status\n\nBlocked. Blocked is the recorded task state, separate from waiting on a dependency.\n\nPhase\n\nPhase 2: Find And Select Work In The Approved Shell · [US1]\n\nDependencies\n\nT001@a062c1d4\nNot started\n\nExplicit blocker\n\nThe combined mock has no explicit current-revision approval, so shell work cannot start.\n\nVerification and review results\n\nNot exposed by this source. The readers behind this view return canonical task text, state, dependencies and blockers. They expose no task-bound test or review outcome, so none is shown. Acceptance wording inside the unit, a Done glyph, this feature’s activity and design-review history are not results for this task.\n\nRecorded unit\n\n- [ ] T002@b062d2e5 [US1] Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.\n    deps: T001@a062c1d4\n\n    Retain Open/Closed/All and complete discovery while moving the sole finder to the command-bar workspace. Add capture-number labels and numeric presentation order from validated context paths, including compact rows. Keep exact selection, pending reads, query/scope/scroll return, working rail destinations, status chrome, and partial/empty states distinct. Do not change inventory or request contracts.\n\n    Acceptance: SC-001/006 and the applicable visual criteria pass on the built surface, including one-activation results, full-list keyboard reachability, no implicit selection, and source-identity failure cases. Follow the plan's per-slice build and comparison checks.\n\nThe whole canonical unit from .dude/specs/062-dude-canvas-workspace-integration/tasks.md, including every line after a blank line and any example it quotes. It is shown as text and never run: markup, code fences and task-shaped examples inside it stay inert, and an example line is not another task. Its leading - [ ] is the state marker recorded in the file, not a control here. The box scrolls when the unit is taller than the pane.\n\nRead 2026-09-13 21:30 local · task source captured 2026-09-14 22:46 UTC · content identity a3cb207d0f83. This preview is frozen: it rereads nothing and follows no agent.",
+        "filters": [
+          "All 5",
+          "Pending 4",
+          "In progress 0",
+          "Blocked 1",
+          "Done 0"
+        ]
+      }
+    },
+    {
+      "step": "blocked-and-coverage",
+      "name": "blocked Next does not deny visible T001 dependency readiness",
+      "pass": false,
+      "detail": {
+        "t001": "Revise and compare the integrated mock at `.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html` with read-only selected-task drill-down, then obtain explicit approval of its current revision through the existing design workflow.\nT001@a062c1d4\nNot started\nReady by recorded task dependencies\n[Shared]",
+        "t002": "Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.\nT002@b062d2e5\nBlocked\nBlocker reason recorded\n[US1]\nReading",
+        "next": "NO NEXT STEP\n\nNo canonical task is ready.",
+        "lifecycle": "LIFECYCLE AND PROGRESS\nEXAMPLE EXECUTION STATE\nCaptured\nDone\nDefined\nDone\nWork\nBlocked\nVerified\nNot started\n\n0 of 5 canonical tasks complete, 1 blocked. These counts are part of the example execution state, recomputed from the same controlled task states the rows below use. Recorded in this repository at the last complete read: Defined, 0 of 5 canonical tasks complete and 5 open. No canonical task execution evidence exists yet.",
+        "detail": "TASK DETAIL · READ ONLY\nClose\n\nT002@b062d2e5 · 062-dude-canvas-workspace-integration\n\nEXAMPLE TASK STATE This selection shows this task as Blocked. The repository records it as Not started. The recorded unit below is unchanged.\n\nRecorded status\n\nBlocked. Blocked is the recorded task state, separate from waiting on a dependency.\n\nPhase\n\nPhase 2: Find And Select Work In The Approved Shell · [US1]\n\nDependencies\n\nT001@a062c1d4\nNot started\n\nExplicit blocker\n\nThe combined mock has no explicit current-revision approval, so shell work cannot start.\n\nVerification and review results\n\nNot exposed by this source. The readers behind this view return canonical task text, state, dependencies and blockers. They expose no task-bound test or review outcome, so none is shown. Acceptance wording inside the unit, a Done glyph, this feature’s activity and design-review history are not results for this task.\n\nRecorded unit\n\n- [ ] T002@b062d2e5 [US1] Apply the approved workspace chrome and single numbered work finder in `src/extensions/dude/frontend/app.jsx` and `styles.js`, with discovery and selection regressions in `scripts/dude-canvas-ui/browser.test.mjs` and `t011-browser.test.mjs`.\n    deps: T001@a062c1d4\n\n    Retain Open/Closed/All and complete discovery while moving the sole finder to the command-bar workspace. Add capture-number labels and numeric presentation order from validated context paths, including compact rows. Keep exact selection, pending reads, query/scope/scroll return, working rail destinations, status chrome, and partial/empty states distinct. Do not change inventory or request contracts.\n\n    Acceptance: SC-001/006 and the applicable visual criteria pass on the built surface, including one-activation results, full-list keyboard reachability, no implicit selection, and source-identity failure cases. Follow the plan's per-slice build and comparison checks.\n\nThe whole canonical unit from .dude/specs/062-dude-canvas-workspace-integration/tasks.md, including every line after a blank line and any example it quotes. It is shown as text and never run: markup, code fences and task-shaped examples inside it stay inert, and an example line is not another task. Its leading - [ ] is the state marker recorded in the file, not a control here. The box scrolls when the unit is taller than the pane.\n\nRead 2026-09-13 21:30 local · task source captured 2026-09-14 22:46 UTC · content identity a3cb207d0f83. This preview is frozen: it rereads nothing and follows no agent.",
+        "filters": [
+          "All 5",
+          "Pending 4",
+          "In progress 0",
+          "Blocked 1",
+          "Done 0"
+        ]
+      }
+    },
+    {
+      "step": "blocked-and-coverage",
+      "name": "unavailable is withheld rather than empty/zero success",
+      "pass": true,
+      "detail": {
+        "task": "TASKS\n\nTask coverage is withheld with the rest of this record’s execution facts. No rows, totals or task detail are shown in their place, and no other record’s tasks are substituted.",
+        "lifecycle": "LIFECYCLE AND PROGRESS\n\nProgress is withheld while the execution authority for this record cannot be confirmed.",
+        "next": "NEXT STEP UNAVAILABLE\n\nThe selected source and execution authority could not be confirmed together. Refresh to reread; unrelated records remain available.\n\nThe selected record is still 062-dude-canvas-workspace-integration. No other record's instruction, progress or blockers are shown in its place.",
+        "rows": 0
+      }
+    },
+    {
+      "step": "blocked-and-coverage",
+      "name": "draft/no-package and uncaptured package are distinct truthful states",
+      "pass": true,
+      "detail": {
+        "draft": "TASKS\n\nThis record is a captured idea with no defined package, so it has no task definitions. That is not an empty task list and not unreadable data.",
+        "uncaptured": {
+          "text": "TASKS\n\nThe canonical units for .dude/specs/001-brainstorm-ideas-intake/tasks.md were not captured into this offline preview file, so this mock has no rows or unit text to show for them. The recorded phase totals below come from the frozen inventory read. In the product this record reads its own task source like every other one.\n\nPhase 1: Shared Workspace Contract\n1 of 1\nPhase 2: Migration And Lint Foundation\n2 of 2\nPhase 3: Brainstorm And Compatibility Entry Points\n2 of 2\nPhase 4: Lifecycle And Preservation Consumers\n2 of 2\nPhase 5: Coordinator-Owned Dogfood Cutover And Knowledge Reconciliation\n1 of 1\nPhase 6: Tracked Integration\n1 of 1\nPhase 7: Independent Domain Terminology\n1 of 1\nPhase 8: Documentation And Distribution\n2 of 2\nPhase 9: Verification And Handoff\n1 of 1\n\nRecorded phase headings and totals for .dude/specs/001-brainstorm-ideas-intake/tasks.md, in file order, from the frozen inventory read. This preview holds no rows or unit text for them.",
+          "rows": 0,
+          "phases": 9
+        }
+      }
+    },
+    {
+      "step": "narrow-overlay",
+      "name": "accepted narrow menu is a 260px panel over the compact full-width rail row",
+      "pass": true,
+      "detail": {
+        "panelWidth": 260,
+        "railRowWidth": 360,
+        "name": "Close navigation menu",
+        "expanded": "true",
+        "active": "overview",
+        "inert": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "step": "narrow-overlay",
+      "name": "native Tab/Shift+Tab wrap inside the inert-background overlay",
+      "pass": true,
+      "detail": {
+        "forward": "rail-toggle",
+        "backward": "new"
+      }
+    },
+    {
+      "step": "narrow-overlay",
+      "name": "native Escape restores focus/background and retains narrow task inspection",
+      "pass": true,
+      "detail": {
+        "before": {
+          "detail": "T002@b062d2e5",
+          "overflow": 0,
+          "identity": "062\nDude Canvas Workspace Integration"
+        },
+        "closed": {
+          "expanded": "false",
+          "focus": "rail-toggle",
+          "workInert": false,
+          "detail": "T002@b062d2e5",
+          "overflow": 0
+        }
+      }
+    },
+    {
+      "step": "long-title",
+      "name": "360px 021 identity wraps; three Done rows and full in-flow source remain readable",
+      "pass": true,
+      "detail": {
+        "title": "021 Add A Topology-First Reset When Review Revisions Expand Enforcement Scope",
+        "titleWidth": [
+          328,
+          328
+        ],
+        "titleHeight": [
+          116,
+          28
+        ],
+        "rows": [
+          {
+            "key": "T001@74726967",
+            "status": "Done"
+          },
+          {
+            "key": "T002@6576616c",
+            "status": "Done"
+          },
+          {
+            "key": "T003@61636365",
+            "status": "Done"
+          }
+        ],
+        "sourceChars": 1741,
+        "sourceClamp": "none",
+        "sourceOverflow": "visible",
+        "pageOverflow": 0
+      }
+    },
+    {
+      "step": "unsent-wide-rail",
+      "name": "wide 48→208 nonmodal rail preserves unsent input/caret and cross-scope identity",
+      "pass": true,
+      "detail": {
+        "before": {
+          "value": "Unsent task-inspection regression note",
+          "selection": [
+            38,
+            38
+          ],
+          "rail": 48,
+          "browsing": "Browsing 062 Dude Canvas Workspace Integration. The open request has its own scope, stated with the request.",
+          "scope": "THIS REQUEST IS ABOUT\n\n061 · Work Inspection Source Capacity\n\n.dude/ideas/061-work-inspection-source-capacity.md\n\nYou are browsing 062 · Dude Canvas Workspace Integration. Answering this request does not change that selection."
+        },
+        "expanded": {
+          "value": "Unsent task-inspection regression note",
+          "selection": [
+            38,
+            38
+          ],
+          "rail": 208,
+          "active": "rail-toggle",
+          "workInert": false,
+          "browsing": "Browsing 062 Dude Canvas Workspace Integration. The open request has its own scope, stated with the request.",
+          "scope": "THIS REQUEST IS ABOUT\n\n061 · Work Inspection Source Capacity\n\n.dude/ideas/061-work-inspection-source-capacity.md\n\nYou are browsing 062 · Dude Canvas Workspace Integration. Answering this request does not change that selection.",
+          "sent": false
+        }
+      }
+    },
+    {
+      "step": "browser-boundary",
+      "name": "all focused sessions completed and cleaned up",
+      "pass": false,
+      "detail": [
+        {
+          "label": "filter-return",
+          "result": "completed",
+          "durationMs": 2232
+        },
+        {
+          "label": "request-return",
+          "result": "completed",
+          "durationMs": 1600
+        },
+        {
+          "label": "blocked-and-coverage",
+          "result": "completed",
+          "durationMs": 2028
+        },
+        {
+          "label": "narrow-overlay",
+          "result": "completed",
+          "durationMs": 1894
+        },
+        {
+          "label": "long-title",
+          "result": "completed",
+          "durationMs": 1372
+        },
+        {
+          "label": "unsent-wide-rail",
+          "result": "completed",
+          "durationMs": 1617
+        },
+        {
+          "label": "review-retention",
+          "result": "failed",
+          "durationMs": 6210,
+          "operation": "review-retention:Input.dispatchMouseEvent",
+          "error": {
+            "name": "Error",
+            "message": "Capture timed out. Your markup is retained; nothing was sent.",
+            "stack": "Error: Capture timed out. Your markup is retained; nothing was sent.\n    at Timeout._onTimeout (file:///Users/eg/work/dude/.github/extensions/dude/lib/review/browser.mjs:145:36)\n    at listOnTimeout (node:internal/timers:685:17)\n    at process.processTimers (node:internal/timers:618:7)"
+          }
+        }
+      ]
+    },
+    {
+      "step": "browser-boundary",
+      "name": "no console/page error or external request occurred",
+      "pass": true,
+      "detail": {
+        "consoleErrors": [],
+        "pageErrors": [],
+        "requests": [
+          "http://127.0.0.1:61609/workspace-integration.html?view=now&select=062&data=repository&task=T003%40c062e3f6&theme=light",
+          "http://127.0.0.1:61609/workspace-integration.html?view=now&select=062&data=progress&task=T003%40c062e3f6&theme=dark",
+          "http://127.0.0.1:61609/workspace-integration.html?view=now&select=062&data=blocked&task=T002%40b062d2e5&theme=light",
+          "http://127.0.0.1:61609/workspace-integration.html?view=now&select=062&data=unavailable&theme=light",
+          "http://127.0.0.1:61609/workspace-integration.html?view=now&select=061&data=repository&theme=light",
+          "http://127.0.0.1:61609/workspace-integration.html?view=now&select=001&data=repository&theme=light",
+          "http://127.0.0.1:61609/workspace-integration.html?view=now&select=062&data=repository&task=T002%40b062d2e5&theme=dark",
+          "http://127.0.0.1:61609/workspace-integration.html?view=now&select=021&data=repository&task=T001%4074726967&theme=light",
+          "http://127.0.0.1:61609/workspace-integration.html?view=needs&select=062&data=progress&request=fact-061-4&theme=light",
+          "http://127.0.0.1:61609/workspace-integration.html?view=review&select=062&data=progress&request=preview-062-1&theme=dark"
+        ],
+        "externalRequests": []
+      }
+    },
+    {
+      "step": "post-state",
+      "name": "artifact and real 062 task glyph bytes remained unchanged",
+      "pass": true,
+      "detail": {
+        "mockSha256": "b6f409d27f404569ebab27cb47a3f4713eebbc6a4d9c4988d53f14453cd2cc56",
+        "tasksSha256": "a3cb207d0f834b76060123754e3cc663d267ac20c8a202de7c945808a3b3f5c8"
+      }
+    }
+  ],
+  "screenshots": [
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-r3-empty-done-1440-light.png",
+      "bytes": 269841,
+      "sha256": "27c9b8f7bb1b6d5834bbbb09a7c22d02c061c3d0d5248f8f74cebc5f6442984c",
+      "viewport": {
+        "width": 1440,
+        "height": 1000,
+        "theme": "light"
+      }
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-r3-overlay-panel-360-dark.png",
+      "bytes": 73049,
+      "sha256": "9fde9626b7adab8306ecc0758665b93d09ab94bce0dd9b8897b83266604e04d3",
+      "viewport": {
+        "width": 360,
+        "height": 900,
+        "theme": "dark"
+      }
+    },
+    {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-r3-unsent-960-light.png",
+      "bytes": 153821,
+      "sha256": "3f0546cdce9c1a8de87b8c9e4ac33b03db45c05e86a3985de11a7ba8bb12ad53",
+      "viewport": {
+        "width": 960,
+        "height": 900,
+        "theme": "light"
+      }
+    }
+  ],
+  "inheritedFreshEvidence": {
+    "reports": [
+      {
+        "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-verification.json",
+        "bytes": 257320,
+        "sha256": "3a0dcd015a9c1861032f578abfaa01c4dcd3eec6a01447c9eb8376aeb0f86e1f"
+      },
+      {
+        "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-verification-r2.json",
+        "bytes": 187377,
+        "sha256": "257fa1694ee36bc9e30f45ace4eb86d994fadd16e1d134d77570c45c096b04b9"
+      }
+    ],
+    "visuals": [
+      {
+        "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-repository-T003-1440-light.png",
+        "bytes": 327358,
+        "sha256": "0e4ce5c803bccf1ca8bdaf7c2cbd373937888b5f9720300a95d73758a18d684f"
+      },
+      {
+        "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-completed-052-1440-light.png",
+        "bytes": 386772,
+        "sha256": "4392d01426f22db47862a93bb9299f820e70777be310c65fef88223f8bc635de"
+      },
+      {
+        "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-progress-distinct-1440-dark.png",
+        "bytes": 385814,
+        "sha256": "bc720eba3ac2d6320ee8d3cbb4e38f9ddb820aaa0985d72f6f8720679b4cac84"
+      },
+      {
+        "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-blocked-contradiction-1440-light.png",
+        "bytes": 314028,
+        "sha256": "de92b6a86dae9f4fe064eefe34102997c1a9313c2a23cf97d9c697467dee20f5"
+      },
+      {
+        "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-002-phase10-1440-light.png",
+        "bytes": 274317,
+        "sha256": "c9b54515409f4b19c61883449e67debea41dd08ddf3aed69f9cd171de5f22325"
+      },
+      {
+        "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-inflow-960-light.png",
+        "bytes": 178917,
+        "sha256": "da7b5e1cc12076082e6cbb6e592b696aae8add80683b2b62f4eb038e2254392c"
+      },
+      {
+        "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-unavailable-960-dark.png",
+        "bytes": 174229,
+        "sha256": "3da69ce29a96ded7e6551464c0c7f2c038fd8f205afdd9819963c2f128574ff0"
+      },
+      {
+        "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-long-021-360-light.png",
+        "bytes": 113969,
+        "sha256": "b6a4c53dfaa56ce0ff3140c652a4406ba09def4bc6c34f427350d832ae5c0cff"
+      },
+      {
+        "path": ".dude/specs/062-dude-canvas-workspace-integration/design/screenshots/tester-task-inspection-062-overlay-360-dark.png",
+        "bytes": 73049,
+        "sha256": "9fde9626b7adab8306ecc0758665b93d09ab94bce0dd9b8897b83266604e04d3"
+      }
+    ],
+    "note": "The first report contains the full fresh canonical-source/interaction run and nine captures. Its long accumulated browser sequence later timed out. The second diagnostic proved complete keyboard scrolling. This focused run uses one short-lived isolated helper per case, corrects only identified test-oracle mistakes, and completes the previously missing request/Review checks."
+  },
+  "diagnosticResolution": {
+    "firstRun": "The accumulated target exceeded the helper per-command deadline before the unsent-input case.",
+    "secondRun": "Added keyboard scrolling reached the exact end, then the accumulated target again exceeded the deadline before later cases.",
+    "controlledFollowup": [
+      {
+        "label": "filter-return",
+        "result": "completed",
+        "durationMs": 2232
+      },
+      {
+        "label": "request-return",
+        "result": "completed",
+        "durationMs": 1600
+      },
+      {
+        "label": "blocked-and-coverage",
+        "result": "completed",
+        "durationMs": 2028
+      },
+      {
+        "label": "narrow-overlay",
+        "result": "completed",
+        "durationMs": 1894
+      },
+      {
+        "label": "long-title",
+        "result": "completed",
+        "durationMs": 1372
+      },
+      {
+        "label": "unsent-wide-rail",
+        "result": "completed",
+        "durationMs": 1617
+      },
+      {
+        "label": "review-retention",
+        "result": "failed",
+        "durationMs": 6210,
+        "operation": "review-retention:Input.dispatchMouseEvent",
+        "error": {
+          "name": "Error",
+          "message": "Capture timed out. Your markup is retained; nothing was sent.",
+          "stack": "Error: Capture timed out. Your markup is retained; nothing was sent.\n    at Timeout._onTimeout (file:///Users/eg/work/dude/.github/extensions/dude/lib/review/browser.mjs:145:36)\n    at listOnTimeout (node:internal/timers:685:17)\n    at process.processTimers (node:internal/timers:618:7)"
+        }
+      }
+    ],
+    "conclusion": "The same later scenarios completed in fresh isolated helper sessions. This establishes a test-sequencing/control-channel limit, not a preview failure; no sleep/retry was used as an acceptance oracle."
+  },
+  "sourceCoverageGap": {
+    "record": "002",
+    "limitation": "The embedded frozen SNAPSHOT still carries the old Phase 10 rollup 1/6 with five blocked (phase totals sum 41), but the current rendered 002 task route uses the separate exact TASK_SOURCE capture: 36/36 rows and Phase 10 1/1. This hidden inventory value was not accepted as task detail."
+  },
+  "limits": [
+    "No live selected-task API exists yet and none was called; the preview is a frozen proposal for the approved-plan enrichment.",
+    "Current captured canonical units include angle-bracket source tokens but no fenced block or literal <script> payload; exact inert text/child-node behavior was checked without inventing source data.",
+    "No native Copilot host, provider send, task mutation, live agent, user approval, product acceptance, or task close was exercised."
+  ],
+  "unchanged": {
+    "mock": true,
+    "tasks062": true
+  }
+}

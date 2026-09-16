@@ -1,0 +1,45 @@
+/* Frame/overlay fragments adapted from Sharpie; MIT, see NOTICE.txt.
+   Fluent React owns all toolbar, picker, comment, drawer, and status chrome. */
+.dude-review-engine {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 200px;
+  position: relative;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--colorNeutralBackground3);
+  border: var(--strokeWidthThin) solid var(--colorNeutralStroke2);
+}
+.dude-review-engine[hidden] { display: none; }
+.dude-review-frame { position: relative; flex: 1; min-width: 0; min-height: 200px; overflow: hidden; }
+.dude-review-frame-pinned { flex: none; min-height: 0; }
+.dude-review-frame iframe { width: 100%; height: 100%; border: 0; display: block; pointer-events: none; }
+.dude-review-overlay { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; outline: none; }
+.dude-review-engine:focus-visible, .dude-review-overlay:focus-visible {
+  outline: var(--strokeWidthThick) solid var(--colorStrokeFocus2);
+  outline-offset: calc(-1 * var(--strokeWidthThicker));
+}
+/* An inset outline on the scrollport is covered by its iframe. The surrounding
+   Canvas gutter leaves room for this ring without moving the frozen frame. */
+.dude-review-engine:focus-visible { border-color: var(--colorStrokeFocus1); outline-offset: 0; }
+.dude-review-frame:has(> .dude-review-overlay:focus-visible)::after {
+  content: '';
+  position: absolute;
+  inset: var(--strokeWidthThicker);
+  border: var(--strokeWidthThick) solid var(--colorStrokeFocus1);
+  pointer-events: none;
+}
+.dude-review-overlay[data-tool="select"] { cursor: default; }
+.dude-review-overlay:not([data-tool="select"]) { cursor: crosshair; }
+/* 059 exploration. The transient action the engine classified under the
+   pointer wins over the tool's default, so a selected handle, border, or
+   stroke says what the next press will actually do. */
+.dude-review-overlay[data-action="move"] { cursor: move; }
+.dude-review-overlay[data-action="nwse-resize"] { cursor: nwse-resize; }
+.dude-review-overlay[data-action="nesw-resize"] { cursor: nesw-resize; }
+.dude-review-overlay[data-action="ew-resize"] { cursor: ew-resize; }
+.dude-review-overlay[data-action="ns-resize"] { cursor: ns-resize; }

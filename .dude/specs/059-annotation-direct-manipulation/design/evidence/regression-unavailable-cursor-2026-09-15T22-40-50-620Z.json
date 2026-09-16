@@ -1,0 +1,478 @@
+{
+  "task": "T001@59a10f01 code review finding R1",
+  "startedAt": "2026-09-15T22:40:50.620Z",
+  "command": "node .dude/specs/059-annotation-direct-manipulation/design/prototype/proof-unavailable-cursor.mjs",
+  "checks": [
+    {
+      "name": "drawing tool armed over a selected handle",
+      "status": "passed",
+      "detail": {
+        "tool": "box",
+        "point": "handle",
+        "through": "update",
+        "loadedEngine": "ea85f7f964e3b7817e1547faca9e8611d1f63dff03f108bb4048d18227b9256d",
+        "hovered": {
+          "action": "nwse-resize",
+          "cursor": "nwse-resize"
+        },
+        "blocked": {
+          "action": null,
+          "cursor": "crosshair"
+        },
+        "afterPress": {
+          "action": null,
+          "cursor": "crosshair"
+        },
+        "sameOverlay": true,
+        "refusal": {
+          "code": "review_historical",
+          "message": "This is saved evidence, not a live review or permission to send."
+        },
+        "reportedError": null,
+        "annotation": {
+          "before": {
+            "id": "c2178563-c9ca-490d-aa33-0bbd5faa26b7",
+            "tool": "box",
+            "x1": 120,
+            "y1": 140,
+            "x2": 320,
+            "y2": 280,
+            "comment": "",
+            "replacement": "",
+            "styleNote": "",
+            "element": {
+              "selector": "#summary",
+              "selectorMatches": 1,
+              "tag": "section",
+              "text": "\n    Release notes\n    This static fixture stands in for a design under review. It is owned by feature 059 and is not the user's work.\n  ",
+              "rect": {
+                "x": 32,
+                "y": 88,
+                "width": 560,
+                "height": 150
+              },
+              "styles": {
+                "color": "rgb(16, 36, 58)",
+                "background-color": "rgb(255, 255, 255)",
+                "background-image": "none",
+                "font-family": "system-ui, sans-serif",
+                "font-size": "16px",
+                "font-weight": "400",
+                "line-height": "24px",
+                "letter-spacing": "normal",
+                "text-align": "start",
+                "display": "block",
+                "position": "static",
+                "width": "560px",
+                "height": "150px",
+                "margin": "0px",
+                "padding": "20px",
+                "gap": "normal",
+                "border": "2px solid rgb(36, 85, 122)",
+                "border-radius": "12px",
+                "opacity": "1",
+                "transform": "none",
+                "visibility": "visible",
+                "overflow": "visible",
+                "clip-path": "none",
+                "filter": "none",
+                "box-shadow": "none"
+              }
+            },
+            "scrollBasis": []
+          },
+          "after": {
+            "id": "c2178563-c9ca-490d-aa33-0bbd5faa26b7",
+            "tool": "box",
+            "x1": 120,
+            "y1": 140,
+            "x2": 320,
+            "y2": 280,
+            "comment": "",
+            "replacement": "",
+            "styleNote": "",
+            "element": {
+              "selector": "#summary",
+              "selectorMatches": 1,
+              "tag": "section",
+              "text": "\n    Release notes\n    This static fixture stands in for a design under review. It is owned by feature 059 and is not the user's work.\n  ",
+              "rect": {
+                "x": 32,
+                "y": 88,
+                "width": 560,
+                "height": 150
+              },
+              "styles": {
+                "color": "rgb(16, 36, 58)",
+                "background-color": "rgb(255, 255, 255)",
+                "background-image": "none",
+                "font-family": "system-ui, sans-serif",
+                "font-size": "16px",
+                "font-weight": "400",
+                "line-height": "24px",
+                "letter-spacing": "normal",
+                "text-align": "start",
+                "display": "block",
+                "position": "static",
+                "width": "560px",
+                "height": "150px",
+                "margin": "0px",
+                "padding": "20px",
+                "gap": "normal",
+                "border": "2px solid rgb(36, 85, 122)",
+                "border-radius": "12px",
+                "opacity": "1",
+                "transform": "none",
+                "visibility": "visible",
+                "overflow": "visible",
+                "clip-path": "none",
+                "filter": "none",
+                "box-shadow": "none"
+              }
+            },
+            "scrollBasis": []
+          }
+        },
+        "engineState": {
+          "before": {
+            "editable": true,
+            "status": "editing",
+            "stale": false,
+            "canUndo": true,
+            "selectedId": "c2178563-c9ca-490d-aa33-0bbd5faa26b7",
+            "tool": "box"
+          },
+          "after": {
+            "editable": false,
+            "status": "unavailable",
+            "stale": false,
+            "canUndo": false,
+            "selectedId": "c2178563-c9ca-490d-aa33-0bbd5faa26b7",
+            "tool": "box"
+          }
+        }
+      }
+    },
+    {
+      "name": "Select over a selected border",
+      "status": "passed",
+      "detail": {
+        "tool": "select",
+        "point": "border",
+        "through": "update",
+        "loadedEngine": "ea85f7f964e3b7817e1547faca9e8611d1f63dff03f108bb4048d18227b9256d",
+        "hovered": {
+          "action": "move",
+          "cursor": "move"
+        },
+        "blocked": {
+          "action": null,
+          "cursor": "default"
+        },
+        "afterPress": {
+          "action": null,
+          "cursor": "default"
+        },
+        "sameOverlay": true,
+        "refusal": {
+          "code": "review_historical",
+          "message": "This is saved evidence, not a live review or permission to send."
+        },
+        "reportedError": null,
+        "annotation": {
+          "before": {
+            "id": "549a4aef-f49c-4ddb-8e7e-d99b2ebe3579",
+            "tool": "box",
+            "x1": 120,
+            "y1": 140,
+            "x2": 320,
+            "y2": 280,
+            "comment": "",
+            "replacement": "",
+            "styleNote": "",
+            "element": {
+              "selector": "#summary",
+              "selectorMatches": 1,
+              "tag": "section",
+              "text": "\n    Release notes\n    This static fixture stands in for a design under review. It is owned by feature 059 and is not the user's work.\n  ",
+              "rect": {
+                "x": 32,
+                "y": 88,
+                "width": 560,
+                "height": 150
+              },
+              "styles": {
+                "color": "rgb(16, 36, 58)",
+                "background-color": "rgb(255, 255, 255)",
+                "background-image": "none",
+                "font-family": "system-ui, sans-serif",
+                "font-size": "16px",
+                "font-weight": "400",
+                "line-height": "24px",
+                "letter-spacing": "normal",
+                "text-align": "start",
+                "display": "block",
+                "position": "static",
+                "width": "560px",
+                "height": "150px",
+                "margin": "0px",
+                "padding": "20px",
+                "gap": "normal",
+                "border": "2px solid rgb(36, 85, 122)",
+                "border-radius": "12px",
+                "opacity": "1",
+                "transform": "none",
+                "visibility": "visible",
+                "overflow": "visible",
+                "clip-path": "none",
+                "filter": "none",
+                "box-shadow": "none"
+              }
+            },
+            "scrollBasis": []
+          },
+          "after": {
+            "id": "549a4aef-f49c-4ddb-8e7e-d99b2ebe3579",
+            "tool": "box",
+            "x1": 120,
+            "y1": 140,
+            "x2": 320,
+            "y2": 280,
+            "comment": "",
+            "replacement": "",
+            "styleNote": "",
+            "element": {
+              "selector": "#summary",
+              "selectorMatches": 1,
+              "tag": "section",
+              "text": "\n    Release notes\n    This static fixture stands in for a design under review. It is owned by feature 059 and is not the user's work.\n  ",
+              "rect": {
+                "x": 32,
+                "y": 88,
+                "width": 560,
+                "height": 150
+              },
+              "styles": {
+                "color": "rgb(16, 36, 58)",
+                "background-color": "rgb(255, 255, 255)",
+                "background-image": "none",
+                "font-family": "system-ui, sans-serif",
+                "font-size": "16px",
+                "font-weight": "400",
+                "line-height": "24px",
+                "letter-spacing": "normal",
+                "text-align": "start",
+                "display": "block",
+                "position": "static",
+                "width": "560px",
+                "height": "150px",
+                "margin": "0px",
+                "padding": "20px",
+                "gap": "normal",
+                "border": "2px solid rgb(36, 85, 122)",
+                "border-radius": "12px",
+                "opacity": "1",
+                "transform": "none",
+                "visibility": "visible",
+                "overflow": "visible",
+                "clip-path": "none",
+                "filter": "none",
+                "box-shadow": "none"
+              }
+            },
+            "scrollBasis": []
+          }
+        },
+        "engineState": {
+          "before": {
+            "editable": true,
+            "status": "editing",
+            "stale": false,
+            "canUndo": true,
+            "selectedId": "549a4aef-f49c-4ddb-8e7e-d99b2ebe3579",
+            "tool": "select"
+          },
+          "after": {
+            "editable": false,
+            "status": "unavailable",
+            "stale": false,
+            "canUndo": false,
+            "selectedId": "549a4aef-f49c-4ddb-8e7e-d99b2ebe3579",
+            "tool": "select"
+          }
+        }
+      }
+    },
+    {
+      "name": "drawing tool armed over a selected handle, refused by the provider",
+      "status": "passed",
+      "detail": {
+        "tool": "box",
+        "point": "handle",
+        "through": "refusal",
+        "loadedEngine": "ea85f7f964e3b7817e1547faca9e8611d1f63dff03f108bb4048d18227b9256d",
+        "hovered": {
+          "action": "nwse-resize",
+          "cursor": "nwse-resize"
+        },
+        "blocked": {
+          "action": null,
+          "cursor": "crosshair"
+        },
+        "afterPress": {
+          "action": null,
+          "cursor": "crosshair"
+        },
+        "sameOverlay": true,
+        "refusal": {
+          "code": "review_historical",
+          "message": "This is saved evidence, not a live review or permission to send."
+        },
+        "reportedError": {
+          "code": "provider_unavailable",
+          "message": "provider_unavailable"
+        },
+        "annotation": {
+          "before": {
+            "id": "2850ff07-196a-4bcc-9b92-f844e0f19dfa",
+            "tool": "box",
+            "x1": 120,
+            "y1": 140,
+            "x2": 320,
+            "y2": 280,
+            "comment": "",
+            "replacement": "",
+            "styleNote": "",
+            "element": {
+              "selector": "#summary",
+              "selectorMatches": 1,
+              "tag": "section",
+              "text": "\n    Release notes\n    This static fixture stands in for a design under review. It is owned by feature 059 and is not the user's work.\n  ",
+              "rect": {
+                "x": 32,
+                "y": 88,
+                "width": 560,
+                "height": 150
+              },
+              "styles": {
+                "color": "rgb(16, 36, 58)",
+                "background-color": "rgb(255, 255, 255)",
+                "background-image": "none",
+                "font-family": "system-ui, sans-serif",
+                "font-size": "16px",
+                "font-weight": "400",
+                "line-height": "24px",
+                "letter-spacing": "normal",
+                "text-align": "start",
+                "display": "block",
+                "position": "static",
+                "width": "560px",
+                "height": "150px",
+                "margin": "0px",
+                "padding": "20px",
+                "gap": "normal",
+                "border": "2px solid rgb(36, 85, 122)",
+                "border-radius": "12px",
+                "opacity": "1",
+                "transform": "none",
+                "visibility": "visible",
+                "overflow": "visible",
+                "clip-path": "none",
+                "filter": "none",
+                "box-shadow": "none"
+              }
+            },
+            "scrollBasis": []
+          },
+          "after": {
+            "id": "2850ff07-196a-4bcc-9b92-f844e0f19dfa",
+            "tool": "box",
+            "x1": 120,
+            "y1": 140,
+            "x2": 320,
+            "y2": 280,
+            "comment": "",
+            "replacement": "",
+            "styleNote": "",
+            "element": {
+              "selector": "#summary",
+              "selectorMatches": 1,
+              "tag": "section",
+              "text": "\n    Release notes\n    This static fixture stands in for a design under review. It is owned by feature 059 and is not the user's work.\n  ",
+              "rect": {
+                "x": 32,
+                "y": 88,
+                "width": 560,
+                "height": 150
+              },
+              "styles": {
+                "color": "rgb(16, 36, 58)",
+                "background-color": "rgb(255, 255, 255)",
+                "background-image": "none",
+                "font-family": "system-ui, sans-serif",
+                "font-size": "16px",
+                "font-weight": "400",
+                "line-height": "24px",
+                "letter-spacing": "normal",
+                "text-align": "start",
+                "display": "block",
+                "position": "static",
+                "width": "560px",
+                "height": "150px",
+                "margin": "0px",
+                "padding": "20px",
+                "gap": "normal",
+                "border": "2px solid rgb(36, 85, 122)",
+                "border-radius": "12px",
+                "opacity": "1",
+                "transform": "none",
+                "visibility": "visible",
+                "overflow": "visible",
+                "clip-path": "none",
+                "filter": "none",
+                "box-shadow": "none"
+              }
+            },
+            "scrollBasis": []
+          }
+        },
+        "engineState": {
+          "before": {
+            "editable": true,
+            "status": "editing",
+            "stale": false,
+            "canUndo": true,
+            "selectedId": "2850ff07-196a-4bcc-9b92-f844e0f19dfa",
+            "tool": "box"
+          },
+          "after": {
+            "editable": false,
+            "status": "unavailable",
+            "stale": false,
+            "canUndo": false,
+            "selectedId": "2850ff07-196a-4bcc-9b92-f844e0f19dfa",
+            "tool": "box"
+          }
+        }
+      }
+    }
+  ],
+  "counts": {
+    "planned": 3,
+    "executed": 3,
+    "passed": 3,
+    "failed": 0
+  },
+  "observations": {
+    "browser": "Edg/133.0.3065.69",
+    "engineRevision": {
+      "loaded": [
+        "ea85f7f964e3b7817e1547faca9e8611d1f63dff03f108bb4048d18227b9256d"
+      ],
+      "designCopy": "ea85f7f964e3b7817e1547faca9e8611d1f63dff03f108bb4048d18227b9256d",
+      "currentSource": "556f07ac8ee5d4a067ffcb03b8dad1eb1ad3550a81b994046ea5ffe2ab764972"
+    }
+  },
+  "finishedAt": "2026-09-15T22:40:58.159Z",
+  "outcome": "passed"
+}

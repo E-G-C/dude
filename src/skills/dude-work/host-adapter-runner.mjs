@@ -13,9 +13,13 @@ import { isMainModule } from '../dude-engine/lib/text.mjs';
 import { WORKSPACE_PATHS, resolveMutationPath } from '../dude-engine/lib/workspace-paths.mjs';
 import { createHostAdapter, createTemporaryCheckpointStore } from './host-adapter.mjs';
 import {
+  HALT_NEXT_ACTIONS,
   canonicalJson,
   canonicalTarget,
+  capacityDiagnostic,
+  capacitySubject,
   capturedBytesV1,
+  classifyOutcomeReason,
   contentDescriptor,
   describeUnattendedHalt,
   inspect,
@@ -23,6 +27,7 @@ import {
   runCommand,
   sha256,
   validateAssessment,
+  validateCapacityDiagnostic,
   validateRunState,
 } from './recovery.mjs';
 
@@ -448,6 +453,15 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   let currentInspection = null;
   /** @type {Record<string, unknown>|null} */
   let carriedBlocker = null;
+  /** @type {{budget:string,limit:number,required:number,source:string,target:Record<string, unknown>|null}|null} */
+  let carriedCapacity = null;
+  /**
+   * The evidence hash the carried capacity may bind, established at the moment
+   * the refusal is observed. An acquisition refusal has none, so it stays null
+   * and no older Inspection hash is ever borrowed.
+   * @type {string|null}
+   */
+  let capacityEvidenceHash = null;
   /** @type {Record<string, unknown>|null} */
   let runtimeInspection = null;
   /** @type {Record<string, unknown>|null} */
@@ -492,6 +506,29 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
       } catch {
         // Fail closed: keep the unresolved report; `finish` must never throw.
       }
+      // A recognized capacity refusal binds only the evidence hash established
+      // when it was observed. An acquisition refusal — initial or late — has
+      // none, so the report carries `evidenceHash: null` rather than an older
+      // Inspection's hash. Its runtime-owned fields still resolve the halt.
+      // Without a canonical target the report stays unresolved alongside the
+      // bounded diagnostic.
+      if (carriedCapacity !== null
+        && (haltReport.resolved !== true || haltReport.evidenceHash !== capacityEvidenceHash)) {
+        try {
+          haltReport = {
+            halted: true,
+            resolved: true,
+            reason: 'evidence-incomplete',
+            stopClass: classifyOutcomeReason('evidence-incomplete'),
+            target: /** @type {Record<string, unknown>} */ (canonicalTarget(target)),
+            subject: capacitySubject(carriedCapacity),
+            nextAction: HALT_NEXT_ACTIONS[classifyOutcomeReason('evidence-incomplete')],
+            evidenceHash: capacityEvidenceHash,
+          };
+        } catch {
+          // No canonical target: keep the unresolved report.
+        }
+      }
     }
     return {
       ...row,
@@ -505,11 +542,32 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
 
   /** @param {string} step @param {Record<string, unknown>} result */
   const recordStep = (step, result) => {
+    // The adapter's bounded capacity diagnostic is revalidated here and carried
+    // onto the step row and the terminal halt report. A headroom or admission
+    // refusal binds the Inspection this very operation returned; an acquisition
+    // refusal returned none, so it binds no evidence hash at all. `run` clears
+    // the per-call tracking first, so a late acquisition failure can never
+    // borrow the hash of an Inspection an earlier operation returned.
+    const capacity = Object.hasOwn(result, 'capacity')
+      ? validateCapacityDiagnostic(result.capacity)
+      : null;
+    if (capacity !== null) {
+      carriedCapacity = capacity;
+      capacityEvidenceHash = runtimeInspection === null
+        ? null
+        : /** @type {string} */ (runtimeInspection.evidenceHash);
+      carriedBlocker = capacityEvidenceHash === null ? null : {
+        code: 'evidence-incomplete',
+        subject: capacitySubject(capacity),
+        evidenceHash: capacityEvidenceHash,
+      };
+    }
     const row = stateResult(/** @type {Record<string, unknown>} */ (result.session), {
       type: 'step',
       step,
       outcome: result.outcome,
       reason: result.reason,
+      ...(capacity === null ? {} : { capacity }),
       ...(Object.hasOwn(result, 'effect')
         ? { effectIdentity: /** @type {Record<string, unknown>} */ (result.effect).effectIdentity }
         : {}),
@@ -541,6 +599,9 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   /** @param {string} step @param {string} operation @param {Record<string, unknown>} payload @param {string} [correctionIdentity] */
   const run = (step, operation, payload, correctionIdentity) => {
     const current = /** @type {NonNullable<typeof adapter>} */ (adapter).snapshot();
+    // Per-call Inspection tracking is reset before the operation, so whatever
+    // `runtimeInspection` holds afterwards was returned by this operation alone.
+    runtimeInspection = null;
     const result = /** @type {Record<string, unknown>} */ (
       /** @type {NonNullable<typeof adapter>} */ (adapter).run({
         version: 1,
@@ -1406,7 +1467,18 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     const endedRow = recordStep('end', ended);
     return finish(endedRow);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const capacity = capacityDiagnostic(error);
+    if (capacity !== null) {
+      carriedCapacity = capacity;
+      // A capacity refusal that escapes as a throw is an acquisition failure: it
+      // returned no Inspection, so it binds no evidence hash.
+      capacityEvidenceHash = null;
+      carriedBlocker = null;
+    }
+    const detail = capacity === null
+      ? (error instanceof Error ? error.message : String(error))
+      : `${capacity.budget}: ${capacity.required} required against the fixed limit of `
+        + `${capacity.limit} for ${capacity.source}`;
     const taskStateFailure = error instanceof TaskStateEvidenceError;
     if (taskStateFailure && currentInspection === null) {
       try {
@@ -1423,21 +1495,18 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
         evidenceHash: currentInspection.evidenceHash,
       };
     }
+    const reason = taskStateFailure || capacity !== null ? 'evidence-incomplete' : 'runner-refused';
+    const fields = {
+      type: 'step',
+      step: 'runner',
+      outcome: 'hard-stop',
+      reason,
+      detail,
+      ...(capacity === null ? {} : { capacity }),
+    };
     const row = adapter === null
-      ? initialStateResult(state, {
-        type: 'step',
-        step: 'runner',
-        outcome: 'hard-stop',
-        reason: taskStateFailure ? 'evidence-incomplete' : 'runner-refused',
-        detail,
-      })
-      : stateResult(adapter.snapshot(), {
-        type: 'step',
-        step: 'runner',
-        outcome: 'hard-stop',
-        reason: taskStateFailure ? 'evidence-incomplete' : 'runner-refused',
-        detail,
-      });
+      ? initialStateResult(state, fields)
+      : stateResult(adapter.snapshot(), fields);
     steps.push(row);
     return finish(row);
   }
