@@ -92,7 +92,7 @@ export function mountReview(container, { review, requestHandle, revision, theme,
   iframe.setAttribute('aria-hidden', 'true');
   const overlay = el('svg', { tabindex: 0, role: 'group',
     'aria-label': 'Reviewed HTML document. Use drawing tools or Choose an element to annotate.' });
-  overlay.setAttribute('aria-description', 'With the Select tool, double-click an annotation or its number to write its comment. With a drawing tool, the selected annotation keeps its handles for resizing and its border for moving, and two presses on that border write its comment. Enter does the same for the selected annotation.');
+  overlay.setAttribute('aria-description', 'With the Select tool, double-click an annotation or its number to write its comment. With a drawing tool, the selected annotation keeps its handles for resizing and its border for moving, and two presses on that border write its comment. With the Comment tool, press a pin you already placed to select it, drag it to move it, and press it twice to write its comment, while a press anywhere else places another pin. Enter does the same for the selected annotation.');
   overlay.classList.add('dude-review-overlay');
   frame.append(iframe, overlay); root.append(css, frame); container.append(root);
 
@@ -573,6 +573,14 @@ export function mountReview(container, { review, requestHandle, revision, theme,
    * eligible -- there is no scan of unselected marks for a drawing-mode grab,
    * and no recency rule -- while Select keeps its existing whole-face, badge,
    * and topmost behavior unchanged.
+   *
+   * Comment answers for the object Comment makes. A pin already on the mock
+   * takes the press with Select's own marker predicate, so pressing one
+   * selects it, dragging one moves it, and a pair opens its comment, the way a
+   * map or PDF tool keeps its pin tool armed while an existing pin still
+   * belongs to itself. Only pins answer, first or last and topmost first, so
+   * every other place -- including inside a drawing -- still drops a new pin
+   * through the existing capture path, and a pin still has no handles.
    */
   function targetAt(p) {
     const { annotations, clips } = pointable();
@@ -591,7 +599,10 @@ export function mountReview(container, { review, requestHandle, revision, theme,
       const hit = markerAt(annotations, clips, p);
       return hit ? { kind: 'move', id: hit.id, cursor: 'move' } : { kind: 'pick', cursor: null };
     }
-    if (state.tool === 'comment') return { kind: 'pick', cursor: null };
+    if (state.tool === 'comment') {
+      const pin = markerAt(annotations.filter(a => a.tool === 'comment'), clips, p);
+      return pin ? { kind: 'move', id: pin.id, cursor: 'move' } : { kind: 'pick', cursor: null };
+    }
     if (reachable && hitBoundary(selected, p)) return { kind: 'move', id: selected.id, cursor: 'move' };
     return { kind: 'create', cursor: null };
   }

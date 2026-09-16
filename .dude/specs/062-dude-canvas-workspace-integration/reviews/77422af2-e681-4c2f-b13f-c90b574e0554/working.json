@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "submissionId": "77422af2-e681-4c2f-b13f-c90b574e0554",
+  "scope": {
+    "kind": "feature",
+    "ideaPath": ".dude/ideas/062-dude-canvas-workspace-integration.md",
+    "specPath": ".dude/specs/062-dude-canvas-workspace-integration/spec.md"
+  },
+  "preview": {
+    "artifact": {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+      "revision": "sha256:1508fe1efaf6a5228784dee8c140a569927bf27eb1dfc9244679b6ae80ec2962"
+    },
+    "assets": []
+  },
+  "requestRef": "workspace-integration-whole-layout-approval",
+  "requestRevision": "sha256:dd246853e020f9d5270b51109b1f62533f4662cd79bd05314f4902dd375ecc58",
+  "state": {
+    "annotations": [
+      {
+        "id": "eb4a41e3-bdd5-4284-b361-ce992028d97b",
+        "tool": "comment",
+        "x1": 32.8671875,
+        "y1": 355.41796875,
+        "x2": 32.8671875,
+        "y2": 355.41796875,
+        "comment": "Where this # 6 comes from?",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "li.rail-item:nth-of-type(3) > button.rail-button",
+          "selectorMatches": 1,
+          "tag": "button",
+          "text": "Needs you",
+          "rect": {
+            "x": 7.5,
+            "y": 332,
+            "width": 32,
+            "height": 32
+          },
+          "styles": {
+            "color": "rgb(66, 66, 66)",
+            "background-color": "rgb(255, 255, 255)",
+            "background-image": "none",
+            "font-family": "system-ui",
+            "font-size": "11px",
+            "font-weight": "400",
+            "line-height": "normal",
+            "letter-spacing": "normal",
+            "text-align": "center",
+            "display": "flex",
+            "position": "relative",
+            "width": "32px",
+            "height": "32px",
+            "margin": "0px",
+            "padding": "0px",
+            "gap": "8px",
+            "border": "1px solid rgb(97, 97, 97)",
+            "border-radius": "4px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": []
+      }
+    ],
+    "notes": "",
+    "tool": "comment",
+    "selectedId": "eb4a41e3-bdd5-4284-b361-ce992028d97b",
+    "caret": {
+      "id": "eb4a41e3-bdd5-4284-b361-ce992028d97b",
+      "field": "comment",
+      "start": 26,
+      "end": 26,
+      "direction": "none"
+    },
+    "view": {
+      "viewport": {
+        "width": 997,
+        "height": 728,
+        "scrollX": 0,
+        "scrollY": 55,
+        "deviceScale": 2,
+        "theme": "light",
+        "documentWidth": 997,
+        "documentHeight": 1105
+      },
+      "signature": "sha256:9a6c1d9d6b79eb361670dedd737961e172ade86b7edf08428f0e3abfd7ff4188",
+      "scrolls": []
+    },
+    "palette": {
+      "stroke": "#d13438",
+      "background": "#ffffff",
+      "foreground": "#242424",
+      "highlightFill": "#fef7b2",
+      "highlightStroke": "#fde300",
+      "selection": "#0f6cbd",
+      "fontFamily": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif"
+    }
+  }
+}

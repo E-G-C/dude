@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "submissionId": "bf29c0fa-0420-4fdf-9e8f-8fd459ffa03e",
+  "scope": {
+    "kind": "feature",
+    "ideaPath": ".dude/ideas/062-dude-canvas-workspace-integration.md",
+    "specPath": ".dude/specs/062-dude-canvas-workspace-integration/spec.md"
+  },
+  "preview": {
+    "artifact": {
+      "path": ".dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html",
+      "revision": "sha256:1508fe1efaf6a5228784dee8c140a569927bf27eb1dfc9244679b6ae80ec2962"
+    },
+    "assets": []
+  },
+  "requestRef": "workspace-integration-whole-layout-approval",
+  "requestRevision": "sha256:dd246853e020f9d5270b51109b1f62533f4662cd79bd05314f4902dd375ecc58",
+  "state": {
+    "annotations": [
+      {
+        "id": "a79bbcd2-3640-4b85-8b19-e13efd26ca81",
+        "tool": "comment",
+        "x1": 703.98046875,
+        "y1": 173.26171875,
+        "x2": 703.98046875,
+        "y2": 173.26171875,
+        "comment": "After placing  a comment marker, clicking on it  does not select it or offers the same “move” functionality as shapes . also there is a rendering problem, not sure if it’s because is the first comment",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "header.shell-bar",
+          "selectorMatches": 1,
+          "tag": "header",
+          "text": "\n      \n        \n        Dude\n        Workspace\n      \n      \n\n      \n      \n        \n        \n        \n          Working on\n          \n        \n        \n        Clear\n      \n\n      \n      \n        \n          \n            \n            \n          \n        \n        \n          Show\n          \n            Open\n            Closed\n            All\n          \n        \n        \n      \n\n      \n        \n          \n          Refresh\n        \n      \n    ",
+          "rect": {
+            "x": 0,
+            "y": 142,
+            "width": 1499,
+            "height": 45
+          },
+          "styles": {
+            "color": "rgb(36, 36, 36)",
+            "background-color": "rgb(250, 250, 250)",
+            "background-image": "none",
+            "font-family": "Segoe UI, \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, Helvetica Neue, sans-serif",
+            "font-size": "14px",
+            "font-weight": "400",
+            "line-height": "20px",
+            "letter-spacing": "normal",
+            "text-align": "start",
+            "display": "flex",
+            "position": "sticky",
+            "width": "1499px",
+            "height": "45px",
+            "margin": "0px",
+            "padding": "6px 12px",
+            "gap": "8px",
+            "border": "",
+            "border-radius": "0px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": []
+      },
+      {
+        "id": "6fc5306c-6aed-4cfe-bfed-157a7edd7555",
+        "tool": "comment",
+        "x1": 747.765625,
+        "y1": 258.08984375,
+        "x2": 747.765625,
+        "y2": 258.08984375,
+        "comment": "",
+        "replacement": "",
+        "styleNote": "",
+        "element": {
+          "selector": "div.view-head:nth-of-type(1)",
+          "selectorMatches": 1,
+          "tag": "div",
+          "text": "OverviewNew ideaNothing is selected. Records are listed in capture order; the number records when a record was captured and nothing else.",
+          "rect": {
+            "x": 48,
+            "y": 187,
+            "width": 1111,
+            "height": 85
+          },
+          "styles": {
+            "color": "rgb(36, 36, 36)",
+            "background-color": "rgba(0, 0, 0, 0)",
+            "background-image": "none",
+            "font-family": "Segoe UI, \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, Helvetica Neue, sans-serif",
+            "font-size": "14px",
+            "font-weight": "400",
+            "line-height": "20px",
+            "letter-spacing": "normal",
+            "text-align": "start",
+            "display": "grid",
+            "position": "static",
+            "width": "1111px",
+            "height": "85px",
+            "margin": "0px",
+            "padding": "12px 16px 8px",
+            "gap": "4px 8px",
+            "border": "",
+            "border-radius": "0px",
+            "opacity": "1",
+            "transform": "none",
+            "visibility": "visible",
+            "overflow": "visible",
+            "clip-path": "none",
+            "filter": "none",
+            "box-shadow": "none"
+          }
+        },
+        "scrollBasis": []
+      }
+    ],
+    "notes": "",
+    "tool": "select",
+    "selectedId": "a79bbcd2-3640-4b85-8b19-e13efd26ca81",
+    "caret": {
+      "id": "a79bbcd2-3640-4b85-8b19-e13efd26ca81",
+      "field": "comment",
+      "start": 200,
+      "end": 200,
+      "direction": "none"
+    },
+    "view": {
+      "viewport": {
+        "width": 1499,
+        "height": 1219,
+        "scrollX": 0,
+        "scrollY": 0,
+        "deviceScale": 1,
+        "theme": "light",
+        "documentWidth": 1499,
+        "documentHeight": 1219
+      },
+      "signature": "sha256:a4a180a980052476349a628754458bb9b8bc61da19ea94a805329d40b88369cb",
+      "scrolls": []
+    },
+    "palette": {
+      "stroke": "#d13438",
+      "background": "#ffffff",
+      "foreground": "#242424",
+      "highlightFill": "#fef7b2",
+      "highlightStroke": "#fde300",
+      "selection": "#0f6cbd",
+      "fontFamily": "\"Segoe UI\", \"Segoe UI Web (West European)\", -apple-system, BlinkMacSystemFont, Roboto, \"Helvetica Neue\", sans-serif"
+    }
+  }
+}

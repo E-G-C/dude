@@ -30,7 +30,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = '12f499b0703b89b2f79880ba80b750ffd43fc141253846a24310797422df89b3';
+const PUBLISHED_APP_SHA256 = '8a571800c96c8e55fb7eba4ac06e31a345334bf7ae9cc338d753fd7371a9055c';
 
 /** @param {string|Buffer} value */
 function hash(value) {
@@ -8095,6 +8095,7 @@ test('T012 review regression: double-click opens an annotation comment while dra
     dragAndResize: null,
     dragPriming: null,
     commentField: null,
+    commentPin: null,
     pickerAndKeyboard: null,
     accessibility: null,
     frame: null,
@@ -8191,7 +8192,7 @@ test('T012 review regression: double-click opens an annotation comment while dra
       overlay:{
         role:'group',
         name:'Reviewed HTML document. Use drawing tools or Choose an element to annotate.',
-        description:'With the Select tool, double-click an annotation or its number to write its comment. With a drawing tool, the selected annotation keeps its handles for resizing and its border for moving, and two presses on that border write its comment. Enter does the same for the selected annotation.',
+        description:'With the Select tool, double-click an annotation or its number to write its comment. With a drawing tool, the selected annotation keeps its handles for resizing and its border for moving, and two presses on that border write its comment. With the Comment tool, press a pin you already placed to select it, drag it to move it, and press it twice to write its comment, while a press anywhere else places another pin. Enter does the same for the selected annotation.',
       },
     }, 'pan and annotation-open instructions remain on their separate accessible surfaces');
     const descriptionTree = await page.send('Accessibility.getFullAXTree');
@@ -8279,6 +8280,7 @@ test('T012 review regression: double-click opens an annotation comment while dra
     });
     const settle = () => evaluate(page,
       'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    const separate = () => new Promise(resolve => setTimeout(resolve, 650));
     // The engine refreshes its unpinned view whenever the stage reflows, and an
     // admission that races that refresh is superseded rather than drawn. Wait
     // for saved, still chrome before each drawing gesture, the way the rest of
@@ -9030,6 +9032,91 @@ test('T012 review regression: double-click opens an annotation comment while dra
       drawn:workingState().annotations.length,
       tool:workingState().tool,
     };
+
+    // Assert the full shell response to the settled Comment-pin convention.
+    // The engine-only regression owns movement and history; this existing
+    // production UI fixture proves both open gestures reveal the real drawer
+    // and focus its comment field without adding or moving the pin.
+    await revealFloatingTool(page, 'Comment (C)');
+    await clickAtCurrentPosition(page, tool('Comment (C)'));
+    await until(() => workingState()?.tool === 'comment',
+      'Comment is armed for the existing-pin shell path');
+    const existingPinPoint = await at(anchored.x1, anchored.y1);
+    const existingPinCursor = await hoverCursor(
+      existingPinPoint,
+      {action:'move', cursor:'move'},
+      'Comment exposes the existing anchored pin as movable',
+    );
+    const pinCount = workingState().annotations.length;
+    const pinBefore = structuredClone(
+      workingState().annotations.find(item => item.id === anchored.id),
+    );
+    await separate();
+    await clickMouse(existingPinPoint);
+    await until(() => workingState()?.selectedId === anchored.id,
+      'one Comment press selects the existing pin');
+    assert.equal(workingState().annotations.length, pinCount,
+      'one Comment press adds no duplicate pin');
+    assert.deepEqual(
+      workingState().annotations.find(item => item.id === anchored.id),
+      pinBefore,
+      'one Comment press changes no pin coordinates or fields',
+    );
+    assert.equal(await commentsOpen(), false,
+      'one Comment press leaves the drawer closed');
+
+    await separate();
+    const pinPairStart = await pressCount();
+    await clickMouse(existingPinPoint, 2);
+    const pinPair = pairMetrics(await pressesSince(pinPairStart));
+    assert.equal(pinPair.count, 2,
+      'the Comment-pin open gesture contains exactly two trusted presses');
+    assert.ok(pinPair.elapsed >= 0 && pinPair.elapsed <= 500,
+      `the Comment-pin presses stay inside 500 ms: ${JSON.stringify(pinPair)}`);
+    assert.ok(pinPair.distance <= 4,
+      `the Comment-pin presses stay inside 4 px: ${JSON.stringify(pinPair)}`);
+    assert.deepEqual(pinPair.annotations, [anchored.id, anchored.id],
+      'both presses land on the existing pin');
+    await until(async () => await commentsOpen() && await focusedComment(),
+      'the Comment-pin pair opens the real drawer with comment focus');
+    assert.equal(await markedRow(), anchored.id,
+      'the drawer marks the pin opened by the pair');
+    assert.equal(workingState().annotations.length, pinCount,
+      'the opening pair adds no pin');
+    assert.deepEqual(
+      workingState().annotations.find(item => item.id === anchored.id),
+      pinBefore,
+      'the opening pair changes no persisted pin data',
+    );
+    await closeComments('the Comment-pin pair');
+
+    await evaluate(page, `document.querySelector('.dude-review-overlay')
+      .focus({preventScroll:true})`);
+    await press(page, 'Enter');
+    await until(async () => await commentsOpen() && await focusedComment(),
+      'Enter on the selected Comment pin opens the real drawer with comment focus');
+    assert.equal(await markedRow(), anchored.id,
+      'Enter opens the selected pin');
+    assert.equal(workingState().annotations.length, pinCount,
+      'Enter adds no pin');
+    assert.deepEqual(
+      workingState().annotations.find(item => item.id === anchored.id),
+      pinBefore,
+      'Enter changes no persisted pin data',
+    );
+    observations.commentPin = {
+      id:anchored.id,
+      cursor:existingPinCursor,
+      count:pinCount,
+      selectedId:workingState().selectedId,
+      tool:workingState().tool,
+      pair:pinPair,
+      panelOpen:await commentsOpen(),
+      commentFocused:await focusedComment(),
+      coordinates:{x1:pinBefore.x1,y1:pinBefore.y1,x2:pinBefore.x2,y2:pinBefore.y2},
+    };
+    await closeComments('the Comment-pin Enter gesture');
+    await quiet('the final Comment-pin shell state');
 
     // Assert: no gesture moved, resized, or scrolled the pinned reviewed view.
     const after = await frameSnapshot();
@@ -11357,5 +11444,441 @@ test('T011 review regression: latest history navigation wins over superseded rea
     }
     board.close();
     if (!diagnosticFailure && diagnosticRetentionError) throw diagnosticRetentionError;
+  }
+});
+
+test('T012 review regression: the selected-element context summary collapses source whitespace while its stored text stays literal', {
+  timeout: 180_000,
+  concurrency: false,
+}, async (context) => {
+  if (!browserReady(context)) return;
+  const output = evidence(context, 't012-context-whitespace');
+  const board = installEmptyBoard();
+  let browserState;
+  let fixture;
+  let publication;
+  const runtimeErrors = [];
+  const observations = {
+    convention: 'Browsers render body copy with collapsed whitespace; only code, transcript, and user-authored surfaces keep literal newlines. '
+      + 'The captured-context summary is body copy about the element, so it follows that convention while the stored annotation text stays literal.',
+    reproduced: 'The reported panel painted a 445-byte header of 46 lines, 37 of them blank, as a 920px-tall paragraph at a 20px line height.',
+    cases: [],
+    saved: null,
+    sealed: null,
+    runtimeErrors,
+  };
+  context.after(() => writeEvidenceJson(output, 'context-whitespace.metrics', observations));
+  try {
+    // Arrange: a fixture whose header carries the same kind of source
+    // whitespace the reported mock carried — blank-line runs and indentation
+    // between its children — beside an ordinary single-line paragraph that has
+    // none, so the collapse can be shown to change only the first one.
+    const headerLines = [
+      '    <span class="brand">Dude Canvas workspace</span>',
+      ...Array(11).fill(''),
+      '    <span class="crumb">Ideas and features, newest capture first</span>',
+      ...Array(8).fill(''),
+      '    <span class="crumb">062 Canvas workspace integration</span>',
+      ...Array(9).fill(''),
+      '    <button type="button" id="shell-review">Review this design</button>',
+      ...Array(9).fill(''),
+      '    <button type="button" id="shell-send">Send annotations to the design owner</button>',
+    ];
+    const headerText = `\n${headerLines.map((line) => line.replace(/<[^>]+>/g, '')).join('\n')}\n`;
+    const headerCollapsed = headerText.replace(/\s+/gu, ' ').trim();
+    const viewHeadText = 'Ideas and features, newest capture first. Number shows capture order only.';
+    const userComment = 'After placing  a comment marker, this context box was unreadable.';
+    const headerStats = {
+      bytes: Buffer.byteLength(headerText),
+      lineCount: headerText.split('\n').length,
+      blankLineCount: headerText.split('\n').filter((line) => line.trim() === '').length,
+      maxBlankRun: headerText.split('\n').reduce((state, line) => {
+        const run = line.trim() === '' ? state.run + 1 : 0;
+        return { run, max: Math.max(state.max, run) };
+      }, { run: 0, max: 0 }).max,
+      collapsedLength: headerCollapsed.length,
+    };
+    assert.ok(headerStats.blankLineCount >= 30 && headerStats.maxBlankRun >= 8,
+      `the fixture must reproduce the reported blank-line shape: ${JSON.stringify(headerStats)}`);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-t012-context-whitespace-'));
+    const feature = createIdea(root, 907, 'context-whitespace-regression', 'defined');
+    assert.ok(feature.specPath);
+    const artifactPath = `${path.posix.dirname(feature.specPath)}/design/mock.html`;
+    write(root, artifactPath, [
+      '<!doctype html><html lang="en"><head><meta charset="utf-8">',
+      '<meta name="viewport" content="width=device-width">',
+      '<title>T012 context whitespace fixture</title><style>',
+      'html,body{margin:0;font:16px/1.5 system-ui;background:#fff;color:#242424}',
+      '#shell-bar{display:flex;gap:16px;align-items:center;padding:16px;border-bottom:2px solid #0f6cbd}',
+      'main{padding:32px;min-height:700px;box-sizing:border-box}',
+      '#view-head{margin:24px 0 0;max-width:640px}',
+      'button{font:inherit;min-height:32px}',
+      '</style></head><body>',
+      '<header id="shell-bar" aria-label="Shell bar">',
+      ...headerLines,
+      '</header>',
+      '<main><h1 id="heading">Workspace integration</h1>',
+      `<p id="view-head">${viewHeadText}</p>`,
+      '</main></body></html>',
+    ].join('\n'));
+    write(root, feature.specPath, [
+      '---',
+      `preview_path: ${artifactPath}`,
+      '---',
+      '',
+      '# Context whitespace fixture',
+      '',
+    ].join('\n'));
+    const preview = {
+      artifact: {
+        path: artifactPath,
+        revision: hash(fs.readFileSync(path.join(root, ...artifactPath.split('/')))),
+      },
+      assets: [],
+    };
+    fixture = await createFixture(root);
+    const scope = { kind: 'feature', ideaPath: feature.ideaPath, specPath: feature.specPath };
+    const request = requestFor(fixture, 'preview', preview, scope);
+    request.prompt = 'Comment on the captured elements of this mock.';
+    publication = await publish(fixture, request);
+    browserState = await startBrowser(1, true);
+    const { page } = browserState;
+    page.on('Runtime.exceptionThrown', (event) => runtimeErrors.push(event));
+
+    // The reported panel ran at this exact window and display scale.
+    await viewport(page, 1499, 'light', 1219, 1);
+    await page.send('Page.navigate', { url: fixture.instance.url });
+    await visible(page, 'Connected');
+    await click(page, `document.querySelector('[data-work-path="${feature.ideaPath}"]')`);
+    await visible(page, 'Defined feature');
+    await click(page, button('Review design'));
+    await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+      && !document.querySelector('[aria-label="Comment (C)"]')?.disabled`),
+    'context-whitespace Review engine', 60_000);
+
+    const workingFile = () => {
+      const reviews = path.join(root, ...path.posix.dirname(feature.specPath).split('/'), 'reviews');
+      if (!fs.existsSync(reviews)) return null;
+      const submission = fs.readdirSync(reviews).sort()
+        .find((name) => fs.existsSync(path.join(reviews, name, 'working.json')));
+      return submission ? path.join(reviews, submission, 'working.json') : null;
+    };
+    const workingState = () => {
+      const file = workingFile();
+      return file ? JSON.parse(fs.readFileSync(file, 'utf8')).state : null;
+    };
+    const commentsOpen = () => evaluate(page, `Boolean(document.querySelector(
+      '[aria-label="Close comments"]'
+    )?.getClientRects().length)`);
+
+    /** @param {string} option @param {string} selector @param {number} expected */
+    const addCommentFor = async (option, selector, expected) => {
+      await openReviewDetails(page);
+      await until(() => evaluate(page, `Boolean(${field('Choose an element')})`), 'disclosed element chooser');
+      await choose(page, 'Choose an element', option);
+      await click(page, button('Add comment'));
+      await until(() => commentsOpen(), `Comments open for ${option}`);
+      return structuredClone(await until(() => {
+        const state = workingState();
+        return state && state.annotations.length === expected
+          && state.annotations.at(-1)?.element?.selector === selector ? state : null;
+      }, `saved annotation for ${option}`, 60_000));
+    };
+    const closeComments = async (label) => {
+      await click(page, button('Done'));
+      await until(async () => !await commentsOpen(), `Comments closed after ${label}`);
+    };
+
+    /**
+     * Measure the rendered context summary beside two test-owned controls at
+     * the same width: the same literal text under the rule the panel uses, and
+     * under the `pre-wrap` rule it replaced. The controls live and die inside
+     * this measurement, so no live style or source is changed to prove the
+     * negative.
+     * @param {string} raw
+     */
+    const measureContext = (raw) => evaluate(page, `(() => {
+      const raw=${JSON.stringify(raw)};
+      const paragraph=[...document.querySelectorAll('p')]
+        .find(node=>node.textContent===raw&&node.getClientRects().length);
+      if(!paragraph) return null;
+      const style=getComputedStyle(paragraph);
+      const rect=paragraph.getBoundingClientRect();
+      const range=document.createRange();
+      range.selectNodeContents(paragraph);
+      const lineBoxes=[...range.getClientRects()].length;
+      const container=paragraph.parentElement.getBoundingClientRect();
+      const host=document.createElement('div');
+      host.style.cssText=['position:absolute','left:-20000px','top:0','visibility:hidden',
+        'width:'+rect.width+'px','z-index:-1'].join(';');
+      const collapsed=paragraph.cloneNode(true);
+      collapsed.style.setProperty('white-space','normal','important');
+      const preWrap=paragraph.cloneNode(true);
+      preWrap.style.setProperty('white-space','pre-wrap','important');
+      host.append(collapsed,preWrap);
+      // Measured inside the panel the summary lives in, so both controls
+      // inherit the same font, size, and width it actually renders with.
+      paragraph.parentElement.append(host);
+      const controls={
+        collapsed:{
+          textEqualsRaw:collapsed.textContent===raw,
+          whiteSpace:getComputedStyle(collapsed).whiteSpace,
+          height:collapsed.getBoundingClientRect().height,
+        },
+        preWrap:{
+          textEqualsRaw:preWrap.textContent===raw,
+          whiteSpace:getComputedStyle(preWrap).whiteSpace,
+          height:preWrap.getBoundingClientRect().height,
+        },
+      };
+      host.remove();
+      return {
+        textEqualsRaw:paragraph.textContent===raw,
+        innerText:paragraph.innerText,
+        computed:{
+          whiteSpace:style.whiteSpace,
+          overflowWrap:style.overflowWrap,
+          lineHeight:parseFloat(style.lineHeight),
+        },
+        width:rect.width,
+        height:rect.height,
+        lineBoxes,
+        container:{width:container.width},
+        commentsOpen:Boolean(document.querySelector('[aria-label="Close comments"]')?.getClientRects().length),
+        controls,
+      };
+    })()`);
+
+    /**
+     * @param {any} metrics @param {string} label @param {string} raw
+     * @param {{maxLines:number, collapsesWhitespace:boolean}} expected
+     */
+    const assertContext = (metrics, label, raw, expected) => {
+      assert.ok(metrics, `${label}: the context summary is rendered`);
+      assert.equal(metrics.textEqualsRaw, true, `${label}: the literal captured text stays in the DOM`);
+      assert.equal(metrics.computed.whiteSpace, 'normal', `${label}: source whitespace is collapsed for display`);
+      assert.equal(metrics.computed.overflowWrap, 'anywhere', `${label}: long unbroken strings still break`);
+      assert.equal(metrics.innerText.replace(/\s+/gu, ' ').trim(), raw.replace(/\s+/gu, ' ').trim(),
+        `${label}: every captured word is still readable`);
+      assert.ok(metrics.width <= metrics.container.width + 1,
+        `${label}: the summary stays inside its panel: ${JSON.stringify(metrics)}`);
+      assert.ok(metrics.height <= metrics.computed.lineHeight * expected.maxLines,
+        `${label}: the summary is ${metrics.height}px, over ${expected.maxLines} lines of ${metrics.computed.lineHeight}px`);
+      assert.equal(metrics.controls.collapsed.textEqualsRaw, true, `${label}: the control carries the same literal text`);
+      assert.ok(Math.abs(metrics.controls.collapsed.height - metrics.height) <= 1,
+        `${label}: the rendered height is the collapsed-whitespace height: ${JSON.stringify(metrics)}`);
+      if (expected.collapsesWhitespace) {
+        assert.ok(metrics.controls.preWrap.height >= metrics.height * 5,
+          `${label}: the replaced pre-wrap rule painted ${metrics.controls.preWrap.height}px for the same text`);
+        assert.ok(metrics.controls.preWrap.height >= 600,
+          `${label}: the reported empty height is reproduced by the control: ${JSON.stringify(metrics.controls)}`);
+      } else {
+        assert.equal(metrics.controls.preWrap.height, metrics.height,
+          `${label}: text without source newlines is unaffected by the rule`);
+      }
+    };
+
+    // Act: the first selection this review ever had is the whitespace-heavy
+    // element, which is how the incident was reported.
+    const first = await addCommentFor('Shell bar', '#shell-bar', 1);
+    const headerId = first.annotations[0].id;
+    assert.equal(first.annotations[0].element.text, headerText,
+      'the inspector still captures the literal element text');
+    const firstMetrics = await measureContext(headerText);
+    assertContext(firstMetrics, 'first selection at 1499x1219', headerText,
+      { maxLines: 8, collapsesWhitespace: true });
+    await fill(page, field('Comment (optional)'), userComment);
+    await until(() => workingState()?.annotations[0]?.comment === userComment, 'literal comment kept');
+    const literalStyles = await evaluate(page, `(() => {
+      const row=document.querySelector('[data-annotation-id][aria-current="true"]');
+      const comment=[...(row?.querySelectorAll('span')||[])]
+        .find(node=>node.textContent===${JSON.stringify(userComment)});
+      const selector=[...document.querySelectorAll('span')]
+        .find(node=>node.textContent==='#shell-bar'&&node.getClientRects().length);
+      return {
+        comment:comment?{text:comment.textContent,whiteSpace:getComputedStyle(comment).whiteSpace}:null,
+        selector:selector?{whiteSpace:getComputedStyle(selector).whiteSpace}:null,
+      };
+    })()`);
+    assert.equal(literalStyles.comment?.text, userComment, 'the reviewer comment is shown exactly as typed');
+    assert.equal(literalStyles.comment?.whiteSpace, 'pre-wrap',
+      'reviewer comments keep their own literal line breaks');
+    assert.equal(literalStyles.selector?.whiteSpace, 'pre-wrap',
+      'the captured selector keeps its code presentation');
+    await closeComments('first selection');
+
+    // A later selection of ordinary single-line text is unchanged.
+    const second = await addCommentFor(viewHeadText, '#view-head', 2);
+    assert.equal(second.annotations[1].element.text, viewHeadText,
+      'the single-line control carries its own captured text');
+    const viewHeadMetrics = await measureContext(viewHeadText);
+    assertContext(viewHeadMetrics, 'single-line element', viewHeadText,
+      { maxLines: 4, collapsesWhitespace: false });
+    await closeComments('single-line element');
+
+    // The same whitespace-heavy element, selected later from the list.
+    await click(page, `[...document.querySelectorAll('button')]
+      .find(node => /^Comments \\(\\d+\\)$/.test(node.innerText.trim()) && node.getClientRects().length)`);
+    await until(() => commentsOpen(), 'Comments reopened for a later selection');
+    await click(page, `document.querySelector('[data-annotation-id="${headerId}"]')`);
+    await until(() => evaluate(page, `document.querySelector(
+      '[data-annotation-id="${headerId}"]'
+    )?.getAttribute('aria-current') === 'true'`), 'the earlier annotation is selected again');
+    const laterMetrics = await measureContext(headerText);
+    assertContext(laterMetrics, 'later selection at 1499x1219', headerText,
+      { maxLines: 8, collapsesWhitespace: true });
+    const wideScreenshot = Buffer.from((await page.send('Page.captureScreenshot', {
+      format: 'png', captureBeyondViewport: false,
+    })).data, 'base64');
+    fs.writeFileSync(path.join(output.directory, 'context-summary-1499.png'), wideScreenshot);
+
+    // Narrow width keeps the summary collapsed, wrapped, and reachable.
+    await viewport(page, 420, 'light', 1219, 1);
+    await until(() => commentsOpen(), 'Comments stay open at a narrow width');
+    const narrowMetrics = await measureContext(headerText);
+    assertContext(narrowMetrics, 'later selection at 420 wide', headerText,
+      { maxLines: 14, collapsesWhitespace: true });
+    assert.ok(narrowMetrics.lineBoxes >= 2,
+      `the narrow summary still wraps: ${JSON.stringify(narrowMetrics)}`);
+    assert.equal(narrowMetrics.commentsOpen, true, 'the panel is still usable at a narrow width');
+    const narrowScreenshot = Buffer.from((await page.send('Page.captureScreenshot', {
+      format: 'png', captureBeyondViewport: false,
+    })).data, 'base64');
+    fs.writeFileSync(path.join(output.directory, 'context-summary-420.png'), narrowScreenshot);
+
+    // Assert: nothing the reviewer or the inspector stored was normalized.
+    const savedBytes = fs.readFileSync(/** @type {string} */ (workingFile()));
+    const saved = JSON.parse(savedBytes.toString('utf8')).state;
+    assert.equal(saved.annotations.length, 2);
+    assert.equal(saved.annotations[0].element.text, headerText);
+    assert.equal(saved.annotations[1].element.text, viewHeadText);
+    assert.equal(saved.annotations[0].comment, userComment);
+    assert.ok(savedBytes.includes(Buffer.from(JSON.stringify(headerText).slice(1, -1), 'utf8')),
+      'the persisted markup carries the captured text verbatim');
+
+    observations.saved = {
+      headerTextSha256: sha256(headerText),
+      savedHeaderTextSha256: sha256(saved.annotations[0].element.text),
+      comment: saved.annotations[0].comment,
+      workingBytes: savedBytes.length,
+    };
+
+    // The display-only rule must not normalize the state when the ordinary
+    // production flow seals it. Return to the original wide shell, wait for
+    // the current working bytes to settle, then send through the same UI and
+    // provider path used by the main Review acceptance.
+    await closeComments('the narrow context check');
+    await viewport(page, 1499, 'light', 1219, 1);
+    await until(() => evaluate(page, `Boolean(${button('Save markup')}
+      ?.matches('[aria-disabled="true"]'))`), 'context markup saved before sealing', 60_000);
+    const workingPath = /** @type {string} */ (workingFile());
+    const sealBaseline = fs.readFileSync(workingPath);
+    const artifactBeforeSeal = fs.readFileSync(path.join(root, ...artifactPath.split('/')));
+    await click(page, button('Send annotations'));
+    await evaluate(page, `(${button('Send annotations')})?.click()`);
+    const toolResult = await publication.result;
+    const delivered = JSON.parse(toolResult.textResultForLlm);
+    const reviewDirectory = path.dirname(workingPath);
+    const reportBytes = fs.readFileSync(path.join(reviewDirectory, 'report.md'));
+    const report = reportBytes.toString('utf8');
+    const provenanceBytes = fs.readFileSync(path.join(reviewDirectory, 'provenance.json'));
+    const provenance = JSON.parse(provenanceBytes.toString('utf8'));
+    const imageBytes = fs.readFileSync(path.join(reviewDirectory, 'annotated.png'));
+    const sealedWorking = fs.readFileSync(workingPath);
+    const sealedState = JSON.parse(sealedWorking.toString('utf8')).state;
+    const artifactAfterSeal = fs.readFileSync(path.join(root, ...artifactPath.split('/')));
+
+    assert.deepEqual(fs.readdirSync(reviewDirectory).sort(), [
+      'annotated.png',
+      'provenance.json',
+      'report.md',
+      'working.json',
+    ]);
+    assert.deepEqual(sealedWorking, sealBaseline,
+      'sealing leaves the settled literal working state byte-identical');
+    assert.deepEqual(artifactAfterSeal, artifactBeforeSeal,
+      'sealing does not change the canonical source');
+    assert.equal(hash(artifactAfterSeal), preview.artifact.revision,
+      'the sealed report still answers to the original source revision');
+    assert.equal(sealedState.annotations[0].element.text, headerText);
+    assert.equal(sealedState.annotations[1].element.text, viewHeadText);
+    assert.equal(sealedState.annotations[0].comment, userComment);
+    assert.ok(report.includes(headerText),
+      'the report retains the whitespace-heavy captured text literally');
+    assert.ok(report.includes(viewHeadText),
+      'the report retains the single-line captured text');
+    assert.ok(report.includes(userComment),
+      'the report retains the reviewer comment, including its double space');
+    assert.deepEqual(
+      provenance.capture.selectors.map(({ annotationId, selector }) => ({
+        annotationId,
+        selector,
+      })),
+      [
+        {annotationId:headerId,selector:'#shell-bar'},
+        {annotationId:second.annotations[1].id,selector:'#view-head'},
+      ],
+      'the seal keeps both original annotation IDs and selector anchors',
+    );
+    assert.equal(toolResult.resultType, 'success');
+    assert.equal(toolResult.binaryResultsForLlm.length, 1);
+    const deliveredImage = Buffer.isBuffer(toolResult.binaryResultsForLlm[0].data)
+      ? toolResult.binaryResultsForLlm[0].data
+      : typeof toolResult.binaryResultsForLlm[0].data === 'string'
+        ? Buffer.from(toolResult.binaryResultsForLlm[0].data, 'base64')
+        : Buffer.from(toolResult.binaryResultsForLlm[0].data);
+    assert.equal(
+      deliveredImage.equals(imageBytes),
+      true,
+      'the original waiter receives the exact sealed context image',
+    );
+    assert.equal(delivered.status, 'awaiting_acknowledgment');
+    assert.equal(delivered.response.action, 'annotations');
+    assert.equal(
+      fixture.provider.read().requests.find(
+        ({ requestHandle }) => requestHandle === publication.record.requestHandle,
+      )?.phase,
+      'awaiting_acknowledgment',
+    );
+    assert.deepEqual(runtimeErrors, []);
+    observations.sealed = {
+      files:fs.readdirSync(reviewDirectory).sort(),
+      workingSha256:sha256(sealedWorking),
+      reportSha256:sha256(reportBytes),
+      imageSha256:sha256(imageBytes),
+      provenanceSha256:sha256(provenanceBytes),
+      sourceRevision:hash(artifactAfterSeal),
+      selectors:provenance.capture.selectors.map(({ annotationId, selector }) => ({
+        annotationId,
+        selector,
+      })),
+      status:delivered.status,
+    };
+    observations.cases.push(
+      { case: 'first selection at 1499x1219', stats: headerStats, metrics: firstMetrics },
+      { case: 'single-line element', metrics: viewHeadMetrics },
+      { case: 'later selection at 1499x1219', metrics: laterMetrics },
+      { case: 'later selection at 420 wide', metrics: narrowMetrics },
+    );
+    output.results.push({
+      case: 'T012 review regression: captured-context whitespace',
+      pass: true,
+      browser: browserState.version.Browser,
+      appRevision: `sha256:${output.sources['src/extensions/dude/ui/assets/app.js']}`,
+      contextHeight: {
+        wide: firstMetrics.height,
+        wideReplacedPreWrapControl: firstMetrics.controls.preWrap.height,
+        narrow: narrowMetrics.height,
+        narrowReplacedPreWrapControl: narrowMetrics.controls.preWrap.height,
+      },
+    });
+  } finally {
+    if (publication) {
+      publication.controller.abort();
+      await publication.result.catch(() => {});
+    }
+    if (browserState) await cleanupBrowserDriver(browserState);
+    if (fixture) await fixture.close();
+    board.close();
   }
 });

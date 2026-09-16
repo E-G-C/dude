@@ -633,6 +633,8 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
                 With Select, double-click an annotation or its number to write its comment; with one selected, Enter on the mock does the same.
                 With a drawing tool armed, the selected shape keeps working: drag a handle to resize it, drag its border or stroke to move it,
                 press its border twice to write its comment, and draw anywhere else, including inside it.
+                With Comment armed, a pin you already placed answers the same way: click it to select it, drag it to move it,
+                click it twice to write its comment, and click anywhere else to place another pin.
                 V select · C comment · B box · O circle · A arrow · L line · H highlight · Ctrl/⌘ Z undo.</Text>
               <Text className={s.eyebrow}>The Move tools grip parks the palette clear of the element you are marking.
                 Drag it, click it to choose a corner, or focus it and press the arrow keys.</Text>
@@ -809,7 +811,7 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
           {commentField('comment', 'Comment (optional)')}
           {selected.element && <>
             <Text className={s.code}>{selected.element.selector}</Text>
-            <p className={s.prose}>{selected.element.text}</p>
+            <p className={mergeClasses(s.prose, s.contextText)}>{selected.element.text}</p>
             {commentField('replacement', 'Suggested replacement text')}
             {commentField('styleNote', 'Suggested style change')}
           </>}

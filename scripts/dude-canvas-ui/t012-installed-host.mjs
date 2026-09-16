@@ -55,7 +55,7 @@ const SPEC_PATH = `.dude/specs/${REVIEW_ID}-${REVIEW_SLUG}/spec.md`;
 const DESIGN_ROOT = `.dude/specs/${REVIEW_ID}-${REVIEW_SLUG}/design`;
 const MOCK_PATH = `${DESIGN_ROOT}/mock.html`;
 const CSS_PATH = `${DESIGN_ROOT}/mock.css`;
-const SOURCE_APP_SHA256 = '12f499b0703b89b2f79880ba80b750ffd43fc141253846a24310797422df89b3';
+const SOURCE_APP_SHA256 = '8a571800c96c8e55fb7eba4ac06e31a345334bf7ae9cc338d753fd7371a9055c';
 const SOURCE_LEGAL_SHA256 = '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387cf70ba7a6d869';
 /**
  * The Review gesture behavior lives in these static modules, not in the bundled
@@ -64,7 +64,7 @@ const SOURCE_LEGAL_SHA256 = '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387
  * Canvas server actually serves.
  */
 const SOURCE_REVIEW_MODULES = Object.freeze({
-  'ui/review/engine.mjs': '578e21f8223574bd0adbdaf9d56eae2a33595ff78ba02c316e26b4626c6855af',
+  'ui/review/engine.mjs': '69e1b1b1ebae71e4f64f6d3a477ec375924a243e515b994f8ccfd78884d78c50',
   'ui/review/geometry.mjs': 'e3e000908c5ee2f033448215eec606cae2931b062d0f3d75d049844c4a8f4def',
   'ui/review/styles.css': '20e3430b0e0111584f2c4d06352f69182cdeb3eff522db1a088d858fc23871af',
 });

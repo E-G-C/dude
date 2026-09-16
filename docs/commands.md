@@ -815,6 +815,12 @@ will take. Two presses on that border, without moving the mark between them,
 open the same comment field. Every other press still draws: inside the selected
 mark, over an unselected one, or anywhere else on the mock.
 
+While Comment (C) stays armed, a pin you already placed still belongs to
+itself: click it to select it, drag it to move it, and press it twice, without
+moving it between the presses, to write its comment. A pin has no resize
+handles. Every other press still places a new pin on the element under it,
+including inside a drawing you already made.
+
 The first annotation pins the reviewed viewport. After that, shrinking the host
 panel pans the pinned frame rather than reflowing the mock or rebasing existing
 marks, and arrow keys pan it as well. A genuine change of source, theme,

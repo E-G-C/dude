@@ -515,5 +515,15 @@
       "T001@61c8a4e2": "x"
     },
     "updated_at": "2026-09-15T12:29:43.586Z"
+  },
+  ".dude/specs/062-dude-canvas-workspace-integration/tasks.md": {
+    "glyphs": {
+      "T001@a062c1d4": "x",
+      "T002@b062d2e5": " ",
+      "T003@c062e3f6": " ",
+      "T004@d062f4a7": " ",
+      "T005@e062a5b8": " "
+    },
+    "updated_at": "2026-09-16T17:38:57.933Z"
   }
 }

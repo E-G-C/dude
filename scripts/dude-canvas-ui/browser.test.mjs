@@ -2934,7 +2934,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          '12f499b0703b89b2f79880ba80b750ffd43fc141253846a24310797422df89b3',
+          '8a571800c96c8e55fb7eba4ac06e31a345334bf7ae9cc338d753fd7371a9055c',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -9500,6 +9500,761 @@ test('T010 review regression: click-only selection persists across unchanged-sou
           collect(failures, () => assert.deepEqual(reopened.annotations, annotationsAtCommit));
           assert.deepEqual(failures, [], failures.join('\n'));
         } finally {
+          await harness.close();
+        }
+      });
+
+test('T010 review regression: Comment-armed pins select, move, open, and still capture elsewhere', {
+        timeout: 240_000,
+        concurrency: false,
+      }, async (context) => {
+        if (!t010BrowserReady(context)) return;
+        const profileOwnership = trackT010ReviewProfiles();
+        context.after(() => profileOwnership.finish(
+          'Comment-pin regression leaves no exact Review profile created by this test process',
+        ));
+        const evidence = createT010Evidence(context, 't010-comment-pin');
+        const html = [
+          '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">',
+          '<style>',
+          'html,body{margin:0;width:100%;height:100%;overflow:hidden;',
+          'background:#fff;color:#242424;font:16px system-ui}',
+          'main{position:relative;width:100%;height:100%;padding:24px;box-sizing:border-box}',
+          'section{position:absolute;padding:16px;border:1px solid #d1d1d1}',
+          '#one{left:80px;top:100px;width:360px;height:250px}',
+          '#two{left:700px;top:100px;width:230px;height:180px}',
+          '</style>',
+          '<main><h1>Comment pin fixture</h1>',
+          '<section id="one">Existing pins remain editable while Comment stays armed.</section>',
+          '<section id="two">Empty source locations still accept new pins.</section>',
+          '</main>',
+        ].join('');
+        const harness = await createT010ReviewHarness(context, {
+          number: '717',
+          slug: 'comment-pin-regression',
+          html,
+          width: 1000,
+          height: 700,
+          profileOwnership,
+        });
+        try {
+          const readState = () => evaluate(harness.page, 'window.__review.getState()');
+          const idle = (label = 'the Comment-pin engine is idle') => until(async () => {
+            const state = await readState();
+            return state.busy ? null : state;
+          }, label);
+          const geometryOf = (state, id) => {
+            const annotation = state.annotations.find((entry) => entry.id === id);
+            assert.ok(annotation, `annotation ${id} is present`);
+            return {
+              x1: annotation.x1,
+              y1: annotation.y1,
+              x2: annotation.x2,
+              y2: annotation.y2,
+            };
+          };
+          const pointOf = (state, id) => {
+            const geometry = geometryOf(state, id);
+            return { x: geometry.x1, y: geometry.y1 };
+          };
+          const messageCount = (code) => evaluate(harness.page, `window.__reviewMessages
+            .filter(message => message.code === ${JSON.stringify(code)}).length`);
+          const addCount = () => messageCount('review_comment_added');
+          const openCount = () => messageCount('review_comment_open');
+          const saveRequests = () => harness.network.filter(({ request }) => (
+            request.method === 'POST'
+              && new URL(request.url).pathname === '/api/needs-you/review/save'
+          )).length;
+          const workingBytes = () => fs.readFileSync(path.join(
+            harness.reviewDirectory,
+            'working.json',
+          ));
+          const opening = await readState();
+          const viewport = opening.view.viewport;
+          assert.deepEqual(
+            {
+              width: viewport.width,
+              height: viewport.height,
+              scrollX: viewport.scrollX,
+              scrollY: viewport.scrollY,
+            },
+            { width: 1000, height: 700, scrollX: 0, scrollY: 0 },
+            'the pointer fixture uses the requested document CSS coordinates',
+          );
+          const frame = await evaluate(harness.page, `(() => {
+            const rect = document.querySelector('.dude-review-overlay').getBoundingClientRect();
+            return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+          })()`);
+          const client = ({ x, y }) => ({
+            x: frame.left + (x - viewport.scrollX) * frame.width / viewport.width,
+            y: frame.top + (y - viewport.scrollY) * frame.height / viewport.height,
+          });
+          const hover = (point) => harness.page.send('Input.dispatchMouseEvent', {
+            type: 'mouseMoved', ...client(point), button: 'none', buttons: 0,
+          });
+          const pressAt = (point) => harness.page.send('Input.dispatchMouseEvent', {
+            type: 'mousePressed', ...client(point), button: 'left', buttons: 1, clickCount: 1,
+          });
+          const moveTo = (point) => harness.page.send('Input.dispatchMouseEvent', {
+            type: 'mouseMoved', ...client(point), button: 'left', buttons: 1,
+          });
+          const releaseAt = (point) => harness.page.send('Input.dispatchMouseEvent', {
+            type: 'mouseReleased', ...client(point), button: 'left', buttons: 0, clickCount: 1,
+          });
+          const clickAt = async (point) => {
+            await hover(point);
+            await pressAt(point);
+            await releaseAt(point);
+          };
+          const dragFromTo = async (start, end) => {
+            await hover(start);
+            await pressAt(start);
+            await moveTo(end);
+            await releaseAt(end);
+          };
+          const outAndBack = async (start, away, id) => {
+            await hover(start);
+            await pressAt(start);
+            await moveTo(away);
+            const during = await until(async () => {
+              const state = await readState();
+              const geometry = geometryOf(state, id);
+              return state.busy
+                && (geometry.x1 !== start.x || geometry.y1 !== start.y
+                  || geometry.x2 !== start.x || geometry.y2 !== start.y)
+                ? state
+                : null;
+            }, 'the pin is observably displaced while its pointer is held');
+            await moveTo(start);
+            await releaseAt(start);
+            return during;
+          };
+          const overlayAction = () => evaluate(harness.page, `(() => {
+            const overlay = document.querySelector('.dude-review-overlay');
+            return {
+              action: overlay.dataset.action ?? null,
+              cursor: getComputedStyle(overlay).cursor,
+            };
+          })()`);
+          const actionAt = async (point, expected, label) => {
+            let observed;
+            await until(async () => {
+              await hover(point);
+              observed = await overlayAction();
+              return observed.action === expected.action && observed.cursor === expected.cursor;
+            }, label);
+            return observed;
+          };
+          const atCount = (count, label) => until(async () => {
+            const state = await readState();
+            return !state.busy && state.annotations.length === count ? state : null;
+          }, label);
+          const selected = async (id, count, label) => {
+            const state = await idle(`${label} settles`);
+            assert.equal(
+              state.annotations.length,
+              count,
+              `${label}: annotation count`,
+            );
+            assert.equal(state.selectedId, id, `${label}: selected annotation`);
+            return state;
+          };
+          const separate = () => new Promise((resolve) => setTimeout(resolve, 650));
+          await evaluate(harness.page, `(() => {
+            window.__t010PinPresses = [];
+            document.addEventListener('pointerdown', event => {
+              if (!event.isTrusted || !event.target.closest?.('.dude-review-overlay')) return;
+              window.__t010PinPresses.push({
+                at:event.timeStamp,
+                x:event.clientX,
+                y:event.clientY,
+                annotation:event.target.closest('g[data-annotation]')?.dataset.annotation ?? null,
+              });
+            }, { capture: true });
+          })()`);
+          const pressCount = () => evaluate(harness.page, 'window.__t010PinPresses.length');
+          const pairMetrics = async (start) => {
+            const presses = await evaluate(
+              harness.page,
+              `window.__t010PinPresses.slice(${start})`,
+            );
+            return {
+              count: presses.length,
+              elapsed: presses.length === 2 ? presses[1].at - presses[0].at : null,
+              distance: presses.length === 2
+                ? Math.hypot(presses[1].x - presses[0].x, presses[1].y - presses[0].y)
+                : null,
+              annotations: presses.map(({ annotation }) => annotation),
+            };
+          };
+          const assertPair = (metrics, label) => {
+            assert.equal(metrics.count, 2, `${label} contains two trusted presses`);
+            assert.ok(metrics.elapsed >= 0 && metrics.elapsed <= 500,
+              `${label} stays inside 500 ms: ${JSON.stringify(metrics)}`);
+            assert.ok(metrics.distance <= 4,
+              `${label} stays inside 4 px: ${JSON.stringify(metrics)}`);
+          };
+
+          // Arrange: place two ordinary anchored pins, save them, and retain
+          // their source identity before exercising existing-marker routing.
+          await harness.command({ type: 'tool', tool: 'comment' });
+          await clickAt({ x: 200, y: 200 });
+          const firstPlaced = await atCount(1, 'the first empty-source press places a pin');
+          const firstId = firstPlaced.annotations[0].id;
+          await clickAt({ x: 500, y: 200 });
+          const secondPlaced = await atCount(2, 'a later empty-source press places another pin');
+          const secondId = secondPlaced.annotations[1].id;
+          assert.deepEqual(
+            {
+              tools: secondPlaced.annotations.map(({ tool }) => tool),
+              selectedId: secondPlaced.selectedId,
+              tool: secondPlaced.tool,
+              addMessages: await addCount(),
+              openMessages: await openCount(),
+            },
+            {
+              tools: ['comment', 'comment'],
+              selectedId: secondId,
+              tool: 'comment',
+              addMessages: 2,
+              openMessages: 0,
+            },
+            'ordinary Comment presses add and select exactly the intended pins',
+          );
+          assert.equal((await harness.command({ type: 'save' })).status, 'saved');
+          const arrangedWorking = harness.readWorking();
+          const arrangedView = structuredClone(secondPlaced.view);
+          const firstIdentity = structuredClone(arrangedWorking.state.annotations[0]);
+          const artifactPath = path.join(
+            harness.workspace.root,
+            ...harness.feature.artifactPath.split('/'),
+          );
+          const artifactRevision = harness.workspace.revision(fs.readFileSync(artifactPath));
+          assert.equal(artifactRevision, harness.request.fields.artifact.revision);
+
+          // Act: press both an earlier and a later pin while Comment remains
+          // armed. Assert selection, count, coordinates, cursor, and messages,
+          // rather than accepting the cursor as a proxy for the action.
+          await clickAt({ x: 200, y: 200 });
+          const firstSelected = await selected(
+            firstId,
+            2,
+            'pressing the first pin selects it without duplication',
+          );
+          await clickAt({ x: 500, y: 200 });
+          const secondSelected = await selected(
+            secondId,
+            2,
+            'pressing the later pin selects it without duplication',
+          );
+          const firstCursor = await actionAt(
+            { x: 200, y: 200 },
+            { action: 'move', cursor: 'move' },
+            'Comment exposes the existing first pin as movable',
+          );
+          assert.deepEqual(firstSelected.annotations, secondSelected.annotations);
+          assert.equal(secondSelected.tool, 'comment');
+          assert.equal(await addCount(), 2);
+          assert.equal(await openCount(), 0);
+          assert.equal(
+            await evaluate(harness.page,
+              "document.querySelectorAll('.dude-review-overlay [data-handle]').length"),
+            0,
+            'a selected pin has no resize handles',
+          );
+
+          // Act: drag the first pin and traverse that one committed movement in
+          // both history directions before saving its exact point geometry.
+          await clickAt({ x: 200, y: 200 });
+          await selected(firstId, 2, 'the first pin is selected for movement');
+          const beforeMove = await idle();
+          const beforeMoveGeometry = geometryOf(beforeMove, firstId);
+          await dragFromTo({ x: 200, y: 200 }, { x: 218, y: 212 });
+          const moved = await until(async () => {
+            const state = await readState();
+            return !state.busy && geometryOf(state, firstId).x1 === 218 ? state : null;
+          }, 'the Comment-armed drag commits the first pin movement');
+          assert.deepEqual(geometryOf(moved, firstId), {
+            x1: 218, y1: 212, x2: 218, y2: 212,
+          });
+          assert.deepEqual(geometryOf(moved, secondId), geometryOf(beforeMove, secondId));
+          assert.equal(moved.selectedId, firstId);
+          assert.equal(moved.tool, 'comment');
+          assert.equal(moved.annotations.length, 2);
+          assert.equal(moved.canUndo, true);
+          const moveUndone = await harness.command({ type: 'undo' });
+          assert.deepEqual(geometryOf(moveUndone, firstId), beforeMoveGeometry);
+          assert.equal(moveUndone.canRedo, true);
+          const moveRedone = await harness.command({ type: 'redo' });
+          assert.deepEqual(geometryOf(moveRedone, firstId), geometryOf(moved, firstId));
+          assert.equal(moveRedone.canRedo, false);
+          assert.equal((await harness.command({ type: 'save' })).status, 'saved');
+          const movedWorking = harness.readWorking();
+          assert.deepEqual(
+            geometryOf(movedWorking.state, firstId),
+            geometryOf(moved, firstId),
+            'working.json stores the committed pin movement',
+          );
+
+          // Assert: redo and Save are inert when there is no future or dirty
+          // state. Neither may rewrite working.json or issue another save.
+          const noOpBytes = workingBytes();
+          const noOpRequests = saveRequests();
+          const beforeNoOps = await readState();
+          const noOpRedo = await harness.command({ type: 'redo' });
+          const noOpSave = await harness.command({ type: 'save' });
+          assert.deepEqual(noOpRedo.annotations, beforeNoOps.annotations);
+          assert.equal(noOpRedo.selectedId, beforeNoOps.selectedId);
+          assert.equal(noOpRedo.canRedo, false);
+          assert.equal(noOpSave.workingRevision, beforeNoOps.workingRevision);
+          assert.equal(saveRequests(), noOpRequests);
+          assert.deepEqual(workingBytes(), noOpBytes);
+
+          // Act: a bounded native pair opens the pin once, while Enter on the
+          // selected overlay is its keyboard twin. Neither path adds or moves.
+          const movedPoint = pointOf(moved, firstId);
+          await separate();
+          const opensBeforePair = await openCount();
+          const pairStart = await pressCount();
+          await clickAt(movedPoint);
+          await clickAt(movedPoint);
+          const pair = await pairMetrics(pairStart);
+          assertPair(pair, 'the existing-pin open gesture');
+          assert.deepEqual(pair.annotations, [firstId, firstId]);
+          const afterPair = await until(async () => {
+            const state = await readState();
+            return !state.busy && await openCount() === opensBeforePair + 1 ? state : null;
+          }, 'two unmoved pin presses open one comment');
+          assert.equal(afterPair.annotations.length, 2);
+          assert.equal(afterPair.selectedId, firstId);
+          assert.equal(afterPair.tool, 'comment');
+          assert.deepEqual(geometryOf(afterPair, firstId), geometryOf(moved, firstId));
+          await focus(harness.page, '.dude-review-overlay');
+          const opensBeforeEnter = await openCount();
+          await key(harness.page, 'Enter', 'Enter');
+          const afterEnter = await until(async () => {
+            const state = await readState();
+            return await openCount() === opensBeforeEnter + 1 ? state : null;
+          }, 'Enter opens the selected pin comment');
+          assert.equal(
+            await evaluate(harness.page,
+              "document.activeElement === document.querySelector('.dude-review-overlay')"),
+            true,
+            'the direct engine emits the open request without moving surface focus',
+          );
+          assert.deepEqual(afterEnter.annotations, afterPair.annotations);
+          assert.equal(afterEnter.selectedId, firstId);
+
+          // Act: empty source still adds, stacked pins choose the one painted
+          // last, and the earliest pin remains reachable away from the stack.
+          await separate();
+          await clickAt({ x: 820, y: 470 });
+          const thirdPlaced = await atCount(3, 'empty source away from pins adds a third pin');
+          const thirdId = thirdPlaced.annotations[2].id;
+          assert.equal(thirdPlaced.selectedId, thirdId);
+          assert.ok(thirdPlaced.annotations[2].element);
+          await clickAt({ x: 820, y: 180 });
+          const fourthPlaced = await atCount(4, 'a fourth pin is placed before overlap');
+          const fourthId = fourthPlaced.annotations[3].id;
+          const stackedPoint = pointOf(fourthPlaced, secondId);
+          await dragFromTo(pointOf(fourthPlaced, fourthId), stackedPoint);
+          const stacked = await until(async () => {
+            const state = await readState();
+            return !state.busy
+              && geometryOf(state, fourthId).x1 === stackedPoint.x
+              && geometryOf(state, fourthId).y1 === stackedPoint.y ? state : null;
+          }, 'the later pin is moved directly over the earlier pin');
+          assert.equal(stacked.annotations.length, 4);
+          await separate();
+          await clickAt(stackedPoint);
+          const topmost = await selected(
+            fourthId,
+            4,
+            'the topmost overlapping pin takes the Comment press',
+          );
+          await separate();
+          await clickAt(movedPoint);
+          const earliest = await selected(
+            firstId,
+            4,
+            'the earliest uncovered pin remains selectable',
+          );
+          assert.equal(await addCount(), 4);
+
+          // Act: Box ignores pins as drawing-mode grab targets. Comment then
+          // gives a pin inside a newer box precedence, while Select retains its
+          // existing topmost whole-face answer.
+          await harness.command({ type: 'tool', tool: 'box' });
+          const boxOverPinCursor = await actionAt(
+            stackedPoint,
+            { action: null, cursor: 'crosshair' },
+            'Box keeps its drawing cursor over an existing pin',
+          );
+          const stackedBeforeBox = structuredClone(topmost.annotations);
+          await dragFromTo(stackedPoint, { x: stackedPoint.x + 90, y: stackedPoint.y + 70 });
+          const boxOverPinState = await atCount(5, 'Box draws from an existing pin');
+          const boxOverPin = boxOverPinState.annotations[4];
+          assert.equal(boxOverPin.tool, 'box');
+          assert.equal(boxOverPinState.selectedId, boxOverPin.id);
+          assert.deepEqual(
+            boxOverPinState.annotations.slice(0, 4),
+            stackedBeforeBox,
+            'drawing from a pin moves or duplicates no existing pin',
+          );
+          await dragFromTo({ x: 150, y: 150 }, { x: 430, y: 330 });
+          const enclosingState = await atCount(6, 'a later box encloses the first pin');
+          const enclosingBox = enclosingState.annotations[5];
+          assert.equal(enclosingBox.tool, 'box');
+          assert.ok(
+            movedPoint.x > Math.min(enclosingBox.x1, enclosingBox.x2)
+              && movedPoint.x < Math.max(enclosingBox.x1, enclosingBox.x2)
+              && movedPoint.y > Math.min(enclosingBox.y1, enclosingBox.y2)
+              && movedPoint.y < Math.max(enclosingBox.y1, enclosingBox.y2),
+            'the mode-precedence probe is genuinely inside the later box',
+          );
+          await harness.command({ type: 'tool', tool: 'comment' });
+          const overlapCursor = await actionAt(
+            movedPoint,
+            { action: 'move', cursor: 'move' },
+            'Comment exposes the pin even inside the later box',
+          );
+          await clickAt(movedPoint);
+          const commentOverlap = await selected(
+            firstId,
+            6,
+            'Comment selects the pin inside the later box',
+          );
+          await harness.command({ type: 'tool', tool: 'select' });
+          await separate();
+          await clickAt(movedPoint);
+          const selectOverlap = await selected(
+            enclosingBox.id,
+            6,
+            'Select keeps its topmost box-face precedence at the same point',
+          );
+          await clickAt(pointOf(selectOverlap, thirdId));
+          const selectPin = await selected(
+            thirdId,
+            6,
+            'Select still picks an uncovered pin by its existing marker predicate',
+          );
+
+          // Act: Comment on source covered only by a drawing adds a new pin and
+          // does not edit that drawing.
+          await harness.command({ type: 'tool', tool: 'comment' });
+          const enclosingBeforeComment = geometryOf(selectPin, enclosingBox.id);
+          await separate();
+          await clickAt({ x: 350, y: 300 });
+          const shapeOnly = await atCount(7, 'Comment inside a shape-only location adds a pin');
+          const shapeOnlyId = shapeOnly.annotations[6].id;
+          assert.equal(shapeOnly.annotations[6].tool, 'comment');
+          assert.equal(shapeOnly.selectedId, shapeOnlyId);
+          assert.ok(shapeOnly.annotations[6].element);
+          assert.deepEqual(geometryOf(shapeOnly, enclosingBox.id), enclosingBeforeComment);
+
+          // Arrange a retained viewport-hidden pin through the supported edit
+          // path. Its invisible point cannot become a Comment grab target.
+          const shapeOnlyOriginal = geometryOf(shapeOnly, shapeOnlyId);
+          await harness.command({
+            type: 'edit',
+            id: shapeOnlyId,
+            changes: { x1: 10, y1: 10, x2: 10, y2: 10 },
+          });
+          await harness.command({ type: 'select', id: firstId });
+          const hiddenBefore = await idle('the hidden-pin fixture is idle');
+          assert.ok(hiddenBefore.hiddenIds.includes(shapeOnlyId));
+          assert.equal(
+            await evaluate(harness.page,
+              `document.querySelector('[data-annotation="${shapeOnlyId}"]') === null`),
+            true,
+            'the retained out-of-viewport pin has no painted marker',
+          );
+          const hiddenCursor = await actionAt(
+            { x: 10, y: 10 },
+            { action: null, cursor: 'crosshair' },
+            'an invisible pin is not offered as movable',
+          );
+          const hiddenAdds = await addCount();
+          const hiddenOpens = await openCount();
+          await clickAt({ x: 10, y: 10 });
+          const hiddenAfter = await until(async () => {
+            const state = await readState();
+            return !state.busy && state.error?.code === 'review_drawing_outside'
+              ? state
+              : null;
+          }, 'the edge press is refused as a new candidate, not routed to the hidden pin');
+          assert.equal(hiddenAfter.annotations.length, 7);
+          assert.equal(hiddenAfter.selectedId, firstId);
+          assert.deepEqual(geometryOf(hiddenAfter, shapeOnlyId), {
+            x1: 10, y1: 10, x2: 10, y2: 10,
+          });
+          assert.equal(await addCount(), hiddenAdds);
+          assert.equal(await openCount(), hiddenOpens);
+          const hiddenRestored = await harness.command({ type: 'undo' });
+          assert.deepEqual(geometryOf(hiddenRestored, shapeOnlyId), shapeOnlyOriginal);
+
+          // Arrange one redo opportunity, then make a genuine out-and-back pin
+          // motion followed immediately by one press. The net-equal motion adds
+          // no history and cannot prime comment opening.
+          await harness.command({ type: 'select', id: firstId });
+          const outBackBase = geometryOf(await idle(), firstId);
+          const outBackPoint = { x: outBackBase.x1, y: outBackBase.y1 };
+          const redoPoint = { x: outBackPoint.x + 24, y: outBackPoint.y + 18 };
+          await dragFromTo(outBackPoint, redoPoint);
+          const committedForRedo = await until(async () => {
+            const state = await readState();
+            return !state.busy && geometryOf(state, firstId).x1 === redoPoint.x ? state : null;
+          }, 'a real pin move creates the redo fixture');
+          const beforeOutBack = await harness.command({ type: 'undo' });
+          assert.deepEqual(geometryOf(beforeOutBack, firstId), outBackBase);
+          assert.equal(beforeOutBack.canRedo, true);
+          await separate();
+          const outBackAdds = await addCount();
+          const outBackOpens = await openCount();
+          const outBackStart = await pressCount();
+          const outBackHeld = await outAndBack(
+            outBackPoint,
+            { x: outBackPoint.x + 20, y: outBackPoint.y + 14 },
+            firstId,
+          );
+          assert.notDeepEqual(geometryOf(outBackHeld, firstId), outBackBase);
+          await clickAt(outBackPoint);
+          const afterOutBack = await idle('the out-and-back pin gesture and follower settle');
+          const outBackPair = await pairMetrics(outBackStart);
+          assertPair(outBackPair, 'the out-and-back pin motion and its following press');
+          assert.deepEqual(geometryOf(afterOutBack, firstId), outBackBase);
+          assert.equal(afterOutBack.canRedo, true);
+          assert.equal(afterOutBack.selectedId, firstId);
+          assert.equal(afterOutBack.tool, 'comment');
+          assert.equal(await addCount(), outBackAdds);
+          assert.equal(await openCount(), outBackOpens);
+          const redoAfterOutBack = await harness.command({ type: 'redo' });
+          assert.deepEqual(
+            geometryOf(redoAfterOutBack, firstId),
+            geometryOf(committedForRedo, firstId),
+            'the redo opportunity survives the net-equal pin motion',
+          );
+          const baseAgain = await harness.command({ type: 'undo' });
+          assert.deepEqual(geometryOf(baseAgain, firstId), outBackBase);
+
+          // Act: a 2x1-pixel effective pin move and immediate follower remain
+          // inside the open gesture's spatial and timing bounds. Manipulation,
+          // rather than distance alone, disqualifies the pair.
+          await separate();
+          const tinyPoint = { x: outBackPoint.x + 2, y: outBackPoint.y + 1 };
+          const tinyAdds = await addCount();
+          const tinyOpens = await openCount();
+          const tinyStart = await pressCount();
+          await dragFromTo(outBackPoint, tinyPoint);
+          const tinyMoved = await until(async () => {
+            const state = await readState();
+            return !state.busy && geometryOf(state, firstId).x1 === tinyPoint.x ? state : null;
+          }, 'the tiny effective pin movement commits');
+          await clickAt(tinyPoint);
+          const tinyAfterFollower = await idle('the tiny pin movement follower settles');
+          const tinyPair = await pairMetrics(tinyStart);
+          assertPair(tinyPair, 'the tiny pin movement and its following press');
+          assert.deepEqual(geometryOf(tinyMoved, firstId), {
+            x1: tinyPoint.x, y1: tinyPoint.y, x2: tinyPoint.x, y2: tinyPoint.y,
+          });
+          assert.equal(tinyAfterFollower.selectedId, firstId);
+          assert.equal(tinyAfterFollower.tool, 'comment');
+          assert.equal(tinyAfterFollower.annotations.length, 7);
+          assert.equal(await addCount(), tinyAdds);
+          assert.equal(await openCount(), tinyOpens);
+          const tinyUndone = await harness.command({ type: 'undo' });
+          assert.deepEqual(geometryOf(tinyUndone, firstId), outBackBase);
+          assert.equal(tinyUndone.canRedo, true);
+          const tinyRedone = await harness.command({ type: 'redo' });
+          assert.deepEqual(geometryOf(tinyRedone, firstId), geometryOf(tinyMoved, firstId));
+          assert.equal(tinyRedone.canRedo, false);
+          assert.equal((await harness.command({ type: 'save' })).status, 'saved');
+          const tinyWorking = harness.readWorking();
+          assert.deepEqual(geometryOf(tinyWorking.state, firstId), geometryOf(tinyMoved, firstId));
+
+          // Act: save metadata during a real held pin preview, then cancel that
+          // pointer. Only committed coordinates may reach working.json.
+          const previewBase = geometryOf(await idle(), firstId);
+          const previewPoint = { x: previewBase.x1, y: previewBase.y1 };
+          const previewClient = client(previewPoint);
+          const previewAdds = await addCount();
+          const previewOpens = await openCount();
+          await harness.page.send('Emulation.setTouchEmulationEnabled', {
+            enabled: true,
+            maxTouchPoints: 1,
+          });
+          await harness.page.send('Input.dispatchTouchEvent', {
+            type: 'touchStart',
+            touchPoints: [{
+              ...previewClient, radiusX: 1, radiusY: 1, force: 1, id: 1,
+            }],
+          });
+          await harness.page.send('Input.dispatchTouchEvent', {
+            type: 'touchMove',
+            touchPoints: [{
+              x: previewClient.x + 30,
+              y: previewClient.y + 20,
+              radiusX: 1,
+              radiusY: 1,
+              force: 1,
+              id: 1,
+            }],
+          });
+          const heldPreview = await until(async () => {
+            const state = await readState();
+            return state.busy
+              && JSON.stringify(geometryOf(state, firstId)) !== JSON.stringify(previewBase)
+              ? state
+              : null;
+          }, 'the native touch pointer holds a changed pin preview');
+          assert.notDeepEqual(geometryOf(heldPreview, firstId), previewBase);
+          await harness.command({
+            type: 'notes',
+            text: 'Committed pin geometry survives a preview save.',
+          });
+          assert.equal((await harness.command({ type: 'save' })).status, 'saved');
+          const persistedDuringPreview = harness.readWorking();
+          assert.deepEqual(
+            geometryOf(persistedDuringPreview.state, firstId),
+            previewBase,
+            'the preview save freezes the last committed pin geometry',
+          );
+          assert.equal(
+            persistedDuringPreview.state.notes,
+            'Committed pin geometry survives a preview save.',
+          );
+          await harness.page.send('Input.dispatchTouchEvent', {
+            type: 'touchCancel',
+            touchPoints: [],
+          });
+          await harness.page.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+          const afterCancel = await until(async () => {
+            const state = await readState();
+            return !state.busy
+              && JSON.stringify(geometryOf(state, firstId)) === JSON.stringify(previewBase)
+              ? state
+              : null;
+          }, 'pointer cancellation restores committed pin geometry');
+          assert.equal(afterCancel.tool, 'comment');
+          assert.equal(afterCancel.selectedId, firstId);
+          assert.equal(afterCancel.canRedo, false);
+          assert.equal(await addCount(), previewAdds);
+          assert.equal(await openCount(), previewOpens);
+
+          // Assert the complete persisted and authority boundary, including an
+          // explicit no-op save after cancellation.
+          const finalBytes = workingBytes();
+          const finalSaveRequests = saveRequests();
+          const finalSave = await harness.command({ type: 'save' });
+          assert.equal(finalSave.status, 'saved');
+          assert.equal(saveRequests(), finalSaveRequests);
+          assert.deepEqual(workingBytes(), finalBytes);
+          const finalState = await readState();
+          const finalWorking = harness.readWorking();
+          const finalFirst = finalWorking.state.annotations.find(({ id }) => id === firstId);
+          assert.deepEqual(finalWorking.state.annotations, finalState.annotations);
+          assert.equal(finalWorking.state.annotations.length, 7);
+          assert.equal(finalWorking.state.selectedId, firstId);
+          assert.equal(finalWorking.state.tool, 'comment');
+          assert.equal(finalWorking.state.caret, null);
+          assert.equal(finalWorking.state.notes, 'Committed pin geometry survives a preview save.');
+          assert.deepEqual(geometryOf(finalWorking.state, firstId), previewBase);
+          assert.deepEqual(finalState.view, arrangedView);
+          assert.deepEqual(finalFirst.element, firstIdentity.element);
+          assert.deepEqual(finalFirst.scrollBasis, firstIdentity.scrollBasis);
+          assert.equal(
+            harness.workspace.revision(fs.readFileSync(artifactPath)),
+            artifactRevision,
+            'pointer, history, and save paths leave canonical source bytes unchanged',
+          );
+          assert.equal(
+            harness.provider.read().requests.find(
+              ({ requestHandle }) => requestHandle === harness.record.requestHandle,
+            )?.phase,
+            'pending',
+            'working pin gestures neither seal nor consume the current request',
+          );
+          const finalCursor = await actionAt(
+            previewPoint,
+            { action: 'move', cursor: 'move' },
+            'the final persisted pin remains directly movable',
+          );
+          const screenshot = evidence.image('comment-pin-final.png', await harness.screenshot());
+          evidence.json('comment-pin-result.json', {
+            case: context.name,
+            browser: harness.browser.info.Browser,
+            engineSha256: evidence.sources['src/extensions/dude/ui/review/engine.mjs'],
+            viewport,
+            ids: {
+              first: firstId,
+              second: secondId,
+              third: thirdId,
+              fourth: fourthId,
+              shapeOnly: shapeOnlyId,
+              boxOverPin: boxOverPin.id,
+              enclosingBox: enclosingBox.id,
+            },
+            clickSelection: {
+              first: firstSelected.selectedId,
+              later: secondSelected.selectedId,
+              count: secondSelected.annotations.length,
+            },
+            movement: {
+              before: beforeMoveGeometry,
+              committed: geometryOf(moved, firstId),
+              undo: geometryOf(moveUndone, firstId),
+              redo: geometryOf(moveRedone, firstId),
+              tiny: geometryOf(tinyMoved, firstId),
+              cancelRestored: geometryOf(afterCancel, firstId),
+            },
+            opening: {
+              pair,
+              pairMessages: opensBeforePair + 1,
+              enterMessages: opensBeforeEnter + 1,
+              directFocusStayedOnOverlay: true,
+            },
+            precedence: {
+              stackedPoint,
+              topmost: topmost.selectedId,
+              earliest: earliest.selectedId,
+              CommentInsideBox: commentOverlap.selectedId,
+              SelectInsideBox: selectOverlap.selectedId,
+              SelectUncoveredPin: selectPin.selectedId,
+            },
+            cursors: {
+              first: firstCursor,
+              boxOverPin: boxOverPinCursor,
+              CommentInsideBox: overlapCursor,
+              hidden: hiddenCursor,
+              final: finalCursor,
+            },
+            history: {
+              outAndBackPair: outBackPair,
+              redoSurvivedOutAndBack: afterOutBack.canRedo,
+              tinyPair,
+              finalCanUndo: finalState.canUndo,
+              finalCanRedo: finalState.canRedo,
+            },
+            persistence: {
+              annotationCount: finalWorking.state.annotations.length,
+              selectedId: finalWorking.state.selectedId,
+              tool: finalWorking.state.tool,
+              firstCoordinates: geometryOf(finalWorking.state, firstId),
+              workingRevision: finalSave.workingRevision,
+              workingSha256: sha256(finalBytes),
+              sourceRevision: artifactRevision,
+              noOpSaveRequests: saveRequests() - finalSaveRequests,
+            },
+            screenshot,
+          });
+        } finally {
+          try {
+            await harness.page.send('Input.dispatchTouchEvent', {
+              type: 'touchCancel',
+              touchPoints: [],
+            });
+            await harness.page.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+          } catch {}
           await harness.close();
         }
       });

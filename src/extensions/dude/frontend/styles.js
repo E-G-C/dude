@@ -260,6 +260,14 @@ export const useCanvasStyles = makeStyles({
   // text on a tinted selected surface, one ramp step further from the fill.
   annotationSelectedLabel: { color: tokens.colorBrandForeground2 },
   commentEditor: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
+  // The selected element's context summary is the mock's literal `textContent`,
+  // so it carries the source markup's own newlines and indentation. Rendered
+  // with the shared `prose` rule, that authoring whitespace paints as hundreds
+  // of empty pixels between a few words. Collapse it here the way a browser
+  // renders ordinary body copy: only this paragraph's display changes, the
+  // stored annotation text stays literal, and wrapping with `overflowWrap`
+  // from `prose` still carries long unbroken strings at any panel width.
+  contextText: { whiteSpace: 'normal' },
   // The heading and its pending marker share one row, so naming the unsent
   // state costs a short panel no height at all.
   selectionHeading: {
