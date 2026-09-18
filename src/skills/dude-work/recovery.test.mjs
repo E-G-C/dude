@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
 import { parseSpecIdentity } from '../dude-engine/lib/feature-identity.mjs';
 import { BOARD_END, BOARD_START, parseTasks } from '../dude-engine/lib/tasks.mjs';
+import { buildLightweightWorkPostimages } from '../dude-engine/lib/lightweight-work-postimage.mjs';
 import { analyzeAppend } from '../dude-memory-ledger/memory.mjs';
 import {
   commitDefinitionRecoveryV1,
@@ -22,6 +23,12 @@ import {
 } from '../dude-lightweight-execution/board.mjs';
 import * as recoveryRuntime from './recovery.mjs';
 import { createHostAdapter } from './host-adapter.mjs';
+import {
+  buildRetentionPair,
+  expandModelPacket,
+  originalAvailableProjection,
+  readRetentionEpisodeFixture,
+} from '../../../scripts/fixtures/064-work-receipt-overflow-handling/model-view-test-helpers.mjs';
 
 import {
   approachHash,
@@ -216,9 +223,9 @@ function clone(value) {
   return structuredClone(value);
 }
 
-/** @param {(root:string) => void} run */
-function withWorkspace(run) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-recovery-'));
+/** @param {(root:string) => void} run @param {string} [tempRoot] */
+function withWorkspace(run, tempRoot = os.tmpdir()) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(tempRoot, 'dude-recovery-')));
   try {
     fs.mkdirSync(path.join(root, '.dude/ideas'), { recursive: true });
     fs.mkdirSync(path.join(root, path.dirname(SPEC_PATH)), { recursive: true });
@@ -2539,8 +2546,8 @@ test('T008 regression: programmatic Buffer and typed-array bodies are charged be
   });
 });
 
-test('T008: descriptor 64 is retained before separate packet overflow and descriptor 65 refuses before append', () => {
-  assert.deepEqual(limits, { items: 16, bytes: 131_072 });
+test('T008: descriptor 64 is admitted when bytes fit and descriptor 65 refuses before append', () => {
+  assert.deepEqual(limits, { items: 64, bytes: 131_072 });
   const exactRaw = rawInputs({
     currentRun: Array.from({ length: 57 }, (_, index) => (
       capture(TARGET, 'succeeded', [{ descriptor: index }])
@@ -2550,8 +2557,8 @@ test('T008: descriptor 64 is retained before separate packet overflow and descri
   assert.equal(exactItems.length, FIXED_RESOURCE_LIMITS.retainedDescriptors);
   const exact = buildInspection(TARGET, exactItems);
   assert.equal(exact.items.length, FIXED_RESOURCE_LIMITS.retainedDescriptors);
-  assert.equal(exact.overflow, true, 'the unchanged 16-item packet limit remains separate');
-  assert.equal(modelPacket(exact), null);
+  assert.equal(exact.overflow, false);
+  assert.equal(modelPacket(exact)?.items.length, 63, 'the unavailable session still consumes descriptor 64');
 
   const candidates = Array.from(
     { length: FIXED_RESOURCE_LIMITS.retainedDescriptors },
@@ -3238,11 +3245,17 @@ test('evidenceHash distinguishes complete bodies and canonical projection fields
   assert.equal(new Set(variants).size, variants.length);
 });
 
-/** @param {unknown} target @param {ReturnType<typeof evidence>[]} items */
-function packetBytes(target, items) {
+/** Independent literal-only byte oracle; typed payload measurements use the production renderer.
+ * @param {unknown} target @param {ReturnType<typeof evidence>[]} items */
+function literalPacketBytes(target, items) {
   return Buffer.byteLength(canonicalJson({
+    format: 'dude-work-model-view-v1',
     target: canonicalTarget(target),
-    items: items.map((item) => ({ source: item.source, descriptor: descriptor(item), text: item.text })),
+    items: originalAvailableProjection({ target, items }).items.map((item, position) => ({
+      tag: 'literal',
+      text: item.text,
+      frames: [{ descriptor: item.descriptor, occurrences: [{ source: item.source, position }] }],
+    })),
   }));
 }
 
@@ -3253,21 +3266,23 @@ function sizedFinalItem(expectedBytes, prefix, source) {
       ? ownerEvidence('x'.repeat(length))
       : evidence(source, 'x'.repeat(length))
   );
-  let length = Math.max(0, expectedBytes - packetBytes(TARGET, [...prefix, candidateFor(0)]));
+  let length = Math.max(0, expectedBytes - literalPacketBytes(TARGET, [...prefix, candidateFor(0)]));
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const candidate = candidateFor(length);
-    const actual = packetBytes(TARGET, [...prefix, candidate]);
+    const actual = literalPacketBytes(TARGET, [...prefix, candidate]);
     if (actual === expectedBytes) return candidate;
     length += expectedBytes - actual;
   }
   throw new Error(`could not construct ${expectedBytes}-byte packet fixture`);
 }
 
-test('T010 packet: the fixed increase leaves every other declared packet and body limit unchanged', () => {
-  assert.deepEqual(limits, { items: 16, bytes: 131_072 });
+test('T010 packet: descriptor-derived items leave every other declared packet and body limit unchanged', () => {
+  assert.deepEqual(limits, { items: 64, bytes: 131_072 });
   const source = fs.readFileSync(RECOVERY_SCRIPT, 'utf8');
   for (const declaration of [
-    'const MAX_PACKET_ITEMS = 16;',
+    'const MAX_RETAINED_DESCRIPTORS = 64;',
+    'const MAX_SOURCE_ENTRIES = 64;',
+    'const MAX_PACKET_BYTES = 131_072;',
     'const MAX_SOURCE_BODY_BYTES = 1_048_576;',
     'const MAX_INSPECTION_BODY_BYTES = 4_194_304;',
   ]) {
@@ -3396,32 +3411,23 @@ test('T010 packet: the actual current T009 Inspection plus compact verification 
   }
 });
 
-test('T010 packet: exactly 16 items and exactly 131,072 canonical bytes are admitted together', () => {
-  const sixteen = Array.from({ length: limits.items }, (_, index) => evidence('current-run', `item-${index}`));
-  const countInspection = buildInspection(TARGET, sixteen);
+test('T010 packet: exactly 64 items and exactly 131,072 canonical bytes are admitted together', () => {
+  const sixtyFour = Array.from({ length: limits.items }, (_, index) => evidence('current-run', `item-${index}`));
+  const countInspection = buildInspection(TARGET, sixtyFour);
   assert.equal(countInspection.overflow, false);
-  assert.equal(modelPacket(countInspection)?.items.length, 16);
+  assert.equal(modelPacket(countInspection)?.items.length, 64);
 
   const prefix = Array.from({ length: limits.items - 1 }, (_, index) => evidence('current-run', `item-${index}`));
   const boundaryItem = sizedFinalItem(limits.bytes, prefix, 'session');
   const byteInspection = buildInspection(TARGET, [...prefix, boundaryItem]);
   const packet = modelPacket(byteInspection);
   assert.ok(packet);
-  assert.equal(packet.items.length, 16);
+  assert.equal(packet.items.length, 64);
   assert.equal(Buffer.byteLength(canonicalJson(packet)), 131_072);
   assert.equal(byteInspection.overflow, false);
 });
 
-test('item 17 and a packet byte overflow return descriptor-only refusal without truncation or a packet', () => {
-  const seventeen = Array.from({ length: limits.items + 1 }, (_, index) => evidence('current-run', `item-${index}`));
-  const countInspection = buildInspection(TARGET, seventeen);
-  assert.equal(countInspection.overflow, true);
-  assert.equal(countInspection.items.length, 17);
-  assert.equal(countInspection.items[16].status, 'overflow');
-  assert.ok(countInspection.items.every((item) => !Object.hasOwn(item, 'text')));
-  assert.equal(modelPacket(countInspection), null);
-  assert.ok(countInspection.blockers.some((blocker) => blocker.code === 'evidence-incomplete'));
-
+test('packet byte overflow returns descriptor-only refusal without truncation or a packet', () => {
   const oversized = sizedFinalItem(limits.bytes + 1, [], 'owner-log');
   const byteInspection = buildInspection(TARGET, [oversized]);
   assert.equal(byteInspection.overflow, true);
@@ -3445,7 +3451,7 @@ test('T010 packet: 131,073 complete non-owner bytes refuse without completion, r
   };
   const completeItems = collectEvidence(TARGET, oversizedRaw);
   const completeSession = completeItems.find((item) => item.source === 'session');
-  assert.equal(packetBytes(TARGET, completeItems), 131_073);
+  assert.equal(literalPacketBytes(TARGET, completeItems), 131_073);
   assert.equal(completeSession?.status, 'present');
   assert.equal(completeSession?.text, oversizedSession.text);
 
@@ -3493,7 +3499,7 @@ test('an unavailable optional session is represented but does not itself block',
   const inspection = buildInspection(TARGET, [ownerEvidence(), missing('session')]);
   assert.equal(inspection.overflow, false);
   assert.deepEqual(inspection.blockers, []);
-  assert.deepEqual(modelPacket(inspection)?.items.map((item) => item.source), ['owner-log']);
+  assert.deepEqual(expandModelPacket(modelPacket(inspection)).items.map((item) => item.source), ['owner-log']);
 });
 
 test('Assessment, Blocker, Inspection, and minimal RunState invariants are exact', () => {
@@ -4452,7 +4458,7 @@ test('session acquisition includes only exact-bound available text and treats ot
     assert.equal(item?.status, 'missing', /** @type {string} */ (name));
     assert.equal(item?.required, false, /** @type {string} */ (name));
     assert.equal(Object.hasOwn(item || {}, 'text'), false, /** @type {string} */ (name));
-    assert.equal(modelPacket(inspection)?.items.some((candidate) => candidate.source === 'session'), false);
+    assert.equal(expandModelPacket(modelPacket(inspection)).items.some((candidate) => candidate.source === 'session'), false);
     assert.equal(inspection.blockers.some((blocker) => blocker.subject === 'session'), false, /** @type {string} */ (name));
   }
 
@@ -4462,7 +4468,7 @@ test('session acquisition includes only exact-bound available text and treats ot
   const exactItem = exact.items.find((candidate) => candidate.source === 'session');
   assert.equal(exactItem?.status, 'present');
   assert.equal(exactItem?.text, 'exact session body');
-  assert.ok(modelPacket(exact)?.items.some((item) => item.source === 'session'));
+  assert.ok(expandModelPacket(modelPacket(exact)).items.some((item) => item.source === 'session'));
 
   const nontextBytes = Buffer.from([0x00, 0xff, 0x80]);
   const nontext = buildInspection(TARGET, collectEvidence(TARGET, rawInputs({
@@ -4475,10 +4481,10 @@ test('session acquisition includes only exact-bound available text and treats ot
   assert.equal(nontextItem?.byteLength, nontextBytes.length);
   assert.equal(Object.hasOwn(nontextItem || {}, 'text'), false);
   assert.equal(nontext.blockers.some((blocker) => blocker.subject === 'session'), false);
-  assert.equal(modelPacket(nontext)?.items.some((item) => item.source === 'session'), false);
+  assert.equal(expandModelPacket(modelPacket(nontext)).items.some((item) => item.source === 'session'), false);
 });
 
-test('malformed and unbound sessions cannot become item 17 or cross the byte boundary', () => {
+test('malformed and unbound sessions cost a descriptor but no physical item or packet bytes', () => {
   const otherTarget = {
     specPath: '.dude/specs/005-other-feature/spec.md',
     lane: 'lightweight',
@@ -4494,17 +4500,17 @@ test('malformed and unbound sessions cannot become item 17 or cross the byte bou
     assert.equal(sessionItem?.status, 'missing', /** @type {string} */ (name));
     assert.equal(Object.hasOwn(sessionItem || {}, 'text'), false, /** @type {string} */ (name));
 
-    const sixteen = Array.from(
-      { length: limits.items },
+    const available = Array.from(
+      { length: limits.items - 1 },
       (_, index) => evidence('current-run', `item-${index}`),
     );
-    const countInspection = buildInspection(TARGET, [...sixteen, sessionItem]);
-    assert.equal(countInspection.items.length, limits.items + 1, /** @type {string} */ (name));
+    const countInspection = buildInspection(TARGET, [...available, sessionItem]);
+    assert.equal(countInspection.items.length, limits.items, /** @type {string} */ (name));
     assert.equal(countInspection.overflow, false, /** @type {string} */ (name));
-    assert.equal(modelPacket(countInspection)?.items.length, limits.items, /** @type {string} */ (name));
+    assert.equal(modelPacket(countInspection)?.items.length, limits.items - 1, /** @type {string} */ (name));
 
     const prefix = Array.from(
-      { length: limits.items - 1 },
+      { length: limits.items - 2 },
       (_, index) => evidence('current-run', `byte-item-${index}`),
     );
     const boundaryItem = sizedFinalItem(limits.bytes, prefix, 'lint');
@@ -4512,11 +4518,11 @@ test('malformed and unbound sessions cannot become item 17 or cross the byte bou
     const packet = modelPacket(byteInspection);
     assert.equal(byteInspection.overflow, false, /** @type {string} */ (name));
     assert.equal(Buffer.byteLength(canonicalJson(packet)), limits.bytes, /** @type {string} */ (name));
-    assert.equal(packet?.items.some((item) => item.source === 'session'), false, /** @type {string} */ (name));
+    assert.equal(expandModelPacket(packet).items.some((item) => item.source === 'session'), false, /** @type {string} */ (name));
   }
 });
 
-test('collected exact session and record count overflow produce one descriptor-only refusal', () => {
+test('collected session byte excess refuses while 17 available records remain count-admissible', () => {
   const largeSession = 's'.repeat(limits.bytes);
   const byteInspection = buildInspection(TARGET, collectEvidence(TARGET, rawInputs({
     session: { target: TARGET, availability: 'available', bytes: Buffer.from(largeSession) },
@@ -4531,9 +4537,9 @@ test('collected exact session and record count overflow produce one descriptor-o
   ));
   const countInspection = buildInspection(TARGET, collectEvidence(TARGET, rawInputs({ currentRun: runs })));
   assert.equal(countInspection.items.length, 18);
-  assert.equal(countInspection.overflow, true);
-  assert.equal(modelPacket(countInspection), null);
-  assert.ok(countInspection.blockers.some((blocker) => blocker.subject === 'model-packet'));
+  assert.equal(countInspection.overflow, false);
+  assert.equal(modelPacket(countInspection)?.items.length, 17);
+  assert.deepEqual(expandModelPacket(modelPacket(countInspection)), originalAvailableProjection(countInspection));
 });
 
 test('tracked acquisition invokes one synchronous capability with the exact closed envelope', () => {
@@ -7054,17 +7060,18 @@ test('T004: the definition-plan participates in packet item and byte accounting 
   const ordered = collectEvidence(TARGET, withDefinitionPlan(rawInputs(), plan), undefined, 'autonomous');
   const inspection = buildInspection(TARGET, ordered);
   assert.equal(inspection.items[2].source, 'definition-plan');
-  assert.ok(modelPacket(inspection)?.items.some((item) => item.source === 'definition-plan'));
+  assert.ok(expandModelPacket(modelPacket(inspection)).items.some((item) => item.source === 'definition-plan'));
 
   const planItem = evidence('definition-plan', canonicalJson({ path: PLAN_PATH, present: true }), true);
   const fifteen = Array.from({ length: 15 }, (_, index) => evidence('current-run', `c-${index}`));
   const admitted = buildInspection(TARGET, [planItem, ...fifteen]);
   assert.equal(admitted.overflow, false);
   assert.equal(modelPacket(admitted)?.items.length, 16);
-  assert.ok(modelPacket(admitted)?.items.some((item) => item.source === 'definition-plan'));
+  assert.ok(expandModelPacket(modelPacket(admitted)).items.some((item) => item.source === 'definition-plan'));
 
   const sixteen = Array.from({ length: 16 }, (_, index) => evidence('current-run', `c-${index}`));
-  assert.equal(buildInspection(TARGET, [planItem, ...sixteen]).overflow, true);
+  assert.equal(buildInspection(TARGET, [planItem, ...sixteen]).overflow, false);
+  assert.equal(modelPacket(buildInspection(TARGET, [planItem, ...sixteen]))?.items.length, 17);
 
   const prefix = [ownerEvidence()];
   const boundaryPlan = sizedFinalItem(limits.bytes, prefix, 'definition-plan');
@@ -7075,14 +7082,33 @@ test('T004: the definition-plan participates in packet item and byte accounting 
   assert.equal(buildInspection(TARGET, [...prefix, overPlan]).overflow, true);
 });
 
-/** @param {Buffer} planContent @param {(root: string) => void} run */
-function withAutonomousWorkspace(planContent, run) {
+/** @param {Buffer} planContent @param {(root: string) => void} run @param {string} [tempRoot] */
+function withAutonomousWorkspace(planContent, run, tempRoot) {
   withWorkspace((root) => {
     fs.writeFileSync(path.join(root, IDEA_PATH), ideaBytes());
     fs.writeFileSync(path.join(root, TASKS_PATH), transitionTasksBytes([{ id: TASK_KEY, glyph: '~' }]));
     fs.writeFileSync(path.join(root, PLAN_PATH), planContent);
     run(root);
-  });
+  }, tempRoot);
+}
+
+/**
+ * @param {Buffer} planContent
+ * @param {(root:string, aliasedRoot:string, physicalTempRoot:string)=>void} run
+ */
+function withAliasedAutonomousWorkspace(planContent, run) {
+  const owner = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dude-recovery-root-alias-')));
+  const physicalTempRoot = path.join(owner, 'physical');
+  const aliasedTempRoot = path.join(owner, 'alias');
+  try {
+    fs.mkdirSync(physicalTempRoot);
+    fs.symlinkSync(physicalTempRoot, aliasedTempRoot, process.platform === 'win32' ? 'junction' : 'dir');
+    withAutonomousWorkspace(planContent, (root) => {
+      run(root, path.join(aliasedTempRoot, path.basename(root)), physicalTempRoot);
+    }, aliasedTempRoot);
+  } finally {
+    fs.rmSync(owner, { recursive: true, force: true });
+  }
 }
 
 /** @param {string} root @param {Record<string, unknown>} [overrides] */
@@ -10392,9 +10418,8 @@ test('T002 completion Inspection overflow precedence: capture returns only descr
     const entriesBefore = fs.readdirSync(root, { recursive: true }).sort();
     const workspaceBefore = workspacePaths.map((relativePath) => fs.readFileSync(path.join(root, relativePath)));
     const input = autonomousInspectInput(root, {
-      currentRun: Array.from({ length: 17 }, (_, index) => (
-        capture(TARGET, 'failed', [{ index }])
-      )),
+      currentRun: [capture(TARGET, 'failed', [{ fixture: 'complete current-run' }])],
+      session: { target: TARGET, availability: 'available', bytes: Buffer.alloc(limits.bytes, 'x') },
       ...t002TrustedStreams([fixture]),
     });
 
@@ -10434,9 +10459,7 @@ test('T002 completion Inspection overflow precedence: finalize preserves the cap
       captured.occurrenceEvents,
       [fixture],
     );
-    input.currentRun.push(...Array.from({ length: 17 }, (_, index) => (
-      capture(TARGET, 'failed', [{ overflow: index }])
-    )));
+    input.session = { target: TARGET, availability: 'available', bytes: Buffer.alloc(limits.bytes, 'x') };
     const stateReference = captured.state;
     const stateBefore = clone(captured.state);
     const stateBytes = canonicalJson(captured.state);
@@ -16881,6 +16904,9 @@ test('T001 adapter composition: the host adapter closes one ordinary Lightweight
       laneApplication: { ...laneApplication, permit },
     }));
     const after = t018WorkspaceSnapshot(root);
+    assert.equal(applied.outcome, 'accepted', applied.reason);
+    assert.equal(applied.reason, 'lane-mutation-applied');
+    assert.equal(applied.product.kind, 'lane-receipt');
     const receipt = applied.product.receipt;
     const poststateInput = cliInput(t002RetentionInputWithTaskHistory(
       root,
@@ -16922,9 +16948,6 @@ test('T001 adapter composition: the host adapter closes one ordinary Lightweight
     assert.equal(permit.subjectRunStateHash, sha256(canonicalJson(state)));
     assert.equal(permit.mutationIdentity, sha256(canonicalJson(terminal.mutation)));
 
-    assert.equal(applied.outcome, 'accepted');
-    assert.equal(applied.reason, 'lane-mutation-applied');
-    assert.equal(applied.product.kind, 'lane-receipt');
     assert.equal(receipt.permitHash, permit.permitHash);
     assert.equal(receipt.targetStateChanged, true);
     // The lane owner commits its canonical surfaces, then its bounded derived
@@ -16971,10 +16994,15 @@ test('T001 adapter composition: the host adapter closes one ordinary Lightweight
 });
 
 test('T001 adapter composition: only the lane owner mutates, and drifted or replayed bindings refuse without settlement', () => {
-  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+  withAliasedAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root, aliasedRoot, physicalTempRoot) => {
     // Arrange
+    assert.equal(root, fs.realpathSync(root));
+    assert.equal(path.dirname(root), physicalTempRoot);
+    assert.notEqual(aliasedRoot, root);
+    assert.equal(fs.realpathSync(aliasedRoot), root);
     fs.mkdirSync(path.join(root, '.dude/state'), { recursive: true });
-    fs.writeFileSync(path.join(root, '.dude/state/task-state.json'), T005_TASK_STATE);
+    const taskState = Buffer.from('{}\n');
+    fs.writeFileSync(path.join(root, '.dude/state/task-state.json'), taskState);
     const terminal = t001OrdinaryCompletionFixture(root);
     const state = terminal.finalized.completion.state;
     const laneApplication = {
@@ -16990,7 +17018,7 @@ test('T001 adapter composition: only the lane owner mutates, and drifted or repl
         tasksPath: TASKS_PATH,
         tasks: recoveryRuntime.capturedBytesV1(terminal.binding.tasksFile),
         taskStatePath: '.dude/state/task-state.json',
-        taskState: recoveryRuntime.capturedBytesV1(T005_TASK_STATE),
+        taskState: recoveryRuntime.capturedBytesV1(taskState),
       },
       mutation: terminal.mutation,
     };
@@ -17018,7 +17046,7 @@ test('T001 adapter composition: only the lane owner mutates, and drifted or repl
           targetMapping: terminal.binding.targetMapping,
         },
       }));
-      assert.equal(issued.outcome, 'accepted');
+      assert.equal(issued.outcome, 'accepted', issued.reason);
       return { adapter, calls, permit: issued.product.permit };
     };
     /** @param {Record<string, unknown>} permit @param {Record<string, unknown>} overrides */
@@ -17027,13 +17055,14 @@ test('T001 adapter composition: only the lane owner mutates, and drifted or repl
       return t005Receipt({ ...body, ...overrides });
     };
     const before = t018WorkspaceSnapshot(root);
+    const indeterminate = () => ({
+      ok: false,
+      phase: 'indeterminate',
+      reason: 'lightweight-rollback-incomplete',
+      observedEvidenceHash: t018Hash('observed'),
+    });
     const cases = [
-      ['indeterminate lane outcome', () => ({
-        ok: false,
-        phase: 'indeterminate',
-        reason: 'lightweight-rollback-incomplete',
-        observedEvidenceHash: t018Hash('observed'),
-      }), 'hard-stop', 'lane-effect-indeterminate'],
+      ['indeterminate lane outcome', indeterminate, 'hard-stop', 'lane-effect-indeterminate'],
       ['closed lane refusal', () => ({
         ok: false,
         phase: 'refused',
@@ -17066,6 +17095,17 @@ test('T001 adapter composition: only the lane owner mutates, and drifted or repl
       assert.equal(issued.calls.length, 1, /** @type {string} */ (label));
       assert.equal(issued.calls[0].operation, 'work-set', /** @type {string} */ (label));
     }
+
+    // A physically equivalent alias is still the wrong exact application binding
+    // and refuses before the lane owner is called.
+    const wrongRoot = issueWith(indeterminate);
+    const wrongRootResult = wrongRoot.adapter.run(t018Request(wrongRoot.adapter, 'apply-lane-effect', {
+      laneApplication: { ...laneApplication, root: aliasedRoot, permit: wrongRoot.permit },
+    }));
+    assert.equal(wrongRootResult.outcome, 'hard-stop');
+    assert.equal(wrongRootResult.reason, 'lane-permit-binding-mismatch');
+    assert.equal(Object.hasOwn(wrongRootResult, 'product'), false);
+    assert.equal(wrongRoot.calls.length, 0);
 
     // One issued permit applies at most once, and no replay reaches the owner.
     const once = issueWith((request) => ({
@@ -17638,9 +17678,7 @@ test('T003 public learning and exact projection batches: overflow, phase, and si
     );
     const events = captured.projectionBatch.events;
     const overflowInput = t002RetentionInput(root, events, events, [fixture]);
-    overflowInput.currentRun.push(...Array.from({ length: 17 }, (_, index) => (
-      capture(TARGET, 'failed', [{ overflow: index }])
-    )));
+    overflowInput.session = { target: TARGET, availability: 'available', bytes: Buffer.alloc(limits.bytes, 'x') };
     const governedState = {
       ...clone(fixture.state),
       learningGovernance: t002RequiredGovernance([
@@ -18637,10 +18675,12 @@ function t005Descriptor(bytes) {
  * Build the exact fresh Lightweight mapping and prestate from workspace bytes.
  * @param {string} root @param {Record<string, unknown>} target @param {string} ideaPath @param {string} glyph @param {string|null} blockedBy @param {Buffer} [taskStateFile]
  */
-function t005LightweightBinding(root, target, ideaPath, glyph, blockedBy, taskStateFile = T005_TASK_STATE) {
+function t005LightweightBinding(root, target, ideaPath, glyph, blockedBy, taskStateFile) {
   const tasksPath = `${/** @type {string} */ (target.specPath).slice(0, -'spec.md'.length)}tasks.md`;
   const ideaFile = fs.readFileSync(path.join(root, ideaPath));
   const tasksFile = fs.readFileSync(path.join(root, tasksPath));
+  const snapshotPath = path.join(root, '.dude/state/task-state.json');
+  const snapshot = taskStateFile ?? (fs.existsSync(snapshotPath) ? fs.readFileSync(snapshotPath) : Buffer.from('{}\n'));
   const targetMapping = {
     version: 1,
     lane: 'lightweight',
@@ -18653,7 +18693,7 @@ function t005LightweightBinding(root, target, ideaPath, glyph, blockedBy, taskSt
     tasksPath,
     tasksDescriptor: t005Descriptor(tasksFile),
     taskStatePath: '.dude/state/task-state.json',
-    taskStateDescriptor: t005Descriptor(taskStateFile),
+    taskStateDescriptor: t005Descriptor(snapshot),
     taskKey: target.taskKey,
   };
   const lanePrestate = {
@@ -18862,7 +18902,7 @@ function t005VerifiedTerminal(root) {
   });
   return {
     flow,
-    binding,
+    binding: t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null),
     retained,
     attemptEvents,
     attemptIdentity: authorized.authorization.attemptIdentity,
@@ -19141,7 +19181,6 @@ test('T005 acyclic permits: a bound projection plan carries its exact mutation, 
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
-    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
     const learningBatch = flow.learned.learning.projectionBatch;
     const governedInput = () => cliInput(t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures));
 
@@ -19152,6 +19191,7 @@ test('T005 acyclic permits: a bound projection plan carries its exact mutation, 
       input: governedInput(),
       projectionBatch: learningBatch,
     });
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
     const bound = t003Invoke('transition', {
       mode: 'prepare-projection',
       state: flow.learned.learning.state,
@@ -19904,13 +19944,15 @@ test('T005 acyclic permits: a permit is never transferable across routes, phases
       snapshotUpdatedAt: T005_TIME,
     };
     const governedInput = () => cliInput(t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures));
+    const projectionInput = governedInput();
+    const projectionBinding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
     const projectionPermit = t003Invoke('transition', {
       mode: 'prepare-projection',
       state: flow.learned.learning.state,
-      input: governedInput(),
+      input: projectionInput,
       projectionBatch: flow.learned.learning.projectionBatch,
-      lanePrestate: binding.lanePrestate,
-      targetMapping: binding.targetMapping,
+      lanePrestate: projectionBinding.lanePrestate,
+      targetMapping: projectionBinding.targetMapping,
       operationTime: T005_TIME,
     }).transition.plan.items[0].projectionPermit;
     const foreignInput = cliInput(t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures));
@@ -19946,7 +19988,7 @@ test('T005 acyclic permits: a permit is never transferable across routes, phases
       permit: projectionPermit,
       receipt: t005AtomicReceipt(
         projectionPermit,
-        { targetMappingHash: t005Hash('foreign-mapping'), lanePrestateHash: binding.lanePrestateHash },
+        { targetMappingHash: t005Hash('foreign-mapping'), lanePrestateHash: projectionBinding.lanePrestateHash },
         false,
       ),
     });
@@ -19956,7 +19998,7 @@ test('T005 acyclic permits: a permit is never transferable across routes, phases
       state: flow.learned.learning.state,
       input: foreignInput,
       permit: projectionPermit,
-      receipt: t005AtomicReceipt(projectionPermit, binding, false),
+      receipt: t005AtomicReceipt(projectionPermit, projectionBinding, false),
     });
 
     // Assert    assert.equal(asLaneReceipt.transition.committed, false);
@@ -20157,9 +20199,10 @@ test('T005 acyclic permits: a projection or controlled-end receipt cannot assert
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     const flow = t003PublicFlow(root, 'finding', 'selected-alternative');
-    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
     const learnedState = flow.learned.learning.state;
     const governedInput = () => cliInput(t002RetentionInput(root, flow.governedEvents, flow.governedEvents, flow.fixtures));
+    governedInput();
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
     const projectionPermit = t003Invoke('transition', {
       mode: 'prepare-projection',
       state: learnedState,
@@ -20508,6 +20551,7 @@ test('T005 acyclic permits: an ungoverned lane permit reaches its terminal recei
     // Arrange
     const fixture = t002PendingFixture({ checkOutcome: 'passed' });
     const input = () => cliInput(t002RetentionInput(root, [], [], [fixture]));
+    input();
     const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
     const state = autonomousState();
     const blockMutation = {
@@ -21060,7 +21104,7 @@ test('T001 ordinary completion close bridge: commit refuses stale, transferred, 
   withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
     // Arrange
     fs.mkdirSync(path.join(root, '.dude/state'), { recursive: true });
-    fs.writeFileSync(path.join(root, '.dude/state/task-state.json'), T005_TASK_STATE);
+    fs.writeFileSync(path.join(root, '.dude/state/task-state.json'), '{}\n');
     const terminal = t001OrdinaryCompletionFixture(root);
     const state = terminal.finalized.completion.state;
     const issued = t003Invoke('transition', {
@@ -21071,6 +21115,7 @@ test('T001 ordinary completion close bridge: commit refuses stale, transferred, 
       lanePrestate: terminal.binding.lanePrestate,
       targetMapping: terminal.binding.targetMapping,
     });
+    assert.equal(issued.transition.issued, true, issued.transition.reason);
     const permit = issued.transition.permit;
     const receipt = t005AtomicReceipt(permit, terminal.binding, true);
     const unchangedPoststateReceipt = t005Receipt({
@@ -23369,23 +23414,14 @@ function feature029CompleteCoordinatorLog(bytes) {
  * @param {string} ownerText
  */
 function feature029PacketWithOwnerBody(packet, ownerText) {
-  const current = packet.items.find((item) => item.source === 'owner-log');
+  const output = clone(packet);
+  const current = output.items.find((item) => (
+    item.tag === 'literal' && item.frames[0].occurrences[0].source === 'owner-log'
+  ));
   assert.ok(current, 'packet must contain owner-log');
-  const ownerItem = {
-    source: 'owner-log',
-    required: current.descriptor.required,
-    status: current.descriptor.status,
-    ...contentDescriptor(ownerText),
-    text: ownerText,
-  };
-  return {
-    target: packet.target,
-    items: packet.items.map((item) => (
-      item.source === 'owner-log'
-        ? { source: 'owner-log', descriptor: descriptor(ownerItem), text: ownerText }
-        : item
-    )),
-  };
+  current.text = ownerText;
+  Object.assign(current.frames[0].descriptor, contentDescriptor(ownerText));
+  return output;
 }
 
 test('Feature 029: small zero, one, and several-event logs retain every event and bind the canonical body', () => {
@@ -23447,7 +23483,7 @@ test('Feature 029: small zero, one, and several-event logs retain every event an
     assert.equal(body.lastIncludedEventOrdinal, fixture.events.length === 0 ? null : fixture.events.length, fixture.name);
     assert.deepEqual(body.events, fixture.events, fixture.name);
     assert.deepEqual(
-      packet.items.find((packetItem) => packetItem.source === 'owner-log'),
+      expandModelPacket(packet).items.find((packetItem) => packetItem.source === 'owner-log'),
       { source: 'owner-log', descriptor: descriptor(item), text: item.text },
       fixture.name,
     );
@@ -23607,7 +23643,7 @@ test('Feature 029: real owner ledgers project a bounded suffix without mutating 
     assert.equal(body.lastIncludedEventOrdinal, body.totalEventCount, ideaPath);
     assert.ok(body.events.every((event) => /^- \d{4}-\d{2}-\d{2}(?:[ \t]|$)/.test(event)), ideaPath);
     assert.deepEqual(
-      packet.items.find((packetItem) => packetItem.source === 'owner-log'),
+      expandModelPacket(packet).items.find((packetItem) => packetItem.source === 'owner-log'),
       { source: 'owner-log', descriptor: descriptor(item), text: item.text },
       ideaPath,
     );
@@ -24282,7 +24318,7 @@ test('Feature 061: raw, workspace, and CLI inspection admit 60, 63, 200, and 999
   });
 });
 
-test('Feature 061: authorization reserves exact autonomous source and model headroom without changing refused state', () => {
+test('Feature 061: authorization reserves autonomous source and descriptor headroom without changing refused state', () => {
   const autonomousState = () => emptyState({
     mode: 'autonomous',
     overall: 10,
@@ -24440,20 +24476,12 @@ test('Feature 061: authorization reserves exact autonomous source and model head
   const model14Inspection = inspectAutonomous(modelRaw(7));
   assert.equal(feature061AvailableItemCount(model14Inspection), 14);
   assert.equal(modelPacket(model14Inspection)?.items.length, 14);
-  assert.equal(authorize(modelRaw(7)).result.authorized, true, '14 + 2 model items fits 16');
+  assert.equal(authorize(modelRaw(7)).result.authorized, true);
 
   const model15Inspection = inspectAutonomous(modelRaw(8));
   assert.equal(feature061AvailableItemCount(model15Inspection), 15);
   assert.equal(modelPacket(model15Inspection)?.items.length, 15);
-  const model17 = authorize(modelRaw(8));
-  assert.deepEqual(model17.result.capacity, {
-    budget: 'model-packet-items',
-    limit: 16,
-    required: 17,
-    source: 'model-packet',
-    target: canonicalTarget(TARGET),
-  });
-  assert.strictEqual(model17.result.state, model17.state);
+  assert.equal(authorize(modelRaw(8)).result.authorized, true, 'there is no independent 16-item completion veto');
 
   const emptyPlaceholderRaw = transitionRaw(TARGET, {
     currentRun: uniqueCurrent(9),
@@ -24467,7 +24495,7 @@ test('Feature 061: authorization reserves exact autonomous source and model head
   assert.equal(
     authorize(emptyPlaceholderRaw).result.authorized,
     true,
-    'fresh captures replace empty verification/review placeholders without adding model items',
+    'fresh captures replace empty verification/review placeholders without adding descriptors',
   );
 
   const guardedState = emptyState({ mode: 'guarded', overall: 10 });
@@ -24677,7 +24705,7 @@ test('Feature 061 regression: CLI returns admission refusal data but throws acqu
   });
 });
 
-test('Feature 061: diagnostics report all seven closed budgets with exact limits and measured demand', () => {
+test('Feature 061: diagnostics report the six current closed budgets with exact limits and measured demand', () => {
   const capacityDiagnostic = runtimeFunction('capacityDiagnostic');
   const validateCapacityDiagnostic = runtimeFunction('validateCapacityDiagnostic');
   const closed = [
@@ -24687,7 +24715,6 @@ test('Feature 061: diagnostics report all seven closed budgets with exact limits
     ['inspection-body-bytes', 4_194_304, 'current-run'],
     ['cli-request-bytes', 6_291_456, 'cli-request'],
     ['retained-descriptors', 64, 'current-run'],
-    ['model-packet-items', 16, 'model-packet'],
   ];
   for (const [budget, limit, source] of closed) {
     const diagnostic = {
@@ -24700,6 +24727,7 @@ test('Feature 061: diagnostics report all seven closed budgets with exact limits
     assert.deepEqual(validateCapacityDiagnostic(diagnostic), diagnostic, budget);
   }
   for (const invalid of [
+    { budget: 'model-packet-items', limit: 16, required: 17, source: 'model-packet', target: null },
     { budget: 'unknown', limit: 1, required: 2, source: 'current-run', target: null },
     { budget: 'source-entries', limit: 65, required: 65, source: 'current-run', target: null },
     { budget: 'source-entries', limit: 64, required: -1, source: 'current-run', target: null },
@@ -24834,7 +24862,7 @@ test('Feature 061: diagnostics report all seven closed budgets with exact limits
   });
   const modelRaw = transitionRaw(TARGET, {
     currentRun: Array.from(
-      { length: 8 },
+      { length: 55 },
       (_, index) => capture(TARGET, 'failed', [{ modelItem: index }]),
     ),
     verification: [capture(TARGET, 'passed', [{ modelItem: 'verification' }])],
@@ -24849,9 +24877,9 @@ test('Feature 061: diagnostics report all seven closed budgets with exact limits
     'ordinary',
   );
   assert.deepEqual(modelRefusal.capacity, {
-    budget: 'model-packet-items',
-    limit: 16,
-    required: 17,
+    budget: 'retained-descriptors',
+    limit: 64,
+    required: 65,
     source: 'model-packet',
     target: canonicalTarget(TARGET),
   });
@@ -25165,4 +25193,1086 @@ test('Feature 061: actual 062 source inspection is read-only and fixture streams
       `${relativePath} stays byte-identical after read-only inspection`,
     );
   }
+});
+
+/** @param {string} source @param {Record<string, unknown>} capture @param {string} state */
+function feature064TrustedItem(source, capture, state) {
+  return evidence(source, canonicalJson({ target: capture.target, state, records: [capture] }), true);
+}
+
+test('Feature 064 T001: the closed model view expands literals, trusted payloads, and exact co-roles', () => {
+  const trusted = t002EnvelopeFixture();
+  const items = [
+    evidence('current-run', 'Full literal history, including failed assertions.\n'),
+    feature064TrustedItem('review', trusted.reviewCapture, 'rejected'),
+    feature064TrustedItem('verification', trusted.verificationCapture, 'failed'),
+    feature064TrustedItem('lint', trusted.verificationCapture, 'failed'),
+    missing('session'),
+  ];
+  const before = canonicalJson(items);
+  const inspection = buildInspection(TARGET, items);
+  const packet = modelPacket(inspection);
+  assert.ok(packet);
+  assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+  assert.equal(canonicalJson(items), before);
+  assert.deepEqual(packet.items.map(({ tag }) => tag), ['literal', 'review', 'verification']);
+  assert.deepEqual(packet.items[2].frames[0].occurrences, [
+    { source: 'verification', position: 2 },
+    { source: 'lint', position: 3 },
+  ]);
+  assert.deepEqual(modelPacket(buildInspection(TARGET, items)), packet);
+  assert.equal(inspection.evidenceHash, evidenceHash(TARGET, inspection.items, false));
+});
+
+test('Feature 064 T002: the shared current-run constructor preserves transport records and substantive hashing', () => {
+  const records = [{
+    substantive: { note: 'retained exact input' },
+    presentation: { eventId: 'first', timestamp: '2026-01-01T00:00:00Z' },
+  }];
+  const before = canonicalJson(records);
+  const captured = recoveryRuntime.currentRunCapture(TARGET, records);
+  assert.deepEqual(captured.target, TARGET);
+  assert.notEqual(captured.target, TARGET);
+  assert.equal(captured.bytes.toString(), canonicalJson({ target: TARGET, state: 'failed', records }));
+  assert.equal(captured.outcomeHash, sha256(canonicalJson({
+    target: TARGET, state: 'failed', records: records.map(record => record.substantive),
+  })));
+  assert.equal(canonicalJson(records), before);
+  const normalized = collectEvidence(TARGET, {
+    ...rawInputs(), currentRun: [captured],
+  }).find(item => item.source === 'current-run');
+  assert.equal(normalized.status, 'present');
+  assert.equal(normalized.sha256, captured.outcomeHash);
+  assert.equal(normalized.text, canonicalJson({
+    target: TARGET, state: 'failed', records: records.map(record => record.substantive),
+  }));
+});
+
+test('Feature 064 T002: individual Lightweight issuance predicts exact complete captures and both observed postimages', (context) => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const fixture = t002PendingFixture({ attemptOrdinal: 2, verdict: 'accepted', checkOutcome: 'failed' });
+    const prior = t002PendingFixture({ verdict: 'accepted', checkOutcome: 'failed' });
+    const records = [{ substantive: { note: 'last complete current-run source' } }];
+    const raw = autonomousInspectInput(root, {
+      ...t002TrustedStreams([prior, fixture]),
+      currentRun: [
+        recoveryRuntime.currentRunCapture(TARGET, [{ substantive: { note: 'earlier complete current-run source' } }]),
+        recoveryRuntime.currentRunCapture(TARGET, records),
+      ],
+      session: { target: TARGET, availability: 'available', bytes: Buffer.from('x') },
+    });
+    const captured = recoveryRuntime.runCommand('complete', {
+      mode: 'capture', state: fixture.state, input: cliInput(raw), completion: fixture.completion,
+    }).completion;
+    assert.equal(captured.captured, true);
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null, Buffer.from('{}\n'));
+    const prepared = recoveryRuntime.prepareProjectionV2(
+      captured.state, raw, captured.projectionBatch, undefined, false,
+      { lanePrestate: binding.lanePrestate, targetMapping: binding.targetMapping, operationTime: T005_TIME },
+    );
+    assert.equal(prepared.transition.prepared, true, prepared.transition.reason);
+    assert.equal(prepared.transition.plan.items.length, 1);
+    const item = prepared.transition.plan.items[0];
+    const predicted = buildLightweightWorkPostimages({
+      tasks: binding.tasksFile, owner: binding.ideaFile, taskState: Buffer.from('{}\n'),
+      tasksPath: TASKS_PATH, taskKey: TASK_KEY, kind: item.mutation.kind,
+      toGlyph: item.mutation.toGlyph, blocker: item.mutation.blocker,
+      eventLines: item.mutation.eventLines.lines.map(line => line.exactLine),
+      ownerLogLines: [], snapshotUpdatedAt: T005_TIME,
+    });
+    assert.ok(!('reason' in predicted));
+    const applied = applyLightweightWorkRequest({
+      version: 1, operation: 'work-project', root: fs.realpathSync(root),
+      owner: {
+        ideaPath: IDEA_PATH, specPath: SPEC_PATH,
+        ownerCapture: recoveryRuntime.capturedBytesV1(binding.ideaFile),
+        ownerBindingHash: binding.targetMapping.ownerBindingHash,
+      },
+      target: TARGET, state: captured.state, permit: item.projectionPermit,
+      mapping: binding.targetMapping, mutation: item.mutation,
+      expected: {
+        tasksPath: TASKS_PATH, tasks: recoveryRuntime.capturedBytesV1(binding.tasksFile),
+        taskStatePath: '.dude/state/task-state.json', taskState: recoveryRuntime.capturedBytesV1('{}\n'),
+      },
+    });
+    assert.equal(applied.ok, true, JSON.stringify(applied));
+    for (const [surface, relative] of [
+      ['tasks', TASKS_PATH], ['owner', IDEA_PATH], ['taskState', '.dude/state/task-state.json'],
+    ]) assert.deepEqual(fs.readFileSync(path.join(root, relative)), predicted[surface]);
+    const laneFirst = inspect(raw);
+    const receiptInput = {
+      ...raw,
+      currentRun: [raw.currentRun[0], recoveryRuntime.currentRunCapture(TARGET, [...records, item.currentRunRecord])],
+    };
+    const observed = inspect(receiptInput);
+    const packet = modelPacket(observed);
+    assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(observed));
+    for (const source of ['current-run', 'verification', 'review']) {
+      assert.equal(observed.items.filter(item => item.source === source).length, 2, source);
+    }
+    assert.ok(observed.items.some(item => item.source === 'current-run' && item.sha256 === raw.currentRun[0].outcomeHash));
+    const sessionItem = packet.items.find(item => item.frames.some(frame => (
+      frame.occurrences.some(occurrence => occurrence.source === 'session')
+    )));
+    assert.equal(sessionItem.tag, 'literal');
+    let length = 131_072 - Buffer.byteLength(canonicalJson(packet)) + 1;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const text = 'x'.repeat(length);
+      sessionItem.text = text;
+      sessionItem.frames[0].descriptor = { required: false, status: 'present', ...contentDescriptor(text) };
+      const difference = 131_072 - Buffer.byteLength(canonicalJson(packet));
+      if (difference === 0) break;
+      length += difference;
+    }
+    assert.equal(Buffer.byteLength(canonicalJson(packet)), 131_072);
+    const session = bytes => ({ target: TARGET, availability: 'available', bytes: Buffer.from('x'.repeat(bytes)) });
+    assert.equal(Buffer.byteLength(canonicalJson(modelPacket(inspect({ ...receiptInput, session: session(length) })))), 131_072);
+    assert.equal(inspect({ ...receiptInput, session: session(length + 1) }).overflow, true);
+    context.diagnostic(canonicalJson({
+      individualPermit: {
+        laneFirstUnpadded: Buffer.byteLength(canonicalJson(modelPacket(laneFirst))),
+        receiptUnpadded: Buffer.byteLength(canonicalJson(modelPacket(observed))),
+        receiptEquality: 131_072, receiptFirstExcess: 131_073,
+        currentRunSources: 2, verificationSources: 2, reviewSources: 2,
+      },
+    }));
+    fs.writeFileSync(path.join(root, TASKS_PATH), binding.tasksFile);
+    fs.writeFileSync(path.join(root, IDEA_PATH), binding.ideaFile);
+    fs.unlinkSync(path.join(root, '.dude/state/task-state.json'));
+    const before = canonicalJson(captured.state);
+    const issue = bytes => recoveryRuntime.issueLanePermitV2(
+      captured.state, { ...raw, session: session(bytes) }, item.mutation,
+      binding.lanePrestate, binding.targetMapping,
+    );
+    const equality = issue(length);
+    assert.equal(equality.transition.issued, true, equality.transition.reason);
+    assert.deepEqual(equality.transition.permit, item.projectionPermit);
+    const error = feature061Thrown(() => issue(length + 1), 'known complete receipt first excess');
+    assert.deepEqual(recoveryRuntime.capacityDiagnostic(error), {
+      budget: 'model-packet-bytes', limit: 131_072, required: 131_073,
+      source: 'model-packet', target: canonicalTarget(TARGET),
+    });
+    assert.equal(canonicalJson(captured.state), before);
+    assert.deepEqual(fs.readFileSync(path.join(root, TASKS_PATH)), binding.tasksFile);
+    assert.deepEqual(fs.readFileSync(path.join(root, IDEA_PATH)), binding.ideaFile);
+    assert.equal(fs.existsSync(path.join(root, '.dude/state/task-state.json')), false);
+    fs.writeFileSync(path.join(root, '.dude/state/task-state.json'), '{corrupt');
+    const corrupt = issue(length);
+    assert.equal(corrupt.transition.issued, false);
+    assert.equal(corrupt.transition.reason, 'snapshot-corrupt');
+    assert.equal(canonicalJson(corrupt.transition.state), before);
+    assert.equal(fs.readFileSync(path.join(root, '.dude/state/task-state.json'), 'utf8'), '{corrupt');
+  });
+});
+
+test('Feature 064 T002: a known serialized snapshot exceeding the source-byte ceiling refuses before issuance', (context) => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const glyphs = Object.fromEntries(Array.from({ length: 64 }, (_, index) => [
+      `T${String(index + 1).padStart(3, '0')}@aaaaaaaa`, ' ',
+    ]));
+    const snapshot = Buffer.from(JSON.stringify(Object.fromEntries(Array.from({ length: 700 }, (_, index) => [
+      `.dude/specs/feature-${String(index).padStart(3, '0')}/tasks.md`,
+      { glyphs, updated_at: '2026-01-01T00:00:00.000Z' },
+    ]))));
+    assert.ok(snapshot.byteLength <= 1_048_576, 'the complete acquired snapshot fits its unchanged ceiling');
+    fs.mkdirSync(path.join(root, '.dude/state'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.dude/state/task-state.json'), snapshot);
+    const input = autonomousInspectInput(root);
+    const state = autonomousState();
+    const before = canonicalJson(state);
+    const binding = t005LightweightBinding(root, TARGET, IDEA_PATH, '~', null);
+    const mutation = {
+      version: 1, lane: 'lightweight', kind: 'task-blocked', reason: 'task-blocked', target: TARGET,
+      fromGlyph: '~', toGlyph: '!',
+      blocker: { kind: 'add', before: null, after: 'external dependency' },
+      eventLines: { kind: 'none' }, ownerLog: { kind: 'none' }, snapshotUpdatedAt: T005_TIME,
+    };
+    const postimages = buildLightweightWorkPostimages({
+      tasks: binding.tasksFile, owner: binding.ideaFile, taskState: snapshot,
+      tasksPath: TASKS_PATH, taskKey: TASK_KEY, kind: mutation.kind, toGlyph: mutation.toGlyph,
+      blocker: mutation.blocker, eventLines: [], ownerLogLines: [], snapshotUpdatedAt: T005_TIME,
+    });
+    assert.ok(!('reason' in postimages));
+    assert.ok(postimages.taskState.byteLength > 1_048_576, 'the existing two-space serializer is the known growth');
+    const packet = modelPacket(inspect(input));
+    assert.ok(packet, 'model evidence fits independently of the snapshot source bound');
+    const error = feature061Thrown(() => recoveryRuntime.issueLanePermitV2(
+      state, input, mutation, binding.lanePrestate, binding.targetMapping,
+    ), 'known snapshot postimage source limit');
+    assert.deepEqual(recoveryRuntime.capacityDiagnostic(error), {
+      budget: 'source-body-bytes', limit: 1_048_576, required: postimages.taskState.byteLength,
+      source: 'lane-history', target: canonicalTarget(TARGET),
+    });
+    context.diagnostic(canonicalJson({
+      snapshotSource: {
+        beforeBytes: snapshot.byteLength, postimageBytes: postimages.taskState.byteLength,
+        sourceLimit: 1_048_576, modelBytes: Buffer.byteLength(canonicalJson(packet)),
+      },
+    }));
+    assert.equal(canonicalJson(state), before);
+    assert.deepEqual(fs.readFileSync(path.join(root, TASKS_PATH)), binding.tasksFile);
+    assert.deepEqual(fs.readFileSync(path.join(root, IDEA_PATH)), binding.ideaFile);
+    assert.deepEqual(fs.readFileSync(path.join(root, '.dude/state/task-state.json')), snapshot);
+  });
+});
+
+test('Feature 064 T001: 15, 16, 17, 63, and 64 physical items fit the descriptor-backed count', () => {
+  assert.deepEqual(limits, { items: 64, bytes: 131_072 });
+  for (const count of [15, 16, 17, 63, 64]) {
+    const items = Array.from({ length: count }, (_, index) => evidence('current-run', `literal-${index}`));
+    const inspection = buildInspection(TARGET, items);
+    const packet = modelPacket(inspection);
+    assert.ok(packet, `${count} original descriptors`);
+    assert.equal(packet.items.length, count);
+    assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+  }
+  assert.throws(() => buildInspection(TARGET, Array.from(
+    { length: 65 }, (_, index) => evidence('current-run', `literal-${index}`),
+  )), /retained descriptor 65/);
+});
+
+test('Feature 064 T001: actual 131071, 131072, and 131073 byte packets preserve the hard byte boundary', () => {
+  for (const bytes of [131_071, 131_072, 131_073]) {
+    const item = sizedFinalItem(bytes, [], 'current-run');
+    assert.equal(literalPacketBytes(TARGET, [item]), bytes);
+    const inspection = buildInspection(TARGET, [item]);
+    assert.equal(inspection.overflow, bytes > 131_072);
+    if (bytes <= 131_072) {
+      const packet = modelPacket(inspection);
+      assert.equal(Buffer.byteLength(canonicalJson(packet)), bytes);
+      assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+      assert.doesNotThrow(() => validateInspection(inspection));
+    } else {
+      assert.equal(modelPacket(inspection), null);
+      assert.deepEqual(inspection.items, [{
+        source: item.source, ...descriptor(item), status: 'overflow',
+      }]);
+      assert.deepEqual(inspection.blockers, [{
+        code: 'evidence-incomplete', subject: 'model-packet', evidenceHash: inspection.evidenceHash,
+      }]);
+      const forged = {
+        ...inspection, overflow: false, items: [item], blockers: [],
+        evidenceHash: evidenceHash(TARGET, [item]),
+      };
+      assert.throws(() => validateInspection(forged), /packet limits/);
+      assert.throws(() => modelPacket(forged), /packet limits/);
+    }
+  }
+});
+
+test('Feature 064 T001: review eligibility uses the full validated set before a byte-sensitive prefix', () => {
+  const trusted = t002EnvelopeFixture();
+  const reviewBody = clone(trusted.review);
+  delete reviewBody.envelopeIdentity;
+  reviewBody.findings = Array.from({ length: 16 }, (_, index) => {
+    const basis = { ...clone(trusted.finding.basis), subjects: [`src/fixture-${index}.mjs`] };
+    const basisIdentity = sha256(canonicalJson(basis));
+    const observation = { kind: 'observed-evidence', identity: sha256(`fixture observation ${index}`) };
+    return {
+      version: 2, basis, basisIdentity, observation,
+      findingIdentity: sha256(canonicalJson({ version: 2, basisIdentity, observation })),
+    };
+  }).sort((left, right) => Buffer.compare(Buffer.from(left.findingIdentity), Buffer.from(right.findingIdentity)));
+  const review = t002WithIdentity(reviewBody);
+  const reviewCapture = t002TrustedCapture(
+    review, 'independent-review', review.reviewerAuthorityIdentity, review.reviewInvocationIdentity,
+  );
+  const items = [
+    evidence('current-run', ''),
+    feature064TrustedItem('review', reviewCapture, 'rejected'),
+    feature064TrustedItem('verification', trusted.verificationCapture, 'failed'),
+  ];
+  const expected = clone(modelPacket(buildInspection(TARGET, items)));
+  let length = limits.bytes - Buffer.byteLength(canonicalJson(expected));
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    items[0] = evidence('current-run', 'x'.repeat(length));
+    expected.items[0].text = items[0].text;
+    expected.items[0].frames[0].descriptor = descriptor(items[0]);
+    const actual = Buffer.byteLength(canonicalJson(expected));
+    if (actual === limits.bytes) break;
+    length += limits.bytes - actual;
+  }
+  assert.equal(Buffer.byteLength(canonicalJson(expected)), 131_072);
+  const partialContext = {
+    ...clone(expected),
+    items: [
+      expected.items[0],
+      {
+        tag: 'literal', text: items[1].text,
+        frames: [{ descriptor: descriptor(items[1]), occurrences: [{ source: 'review', position: 1 }] }],
+      },
+    ],
+  };
+  assert.ok(Buffer.byteLength(canonicalJson(partialContext)) > 131_072,
+    'misclassifying the review before its later verification must actually exceed the real budget');
+  const inspection = buildInspection(TARGET, items);
+  assert.equal(inspection.overflow, false,
+    'review eligibility must resolve from the complete evidence set before measuring prefixes');
+  assert.deepEqual(modelPacket(inspection), expected);
+  assert.deepEqual(expandModelPacket(expected), originalAvailableProjection(inspection));
+});
+
+test('Feature 064 T001: exact repeated payloads stay stable while source entries and occurrence frames grow', (t) => {
+  let previousBytes = 0;
+  const measurements = [];
+  for (let count = 1; count <= 20; count += 1) {
+    const cohort = Array.from({ length: count }, (_, index) => t002EnvelopeFixture({
+      attemptIdentity: sha256(`fixture attempt ${index}`),
+      resultIdentity: sha256(`fixture result ${index}`),
+      sourceRevisionIdentity: sha256(`fixture revision ${index}`),
+      reviewInvocationIdentity: sha256(`fixture review invocation ${index}`),
+      attemptOrdinal: index + 1,
+    }));
+    const raw = withPolicyPlan(TARGET, transitionRaw(TARGET, {
+      currentRun: [capture(TARGET, 'failed', [{ fixture: 'read-only repeated payload control' }])],
+      verification: cohort.map((row) => capture(TARGET, 'failed', [row.verificationCapture])),
+      review: cohort.map((row) => capture(TARGET, 'rejected', [row.reviewCapture])),
+      lint: cohort.map((row) => capture(TARGET, 'failed', [row.verificationCapture])),
+    }), 'autonomous');
+    const rawSources = 5 + 3 * count;
+    if (count === 20) {
+      const error = feature061Thrown(
+        () => collectEvidence(TARGET, raw, undefined, 'autonomous'), 'source 65 before sharing',
+      );
+      assert.deepEqual(recoveryRuntime.capacityDiagnostic(error), {
+        budget: 'source-entries', limit: 64, required: 65, source: 'lint', target: canonicalTarget(TARGET),
+      });
+      measurements.push({ count, rawSources, refusal: 'source-entries' });
+      continue;
+    }
+    const inspection = buildInspection(TARGET, collectEvidence(TARGET, raw, undefined, 'autonomous'));
+    const packet = modelPacket(inspection);
+    assert.ok(packet);
+    const expanded = expandModelPacket(packet);
+    assert.deepEqual(expanded, originalAvailableProjection(inspection));
+    assert.equal(packet.items.length, 7);
+    assert.equal(expanded.items.length, rawSources);
+    assert.equal(inspection.items.length, rawSources + 1);
+    for (const tag of ['verification', 'review']) {
+      const typed = packet.items.filter((item) => item.tag === tag);
+      assert.equal(typed.length, 1);
+      assert.equal(typed[0].frames.length, count);
+      assert.equal(new Set(typed[0].frames.map(({ binding }) => binding.resultIdentity)).size, count);
+    }
+    const byteLength = Buffer.byteLength(canonicalJson(packet));
+    assert.ok(byteLength > previousBytes, 'every new binding and occurrence is charged');
+    previousBytes = byteLength;
+    assert.deepEqual(modelPacket(buildInspection(TARGET, inspection.items)), packet);
+    measurements.push({ count, rawSources, descriptors: inspection.items.length, physical: 7, byteLength });
+  }
+  t.diagnostic(canonicalJson({ repeatedPayloadSeries: measurements }));
+});
+
+test('Feature 064 T001: changed checks, outcomes, findings, identities, revisions, and authorities remain distinct', () => {
+  const base = t002EnvelopeFixture();
+  const variants = [
+    ['attempt', { attemptIdentity: sha256('different attempt') }, 1, 1],
+    ['result', { resultIdentity: sha256('different result') }, 1, 1],
+    ['revision', { sourceRevisionIdentity: sha256('different revision') }, 1, 1],
+    ['inspected evidence', { inspectedEvidenceHash: sha256('different inspection') }, 1, 1],
+    ['review authority', { reviewerAuthorityIdentity: sha256('different reviewer') }, 1, 1],
+    ['review invocation', { reviewInvocationIdentity: sha256('different review invocation') }, 1, 1],
+    ['review chronology', { reviewOrdinal: 2 }, 1, 1],
+    ['check outcome', { checkOutcome: 'passed' }, 2, 2],
+    ['check definition', { definitionIdentity: sha256('different definition') }, 2, 2],
+    ['check evidence', { checkEvidenceIdentity: sha256('different evidence') }, 2, 2],
+    ['finding observation', { observationKind: 'observed-evidence', observationIdentity: sha256('new observation') }, 1, 2],
+    ['finding basis', { failureClass: 'different-expectation' }, 1, 2],
+    ['review verdict', { verdict: 'accepted' }, 1, 2],
+  ];
+  for (const [label, overrides, verificationCount, reviewCount] of variants) {
+    const changed = t002EnvelopeFixture(overrides);
+    const items = [
+      feature064TrustedItem('review', base.reviewCapture, 'rejected'),
+      feature064TrustedItem('review', changed.reviewCapture, changed.review.verdict),
+      feature064TrustedItem('verification', base.verificationCapture, 'failed'),
+      feature064TrustedItem('verification', changed.verificationCapture, changed.verification.checks[0].outcome),
+    ];
+    const inspection = buildInspection(TARGET, items);
+    const packet = modelPacket(inspection);
+    assert.ok(packet, label);
+    assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection), label);
+    assert.equal(packet.items.filter(({ tag }) => tag === 'verification').length, verificationCount, label);
+    assert.equal(packet.items.filter(({ tag }) => tag === 'review').length, reviewCount, label);
+    assert.equal(inspection.items.length, new Set(items.map(canonicalJson)).size, label);
+  }
+  const changedAuthority = clone(base.verificationCapture);
+  changedAuthority.authority.authorityIdentity = sha256('independent verification authority');
+  changedAuthority.authority.invocationIdentity = sha256('independent verification invocation');
+  const inspection = buildInspection(TARGET, [
+    feature064TrustedItem('verification', base.verificationCapture, 'failed'),
+    feature064TrustedItem('verification', changedAuthority, 'failed'),
+  ]);
+  const packet = modelPacket(inspection);
+  assert.equal(packet.items.length, 1);
+  assert.equal(packet.items[0].frames.length, 2);
+  assert.notDeepEqual(packet.items[0].frames[0].capture.authority, packet.items[0].frames[1].capture.authority);
+  assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+});
+
+test('Feature 064 T001: co-role equality includes the full descriptor and text, excludes placeholders, and pairs once', () => {
+  const trusted = t002EnvelopeFixture();
+  const verification = feature064TrustedItem('verification', trusted.verificationCapture, 'failed');
+  const lint = { ...verification, source: 'lint' };
+  const earlierIneligible = { ...verification, required: false };
+  const whitespace = evidence('lint', `${lint.text}\n`, true);
+  const items = [earlierIneligible, verification, lint, whitespace];
+  const inspection = buildInspection(TARGET, items);
+  const packet = modelPacket(inspection);
+  assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+  const typed = packet.items.find(({ tag }) => tag === 'verification');
+  assert.deepEqual(typed.frames.map(({ occurrences }) => occurrences), [
+    [{ source: 'verification', position: 0 }],
+    [{ source: 'verification', position: 1 }, { source: 'lint', position: 2 }],
+  ]);
+  assert.equal(packet.items[1].tag, 'literal', 'a noncanonical source keeps every framing byte');
+  assert.equal(packet.items[1].text, whitespace.text);
+  const empty = modelPacket(buildInspection(TARGET, [
+    evidence('verification', '[]', true), evidence('lint', '[]', true),
+  ]));
+  assert.equal(empty.items.length, 2, 'two empty placeholders are two original obligations');
+  const opaque = modelPacket(buildInspection(TARGET, [
+    evidence('verification', 'complete opaque body', true),
+    evidence('lint', 'complete opaque body', true),
+  ]));
+  assert.equal(opaque.items.length, 1);
+  assert.equal(opaque.items[0].tag, 'literal');
+  assert.equal(opaque.items[0].frames[0].occurrences.length, 2);
+  const separateRoles = modelPacket(buildInspection(TARGET, [
+    evidence('review', 'complete opaque body', true),
+    evidence('verification', 'complete opaque body', true),
+  ]));
+  assert.equal(separateRoles.items.length, 2, 'ordinary equal bodies are not an implicit co-role pair');
+  assert.ok(separateRoles.items.every((item) => item.frames[0].occurrences.length === 1));
+});
+
+test('Feature 064 T001: unknown, unsupported, and multi-record evidence stays literal with exact source framing', () => {
+  const trusted = t002EnvelopeFixture();
+  const second = t002EnvelopeFixture({ attemptIdentity: sha256('second multi-record attempt') });
+  const unsupported = t002TrustedCapture({
+    type: 'unsupported-envelope', version: 2, target: TARGET, content: 'unchanged unsupported facts',
+  }, 'verification', sha256('unsupported authority'), sha256('unsupported invocation'));
+  const texts = [
+    'opaque report\n',
+    canonicalJson({ target: TARGET, state: 'failed', records: [{ check: 'older source shape' }] }),
+    canonicalJson({ target: TARGET, state: 'failed', records: [unsupported] }),
+    canonicalJson({
+      target: TARGET, state: 'failed',
+      records: [trusted.verificationCapture, second.verificationCapture],
+    }),
+    canonicalJson({
+      target: TARGET, state: 'failed', records: [trusted.verificationCapture], extra: 'unsupported outer',
+    }),
+  ];
+  for (const text of texts) {
+    const inspection = buildInspection(TARGET, [evidence('verification', text, true)]);
+    const packet = modelPacket(inspection);
+    assert.equal(packet.items[0].tag, 'literal');
+    assert.equal(packet.items[0].text, text);
+    assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+  }
+  const multiRecordVerification = evidence('verification', texts[3], true);
+  const mixed = buildInspection(TARGET, [
+    feature064TrustedItem('review', second.reviewCapture, 'rejected'), multiRecordVerification,
+  ]);
+  const packet = modelPacket(mixed);
+  assert.deepEqual(packet.items.map(({ tag }) => tag), ['review', 'literal']);
+  assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(mixed));
+});
+
+test('Feature 064 T001: recognized malformed or misbound trusted envelopes never acquire compact success', () => {
+  const base = t002EnvelopeFixture();
+  const malformed = [
+    ['captured length', (capture) => { capture.bytes.byteLength += 1; }, /complete decoded bytes/],
+    ['captured hash', (capture) => { capture.bytes.sha256 = sha256('forged'); }, /complete decoded bytes/],
+    ['capture authority', (capture) => { capture.authority.kind = 'independent-review'; }, /must be verification/],
+    ['capture target', (capture) => { capture.target.taskKey = SECOND_TASK_KEY; }, /target/],
+    ['capture extra field', (capture) => { capture.extra = true; }, /unknown field/],
+  ];
+  for (const [label, mutate, expected] of malformed) {
+    const changed = clone(base.verificationCapture);
+    mutate(changed);
+    assert.throws(() => buildInspection(TARGET, [
+      feature064TrustedItem('verification', changed, 'failed'),
+    ]), expected, label);
+  }
+  const invalidCheck = clone(base.verification);
+  delete invalidCheck.envelopeIdentity;
+  invalidCheck.checks[0].checkIdentity = sha256('forged check identity');
+  const malformedCheck = t002TrustedCapture(
+    t002WithIdentity(invalidCheck), 'verification', sha256('authority'), sha256('invocation'),
+  );
+  assert.throws(() => buildInspection(TARGET, [
+    feature064TrustedItem('verification', malformedCheck, 'failed'),
+  ]), /checkIdentity/);
+  const verification = feature064TrustedItem('verification', base.verificationCapture, 'failed');
+  assert.throws(() => buildInspection(TARGET, [
+    feature064TrustedItem('verification', base.verificationCapture, 'passed'),
+  ]), /authoritative source outcome/);
+  const unbound = buildInspection(TARGET, [
+    feature064TrustedItem('review', base.reviewCapture, 'rejected'),
+  ]);
+  assert.equal(modelPacket(unbound).items[0].tag, 'literal');
+  assert.deepEqual(expandModelPacket(modelPacket(unbound)), originalAvailableProjection(unbound));
+  const forgedReview = clone(base.reviewCapture);
+  forgedReview.authority.authorityIdentity = sha256('forged reviewer');
+  assert.throws(() => buildInspection(TARGET, [
+    feature064TrustedItem('review', forgedReview, 'rejected'), verification,
+  ]), /reviewer authority and invocation/);
+  const different = t002EnvelopeFixture({ sourceRevisionIdentity: sha256('another revision') });
+  const unavailableBinding = buildInspection(TARGET, [
+    feature064TrustedItem('review', different.reviewCapture, 'rejected'), verification,
+  ]);
+  assert.equal(modelPacket(unavailableBinding).items[0].tag, 'literal');
+  assert.deepEqual(expandModelPacket(modelPacket(unavailableBinding)), originalAvailableProjection(unavailableBinding));
+  assert.throws(
+    () => recoveryRuntime.normalizeIndependentReviewEnvelopeV2(different.reviewCapture, base.verification),
+    /must match the bound verification envelope/,
+  );
+});
+
+test('Feature 064 T001: unavailable descriptors pay 63, 64, and 65 even when no payload is available', () => {
+  const candidates = Array.from({ length: 65 }, (_, index) => ({
+    source: 'session', required: false, status: 'nontext', ...contentDescriptor(`nontext-${index}`),
+  }));
+  for (const count of [63, 64]) {
+    const inspection = buildInspection(TARGET, candidates.slice(0, count));
+    assert.equal(inspection.items.length, count);
+    assert.deepEqual(modelPacket(inspection).items, []);
+    assert.deepEqual(inspection.blockers, []);
+  }
+  const error = feature061Thrown(() => buildInspection(TARGET, candidates), 'unavailable descriptor 65');
+  assert.deepEqual(recoveryRuntime.capacityDiagnostic(error), {
+    budget: 'retained-descriptors', limit: 64, required: 65, source: 'session', target: null,
+  });
+});
+
+test('Feature 064 T001: mandatory headroom counts raw sources before original descriptors without guessing sharing', () => {
+  const current = (count, duplicate = false) => Array.from({ length: count }, (_, index) => (
+    capture(TARGET, 'failed', [{ fixture: duplicate ? 'same raw body' : `independent ${index}` }])
+  ));
+  const authorize = (raw, action = 'execute-task', policyMode = 'autonomous') => {
+    const state = emptyState({ mode: policyMode, overall: 10, recovery: 10, recover: true });
+    const before = canonicalJson(state);
+    const inspection = buildInspection(TARGET, collectEvidence(
+      TARGET, withPolicyPlan(TARGET, raw, policyMode), undefined, policyMode,
+    ));
+    const result = authorizeAttempt(state, TARGET, raw, transitionAssessment(action),
+      action === 'execute-task' ? 'ordinary' : 'recovery');
+    assert.equal(canonicalJson(state), before, 'authorization never mutates the accepted input state');
+    if (!result.authorized) assert.strictEqual(result.state, state);
+    return { inspection, result };
+  };
+  for (const required of [63, 64, 65]) {
+    const { result } = authorize(transitionRaw(TARGET, { currentRun: current(required - 6, true) }));
+    assert.equal(result.authorized, required <= 64, `mandatory source total ${required}`);
+    if (required === 65) assert.deepEqual(result.capacity, {
+      budget: 'source-entries', limit: 64, required: 65, source: 'review', target: canonicalTarget(TARGET),
+    });
+  }
+  const descriptorRaw = (count) => transitionRaw(TARGET, {
+    currentRun: current(count),
+    verification: [capture(TARGET, 'passed', [{ fixture: 'prior verification' }])],
+    review: [capture(TARGET, 'accepted', [{ fixture: 'prior independent review' }])],
+    lint: [],
+  });
+  for (const required of [63, 64, 65]) {
+    const { inspection, result } = authorize(descriptorRaw(required - 10));
+    assert.equal(inspection.items.length + 2, required);
+    assert.equal(inspection.items.at(-1).source, 'session');
+    assert.equal(inspection.items.at(-1).status, 'missing');
+    assert.equal(result.authorized, required <= 64, `mandatory original descriptor total ${required}`);
+    if (required === 65) assert.deepEqual(result.capacity, {
+      budget: 'retained-descriptors', limit: 64, required: 65, source: 'model-packet', target: canonicalTarget(TARGET),
+    });
+  }
+  const both = authorize({
+    ...descriptorRaw(55), session: { target: TARGET, availability: 'unavailable' },
+  }, 'address-test');
+  assert.equal(both.inspection.items.length + 2, 65);
+  assert.deepEqual(both.result.capacity, {
+    budget: 'source-entries', limit: 64, required: 65, source: 'lint', target: canonicalTarget(TARGET),
+  });
+  const placeholders = authorize(transitionRaw(TARGET, {
+    currentRun: current(56), verification: [], review: [], lint: [],
+  }), 'address-test');
+  assert.equal(placeholders.inspection.items.length, 64);
+  assert.equal(placeholders.result.authorized, true, 'three new capture sources replace three original placeholders');
+  const noCurrent = (count) => transitionRaw(TARGET, {
+    currentRun: [],
+    verification: Array.from({ length: count }, () => capture(TARGET, 'failed', [{ fixture: 'same verification' }])),
+    review: [], lint: [],
+  });
+  assert.equal(authorize(noCurrent(56), 'address-test').result.authorized, true, 'four mandatory sources fit exactly 64');
+  const missingCurrent = authorize(noCurrent(57), 'address-test');
+  assert.deepEqual(missingCurrent.result.capacity, {
+    budget: 'source-entries', limit: 64, required: 65, source: 'current-run', target: canonicalTarget(TARGET),
+  });
+  const absent = descriptorRaw(1);
+  delete absent.currentRun;
+  const unavailableCurrent = authorize(absent);
+  assert.equal(unavailableCurrent.result.reason, 'evidence-incomplete');
+  assert.equal(unavailableCurrent.result.blocker.subject, 'current-run');
+  assert.equal(Object.hasOwn(unavailableCurrent.result, 'capacity'), false, 'earlier missing-evidence gates stay earlier');
+  const guarded = authorize(transitionRaw(TARGET, {
+    currentRun: current(57), verification: [], review: [], lint: [],
+  }), 'execute-task', 'guarded');
+  assert.equal(guarded.inspection.items.length, 64);
+  assert.equal(guarded.result.authorized, true, 'guarded mode reserves no mandatory captures');
+
+  const trusted = t002EnvelopeFixture();
+  const shared = authorize(transitionRaw(TARGET, {
+    currentRun: current(54),
+    verification: [capture(TARGET, 'failed', [trusted.verificationCapture])],
+    review: [capture(TARGET, 'rejected', [trusted.reviewCapture])],
+    lint: [capture(TARGET, 'failed', [trusted.verificationCapture])],
+  }), 'address-test');
+  assert.equal(modelPacket(shared.inspection).items.length, 60);
+  assert.equal(shared.inspection.items.length, 62);
+  assert.deepEqual(shared.result.capacity, {
+    budget: 'retained-descriptors', limit: 64, required: 65, source: 'model-packet', target: canonicalTarget(TARGET),
+  });
+});
+
+test('Feature 064 T001: compact inspection runtime validation rejects Proxy and accessor behavior', () => {
+  const trusted = t002EnvelopeFixture();
+  const item = feature064TrustedItem('verification', trusted.verificationCapture, 'failed');
+  const inspection = buildInspection(TARGET, [item]);
+  assert.equal(modelPacket(inspection).items[0].tag, 'verification');
+  let effects = 0;
+  const proxy = (value) => new Proxy(value, {
+    get() { effects += 1; throw new Error('Proxy get executed'); },
+    ownKeys() { effects += 1; throw new Error('Proxy ownKeys executed'); },
+    getPrototypeOf() { effects += 1; throw new Error('Proxy prototype executed'); },
+  });
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    const request = {
+      trigger: 'explicit-inspection',
+      input: cliInput(autonomousInspectInput(root, {
+        verification: [capture(TARGET, 'failed', [trusted.verificationCapture])],
+        review: [capture(TARGET, 'rejected', [trusted.reviewCapture])],
+      })),
+    };
+    const result = recoveryRuntime.runCommand('inspect', request);
+    assert.equal(recoveryRuntime.validateRecoveryRuntimeResultV1('inspect', request, result), true);
+    assert.ok(modelPacket(result.inspection).items.some(({ tag }) => tag === 'verification'));
+    for (const supplied of [
+      proxy(result),
+      { ...result, inspection: proxy(result.inspection) },
+      { ...result, inspection: { ...result.inspection, items: proxy(result.inspection.items) } },
+      { ...result, inspection: {
+        ...result.inspection, items: [proxy(result.inspection.items[0]), ...result.inspection.items.slice(1)],
+      } },
+    ]) {
+      assert.throws(
+        () => recoveryRuntime.validateRecoveryRuntimeResultV1('inspect', request, supplied),
+        /must not contain a Proxy/,
+      );
+      assert.equal(effects, 0);
+    }
+    const supplied = clone(result);
+    Object.defineProperty(supplied.inspection.items[0], 'text', {
+      enumerable: true, get() { effects += 1; return result.inspection.items[0].text; },
+    });
+    assert.throws(
+      () => recoveryRuntime.validateRecoveryRuntimeResultV1('inspect', request, supplied),
+      /data property/,
+    );
+    assert.equal(effects, 0);
+  });
+  const accessor = { ...item };
+  Object.defineProperty(accessor, 'text', {
+    enumerable: true, get() { effects += 1; return item.text; },
+  });
+  assert.throws(() => buildInspection(TARGET, [accessor]), /data propert/);
+  assert.throws(() => modelPacket({ ...inspection, items: [accessor] }), /data propert/);
+  assert.equal(effects, 0);
+  assert.throws(() => validateInspection(modelPacket(inspection)), /unknown field|missing required/);
+});
+
+test('Feature 064 T001: portable frozen evidence fits without changing source bytes or historical assertions', (t) => {
+  const fixturePath = new URL('../../../scripts/fixtures/064-work-receipt-overflow-handling/reference.json', import.meta.url);
+  const fixtureBytes = fs.readFileSync(fixturePath);
+  const reference = JSON.parse(fixtureBytes.toString('utf8'));
+  assert.equal(sha256(fixtureBytes), '143a377722cd3f85b70b4f05a8817a2a462744035836c6ccf233fc092a3c99f4');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-064-reference-'));
+  try {
+    for (const file of reference.files) {
+      assert.ok(file.path.startsWith('.dude/'));
+      assert.equal(path.posix.normalize(file.path), file.path);
+      const bytes = Buffer.from(file.bytes.base64, 'base64');
+      assert.deepEqual(recoveryRuntime.capturedBytesV1(bytes), file.bytes);
+      fs.mkdirSync(path.dirname(path.join(root, file.path)), { recursive: true });
+      fs.writeFileSync(path.join(root, file.path), bytes, { flag: 'wx' });
+    }
+    const before = reference.files.map((file) => feature029FileFingerprint(path.join(root, file.path)));
+    const input = { ...clone(reference.input), root };
+    for (const field of ['currentRun', 'verification', 'review', 'lint']) {
+      input[field] = input[field].map((row, index) => {
+        assert.deepEqual(Object.keys(row.bytes), ['base64']);
+        const bytes = Buffer.from(row.bytes.base64, 'base64');
+        assert.deepEqual(contentDescriptor(bytes), reference.identities.streams[field][index]);
+        return { ...row, bytes };
+      });
+    }
+    const inspection = inspect(input);
+    assert.equal(inspection.overflow, false);
+    assert.deepEqual(inspection.blockers, []);
+    const packet = modelPacket(inspection);
+    assert.ok(packet);
+    const expanded = expandModelPacket(packet);
+    assert.deepEqual(expanded, originalAvailableProjection(inspection));
+    assert.deepEqual(inspect(input), inspection, 'fresh unchanged inspection is deterministic');
+    assert.equal(inspection.items.length, 17);
+    assert.equal(expanded.items.length, 16);
+    assert.equal(packet.items.length, 13);
+    for (let index = 1; index < inspection.items.length; index += 1) {
+      const item = inspection.items[index];
+      assert.deepEqual({ source: item.source, ...descriptor(item) }, reference.identities.originalSources[index]);
+    }
+    const fileFor = (suffix) => reference.files.find(({ path }) => path.endsWith(suffix));
+    const ownerFile = reference.files.find(({ path }) => path.startsWith('.dude/ideas/'));
+    const completeOwner = collectEvidence(input.target, {
+      directIdeas: [{ path: ownerFile.path, bytes: Buffer.from(ownerFile.bytes.base64, 'base64') }],
+      tasks: { path: fileFor('/tasks.md').path, bytes: Buffer.from(fileFor('/tasks.md').bytes.base64, 'base64') },
+      lane: input.lane, currentRun: [], verification: [], review: [], lint: [],
+    }).find(({ source }) => source === 'owner-log');
+    assert.ok(completeOwner);
+    const inlineControl = originalAvailableProjection({
+      target: input.target, items: [completeOwner, ...inspection.items.slice(1)],
+    });
+    assert.deepEqual(contentDescriptor(canonicalJson(inlineControl)), reference.identities.oldInline);
+    assert.equal(reference.identities.oldInline.byteLength, 159_163);
+    assert.equal(reference.identities.priorInline.byteLength, 130_878);
+    assert.equal(reference.identities.originalInspection.evidenceHash,
+      '1e1a133d887f1d22f42b8448f91d1e489428a937966824fe905caadc8fe0ff42');
+    const owner = JSON.parse(inspection.items[0].text);
+    const originalOwner = JSON.parse(completeOwner.text);
+    assert.equal(owner.fullLogSha256, originalOwner.fullLogSha256);
+    assert.equal(owner.fullLogByteLength, originalOwner.fullLogByteLength);
+    assert.deepEqual(owner.events, originalOwner.events.slice(-owner.includedEventCount));
+    assert.ok(owner.omittedEventCount > 0);
+    const larger = clone(packet);
+    const ownerItem = larger.items[0];
+    assert.equal(ownerItem.tag, 'literal');
+    const events = originalOwner.events.slice(-(owner.includedEventCount + 1));
+    ownerItem.text = canonicalJson({
+      ...owner, events, includedEventCount: events.length,
+      omittedEventCount: owner.totalEventCount - events.length,
+      firstIncludedEventOrdinal: owner.totalEventCount - events.length + 1,
+    });
+    Object.assign(ownerItem.frames[0].descriptor, contentDescriptor(ownerItem.text));
+    assert.ok(Buffer.byteLength(canonicalJson(larger)) > limits.bytes, 'the whole-event owner suffix is maximal');
+    const checks = inspection.items.filter(({ source }) => source === 'verification')
+      .flatMap(({ text }) => recoveryRuntime.normalizeVerificationEnvelopeV2(JSON.parse(text).records[0]).checks);
+    assert.equal(checks.length, 50);
+    assert.equal(checks.filter(({ outcome }) => outcome === 'passed').length, 27);
+    assert.equal(checks.filter(({ outcome }) => outcome === 'failed').length, 23);
+    const verifications = new Map(inspection.items.filter(({ source }) => source === 'verification')
+      .map(({ text }) => {
+        const capture = JSON.parse(text).records[0];
+        const envelope = recoveryRuntime.normalizeVerificationEnvelopeV2(capture);
+        return [envelope.envelopeIdentity, envelope];
+      }));
+    const reviews = new Map(inspection.items.filter(({ source }) => source === 'review')
+      .map(({ text }) => {
+        const capture = JSON.parse(text).records[0];
+        const decoded = JSON.parse(Buffer.from(capture.bytes.base64, 'base64').toString('utf8'));
+        const envelope = recoveryRuntime.normalizeIndependentReviewEnvelopeV2(
+          capture, verifications.get(decoded.verificationEnvelopeIdentity),
+        );
+        return [envelope.envelopeIdentity, { capture, envelope }];
+      }));
+    assert.equal([...reviews.values()].flatMap(({ envelope }) => envelope.findings).length, 5);
+    const currentEvents = JSON.parse(inspection.items.find(({ source }) => source === 'current-run').text)
+      .records.map(({ event }) => event);
+    const history = JSON.parse(inspection.items.find(({ source }) => source === 'task-history').text).history;
+    const prefix = '- dude-run-event: ';
+    const globalEvents = history.split(/\r?\n/).filter((line) => line.startsWith(prefix)).map((line) => {
+      const event = JSON.parse(line.slice(prefix.length));
+      assert.equal(canonicalJson(event), line.slice(prefix.length));
+      return event;
+    });
+    assert.equal(globalEvents.length, 20, 'unrelated historical task events remain in the complete literal body');
+    const laneEvents = globalEvents.filter((event) => targetKey(event.target) === targetKey(input.target));
+    assert.equal(currentEvents.length, 12);
+    assert.deepEqual(laneEvents, currentEvents, 'both surfaces retain the same complete ordered target sequence');
+    const approaches = currentEvents.filter(({ type }) => type === 'approach-occurrence');
+    const findings = currentEvents.filter(({ type }) => type === 'finding-occurrence');
+    const governance = currentEvents.filter(({ type }) => type === 'learning-governance');
+    const learning = currentEvents.filter(({ type }) => type === 'learning-review');
+    assert.equal(approaches.length, 4);
+    assert.equal(new Set(approaches.map(({ occurrence }) => occurrence.basisIdentity)).size, 3);
+    assert.ok(approaches.every(({ occurrence }) => occurrence.disposition !== 'accepted'));
+    assert.equal(findings.length, 5);
+    assert.equal(learning.length, 1);
+    assert.deepEqual(governance.map(({ phase }) => phase), ['required', 'reviewed']);
+    for (const event of approaches) {
+      recoveryRuntime.validateApproachOccurrenceEventV1(event);
+      const verification = verifications.get(event.verificationEnvelopeIdentity);
+      const { envelope: review } = reviews.get(event.reviewEnvelopeIdentity);
+      assert.equal(event.occurrence.attemptIdentity, verification.attemptIdentity);
+      assert.equal(event.occurrence.resultIdentity, verification.resultIdentity);
+      assert.equal(event.occurrence.authorizationEvidenceHash, verification.inspectedEvidenceHash);
+      assert.equal(event.occurrence.chronology.attemptOrdinal, review.attemptOrdinal);
+      assert.equal(review.verificationEnvelopeIdentity, verification.envelopeIdentity);
+      assert.equal(event.occurrence.basisIdentity, sha256(canonicalJson(event.basis)));
+    }
+    for (const event of findings) {
+      recoveryRuntime.validateFindingOccurrenceEventV1(event);
+      const { capture, envelope: review } = reviews.get(event.occurrence.reviewEnvelopeIdentity);
+      assert.equal(event.sourceCaptureIdentity, recoveryRuntime.trustedSourceCaptureIdentityV2(capture));
+      const finding = review.findings.find(({ findingIdentity }) => findingIdentity === event.occurrence.findingIdentity);
+      assert.ok(finding);
+      assert.deepEqual(finding.basis, event.basis);
+      assert.deepEqual(finding.observation, event.occurrence.observation);
+      assert.equal(event.occurrence.attemptIdentity, review.attemptIdentity);
+      assert.deepEqual(event.occurrence.chronology, {
+        attemptOrdinal: review.attemptOrdinal, reviewOrdinal: review.reviewOrdinal,
+      });
+    }
+    learning.forEach((event) => recoveryRuntime.validateLearningReviewEventV2(event));
+    governance.forEach((event) => recoveryRuntime.validateGovernanceEventV1(event));
+    const occurrences = currentEvents.filter(({ type }) => ['approach-occurrence', 'finding-occurrence'].includes(type));
+    const repeat = recoveryRuntime.deriveEarliestRepeatRelationshipV1(occurrences);
+    assert.deepEqual(repeat, governance[0].trigger);
+    const failedSet = recoveryRuntime.deriveFailedApproachSetV1(repeat, occurrences);
+    assert.equal(failedSet.setIdentity, governance[0].failedApproachSetIdentity);
+    assert.equal(learning[0].failedApproachSetIdentity, failedSet.setIdentity);
+    assert.equal(governance[1].reviewIdentity, learning[0].reviewIdentity);
+    assert.equal(evidenceHash(input.target, reference.identities.originalInspection.items, true),
+      reference.identities.originalInspection.evidenceHash);
+    const bytes = Buffer.byteLength(canonicalJson(packet));
+    assert.ok(bytes <= limits.bytes);
+    t.diagnostic(canonicalJson({
+      fixture: sha256(fixtureBytes), packet: contentDescriptor(canonicalJson(packet)),
+      headroom: limits.bytes - bytes, physical: packet.items.length, logical: expanded.items.length,
+      sources: 16, descriptors: inspection.items.length, historicalChecks: { passed: 27, failed: 23 },
+      ownerEvents: { included: owner.includedEventCount, total: owner.totalEventCount },
+      authority: {
+        verificationEnvelopes: verifications.size, reviewEnvelopes: reviews.size,
+        targetEventsPerSurface: 12, globalTaskEvents: 20, failedAttempts: 4, approachBases: 3,
+        findings: 5, learningReviews: 1, governancePhases: governance.map(({ phase }) => phase),
+        failedApproachSetIdentity: failedSet.setIdentity,
+      },
+      evidenceHash: inspection.evidenceHash, modelCalls: 0, hostOperations: 0,
+    }));
+    assert.deepEqual(reference.files.map((file) => feature029FileFingerprint(path.join(root, file.path))), before);
+    assert.deepEqual(fs.readFileSync(fixturePath), fixtureBytes);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Feature 064 T003: the portable episode preserves provenance while fresh bindings stay distinct', () => {
+  const loaded = readRetentionEpisodeFixture();
+  const episode = loaded.value;
+  assert.equal(episode.schema, 'dude-work-retention-episode-fixture-v1');
+  assert.equal(episode.classification, 'test-owned-fixture-assertion-not-production-verdict');
+  assert.deepEqual(episode.reference, {
+    path: 'reference.json',
+    sha256: '143a377722cd3f85b70b4f05a8817a2a462744035836c6ccf233fc092a3c99f4',
+    byteLength: 435_771,
+    initialProductionPacketBytes: 131_023,
+    initialProductionHeadroomBytes: 49,
+  });
+  const provenance = new Map(episode.research.provenance.map((row) => [row.path, row]));
+  assert.equal(provenance.size, 10);
+  assert.deepEqual(provenance.get('accounting-measurement/raw-series.json'), {
+    path: 'accounting-measurement/raw-series.json',
+    sha256: '83d830c70f6315a2323ca85018198e0873b3d9c5cbfbaad1adda0846cf7494b7',
+    byteLength: 2_924_588,
+  });
+  assert.deepEqual(provenance.get('co-role-measurement/raw-next-pair.json'), {
+    path: 'co-role-measurement/raw-next-pair.json',
+    sha256: 'c5042cd4d1fae3401b7d906156ec17c770117a56555c27ac11429b97edbbc0da',
+    byteLength: 105_912,
+  });
+  assert.deepEqual(provenance.get('payload-measurement/raw-projection.json'), {
+    path: 'payload-measurement/raw-projection.json',
+    sha256: '9d7b0eaed9afa71c509563e6f4b0db0eb38a58e296e02c96ca49f9c3a2c2acc6',
+    byteLength: 1_318_446,
+  });
+  assert.ok(episode.research.provenance.every(({ path: sourcePath }) => (
+    path.posix.normalize(sourcePath) === sourcePath && !path.isAbsolute(sourcePath)
+  )));
+  const forbidden = new Set([
+    'supervisorAuthorityIdentity',
+    'workerToken',
+    'permission',
+    'control',
+    'invocationIdentity',
+    'permit',
+    'receipt',
+  ]);
+  const visit = (value) => {
+    if (value === null || typeof value !== 'object') return;
+    for (const [field, child] of Object.entries(value)) {
+      assert.equal(forbidden.has(field), false, `portable fixture field ${field}`);
+      visit(child);
+    }
+  };
+  visit(episode);
+  assert.equal(canonicalJson(episode).includes('/Users/'), false);
+  assert.equal(episode.payload.specialistResult.verification.checks.length, 16);
+  assert.ok(episode.payload.specialistResult.verification.checks.every(
+    ({ outcome }) => outcome === 'passed',
+  ));
+  assert.deepEqual(episode.payload.specialistResult.review, {
+    verdict: 'accepted',
+    findings: [],
+  });
+
+  const first = buildRetentionPair({
+    target: TARGET,
+    episode,
+    ordinal: 5,
+    authorizationEvidenceHash: sha256('T003 fixture authorization 5'),
+  });
+  const second = buildRetentionPair({
+    target: TARGET,
+    episode,
+    ordinal: 6,
+    authorizationEvidenceHash: sha256('T003 fixture authorization 6'),
+  });
+  assert.deepEqual(first.verification.checks, second.verification.checks);
+  assert.deepEqual(first.review.findings, second.review.findings);
+  assert.notEqual(first.verification.attemptIdentity, second.verification.attemptIdentity);
+  assert.notEqual(first.verification.resultIdentity, second.verification.resultIdentity);
+  assert.notEqual(first.verification.envelopeIdentity, second.verification.envelopeIdentity);
+  assert.notEqual(first.review.envelopeIdentity, second.review.envelopeIdentity);
+  assert.notEqual(
+    recoveryRuntime.trustedSourceCaptureIdentityV2(first.verificationCapture),
+    recoveryRuntime.trustedSourceCaptureIdentityV2(second.verificationCapture),
+  );
+
+  const inspection = buildInspection(TARGET, [
+    feature064TrustedItem('review', first.reviewCapture, 'accepted'),
+    feature064TrustedItem('review', second.reviewCapture, 'accepted'),
+    feature064TrustedItem('verification', first.verificationCapture, 'passed'),
+    feature064TrustedItem('lint', first.verificationCapture, 'passed'),
+    feature064TrustedItem('verification', second.verificationCapture, 'passed'),
+    feature064TrustedItem('lint', second.verificationCapture, 'passed'),
+  ]);
+  const packet = modelPacket(inspection);
+  assert.ok(packet);
+  assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+  assert.equal(packet.items.length, 2);
+  const verification = packet.items.find(({ tag }) => tag === 'verification');
+  const review = packet.items.find(({ tag }) => tag === 'review');
+  assert.equal(verification.payload.checks.length, 16);
+  assert.equal(verification.frames.length, 2);
+  assert.ok(verification.frames.every(({ occurrences }) => occurrences.length === 2));
+  assert.equal(review.frames.length, 2);
+  assert.equal(new Set(verification.frames.map(
+    ({ binding }) => binding.sourceRevisionIdentity,
+  )).size, 2);
+  assert.equal(new Set(review.frames.map(
+    ({ binding }) => binding.reviewerAuthorityIdentity,
+  )).size, 1, 'one fixture-owned Reviewer authority retains separate invocations');
+  assert.equal(new Set(review.frames.map(
+    ({ binding }) => binding.reviewInvocationIdentity,
+  )).size, 2);
+  assert.equal(sha256(loaded.bytes), loaded.descriptor.sha256);
+});
+
+test('Feature 064 T003: the full payload repeat control reaches source 65 before ordinal-20 normalization', (t) => {
+  const episode = readRetentionEpisodeFixture().value;
+  const measurements = [];
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), (root) => {
+    for (const count of [1, 2, 19]) {
+      const pairs = Array.from({ length: count }, (_, index) => buildRetentionPair({
+        target: TARGET,
+        episode,
+        ordinal: index + 1,
+        authorizationEvidenceHash: sha256(`T003 homogeneous authorization ${index + 1}`),
+      }));
+      const raw = withPolicyPlan(TARGET, transitionRaw(TARGET, {
+        currentRun: [capture(TARGET, 'failed', [{
+          fixture: 'T003 complete repeated payload control',
+        }])],
+        verification: pairs.map(pair => capture(
+          TARGET,
+          'passed',
+          [pair.verificationCapture],
+        )),
+        review: pairs.map(pair => capture(TARGET, 'accepted', [pair.reviewCapture])),
+        lint: pairs.map(pair => capture(TARGET, 'passed', [pair.verificationCapture])),
+      }), 'autonomous');
+      const sourceEntries = 5 + 3 * count;
+      const inspection = buildInspection(
+        TARGET,
+        collectEvidence(TARGET, raw, undefined, 'autonomous'),
+      );
+      const packet = modelPacket(inspection);
+      assert.ok(packet);
+      const expanded = expandModelPacket(packet);
+      assert.deepEqual(expanded, originalAvailableProjection(inspection));
+      assert.equal(packet.items.length, 7);
+      assert.equal(expanded.items.length, sourceEntries);
+      assert.equal(inspection.items.length, sourceEntries + 1);
+      assert.equal(packet.items.find(({ tag }) => tag === 'verification').payload.checks.length, 16);
+      measurements.push({
+        ordinal: count,
+        sourceEntries,
+        retainedDescriptors: inspection.items.length,
+        physicalItems: packet.items.length,
+        packetBytes: Buffer.byteLength(canonicalJson(packet)),
+      });
+    }
+
+    const count = 20;
+    const pairs = Array.from({ length: count }, (_, index) => buildRetentionPair({
+      target: TARGET,
+      episode,
+      ordinal: index + 1,
+      authorizationEvidenceHash: sha256(`T003 homogeneous authorization ${index + 1}`),
+    }));
+    const raw = withPolicyPlan(TARGET, transitionRaw(TARGET, {
+      currentRun: [capture(TARGET, 'failed', [{
+        fixture: 'T003 complete repeated payload control',
+      }])],
+      verification: pairs.map(pair => capture(TARGET, 'passed', [pair.verificationCapture])),
+      review: pairs.map(pair => capture(TARGET, 'accepted', [pair.reviewCapture])),
+      lint: pairs.map(pair => capture(TARGET, 'passed', [pair.verificationCapture])),
+    }), 'autonomous');
+    const error = feature061Thrown(
+      () => collectEvidence(TARGET, raw, undefined, 'autonomous'),
+      'T003 source 65 before normalization',
+    );
+    assert.deepEqual(recoveryRuntime.capacityDiagnostic(error), {
+      budget: 'source-entries',
+      limit: 64,
+      required: 65,
+      source: 'lint',
+      target: canonicalTarget(TARGET),
+    });
+    measurements.push({
+      ordinal: 20,
+      sourceEntries: 65,
+      retainedDescriptors: null,
+      physicalItems: null,
+      packetBytes: null,
+      refusal: 'source-entries-before-normalization',
+    });
+  });
+  assert.deepEqual(measurements.map(({ ordinal, sourceEntries }) => [
+    ordinal,
+    sourceEntries,
+  ]), [[1, 8], [2, 11], [19, 62], [20, 65]]);
+  assert.equal(measurements[2].retainedDescriptors, 63);
+  assert.equal(measurements[2].physicalItems, 7);
+  assert.equal(
+    episode.research.homogeneousControl.ordinal19.researchPacketBytes,
+    130_761,
+    'the historical research number remains labeled, not reused as this production fixture size',
+  );
+  assert.deepEqual(episode.research.homogeneousControl.ordinal20, {
+    firstReachableRefusal: 'source-entries',
+    sourceEntriesRequired: 65,
+    sourceLimit: 64,
+    counterfactualRetainedDescriptors: 66,
+    counterfactualResearchPacketBytes: 136_580,
+  });
+  t.diagnostic(canonicalJson({ fullPayloadHomogeneousControl: measurements }));
 });

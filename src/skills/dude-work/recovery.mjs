@@ -12,6 +12,7 @@ import {
   resolveSpecIdentity,
 } from '../dude-engine/lib/feature-identity.mjs';
 import { CANONICAL_IDEA_KEYS, resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
+import { buildLightweightWorkPostimages } from '../dude-engine/lib/lightweight-work-postimage.mjs';
 import { parseTaskState } from '../dude-engine/lib/task-state.mjs';
 import { parseTasks, parseVisibleTasks } from '../dude-engine/lib/tasks.mjs';
 import { resolveWorkspacePath } from '../dude-engine/lib/workspace-paths.mjs';
@@ -112,7 +113,6 @@ const MAX_SOURCE_ENTRIES = 64;
 const MAX_IDEA_INVENTORY_ENTRIES = 999;
 const MAX_RETAINED_DESCRIPTORS = 64;
 const MAX_ERROR_JSON_BYTES = 8_192;
-const MAX_PACKET_ITEMS = 16;
 const MAX_PACKET_BYTES = 131_072;
 const MAX_REGISTRY_ENTRIES = 64;
 const MAX_RUNTIME_RESULT_DEPTH = 32;
@@ -189,7 +189,7 @@ const CAPACITY_LIMITS = Object.freeze({
   'inspection-body-bytes': MAX_INSPECTION_BODY_BYTES,
   'cli-request-bytes': MAX_CLI_REQUEST_BYTES,
   'retained-descriptors': MAX_RETAINED_DESCRIPTORS,
-  'model-packet-items': MAX_PACKET_ITEMS,
+  'model-packet-bytes': MAX_PACKET_BYTES,
 });
 
 /**
@@ -2071,6 +2071,21 @@ function normalizeSourceRecord(value, source, label) {
   return substantive;
 }
 
+/** The runner and known-growth prediction construct the same complete capture. @param {Record<string, unknown>} target @param {Record<string, unknown>[]} records */
+export function currentRunCapture(target, records) {
+  const state = 'failed';
+  return {
+    target: JSON.parse(canonicalJson(target)),
+    state,
+    outcomeHash: sha256(canonicalJson({
+      target,
+      state,
+      records: records.map(entry => entry.substantive),
+    })),
+    bytes: Buffer.from(canonicalJson({ target, state, records })),
+  };
+}
+
 /** @param {unknown} value @param {Record<string, unknown>} target */
 function normalizeSession(value, target) {
   if (value === undefined) return missingEvidence('session', false, false);
@@ -2747,9 +2762,21 @@ function readAutonomousDefinitionFile(root, relativePath, budget, label, source)
   }
 }
 
+/** @param {string} root @param {Record<string, unknown>} target @returns {{bytes:Buffer}|{reason:string}} */
+function acquireLightweightTaskState(root, target) {
+  try {
+    return { bytes: readWorkspaceFile(root, TASK_STATE_PATH, createBodyBudget(target), 'lane-history') };
+  } catch (error) {
+    if (capacityDiagnostic(error)) throw error;
+    if (isMissingPath(error)) return { bytes: Buffer.from('{}\n') };
+    return { reason: 'lane-prestate-mismatch' };
+  }
+}
+
 /**
  * @param {unknown} value @param {unknown} [dependenciesValue] @param {boolean} [transport]
- * @param {string} [policyModeOverride] @param {{definitionTaskSuffix?:Buffer}} [acquisitionOptions]
+ * @param {string} [policyModeOverride]
+ * @param {{definitionTaskSuffix?:Buffer,lightweightPostimages?:boolean}} [acquisitionOptions]
  */
 function acquireInspection(
   value,
@@ -2850,22 +2877,32 @@ function acquireInspection(
     ...(Object.hasOwn(acquiredInput, 'lint') ? { lint: acquiredInput.lint } : {}),
     ...(Object.hasOwn(acquiredInput, 'session') ? { session: acquiredInput.session } : {}),
   };
+  const context = {
+    ownerDiagnostics: capturedIdeas.diagnostics,
+    policyMode,
+    definitionPlanStatus,
+    definitionSpec,
+    definitionSpecStatus,
+    ...(acquisitionOptions.definitionTaskSuffix
+      ? { definitionTaskSuffix: acquisitionOptions.definitionTaskSuffix }
+      : {}),
+  };
+  const taskState = acquisitionOptions.lightweightPostimages && target.lane === 'lightweight'
+    ? acquireLightweightTaskState(/** @type {string} */ (input.root), target)
+    : null;
   return {
     root: /** @type {string} */ (input.root),
     target,
     accounting,
+    rawInputs,
+    context,
+    dependencies,
+    taskState,
     inspection: buildInspection(target, collectEvidenceInternal(target, rawInputs, dependencies, {
-      ownerDiagnostics: capturedIdeas.diagnostics,
+      ...context,
       budget,
       workspaceCharged: true,
       capturesCharged: transport,
-      policyMode,
-      definitionPlanStatus,
-      definitionSpec,
-      definitionSpecStatus,
-      ...(acquisitionOptions.definitionTaskSuffix
-        ? { definitionTaskSuffix: acquisitionOptions.definitionTaskSuffix }
-        : {}),
     })),
   };
 }
@@ -3020,16 +3057,191 @@ function isAvailable(item) {
     && Object.hasOwn(item, 'text');
 }
 
-/** @param {unknown} target @param {unknown} value */
-function packetProjection(target, value) {
-  const items = /** @type {Record<string, unknown>[]} */ (assertDenseDataArray(value, 'EvidenceItem list'));
+/**
+ * @typedef {{source:string,position:number}} ModelOccurrence
+ * @typedef {{descriptor:ReturnType<typeof descriptor>,occurrences:ModelOccurrence[]}} ModelFrame
+ * @typedef {{tag:'verification'|'review',payload:Record<string,unknown>,outer:Record<string,unknown>,
+ *   capture:Record<string,unknown>,binding:Record<string,unknown>}} ModelPayload
+ * @typedef {ModelFrame & {outer:Record<string,unknown>,capture:Record<string,unknown>,
+ *   binding:Record<string,unknown>}} TrustedModelFrame
+ * @typedef {{tag:'literal',text:string,frames:ModelFrame[]}} LiteralModelItem
+ * @typedef {{tag:'verification'|'review',payload:Record<string,unknown>,frames:TrustedModelFrame[]}} TypedModelItem
+ */
+
+/**
+ * Resolve trusted payloads against the full evidence set, not a measured prefix.
+ * Unsupported bodies remain literal; recognized v2 envelopes use the existing
+ * normalizers without catching their authority or malformed-evidence refusals.
+ * @param {unknown} target @param {Record<string, unknown>[]} items
+ * @returns {Map<Record<string,unknown>,ModelPayload>}
+ */
+function modelPayloadContext(target, items) {
+  /** @type {{item:Record<string,unknown>,body:Record<string,unknown>,capture:Record<string,unknown>,
+   *   envelope:Record<string,unknown>,kind:string}[]} */
+  const rows = [];
+  for (const item of items) {
+    if (item.status !== 'present' || typeof item.text !== 'string'
+      || !['verification', 'lint', 'review'].includes(/** @type {string} */ (item.source))) continue;
+    let body;
+    try {
+      body = JSON.parse(item.text);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      continue;
+    }
+    if (!isPlainRecord(body) || Object.keys(body).length !== 3
+      || !Object.hasOwn(body, 'target') || !Object.hasOwn(body, 'state')
+      || !Array.isArray(body.records)) continue;
+    for (const record of body.records) {
+      if (!isPlainRecord(record)
+        || (!Object.hasOwn(record, 'authority') && !Object.hasOwn(record, 'bytes'))) continue;
+      const kind = item.source === 'review' ? 'independent-review' : 'verification';
+      const label = `${item.source} model capture`;
+      const capture = /** @type {Record<string,unknown>} */ (validateTrustedSourceCaptureV2(record, label));
+      const envelope = /** @type {Record<string,unknown>} */ (
+        parseCanonicalJsonBytes(validateCapturedBytesV1(capture.bytes, `${label}.bytes`).decoded, `${label}.bytes`)
+      );
+      if (envelope?.version !== 2
+        || envelope.type !== `${kind}-envelope`) continue;
+      rows.push({ item, body, capture, envelope, kind });
+    }
+  }
+  /** @type {Map<string,Record<string,unknown>>} */
+  const verifications = new Map();
+  /** @type {Map<Record<string,unknown>,ModelPayload>} */
+  const context = new Map();
+  /** @param {typeof rows[number]} row @param {Record<string,unknown>} envelope */
+  const retain = (row, envelope) => {
+    if (canonicalJson(row.body.target) !== canonicalJson(canonicalTarget(target))
+      || targetKey(row.capture.target) !== targetKey(target)) {
+      invalid(`${row.item.source} model source.target`, 'must match the fresh Inspection target');
+    }
+    const expectedState = row.kind === 'verification'
+      ? (/** @type {Record<string,unknown>[]} */ (envelope.checks)
+        .some((check) => check.outcome === 'failed') ? 'failed' : 'passed')
+      : envelope.verdict;
+    if (row.body.state !== expectedState) {
+      invalid(`${row.item.source} model source.state`, 'must match its authoritative source outcome');
+    }
+    if (/** @type {unknown[]} */ (row.body.records).length !== 1
+      || canonicalJson(row.body) !== row.item.text) return;
+    const captured = /** @type {Record<string,unknown>} */ (row.capture.bytes);
+    if (!Buffer.from(canonicalJson(envelope)).equals(
+      Buffer.from(/** @type {string} */ (captured.base64), 'base64'),
+    )) return;
+    const payloadFields = row.kind === 'verification'
+      ? ['type', 'version', 'target', 'checks']
+      : ['type', 'version', 'target', 'verdict', 'findings'];
+    const { base64, ...bytes } = captured;
+    context.set(row.item, {
+      tag: row.kind === 'verification' ? 'verification' : 'review',
+      payload: Object.fromEntries(payloadFields.map((field) => [field, envelope[field]])),
+      outer: { target: row.body.target, state: row.body.state },
+      capture: { ...row.capture, bytes },
+      binding: Object.fromEntries(Object.entries(envelope)
+        .filter(([field]) => !payloadFields.includes(field))),
+    });
+  };
+  for (const row of rows.filter((row) => row.kind === 'verification')) {
+    const envelope = /** @type {Record<string,unknown>} */ (normalizeVerificationEnvelopeV2(row.capture));
+    retain(row, envelope);
+    if (row.item.source === 'verification') {
+      verifications.set(/** @type {string} */ (envelope.envelopeIdentity), envelope);
+    }
+  }
+  for (const row of rows.filter((row) => row.kind === 'independent-review')) {
+    const verification = verifications.get(/** @type {string} */ (row.envelope.verificationEnvelopeIdentity));
+    // An unavailable binding grants no typed view; the existing authority reader
+    // still owns the incomplete-evidence refusal using the unchanged literal body.
+    if (!verification) continue;
+    retain(row, /** @type {Record<string,unknown>} */ (
+      normalizeIndependentReviewEnvelopeV2(row.capture, verification)
+    ));
+  }
+  return context;
+}
+
+/**
+ * @param {unknown} target @param {unknown} value
+ * @param {Map<Record<string,unknown>,ModelPayload>} [context]
+ */
+function packetProjection(target, value, context) {
+  const originals = /** @type {Record<string, unknown>[]} */ (assertDenseDataArray(value, 'EvidenceItem list'));
+  const payloads = context ?? modelPayloadContext(target, originals);
+  /** @param {unknown} value */
+  const canonicalBytes = (value) => Buffer.byteLength(canonicalJson(value));
+  /** @type {{source:string,position:number,literal:LiteralModelItem,typed:TypedModelItem|null}[]} */
+  const units = [];
+  for (const [position, item] of originals.filter(isAvailable).entries()) {
+    const source = /** @type {string} */ (item.source);
+    const frame = { descriptor: descriptor(item), occurrences: [{ source, position }] };
+    /** @type {LiteralModelItem} */
+    const literal = { tag: 'literal', text: /** @type {string} */ (item.text), frames: [frame] };
+    const payload = payloads.get(item);
+    /** @type {TypedModelItem|null} */
+    const typed = payload ? {
+      tag: payload.tag,
+      payload: payload.payload,
+      frames: [{ ...frame, outer: payload.outer, capture: payload.capture, binding: payload.binding }],
+    } : null;
+    if (source === 'lint' && item.status === 'present' && item.text !== '[]') {
+      const prior = units.find((unit) => unit.source === 'verification'
+        && unit.literal.frames[0].occurrences.length === 1
+        && canonicalJson(unit.literal.frames[0].descriptor) === canonicalJson(frame.descriptor)
+        && Buffer.from(unit.literal.text).equals(Buffer.from(literal.text)));
+      if (prior) {
+        const occurrences = [...prior.literal.frames[0].occurrences, { source, position }];
+        const merged = { ...prior.literal, frames: [{ ...prior.literal.frames[0], occurrences }] };
+        const typedSmaller = !prior.typed || (typed && canonicalBytes({
+          ...prior.typed, frames: [{ ...prior.typed.frames[0], occurrences }],
+        }) < canonicalBytes({ ...prior.typed, frames: [...prior.typed.frames, ...typed.frames] }));
+        if (typedSmaller && canonicalBytes(merged) < canonicalBytes(prior.literal) + 1 + canonicalBytes(literal)) {
+          prior.literal = merged;
+          if (prior.typed) prior.typed.frames[0].occurrences = occurrences;
+          continue;
+        }
+      }
+    }
+    units.push({ source, position, literal, typed });
+  }
+  /** @type {Map<string,{position:number,literal:LiteralModelItem,typed:TypedModelItem}[]>} */
+  const groups = new Map();
+  for (const unit of units) {
+    if (!unit.typed) continue;
+    // Canonical scalar JSON has one UTF-8 encoding: compare the entire payload, not its hash.
+    const key = canonicalJson(unit.typed.payload);
+    const group = groups.get(key) ?? [];
+    group.push({ position: unit.position, literal: unit.literal, typed: unit.typed });
+    groups.set(key, group);
+  }
+  /** @type {{position:number,item:LiteralModelItem|TypedModelItem}[]} */
+  const selected = [];
+  const consumed = new Set();
+  for (const unit of units) {
+    if (!unit.typed) {
+      selected.push({ position: unit.position, item: unit.literal });
+      continue;
+    }
+    const key = canonicalJson(unit.typed.payload);
+    if (consumed.has(key)) continue;
+    consumed.add(key);
+    const group = /** @type {{position:number,literal:LiteralModelItem,typed:TypedModelItem}[]} */ (groups.get(key));
+    const candidate = {
+      ...unit.typed,
+      frames: group.flatMap((member) => member.typed.frames),
+    };
+    const literalCost = group.reduce((total, member) => total + canonicalBytes(member.literal), group.length - 1);
+    if (canonicalBytes(candidate) < literalCost) {
+      selected.push({ position: unit.position, item: candidate });
+    } else {
+      selected.push(...group.map((member) => ({ position: member.position, item: member.literal })));
+    }
+  }
+  selected.sort((left, right) => left.position - right.position);
   return {
+    format: 'dude-work-model-view-v1',
     target: canonicalTarget(target),
-    items: items.filter(isAvailable).map((item) => ({
-      source: item.source,
-      descriptor: descriptor(item),
-      text: item.text,
-    })),
+    items: selected.map(({ item }) => item),
   };
 }
 
@@ -3202,6 +3414,11 @@ function inspectionBlockers(items, hash, overflow) {
  * @param {unknown[]} values
  */
 export function buildInspection(target, values) {
+  return measuredInspection(target, values).inspection;
+}
+
+/** Keep complete selected bytes private even when the public Inspection must be descriptor-only. @param {unknown} target @param {unknown[]} values */
+function measuredInspection(target, values) {
   const inspectionTarget = canonicalTarget(target);
   const ordered = orderAndDedupeItems(values);
   for (const item of ordered) {
@@ -3213,6 +3430,7 @@ export function buildInspection(target, values) {
       invalid('EvidenceItem.text', 'must contain the complete available body');
     }
   }
+  const context = modelPayloadContext(inspectionTarget, ordered);
 
   /** @type {Record<string, unknown>[]} */
   let selectedItems = ordered;
@@ -3227,10 +3445,8 @@ export function buildInspection(target, values) {
     const owner = parseOwnerLogBody(ownerItem.text, 'owner-log body');
     const ownerIndex = ordered.indexOf(ownerItem);
     const nonOwnerItems = ordered.filter((item) => item.source !== 'owner-log');
-    const nonOwnerPacket = packetProjection(inspectionTarget, nonOwnerItems);
-    const allItemCount = packetProjection(inspectionTarget, ordered).items.length;
-    if (allItemCount <= MAX_PACKET_ITEMS
-      && Buffer.byteLength(canonicalJson(nonOwnerPacket)) <= MAX_PACKET_BYTES) {
+    const nonOwnerPacket = packetProjection(inspectionTarget, nonOwnerItems, context);
+    if (Buffer.byteLength(canonicalJson(nonOwnerPacket)) <= MAX_PACKET_BYTES) {
       /** @param {string[]} candidateEvents */
       const replaceOwner = (candidateEvents) => {
         const text = canonicalJson(ownerLogProjectionBody(owner, candidateEvents));
@@ -3245,10 +3461,10 @@ export function buildInspection(target, values) {
       const events = /** @type {string[]} */ (owner.events);
       let candidateItems = replaceOwner(events.length === 0 ? [] : events.slice(-1));
       selectedItems = candidateItems;
-      if (Buffer.byteLength(canonicalJson(packetProjection(inspectionTarget, candidateItems))) <= MAX_PACKET_BYTES) {
+      if (Buffer.byteLength(canonicalJson(packetProjection(inspectionTarget, candidateItems, context))) <= MAX_PACKET_BYTES) {
         for (let first = events.length - 2; first >= 0; first -= 1) {
           candidateItems = replaceOwner(events.slice(first));
-          if (Buffer.byteLength(canonicalJson(packetProjection(inspectionTarget, candidateItems))) > MAX_PACKET_BYTES) {
+          if (Buffer.byteLength(canonicalJson(packetProjection(inspectionTarget, candidateItems, context))) > MAX_PACKET_BYTES) {
             break;
           }
           selectedItems = candidateItems;
@@ -3258,19 +3474,16 @@ export function buildInspection(target, values) {
   }
 
   let crossingIndex = selectedItems.findIndex((item) => item.status === 'overflow');
-  let availableCount = 0;
   /** @type {Record<string, unknown>[]} */
   const prefix = [];
-  if (crossingIndex < 0 && Buffer.byteLength(canonicalJson(packetProjection(inspectionTarget, []))) > MAX_PACKET_BYTES) {
+  if (crossingIndex < 0 && Buffer.byteLength(canonicalJson(packetProjection(inspectionTarget, [], context))) > MAX_PACKET_BYTES) {
     crossingIndex = 0;
   }
   for (let index = 0; crossingIndex < 0 && index < selectedItems.length; index += 1) {
     const item = selectedItems[index];
     if (!isAvailable(item)) continue;
-    availableCount += 1;
     prefix.push(item);
-    if (availableCount > MAX_PACKET_ITEMS
-      || Buffer.byteLength(canonicalJson(packetProjection(inspectionTarget, prefix))) > MAX_PACKET_BYTES) {
+    if (Buffer.byteLength(canonicalJson(packetProjection(inspectionTarget, prefix, context))) > MAX_PACKET_BYTES) {
       crossingIndex = index;
     }
   }
@@ -3294,7 +3507,10 @@ export function buildInspection(target, values) {
     blockers: inspectionBlockers(outputItems, hash, overflow),
   };
   validateInspection(inspection);
-  return inspection;
+  return {
+    inspection,
+    modelBytes: Buffer.byteLength(canonicalJson(packetProjection(inspectionTarget, selectedItems, context))),
+  };
 }
 
 /** @param {unknown} value */
@@ -3338,8 +3554,7 @@ export function validateInspection(value) {
   }
   if (!inspection.overflow) {
     const packet = packetProjection(inspection.target, items);
-    if (packet.items.length > MAX_PACKET_ITEMS
-      || Buffer.byteLength(canonicalJson(packet)) > MAX_PACKET_BYTES) {
+    if (Buffer.byteLength(canonicalJson(packet)) > MAX_PACKET_BYTES) {
       invalid('Inspection.overflow', 'must be true when packet limits are exceeded');
     }
   } else {
@@ -9161,22 +9376,20 @@ function definitionReconciliationRefusalV1(state, inspection, reason) {
  * exists yet. Guarded completion emits no new inspection captures, and no
  * absent optional session is ever reserved.
  *
- * Source demand counts one charged entry per new capture. Model-item demand is
- * derived from the fresh normalized Inspection: replacing a present empty `[]`
- * placeholder with its first capture adds no item, while appending a fresh
- * result to a populated class adds one. Future specialist results are never
- * assumed to deduplicate.
+ * Source demand counts one charged entry per new capture. Original-descriptor
+ * growth counts placeholder replacement as zero and an independent appended
+ * result as one, without predicting future model-view sharing.
  *
  * @param {string} policyMode @param {string} action @param {Record<string, unknown>} inspection
  * @param {{currentRun:number}} streams
  */
 function completionEntryDemand(policyMode, action, inspection, streams) {
-  if (policyMode !== 'autonomous') return { sources: 0, items: 0, classes: [] };
+  if (policyMode !== 'autonomous') return { sources: 0, descriptors: 0, classes: [] };
   const items = /** @type {Record<string, unknown>[]} */ (inspection.items);
   /** @param {string} source */
   const availableFor = (source) => items.filter((item) => item.source === source && isAvailable(item));
   /** @param {string} source */
-  const appendItemDelta = (source) => {
+  const appendDescriptorDelta = (source) => {
     const available = availableFor(source);
     if (available.length === 0) return 1;
     if (available.length === 1 && available[0].text === '[]') return 0;
@@ -9187,13 +9400,13 @@ function completionEntryDemand(policyMode, action, inspection, streams) {
   ].includes('lint');
   /** @type {string[]} */
   const classes = ['verification', 'review', ...(requiresLint ? ['lint'] : [])];
-  // A present empty placeholder is replaced in place; only an absent class gains an item.
+  // A present empty placeholder is replaced in place; only an absent class gains a descriptor.
   if (streams.currentRun === 0) classes.push('current-run');
   return {
     sources: classes.length,
-    items: classes.reduce((total, source) => total + (source === 'current-run'
+    descriptors: classes.reduce((total, source) => total + (source === 'current-run'
       ? (availableFor('current-run').length === 0 ? 1 : 0)
-      : appendItemDelta(source)), 0),
+      : appendDescriptorDelta(source)), 0),
     classes,
   };
 }
@@ -9423,8 +9636,8 @@ function authorizeInspectedAttempt(state, target, inspection, assessmentValue, m
     );
     const acquired = /** @type {number} */ (accounting.sources);
     const requiredSources = acquired + demand.sources;
-    const requiredItems = /** @type {Record<string, unknown>[]} */ (inspection.items)
-      .filter(isAvailable).length + demand.items;
+    const requiredDescriptors = /** @type {Record<string, unknown>[]} */ (inspection.items)
+      .length + demand.descriptors;
     // Name the first mandatory completion capture that cannot be charged.
     const crossing = demand.classes[Math.max(
       0,
@@ -9432,8 +9645,8 @@ function authorizeInspectedAttempt(state, target, inspection, assessmentValue, m
     )];
     const capacity = requiredSources > MAX_SOURCE_ENTRIES && crossing !== undefined
       ? capacityProjection('source-entries', requiredSources, crossing, target)
-      : requiredItems > MAX_PACKET_ITEMS
-        ? capacityProjection('model-packet-items', requiredItems, 'model-packet', target)
+      : requiredDescriptors > MAX_RETAINED_DESCRIPTORS
+        ? capacityProjection('retained-descriptors', requiredDescriptors, 'model-packet', target)
         : null;
     if (capacity) {
       const blocker = {
@@ -11264,7 +11477,9 @@ export function prepareProjectionV2(stateValue, inputValue, batchValue, dependen
   if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
     invalid('prepareProjectionV2', 'requires autonomous policy');
   }
-  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous', {
+    lightweightPostimages: laneBinding !== undefined,
+  });
   const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
   if (inspection.overflow) return { inspection };
   if (/** @type {unknown[]} */ (inspection.blockers).length > 0) {
@@ -11319,6 +11534,14 @@ export function prepareProjectionV2(stateValue, inputValue, batchValue, dependen
       validateProjectionPermitV1(projectionPermit);
       return { ...item, mutation, mutationIdentity: derived.mutationIdentity, projectionPermit };
     });
+  if (bound && target.lane === 'lightweight') {
+    const remaining = remainingProjectionItemsV2(inspection, items);
+    if ('reason' in remaining) {
+      return { inspection, transition: { prepared: false, reason: remaining.reason, state } };
+    }
+    const reason = preflightLightweightWorkV2(acquired, bound, remaining.items);
+    if (reason) return { inspection, transition: { prepared: false, reason, state } };
+  }
   const planWithoutIdentity = {
     version: 1,
     target,
@@ -11360,6 +11583,150 @@ function v2ProjectionMutationV1(target, bound, item) {
     ownerLog: { kind: 'none' },
     ...(lightweight ? { snapshotUpdatedAt: bound.operationTime } : {}),
   };
+}
+
+/**
+ * Only an observed, exact, ordered two-surface prefix can be skipped. A
+ * one-sided write is not an accepted prefix or authority to repair the other.
+ * @param {Record<string, unknown>} inspection @param {Record<string, unknown>[]} items
+ * @returns {{reason:string}|{items:Record<string, unknown>[]}}
+ */
+function remainingProjectionItemsV2(inspection, items) {
+  const index = dualSurfaceEventIndexV2(inspection);
+  let prefix = 0;
+  let missing = false;
+  for (const item of items) {
+    const hash = /** @type {string} */ (item.eventHash);
+    const current = index.currentRun.byHash.get(hash);
+    const lane = index.lane.byHash.get(hash);
+    if (!current && !lane) {
+      missing = true;
+      continue;
+    }
+    if (!current) return { reason: 'projection-missing-current-run' };
+    if (!lane) return { reason: 'projection-missing-lane-history' };
+    const record = /** @type {{substantive:{event:unknown}}} */ (item.currentRunRecord);
+    if (missing || index.currentRun.counts.get(hash) !== 1 || index.lane.counts.get(hash) !== 1
+      || canonicalJson(current) !== canonicalJson(record.substantive.event)
+      || canonicalJson(lane) !== canonicalJson(record.substantive.event)) {
+      return { reason: 'projection-conflict' };
+    }
+    prefix += 1;
+  }
+  const hashes = new Set(items.map(item => item.eventHash));
+  const expected = items.slice(0, prefix).map(item => item.eventHash);
+  for (const events of [currentRunEventsV2(inspection), laneHistoryEventsV2(inspection)]) {
+    if (canonicalJson(events.filter(event => hashes.has(event.eventHash)).map(event => event.eventHash))
+      !== canonicalJson(expected)) return { reason: 'projection-conflict' };
+  }
+  return { items: items.slice(prefix) };
+}
+
+/**
+ * Measure exact postimages over the complete private acquisition, never over
+ * truncated Inspection text. Each iteration measures the lane-first window
+ * and then the same current-run capture the runner will publish for its receipt.
+ * @param {ReturnType<typeof acquireInspection>} acquired
+ * @param {Record<string, unknown>} bound @param {Record<string, unknown>[]} items
+ * @returns {string|null}
+ */
+function preflightLightweightWorkV2(acquired, bound, items) {
+  const { target, context, dependencies } = acquired;
+  const mapping = /** @type {Record<string, unknown>} */ (bound.mapping);
+  const prestate = /** @type {Record<string, unknown>} */ (bound.prestate);
+  const ownerBody = inspectionSourceBodyV2(acquired.inspection, 'owner-log');
+  const owner = acquired.rawInputs.directIdeas.find(idea => idea.path === ownerBody.ideaPath);
+  const tasks = byteSequence(acquired.rawInputs.tasks.bytes);
+  if (!owner || !tasks || acquired.taskState === null) return 'lane-prestate-mismatch';
+  if ('reason' in acquired.taskState) return acquired.taskState.reason;
+  let taskState = acquired.taskState.bytes;
+  if (parseTaskState(taskState.toString('utf8')).status === 'corrupt') return 'snapshot-corrupt';
+  const descriptors = {
+    tasksDescriptor: contentDescriptor(tasks),
+    taskStateDescriptor: contentDescriptor(taskState),
+    ownerDescriptor: contentDescriptor(owner.bytes),
+  };
+  if (Object.entries(descriptors).some(([field, value]) => canonicalJson(value) !== canonicalJson(prestate[field]))
+    || mapping.ownerBindingHash !== sha256(canonicalJson({
+      ideaPath: owner.path, specPath: target.specPath, ownerCapture: descriptors.ownerDescriptor,
+    }))) return 'lane-prestate-mismatch';
+
+  let raw = acquired.rawInputs;
+  let ownerBytes = owner.bytes;
+  /** @param {typeof raw} candidate */
+  const measure = candidate => {
+    assertSourceEntryLimit(candidate, 'known Lightweight postimage', 'autonomous', target);
+    const budget = createBodyBudget(target);
+    chargeRawInputBodies(candidate, budget, false, true, target);
+    if (context.definitionSpec?.bytes) {
+      chargeByteSequence(context.definitionSpec.bytes, 'definition prestate spec', budget, 'definition-spec');
+    }
+    const evidence = collectEvidenceInternal(target, candidate, dependencies, {
+      ...context, budget, workspaceCharged: true,
+    });
+    // The snapshot is not model evidence, but the next lane binding must still acquire it.
+    chargeByteSequence(taskState, 'known Lightweight task-state postimage', createBodyBudget(target), 'lane-history');
+    const measured = measuredInspection(target, evidence);
+    if (measured.modelBytes > MAX_PACKET_BYTES) {
+      capacityRefusal(
+        'model-packet-bytes', measured.modelBytes, 'model-packet', target,
+        'known Lightweight postimage', `exceeds the model packet resource limit of ${MAX_PACKET_BYTES} bytes`,
+      );
+    }
+    return measured.inspection.blockers.length === 0 ? null : 'projection-stale';
+  };
+  for (const item of items) {
+    const mutation = /** @type {Record<string, unknown>} */ (item.mutation);
+    const ownerLog = /** @type {Record<string, unknown>} */ (mutation.ownerLog);
+    if (ownerLog.kind === 'append-exact'
+      && (ownerLog.ownerPath !== owner.path || ownerLog.expectedOwnerHash !== sha256(ownerBytes))) {
+      return 'owner-prestate-mismatch';
+    }
+    if (ownerLog.kind === 'append-exact' && !ownerBytes.toString('utf8').endsWith('\n')) {
+      return 'owner-log-conflict';
+    }
+    const eventLines = /** @type {Record<string, unknown>} */ (mutation.eventLines);
+    const postimages = buildLightweightWorkPostimages({
+      tasks: /** @type {Buffer} */ (raw.tasks.bytes),
+      owner: ownerBytes,
+      taskState,
+      tasksPath: raw.tasks.path,
+      taskKey: /** @type {string} */ (target.taskKey),
+      kind: /** @type {string} */ (mutation.kind),
+      toGlyph: /** @type {string} */ (mutation.toGlyph),
+      blocker: /** @type {{kind:string,before:string|null,after:string|null}} */ (mutation.blocker),
+      eventLines: eventLines.kind === 'none' ? [] : /** @type {{exactLine:string}[]} */ (eventLines.lines).map(line => line.exactLine),
+      ownerLogLines: ownerLog.kind === 'none' ? [] : /** @type {string[]} */ (ownerLog.exactLines),
+      snapshotUpdatedAt: /** @type {string} */ (mutation.snapshotUpdatedAt),
+    });
+    if ('reason' in postimages) return postimages.reason;
+    ownerBytes = postimages.owner;
+    taskState = postimages.taskState;
+    raw = {
+      ...raw,
+      tasks: { ...raw.tasks, bytes: postimages.tasks },
+      directIdeas: raw.directIdeas.map(idea => idea.path === owner.path ? { ...idea, bytes: ownerBytes } : idea),
+    };
+    const laneReason = measure(raw);
+    if (laneReason) return laneReason;
+    if (Object.hasOwn(item, 'currentRunRecord')) {
+      const captures = /** @type {Record<string, unknown>[]} */ (raw.currentRun);
+      const last = captures.at(-1);
+      const records = last
+        ? JSON.parse(/** @type {string} */ (decodeCapturedBytes(last.bytes).text)).records
+        : [];
+      raw = {
+        ...raw,
+        currentRun: [
+          ...captures.slice(0, -1),
+          currentRunCapture(target, [...records, item.currentRunRecord]),
+        ],
+      };
+      const receiptReason = measure(raw);
+      if (receiptReason) return receiptReason;
+    }
+  }
+  return null;
 }
 
 /**
@@ -13525,7 +13892,9 @@ export function issueLanePermitV2(stateValue, inputValue, mutationValue, lanePre
   if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
     invalid('issueLanePermitV2', 'requires autonomous policy');
   }
-  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous');
+  const acquired = acquireInspection(inputValue, dependencies, transport, 'autonomous', {
+    lightweightPostimages: true,
+  });
   const inspection = /** @type {Record<string, unknown>} */ (acquired.inspection);
   if (inspection.overflow) return { inspection };
   /** @param {Record<string, unknown>} transition */
@@ -13560,7 +13929,9 @@ export function issueLanePermitV2(stateValue, inputValue, mutationValue, lanePre
   const prestateState = mutation.lane === 'lightweight'
     ? bound.prestate.glyph
     : bound.prestate.status;
-  if (mutation[mutation.lane === 'lightweight' ? 'fromGlyph' : 'fromStatus'] !== prestateState) {
+  if (mutation[mutation.lane === 'lightweight' ? 'fromGlyph' : 'fromStatus'] !== prestateState
+    || (mutation.lane === 'lightweight'
+      && /** @type {Record<string, unknown>} */ (mutation.blocker).before !== bound.prestate.blockedBy)) {
     return respond({ issued: false, reason: 'lane-prestate-mismatch', state });
   }
   if (mutation.kind !== 'incident-supersession'
@@ -13595,6 +13966,14 @@ export function issueLanePermitV2(stateValue, inputValue, mutationValue, lanePre
       mutationIdentity: derivedMutation.mutationIdentity,
     });
     validateProjectionPermitV1(permit);
+    if (target.lane === 'lightweight') {
+      const item = { ...v2ProjectionPlanItem(derivedMutation.events[0], 'issue-lane-permit event'), mutation };
+      const remaining = remainingProjectionItemsV2(inspection, [item]);
+      const reason = 'reason' in remaining
+        ? remaining.reason
+        : preflightLightweightWorkV2(acquired, bound, remaining.items);
+      if (reason) return respond({ issued: false, reason, state });
+    }
     return respond({ issued: true, reason: 'lane-permit-issued', state, permit });
   }
   const gate = requiredLanePermitPhaseV2(state, mutation, governed, inspection);
@@ -13615,6 +13994,10 @@ export function issueLanePermitV2(stateValue, inputValue, mutationValue, lanePre
     mutationIdentity: derivedMutation.mutationIdentity,
   });
   validateLaneMutationPermitV1(permit);
+  if (target.lane === 'lightweight') {
+    const reason = preflightLightweightWorkV2(acquired, bound, [{ mutation }]);
+    if (reason) return respond({ issued: false, reason, state });
+  }
   return respond({ issued: true, reason: 'lane-permit-issued', state, permit });
 }
 
@@ -15540,4 +15923,4 @@ function runMain() {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) runMain();
 
-export const limits = Object.freeze({ items: MAX_PACKET_ITEMS, bytes: MAX_PACKET_BYTES });
+export const limits = Object.freeze({ items: MAX_RETAINED_DESCRIPTORS, bytes: MAX_PACKET_BYTES });

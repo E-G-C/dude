@@ -21,6 +21,7 @@ import {
   capturedBytesV1,
   classifyOutcomeReason,
   contentDescriptor,
+  currentRunCapture,
   describeUnattendedHalt,
   inspect,
   modelPacket,
@@ -225,26 +226,6 @@ function freshLaneBinding(root, targetValue, expectedOwner) {
   };
 }
 
-/** @param {Record<string, unknown>} target @param {unknown[]} records */
-function currentRunCapture(target, records) {
-  const state = 'failed';
-  const body = canonicalJson({
-    target,
-    state,
-    records,
-  });
-  return {
-    target: clone(target),
-    state,
-    outcomeHash: sha256(canonicalJson({
-      target,
-      state,
-      records: records.map((entry) => /** @type {Record<string, unknown>} */ (entry).substantive),
-    })),
-    bytes: Buffer.from(body),
-  };
-}
-
 /** @param {Record<string, unknown>} input */
 function transportInput(input) {
   const output = { ...input, lane: clone(input.lane) };
@@ -441,7 +422,7 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
 
   /** @type {Record<string, unknown>[]} */
   const steps = [];
-  /** @type {unknown[]} */
+  /** @type {Record<string, unknown>[]} */
   const currentRun = [];
   /** @type {{verification:Record<string, unknown>[],review:Record<string, unknown>[],lint:Record<string, unknown>[]}} */
   const observedStreams = { verification: [], review: [], lint: [] };
@@ -542,6 +523,12 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
 
   /** @param {string} step @param {Record<string, unknown>} result */
   const recordStep = (step, result) => {
+    // Only the adapter's validated overflow stop may replace the earlier
+    // explicit Inspection with this operation's descriptor-only evidence.
+    if (result.outcome === 'hard-stop' && result.reason === 'evidence-incomplete'
+      && runtimeInspection?.overflow === true) {
+      currentInspection = clone(runtimeInspection);
+    }
     // The adapter's bounded capacity diagnostic is revalidated here and carried
     // onto the step row and the terminal halt report. A headroom or admission
     // refusal binds the Inspection this very operation returned; an acquisition
@@ -979,7 +966,7 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
         return { terminal: orphan('projection-plan-mismatch', label) };
       }
 
-      currentRun.push(clone(item.currentRunRecord));
+      const stagedRecord = clone(item.currentRunRecord);
       const applied = runDeterministic(
         `${label}:apply-projection:${index + 1}`,
         'apply-lane-effect',
@@ -1003,6 +990,7 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
           ),
         };
       }
+      currentRun.push(stagedRecord);
       const receipt = /** @type {Record<string, unknown>} */ (
         /** @type {Record<string, unknown>} */ (applied.result.product).receipt
       );

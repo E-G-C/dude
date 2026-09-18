@@ -14,6 +14,14 @@ import {
   renderCopilotAgent,
 } from '../src/skills/dude-engine/lib/agent-projection.mjs';
 import { collectLifecycleModel } from '../src/skills/dude-lightweight-execution/backlog.mjs';
+import * as workRuntime from '../src/skills/dude-work/recovery.mjs';
+import {
+  buildRetentionPair,
+  expandModelPacket,
+  originalAvailableProjection,
+  readRetentionEpisodeFixture,
+  withReferenceWorkspace,
+} from './fixtures/064-work-receipt-overflow-handling/model-view-test-helpers.mjs';
 import {
   isReleaseFile,
   listCoreOutputs,
@@ -3060,26 +3068,62 @@ test('T008 Work detailed owner defines the sequential-v1 recovery trust boundary
   assert.deepEqual(failures, [], `${RECOVERY_POLICY_OWNER}: sequential-v1 recovery contract`);
 });
 
-test('Feature 061 capacity guidance keeps inventory, source, admission, and diagnostic contracts distinct', () => {
+test('Work capacity guidance keeps inventory, raw admission, and model-view budgets distinct', () => {
   const work = markdownSection(read(RECOVERY_POLICY_OWNER), '## Inspection And Recovery');
   const commands = markdownSection(read('docs/commands.md'), '### `@dude work`');
+  const runtime = markdownSection(read(RECOVERY_POLICY_OWNER), '## Host Adapter Runtime Boundary');
 
-  assert.match(
-    work,
-    /inventory has its own ceiling of 999 direct `\.dude\/ideas` children[\s\S]*1,000th entry refuses before its name or any candidate body is read/i,
-  );
-  assert.match(
-    work,
-    /However many ideas back it, exact ownership costs one owner source[\s\S]*independent 64-source-entry budget[\s\S]*autonomous `definition-plan` source[\s\S]*tracked issue acquisition[\s\S]*supplied capture[\s\S]*optional supplied session[\s\S]*before any capture is decoded or deduplicated/i,
-  );
-  assert.match(
-    work,
-    /Before that authorization charges an attempt, records a pending entry, or permits implementation dispatch[\s\S]*one new verification and one new independent review[\s\S]*one lint capture[\s\S]*one current-run capture[\s\S]*Guarded completion emits no new inspection capture[\s\S]*absent optional session is never reserved/i,
-  );
-  assert.match(
-    work,
-    /refusal returns `evidence-incomplete`[\s\S]*state, counters, pending entries, and completed tuples unchanged[\s\S]*no task or lane write[\s\S]*guarantees no future byte size/i,
-  );
+  assert.deepEqual(missingParagraphRequirements(work, [
+    ['complete inventory and independent raw source accounting', [
+      /ceiling of 999 direct `\.dude\/ideas` children/i,
+      /1,000th entry refuses before its name or any candidate body is read/i,
+      /exact ownership costs one owner source/i,
+      /independent 64-source-entry budget/i,
+      /autonomous `definition-plan` source/i,
+      /each tracked issue acquisition/i,
+      /each supplied capture/i,
+      /optional supplied session/i,
+      /before any capture is decoded, normalized, or shared/i,
+    ]],
+    ['derived item bound and unavailable original descriptors', [
+      /independent 64-retained-descriptor budget includes unavailable descriptors/i,
+      /physical items <= available original occurrences <= original retained descriptors <= 64/,
+      /no separate 16-item veto/i,
+      /\{items:64,bytes:131072\}/,
+      /16 checks per attestation/i,
+    ]],
+    ['mandatory headroom before authorization changes state', [
+      /Before that authorization charges an attempt, records a pending entry, or permits implementation dispatch/i,
+      /raw-source and original-descriptor headroom/i,
+      /one new verification and one new independent review/i,
+      /lint when `requiredChecksForAction` includes it/i,
+      /current-run when that stream is absent/i,
+      /placeholder replacement adds no descriptor/i,
+      /independent append adds one/i,
+      /absent current-run adds both/i,
+      /Never assume a future payload will equal/i,
+      /Guarded completion reserves nothing/i,
+      /absent optional session is never reserved/i,
+      /source exhaustion precedes descriptor exhaustion/i,
+      /earlier eligibility, authority, learning, and resource gates keep their precedence/i,
+      /state, counters, pending entries, and completed tuples unchanged/i,
+      /no task or lane write/i,
+      /Count admission promises no future byte fit/i,
+    ]],
+    ['lossless complete model evidence with only the established owner suffix', [
+      /`dude-work-model-view-v1`/i,
+      /self-contained lossless projection/i,
+      /exact, complete, validated verification or review payloads/i,
+      /every ordered occurrence, original descriptor, and authority binding/i,
+      /full validated evidence set before measuring any prefix or owner suffix/i,
+      /all other metadata/i,
+      /machine Inspection, captured bytes and hashes/i,
+      /task and current-run bodies stay literal/i,
+      /maximal whole-event suffix/i,
+      /omitted owner events are not inspected text/i,
+      /do not prune or retire history or create persistent compaction state/i,
+    ]],
+  ]), []);
 
   for (const exact of [
     '`6,291,456` bytes for the complete encoded CLI request',
@@ -3089,11 +3133,65 @@ test('Feature 061 capacity guidance keeps inventory, source, admission, and diag
     '`64` total source entries per inspection',
     '`64` total retained evidence descriptors per inspection',
     '`8,192` UTF-8 bytes for a deterministic error response',
-    '`16` items and\n`131,072` canonical bytes',
+    '`{items:64,bytes:131072}`',
+    '`physical items <= available original occurrences <= original retained descriptors <= 64`',
   ]) {
     assert.ok(commands.includes(exact), `commands retain exact capacity text: ${exact}`);
   }
-  assert.doesNotMatch(commands, /`65,536` canonical bytes/);
+  assert.deepEqual(missingParagraphRequirements(commands, [
+    ['self-contained complete model projection', [
+      /`dude-work-model-view-v1`/, /self-contained/i, /lossless/i,
+      /exact, complete, validated verification or review payloads/i,
+      /Every original byte, descriptor, ordered occurrence, and authority binding/i,
+      /Task and current-run histories stay complete and literal/i,
+    ]],
+    ['whole canonical packet charged independently of attestation checks', [
+      /entire canonical packet/i, /format, payloads, frames, descriptors, bindings, and other metadata/i,
+      /`131,072` bytes/, /`16` checks per attestation/i, /finite limits/i,
+    ]],
+    ['raw source and original-descriptor completion demand', [
+      /Before authorization changes an attempt counter/i,
+      /raw source and original-descriptor headroom/i,
+      /replacing an empty placeholder adds no descriptor/i,
+      /independent append adds one/i,
+      /absent current-run adds both/i,
+      /never assumes future payload equality/i,
+      /Guarded completion reserves nothing/i,
+      /absent optional session is never reserved/i,
+    ]],
+    ['source precedence and unchanged refusal state', [
+      /source exhaustion precedes descriptor exhaustion/i,
+      /earlier eligibility, authority, learning, and resource gates keep their order/i,
+      /accepted state, counters, pending entries, and completed tuples unchanged/i,
+      /no task or lane write/i, /no future byte fit/i,
+    ]],
+  ]), []);
+  assert.deepEqual(missingParagraphRequirements(runtime, [
+    ['exact known Lightweight growth before usable permits', [
+      /autonomous Lightweight permit becomes usable/i,
+      /every fully known remaining lane-first prefix and receipt footprint/i,
+      /complete original acquisitions and accumulated captures before owner-log projection/i,
+      /same exact postimages as the lane writer/i,
+      /bounded private batch capsule/i,
+      /application freshly reacquires and rederives/i,
+      /released on consumption, supersession, or end/i,
+      /Predicted bytes are never observed authority/i,
+      /Unknown tracked postimages gain no prediction/i,
+      /`model-packet-bytes`/, /131,072/,
+    ]],
+    ['lane-first publication and observed receipt input', [
+      /stages the exact next current-run record privately/i,
+      /freshly prechecked lane application/i,
+      /publishes that same staged record/i,
+      /fresh runtime input that observes both updated retained surfaces/i,
+      /`authorityObservation` does not see the staged record before publication/i,
+      /one-sided lane evidence/i, /accepted predecessor/i,
+      /no retry, takeover, acceptance, or close/i,
+    ]],
+  ]), []);
+  for (const section of [work, runtime, commands]) {
+    assert.doesNotMatch(section, /model-packet-items|`16` items and|`65,536` canonical bytes/);
+  }
   assert.match(
     commands,
     /capacity refusal names the exhausted budget, its fixed limit, the measured or[\s\S]*first-crossing demand[\s\S]*runtime-established facts/i,
@@ -3108,6 +3206,167 @@ test('Feature 061 capacity guidance keeps inventory, source, admission, and diag
   );
   assert.ok(commands.includes('`{"error":{"code","message"}}`'));
   assert.match(commands, /code `recovery-resource-limit`/i);
+});
+
+const WORK_CAPACITY_TARGET = {
+  specPath: '.dude/specs/001-capacity/spec.md',
+  lane: 'lightweight',
+  taskKey: 'T001@abcdef12',
+};
+
+/** @param {string} text */
+function workLiteral(text) {
+  return { source: 'current-run', required: false, status: 'present', text, ...workRuntime.contentDescriptor(text) };
+}
+
+test('Work delivery exports the derived 64-item bound and counts unavailable original descriptors', () => {
+  assert.deepEqual(workRuntime.limits, { items: 64, bytes: 131_072 });
+  for (const count of [15, 16, 17, 63, 64]) {
+    const inspection = workRuntime.buildInspection(WORK_CAPACITY_TARGET, Array.from(
+      { length: count }, (_, index) => workLiteral(`complete literal ${index}`),
+    ));
+    const packet = workRuntime.modelPacket(inspection);
+    assert.ok(packet);
+    assert.equal(packet.items.length, count);
+    assert.equal(inspection.items.length, count);
+    assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+  }
+  const unavailable = Array.from({ length: 65 }, (_, index) => ({
+    source: 'session', required: false, status: 'nontext',
+    ...workRuntime.contentDescriptor(`unavailable ${index}`),
+  }));
+  for (const count of [63, 64]) {
+    const inspection = workRuntime.buildInspection(WORK_CAPACITY_TARGET, unavailable.slice(0, count));
+    assert.equal(inspection.items.length, count);
+    assert.deepEqual(workRuntime.modelPacket(inspection)?.items, []);
+  }
+  assert.throws(() => workRuntime.buildInspection(WORK_CAPACITY_TARGET, unavailable), error => {
+    assert.deepEqual(workRuntime.capacityDiagnostic(error), {
+      budget: 'retained-descriptors', limit: 64, required: 65, source: 'session', target: null,
+    });
+    return true;
+  });
+});
+
+test('Work delivery charges raw source entries before normalization or payload sharing', () => {
+  withReferenceWorkspace(({ input }) => {
+    const target = workRuntime.canonicalTarget(input.target);
+    const capture = workRuntime.currentRunCapture(target, [{ substantive: { fixture: 'raw source control' } }]);
+    for (const count of [63, 64, 65]) {
+      const candidate = {
+        ...input,
+        currentRun: Array.from({ length: count - 4 }, () => capture),
+        verification: [], review: [], lint: [],
+      };
+      if (count <= 64) {
+        const inspection = workRuntime.inspect(candidate);
+        assert.equal(inspection.overflow, false);
+        assert.equal(inspection.items.filter(item => item.source === 'current-run').length, 1);
+        assert.ok(workRuntime.modelPacket(inspection));
+      } else {
+        candidate.currentRun[count - 5] = { ...capture, bytes: Buffer.from('not valid capture JSON') };
+        assert.throws(() => workRuntime.inspect(candidate), error => {
+          assert.deepEqual(workRuntime.capacityDiagnostic(error), {
+            budget: 'source-entries', limit: 64, required: 65, source: 'current-run', target,
+          });
+          return true;
+        });
+      }
+    }
+  });
+});
+
+test('Work delivery emits the complete closed packet with reversible trusted frames and original bytes', () => {
+  withReferenceWorkspace(({ root, input, filePreimages }) => {
+    const request = { trigger: 'explicit-inspection', input };
+    const response = workRuntime.runCommand('inspect', request);
+    assert.deepEqual(Object.keys(response), ['inspection']);
+    assert.equal(workRuntime.validateRecoveryRuntimeResultV1('inspect', request, response), true);
+    const inspection = response.inspection;
+    const packet = workRuntime.modelPacket(inspection);
+    assert.ok(packet);
+    assert.equal(packet.format, 'dude-work-model-view-v1');
+    assert.deepEqual(Object.keys(packet).sort(), ['format', 'items', 'target']);
+    assert.deepEqual(new Set(packet.items.map(item => item.tag)), new Set(['literal', 'verification', 'review']));
+    const expanded = expandModelPacket(packet);
+    assert.deepEqual(expanded, originalAvailableProjection(inspection));
+    assert.ok(packet.items.length <= expanded.items.length);
+    assert.ok(expanded.items.length <= inspection.items.length);
+    assert.ok(inspection.items.length <= workRuntime.limits.items);
+    assert.ok(Buffer.byteLength(workRuntime.canonicalJson(packet)) <= workRuntime.limits.bytes);
+    assert.deepEqual(workRuntime.modelPacket(workRuntime.buildInspection(inspection.target, inspection.items)), packet);
+    for (const [relative, bytes] of filePreimages) {
+      assert.deepEqual(fs.readFileSync(path.join(root, relative)), bytes, relative);
+    }
+  });
+});
+
+test('Work delivery charges complete canonical packet bytes and preserves descriptor-only late overflow', () => {
+  const initial = 'x'.repeat(130_000);
+  const initialPacket = workRuntime.modelPacket(workRuntime.buildInspection(WORK_CAPACITY_TARGET, [workLiteral(initial)]));
+  assert.ok(initialPacket);
+  const padding = workRuntime.limits.bytes - Buffer.byteLength(workRuntime.canonicalJson(initialPacket));
+  const exact = initial + 'x'.repeat(padding);
+  for (const delta of [-1, 0, 1]) {
+    const text = delta < 0 ? exact.slice(0, -1) : exact + 'x'.repeat(delta);
+    const inspection = workRuntime.buildInspection(WORK_CAPACITY_TARGET, [workLiteral(text)]);
+    const packet = workRuntime.modelPacket(inspection);
+    assert.equal(inspection.overflow, delta > 0);
+    if (delta <= 0) {
+      assert.ok(packet);
+      assert.equal(Buffer.byteLength(workRuntime.canonicalJson(packet)), 131_072 + delta);
+      assert.ok(Buffer.byteLength(text) < 131_072, 'packet metadata consumes byte capacity too');
+    } else {
+      assert.equal(packet, null);
+      assert.ok(inspection.items.every(item => !Object.hasOwn(item, 'text')));
+      assert.deepEqual(inspection.blockers, [{
+        code: 'evidence-incomplete', subject: 'model-packet', evidenceHash: inspection.evidenceHash,
+      }]);
+    }
+  }
+});
+
+test('Work delivery capacity diagnostics retain their closed shape and exact fixed budget kinds', () => {
+  for (const [budget, limit, source] of [
+    ['idea-inventory-entries', 999, '.dude/ideas'],
+    ['source-entries', 64, 'current-run'],
+    ['source-body-bytes', 1_048_576, 'verification'],
+    ['inspection-body-bytes', 4_194_304, 'owner-log'],
+    ['cli-request-bytes', 6_291_456, 'cli-request'],
+    ['retained-descriptors', 64, 'model-packet'],
+    ['model-packet-bytes', 131_072, 'model-packet'],
+  ]) {
+    const diagnostic = {
+      budget, limit, required: Number(limit) + 1, source,
+      target: workRuntime.canonicalTarget(WORK_CAPACITY_TARGET),
+    };
+    assert.deepEqual(workRuntime.validateCapacityDiagnostic(diagnostic), diagnostic);
+    assert.equal(workRuntime.validateCapacityDiagnostic({ ...diagnostic, limit: Number(limit) + 1 }), null);
+    assert.equal(workRuntime.validateCapacityDiagnostic({ ...diagnostic, extra: true }), null);
+  }
+  for (const limit of [16, 64]) {
+    assert.equal(workRuntime.validateCapacityDiagnostic({
+      budget: 'model-packet-items', limit, required: limit + 1, source: 'model-packet', target: null,
+    }), null);
+  }
+});
+
+test('Work delivery retains the separate sixteen-check attestation ceiling', () => {
+  const episode = readRetentionEpisodeFixture().value;
+  const input = {
+    target: WORK_CAPACITY_TARGET, episode, ordinal: 1,
+    authorizationEvidenceHash: workRuntime.sha256('delivery attestation fixture'),
+  };
+  const pair = buildRetentionPair(input);
+  assert.equal(pair.verification.checks.length, 16);
+  const excessive = structuredClone(episode);
+  excessive.payload.specialistResult.verification.checks.push({
+    definition: 'delivery-check-17', outcome: 'passed', evidence: 'fixture assertion only',
+  });
+  assert.throws(
+    () => buildRetentionPair({ ...input, episode: excessive }),
+    /must contain 1 through 16 rows/,
+  );
 });
 
 test('T007 recovery-specific always-loaded prompt proxy is deterministic and bounded', () => {
@@ -6569,14 +6828,38 @@ const CONTINUITY_DOC_REQUIREMENTS = {
   ],
 };
 
-/** @param {string} relative @param {string} heading */
-function continuityDocPointer(relative, heading) {
-  const paragraphs = markdownSection(read(relative), heading)
+/** @param {string} relative @param {string} heading @param {string} [source] */
+function continuityDocPointer(relative, heading, source = read(relative)) {
+  const paragraphs = markdownSection(source, heading)
     .split(/\n\s*\n/)
-    .filter((paragraph) => /\bhalts?\b/i.test(paragraph));
-  assert.equal(paragraphs.length, 1, `${relative} ${heading}: exactly one halt paragraph`);
+    .filter((paragraph) => /\bhalts?\b/i.test(paragraph)
+      && /\b(?:autonomous|unattended)\b/i.test(paragraph)
+      && /\b(?:ready work|loop)\b/i.test(paragraph));
+  assert.equal(paragraphs.length, 1, `${relative} ${heading}: exactly one unattended-continuity paragraph`);
   return unwrappedParagraphs(paragraphs[0]);
 }
+
+test('Work delivery distinguishes overflow reporting from the unattended-continuity pointer', () => {
+  const relative = 'docs/commands.md';
+  const heading = '### `@dude work`';
+  const source = read(relative);
+  const pointer = continuityDocPointer(relative, heading, source);
+  const paragraphs = markdownSection(source, heading).split(/\n\s*\n/);
+  const policy = paragraphs.find(paragraph => unwrappedParagraphs(paragraph) === pointer);
+  const overflow = paragraphs.find(paragraph => paragraph.startsWith('Model-packet overflow'));
+  assert.ok(policy);
+  assert.ok(overflow);
+  assert.match(overflow, /halt\s+report bound to that fresh Inspection/);
+  assert.deepEqual(missingParagraphRequirements(pointer, CONTINUITY_DOC_REQUIREMENTS[relative]), []);
+  assert.throws(
+    () => continuityDocPointer(relative, heading, source.replace(policy, '')),
+    /exactly one unattended-continuity paragraph/,
+  );
+  assert.throws(
+    () => continuityDocPointer(relative, heading, source.replace(policy, `${policy}\n\n${policy}`)),
+    /exactly one unattended-continuity paragraph/,
+  );
+});
 
 test('T004 the unattended continuity discipline lives only in the Work owner', () => {
   for (const relative of [CONTINUITY_OWNER, ...CONTINUITY_POINTER_SURFACES]) {

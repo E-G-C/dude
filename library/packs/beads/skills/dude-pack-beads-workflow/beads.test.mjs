@@ -14,10 +14,11 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { canonicalJson, sha256 } from '../../../../../src/skills/dude-work/recovery.mjs';
+import { buildRelease } from '../../../../../scripts/build-release.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../../../../..');
-const engineSrc = path.join(repo, '.github', 'skills', 'dude-engine');
+const engineSrc = path.join(repo, 'src', 'skills', 'dude-engine');
 const recoverySrc = path.join(repo, 'src', 'skills', 'dude-work', 'recovery.mjs');
 const beadsSrc = path.join(here, 'beads.mjs');
 const SPEC_PATH = '.dude/specs/001-x/spec.md';
@@ -735,6 +736,48 @@ test('beads.mjs resolves the core engine post-install and plans an import', () =
     assert.ok(plan.commands.some((c) => c.startsWith('# dependencies')));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('beads composition loads shared recovery and postimage dependencies from the delivered core', async () => {
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-beads-composed-'));
+  const root = path.join(sandbox, 'bundle');
+  try {
+    buildRelease({ repoRoot: repo, outDir: root, ref: 'v0.0.0-fixture' });
+    assert.equal(fs.existsSync(path.join(root, '.github/skills/dude-pack-beads-workflow/beads.test.mjs')), false);
+    const { cmdAdd } = await import(pathToFileURL(path.join(root, '.github/skills/dude-compose/compose.mjs')).href);
+    const added = await cmdAdd({
+      root, library: path.join(repo, 'library/packs'), name: 'beads', force: false, fetch: false,
+    });
+    assert.equal(added.ok, true, added.error);
+    const file = writeFixture(root, SPEC_PATH.replace(/spec\.md$/, 'tasks.md'), FIXTURE);
+    writeFixture(root, SPEC_PATH, '# Spec X\n');
+    writeFixture(root, IDEA_PATH, ideaLedger());
+    const emptyBd = writeFixture(root, 'empty-bd-list.json', '[]\n');
+    const script = path.join(root, '.github/skills/dude-pack-beads-workflow/beads.mjs');
+    for (const [source, deployed] of [
+      [beadsSrc, script],
+      [recoverySrc, path.join(root, '.github/skills/dude-work/recovery.mjs')],
+      ...['tasks.mjs', 'task-state.mjs', 'lightweight-work-postimage.mjs'].map(filename => [
+        path.join(engineSrc, 'lib', filename), path.join(root, '.github/skills/dude-engine/lib', filename),
+      ]),
+    ]) {
+      assert.deepEqual(fs.readFileSync(deployed), fs.readFileSync(source), deployed);
+    }
+    assert.equal(fs.existsSync(path.join(root, '.github/skills/dude-work/recovery.test.mjs')), false);
+    const result = runNode(script, ['plan-import', file, '--spec', SPEC_PATH, '--root', root, '--from', emptyBd, '--json']);
+    assert.equal(result.code, 0, result.out);
+    const plan = JSON.parse(result.out);
+    assert.equal(plan.idea_path, IDEA_PATH);
+    assert.deepEqual(plan.skipped_done, ['T001@aaaaaaaa']);
+    assert.deepEqual(plan.issues.map(issue => issue.key).sort(), ['T002@bbbbbbbb', 'T003@cccccccc', 'T004@dddddddd']);
+    assert.ok(plan.deps.some(edge => edge.from === 'T003@cccccccc' && edge.to === 'T002@bbbbbbbb'));
+    const recovery = await import(pathToFileURL(path.join(root, '.github/skills/dude-work/recovery.mjs')).href);
+    assert.deepEqual(recovery.limits, { items: 64, bytes: 131_072 });
+    const leaf = fs.readFileSync(path.join(root, '.github/skills/dude-engine/lib/lightweight-work-postimage.mjs'), 'utf8');
+    assert.doesNotMatch(leaf, /from ['"][^'"]*(?:dude-work|recovery\.mjs|board\.mjs)/);
+  } finally {
+    fs.rmSync(sandbox, { recursive: true, force: true });
   }
 });
 

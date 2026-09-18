@@ -14,6 +14,7 @@ import {
   completeAttempt,
   buildGovernanceEventV1,
   capacityDiagnostic,
+  capturedBytesV1,
   deriveGovernanceRuntimeRequestV1,
   normalizeIndependentReviewEnvelopeV2,
   normalizeVerificationEnvelopeV2,
@@ -1760,7 +1761,20 @@ function advanceGovernance(session, request, invoke) {
 
 /** One adapter worker's replay seal over the lane permits it issued itself. */
 function createLaneLedger() {
-  return { permits: new Map() };
+  /** @type {Map<string,{stage:string,permit:Record<string,unknown>,receipt:Record<string,unknown>|null,preparation:{request:Record<string,unknown>,inspectionIdentity:unknown}|null}>} */
+  const permits = new Map();
+  return {
+    permits,
+    /** @param {{request:Record<string,unknown>,inspectionIdentity:unknown}|null} [preparation] */
+    release(preparation) {
+      for (const entry of permits.values()) {
+        if (entry.preparation === null
+          || (preparation !== undefined && entry.preparation !== preparation)) continue;
+        entry.preparation = null;
+        if (entry.stage === 'issued') entry.stage = 'superseded';
+      }
+    },
+  };
 }
 
 /** @param {unknown} value @param {string} label */
@@ -1773,6 +1787,16 @@ function laneEffectPermit(value, label) {
   );
 }
 
+/** @param {unknown} value @param {unknown} expectedValue */
+function matchesLaneCapture(value, expectedValue) {
+  const capture = exactRecord(value, ['base64', 'sha256', 'byteLength'], [], 'lane application capture');
+  const expected = record(expectedValue, 'prepared lane descriptor');
+  if (typeof capture.base64 !== 'string'
+    || capture.sha256 !== expected.sha256 || capture.byteLength !== expected.byteLength
+    || capture.base64.length !== 4 * Math.ceil(/** @type {number} */ (expected.byteLength) / 3)) return false;
+  return canonicalJson(capture) === canonicalJson(capturedBytesV1(Buffer.from(capture.base64, 'base64')));
+}
+
 /** @param {Record<string, unknown>} session @param {Record<string, unknown>} request @param {(command:string, request:unknown)=>unknown} invoke @param {ReturnType<typeof createLaneLedger>} ledger */
 function prepareAuthoritativeProjection(session, request, invoke, ledger) {
   if (session.pendingEffect === null) return hardStop(session, 'pending-effect-missing');
@@ -1781,7 +1805,7 @@ function prepareAuthoritativeProjection(session, request, invoke, ledger) {
   const binding = Object.hasOwn(projection, 'laneBinding')
     ? /** @type {Record<string, unknown>} */ (projection.laneBinding)
     : null;
-  const top = exactRecord(invoke('transition', {
+  const preparationRequest = {
     mode: 'prepare-projection',
     state: clone(effect.provisionalState),
     input: projection.input,
@@ -1791,7 +1815,9 @@ function prepareAuthoritativeProjection(session, request, invoke, ledger) {
       targetMapping: binding.targetMapping,
       operationTime: binding.operationTime,
     }),
-  }), ['inspection', 'transition'], [], 'recovery projection preparation response');
+  };
+  const top = exactRecord(invoke('transition', preparationRequest),
+    ['inspection', 'transition'], [], 'recovery projection preparation response');
   requireSessionInspection(
     /** @type {Record<string, unknown>} */ (top.inspection),
     session,
@@ -1832,6 +1858,8 @@ function prepareAuthoritativeProjection(session, request, invoke, ledger) {
       const items = denseArray(plan.items, 'recovery projection preparation response.transition.plan.items');
       const events = /** @type {Record<string, unknown>[]} */ (batch.events);
       if (items.length !== events.length) invalid('projection plan', 'must cover the exact pending batch');
+      /** @type {Record<string, unknown>[]} */
+      const permits = [];
       for (let index = 0; index < items.length; index += 1) {
         const item = record(items[index], `projection plan item[${index}]`);
         const permit = laneEffectPermit(item.projectionPermit, `projection plan item[${index}].projectionPermit`);
@@ -1849,11 +1877,26 @@ function prepareAuthoritativeProjection(session, request, invoke, ledger) {
         if (prior && canonicalJson(prior.permit) !== canonicalJson(permit)) {
           invalid('projection plan item', 'must not conflict with an admitted permit');
         }
-        if (!prior) {
+        permits.push(permit);
+      }
+      // One bounded frozen capsule is shared by the batch, not copied per
+      // permit. Only its small replay seals survive a consumed/superseded batch.
+      const preparation = {
+        request: /** @type {Record<string, unknown>} */ (
+          freezeData(detachedData(preparationRequest, 'lane preparation'))
+        ),
+        inspectionIdentity: /** @type {Record<string, unknown>} */ (top.inspection).evidenceHash,
+      };
+      Object.freeze(preparation);
+      ledger.release();
+      for (const permit of permits) {
+        const prior = ledger.permits.get(/** @type {string} */ (permit.permitHash));
+        if (!prior || prior.stage === 'superseded') {
           ledger.permits.set(/** @type {string} */ (permit.permitHash), {
             stage: 'issued',
             permit: clone(permit),
             receipt: null,
+            preparation,
           });
         }
       }
@@ -1868,14 +1911,16 @@ function prepareAuthoritativeProjection(session, request, invoke, ledger) {
 function authorizeLaneEffect(session, request, invoke, ledger) {
   if (session.pendingEffect !== null) return effectRequired(session, 'effect-unsettled');
   const laneEffect = /** @type {Record<string, unknown>} */ (request.laneEffect);
-  const top = exactRecord(invoke('transition', {
+  const preparationRequest = {
     mode: 'issue-lane-permit',
     state: JSON.parse(/** @type {string} */ (session.acceptedStateBytes)),
     input: laneEffect.input,
     mutation: laneEffect.mutation,
     lanePrestate: laneEffect.lanePrestate,
     targetMapping: laneEffect.targetMapping,
-  }), ['inspection', 'transition'], [], 'recovery lane permit response');
+  };
+  const top = exactRecord(invoke('transition', preparationRequest),
+    ['inspection', 'transition'], [], 'recovery lane permit response');
   requireSessionInspection(
     /** @type {Record<string, unknown>} */ (top.inspection),
     session,
@@ -1920,10 +1965,19 @@ function authorizeLaneEffect(session, request, invoke, ledger) {
     return hardStop(session, 'lane-permit-replayed');
   }
   // No local cap: every permit insert trails a retained probe insert on the same handle-stable authority, so the probe ceiling bounds permits at the same MAX_GRAPH_ENTRIES.
+  const preparation = {
+    request: /** @type {Record<string, unknown>} */ (
+      freezeData(detachedData(preparationRequest, 'lane preparation'))
+    ),
+    inspectionIdentity: /** @type {Record<string, unknown>} */ (top.inspection).evidenceHash,
+  };
+  Object.freeze(preparation);
+  ledger.release();
   ledger.permits.set(/** @type {string} */ (permit.permitHash), {
     stage: 'issued',
     permit: clone(permit),
     receipt: null,
+    preparation,
   });
   return acceptState(session, successor.state, 'lane-permit-issued', false, {
     kind: 'lane-permit',
@@ -1936,8 +1990,9 @@ function authorizeLaneEffect(session, request, invoke, ledger) {
  * No board command line and no direct file edit is reachable from here.
  * @param {Record<string, unknown>} session @param {Record<string, unknown>} request
  * @param {ReturnType<typeof trustedPorts>} ports @param {ReturnType<typeof createLaneLedger>} ledger
+ * @param {(command:string, request:unknown)=>unknown} invoke
  */
-function applyLaneEffect(session, request, ports, ledger) {
+function applyLaneEffect(session, request, ports, ledger, invoke) {
   if (/** @type {Record<string, unknown>} */ (session.target).lane !== 'lightweight') {
     return hardStop(session, 'lane-owner-unavailable');
   }
@@ -1980,6 +2035,71 @@ function applyLaneEffect(session, request, ports, ledger) {
   if (canonicalJson(entry.permit) !== canonicalJson(permit)
     || permit.subjectRunStateHash !== subjectStateHash
     || permit.mutationIdentity !== sha256(canonicalJson(application.mutation))) {
+    return hardStop(session, 'lane-permit-binding-mismatch');
+  }
+  const preparation = entry.preparation;
+  if (preparation === null) return hardStop(session, 'lane-permit-replayed');
+  const preparedInput = /** @type {Record<string, unknown>} */ (preparation.request.input);
+  if (application.root !== preparedInput.root
+    || canonicalJson(application.mapping) !== canonicalJson(preparation.request.targetMapping)
+    || sha256(canonicalJson(preparation.request.lanePrestate)) !== permit.lanePrestateHash
+    || sha256(canonicalJson(preparation.request.state)) !== subjectStateHash) {
+    return hardStop(session, 'lane-permit-binding-mismatch');
+  }
+  try {
+    const owner = exactRecord(application.owner,
+      ['ideaPath', 'specPath', 'ownerCapture', 'ownerBindingHash'], [], 'lane application owner');
+    const expected = exactRecord(application.expected,
+      ['tasksPath', 'tasks', 'taskStatePath', 'taskState'], [], 'lane application expected');
+    const mapping = /** @type {Record<string, unknown>} */ (preparation.request.targetMapping);
+    const prestate = /** @type {Record<string, unknown>} */ (preparation.request.lanePrestate);
+    if (!matchesLaneCapture(owner.ownerCapture, prestate.ownerDescriptor)) {
+      return hardStop(session, 'lane-permit-binding-mismatch');
+    }
+    const ownerDescriptor = prestate.ownerDescriptor;
+    const ownerBindingHash = sha256(canonicalJson({
+      ideaPath: owner.ideaPath, specPath: owner.specPath, ownerCapture: ownerDescriptor,
+    }));
+    if (owner.specPath !== /** @type {Record<string, unknown>} */ (session.target).specPath
+      || owner.ownerBindingHash !== ownerBindingHash || ownerBindingHash !== mapping.ownerBindingHash
+      || expected.tasksPath !== mapping.tasksPath || expected.taskStatePath !== mapping.taskStatePath) {
+      return hardStop(session, 'lane-permit-binding-mismatch');
+    }
+    for (const [field, descriptor] of [
+      ['tasks', mapping.tasksDescriptor], ['taskState', mapping.taskStateDescriptor],
+    ]) {
+      if (!matchesLaneCapture(expected[/** @type {string} */ (field)], descriptor)) {
+        return hardStop(session, 'lane-permit-binding-mismatch');
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    return hardStop(session, 'lane-permit-binding-mismatch');
+  }
+  const fresh = exactRecord(
+    invoke('transition', { ...preparation.request, state: clone(subjectState) }),
+    ['inspection', 'transition'], [], 'recovery lane application precheck',
+  );
+  requireSessionInspection(
+    /** @type {Record<string, unknown>} */ (fresh.inspection), session,
+    'recovery lane application precheck.inspection',
+  );
+  const transition = record(fresh.transition, 'recovery lane application precheck.transition');
+  if (transition[projection ? 'prepared' : 'issued'] !== true) {
+    return closedIncident(session, 'apply-lane-effect', 'evidence-drift', /** @type {string} */ (transition.reason));
+  }
+  if (/** @type {Record<string, unknown>} */ (fresh.inspection).evidenceHash !== preparation.inspectionIdentity) {
+    return closedIncident(session, 'apply-lane-effect', 'evidence-drift', 'inspection-stale');
+  }
+  const plan = projection ? record(transition.plan, 'recovery lane application precheck.plan') : null;
+  const item = plan
+    ? denseArray(plan.items, 'recovery lane application precheck.plan.items')
+      .find(candidate => candidate.eventHash === permit.eventHash)
+    : null;
+  if ((projection && !item)
+    || canonicalJson(projection ? item.projectionPermit : transition.permit) !== canonicalJson(permit)
+    || (projection && canonicalJson(item.mutation) !== canonicalJson(application.mutation))
+    || (!projection && canonicalJson(preparation.request.mutation) !== canonicalJson(application.mutation))) {
     return hardStop(session, 'lane-permit-binding-mismatch');
   }
   const laneRequest = freezeData({
@@ -2032,6 +2152,7 @@ function applyLaneEffect(session, request, ports, ledger) {
   }
   entry.stage = 'applied';
   entry.receipt = clone(receipt);
+  ledger.release(preparation);
   if (projection) {
     return effectRequired(
       session,
@@ -3794,9 +3915,19 @@ function invokeRuntime(ports, session, semanticOperation, command, request) {
       'empty-value',
     );
   }
+  let overflow = false;
   try {
-    validateRecoveryRuntimeResultV1(command, request, envelope.value);
-    return envelope.value;
+    validateRecoveryRuntimeResultV1(command, lowLevelRequest, envelope.value);
+    const value = record(envelope.value, 'host runtime result.value');
+    if (Object.hasOwn(value, 'inspection')
+      && record(value.inspection, 'host runtime result.inspection').overflow === true) {
+      requireSessionInspection(
+        /** @type {Record<string, unknown>} */ (value.inspection),
+        session,
+        'host runtime result.inspection',
+      );
+      overflow = true;
+    }
   } catch {
     throw classifiedRuntimeIncident(
       ports,
@@ -3807,6 +3938,27 @@ function invokeRuntime(ports, session, semanticOperation, command, request) {
       'non-authoritative',
     );
   }
+  if (overflow) {
+    // A validated overflow intentionally has no operation body. An injected
+    // port must also prove no effect before it can carry this evidence stop.
+    const refusal = new RuntimeIncident(
+      'tool-contract',
+      'evidence-incomplete',
+      runtimeObservationIdentity(envelope, 'returned'),
+    );
+    if (ports.runtimeIsDefault) throw refusal;
+    const incident = classifiedRuntimeIncident(
+      ports,
+      probe,
+      'malformed-output',
+      'runtime-output-malformed',
+      envelope,
+      'returned',
+    );
+    if (incident.provenNoEffect) throw refusal;
+    throw incident;
+  }
+  return envelope.value;
 }
 
 /** @param {Record<string, unknown>} session @param {unknown} requestValue @param {ReturnType<typeof trustedPorts>} ports @param {{beginOperation:(session:Record<string, unknown>, operation:string, request:Record<string, unknown>)=>{session?:Record<string, unknown>, reason?:string}}|null} [host] @param {ReturnType<typeof createLaneLedger>} [ledger] */
@@ -3861,7 +4013,7 @@ function runOperation(session, requestValue, ports, host = null, ledger = create
     if (request.operation === 'authorize-lane-effect') {
       return authorizeLaneEffect(workingSession, request, invoke, ledger);
     }
-    if (request.operation === 'apply-lane-effect') return applyLaneEffect(workingSession, request, ports, ledger);
+    if (request.operation === 'apply-lane-effect') return applyLaneEffect(workingSession, request, ports, ledger, invoke);
     if (request.operation === 'commit-lane-receipt') {
       return commitLaneReceipt(workingSession, request, invoke, ledger);
     }
@@ -3994,6 +4146,7 @@ function hostAdapterHandle(session, ports, checkpointHost, ownershipReport) {
 
   /** @param {Record<string, unknown>} stopped @param {string} reason */
   function fail(stopped, reason) {
+    ledger.release();
     if (host) ownership = ownershipDiagnostic(host.checkpointKey, null, reason);
     const result = /** @type {Record<string, unknown>} */ (hardStop(stopped, reason));
     current = /** @type {Record<string, unknown>} */ (result.session);
@@ -4020,12 +4173,18 @@ function hostAdapterHandle(session, ports, checkpointHost, ownershipReport) {
         const failure = host.settle(next);
         if (failure) return fail(next, failure);
       }
+      if (next.status !== 'active' || current.acceptedStateHash !== next.acceptedStateHash
+        || /** @type {Record<string, unknown>|null} */ (current.pendingEffect)?.effectIdentity
+          !== /** @type {Record<string, unknown>|null} */ (next.pendingEffect)?.effectIdentity) {
+        ledger.release();
+      }
       current = next;
       return validateHostAdapterResult(result);
     },
     end(reasonValue) {
       enumeration(reasonValue, END_REASONS, 'host adapter end reason');
       const reason = /** @type {string} */ (reasonValue);
+      ledger.release();
       if (current.status === 'ended') return terminalResult(current);
       if (current.status === 'hard-stop' && reason !== 'hard-stop-recorded') return terminalResult(current);
       if (host) {

@@ -5,6 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -360,7 +361,7 @@ test('parseArgs flags unknown arguments and parses release options', () => {
   assert.equal(args.repo, 'r');
 });
 
-test('buildRelease preserves unrelated source bytes and excludes source tests', () => {
+test('buildRelease preserves unrelated source bytes and excludes source tests', async () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-rel-source-parity-'));
   try {
     const result = buildRelease({ repoRoot, outDir, ref: 'v0.0.0' });
@@ -369,13 +370,54 @@ test('buildRelease preserves unrelated source bytes and excludes source tests', 
     assert.equal(fs.statSync(path.join(repoRoot, RECOVERY_TEST_SOURCE_REL)).isFile(), true);
     for (const [sourceRel, deployRel] of [
       [RECOVERY_SOURCE_REL, RECOVERY_DEPLOY_REL],
+      ['src/skills/dude-engine/lib/lightweight-work-postimage.mjs', '.github/skills/dude-engine/lib/lightweight-work-postimage.mjs'],
+      ['src/skills/dude-lightweight-execution/board.mjs', '.github/skills/dude-lightweight-execution/board.mjs'],
       ...T007_PROJECTION_PAIRS,
     ]) {
+      assert.ok(result.files.includes(deployRel), deployRel);
       assert.deepEqual(
         fs.readFileSync(path.join(outDir, ...deployRel.split('/'))),
         fs.readFileSync(path.join(repoRoot, ...sourceRel.split('/'))),
         `${deployRel} must be byte-identical to ${sourceRel}`,
       );
+    }
+    /** @type {Set<string>} */
+    const visited = new Set();
+    /** @type {Set<string>} */
+    const visiting = new Set();
+    /** @param {string} absolute */
+    const checkImports = absolute => {
+      assert.equal(visiting.has(absolute), false, `cyclic release import: ${absolute}`);
+      if (visited.has(absolute)) return;
+      visiting.add(absolute);
+      const text = fs.readFileSync(absolute, 'utf8');
+      for (const [, specifier] of text.matchAll(/(?:\bfrom\s+|\bimport\s*)['"](\.[^'"]+)['"]/g)) {
+        checkImports(path.resolve(path.dirname(absolute), specifier));
+      }
+      visiting.delete(absolute);
+      visited.add(absolute);
+    };
+    for (const [relative, exported] of [
+      ['dude-engine/lib/lightweight-work-postimage.mjs', 'buildLightweightWorkPostimages'],
+      ['dude-lightweight-execution/board.mjs', 'applyLightweightWorkRequest'],
+      ['dude-work/recovery.mjs', 'modelPacket'],
+    ]) {
+      const absolute = path.join(outDir, '.github/skills', relative);
+      checkImports(absolute);
+      assert.equal(typeof (await import(pathToFileURL(absolute).href))[exported], 'function');
+      if (relative !== 'dude-engine/lib/lightweight-work-postimage.mjs') {
+        assert.match(fs.readFileSync(absolute, 'utf8'),
+          /import \{ buildLightweightWorkPostimages \} from '\.\.\/dude-engine\/lib\/lightweight-work-postimage\.mjs'/);
+      }
+    }
+    const fixtureHashes = new Set(['README.md', 'reference.json', 'retention-episode.json', 'model-view-test-helpers.mjs']
+      .map(filename => createHash('sha256').update(fs.readFileSync(path.join(
+        repoRoot, 'scripts/fixtures/064-work-receipt-overflow-handling', filename,
+      ))).digest('hex')));
+    for (const relative of listRelativeFiles(outDir)) {
+      assert.doesNotMatch(relative, /(?:^|\/)fixtures(?:\/|$)|\.test\.|model-view-test-helpers|064-work-receipt-overflow-handling/);
+      const digest = createHash('sha256').update(fs.readFileSync(path.join(outDir, relative))).digest('hex');
+      assert.equal(fixtureHashes.has(digest), false, `${relative} ships fixture bytes`);
     }
   } finally {
     fs.rmSync(outDir, { recursive: true, force: true });

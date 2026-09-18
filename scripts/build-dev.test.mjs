@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildDev } from './build-dev.mjs';
 import { listCoreOutputs, listCoreSourceFiles } from './build-release.mjs';
 import {
@@ -269,7 +269,7 @@ test('buildDev renders Copilot profiles, packages exact config bytes, and preser
   }
 });
 
-test('checked-in dev core is a byte-identical non-mutating projection of authoritative source', () => {
+test('checked-in dev core is a byte-identical non-mutating projection of authoritative source', async () => {
   const checkedInBefore = snapshotTree(path.join(repoRoot, '.github'));
   const checkedInOutputs = listCoreOutputs(repoRoot);
   const checkedInPaths = checkedInOutputs.map(({ relPath }) => relPath);
@@ -294,6 +294,14 @@ test('checked-in dev core is a byte-identical non-mutating projection of authori
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-dev-complete-'));
   try {
     fs.cpSync(path.join(repoRoot, 'src'), path.join(root, 'src'), { recursive: true });
+    const fixtureDirectory = 'scripts/fixtures/064-work-receipt-overflow-handling';
+    const fixtureHashes = new Set(['README.md', 'reference.json', 'retention-episode.json', 'model-view-test-helpers.mjs']
+      .map(filename => {
+        const relative = `${fixtureDirectory}/${filename}`;
+        const bytes = fs.readFileSync(path.join(repoRoot, relative));
+        w(root, relative, bytes);
+        return sha256(bytes);
+      }));
     w(
       root,
       '.dude/metadata/bundle-manifest.md',
@@ -330,6 +338,45 @@ test('checked-in dev core is a byte-identical non-mutating projection of authori
       if (stem) assertCopilotProjection(root, stem);
     }
     assert.deepEqual(enumerateCorePaths(root), expectedPaths);
+    const postimageFiles = [
+      'skills/dude-engine/lib/lightweight-work-postimage.mjs',
+      'skills/dude-lightweight-execution/board.mjs',
+      'skills/dude-work/recovery.mjs',
+    ];
+    /** @type {Set<string>} */
+    const visited = new Set();
+    /** @type {Set<string>} */
+    const visiting = new Set();
+    /** @param {string} absolute */
+    const checkImports = absolute => {
+      assert.equal(visiting.has(absolute), false, `cyclic generated import: ${absolute}`);
+      if (visited.has(absolute)) return;
+      visiting.add(absolute);
+      const text = fs.readFileSync(absolute, 'utf8');
+      for (const [, specifier] of text.matchAll(/(?:\bfrom\s+|\bimport\s*)['"](\.[^'"]+)['"]/g)) {
+        checkImports(path.resolve(path.dirname(absolute), specifier));
+      }
+      visiting.delete(absolute);
+      visited.add(absolute);
+    };
+    for (const relative of postimageFiles) {
+      const deployed = `.github/${relative}`;
+      assert.ok(result.written.includes(deployed), deployed);
+      const absolute = path.join(root, deployed);
+      assertExactBytes(fs.readFileSync(absolute), fs.readFileSync(path.join(repoRoot, 'src', relative)), deployed);
+      checkImports(absolute);
+      const loaded = await import(pathToFileURL(absolute).href);
+      assert.equal(typeof loaded[relative.includes('postimage') ? 'buildLightweightWorkPostimages'
+        : relative.endsWith('board.mjs') ? 'applyLightweightWorkRequest' : 'modelPacket'], 'function');
+    }
+    for (const relative of postimageFiles.slice(1)) {
+      assert.match(fs.readFileSync(path.join(root, '.github', relative), 'utf8'),
+        /import \{ buildLightweightWorkPostimages \} from '\.\.\/dude-engine\/lib\/lightweight-work-postimage\.mjs'/);
+    }
+    for (const entry of snapshotTree(path.join(root, '.github')).filter(row => row.type === 'file')) {
+      assert.doesNotMatch(entry.path, /(?:^|\/)fixtures(?:\/|$)|\.test\.|model-view-test-helpers|064-work-receipt-overflow-handling/);
+      assert.equal(fixtureHashes.has(sha256(/** @type {Buffer} */ (entry.bytes))), false, `${entry.path} ships fixture bytes`);
+    }
     assertExactBytes(
       fs.readFileSync(path.join(root, '.github/skills/dude-engine/config/agent-models.json')),
       fs.readFileSync(path.join(root, 'src/config/agent-models.json')),

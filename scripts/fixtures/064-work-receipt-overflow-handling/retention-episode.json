@@ -1,0 +1,314 @@
+{
+  "schema": "dude-work-retention-episode-fixture-v1",
+  "classification": "test-owned-fixture-assertion-not-production-verdict",
+  "reference": {
+    "path": "reference.json",
+    "sha256": "143a377722cd3f85b70b4f05a8817a2a462744035836c6ccf233fc092a3c99f4",
+    "byteLength": 435771,
+    "initialProductionPacketBytes": 131023,
+    "initialProductionHeadroomBytes": 49
+  },
+  "payload": {
+    "label": "co-role-measurement-hypothetical-accepted-pair-v1",
+    "target": {
+      "lane": "lightweight",
+      "specPath": ".dude/specs/062-dude-canvas-workspace-integration/spec.md",
+      "taskKey": "T004@d062f4a7"
+    },
+    "approachBasis": {
+      "action": "address-test",
+      "assumptionIdentities": [],
+      "evidenceAcquisitionIdentities": [],
+      "materialInputs": {
+        "checks": [
+          "lint",
+          "verification"
+        ],
+        "operations": [
+          "address-test"
+        ],
+        "targets": [
+          "scripts/dude-canvas-ui/t011-browser.test.mjs"
+        ]
+      },
+      "mechanismIdentities": [],
+      "target": {
+        "lane": "lightweight",
+        "specPath": ".dude/specs/062-dude-canvas-workspace-integration/spec.md",
+        "taskKey": "T004@d062f4a7"
+      },
+      "validationPlanIdentities": [],
+      "version": 1
+    },
+    "route": "test-repair",
+    "specialistResult": {
+      "outcome": "succeeded",
+      "operations": [
+        "address-test"
+      ],
+      "changedTargets": [
+        "scripts/dude-canvas-ui/t011-browser.test.mjs"
+      ],
+      "verification": {
+        "checks": [
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-01",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-01:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-02",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-02:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-03",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-03:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-04",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-04:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-05",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-05:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-06",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-06:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-07",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-07:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-08",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-08:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-09",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-09:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-10",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-10:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-11",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-11:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-12",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-12:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-13",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-13:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-14",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-14:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-15",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-15:passed"
+          },
+          {
+            "definition": "co-role-measurement-hypothetical-accepted-pair-v1:check-16",
+            "outcome": "passed",
+            "evidence": "co-role-measurement-hypothetical-accepted-pair-v1:evidence-16:passed"
+          }
+        ]
+      },
+      "review": {
+        "verdict": "accepted",
+        "findings": []
+      }
+    }
+  },
+  "research": {
+    "format": "064-payload-1",
+    "projectionOrder": "current-run-first",
+    "scope": "historical-definition-research-only",
+    "prefixes": [
+      {
+        "label": "frozen-current-view",
+        "packetBytes": 131013,
+        "physicalItems": 13,
+        "logicalOccurrences": 16,
+        "sourceEntries": 16,
+        "retainedDescriptors": 17
+      },
+      {
+        "label": "ordinal-5-captures",
+        "packetBytes": 131053,
+        "physicalItems": 15,
+        "logicalOccurrences": 19,
+        "sourceEntries": 19,
+        "retainedDescriptors": 20
+      },
+      {
+        "label": "ordinal-5-current-run-first",
+        "packetBytes": 130878,
+        "physicalItems": 15,
+        "logicalOccurrences": 19,
+        "sourceEntries": 19,
+        "retainedDescriptors": 20
+      },
+      {
+        "label": "ordinal-5-complete-receipt",
+        "packetBytes": 130241,
+        "physicalItems": 15,
+        "logicalOccurrences": 19,
+        "sourceEntries": 19,
+        "retainedDescriptors": 20
+      },
+      {
+        "label": "ordinal-6-captures",
+        "packetBytes": 130971,
+        "physicalItems": 15,
+        "logicalOccurrences": 22,
+        "sourceEntries": 22,
+        "retainedDescriptors": 23
+      },
+      {
+        "label": "ordinal-6-current-run-first",
+        "packetBytes": 130722,
+        "physicalItems": 15,
+        "logicalOccurrences": 22,
+        "sourceEntries": 22,
+        "retainedDescriptors": 23
+      },
+      {
+        "label": "ordinal-6-complete-receipt",
+        "packetBytes": 130146,
+        "physicalItems": 15,
+        "logicalOccurrences": 22,
+        "sourceEntries": 22,
+        "retainedDescriptors": 23
+      },
+      {
+        "label": "ordinal-7-captures",
+        "packetBytes": 130839,
+        "physicalItems": 15,
+        "logicalOccurrences": 25,
+        "sourceEntries": 25,
+        "retainedDescriptors": 26
+      },
+      {
+        "label": "ordinal-7-current-run-first",
+        "packetBytes": 130948,
+        "physicalItems": 15,
+        "logicalOccurrences": 25,
+        "sourceEntries": 25,
+        "retainedDescriptors": 26
+      },
+      {
+        "label": "ordinal-7-complete-receipt",
+        "packetBytes": 129880,
+        "physicalItems": 15,
+        "logicalOccurrences": 25,
+        "sourceEntries": 25,
+        "retainedDescriptors": 26
+      },
+      {
+        "label": "ordinal-8-captures-first-refusal",
+        "packetBytes": 131879,
+        "physicalItems": 15,
+        "logicalOccurrences": 28,
+        "sourceEntries": 28,
+        "retainedDescriptors": 29,
+        "reason": "model-packet-bytes"
+      }
+    ],
+    "homogeneousControl": {
+      "payloadPhysicalItems": 7,
+      "ordinal19": {
+        "sourceEntries": 62,
+        "retainedDescriptors": 63,
+        "researchPacketBytes": 130761
+      },
+      "ordinal20": {
+        "firstReachableRefusal": "source-entries",
+        "sourceEntriesRequired": 65,
+        "sourceLimit": 64,
+        "counterfactualRetainedDescriptors": 66,
+        "counterfactualResearchPacketBytes": 136580
+      }
+    },
+    "provenance": [
+      {
+        "path": "accounting-measurement/accounting.measurement.mjs",
+        "sha256": "07e0ff026a9e73ff198d4d0968e5d52d88533a213ae205ca6fbf98860b723fe1",
+        "byteLength": 50805
+      },
+      {
+        "path": "accounting-measurement/raw-series.json",
+        "sha256": "83d830c70f6315a2323ca85018198e0873b3d9c5cbfbaad1adda0846cf7494b7",
+        "byteLength": 2924588
+      },
+      {
+        "path": "accounting-measurement/result.json",
+        "sha256": "421a9a810e94d89d8aac7192af975119c4a1f855db67dd2254fa2691bf70add9",
+        "byteLength": 17364
+      },
+      {
+        "path": "accounting-measurement/report.json",
+        "sha256": "b9d280136b37b594a38aade989dbeef7b1037dd82e75c613d739e7fa666c091d",
+        "byteLength": 3312
+      },
+      {
+        "path": "accounting-measurement/field-identities.json",
+        "sha256": "fa240f40a6eac6875386909e1fe77d9c59988afdcf6b3cb2c4ee297203c48275",
+        "byteLength": 5689
+      },
+      {
+        "path": "co-role-measurement/co-role.measurement.mjs",
+        "sha256": "df008a22d7a76b35bfbedb4ecea27b8f27e2e307066e1839768bf584aabc3b44",
+        "byteLength": 66571
+      },
+      {
+        "path": "co-role-measurement/raw-next-pair.json",
+        "sha256": "c5042cd4d1fae3401b7d906156ec17c770117a56555c27ac11429b97edbbc0da",
+        "byteLength": 105912
+      },
+      {
+        "path": "co-role-measurement/raw-stages.json",
+        "sha256": "e5afe12204c4d5e0abfda3de033a9a79ded29cfee27e2f237baded8e2caa34de",
+        "byteLength": 2390821
+      },
+      {
+        "path": "payload-measurement/payload.measurement.mjs",
+        "sha256": "106e1f66c95eb435fb1a8692c0d4504122b08958901c69930988115acfc94c71",
+        "byteLength": 46228
+      },
+      {
+        "path": "payload-measurement/raw-projection.json",
+        "sha256": "9d7b0eaed9afa71c509563e6f4b0db0eb38a58e296e02c96ca49f9c3a2c2acc6",
+        "byteLength": 1318446
+      }
+    ]
+  },
+  "limits": {
+    "sourceBodyBytes": 1048576,
+    "aggregateDecodedBytes": 4194304,
+    "requestBytes": 6291456,
+    "sourceEntries": 64,
+    "retainedDescriptors": 64,
+    "modelPacketBytes": 131072,
+    "checksPerAttestation": 16
+  }
+}

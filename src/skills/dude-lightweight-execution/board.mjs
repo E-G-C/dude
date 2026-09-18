@@ -53,6 +53,7 @@ import {
   resolveMutationPath,
 } from '../dude-engine/lib/workspace-paths.mjs';
 import { resolveFeatureOwner } from '../dude-engine/lib/feature.mjs';
+import { buildLightweightWorkPostimages } from '../dude-engine/lib/lightweight-work-postimage.mjs';
 import { refreshCommittedBacklog } from './backlog.mjs';
 import {
   canonicalJson,
@@ -869,104 +870,6 @@ function parseVisibleLaneTasks(bytes, absolutePath, reason) {
 }
 
 /**
- * Build the exact `tasks.md` postimage with byte-precise edits over the fresh
- * source: only the glyph, the `blocked-by:` metadata line, and appended lane
- * event records may change.
- * @param {ReturnType<typeof parseVisibleTasks>} visible
- * @param {Buffer} bytes
- * @param {import('../dude-engine/lib/tasks.mjs').Task} task
- * @param {Record<string, unknown>} mutation
- * @param {{kind:string,before:string|null,after:string|null}} blocker
- * @param {string[]} appendRecords
- */
-function lightweightTasksPostimage(visible, bytes, task, mutation, blocker, appendRecords) {
-  const parsed = visible.parsed;
-  /** @type {{start:number,end:number,text:Buffer}[]} */
-  const edits = [];
-  const headerLine = visible.lines[task.headerLine];
-  const glyphMatch = /^- \[[^\]]*\]/.exec(parsed.lines[task.headerLine]);
-  if (!glyphMatch) refuse('lane-prestate-mismatch');
-  edits.push({
-    start: headerLine.start,
-    end: headerLine.start + glyphMatch[0].length,
-    text: Buffer.from(`- [${mutation.toGlyph}]`),
-  });
-
-  if (blocker.kind !== 'unchanged') {
-    let blockedLine = -1;
-    /** @type {string|null} */
-    let firstMetaIndent = null;
-    for (let i = task.headerLine + 1; i < parsed.lines.length && /^\s+\S/.test(parsed.lines[i]); i += 1) {
-      if (firstMetaIndent === null) firstMetaIndent = /^(\s+)/.exec(parsed.lines[i])?.[1] ?? null;
-      if (/^\s*blocked-by:/.test(parsed.lines[i])) {
-        blockedLine = i;
-        break;
-      }
-    }
-    const indent = firstMetaIndent ?? '   ';
-    if (blocker.kind === 'add') {
-      if (blockedLine !== -1) refuse('lane-prestate-mismatch');
-      const separator = bytes.subarray(headerLine.contentEnd, headerLine.end).toString('utf8')
-        || parsed.preferredSeparator;
-      edits.push({
-        start: headerLine.end,
-        end: headerLine.end,
-        text: Buffer.from(`${indent}blocked-by: ${blocker.after}${separator}`),
-      });
-    } else {
-      if (blockedLine === -1) refuse('lane-prestate-mismatch');
-      const meta = visible.lines[blockedLine];
-      edits.push(blocker.kind === 'remove'
-        ? { start: meta.start, end: meta.end, text: Buffer.alloc(0) }
-        : {
-          start: meta.start,
-          end: meta.contentEnd,
-          text: Buffer.from(`${indent}blocked-by: ${blocker.after}`),
-        });
-    }
-  }
-
-  if (appendRecords.length > 0) {
-    if (bytes.length === 0 || bytes[bytes.length - 1] !== 0x0a) refuse('lane-prestate-mismatch');
-    let prefix = '';
-    if (visible.historyOffset === null) {
-      const unsafeHistoryHeading = visible.lines.some(({ text }) => {
-        const heading = /^ {0,3}##[ \t]+(.+?)[ \t]*#*[ \t]*$/.exec(text);
-        return heading !== null
-          && heading[1].replace(/[^A-Za-z0-9]+/g, ' ').trim().toLowerCase()
-            === 'lightweight execution history';
-      });
-      if (mutation.kind !== 'append-event'
-        || parsed.tasks.length === 0
-        || parsed.warnings.length > 0
-        || parsed.byId.size !== parsed.tasks.length
-        || unsafeHistoryHeading) {
-        refuse('lane-prestate-mismatch');
-      }
-      const trailingLfCount = /\n+$/.exec(bytes.toString('utf8'))?.[0].length ?? 0;
-      prefix = `${'\n'.repeat(Math.max(0, 2 - trailingLfCount))}## Lightweight Execution History\n\n`;
-    }
-    edits.push({
-      start: bytes.length,
-      end: bytes.length,
-      text: Buffer.from(`${prefix}${appendRecords.join('')}`),
-    });
-  }
-
-  edits.sort((left, right) => left.start - right.start);
-  let cursor = 0;
-  /** @type {Buffer[]} */
-  const parts = [];
-  for (const edit of edits) {
-    if (edit.start < cursor) refuse('lane-prestate-mismatch');
-    parts.push(bytes.subarray(cursor, edit.start), edit.text);
-    cursor = edit.end;
-  }
-  parts.push(bytes.subarray(cursor));
-  return Buffer.concat(parts);
-}
-
-/**
  * Write every changed surface, then restore all preimages if any write throws.
  * @param {{absolutePath:string,before:Buffer|'missing',after:Buffer}[]} files
  */
@@ -1176,34 +1079,33 @@ function commitLightweightWorkRequest(requestValue, context) {
     ? ''
     : fresh.tasks.bytes.subarray(visible.historyOffset).toString('utf8');
   const existing = laneHistoryIndex(history);
-  /** @type {string[]} */
-  const appendRecords = [];
   for (const line of derived.eventLines.lines) {
     const bodies = existing.get(line.eventHash);
     if (bodies && (bodies.size > 1 || !bodies.has(line.exactLine))) refuse('event-conflict');
-    if (!bodies) appendRecords.push(`${line.exactLine}\n`);
   }
 
   const ownerText = fresh.owner.bytes.toString('utf8');
-  let ownerNext = ownerText;
   if (derived.ownerLog.kind === 'append-exact') {
     if (derived.ownerLog.ownerPath !== owner.ideaPath) refuse('owner-log-conflict');
     if (derived.ownerLog.expectedOwnerHash !== fresh.owner.descriptor.sha256) refuse('owner-prestate-mismatch');
     if (!ownerText.endsWith('\n')) refuse('owner-log-conflict');
-    const ownerLines = new Set(ownerText.split('\n'));
-    for (const line of derived.ownerLog.exactLines) {
-      if (!ownerLines.has(line)) ownerNext += `${line}\n`;
-    }
   }
 
-  const tasksNext = lightweightTasksPostimage(
-    visible,
-    fresh.tasks.bytes,
-    task,
-    derived.mutation,
-    derived.blocker,
-    appendRecords,
-  );
+  const postimages = buildLightweightWorkPostimages({
+    tasks: fresh.tasks.bytes,
+    owner: fresh.owner.bytes,
+    taskState: fresh.taskState.bytes,
+    tasksPath,
+    taskKey: target.taskKey,
+    kind: /** @type {string} */ (derived.mutation.kind),
+    toGlyph: /** @type {string} */ (derived.mutation.toGlyph),
+    blocker: derived.blocker,
+    eventLines: derived.eventLines.lines.map(line => line.exactLine),
+    ownerLogLines: derived.ownerLog.exactLines,
+    snapshotUpdatedAt: /** @type {string} */ (derived.mutation.snapshotUpdatedAt),
+  });
+  if ('reason' in postimages) refuse(postimages.reason);
+  const tasksNext = postimages.tasks;
   const verify = parseVisibleLaneTasks(
     tasksNext,
     surfaces.tasks.absolutePath,
@@ -1219,17 +1121,7 @@ function commitLightweightWorkRequest(requestValue, context) {
 
   // A permit that would change neither tasks nor owner bytes has already been
   // consumed; only the snapshot timestamp would move.
-  if (tasksNext.equals(fresh.tasks.bytes) && ownerNext === ownerText) refuse('permit-replayed');
-
-  const merged = { ...(snapshot.status === 'ok' ? snapshot.state : {}) };
-  merged[tasksPath] = {
-    glyphs: glyphsOf(verify),
-    updated_at: `${/** @type {string} */ (derived.mutation.snapshotUpdatedAt).slice(0, -1)}.000Z`,
-  };
-  /** @type {Record<string, unknown>} */
-  const ordered = {};
-  for (const key of Object.keys(merged).sort()) ordered[key] = merged[key];
-  const taskStateNext = `${JSON.stringify(ordered, null, 2)}\n`;
+  if (tasksNext.equals(fresh.tasks.bytes) && postimages.owner.equals(fresh.owner.bytes)) refuse('permit-replayed');
 
   const files = [
     {
@@ -1240,12 +1132,12 @@ function commitLightweightWorkRequest(requestValue, context) {
     {
       absolutePath: surfaces.taskState.absolutePath,
       before: fresh.taskState.preimage,
-      after: Buffer.from(taskStateNext),
+      after: postimages.taskState,
     },
     {
       absolutePath: surfaces.owner.absolutePath,
       before: fresh.owner.bytes,
-      after: Buffer.from(ownerNext),
+      after: postimages.owner,
     },
   ];
   const createdDirectories = applyAtomically(files);

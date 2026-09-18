@@ -23,6 +23,7 @@ import {
   BOARD_NOTICE,
   CANONICAL_NOTICE,
 } from './tasks.mjs';
+import { buildLightweightWorkPostimages } from './lightweight-work-postimage.mjs';
 
 const FIXTURE = `# Feature X — tasks
 
@@ -181,6 +182,31 @@ test('renderBoard replaces an existing board region in place', () => {
   assert.equal((rerendered.match(new RegExp(CANONICAL_NOTICE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length, 1);
   // T003 now ready (its dep T002 is done)
   assert.ok(readyTasks(parseTasks(rerendered)).some((t) => t.id === 'T003@cccccccc'));
+});
+
+test('T002 extracted Work byte construction leaves canonical task parsing and derived rendering unchanged', () => {
+  const source = Buffer.from(renderBoard(parseTasks(HISTORY_FIXTURE)));
+  const input = {
+    tasks: source,
+    owner: Buffer.from('## Coordinator Log\n'),
+    taskState: Buffer.from('{}\n'),
+    tasksPath: '.dude/specs/x/tasks.md',
+    taskKey: 'T019@cccccccc',
+    kind: 'claim',
+    toGlyph: '~',
+    blocker: { kind: 'unchanged', before: null, after: null },
+    eventLines: [],
+    ownerLogLines: [],
+    snapshotUpdatedAt: '2026-01-01T00:00:00Z',
+  };
+  const post = buildLightweightWorkPostimages(input);
+  assert.ok(!('reason' in post));
+  const expected = setTaskState(parseTasks(source.toString()), input.taskKey, 'in-progress').content;
+  assert.equal(post.tasks.toString(), expected);
+  assert.equal(historySuffixOf(post.tasks.toString()), historySuffixOf(source.toString()));
+  assert.equal(renderBoard(parseTasks(post.tasks.toString())), renderBoard(parseTasks(expected)));
+  assert.deepEqual(glyphsOf(parseTasks(post.tasks.toString())), { [input.taskKey]: '~' });
+  assert.equal(input.tasks, source);
 });
 
 test('boardIsStale detects a missing/outdated board', () => {

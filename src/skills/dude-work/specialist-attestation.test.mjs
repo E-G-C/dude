@@ -5,7 +5,11 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
+  buildInspection,
   canonicalJson,
+  contentDescriptor,
+  limits,
+  modelPacket,
   normalizeIndependentReviewEnvelopeV2,
   normalizeVerificationEnvelopeV2,
   trustedSourceCaptureIdentityV2,
@@ -14,6 +18,10 @@ import {
   validateVerificationEnvelopeV2,
 } from './recovery.mjs';
 import { buildSpecialistAttestation } from './specialist-attestation.mjs';
+import {
+  buildRetentionPair,
+  readRetentionEpisodeFixture,
+} from '../../../scripts/fixtures/064-work-receipt-overflow-handling/model-view-test-helpers.mjs';
 
 const TARGET = Object.freeze({
   specPath: '.dude/specs/019-specialist-attestation-producer/spec.md',
@@ -1028,4 +1036,135 @@ test('producer retains existing validators as the final output authority', () =>
     /validateIndependentReviewEnvelopeV2\(envelope, verification\);[\s\S]+normalizeIndependentReviewEnvelopeV2\(capture, verification\)/,
     'producer must validate and normalize each review envelope before returning it',
   );
+});
+
+/** @param {Record<string,unknown>} capture @param {string} source @param {string} state */
+function modelEvidence(capture, source, state) {
+  const text = canonicalJson({ target: capture.target, state, records: [capture] });
+  return { source, required: true, status: 'present', ...contentDescriptor(text), text };
+}
+
+test('Feature 064 T001: 15, 16, and 17 complete specialist payloads retain all sixteen checks per attestation', () => {
+  const items = Array.from({ length: 17 }, (_, index) => {
+    const checks = Array.from({ length: 16 }, (_, check) => ({
+      definition: `fixture ${index} check ${check}`,
+      outcome: check % 2 ? 'passed' : 'failed',
+      evidence: `controlled fixture assertion ${index}:${check}, not an executed external check`,
+    }));
+    const built = buildVerification(verificationInput(checks, index + 1));
+    assert.equal(built.envelope.checks.length, 16);
+    return modelEvidence(built.capture, 'verification', 'failed');
+  });
+  for (const count of [15, 16, 17]) {
+    const inspection = buildInspection(TARGET, items.slice(0, count));
+    const packet = modelPacket(inspection);
+    assert.ok(packet);
+    assert.equal(packet.format, 'dude-work-model-view-v1');
+    assert.equal(packet.items.length, count);
+    assert.ok(Buffer.byteLength(canonicalJson(packet)) <= limits.bytes);
+    for (let index = 0; index < count; index += 1) {
+      const item = packet.items[index];
+      assert.equal(item.tag, 'verification');
+      assert.equal(item.payload.checks.length, 16);
+      const capture = JSON.parse(items[index].text).records[0];
+      const { checks, type, version, target, ...binding } = normalizeVerificationEnvelopeV2(capture);
+      assert.deepEqual(item.payload, { checks, type, version, target });
+      assert.deepEqual(item.frames[0].binding, binding);
+      const { base64, ...bytes } = capture.bytes;
+      assert.deepEqual(item.frames[0].capture, { ...capture, bytes });
+    }
+  }
+  const tooManyChecks = Array.from({ length: 17 }, (_, index) => ({
+    definition: `fixture check ${index}`, outcome: 'passed', evidence: `fixture assertion ${index}`,
+  }));
+  assert.throws(() => buildSpecialistAttestation(verificationInput(tooManyChecks)), /16|sixteen/);
+});
+
+test('Feature 064 T001: separate specialist invocations share only payloads and retain every review binding', () => {
+  const items = [];
+  const originals = [];
+  for (let occurrence = 1; occurrence <= 4; occurrence += 1) {
+    const verificationRequest = verificationInput(undefined, occurrence);
+    const verification = buildVerification(verificationRequest);
+    const request = reviewInput(verification.capture, 'rejected', [OBSERVED_FINDING], occurrence, occurrence);
+    request.context.verification.dispatch = clone(verificationRequest.context.dispatch);
+    const review = buildReview(request);
+    items.push(
+      modelEvidence(verification.capture, 'verification', 'passed'),
+      modelEvidence(review.capture, 'review', 'rejected'),
+      modelEvidence(verification.capture, 'lint', 'passed'),
+    );
+    originals.push({ verification, review });
+  }
+  const inspection = buildInspection(TARGET, items);
+  const packet = modelPacket(inspection);
+  assert.ok(packet);
+  assert.equal(packet.items.length, 2);
+  const verification = packet.items.find(({ tag }) => tag === 'verification');
+  const review = packet.items.find(({ tag }) => tag === 'review');
+  assert.equal(verification.frames.length, 4);
+  assert.equal(review.frames.length, 4);
+  assert.equal(new Set(verification.frames.map(({ capture }) => capture.authority.invocationIdentity)).size, 4);
+  assert.equal(new Set(review.frames.map(({ binding }) => binding.reviewInvocationIdentity)).size, 4);
+  assert.deepEqual(review.frames.map(({ binding }) => binding.reviewOrdinal), [1, 2, 3, 4]);
+  for (let index = 0; index < originals.length; index += 1) {
+    assert.deepEqual(verification.payload.checks, originals[index].verification.envelope.checks);
+    assert.deepEqual(review.payload.findings, originals[index].review.envelope.findings);
+    assert.deepEqual(verification.frames[index].occurrences.map(({ source }) => source), ['verification', 'lint']);
+    assert.equal(review.frames[index].binding.verificationEnvelopeIdentity,
+      originals[index].verification.envelope.envelopeIdentity);
+    assert.deepEqual(review.frames[index].capture.authority, originals[index].review.capture.authority);
+  }
+  assert.deepEqual(modelPacket(buildInspection(TARGET, items)), packet);
+  assert.throws(() => normalizeVerificationEnvelopeV2(verification.frames[0].capture), /base64/);
+  assert.throws(() => validateTrustedSourceCaptureV2(packet), /unknown field|missing required/);
+});
+
+test('Feature 064 T003: the retained episode is a 16-check fixture assertion with fresh attestation authority', () => {
+  const episode = readRetentionEpisodeFixture().value;
+  const pair = buildRetentionPair({
+    target: TARGET,
+    episode,
+    ordinal: 5,
+    authorizationEvidenceHash: sha256('T003 attestation fixture authorization'),
+  });
+  validateTrustedSourceCaptureV2(pair.verificationCapture);
+  validateTrustedSourceCaptureV2(pair.reviewCapture);
+  validateVerificationEnvelopeV2(pair.verification);
+  validateIndependentReviewEnvelopeV2(pair.review, pair.verification);
+  assert.equal(pair.verification.checks.length, 16);
+  assert.ok(pair.verification.checks.every(({ outcome }) => outcome === 'passed'));
+  assert.equal(new Set(pair.verification.checks.map(
+    ({ checkIdentity }) => checkIdentity,
+  )).size, 16);
+  assert.equal(pair.review.verdict, 'accepted');
+  assert.deepEqual(pair.review.findings, []);
+  assert.equal(pair.review.attemptIdentity, pair.verification.attemptIdentity);
+  assert.equal(pair.review.resultIdentity, pair.verification.resultIdentity);
+  assert.equal(
+    pair.review.verificationEnvelopeIdentity,
+    pair.verification.envelopeIdentity,
+  );
+  assert.equal(
+    pair.review.reviewerAuthorityIdentity,
+    pair.reviewCapture.authority.authorityIdentity,
+  );
+  assert.equal(
+    pair.review.reviewInvocationIdentity,
+    pair.reviewCapture.authority.invocationIdentity,
+  );
+  assert.notEqual(
+    trustedSourceCaptureIdentityV2(pair.verificationCapture),
+    trustedSourceCaptureIdentityV2(pair.reviewCapture),
+  );
+  const inspection = buildInspection(TARGET, [
+    modelEvidence(pair.reviewCapture, 'review', 'accepted'),
+    modelEvidence(pair.verificationCapture, 'verification', 'passed'),
+    modelEvidence(pair.verificationCapture, 'lint', 'passed'),
+  ]);
+  const packet = modelPacket(inspection);
+  assert.equal(packet.format, 'dude-work-model-view-v1');
+  assert.equal(packet.items.length, 2);
+  assert.equal(packet.items.find(({ tag }) => tag === 'verification').payload.checks.length, 16);
+  assert.equal(episode.classification, 'test-owned-fixture-assertion-not-production-verdict');
 });

@@ -525,5 +525,14 @@
       "T005@e062a5b8": " "
     },
     "updated_at": "2026-09-16T17:38:57.933Z"
+  },
+  ".dude/specs/064-work-receipt-overflow-handling/tasks.md": {
+    "glyphs": {
+      "T001@c064a71e": "x",
+      "T002@c064b82f": "x",
+      "T003@c064c930": "x",
+      "T004@c064da41": "x"
+    },
+    "updated_at": "2026-09-18T15:48:01.000Z"
   }
 }

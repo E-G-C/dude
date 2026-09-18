@@ -12,6 +12,7 @@ import path from 'node:path';
 // must go green.
 // @ts-ignore -- ../lib/task-state.mjs is created by the T037 Coder step
 import { parseTaskState, readTaskState, upsertTaskStateEntry } from './task-state.mjs';
+import { buildLightweightWorkPostimages } from './lightweight-work-postimage.mjs';
 
 /** A canonical `new Date().toISOString()`-shaped timestamp. */
 const ISO = '2026-01-01T00:00:00.000Z';
@@ -169,6 +170,38 @@ test('parseTaskState accepts an empty object and a valid populated snapshot', ()
   const populated = parseTaskState(JSON.stringify(validState()));
   assert.equal(populated.status, 'ok');
   assert.deepEqual(populated.state, validState());
+});
+
+test('T002 pure postimages serialize the optional empty baseline and preserve every unrelated snapshot entry', () => {
+  const input = {
+    tasks: Buffer.from('# Tasks\n\n- [ ] T001@aaaaaaaa Do work\n'),
+    owner: Buffer.from('## Coordinator Log\n\n'),
+    taskState: Buffer.from('{}\n'),
+    tasksPath: CANON,
+    taskKey: 'T001@aaaaaaaa',
+    kind: 'claim',
+    toGlyph: '~',
+    blocker: { kind: 'unchanged', before: null, after: null },
+    eventLines: [],
+    ownerLogLines: [],
+    snapshotUpdatedAt: '2026-01-01T00:00:00Z',
+  };
+  const other = '.dude/specs/aaa/tasks.md';
+  const unchanged = { glyphs: { 'T003@cccccccc': 'x' }, updated_at: ISO };
+  for (const baseline of [{}, { [other]: unchanged }]) {
+    const bytes = Buffer.from(`${JSON.stringify(baseline, null, 4)}\n`);
+    const post = buildLightweightWorkPostimages({ ...input, taskState: bytes });
+    assert.ok(!('reason' in post));
+    assert.deepEqual(bytes, Buffer.from(`${JSON.stringify(baseline, null, 4)}\n`));
+    const expected = { ...baseline, [CANON]: { glyphs: { 'T001@aaaaaaaa': '~' }, updated_at: ISO } };
+    assert.equal(post.taskState.toString(), `${JSON.stringify(expected, null, 2)}\n`);
+    assert.deepEqual(parseTaskState(post.taskState.toString()), { status: 'ok', state: expected });
+  }
+  for (const text of ['{broken', '[]', '{"bad":{"glyphs":{},"updated_at":"no"}}']) {
+    assert.deepEqual(buildLightweightWorkPostimages({ ...input, taskState: Buffer.from(text) }), {
+      reason: 'snapshot-corrupt',
+    });
+  }
 });
 
 test('parseTaskState reports every wrong-schema shape as corrupt with a nonempty reason', () => {

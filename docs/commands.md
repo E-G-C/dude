@@ -463,12 +463,18 @@ feature. Under `autonomous`, that Inspection additionally acquires exactly one
 plan. An explicit feature-only inspection is read-only: it cannot authorize
 work, consume a budget, or mutate workflow state. Optional session history is
 used only when it can be exactly bound; its unavailability alone is not a
-blocker. Inspection admits one bounded complete evidence packet and one
-Assessment bound to that Inspection's `evidenceHash`. All non-owner admitted
-evidence remains complete. Owner-log evidence carries exact owner identity, the
-complete log's digest, byte length, and event counts, plus the maximal
-whole-event suffix that fits that fresh packet; omitted owner events are not
-inspected text. Before authorization, Work freshly rebuilds the Inspection;
+blocker. Inspection admits one self-contained `dude-work-model-view-v1` packet
+and one Assessment bound to that Inspection's `evidenceHash`. The lossless model
+view shares only exact, complete, validated verification or review payloads.
+Every original byte, descriptor, ordered occurrence, and authority binding
+remains reconstructible; sharing grants no authority. Raw machine Inspection
+evidence, trusted captures, and audit files retain their established forms.
+Task and current-run histories stay complete and literal.
+
+All non-owner admitted evidence remains complete. Owner-log evidence carries
+exact owner identity, the complete log's digest, byte length, and event counts,
+plus the maximal whole-event suffix that fits that fresh packet; omitted owner
+events are not inspected text. Before authorization, Work freshly rebuilds the Inspection;
 substantive drift returns `evidence-drift` without changing state, counters,
 pending authorization, or completed attempts. If the available evidence cannot
 fit, Work reports descriptors only, makes no model call or recovery assessment,
@@ -491,8 +497,14 @@ it is refused before further work:
 - `64` total retained evidence descriptors per inspection
 - `8,192` UTF-8 bytes for a deterministic error response
 
-These are separate from the model-facing packet's own limit of `16` items and
-`131,072` canonical bytes.
+The model-facing limit remains exactly `{items:64,bytes:131072}`. Its item
+maximum is derived from original descriptors:
+`physical items <= available original occurrences <= original retained descriptors <= 64`.
+There is no independent 16-item quota. The entire canonical packet, including
+its format, payloads, frames, descriptors, bindings, and other metadata, must
+fit within `131,072` bytes. The separate limit of `16` checks per attestation and
+all other ceilings remain unchanged. Repeated payloads can share space, but
+occurrence metadata and distinct evidence still grow to finite limits.
 
 The inventory ceiling and the source-entry ceiling are independent. Work counts
 every direct child of `.dude/ideas`, including unsupported files and directories,
@@ -502,19 +514,28 @@ inventory never consumes evidence slots: however many ideas back it, complete
 exact ownership costs one owner source. The `64` source entries are the owner,
 task, and lane sources, the autonomous `definition-plan` source, each tracked
 issue acquisition, each supplied capture, and an optional supplied session,
-counted before any capture is decoded or deduplicated.
+counted before any capture is decoded, normalized, or shared. The independent
+descriptor budget counts all original descriptors, including unavailable
+entries, before model compaction.
 
 Before authorization changes an attempt counter, records a pending
 authorization, or permits implementation dispatch, Work also checks that the
-captures the authorized attempt's own completion must produce still fit. Under
-`autonomous` that reservation is one new verification and one new independent
-review, plus one lint capture when the action requires lint and one current-run
-capture when no current-run stream exists yet. Guarded completion emits no new
-inspection capture and reserves nothing, and an unavailable optional session is
-never reserved. A refusal returns `evidence-incomplete` with the accepted state,
-counters, pending entries, and completed tuples unchanged and performs no task
-or lane write. This admission guarantees entry headroom only; every later
-acquisition still rechecks the byte ceilings.
+captures the authorized attempt's own completion must produce have both raw
+source and original-descriptor headroom. Under `autonomous` that demand is one
+new verification and one new independent review, plus one lint capture when the
+action requires lint and one current-run capture when no current-run stream
+exists yet. Every new capture costs a source;
+replacing an empty placeholder adds no descriptor, while an independent append
+adds one. An absent current-run adds both. Work never assumes future payload
+equality to reduce that demand. Guarded completion reserves nothing, and an
+absent optional session is never reserved.
+
+Within this headroom check, source exhaustion precedes descriptor exhaustion;
+earlier eligibility, authority, learning, and resource gates keep their order.
+A refusal returns `evidence-incomplete` with the accepted state, counters,
+pending entries, and completed tuples unchanged and performs no task or lane
+write. Count admission promises no future byte fit; every later acquisition
+still rechecks the byte ceilings.
 
 A capacity refusal names the exhausted budget, its fixed limit, the measured or
 first-crossing demand, the affected source or canonical target, and the owner's
@@ -525,7 +546,7 @@ text, and it grants no retry, cleanup, claim takeover, learning resolution, or
 close authority.
 
 How that refusal reaches the CLI boundary depends on whether it stopped an
-acquisition or an admission. The headroom reservation above is an admission
+acquisition or an admission. The headroom check above is an admission
 check, and the command that ran it exits zero because the inspection itself
 succeeded: `authorize` writes its ordinary `{"inspection","authorization"}`
 response to standard output, with `authorized` false, the reason
@@ -536,6 +557,36 @@ proceed. Acquisition is the exception that fails the command outright: when a
 ceiling stops Work from reading the request or a source at all, the CLI
 leaves standard output empty, exits nonzero, and writes one bounded
 `{"error":{"code","message"}}` response with the code `recovery-resource-limit`.
+
+Before an autonomous Lightweight projection or lane permit becomes usable,
+Work checks every fully known lane-first prefix and receipt footprint against
+complete original acquisitions and accumulated captures, using the same exact
+postimages as the lane writer. It freshly rederives the binding before
+application; changed sources or prestate invalidate the earlier fit. Capacity
+diagnostics distinguish `source-entries`, `retained-descriptors`, and exact-known
+`model-packet-bytes` at `131,072` bytes. Unknown tracked postimages are not
+predicted.
+
+The runner stages the next current-run record privately, applies the checked
+lane mutation, publishes that same record, and commits the receipt from fresh
+input observing both retained surfaces before finalization. A crash between
+the lane write and publication leaves one-sided evidence and preserves the
+accepted predecessor. Predictions establish no observed authority, persistent
+reservation, automatic retry, or close permission. The Work skill linked below
+owns the full model-view and runtime contract.
+
+Model-packet overflow returns a valid descriptor-only Inspection instead of an
+operation result body. Work hard-stops as `evidence-incomplete`, with its halt
+report bound to that fresh Inspection, without another model call or automatic
+retry. This also applies when evidence grows during projection or receipt
+handling; it is not malformed runtime output.
+
+If overflow rejects a lane-receipt commit, accepted state and the pending effect
+remain unchanged, but earlier lane projections stay applied. The rejected step
+commits no receipt and grants no settlement or close authority. Preserve those
+records and their permit/receipt evidence for owner review. The invocation stays
+stopped; repairing the evidence or its reporting does not authorize continuation
+or a new Work/Ship run.
 
 Ordinary Work always performs that post-block inspection, reports the finding,
 and stops. Only `--recover-on-block` can authorize another attempt. Its overall

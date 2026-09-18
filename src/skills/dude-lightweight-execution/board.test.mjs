@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 
 import { run, parseArgs, applyLightweightWorkRequest } from './board.mjs';
 import { renderArtifacts } from './backlog.mjs';
-import { parseTasks } from '../dude-engine/lib/tasks.mjs';
+import { parseTasks, renderBoard } from '../dude-engine/lib/tasks.mjs';
+import { buildLightweightWorkPostimages } from '../dude-engine/lib/lightweight-work-postimage.mjs';
 import { canonicalJson } from '../dude-work/recovery.mjs';
 
 /** Absolute path to the board CLI, spawned as a child process end-to-end. */
@@ -1252,6 +1253,106 @@ function laneRequest(root, options = {}) {
     mutation,
   };
 }
+
+/** @param {ReturnType<typeof laneRequest>} request */
+function predictedLanePostimages(request) {
+  const mutation = request.mutation;
+  return buildLightweightWorkPostimages({
+    tasks: Buffer.from(request.expected.tasks.base64, 'base64'),
+    taskState: Buffer.from(request.expected.taskState.base64, 'base64'),
+    owner: Buffer.from(request.owner.ownerCapture.base64, 'base64'),
+    tasksPath: request.expected.tasksPath,
+    taskKey: request.target.taskKey,
+    kind: mutation.kind,
+    toGlyph: mutation.toGlyph,
+    blocker: mutation.blocker,
+    eventLines: mutation.eventLines.kind === 'none' ? [] : mutation.eventLines.lines.map(line => line.exactLine),
+    ownerLogLines: mutation.ownerLog.kind === 'none' ? [] : mutation.ownerLog.exactLines,
+    snapshotUpdatedAt: mutation.snapshotUpdatedAt,
+  });
+}
+
+test('T002 pure postimages match the actual writer for first history, duplicate records and exact owner append', () => {
+  for (const separator of ['\n', '\r\n']) {
+    for (const trailing of [1, 2, 3]) {
+      const source = `${LANE_TASKS_WITHOUT_HISTORY_FIXTURE.trimEnd()}${separator.repeat(trailing)}`
+        .replace(/\r?\n/g, separator);
+      const root = scaffoldLane(source);
+      try {
+        const original = laneSurfaces(root);
+        const mutation = laneProjectionMutation({
+          ownerLog: laneOwnerAppend(root, ['- Existing entry.', '- T002 exact owner append.']),
+        });
+        const request = laneRequest(root, { operation: 'work-project', mutation });
+        const requestBefore = canonicalJson(request);
+        const predicted = predictedLanePostimages(request);
+        assert.ok(!('reason' in predicted), JSON.stringify(predicted));
+        assert.deepEqual(laneSurfaces(root), original, 'prediction has no filesystem effect');
+        assert.equal(canonicalJson(request), requestBefore, 'prediction does not alter caller bytes or bindings');
+        const committed = applyLightweightWorkRequest(request);
+        assert.equal(committed.ok, true, JSON.stringify(committed));
+        assert.deepEqual(laneSurfaces(root), predicted, 'all three postimages equal the actual transaction');
+        assert.equal(predicted.owner.toString(), `${original.owner}- T002 exact owner append.\n`);
+        assert.equal(parseTasks(predicted.tasks.toString()).byId.get(LANE_OTHER_KEY).glyph, ' ');
+
+        const duplicate = laneRequest(root, {
+          operation: 'work-project',
+          mutation: laneProjectionMutation({
+            ownerLog: laneOwnerAppend(root, ['- T002 exact owner append.', '- T002 second owner append.']),
+          }),
+        });
+        const duplicatePrediction = predictedLanePostimages(duplicate);
+        assert.ok(!('reason' in duplicatePrediction));
+        assert.deepEqual(duplicatePrediction.tasks, predicted.tasks, 'the exact event and first heading are deduplicated');
+        assert.equal(applyLightweightWorkRequest(duplicate).ok, true);
+        assert.deepEqual(laneSurfaces(root), duplicatePrediction);
+        assert.equal(duplicatePrediction.owner.toString(), `${predicted.owner}- T002 second owner append.\n`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
+test('T002 pure postimages preserve blocker edits, event order, unrelated rows and existing board rendering', () => {
+  const cases = [
+    { from: ' ', to: '!', kind: 'task-blocked', reason: 'task-blocked', before: null, after: 'new blocker', edit: 'add' },
+    { from: '!', to: '!', kind: 'task-blocked', reason: 'task-blocked', before: 'old blocker', after: 'new blocker', edit: 'replace' },
+    { from: '!', to: '~', kind: 'claim', reason: 'resume-claim', before: 'old blocker', after: null, edit: 'remove' },
+  ];
+  for (const entry of cases) {
+    const tasks = LANE_TASKS_FIXTURE.replace(
+      `- [ ] ${LANE_TASK_KEY} [US3] Implement the lane boundary`,
+      `- [${entry.from}] ${LANE_TASK_KEY} [US3] Implement the lane boundary`
+        + (entry.before === null ? '' : `\n    blocked-by: ${entry.before}`),
+    );
+    const root = scaffoldLane(renderBoard(parseTasks(tasks)));
+    try {
+      const mutation = laneMutation({
+        kind: entry.kind, reason: entry.reason, fromGlyph: entry.from, toGlyph: entry.to,
+        blocker: { kind: entry.edit, before: entry.before, after: entry.after },
+        eventLines: laneEventEffect([laneEvent('first'), laneEvent('second')]),
+      });
+      const request = laneRequest(root, { mutation, glyph: entry.from, blockedBy: entry.before });
+      const predicted = predictedLanePostimages(request);
+      assert.ok(!('reason' in predicted));
+      assert.equal(applyLightweightWorkRequest(request).ok, true);
+      assert.deepEqual(laneSurfaces(root), predicted);
+      const parsed = parseTasks(predicted.tasks.toString());
+      assert.equal(parsed.byId.get(LANE_TASK_KEY).blockedBy, entry.after);
+      assert.equal(parsed.byId.get(LANE_TASK_KEY).glyph, entry.to);
+      assert.equal(parsed.byId.get(LANE_OTHER_KEY).glyph, ' ');
+      assert.ok(predicted.tasks.toString().endsWith(
+        mutation.eventLines.lines.map(line => `${line.exactLine}\n`).join(''),
+      ));
+      const rendered = renderBoard(parsed);
+      assert.equal(renderBoard(parseTasks(rendered)), rendered);
+      assert.equal(renderBoard(parseTasks(laneBytes(root, LANE_TASKS).toString())), rendered);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
 
 /**
  * Assert a closed refusal that mutated nothing.
