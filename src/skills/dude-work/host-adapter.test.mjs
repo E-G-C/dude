@@ -11,8 +11,10 @@ import { fileURLToPath } from 'node:url';
 
 import { applyLightweightWorkRequest } from '../dude-lightweight-execution/board.mjs';
 import { parseVisibleTasks } from '../dude-engine/lib/tasks.mjs';
+import { buildLightweightWorkPostimages } from '../dude-engine/lib/lightweight-work-postimage.mjs';
 import {
   approachHash,
+  buildApproachOccurrenceEventV1,
   captureCompletionV2,
   canonicalJson,
   canonicalTarget,
@@ -30,6 +32,7 @@ import {
   normalizeVerificationEnvelopeV2,
   OUTCOME_REASON_CLASSES,
   prepareProjectionV2,
+  requiredChecksForAction,
   resumeGovernanceV2,
   runCommand,
   sha256,
@@ -51,10 +54,13 @@ import {
   expandModelPacket,
   mandatoryCompletionHeadroom,
   measurePrivateModelView,
+  measurePrivatePreflight,
   originalAvailableProjection,
   publishCurrentRun,
   rawSourceCount,
   readRetentionEpisodeFixture,
+  renderPrivateModelProjection,
+  withHistoryIncidentWorkspace,
   withReferenceWorkspace,
 } from '../../../scripts/fixtures/064-work-receipt-overflow-handling/model-view-test-helpers.mjs';
 
@@ -10648,7 +10654,7 @@ nodeTest('descriptor-only overflow: unknown post-apply growth reports the fresh 
           assert.equal(applied.ok, true);
           // External bytes arriving after the prechecked lane transaction were
           // not knowable at preparation. Its receipt is not claimed settled.
-          fs.appendFileSync(path.join(root, TASKS_PATH), `${'x'.repeat(2_000)}\n`);
+          fs.appendFileSync(path.join(root, TASKS_PATH), `${'x'.repeat(3_089)}\n`);
           return applied;
         },
       },
@@ -10667,6 +10673,12 @@ nodeTest('descriptor-only overflow: unknown post-apply growth reports the fresh 
     assert.equal(last.request.mode, 'commit-lane-receipt');
     assert.deepEqual(Object.keys(last.value), ['inspection']);
     assert.equal(last.value.inspection.overflow, true);
+    const measured = await measurePrivateModelView(last.request.input);
+    assert.deepEqual(measured.inspection, last.value.inspection);
+    assert.equal(measured.modelBytes, 131_073, 'unknown growth crosses the real byte ceiling by one');
+    assert.deepEqual(expandModelPacket(measured.packet), originalAvailableProjection({
+      target: TARGET, items: measured.items,
+    }));
     assert.equal(applications.length, 1);
     assert.equal(applications[0].request.operation, 'work-project');
     assert.equal(result.steps.at(-1).step, 'attempt:1:completion:commit-projection:1');
@@ -10694,7 +10706,7 @@ nodeTest('descriptor-only overflow: unknown post-apply growth reports the fresh 
 
 nodeTest('T002 known growth: forked runner exits nonzero before its excessive projection is applied', async () => {
   await withSealedWorkspace(async (root) => {
-    const request = latePacketOverflowRunnerRequest(root, 58_000);
+    const request = latePacketOverflowRunnerRequest(root, 58_748);
     const filesBefore = laneSurfaceDigests(root);
     const temp = path.join(root, 'tmp');
     fs.mkdirSync(temp);
@@ -10714,7 +10726,7 @@ nodeTest('T002 known growth: forked runner exits nonzero before its excessive pr
     assert.equal(result.haltReport.evidenceHash, null, 'predicted evidence is not reported as observed authority');
     assert.equal(result.capacity.budget, 'model-packet-bytes');
     assert.equal(result.capacity.limit, 131_072);
-    assert.equal(result.capacity.required, 131_087);
+    assert.equal(result.capacity.required, 131_077);
     assert.equal(result.haltReport.nextAction, 'request-human-input');
     assert.deepEqual(laneSurfaceDigests(root), filesBefore);
     assert.equal(focusedRunnerAcceptedState(result).pending.length, 1);
@@ -10888,13 +10900,14 @@ for (const mode of ['matching', 'missing', 'effect-observed', 'indeterminate', '
   });
 }
 
-nodeTest('descriptor-only overflow: an effectful runner port cannot claim a no-effect evidence stop', async () => {
+nodeTest('descriptor-only overflow: an effectful runner port cannot claim a no-effect evidence stop', async (context) => {
   await withSealedWorkspace(async (root) => {
     const request = latePacketOverflowRunnerRequest(root);
     const ownerPath = path.join(root, IDEA_PATH);
     const marker = 'OVERFLOW_INJECTED_EFFECT_SECRET';
     const calls = [];
     let inspection;
+    let receiptInput;
     const result = await runHostAdapter(request, {
       checkpoint: memoryCheckpointStore().port,
       runtime: {
@@ -10902,7 +10915,10 @@ nodeTest('descriptor-only overflow: an effectful runner port cannot claim a no-e
         invoke(command, lowLevelRequest) {
           calls.push(`${command}:${lowLevelRequest.mode ?? 'inspect'}`);
           if (command === 'transition' && lowLevelRequest.mode === 'commit-lane-receipt') {
-            fs.appendFileSync(ownerPath, `\n- 2026-08-10 ${marker} ${'x'.repeat(2_000)}\n`);
+            // The mandatory last owner event alone must exceed the byte budget;
+            // dropping the preceding owner event must not make this guard moot.
+            fs.appendFileSync(ownerPath, `\n- 2026-08-10 ${marker} ${'x'.repeat(3_084)}\n`);
+            receiptInput = clone(lowLevelRequest.input);
           }
           const value = runCommand(command, lowLevelRequest);
           inspection = value.inspection;
@@ -10914,6 +10930,15 @@ nodeTest('descriptor-only overflow: an effectful runner port cannot claim a no-e
       },
     });
     assert.equal(inspection.overflow, true, 'the returned shape is genuinely runtime-owned');
+    const measured = await measurePrivateModelView(receiptInput);
+    assert.deepEqual(measured.inspection, inspection);
+    assert.equal(measured.modelBytes, 131_087, 'the effectful port returns a real descriptor-only overflow');
+    assert.deepEqual(expandModelPacket(measured.packet), originalAvailableProjection({
+      target: TARGET, items: measured.items,
+    }));
+    context.diagnostic(canonicalJson({
+      effectfulOverflow: { modelBytes: measured.modelBytes, limit: 131_072 },
+    }));
     assert.equal(calls.length, 7, 'the fresh application precheck precedes the late receipt refusal');
     assert.equal(calls.at(-1), 'transition:commit-lane-receipt');
     assert.equal(result.outcome, 'hard-stop');
@@ -11281,6 +11306,13 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
       trigger: 'explicit-inspection',
       input: initialInput,
     }).inspection;
+    const literalReference = await measurePrivateModelView(initialInput, { literalHistory: true });
+    assert.equal(literalReference.modelBytes, 131_023, 'the immutable pre-compaction reference control');
+    const sameProjectionLiteral = await renderPrivateModelProjection(
+      target, initialInspection.items, { literalHistory: true },
+    );
+    const sameProjectionLiteralBytes = Buffer.byteLength(canonicalJson(sameProjectionLiteral));
+    assert.deepEqual(expandModelPacket(sameProjectionLiteral), originalAvailableProjection(initialInspection));
     const stages = [await t003StageMeasurement({
       label: 'frozen-reference',
       root,
@@ -11298,8 +11330,8 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
       checks: stages[0].checks,
       surfaces: stages[0].surfaces,
     }, {
-      canonicalBytes: 131_023,
-      byteHeadroom: 49,
+      canonicalBytes: 107_680,
+      byteHeadroom: 23_392,
       physicalItems: 13,
       logicalOccurrences: 16,
       rawSourceEntries: 16,
@@ -11602,7 +11634,9 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
     const receipts = [clone(applied.product.receipt)];
 
     let refusal = null;
-    for (const ordinal of [6, 7, 8]) {
+    // Exact event sharing postpones this counterfactual component's real
+    // overflow. Carry the same complete payloads until that byte guard fires.
+    for (let ordinal = 6; ordinal <= 14; ordinal += 1) {
       const preCaptureInspection = runCommand('inspect', {
         trigger: 'explicit-inspection',
         input: retainedInput,
@@ -11644,15 +11678,15 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         assert.deepEqual(Object.keys(capturedPrefix), ['inspection']);
         assert.equal(canonicalJson(state), stateBefore);
         assert.deepEqual(t003FileIdentities(root, reference), filesBefore);
-        assert.equal(measured.canonicalBytes, 131_889);
+        assert.equal(measured.canonicalBytes, 159_228);
         assert.equal(measured.physicalItems, 15);
-        assert.equal(measured.logicalOccurrences, 28);
-        assert.equal(measured.rawSourceEntries, 28);
-        assert.equal(measured.originalDescriptors, 29);
+        assert.equal(measured.logicalOccurrences, 46);
+        assert.equal(measured.rawSourceEntries, 46);
+        assert.equal(measured.originalDescriptors, 47);
         assert.deepEqual(measured.surfaces, {
-          currentRun: 15,
-          laneTarget: 15,
-          laneGlobal: 23,
+          currentRun: 21,
+          laneTarget: 21,
+          laneGlobal: 29,
           equal: true,
         });
         assert.deepEqual(capturedPrefix.inspection.blockers, [
@@ -11681,7 +11715,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         assert.deepEqual(report.target, target);
         assert.equal(report.evidenceHash, capturedPrefix.inspection.evidenceHash);
         assert.equal(canonicalJson(report).includes('runtime-output-malformed'), false);
-        assert.equal(receipts.length, 3);
+        assert.equal(receipts.length, 9);
         refusal = {
           ordinal,
           phase: 'captures',
@@ -11716,7 +11750,7 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         {
           lanePrestate: binding.lanePrestate,
           targetMapping: binding.targetMapping,
-          operationTime: `2026-09-18T12:00:0${ordinal}Z`,
+          operationTime: `2026-09-18T12:00:${String(ordinal).padStart(2, '0')}Z`,
         },
       );
       assert.equal(preparedPrefix.transition.prepared, true, preparedPrefix.transition.reason);
@@ -11784,136 +11818,63 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
       retainedInput = publishedInput;
     }
 
-    assert.deepEqual(stages.map(stage => ({
-      label: stage.label,
-      canonicalBytes: stage.canonicalBytes,
-      physicalItems: stage.physicalItems,
-      logicalOccurrences: stage.logicalOccurrences,
-      rawSourceEntries: stage.rawSourceEntries,
-      originalDescriptors: stage.originalDescriptors,
-      capacityAdmissible: stage.capacityAdmissible,
-    })), [
-      {
-        label: 'frozen-reference',
-        canonicalBytes: 131_023,
-        physicalItems: 13,
-        logicalOccurrences: 16,
-        rawSourceEntries: 16,
-        originalDescriptors: 17,
-        capacityAdmissible: true,
-      },
-      {
-        label: 'ordinal-5-captures',
-        canonicalBytes: 131_063,
-        physicalItems: 15,
-        logicalOccurrences: 19,
-        rawSourceEntries: 19,
-        originalDescriptors: 20,
-        capacityAdmissible: true,
-      },
-      {
-        label: 'ordinal-5-lane-first',
-        canonicalBytes: 128_735,
-        physicalItems: 15,
-        logicalOccurrences: 19,
-        rawSourceEntries: 19,
-        originalDescriptors: 20,
-        capacityAdmissible: true,
-      },
-      {
-        label: 'ordinal-5-receipt',
-        canonicalBytes: 130_251,
-        physicalItems: 15,
-        logicalOccurrences: 19,
-        rawSourceEntries: 19,
-        originalDescriptors: 20,
-        capacityAdmissible: true,
-      },
-      {
-        label: 'ordinal-6-captures',
-        canonicalBytes: 130_981,
-        physicalItems: 15,
-        logicalOccurrences: 22,
-        rawSourceEntries: 22,
-        originalDescriptors: 23,
-        capacityAdmissible: true,
-      },
-      {
-        label: 'ordinal-6-lane-first',
-        canonicalBytes: 130_960,
-        physicalItems: 15,
-        logicalOccurrences: 22,
-        rawSourceEntries: 22,
-        originalDescriptors: 23,
-        capacityAdmissible: true,
-      },
-      {
-        label: 'ordinal-6-receipt',
-        canonicalBytes: 130_156,
-        physicalItems: 15,
-        logicalOccurrences: 22,
-        rawSourceEntries: 22,
-        originalDescriptors: 23,
-        capacityAdmissible: true,
-      },
-      {
-        label: 'ordinal-7-captures',
-        canonicalBytes: 130_849,
-        physicalItems: 15,
-        logicalOccurrences: 25,
-        rawSourceEntries: 25,
-        originalDescriptors: 26,
-        capacityAdmissible: true,
-      },
-      {
-        label: 'ordinal-7-lane-first',
-        canonicalBytes: 130_833,
-        physicalItems: 15,
-        logicalOccurrences: 25,
-        rawSourceEntries: 25,
-        originalDescriptors: 26,
-        capacityAdmissible: true,
-      },
-      {
-        label: 'ordinal-7-receipt',
-        canonicalBytes: 129_890,
-        physicalItems: 15,
-        logicalOccurrences: 25,
-        rawSourceEntries: 25,
-        originalDescriptors: 26,
-        capacityAdmissible: true,
-      },
-      {
-        label: 'ordinal-8-captures-refused',
-        canonicalBytes: 131_889,
-        physicalItems: 15,
-        logicalOccurrences: 28,
-        rawSourceEntries: 28,
-        originalDescriptors: 29,
-        capacityAdmissible: false,
-      },
+    assert.deepEqual(stages.map(stage => [
+      stage.label, stage.canonicalBytes, stage.ownerEvents.included,
+      stage.physicalItems, stage.logicalOccurrences, stage.rawSourceEntries,
+      stage.originalDescriptors, stage.capacityAdmissible,
+    ]), [
+      // Boundary, complete bytes, owner suffix, items, occurrences, sources, descriptors, admitted.
+      ['frozen-reference', 107_680, 36, 13, 16, 16, 17, true],
+      ['ordinal-5-captures', 115_695, 36, 15, 19, 19, 20, true],
+      ['ordinal-5-lane-first', 117_439, 36, 15, 19, 19, 20, true],
+      ['ordinal-5-receipt', 117_446, 36, 15, 19, 19, 20, true],
+      ['ordinal-6-captures', 120_531, 36, 15, 22, 22, 23, true],
+      ['ordinal-6-lane-first', 122_275, 36, 15, 22, 22, 23, true],
+      ['ordinal-6-receipt', 122_282, 36, 15, 22, 22, 23, true],
+      ['ordinal-7-captures', 125_367, 36, 15, 25, 25, 26, true],
+      ['ordinal-7-lane-first', 127_111, 36, 15, 25, 25, 26, true],
+      ['ordinal-7-receipt', 127_118, 36, 15, 25, 25, 26, true],
+      ['ordinal-8-captures', 130_203, 36, 15, 28, 28, 29, true],
+      ['ordinal-8-lane-first', 130_769, 33, 15, 28, 28, 29, true],
+      ['ordinal-8-receipt', 130_776, 33, 15, 28, 28, 29, true],
+      ['ordinal-9-captures', 130_794, 29, 15, 31, 31, 32, true],
+      ['ordinal-9-lane-first', 130_613, 27, 15, 31, 31, 32, true],
+      ['ordinal-9-receipt', 130_620, 27, 15, 31, 31, 32, true],
+      ['ordinal-10-captures', 129_526, 24, 15, 34, 34, 35, true],
+      ['ordinal-10-lane-first', 128_890, 23, 15, 34, 34, 35, true],
+      ['ordinal-10-receipt', 128_897, 23, 15, 34, 34, 35, true],
+      ['ordinal-11-captures', 130_194, 22, 15, 37, 37, 38, true],
+      ['ordinal-11-lane-first', 130_081, 19, 15, 37, 37, 38, true],
+      ['ordinal-11-receipt', 130_088, 19, 15, 37, 37, 38, true],
+      ['ordinal-12-captures', 130_381, 15, 15, 40, 40, 41, true],
+      ['ordinal-12-lane-first', 130_821, 13, 15, 40, 40, 41, true],
+      ['ordinal-12-receipt', 130_828, 13, 15, 40, 40, 41, true],
+      ['ordinal-13-captures', 131_067, 6, 15, 43, 43, 44, true],
+      ['ordinal-13-lane-first', 130_353, 5, 15, 43, 43, 44, true],
+      ['ordinal-13-receipt', 130_360, 5, 15, 43, 43, 44, true],
+      ['ordinal-14-captures-refused', 159_228, 36, 15, 46, 46, 47, false],
     ]);
     assert.deepEqual(refusal, {
-      ordinal: 8,
+      ordinal: 14,
       phase: 'captures',
       reason: 'model-packet-bytes',
-      required: 131_889,
+      required: 159_228,
       limit: 131_072,
       target,
       componentReceipts: receipts.map(receipt => receipt.receiptHash),
     });
-    assert.equal(stages.at(-2).label, 'ordinal-7-receipt');
-    assert.equal(stages.at(-2).canonicalBytes, 129_890);
+    assert.equal(stages.at(-2).label, 'ordinal-13-receipt');
+    assert.equal(stages.at(-2).canonicalBytes, 130_360);
     assert.deepEqual(stages.at(-1).mandatoryHeadroom, {
       classes: ['verification', 'review', 'lint'],
       sourceDelta: 3,
       descriptorDelta: 3,
-      requiredSources: 31,
-      requiredDescriptors: 32,
+      requiredSources: 49,
+      requiredDescriptors: 50,
     });
     assert.deepEqual(t003CheckSummary(retainedInput), {
-      total: 98,
-      passed: 75,
+      total: 194,
+      passed: 171,
       failed: 23,
     });
     for (const field of ['verification', 'review', 'lint']) {
@@ -11940,19 +11901,9 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
       new URL('../../../scripts/fixtures/064-work-receipt-overflow-handling/reference.json', import.meta.url),
     ), referenceBytes);
     const research = episode.research.prefixes;
-    assert.equal(stages[0].canonicalBytes - research[0].packetBytes, 10);
-    assert.equal(stages[1].canonicalBytes - research[1].packetBytes, 10);
-    assert.equal(stages[3].canonicalBytes - research[3].packetBytes, 10);
-    assert.equal(stages[4].canonicalBytes - research[4].packetBytes, 10);
-    assert.equal(stages[6].canonicalBytes - research[6].packetBytes, 10);
-    assert.equal(stages[7].canonicalBytes - research[7].packetBytes, 10);
-    assert.equal(stages[9].canonicalBytes - research[9].packetBytes, 10);
-    assert.equal(stages[10].canonicalBytes - research[10].packetBytes, 10);
-    assert.notEqual(
-      stages[8].canonicalBytes,
-      research[8].packetBytes + 10,
-      'the lane-first prefix is measured, not relabeled from current-run-first research',
-    );
+    assert.equal(literalReference.modelBytes - research[0].packetBytes, 10);
+    assert.ok(sameProjectionLiteralBytes > stages[0].canonicalBytes,
+      'compare the exact selected projection, not an assumed offset from historical research');
     assert.deepEqual(runtimeCalls.map(({ command, mode }) => `${command}:${mode}`), [
       'transition:bind-post-learning-inspection',
       'transition:issue-attempt-permit',
@@ -11971,10 +11922,12 @@ nodeTest('Feature 064 T003 component measurement: counterfactual reference growt
         productionFormat: 'dude-work-model-view-v1',
         productionOrder: 'lane-first',
         stages,
-        lastFittingComponentPrefix: 'ordinal-7-receipt',
+        literalHistoryReferenceBytes: literalReference.modelBytes,
+        sameProjectionLiteralReferenceBytes: sameProjectionLiteralBytes,
+        lastFittingComponentPrefix: 'ordinal-13-receipt',
         firstCounterfactualByteOverflow: refusal,
         discardedComponentSuccessors: {
-          ordinals: [6, 7],
+          ordinals: [6, 7, 8, 9, 10, 11, 12, 13],
           finalized: true,
           completed: false,
           reason: 'learning-required',
@@ -12331,7 +12284,7 @@ async function runT003FullReferenceCase(context, scenario) {
       input: retainedInput,
     }, 'accepted', 'inspection-refreshed');
     await measure('frozen-reference', lastRuntime.value.inspection);
-    assert.equal(stages[0].canonicalBytes, 131_023);
+    assert.equal(stages[0].canonicalBytes, 107_680);
     assert.deepEqual(stages[0].checks, { total: 50, passed: 27, failed: 23 });
     assert.equal(inspected.session.acceptedState.overallUsed, 4);
     operate('derive-required', 'advance-governance', {
@@ -12459,7 +12412,7 @@ async function runT003FullReferenceCase(context, scenario) {
       measuredBytes['ordinal-5:completion:lane-first:1'],
       measuredBytes['ordinal-5:completion:receipt:1'],
       measuredBytes['ordinal-5:settled'],
-    ], [130_536, 130_806, 130_823, 128_760, 128_760]);
+    ], [113_798, 121_813, 123_557, 123_564, 123_564]);
     for (const [relative, bytes] of filePreimages) {
       if (relative === binding.targetMapping.tasksPath || relative === '.dude/state/task-state.json') continue;
       assert.deepEqual(fs.readFileSync(path.join(root, relative)), bytes, relative);
@@ -12526,21 +12479,21 @@ async function runT003FullReferenceCase(context, scenario) {
       mandatoryHeadroom: stage.mandatoryHeadroom,
     });
     const preterminalStageIdentity = {
-      canonicalBytes: 128_760,
-      byteHeadroom: 2_312,
+      canonicalBytes: 123_564,
+      byteHeadroom: 7_508,
       physicalItems: 15,
       logicalOccurrences: 19,
       rawSourceEntries: 19,
       originalDescriptors: 20,
       maximumSourceBodyBytes: 77_433,
       aggregateDecodedBytes: 343_915,
-      requestBytes: 142_794,
+      requestBytes: 142_712 + Buffer.byteLength(canonicalJson(root)) - 2,
       capacityAdmissible: true,
       refusalReason: null,
-      sourceIdentity: 'cc71010fa11b4423d35266253cf3942a7dadc49ba11907d356e45a71fcd7c13e',
-      evidenceHash: '6f64fb2468822be59af544898d4f0449a0a1e80ac99863f454cd679b49e4c083',
-      packetIdentity: '8f27f365abf0e33f30e19860c3e29c3ae4c2d8436fd06217dd3969034a8aa3d4',
-      ownerEvents: { included: 5, total: 36 },
+      sourceIdentity: 'acc7f75ea4a3ddc07fcb7f041079ff610910750312509d914b58b599c6ccae18',
+      evidenceHash: 'de0e164bed963489e4388ea834c2a996e90b4ecbf017cb7e9882910df4938b66',
+      packetIdentity: 'd69d914eede010845190df9929496e3d944ade0390bdc757d41d388c59b2ad67',
+      ownerEvents: { included: 36, total: 36 },
       checks: { total: 66, passed: 43, failed: 23 },
       surfaces: { currentRun: 15, laneTarget: 15, laneGlobal: 23, equal: true },
       mandatoryHeadroom: {
@@ -12553,11 +12506,11 @@ async function runT003FullReferenceCase(context, scenario) {
     };
     const appliedStageIdentity = {
       ...preterminalStageIdentity,
-      canonicalBytes: 128_746,
-      byteHeadroom: 2_326,
-      sourceIdentity: '88c886ec4ee90adc55e855a29d705f47067af1588e53abef292ddae55c398a2e',
-      evidenceHash: 'f9ad78dc2307c10b74587eb26b8051000830322b7aa4f1432bb47eb1877f37f4',
-      packetIdentity: 'c56db0497e6aeb821302e56ac345914d5a675c76e16a4c0c24bf2198250b5b0b',
+      canonicalBytes: 123_550,
+      byteHeadroom: 7_522,
+      sourceIdentity: 'c67f987bdfcc66afcfa74bc4423483af4c42bdad45c19bb30c725246c6af40c8',
+      evidenceHash: 'f7d900a245b4a3e46e68b84aa2aa95273fbda27c9d8dff322dfafc07bce54a2d',
+      packetIdentity: '24bd7aca5c4a48b58095dcaa6fd4e977f5b9047c9e3b5e19b6ffe792e3fc85e5',
     };
     const assertTerminalStages = expected => assert.deepEqual(
       stages.filter(stage => stage.label.startsWith('terminal:')).map(terminalStageIdentity),
@@ -13043,5 +12996,1133 @@ nodeTest('Feature 064 T003: the production runner cannot settle after a misbound
         actual062Operations: 0,
       },
     }));
+  });
+});
+
+/**
+ * Each refusal starts with a separate complete, freshly owned failed episode.
+ * @param {import('node:test').TestContext} context
+ * @param {'review-learning'|'resume-learning'} continuationAction
+ */
+async function runFeature065FailedEpisode(context, continuationAction) {
+  await withHistoryIncidentWorkspace(async ({
+    root, reference, referenceBytes, input: initialInput, filePreimages,
+  }) => {
+    const target = canonicalTarget(initialInput.target);
+    const historicalRecords = currentRunRecords(initialInput);
+    const historicalEvents = t003CurrentEvents(initialInput);
+    const historicalLane = t003LaneEvents(root, target);
+    const priorReview = historicalEvents.filter(event => event.type === 'learning-review').at(-1);
+    assert.ok(priorReview);
+    assert.deepEqual(historicalLane.target, historicalEvents);
+    assert.equal(historicalRecords.length, 14);
+    assert.deepEqual(t003CheckSummary(initialInput), { total: 54, passed: 28, failed: 26 });
+
+    // Recreate the governed attempt through fresh owner operations. The archive's
+    // preflight RunState, worker, and provisional completion are never admitted.
+    const initialState = t003HistoricalState(target, historicalEvents);
+    initialState.policy.overall = 6;
+    initialState.policy.recovery = 5;
+    const initialBinding = t003LaneBinding(root, reference, target);
+    assert.deepEqual(initialBinding.lanePrestate, reference.preflight.laneBinding.lanePrestate);
+    assert.deepEqual(initialBinding.targetMapping, reference.preflight.laneBinding.targetMapping);
+    const checkpoint = memoryCheckpointStore();
+    const supervisor = sealedSupervisorSession({ identity: randomBytes(32).toString('hex') });
+    let input = clone(initialInput);
+    let lastRuntime = null;
+    let producedStreams = null;
+    const stages = [];
+    const operations = [];
+    const receipts = [];
+    const writerPostimages = [];
+    const runtimeErrors = [];
+    let fullOwner;
+    const adapter = createAuthorizedHostAdapter({
+      state: initialState,
+      target,
+      inspectionIdentity: sha256('Feature 065 fresh fixture-owned admission'),
+      workspace: t003CheckpointWorkspace(root, target, initialBinding),
+    }, {
+      supervisorSession: supervisor,
+      noEffectAuthority: sealedNoEffectAuthority(),
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('Feature 065 unchanged runtime observer'),
+        invoke(command, request) {
+          let value;
+          try {
+            value = runCommand(command, request);
+          } catch (error) {
+            runtimeErrors.push({ command, mode: request.mode ?? null, message: error.message });
+            throw error;
+          }
+          lastRuntime = { command, mode: request.mode ?? null, value };
+          if (command === 'complete' && request.mode === 'capture') {
+            producedStreams = clone(request.input);
+          }
+          return { status: 'returned', value };
+        },
+      },
+      laneOwner: {
+        identity: sha256('Feature 065 fresh disposable lane owner'),
+        apply(request) {
+          assert.equal(request.root, root);
+          const mutation = request.mutation;
+          const predicted = buildLightweightWorkPostimages({
+            tasks: Buffer.from(request.expected.tasks.base64, 'base64'),
+            owner: Buffer.from(request.owner.ownerCapture.base64, 'base64'),
+            taskState: Buffer.from(request.expected.taskState.base64, 'base64'),
+            tasksPath: request.expected.tasksPath,
+            taskKey: target.taskKey,
+            kind: mutation.kind,
+            toGlyph: mutation.toGlyph,
+            blocker: mutation.blocker,
+            eventLines: mutation.eventLines.lines.map(line => line.exactLine),
+            ownerLogLines: [],
+            snapshotUpdatedAt: mutation.snapshotUpdatedAt,
+          });
+          assert.ok(!('reason' in predicted));
+          const result = applyLightweightWorkRequest(request);
+          assert.equal(result.ok, true, canonicalJson(result));
+          const hashes = {};
+          for (const [surface, relative] of [
+            ['tasks', request.expected.tasksPath],
+            ['taskState', request.expected.taskStatePath],
+            ['owner', request.owner.ideaPath],
+          ]) {
+            const actual = fs.readFileSync(path.join(root, relative));
+            assert.deepEqual(actual, predicted[surface], `${surface}: predictor equals real writer`);
+            hashes[surface] = contentDescriptor(actual);
+          }
+          writerPostimages.push({ eventHash: request.permit.eventHash, hashes });
+          return result;
+        },
+      },
+    });
+    for (const identity of [
+      adapter.snapshot().invocationIdentity, adapter.snapshot().workerToken, supervisor.identity,
+    ]) assert.equal(canonicalJson(reference).includes(identity), false);
+
+    const operate = (label, operation, payload, expectedOutcome, expectedReason) => {
+      const before = adapter.snapshot();
+      const files = t003FileIdentities(root, reference);
+      const result = adapter.run(sealedRequest(adapter, operation, payload));
+      validateHostAdapterResult(result);
+      assert.deepEqual(result.session, adapter.snapshot());
+      assert.equal(result.session.hostRevision, before.hostRevision + 2);
+      assert.equal(result.session.acceptedRevision, before.acceptedRevision
+        + Number(result.session.acceptedStateHash !== before.acceptedStateHash));
+      if (result.outcome !== 'accepted' || operation === 'fresh-inspection') {
+        assert.deepEqual(acceptedAuthorityTuple(result.session), acceptedAuthorityTuple(before), label);
+      }
+      if (operation !== 'apply-lane-effect') {
+        assert.deepEqual(t003FileIdentities(root, reference), files);
+      }
+      operations.push({
+        label, operation, outcome: result.outcome, reason: result.reason,
+        beforeStateHash: before.acceptedStateHash,
+        afterStateHash: result.session.acceptedStateHash,
+        acceptedRevision: result.session.acceptedRevision,
+        overallUsed: result.session.acceptedState.overallUsed,
+        governancePhase: result.session.acceptedState.learningGovernance?.phase ?? null,
+        pendingPurpose: result.session.pendingEffect?.projectionBatch.purpose ?? null,
+      });
+      if (expectedOutcome !== undefined) {
+        assert.equal(result.outcome, expectedOutcome, `${label}: ${result.reason}`);
+        assert.equal(result.reason, expectedReason, label);
+      }
+      return result;
+    };
+    const measure = async (label, inspection = runCommand('inspect', {
+      trigger: 'explicit-inspection', input,
+    }).inspection) => {
+      const row = await t003StageMeasurement({ label, root, reference, input, inspection });
+      const literal = await renderPrivateModelProjection(target, inspection.items, { literalHistory: true });
+      row.sameProjectionLiteralBytes = Buffer.byteLength(canonicalJson(literal));
+      row.netBytes = row.sameProjectionLiteralBytes - row.canonicalBytes;
+      row.ownerEvents.omitted = row.ownerEvents.total - row.ownerEvents.included;
+      assert.deepEqual(expandModelPacket(literal), originalAvailableProjection(inspection));
+      const ownerItem = inspection.items.find(item => item.source === 'owner-log');
+      const owner = JSON.parse(ownerItem.text);
+      if (!fullOwner) {
+        assert.equal(owner.includedEventCount, owner.totalEventCount);
+        fullOwner = owner;
+      }
+      assert.equal(owner.fullLogSha256, fullOwner.fullLogSha256);
+      assert.equal(owner.fullLogByteLength, fullOwner.fullLogByteLength);
+      assert.deepEqual(owner.events, fullOwner.events.slice(-owner.includedEventCount));
+      if (owner.includedEventCount < owner.totalEventCount) {
+        const largerText = canonicalJson({
+          ...owner,
+          events: fullOwner.events.slice(-(owner.includedEventCount + 1)),
+          includedEventCount: owner.includedEventCount + 1,
+          omittedEventCount: owner.omittedEventCount - 1,
+          firstIncludedEventOrdinal: owner.firstIncludedEventOrdinal - 1,
+        });
+        const larger = await renderPrivateModelProjection(target, inspection.items.map(item => (
+          item === ownerItem ? { ...item, text: largerText, ...contentDescriptor(largerText) } : item
+        )));
+        row.nextOwnerSuffixBytes = Buffer.byteLength(canonicalJson(larger));
+        assert.ok(row.nextOwnerSuffixBytes > 131_072, `${label}: actual owner suffix is maximal`);
+      }
+      assert.equal(row.capacityAdmissible, true, label);
+      assert.ok(row.canonicalBytes <= 131_072 && row.netBytes > 0, label);
+      assert.ok(row.physicalItems <= row.logicalOccurrences && row.logicalOccurrences <= row.originalDescriptors);
+      assert.ok(row.rawSourceEntries <= 64 && row.originalDescriptors <= 64);
+      assert.ok(row.mandatoryHeadroom.requiredSources <= 64
+        && row.mandatoryHeadroom.requiredDescriptors <= 64);
+      assert.ok(row.maximumSourceBodyBytes <= 1_048_576);
+      assert.ok(row.aggregateDecodedBytes <= 4_194_304 && row.requestBytes <= 6_291_456);
+      assert.deepEqual(currentRunRecords(input).slice(0, historicalRecords.length), historicalRecords);
+      assert.deepEqual(t003LaneEvents(root, target).global.slice(0, historicalLane.global.length), historicalLane.global);
+      for (const field of ['verification', 'review', 'lint']) {
+        assert.deepEqual(input[field].slice(0, initialInput[field].length), initialInput[field],
+          `${label}: every original failed and contradictory capture remains exact`);
+      }
+      row.captureCounts = Object.fromEntries(['currentRun', 'verification', 'review', 'lint']
+        .map(field => [field, input[field].length]));
+      assert.deepEqual(t003CheckSummary(initialInput), { total: 54, passed: 28, failed: 26 });
+      for (const [relative, bytes] of filePreimages) {
+        if (relative === initialBinding.targetMapping.tasksPath || relative === '.dude/state/task-state.json') continue;
+        assert.deepEqual(fs.readFileSync(path.join(root, relative)), bytes, relative);
+      }
+      stages.push(row);
+      return inspection;
+    };
+    const project = async label => {
+      const effect = adapter.snapshot().pendingEffect;
+      const batch = effect.projectionBatch;
+      for (const [index, event] of batch.events.entries()) {
+        const binding = t003LaneBinding(root, reference, target);
+        const laneBinding = {
+          lanePrestate: binding.lanePrestate,
+          targetMapping: binding.targetMapping,
+          operationTime: '2026-09-18T18:00:00Z',
+        };
+        const prediction = await measurePrivatePreflight({
+          state: effect.provisionalState, input, batch, laneBinding,
+        });
+        assert.equal(prediction.capacity, null, `${label}: known postimages fit`);
+        const prepared = operate(`${label}:prepare:${index}`, 'prepare-authoritative-projection', {
+          projection: { input, laneBinding },
+        }, 'effect-required', 'projection-prepared');
+        assert.deepEqual(prepared.product.plan, prediction.result.transition.plan);
+        await measure(`${label}:prepare:${index}`, lastRuntime.value.inspection);
+        const item = prepared.product.plan.items[index];
+        assert.equal(item.eventHash, event.eventHash);
+        const beforePublish = canonicalJson(input);
+        const applied = operate(`${label}:lane-first:${index}`, 'apply-lane-effect', {
+          laneApplication: { ...binding.application, permit: item.projectionPermit, mutation: item.mutation },
+        }, 'effect-required', 'lane-projection-applied');
+        assert.equal(canonicalJson(input), beforePublish, 'publication follows the actual lane write');
+        const laneInspection = await measure(`${label}:lane-first:${index}`);
+        assert.deepEqual(laneInspection, prediction.measurements[1].inspection);
+        assert.equal(stages.at(-1).surfaces.equal, false);
+        input = publishCurrentRun(input, item.currentRunRecord);
+        const bothInspection = await measure(`${label}:both-surfaces:${index}`);
+        assert.deepEqual(bothInspection, prediction.measurements[2].inspection);
+        assert.equal(stages.at(-1).surfaces.equal, true);
+        operate(`${label}:receipt:${index}`, 'commit-lane-receipt', {
+          laneReceipt: { input, permit: item.projectionPermit, receipt: applied.product.receipt },
+        }, 'effect-required', 'lane-receipt-committed');
+        await measure(`${label}:receipt:${index}`, lastRuntime.value.inspection);
+        receipts.push(clone(applied.product.receipt));
+      }
+    };
+
+    let continuation = null;
+    let refusalProof = null;
+    let cleanup = null;
+    try {
+      operate('acquire', 'fresh-inspection', { input }, 'accepted', 'inspection-refreshed');
+      await measure('complete-incident', lastRuntime.value.inspection);
+      assert.equal(stages[0].canonicalBytes, 121_590);
+      operate('derive-governance', 'advance-governance', {
+        governance: { action: 'resume-learning', input },
+      }, 'accepted', 'governance-resumed');
+      await measure('governance-required', lastRuntime.value.inspection);
+      const finding = {
+        version: 1,
+        statement: 'Synthetic fixture learning for the retained failed result; not real 062 browser acceptance.',
+        evidenceIdentities: [sha256('Feature 065 synthetic learning provider')],
+        assumptionIdentities: [],
+      };
+      const review = {
+        version: 2, target, assumptionIdentities: [],
+        findings: [{ ...finding, findingIdentity: sha256(canonicalJson(finding)) }],
+        alternatives: clone(priorReview.alternatives),
+        outcome: 'selected-alternative',
+        selectedAlternativeIdentity: priorReview.selectedAlternativeIdentity,
+      };
+      operate('review-before-failed-counterpart', 'advance-governance', {
+        governance: { action: 'review-learning', input, review },
+      }, 'effect-required', 'learning-reviewed');
+      await measure('learning-reviewed', lastRuntime.value.inspection);
+      assert.deepEqual(adapter.snapshot().pendingEffect.projectionBatch.events.map(event => event.type),
+        ['learning-review', 'learning-governance']);
+      await project('initial-learning');
+      operate('settle-initial-learning', 'settle-effect', { input }, 'accepted', 'projection-verified');
+      await measure('learning-projected', lastRuntime.value.inspection);
+      assert.equal(receipts.length, 2);
+      assert.equal(adapter.snapshot().acceptedState.learningGovernance.phase, 'projected');
+      operate('post-learning-acquire', 'fresh-inspection', { input }, 'accepted', 'inspection-refreshed');
+      await measure('post-learning-acquire', lastRuntime.value.inspection);
+      operate('bind-alternative', 'advance-governance', {
+        governance: { action: 'bind-alternative', input },
+      }, 'accepted', 'post-learning-inspection-bound');
+      const inspection = await measure('alternative-inspected', lastRuntime.value.inspection);
+      const episode = clone(readRetentionEpisodeFixture().value);
+      const binding = t003LaneBinding(root, reference, target);
+      const authorized = operate('authorize-failed-counterpart', 'authorize-attempt', {
+        authorization: {
+          input,
+          assessment: {
+            evidenceHash: inspection.evidenceHash, intent: 'unchanged',
+            action: episode.payload.approachBasis.action,
+            materialInputs: clone(episode.payload.approachBasis.materialInputs),
+            equivalence: 'distinct', retention: 'transient',
+            summary: 'Synthetic counterpart of the incident failed result, preserving every old assertion.',
+          },
+          permit: { lanePrestate: binding.lanePrestate, targetMapping: binding.targetMapping },
+        },
+      }, 'accepted', 'authorized');
+      await measure('alternative-authorized', lastRuntime.value.inspection);
+      assert.equal(authorized.session.acceptedState.learningGovernance.phase, 'alternative-authorized');
+      assert.equal(authorized.session.acceptedState.pending[0].action, 'address-test');
+      assert.deepEqual(authorized.session.acceptedState.pending[0].materialInputs.checks, ['lint', 'verification']);
+      const historicalVerification = normalizeVerificationEnvelopeV2(t003TrustedCapture(input.verification.at(-1)));
+      const historicalReview = normalizeIndependentReviewEnvelopeV2(
+        t003TrustedCapture(input.review.at(-1)), historicalVerification,
+      );
+      episode.payload.specialistResult = {
+        outcome: 'failed',
+        operations: ['address-test'],
+        changedTargets: [],
+        verification: { checks: historicalVerification.checks.map(check => ({
+          definition: `Synthetic counterpart of captured definition ${check.definitionIdentity}`,
+          outcome: check.outcome,
+          evidence: `Synthetic reassertion of retained evidence ${check.evidenceIdentity}`,
+        })) },
+        review: {
+          verdict: historicalReview.verdict,
+          findings: historicalReview.findings.map(row => ({
+            basis: {
+              expectation: {
+                kind: row.basis.expectation.kind,
+                reference: `Synthetic counterpart of retained expectation ${row.basis.expectation.identity}`,
+              },
+              subjects: clone(row.basis.subjects),
+              failureClass: row.basis.failureClass,
+              checkDefinition: `Synthetic counterpart of captured definition ${row.basis.checkDefinitionIdentity}`,
+            },
+            observation: {
+              kind: 'observed-evidence',
+              evidence: `Synthetic reassertion of retained observation ${row.observation.identity}`,
+            },
+          })),
+        },
+      };
+      const pair = buildRetentionPair({
+        target, episode, ordinal: authorized.session.acceptedState.overallUsed,
+        authorizationEvidenceHash: authorized.session.acceptedState.pending[0].evidenceHash,
+      });
+      assert.equal(pair.semanticResult.outcome, 'failed');
+      assert.equal(pair.review.verdict, 'rejected');
+      assert.deepEqual(pair.verification.checks.map(check => check.outcome).sort(),
+        ['failed', 'failed', 'failed', 'passed']);
+      assert.equal(pair.review.verificationEnvelopeIdentity, pair.verification.envelopeIdentity);
+      assert.equal(pair.verification.inspectedEvidenceHash, inspection.evidenceHash);
+      assert.equal(pair.verification.attemptIdentity,
+        authorized.session.acceptedState.learningGovernance.authorizedAttemptIdentity);
+      for (const field of ['verification', 'review', 'lint']) {
+        assert.equal(input[field].some(stream => canonicalJson(stream) === canonicalJson(pair.streams[field])), false,
+          `${field}: genuinely new bound capture, not reinspection`);
+        assert.equal(pair.streams[field].state, field === 'review' ? 'rejected' : 'failed');
+      }
+      const recordInput = clone(input);
+      // This owner accepts semantic results, not caller-selected trusted streams.
+      // Keep the full retained input and append its actual returned captures below.
+      delete recordInput.verification;
+      delete recordInput.review;
+      delete recordInput.lint;
+      operate('capture-failed-counterpart', 'record-attempt-result', {
+        attemptResult: { input: recordInput, result: pair.semanticResult },
+      }, 'effect-required', 'occurrence-retention-required');
+      assert.ok(producedStreams);
+      for (const field of ['verification', 'review', 'lint']) {
+        assert.deepEqual(producedStreams[field], [pair.streams[field]]);
+      }
+      input = appendRetentionPair(input, pair);
+      await measure('failed-result-captures');
+      const grown = stages.at(-1);
+      assert.equal(grown.rawSourceEntries, stages[0].rawSourceEntries + 3);
+      assert.equal(grown.originalDescriptors, stages[0].originalDescriptors + 3);
+      assert.ok(grown.aggregateDecodedBytes > stages[0].aggregateDecodedBytes);
+      assert.deepEqual(adapter.snapshot().pendingEffect.projectionBatch.events.map(event => event.type),
+        ['approach-occurrence', 'finding-occurrence']);
+      await project('failed-result');
+      operate('settle-failed-result', 'settle-effect', { input }, 'accepted', 'verification-failed');
+      await measure('failed-result-settled', lastRuntime.value.inspection);
+      assert.equal(lastRuntime.value.completion.finalized, true);
+      assert.equal(lastRuntime.value.completion.completed, false);
+      assert.equal(adapter.snapshot().pendingEffect, null);
+      assert.deepEqual(adapter.snapshot().acceptedState.pending, []);
+      assert.equal(adapter.snapshot().acceptedState.learningGovernance.phase, 'alternative-authorized');
+      assert.equal(adapter.snapshot().acceptedState.overallUsed, 5);
+      assert.equal(adapter.snapshot().acceptedState.recoveryUsed[0].count, 4);
+      assert.deepEqual(t003CheckSummary(input), { total: 58, passed: 29, failed: 29 });
+      assert.equal(receipts.length, 4);
+      assert.equal(new Set(receipts.map(receipt => receipt.receiptHash)).size, 4);
+      assert.equal(writerPostimages.length, 4);
+      assert.deepEqual(t003CurrentEvents(input).slice(historicalEvents.length).map(event => event.type),
+        ['learning-review', 'learning-governance', 'approach-occurrence', 'finding-occurrence']);
+      assert.equal(t003CurrentEvents(input).at(-2).occurrence.disposition, 'verification-failed');
+      assert.deepEqual(t003CurrentEvents(input), t003LaneEvents(root, target).target);
+      assert.equal(stages.at(-1).canonicalBytes, 129_356);
+      assert.equal(stages.at(-1).sameProjectionLiteralBytes, 169_973);
+
+      operate('sealed-acquire', 'fresh-inspection', { input }, 'accepted', 'inspection-refreshed');
+      await measure('sealed-acquire', lastRuntime.value.inspection);
+      const beforeRefusal = adapter.snapshot();
+      const beforeFiles = t003FileIdentities(root, reference);
+      const beforeInput = canonicalJson(input);
+      const beforeReceipts = canonicalJson(receipts);
+      const expectedReason = continuationAction === 'review-learning'
+        ? 'learning-phase-mismatch' : 'governance-unresolved';
+      continuation = operate('sealed-continuation', 'advance-governance', {
+        governance: {
+          action: continuationAction, input,
+          ...(continuationAction === 'review-learning' ? { review } : {}),
+        },
+      }, 'hard-stop', expectedReason);
+      const returned = continuationAction === 'review-learning'
+        ? lastRuntime.value.learning : lastRuntime.value.transition;
+      assert.equal(returned[continuationAction === 'review-learning' ? 'reviewed' : 'resumed'], false);
+      assert.equal(returned.reason, expectedReason);
+      assert.deepEqual(returned.state, beforeRefusal.acceptedState);
+      assert.equal(continuation.session.acceptedStateBytes, beforeRefusal.acceptedStateBytes);
+      assert.deepEqual(acceptedAuthorityTuple(continuation.session), acceptedAuthorityTuple(beforeRefusal));
+      assert.deepEqual(continuation.session.pendingEffect, beforeRefusal.pendingEffect);
+      assert.equal(continuation.session.acceptedState.learningGovernance.phase, 'alternative-authorized');
+      assert.equal(canonicalJson(input), beforeInput);
+      assert.equal(canonicalJson(receipts), beforeReceipts);
+      assert.deepEqual(t003FileIdentities(root, reference), beforeFiles);
+      assert.equal(Object.hasOwn(continuation, 'capacity'), false, 'a governance refusal, not a capacity failure');
+      assert.deepEqual(lastRuntime.value.inspection.blockers, []);
+      // Observe the returned packet only. No adapter/runtime operation follows
+      // the hard stop; only its independently allowed fixture cleanup remains.
+      await measure('sealed-continuation-refused', lastRuntime.value.inspection);
+      refusalProof = {
+        action: continuationAction,
+        runtimeCommand: lastRuntime.command,
+        runtimeMode: lastRuntime.mode,
+        returned: clone(returned),
+        acceptedStateBytes: contentDescriptor(beforeRefusal.acceptedStateBytes),
+        acceptedStateUnchanged: true,
+        input: contentDescriptor(beforeInput),
+        receipts: contentDescriptor(beforeReceipts),
+        files: beforeFiles,
+        counters: {
+          overallUsed: beforeRefusal.acceptedState.overallUsed,
+          recoveryUsed: clone(beforeRefusal.acceptedState.recoveryUsed),
+        },
+      };
+      assert.equal(refusalProof.acceptedStateBytes.byteLength, 3_649);
+      assert.deepEqual(runtimeErrors, []);
+      assert.equal(t003ParsedTargetTask(root, target).glyph, '~');
+      assert.equal(t003SnapshotGlyph(root, target), '~');
+    } finally {
+      cleanup = adapter.end('hard-stop-recorded');
+      context.diagnostic(canonicalJson({
+        feature065T002FailedPath: {
+          classification: 'synthetic-fixture-results-not-real-062-browser-acceptance',
+          continuationAction,
+          incident: contentDescriptor(referenceBytes),
+          stages, operations, receipts, writerPostimages, runtimeErrors,
+          refusalProof,
+          continuation: continuation && {
+            outcome: continuation.outcome, reason: continuation.reason,
+            acceptedState: continuation.session.acceptedState,
+            pendingEffect: continuation.session.pendingEffect,
+          },
+          fixtureCleanup: cleanup.reason,
+          taskGlyph: t003ParsedTargetTask(root, target).glyph,
+          snapshotGlyph: t003SnapshotGlyph(root, target),
+          taskSettled: false,
+          checkpointCleared: checkpoint.pair.checkpoint === null,
+          actual062Operations: 0,
+        },
+      }));
+    }
+    assert.equal(continuation?.outcome, 'hard-stop');
+    assert.equal(cleanup.outcome, 'ended');
+    assert.equal(cleanup.reason, 'hard-stop-recorded');
+    assert.equal(cleanup.session.acceptedStateBytes, continuation.session.acceptedStateBytes);
+    assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+    assert.equal(operations.at(-1).label, 'sealed-continuation');
+    assert.deepEqual(t003FileIdentities(root, reference), refusalProof.files);
+    assert.equal(t003ParsedTargetTask(root, target).glyph, '~');
+    assert.equal(t003SnapshotGlyph(root, target), '~');
+  });
+}
+
+nodeTest('Feature 065 T002 SC003: complete failed episode refuses direct re-review without changing the sealed successor', async context => {
+  await runFeature065FailedEpisode(context, 'review-learning');
+});
+
+nodeTest('Feature 065 T002 SC003: separate complete failed episode refuses supported resume without changing the sealed successor', async context => {
+  await runFeature065FailedEpisode(context, 'resume-learning');
+});
+
+/**
+ * Fresh admissions share only this disposable lane and the captures actually
+ * produced by the adapter. No archived RunState or runner preload is involved.
+ * @param {string} root
+ */
+function crossInvocationFixture(root) {
+  writeSealedTaskState(root);
+  let input = sealedTransportInput(sealedInspectionInput(root, {
+    policyMode: 'autonomous',
+    currentRun: [sealedCapture(TARGET, 'failed', [])],
+  }));
+  let adapter;
+  let runtimeResult;
+  let produced;
+  const admissions = [];
+  const receipts = [];
+  const operations = [];
+  const originalOwner = fs.readFileSync(path.join(root, IDEA_PATH));
+
+  const operate = (operation, payload, outcome, reason) => {
+    const result = adapter.run(sealedRequest(adapter, operation, payload));
+    validateHostAdapterResult(result);
+    operations.push({ operation, outcome: result.outcome, reason: result.reason });
+    assert.equal(result.outcome, outcome, `${operation}: ${result.reason}`);
+    assert.equal(result.reason, reason, operation);
+    assert.deepEqual(fs.readFileSync(path.join(root, IDEA_PATH)), originalOwner);
+    return result;
+  };
+  const start = (state = emptyState('autonomous')) => {
+    validateRunState(state);
+    adapter = createHostAdapter(sealedInitial({ state: clone(state) }), {
+      runtime: {
+        identity: sha256('cross-invocation runtime observer'),
+        invoke(command, request) {
+          const value = runCommand(command, request);
+          runtimeResult = value;
+          if (command === 'complete' && request.mode === 'capture') produced = clone(request.input);
+          return { status: 'returned', value };
+        },
+      },
+      laneOwner: {
+        identity: sha256('cross-invocation disposable lane owner'),
+        apply(request) {
+          assert.equal(request.root, root);
+          const mutation = request.mutation;
+          const predicted = buildLightweightWorkPostimages({
+            tasks: Buffer.from(request.expected.tasks.base64, 'base64'),
+            owner: Buffer.from(request.owner.ownerCapture.base64, 'base64'),
+            taskState: Buffer.from(request.expected.taskState.base64, 'base64'),
+            tasksPath: request.expected.tasksPath,
+            taskKey: TARGET.taskKey,
+            kind: mutation.kind,
+            toGlyph: mutation.toGlyph,
+            blocker: mutation.blocker,
+            eventLines: mutation.eventLines.kind === 'append-exact'
+              ? mutation.eventLines.lines.map(line => line.exactLine) : [],
+            ownerLogLines: [],
+            snapshotUpdatedAt: mutation.snapshotUpdatedAt,
+          });
+          assert.ok(!('reason' in predicted));
+          const applied = applyLightweightWorkRequest(request);
+          assert.equal(applied.ok, true, canonicalJson(applied));
+          for (const [surface, relative] of [
+            ['tasks', TASKS_PATH], ['taskState', TASK_STATE_PATH], ['owner', IDEA_PATH],
+          ]) assert.deepEqual(fs.readFileSync(path.join(root, relative)), predicted[surface]);
+          return applied;
+        },
+      },
+    });
+    const session = adapter.snapshot();
+    assert.deepEqual(session.acceptedState, state);
+    assert.equal(session.acceptedRevision, 0);
+    for (const prior of admissions) {
+      assert.notEqual(session.invocationIdentity, prior.invocationIdentity);
+      assert.notEqual(session.authorities.supervisorAuthorityIdentity, prior.authorities.supervisorAuthorityIdentity);
+    }
+    admissions.push(session);
+    return session;
+  };
+  const project = () => {
+    const batch = clone(adapter.snapshot().pendingEffect.projectionBatch);
+    for (const [index, event] of batch.events.entries()) {
+      const binding = sealedLaneBinding(root);
+      const prepared = operate('prepare-authoritative-projection', {
+        projection: {
+          input,
+          laneBinding: {
+            lanePrestate: binding.lanePrestate,
+            targetMapping: binding.targetMapping,
+            operationTime: LANE_MUTATION.snapshotUpdatedAt,
+          },
+        },
+      }, 'effect-required', 'projection-prepared');
+      const item = prepared.product.plan.items[index];
+      assert.equal(item.eventHash, event.eventHash);
+      const applied = operate('apply-lane-effect', {
+        laneApplication: { ...binding.application, permit: item.projectionPermit, mutation: item.mutation },
+      }, 'effect-required', 'lane-projection-applied');
+      input = publishCurrentRun(input, item.currentRunRecord);
+      operate('commit-lane-receipt', {
+        laneReceipt: { input, permit: item.projectionPermit, receipt: applied.product.receipt },
+      }, 'effect-required', 'lane-receipt-committed');
+      receipts.push(clone(applied.product.receipt));
+    }
+    return batch.events;
+  };
+  const attempt = ({
+    action = 'execute-task', material, label, verdict = 'rejected',
+    failedCheck = false, repeat = false, reverseCurrentRun = false, findings,
+  }) => {
+    operate('fresh-inspection', { input }, 'accepted', 'inspection-refreshed');
+    const binding = sealedLaneBinding(root);
+    const assessment = {
+      ...sealedAssessment(runtimeResult.inspection, 'Exercise fresh cross-invocation authority.'),
+      action,
+      materialInputs: {
+        targets: [material],
+        operations: [action],
+        checks: [...requiredChecksForAction[action]],
+      },
+    };
+    const authorized = operate('authorize-attempt', {
+      authorization: {
+        input, assessment,
+        permit: { lanePrestate: binding.lanePrestate, targetMapping: binding.targetMapping },
+      },
+    }, 'accepted', 'authorized');
+    const semantic = focusedSpecialistPair(assessment, label, verdict);
+    if (findings) semantic.review.findings = findings(semantic.review.findings[0]);
+    if (failedCheck) {
+      semantic.outcome = 'failed';
+      semantic.verification.checks[0].outcome = 'failed';
+    }
+    const retainedStreams = clone(input);
+    const { verification, review, lint, ...recordInput } = input;
+    produced = null;
+    const captured = operate('record-attempt-result', {
+      attemptResult: { input: recordInput, result: semantic },
+    }, 'effect-required', 'occurrence-retention-required');
+    assert.ok(produced);
+    for (const field of ['verification', 'review', 'lint']) {
+      input[field].push(...produced[field]);
+      assert.deepEqual(input[field].slice(0, retainedStreams[field].length), retainedStreams[field]);
+    }
+    const events = project();
+    const lane = t003LaneEvents(root, TARGET).target;
+    assert.deepEqual(t003CurrentEvents(input), lane);
+    if (reverseCurrentRun) {
+      input.currentRun = sealedTransportInput({
+        lane: { kind: 'lightweight' },
+        currentRun: [sealedCapture(TARGET, 'failed', [...lane].reverse().map(event => ({ event })))],
+      }).currentRun;
+    }
+    const settled = operate('settle-effect', { input }, repeat ? 'effect-required' : 'accepted',
+      repeat ? 'learning-required' : failedCheck ? 'verification-failed'
+        : verdict === 'rejected' ? 'review-rejected' : 'completed');
+    assert.equal(runtimeResult.completion.finalized, true);
+    assert.deepEqual(t003LaneEvents(root, TARGET).target, lane);
+    return { authorized, captured, events, settled };
+  };
+  const close = () => {
+    const binding = sealedLaneBinding(root);
+    const issued = operate('authorize-lane-effect', {
+      laneEffect: {
+        input, mutation: clone(LANE_MUTATION),
+        lanePrestate: binding.lanePrestate, targetMapping: binding.targetMapping,
+      },
+    }, 'accepted', 'lane-permit-issued');
+    const permit = issued.product.permit;
+    const applied = operate('apply-lane-effect', {
+      laneApplication: { ...binding.application, permit },
+    }, 'accepted', 'lane-mutation-applied');
+    operate('commit-lane-receipt', {
+      laneReceipt: { input, permit, receipt: applied.product.receipt },
+    }, 'accepted', 'lane-receipt-committed');
+    receipts.push(clone(applied.product.receipt));
+    const ended = adapter.end('task-settled');
+    assert.equal(ended.outcome, 'ended');
+    assert.equal(ended.reason, 'task-settled');
+    assert.equal(t003ParsedTargetTask(root, TARGET).glyph, 'x');
+    assert.equal(t003SnapshotGlyph(root, TARGET), 'x');
+    return { permit, ended };
+  };
+  return {
+    start, attempt, project, operate, close, admissions, receipts, operations,
+    input: () => clone(input),
+    snapshot: () => adapter.snapshot(),
+    end: (reason = 'controlled-end') => {
+      const ended = adapter.end(reason);
+      assert.equal(ended.outcome, 'ended');
+      assert.equal(ended.reason, reason);
+      return ended;
+    },
+  };
+}
+
+nodeTest('cross-invocation occurrence identity: fresh budgets retain reused ordinals through receipts and settlement', () => {
+  withSealedWorkspace(root => {
+    const fixture = crossInvocationFixture(root);
+    fixture.start();
+    const oldFirst = fixture.attempt({ material: 'src/old-first.mjs', label: 'old-first', failedCheck: true });
+    const oldSecond = fixture.attempt({ material: 'src/old-second.mjs', label: 'old-second', failedCheck: true });
+    const oldEvents = t003LaneEvents(root, TARGET).target;
+    const oldStreams = fixture.input();
+    assert.equal(fixture.end().session.acceptedState.overallUsed, 2);
+    fixture.start();
+    const first = fixture.attempt({ material: 'src/new-first.mjs', label: 'new-first' });
+    const second = fixture.attempt({
+      action: 'address-review', material: 'src/new-second.mjs', label: 'new-second', verdict: 'accepted',
+    });
+    for (const [old, fresh, ordinal] of [[oldFirst, first, 1], [oldSecond, second, 2]]) {
+      assert.equal(old.events[0].occurrence.chronology.attemptOrdinal, ordinal);
+      assert.equal(fresh.events[0].occurrence.chronology.attemptOrdinal, ordinal);
+      assert.notEqual(old.events[0].occurrence.attemptIdentity, fresh.events[0].occurrence.attemptIdentity);
+      assert.notEqual(old.events[0].occurrenceIdentity, fresh.events[0].occurrenceIdentity);
+      assert.notEqual(old.events[0].eventHash, fresh.events[0].eventHash);
+    }
+    assert.deepEqual(t003LaneEvents(root, TARGET).target.slice(0, oldEvents.length), oldEvents);
+    for (const field of ['verification', 'review', 'lint']) {
+      assert.deepEqual(fixture.input()[field].slice(0, oldStreams[field].length), oldStreams[field]);
+    }
+    const terminal = fixture.close();
+    assert.equal(terminal.permit.attemptIdentity, second.events[0].occurrence.attemptIdentity);
+    assert.equal(terminal.ended.session.acceptedState.overallUsed, 2);
+    assert.equal(terminal.ended.session.acceptedState.recoveryUsed[0].count, 1);
+    assert.equal(terminal.ended.session.acceptedState.completed.length, 2);
+    assert.equal(fixture.receipts.length, 8);
+    assert.equal(new Set(fixture.receipts.map(receipt => receipt.receiptHash)).size, 8);
+  });
+});
+
+nodeTest('cross-invocation occurrence identity: an older accepted ordinal cannot mask the current completed tuple', () => {
+  withSealedWorkspace(root => {
+    const fixture = crossInvocationFixture(root);
+    fixture.start();
+    const old = fixture.attempt({ material: 'src/accepted.mjs', label: 'accepted', verdict: 'accepted' });
+    fixture.end();
+    fixture.start();
+    const fresh = fixture.attempt({ material: 'src/accepted.mjs', label: 'accepted', verdict: 'accepted' });
+    assert.equal(old.events[0].occurrence.chronology.attemptOrdinal, 1);
+    assert.equal(fresh.events[0].occurrence.chronology.attemptOrdinal, 1);
+    const terminal = fixture.close();
+    assert.equal(terminal.permit.attemptIdentity, fresh.events[0].occurrence.attemptIdentity);
+    assert.notEqual(terminal.permit.attemptIdentity, old.events[0].occurrence.attemptIdentity);
+    assert.equal(terminal.ended.session.acceptedState.overallUsed, 1);
+    assert.equal(terminal.ended.session.acceptedState.completed.length, 1);
+  });
+});
+
+nodeTest('cross-invocation ordinary close: reordered old acceptance cannot mask a later failed lane attempt', () => {
+  withSealedWorkspace(root => {
+    const fixture = crossInvocationFixture(root);
+    fixture.start();
+    const older = fixture.attempt({
+      material: 'src/older-accepted.mjs', label: 'older-accepted', verdict: 'accepted',
+    });
+    const acceptedSession = fixture.snapshot();
+    const staleAcceptedState = clone(acceptedSession.acceptedState);
+    const acceptedInput = fixture.input();
+    const olderEvent = older.events[0];
+    assert.equal(older.events.length, 1);
+    assert.equal(olderEvent.occurrence.disposition, 'accepted');
+    assert.equal(olderEvent.occurrence.chronology.attemptOrdinal, 1);
+    assert.deepEqual(staleAcceptedState.pending, []);
+    assert.equal(Object.hasOwn(staleAcceptedState, 'pendingCompletion'), false);
+    assert.equal(Object.hasOwn(staleAcceptedState, 'learningGovernance'), false);
+    assert.deepEqual(staleAcceptedState.completed, t003CompletedRows([olderEvent]));
+    validateRunState(staleAcceptedState);
+
+    // Establish a real accepted-only control before introducing the later
+    // failure. Production permit issuance plus the ordinary lane builder
+    // produce a receipt that the production commit API accepts in an exact
+    // disposable copy. They become explicitly stale negative fixture data
+    // below; they are not represented as a legitimate continuation.
+    const controlBinding = sealedLaneBinding(root);
+    const controlIssued = runCommand('transition', {
+      mode: 'issue-lane-permit',
+      state: staleAcceptedState,
+      input: acceptedInput,
+      mutation: clone(LANE_MUTATION),
+      lanePrestate: controlBinding.lanePrestate,
+      targetMapping: controlBinding.targetMapping,
+    });
+    assert.equal(controlIssued.transition.issued, true, controlIssued.transition.reason);
+    assert.equal(controlIssued.transition.reason, 'lane-permit-issued');
+    assert.deepEqual(controlIssued.inspection.blockers, []);
+    const stalePermit = clone(controlIssued.transition.permit);
+    /** @type {Record<string, unknown>|null} */
+    let staleReceipt = null;
+    withTemporaryRoot(receiptRoot => {
+      for (const entry of fs.readdirSync(root)) {
+        fs.cpSync(path.join(root, entry), path.join(receiptRoot, entry), { recursive: true });
+      }
+      const receiptBinding = sealedLaneBinding(receiptRoot);
+      const controlInput = { ...clone(acceptedInput), root: fs.realpathSync(receiptRoot) };
+      const applied = applyLightweightWorkRequest({
+        version: 1,
+        operation: 'work-set',
+        ...receiptBinding.application,
+        target: clone(TARGET),
+        state: clone(staleAcceptedState),
+        permit: clone(stalePermit),
+        mutation: clone(LANE_MUTATION),
+      });
+      assert.equal(applied.ok, true, canonicalJson(applied));
+      staleReceipt = clone(applied.receipt);
+      const controlCommitted = runCommand('transition', {
+        mode: 'commit-lane-receipt',
+        state: staleAcceptedState,
+        input: controlInput,
+        permit: stalePermit,
+        receipt: staleReceipt,
+      });
+      assert.equal(controlCommitted.transition.committed, true, controlCommitted.transition.reason);
+      assert.equal(controlCommitted.transition.reason, 'lane-receipt-committed');
+      assert.equal(controlCommitted.transition.terminalEvidenceIdentity, staleReceipt.receiptHash);
+      assert.deepEqual(controlCommitted.transition.state, staleAcceptedState);
+    });
+    assert.ok(staleReceipt);
+    fixture.end();
+
+    // A separate invocation reuses ordinal 1 but fails after the accepted
+    // event was already appended. Reversing only current-run delivery puts the
+    // old accepted event last while authoritative lane history remains ordered.
+    fixture.start();
+    const later = fixture.attempt({
+      material: 'src/later-failed.mjs',
+      label: 'later-failed',
+      verdict: 'accepted',
+      failedCheck: true,
+      reverseCurrentRun: true,
+    });
+    fixture.end();
+    const laterEvent = later.events[0];
+    const collisionInput = fixture.input();
+    const laneEvents = t003LaneEvents(root, TARGET).target;
+    const currentEvents = t003CurrentEvents(collisionInput);
+    assert.equal(later.events.length, 1);
+    assert.equal(laterEvent.occurrence.disposition, 'verification-failed');
+    assert.equal(laterEvent.occurrence.chronology.attemptOrdinal, 1);
+    assert.notEqual(laterEvent.occurrence.attemptIdentity, olderEvent.occurrence.attemptIdentity);
+    assert.deepEqual(laneEvents.map(event => event.eventHash), [
+      olderEvent.eventHash, laterEvent.eventHash,
+    ]);
+    assert.deepEqual(currentEvents.map(event => event.eventHash), [
+      laterEvent.eventHash, olderEvent.eventHash,
+    ]);
+    assert.equal(new Set(laneEvents.map(event => event.eventHash)).size, 2);
+    assert.deepEqual(
+      currentEvents.map(event => event.eventHash).sort(),
+      laneEvents.map(event => event.eventHash).sort(),
+    );
+    for (const laneEvent of laneEvents) {
+      assert.deepEqual(
+        currentEvents.find(event => event.eventHash === laneEvent.eventHash),
+        laneEvent,
+      );
+    }
+    assert.equal(deriveEarliestRepeatRelationshipV1(laneEvents), null);
+
+    // Decode and normalize every trusted capture, then bind both approach
+    // events back to the exact verification and review envelopes they name.
+    const verificationEnvelopes = collisionInput.verification.map(entry => (
+      normalizeVerificationEnvelopeV2(t003TrustedCapture(entry))
+    ));
+    const verifications = new Map(verificationEnvelopes.map(envelope => (
+      [envelope.envelopeIdentity, envelope]
+    )));
+    const reviews = new Map(collisionInput.review.map((entry, index) => {
+      const envelope = normalizeIndependentReviewEnvelopeV2(
+        t003TrustedCapture(entry),
+        verificationEnvelopes[index],
+      );
+      return [envelope.envelopeIdentity, envelope];
+    }));
+    assert.equal(verifications.size, 2);
+    assert.equal(reviews.size, 2);
+    for (const event of laneEvents) {
+      const verification = verifications.get(event.verificationEnvelopeIdentity);
+      const review = reviews.get(event.reviewEnvelopeIdentity);
+      assert.ok(verification);
+      assert.ok(review);
+      assert.equal(verification.attemptIdentity, event.occurrence.attemptIdentity);
+      assert.equal(verification.resultIdentity, event.occurrence.resultIdentity);
+      assert.equal(verification.inspectedEvidenceHash, event.occurrence.authorizationEvidenceHash);
+      assert.equal(review.attemptIdentity, event.occurrence.attemptIdentity);
+      assert.equal(review.resultIdentity, event.occurrence.resultIdentity);
+      assert.equal(review.verificationEnvelopeIdentity, verification.envelopeIdentity);
+    }
+    const collisionInspection = runCommand('inspect', {
+      trigger: 'explicit-inspection',
+      input: collisionInput,
+    }).inspection;
+    assert.equal(collisionInspection.overflow, false);
+    assert.deepEqual(collisionInspection.blockers, []);
+    assert.deepEqual(collisionInspection.target, canonicalTarget(TARGET));
+
+    // The supplied state is deliberately the stale accepted-only state: its
+    // sole completed tuple exactly matches the old accepted event. This is the
+    // adversarial input that made current-run order unsafe, not a claimed
+    // continuation after the later failed attempt.
+    assert.equal(staleAcceptedState.overallUsed, 1);
+    assert.deepEqual(staleAcceptedState.completed, t003CompletedRows([olderEvent]));
+    assert.notDeepEqual(staleAcceptedState.completed, t003CompletedRows([laterEvent]));
+    const filesBefore = laneSurfaceDigests(root);
+    const inputBefore = canonicalJson(collisionInput);
+    const historicalAuthority = acceptedAuthorityTuple(acceptedSession);
+
+    fixture.start(staleAcceptedState);
+    const authorityBefore = acceptedAuthorityTuple(fixture.snapshot());
+    assert.equal(authorityBefore.acceptedStateBytes, historicalAuthority.acceptedStateBytes);
+    assert.equal(authorityBefore.acceptedStateHash, historicalAuthority.acceptedStateHash);
+    assert.equal(authorityBefore.overallUsed, historicalAuthority.overallUsed);
+    assert.deepEqual(authorityBefore.recoveryUsed, historicalAuthority.recoveryUsed);
+    assert.deepEqual(authorityBefore.completed, historicalAuthority.completed);
+    const binding = sealedLaneBinding(root);
+    const refusedIssue = fixture.operate('authorize-lane-effect', {
+      laneEffect: {
+        input: collisionInput,
+        mutation: clone(LANE_MUTATION),
+        lanePrestate: binding.lanePrestate,
+        targetMapping: binding.targetMapping,
+      },
+    }, 'hard-stop', 'governance-unresolved');
+    assert.equal(Object.hasOwn(refusedIssue, 'product'), false);
+    assert.deepEqual(acceptedAuthorityTuple(refusedIssue.session), authorityBefore);
+    assert.equal(refusedIssue.session.acceptedState.overallUsed, 1);
+    assert.deepEqual(refusedIssue.session.acceptedState.completed, t003CompletedRows([olderEvent]));
+    assert.deepEqual(laneSurfaceDigests(root), filesBefore);
+    assert.equal(canonicalJson(collisionInput), inputBefore);
+
+    // The control permit and receipt are now intentionally stale chronology
+    // inputs. Their hashes, target, state, and accepted-only positive control
+    // are valid, so the terminal API must still refuse specifically because
+    // fresh lane order says the actual latest attempt failed.
+    const refusedCommit = runCommand('transition', {
+      mode: 'commit-lane-receipt',
+      state: staleAcceptedState,
+      input: collisionInput,
+      permit: stalePermit,
+      receipt: staleReceipt,
+    });
+    assert.deepEqual(refusedCommit.inspection, collisionInspection);
+    assert.equal(refusedCommit.transition.committed, false);
+    assert.equal(refusedCommit.transition.reason, 'governance-unresolved');
+    assert.equal(Object.hasOwn(refusedCommit.transition, 'receipt'), false);
+    assert.equal(Object.hasOwn(refusedCommit.transition, 'terminalEvidenceIdentity'), false);
+    assert.equal(canonicalJson(refusedCommit.transition.state), acceptedSession.acceptedStateBytes);
+    assert.equal(refusedCommit.transition.state.overallUsed, authorityBefore.overallUsed);
+    assert.deepEqual(refusedCommit.transition.state.recoveryUsed, authorityBefore.recoveryUsed);
+    assert.deepEqual(refusedCommit.transition.state.completed, authorityBefore.completed);
+    assert.deepEqual(laneSurfaceDigests(root), filesBefore);
+    assert.equal(canonicalJson(collisionInput), inputBefore);
+    assert.equal(t003ParsedTargetTask(root, TARGET).glyph, '~');
+    assert.equal(t003SnapshotGlyph(root, TARGET), '~');
+  });
+});
+
+nodeTest('cross-invocation chronology: lane history orders a higher old ordinal before a lower fresh repeat', () => {
+  withSealedWorkspace(root => {
+    const fixture = crossInvocationFixture(root);
+    fixture.start();
+    const first = fixture.attempt({
+      material: 'src/distinct.mjs', label: 'distinct', failedCheck: true, verdict: 'accepted',
+    });
+    const old = fixture.attempt({
+      material: 'src/repeat.mjs', label: 'repeat', failedCheck: true, verdict: 'accepted',
+    });
+    fixture.end();
+    fixture.start();
+    const fresh = fixture.attempt({
+      material: 'src/repeat.mjs', label: 'repeat', failedCheck: true, verdict: 'accepted',
+      repeat: true, reverseCurrentRun: true,
+    });
+    const governance = fresh.settled.session.pendingEffect.provisionalState.learningGovernance;
+    assert.deepEqual(governance.trigger.occurrenceIdentities, [
+      old.events[0].occurrenceIdentity, fresh.events[0].occurrenceIdentity,
+    ]);
+    assert.equal(old.events[0].occurrence.chronology.attemptOrdinal, 2);
+    assert.equal(fresh.events[0].occurrence.chronology.attemptOrdinal, 1);
+    assert.deepEqual(governance.failedApproachSet.approachBasisIdentities,
+      [first.events[0].occurrence.basisIdentity, old.events[0].occurrence.basisIdentity].sort());
+    assert.deepEqual(governance.failedApproachSet.evidenceEventHashes,
+      [first.events[0].eventHash, old.events[0].eventHash, fresh.events[0].eventHash].sort());
+    fixture.project();
+    fixture.operate('settle-effect', { input: fixture.input() }, 'accepted', 'projection-verified');
+    fixture.operate('advance-governance', {
+      governance: { action: 'resume-learning', input: fixture.input() },
+    }, 'accepted', 'governance-resumed');
+    assert.deepEqual(fixture.snapshot().acceptedState.learningGovernance.trigger, governance.trigger);
+    assert.deepEqual(fixture.snapshot().acceptedState.learningGovernance.failedApproachSet, governance.failedApproachSet);
+    assert.equal(fixture.snapshot().acceptedState.overallUsed, 1);
+    fixture.end();
+  });
+});
+
+nodeTest('cross-invocation occurrence identity: multiple trusted findings at reused review ordinals remain distinct', () => {
+  withSealedWorkspace(root => {
+    const fixture = crossInvocationFixture(root);
+    const findings = first => [first, {
+      ...clone(first),
+      basis: { ...clone(first.basis), failureClass: 'second-finding' },
+    }];
+    fixture.start();
+    const old = fixture.attempt({ material: 'src/old-review.mjs', label: 'shared-review', findings });
+    fixture.end();
+    fixture.start();
+    const fresh = fixture.attempt({
+      material: 'src/new-review.mjs', label: 'shared-review', findings,
+      repeat: true, reverseCurrentRun: true,
+    });
+    assert.equal(old.events.length, 3);
+    assert.equal(fresh.events.length, 3);
+    const all = [...old.events, ...fresh.events];
+    assert.equal(new Set(all.map(event => event.occurrenceIdentity)).size, 6);
+    assert.equal(new Set(all.map(event => event.eventHash)).size, 6);
+    const oldFindings = old.events.slice(1);
+    const freshFindings = fresh.events.slice(1);
+    for (const finding of freshFindings) {
+      const earlier = oldFindings.find(event => event.occurrence.basisIdentity === finding.occurrence.basisIdentity);
+      assert.ok(earlier);
+      assert.equal(earlier.occurrence.findingIdentity, finding.occurrence.findingIdentity);
+      assert.deepEqual(earlier.occurrence.chronology, finding.occurrence.chronology);
+      assert.notEqual(earlier.occurrence.attemptIdentity, finding.occurrence.attemptIdentity);
+      assert.notEqual(earlier.occurrence.reviewEnvelopeIdentity, finding.occurrence.reviewEnvelopeIdentity);
+      assert.notEqual(earlier.sourceCaptureIdentity, finding.sourceCaptureIdentity);
+    }
+    const governance = fresh.settled.session.pendingEffect.provisionalState.learningGovernance;
+    const latest = freshFindings[0];
+    const earliest = oldFindings.find(event => event.occurrence.basisIdentity === latest.occurrence.basisIdentity);
+    assert.deepEqual(governance.trigger.occurrenceIdentities, [earliest.occurrenceIdentity, latest.occurrenceIdentity]);
+    assert.deepEqual(governance.failedApproachSet.approachBasisIdentities,
+      [old.events[0].occurrence.basisIdentity, fresh.events[0].occurrence.basisIdentity].sort());
+    fixture.project();
+    fixture.operate('settle-effect', { input: fixture.input() }, 'accepted', 'projection-verified');
+    fixture.end();
+  });
+});
+
+nodeTest('cross-invocation retention conflicts: exact captures, dual surfaces and one-use receipts remain required', () => {
+  withSealedWorkspace(root => {
+    const fixture = crossInvocationFixture(root);
+    fixture.start();
+    fixture.attempt({ material: 'src/prior.mjs', label: 'prior' });
+    fixture.end();
+    fixture.start();
+    const fresh = fixture.attempt({ material: 'src/current.mjs', label: 'current', verdict: 'accepted' });
+    const complete = fixture.input();
+    const state = fresh.captured.session.pendingEffect.provisionalState;
+    const batch = fresh.captured.effect.projectionBatch;
+    const event = fresh.events[0];
+    const rebuild = overrides => buildApproachOccurrenceEventV1({
+      target: event.target, basis: event.basis,
+      attemptIdentity: event.occurrence.attemptIdentity,
+      authorizationEvidenceHash: event.occurrence.authorizationEvidenceHash,
+      resultIdentity: event.occurrence.resultIdentity,
+      disposition: event.occurrence.disposition,
+      attemptOrdinal: event.occurrence.chronology.attemptOrdinal,
+      verificationEnvelopeIdentity: event.verificationEnvelopeIdentity,
+      reviewEnvelopeIdentity: event.reviewEnvelopeIdentity,
+      ...overrides,
+    });
+    const replaceReviewCapture = (input, mutate) => {
+      const index = input.review.length - 1;
+      const trusted = t003TrustedCapture(input.review[index]);
+      mutate(trusted);
+      input.review[index] = sealedTransportInput({
+        lane: { kind: 'lightweight' },
+        review: [sealedCapture(TARGET, 'accepted', [trusted])],
+      }).review[0];
+      return input;
+    };
+    const oneSided = clone(complete);
+    oneSided.currentRun = sealedTransportInput({
+      lane: { kind: 'lightweight' },
+      currentRun: [sealedCapture(TARGET, 'failed',
+        t003CurrentEvents(complete).slice(0, -1).map(row => ({ event: row })))],
+    }).currentRun;
+    const duplicateCapture = clone(complete);
+    const index = duplicateCapture.review.length - 1;
+    const trusted = t003TrustedCapture(duplicateCapture.review[index]);
+    duplicateCapture.review[index] = sealedTransportInput({
+      lane: { kind: 'lightweight' },
+      review: [sealedCapture(TARGET, 'accepted', [trusted, clone(trusted)])],
+    }).review[0];
+    const cases = [
+      ['one-sided occurrence', oneSided, 'occurrence-retention-incomplete'],
+      ['duplicate event', publishCurrentRun(complete, { substantive: { event } }), 'occurrence-retention-conflict'],
+      ['same attempt', publishCurrentRun(complete, { substantive: { event: rebuild({
+        resultIdentity: sha256('conflicting result for the actual current attempt'),
+      }) } }), 'occurrence-retention-conflict'],
+      ['same occurrence', publishCurrentRun(complete, { substantive: { event: rebuild({
+        reviewEnvelopeIdentity: sha256('conflicting envelope for the same occurrence'),
+      }) } }), 'occurrence-retention-conflict'],
+      ['duplicate capture', duplicateCapture, /contains a duplicate trusted capture/],
+      ['conflicting capture bytes', replaceReviewCapture(clone(complete), capture => {
+        const body = JSON.parse(Buffer.from(capture.bytes.base64, 'base64').toString('utf8'));
+        capture.bytes.base64 = Buffer.from(canonicalJson({ ...body, verdict: 'rejected' })).toString('base64');
+      }), /descriptor must bind the complete decoded bytes/],
+      ['wrong authority', replaceReviewCapture(clone(complete), capture => {
+        capture.authority.authorityIdentity = sha256('wrong reviewer authority');
+      }), /must bind the reviewer authority and invocation/],
+      ['wrong target', replaceReviewCapture(clone(complete), capture => {
+        capture.target = clone(SECOND_TARGET);
+      }), /must match the normalized envelope target/],
+    ];
+    const before = laneSurfaceDigests(root);
+    for (const [label, input, reason] of cases) {
+      const finalize = () => runCommand('complete', { mode: 'finalize', state, input, projectionBatch: batch });
+      if (reason instanceof RegExp) assert.throws(finalize, reason, label);
+      else {
+        const result = finalize();
+        assert.equal(result.completion.finalized, false, label);
+        assert.equal(result.completion.reason, reason, label);
+        assert.deepEqual(result.completion.state, state, label);
+      }
+      assert.deepEqual(laneSurfaceDigests(root), before, label);
+    }
+    // A projection receipt alone never discharges retention. The terminal
+    // receipt must rebind the exact accepted completion on both surfaces.
+    const binding = sealedLaneBinding(root);
+    const issued = fixture.operate('authorize-lane-effect', {
+      laneEffect: {
+        input: complete, mutation: clone(LANE_MUTATION),
+        lanePrestate: binding.lanePrestate, targetMapping: binding.targetMapping,
+      },
+    }, 'accepted', 'lane-permit-issued');
+    const permit = issued.product.permit;
+    const applied = fixture.operate('apply-lane-effect', {
+      laneApplication: { ...binding.application, permit },
+    }, 'accepted', 'lane-mutation-applied');
+    const receipt = applied.product.receipt;
+    const appliedFiles = laneSurfaceDigests(root);
+    const terminalState = fixture.snapshot().acceptedState;
+    const oneSidedReceipt = runCommand('transition', {
+      mode: 'commit-lane-receipt', state: terminalState, input: oneSided, permit, receipt,
+    });
+    assert.equal(oneSidedReceipt.transition.committed, false);
+    assert.equal(oneSidedReceipt.transition.reason, 'governance-unresolved');
+    assert.deepEqual(oneSidedReceipt.transition.state, terminalState);
+    fixture.operate('commit-lane-receipt', {
+      laneReceipt: { input: complete, permit, receipt },
+    }, 'accepted', 'lane-receipt-committed');
+    const prior = fixture.snapshot();
+    const replayed = fixture.operate('commit-lane-receipt', {
+      laneReceipt: { input: complete, permit, receipt },
+    }, 'hard-stop', 'lane-receipt-replayed');
+    assert.deepEqual(acceptedAuthorityTuple(replayed.session), acceptedAuthorityTuple(prior));
+    assert.deepEqual(laneSurfaceDigests(root), appliedFiles);
+    fixture.end('hard-stop-recorded');
   });
 });

@@ -24,10 +24,19 @@ import {
 import * as recoveryRuntime from './recovery.mjs';
 import { createHostAdapter } from './host-adapter.mjs';
 import {
+  acquisitionMetrics,
   buildRetentionPair,
   expandModelPacket,
+  HISTORY_INCIDENT_SHA256,
+  mandatoryCompletionHeadroom,
+  measurePrivateModelView,
+  measurePrivatePreflight,
   originalAvailableProjection,
+  rawSourceCount,
+  readHistoryIncidentFixture,
   readRetentionEpisodeFixture,
+  renderPrivateModelProjection,
+  withHistoryIncidentWorkspace,
 } from '../../../scripts/fixtures/064-work-receipt-overflow-handling/model-view-test-helpers.mjs';
 
 import {
@@ -8991,7 +9000,7 @@ test('T002 trusted occurrence contracts classify stable bases, chronology, repla
   // Act
   const firstResult = recoveryRuntime.deriveEarliestRepeatRelationshipV1([first]);
   const distinctResult = recoveryRuntime.deriveEarliestRepeatRelationshipV1([first, distinct]);
-  const equalResult = recoveryRuntime.deriveEarliestRepeatRelationshipV1([equalLater, distinct, first]);
+  const equalResult = recoveryRuntime.deriveEarliestRepeatRelationshipV1([first, distinct, equalLater]);
   const replayResult = recoveryRuntime.deriveEarliestRepeatRelationshipV1([first, clone(first)]);
   const sameAttemptResult = recoveryRuntime.deriveEarliestRepeatRelationshipV1([sameAttemptReview, sameAttempt]);
   const crossTargetResult = recoveryRuntime.deriveEarliestRepeatRelationshipV1([crossTargetB, crossTargetA]);
@@ -9081,7 +9090,9 @@ test('T002 trusted occurrence contracts refuse partial duplicate conflicting sta
       fixture.completion,
     );
     const events = captured.occurrenceEvents;
-    const chronologyConflict = t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 'conflict' });
+    const chronologyConflict = t002RebuildApproachEvent(events[0], {
+      resultIdentity: t002Hash('conflicting-result-for-the-same-attempt'),
+    });
     const wrongTarget = t002ApproachEvent({ target: SECOND_TARGET, attemptOrdinal: 4, basisLabel: 'wrong-target' });
     const refusalCases = [
       ['current-run only', events, [], [fixture], 'occurrence-retention-incomplete'],
@@ -9571,16 +9582,16 @@ test('T002 trusted occurrence contracts select earliest pairs beyond two occurre
 
   // Act
   const findingRepeat = recoveryRuntime.deriveEarliestRepeatRelationshipV1([
-    findingThird,
-    findingSecond,
     findingFirst,
+    findingSecond,
+    findingThird,
   ]);
-  const acceptedOnly = recoveryRuntime.deriveEarliestRepeatRelationshipV1([acceptedSecond, acceptedFirst]);
+  const acceptedOnly = recoveryRuntime.deriveEarliestRepeatRelationshipV1([acceptedFirst, acceptedSecond]);
   const failedRepeat = recoveryRuntime.deriveEarliestRepeatRelationshipV1([
-    failedSecond,
+    acceptedFirst,
     acceptedSecond,
     failedFirst,
-    acceptedFirst,
+    failedSecond,
   ]);
 
   // Assert
@@ -9620,6 +9631,124 @@ test('T002 trusted occurrence contracts derive a complete bounded failed-approac
     events.map((event) => event.eventHash)
       .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))),
   );
+});
+
+test('cross-invocation chronology: failed sets use the triggering attempt in ordered history, not ordinal magnitude', () => {
+  const earlier = t002ApproachEvent({ attemptOrdinal: 4, basisLabel: 'earlier-distinct' });
+  const first = t002ApproachEvent({ attemptOrdinal: 7, basisLabel: 'cross-run-repeat' });
+  const second = t002ApproachEvent({ attemptOrdinal: 1, basisLabel: 'cross-run-repeat' });
+  const later = t002ApproachEvent({
+    attemptOrdinal: 1, basisLabel: 'later-distinct', attemptIdentity: t002Hash('a-later-invocation'),
+  });
+  const events = [earlier, first, second, later];
+  const bytes = canonicalJson(events);
+  const repeat = recoveryRuntime.deriveEarliestRepeatRelationshipV1(events);
+  assert.deepEqual(repeat.occurrenceIdentities, [first.occurrenceIdentity, second.occurrenceIdentity]);
+  const failedSet = recoveryRuntime.deriveFailedApproachSetV1(repeat, events);
+  assert.equal(failedSet.chronologyCutoff, 1, 'the recorded ordinal belongs to the actual trigger attempt');
+  assert.deepEqual(failedSet.approachBasisIdentities,
+    [earlier.occurrence.basisIdentity, first.occurrence.basisIdentity].sort());
+  assert.deepEqual(failedSet.evidenceEventHashes,
+    [earlier.eventHash, first.eventHash, second.eventHash].sort());
+  assert.equal(canonicalJson(events), bytes, 'history, identities, ordinals, and hashes are immutable');
+});
+
+test('cross-invocation chronology: multiple findings and reviews retain their actual attempt bindings', () => {
+  const first = t002FindingEvent({
+    attemptOrdinal: 5, reviewOrdinal: 2, basisLabel: 'cross-run-finding',
+  });
+  const sibling = t002FindingEvent({
+    attemptOrdinal: 5, reviewOrdinal: 2, basisLabel: 'other-finding',
+  });
+  const repeatedReview = t002FindingEvent({
+    attemptOrdinal: 5, reviewOrdinal: 3, basisLabel: 'cross-run-finding',
+  });
+  const second = t002FindingEvent({
+    attemptOrdinal: 1, reviewOrdinal: 1, basisLabel: 'cross-run-finding',
+  });
+  const secondReview = t002FindingEvent({
+    attemptOrdinal: 1, reviewOrdinal: 2, basisLabel: 'cross-run-finding',
+  });
+  const later = t002FindingEvent({
+    attemptOrdinal: 1, reviewOrdinal: 1, basisLabel: 'cross-run-finding',
+    attemptIdentity: t002Hash('later-finding-attempt'),
+    attemptApproachBasisIdentity: t002Hash('later-failed-approach'),
+  });
+  assert.equal(recoveryRuntime.deriveEarliestRepeatRelationshipV1([first, sibling, repeatedReview]), null);
+  const events = [first, sibling, repeatedReview, second, secondReview, later];
+  const repeat = recoveryRuntime.deriveEarliestRepeatRelationshipV1(events);
+  assert.deepEqual(repeat.occurrenceIdentities, [first.occurrenceIdentity, second.occurrenceIdentity]);
+  const failedSet = recoveryRuntime.deriveFailedApproachSetV1(repeat, events);
+  assert.deepEqual(failedSet.approachBasisIdentities,
+    [first.occurrence.attemptApproachBasisIdentity, second.occurrence.attemptApproachBasisIdentity].sort());
+  assert.deepEqual(failedSet.evidenceEventHashes,
+    [first.eventHash, repeatedReview.eventHash, second.eventHash, secondReview.eventHash].sort());
+});
+
+test('cross-invocation occurrence identity: actual attempt, occurrence, and event conflicts still reject', () => {
+  const approach = t002ApproachEvent({ attemptOrdinal: 2, basisLabel: 'identity' });
+  const sameAttempt = t002RebuildApproachEvent(approach, {
+    attemptOrdinal: 1, resultIdentity: t002Hash('different-result'),
+  });
+  const sameOccurrence = t002RebuildApproachEvent(approach, {
+    verificationEnvelopeIdentity: t002Hash('different-verification-envelope'),
+  });
+  const finding = t002FindingEvent({ attemptOrdinal: 2, reviewOrdinal: 1, basisLabel: 'identity' });
+  const sameFindingPosition = t002RebuildFindingEvent(finding, {
+    reviewEnvelopeIdentity: t002Hash('conflicting-review-envelope'),
+  });
+  for (const [events, pattern] of [
+    [[approach, sameAttempt], /chronology position/],
+    [[approach, sameOccurrence], /one occurrence identity/],
+    [[finding, sameFindingPosition], /chronology position/],
+    [[approach, { ...approach, eventHash: t002Hash('forged-event') }], /eventHash/],
+  ]) assert.throws(() => recoveryRuntime.deriveEarliestRepeatRelationshipV1(events), pattern);
+  assert.equal(recoveryRuntime.deriveEarliestRepeatRelationshipV1([approach, clone(approach)]), null,
+    'an identical event replay is not a second occurrence');
+});
+
+test('cross-invocation chronology: tracked retention and governance use the existing ordered notes', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), root => {
+    const fixtures = [2, 1].map((attemptOrdinal, index) => t002PendingFixture({
+      target: TRACKED, attemptOrdinal, checkOutcome: 'passed',
+      materialInputs: {
+        targets: [`src/tracked-cross-invocation-${index}.mjs`],
+        operations: ['retry-task'], checks: ['verification'],
+      },
+    }));
+    const input = (current, lane) => ({
+      root, specPath: SPEC_PATH, target: TRACKED,
+      lane: trackedRawInputs([t018TrackedCapture(lane)]).lane,
+      currentRun: current.length ? [capture(TRACKED, 'failed', current.map(event => ({ event })))] : [],
+      ...t002TrustedStreams(fixtures), lint: [], policyMode: 'autonomous',
+    });
+    const dependencies = events => ({
+      normalizeTrackedEvidence: () => trackedProjection(TRACKED, [t018TrackedCapture(events)]),
+    });
+    const events = [];
+    let captured;
+    for (const fixture of fixtures) {
+      captured = recoveryRuntime.captureCompletionV2(
+        fixture.state, input(events, events), fixture.completion, dependencies(events),
+      );
+      events.push(...captured.occurrenceEvents);
+    }
+    const retainedInput = input([...events].reverse(), events);
+    const finalized = recoveryRuntime.finalizeCompletionV2(
+      captured.state, retainedInput, captured.occurrenceEvents, dependencies(events),
+    );
+    assert.equal(finalized.finalized, true);
+    assert.equal(finalized.reason, 'learning-required');
+    assert.equal(finalized.state.overallUsed, 1);
+    assert.deepEqual(finalized.repeat.occurrenceIdentities,
+      events.filter(event => event.type === 'finding-occurrence').map(event => event.occurrenceIdentity));
+    const resumed = recoveryRuntime.resumeGovernanceV2(autonomousState(), retainedInput, dependencies(events));
+    assert.equal(resumed.transition.reason, 'governance-resumed');
+    assert.equal(resumed.transition.resumedFrom, 'retained-occurrences');
+    assert.equal(resumed.transition.state.overallUsed, 0);
+    assert.deepEqual(resumed.transition.trigger, finalized.repeat);
+    assert.deepEqual(resumed.transition.failedApproachSet, finalized.state.learningGovernance.failedApproachSet);
+  });
 });
 
 test('T002 trusted occurrence contracts admit sixteen failed bases across the required seventeenth occurrence', () => {
@@ -19687,8 +19816,8 @@ test('T005 incident contracts: the exact-evidence branch derives intent, events,
     );
     assert.equal(transition.governanceBatch.events[0].phase, 'required');
     assert.equal(transition.intent.repeat.channel, 'finding');
-    // `incident-evidence` is finding-only and chronological; normal completion
-    // retention still requires its approach event first.
+    // A batch binds distinct findings; only its captured-history context can
+    // establish their chronology. Normal completion still starts with an approach.
     const findings = transition.incidentEvidenceBatch.events;
     /** @param {Record<string, unknown>[]} events */
     const rebatch = (events) => {
@@ -19709,12 +19838,12 @@ test('T005 incident contracts: the exact-evidence branch derives intent, events,
     };
     for (const [label, events] of [
       ['approach row', [transition.governanceBatch.events[0], findings[1]]],
-      ['reversed chronology', [findings[1], findings[0]]],
+      ['same attempt replay', [findings[0], findings[0]]],
       ['single row', [findings[0]]],
     ]) {
       assert.throws(
         () => recoveryRuntime.validateProjectionBatchV1(rebatch(/** @type {Record<string, unknown>[]} */ (events))),
-        /must contain exactly two finding occurrence events|must be in strict chronology order/,
+        /must contain exactly two finding occurrence events|must bind one finding basis across two distinct attempts/,
         /** @type {string} */ (label),
       );
     }
@@ -19745,6 +19874,96 @@ test('T005 incident contracts: the exact-evidence branch derives intent, events,
     );
     // Deriving the correction grants no lane authority and mutates no RunState.
     assert.deepEqual(transition.state, autonomousState());
+  });
+});
+
+test('cross-invocation chronology: incident evidence keeps the retained higher-to-lower finding order', () => {
+  withIncidentWorkspace(root => {
+    const fixtures = [3, 1].map((attemptOrdinal, index) => t002PendingFixture({
+      target: F7_TARGET, attemptOrdinal, checkOutcome: 'passed', verdict: 'rejected',
+      materialInputs: {
+        targets: [`src/cross-invocation-incident-${index}.mjs`],
+        operations: ['retry-task'], checks: ['verification'],
+      },
+    }));
+    const events = [];
+    for (const fixture of fixtures) {
+      const captured = t003Invoke('complete', {
+        mode: 'capture', state: fixture.state,
+        input: cliInput(t005IncidentInput(root, events, fixtures)),
+        completion: fixture.completion,
+      });
+      events.push(...captured.completion.projectionBatch.events);
+    }
+    const input = cliInput(t005IncidentInput(root, events, fixtures));
+    const prepared = t003Invoke('transition', {
+      mode: 'incident-correction', state: autonomousState(), input,
+      incident: t005AcceptedEvidence(root),
+    }).transition;
+    assert.equal(prepared.prepared, true);
+    assert.equal(prepared.branch, 'exact-evidence');
+    const findings = events.filter(event => event.type === 'finding-occurrence');
+    assert.deepEqual(prepared.incidentEvidenceBatch.events, findings);
+    assert.deepEqual(prepared.intent.repeat.occurrenceIdentities, findings.map(event => event.occurrenceIdentity));
+    const failedSet = recoveryRuntime.deriveFailedApproachSetV1(prepared.intent.repeat, events);
+    assert.equal(failedSet.chronologyCutoff, 1);
+    assert.equal(prepared.governanceBatch.events[0].failedApproachSetIdentity, failedSet.setIdentity);
+    recoveryRuntime.validateIncidentCorrectionPreviewV1(prepared.preview);
+  });
+});
+
+test('cross-invocation chronology: a self-consistent reversed incident preview cannot replace captured history order', () => {
+  withIncidentWorkspace(root => {
+    const evidence = t005IncidentEvidence(root);
+    const prepare = events => {
+      const input = cliInput(t005IncidentInput(root, events, evidence.fixtures));
+      return t003Invoke('transition', {
+        mode: 'incident-correction', state: autonomousState(), input,
+        incident: t005AcceptedEvidence(root),
+      }).transition.preview;
+    };
+    const original = prepare(evidence.events);
+    const reversed = prepare([...evidence.events.slice(2), ...evidence.events.slice(0, 2)]);
+    assert.notDeepEqual(reversed.intent.repeat, original.intent.repeat);
+    const reidentify = (value, field) => {
+      const { [field]: previous, ...body } = value;
+      return { ...body, [field]: sha256(canonicalJson(body)) };
+    };
+    // Keep every dependent hash, batch and line valid, but bind the reverse
+    // claim to the original captured authority. No stale companion can refuse first.
+    const forged = clone(reversed);
+    forged.prestate = clone(original.prestate);
+    forged.rollback = clone(original.rollback);
+    forged.intent = reidentify({
+      ...forged.intent,
+      prestateIdentity: sha256(canonicalJson(forged.prestate)),
+    }, 'intentIdentity');
+    const supersession = reidentify({
+      ...forged.supersessionBatch.events[0], intentIdentity: forged.intent.intentIdentity,
+    }, 'eventHash');
+    const eventCommitments = [{ kind: supersession.type, eventHash: supersession.eventHash }];
+    forged.supersessionBatch = {
+      ...forged.supersessionBatch,
+      events: [supersession], eventCommitments,
+      batchIdentity: sha256(canonicalJson({
+        version: 1, purpose: 'incident-supersession', target: canonicalTarget(F7_TARGET), eventCommitments,
+      })),
+    };
+    forged.mutationCore.intentIdentity = forged.intent.intentIdentity;
+    forged.mutationCore.ownerLog.exactLines = [
+      `- ${forged.intent.operationTime} - incident-supersession v1 `
+        + `intent=${forged.intent.intentIdentity} branch=exact-evidence target=${F7_TARGET.taskKey}`,
+    ];
+    forged.mutationCore.eventLines.lines[3] = {
+      eventHash: supersession.eventHash, exactLine: t002V2EventLine(supersession), terminator: 'LF',
+    };
+    const preview = reidentify(forged, 'previewIdentity');
+    recoveryRuntime.validateIncidentCorrectionIntentV1(preview.intent);
+    recoveryRuntime.validateProjectionBatchV1(preview.incidentEvidenceBatch);
+    recoveryRuntime.validateProjectionBatchV1(preview.governanceBatch);
+    recoveryRuntime.validateProjectionBatchV1(preview.supersessionBatch);
+    assert.throws(() => recoveryRuntime.validateIncidentCorrectionPreviewV1(preview),
+      /must match the strict chronology order in captured lane history/);
   });
 });
 
@@ -25951,18 +26170,21 @@ test('Feature 064 T001: portable frozen evidence fits without changing source by
     assert.equal(owner.fullLogSha256, originalOwner.fullLogSha256);
     assert.equal(owner.fullLogByteLength, originalOwner.fullLogByteLength);
     assert.deepEqual(owner.events, originalOwner.events.slice(-owner.includedEventCount));
-    assert.ok(owner.omittedEventCount > 0);
-    const larger = clone(packet);
-    const ownerItem = larger.items[0];
-    assert.equal(ownerItem.tag, 'literal');
-    const events = originalOwner.events.slice(-(owner.includedEventCount + 1));
-    ownerItem.text = canonicalJson({
-      ...owner, events, includedEventCount: events.length,
-      omittedEventCount: owner.totalEventCount - events.length,
-      firstIncludedEventOrdinal: owner.totalEventCount - events.length + 1,
-    });
-    Object.assign(ownerItem.frames[0].descriptor, contentDescriptor(ownerItem.text));
-    assert.ok(Buffer.byteLength(canonicalJson(larger)) > limits.bytes, 'the whole-event owner suffix is maximal');
+    if (owner.omittedEventCount === 0) {
+      assert.deepEqual(owner, originalOwner, 'history sharing may restore the complete owner log');
+    } else {
+      const larger = clone(packet);
+      const ownerItem = larger.items[0];
+      assert.equal(ownerItem.tag, 'literal');
+      const events = originalOwner.events.slice(-(owner.includedEventCount + 1));
+      ownerItem.text = canonicalJson({
+        ...owner, events, includedEventCount: events.length,
+        omittedEventCount: owner.totalEventCount - events.length,
+        firstIncludedEventOrdinal: owner.totalEventCount - events.length + 1,
+      });
+      Object.assign(ownerItem.frames[0].descriptor, contentDescriptor(ownerItem.text));
+      assert.ok(Buffer.byteLength(canonicalJson(larger)) > limits.bytes, 'the whole-event owner suffix is maximal');
+    }
     const checks = inspection.items.filter(({ source }) => source === 'verification')
       .flatMap(({ text }) => recoveryRuntime.normalizeVerificationEnvelopeV2(JSON.parse(text).records[0]).checks);
     assert.equal(checks.length, 50);
@@ -26275,4 +26497,654 @@ test('Feature 064 T003: the full payload repeat control reaches source 65 before
     counterfactualResearchPacketBytes: 136_580,
   });
   t.diagnostic(canonicalJson({ fullPayloadHomogeneousControl: measurements }));
+});
+
+// --- Feature 065 T001: packet-local history event references ----------------
+
+/**
+ * Use the real task/current-run normalizers and supported event records.
+ * @param {Record<string, unknown>[]} events
+ * @param {Record<string, unknown>[][]} [captures]
+ * @param {string[]} [lines]
+ * @param {Record<string, string>} [target]
+ */
+function feature065HistoryItems(
+  events,
+  captures = [events],
+  lines = events.map(event => `${t002V2EventLine(event)}\n`),
+  target = TARGET,
+) {
+  return collectEvidence(target, rawInputs({
+    tasks: {
+      path: target.specPath.replace(/spec\.md$/, 'tasks.md'),
+      bytes: t002HistoryTasksRecordBytes(lines, [{ id: target.taskKey, glyph: '~' }]),
+    },
+    currentRun: captures.map(records => recoveryRuntime.currentRunCapture(
+      target, records.map(buildProjectionRecord),
+    )),
+  })).filter(item => ['task-history', 'current-run'].includes(item.source));
+}
+
+/** @param {Record<string, unknown>[]} items @param {unknown} [target] */
+function feature065RoundTrip(items, target = TARGET) {
+  const before = canonicalJson(items);
+  const inspection = buildInspection(target, items);
+  const packet = modelPacket(inspection);
+  assert.ok(packet);
+  assert.deepEqual(expandModelPacket(packet), originalAvailableProjection(inspection));
+  assert.equal(canonicalJson(items), before, 'rendering leaves every source byte and descriptor unchanged');
+  assert.deepEqual(modelPacket(buildInspection(target, items)), packet);
+  assert.equal(inspection.evidenceHash, evidenceHash(target, inspection.items, false));
+  return { inspection, packet };
+}
+
+test('Feature 065 T002 SC004: history-bearing 131071, 131072, and 131073 byte packets use the unchanged real limit', async t => {
+  assert.deepEqual(limits, { items: 64, bytes: 131_072 });
+  const history = feature065HistoryItems([t002ApproachEvent(), t002FindingEvent()]);
+  const historyBefore = canonicalJson(history);
+  const measurements = [];
+  for (const expectedBytes of [131_071, 131_072, 131_073]) {
+    // Vary an ordinary literal source, not the renderer's costs or its budget.
+    let padding = 120_000;
+    let items;
+    let packet;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      items = [...history, evidence('session', 'x'.repeat(padding))];
+      packet = await renderPrivateModelProjection(TARGET, items);
+      const actual = Buffer.byteLength(canonicalJson(packet));
+      if (actual === expectedBytes) break;
+      padding += expectedBytes - actual;
+    }
+    const actualBytes = Buffer.byteLength(canonicalJson(packet));
+    assert.equal(actualBytes, expectedBytes);
+    assert.deepEqual(packet.items.map(item => item.tag), ['literal', 'current-run', 'literal']);
+    assert.ok(packet.items[1].body.records.every(Array.isArray));
+    assert.deepEqual(expandModelPacket(packet), originalAvailableProjection({ target: TARGET, items }));
+    const literal = await renderPrivateModelProjection(TARGET, items, { literalHistory: true });
+    const literalBytes = Buffer.byteLength(canonicalJson(literal));
+    assert.ok(literalBytes > actualBytes);
+    assert.deepEqual(expandModelPacket(literal), expandModelPacket(packet));
+    const inspection = buildInspection(TARGET, items);
+    assert.equal(inspection.overflow, expectedBytes > limits.bytes);
+    if (!inspection.overflow) {
+      assert.deepEqual(modelPacket(inspection), packet);
+      assert.doesNotThrow(() => validateInspection(inspection));
+    } else {
+      assert.equal(modelPacket(inspection), null, 'no model call can receive an excessive packet');
+      assert.ok(inspection.items.every(item => !Object.hasOwn(item, 'text')));
+      assert.equal(inspection.items.length, items.length, 'all original descriptors survive refusal');
+      assert.deepEqual(inspection.blockers, [{
+        code: 'evidence-incomplete', subject: 'model-packet', evidenceHash: inspection.evidenceHash,
+      }]);
+      const forged = {
+        ...inspection, items, overflow: false, blockers: [],
+        evidenceHash: evidenceHash(TARGET, items),
+      };
+      assert.throws(() => validateInspection(forged), /packet limits/);
+      assert.throws(() => modelPacket(forged), /packet limits/);
+    }
+    assert.equal(canonicalJson(history), historyBefore);
+    measurements.push({
+      modelBytes: actualBytes, sameProjectionLiteralBytes: literalBytes,
+      netBytes: literalBytes - actualBytes, overflow: inspection.overflow,
+      physicalItems: packet.items.length, availableOccurrences: expandModelPacket(packet).items.length,
+      originalDescriptors: inspection.items.length,
+    });
+  }
+  t.diagnostic(canonicalJson({ feature065HistoryByteBoundary: measurements }));
+});
+
+test('Feature 065 T001: references preserve exact bodies, earliest lines, record order, and separate captures', () => {
+  const first = t002ApproachEvent();
+  const second = t002FindingEvent();
+  // Same complete occurrence identity, different capture binding: not equal.
+  const near = t002RebuildFindingEvent(second, { sourceCaptureIdentity: sha256('a distinct source capture') });
+  assert.equal(near.occurrenceIdentity, second.occurrenceIdentity);
+  const unmatched = t002ApproachEvent({ attemptOrdinal: 2 });
+  const items = feature065HistoryItems(
+    [first, second, first],
+    [[second, first, second, near, unmatched], [first]],
+    [
+      '\nAn unrelated retained line.\r\n\n',
+      `${t002V2EventLine(first)}\n`,
+      `${t002V2EventLine(second)}\n`,
+      `${t002V2EventLine(first)}\n`,
+    ],
+  );
+  const { packet } = feature065RoundTrip(items);
+  assert.deepEqual(packet.items.map(item => item.tag), ['literal', 'current-run', 'current-run']);
+  assert.equal(packet.items[0].text, items[0].text);
+  const historyLines = JSON.parse(items[0].text).history.split(/\r\n|\r|\n/);
+  const firstLine = historyLines.indexOf(t002V2EventLine(first));
+  const secondLine = historyLines.indexOf(t002V2EventLine(second));
+  assert.notEqual(firstLine, historyLines.lastIndexOf(t002V2EventLine(first)));
+  assert.deepEqual(packet.items[1].body.records, [
+    [0, secondLine], [0, firstLine], [0, secondLine], { event: near }, { event: unmatched },
+  ]);
+  assert.deepEqual(packet.items[2].body.records, [[0, firstLine]]);
+  assert.deepEqual(packet.items.slice(1).map(item => item.frames[0].occurrences), [
+    [{ source: 'current-run', position: 1 }],
+    [{ source: 'current-run', position: 2 }],
+  ]);
+});
+
+function feature065LearningEvents() {
+  const governance = t002RequiredGovernance([
+    t002ApproachEvent({ attemptOrdinal: 1 }),
+    t002ApproachEvent({ attemptOrdinal: 2 }),
+  ]);
+  const failed = governance.failedApproachSet;
+  const alternative = t003CredibleAlternative(
+    TARGET, failed.approachBasisIdentities, failed.setIdentity, 'feature065',
+  );
+  const learning = recoveryRuntime.buildLearningReviewEventV2({
+    governanceIdentity: governance.governanceIdentity,
+    target: governance.target,
+    trigger: governance.trigger,
+    failedApproachSetIdentity: failed.setIdentity,
+    preLearningEvidenceHash: sha256('feature065 pre-learning'),
+    assumptionSetHash: sha256('feature065 assumptions'),
+    findings: [t003LearningFinding('quotes " backslash \\ newline\n tab\t NUL\u0000 雪 😀 e\u0301')],
+    alternatives: [alternative],
+    outcome: 'selected-alternative',
+    selectedAlternativeIdentity: alternative.alternativeIdentity,
+    sequenceIdentity: sha256('feature065 optional sequence binding'),
+  });
+  return [recoveryRuntime.buildGovernanceEventV1(governance), learning];
+}
+
+test('Feature 065 T001: declared event versions and complete escaped Unicode bodies round-trip exactly', () => {
+  const events = [t002ApproachEvent(), t002FindingEvent(), ...feature065LearningEvents()];
+  const { packet } = feature065RoundTrip(feature065HistoryItems(events));
+  assert.equal(packet.items[1].tag, 'current-run');
+  assert.equal(packet.items[1].body.records.length, events.length);
+  assert.ok(packet.items[1].body.records.every(Array.isArray));
+  const audit = t001AuditOnlyEvent();
+  recoveryRuntime.validateIncidentSupersessionEventV1(audit);
+  const auditPacket = feature065RoundTrip(
+    feature065HistoryItems([audit], [[audit]], undefined, F7_TARGET), F7_TARGET,
+  ).packet;
+  assert.equal(auditPacket.items[1].tag, 'current-run');
+  assert.deepEqual(
+    [...events, audit].map(event => event.type).sort(),
+    Object.keys(recoveryRuntime.LANE_EVENT_TYPES).sort(),
+  );
+  const legacy = buildLearningReviewEvent(learningEventInput());
+  const legacyPacket = feature065RoundTrip(feature065HistoryItems([legacy])).packet;
+  assert.equal(legacyPacket.items[1].tag, 'literal', 'v1 learning review is not an autonomous declared event');
+  const wrapped = feature065RoundTrip(feature065HistoryItems(
+    [legacy], [[legacy]], [`${buildLaneEventLine(legacy)}\n`],
+  )).packet;
+  assert.ok(wrapped.items.every(item => item.tag === 'literal'));
+});
+
+test('Feature 065 T001: noncanonical, extra-field, unknown, and invalid captures stay entirely literal', () => {
+  const event = feature065LearningEvents()[1];
+  const [history, current] = feature065HistoryItems([event]);
+  const body = JSON.parse(current.text);
+  const texts = [
+    ['outer whitespace', `${current.text}\n`],
+    ['pretty JSON', JSON.stringify(body, null, 2)],
+    ['duplicate key', current.text.replace('"records":', '"records":[],"records":')],
+    ['alternate Unicode spelling', current.text.replace('雪', '\\u96ea')],
+    ['alternate control spelling', current.text.replace('\\n', '\\u000a')],
+    ['extra outer field', canonicalJson({ ...body, extra: true })],
+    ['extra record field', canonicalJson({ ...body, records: [{ event, extra: true }] })],
+    ['unknown record', canonicalJson({ ...body, records: [{ event }, { note: 'retain the entire capture' }] })],
+    ['extra event field', canonicalJson({ ...body, records: [{ event: { ...event, extra: true } }] })],
+    ['unknown event', canonicalJson({ ...body, records: [{ event: { ...event, type: 'unknown-event' } }] })],
+    ['unsupported event version', canonicalJson({ ...body, records: [{ event: { ...event, version: 3 } }] })],
+    ['invalid hash', canonicalJson({ ...body, records: [{ event: { ...event, eventHash: sha256('forged') } }] })],
+    ['invalid state', canonicalJson({ ...body, state: 'none' })],
+    ['foreign outer target', canonicalJson({ ...body, target: { ...TARGET, taskKey: SECOND_TASK_KEY } })],
+    ['foreign event target', canonicalJson({
+      ...body, records: [{ event: t002ApproachEvent({ target: { ...TARGET, taskKey: SECOND_TASK_KEY } }) }],
+    })],
+    ['empty records', canonicalJson({ ...body, records: [] })],
+    ['empty capture', '[]'],
+    ['malformed JSON', '{'],
+    ['empty text', ''],
+  ];
+  for (const [label, text] of texts) {
+    const { packet } = feature065RoundTrip([history, evidence('current-run', text, true)]);
+    assert.equal(packet.items[1].tag, 'literal', label);
+    assert.equal(packet.items[1].text, text, label);
+  }
+  for (const status of ['malformed', 'conflict', 'stale']) {
+    const { packet } = feature065RoundTrip([history, { ...current, status }]);
+    assert.equal(packet.items[1].tag, 'literal', status);
+  }
+});
+
+test('Feature 065 T001: anchors require exact LF lines and canonical closed task-history at the expected path', () => {
+  const event = t002ApproachEvent();
+  const line = t002V2EventLine(event);
+  for (const [label, text, shares] of [
+    ['LF', `${line}\n`, true],
+    ['CRLF', `${line}\r\n`, false],
+    ['CR', `${line}\r`, false],
+    ['unterminated', line, false],
+    ['indented', ` ${line}\n`, false],
+    ['wrapped', `${buildLaneEventLine(event)}\n`, false],
+    ['trailing whitespace', `${line} \n`, false],
+    ['duplicate key', `${line.replace('"version":1', '"version":0,"version":1')}\n`, false],
+    ['malformed suffix', '- dude-run-event: {\n', false],
+    ['later exact LF', `${line}\r\n\n${line}\n`, true],
+  ]) {
+    const items = feature065HistoryItems([event], [[event]], [text]);
+    const { packet } = feature065RoundTrip(items);
+    assert.equal(packet.items[1].tag, shares ? 'current-run' : 'literal', label);
+    if (label === 'later exact LF') {
+      const index = JSON.parse(items[0].text).history.split(/\r\n|\r|\n/).lastIndexOf(line);
+      assert.deepEqual(packet.items[1].body.records, [[0, index]]);
+    }
+  }
+  const [history, current] = feature065HistoryItems([event]);
+  const body = JSON.parse(history.text);
+  for (const [label, text] of [
+    ['unknown outer', canonicalJson({ ...body, extra: true })],
+    ['wrong sibling', canonicalJson({ ...body, path: '.dude/specs/005-other-feature/tasks.md' })],
+    ['noncanonical history', `${history.text}\n`],
+    ['alternate escape', history.text.replace('T001', '\\u0054001')],
+    ['unknown shape', canonicalJson({ history: body.history })],
+    ['non-array tasks', canonicalJson({ ...body, canonicalTasks: {} })],
+  ]) {
+    const { packet } = feature065RoundTrip([evidence('task-history', text, true), current]);
+    assert.equal(packet.items[1].tag, 'literal', label);
+  }
+  for (const status of ['malformed', 'conflict', 'stale']) {
+    const { packet } = feature065RoundTrip([{ ...history, status }, current]);
+    assert.equal(packet.items[1].tag, 'literal', status);
+  }
+  const secondHistory = evidence('task-history', canonicalJson({ ...body, history: `${body.history}\n` }), true);
+  assert.ok(feature065RoundTrip([history, secondHistory, current]).packet.items.every(item => item.tag === 'literal'),
+    'ambiguous present history anchors do not share');
+  assert.equal(feature065RoundTrip([current]).packet.items[0].tag, 'literal', 'absent anchor');
+  assert.equal(feature065RoundTrip([missing('task-history'), current]).packet.items[0].tag, 'literal', 'unavailable anchor');
+  assert.equal(feature065RoundTrip([history, current], { specPath: SPEC_PATH, lane: 'lightweight' })
+    .packet.items[1].tag, 'literal', 'feature-only target');
+  assert.equal(feature065RoundTrip([history, current], TRACKED).packet.items[1].tag, 'literal', 'tracked target');
+});
+
+test('Feature 065 T001: coordinates are local available occurrences, not descriptor or physical item indexes', async () => {
+  const event = t002ApproachEvent();
+  const [history, current] = feature065HistoryItems([event]);
+  const owner = evidence('owner-log', ownerLogBody(['- 2026-09-18 retained owner event\n']), true);
+  const full = feature065RoundTrip([owner, history, missing('lane-history'), current]).packet;
+  const reference = full.items[2].body.records[0];
+  assert.equal(reference[0], 1);
+  const withoutOwner = await renderPrivateModelProjection(TARGET, [history, missing('lane-history'), current]);
+  assert.deepEqual(withoutOwner.items[1].body.records[0], [0, reference[1]]);
+  assert.deepEqual(expandModelPacket(withoutOwner), originalAvailableProjection({
+    target: TARGET, items: [history, missing('lane-history'), current],
+  }));
+  for (const prefix of [[owner], [owner, history], [current], [current, history]]) {
+    const packet = await renderPrivateModelProjection(TARGET, prefix);
+    assert.deepEqual(expandModelPacket(packet), originalAvailableProjection({ target: TARGET, items: prefix }));
+    assert.ok(packet.items.every(item => item.tag === 'literal'), 'no forward or omitted anchor');
+  }
+  const trusted = t002EnvelopeFixture();
+  const verification = feature064TrustedItem('verification', trusted.verificationCapture, 'failed');
+  // Probe the private renderer's coordinate contract with preceding shared
+  // frames. Public acquisition still owns its unchanged canonical source order.
+  const items = [verification, { ...verification, source: 'lint' }, missing('session'), history, current];
+  const packet = await renderPrivateModelProjection(TARGET, items);
+  assert.equal(packet.items[0].frames[0].occurrences.length, 2);
+  assert.equal(packet.items[1].tag, 'literal');
+  assert.deepEqual(packet.items[2].body.records[0], [2, reference[1]]);
+  assert.deepEqual(expandModelPacket(packet), originalAvailableProjection({ target: TARGET, items }));
+  const corrupted = clone(packet);
+  corrupted.items[2].body.records[0][0] = 1;
+  assert.throws(() => expandModelPacket(corrupted), /earlier emitted literal occurrence/);
+});
+
+test('Feature 065 T001: at least one reference and a strictly smaller complete item are required', async () => {
+  const event = t002ApproachEvent();
+  const items = feature065HistoryItems([event]);
+  const { packet } = feature065RoundTrip(items);
+  const literal = await renderPrivateModelProjection(TARGET, items, { literalHistory: true });
+  const bytes = value => Buffer.byteLength(canonicalJson(value));
+  assert.equal(packet.items.length, literal.items.length);
+  assert.ok(bytes(packet.items[1]) < bytes(literal.items[1]));
+  assert.equal(bytes(literal) - bytes(packet), bytes(literal.items[1]) - bytes(packet.items[1]),
+    'full-item accounting includes tags, frames, descriptors, tuple digits, and escaping');
+  for (const historyCost of ['tie', 'larger']) {
+    // Declared events are substantial. Inject only their selection cost to
+    // exercise this defensive guard; these are not real byte-boundary proofs.
+    const control = await renderPrivateModelProjection(TARGET, items, { historyCost });
+    assert.deepEqual(control, literal, historyCost);
+    assert.deepEqual(expandModelPacket(control), originalAvailableProjection({ target: TARGET, items }));
+  }
+  const unmatched = feature065HistoryItems([event], [[t002ApproachEvent({ attemptOrdinal: 3 })]]);
+  assert.equal(feature065RoundTrip(unmatched).packet.items[1].tag, 'literal');
+});
+
+test('Feature 065 T001: a selected owner suffix and every measured prefix keep self-contained references', async () => {
+  const events = Array.from({ length: 12 }, (_, index) => t002ApproachEvent({ attemptOrdinal: index + 1 }));
+  const history = feature065HistoryItems(events);
+  const ownerEvents = Array.from({ length: 5 }, (_, index) => (
+    `- 2026-09-18 event ${index + 1} ${'x'.repeat(30_000)}\n`
+  ));
+  const owner = evidence('owner-log', ownerLogBody(ownerEvents), true);
+  const { inspection, packet } = feature065RoundTrip([owner, ...history]);
+  const body = JSON.parse(inspection.items[0].text);
+  assert.ok(body.includedEventCount > 0 && body.includedEventCount < ownerEvents.length);
+  assert.deepEqual(body.events, ownerEvents.slice(-body.includedEventCount));
+  assert.ok(packet.items[2].body.records.every(record => record[0] === 1));
+  const largerBody = {
+    ...body,
+    events: ownerEvents.slice(-(body.includedEventCount + 1)),
+    includedEventCount: body.includedEventCount + 1,
+    omittedEventCount: body.omittedEventCount - 1,
+    firstIncludedEventOrdinal: body.firstIncludedEventOrdinal - 1,
+  };
+  const larger = await renderPrivateModelProjection(TARGET, [
+    evidence('owner-log', canonicalJson(largerBody), true), ...history,
+  ]);
+  assert.ok(Buffer.byteLength(canonicalJson(larger)) > limits.bytes);
+  for (let length = 1; length <= inspection.items.length; length += 1) {
+    const items = inspection.items.slice(0, length);
+    const prefix = await renderPrivateModelProjection(TARGET, items);
+    assert.deepEqual(expandModelPacket(prefix), originalAvailableProjection({ target: TARGET, items }));
+    assert.ok(Buffer.byteLength(canonicalJson(prefix)) <= limits.bytes);
+  }
+});
+
+test('Feature 065 T001: history sharing leaves trusted payload, co-role, and malformed-envelope behavior unchanged', () => {
+  const history = feature065HistoryItems([t002ApproachEvent()]);
+  const first = t002EnvelopeFixture();
+  const second = t002EnvelopeFixture({ attemptIdentity: sha256('feature065 second trusted attempt') });
+  const items = [first, second].flatMap(fixture => [
+    feature064TrustedItem('review', fixture.reviewCapture, 'rejected'),
+    feature064TrustedItem('verification', fixture.verificationCapture, 'failed'),
+    feature064TrustedItem('lint', fixture.verificationCapture, 'failed'),
+  ]);
+  const { packet } = feature065RoundTrip([...history, ...items]);
+  assert.deepEqual(packet.items.map(item => item.tag), ['literal', 'current-run', 'review', 'verification']);
+  const control = modelPacket(buildInspection(TARGET, items));
+  for (const tag of ['review', 'verification']) {
+    const actual = clone(packet.items.find(item => item.tag === tag));
+    for (const frame of actual.frames) {
+      frame.occurrences.forEach(occurrence => { occurrence.position -= history.length; });
+    }
+    assert.deepEqual(actual, control.items.find(item => item.tag === tag));
+  }
+  const forged = clone(first.verificationCapture);
+  forged.bytes.sha256 = sha256('forged capture bytes');
+  assert.throws(() => buildInspection(TARGET, [
+    ...history, feature064TrustedItem('verification', forged, 'failed'),
+  ]), /complete decoded bytes/);
+  const forgedReview = clone(first.reviewCapture);
+  forgedReview.authority.authorityIdentity = sha256('forged reviewer');
+  assert.throws(() => buildInspection(TARGET, [
+    ...history,
+    feature064TrustedItem('verification', first.verificationCapture, 'failed'),
+    feature064TrustedItem('review', forgedReview, 'rejected'),
+  ]), /reviewer authority and invocation/);
+});
+
+test('Feature 065 T001: ineligible malformed events still refuse at the existing authority reader', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), root => {
+    const trusted = t002PendingFixture({ verdict: 'accepted', checkOutcome: 'failed' });
+    const captured = recoveryRuntime.captureCompletionV2(
+      trusted.state, autonomousInspectInput(root, t002TrustedStreams([trusted])), trusted.completion,
+    );
+    const event = captured.occurrenceEvents[0];
+    assert.equal(feature065RoundTrip(feature065HistoryItems([event])).packet.items[1].tag, 'current-run');
+    const malformed = { ...event, eventHash: sha256('a forged event body') };
+    assert.equal(feature065RoundTrip(feature065HistoryItems([malformed])).packet.items[1].tag, 'literal');
+    const input = t002RetentionInput(root, [malformed], [malformed], [trusted]);
+    const state = autonomousState();
+    const before = canonicalJson(state);
+    const refused = recoveryRuntime.runCommand('authorize', {
+      trigger: 'post-failure', state, input,
+      assessment: { ...transitionAssessment('retry-task'), evidenceHash: inspect(input).evidenceHash },
+      mode: 'recovery',
+    }).authorization;
+    assert.equal(refused.authorized, false);
+    assert.equal(refused.reason, 'evidence-incomplete');
+    assert.equal(refused.blocker.subject, 'occurrence-retention');
+    assert.equal(canonicalJson(refused.state), before);
+  });
+});
+
+test('Feature 065 T001: the portable incident binds complete preimages and all contradictory retained captures', () => {
+  const loaded = readHistoryIncidentFixture();
+  assert.equal(loaded.descriptor.sha256, HISTORY_INCIDENT_SHA256);
+  assert.equal(loaded.descriptor.byteLength, 479_930);
+  const fixture = loaded.value;
+  assert.equal(fixture.input.root, '.');
+  assert.equal(fixture.input.target.taskKey, 'T004@d062f4a7');
+  assert.equal(fixture.files.length, 5);
+  const files = new Map(fixture.files.map(file => {
+    const bytes = Buffer.from(file.bytes.base64, 'base64');
+    assert.deepEqual(recoveryRuntime.capturedBytesV1(bytes), file.bytes);
+    assert.ok(file.path.startsWith('.dude/'));
+    assert.equal(path.posix.normalize(file.path), file.path);
+    return [file.path, contentDescriptor(bytes)];
+  }));
+  const { lanePrestate, targetMapping } = fixture.preflight.laneBinding;
+  for (const [file, descriptor] of [
+    [targetMapping.tasksPath, lanePrestate.tasksDescriptor],
+    [targetMapping.taskStatePath, lanePrestate.taskStateDescriptor],
+    ['.dude/ideas/062-dude-canvas-workspace-integration.md', lanePrestate.ownerDescriptor],
+  ]) assert.deepEqual(files.get(file), descriptor);
+  assert.deepEqual(files.get('.dude/state/task-state.json'), {
+    sha256: '07ba58191fae23a21ad43cd488bf0d1135377bfaeeef02ddeafc6d0487c00882', byteLength: 14_606,
+  });
+  assert.deepEqual(contentDescriptor(canonicalJson(fixture.preflight.state)), fixture.preflight.stateDescriptor);
+  recoveryRuntime.validateRunState(fixture.preflight.state);
+  assert.deepEqual(fixture.provenance.ended, { outcome: 'ended', reason: 'hard-stop-recorded', ownership: null });
+
+  const forbidden = new Set([
+    'workerToken', 'workerGeneration', 'supervisorAuthorityIdentity', 'supervisorToken',
+    'permission', 'control', 'checkpoint', 'expectedSessionIdentity', 'sessionIdentity',
+  ]);
+  const checkNoHostControls = value => {
+    if (value === null || typeof value !== 'object') return;
+    for (const [field, child] of Object.entries(value)) {
+      assert.equal(forbidden.has(field), false, field);
+      if (field === 'base64') {
+        const text = Buffer.from(child, 'base64').toString('utf8');
+        if (/^[{[]/.test(text)) checkNoHostControls(JSON.parse(text));
+      } else checkNoHostControls(child);
+    }
+  };
+  checkNoHostControls(fixture);
+  const checks = { verification: [], lint: [] };
+  const verifications = new Map();
+  const recordCounts = {};
+  let findings = 0;
+  for (const field of ['currentRun', 'verification', 'review', 'lint']) {
+    const streams = fixture.input[field];
+    recordCounts[field] = [];
+    for (const [index, stream] of streams.entries()) {
+      const bytes = Buffer.from(stream.bytes.base64, 'base64');
+      const binding = fixture.inputBindings[field][index];
+      assert.deepEqual(contentDescriptor(bytes), { sha256: binding.sha256, byteLength: binding.byteLength });
+      const body = JSON.parse(bytes.toString('utf8'));
+      assert.equal(canonicalJson(body), bytes.toString('utf8'));
+      assert.equal(body.state, stream.state);
+      const records = body.records.map(record => record.substantive);
+      recordCounts[field].push(records.length);
+      assert.equal(records.length, binding.records);
+      assert.equal(sha256(canonicalJson({ ...body, records })), stream.outcomeHash);
+      if (field === 'currentRun') continue;
+      for (const capture of records) {
+        recoveryRuntime.validateTrustedSourceCaptureV2(capture);
+        assert.match(capture.authority.authorityIdentity, /^[a-f0-9]{64}$/);
+        assert.match(capture.authority.invocationIdentity, /^[a-f0-9]{64}$/,
+          'trusted invocation binding is required evidence, not a host worker token');
+        const envelope = JSON.parse(Buffer.from(capture.bytes.base64, 'base64').toString('utf8'));
+        if (field === 'review') {
+          assert.deepEqual(recoveryRuntime.normalizeIndependentReviewEnvelopeV2(
+            capture, verifications.get(envelope.verificationEnvelopeIdentity),
+          ), envelope);
+          assert.equal(envelope.verdict, 'rejected');
+          findings += envelope.findings.length;
+          assert.equal(envelope.findings.length, binding.findings);
+        } else {
+          assert.deepEqual(recoveryRuntime.normalizeVerificationEnvelopeV2(capture), envelope);
+          verifications.set(envelope.envelopeIdentity, envelope);
+          const outcomes = envelope.checks.map(check => check.outcome);
+          assert.deepEqual(outcomes, binding.checks);
+          checks[field].push(...outcomes);
+        }
+      }
+    }
+  }
+  assert.deepEqual(recordCounts, {
+    currentRun: [14], verification: [1, 1, 1, 1, 1], review: [1, 1, 1, 1, 1], lint: [1, 1, 1, 1],
+  });
+  assert.deepEqual(fixture.inputBindings.verification.map(row => row.checks.length), [11, 12, 13, 14, 4]);
+  assert.deepEqual(checks.verification.reduce((counts, outcome) => {
+    counts[outcome] += 1;
+    return counts;
+  }, { passed: 0, failed: 0 }), { passed: 28, failed: 26 });
+  assert.deepEqual(checks.lint.reduce((counts, outcome) => {
+    counts[outcome] += 1;
+    return counts;
+  }, { passed: 0, failed: 0 }), { passed: 20, failed: 23 });
+  assert.equal(findings, 6);
+});
+
+test('Feature 065 T001: complete incident baseline and pure preflight expose same-projection net bytes', async t => {
+  await withHistoryIncidentWorkspace(async ({ root, reference, input, filePreimages }) => {
+    const args = { ...reference.preflight, input };
+    const before = canonicalJson(args);
+    const baseline = await measurePrivatePreflight(args, { literalHistory: true });
+    assert.deepEqual(baseline.capacity, reference.baseline.capacity);
+    assert.deepEqual(baseline.measurements.map(row => row.modelBytes), [130_975, 129_151, 130_678, 131_619]);
+    assert.deepEqual(baseline.measurements.map(row => row.inspection.overflow), [false, false, false, true]);
+    assert.equal(modelPacket(baseline.measurements.at(-1).inspection), null);
+    assert.ok(baseline.measurements.at(-1).inspection.items.every(item => !Object.hasOwn(item, 'text')));
+    for (const [index, row] of baseline.measurements.entries()) {
+      const expected = reference.baseline.prefixes[index];
+      assert.equal(row.items.length, expected.originalDescriptors);
+      assert.equal(row.packet.items.length, expected.physicalItems);
+      assert.equal(expandModelPacket(row.packet).items.length, expected.availableOccurrences);
+      assert.deepEqual(expandModelPacket(row.packet), originalAvailableProjection({
+        target: input.target, items: row.items,
+      }));
+      const owner = JSON.parse(row.items.find(item => item.source === 'owner-log').text);
+      assert.deepEqual({
+        included: owner.includedEventCount, omitted: owner.omittedEventCount, total: owner.totalEventCount,
+      }, expected.ownerEvents);
+    }
+    const lastBaseline = baseline.measurements.at(-1);
+    const historyItems = lastBaseline.packet.items.filter(item => item.frames.some(frame => (
+      frame.occurrences.some(row => ['task-history', 'current-run'].includes(row.source))
+    )));
+    assert.equal(historyItems.reduce((total, item) => total + Buffer.byteLength(canonicalJson(item)), 0), 90_890);
+    const history = JSON.parse(lastBaseline.items.find(item => item.source === 'task-history').text).history;
+    const laneEvents = history.split('\n').filter(line => line.startsWith('- dude-run-event: '))
+      .map(line => JSON.parse(line.slice('- dude-run-event: '.length)));
+    const currentEvents = JSON.parse(lastBaseline.items.find(item => item.source === 'current-run').text)
+      .records.map(record => record.event);
+    const exactBodies = new Set(laneEvents.map(canonicalJson));
+    const repeats = currentEvents.filter(event => exactBodies.has(canonicalJson(event)));
+    assert.equal(laneEvents.length, 24);
+    assert.equal(currentEvents.length, 15);
+    assert.equal(repeats.length, 15);
+    assert.equal(repeats.reduce((total, event) => total + Buffer.byteLength(canonicalJson(event)), 0), 31_036,
+      'repeated canonical body bytes are not a net savings measurement');
+
+    const actual = await measurePrivatePreflight(args);
+    assert.equal(actual.capacity, null);
+    assert.equal(actual.result.transition.prepared, true, actual.result.transition.reason);
+    assert.equal(actual.result.transition.plan.items.length, 2);
+    assert.equal(actual.measurements.length, 5, 'complete input and both surfaces of each pending event');
+    const acquired = await measurePrivateModelView(input);
+    assert.deepEqual(acquired.inspection, actual.measurements[0].inspection);
+    assert.deepEqual(acquired.packet, modelPacket(acquired.inspection));
+    assert.deepEqual(acquired.inspection, recoveryRuntime.runCommand('inspect', {
+      trigger: 'explicit-inspection', input,
+    }).inspection);
+    const measurements = [];
+    for (const [index, row] of actual.measurements.entries()) {
+      const projection = { target: input.target, items: row.items };
+      assert.equal(row.inspection.overflow, false);
+      assert.deepEqual(row.inspection.blockers, []);
+      assert.deepEqual(expandModelPacket(row.packet), originalAvailableProjection(projection));
+      assert.equal(row.modelBytes, Buffer.byteLength(canonicalJson(row.packet)));
+      assert.equal(row.inspection.evidenceHash, evidenceHash(input.target, row.inspection.items, false));
+      assert.deepEqual(modelPacket(row.inspection), row.packet);
+      if (index < baseline.measurements.length) {
+        assert.deepEqual(row.rawItems, baseline.measurements[index].rawItems,
+          'baseline changes selection only, not acquisition or normalized evidence');
+      }
+      const literal = await renderPrivateModelProjection(input.target, row.items, { literalHistory: true });
+      const literalBytes = Buffer.byteLength(canonicalJson(literal));
+      assert.deepEqual(expandModelPacket(literal), originalAvailableProjection(projection));
+      assert.ok(row.modelBytes < literalBytes, 'strict net savings over exactly the same owner suffix and other sharing');
+      const newHistory = row.packet.items.find(item => item.tag === 'current-run');
+      assert.ok(newHistory);
+      assert.equal(newHistory.body.records.length, index < 2 ? 14 : index < 4 ? 15 : 16);
+      assert.ok(newHistory.body.records.every(Array.isArray));
+      assert.equal(row.items.length, 20);
+      assert.equal(expandModelPacket(row.packet).items.length, 19);
+      assert.equal(row.packet.items.length, 15);
+      assert.deepEqual(
+        row.packet.items.filter(item => ['verification', 'review'].includes(item.tag)),
+        literal.items.filter(item => ['verification', 'review'].includes(item.tag)),
+      );
+      const ownerItem = row.items.find(item => item.source === 'owner-log');
+      const owner = JSON.parse(ownerItem.text);
+      const fullOwner = JSON.parse(row.rawItems.find(item => item.source === 'owner-log').text);
+      assert.equal(owner.fullLogSha256, fullOwner.fullLogSha256);
+      assert.equal(owner.fullLogByteLength, fullOwner.fullLogByteLength);
+      assert.deepEqual(owner.events, fullOwner.events.slice(-owner.includedEventCount));
+      if (owner.includedEventCount < owner.totalEventCount) {
+        const largerText = canonicalJson({
+          ...owner,
+          events: fullOwner.events.slice(-(owner.includedEventCount + 1)),
+          includedEventCount: owner.includedEventCount + 1,
+          omittedEventCount: owner.omittedEventCount - 1,
+          firstIncludedEventOrdinal: owner.firstIncludedEventOrdinal - 1,
+        });
+        const largerItems = row.items.map(item => item === ownerItem
+          ? { ...item, text: largerText, ...contentDescriptor(largerText) } : item);
+        const larger = await renderPrivateModelProjection(input.target, largerItems);
+        assert.ok(Buffer.byteLength(canonicalJson(larger)) > limits.bytes, 'actual suffix is maximal');
+      }
+      measurements.push({
+        phase: index === 0 ? 'complete-input' : index % 2 ? 'lane-first' : 'both-surfaces',
+        eventType: index === 0 ? null : reference.preflight.batch.events[Math.floor((index - 1) / 2)].type,
+        modelBytes: row.modelBytes,
+        sameProjectionLiteralBytes: literalBytes,
+        netBytes: literalBytes - row.modelBytes,
+        ownerEvents: { included: owner.includedEventCount, omitted: owner.omittedEventCount, total: owner.totalEventCount },
+        descriptors: row.items.length,
+        availableOccurrences: expandModelPacket(row.packet).items.length,
+        physicalItems: row.packet.items.length,
+        references: newHistory.body.records.length,
+        evidenceHash: row.inspection.evidenceHash,
+      });
+    }
+    assert.equal(rawSourceCount(input), 19);
+    const headroom = mandatoryCompletionHeadroom(acquired.inspection, input);
+    assert.equal(headroom.requiredSources, 22);
+    assert.equal(headroom.requiredDescriptors, 23);
+    const metrics = acquisitionMetrics(root, reference, input);
+    assert.ok(metrics.maximumSourceBodyBytes <= FIXED_RESOURCE_LIMITS.sourceBodyBytes);
+    assert.ok(metrics.aggregateDecodedBytes <= FIXED_RESOURCE_LIMITS.inspectionBodyBytes);
+    assert.ok(metrics.requestBytes <= FIXED_RESOURCE_LIMITS.cliRequestBytes);
+    assert.notEqual(acquired.inspection.evidenceHash, baseline.measurements[0].inspection.evidenceHash,
+      'a larger selected owner suffix legitimately changes evidence identity');
+    assert.equal(canonicalJson(args), before);
+    for (const [relative, bytes] of filePreimages) {
+      assert.deepEqual(fs.readFileSync(path.join(root, relative)), bytes, relative);
+    }
+    t.diagnostic(canonicalJson({
+      historyIncident: {
+        fixtureSha256: HISTORY_INCIDENT_SHA256,
+        sourceEntries: rawSourceCount(input),
+        headroom,
+        acquisition: metrics,
+        baseline: reference.baseline.prefixes,
+        measurements,
+        proof: 'pure complete-input/preflight and inverse only; no application, receipts, settlement, or later growth',
+      },
+    }));
+  });
 });

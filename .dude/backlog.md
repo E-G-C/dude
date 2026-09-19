@@ -8,7 +8,7 @@ A read-only view built from idea files, linked feature files, task records, and 
 - Ready / Next: **0**
 - Ideas awaiting definition: **6**
 - Defined awaiting work: **1**
-- Completed: **57**
+- Completed: **58**
 
 ## Current
 
@@ -90,6 +90,7 @@ No current work to diagram.
 - `059` · `annotation-direct-manipulation` — Annotation Direct Manipulation (`.dude/ideas/059-annotation-direct-manipulation.md`)
 - `061` · `work-inspection-source-capacity` — Work Inspection Source Capacity (`.dude/ideas/061-work-inspection-source-capacity.md`)
 - `064` · `work-receipt-overflow-handling` — Work Receipt Overflow Handling (`.dude/ideas/064-work-receipt-overflow-handling.md`)
+- `065` · `work-history-event-compaction` — Work History Event Compaction (`.dude/ideas/065-work-history-event-compaction.md`)
 
 ## Dependency and order notes
 

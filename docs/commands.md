@@ -465,11 +465,14 @@ work, consume a budget, or mutate workflow state. Optional session history is
 used only when it can be exactly bound; its unavailability alone is not a
 blocker. Inspection admits one self-contained `dude-work-model-view-v1` packet
 and one Assessment bound to that Inspection's `evidenceHash`. The lossless model
-view shares only exact, complete, validated verification or review payloads.
+view shares only exact, complete, validated verification or review payloads and
+complete byte-identical event bodies through private packet-local current-run
+references into earlier literal task history.
 Every original byte, descriptor, ordered occurrence, and authority binding
 remains reconstructible; sharing grants no authority. Raw machine Inspection
 evidence, trusted captures, and audit files retain their established forms.
-Task and current-run histories stay complete and literal.
+Task history stays complete and literal; the current-run model view stays
+complete and exactly reconstructible.
 
 All non-owner admitted evidence remains complete. Owner-log evidence carries
 exact owner identity, the complete log's digest, byte length, and event counts,

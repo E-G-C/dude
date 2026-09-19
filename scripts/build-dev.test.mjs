@@ -295,9 +295,13 @@ test('checked-in dev core is a byte-identical non-mutating projection of authori
   try {
     fs.cpSync(path.join(repoRoot, 'src'), path.join(root, 'src'), { recursive: true });
     const fixtureDirectory = 'scripts/fixtures/064-work-receipt-overflow-handling';
-    const fixtureHashes = new Set(['README.md', 'reference.json', 'retention-episode.json', 'model-view-test-helpers.mjs']
-      .map(filename => {
-        const relative = `${fixtureDirectory}/${filename}`;
+    const fixturePaths = [
+      ...['README.md', 'reference.json', 'retention-episode.json', 'model-view-test-helpers.mjs']
+        .map(filename => `${fixtureDirectory}/${filename}`),
+      'scripts/fixtures/065-work-history-event-compaction/retained-incident.json',
+    ];
+    const fixtureHashes = new Set(fixturePaths
+      .map(relative => {
         const bytes = fs.readFileSync(path.join(repoRoot, relative));
         w(root, relative, bytes);
         return sha256(bytes);
@@ -374,7 +378,7 @@ test('checked-in dev core is a byte-identical non-mutating projection of authori
         /import \{ buildLightweightWorkPostimages \} from '\.\.\/dude-engine\/lib\/lightweight-work-postimage\.mjs'/);
     }
     for (const entry of snapshotTree(path.join(root, '.github')).filter(row => row.type === 'file')) {
-      assert.doesNotMatch(entry.path, /(?:^|\/)fixtures(?:\/|$)|\.test\.|model-view-test-helpers|064-work-receipt-overflow-handling/);
+      assert.doesNotMatch(entry.path, /(?:^|\/)fixtures(?:\/|$)|\.test\.|model-view-test-helpers|064-work-receipt-overflow-handling|065-work-history-event-compaction/);
       assert.equal(fixtureHashes.has(sha256(/** @type {Buffer} */ (entry.bytes))), false, `${entry.path} ships fixture bytes`);
     }
     assertExactBytes(

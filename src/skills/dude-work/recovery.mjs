@@ -3065,6 +3065,7 @@ function isAvailable(item) {
  * @typedef {ModelFrame & {outer:Record<string,unknown>,capture:Record<string,unknown>,
  *   binding:Record<string,unknown>}} TrustedModelFrame
  * @typedef {{tag:'literal',text:string,frames:ModelFrame[]}} LiteralModelItem
+ * @typedef {{tag:'current-run',body:Record<string,unknown>,frames:ModelFrame[]}} CurrentRunModelItem
  * @typedef {{tag:'verification'|'review',payload:Record<string,unknown>,frames:TrustedModelFrame[]}} TypedModelItem
  */
 
@@ -3162,17 +3163,105 @@ function modelPayloadContext(target, items) {
 }
 
 /**
+ * Index only the literal history actually available in this packet. Full-set
+ * trusted-payload context must never supply an omitted history anchor.
+ * @param {unknown} target @param {Record<string,unknown>[]} available
+ * @returns {Map<string,[number,number]>}
+ */
+function modelHistoryEvents(target, available) {
+  /** @type {Map<string,[number,number]>} */
+  const events = new Map();
+  const canonical = canonicalTarget(target);
+  if (canonical.lane !== 'lightweight' || !canonical.taskKey) return events;
+  const histories = available.filter(item => item.source === 'task-history' && item.status === 'present');
+  if (histories.length !== 1) return events;
+  const item = histories[0];
+  let history;
+  try {
+    const body = assertExactRecord(
+      JSON.parse(/** @type {string} */ (item.text)),
+      ['path', 'canonicalTasks', 'dependencies', 'discovered', 'history'], [], 'model task-history',
+    );
+    if (body.path !== canonical.specPath.replace(/spec\.md$/, 'tasks.md')
+      || canonicalJson(body) !== item.text) return events;
+    assertDenseDataArray(body.canonicalTasks, 'model task-history.canonicalTasks');
+    assertDenseDataArray(body.dependencies, 'model task-history.dependencies');
+    assertUnicodeScalarString(body.discovered, 'model task-history.discovered');
+    assertUnicodeScalarString(body.history, 'model task-history.history');
+    history = /** @type {string} */ (body.history);
+  } catch (error) {
+    if (!(error instanceof SyntaxError || error instanceof TypeError)) throw error;
+    return events;
+  }
+  const position = available.indexOf(item);
+  for (const [lineIndex, line] of logicalLines(history).entries()) {
+    if (!line.text.startsWith(LANE_EVENT_PREFIX)
+      || history.slice(line.start + line.text.length, line.end) !== '\n') continue;
+    const suffix = line.text.slice(LANE_EVENT_PREFIX.length);
+    try {
+      const event = /** @type {Record<string,unknown>} */ (
+        validateT002AuthoritativeEvent(JSON.parse(suffix), 'model history event')
+      );
+      if (canonicalJson(event) !== suffix
+        || canonicalJson(event.target) !== canonicalJson(canonical)) continue;
+      if (!events.has(suffix)) events.set(suffix, [position, lineIndex]);
+    } catch (error) {
+      if (!(error instanceof SyntaxError || error instanceof TypeError)) throw error;
+      // Eligibility only: unchanged raw history still reaches authority readers.
+    }
+  }
+  return events;
+}
+
+/**
+ * A capture stays literal unless its complete canonical body is eligible.
+ * Nothing here normalizes or repairs a source, or merges separate captures.
+ * @param {unknown} target @param {Record<string,unknown>} item
+ * @param {ModelFrame} frame @param {Map<string,[number,number]>} events
+ * @returns {CurrentRunModelItem|null}
+ */
+function modelCurrentRunItem(target, item, frame, events) {
+  if (item.source !== 'current-run' || item.status !== 'present' || events.size === 0) return null;
+  try {
+    const body = assertExactRecord(
+      JSON.parse(/** @type {string} */ (item.text)), ['target', 'state', 'records'], [], 'model current-run',
+    );
+    const canonical = canonicalJson(canonicalTarget(target));
+    if (canonicalJson(body) !== item.text || canonicalJson(body.target) !== canonical) return null;
+    assertEnum(body.state, CURRENT_RUN_STATES, 'model current-run.state');
+    let references = 0;
+    const records = assertDenseDataArray(body.records, 'model current-run.records').map(value => {
+      const record = assertExactRecord(value, ['event'], [], 'model current-run record');
+      const event = /** @type {Record<string,unknown>} */ (
+        validateT002AuthoritativeEvent(record.event, 'model current-run event')
+      );
+      if (canonicalJson(event.target) !== canonical) invalid('model current-run event.target', 'must match');
+      const reference = events.get(canonicalJson(event));
+      if (!reference || reference[0] >= frame.occurrences[0].position) return record;
+      references += 1;
+      return reference;
+    });
+    return references > 0 ? { tag: 'current-run', body: { ...body, records }, frames: [frame] } : null;
+  } catch (error) {
+    if (!(error instanceof SyntaxError || error instanceof TypeError)) throw error;
+    return null;
+  }
+}
+
+/**
  * @param {unknown} target @param {unknown} value
  * @param {Map<Record<string,unknown>,ModelPayload>} [context]
  */
 function packetProjection(target, value, context) {
   const originals = /** @type {Record<string, unknown>[]} */ (assertDenseDataArray(value, 'EvidenceItem list'));
   const payloads = context ?? modelPayloadContext(target, originals);
+  const available = originals.filter(isAvailable);
+  const historyEvents = modelHistoryEvents(target, available);
   /** @param {unknown} value */
   const canonicalBytes = (value) => Buffer.byteLength(canonicalJson(value));
   /** @type {{source:string,position:number,literal:LiteralModelItem,typed:TypedModelItem|null}[]} */
   const units = [];
-  for (const [position, item] of originals.filter(isAvailable).entries()) {
+  for (const [position, item] of available.entries()) {
     const source = /** @type {string} */ (item.source);
     const frame = { descriptor: descriptor(item), occurrences: [{ source, position }] };
     /** @type {LiteralModelItem} */
@@ -3214,12 +3303,18 @@ function packetProjection(target, value, context) {
     group.push({ position: unit.position, literal: unit.literal, typed: unit.typed });
     groups.set(key, group);
   }
-  /** @type {{position:number,item:LiteralModelItem|TypedModelItem}[]} */
+  /** @type {{position:number,item:LiteralModelItem|CurrentRunModelItem|TypedModelItem}[]} */
   const selected = [];
   const consumed = new Set();
   for (const unit of units) {
     if (!unit.typed) {
-      selected.push({ position: unit.position, item: unit.literal });
+      const currentRun = modelCurrentRunItem(
+        target, available[unit.position], unit.literal.frames[0], historyEvents,
+      );
+      selected.push({
+        position: unit.position,
+        item: currentRun && canonicalBytes(currentRun) < canonicalBytes(unit.literal) ? currentRun : unit.literal,
+      });
       continue;
     }
     const key = canonicalJson(unit.typed.payload);
@@ -7832,13 +7927,15 @@ function projectionCommitmentForEventsV1(purpose, target, events, label) {
   });
   if (purpose === 'incident-evidence') {
     // The dedicated incident-evidence batch is finding-only, exactly two rows,
-    // and stays in strict chronology order. Normal completion retention still
-    // requires its approach event first.
+    // from distinct attempts of one basis. Chronology is checked against the
+    // preview's captured lane history, not these invocation-local ordinals.
     if (events.length !== 2 || events.some((event) => event.type !== 'finding-occurrence')) {
       invalid(`${label}.events`, 'must contain exactly two finding occurrence events');
     }
-    if (compareOccurrenceChronologyV2(events[0], events[1]) >= 0) {
-      invalid(`${label}.events`, 'must be in strict chronology order');
+    const first = /** @type {Record<string, unknown>} */ (events[0].occurrence);
+    const second = /** @type {Record<string, unknown>} */ (events[1].occurrence);
+    if (first.attemptIdentity === second.attemptIdentity || first.basisIdentity !== second.basisIdentity) {
+      invalid(`${label}.events`, 'must bind one finding basis across two distinct attempts');
     }
   } else if (purpose === 'incident-supersession') {
     if (events.length !== 1 || events[0].type !== 'incident-supersession') {
@@ -8316,12 +8413,32 @@ function eventChronologyV2(event) {
   };
 }
 
-/** @param {Record<string, unknown>} left @param {Record<string, unknown>} right */
-function compareOccurrenceChronologyV2(left, right) {
+/**
+ * Attempt ordinals are local budget counters. Only the existing ordered lane
+ * history establishes the order of distinct attempts across invocations.
+ * @param {Record<string, unknown>[]} events Already in authoritative history order.
+ */
+function occurrenceAttemptPositionsV2(events) {
+  /** @type {Map<string, number>} */
+  const positions = new Map();
+  for (const event of events) {
+    const attemptIdentity = /** @type {string} */ (
+      /** @type {Record<string, unknown>} */ (event.occurrence).attemptIdentity
+    );
+    if (!positions.has(attemptIdentity)) positions.set(attemptIdentity, positions.size);
+  }
+  return positions;
+}
+
+/** @param {Record<string, unknown>} left @param {Record<string, unknown>} right @param {Map<string, number>} positions */
+function compareOccurrenceChronologyV2(left, right, positions) {
+  const leftAttempt = /** @type {string} */ (/** @type {Record<string, unknown>} */ (left.occurrence).attemptIdentity);
+  const rightAttempt = /** @type {string} */ (/** @type {Record<string, unknown>} */ (right.occurrence).attemptIdentity);
   const leftChronology = eventChronologyV2(left);
   const rightChronology = eventChronologyV2(right);
-  return leftChronology.attemptOrdinal - rightChronology.attemptOrdinal
+  return /** @type {number} */ (positions.get(leftAttempt)) - /** @type {number} */ (positions.get(rightAttempt))
     || leftChronology.reviewOrdinal - rightChronology.reviewOrdinal
+    // Canonical tie-breaking within one review, never hash-as-time for attempts.
     || compareUtf8(/** @type {string} */ (left.occurrenceIdentity), /** @type {string} */ (right.occurrenceIdentity));
 }
 
@@ -8355,9 +8472,10 @@ function validateOccurrenceSurfaceV2(events, surface) {
     const priorOccurrence = byOccurrence.get(occurrenceIdentity);
     if (priorOccurrence && priorOccurrence !== eventHash) invalid(surface, 'contains conflicting bytes for one occurrence identity');
     byOccurrence.set(occurrenceIdentity, eventHash);
+    const occurrence = /** @type {Record<string, unknown>} */ (event.occurrence);
     const position = event.type === 'finding-occurrence'
-      ? `finding:${eventChronologyV2(event).attemptOrdinal}:${eventChronologyV2(event).reviewOrdinal}:${/** @type {Record<string, unknown>} */ (event.occurrence).findingIdentity}`
-      : `approach:${eventChronologyV2(event).attemptOrdinal}`;
+      ? `finding:${occurrence.attemptIdentity}:${eventChronologyV2(event).reviewOrdinal}:${occurrence.findingIdentity}`
+      : `approach:${occurrence.attemptIdentity}`;
     const priorPosition = chronology.get(position);
     if (priorPosition && priorPosition !== eventJson) invalid(surface, 'contains conflicting bytes at one chronology position');
     chronology.set(position, eventJson);
@@ -8385,16 +8503,18 @@ function dualRetainedOccurrenceEventsV2(inspection) {
   const laneByHash = laneSurface.byHash;
   /** @type {Record<string, unknown>[]} */
   const retained = [];
-  for (const [eventHash, currentEvent] of currentByHash) {
-    const laneEvent = laneByHash.get(eventHash);
-    if (!laneEvent) invalid('occurrence retention', 'is incomplete on lane-history');
+  // Current-run capture delivery order is not chronology. Preserve the order
+  // already owned by lane history after proving exact dual retention.
+  for (const [eventHash, laneEvent] of laneByHash) {
+    const currentEvent = currentByHash.get(eventHash);
+    if (!currentEvent) invalid('occurrence retention', 'is incomplete on current-run');
     if (canonicalJson(currentEvent) !== canonicalJson(laneEvent)) {
       invalid('occurrence retention', 'contains conflicting current-run and lane event bytes');
     }
-    retained.push(currentEvent);
+    retained.push(laneEvent);
   }
-  for (const eventHash of laneByHash.keys()) {
-    if (!currentByHash.has(eventHash)) invalid('occurrence retention', 'is incomplete on current-run');
+  for (const eventHash of currentByHash.keys()) {
+    if (!laneByHash.has(eventHash)) invalid('occurrence retention', 'is incomplete on lane-history');
   }
   return {
     currentByHash,
@@ -8495,7 +8615,7 @@ function validateRetainedOccurrenceAuthorityV2(events, trusted) {
   }
 }
 
-/** @param {Record<string, unknown>[]} events */
+/** @param {Record<string, unknown>[]} events Occurrences in authoritative lane-history order. */
 export function deriveEarliestRepeatRelationshipV1(events) {
   const validatedRows = assertDenseDataArray(events, 'retained occurrence events')
     .map((event, index) => {
@@ -8506,7 +8626,10 @@ export function deriveEarliestRepeatRelationshipV1(events) {
       return record;
     });
   const surface = validateOccurrenceSurfaceV2(validatedRows, 'retained occurrence events');
-  const rows = [...surface.byHash.values()].sort(compareOccurrenceChronologyV2);
+  const positions = occurrenceAttemptPositionsV2([...surface.byHash.values()]);
+  /** @param {Record<string, unknown>} left @param {Record<string, unknown>} right */
+  const compare = (left, right) => compareOccurrenceChronologyV2(left, right, positions);
+  const rows = [...surface.byHash.values()].sort(compare);
   /** @type {{repeat:Record<string, unknown>,second:Record<string, unknown>,first:Record<string, unknown>}[]} */
   const candidates = [];
   for (const channel of ['finding', 'approach']) {
@@ -8524,8 +8647,7 @@ export function deriveEarliestRepeatRelationshipV1(events) {
           || firstOccurrence.attemptIdentity === secondOccurrence.attemptIdentity
           || first.occurrenceIdentity === second.occurrenceIdentity
           || targetKey(first.target) !== targetKey(second.target)
-          || eventChronologyV2(first).attemptOrdinal >= eventChronologyV2(second).attemptOrdinal
-          || compareOccurrenceChronologyV2(first, second) >= 0) continue;
+          || compare(first, second) >= 0) continue;
         candidates.push({
           first,
           second,
@@ -8541,14 +8663,14 @@ export function deriveEarliestRepeatRelationshipV1(events) {
     }
   }
   if (candidates.length === 0) return null;
-  candidates.sort((left, right) => compareOccurrenceChronologyV2(left.second, right.second)
-    || compareOccurrenceChronologyV2(left.first, right.first)
+  candidates.sort((left, right) => compare(left.second, right.second)
+    || compare(left.first, right.first)
     || compareUtf8(/** @type {string} */ (left.repeat.channel), /** @type {string} */ (right.repeat.channel)));
   validateRepeatRelationshipV1(candidates[0].repeat);
   return candidates[0].repeat;
 }
 
-/** @param {Record<string, unknown>} repeat @param {Record<string, unknown>[]} retained */
+/** @param {Record<string, unknown>} repeat @param {Record<string, unknown>[]} retained Occurrences in authoritative lane-history order. */
 export function deriveFailedApproachSetV1(repeat, retained) {
   validateRepeatRelationshipV1(repeat);
   const events = assertDenseDataArray(retained, 'retained occurrence events')
@@ -8559,6 +8681,8 @@ export function deriveFailedApproachSetV1(repeat, retained) {
       else invalid(`retained occurrence events[${index}].type`, 'must be an occurrence event');
       return record;
     });
+  const surface = validateOccurrenceSurfaceV2(events, 'retained occurrence events');
+  const positions = occurrenceAttemptPositionsV2([...surface.byHash.values()]);
   const byOccurrence = new Map(events.map((event) => [event.occurrenceIdentity, event]));
   const triggerEvents = /** @type {string[]} */ (repeat.occurrenceIdentities)
     .map((identity) => byOccurrence.get(identity));
@@ -8571,14 +8695,28 @@ export function deriveFailedApproachSetV1(repeat, retained) {
   if (typedTriggerEvents.some((event) => targetKey(event.target) !== targetKey(target))) {
     invalid('RepeatRelationshipV1', 'must bind one target');
   }
-  const cutoff = Math.max(...typedTriggerEvents.map((event) => eventChronologyV2(event).attemptOrdinal));
+  const triggerOccurrences = typedTriggerEvents.map((event) => (
+    /** @type {Record<string, unknown>} */ (event.occurrence)
+  ));
+  const cutoffPosition = /** @type {number} */ (
+    positions.get(/** @type {string} */ (triggerOccurrences[1].attemptIdentity))
+  );
+  if (triggerOccurrences.some((occurrence) => occurrence.basisIdentity !== repeat.basisIdentity)
+    || /** @type {number} */ (positions.get(/** @type {string} */ (triggerOccurrences[0].attemptIdentity))) >= cutoffPosition) {
+    invalid('RepeatRelationshipV1', 'must bind one basis across distinct history-ordered attempts');
+  }
+  // Keep the recorded ordinal, but select the complete prefix by the actual
+  // trigger attempt. A later invocation can reuse or lower that ordinal.
+  const cutoff = eventChronologyV2(typedTriggerEvents[1]).attemptOrdinal;
   const qualifying = events.filter((event) => event.type === `${repeat.channel}-occurrence`
     && targetKey(event.target) === targetKey(target)
     && (repeat.channel === 'approach'
       || /** @type {Record<string, unknown>} */ (event.occurrence).basisIdentity === repeat.basisIdentity)
     && (repeat.channel !== 'approach'
       || /** @type {Record<string, unknown>} */ (event.occurrence).disposition !== 'accepted')
-    && eventChronologyV2(event).attemptOrdinal <= cutoff);
+    && /** @type {number} */ (positions.get(
+      /** @type {string} */ (/** @type {Record<string, unknown>} */ (event.occurrence).attemptIdentity),
+    )) <= cutoffPosition);
   const basisIdentities = qualifying.map((event) => repeat.channel === 'finding'
     ? /** @type {Record<string, unknown>} */ (event.occurrence).attemptApproachBasisIdentity
     : /** @type {Record<string, unknown>} */ (event.occurrence).basisIdentity);
@@ -13514,6 +13652,12 @@ export function validateIncidentCorrectionPreviewV1(value, label = 'IncidentCorr
   const rollback = /** @type {Record<string, unknown>} */ (
     validateFeature007RollbackV1(preview.rollback, `${label}.rollback`)
   );
+  // These existing captures also supply the authoritative chronology below.
+  if (canonicalJson(/** @type {Record<string, unknown>[]} */ (rollback.captures).map((capture) => (
+    /** @type {Record<string, unknown>} */ (capture.bytes).sha256
+  ))) !== canonicalJson([prestate.ideaHash, prestate.tasksHash, prestate.taskStateHash])) {
+    invalid(`${label}.rollback.captures`, 'must capture the exact prestate revision it restores');
+  }
   const evidence = exact
     ? assertExactRecord(preview.evidence, ['inventoryHash', 'reviewEnvelopeIdentities', 'findingOccurrenceEvents', 'repeat'], [], `${label}.evidence`)
     : assertExactRecord(preview.evidence, ['inventoryHash', 'incompleteReason'], [], `${label}.evidence`);
@@ -13544,6 +13688,26 @@ export function validateIncidentCorrectionPreviewV1(value, label = 'IncidentCorr
     validateRepeatRelationshipV1(evidence.repeat, `${label}.evidence.repeat`);
     if (canonicalJson(evidence.repeat) !== canonicalJson(intent.repeat)) {
       invalid(`${label}.evidence.repeat`, 'must equal the exact intent Repeat Relationship');
+    }
+    const taskCapture = /** @type {Record<string, unknown>[]} */ (rollback.captures)[1];
+    const taskBytes = /** @type {Record<string, unknown>} */ (taskCapture.bytes);
+    const history = normalizeTaskHistory({
+      path: taskCapture.path,
+      bytes: Buffer.from(/** @type {string} */ (taskBytes.base64), 'base64'),
+    }, FEATURE_007_TARGET);
+    if (!history.usable) invalid(`${label}.rollback.captures`, 'must retain usable target history');
+    const retained = parseV2EventLines(
+      JSON.parse(/** @type {string} */ (history.item.text)).history,
+      `${label} captured lane history`,
+    ).filter((event) => targetKey(event.target) === targetKey(FEATURE_007_TARGET)
+      && laneEventDeclaration(event.type)?.relevance === 'retention-relevant');
+    const repeat = deriveEarliestRepeatRelationshipV1(retained);
+    const byOccurrence = new Map(retained.map((event) => [event.occurrenceIdentity, event]));
+    if (!repeat || canonicalJson(repeat) !== canonicalJson(intent.repeat)
+      || canonicalJson(findings) !== canonicalJson(
+        /** @type {string[]} */ (repeat.occurrenceIdentities).map((identity) => byOccurrence.get(identity)),
+      )) {
+      invalid(`${label}.evidence.findingOccurrenceEvents`, 'must match the strict chronology order in captured lane history');
     }
     // The carried rows are the exact occurrences the intent repeats, and the
     // carried envelopes are the exact ones those occurrences were reviewed in.
@@ -13599,7 +13763,8 @@ export function validateIncidentCorrectionPreviewV1(value, label = 'IncidentCorr
     // own `governanceIdentity` and failed-approach binding are derived from.
     if (governanceEvent.phase !== 'required'
       || governanceEvent.revision !== 1
-      || canonicalJson(governanceEvent.trigger) !== canonicalJson(intent.repeat)) {
+      || canonicalJson(governanceEvent.trigger) !== canonicalJson(intent.repeat)
+      || governanceEvent.failedApproachSetIdentity !== deriveFailedApproachSetV1(repeat, retained).setIdentity) {
       invalid(`${label}.governanceBatch.events[0]`, 'must require governance on the exact intent Repeat Relationship');
     }
     exactLineHashes = [
@@ -13648,12 +13813,6 @@ export function validateIncidentCorrectionPreviewV1(value, label = 'IncidentCorr
   }
   if (core.snapshotUpdatedAt !== intent.operationTime) {
     invalid(`${label}.mutationCore.snapshotUpdatedAt`, 'must equal the intent operation time');
-  }
-  // Rollback restores the exact revision the prestate promises, never another.
-  if (canonicalJson(/** @type {Record<string, unknown>[]} */ (rollback.captures).map((capture) => (
-    /** @type {Record<string, unknown>} */ (capture.bytes).sha256
-  ))) !== canonicalJson([prestate.ideaHash, prestate.tasksHash, prestate.taskStateHash])) {
-    invalid(`${label}.rollback.captures`, 'must capture the exact prestate revision it restores');
   }
   const taskEffect = /** @type {Record<string, unknown>} */ (intent.taskEffect);
   if (core.toGlyph !== taskEffect.toGlyph || canonicalJson(core.blocker) !== canonicalJson(taskEffect.blocker)) {
@@ -14084,12 +14243,12 @@ function ordinaryAcceptedCompletionAuthorityV2(state, inspection, target) {
     || retained.laneCounts.get(/** @type {string} */ (event.eventHash)) !== 1)) return null;
   if (deriveEarliestRepeatRelationshipV1(retained.retained)) return null;
   const finalAttemptOrdinal = /** @type {number} */ (state.overallUsed);
-  const accepted = retained.retained.filter((event) => event.type === 'approach-occurrence'
-    && targetKey(event.target) === targetKey(target)
-    && eventChronologyV2(event).attemptOrdinal === finalAttemptOrdinal
-    && /** @type {Record<string, unknown>} */ (event.occurrence).disposition === 'accepted');
-  if (accepted.length !== 1) return null;
-  const event = accepted[0];
+  // The lane's latest attempt must bind this invocation's final completed
+  // tuple. Older invocations may have accepted occurrences at the same ordinal.
+  const event = retained.retained.filter((row) => row.type === 'approach-occurrence'
+    && targetKey(row.target) === targetKey(target)).at(-1);
+  if (!event || eventChronologyV2(event).attemptOrdinal !== finalAttemptOrdinal
+    || /** @type {Record<string, unknown>} */ (event.occurrence).disposition !== 'accepted') return null;
   const eventHash = /** @type {string} */ (event.eventHash);
   if (retained.currentCounts.get(eventHash) !== 1 || retained.laneCounts.get(eventHash) !== 1) return null;
   const occurrence = /** @type {Record<string, unknown>} */ (event.occurrence);

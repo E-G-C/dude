@@ -3118,7 +3118,14 @@ test('Work capacity guidance keeps inventory, raw admission, and model-view budg
       /full validated evidence set before measuring any prefix or owner suffix/i,
       /all other metadata/i,
       /machine Inspection, captured bytes and hashes/i,
-      /task and current-run bodies stay literal/i,
+      /complete byte-identical event bodies through private packet-local current-run references/i,
+      /earlier literal task history/i,
+      /record order and duplicates/i,
+      /unmatched records inline/i,
+      /complete encoded item is smaller/i,
+      /ineligible captures stay literal/i,
+      /Rebuild event references within each actual packet/i,
+      /task history stays literal, and current-run references restore every original record/i,
       /maximal whole-event suffix/i,
       /omitted owner events are not inspected text/i,
       /do not prune or retire history or create persistent compaction state/i,
@@ -3141,9 +3148,11 @@ test('Work capacity guidance keeps inventory, raw admission, and model-view budg
   assert.deepEqual(missingParagraphRequirements(commands, [
     ['self-contained complete model projection', [
       /`dude-work-model-view-v1`/, /self-contained/i, /lossless/i,
-      /exact, complete, validated verification or review payloads/i,
+      /exact, complete, validated verification or review payloads and complete byte-identical event bodies/i,
+      /private packet-local current-run references into earlier literal task history/i,
       /Every original byte, descriptor, ordered occurrence, and authority binding/i,
-      /Task and current-run histories stay complete and literal/i,
+      /Task history stays complete and literal/i,
+      /current-run model view stays complete and exactly reconstructible/i,
     ]],
     ['whole canonical packet charged independently of attestation checks', [
       /entire canonical packet/i, /format, payloads, frames, descriptors, bindings, and other metadata/i,
@@ -3287,7 +3296,11 @@ test('Work delivery emits the complete closed packet with reversible trusted fra
     assert.ok(packet);
     assert.equal(packet.format, 'dude-work-model-view-v1');
     assert.deepEqual(Object.keys(packet).sort(), ['format', 'items', 'target']);
-    assert.deepEqual(new Set(packet.items.map(item => item.tag)), new Set(['literal', 'verification', 'review']));
+    assert.deepEqual(new Set(packet.items.map(item => item.tag)),
+      new Set(['literal', 'current-run', 'verification', 'review']));
+    const currentRun = packet.items.find(item => item.tag === 'current-run');
+    assert.ok(currentRun.body.records.length > 0);
+    assert.ok(currentRun.body.records.every(record => Array.isArray(record) && record.length === 2));
     const expanded = expandModelPacket(packet);
     assert.deepEqual(expanded, originalAvailableProjection(inspection));
     assert.ok(packet.items.length <= expanded.items.length);

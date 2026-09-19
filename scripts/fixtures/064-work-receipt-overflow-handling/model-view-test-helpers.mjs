@@ -16,6 +16,11 @@ export const REFERENCE_SHA256 =
   '143a377722cd3f85b70b4f05a8817a2a462744035836c6ccf233fc092a3c99f4';
 export const RETENTION_EPISODE_SHA256 =
   'c497f3d425711555e0a65fedc6872a4bc51298094718648da9c84b7c148ce944';
+export const HISTORY_INCIDENT_PATH = path.join(
+  FIXTURE_DIRECTORY, '../065-work-history-event-compaction/retained-incident.json',
+);
+export const HISTORY_INCIDENT_SHA256 =
+  '1800d8860abf55038087c6d8dc9b1657379c57f8796de6df76686164185ac88b';
 
 /** @param {unknown} value */
 export function cloneCanonical(value) {
@@ -44,21 +49,43 @@ export function readRetentionEpisodeFixture() {
   return fixture;
 }
 
+export function readHistoryIncidentFixture() {
+  const fixture = readJsonFixture(HISTORY_INCIDENT_PATH);
+  assert.equal(fixture.descriptor.sha256, HISTORY_INCIDENT_SHA256);
+  return fixture;
+}
+
 /**
- * Materialize the immutable reference in one owned canonical root.
- * @param {(fixture:{
+ * @typedef {(fixture:{
  *   root:string,
  *   reference:Record<string, unknown>,
  *   referenceBytes:Buffer,
  *   input:Record<string, unknown>,
  *   filePreimages:Map<string, Buffer>,
- * })=>unknown} run
+ * })=>unknown} ModelFixtureTest
+ */
+
+/** @param {ModelFixtureTest} run @param {{tempBase?:string}} [options] */
+export function withReferenceWorkspace(run, options = {}) {
+  return withModelFixtureWorkspace(readReferenceFixture(), 'dude-064-reference-', run, options);
+}
+
+/** Pure forensic inputs only; never use the retained state to start an adapter.
+ * @param {ModelFixtureTest} run @param {{tempBase?:string}} [options] */
+export function withHistoryIncidentWorkspace(run, options = {}) {
+  return withModelFixtureWorkspace(readHistoryIncidentFixture(), 'dude-065-incident-', run, options);
+}
+
+/**
+ * Materialize hash-bound source bytes in one owned canonical root.
+ * @param {ReturnType<typeof readJsonFixture>} loaded
+ * @param {string} prefix
+ * @param {ModelFixtureTest} run
  * @param {{tempBase?:string}} [options]
  */
-export function withReferenceWorkspace(run, options = {}) {
+function withModelFixtureWorkspace(loaded, prefix, run, options = {}) {
   const tempBase = fs.realpathSync(path.resolve(options.tempBase ?? os.tmpdir()));
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(tempBase, 'dude-064-reference-')));
-  const loaded = readReferenceFixture();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(tempBase, prefix)));
   const reference = /** @type {Record<string, unknown>} */ (loaded.value);
   const files = /** @type {Record<string, unknown>[]} */ (reference.files);
   /** @type {Map<string, Buffer>} */
@@ -109,16 +136,19 @@ export function expandModelPacket(packet) {
   const rows = [];
   const verifications = new Map();
   const reviews = [];
+  const historyLiterals = new Map();
   let previousItem = -1;
   for (const item of /** @type {Record<string, unknown>[]} */ (packet.items)) {
-    assert.ok(['literal', 'verification', 'review'].includes(/** @type {string} */ (item.tag)));
+    assert.ok(['literal', 'current-run', 'verification', 'review'].includes(/** @type {string} */ (item.tag)));
+    const trusted = item.tag === 'verification' || item.tag === 'review';
     exactKeys(
       item,
-      item.tag === 'literal' ? ['tag', 'text', 'frames'] : ['tag', 'payload', 'frames'],
+      item.tag === 'literal' ? ['tag', 'text', 'frames']
+        : item.tag === 'current-run' ? ['tag', 'body', 'frames'] : ['tag', 'payload', 'frames'],
     );
     const frames = /** @type {Record<string, unknown>[]} */ (item.frames);
     assert.ok(frames.length > 0);
-    if (item.tag === 'literal') assert.equal(frames.length, 1);
+    if (!trusted) assert.equal(frames.length, 1);
     else {
       exactKeys(
         item.payload,
@@ -134,13 +164,17 @@ export function expandModelPacket(packet) {
     for (const frame of frames) {
       exactKeys(
         frame,
-        item.tag === 'literal'
+        !trusted
           ? ['descriptor', 'occurrences']
           : ['descriptor', 'occurrences', 'outer', 'capture', 'binding'],
       );
       exactKeys(frame.descriptor, ['required', 'status', 'sha256', 'byteLength']);
       const occurrences = /** @type {Record<string, unknown>[]} */ (frame.occurrences);
       assert.ok(occurrences.length === 1 || occurrences.length === 2);
+      if (item.tag === 'current-run') {
+        assert.equal(occurrences.length, 1);
+        assert.equal(occurrences[0].source, 'current-run');
+      }
       assert.ok(/** @type {number} */ (occurrences[0].position) > previousFrame);
       previousFrame = /** @type {number} */ (occurrences[0].position);
       if (occurrences.length === 2) {
@@ -153,7 +187,40 @@ export function expandModelPacket(packet) {
         assert.notEqual(item.text, '[]');
       }
       let text = item.text;
-      if (item.tag !== 'literal') {
+      if (item.tag === 'current-run') {
+        const body = /** @type {Record<string, unknown>} */ (item.body);
+        exactKeys(body, ['target', 'state', 'records']);
+        assert.deepEqual(body.target, packet.target);
+        let references = 0;
+        const records = /** @type {unknown[]} */ (body.records).map(record => {
+          if (!Array.isArray(record)) {
+            exactKeys(record, ['event']);
+            return cloneCanonical(record);
+          }
+          assert.equal(record.length, 2);
+          assert.ok(record.every(coordinate => Number.isSafeInteger(coordinate) && coordinate >= 0));
+          const [historyPosition, lineIndex] = record;
+          assert.ok(historyPosition < occurrences[0].position);
+          assert.ok(historyLiterals.has(historyPosition), 'reference must resolve to an earlier emitted literal occurrence');
+          const history = JSON.parse(historyLiterals.get(historyPosition));
+          exactKeys(history, ['path', 'canonicalTasks', 'dependencies', 'discovered', 'history']);
+          assert.equal(history.path, /** @type {Record<string, string>} */ (packet.target).specPath.replace(/spec\.md$/, 'tasks.md'));
+          // Independent framing: split retains each terminator, including CRLF
+          // and CR, so line coordinates include all headings and blank lines.
+          const lines = history.history.split(/(\r\n|\r|\n)/);
+          const line = lines[lineIndex * 2];
+          assert.equal(lines[lineIndex * 2 + 1], '\n');
+          assert.ok(line.startsWith('- dude-run-event: '));
+          const suffix = line.slice('- dude-run-event: '.length);
+          const event = JSON.parse(suffix);
+          assert.equal(recoveryRuntime.canonicalJson(event), suffix);
+          assert.deepEqual(event.target, packet.target);
+          references += 1;
+          return { event };
+        });
+        assert.ok(references > 0);
+        text = recoveryRuntime.canonicalJson({ ...body, records });
+      } else if (trusted) {
         exactKeys(frame.outer, ['target', 'state']);
         exactKeys(/** @type {Record<string, unknown>} */ (frame.capture).bytes, [
           'sha256',
@@ -218,6 +285,9 @@ export function expandModelPacket(packet) {
       for (const occurrence of occurrences) {
         exactKeys(occurrence, ['source', 'position']);
         assert.ok(Number.isSafeInteger(occurrence.position));
+        if (item.tag === 'literal' && occurrence.source === 'task-history') {
+          historyLiterals.set(occurrence.position, text);
+        }
         rows.push({
           ...occurrence,
           descriptor: cloneCanonical(frame.descriptor),
@@ -369,6 +439,8 @@ export function buildRetentionPair(input) {
     reviewCapture,
     verification,
   );
+  const verificationState = verification.checks.some(check => check.outcome === 'failed')
+    ? 'failed' : 'passed';
   const stream = (state, capture) => {
     const normalized = recoveryRuntime.canonicalJson({
       target,
@@ -395,9 +467,9 @@ export function buildRetentionPair(input) {
     reviewCapture,
     review,
     streams: {
-      verification: stream('passed', verificationCapture),
-      review: stream('accepted', reviewCapture),
-      lint: stream('passed', verificationCapture),
+      verification: stream(verificationState, verificationCapture),
+      review: stream(review.verdict, reviewCapture),
+      lint: stream(verificationState, verificationCapture),
     },
     completion: {
       version: 2,
@@ -519,14 +591,27 @@ export function acquisitionMetrics(root, reference, input) {
   };
 }
 
-let measuredRuntimePromise;
+const measuredRuntimePromises = new Map();
 
-async function measuredRuntime() {
-  if (measuredRuntimePromise) return measuredRuntimePromise;
-  measuredRuntimePromise = (async () => {
+/** @param {boolean} literalHistory @param {'tie'|'larger'} [historyCost] */
+async function measuredRuntime(literalHistory = false, historyCost) {
+  const key = `${literalHistory}:${historyCost ?? 'actual'}`;
+  if (measuredRuntimePromises.has(key)) return measuredRuntimePromises.get(key);
+  const promise = (async () => {
     const runtimeUrl = new URL('../../../src/skills/dude-work/recovery.mjs', import.meta.url);
     const runtimePath = fileURLToPath(runtimeUrl);
     let source = fs.readFileSync(runtimePath, 'utf8');
+    if (literalHistory || historyCost) {
+      const selection = 'currentRun && canonicalBytes(currentRun) < canonicalBytes(unit.literal)';
+      assert.equal(source.split(selection).length, 2);
+      // Suppress only selection; acquisition, other sharing, prefixes, suffix
+      // maximization, and all capacity/authority guards remain production code.
+      // Synthetic cost controls separately exercise the defensive strict-less
+      // guard, without inventing small unsupported events or changing a limit.
+      source = source.replace(selection, literalHistory ? 'false' : selection.replace(
+        'canonicalBytes(currentRun)', `canonicalBytes(unit.literal)${historyCost === 'larger' ? ' + 1' : ''}`,
+      ));
+    }
     const returnNeedle = [
       '  return {',
       '    inspection,',
@@ -537,12 +622,15 @@ async function measuredRuntime() {
     assert.equal(source.split(returnNeedle).length, 2);
     source = source.replace(returnNeedle, [
       '  const testModelPacket = packetProjection(inspectionTarget, selectedItems, context);',
-      '  return {',
+      '  const testMeasurement = {',
       '    inspection,',
       '    modelBytes: Buffer.byteLength(canonicalJson(testModelPacket)),',
       '    testModelPacket,',
       '    testSelectedItems: selectedItems,',
+      '    testRawItems: values,',
       '  };',
+      '  testMeasurements.push(testMeasurement);',
+      '  return testMeasurement;',
       '}',
     ].join('\n'));
     const acquisitionNeedle = 'inspection: buildInspection(target, collectEvidenceInternal';
@@ -559,38 +647,77 @@ async function measuredRuntime() {
     source += [
       '',
       'let testLastMeasurement = null;',
-      'let testLastItems = null;',
+      'let testMeasurements = [];',
       'function testMeasuredInspectionCapture(target, values) {',
-      '  testLastItems = values;',
       '  testLastMeasurement = measuredInspection(target, values);',
       '  return testLastMeasurement.inspection;',
       '}',
       'export function testAcquireMeasured(input) {',
       '  testLastMeasurement = null;',
-      '  testLastItems = null;',
+      '  testMeasurements = [];',
       "  acquireInspection(input, undefined, true, 'autonomous');",
-      '  return { ...testLastMeasurement, testItems: testLastItems };',
+      '  return testLastMeasurement;',
+      '}',
+      'export { packetProjection as testPacketProjection };',
+      'export function testPrepareMeasured(state, input, batch, laneBinding) {',
+      '  testMeasurements = [];',
+      '  let result = null;',
+      '  let capacity = null;',
+      '  try { result = prepareProjectionV2(state, input, batch, undefined, true, laneBinding); }',
+      '  catch (error) {',
+      '    capacity = capacityDiagnostic(error);',
+      '    if (capacity === null) throw error;',
+      '  }',
+      '  return { result, capacity, measurements: testMeasurements };',
       '}',
       '',
     ].join('\n');
     return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
   })();
-  return measuredRuntimePromise;
+  measuredRuntimePromises.set(key, promise);
+  return promise;
+}
+
+/** @param {Record<string, unknown>} measured */
+function modelMeasurement(measured) {
+  return {
+    inspection: measured.inspection,
+    modelBytes: measured.modelBytes,
+    packet: measured.testModelPacket,
+    items: measured.testSelectedItems,
+    rawItems: measured.testRawItems,
+  };
 }
 
 /**
  * Observe the private complete packet used by the unchanged production renderer.
  * The public overflow Inspection remains descriptor-only.
  * @param {Record<string, unknown>} input
+ * @param {{literalHistory?:boolean}} [options]
  */
-export async function measurePrivateModelView(input) {
-  const runtime = await measuredRuntime();
+export async function measurePrivateModelView(input, options = {}) {
+  const runtime = await measuredRuntime(options.literalHistory);
   const measured = runtime.testAcquireMeasured(input);
+  return modelMeasurement(measured);
+}
+
+/** Render exactly these available positions, without a hidden full-packet anchor.
+ * @param {unknown} target @param {unknown[]} items
+ * @param {{literalHistory?:boolean,historyCost?:'tie'|'larger'}} [options] */
+export async function renderPrivateModelProjection(target, items, options = {}) {
+  const runtime = await measuredRuntime(options.literalHistory, options.historyCost);
+  return runtime.testPacketProjection(target, items);
+}
+
+/** Observe pure production preflight; this does not apply a permit or start a host.
+ * @param {{state:unknown,input:unknown,batch:unknown,laneBinding:unknown}} input
+ * @param {{literalHistory?:boolean}} [options] */
+export async function measurePrivatePreflight(input, options = {}) {
+  const runtime = await measuredRuntime(options.literalHistory);
+  const measured = runtime.testPrepareMeasured(input.state, input.input, input.batch, input.laneBinding);
   return {
-    inspection: measured.inspection,
-    modelBytes: measured.modelBytes,
-    packet: measured.testModelPacket,
-    items: measured.testSelectedItems,
-    rawItems: measured.testItems,
+    result: measured.result,
+    capacity: measured.capacity,
+    measurements: measured.measurements.map(modelMeasurement),
   };
 }

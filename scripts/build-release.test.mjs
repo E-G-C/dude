@@ -410,12 +410,15 @@ test('buildRelease preserves unrelated source bytes and excludes source tests', 
           /import \{ buildLightweightWorkPostimages \} from '\.\.\/dude-engine\/lib\/lightweight-work-postimage\.mjs'/);
       }
     }
-    const fixtureHashes = new Set(['README.md', 'reference.json', 'retention-episode.json', 'model-view-test-helpers.mjs']
-      .map(filename => createHash('sha256').update(fs.readFileSync(path.join(
-        repoRoot, 'scripts/fixtures/064-work-receipt-overflow-handling', filename,
-      ))).digest('hex')));
+    const fixturePaths = [
+      ...['README.md', 'reference.json', 'retention-episode.json', 'model-view-test-helpers.mjs']
+        .map(filename => `scripts/fixtures/064-work-receipt-overflow-handling/${filename}`),
+      'scripts/fixtures/065-work-history-event-compaction/retained-incident.json',
+    ];
+    const fixtureHashes = new Set(fixturePaths.map(relative => createHash('sha256')
+      .update(fs.readFileSync(path.join(repoRoot, relative))).digest('hex')));
     for (const relative of listRelativeFiles(outDir)) {
-      assert.doesNotMatch(relative, /(?:^|\/)fixtures(?:\/|$)|\.test\.|model-view-test-helpers|064-work-receipt-overflow-handling/);
+      assert.doesNotMatch(relative, /(?:^|\/)fixtures(?:\/|$)|\.test\.|model-view-test-helpers|064-work-receipt-overflow-handling|065-work-history-event-compaction/);
       const digest = createHash('sha256').update(fs.readFileSync(path.join(outDir, relative))).digest('hex');
       assert.equal(fixtureHashes.has(digest), false, `${relative} ships fixture bytes`);
     }
