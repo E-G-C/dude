@@ -687,6 +687,8 @@ async function focus(page, selector) {
 async function key(page, key, code = key, { shift = false } = {}) {
   const virtualKeys = {
     ArrowDown: 40,
+    ArrowLeft: 37,
+    ArrowRight: 39,
     End: 35,
     Enter: 13,
     Escape: 27,
@@ -824,6 +826,9 @@ async function prepareT010Baseline(reviewTest) {
 
 const T010_REVIEW_SOURCES = Object.freeze([
         'scripts/dude-canvas-ui/browser.test.mjs',
+        'src/extensions/dude/frontend/app.jsx',
+        'src/extensions/dude/frontend/review.jsx',
+        'src/extensions/dude/frontend/styles.js',
         'src/extensions/dude/lib/canvas-server.mjs',
         'src/extensions/dude/lib/review.mjs',
         'src/extensions/dude/lib/review/browser.mjs',
@@ -2934,7 +2939,7 @@ test('T012 anchoring regression: nested-scroll Open comment clips then recovers 
         )));
         assert.equal(
           productAppSha256,
-          '8a571800c96c8e55fb7eba4ac06e31a345334bf7ae9cc338d753fd7371a9055c',
+          'fcf3f9102f8eabd36f9bd0494a84695fda2891e1d53a7f05b03a1be2088a9463',
           'the exact-source regression executes the current published product UI',
         );
         const exactHarnessOptions = {
@@ -11017,6 +11022,504 @@ test('T010 review regression: keyboard focus remains visible when source paint m
           results,
         });
         assert.deepEqual(failures, [], failures.join('\n'));
+      });
+
+test('T002 production shell retains the mounted Review frame, markup, and caret across rail navigation and Clear', {
+  timeout: 180_000,
+  concurrency: false,
+}, async (context) => {
+        if (!t010BrowserReady(context)) return;
+        const output = createT010Evidence(context, 't002-review-retention');
+        const profileOwnership = trackT010ReviewProfiles();
+        context.after(() => profileOwnership.finish(
+          'T002 Review retention leaves no exact capture profile created by this test process',
+        ));
+        const [
+          { createNeedsYou },
+          { createReview },
+          { closeInstance, openInstance },
+        ] = await Promise.all([
+          import('../../src/extensions/dude/lib/needs-you.mjs'),
+          import('../../src/extensions/dude/lib/review.mjs'),
+          import('../../src/extensions/dude/lib/canvas-server.mjs'),
+        ]);
+        const workspace = createReviewWorkspaceFixture();
+        const feature = workspace.stable;
+        const adapter = createReview({ root: workspace.root });
+        const sends = [];
+        const session = {
+          sessionId: `t002-review-retention-${randomUUID()}`,
+          send: async input => { sends.push(input); return `unexpected-${sends.length}`; },
+          rpc: {
+            queue: {
+              pendingItems: async () => ({
+                items: [],
+                steeringMessages: [],
+                inFlightSteeringCount: 0,
+              }),
+            },
+          },
+        };
+        const provider = createNeedsYou({ root: workspace.root, reviewAdapter: adapter });
+        provider.bindSession(/** @type {any} */ (session));
+        provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+        const controller = new AbortController();
+        const request = {
+          owner: 'dude-spec-lead',
+          requestRef: `t002-review-${randomUUID()}`,
+          scope: feature.scope,
+          source: {
+            kind: 'file',
+            path: feature.ideaPath,
+            revision: workspace.revision(fs.readFileSync(
+              path.join(workspace.root, ...feature.ideaPath.split('/')),
+            )),
+          },
+          revision: `current-t002-review-${randomUUID()}`,
+          class: 'preview',
+          prompt: 'Retain this exact Review through shared-shell navigation.',
+          whyHuman: 'Visual feedback requires the user.',
+          unblocks: 'The design owner can revise the canonical mock.',
+          blocking: true,
+          fields: feature.preview,
+        };
+        const toolResult = provider.tool.handler({ op: 'request', request }, {
+          sessionId: session.sessionId,
+          toolName: 'dude_needs_you',
+          toolCallId: `t002-review-tool-${randomUUID()}`,
+          signal: controller.signal,
+        });
+        const record = await until(() => provider.read().requests.find(entry => (
+          entry.request.requestRef === request.requestRef && entry.phase === 'pending'
+        )), 'pending T002 Review retention request');
+        const instanceId = `t002-review-retention-${randomUUID()}`;
+        let instance;
+        let browserState;
+        const runtimeErrors = [];
+        const network = [];
+        try {
+          instance = await openInstance(
+            instanceId,
+            () => {},
+            completeProjection({ slug: 'stable-review', number: '701' }),
+            { root: workspace.root },
+            provider,
+          );
+          browserState = await startBrowser(2);
+          const { page } = browserState;
+          page.on('Runtime.exceptionThrown', event => runtimeErrors.push(event));
+          page.on('Network.requestWillBeSent', event => {
+            if (!event.request.url.startsWith(instance.url)) return;
+            network.push({
+              method: event.request.method,
+              path: new URL(event.request.url).pathname,
+            });
+          });
+          const button = text => `[...document.querySelectorAll('button')].find(node =>
+            node.innerText.trim() === ${JSON.stringify(text)} && node.getClientRects().length)`;
+          const field = label => `(() => {
+            const label = [...document.querySelectorAll('label')].find(node =>
+              node.textContent.trim() === ${JSON.stringify(label)} && node.getClientRects().length);
+            return label && document.getElementById(label.htmlFor);
+          })()`;
+          const click = async expression => {
+            await until(() => evaluate(page, `Boolean(${expression})`), `rendered T002 target ${expression}`);
+            let previous = null;
+            const point = await until(async () => {
+              const current = await evaluate(page, `(() => {
+                const node = ${expression};
+                if (!node || node.matches(':disabled,[aria-disabled="true"]')) return null;
+                node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+                const rect = node.getBoundingClientRect();
+                const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+                const hit = document.elementFromPoint(x, y);
+                return {
+                  x, y, width: rect.width, height: rect.height,
+                  hit: Boolean(hit && (hit === node || node.contains(hit))),
+                };
+              })()`);
+              const stable = current?.hit && current.width >= 24 && current.height >= 24
+                && previous?.x === current.x && previous?.y === current.y;
+              previous = current;
+              return stable ? current : null;
+            }, `stable T002 target ${expression}`);
+            await page.send('Input.dispatchMouseEvent', {
+              type: 'mousePressed', x: point.x, y: point.y,
+              button: 'left', buttons: 1, clickCount: 1,
+            });
+            await page.send('Input.dispatchMouseEvent', {
+              type: 'mouseReleased', x: point.x, y: point.y,
+              button: 'left', buttons: 0, clickCount: 1,
+            });
+          };
+          const fill = async (expression, text) => {
+            await until(() => evaluate(page, `Boolean(${expression} && !${expression}.disabled)`),
+              `enabled T002 field ${expression}`);
+            await evaluate(page, `(() => {
+              const node = ${expression};
+              node.focus();
+              node.select();
+            })()`);
+            await page.send('Input.insertText', { text });
+          };
+
+          // Arrange: enter the current request's real Review from the actual
+          // production shell and create one persisted annotation.
+          await navigate(page, null, 1440, 'light', new URL(instance.url).origin, 900, false, 2);
+          await until(() => evaluate(page, `document.body.innerText.includes('Connected')`),
+            'connected T002 shared shell');
+          await click(`document.querySelector('[data-work-path="${feature.ideaPath}"]')`);
+          await until(() => evaluate(page, `document.body.innerText.includes('Defined feature')`),
+            'selected stable Review fixture');
+          await click(button('Review design'));
+          await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+            && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+          'T002 Review engine ready', 60_000);
+          assert.equal(await evaluate(page, `document.querySelectorAll('[data-work-selector] input[type=search]').length`), 0);
+          assert.equal(await evaluate(page, `document.querySelectorAll('[data-work-selector] [role=combobox]').length`), 0);
+          assert.equal(await evaluate(page, `document.querySelector('[data-work-selector] [aria-label="Working on"]')
+            ?.innerText.includes('701')`), true);
+          await click(`document.querySelector('[aria-label="Box (B)"]')`);
+          await click(button('Notes and more'));
+          await until(() => evaluate(page, `Boolean(document.querySelector(
+            '.fui-PopoverSurface[aria-label="Notes and more"]'
+          )?.getClientRects().length)`), 'Review details popover');
+          await click(button('Add at center'));
+          await until(() => evaluate(page, `Boolean(${button('Comments (1)')})`),
+            'one real Review annotation');
+          await click(field('Choose an element'));
+          await click(`[...document.querySelectorAll('[role="option"]')].find(node =>
+            node.innerText.includes('Source content remains visible beneath annotations.')
+            && node.getClientRects().length)`);
+          if (!await evaluate(page, `Boolean(document.querySelector(
+            '.fui-PopoverSurface[aria-label="Notes and more"]'
+          )?.getClientRects().length)`)) {
+            await click(button('Notes and more'));
+          }
+          await click(button('Add comment'));
+          await until(() => evaluate(page, `Boolean(${button('Comments (2)')})`),
+            'anchored Review pin beside the retained shape');
+          const comment = '  Review markup and caret survive shared navigation.  ';
+          const replacement = '  Preserve this exact replacement text.  ';
+          const styleNote = '  Keep the approved body-sized treatment.  ';
+          await fill(field('Comment (optional)'), comment);
+          await fill(field('Suggested replacement text'), replacement);
+          await fill(field('Suggested style change'), styleNote);
+          await evaluate(page, `(() => {
+            const node = ${field('Comment (optional)')};
+            node.focus();
+            node.setSelectionRange(${comment.length}, ${comment.length});
+          })()`);
+          await key(page, 'ArrowLeft');
+          await key(page, 'ArrowLeft');
+          await key(page, 'ArrowLeft', 'ArrowLeft', { shift: true });
+          await key(page, 'ArrowLeft', 'ArrowLeft', { shift: true });
+          await key(page, 'ArrowLeft', 'ArrowLeft', { shift: true });
+          const expectedCaret = { start: comment.length - 5, end: comment.length - 2 };
+          assert.deepEqual(await evaluate(page, `({
+            start: ${field('Comment (optional)')}.selectionStart,
+            end: ${field('Comment (optional)')}.selectionEnd
+          })`), expectedCaret);
+          await click(`document.querySelector('[aria-label="Close comments"]')`);
+          await click(button('Save markup'));
+          const working = await until(() => {
+            const reviews = path.join(
+              workspace.root,
+              ...feature.specDirectory.split('/'),
+              'reviews',
+            );
+            if (!fs.existsSync(reviews)) return null;
+            const submission = fs.readdirSync(reviews).find(name => (
+              fs.existsSync(path.join(reviews, name, 'working.json'))
+            ));
+            if (!submission) return null;
+            const file = path.join(reviews, submission, 'working.json');
+            const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+            return value.state.annotations.some(annotation => annotation.comment === comment)
+              ? { file, value } : null;
+          }, 'persisted T002 Review annotation');
+          const selectedAnnotation = working.value.state.annotations.find(annotation =>
+            annotation.id === working.value.state.selectedId);
+          const before = await evaluate(page, `(() => {
+            window.__t002ReviewWorkspace = document.querySelector('[data-review-workspace]');
+            window.__t002ReviewEngineHost = document.querySelector('[data-review-engine-host]');
+            window.__t002ReviewViewport = document.querySelector('.dude-review-engine');
+            window.__t002ReviewFrame = document.querySelector('.dude-review-frame');
+            window.__t002ReviewOverlay = document.querySelector('.dude-review-overlay');
+            const frame = window.__t002ReviewFrame;
+            const overlay = window.__t002ReviewOverlay;
+            return {
+              frame: { width: frame.clientWidth, height: frame.clientHeight },
+              frameStyle: { width: frame.style.width, height: frame.style.height },
+              viewBox: overlay.getAttribute('viewBox'),
+              workspaceVisible: Boolean(window.__t002ReviewWorkspace.getClientRects().length),
+            };
+          })()`);
+          assert.equal(before.workspaceVisible, true);
+          assert.equal(working.value.state.annotations.length, 2);
+          assert.equal(selectedAnnotation.tool, 'comment');
+          assert.ok(selectedAnnotation.element?.selector);
+          assert.equal(selectedAnnotation.comment, comment);
+          assert.equal(selectedAnnotation.replacement, replacement);
+          assert.equal(selectedAnnotation.styleNote, styleNote);
+          assert.deepEqual(working.value.state.caret && {
+            start: working.value.state.caret.start,
+            end: working.value.state.caret.end,
+          }, expectedCaret);
+          const reviewOpenPosts = network.filter(entry =>
+            entry.method === 'POST' && entry.path === '/api/needs-you/review/open').length;
+          assert.equal(reviewOpenPosts, 1);
+
+          // A task dock round trip hides rather than rebuilds the current
+          // Review. Inspecting source-backed work cannot resize or retarget its
+          // pinned engine, frame, overlay, or working submission.
+          await click(`document.querySelector('[data-review-return]')`);
+          await until(() => evaluate(page, `Boolean(document.querySelector(
+            '[data-task-key="T001@aaaaaaaa"]'
+          ))`), 'source-backed task row after Review return');
+          await click(`document.querySelector('[data-task-key="T001@aaaaaaaa"]')`);
+          const taskNavigation = await evaluate(page, `(() => ({
+            detail: document.querySelector('[data-task-detail]')?.getAttribute('data-task-detail'),
+            sameWorkspace: document.querySelector('[data-review-workspace]') === window.__t002ReviewWorkspace,
+            sameEngineHost: document.querySelector('[data-review-engine-host]') === window.__t002ReviewEngineHost,
+            sameViewport: document.querySelector('.dude-review-engine') === window.__t002ReviewViewport,
+            sameFrame: document.querySelector('.dude-review-frame') === window.__t002ReviewFrame,
+            sameOverlay: document.querySelector('.dude-review-overlay') === window.__t002ReviewOverlay,
+            reviewHidden: !document.querySelector('[data-review-workspace]').getClientRects().length,
+            frameStyle: {
+              width: document.querySelector('.dude-review-frame').style.width,
+              height: document.querySelector('.dude-review-frame').style.height,
+            },
+            viewBox: document.querySelector('.dude-review-overlay').getAttribute('viewBox'),
+          }))()`);
+          assert.deepEqual(taskNavigation, {
+            detail: 'T001@aaaaaaaa',
+            sameWorkspace: true,
+            sameEngineHost: true,
+            sameViewport: true,
+            sameFrame: true,
+            sameOverlay: true,
+            reviewHidden: true,
+            frameStyle: before.frameStyle,
+            viewBox: before.viewBox,
+          });
+          await click(button('Review design'));
+          await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+            && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+          'same Review after task dock inspection', 60_000);
+          assert.equal(network.filter(entry =>
+            entry.method === 'POST' && entry.path === '/api/needs-you/review/open').length,
+          reviewOpenPosts, 'task dock return reuses the retained Review allocation');
+
+          // Act: expand the nonmodal desktop rail, leave focused Review through
+          // a real destination, and Clear the selected work while it is hidden.
+          await click(`document.querySelector('[aria-label="Expand navigation pane"]')`);
+          await until(() => evaluate(page, `document.querySelector('[data-navigation-pane]')
+            .getBoundingClientRect().width === 208`), 'expanded desktop rail beside Review');
+          const expanded = await evaluate(page, `(() => {
+            const frame = document.querySelector('.dude-review-frame');
+            return {
+              sameFrame: frame === window.__t002ReviewFrame,
+              sameWorkspace: document.querySelector('[data-review-workspace]') === window.__t002ReviewWorkspace,
+              sameEngineHost: document.querySelector('[data-review-engine-host]') === window.__t002ReviewEngineHost,
+              sameViewport: document.querySelector('.dude-review-engine') === window.__t002ReviewViewport,
+              sameOverlay: document.querySelector('.dude-review-overlay') === window.__t002ReviewOverlay,
+              frame: { width: frame.clientWidth, height: frame.clientHeight },
+              dialog: Boolean(document.querySelector('[data-navigation-dialog]')),
+            };
+          })()`);
+          assert.equal(expanded.sameFrame, true);
+          assert.equal(expanded.sameWorkspace, true);
+          assert.equal(expanded.sameEngineHost, true);
+          assert.equal(expanded.sameViewport, true);
+          assert.equal(expanded.sameOverlay, true);
+          assert.deepEqual(expanded.frame, before.frame, 'rail disclosure cannot resize the pinned reviewed frame');
+          assert.equal(expanded.dialog, false);
+
+          await page.send('Emulation.setDeviceMetricsOverride', {
+            width: 360,
+            height: 900,
+            deviceScaleFactor: 2,
+            mobile: false,
+          });
+          await settleBrowserWork(page);
+          await focus(page, '.dude-review-engine');
+          await key(page, 'ArrowRight');
+          await key(page, 'ArrowRight');
+          let previousPan = null;
+          let stablePanSamples = 0;
+          const panned = await until(async () => {
+            const current = await evaluate(page, `(() => {
+              const viewport = document.querySelector('.dude-review-engine');
+              const frame = document.querySelector('.dude-review-frame');
+              if (!viewport || viewport.scrollLeft <= 0) return null;
+              return {
+                scrollLeft: viewport.scrollLeft,
+                scrollTop: viewport.scrollTop,
+                overflow: viewport.scrollWidth > viewport.clientWidth,
+                sameViewport: viewport === window.__t002ReviewViewport,
+                sameFrame: frame === window.__t002ReviewFrame,
+                frame: { width: frame.clientWidth, height: frame.clientHeight },
+                viewBox: document.querySelector('.dude-review-overlay').getAttribute('viewBox'),
+              };
+            })()`);
+            stablePanSamples = current?.scrollLeft === previousPan ? stablePanSamples + 1 : 0;
+            previousPan = current?.scrollLeft ?? null;
+            return stablePanSamples >= 3 ? current : null;
+          }, 'settled keyboard pan in the pinned Review at 360px');
+          assert.equal(panned.overflow, true);
+          assert.equal(panned.sameViewport, true);
+          assert.equal(panned.sameFrame, true);
+          assert.deepEqual(panned.frame, before.frame);
+          assert.equal(panned.viewBox, before.viewBox);
+
+          await click(`document.querySelector('#dude-tab-overview')`);
+          await until(() => evaluate(page, `document.querySelector('h1')?.innerText.trim() === 'Overview'`),
+            'Review exit to selected Overview');
+          assert.equal(await evaluate(page, `document.querySelector('.dude-review-frame') === window.__t002ReviewFrame
+            && !document.querySelector('[data-review-workspace]').getClientRects().length`), true);
+          assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-work-path]')]
+            .map(node => node.getAttribute('data-work-path'))`), [feature.ideaPath]);
+          await click(`document.querySelector('[aria-label="Clear work selection"]')`);
+          assert.equal(await evaluate(page, `document.querySelector('.dude-review-frame') === window.__t002ReviewFrame`), true);
+          assert.equal(await evaluate(page, `document.querySelectorAll('input[type=search]').length`), 1);
+          assert.equal(await evaluate(page, `document.activeElement?.type`), 'search');
+
+          // Act: reopen from the independent request. The existing entry and
+          // engine become active without another open call or a replacement
+          // iframe, then the exact saved caret is restored.
+          await click(`document.querySelector('#dude-tab-needs')`);
+          await until(() => evaluate(page, `document.body.innerText.includes(${JSON.stringify(request.prompt)})`),
+            'independent request after Clear');
+          await click(button('Open Review'));
+          await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+            && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+          'retained Review active after Clear', 60_000);
+          const reopened = await evaluate(page, `(() => {
+            const frame = document.querySelector('.dude-review-frame');
+            return {
+              sameFrame: frame === window.__t002ReviewFrame,
+              sameWorkspace: document.querySelector('[data-review-workspace]') === window.__t002ReviewWorkspace,
+              sameEngineHost: document.querySelector('[data-review-engine-host]') === window.__t002ReviewEngineHost,
+              sameViewport: document.querySelector('.dude-review-engine') === window.__t002ReviewViewport,
+              sameOverlay: document.querySelector('.dude-review-overlay') === window.__t002ReviewOverlay,
+              frame: { width: frame.clientWidth, height: frame.clientHeight },
+              viewBox: document.querySelector('.dude-review-overlay').getAttribute('viewBox'),
+              pan: {
+                left: document.querySelector('.dude-review-engine').scrollLeft,
+                top: document.querySelector('.dude-review-engine').scrollTop,
+              },
+            };
+          })()`);
+          assert.equal(reopened.sameFrame, true);
+          assert.equal(reopened.sameWorkspace, true);
+          assert.equal(reopened.sameEngineHost, true);
+          assert.equal(reopened.sameViewport, true);
+          assert.equal(reopened.sameOverlay, true);
+          assert.deepEqual(reopened.frame, before.frame);
+          assert.equal(reopened.viewBox, before.viewBox);
+          assert.deepEqual(reopened.pan, { left: panned.scrollLeft, top: panned.scrollTop });
+          assert.equal(network.filter(entry =>
+            entry.method === 'POST' && entry.path === '/api/needs-you/review/open').length,
+          reviewOpenPosts, 'reopening retained Review does not allocate a new submission');
+          await click(button('Comments (2)'));
+          await until(() => evaluate(page, `document.activeElement === ${field('Comment (optional)')}`),
+            'restored Review comment focus');
+          const restored = await evaluate(page, `({
+            value: ${field('Comment (optional)')}.value,
+            replacement: ${field('Suggested replacement text')}.value,
+            styleNote: ${field('Suggested style change')}.value,
+            start: ${field('Comment (optional)')}.selectionStart,
+            end: ${field('Comment (optional)')}.selectionEnd
+          })`);
+          assert.deepEqual(restored, {
+            value: comment,
+            replacement,
+            styleNote,
+            ...expectedCaret,
+          });
+          assert.equal(provider.read().requests.find(entry =>
+            entry.requestHandle === record.requestHandle).phase, 'pending');
+          assert.equal(network.some(entry => [
+            '/api/needs-you/review/seal',
+            '/api/needs-you/respond',
+          ].includes(entry.path)), false);
+
+          // Assert visual/AX evidence from the actual retained Review surface.
+          const screenshot = await page.send('Page.captureScreenshot', {
+            format: 'png',
+            captureBeyondViewport: false,
+          });
+          const image = Buffer.from(screenshot.data, 'base64');
+          const screenshotEvidence = output.image('retained-review-after-clear.png', image);
+          const tree = await page.send('Accessibility.getFullAXTree');
+          const namedRoles = new Set([
+            'button', 'checkbox', 'combobox', 'listbox', 'option', 'radio',
+            'radiogroup', 'tab', 'tabpanel', 'textbox', 'toolbar',
+          ]);
+          const unnamed = tree.nodes.filter(node => (
+            !node.ignored && namedRoles.has(node.role?.value) && !node.name?.value
+          ));
+          assert.deepEqual(unnamed, []);
+          output.json('review-retention-result.json', {
+            case: context.name,
+            browser: browserState.info.Browser,
+            before,
+            taskNavigation,
+            expanded,
+            panned,
+            reopened,
+            restored,
+            working: {
+              submissionId: working.value.submissionId,
+              annotations: working.value.state.annotations.length,
+              selectedId: working.value.state.selectedId,
+              selectedTool: selectedAnnotation.tool,
+              selectedElement: selectedAnnotation.element,
+              comment,
+              replacement,
+              styleNote,
+              caret: working.value.state.caret,
+            },
+            network,
+            screenshot: screenshotEvidence,
+            accessibility: {
+              nodes: tree.nodes.length,
+              unnamedInteractiveNodes: unnamed.length,
+            },
+            productionBoundary: {
+              sameWorkspace: true,
+              sameEngineHost: true,
+              sameViewport: true,
+              sameFrame: true,
+              sameOverlay: true,
+              retainedTaskDockAndPan: true,
+              retainedAcrossClear: true,
+              reviewOpenPosts,
+              responsePosts: 0,
+              sealPosts: 0,
+            },
+          });
+          assert.deepEqual(runtimeErrors, []);
+          assert.equal(sends.length, 0);
+        } finally {
+          controller.abort();
+          await toolResult.catch(() => {});
+          try {
+            await browserState?.page.send('Page.navigate', { url: 'about:blank' });
+          } catch {}
+          if (browserState) await cleanupBrowserDriver(browserState);
+          try {
+            if (instance) await closeInstance(instanceId);
+          } finally {
+            provider.dispose();
+          }
+          workspace.close();
+          profileOwnership.assertReapedSince(
+            0,
+            'T002 shell navigation leaves no exact Review capture profile',
+          );
+        }
       });
 
 test('T010 mounts the vanilla engine under current Fluent tokens and seals real source-aligned evidence', { timeout: 120_000, concurrency: false }, async (reviewTest) => {

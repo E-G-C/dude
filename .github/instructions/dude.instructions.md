@@ -22,3 +22,11 @@ description: "Universal Dude authority, safety, and execution rules."
 15. A directly dispatched writer keeps direct repository work bounded only while it has one clear outcome, no unresolved behavior, new architecture, public contract, persistent state, or additional independent outcome, and the original focused verification still proves completion. If any condition fails, stop before another repository write and report the concrete crossed condition to the coordinator; do not capture, define, or mutate workflow state. Size alone does not trigger this stop, and valid completed work is preserved without rollback.
 
 Load detailed procedures only when their mode applies: `dude-feature-definition`, `dude-lightweight-execution`, installed tracked execution, `dude-work`, `dude-parallel-dispatch`, `dude-verification-before-completion`, and the review skills. The only exception is Work-authorized unchanged-intent derived-artifact repair in an existing Lightweight package through `dude-work`; tracked definition recovery refuses before writes.
+
+##  Responses
+- Be concise.
+- Lead with the answer or smallest immediate action. Skip preambles, tangents, recaps, and pleasantries.
+- Number multi-step tasks; keep each step bounded. Group long lists into at most five items without losing necessary details.
+- During ongoing work, briefly state current progress and completed results. 
+- Explain things clearly.  If it's failure, cause if known, and fix. If work remains, end with one specific next action.  
+

@@ -13,7 +13,7 @@ import {
   SaveRegular, SquareRegular, WarningRegular,
 } from '@fluentui/react-icons';
 import { mergeClasses, useCanvasStyles } from './styles.js';
-import { Notice, ResponseStatus, SelectField } from './needs-you.jsx';
+import { Notice, ResponseStatus, ScopeIdentity, scopeLabel, SelectField } from './needs-you.jsx';
 import { requestKey } from './use-canvas-data.js';
 
 export function loadReviewEngine() {
@@ -103,7 +103,7 @@ function captureUnavailableReason(capture) {
     ? `${reason} ${stages.cleanup}` : reason;
 }
 
-export function ReviewHistory({ record, onReturn }) {
+export function ReviewHistory({ record, onReturn, scopeTitle, browsingLabel }) {
   const s = useCanvasStyles();
   return <section className={mergeClasses(s.detail, s.stack)} aria-label="Sealed review history">
     <Button className={s.back} icon={<ArrowLeftRegular />} onClick={onReturn}>Back</Button>
@@ -113,6 +113,10 @@ export function ReviewHistory({ record, onReturn }) {
         This report and image belong to the recorded source revision. They do not show the current mock,
         restore a waiting request, or grant permission to send or approve.
       </Notice>
+      <section className={s.scope} aria-label="Recorded review scope">
+        <ScopeIdentity scope={record.scope} title={scopeTitle} browsingLabel={browsingLabel} />
+        <Text className={s.code}>Recorded request: {record.provenance.requestRef} · Revision: {record.provenance.requestRevision}</Text>
+      </section>
       <Text className={s.code}>{record.preview.artifact.path}{'\n'}{record.preview.artifact.revision}</Text>
       <Text className={s.code}>Submission: {record.submissionId}</Text>
       <img className={s.historyImage} alt={`Annotated mock from sealed submission ${record.submissionId}`}
@@ -129,7 +133,7 @@ export function ReviewHistory({ record, onReturn }) {
  * this workspace; only replacement/root disposal ends the engine lifetime.
  * review/open is performed by the explicit entry handler, never by this effect.
  */
-export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReviewed, onHistory, onRestore }) {
+export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReviewed, onHistory, onRestore, scopeTitle, browsingLabel }) {
   const s = useCanvasStyles();
   const host = useRef(null), section = useRef(null), engine = useRef(null);
   const [state, setState] = useState(null);
@@ -293,7 +297,7 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
       },
     });
     engine.current = mounted;
-    return () => { mounted.dispose(); engine.current = null; };
+    return () => { restoring.current = false; mounted.dispose(); engine.current = null; };
   }, [entry]);
 
   useEffect(() => {
@@ -307,7 +311,11 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
   }, [active, theme, current, record?.requestHandle, record?.request.revision, record?.request.fields, entry]);
 
   useEffect(() => {
-    if (!active) { restoredEntryFocus.current = false; return; }
+    if (!active) {
+      restoredEntryFocus.current = false;
+      restoring.current = false; setRecovering(false);
+      return;
+    }
     if (!state?.ready || restoredEntryFocus.current) return;
     restoredEntryFocus.current = true;
     if (inspector) return;
@@ -493,17 +501,20 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
   };
   const restoreRecordedView = async () => {
     if (restoring.current || !current || !state?.stale || state.busy || state.sealing) return;
-    restoring.current = true; setRecovering(true);
+    const intent = {};
+    restoring.current = intent; setRecovering(true);
     try {
       // Save the original state, including its viewport and scroll bases, before
       // the guarded opening can replace this engine. Failure keeps this tab.
       await engine.current.command({ type: 'save' });
+      if (restoring.current !== intent) return;
       await onRestore(record);
     } catch (error) {
+      if (restoring.current !== intent) return;
       setMessage({ error: true, message: `${error.message} The recorded view was not restored. Your markup remains in this tab.` });
       setDetails(true);
     } finally {
-      restoring.current = false; setRecovering(false);
+      if (restoring.current === intent) { restoring.current = false; setRecovering(false); }
     }
   };
   const send = async () => {
@@ -541,7 +552,10 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
     onKeyDown={event => engine.current?.handleKeyDown(event)}>
     <header className={s.reviewBar}>
       <Button data-review-return className={s.reviewBarItem} icon={<ArrowLeftRegular />} onClick={returnToWork}>Back</Button>
-      <h1 className={s.reviewPrompt} title={entry.record.request.prompt}>{entry.record.request.prompt}</h1>
+      <div className={s.reviewIdentity} tabIndex={0} role="group" aria-label="Review request identity, scrollable">
+        <Text className={s.eyebrow}>Reviewing · {scopeTitle || scopeLabel(entry.record.request.scope)}</Text>
+        <h1 className={s.reviewPrompt}>{entry.record.request.prompt}</h1>
+      </div>
       <Badge className={s.reviewBarItem} appearance="tint" color={state?.stale ? 'warning' : 'informative'}>
         {state?.stale ? 'Stale source' : savedEvidence || state?.status === 'sealed' ? 'Sealed evidence' : state?.ready ? 'Review' : 'Loading mock'}
       </Badge>
@@ -551,6 +565,9 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
         </PopoverTrigger>
         <PopoverSurface>
           <div className={s.sourceDetails}>
+            <Text weight="semibold">Request scope</Text>
+            <ScopeIdentity scope={entry.record.request.scope} title={scopeTitle} browsingLabel={browsingLabel} />
+            <Text className={s.code}>Request: {entry.record.request.requestRef} · Revision: {entry.record.request.revision}</Text>
             <Text weight="semibold">Reviewed source</Text>
             <Text className={s.code}>{entry.review.preview.artifact.path}{'\n'}{entry.review.preview.artifact.revision}</Text>
           </div>
@@ -650,7 +667,8 @@ export function ReviewWorkspace({ entry, active, theme, data, onReturn, onReview
                 <Notice title="Immutable feedback evidence">
                   Sealing alone is not delivery or approval. The request receipt above records delivery and the owner's acknowledgment.
                 </Notice>
-                <Button className={s.back} onClick={() => onHistory(entry.record.request.scope, savedEvidence || entry.review.submissionId)}>
+                <Button className={s.back} data-history-entry={savedEvidence || entry.review.submissionId}
+                  onClick={() => onHistory(entry.record.request.scope, savedEvidence || entry.review.submissionId)}>
                   View sealed feedback
                 </Button>
               </div>}

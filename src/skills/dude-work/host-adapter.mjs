@@ -23,7 +23,9 @@ import {
   sha256,
   validateAssessment,
   validateAttemptAuthorizationPermitV1,
+  validateBlocker,
   validateCapacityDiagnostic,
+  validateCompletionV2,
   validateInspection,
   validateLaneMutationPermitV1,
   validateLightweightAtomicReceiptV1,
@@ -265,7 +267,12 @@ function detachedData(value, label) {
       if (!descriptor?.enumerable || !('value' in descriptor)) {
         invalid(path, `field '${key}' must be an enumerable data property`);
       }
-      result[key] = visit(descriptor.value, depth + 1, `${path}.${key}`);
+      // Preserve even "__proto__" as own data; assignment would erase that
+      // caller field before the closed receiver schema could reject it.
+      Object.defineProperty(result, key, {
+        value: visit(descriptor.value, depth + 1, `${path}.${key}`),
+        enumerable: true, configurable: true, writable: true,
+      });
     }
     active.delete(current);
     return result;
@@ -333,9 +340,6 @@ function validateAttemptResult(value, label) {
   // results only. Every trusted identity, dispatch fact, and capture is derived
   // by host integration from accepted state, so naming one here is unknown.
   const result = exactRecord(value, ['outcome', 'operations', 'changedTargets', 'verification', 'review'], [], label);
-  enumeration(result.outcome, OUTCOMES, `${label}.outcome`);
-  sortedStrings(result.operations, `${label}.operations`, false);
-  sortedStrings(result.changedTargets, `${label}.changedTargets`);
   exactRecord(result.verification, ['checks'], [], `${label}.verification`);
   exactRecord(result.review, ['verdict', 'findings'], [], `${label}.review`);
   return 'trusted';
@@ -610,12 +614,28 @@ export function validateHostAdapterRequest(value, stateValue) {
     }
   } else if (request.operation === 'record-attempt-result') {
     const attempt = exactRecord(request.attemptResult, ['input', 'result'], [], 'HostAdapterRequest.attemptResult');
-    if (validateAttemptResult(attempt.result, 'HostAdapterRequest.attemptResult.result') === 'trusted') {
+    const resultKind = validateAttemptResult(attempt.result, 'HostAdapterRequest.attemptResult.result');
+    if (stateValue !== undefined) {
+      const state = /** @type {Record<string, unknown>} */ (
+        validateRunState(detachedData(stateValue, 'HostAdapterRequest RunState'))
+      );
+      const policy = /** @type {Record<string, unknown>} */ (state.policy);
+      if (resultKind !== (policy.mode === 'autonomous' ? 'trusted' : 'guarded')) {
+        invalid('HostAdapterRequest.attemptResult.result', 'must match the current policy result contract');
+      }
+    }
+    if (resultKind === 'trusted') {
       const input = record(attempt.input, 'HostAdapterRequest.attemptResult.input');
       for (const stream of ['verification', 'review', 'lint']) {
         if (Object.hasOwn(input, stream)) {
           invalid('HostAdapterRequest.attemptResult.input', `must not select the '${stream}' trusted capture`);
         }
+      }
+      const prepared = prepareSpecialistResult(stateValue, attempt.result);
+      if ((Object.hasOwn(input, 'target')
+          && canonicalJson(canonicalTarget(validateTarget(input.target))) !== canonicalJson(prepared.completion.target))
+        || (Object.hasOwn(input, 'specPath') && input.specPath !== prepared.completion.target.specPath)) {
+        invalid('HostAdapterRequest.attemptResult.input', 'must match the pending attempt target');
       }
     }
   } else if (request.operation === 'advance-governance') {
@@ -689,17 +709,23 @@ export function validateHostAdapterResult(value) {
     ended: ['version', 'outcome', 'reason', 'session'],
   }[/** @type {string} */ (candidate.outcome)];
   // The one-shot notice is admissible on an accepted outcome only; every other
-  // outcome rejects it as an unknown field. The bounded capacity diagnostic is
-  // admissible only on the matching `evidence-incomplete` hard stop, and never
-  // inside session, RunState, or checkpoint data.
+  // outcome rejects it as an unknown field. Blockers belong only to matching
+  // hard stops; capacity remains an independent evidence-incomplete diagnostic.
+  // Neither belongs inside session, RunState, or checkpoint data.
   const optional = candidate.outcome === NOTICE_OUTCOME
     ? ['product', 'recoveryNotice']
     : candidate.outcome === 'effect-required'
       ? ['product']
-      : candidate.outcome === 'hard-stop' && candidate.reason === 'evidence-incomplete'
-        ? ['capacity']
+      : candidate.outcome === 'hard-stop'
+        ? ['blocker', ...(candidate.reason === 'evidence-incomplete' ? ['capacity'] : [])]
         : [];
   const result = exactRecord(safe, fields, optional, 'HostAdapterResult');
+  if (Object.hasOwn(result, 'blocker')) {
+    const blocker = /** @type {Record<string, unknown>} */ (validateBlocker(result.blocker));
+    if (blocker.code !== result.reason) {
+      invalid('HostAdapterResult.blocker.code', 'must match the hard-stop reason');
+    }
+  }
   const capacity = Object.hasOwn(result, 'capacity')
     ? validateCapacityDiagnostic(result.capacity)
     : null;
@@ -788,14 +814,15 @@ function advanceHost(session, updates = {}) {
   return validateHostAdapterSession(next);
 }
 
-/** @param {Record<string, unknown>} session @param {string} reason @param {unknown} [capacity] */
-function hardStop(session, reason, capacity) {
+/** @param {Record<string, unknown>} session @param {string} reason @param {unknown} [capacity] @param {unknown} [blocker] */
+function hardStop(session, reason, capacity, blocker) {
   const carried = capacity === undefined ? null : validateCapacityDiagnostic(capacity);
   return checkedResult({
     version: 1,
     outcome: 'hard-stop',
     reason,
     ...(carried && reason === 'evidence-incomplete' ? { capacity: carried } : {}),
+    ...(blocker === undefined ? {} : { blocker }),
     session: advanceHost(session, { status: 'hard-stop', disposition: reason }),
   });
 }
@@ -998,7 +1025,7 @@ function authorityFailure(session, request) {
 }
 
 /** @param {Record<string, unknown>} session @param {unknown} value */
-function malformedRequestOperation(session, value) {
+function malformedRequest(session, value) {
   try {
     const request = record(detachedData(value, 'HostAdapterRequest'), 'HostAdapterRequest');
     if (request.version !== 1 || !CORRECTABLE_OPERATIONS.includes(/** @type {string} */ (request.operation))) {
@@ -1007,7 +1034,7 @@ function malformedRequestOperation(session, value) {
     hash(request.expectedSessionIdentity, 'HostAdapterRequest.expectedSessionIdentity');
     integer(request.expectedAcceptedRevision, 'HostAdapterRequest.expectedAcceptedRevision');
     integer(request.expectedHostRevision, 'HostAdapterRequest.expectedHostRevision');
-    return authorityFailure(session, request) === null ? request.operation : null;
+    return authorityFailure(session, request) === null ? request : null;
   } catch {
     return null;
   }
@@ -1155,6 +1182,12 @@ function handleAuthorization(session, assessment, response, mode, permit) {
   if (!successor) return hardStop(session, 'successor-malformed');
   if (authorization.authorized !== true) {
     if (successor.bytes !== session.acceptedStateBytes) return hardStop(session, 'refused-successor-mismatch');
+    if (Object.hasOwn(fields, 'blocker')) {
+      const blocker = /** @type {Record<string, unknown>} */ (validateBlocker(fields.blocker));
+      if (blocker.code !== fields.reason || blocker.evidenceHash !== inspection.evidenceHash) {
+        return hardStop(session, 'runtime-result-malformed');
+      }
+    }
     if (Object.hasOwn(fields, 'capacity') && fields.reason !== 'evidence-incomplete') {
       return hardStop(session, 'runtime-result-malformed');
     }
@@ -1165,11 +1198,11 @@ function handleAuthorization(session, assessment, response, mode, permit) {
       'permit-target-mismatch': 'stale-permit',
       'permit-transition-mismatch': 'stale-permit',
     }[/** @type {string} */ (fields.reason)];
-    // The runtime's own admission diagnostic is preserved on its matching hard
-    // stop rather than being flattened into an opaque refusal.
+    // Bind diagnostics to this operation's validated Inspection, not the
+    // session's earlier explicit-inspection identity.
     return incidentClass
       ? closedIncident(session, 'authorize-attempt', incidentClass, /** @type {string} */ (fields.reason))
-      : hardStop(session, /** @type {string} */ (fields.reason), fields.capacity);
+      : hardStop(session, /** @type {string} */ (fields.reason), fields.capacity, fields.blocker);
   }
   if (fields.reason !== 'authorized' || inspection.evidenceHash !== assessment.evidenceHash) {
     return hardStop(session, 'authorization-binding-mismatch');
@@ -1434,7 +1467,47 @@ function specialistAttestation(state, pending, semanticResult) {
         .map((finding) => finding.findingIdentity),
     },
     streams,
+    verificationEnvelope,
+    reviewEnvelope,
   };
+}
+
+/**
+ * Prepare the sole specialist pair against the exact pending authorization.
+ * This is inert preflight, not capture, acceptance, or permission to dispatch.
+ * The receiver repeats it and independently acquires the trusted streams.
+ * @param {unknown} stateValue @param {unknown} resultValue
+ */
+export function prepareSpecialistResult(stateValue, resultValue) {
+  if (stateValue === undefined) invalid('specialist result', 'requires the current accepted RunState');
+  const state = /** @type {Record<string, unknown>} */ (
+    validateRunState(detachedData(stateValue, 'specialist result RunState'))
+  );
+  const semanticResult = /** @type {Record<string, unknown>} */ (
+    detachedData(resultValue, 'HostAdapterRequest.attemptResult.result')
+  );
+  if (validateAttemptResult(semanticResult, 'HostAdapterRequest.attemptResult.result') !== 'trusted'
+    || /** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('specialist result', 'requires the autonomous specialist pair');
+  }
+  const pendingRows = /** @type {Record<string, unknown>[]} */ (state.pending);
+  if (pendingRows.length !== 1) invalid('specialist result', 'requires exactly one pending attempt');
+  const pending = pendingRows[0];
+  if (pending.action === 'reconcile-derived-definition') {
+    invalid('specialist result', 'definition-reconciliation-attestation-unsupported');
+  }
+  const attestation = specialistAttestation(state, pending, semanticResult);
+  const completion = {
+    version: 2,
+    target: clone(pending.target),
+    route: completionRoute(pending),
+    outcome: semanticResult.outcome,
+    operations: clone(semanticResult.operations),
+    changedTargets: clone(semanticResult.changedTargets),
+    ...attestation.trusted,
+  };
+  validateCompletionV2(state, completion, attestation.verificationEnvelope, attestation.reviewEnvelope);
+  return { result: semanticResult, completion, trusted: attestation.trusted, streams: attestation.streams };
 }
 
 /** @param {Record<string, unknown>} session @param {Record<string, unknown>} request @param {(command:string, request:unknown)=>unknown} invoke */
@@ -1459,26 +1532,12 @@ function recordAttemptResult(session, request, invoke) {
     if (pending.action === 'reconcile-derived-definition') {
       return hardStop(session, 'definition-reconciliation-attestation-unsupported');
     }
-    let attestation;
-    try {
-      attestation = specialistAttestation(state, pending, semanticResult);
-    } catch {
-      return hardStop(session, 'attempt-result-contract-mismatch');
-    }
-    const completion = {
-      version: 2,
-      target,
-      route,
-      outcome: semanticResult.outcome,
-      operations: clone(semanticResult.operations),
-      changedTargets: clone(semanticResult.changedTargets),
-      ...attestation.trusted,
-    };
+    const attestation = prepareSpecialistResult(state, semanticResult);
     return handleTrustedCapture(session, attestation.trusted, invoke('complete', {
         mode: 'capture',
         state: JSON.parse(/** @type {string} */ (session.acceptedStateBytes)),
         input: { .../** @type {Record<string, unknown>} */ (attempt.input), ...attestation.streams },
-        completion,
+        completion: attestation.completion,
     }));
   }
   const completionInput = {
@@ -2347,7 +2406,20 @@ function freshInspection(session, request, invoke) {
     inspection,
     predecessorSessionIdentity: session.sessionIdentity,
   }));
-  const notice = session.recoveryNotice;
+  const correction = /** @type {Record<string, unknown>|null} */ (session.correction);
+  // A local result rejection may need its actual specialist owners rather than
+  // a mechanical correction. Fresh inspection is the first accepted resumption;
+  // report it once without claiming that the result itself has been accepted.
+  const notice = session.recoveryNotice ?? (
+    correction?.semanticOperation === 'record-attempt-result'
+      && correction.incidentClass === 'malformed-request'
+      ? {
+        incidentClassification: correction.incidentClass,
+        statePreserved: true,
+        resumedAction: 'fresh-inspection',
+      }
+      : null
+  );
   const next = advanceHost(session, { inspectionIdentity, correction: null, recoveryNotice: null });
   return checkedResult({
     version: 1,
@@ -3059,8 +3131,8 @@ function createCheckpointHost(store, binding, prestate, createdAt, claimed) {
   let projectionApplication = null;
   const host = {
     checkpointKey,
-    /** @param {Record<string, unknown>} session */
-    verify(session) {
+    /** @param {Record<string, unknown>} session @param {boolean} [requireSettled] */
+    verify(session, requireSettled = false) {
       let loaded;
       try {
         loaded = validateCheckpointResult(store.load(binding), 'load', checkpointKey);
@@ -3076,8 +3148,10 @@ function createCheckpointHost(store, binding, prestate, createdAt, claimed) {
         || current.workerToken !== session.workerToken
         || current.workerGeneration !== session.workerGeneration) return 'stale-worker';
       // Host metadata may legitimately be ahead in memory before commit; accepted authority may not.
-      if (current.acceptedStateHash !== session.acceptedStateHash
+      if (current.acceptedStateBytes !== session.acceptedStateBytes
+        || current.acceptedStateHash !== session.acceptedStateHash
         || current.acceptedRevision !== session.acceptedRevision) return 'checkpoint-revision-conflict';
+      if (requireSettled && current.inFlight !== null) return 'effect-unverified';
       return null;
     },
     /** @param {Record<string, unknown>} session @param {unknown} inFlight */
@@ -3961,7 +4035,36 @@ function invokeRuntime(ports, session, semanticOperation, command, request) {
   return envelope.value;
 }
 
-/** @param {Record<string, unknown>} session @param {unknown} requestValue @param {ReturnType<typeof trustedPorts>} ports @param {{beginOperation:(session:Record<string, unknown>, operation:string, request:Record<string, unknown>)=>{session?:Record<string, unknown>, reason?:string}}|null} [host] @param {ReturnType<typeof createLaneLedger>} [ledger] */
+/**
+ * Check the independently admitted live worker and exact checkpoint, not merely
+ * equality of accepted RunState. No runtime or lane port is entered here.
+ * @param {Record<string, unknown>} session @param {ReturnType<typeof trustedPorts>} ports
+ * @param {ReturnType<typeof createCheckpointHost>|null} host
+ * @param {{requireSettled?:boolean, requireSupervisor?:boolean}} [checks]
+ */
+function survivingAuthorityFailure(session, ports, host, checks = {}) {
+  const admitted = ADMITTED_INVOCATIONS.get(/** @type {string} */ (session.invocationIdentity));
+  const authorities = /** @type {Record<string, unknown>} */ (session.authorities);
+  if (admitted && (admitted.workerToken !== session.workerToken
+    || admitted.workerGeneration !== session.workerGeneration)) return 'stale-worker';
+  if (ports.supervisorSession.authority !== undefined) {
+    try {
+      const supervisor = exactRecord(
+        ports.supervisorSession.authority, ['identity', 'admit'], [], 'live supervisor session',
+      );
+      if (!admitted || supervisor.identity !== authorities.supervisorAuthorityIdentity
+        || supervisor.admit !== ports.supervisorSession.admit) return 'supervisor-identity-mismatch';
+    } catch {
+      return 'supervisor-identity-missing';
+    }
+  } else if (host === null || checks.requireSupervisor) {
+    // A handoff receipt and checkpoint cannot prove current supervisor authority.
+    return 'supervisor-identity-missing';
+  }
+  return host?.verify(session, checks.requireSettled) ?? null;
+}
+
+/** @param {Record<string, unknown>} session @param {unknown} requestValue @param {ReturnType<typeof trustedPorts>} ports @param {ReturnType<typeof createCheckpointHost>|null} [host] @param {ReturnType<typeof createLaneLedger>} [ledger] */
 function runOperation(session, requestValue, ports, host = null, ledger = createLaneLedger()) {
   if (session.status !== 'active') return terminalResult(session);
   let request;
@@ -3969,16 +4072,56 @@ function runOperation(session, requestValue, ports, host = null, ledger = create
     request = /** @type {Record<string, unknown>} */ (
       validateHostAdapterRequest(requestValue, session.acceptedState)
     );
-  } catch (error) {
-    const operation = malformedRequestOperation(session, requestValue);
-    if (operation) {
-      if (session.correction !== null) return reinspect(session, 'correction-or-inspection-required');
-      return closedIncident(session, /** @type {string} */ (operation), 'malformed-request', 'malformed-request');
+  } catch {
+    // Re-reading only inert own data proves validation could not invoke a
+    // caller accessor, runtime, or lane writer. This is a local rejection, not
+    // a port failure; port failures still need capture/classifyNoEffect below.
+    const rejected = malformedRequest(session, requestValue);
+    if (rejected === null) return hardStop(session, 'request-not-authorized');
+    const state = /** @type {Record<string, unknown>} */ (session.acceptedState);
+    const policy = /** @type {Record<string, unknown>} */ (state.policy);
+    const pending = /** @type {Record<string, unknown>[]} */ (state.pending);
+    if (rejected.operation === 'record-attempt-result') {
+      if (pending.length !== 1) return hardStop(session, 'pending-attempt-missing');
+      if (policy.mode === 'autonomous' && pending[0].action === 'reconcile-derived-definition') {
+        return hardStop(session, 'definition-reconciliation-attestation-unsupported');
+      }
     }
-    return hardStop(session, 'request-not-authorized');
+    if (session.pendingEffect !== null || Object.hasOwn(state, 'pendingCompletion')) {
+      return hardStop(session, 'effect-unverified');
+    }
+    const lost = survivingAuthorityFailure(session, ports, host, {
+      requireSettled: true,
+      requireSupervisor: rejected.operation === 'record-attempt-result',
+    });
+    if (lost) return hardStop(session, lost);
+    if (session.correction !== null) {
+      const stored = /** @type {Record<string, unknown>} */ (session.correction);
+      if (stored.consumed || rejected.correctionIdentity !== stored.identity
+        || rejected.operation !== stored.semanticOperation) {
+        return reinspect(session, 'correction-or-inspection-required');
+      }
+      const correction = authorizeCorrection(session, rejected);
+      if (correction.result) return correction.result;
+      session = /** @type {Record<string, unknown>} */ (correction.session);
+    }
+    return closedIncident(session, /** @type {string} */ (rejected.operation), 'malformed-request', 'malformed-request');
   }
   const authorityReason = authorityFailure(session, request);
   if (authorityReason) return hardStop(session, authorityReason);
+  if (session.correction !== null || Object.hasOwn(request, 'correctionIdentity')) {
+    const completion = request.operation === 'record-attempt-result';
+    if (completion && (session.pendingEffect !== null
+      || Object.hasOwn(session.acceptedState, 'pendingCompletion'))) {
+      return hardStop(session, 'effect-unverified');
+    }
+    const lost = survivingAuthorityFailure(session, ports, host, {
+      requireSettled: completion,
+      requireSupervisor: completion
+        && /** @type {Record<string, unknown>|null} */ (session.correction)?.incidentClass === 'malformed-request',
+    });
+    if (lost) return hardStop(session, lost);
+  }
   // The completion bridge and every lane-effect and audit route are autonomous only.
   if (AUTONOMOUS_OPERATIONS.has(/** @type {string} */ (request.operation))
     && /** @type {Record<string, unknown>} */ (
@@ -4023,6 +4166,12 @@ function runOperation(session, requestValue, ports, host = null, ledger = create
       return hardStop(workingSession, 'evidence-incomplete', error.capacity);
     }
     if (error instanceof RuntimeIncident && error.provenNoEffect) {
+      if (request.operation === 'record-attempt-result' && (workingSession.pendingEffect !== null
+        || Object.hasOwn(workingSession.acceptedState, 'pendingCompletion'))) {
+        return hardStop(workingSession, 'effect-unverified');
+      }
+      const lost = survivingAuthorityFailure(workingSession, ports, host);
+      if (lost) return hardStop(workingSession, lost);
       return closedIncident(workingSession, /** @type {string} */ (request.operation), error.incidentClass, error.message);
     }
     return hardStop(

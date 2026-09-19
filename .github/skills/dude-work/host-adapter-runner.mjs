@@ -11,7 +11,7 @@ import { readTaskState } from '../dude-engine/lib/task-state.mjs';
 import { parseVisibleTasks } from '../dude-engine/lib/tasks.mjs';
 import { isMainModule } from '../dude-engine/lib/text.mjs';
 import { WORKSPACE_PATHS, resolveMutationPath } from '../dude-engine/lib/workspace-paths.mjs';
-import { createHostAdapter, createTemporaryCheckpointStore } from './host-adapter.mjs';
+import { createHostAdapter, createTemporaryCheckpointStore, prepareSpecialistResult } from './host-adapter.mjs';
 import {
   HALT_NEXT_ACTIONS,
   canonicalJson,
@@ -24,17 +24,21 @@ import {
   currentRunCapture,
   describeUnattendedHalt,
   inspect,
+  inspectRetainedOccurrencesV2,
   modelPacket,
   runCommand,
   sha256,
   validateAssessment,
+  validateBlocker,
   validateCapacityDiagnostic,
+  validateInspection,
   validateRunState,
 } from './recovery.mjs';
 
 const MAX_REQUEST_BYTES = 1_048_576;
 const DEFAULT_RUNTIME_IDENTITY = sha256('dude-work/host-adapter-runner:recovery-runtime:v1');
 const EMPTY_TASK_STATE_BYTES = Buffer.from('{}\n');
+const RETAINED_STREAMS = ['currentRun', 'verification', 'review', 'lint'];
 
 class TaskStateEvidenceError extends Error {}
 
@@ -78,6 +82,18 @@ const CHALLENGE_ENVELOPE_INVALID_DETAIL = 'challenge-response-envelope';
 // this runner-owned failure class. Validator messages, rejected target text,
 // evidence bytes, and hashes never reach a result.
 const ASSESSMENT_INVALID_DETAIL = 'Assessment: invalid-contract';
+
+/** Only closed source classes, never validator text or rejected capture bytes. @param {TypeError} error */
+function retainedInputFailureDetail(error) {
+  const message = utilTypes.isProxy(error) ? null : Object.getOwnPropertyDescriptor(error, 'message')?.value;
+  const match = typeof message === 'string'
+    ? /^(?:(?:inspect (?:request\.input|input)|rawInputs|retainedEvidence)\.)(currentRun|verification|review|lint)(?:[.\[\s]|$)|^(current-run|verification|review|lint|independent-review)[ .]/.exec(message)
+    : null;
+  const source = match?.[1] ?? match?.[2];
+  return source
+    ? `retainedEvidence: invalid ${source === 'currentRun' ? 'current-run' : source === 'independent-review' ? 'review' : source}`
+    : 'retainedEvidence: invalid current-run/verification/review/lint input';
+}
 
 /**
  * Capture only top-level enumerable data properties without invoking caller
@@ -382,9 +398,9 @@ function checkpointWorkspace(binding, root) {
  * @param {unknown} [dependenciesValue]
  */
 export async function runHostAdapter(requestValue, dependenciesValue) {
-  const request = exactRecord(requestValue, [
+  const request = captureExactDataRecord(requestValue, [
     'version', 'root', 'target', 'owner', 'state',
-  ], 'HostAdapterRunnerRequest', ['assessment', 'specialistResult']);
+  ], ['assessment', 'specialistResult', 'retainedEvidence'], 'HostAdapterRunnerRequest');
   if (request.version !== 1) throw new TypeError('HostAdapterRunnerRequest.version must be the literal 1');
   if (typeof request.root !== 'string' || request.root.length === 0) {
     throw new TypeError('HostAdapterRunnerRequest.root must be a nonempty string');
@@ -402,7 +418,7 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   }
   let initialAssessment = Object.hasOwn(request, 'assessment') ? request.assessment : null;
   let initialSpecialistResult = Object.hasOwn(request, 'specialistResult')
-    ? clone(request.specialistResult)
+    ? request.specialistResult
     : null;
   const dependencies = dependenciesValue === undefined
     ? {}
@@ -426,12 +442,16 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   const currentRun = [];
   /** @type {{verification:Record<string, unknown>[],review:Record<string, unknown>[],lint:Record<string, unknown>[]}} */
   const observedStreams = { verification: [], review: [], lint: [] };
+  /** @type {Record<string, Record<string, unknown>[]>} */
+  let retainedEvidence = { currentRun: [], verification: [], review: [], lint: [] };
   /** @type {string|null} */
   let occurrenceIdentity = null;
   /** @type {ReturnType<typeof createHostAdapter>|null} */
   let adapter = null;
   /** @type {Record<string, unknown>|null} */
   let currentInspection = null;
+  /** The terminal operation's evidence, separate from the model's last explicit Inspection. @type {Record<string, unknown>|null} */
+  let reportInspection = null;
   /** @type {Record<string, unknown>|null} */
   let carriedBlocker = null;
   /** @type {{budget:string,limit:number,required:number,source:string,target:Record<string, unknown>|null}|null} */
@@ -454,6 +474,21 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     ? 75
     : Math.max(1, /** @type {number} */ (policy.overall) * 3 + 1);
 
+  /** @param {unknown} value @param {unknown} reason @param {unknown} evidence */
+  const boundBlocker = (value, reason, evidence) => {
+    try {
+      const blocker = /** @type {Record<string, unknown>} */ (validateBlocker(value));
+      const inspection = /** @type {Record<string, unknown>} */ (validateInspection(evidence));
+      if (blocker.code !== reason || blocker.evidenceHash !== inspection.evidenceHash
+        || canonicalJson(inspection.target) !== canonicalJson(target)) {
+        throw new TypeError('blocker binding mismatch');
+      }
+      return clone(blocker);
+    } catch {
+      throw new TypeError('runtime-blocker-invalid');
+    }
+  };
+
   /**
    * The single terminal chokepoint: every terminal result of the deterministic
    * unattended run flows through here, so the halt report is attached here and
@@ -474,16 +509,21 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     let haltReport = null;
     if (row.outcome === 'hard-stop') {
       haltReport = { halted: true, resolved: false, unresolved: ['reason', 'subject'] };
+      let validDiagnostics = false;
       try {
         const haltState = JSON.parse(
           Buffer.from(/** @type {string} */ (row.stateBase64), 'base64').toString('utf8'),
         );
+        const blocker = carriedBlocker === null
+          ? null
+          : boundBlocker(carriedBlocker, row.reason, reportInspection);
         const report = describeUnattendedHalt({
           state: haltState,
           reason: row.reason,
-          ...(carriedBlocker === null ? {} : { blocker: carriedBlocker }),
-        }, currentInspection);
+          ...(blocker === null ? {} : { blocker }),
+        }, reportInspection);
         if (report !== null) haltReport = report;
+        validDiagnostics = true;
       } catch {
         // Fail closed: keep the unresolved report; `finish` must never throw.
       }
@@ -493,7 +533,8 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
       // Inspection's hash. Its runtime-owned fields still resolve the halt.
       // Without a canonical target the report stays unresolved alongside the
       // bounded diagnostic.
-      if (carriedCapacity !== null
+      if (validDiagnostics && carriedCapacity !== null && row.reason === 'evidence-incomplete'
+        && carriedBlocker === null
         && (haltReport.resolved !== true || haltReport.evidenceHash !== capacityEvidenceHash)) {
         try {
           haltReport = {
@@ -523,37 +564,31 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
 
   /** @param {string} step @param {Record<string, unknown>} result */
   const recordStep = (step, result) => {
-    // Only the adapter's validated overflow stop may replace the earlier
-    // explicit Inspection with this operation's descriptor-only evidence.
-    if (result.outcome === 'hard-stop' && result.reason === 'evidence-incomplete'
-      && runtimeInspection?.overflow === true) {
-      currentInspection = clone(runtimeInspection);
-    }
-    // The adapter's bounded capacity diagnostic is revalidated here and carried
-    // onto the step row and the terminal halt report. A headroom or admission
-    // refusal binds the Inspection this very operation returned; an acquisition
-    // refusal returned none, so it binds no evidence hash at all. `run` clears
-    // the per-call tracking first, so a late acquisition failure can never
-    // borrow the hash of an Inspection an earlier operation returned.
+    reportInspection = runtimeInspection === null
+      ? null
+      : clone(validateInspection(runtimeInspection));
+    const blocker = Object.hasOwn(result, 'blocker')
+      ? boundBlocker(result.blocker, result.reason, reportInspection)
+      : null;
+    // Capacity is independent of a carried blocker. An acquisition refusal
+    // returned no Inspection, so it must not borrow an earlier evidence hash.
     const capacity = Object.hasOwn(result, 'capacity')
       ? validateCapacityDiagnostic(result.capacity)
       : null;
-    if (capacity !== null) {
-      carriedCapacity = capacity;
-      capacityEvidenceHash = runtimeInspection === null
-        ? null
-        : /** @type {string} */ (runtimeInspection.evidenceHash);
-      carriedBlocker = capacityEvidenceHash === null ? null : {
-        code: 'evidence-incomplete',
-        subject: capacitySubject(capacity),
-        evidenceHash: capacityEvidenceHash,
-      };
+    if (Object.hasOwn(result, 'capacity') && capacity === null) {
+      throw new TypeError('runtime-capacity-invalid');
     }
+    carriedBlocker = blocker;
+    carriedCapacity = capacity;
+    capacityEvidenceHash = capacity === null || reportInspection === null
+      ? null
+      : /** @type {string} */ (reportInspection.evidenceHash);
     const row = stateResult(/** @type {Record<string, unknown>} */ (result.session), {
       type: 'step',
       step,
       outcome: result.outcome,
       reason: result.reason,
+      ...(blocker === null ? {} : { blocker }),
       ...(capacity === null ? {} : { capacity }),
       ...(Object.hasOwn(result, 'effect')
         ? { effectIdentity: /** @type {Record<string, unknown>} */ (result.effect).effectIdentity }
@@ -569,6 +604,10 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
 
   /** @param {string} reason @param {string} detail */
   const orphan = (reason, detail) => {
+    reportInspection = null;
+    carriedBlocker = null;
+    carriedCapacity = null;
+    capacityEvidenceHash = null;
     const row = adapter === null
       ? initialStateResult(state, {
         type: 'step', step: 'runner', outcome: 'hard-stop', reason, detail,
@@ -583,12 +622,36 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     return finish(row);
   };
 
+  /** @param {Record<string, unknown>|null} blocker @param {string} detail */
+  const refuseAdmission = (blocker, detail) => {
+    carriedBlocker = blocker === null ? null : boundBlocker(blocker, blocker.code, reportInspection);
+    const row = initialStateResult(state, {
+      type: 'step', step: 'runner', outcome: 'hard-stop',
+      reason: blocker?.code ?? 'evidence-incomplete', detail,
+      ...(carriedBlocker === null ? {} : { blocker: carriedBlocker }),
+    });
+    steps.push(row);
+    return finish(row);
+  };
+
+  /** @param {string[]} fields */
+  const retainedSourceDetail = (fields) => {
+    const missing = fields.filter(field => retainedEvidence[field].length === 0);
+    const sources = (missing.length > 0 ? missing : fields)
+      .map(field => field === 'currentRun' ? 'current-run' : field);
+    return `retainedEvidence: ${missing.length > 0 ? 'missing' : 'invalid'} ${sources.join('/')}`;
+  };
+
   /** @param {string} step @param {string} operation @param {Record<string, unknown>} payload @param {string} [correctionIdentity] */
   const run = (step, operation, payload, correctionIdentity) => {
     const current = /** @type {NonNullable<typeof adapter>} */ (adapter).snapshot();
-    // Per-call Inspection tracking is reset before the operation, so whatever
-    // `runtimeInspection` holds afterwards was returned by this operation alone.
+    // A later refusal must not inherit evidence or diagnostics from an earlier
+    // operation. Keep the explicit model Inspection for challenge binding only.
     runtimeInspection = null;
+    reportInspection = null;
+    carriedBlocker = null;
+    carriedCapacity = null;
+    capacityEvidenceHash = null;
     const result = /** @type {Record<string, unknown>} */ (
       /** @type {NonNullable<typeof adapter>} */ (adapter).run({
         version: 1,
@@ -623,7 +686,9 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     specPath: target.specPath,
     target: clone(target),
     lane: { kind: 'lightweight' },
-    currentRun: currentRun.length === 0 ? [] : [currentRunCapture(target, currentRun)],
+    currentRun: retainedEvidence.currentRun.length === 0 && currentRun.length === 0
+      ? []
+      : [currentRunCapture(target, currentRun)],
     review: [],
     verification: [],
     lint: [],
@@ -631,8 +696,11 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   });
   const runtimeInput = () => {
     const input = transportInput(rawInput());
-    for (const field of ['verification', 'review', 'lint']) {
-      if (observedStreams[field].length > 0) input[field] = observedStreams[field];
+    for (const field of RETAINED_STREAMS) {
+      input[field] = [
+        ...retainedEvidence[field],
+        ...(field === 'currentRun' ? input.currentRun : observedStreams[field]),
+      ];
     }
     return input;
   };
@@ -682,21 +750,17 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   };
 
   /** @param {unknown} value */
-  const boundSpecialistResult = (value) => {
+  const preflightSpecialistResult = (value) => {
     try {
-      const result = exactRecord(
+      return prepareSpecialistResult(
+        /** @type {NonNullable<typeof adapter>} */ (adapter).snapshot().acceptedState,
         value,
-        ['outcome', 'operations', 'changedTargets', 'verification', 'review'],
-        'specialist-pair result',
-      );
-      if (!Array.isArray(result.operations) || !Array.isArray(result.changedTargets)) {
-        throw new TypeError('specialist-pair operations and changedTargets must be arrays');
-      }
-      exactRecord(result.verification, ['checks'], 'specialist-pair verification');
-      exactRecord(result.review, ['verdict', 'findings'], 'specialist-pair review');
-      return /** @type {Record<string, unknown>} */ (clone(result));
+      ).result;
     } catch {
-      return null;
+      // Do not clone, repair, or accept rejected raw data. The receiver repeats
+      // validation and alone decides whether this inert rejection has surviving
+      // authority for correction or must hard-stop.
+      return value;
     }
   };
 
@@ -863,12 +927,13 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   };
 
   /**
-   * Apply the adapter's exact offered correction once. A second refusal is
-   * followed by one fresh Inspection and returned to the caller for new input.
+   * Apply the adapter's offered correction once for a valid payload rejected by
+   * a port. A locally invalid specialist result needs fresh inspection and its
+   * actual owners, never replay of that same known-invalid record.
    * @param {string} step @param {string} operation @param {Record<string, unknown>} payload
    */
   const runSemantic = (step, operation, payload) => {
-    let result = run(step, operation, clone(payload));
+    let result = run(step, operation, payload);
     if (!['closed-refusal', 'reinspect-required'].includes(/** @type {string} */ (result.outcome))) {
       return {
         result,
@@ -879,7 +944,8 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
       };
     }
     const next = /** @type {Record<string, unknown>} */ (result.next);
-    if (next.kind === 'correction') {
+    if (next.kind === 'correction'
+      && !(operation === 'record-attempt-result' && result.incidentClass === 'malformed-request')) {
       result = run(
         `${step}:correction`,
         operation,
@@ -1053,18 +1119,15 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   /** @param {boolean} allowInitial @param {Record<string, unknown>} assessment */
   const requestSpecialistPair = async (allowInitial, assessment) => {
     if (allowInitial && initialSpecialistResult !== null) {
-      const candidate = boundSpecialistResult(initialSpecialistResult);
+      const candidate = preflightSpecialistResult(initialSpecialistResult);
       initialSpecialistResult = null;
-      if (candidate !== null) return { value: candidate };
+      return { value: candidate };
     }
     const response = await exchange('specialist-pair', {
       assessmentIdentity: sha256(canonicalJson(assessment)),
     });
     if (response.terminal) return response;
-    const specialistResult = boundSpecialistResult(response.value);
-    return specialistResult === null
-      ? { terminal: orphan('challenge-response-invalid', 'specialist-pair') }
-      : { value: specialistResult };
+    return { value: preflightSpecialistResult(response.value) };
   };
 
   try {
@@ -1072,9 +1135,46 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     if (initialBinding.task.glyph !== '~' || initialBinding.task.blockedBy !== null) {
       throw new TypeError('lane-prestate-mismatch');
     }
-    const initialInspectionInput = rawInput();
-    const initialInspection = /** @type {Record<string, unknown>} */ (inspect(initialInspectionInput));
+    let initialInspection;
+    try {
+      if (Object.hasOwn(request, 'retainedEvidence')) {
+        const supplied = exactRecord(request.retainedEvidence, RETAINED_STREAMS, 'retainedEvidence');
+        for (const field of RETAINED_STREAMS) {
+          if (!Array.isArray(supplied[field])) throw new TypeError(`retainedEvidence.${field} must be an array`);
+        }
+        retainedEvidence = /** @type {Record<string, Record<string, unknown>[]>} */ (supplied);
+      }
+      initialInspection = runCommand('inspect', {
+        trigger: 'explicit-inspection', input: runtimeInput(),
+      }).inspection;
+      // The receiver charges and validates original acquisitions before this
+      // private snapshot. The runner entry accepts only its JSON byte transport.
+      for (const field of RETAINED_STREAMS) {
+        for (const entry of retainedEvidence[field]) {
+          exactRecord(entry.bytes, ['base64'], `retainedEvidence.${field} bytes`);
+        }
+      }
+      retainedEvidence = clone(retainedEvidence);
+    } catch (error) {
+      if (!Object.hasOwn(request, 'retainedEvidence')
+        || !(error instanceof TypeError) || capacityDiagnostic(error) !== null) throw error;
+      return refuseAdmission(null, retainedInputFailureDetail(error));
+    }
     currentInspection = clone(initialInspection);
+    reportInspection = clone(initialInspection);
+    if (initialInspection.blockers.length > 0) {
+      const blocker = initialInspection.blockers[0];
+      const field = blocker.subject === 'current-run' ? 'currentRun' : blocker.subject;
+      return refuseAdmission(blocker, RETAINED_STREAMS.includes(field)
+        ? retainedSourceDetail([field])
+        : 'inspection prerequisites unavailable');
+    }
+    const retention = inspectRetainedOccurrencesV2(initialInspection);
+    if (retention.blocker) {
+      return refuseAdmission(retention.blocker, retainedSourceDetail(
+        retention.source === 'current-run' ? ['currentRun'] : ['verification', 'review'],
+      ));
+    }
 
     const baseRuntime = Object.hasOwn(dependencies, 'runtime')
       ? exactRecord(dependencies.runtime, ['identity', 'invoke'], 'host adapter runner runtime')
@@ -1090,6 +1190,9 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     const runtime = {
       identity: baseRuntime.identity,
       invoke(command, lowLevelRequest) {
+        // Some semantic operations invoke more than one low-level route. Only
+        // the final call can establish evidence for that operation's refusal.
+        runtimeInspection = null;
         if (lowLevelRequest && typeof lowLevelRequest === 'object'
           && /** @type {Record<string, unknown>} */ (lowLevelRequest).mode === 'capture') {
           const input = /** @type {Record<string, unknown>} */ (
@@ -1100,14 +1203,22 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
           appendUniqueRows(observedStreams.lint, input.lint);
         }
         const output = /** @type {Function} */ (baseRuntime.invoke)(command, lowLevelRequest);
-        if (output && typeof output === 'object'
-          && /** @type {Record<string, unknown>} */ (output).status === 'returned') {
-          const value = /** @type {Record<string, unknown>} */ (
-            /** @type {Record<string, unknown>} */ (output).value
-          );
-          if (value && typeof value === 'object' && Object.hasOwn(value, 'inspection')) {
-            runtimeInspection = clone(value.inspection);
+        try {
+          const envelope = captureExactDataRecord(output, ['status', 'value'], [], 'runtime result');
+          const value = envelope.value;
+          if (envelope.status === 'returned' && value !== null && typeof value === 'object'
+            && !utilTypes.isProxy(value)) {
+            const descriptor = Object.getOwnPropertyDescriptor(value, 'inspection');
+            if (descriptor && 'value' in descriptor) {
+              const inspection = /** @type {Record<string, unknown>} */ (validateInspection(descriptor.value));
+              if (canonicalJson(inspection.target) === canonicalJson(target)) {
+                runtimeInspection = clone(inspection);
+              }
+            }
           }
+        } catch {
+          // The adapter owns authoritative result validation and sanitization.
+          // An invalid observation supplies no report evidence.
         }
         return output;
       },
@@ -1456,32 +1567,30 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     return finish(endedRow);
   } catch (error) {
     const capacity = capacityDiagnostic(error);
-    if (capacity !== null) {
-      carriedCapacity = capacity;
-      // A capacity refusal that escapes as a throw is an acquisition failure: it
-      // returned no Inspection, so it binds no evidence hash.
-      capacityEvidenceHash = null;
-      carriedBlocker = null;
-    }
+    // A thrown acquisition or runner failure supplied no current Inspection.
+    reportInspection = null;
+    carriedCapacity = capacity;
+    capacityEvidenceHash = null;
+    carriedBlocker = null;
     const detail = capacity === null
       ? (error instanceof Error ? error.message : String(error))
       : `${capacity.budget}: ${capacity.required} required against the fixed limit of `
         + `${capacity.limit} for ${capacity.source}`;
     const taskStateFailure = error instanceof TaskStateEvidenceError;
-    if (taskStateFailure && currentInspection === null) {
+    if (taskStateFailure) {
       try {
-        currentInspection = clone(inspect(rawInput()));
+        reportInspection = clone(inspect(rawInput()));
       } catch {
         // The terminal report remains explicitly unresolved when no valid
         // Inspection can bind the snapshot evidence.
       }
     }
-    if (taskStateFailure && currentInspection !== null) {
-      carriedBlocker = {
+    if (taskStateFailure && reportInspection !== null) {
+      carriedBlocker = boundBlocker({
         code: 'evidence-incomplete',
         subject: WORKSPACE_PATHS.TASK_STATE,
-        evidenceHash: currentInspection.evidenceHash,
-      };
+        evidenceHash: reportInspection.evidenceHash,
+      }, 'evidence-incomplete', reportInspection);
     }
     const reason = taskStateFailure || capacity !== null ? 'evidence-incomplete' : 'runner-refused';
     const fields = {
@@ -1490,6 +1599,7 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
       outcome: 'hard-stop',
       reason,
       detail,
+      ...(carriedBlocker === null ? {} : { blocker: carriedBlocker }),
       ...(capacity === null ? {} : { capacity }),
     };
     const row = adapter === null

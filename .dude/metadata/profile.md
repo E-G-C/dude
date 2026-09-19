@@ -39,6 +39,8 @@ It is maintained by `dude-compose`. Do not hand-edit the `installed` map.
         ".github/agents/dude-pack-coding-coder.agent.md",
         ".github/agents/dude-pack-coding-reviewer.agent.md",
         ".github/agents/dude-pack-coding-tester.agent.md",
+        ".github/instructions/dude-pack-coding-engineering-standards.instructions.md",
+        ".github/instructions/dude-pack-coding-host-controls.instructions.md",
         ".github/skills/dude-pack-coding-spec-artifacts"
       ],
       "source": {

@@ -369,6 +369,11 @@ test('exact target wins while omitted target makes no mtime, chronology, file, t
     assert.equal(single.stage, 'Idea');
     assert.equal(single.nextReason, 'This feature is still an idea.');
     assert.equal(single.tasks, null);
+    assert.deepEqual(single.taskDetails, {
+      coverage: { state: 'not-applicable', reason: 'This idea has no task definitions.' },
+      items: null,
+      resultCoverage: 'not-exposed',
+    });
     assert.equal(empty.status, 'choose');
     assert.deepEqual(empty.choices, []);
     assertSafeReadAction(empty);
@@ -409,6 +414,11 @@ test('an explicit resolved idea exposes only supported definition facts', async 
     assert.deepEqual(result.blockers, []);
     assert.equal(result.tasks, null);
     assert.deepEqual(result.phases, []);
+    assert.deepEqual(result.taskDetails, {
+      coverage: { state: 'not-applicable', reason: 'This idea has no task definitions.' },
+      items: null,
+      resultCoverage: 'not-exposed',
+    });
     assert.equal(result.unansweredQuestions, 0);
     assert.deepEqual(result.diagnostics, []);
     assert.deepEqual(result.choices, [], 'resolved ideas are not navigation choices');
@@ -1048,7 +1058,7 @@ test('T003 a new draft published during final authority read rejects mixed inven
   }
 });
 
-test('all-open owned package is Definition Only, counts safe questions, ignores task-state, and writes nothing', async () => {
+test('all-open owned package exposes planned rows under Definition authority and writes nothing', async () => {
   const root = temporaryRoot();
   try {
     // Arrange
@@ -1074,8 +1084,44 @@ test('all-open owned package is Definition Only, counts safe questions, ignores 
     assert.equal(result.nextReason, 'No canonical task execution evidence exists yet.');
     assert.deepEqual(result.blockers, []);
     assert.equal(result.unansweredQuestions, 1);
-    assert.equal(result.tasks, null);
-    assert.deepEqual(result.phases, []);
+    assert.deepEqual(result.tasks, {
+      total: 1,
+      open: 1,
+      inProgress: 0,
+      blocked: 0,
+      done: 0,
+    });
+    assert.deepEqual(result.phases, [{
+      name: 'Work',
+      total: 1,
+      open: 1,
+      inProgress: 0,
+      blocked: 0,
+      done: 0,
+      state: 'upcoming',
+    }]);
+    assert.deepEqual(result.taskDetails, {
+      coverage: { state: 'available', reason: null },
+      items: [{
+        taskKey: 'T001@aaaaaaaa',
+        title: 'First task',
+        state: 'todo',
+        phase: null,
+        source: {
+          kind: 'file',
+          path: feature.tasksPath,
+          contentIdentity: result.sources.find(({ path: sourcePath }) => sourcePath === feature.tasksPath)?.contentIdentity,
+        },
+        instruction: {
+          coverage: 'full-unit',
+          text: '- [ ] T001@aaaaaaaa First task\n',
+        },
+        deps: null,
+        blockedBy: null,
+        readiness: { state: 'ready', basis: 'recorded-deps' },
+      }],
+      resultCoverage: 'not-exposed',
+    });
     assert.deepEqual(result.diagnostics, []);
     assert.deepEqual(
       result.sources.map(({ label, role, path: sourcePath }) => ({ label, role, path: sourcePath })),
@@ -1145,6 +1191,198 @@ test('Lightweight projection reuses canonical task readiness and blocker metadat
       done: 1,
       state: 'current',
     }]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 selected task descriptors retain exact visible units and exclude derived or terminal task lookalikes', async () => {
+  const root = temporaryRoot();
+  try {
+    // Arrange
+    const feature = define(root, '062', 'task-detail-boundary');
+    const firstUnit = [
+      '- [x] T001@aaaaaaaa Completed prerequisite',
+      '',
+      'First paragraph keeps Unicode café — 東京.',
+      '',
+      'Acceptance:',
+      '  - preserve blank paragraphs and source punctuation',
+      '',
+      '<!--',
+      '## Comment-hidden heading must stay inert',
+      '- [!] T900@hidden00 Comment-hidden task lookalike',
+      '-->',
+      '',
+      '```html',
+      '<script>globalThis.__t003SourceExecuted = true</script>',
+      '- [ ] T901@fenced01 Fenced task lookalike',
+      '```',
+      '',
+    ].join('\r\n');
+    const secondUnit = [
+      '- [~] T002@bbbbbbbb Current task with complete source',
+      '    deps: T001@aaaaaaaa',
+      '',
+      'Second body paragraph after metadata and a blank line.',
+      '',
+    ].join('\r\n');
+    const thirdUnit = [
+      '- [ ] T003@cccccccc Ready delivery task',
+      '    deps: T001@aaaaaaaa',
+      '',
+      'Delivery detail does not absorb discovered or archived material.',
+      '',
+    ].join('\r\n');
+    const source = [
+      '# Tasks',
+      '',
+      '<!-- dude:board:start -->',
+      '### Blocked',
+      '- T999@board999 Derived board row',
+      '<!-- dude:board:end -->',
+      '',
+      '## Phase 1: Foundation',
+      firstUnit.slice(0, -2),
+      '## Phase 2: Delivery',
+      secondUnit.slice(0, -2),
+      thirdUnit.slice(0, -2),
+      '## Discovered During Execution',
+      '',
+      'A discovered note mentions T004@052t004x but is not a canonical task.',
+      '',
+      '## Lightweight Execution History',
+      '- [x] T004@052t004x Archived 052 task must not become current detail',
+      '',
+    ].join('\r\n');
+    write(root, feature.tasksPath, Buffer.from(source));
+    const bd = installBdCommand(root);
+    const before = contentSnapshot(root);
+
+    // Act
+    const result = await bd.run(() => readNowProjection({ root, target: 'task-detail-boundary' }));
+
+    // Assert
+    assertComplete(result);
+    assert.equal(result.authority, 'lightweight');
+    assert.equal(result.stage, 'In progress');
+    assert.deepEqual(result.tasks, {
+      total: 3,
+      open: 1,
+      inProgress: 1,
+      blocked: 0,
+      done: 1,
+    });
+    assert.deepEqual(result.phases, [{
+      name: 'Foundation',
+      total: 1,
+      open: 0,
+      inProgress: 0,
+      blocked: 0,
+      done: 1,
+      state: 'done',
+    }, {
+      name: 'Delivery',
+      total: 2,
+      open: 1,
+      inProgress: 1,
+      blocked: 0,
+      done: 0,
+      state: 'current',
+    }]);
+    assert.deepEqual(result.next, {
+      description: 'Current task with complete source',
+      source: {
+        kind: 'file',
+        path: feature.tasksPath,
+        taskKey: 'T002@bbbbbbbb',
+        description: 'Current task with complete source',
+      },
+    });
+    assert.deepEqual(
+      result.taskDetails.items.map(({ taskKey, title, state, phase, deps, readiness }) => (
+        { taskKey, title, state, phase, deps, readiness }
+      )),
+      [{
+        taskKey: 'T001@aaaaaaaa',
+        title: 'Completed prerequisite',
+        state: 'done',
+        phase: { heading: 'Phase 1: Foundation', order: 0 },
+        deps: null,
+        readiness: { state: 'not-applicable', basis: null },
+      }, {
+        taskKey: 'T002@bbbbbbbb',
+        title: 'Current task with complete source',
+        state: 'in-progress',
+        phase: { heading: 'Phase 2: Delivery', order: 1 },
+        deps: ['T001@aaaaaaaa'],
+        readiness: { state: 'not-applicable', basis: null },
+      }, {
+        taskKey: 'T003@cccccccc',
+        title: 'Ready delivery task',
+        state: 'todo',
+        phase: { heading: 'Phase 2: Delivery', order: 1 },
+        deps: ['T001@aaaaaaaa'],
+        readiness: { state: 'ready', basis: 'recorded-deps' },
+      }],
+    );
+    assert.deepEqual(result.taskDetails.coverage, { state: 'available', reason: null });
+    assert.equal(result.taskDetails.resultCoverage, 'not-exposed');
+    assert.equal(result.taskDetails.items[0].instruction.coverage, 'full-unit');
+    assert.equal(result.taskDetails.items[0].instruction.text, firstUnit);
+    assert.equal(result.taskDetails.items[1].instruction.text, secondUnit);
+    assert.equal(result.taskDetails.items[2].instruction.text, thirdUnit);
+    assert.match(result.taskDetails.items[0].instruction.text, /<script>globalThis\.__t003SourceExecuted/);
+    assert.match(result.taskDetails.items[0].instruction.text, /T901@fenced01/);
+    assert.match(result.taskDetails.items[0].instruction.text, /T900@hidden00/);
+    assert.doesNotMatch(JSON.stringify(result.taskDetails), /T999@board999|Archived 052 task|Discovered During Execution/);
+    assert.deepEqual(
+      result.sources.at(-1)?.details?.phases,
+      [
+        { heading: 'Phase 1: Foundation', taskKeys: ['T001@aaaaaaaa'] },
+        { heading: 'Phase 2: Delivery', taskKeys: ['T002@bbbbbbbb', 'T003@cccccccc'] },
+      ],
+      'phase membership and task rows are reduced from the same captured task bytes',
+    );
+    assert.deepEqual(contentSnapshot(root), before, 'selected detail is a read-only projection');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 discovered canonical-looking rows make detail unavailable instead of mixing a mirror with definitions', async () => {
+  const root = temporaryRoot();
+  try {
+    // Arrange
+    const feature = define(root, '062', 'discovered-ambiguity', {
+      tasks: [
+        '## Phase 1: Canonical',
+        '- [~] T001@aaaaaaaa Current canonical task',
+        '',
+        '## Discovered During Execution',
+        '- [ ] T004@dddddddd Mirror-shaped discovered task',
+        '',
+      ].join('\n'),
+    });
+    const bd = installBdCommand(root);
+
+    // Act
+    const result = await bd.run(() => readNowProjection({ root, target: feature.ideaPath }));
+
+    // Assert
+    assertComplete(result);
+    assert.deepEqual(result.tasks, {
+      total: 2,
+      open: 1,
+      inProgress: 1,
+      blocked: 0,
+      done: 0,
+    }, 'independently published totals are not silently rewritten');
+    assert.equal(result.taskDetails.coverage.state, 'unavailable');
+    assert.match(result.taskDetails.coverage.reason, /discovered mirror rows/i);
+    assert.equal(result.taskDetails.items, null);
+    assert.equal(result.taskDetails.resultCoverage, 'not-exposed');
+    assert.doesNotMatch(JSON.stringify(result.taskDetails), /Mirror-shaped discovered task/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1269,6 +1507,10 @@ test('populated tracked authority never falls back to selected feature markdown,
     assert.equal(absent.stage, 'Defined');
     assert.equal(absent.tasks, null);
     assert.deepEqual(absent.phases, []);
+    assert.equal(absent.taskDetails.coverage.state, 'unavailable');
+    assert.match(absent.taskDetails.coverage.reason, /no exact issue/i);
+    assert.equal(absent.taskDetails.items, null);
+    assert.equal(absent.taskDetails.resultCoverage, 'not-exposed');
     assert.deepEqual(absent.blockers, []);
     assert.match(absent.nextReason, /no exact issue/i);
     assert.deepEqual(
@@ -1309,6 +1551,22 @@ test('populated tracked authority never falls back to selected feature markdown,
       },
     }]);
     assert.deepEqual(noneReady.tasks, { total: 2, open: 1, inProgress: 0, blocked: 1, done: 0 });
+    assert.deepEqual(
+      noneReady.taskDetails.items.map(({ taskKey, issueId, state, readiness }) => (
+        { taskKey, issueId, state, readiness }
+      )),
+      [{
+        taskKey: 'T002@bbbbbbbb',
+        issueId: 'beta-open',
+        state: 'todo',
+        readiness: { state: 'ready', basis: 'beads-ready' },
+      }, {
+        taskKey: 'T001@aaaaaaaa',
+        issueId: 'beta-task',
+        state: 'blocked',
+        readiness: { state: 'not-applicable', basis: null },
+      }],
+    );
     assert.doesNotMatch(JSON.stringify(noneReady), /Markdown task that must not leak/);
     assert.deepEqual(betaBd.callSequence, [
       BD_LIST_CALL,
@@ -1635,7 +1893,14 @@ test('an exact in-progress tracked issue wins without querying readiness and is 
       title: 'Active tracked task',
       description: `spec: ${feature.specPath}\nTask: T001@aaaaaaaa`,
     };
-    const bd = installBdCommand(root, [active], 0, commandResponses({
+    const open = {
+      id: 'open-task',
+      type: 'task',
+      status: 'open',
+      title: 'Open task without an acquired ready result',
+      description: `spec: ${feature.specPath}\nTask: T002@bbbbbbbb`,
+    };
+    const bd = installBdCommand(root, [active, open], 0, commandResponses({
       ready: 'this readiness response must remain unread',
     }));
     const before = contentSnapshot(root);
@@ -1657,6 +1922,17 @@ test('an exact in-progress tracked issue wins without querying readiness and is 
       result.sources.filter((source) => source.kind === 'tracked').map((source) => source.command),
       ['bd list --all --limit 0 --json'],
     );
+    assert.deepEqual(result.taskDetails.items.map(({ taskKey, issueId, readiness }) => ({
+      taskKey, issueId, readiness,
+    })), [{
+      taskKey: 'T001@aaaaaaaa',
+      issueId: 'active-task',
+      readiness: { state: 'not-applicable', basis: null },
+    }, {
+      taskKey: 'T002@bbbbbbbb',
+      issueId: 'open-task',
+      readiness: { state: 'not-exposed', basis: null },
+    }], 'an active branch does not manufacture readiness for another open issue');
     assert.deepEqual(bd.callSequence, [BD_LIST_CALL, BD_LIST_CALL]);
     assert.deepEqual(contentSnapshot(root), before, 'active projection is read-only');
   } finally {
@@ -1793,6 +2069,257 @@ test('tracked readiness selects the first exact normalized open non-epic issue i
     assert.deepEqual(contentSnapshot(root), before, 'ready projection is read-only');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 tracked task detail uses only visible explicit carriers and already captured board facts', async () => {
+  const root = temporaryRoot();
+  try {
+    // Arrange
+    const feature = define(root, '061', 'tracked-task-detail', {
+      tasks: '- [~] T001@aaaaaaaa Markdown body backfill is forbidden.\n',
+    });
+    const readyDescription = [
+      `spec: ${feature.specPath}`,
+      'Task: T001@aaaaaaaa Imported ready task',
+      'Deps: T099@zzzzzzzz',
+      '',
+      'Literal imported body.',
+      '```text',
+      'Task: T900@fenced01 hidden fenced carrier',
+      '```',
+      '<!-- Task: T901@comment1 hidden comment carrier -->',
+    ].join('\n');
+    const blockedDescription = [
+      `spec: ${feature.specPath}`,
+      'Task: T002@bbbbbbbb',
+      'Blocked-by: external-dependency: waiting for fixture service',
+    ].join('\n');
+    const issues = [{
+      id: '01-ready',
+      type: 'task',
+      status: 'open',
+      title: 'Imported ready task',
+      description: readyDescription,
+      acceptance_criteria: 'Retain imported acceptance literally.',
+      design: 'No phase is exposed by this issue.',
+      notes: 'No task result is inferred.',
+    }, {
+      id: '02-blocked',
+      type: 'task',
+      status: 'blocked',
+      title: 'Imported blocked task',
+      description: blockedDescription,
+    }, {
+      id: '03-done',
+      type: 'task',
+      status: 'closed',
+      title: 'Imported completed task',
+      description: `spec: ${feature.specPath}\nTask: T003@cccccccc`,
+    }, {
+      id: '00-epic',
+      type: 'epic',
+      status: 'in_progress',
+      title: 'Feature carrier is not a task row',
+      description: `spec: ${feature.specPath}\nTask: T999@epic0000`,
+    }, {
+      id: 'second-line',
+      type: 'task',
+      status: 'in_progress',
+      title: 'Second-line specification is not selected work',
+      description: `not an exact first line\nspec: ${feature.specPath}\nTask: T998@second00`,
+    }];
+    const ready = [{
+      ...issues[0],
+    }, {
+      id: 'foreign-ready',
+      type: 'task',
+      status: 'open',
+      title: 'Foreign readiness must not leak',
+      description: 'spec: .dude/specs/999-foreign/spec.md\nTask: T999@foreign0',
+    }];
+    const bd = installBdCommand(root, issues, 0, commandResponses({ ready }));
+    const before = contentSnapshot(root);
+
+    // Act
+    const result = await bd.run(() => readNowProjection({ root, target: feature.ideaPath }));
+
+    // Assert
+    assertComplete(result);
+    assert.equal(result.authority, 'tracked');
+    assert.deepEqual(result.tasks, {
+      total: 3,
+      open: 1,
+      inProgress: 0,
+      blocked: 1,
+      done: 1,
+    });
+    assert.deepEqual(result.taskDetails.coverage, { state: 'available', reason: null });
+    assert.equal(result.taskDetails.resultCoverage, 'not-exposed');
+    assert.deepEqual(result.taskDetails.items.map((task) => ({
+      taskKey: task.taskKey,
+      issueId: task.issueId,
+      title: task.title,
+      state: task.state,
+      phase: task.phase,
+      deps: task.deps,
+      blockedBy: task.blockedBy,
+      readiness: task.readiness,
+      coverage: task.instruction.coverage,
+    })), [{
+      taskKey: 'T001@aaaaaaaa',
+      issueId: '01-ready',
+      title: 'Imported ready task',
+      state: 'todo',
+      phase: null,
+      deps: ['T099@zzzzzzzz'],
+      blockedBy: null,
+      readiness: { state: 'ready', basis: 'beads-ready' },
+      coverage: 'imported-description',
+    }, {
+      taskKey: 'T002@bbbbbbbb',
+      issueId: '02-blocked',
+      title: 'Imported blocked task',
+      state: 'blocked',
+      phase: null,
+      deps: null,
+      blockedBy: 'external-dependency: waiting for fixture service',
+      readiness: { state: 'not-applicable', basis: null },
+      coverage: 'imported-description',
+    }, {
+      taskKey: 'T003@cccccccc',
+      issueId: '03-done',
+      title: 'Imported completed task',
+      state: 'done',
+      phase: null,
+      deps: null,
+      blockedBy: null,
+      readiness: { state: 'not-applicable', basis: null },
+      coverage: 'imported-description',
+    }]);
+    assert.equal(result.taskDetails.items[0].instruction.text, readyDescription,
+      'hidden carrier text stays literal in the imported description without supplying identity');
+    assert.deepEqual(result.taskDetails.items[0].instruction.extraText, {
+      acceptance_criteria: 'Retain imported acceptance literally.',
+      design: 'No phase is exposed by this issue.',
+      notes: 'No task result is inferred.',
+    });
+    assert.deepEqual(result.next?.source, {
+      kind: 'tracked',
+      issueId: '01-ready',
+      title: 'Imported ready task',
+    });
+    assert.deepEqual(bd.callSequence, [
+      BD_LIST_CALL,
+      BD_READY_CALL,
+      BD_LIST_CALL,
+      BD_READY_CALL,
+    ], 'task detail adds no bd show, history, or per-row query');
+    assert.doesNotMatch(JSON.stringify(result), /Markdown body backfill is forbidden|Feature carrier is not a task row|Second-line specification is not selected work|Foreign readiness must not leak/);
+    assert.deepEqual(contentSnapshot(root), before, 'tracked inspection does not backfill or mutate markdown');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 tracked task detail rejects missing, duplicate, hidden-only, and ambiguous carrier identity', async (t) => {
+  const scenarios = [{
+    name: 'missing explicit carrier',
+    issues: (specPath) => [{
+      id: 'active',
+      type: 'task',
+      status: 'in_progress',
+      title: 'Dependency mention is not identity',
+      description: `spec: ${specPath}\nDepends on T001@aaaaaaaa`,
+    }],
+  }, {
+    name: 'hidden-only carrier',
+    issues: (specPath) => [{
+      id: 'active',
+      type: 'task',
+      status: 'in_progress',
+      title: 'Hidden carrier is not identity',
+      description: `spec: ${specPath}\n\`\`\`text\nTask: T001@aaaaaaaa\n\`\`\``,
+    }],
+  }, {
+    name: 'two visible carriers on one issue',
+    issues: (specPath) => [{
+      id: 'active',
+      type: 'task',
+      status: 'in_progress',
+      title: 'Duplicate carrier lines',
+      description: `spec: ${specPath}\nTask: T001@aaaaaaaa\nTask: T002@bbbbbbbb`,
+    }],
+  }, {
+    name: 'duplicate task key across issues',
+    issues: (specPath) => [{
+      id: 'active',
+      type: 'task',
+      status: 'in_progress',
+      title: 'First key owner',
+      description: `spec: ${specPath}\nTask: T001@aaaaaaaa`,
+    }, {
+      id: 'done',
+      type: 'task',
+      status: 'closed',
+      title: 'Second key owner',
+      description: `spec: ${specPath}\nTask: T001@aaaaaaaa`,
+    }],
+  }, {
+    name: 'duplicate issue identity',
+    issues: (specPath) => [{
+      id: 'same-id',
+      type: 'task',
+      status: 'in_progress',
+      title: 'First issue',
+      description: `spec: ${specPath}\nTask: T001@aaaaaaaa`,
+    }, {
+      id: 'same-id',
+      type: 'task',
+      status: 'closed',
+      title: 'Second issue',
+      description: `spec: ${specPath}\nTask: T002@bbbbbbbb`,
+    }],
+  }, {
+    name: 'conflicting id aliases',
+    issues: (specPath) => [{
+      id: 'id-a',
+      issue_id: 'id-b',
+      type: 'task',
+      status: 'in_progress',
+      title: 'Conflicting identity aliases',
+      description: `spec: ${specPath}\nTask: T001@aaaaaaaa`,
+    }],
+  }];
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const root = temporaryRoot();
+      try {
+        // Arrange
+        const feature = define(root, '061', `tracked-${scenario.name.replaceAll(' ', '-')}`, {
+          tasks: '- [~] T001@aaaaaaaa Markdown backfill forbidden.\n',
+        });
+        const issues = scenario.issues(feature.specPath);
+        const bd = installBdCommand(root, issues);
+
+        // Act
+        const result = await bd.run(() => readNowProjection({ root, target: feature.ideaPath }));
+
+        // Assert
+        assertComplete(result);
+        assert.equal(result.authority, 'tracked');
+        assert.equal(result.taskDetails.coverage.state, 'unavailable');
+        assert.match(result.taskDetails.coverage.reason, /explicit Task: key|visible imported task metadata/i);
+        assert.equal(result.taskDetails.items, null);
+        assert.equal(result.taskDetails.resultCoverage, 'not-exposed');
+        assert.deepEqual(bd.callSequence, [BD_LIST_CALL, BD_LIST_CALL],
+          'an active tracked branch performs only its existing complete-list capture and verification');
+        assert.doesNotMatch(JSON.stringify(result), /Markdown backfill forbidden/);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
   }
 });
 
@@ -2080,6 +2607,9 @@ test('safe reads refuse symlinks, missing and wrong-type tasks, malformed tasks,
       assert.equal(result.stage, null);
       assert.equal(result.next, null);
       assert.deepEqual(result.blockers, []);
+      assert.equal(result.taskDetails.coverage.state, 'unavailable');
+      assert.equal(result.taskDetails.items, null);
+      assert.equal(result.taskDetails.resultCoverage, 'not-exposed');
       assert.equal(result.diagnostics.length, 1);
       const [diagnostic] = result.diagnostics;
       assert.deepEqual(

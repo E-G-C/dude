@@ -763,6 +763,51 @@ test('API accepts at most sixteen checks and findings', () => {
   );
 });
 
+test('Feature 060 T002: full 16-row attestation preserves every check while 17 and 18 rows reject unchanged', () => {
+  for (const count of [16, 17, 18]) {
+    const checks = Array.from({ length: count }, (_, index) => ({
+      definition: `Feature060T002 obligation ${index + 1}`,
+      outcome: index === count - 1 ? 'failed' : 'passed',
+      evidence: `complete check evidence ${index + 1}`,
+    }));
+    const input = verificationInput(checks);
+    const before = canonicalJson(input);
+    if (count === 16) {
+      const verification = buildVerification(input);
+      assertVerificationSemantics(verification.envelope, checks);
+      const review = buildReview(reviewInput(verification.capture, 'accepted', []));
+      assert.equal(review.envelope.verificationEnvelopeIdentity, verification.envelope.envelopeIdentity);
+      assert.equal(review.verification.checks.length, 16);
+    } else {
+      assert.throws(
+        () => buildSpecialistAttestation(input),
+        /verification\.result\.checks must contain 1 through 16 rows/,
+      );
+    }
+    assert.equal(canonicalJson(input), before, `${count} raw check rows stay exact`);
+    assert.deepEqual(input.result.checks, checks);
+  }
+});
+
+test('Feature 060 T002: a changed verification requires a newly bound independent review', () => {
+  const original = buildVerification(verificationInput());
+  const originalReview = buildReview(reviewInput(original.capture, 'accepted', []));
+  const correctedInput = verificationInput([
+    { definition: 'node focused test', outcome: 'passed', evidence: 'fresh complete owner evidence' },
+  ]);
+  const corrected = buildVerification(correctedInput);
+  assert.notEqual(corrected.envelope.envelopeIdentity, original.envelope.envelopeIdentity);
+  const oldBytes = canonicalJson(originalReview.capture);
+  assert.throws(
+    () => normalizeIndependentReviewEnvelopeV2(originalReview.capture, corrected.envelope),
+    /verification/,
+  );
+  const freshReview = buildReview(reviewInput(corrected.capture, 'accepted', []));
+  assert.equal(freshReview.envelope.verificationEnvelopeIdentity, corrected.envelope.envelopeIdentity);
+  assert.notEqual(freshReview.envelope.envelopeIdentity, originalReview.envelope.envelopeIdentity);
+  assert.equal(canonicalJson(originalReview.capture), oldBytes, 'old review is not rewritten as fresh evidence');
+});
+
 test('semantic result bindings refuse target, attempt, revision, evidence, result, dispatch, and chronology mismatch', () => {
   const verificationMutations = [
     (input) => { input.context.attempt.approachBasis.target = { ...clone(TARGET), taskKey: 'T002@696e7467' }; },

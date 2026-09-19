@@ -38,6 +38,22 @@ const PHASES = {
   sending: 'Awaiting capture delivery', issued: 'Capture prepared',
 };
 
+export function matchesRequestScope(context, scope) {
+  return Boolean(context && scope && scope.ideaPath === context.ideaPath
+    && (scope.kind === 'idea' || (scope.kind === 'feature' && scope.specPath === context.specPath)));
+}
+
+// A contextual shortcut uses the admitted request, not task state or a preview
+// path. Partial coverage elsewhere does not hide this owner's current request.
+export function currentRequests(context, data) {
+  const feed = data.needs;
+  if (!context || ['stale', 'unavailable'].includes(context.coverage?.state)
+    || !feed || data.issues.needs || feed.coverage.state === 'unavailable'
+    || (data.index && data.index.workspaceId !== feed.workspaceId)) return [];
+  return feed.requests.filter(record => record.phase === 'pending'
+    && matchesRequestScope(context, record.request.scope));
+}
+
 // One eligibility rule for Overview, Context and the current preview form.
 // The admitted provider request proves canonical artifact ownership; preview_path
 // alone, a task mentioning design, and old approvals do not supply entry.
@@ -64,9 +80,21 @@ export function previewEligibility(context, data) {
   return { records, reason: records.length ? null : 'No current owner-qualified preview request is waiting for this record.' };
 }
 
-function scopeLabel(request) {
-  return request.scope.kind === 'session' ? 'This session · no canonical idea'
-    : request.scope.kind === 'feature' ? request.scope.specPath : request.scope.ideaPath;
+export function scopeLabel(scope) {
+  return scope.kind === 'session' ? 'This session · no canonical idea'
+    : scope.kind === 'feature' ? scope.specPath : scope.ideaPath;
+}
+
+export function ScopeIdentity({ scope, title, browsingLabel }) {
+  const s = useCanvasStyles();
+  return <div className={s.tight}>
+    <Text weight="semibold">{title || scopeLabel(scope)}</Text>
+    {scope.kind !== 'session' && <Text className={s.code}>
+      {scope.ideaPath}{scope.kind === 'feature' ? `\n${scope.specPath}` : ''}
+    </Text>}
+    {browsingLabel && <Text className={s.eyebrow}>You are browsing {browsingLabel}.
+      {' '}Your work selection stays separate from this scope.</Text>}
+  </div>;
 }
 
 function exceedsTextLimit(value, data) {
@@ -148,6 +176,7 @@ export function NewIdea({ value, onChange, onCancel, data }) {
       <p className={s.lead}>What would you like to make?</p>
       <p className={s.prose}>Describe the outcome in your own words. Submit captures it and continues brainstorming.
         Save captures it for later, without further discussion, definition, or execution.</p>
+      <Text className={s.eyebrow}>New idea is unfiled. Your work selection is not attached to this draft.</Text>
     </header>
     <Field label="Your idea" validationState={validation ? 'error' : 'none'} validationMessage={validation || undefined}>
       <Textarea value={value} className={s.control} resize="vertical" rows={7}
@@ -351,7 +380,7 @@ function RequestForm({ record, data, value, onChange, onReview, reviewed }) {
   </div>;
 }
 
-export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, reviewedKey, onNew }) {
+export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, reviewedKey, onNew, scopeTitle, browsingLabel }) {
   const s = useCanvasStyles(), heading = useId();
   const feed = data.needs;
   const records = feed?.requests || [];
@@ -368,11 +397,14 @@ export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, 
           <Text className={s.eyebrow}>{request.blocking ? 'Blocking clarification in this context' : 'Advisory request'}</Text></div>
         <h1 className={s.title}>Needs you</h1>
         <p className={s.lead}>{request.prompt}</p>
-        <Text className={s.code}>{scopeLabel(request)}</Text>
+      </header>
+      <section className={s.scope} aria-label="Request scope">
+        <Text className={s.eyebrow}>This request is about</Text>
+        <ScopeIdentity scope={request.scope} title={scopeTitle} browsingLabel={browsingLabel} />
         <Text>Owner: {request.owner}</Text>
         <Text className={s.code}>Request: {request.requestRef} · Revision: {request.revision}</Text>
         <Text className={s.code}>Source: {request.source.kind === 'file' ? request.source.path : request.source.kind}{'\n'}{request.source.revision}</Text>
-      </header>
+      </section>
       <section className={s.scope}><Text weight="semibold">Why your input is needed</Text>
         <p className={s.prose}>{request.whyHuman}</p><Text weight="semibold">What this unblocks</Text>
         <p className={s.prose}>{request.unblocks}</p></section>
@@ -403,7 +435,7 @@ export function NeedsYou({ data, selected, onSelect, drafts, onDraft, onReview, 
       {pending.map(item => <Button key={item.requestHandle} className={s.requestOption}
         onClick={() => onSelect(requestKey(feed, item))}>
         <span className={s.tight}><Text weight="semibold">{item.request.prompt}</Text>
-          <Text className={s.eyebrow}>{CLASSES[item.request.class]} · {item.request.owner} · {scopeLabel(item.request)}</Text></span>
+          <Text className={s.eyebrow}>{CLASSES[item.request.class]} · {item.request.owner} · {scopeLabel(item.request.scope)}</Text></span>
       </Button>)}
     </section> : <section className={s.stack}>
       <h2 className={s.subheading}>{uncertain ? 'No current requests can be confirmed' : 'No current requests from the joined owner'}</h2>

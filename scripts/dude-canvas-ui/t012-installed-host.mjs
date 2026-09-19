@@ -55,7 +55,7 @@ const SPEC_PATH = `.dude/specs/${REVIEW_ID}-${REVIEW_SLUG}/spec.md`;
 const DESIGN_ROOT = `.dude/specs/${REVIEW_ID}-${REVIEW_SLUG}/design`;
 const MOCK_PATH = `${DESIGN_ROOT}/mock.html`;
 const CSS_PATH = `${DESIGN_ROOT}/mock.css`;
-const SOURCE_APP_SHA256 = '8a571800c96c8e55fb7eba4ac06e31a345334bf7ae9cc338d753fd7371a9055c';
+const SOURCE_APP_SHA256 = 'fcf3f9102f8eabd36f9bd0494a84695fda2891e1d53a7f05b03a1be2088a9463';
 const SOURCE_LEGAL_SHA256 = '3be2d01e3b59529e54cde5f17aee76c168bcde63245c21ec387cf70ba7a6d869';
 /**
  * The Review gesture behavior lives in these static modules, not in the bundled

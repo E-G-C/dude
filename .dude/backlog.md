@@ -4,17 +4,27 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 ## Where are we?
 
-- Current work: **0** (0 active, 0 blocked)
+- Current work: **1** (1 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **6**
-- Defined awaiting work: **1**
-- Completed: **58**
+- Ideas awaiting definition: **5**
+- Defined awaiting work: **0**
+- Completed: **59**
 
 ## Current
 
-Blocked 0 · Active 0 · Next 0
+Blocked 0 · Active 1 · Next 0
 
-No current work to diagram.
+### Active
+
+- `062` · `dude-canvas-workspace-integration` — Dude Canvas Workspace Integration (`.dude/ideas/062-dude-canvas-workspace-integration.md`)
+
+### Current work map
+
+```mermaid
+kanban
+  active[Active]
+    work_1[062 dude-canvas-workspace-integration]
+```
 
 ## Planned
 
@@ -24,12 +34,7 @@ No current work to diagram.
 - `054` · `mockup-opens-in-review` — Mockup Opens in Review (`.dude/ideas/054-mockup-opens-in-review.md`)
 - `056` · `ship-orphan-cleanup` — Ship Orphan Cleanup (`.dude/ideas/056-ship-orphan-cleanup.md`)
 - `058` · `outcome-aligned-intake` — Outcome-Aligned Intake (`.dude/ideas/058-outcome-aligned-intake.md`)
-- `060` · `recoverable-work-handoffs` — Recoverable Work Handoffs (`.dude/ideas/060-recoverable-work-handoffs.md`)
 - `063` · `dude-canvas-settings` — Dude Canvas Settings (`.dude/ideas/063-dude-canvas-settings.md`)
-
-### Defined awaiting work
-
-- `062` · `dude-canvas-workspace-integration` — Dude Canvas Workspace Integration (`.dude/ideas/062-dude-canvas-workspace-integration.md`)
 
 ## Completed
 
@@ -88,6 +93,7 @@ No current work to diagram.
 - `055` · `canvas-acceptance-reliability` — Canvas Acceptance Reliability (`.dude/ideas/055-canvas-acceptance-reliability.md`)
 - `057` · `dude-canvas-needs-you` — Dude Canvas Needs You (`.dude/ideas/057-dude-canvas-needs-you.md`)
 - `059` · `annotation-direct-manipulation` — Annotation Direct Manipulation (`.dude/ideas/059-annotation-direct-manipulation.md`)
+- `060` · `recoverable-work-handoffs` — Recoverable Work Handoffs (`.dude/ideas/060-recoverable-work-handoffs.md`)
 - `061` · `work-inspection-source-capacity` — Work Inspection Source Capacity (`.dude/ideas/061-work-inspection-source-capacity.md`)
 - `064` · `work-receipt-overflow-handling` — Work Receipt Overflow Handling (`.dude/ideas/064-work-receipt-overflow-handling.md`)
 - `065` · `work-history-event-compaction` — Work History Event Compaction (`.dude/ideas/065-work-history-event-compaction.md`)
