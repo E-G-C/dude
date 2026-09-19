@@ -25,7 +25,9 @@ import {
 import {
   nextTask,
   parseVisibleTasks,
+  readyTasks,
   scanMarkdownVisibility,
+  TASK_KEY_RE,
 } from '../../../skills/dude-engine/lib/tasks.mjs';
 import { resolveMutationPath } from '../../../skills/dude-engine/lib/workspace-paths.mjs';
 
@@ -847,6 +849,7 @@ function projectionBase() {
     unansweredQuestions: null,
     tasks: null,
     phases: [],
+    taskDetails: emptyTaskDetails('not-applicable', 'Select a feature to inspect task definitions.'),
     activity: null,
     latestEvent: null,
     attention: [],
@@ -917,6 +920,7 @@ function failedProjection(base, diagnostics, facts = {}) {
     blockers: [],
     tasks: null,
     phases: [],
+    taskDetails: emptyTaskDetails('unavailable', failedReadReason(diagnostics)),
     attention: attentionFrom(diagnostics),
     diagnostics,
     contexts: base.contexts.map((context) => {
@@ -1047,41 +1051,71 @@ function latestSectionEvent(sections) {
 }
 
 /**
- * @param {ReturnType<typeof parseVisibleTasks>['parsed']} parsed
+ * @param {'not-applicable'|'unavailable'} state
+ * @param {string} reason
  */
-function taskProjection(parsed) {
-  const counts = { total: parsed.tasks.length, open: 0, inProgress: 0, blocked: 0, done: 0 };
-  for (const task of parsed.tasks) {
+function emptyTaskDetails(state, reason) {
+  return { coverage: { state, reason }, items: null, resultCoverage: 'not-exposed' };
+}
+
+/** @param {ReturnType<typeof parseVisibleTasks>['parsed']['tasks']} tasks */
+function canonicalTaskCounts(tasks) {
+  const counts = { total: tasks.length, open: 0, inProgress: 0, blocked: 0, done: 0 };
+  for (const task of tasks) {
     if (task.state === 'todo') counts.open += 1;
     else if (task.state === 'in-progress') counts.inProgress += 1;
     else if (task.state === 'blocked') counts.blocked += 1;
     else if (task.state === 'done') counts.done += 1;
   }
+  return counts;
+}
 
-  /** @type {Map<string, {name:string,heading:string,tasks:typeof parsed.tasks}>} */
+/**
+ * Membership and metadata come from the canonical parser. Only the unit's byte
+ * boundaries use visible headings; its display text always uses original bytes.
+ * @param {ReturnType<typeof parseVisibleTasks>} scan
+ * @param {Buffer} bytes
+ * @param {string} tasksPath
+ */
+function taskProjection(scan, bytes, tasksPath) {
+  const { parsed } = scan;
+  const counts = canonicalTaskCounts(parsed.tasks);
+
+  /** @type {Map<string, {name:string,heading:string,order:number,tasks:typeof parsed.tasks}>} */
   const grouped = new Map();
+  const taskPhases = new Map();
+  const boundaries = [];
   let heading = 'Work';
+  let hasHeading = false;
+  let discoveredLine = null;
   let taskIndex = 0;
-  for (let line = 0; line < parsed.lines.length && taskIndex < parsed.tasks.length; line += 1) {
-    const headingMatch = /^#{2,3}\s+(.+?)\s*$/.exec(parsed.lines[line]);
-    if (headingMatch) heading = headingMatch[1];
+  for (let line = 0; line < scan.lines.length; line += 1) {
+    const visible = scan.lines[line];
+    if (parsed.board && line >= parsed.board.startLine && line <= parsed.board.endLine) {
+      if (line === parsed.board.startLine) boundaries.push(visible.start);
+      continue;
+    }
+    const headingMatch = /^#{2,3}\s+(.+?)\s*$/.exec(visible.text);
+    if (headingMatch) {
+      boundaries.push(visible.start);
+      heading = headingMatch[1];
+      hasHeading = true;
+      if (/^##[ \t]+Discovered During Execution(?:[ \t]+#+)?[ \t]*$/.test(visible.text)
+        && discoveredLine === null) discoveredLine = line;
+    }
     while (parsed.tasks[taskIndex]?.headerLine === line) {
       const name = orientationText(heading.replace(/^Phase\s+\d+\s*:\s*/i, '')) || 'Work';
-      const group = grouped.get(heading) ?? { name, heading, tasks: [] };
+      const group = grouped.get(heading) ?? { name, heading, order: grouped.size, tasks: [] };
       group.tasks.push(parsed.tasks[taskIndex]);
       grouped.set(heading, group);
+      taskPhases.set(parsed.tasks[taskIndex].id, hasHeading ? { heading, order: group.order } : null);
+      boundaries.push(visible.start);
       taskIndex += 1;
     }
   }
 
   const phases = [...grouped.values()].map((group) => {
-    const phaseCounts = { total: group.tasks.length, open: 0, inProgress: 0, blocked: 0, done: 0 };
-    for (const task of group.tasks) {
-      if (task.state === 'todo') phaseCounts.open += 1;
-      else if (task.state === 'in-progress') phaseCounts.inProgress += 1;
-      else if (task.state === 'blocked') phaseCounts.blocked += 1;
-      else if (task.state === 'done') phaseCounts.done += 1;
-    }
+    const phaseCounts = canonicalTaskCounts(group.tasks);
     const state = phaseCounts.done === phaseCounts.total
       ? 'done'
       : phaseCounts.inProgress > 0 || phaseCounts.blocked > 0
@@ -1093,7 +1127,99 @@ function taskProjection(parsed) {
     heading: group.heading,
     taskKeys: group.tasks.map((task) => task.id),
   }));
-  return { counts, phases, details };
+  if (discoveredLine !== null && parsed.tasks.some((task) => task.headerLine > discoveredLine)) {
+    return { counts, phases, details, taskDetails: emptyTaskDetails('unavailable',
+      'The parsed totals include discovered mirror rows. A complete task-definition collection cannot be established.') };
+  }
+
+  boundaries.push(scan.activeEnd);
+  const ready = new Set(readyTasks(parsed).map((task) => task.id));
+  const source = { kind: 'file', path: tasksPath, contentIdentity: contentIdentity(bytes) };
+  let boundary = 0;
+  const items = parsed.tasks.map((task) => {
+    const start = scan.lines[task.headerLine].start;
+    while (boundaries[boundary] <= start && boundary < boundaries.length - 1) boundary += 1;
+    return {
+      taskKey: task.id,
+      title: task.description,
+      state: task.state,
+      phase: taskPhases.get(task.id),
+      source,
+      instruction: { coverage: 'full-unit', text: bytes.subarray(start, boundaries[boundary]).toString('utf8') },
+      deps: task.deps.length ? task.deps : null,
+      blockedBy: task.blockedBy,
+      readiness: task.state === 'todo'
+        ? { state: ready.has(task.id) ? 'ready' : 'waiting', basis: 'recorded-deps' }
+        : { state: 'not-applicable', basis: null },
+    };
+  });
+  return { counts, phases, details, taskDetails: {
+    coverage: { state: 'available', reason: null }, items, resultCoverage: 'not-exposed',
+  } };
+}
+
+/**
+ * Use only the explicit import carrier, never a task key mentioned in prose.
+ * Board counts remain independent when this collection cannot be fully mapped.
+ * @param {Array<{issue:Record<string, unknown>,normalized:ReturnType<typeof normalizeBeadsIssue>}>} executable
+ * @param {Record<string, unknown>[]} issues
+ * @param {typeof executable | null} ready
+ * @param {string} identity
+ */
+function trackedTaskDetails(executable, issues, ready, identity) {
+  const ids = new Map();
+  for (const issue of issues) ids.set(issueId(issue), (ids.get(issueId(issue)) ?? 0) + 1);
+  const keys = new Set();
+  const readyIds = new Set(ready?.map(({ issue }) => issueId(issue)));
+  const states = { open: 'todo', in_progress: 'in-progress', blocked: 'blocked', closed: 'done' };
+  const items = [];
+  for (const { issue, normalized } of executable) {
+    const id = issueId(issue);
+    let lines;
+    try {
+      lines = scanMarkdownVisibility(Buffer.from(String(issue.description)), 'tracked task description', 'generic')
+        .lines.map((line) => line.text);
+    } catch {
+      return emptyTaskDetails('unavailable', 'The visible imported task metadata could not be established. No markdown backfill is used.');
+    }
+    const carriers = lines.filter((line) => line.startsWith('Task:'));
+    const carrier = carriers.length === 1 ? /^Task: (\S+)(?:[ \t]+.*)?$/.exec(carriers[0]) : null;
+    const key = carrier?.[1];
+    if (!key || !TASK_KEY_RE.test(key) || keys.has(key) || !id || ids.get(id) !== 1
+      || (meaningfulString(issue.id) && meaningfulString(issue.issue_id) && issue.id !== issue.issue_id)) {
+      return emptyTaskDetails('unavailable',
+        'Tracked task detail requires one explicit Task: key per issue and a unique issue/key mapping. No markdown backfill is used.');
+    }
+    keys.add(key);
+    const declarations = lines.filter((line) => line.startsWith('Deps: '));
+    const deps = declarations.length === 1
+      ? declarations[0].slice('Deps: '.length).split(',').map((value) => value.trim()).filter(Boolean) : null;
+    let blocker;
+    try { blocker = trackedBlocker(issue); } catch {
+      return emptyTaskDetails('unavailable', 'Imported task blocker metadata is conflicting.');
+    }
+    const extraText = Object.fromEntries(['acceptance_criteria', 'design', 'notes']
+      .filter((field) => typeof issue[field] === 'string').map((field) => [field, issue[field]]));
+    items.push({
+      taskKey: key,
+      title: issueTitle(issue),
+      state: states[normalized.status],
+      phase: null,
+      issueId: id,
+      source: { kind: 'tracked', command: TRACKED_COMMAND, contentIdentity: identity },
+      instruction: {
+        coverage: 'imported-description',
+        text: issue.description,
+        ...(Object.keys(extraText).length ? { extraText } : {}),
+      },
+      deps: deps?.every((dep) => TASK_KEY_RE.test(dep)) ? deps : null,
+      blockedBy: blocker ? (blocker.classification ? `${blocker.classification}: ${blocker.reason}` : blocker.reason) : null,
+      readiness: normalized.status !== 'open'
+        ? { state: 'not-applicable', basis: null }
+        : readyIds.has(id) ? { state: 'ready', basis: 'beads-ready' } : { state: 'not-exposed', basis: null },
+    });
+  }
+  return { coverage: { state: 'available', reason: null }, items, resultCoverage: 'not-exposed' };
 }
 
 /** @param {Array<{normalized:ReturnType<typeof normalizeBeadsIssue>}>} executable */
@@ -1485,6 +1611,7 @@ export async function readWorkIndex({ root }, options = {}) {
         for (const context of base.contexts) {
           if (!context.specPath) continue;
           const files = [];
+          let taskFacts = null;
           try {
             for (const name of [context.specPath, `${path.posix.dirname(context.specPath)}/tasks.md`]) {
               const stat = fs.lstatSync(resolveMutationPath(root, name));
@@ -1493,9 +1620,21 @@ export async function readWorkIndex({ root }, options = {}) {
                 throw new Error('bounded metadata unavailable');
               }
               const bytes = readSafeFile(root, name);
+              if (name.endsWith('/tasks.md')) {
+                // Reduce the same captured bytes used by fileSource below.
+                // Only the selected reader builds units or retains task bodies.
+                try {
+                  const { parsed } = parseVisibleTasks(bytes, { path: name, state: 'work index' });
+                  if (!parsed.warnings.length) taskFacts = {
+                    counts: canonicalTaskCounts(parsed.tasks),
+                    ownBlocked: parsed.tasks.some(task => task.state === 'blocked'
+                      || (Boolean(task.blockedBy) && task.state !== 'done')),
+                  };
+                } catch { /* Invalid canonical visibility leaves task facts unavailable. */ }
+              }
               files.push(fileSource(name.endsWith('/tasks.md') ? 'Tasks' : 'Specification', name, 'work', bytes));
             }
-            metadata.set(context.ideaPath, files);
+            metadata.set(context.ideaPath, { files, taskFacts });
           } catch { metadata.set(context.ideaPath, null); }
         }
       }
@@ -1508,18 +1647,37 @@ export async function readWorkIndex({ root }, options = {}) {
             if (contentIdentity(readSafeFile(root, source.path)) !== source.contentIdentity) throw new Error('base source changed');
           }
           const admitted = new Map(base.contexts.map(context => [context.ideaPath, context]));
+          const taskUnavailable = 'Task state is unavailable because the tasks file is incomplete or ambiguous.';
           const collected = collectLifecycleItems({ root }).filter(item => {
             const context = admitted.get(item.ideaPath);
             return context && item.specPath === context.specPath;
+          }).map(item => {
+            if (!item.specPath) return item;
+            const facts = metadata.get(item.ideaPath)?.taskFacts;
+            const available = Boolean(facts);
+            const { inProgress: active, ...counts } = facts?.counts ?? canonicalTaskCounts([]);
+            return {
+              ...item,
+              taskCounts: { ...counts, active },
+              tasksAvailable: available,
+              packageComplete: available && counts.total > 0 && counts.done === counts.total,
+              hasInProgress: available && active > 0,
+              ownBlocked: facts?.ownBlocked ?? false,
+              taskWarnings: available ? [] : item.taskWarnings,
+              // Only the raw task parser's failure can be replaced. Ownership,
+              // path, specification and lifecycle metadata failures still apply.
+              unavailableDetail: available && item.unavailableDetail === taskUnavailable
+                ? null : item.unavailableDetail ?? (available ? null : taskUnavailable),
+            };
           });
           const model = deriveLifecycleModel({ items: collected });
           const byIdentity = new Map(model.items.map(item => [item.ideaPath, item]));
-          for (const files of metadata.values()) if (files) sources.push(...files);
+          for (const captured of metadata.values()) if (captured) sources.push(...captured.files);
           items = items.map(item => {
             const recorded = byIdentity.get(item.ideaPath);
             if (!recorded || recorded.unavailableDetail || recorded.authorityIssues.length
               || (item.specPath && !metadata.get(item.ideaPath))) return item;
-            const counted = metadata.get(item.ideaPath) ?? [];
+            const counted = metadata.get(item.ideaPath)?.files ?? [];
             const current = { ...item, lane: recorded.defined && (recorded.taskCounts.done || recorded.taskCounts.active || recorded.taskCounts.blocked)
               ? 'lightweight' : 'definition',
               basis: 'canonical-lifecycle', group: recorded.group,
@@ -1535,7 +1693,7 @@ export async function readWorkIndex({ root }, options = {}) {
             if (item.specPath && recorded.group !== 'completed' && !recorded.ownBlocked) {
               for (const { type, from, to } of model.relationships.declared) {
                 if (type !== 'dependency' || to !== recorded || !from?.defined) continue;
-                const required = metadata.get(from.ideaPath);
+                const required = metadata.get(from.ideaPath)?.files;
                 if (!required) return unavailable(current, 'A prerequisite source could not be confirmed.', 'stale');
                 for (const source of required) {
                   const consumers = packageConsumers.get(source.path) ?? new Set();
@@ -1714,6 +1872,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
         selected,
         authority: 'definition',
         stage: 'Completed without a package',
+        taskDetails: emptyTaskDetails('not-applicable', 'This idea has no task definitions.'),
         nextReason: 'This idea is resolved.',
         unansweredQuestions: questions,
         activity,
@@ -1774,6 +1933,9 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
           selected,
           authority: 'tracked',
           stage: idea.status === 'draft' ? 'Idea' : 'Defined',
+          taskDetails: owner
+            ? emptyTaskDetails('unavailable', 'The populated tracked board has no exact issue for this feature. No markdown backfill is used.')
+            : emptyTaskDetails('not-applicable', 'This idea has no task definitions.'),
           nextReason: 'Tracked work is authoritative, but it has no exact issue for this feature.',
           unansweredQuestions: questions,
           activity,
@@ -1811,7 +1973,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
         let readiness;
         try {
           readiness = await queryReadyIssues(root, operation);
-          [ready] = correlateReadyIssues(
+          ready = correlateReadyIssues(
             readiness.issues,
             issues,
             `spec: ${owner.specPath}`,
@@ -1835,7 +1997,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
           readiness.identity,
         ));
       }
-      const nextIssue = active ?? ready;
+      const nextIssue = active ?? ready?.[0];
       let blockers;
       try {
         blockers = ordered
@@ -1891,6 +2053,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
         blockers,
         unansweredQuestions: questions,
         tasks,
+        taskDetails: trackedTaskDetails(ordered, issues, ready, tracked.identity),
         activity,
         latestEvent,
         diagnostics: inventoryDiagnostics,
@@ -1905,6 +2068,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
         selected,
         authority: 'definition',
         stage: 'Idea',
+        taskDetails: emptyTaskDetails('not-applicable', 'This idea has no task definitions.'),
         nextReason: 'This feature is still an idea.',
         unansweredQuestions: questions,
         activity,
@@ -1918,7 +2082,8 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
     if (!specIdentity) throw new Error(`invalid selected specification identity: ${owner.specPath}`);
     const tasksPath = `${specIdentity.directoryPath}/tasks.md`;
     const taskBytes = readSafeFile(root, tasksPath);
-    const parsed = parseVisibleTasks(taskBytes, { path: tasksPath, state: 'selected feature' }).parsed;
+    const scan = parseVisibleTasks(taskBytes, { path: tasksPath, state: 'selected feature' });
+    const { parsed } = scan;
     if (parsed.warnings.length !== 0) {
       const diagnostics = boundedDiagnostics(root, parsed.warnings.map((message) => ({
         code: 'TASKS_MALFORMED',
@@ -1934,7 +2099,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
       });
     }
 
-    const taskData = taskProjection(parsed);
+    const taskData = taskProjection(scan, taskBytes, tasksPath);
     const executionEvidence = parsed.tasks.some((task) => task.state !== 'todo');
     if (!executionEvidence) {
       sources.push(fileSource('Tasks', tasksPath, 'authority-check', taskBytes));
@@ -1944,6 +2109,9 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
         selected,
         authority: 'definition',
         stage: 'Defined',
+        tasks: taskData.counts,
+        phases: taskData.phases,
+        taskDetails: taskData.taskDetails,
         nextReason: 'No canonical task execution evidence exists yet.',
         unansweredQuestions: questions,
         activity,
@@ -2004,6 +2172,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
       unansweredQuestions: questions,
       tasks: taskData.counts,
       phases: taskData.phases,
+      taskDetails: taskData.taskDetails,
       activity,
       latestEvent,
       diagnostics: inventoryDiagnostics,

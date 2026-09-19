@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { readWorkIndex } from './lib/projection.mjs';
+import { readNowProjection, readWorkIndex } from './lib/projection.mjs';
 
 const BD_LIST = ['list', '--all', '--limit', '0', '--json'];
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -328,6 +328,117 @@ test('T011 work index publishes the exact flat DTO with complete 50-draft and 41
         ? { ...entry, size: fs.statSync(path.join(root, ...entry.path.split('/'))).size }
         : entry
     )), 'the reader creates no board, package, cache, or duplicate parser output');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T003 work index and selected detail reduce canonical visibility from the same captured task bytes', async () => {
+  // Arrange
+  const root = temporaryRoot();
+  const calls = [];
+  try {
+    const planned = feature(root, '061', 'visibility-planned');
+    const plannedSource = [
+      '# Tasks',
+      '',
+      '## Phase 1: Source owned',
+      '',
+      '- [ ] T001@aaaaaaaa Real planned task',
+      '',
+      'SOURCE-OWNED-BODY-ONLY-IN-SELECTED-DETAIL',
+      '',
+      '```md',
+      '- [~] T900@fenced01 Fenced in-progress lookalike',
+      '```',
+      '',
+      '<!--',
+      '- [!] T901@hidden00 Comment-hidden blocked lookalike',
+      '-->',
+      '',
+    ].join('\n');
+    write(root, planned.tasksPath, plannedSource);
+    const completed = feature(root, '062', 'visibility-completed', [
+      '- [x] T001@bbbbbbbb Real completed task',
+      '```md',
+      '- [ ] T900@fenced02 Hidden pending lookalike',
+      '```',
+      '',
+    ].join('\n'));
+    const active = feature(root, '063', 'visibility-active', [
+      '- [~] T001@cccccccc Real in-progress task',
+      '<!-- - [!] T900@hidden01 Hidden blocked lookalike -->',
+      '',
+    ].join('\n'));
+    const blocked = feature(root, '064', 'visibility-blocked', [
+      '- [ ] T001@dddddddd Real task with an explicit blocker',
+      '    blocked-by: external-dependency: waiting for source fixture',
+      '',
+    ].join('\n'));
+    const before = fileInventory(root);
+    const runBd = (args) => {
+      calls.push(args);
+      return emptyBoard();
+    };
+    const naiveRawHeaders = [...plannedSource.matchAll(
+      /^- \[(?: |~|!|x)\] T\d{3,}@[a-z0-9]{8} /gm,
+    )].map(([line]) => line);
+
+    // Act
+    const index = await readWorkIndex({ root }, { runBd });
+    const selected = await readNowProjection({ root, target: planned.ideaPath }, { runBd });
+
+    // Assert
+    assert.equal(naiveRawHeaders.length, 3,
+      'negative control would reproduce the former raw-parser overcount on this exact fixture');
+    const plannedRow = index.items.find(({ ideaPath }) => ideaPath === planned.ideaPath);
+    assert.deepEqual(plannedRow.taskCounts, {
+      total: 1,
+      open: 1,
+      inProgress: 0,
+      blocked: 0,
+      done: 0,
+    });
+    assert.equal(plannedRow.lane, 'definition');
+    assert.equal(plannedRow.group, 'defined-awaiting-work');
+    assert.equal(plannedRow.availability.state, 'current');
+    assert.deepEqual(selected.tasks, plannedRow.taskCounts);
+    assert.equal(selected.authority, 'definition');
+    assert.equal(selected.stage, 'Defined');
+    assert.equal(selected.next, null);
+    assert.deepEqual(selected.taskDetails.items.map(({ taskKey }) => taskKey), ['T001@aaaaaaaa']);
+    assert.equal(selected.taskDetails.items[0].instruction.text,
+      plannedSource.slice(plannedSource.indexOf('- [ ] T001@aaaaaaaa')));
+    assert.match(selected.taskDetails.items[0].instruction.text, /T900@fenced01/);
+    assert.match(selected.taskDetails.items[0].instruction.text, /T901@hidden00/);
+    const indexedTaskSource = plannedRow.sources.find(({ path: sourcePath }) => sourcePath === planned.tasksPath);
+    assert.equal(indexedTaskSource.contentIdentity, selected.taskDetails.items[0].source.contentIdentity,
+      'the index count and selected unit identify the same task-file bytes');
+    assert.equal(JSON.stringify(index).includes('SOURCE-OWNED-BODY-ONLY-IN-SELECTED-DETAIL'), false,
+      'the work index and inventory do not retain selected task bodies');
+    assert.equal(Object.hasOwn(plannedRow, 'taskDetails'), false);
+    assert.equal(index.contexts.some((context) => Object.hasOwn(context, 'taskDetails')), false);
+
+    const completedRow = index.items.find(({ ideaPath }) => ideaPath === completed.ideaPath);
+    assert.deepEqual(completedRow.taskCounts, {
+      total: 1, open: 0, inProgress: 0, blocked: 0, done: 1,
+    });
+    assert.equal(completedRow.group, 'completed',
+      'a hidden pending mark cannot defeat canonical package completion');
+    const activeRow = index.items.find(({ ideaPath }) => ideaPath === active.ideaPath);
+    assert.deepEqual(activeRow.taskCounts, {
+      total: 1, open: 0, inProgress: 1, blocked: 0, done: 0,
+    });
+    assert.equal(activeRow.group, 'active',
+      'canonical visible in-progress state determines active grouping');
+    const blockedRow = index.items.find(({ ideaPath }) => ideaPath === blocked.ideaPath);
+    assert.deepEqual(blockedRow.taskCounts, {
+      total: 1, open: 1, inProgress: 0, blocked: 0, done: 0,
+    });
+    assert.equal(blockedRow.group, 'blocked',
+      'a visible explicit blocked-by declaration supplies own-blocked classification');
+    assert.deepEqual(calls, [BD_LIST, BD_LIST, BD_LIST, BD_LIST]);
+    assert.deepEqual(fileInventory(root), before, 'both production readers remain read-only');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

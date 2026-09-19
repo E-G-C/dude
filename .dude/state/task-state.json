@@ -510,6 +510,15 @@
     },
     "updated_at": "2026-09-16T10:19:22.255Z"
   },
+  ".dude/specs/060-recoverable-work-handoffs/tasks.md": {
+    "glyphs": {
+      "T001@d060a101": "x",
+      "T002@d060b202": "x",
+      "T003@d060c303": "x",
+      "T004@d060d404": "x"
+    },
+    "updated_at": "2026-09-19T22:28:41.000Z"
+  },
   ".dude/specs/061-work-inspection-source-capacity/tasks.md": {
     "glyphs": {
       "T001@61c8a4e2": "x"
@@ -519,12 +528,12 @@
   ".dude/specs/062-dude-canvas-workspace-integration/tasks.md": {
     "glyphs": {
       "T001@a062c1d4": "x",
-      "T002@b062d2e5": " ",
-      "T003@c062e3f6": " ",
-      "T004@d062f4a7": " ",
+      "T002@b062d2e5": "x",
+      "T003@c062e3f6": "x",
+      "T004@d062f4a7": "~",
       "T005@e062a5b8": " "
     },
-    "updated_at": "2026-09-16T17:38:57.933Z"
+    "updated_at": "2026-09-19T04:49:55.000Z"
   },
   ".dude/specs/064-work-receipt-overflow-handling/tasks.md": {
     "glyphs": {

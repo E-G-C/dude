@@ -1,6 +1,11 @@
 import { makeStyles, tokens } from '@fluentui/react-components';
 export { mergeClasses } from '@fluentui/react-components';
 
+// The shortest vertical palette that still works: one complete 36px tool slot
+// with room for its focus ring, beside the fixed 24px grip, the 36px
+// orientation switch, their two gaps, the palette padding, and its borders.
+const TOOLS_COLUMN_FLOOR = `calc(40px + 24px + 36px + 4 * ${tokens.spacingHorizontalXXS} + 2 * ${tokens.strokeWidthThin})`;
+
 // The approved workspace composition. Fluent owns color, type and spacing;
 // numbers below are responsive geometry and minimum interaction sizes.
 export const useCanvasStyles = makeStyles({
@@ -13,9 +18,13 @@ export const useCanvasStyles = makeStyles({
   },
   app: { display: 'flex', flexDirection: 'column', height: '100dvh', minWidth: 0 },
   titlebar: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap',
-    gap: tokens.spacingHorizontalS, padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
-    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, flexShrink: 0,
+    paddingInlineEnd: tokens.spacingHorizontalM,
+    borderInlineEnd: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  workspaceLabel: {
+    color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200,
+    '@media (max-width: 960px)': { display: 'none' },
   },
   title: { margin: 0, fontSize: tokens.fontSizeBase500, lineHeight: tokens.lineHeightBase500, fontWeight: tokens.fontWeightSemibold, overflowWrap: 'anywhere' },
   subheading: { margin: 0, fontSize: tokens.fontSizeBase400, lineHeight: tokens.lineHeightBase400, fontWeight: tokens.fontWeightSemibold },
@@ -27,13 +36,67 @@ export const useCanvasStyles = makeStyles({
   tight: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, minWidth: 0 },
   grow: { flexGrow: 1, minWidth: 0 },
   commands: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0,
-    gap: tokens.spacingHorizontalXS, flexWrap: 'wrap',
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+    position: 'relative', display: 'flex', alignItems: 'center', flexShrink: 0, minWidth: 0,
+    gap: tokens.spacingHorizontalM,
+    padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalL}`,
     backgroundColor: tokens.colorNeutralBackground1,
     borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '@media (max-width: 719px)': { gap: tokens.spacingHorizontalS, paddingInline: tokens.spacingHorizontalS },
   },
-  viewTabs: { flexShrink: 0, minWidth: 0, maxWidth: '100%', flexWrap: 'wrap' },
+  refresh: { marginInlineStart: 'auto', flexShrink: 0, padding: 0 },
+  refreshButton: { '@media (max-width: 719px)': { minWidth: '32px', width: '32px', minHeight: '32px', height: '32px', padding: 0 } },
+  refreshLabel: {
+    '@media (max-width: 719px)': {
+      position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap',
+    },
+  },
+  shellBody: {
+    display: 'flex', flex: 1, minWidth: 0, minHeight: 0,
+    '@media (max-width: 719px)': { flexDirection: 'column' },
+  },
+  rail: {
+    boxSizing: 'border-box', position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center',
+    width: '48px', flexShrink: 0, gap: tokens.spacingVerticalL, paddingBlock: tokens.spacingVerticalS,
+    backgroundColor: tokens.colorNeutralBackground2,
+    borderInlineEnd: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '@media (max-width: 719px)': {
+      flexDirection: 'row', width: '100%', minHeight: '48px', gap: tokens.spacingHorizontalS,
+      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`, borderInlineEndWidth: 0,
+      borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    },
+  },
+  railExpanded: {
+    width: '208px', alignItems: 'stretch', paddingInline: tokens.spacingHorizontalS,
+    '& > button': { alignSelf: 'flex-start' },
+  },
+  railToggle: { flexShrink: 0, width: '32px', minWidth: '32px', height: '32px', padding: 0 },
+  railContents: { display: 'flex', flexDirection: 'inherit', minWidth: 0 },
+  railList: { padding: 0, gap: tokens.spacingVerticalXS, minWidth: 0, width: '100%' },
+  railTab: {
+    boxSizing: 'border-box', width: '32px', minWidth: '32px', height: '32px', minHeight: '32px', padding: 0,
+    justifyContent: 'center', flexShrink: 0,
+  },
+  railTabExpanded: {
+    width: '100%', justifyContent: 'flex-start', paddingInline: tokens.spacingHorizontalS,
+  },
+  railLabel: {
+    fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200,
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  navLayer: { position: 'absolute', top: '100%', insetInline: 0, zIndex: 1000001 },
+  navDimmer: { position: 'fixed', inset: 0, backgroundColor: tokens.colorBackgroundOverlay },
+  navOverlay: {
+    position: 'relative', boxSizing: 'border-box', width: '260px', maxWidth: 'calc(100vw - 32px)',
+    maxHeight: 'min(60dvh, calc(100dvh - 120px))', overflowY: 'auto', overscrollBehavior: 'contain',
+    marginInlineStart: tokens.spacingHorizontalL, marginTop: tokens.spacingVerticalXS,
+    padding: tokens.spacingHorizontalS, backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium, boxShadow: tokens.shadow16,
+  },
+  navHeading: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    gap: tokens.spacingHorizontalS, paddingBottom: tokens.spacingVerticalS,
+  },
   product: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0, containerType: 'inline-size' },
   detail: {
     flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', scrollbarGutter: 'stable',
@@ -41,28 +104,69 @@ export const useCanvasStyles = makeStyles({
     '@container (max-width: 700px)': { padding: tokens.spacingHorizontalL },
   },
   measure: { maxWidth: '76ch', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL },
-  overview: { width: '100%', maxWidth: '1120px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXL },
-  focal: {
-    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
-    padding: tokens.spacingHorizontalL, backgroundColor: tokens.colorNeutralBackground1,
-    borderRadius: tokens.borderRadiusMedium, boxShadow: tokens.shadow4,
-    borderLeft: `${tokens.strokeWidthThicker} solid ${tokens.colorBrandStroke1}`,
+  overviewPanel: { padding: 0, scrollbarGutter: 'auto', '@container (max-width: 700px)': { padding: 0 } },
+  overview: { width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' },
+  overviewHeader: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS, padding: tokens.spacingHorizontalL, flexShrink: 0 },
+  overviewIntro: { margin: 0, maxWidth: '85ch', color: tokens.colorNeutralForeground2, overflowWrap: 'anywhere' },
+  selector: {
+    position: 'relative', flex: '1 1 440px', minWidth: 0, maxWidth: '620px',
+    '@media (max-width: 719px)': { position: 'static' },
   },
-  focalProgress: { maxWidth: '360px', display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, minWidth: 0 },
-  focalStep: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS,
-    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, paddingTop: tokens.spacingVerticalM },
+  workingOn: {
+    display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, minWidth: 0,
+    boxSizing: 'border-box', minHeight: '32px', paddingInline: tokens.spacingHorizontalS,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderLeft: `${tokens.strokeWidthThicker} solid ${tokens.colorBrandStroke1}`,
+    borderRadius: tokens.borderRadiusMedium, backgroundColor: tokens.colorNeutralBackground1,
+  },
+  workingIdentity: { display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 },
+  workingCaption: { color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase100 },
+  workingNumber: { lineHeight: tokens.lineHeightBase200 },
+  workingTitle: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, lineHeight: tokens.lineHeightBase200 },
   workControls: {
-    display: 'flex', flexWrap: 'wrap', alignItems: 'end', gap: tokens.spacingHorizontalM,
-    '& > *:first-child': { flex: '2 1 260px', minWidth: 0 },
-    '& > *:nth-child(2)': { flex: '1 1 180px', minWidth: 0, maxWidth: '240px' },
+    display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, minWidth: 0,
+  },
+  searchField: { flex: 1, minWidth: 0 },
+  scopeField: {
+    display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalXS, minWidth: 0, flexShrink: 0,
+    '& label': { padding: 0, margin: 0, fontSize: tokens.fontSizeBase200 },
+  },
+  scopeSelect: { minWidth: 0, width: '88px' },
+  finderPopup: {
+    position: 'absolute', top: `calc(100% + ${tokens.spacingVerticalS})`, insetInlineStart: 0, zIndex: 20,
+    display: 'flex', width: 'min(620px, calc(100vw - 200px))', maxHeight: 'min(560px, 60dvh)',
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium, boxShadow: tokens.shadow16,
+    '@media (max-width: 719px)': {
+      insetInline: tokens.spacingHorizontalL, width: 'auto', top: '100%',
+    },
+  },
+  workResults: { display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 },
+  workSummary: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, flexShrink: 0,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
   },
   workScroll: {
-    maxHeight: 'min(560px, 60dvh)', overflowY: 'auto', minWidth: 0,
-    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusMedium,
+    flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', minHeight: 0, minWidth: 0,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+  },
+  workName: { display: 'flex', alignItems: 'baseline', gap: tokens.spacingHorizontalM, minWidth: 0, overflowWrap: 'anywhere' },
+  workNumber: {
+    flexShrink: 0, minWidth: '3ch', fontFamily: tokens.fontFamilyMonospace,
+    fontWeight: tokens.fontWeightSemibold, color: tokens.colorBrandForeground1,
   },
   workHeader: { position: 'sticky', top: 0, zIndex: 1, backgroundColor: tokens.colorNeutralBackground2 },
   workCell: { paddingTop: tokens.spacingVerticalS, paddingBottom: tokens.spacingVerticalS, overflowWrap: 'anywhere' },
   workRow: { cursor: 'pointer' },
+  workSelected: {
+    backgroundColor: tokens.colorNeutralBackground1Selected,
+    boxShadow: `inset 3px 0 ${tokens.colorBrandStroke1}`,
+    '&:hover': { backgroundColor: tokens.colorNeutralBackground1Selected },
+    '& [data-work-number]': { color: tokens.colorBrandForeground2 },
+  },
   workItem: {
     minHeight: '48px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalM,
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
@@ -83,13 +187,135 @@ export const useCanvasStyles = makeStyles({
     borderRadius: tokens.borderRadiusMedium, fontSize: tokens.fontSizeBase300,
     lineHeight: tokens.lineHeightBase400, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere',
   },
+  contextView: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL, minWidth: 0 },
+  contextGrid: {
+    display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: tokens.spacingHorizontalXXL,
+    alignItems: 'start', minWidth: 0,
+    '@media (max-width: 1079px)': { gridTemplateColumns: 'minmax(0, 1fr)' },
+  },
+  contextMain: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXL, minWidth: 0 },
+  objectHeader: {
+    display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalL, minWidth: 0,
+    '& > div': { minWidth: 0 },
+  },
+  objectTitle: {
+    display: 'flex', alignItems: 'baseline', gap: tokens.spacingHorizontalM, margin: 0,
+    fontSize: tokens.fontSizeHero700, lineHeight: tokens.lineHeightHero700, fontWeight: tokens.fontWeightSemibold,
+    overflowWrap: 'anywhere', minWidth: 0,
+    '& > span:last-child': { minWidth: 0 },
+    '@media (max-width: 719px)': { fontSize: tokens.fontSizeBase600, lineHeight: tokens.lineHeightBase600, gap: tokens.spacingHorizontalS },
+  },
+  nextRegion: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
+    padding: tokens.spacingHorizontalL, borderRadius: tokens.borderRadiusMedium,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    borderLeft: `${tokens.strokeWidthThicker} solid ${tokens.colorBrandStroke1}`,
+    backgroundColor: tokens.colorNeutralBackground2,
+    '& > p, & > div': { maxWidth: '85ch' },
+  },
+  contextSection: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
+    '& > p': { maxWidth: '85ch' },
+  },
+  contextDock: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL, minWidth: 0,
+    paddingInlineStart: tokens.spacingHorizontalL,
+    borderInlineStart: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    '@media (max-width: 1079px)': {
+      paddingInlineStart: 0, borderInlineStartWidth: 0,
+      borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, paddingTop: tokens.spacingVerticalL,
+    },
+  },
+  propertySection: {
+    minWidth: 0,
+    '& > summary': {
+      cursor: 'pointer', minHeight: '32px', paddingBlock: tokens.spacingVerticalXS,
+      fontWeight: tokens.fontWeightSemibold, overflowWrap: 'anywhere',
+    },
+    '& > summary:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+    '& > summary + *': { marginTop: tokens.spacingVerticalS },
+  },
+  taskFilters: { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS },
+  taskCount: { fontVariantNumeric: 'tabular-nums', marginInlineStart: tokens.spacingHorizontalXS },
+  taskPhase: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS, minWidth: 0 },
+  taskLabel: {
+    margin: 0, fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300,
+    fontWeight: tokens.fontWeightSemibold, overflowWrap: 'anywhere',
+  },
+  taskRows: { listStyleType: 'none', margin: 0, padding: 0, minWidth: 0 },
+  taskRow: {
+    display: 'grid', gridTemplateColumns: '20px minmax(0, 1fr)', alignItems: 'start',
+    gap: tokens.spacingHorizontalS, width: '100%', minWidth: 0, minHeight: '48px', textAlign: 'start',
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`, fontWeight: tokens.fontWeightRegular,
+    color: tokens.colorNeutralForeground1, backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid transparent`,
+    borderBottomColor: tokens.colorNeutralStroke2, borderRadius: tokens.borderRadiusNone,
+    '&:hover': { backgroundColor: tokens.colorNeutralBackground1Hover },
+  },
+  taskMark: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '20px', height: '20px' },
+  taskTitle: { whiteSpace: 'normal', overflowWrap: 'anywhere', fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300 },
+  taskDoing: {
+    boxShadow: `inset 3px 0 ${tokens.colorBrandStroke1}`,
+    '& > span:first-child': { color: tokens.colorBrandForeground1 },
+  },
+  taskBlocked: {
+    boxShadow: `inset 3px 0 ${tokens.colorPaletteRedBorder2}`,
+    '& > span:first-child': { color: tokens.colorPaletteRedForeground1 },
+  },
+  taskInspected: {
+    backgroundColor: tokens.colorNeutralBackground2,
+    borderColor: tokens.colorNeutralStrokeAccessible, borderRadius: tokens.borderRadiusMedium,
+    '&:hover': { backgroundColor: tokens.colorNeutralBackground2 },
+  },
+  taskChip: {
+    fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200,
+    border: `${tokens.strokeWidthThin} dashed ${tokens.colorNeutralStrokeAccessible}`,
+    borderRadius: tokens.borderRadiusSmall, paddingInline: tokens.spacingHorizontalXS,
+  },
+  taskEmpty: {
+    margin: 0, padding: tokens.spacingHorizontalM,
+    border: `${tokens.strokeWidthThin} dashed ${tokens.colorNeutralStrokeAccessible}`, borderRadius: tokens.borderRadiusMedium,
+  },
+  taskDetail: {
+    display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, minWidth: 0,
+    padding: tokens.spacingHorizontalM, marginBlock: tokens.spacingVerticalXS,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAccessible}`, borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+  },
+  taskDetailDock: {
+    marginBlock: 0,
+    '& [data-task-instruction]': { maxHeight: '38dvh', overflowY: 'auto', overscrollBehavior: 'contain' },
+  },
+  taskSource: {
+    margin: 0, padding: tokens.spacingHorizontalS, fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300,
+    color: tokens.colorNeutralForeground1, backgroundColor: tokens.colorNeutralBackground1,
+    border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusMedium,
+    whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', tabSize: 2,
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+  },
+  taskDependencies: {
+    listStyleType: 'none', margin: 0, padding: 0,
+    '& > li': { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalS },
+  },
   empty: { padding: tokens.spacingHorizontalL, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM },
   footer: {
     display: 'flex', gap: tokens.spacingHorizontalM, flexWrap: 'wrap', flexShrink: 0,
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
     borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
     color: tokens.colorNeutralForeground2, fontSize: tokens.fontSizeBase200, lineHeight: tokens.lineHeightBase200,
   },
+  // Like an editor's status strip, focused Review keeps one line available by
+  // keyboard/scroll instead of letting wrapped status text consume its stage.
+  focusedFooter: {
+    flexWrap: 'nowrap', whiteSpace: 'nowrap', overflowX: 'auto', overflowY: 'hidden',
+    boxSizing: 'border-box', height: '25px', minHeight: '25px',
+    '& > span': { flexShrink: 0 },
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '-2px' },
+  },
+  readTime: { marginInlineStart: 'auto' },
   back: { alignSelf: 'flex-start', flexShrink: 0 },
   control: { minWidth: 0, width: '100%' },
   actions: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalS, paddingTop: tokens.spacingVerticalS },
@@ -111,10 +337,16 @@ export const useCanvasStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground1,
     borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
   },
+  // Keep complete request identity readable without letting changed browsing
+  // labels or wrapping resize the already pinned review frame.
+  reviewIdentity: {
+    minWidth: 0, flexGrow: 1, height: `calc(${tokens.lineHeightBase200} + ${tokens.lineHeightBase300})`,
+    lineHeight: tokens.lineHeightBase200, overflowY: 'auto', overscrollBehavior: 'contain',
+    '&:focus-visible': { outline: `2px solid ${tokens.colorStrokeFocus2}`, outlineOffset: '-2px' },
+  },
   reviewPrompt: {
-    margin: 0, minWidth: 0, flexGrow: 1,
+    margin: 0, minWidth: 0, overflowWrap: 'anywhere',
     fontSize: tokens.fontSizeBase300, lineHeight: tokens.lineHeightBase300, fontWeight: tokens.fontWeightSemibold,
-    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
   reviewBarItem: { flexShrink: 0 },
   // Exact path and revision stay one click away in an overlay, so revealing
@@ -150,9 +382,14 @@ export const useCanvasStyles = makeStyles({
     border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium, boxShadow: tokens.shadow16,
   },
+  // A short stage would otherwise spend its entire budget on the grip and the
+  // orientation switch, leaving the scroller under one tool slot, where no
+  // scroll offset can wholly reveal a tool. Keep the 8px float inset while it
+  // fits, then trade the bottom inset for that slot, and never the stage.
   drawingToolbarVertical: {
     insetInlineStart: tokens.spacingHorizontalS, top: tokens.spacingVerticalS,
-    flexDirection: 'column', alignItems: 'flex-start', width: '60px', maxHeight: 'calc(100% - 16px)',
+    flexDirection: 'column', alignItems: 'flex-start', width: '60px',
+    maxHeight: `clamp(calc(100% - 16px), ${TOOLS_COLUMN_FLOOR}, calc(100% - 8px))`,
   },
   drawingToolbarHorizontal: {
     insetInlineEnd: tokens.spacingHorizontalS, bottom: tokens.spacingVerticalS,

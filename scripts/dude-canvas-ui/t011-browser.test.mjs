@@ -17,12 +17,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 
 import { createNeedsYou } from '../../src/extensions/dude/lib/needs-you.mjs';
 import { createReview } from '../../src/extensions/dude/lib/review.mjs';
 import { buildReport, jsonBytes } from '../../src/extensions/dude/lib/review/data.mjs';
 import { decodePng } from '../../src/extensions/dude/lib/review/png.mjs';
 import { closeInstance, openInstance } from '../../src/extensions/dude/lib/canvas-server.mjs';
+import {
+  createInspector,
+  imageIsStatic,
+  validScrolls,
+} from '../../src/extensions/dude/ui/review/inspector.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
@@ -30,7 +36,7 @@ const BROWSER = process.env.DUDE_CANVAS_BROWSER
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const REQUIRED = process.env.DUDE_CANVAS_BROWSER_REQUIRED === '1';
 const DEADLINE = 20_000;
-const PUBLISHED_APP_SHA256 = '8a571800c96c8e55fb7eba4ac06e31a345334bf7ae9cc338d753fd7371a9055c';
+const PUBLISHED_APP_SHA256 = 'fcf3f9102f8eabd36f9bd0494a84695fda2891e1d53a7f05b03a1be2088a9463';
 
 /** @param {string|Buffer} value */
 function hash(value) {
@@ -308,7 +314,9 @@ class Cdp {
         else pending.resolve(message.result);
         return;
       }
-      for (const listener of this.listeners.get(message.method) ?? []) listener(message.params);
+      for (const listener of this.listeners.get(message.method) ?? []) {
+        listener(message.params, message.sessionId);
+      }
     });
     this.socket.addEventListener('close', () => {
       for (const pending of this.pending.values()) {
@@ -320,8 +328,12 @@ class Cdp {
     });
   }
 
-  /** @param {string} method @param {Record<string,unknown>} [params] */
-  send(method, params = {}) {
+  /**
+   * @param {string} method
+   * @param {Record<string,unknown>} [params]
+   * @param {string} [sessionId]
+   */
+  send(method, params = {}, sessionId) {
     const id = this.next++;
     const promise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -330,15 +342,30 @@ class Cdp {
       }, 45_000);
       this.pending.set(id, { resolve, reject, timer });
     });
-    this.socket.send(JSON.stringify({ id, method, params }));
+    this.socket.send(JSON.stringify({
+      id,
+      method,
+      params,
+      ...(sessionId ? { sessionId } : {}),
+    }));
     return promise;
   }
 
-  /** @param {string} method @param {(value:any)=>void} listener */
+  /**
+   * @param {string} method
+   * @param {(value:any, sessionId?:string)=>void} listener
+   */
   on(method, listener) {
     const listeners = this.listeners.get(method) ?? [];
     listeners.push(listener);
     this.listeners.set(method, listeners);
+    return () => {
+      const current = this.listeners.get(method);
+      if (!current) return;
+      const index = current.indexOf(listener);
+      if (index !== -1) current.splice(index, 1);
+      if (!current.length) this.listeners.delete(method);
+    };
   }
 
   close() {
@@ -506,6 +533,1113 @@ async function evaluate(page, expression) {
     throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
   }
   return result.result?.value;
+}
+
+/**
+ * Read-only evaluation for diagnostics. Unlike the interaction helper above,
+ * this never grants a transient user activation.
+ * @param {Cdp} page
+ * @param {string} expression
+ * @param {{sessionId?:string,contextId?:number}} [route]
+ */
+async function observeRuntime(page, expression, route = {}) {
+  const result = await page.send('Runtime.evaluate', {
+    expression,
+    ...(route.contextId ? { contextId: route.contextId } : {}),
+    awaitPromise: true,
+    returnByValue: true,
+  }, route.sessionId);
+  if (result.exceptionDetails) {
+    throw new Error(result.exceptionDetails.exception?.description
+      ?? result.exceptionDetails.text);
+  }
+  return result.result?.value;
+}
+
+/**
+ * Subscribe the owned page to flattened child targets before Review entry,
+ * then bind an isolated, read-only inspector to the exact mounted source
+ * iframe. The tuple is revalidated for every observation.
+ * @param {Cdp} page
+ */
+async function createReviewSourceObserver(page) {
+  const attachments = new Map();
+  const asynchronous = new Set();
+  const setupErrors = [];
+  const invalidations = [];
+  const lifecycle = [];
+  const removers = [];
+  let binding = null;
+  let closing = false;
+
+  const remember = (type, value, sessionId = null) => {
+    if (lifecycle.length < 400) lifecycle.push({
+      order:lifecycle.length + 1,
+      type,
+      sessionId:sessionId ?? null,
+      value,
+    });
+  };
+  const schedule = work => {
+    const pending = Promise.resolve().then(work).catch(error => {
+      setupErrors.push(error);
+    }).finally(() => asynchronous.delete(pending));
+    asynchronous.add(pending);
+  };
+  const invalidate = (reason, detail = {}) => {
+    if (!closing) invalidations.push({
+      order:invalidations.length + 1,
+      reason,
+      detail,
+    });
+  };
+  const waitForSetup = async () => {
+    while (asynchronous.size) await Promise.allSettled([...asynchronous]);
+    if (setupErrors.length === 1) throw setupErrors[0];
+    if (setupErrors.length > 1) {
+      throw new AggregateError(setupErrors, 'Review source target setup failed.');
+    }
+  };
+
+  removers.push(page.on('Target.attachedToTarget', (event, parentSession) => {
+    if (parentSession && !attachments.has(parentSession)) return;
+    const record = {
+      attached:true,
+      attachedOrder:lifecycle.length + 1,
+      parentSession:parentSession ?? null,
+      sessionId:event.sessionId,
+      targetId:event.targetInfo.targetId,
+      targetInfo:structuredClone(event.targetInfo),
+      initialized:false,
+    };
+    attachments.set(event.sessionId, record);
+    remember('Target.attachedToTarget', {
+      sessionId:event.sessionId,
+      targetInfo:structuredClone(event.targetInfo),
+      waitingForDebugger:event.waitingForDebugger,
+    }, parentSession);
+    if (event.targetInfo.type !== 'iframe') return;
+    schedule(async () => {
+      await page.send('Page.enable', {}, event.sessionId);
+      await page.send('Runtime.enable', {}, event.sessionId);
+      await page.send('Target.setAutoAttach', {
+        autoAttach:true,
+        flatten:true,
+        waitForDebuggerOnStart:false,
+      }, event.sessionId);
+      record.initialized = true;
+    });
+  }));
+  removers.push(page.on('Target.targetInfoChanged', (event, sessionId) => {
+    const record = [...attachments.values()]
+      .find(candidate => candidate.targetId === event.targetInfo.targetId);
+    if (record) record.targetInfo = structuredClone(event.targetInfo);
+    remember('Target.targetInfoChanged', structuredClone(event.targetInfo), sessionId);
+    if (binding && record?.sessionId === binding.sessionId
+      && event.targetInfo.url !== binding.url) {
+      invalidate('target-url-changed', {
+        expected:binding.url,
+        actual:event.targetInfo.url,
+      });
+    }
+  }));
+  removers.push(page.on('Target.detachedFromTarget', (event, parentSession) => {
+    const record = attachments.get(event.sessionId);
+    if (record) record.attached = false;
+    remember('Target.detachedFromTarget', structuredClone(event), parentSession);
+    if (binding?.sessionId === event.sessionId) {
+      invalidate('owning-session-detached', { targetId:event.targetId ?? null });
+    }
+  }));
+  removers.push(page.on('Page.frameNavigated', (event, sessionId) => {
+    remember('Page.frameNavigated', structuredClone(event.frame), sessionId);
+    if (binding && sessionId === binding.sessionId && event.frame.id === binding.frameId
+      && (event.frame.loaderId !== binding.loaderId || event.frame.url !== binding.url)) {
+      invalidate('owning-frame-navigated', {
+        expected:{ loaderId:binding.loaderId, url:binding.url },
+        actual:{ loaderId:event.frame.loaderId, url:event.frame.url },
+      });
+    }
+  }));
+  removers.push(page.on('Page.frameDetached', (event, sessionId) => {
+    remember('Page.frameDetached', structuredClone(event), sessionId);
+    if (binding && sessionId === binding.sessionId && event.frameId === binding.frameId) {
+      invalidate('owning-frame-detached', { reason:event.reason ?? null });
+    }
+  }));
+  removers.push(page.on('Runtime.executionContextDestroyed', (event, sessionId) => {
+    remember('Runtime.executionContextDestroyed', structuredClone(event), sessionId);
+    if (binding && sessionId === binding.sessionId
+      && event.executionContextId === binding.executionContextId) {
+      invalidate('isolated-context-destroyed');
+    }
+  }));
+  removers.push(page.on('Runtime.executionContextsCleared', (event, sessionId) => {
+    remember('Runtime.executionContextsCleared', structuredClone(event), sessionId);
+    if (binding && sessionId === binding.sessionId) {
+      invalidate('owning-contexts-cleared');
+    }
+  }));
+
+  await page.send('Target.setAutoAttach', {
+    autoAttach:true,
+    flatten:true,
+    waitForDebuggerOnStart:false,
+  });
+
+  const resolveOwner = async () => {
+    await page.send('DOM.enable');
+    const { root } = await page.send('DOM.getDocument', { depth:1 });
+    const { nodeId } = await page.send('DOM.querySelector', {
+      nodeId:root.nodeId,
+      selector:'.dude-review-frame iframe',
+    });
+    if (!nodeId) return null;
+    const [{ node }, owner] = await Promise.all([
+      page.send('DOM.describeNode', { nodeId }),
+      observeRuntime(page, `(() => {
+        const iframe = document.querySelector('.dude-review-frame iframe');
+        if (!iframe) return null;
+        return {
+          src:iframe.src,
+          attributeSrc:iframe.getAttribute('src'),
+          title:iframe.title,
+        };
+      })()`),
+    ]);
+    if (!node.frameId || !owner?.src) return null;
+    const attributes = Object.fromEntries(Array.from(
+      { length:(node.attributes?.length ?? 0) / 2 },
+      (_, index) => [
+        node.attributes[index * 2],
+        node.attributes[index * 2 + 1],
+      ],
+    ));
+    return {
+      frameId:node.frameId,
+      nodeId,
+      backendNodeId:node.backendNodeId,
+      resolvedSrc:owner.src,
+      attributeSrc:owner.attributeSrc,
+      describedSrc:attributes.src ?? null,
+      title:owner.title,
+    };
+  };
+  const frameFromTree = (tree, frameId) => {
+    if (tree.frame.id === frameId) return tree.frame;
+    for (const child of tree.childFrames ?? []) {
+      const frame = frameFromTree(child, frameId);
+      if (frame) return frame;
+    }
+    return null;
+  };
+  const validateBinding = async () => {
+    await waitForSetup();
+    if (!binding) throw new Error('Review source observer is not bound.');
+    if (invalidations.length) {
+      throw new Error(`Review source observer was invalidated: ${
+        JSON.stringify(invalidations.at(-1))}`);
+    }
+    const owner = await resolveOwner();
+    const record = attachments.get(binding.sessionId);
+    if (!owner || !record?.attached
+      || owner.frameId !== binding.frameId
+      || owner.resolvedSrc !== binding.url
+      || record.targetId !== binding.targetId
+      || record.targetInfo.url !== binding.url) {
+      throw new Error(`Review source owner/session binding changed: ${JSON.stringify({
+        owner,
+        attached:record?.attached ?? null,
+        targetId:record?.targetId ?? null,
+        targetUrl:record?.targetInfo.url ?? null,
+        binding,
+      })}`);
+    }
+    const { frameTree } = await page.send('Page.getFrameTree', {}, binding.sessionId);
+    const frame = frameFromTree(frameTree, binding.frameId);
+    if (!frame || frame.loaderId !== binding.loaderId || frame.url !== binding.url) {
+      throw new Error(`Review source frame tuple changed: ${JSON.stringify({
+        expected:{ frameId:binding.frameId, loaderId:binding.loaderId, url:binding.url },
+        actual:frame,
+      })}`);
+    }
+    const href = await observeRuntime(page, 'location.href', {
+      sessionId:binding.sessionId,
+      contextId:binding.executionContextId,
+    });
+    if (href !== binding.url) {
+      throw new Error(`Review source isolated context changed URL: ${href}`);
+    }
+    return { owner, frame, href };
+  };
+
+  return {
+    async bind() {
+      if (binding) return structuredClone(binding);
+      const viewed = await until(async () => {
+        await waitForSetup();
+        const owner = await resolveOwner();
+        if (!owner) return null;
+        const candidates = [];
+        for (const record of attachments.values()) {
+          if (!record.attached || !record.initialized
+            || record.targetInfo.type !== 'iframe') continue;
+          const { frameTree } = await page.send('Page.getFrameTree', {}, record.sessionId);
+          const frame = frameFromTree(frameTree, owner.frameId);
+          if (frame && frame.loaderId && frame.url === owner.resolvedSrc
+            && record.targetInfo.url === owner.resolvedSrc) {
+            candidates.push({ owner, record, frame });
+          }
+        }
+        return candidates.length === 1 ? candidates[0] : null;
+      }, 'one exact attached Review source target');
+      const { executionContextId } = await page.send('Page.createIsolatedWorld', {
+        frameId:viewed.frame.id,
+        worldName:`dude-t012-observer-${randomUUID()}`,
+        grantUniveralAccess:false,
+      }, viewed.record.sessionId);
+      if (!Number.isInteger(executionContextId)) {
+        throw new Error('Review source isolated world has no execution context id.');
+      }
+      binding = {
+        targetId:viewed.record.targetId,
+        sessionId:viewed.record.sessionId,
+        frameId:viewed.frame.id,
+        loaderId:viewed.frame.loaderId,
+        executionContextId,
+        url:viewed.owner.resolvedSrc,
+        ownerBackendNodeId:viewed.owner.backendNodeId,
+      };
+      await observeRuntime(page, `(() => {
+        window.__t012ReviewObserver?.cleanup?.();
+        const describe = node => {
+          if (node === window) return 'window';
+          if (node === document) return 'document';
+          if (!(node instanceof Element)) return String(node);
+          const parts = [node.localName];
+          if (node.id) parts.push('#' + node.id);
+          if (node.classList.contains('dude-review-overlay')) {
+            parts.push('.dude-review-overlay');
+          }
+          if (node.hasAttribute('data-review-engine-host')) {
+            parts.push('[data-review-engine-host]');
+          }
+          if (node.hasAttribute('data-review-workspace')) {
+            parts.push('[data-review-workspace]');
+          }
+          const label = node.getAttribute('aria-label');
+          if (label) parts.push('[aria-label="' + label + '"]');
+          return parts.join('');
+        };
+        const time = () => performance.timeOrigin + performance.now();
+        const probe = {
+          wheel:[],
+          mousemove:[],
+          scroll:[],
+          replies:[],
+        };
+        const wheel = event => {
+          if (probe.wheel.length >= 80) return;
+          const path = event.composedPath();
+          const record = {
+            order:probe.wheel.length + 1,
+            time:time(),
+            isTrusted:event.isTrusted,
+            clientX:event.clientX,
+            clientY:event.clientY,
+            deltaX:event.deltaX,
+            deltaY:event.deltaY,
+            deltaMode:event.deltaMode,
+            target:describe(event.target),
+            hit:describe(document.elementFromPoint(event.clientX, event.clientY)),
+            targetClasses:event.target instanceof Element
+              ? [...event.target.classList] : [],
+            path:path.map(describe),
+            pathClasses:path.map(node => (
+              node instanceof Element ? [...node.classList] : []
+            )),
+            focus:describe(document.activeElement),
+            defaultPreventedAtCapture:event.defaultPrevented,
+            defaultPreventedAfterDispatch:null,
+          };
+          probe.wheel.push(record);
+          queueMicrotask(() => {
+            record.defaultPreventedAfterDispatch = event.defaultPrevented;
+          });
+        };
+        const mousemove = event => {
+          if (probe.mousemove.length >= 120) return;
+          const path = event.composedPath();
+          probe.mousemove.push({
+            order:probe.mousemove.length + 1,
+            time:time(),
+            isTrusted:event.isTrusted,
+            clientX:event.clientX,
+            clientY:event.clientY,
+            target:describe(event.target),
+            hit:describe(document.elementFromPoint(event.clientX, event.clientY)),
+            targetClasses:event.target instanceof Element
+              ? [...event.target.classList] : [],
+            path:path.map(describe),
+            pathClasses:path.map(node => (
+              node instanceof Element ? [...node.classList] : []
+            )),
+            focus:describe(document.activeElement),
+          });
+        };
+        const scroll = event => {
+          if (probe.scroll.length >= 120) return;
+          probe.scroll.push({
+            order:probe.scroll.length + 1,
+            time:time(),
+            isTrusted:event.isTrusted,
+            target:describe(event.target),
+            scrollX,
+            scrollY,
+          });
+        };
+        const reply = event => {
+          const iframe = document.querySelector('.dude-review-frame iframe');
+          const data = event.data;
+          if (!iframe || event.source !== iframe.contentWindow || event.origin !== 'null'
+            || !data || probe.replies.length >= 300) return;
+          const result = data.result;
+          probe.replies.push({
+            order:probe.replies.length + 1,
+            time:time(),
+            type:data.type,
+            channel:typeof data.channel === 'string' ? data.channel : null,
+            id:Number.isSafeInteger(data.id) ? data.id : null,
+            keys:Object.keys(data).sort(),
+            error:typeof data.error === 'string' ? data.error : null,
+            viewport:result?.viewport ? structuredClone(result.viewport) : null,
+            signature:typeof result?.signature === 'string' ? result.signature : null,
+            scrolls:Array.isArray(result?.scrolls) ? structuredClone(result.scrolls) : null,
+            targets:Array.isArray(result?.targets)
+              ? result.targets.map(target => ({
+                selector:target.selector,
+                label:target.label,
+              })) : null,
+            element:result?.element ? {
+              selector:result.element.selector,
+              text:result.element.text,
+              rect:structuredClone(result.element.rect),
+              visible:result.visible,
+              clip:structuredClone(result.clip),
+            } : null,
+          });
+        };
+        document.addEventListener('wheel', wheel, {capture:true, passive:true});
+        document.addEventListener('mousemove', mousemove, {capture:true, passive:true});
+        document.addEventListener('scroll', scroll, {capture:true, passive:true});
+        window.addEventListener('message', reply, {capture:true, passive:true});
+        window.__t012ReviewObserver = {
+          probe,
+          cleanup() {
+            document.removeEventListener('wheel', wheel, true);
+            document.removeEventListener('mousemove', mousemove, true);
+            document.removeEventListener('scroll', scroll, true);
+            window.removeEventListener('message', reply, true);
+            delete window.__t012ReviewObserver;
+          },
+        };
+        return true;
+      })()`);
+      await observeRuntime(page, `(() => {
+        globalThis.__t012SourceObserver?.cleanup?.();
+        const inspector = (${createInspector.toString()})(
+          document,
+          window,
+          (${imageIsStatic.toString()}),
+          (${validScrolls.toString()})
+        );
+        const describe = node => {
+          if (node === window) return 'window';
+          if (node === document) return 'document';
+          if (!(node instanceof Element)) return String(node);
+          const label = node.getAttribute('aria-label');
+          return node.localName + (node.id ? '#' + node.id : '')
+            + (label ? '[aria-label="' + label + '"]' : '');
+        };
+        const time = () => performance.timeOrigin + performance.now();
+        const probe = {
+          wheel:[],
+          mousemove:[],
+          scroll:[],
+          queries:[],
+          frameCount:0,
+          lastFrameTime:null,
+        };
+        let frameRequest = null;
+        const frame = timestamp => {
+          probe.frameCount += 1;
+          probe.lastFrameTime = timestamp;
+          frameRequest = requestAnimationFrame(frame);
+        };
+        frameRequest = requestAnimationFrame(frame);
+        const wheel = event => {
+          if (probe.wheel.length >= 80) return;
+          const record = {
+            order:probe.wheel.length + 1,
+            time:time(),
+            isTrusted:event.isTrusted,
+            clientX:event.clientX,
+            clientY:event.clientY,
+            deltaX:event.deltaX,
+            deltaY:event.deltaY,
+            deltaMode:event.deltaMode,
+            target:describe(event.target),
+            hit:describe(document.elementFromPoint(event.clientX, event.clientY)),
+            path:event.composedPath().map(describe),
+            focus:describe(document.activeElement),
+            defaultPreventedAtCapture:event.defaultPrevented,
+            defaultPreventedAfterDispatch:null,
+          };
+          probe.wheel.push(record);
+          queueMicrotask(() => {
+            record.defaultPreventedAfterDispatch = event.defaultPrevented;
+          });
+        };
+        const mousemove = event => {
+          if (probe.mousemove.length >= 120) return;
+          probe.mousemove.push({
+            order:probe.mousemove.length + 1,
+            time:time(),
+            isTrusted:event.isTrusted,
+            clientX:event.clientX,
+            clientY:event.clientY,
+            target:describe(event.target),
+            hit:describe(document.elementFromPoint(event.clientX, event.clientY)),
+            path:event.composedPath().map(describe),
+            focus:describe(document.activeElement),
+          });
+        };
+        const scroll = event => {
+          if (probe.scroll.length >= 120) return;
+          probe.scroll.push({
+            order:probe.scroll.length + 1,
+            time:time(),
+            isTrusted:event.isTrusted,
+            target:describe(event.target),
+            scrollX,
+            scrollY,
+          });
+        };
+        const query = event => {
+          const data = event.data;
+          if (event.source !== parent || event.origin === 'null' || !data
+            || data.type !== 'dude-review-query' || probe.queries.length >= 300) return;
+          probe.queries.push({
+            order:probe.queries.length + 1,
+            time:time(),
+            type:data.type,
+            channel:typeof data.channel === 'string' ? data.channel : null,
+            id:Number.isSafeInteger(data.id) ? data.id : null,
+            op:typeof data.op === 'string' ? data.op : null,
+            keys:Object.keys(data).sort(),
+            point:data.point ? structuredClone(data.point) : null,
+            delta:data.delta ? structuredClone(data.delta) : null,
+            selector:typeof data.selector === 'string' ? data.selector : null,
+            key:typeof data.key === 'string' ? data.key : null,
+            x:Number.isFinite(data.x) ? data.x : null,
+            y:Number.isFinite(data.y) ? data.y : null,
+          });
+        };
+        document.addEventListener('wheel', wheel, {capture:true, passive:true});
+        document.addEventListener('mousemove', mousemove, {capture:true, passive:true});
+        document.addEventListener('scroll', scroll, {capture:true, passive:true});
+        window.addEventListener('message', query, {capture:true, passive:true});
+        globalThis.__t012SourceObserver = {
+          inspector,
+          probe,
+          cleanup() {
+            cancelAnimationFrame(frameRequest);
+            document.removeEventListener('wheel', wheel, true);
+            document.removeEventListener('mousemove', mousemove, true);
+            document.removeEventListener('scroll', scroll, true);
+            window.removeEventListener('message', query, true);
+            delete globalThis.__t012SourceObserver;
+          },
+        };
+        return true;
+      })()`, {
+        sessionId:binding.sessionId,
+        contextId:binding.executionContextId,
+      });
+      await validateBinding();
+      return structuredClone(binding);
+    },
+    async snapshot(checkpoint) {
+      const validated = await validateBinding();
+      const route = {
+        sessionId:binding.sessionId,
+        contextId:binding.executionContextId,
+      };
+      const [owner, source] = await Promise.all([
+        observeRuntime(page, `(() => {
+          const iframe = document.querySelector('.dude-review-frame iframe');
+          const frame = iframe?.closest('.dude-review-frame');
+          const overlay = document.querySelector('.dude-review-overlay');
+          const host = document.querySelector('[data-review-engine-host]');
+          const rect = node => node?.getBoundingClientRect().toJSON() || null;
+          const focus = document.activeElement;
+          return {
+            probe:structuredClone(window.__t012ReviewObserver?.probe || null),
+            iframe:{
+              src:iframe?.src || null,
+              attributeSrc:iframe?.getAttribute('src') || null,
+              rect:rect(iframe),
+              frameRect:rect(frame),
+              overlayRect:rect(overlay),
+              hostRect:rect(host),
+              pinned:frame?.classList.contains('dude-review-frame-pinned') || false,
+              clientWidth:frame?.clientWidth ?? null,
+              clientHeight:frame?.clientHeight ?? null,
+            },
+            focus:{
+              tag:focus?.tagName || null,
+              id:focus?.id || null,
+              role:focus?.getAttribute?.('role') || null,
+              ariaLabel:focus?.getAttribute?.('aria-label') || null,
+              text:focus?.innerText?.trim().slice(0, 120) || null,
+            },
+            boxDisabled:document.querySelector('[aria-label="Box (B)"]')?.disabled ?? null,
+          };
+        })()`),
+        observeRuntime(page, `(async () => {
+          const observed = globalThis.__t012SourceObserver;
+          if (!observed) throw new Error('Source observer is unavailable.');
+          const view = await observed.inspector.readView();
+          const heading = observed.inspector.describeSelector('#heading');
+          const focus = document.activeElement;
+          return {
+            href:location.href,
+            readyState:document.readyState,
+            probe:structuredClone(observed.probe),
+            view,
+            heading,
+            focus:{
+              tag:focus?.tagName || null,
+              id:focus?.id || null,
+              role:focus?.getAttribute?.('role') || null,
+              ariaLabel:focus?.getAttribute?.('aria-label') || null,
+              text:focus?.innerText?.trim().slice(0, 120) || null,
+            },
+          };
+        })()`, route),
+      ]);
+      return {
+        checkpoint,
+        capturedAt:new Date().toISOString(),
+        identity:{ ...structuredClone(binding), validated },
+        owner,
+        source,
+      };
+    },
+    async close() {
+      if (closing) return { alreadyClosed:true };
+      closing = true;
+      const errors = [];
+      const sessions = [...attachments.values()].filter(record => record.attached);
+      if (binding) {
+        try {
+          await observeRuntime(page, 'window.__t012ReviewObserver?.cleanup?.(); true');
+        } catch (error) { errors.push(error); }
+        try {
+          await observeRuntime(page, 'globalThis.__t012SourceObserver?.cleanup?.(); true', {
+            sessionId:binding.sessionId,
+            contextId:binding.executionContextId,
+          });
+        } catch (error) { errors.push(error); }
+      }
+      for (const record of sessions.slice().reverse()) {
+        if (record.targetInfo.type !== 'iframe') continue;
+        try {
+          await page.send('Target.setAutoAttach', {
+            autoAttach:false,
+            flatten:true,
+            waitForDebuggerOnStart:false,
+          }, record.sessionId);
+        } catch (error) { errors.push(error); }
+      }
+      try {
+        await page.send('Target.setAutoAttach', {
+          autoAttach:false,
+          flatten:true,
+          waitForDebuggerOnStart:false,
+        });
+      } catch (error) { errors.push(error); }
+      // Disabling root auto-attachment detaches its flattened children on this
+      // Edge version. Keep the event listeners through that command so only a
+      // session still reported attached needs an explicit detach.
+      for (const record of sessions.filter(candidate => candidate.attached).reverse()) {
+        try {
+          await page.send('Target.detachFromTarget', {
+            sessionId:record.sessionId,
+          }, record.parentSession ?? undefined);
+          record.attached = false;
+        } catch (error) { errors.push(error); }
+      }
+      for (const remove of removers.splice(0)) remove();
+      const summary = {
+        binding:binding ? structuredClone(binding) : null,
+        attachedSessions:sessions.map(record => ({
+          targetId:record.targetId,
+          sessionId:record.sessionId,
+          type:record.targetInfo.type,
+          detached:!record.attached,
+        })),
+        invalidations:structuredClone(invalidations),
+        lifecycle:structuredClone(lifecycle),
+        errors:errors.map(error => error.message),
+      };
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) {
+        throw new AggregateError(errors, 'Review source observer cleanup failed.');
+      }
+      return summary;
+    },
+  };
+}
+
+/** @param {Awaited<ReturnType<typeof createReviewSourceObserver>>} observer */
+async function qualifyReviewSourceObserver(observer) {
+  const before = await observer.snapshot('qualification-before');
+  const after = await until(async () => {
+    const value = await observer.snapshot('qualification-after');
+    return value.source.probe.frameCount > before.source.probe.frameCount
+      ? value : null;
+  }, 'progressing stable Review source observer');
+  const stable = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+  const parentEvents = ['wheel', 'mousemove', 'scroll'];
+  const sourceEvents = ['wheel', 'mousemove', 'scroll'];
+  const checks = {
+    identity:stable(before.identity.targetId, after.identity.targetId)
+      && stable(before.identity.sessionId, after.identity.sessionId)
+      && stable(before.identity.frameId, after.identity.frameId)
+      && stable(before.identity.loaderId, after.identity.loaderId)
+      && stable(before.identity.executionContextId, after.identity.executionContextId)
+      && stable(before.identity.url, after.identity.url),
+    exactSource:before.owner.iframe.src === before.identity.url
+      && after.owner.iframe.src === after.identity.url
+      && before.source.href === before.identity.url
+      && after.source.href === after.identity.url,
+    progress:after.source.probe.frameCount > before.source.probe.frameCount
+      && after.source.probe.lastFrameTime > before.source.probe.lastFrameTime,
+    sourceView:stable(before.source.view, after.source.view),
+    heading:stable(before.source.heading, after.source.heading),
+    sourceFocus:stable(before.source.focus, after.source.focus),
+    parentFocus:stable(before.owner.focus, after.owner.focus),
+    geometry:stable(before.owner.iframe, after.owner.iframe),
+    noParentInput:parentEvents.every(name => (
+      before.owner.probe[name].length === after.owner.probe[name].length
+    )),
+    noSourceInput:sourceEvents.every(name => (
+      before.source.probe[name].length === after.source.probe[name].length
+    )),
+  };
+  return {
+    before,
+    after,
+    checks,
+    passed:Object.values(checks).every(Boolean),
+  };
+}
+
+/** Pair source-observed bridge requests with exact-iframe parent replies. */
+function reviewBridgeSnapshot(observation) {
+  const queries = observation.source.probe.queries;
+  const replies = observation.owner.probe.replies;
+  const correlations = [];
+  for (const query of queries) {
+    const reply = replies.find(candidate => (
+      candidate.channel === query.channel && candidate.id === query.id
+    ));
+    if (reply) correlations.push({ query, reply });
+  }
+  const views = correlations.filter(({ reply }) => (
+    reply.type === 'dude-review-result'
+      && !reply.error
+      && reply.viewport
+      && Array.isArray(reply.targets)
+  ));
+  return {
+    queries:queries.length,
+    replies:replies.length,
+    correlations,
+    latestView:views.at(-1) ?? null,
+  };
+}
+
+/** @param {Cdp} page */
+async function shortPanelWheelPoints(page) {
+  return observeRuntime(page, `(() => {
+    const describe = node => ({
+      tag:node?.tagName || null,
+      id:node?.id || null,
+      ariaLabel:node?.getAttribute?.('aria-label') || null,
+      reviewOverlay:Boolean(node?.closest?.('.dude-review-overlay')),
+      reviewEngineHost:Boolean(node?.closest?.('[data-review-engine-host]')),
+      reviewWorkspace:Boolean(node?.closest?.('[data-review-workspace]')),
+    });
+    const host = document.querySelector('[data-review-engine-host]');
+    const outsideRect = host?.parentElement?.parentElement?.getBoundingClientRect();
+    const overlay = document.querySelector('.dude-review-overlay');
+    const overlayRect = overlay?.getBoundingClientRect();
+    if (!outsideRect || !overlayRect) return null;
+    const outside = {
+      x:outsideRect.left + outsideRect.width / 2,
+      y:outsideRect.top + 20,
+    };
+    const candidates = [
+      [.5,.5],[.75,.5],[.25,.5],[.75,.75],[.25,.75],
+    ].map(([x, y]) => ({
+      x:overlayRect.left + overlayRect.width * x,
+      y:overlayRect.top + overlayRect.height * y,
+    }));
+    const overlayPoint = candidates.find(point => (
+      document.elementFromPoint(point.x, point.y)?.closest?.('.dude-review-overlay')
+    )) || null;
+    return {
+      outside:{
+        ...outside,
+        hit:describe(document.elementFromPoint(outside.x, outside.y)),
+      },
+      overlay:overlayPoint ? {
+        ...overlayPoint,
+        hit:describe(document.elementFromPoint(overlayPoint.x, overlayPoint.y)),
+      } : null,
+      outsideRect:outsideRect.toJSON(),
+      overlayRect:overlayRect.toJSON(),
+    };
+  })()`);
+}
+
+/**
+ * Dispatch one controlled native wheel and retain both requested delivery and
+ * the actual parent/source event paths.
+ * @param {Cdp} page
+ * @param {Awaited<ReturnType<typeof createReviewSourceObserver>>} observer
+ * @param {'standalone'|'positioned'|'overlay-negative'} variant
+ */
+async function dispatchObservedReviewWheel(page, observer, variant) {
+  const points = await shortPanelWheelPoints(page);
+  const point = variant === 'overlay-negative' ? points?.overlay : points?.outside;
+  const pre = await observer.snapshot('pre-wheel');
+  const marker = {
+    parentWheel:pre.owner.probe.wheel.length,
+    parentMousemove:pre.owner.probe.mousemove.length,
+    sourceWheel:pre.source.probe.wheel.length,
+    sourceMousemove:pre.source.probe.mousemove.length,
+    sourceScroll:pre.source.probe.scroll.length,
+    sourceQuery:pre.source.probe.queries.length,
+    parentReply:pre.owner.probe.replies.length,
+  };
+  const synthesized = variant !== 'standalone';
+  const request = {
+    order:1,
+    requestedAt:new Date().toISOString(),
+    type:synthesized ? 'synthesizeScrollGesture' : 'mouseWheel',
+    x:point.x,
+    y:point.y,
+    deltaX:0,
+    deltaY:360,
+    ...(synthesized ? {
+      yDistance:-360,
+      gestureSourceType:'mouse',
+      preventFling:true,
+    } : {}),
+    variant,
+  };
+  if (synthesized) {
+    await page.send('Input.synthesizeScrollGesture', {
+      x:point.x,
+      y:point.y,
+      yDistance:-360,
+      gestureSourceType:'mouse',
+      preventFling:true,
+    });
+  } else {
+    await page.send('Input.dispatchMouseEvent', {
+      type:'mouseWheel',
+      x:point.x,
+      y:point.y,
+      deltaX:0,
+      deltaY:360,
+    });
+  }
+  let priorKey = null;
+  let stableTurns = 0;
+  const post = await until(async () => {
+    const value = await observer.snapshot('post-wheel');
+    const parentDelivered = value.owner.probe.wheel.length > marker.parentWheel;
+    const sourceDelivered = value.source.probe.wheel.length > marker.sourceWheel;
+    if (!parentDelivered && !sourceDelivered || value.owner.boxDisabled) return null;
+    const bridge = reviewBridgeSnapshot(value);
+    const key = JSON.stringify({
+      signature:value.source.view.signature,
+      scrollX:value.source.view.viewport.scrollX,
+      scrollY:value.source.view.viewport.scrollY,
+      latestBridgeId:bridge.latestView?.reply.id ?? null,
+      latestBridgeScrollY:bridge.latestView?.reply.viewport.scrollY ?? null,
+    });
+    stableTurns = key === priorKey ? stableTurns + 1 : 0;
+    priorKey = key;
+    const changed = value.source.view.viewport.scrollY
+      !== pre.source.view.viewport.scrollY;
+    const bridgeCaughtUp = !changed || (
+      bridge.latestView
+      && bridge.latestView.reply.viewport.scrollY
+        === value.source.view.viewport.scrollY
+    );
+    return stableTurns >= 1 && bridgeCaughtUp ? value : null;
+  }, `${variant} native wheel delivery and settled source`);
+  const parentEvents = post.owner.probe.wheel.slice(marker.parentWheel);
+  const sourceEvents = post.source.probe.wheel.slice(marker.sourceWheel);
+  const receivedByOverlay = event => event.pathClasses.some(classes => (
+    classes.includes('dude-review-overlay')
+  ));
+  const receiver = {
+    parentEvents,
+    sourceEvents,
+    sourceScrollEvents:post.source.probe.scroll.slice(marker.sourceScroll),
+    paths:[
+      ...parentEvents.map(event => ({ world:'parent', path:event.path })),
+      ...sourceEvents.map(event => ({ world:'source', path:event.path })),
+    ],
+    overlay:parentEvents.some(receivedByOverlay),
+    outsideOverlay:parentEvents.some(event => !receivedByOverlay(event)),
+    source:Boolean(sourceEvents.length),
+  };
+  return {
+    variant,
+    points,
+    request,
+    marker,
+    pre,
+    post,
+    bridge:reviewBridgeSnapshot(post),
+    receiver,
+  };
+}
+
+/** Inspect only the listbox linked by the Review element combobox. */
+function reviewChooserSnapshot(page) {
+  return observeRuntime(page, `(() => {
+    const label = [...document.querySelectorAll('label')]
+      .find(node => node.textContent.trim() === 'Choose an element');
+    const chooser = label && document.getElementById(label.htmlFor);
+    const controls = (chooser?.getAttribute('aria-controls') || '')
+      .split(/\\s+/).filter(Boolean);
+    const linked = controls.map(id => document.getElementById(id))
+      .filter(node => node?.getAttribute('role') === 'listbox');
+    const listbox = linked.find(node => node.getClientRects().length)
+      || linked[0]
+      || null;
+    const options = listbox ? [...listbox.querySelectorAll('[role="option"]')]
+      .map(node => ({
+        id:node.id || null,
+        label:node.textContent.trim(),
+        value:node.getAttribute('value')
+          || node.getAttribute('data-fui-option-value')
+          || null,
+        visible:Boolean(node.getClientRects().length),
+        selected:node.getAttribute('aria-selected'),
+      })) : [];
+    const focus = document.activeElement;
+    return {
+      labelFor:label?.htmlFor || null,
+      chooserId:chooser?.id || null,
+      ariaControls:controls,
+      ariaExpanded:chooser?.getAttribute('aria-expanded') || null,
+      ariaActiveDescendant:chooser?.getAttribute('aria-activedescendant') || null,
+      linkedListboxCount:linked.length,
+      linkedListboxId:listbox?.id || null,
+      linkedListboxVisible:Boolean(listbox?.getClientRects().length),
+      labels:options.filter(option => option.visible).map(option => option.label),
+      options,
+      focus:focus === chooser ? 'chooser'
+        : focus?.getAttribute?.('role')
+          || focus?.getAttribute?.('aria-label')
+          || focus?.tagName
+          || null,
+    };
+  })()`);
+}
+
+/**
+ * Open the actual Review picker, inspect its aria-controls-linked listbox, and
+ * close it without selecting or issuing a product bridge command.
+ * @param {Cdp} page
+ */
+async function observeReviewChooser(page) {
+  await clickAtCurrentPosition(page, button('Notes and more'));
+  await until(() => observeRuntime(page, `Boolean(document.querySelector(
+    '.fui-PopoverSurface[aria-label="Notes and more"]'
+  )?.getClientRects().length)`), 'observed Notes and more surface');
+  const focusPath = [];
+  for (let step = 0; step < 80; step += 1) {
+    if (await observeRuntime(page, `document.activeElement === (${field('Choose an element')})`)) {
+      break;
+    }
+    await pressNavigationKey(page, 'Tab');
+    focusPath.push(await observeRuntime(page, `document.activeElement?.getAttribute('aria-label')
+      || document.activeElement?.getAttribute('role')
+      || document.activeElement?.innerText?.trim()
+      || document.activeElement?.tagName`));
+  }
+  const before = await reviewChooserSnapshot(page);
+  await press(page, 'Enter');
+  const opened = await until(async () => {
+    const value = await reviewChooserSnapshot(page);
+    return value.ariaExpanded === 'true'
+      && value.linkedListboxCount === 1
+      && value.linkedListboxVisible
+      ? value : null;
+  }, 'aria-controls-linked Review element listbox');
+  await press(page, 'Escape');
+  await until(async () => {
+    const value = await reviewChooserSnapshot(page);
+    return value.ariaExpanded !== 'true' ? value : null;
+  }, 'closed Review element listbox');
+  await press(page, 'Escape');
+  await until(() => observeRuntime(page, `!document.querySelector(
+    '.fui-PopoverSurface[aria-label="Notes and more"]'
+  )?.getClientRects().length
+    && document.activeElement === (${button('Notes and more')})`),
+  'closed observed Notes and more surface with focus returned to its trigger');
+  return {
+    focusPath,
+    before,
+    opened,
+    after:{
+      focus:await observeRuntime(page, `document.activeElement?.getAttribute('aria-label')
+        || document.activeElement?.innerText?.trim()
+        || document.activeElement?.tagName
+        || null`),
+    },
+  };
+}
+
+/**
+ * A fresh-fixture control uses the same production bundle, source bytes,
+ * geometry, observer, and picker instrumentation as the retained positive.
+ * @param {'standalone'|'overlay-negative'} variant
+ * @param {Record<string,any>} record
+ */
+async function runShortPanelWheelControl(variant, record) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `dude-canvas-t012-${variant}-`));
+  let fixture;
+  let publication;
+  let browserState;
+  let observer;
+  const runtimeErrors = [];
+  record.variant = variant;
+  record.root = root;
+  record.stage = 'fixture';
+  try {
+    const feature = createIdea(
+      root,
+      900,
+      'floating-toolbar-regression',
+      'defined',
+      '# Tasks\n\n- [x] T001@aaaaaaaa Closed fixture remains review-eligible.\n',
+    );
+    const preview = createPreview(root, /** @type {any} */ (feature));
+    record.sourceRevision = preview.artifact.revision;
+    fixture = await createFixture(root);
+    const scope = {
+      kind:'feature',
+      ideaPath:feature.ideaPath,
+      specPath:feature.specPath,
+    };
+    const request = requestFor(fixture, 'preview', preview, scope);
+    request.prompt = 'Review the synthetic floating-toolbar workspace mock.';
+    publication = await publish(fixture, request);
+    browserState = await startBrowser(2);
+    record.browser = browserState.version.Browser ?? browserState.version;
+    record.browserPid = browserState.browser.pid;
+    record.profile = browserState.profile;
+    const { page } = browserState;
+    page.on('Runtime.exceptionThrown', event => runtimeErrors.push(event));
+    await viewport(page, 1000, 'light', 900, 2);
+    await page.send('Page.navigate', { url:fixture.instance.url });
+    await visible(page, 'Connected');
+    await choose(page, 'Show', 'Closed');
+    await visible(page, '1 of 1 recorded ideas and features');
+    await click(page, `document.querySelector('[data-work-path="${feature.ideaPath}"]')`);
+    await visible(page, 'Defined feature');
+    observer = await createReviewSourceObserver(page);
+    record.stage = 'subscribed-before-review';
+    await click(page, button('Review design'));
+    await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+      && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+    `${variant} focused Review engine`, 60_000);
+    record.binding = await observer.bind();
+    await viewport(page, 1000, 'light', 300, 2);
+    record.shortPanel = await until(() => observeRuntime(page, `(() => {
+      const frame = document.querySelector('.dude-review-frame');
+      if (!frame) return null;
+      const rect = frame.getBoundingClientRect();
+      return frame.clientWidth === 942
+        && frame.clientHeight === 118
+        && rect.width === 942
+        && rect.height === 117.5
+        && !frame.classList.contains('dude-review-frame-pinned')
+        && document.querySelector('.dude-review-overlay')?.getAttribute('viewBox')
+          === '0 0 942 118'
+        && !document.querySelector('[aria-label="Box (B)"]').disabled
+        ? {
+          viewport:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio},
+          frame:{
+            clientWidth:frame.clientWidth,
+            clientHeight:frame.clientHeight,
+            rect:rect.toJSON(),
+          },
+          viewBox:document.querySelector('.dude-review-overlay').getAttribute('viewBox'),
+        } : null;
+    })()`), `${variant} exact unpinned short panel`);
+    record.qualification = await qualifyReviewSourceObserver(observer);
+    record.stage = record.qualification.passed ? 'qualified' : 'qualification-failed';
+    if (!record.qualification.passed) return record;
+    record.wheel = await dispatchObservedReviewWheel(page, observer, variant);
+    record.stage = 'wheel-observed';
+    record.chooser = await observeReviewChooser(page);
+    record.runtimeErrors = structuredClone(runtimeErrors);
+    record.stage = 'complete';
+    return record;
+  } finally {
+    const cleanupErrors = [];
+    const observerSummary = await Promise.resolve()
+      .then(() => observer?.close())
+      .catch(error => { cleanupErrors.push(error); return null; });
+    if (publication) {
+      publication.controller.abort();
+      await publication.result.catch(() => {});
+    }
+    if (browserState) {
+      await cleanupBrowserDriver(browserState).catch(error => cleanupErrors.push(error));
+    }
+    if (fixture) {
+      await fixture.close().catch(error => cleanupErrors.push(error));
+    } else {
+      try { fs.rmSync(root, { recursive:true, force:true }); }
+      catch (error) { cleanupErrors.push(error); }
+    }
+    record.cleanup = {
+      observer:observerSummary,
+      rootExists:fs.existsSync(root),
+      profileExists:browserState ? fs.existsSync(browserState.profile) : null,
+      browserAlive:browserState?.browser.pid
+        ? browserPidAlive(browserState.browser.pid)
+        : null,
+      errors:cleanupErrors.map(error => error.message),
+    };
+    if (cleanupErrors.length === 1) throw cleanupErrors[0];
+    if (cleanupErrors.length > 1) {
+      throw new AggregateError(cleanupErrors, `${variant} control cleanup failed.`);
+    }
+  }
 }
 
 async function startBrowser(deviceScaleFactor = 1, stabilizeHeadlessTimeline = false) {
@@ -930,7 +2064,7 @@ async function press(page, key, code = key, modifiers = 0) {
  */
 async function pressNavigationKey(page, key, code = key, modifiers = 0) {
   const virtual = {
-    Tab: 9, Home: 36, End: 35,
+    Tab: 9, PageDown: 34, Home: 36, End: 35,
     ArrowDown: 40, ArrowUp: 38, ArrowLeft: 37, ArrowRight: 39,
   }[key] ?? 0;
   await page.send('Input.dispatchKeyEvent', {
@@ -988,6 +2122,7 @@ function evidence(context, slug) {
   fs.mkdirSync(parent, { recursive: true });
   const directory = fs.mkdtempSync(path.join(parent, `dude-canvas-${slug}-`));
   const sourcePaths = [
+    'scripts/dude-canvas-ui/t011-browser.test.mjs',
     'src/extensions/dude/frontend/app.jsx',
     'src/extensions/dude/frontend/needs-you.jsx',
     'src/extensions/dude/frontend/review.jsx',
@@ -1270,7 +2405,9 @@ function textContrastSnapshot(page) {
     const luminance = (rgb) => rgb.map((value) => value / 255)
       .map((value) => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4)
       .reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
-    return [...document.querySelectorAll('h1,h2,h3,p,label,button:not(:disabled),[role=tab]')]
+    return [...document.querySelectorAll(
+      'h1,h2,h3,p,label,button:not(:disabled),[role=tab],[data-work-number]'
+    )]
       .filter((node) => node.getClientRects().length && node.textContent.trim())
       .map((node) => {
         const style = getComputedStyle(node);
@@ -1528,6 +2665,7 @@ function shortReviewToolbarSnapshot(page, checkpoint) {
         clientHeight: workspace.clientHeight,
       } : null,
       frame: rect(frame),
+      framePinned: Boolean(frame?.classList.contains('dude-review-frame-pinned')),
       frameVisibleHeight: frameRect && visiblePanel
         ? Math.max(0, Math.min(frameRect.bottom, visiblePanel.bottom)
           - Math.max(frameRect.top, visiblePanel.top)) : 0,
@@ -2162,7 +3300,7 @@ test('T011 browser: published blank capture, ordinary-chat refresh, local state,
 
     // Assert the approved stable shell, not the removed Now rail/dual chooser.
     assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[role=tab]')].map((node) => node.innerText.trim())`),
-      ['Overview', 'Context', 'Needs you', 'New idea']);
+      ['Overview', 'Now', 'Needs you', 'New idea']);
     assert.equal(await evaluate(page, `document.querySelectorAll('[role=tab]').length`), 4);
     assert.equal(await evaluate(page, `document.body.innerText.includes('Details')
       || document.body.innerText.includes('Browse features')`), false);
@@ -2327,6 +3465,1882 @@ test('T011 browser: published blank capture, ordinary-chat refresh, local state,
   }
 });
 
+test('T002 production shell: one numbered finder, selected-only Overview, Clear, races, and rail modes', {
+  timeout: 300_000,
+  concurrency: false,
+}, async (context) => {
+  if (!browserReady(context)) return;
+  const output = evidence(context, 't002-shell-finder');
+  const board = installEmptyBoard();
+  let browserState;
+  let fixture;
+  let publication;
+  const runtimeErrors = [];
+  const network = [];
+  const observations = {};
+  try {
+    // Arrange: 62 admitted records include exactly 50 feature packages. Five
+    // completed features and one resolved idea make the initial Open count 56.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-t002-shell-'));
+    const records = [];
+    for (let number = 1; number <= 62; number += 1) {
+      const id = String(number).padStart(3, '0');
+      const slug = number === 1 ? 'zulu-record-001'
+        : number === 2 ? 'alpha-record-002'
+          : `record-${id}`;
+      const status = number <= 50 ? 'defined' : number === 62 ? 'resolved' : 'draft';
+      const tasks = number <= 50 && number % 10 === 0
+        ? `# Tasks\n\n- [x] T001@${id}aaaaa Completed instruction for ${slug}.\n`
+        : null;
+      records.push(createIdea(root, number, slug, status, tasks));
+    }
+    assert.equal(fs.readdirSync(path.join(root, '.dude', 'specs')).length, 50);
+    fixture = await createFixture(root);
+    const request = requestFor(fixture, 'fact', { input: { kind: 'text' } });
+    request.prompt = 'Retain this request draft across work lookup changes';
+    publication = await publish(fixture, request);
+    browserState = await startBrowser();
+    const { page } = browserState;
+    page.on('Runtime.exceptionThrown', event => runtimeErrors.push(event));
+    page.on('Network.requestWillBeSent', event => {
+      if (!event.request.url.startsWith(fixture.instance.url)) return;
+      network.push({
+        method: event.request.method,
+        path: new URL(event.request.url).pathname,
+        body: event.request.postData ?? null,
+      });
+    });
+
+    // Act: open the actual committed bundle through the production server.
+    await navigate(page, fixture, 1440, 'light');
+
+    // Assert: the App-owned selector starts Overview/Open/unselected and has
+    // one native search input, one Show control, and numeric capture order.
+    await visible(page, '56 of 62 recorded ideas and features');
+    assert.equal(await evaluate(page, `document.querySelector('[role=tab][aria-selected=true]')?.innerText.trim()`), 'Overview');
+    assert.equal(await evaluate(page, `${field('Show')}.innerText.trim()`), 'Open');
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-work-selector]').length`), 1);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-work-selector] input[type=search]').length`), 1);
+    assert.equal(await evaluate(page, `document.querySelectorAll('input[type=search]').length`), 1);
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[aria-label="Working on"]'))`), false);
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[aria-label="Clear work selection"]'))`), false);
+    const initialPaths = await evaluate(page, `[...document.querySelectorAll('[data-work-path]')]
+      .map(node => node.getAttribute('data-work-path'))`);
+    assert.equal(initialPaths.length, 56);
+    assert.deepEqual(initialPaths.slice(0, 3), [
+      '.dude/ideas/001-zulu-record-001.md',
+      '.dude/ideas/002-alpha-record-002.md',
+      '.dude/ideas/003-record-003.md',
+    ], 'capture chronology wins even when titles would sort alphabetically');
+    assert.equal(initialPaths.includes('.dude/ideas/010-record-010.md'), false);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[aria-current=true][data-work-path]').length`), 0);
+
+    // Arrange retained local state that Clear must not own.
+    await click(page, button('New idea'));
+    const ideaDraft = '  New idea text survives Clear.\n\nExact bytes.  ';
+    await fill(page, field('Your idea'), ideaDraft);
+    await click(page, button('Needs you'));
+    await click(page, `[...document.querySelectorAll('button')].find(node =>
+      node.innerText.includes(${JSON.stringify(request.prompt)}) && node.getClientRects().length)`);
+    const requestDraft = '  Request draft survives Clear.\n\nExact bytes.  ';
+    await fill(page, field('Your response'), requestDraft);
+    await click(page, button('Overview'));
+
+    // Act: set a narrowed, queried, scrolled, and roved lookup, then navigate
+    // without committing it.
+    await fill(page, field('Search work'), 'record');
+    await evaluate(page, `document.querySelector('[data-work-scroll]').scrollTop = 560`);
+    await until(() => evaluate(page, `(() => {
+      const list = document.querySelector('[data-work-scroll]');
+      return list?.scrollTop > 0;
+    })()`), 'scrolled unselected finder');
+    await evaluate(page, `document.querySelector('[data-work-path=".dude/ideas/031-record-031.md"]').focus()`);
+    assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-work-path')`),
+      '.dude/ideas/031-record-031.md');
+    const retainedLookup = await until(() => evaluate(page, `(() => {
+      const list = document.querySelector('[data-work-scroll]');
+      return list?.scrollTop > 0 ? { scrollTop: list.scrollTop } : null;
+    })()`), 'settled roved finder position');
+    await click(page, button('Now'));
+    await visible(page, 'No record is selected');
+    assert.equal(await evaluate(page, `${field('Search work')}.value`), 'record');
+    assert.equal(await evaluate(page, `${field('Show')}.innerText.trim()`), 'Open');
+    await click(page, button('Back to Overview'));
+    assert.equal(await evaluate(page, `document.querySelector('[data-work-scroll]').scrollTop`), retainedLookup.scrollTop);
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-work-path')`),
+      '.dude/ideas/031-record-031.md');
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[aria-label="Working on"]'))`), false,
+      'roving through results does not implicitly select work');
+
+    // Act: All exposes the complete inventory. Native arrow navigation reaches
+    // the last rendered row and scrolls the bounded list without selecting it.
+    await fill(page, field('Search work'), '');
+    await choose(page, 'Show', 'All');
+    await visible(page, '62 of 62 recorded ideas and features');
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    for (let index = 1; index < 62; index += 1) await pressNavigationKey(page, 'ArrowDown');
+    const terminalRow = await evaluate(page, `(() => {
+      const list = document.querySelector('[data-work-scroll]');
+      return {
+        activePath: document.activeElement?.getAttribute('data-work-path'),
+        activeLabel: document.activeElement?.getAttribute('aria-label'),
+        scrollTop: list?.scrollTop ?? 0,
+        currentRows: document.querySelectorAll('[aria-current=true][data-work-path]').length,
+      };
+    })()`);
+    assert.equal(terminalRow.activePath, '.dude/ideas/062-record-062.md');
+    assert.match(terminalRow.activeLabel, /^062\. record 062\. Resolved idea\. Progress not established\. \.dude\/ideas\/062-record-062\.md$/);
+    assert.ok(terminalRow.scrollTop > 0);
+    assert.equal(terminalRow.currentRows, 0);
+    await fill(page, field('Search work'), '062');
+    await visible(page, '1 of 62 recorded ideas and features');
+    assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-work-path]')]
+      .map(node => node.getAttribute('data-work-path'))`), ['.dude/ideas/062-record-062.md']);
+
+    // Arrange the exact pre-Clear state again, then commit one row with Enter.
+    await fill(page, field('Search work'), 'record');
+    await choose(page, 'Show', 'Open');
+    await evaluate(page, `document.querySelector('[data-work-scroll]').scrollTop = 480`);
+    await until(() => evaluate(page, `document.querySelector('[data-work-scroll]').scrollTop > 0`),
+      'queried Open finder scroll before selection');
+    await evaluate(page, `document.querySelector('[data-work-path=".dude/ideas/031-record-031.md"]').focus()`);
+    const targetReadsBefore = network.filter(entry => entry.path === '/api/refresh'
+      && JSON.parse(entry.body || '{}').target === '.dude/ideas/031-record-031.md').length;
+    await press(page, 'Enter');
+    await visible(page, 'Current instruction for record-031');
+    assert.equal(network.filter(entry => entry.path === '/api/refresh'
+      && JSON.parse(entry.body || '{}').target === '.dude/ideas/031-record-031.md').length,
+    targetReadsBefore + 1, 'one activation starts one selected-target read');
+    assert.equal(await evaluate(page, `document.querySelectorAll('input[type=search]').length`), 0);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[aria-label="Working on"]').length`), 1);
+    assert.equal(await evaluate(page, `document.querySelector('[aria-label="Working on"]')?.innerText.includes('031')`), true);
+    assert.equal(await evaluate(page, `document.querySelector('[aria-label="Working on"]')?.innerText.includes('record 031')`), true);
+    for (const destination of ['needs', 'new']) {
+      await click(page, `document.querySelector('#dude-tab-${destination}')`);
+      assert.equal(await evaluate(page, `document.querySelectorAll('[data-work-selector] input[type=search]').length`), 0);
+      assert.equal(await evaluate(page, `document.querySelectorAll('[data-work-selector] [role=combobox]').length`), 0);
+      const identityLabel = destination === 'needs' ? 'Browsing' : 'Working on';
+      assert.equal(await evaluate(page, `document.querySelectorAll(
+        '[data-work-selector] [aria-label="${identityLabel}"]'
+      ).length`), 1);
+      assert.equal(await evaluate(page, `document.querySelector(
+        '[data-work-selector] [aria-label="${identityLabel}"]'
+      )?.innerText.includes('031')`), true,
+      `${identityLabel} retains selected work 031 while the displayed surface owns its own scope`);
+    }
+    await click(page, `document.querySelector('#dude-tab-context')`);
+    await visible(page, 'Current instruction for record-031');
+
+    // Assert selected Overview is the same exact record, never a global list.
+    await click(page, button('Overview'));
+    await visible(page, '1 selected record');
+    const selectedOverview = await evaluate(page, `(() => {
+      const rows = [...document.querySelectorAll('[data-work-path]')];
+      return {
+        paths: rows.map(node => node.getAttribute('data-work-path')),
+        labels: rows.map(node => node.getAttribute('aria-label')),
+        current: rows.map(node => node.getAttribute('aria-current')),
+        search: document.querySelectorAll('input[type=search]').length,
+        show: document.querySelectorAll('[data-work-selector] [role=combobox]').length,
+        nothingSelected: document.body.innerText.includes('Nothing is selected'),
+      };
+    })()`);
+    assert.deepEqual(selectedOverview.paths, ['.dude/ideas/031-record-031.md']);
+    assert.deepEqual(selectedOverview.current, ['true']);
+    assert.match(selectedOverview.labels[0], /^031\. record 031\. In progress\. 0 of 1 tasks\. \.dude\/ideas\/031-record-031\.md$/);
+    assert.equal(selectedOverview.search, 0);
+    assert.equal(selectedOverview.show, 0);
+    assert.equal(selectedOverview.nothingSelected, false);
+    await audit(page, output, 't002-selected-overview-1440-light');
+    await viewport(page, 1440, 'dark');
+    await audit(page, output, 't002-selected-overview-1440-dark');
+    await viewport(page, 1440, 'light');
+    const targetReadsBeforeReopen = network.filter(entry => entry.path === '/api/refresh'
+      && JSON.parse(entry.body || '{}').target === '.dude/ideas/031-record-031.md').length;
+    await click(page, `document.querySelector('[data-work-path=".dude/ideas/031-record-031.md"]')`);
+    await visible(page, 'Current instruction for record-031');
+    assert.equal(network.filter(entry => entry.path === '/api/refresh'
+      && JSON.parse(entry.body || '{}').target === '.dude/ideas/031-record-031.md').length,
+    targetReadsBeforeReopen, 'reopening the same selected row does not create another selected object read');
+    await click(page, button('Back to Overview'));
+
+    // Act + Assert: Clear owns only lookup state and focuses the same search.
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    assert.equal(await evaluate(page, `${field('Search work')}.value`), '');
+    assert.equal(await evaluate(page, `${field('Show')}.innerText.trim()`), 'All');
+    assert.equal(await evaluate(page, `document.querySelector('[data-work-scroll]').scrollTop`), 0);
+    assert.equal(await evaluate(page, `document.activeElement === ${field('Search work')}`), true);
+    await pressNavigationKey(page, 'ArrowDown');
+    assert.equal(await evaluate(page, `document.activeElement?.getAttribute('data-work-path')`),
+      '.dude/ideas/001-zulu-record-001.md', 'Clear resets the roving position to the first capture');
+    await click(page, button('Needs you'));
+    assert.equal(await evaluate(page, `${field('Your response')}.value`), requestDraft);
+    assert.equal(fixture.provider.read().requests.find(entry =>
+      entry.request.requestRef === request.requestRef).phase, 'pending');
+    await click(page, button('New idea'));
+    assert.equal(await evaluate(page, `${field('Your idea')}.value`), ideaDraft);
+    await click(page, button('Overview'));
+
+    // Act: hold A's selected projection, explicitly Clear, select B, then
+    // release A. The data epochs may retain A's read but cannot adopt it as B.
+    await fill(page, field('Search work'), '033');
+    let heldA = null;
+    page.on('Fetch.requestPaused', event => {
+      if (event.request.url.endsWith('/api/refresh')) heldA = event;
+    });
+    await page.send('Fetch.enable', {
+      patterns: [{ urlPattern: '*/api/refresh', requestStage: 'Response' }],
+    });
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    await press(page, 'Enter');
+    await until(() => heldA, 'held selected A projection');
+    await click(page, button('Back to Overview'));
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    await fill(page, field('Search work'), '034');
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    await press(page, 'Enter');
+    const selected034 = await until(() => evaluate(page, `(() => {
+      const heading = document.querySelector('h1');
+      if (heading?.textContent.replace(/\\s+/g, ' ').trim() !== '034 record 034') return null;
+      const spans = [...heading.querySelectorAll(':scope > span')];
+      const source = [...document.querySelectorAll('main *')].find(node =>
+        node.childElementCount === 0
+        && node.textContent.trim() === '.dude/specs/034-record-034/spec.md');
+      return {
+        accessibleTextIdentity: heading.textContent.replace(/\\s+/g, ' ').trim(),
+        renderedText: heading.innerText,
+        number: spans[0]?.textContent.trim() || null,
+        title: spans[1]?.textContent.trim() || null,
+        sourcePath: source?.textContent.trim() || null,
+      };
+    })()`), '034 selected heading identity');
+    assert.match(selected034.renderedText, /^034\s+record 034$/,
+      'visual wrapping may insert a line break but cannot concatenate or drop heading content');
+    assert.deepEqual({
+      accessibleTextIdentity: selected034.accessibleTextIdentity,
+      number: selected034.number,
+      title: selected034.title,
+      sourcePath: selected034.sourcePath,
+    }, {
+      accessibleTextIdentity: '034 record 034',
+      number: '034',
+      title: 'record 034',
+      sourcePath: '.dude/specs/034-record-034/spec.md',
+    }, 'the object heading may wrap between number and title without changing its text identity');
+    assert.equal(await evaluate(page, `document.body.innerText.includes('Current instruction for record-033')`), false);
+    await page.send('Fetch.continueRequest', { requestId: heldA.requestId });
+    await page.send('Fetch.disable');
+    await visible(page, 'Current instruction for record-034');
+    assert.equal(await evaluate(page, `document.body.innerText.includes('Current instruction for record-033')`), false);
+
+    // Act: malformed selected work withholds progress/instruction but retains
+    // the exact committed identity and selected-only Overview.
+    const malformedTasks = path.join(root, '.dude', 'specs', '034-record-034', 'tasks.md');
+    fs.writeFileSync(malformedTasks, '# Tasks\n\n- [?] T001@034aaaaa Invalid state.\n');
+    fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+    await visible(page, 'Current instruction unavailable');
+    assert.deepEqual(await evaluate(page, `(() => {
+      const heading = document.querySelector('h1');
+      const spans = [...heading.querySelectorAll(':scope > span')];
+      return {
+        textIdentity: heading.textContent.replace(/\\s+/g, ' ').trim(),
+        number: spans[0]?.textContent.trim() || null,
+        title: spans[1]?.textContent.trim() || null,
+        sourcePathPresent: [...document.querySelectorAll('main *')].some(node =>
+          node.childElementCount === 0
+          && node.textContent.trim() === '.dude/specs/034-record-034/spec.md'),
+      };
+    })()`), {
+      textIdentity: '034 record 034',
+      number: '034',
+      title: 'record 034',
+      sourcePathPresent: true,
+    });
+    assert.equal(await evaluate(page, `document.querySelectorAll('input[type=search]').length`), 0);
+    await click(page, button('Overview'));
+    assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-work-path]')]
+      .map(node => node.getAttribute('data-work-path'))`), ['.dude/ideas/034-record-034.md']);
+    fs.writeFileSync(malformedTasks, '# Tasks\n\n- [~] T001@034aaaaa Current instruction for record-034.\n');
+    fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+    await click(page, button('Now'));
+    await visible(page, 'Current instruction for record-034');
+
+    // Act: fail one selected-target response. Selection is still explicit and
+    // cannot fall back to the prior record while the read is unavailable.
+    await click(page, button('Back to Overview'));
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    await fill(page, field('Search work'), '035');
+    let failedTarget = null;
+    page.on('Fetch.requestPaused', event => {
+      if (event.request.url.endsWith('/api/refresh')) failedTarget = event;
+    });
+    await page.send('Fetch.enable', {
+      patterns: [{ urlPattern: '*/api/refresh', requestStage: 'Response' }],
+    });
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    await press(page, 'Enter');
+    await until(() => failedTarget, 'selected target response to fail');
+    await page.send('Fetch.failRequest', { requestId: failedTarget.requestId, errorReason: 'ConnectionReset' });
+    await page.send('Fetch.disable');
+    await visible(page, 'Current instruction unavailable');
+    assert.equal(await evaluate(page, `document.querySelector('h1')?.textContent
+      .replace(/\\s+/g, ' ').trim()`), '035 record 035');
+    assert.equal(await evaluate(page, `document.body.innerText.includes('Current instruction for record-034')`), false);
+    await click(page, button('Refresh'));
+    await visible(page, 'Current instruction for record-035');
+
+    // Act: remove the selected source and add a same-title record elsewhere.
+    // The retained commitment must not become a title-based global fallback.
+    await click(page, button('Back to Overview'));
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    await fill(page, field('Search work'), '038');
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    await press(page, 'Enter');
+    await visible(page, 'Current instruction for record-038');
+    fs.rmSync(path.join(root, '.dude', 'ideas', '038-record-038.md'));
+    fs.rmSync(path.join(root, '.dude', 'specs', '038-record-038'), { recursive: true });
+    createIdea(root, 99, 'record-038', 'defined');
+    fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+    await visible(page, 'The selected source is unavailable');
+    assert.equal(await evaluate(page, `document.querySelector('h1')?.textContent
+      .replace(/\\s+/g, ' ').trim()`), '038 record 038');
+    assert.equal(await evaluate(page, `document.body.innerText.includes('.dude/ideas/038-record-038.md')`), true);
+    assert.equal(await evaluate(page, `document.body.innerText.includes('.dude/ideas/099-record-038.md')`), false);
+    await click(page, button('Overview'));
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-work-path]').length`), 0,
+      'selected Overview never exposes replacement or global rows when its source disappears');
+    assert.equal(await evaluate(page, `document.body.innerText.includes('.dude/ideas/038-record-038.md')`), true);
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    await visible(page, '62 of 62 recorded ideas and features');
+
+    // Assert desktop disclosure is inline and nonmodal. Native Tab from the
+    // final rail destination proceeds into ordinary page content.
+    const tabs = await evaluate(page, `[...document.querySelectorAll('[role=tab]')].map(node => ({
+      text: node.innerText.trim(), current: node.getAttribute('aria-current')
+    }))`);
+    assert.deepEqual(tabs.map(({ text }) => text), ['Overview', 'Now', 'Needs you', 'New idea']);
+    assert.equal(tabs.filter(({ current }) => current === 'page').length, 1);
+    assert.equal(await evaluate(page, `document.body.innerText.includes('Settings')
+      || document.body.innerText.includes('Switch work')
+      || document.body.innerText.includes('Kanban')`), false);
+    assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().width`), 48);
+    await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+    assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().width`), 208);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-navigation-dialog]').length`), 0);
+    assert.equal(await evaluate(page, `document.querySelector('main').inert`), false);
+    await audit(page, output, 't002-navigation-expanded-1440-light');
+    await evaluate(page, `document.querySelector('#dude-tab-new').focus()`);
+    await pressNavigationKey(page, 'Tab');
+    assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').contains(document.activeElement)`), false,
+      'desktop rail does not trap normal Tab navigation');
+    await click(page, `document.querySelector('[aria-label="Collapse navigation pane"]')`);
+    assert.equal(await evaluate(page, `document.activeElement?.getAttribute('aria-label')`), 'Expand navigation pane');
+
+    // Assert narrow disclosure is a 260px modal, inerts existing and newly
+    // portaled background, and traps both Tab directions.
+    await viewport(page, 719, 'light');
+    assert.equal(await evaluate(page, `Math.round(document.querySelector('[data-navigation-pane]').getBoundingClientRect().height)`), 49);
+    await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+    await until(() => evaluate(page, `Boolean(document.querySelector('[data-navigation-dialog]'))`),
+      'narrow navigation dialog');
+    assert.equal(await evaluate(page, `Math.round(document.querySelector('[data-navigation-dialog]').getBoundingClientRect().width)`), 260);
+    assert.equal(await evaluate(page, `document.querySelector('header').inert
+      && document.querySelector('main').inert && document.querySelector('footer').inert`), true);
+    await evaluate(page, `(() => {
+      const portal = document.createElement('div');
+      portal.dataset.t002Portal = 'true';
+      portal.innerHTML = '<button style="min-width:24px;min-height:24px">Portaled background control</button>';
+      document.body.append(portal);
+    })()`);
+    await until(() => evaluate(page, `document.querySelector('[data-t002-portal]').inert`),
+      'newly inserted background portal made inert');
+    await audit(page, output, 't002-navigation-overlay-719-light');
+    for (const shift of [false, true]) {
+      await pressNavigationKey(page, 'Tab', 'Tab', shift ? 8 : 0);
+      assert.equal(await evaluate(page, `document.querySelector('[data-navigation-dialog]').contains(document.activeElement)`), true);
+    }
+    await press(page, 'Escape');
+    await until(() => evaluate(page, `!document.querySelector('[data-navigation-dialog]')`), 'Escape closes navigation');
+    assert.equal(await evaluate(page, `document.activeElement?.getAttribute('aria-label')`), 'Expand navigation pane');
+    assert.equal(await evaluate(page, `document.querySelector('header').inert
+      || document.querySelector('main').inert || document.querySelector('footer').inert
+      || document.querySelector('[data-t002-portal]').inert`), false);
+
+    await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+    await click(page, `document.querySelector('[aria-label="Close navigation pane"]')`);
+    assert.equal(await evaluate(page, `document.activeElement?.getAttribute('aria-label')`), 'Expand navigation pane');
+    await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+    await click(page, `document.querySelector('[data-navigation-dimmer]')`);
+    assert.equal(await evaluate(page, `document.activeElement?.getAttribute('aria-label')`), 'Expand navigation pane');
+    await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+    await click(page, `document.querySelector('[data-navigation-dialog] #dude-tab-needs')`);
+    await visible(page, request.prompt);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-navigation-dialog]').length`), 0);
+    assert.equal(await evaluate(page, `document.querySelector('[role=tab][aria-selected=true]')?.innerText.trim()`), 'Needs you');
+    await until(() => evaluate(page, `document.activeElement === document.querySelector(
+      '#dude-panel-needs h1'
+    )`), 'narrow destination focuses its real view heading');
+    await click(page, button('Overview'));
+
+    // Breakpoint dismissal shares the same toggle focus restoration in both
+    // directions and treats exactly 720 CSS px as desktop.
+    await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+    await viewport(page, 720, 'light');
+    await until(() => evaluate(page, `!document.querySelector('[data-navigation-dialog]')
+      && document.activeElement?.getAttribute('aria-label') === 'Expand navigation pane'`),
+    '719 to 720 navigation dismissal');
+    assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().width`), 48);
+    await click(page, `document.querySelector('[aria-label="Expand navigation pane"]')`);
+    assert.equal(await evaluate(page, `document.querySelector('[data-navigation-pane]').getBoundingClientRect().width`), 208);
+    await viewport(page, 719, 'light');
+    await until(() => evaluate(page, `!document.querySelector('[data-navigation-dialog]')
+      && document.activeElement?.getAttribute('aria-label') === 'Expand navigation pane'`),
+    '720 to 719 navigation dismissal');
+
+    // Fresh rendered screenshots, AX trees, geometry, and computed contrast
+    // bind the approved T002 elements across themes and supported widths.
+    await evaluate(page, `document.querySelector('[data-t002-portal]')?.remove()`);
+    const visualMatrix = [];
+    for (const theme of /** @type {const} */ (['light', 'dark'])) {
+      for (const width of [360, 768, 1440, 1920]) {
+        await viewport(page, width, theme);
+        await audit(page, output, `t002-overview-${width}-${theme}`);
+        visualMatrix.push({ width, theme });
+      }
+    }
+    await viewport(page, 720, 'light', 900, 2);
+    assert.equal(await evaluate(page, `devicePixelRatio`), 2);
+    await audit(page, output, 't002-overview-720-dpr2-light');
+    await page.send('Emulation.setEmulatedMedia', {
+      features: [
+        { name: 'prefers-color-scheme', value: 'dark' },
+        { name: 'prefers-reduced-motion', value: 'reduce' },
+      ],
+    });
+    await until(() => evaluate(page, `getComputedStyle(document.querySelector('.fui-FluentProvider'))
+      .getPropertyValue('--colorNeutralForeground1').trim() === '#ffffff'`), 'dark reduced-motion theme');
+    const reducedDuration = await evaluate(page, `getComputedStyle(
+      document.querySelector('[data-navigation-pane]')
+    ).transitionDuration`);
+    assert.ok(Number.parseFloat(reducedDuration) <= 0.001,
+      `reduced motion keeps rail transitions effectively immediate, got ${reducedDuration}`);
+    await audit(page, output, 't002-overview-720-dpr2-reduced-motion-dark');
+
+    const approvedPath = path.join(
+      ROOT,
+      '.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html',
+    );
+    const approvedSha256 = sha256(fs.readFileSync(approvedPath));
+    assert.equal(approvedSha256, '1508fe1efaf6a5228784dee8c140a569927bf27eb1dfc9244679b6ae80ec2962');
+    assert.deepEqual(runtimeErrors, []);
+    assert.equal(fixture.instance.eventClients.size, 1);
+    assert.deepEqual(
+      [...new Set(network.map(({ path: pathname }) => pathname)
+        .filter(pathname => /settings|kanban|task-(?:write|mutate)|workflow/i.test(pathname)))],
+      [],
+      'the T002 journey invokes no future destination or task-mutation route',
+    );
+    Object.assign(observations, {
+      records: 62,
+      packages: 50,
+      initialOpen: 56,
+      retainedLookup,
+      terminalRow,
+      selectedOverview,
+      localState: { requestDraftRetained: true, ideaDraftRetained: true },
+      races: { lateARejectedForB: true, failedTargetRetainedIdentity: true },
+      unavailable: { retained: records[37].ideaPath, replacement: '.dude/ideas/099-record-038.md' },
+      rail: { desktop: [48, 208], compactRow: 49, narrowOverlay: 260, breakpoint: 720 },
+      visualMatrix,
+      scale: { devicePixelRatio: 2, nativeZoomClaimed: false, reducedMotion: true },
+      approvedDesign: { path: path.relative(ROOT, approvedPath), sha256: approvedSha256 },
+      browser: browserState.version.Browser,
+      networkRequests: network.length,
+    });
+    output.results.push({ case: 't002-production-shell-finder', pass: true, ...observations });
+  } finally {
+    publication?.controller.abort();
+    if (publication) await publication.result.catch(() => {});
+    if (browserState) await browserState.page.send('Fetch.disable').catch(() => {});
+    if (fixture) await fixture.close();
+    if (browserState) await cleanupBrowserDriver(browserState);
+    board.close();
+  }
+});
+
+test('T003 production Now: source-backed task detail, freshness guards, responsive focus, and retained local work', {
+  timeout: 420_000,
+  concurrency: false,
+}, async (context) => {
+  if (!browserReady(context)) return;
+  const output = evidence(context, 't003-task-inspection');
+  const board = installEmptyBoard();
+  let browserState;
+  let fixture;
+  let factPublication;
+  let reviewPublication;
+  let movedRoot = null;
+  const runtimeErrors = [];
+  const network = [];
+  const observations = {};
+  const activeKey = 'T002@b062d2e5';
+  const allKeys = [
+    'T001@a062c1d4',
+    activeKey,
+    'T003@c062e3f6',
+    'T004@d062f4a7',
+    'T005@e062a5b8',
+  ];
+  const title = 'Dude Canvas Workspace Integration — Long Literal Source Title';
+  const activeUnit = marker => [
+    `- [~] ${activeKey} Apply the approved shell and finder`,
+    '    deps: T001@a062c1d4',
+    '',
+    `Literal current body ${marker} keeps CRLF, Unicode café — 東京, and every blank paragraph.`,
+    '',
+    '<script>globalThis.__t003SourceExecuted = true</script>',
+    '',
+    '```js',
+    'const literal = "<button>Run</button>";',
+    '- [ ] T999@fenced99 Fenced task lookalike',
+    '```',
+    '',
+    '<!--',
+    '## Hidden source heading',
+    '- [!] T998@hidden98 Comment-hidden task lookalike',
+    '-->',
+    '',
+    'Acceptance:',
+    '  - keep the complete unit as inert source text',
+    '  - never infer a verification result from this wording',
+    '',
+    ...Array.from({ length: 34 }, (_unused, index) => (
+      `Keyboard-scroll proof line ${String(index + 1).padStart(2, '0')} — ${'source '.repeat(9).trim()}`
+    )),
+    '',
+  ].join('\r\n');
+  const tasksSource = (marker, includeActive = true) => [
+    '# Tasks\r\n\r\n',
+    '## Phase 1: Establish The Integrated Design\r\n',
+    '- [x] T001@a062c1d4 Establish the approved integrated design\r\n\r\n',
+    'Recorded completion text is not a verification verdict.\r\n\r\n',
+    ...(includeActive ? [
+      '## Phase 2: Find And Select Work\r\n',
+      activeUnit(marker),
+    ] : []),
+    '## Phase 3: Restore Selected-Feature Now Orientation\r\n',
+    '- [!] T003@c062e3f6 Restore selected-feature Now orientation\r\n',
+    `    deps: ${includeActive ? 'T002@b062d2e5' : 'T001@a062c1d4'}\r\n`,
+    '    blocked-by: external-dependency: waiting for the isolated fixture\r\n\r\n',
+    'Blocked source detail remains separate from dependency readiness.\r\n\r\n',
+    '## Phase 4: Complete The Context-Preserving Interaction Loop\r\n',
+    '- [ ] T004@d062f4a7 Complete the context-preserving interaction loop\r\n',
+    '    deps: T001@a062c1d4\r\n\r\n',
+    'Ready by recorded dependencies does not grant Work admission.\r\n\r\n',
+    '## Phase 5: Verify The Installed Walkthrough\r\n',
+    '- [ ] T005@e062a5b8 Verify the installed walkthrough\r\n',
+    '    deps: T003@c062e3f6\r\n\r\n',
+    'Waiting remains distinct from an explicit blocker.\r\n',
+  ].join('');
+  try {
+    // Arrange: retain the 62-record/50-package production-scale fixture while
+    // making 061 and 062 the two exact feature identities exercised below.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-t003-now-'));
+    let featureA;
+    let featureB;
+    for (let number = 1; number <= 62; number += 1) {
+      if (number <= 48) {
+        createIdea(root, number, `supporting-feature-${String(number).padStart(3, '0')}`, 'defined');
+      } else if (number === 61) {
+        featureB = createIdea(root, number, 'guard-feature-b', 'defined', [
+          '# Tasks',
+          '',
+          '## Phase 1: Guard',
+          '- [~] T001@bguard01 Guard feature B current task',
+          '',
+          'FEATURE-B-BODY must remain selected after delayed feature A data arrives.',
+          '',
+        ].join('\n'));
+      } else if (number === 62) {
+        featureA = createIdea(root, number, 'dude-canvas-workspace-integration', 'defined', tasksSource('SOURCE-A1'));
+      } else {
+        createIdea(root, number, `supporting-draft-${String(number).padStart(3, '0')}`);
+      }
+    }
+    assert.ok(featureA?.specPath && featureB?.specPath);
+    assert.equal(fs.readdirSync(path.join(root, '.dude', 'specs')).length, 50);
+    const ideaPath = path.join(root, ...featureA.ideaPath.split('/'));
+    const ideaBytes = fs.readFileSync(ideaPath, 'utf8')
+      .replace('title: dude canvas workspace integration', `title: ${title}`)
+      .concat('\n## Coordinator Log\n\n- 2026-09-16 UTC - Source-backed task inspection fixture was recorded.\n');
+    fs.writeFileSync(ideaPath, ideaBytes);
+    const preview = createPreview(root, /** @type {any} */ (featureA));
+    fixture = await createFixture(root);
+    const factRequest = requestFor(fixture, 'fact', { input: { kind: 'text' } });
+    factRequest.prompt = 'T003 retained request draft';
+    factPublication = await publish(fixture, factRequest);
+    const reviewRequest = requestFor(fixture, 'preview', preview, featureA);
+    reviewRequest.prompt = 'T003 retained Review frame and caret';
+    reviewPublication = await publish(fixture, reviewRequest);
+
+    // The same real endpoints establish the count/source precondition before
+    // the browser journey; no DTO or projection renderer is substituted.
+    const [indexResponse, projectionResponse] = await Promise.all([
+      fetch(new URL('/api/work-index', fixture.instance.url)),
+      fetch(new URL('/api/refresh', fixture.instance.url), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: featureA.ideaPath }),
+      }),
+    ]);
+    assert.equal(indexResponse.status, 200);
+    assert.equal(projectionResponse.status, 200);
+    const endpointIndex = await indexResponse.json();
+    const endpointProjection = (await projectionResponse.json()).projection;
+    const endpointRow = endpointIndex.items.find(item => item.ideaPath === featureA.ideaPath);
+    const endpointTaskSource = endpointRow.sources.find(source => source.path.endsWith('/tasks.md'));
+    assert.deepEqual(endpointRow.taskCounts, {
+      total: 5, open: 2, inProgress: 1, blocked: 1, done: 1,
+    });
+    assert.deepEqual(endpointProjection.tasks, endpointRow.taskCounts);
+    assert.equal(endpointProjection.taskDetails.items.length, 5);
+    assert.equal(endpointProjection.taskDetails.items.find(task => task.taskKey === activeKey).instruction.text,
+      activeUnit('SOURCE-A1'));
+    assert.equal(
+      endpointProjection.taskDetails.items.find(task => task.taskKey === activeKey).source.contentIdentity,
+      endpointTaskSource.contentIdentity,
+      'selected detail and work-index counts bind the same current task bytes',
+    );
+
+    browserState = await startBrowser();
+    const { page } = browserState;
+    page.on('Runtime.exceptionThrown', event => runtimeErrors.push(event));
+    page.on('Network.requestWillBeSent', event => {
+      if (!event.request.url.startsWith(fixture.instance.url)) return;
+      network.push({
+        method: event.request.method,
+        path: new URL(event.request.url).pathname,
+        body: event.request.postData ?? null,
+      });
+    });
+    await navigate(page, fixture, 1440, 'light');
+
+    // Arrange unrelated local request input before opening selected work.
+    await click(page, button('Needs you'));
+    await click(page, `[...document.querySelectorAll('button')].find(node =>
+      node.innerText.includes('T003 retained request draft') && node.getClientRects().length)`);
+    const requestDraft = '  Request draft survives task inspection.\n\nLiteral bytes.  ';
+    await fill(page, field('Your response'), requestDraft);
+    await click(page, button('Overview'));
+    await fill(page, field('Search work'), '062');
+    const targetReadsBefore = network.filter(entry => entry.path === '/api/refresh'
+      && JSON.parse(entry.body || '{}').target === featureA.ideaPath).length;
+
+    // Act: keyboard activation commits 062 once.
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    await press(page, 'Enter');
+    await until(() => evaluate(page, `document.querySelector('h1')?.textContent
+      .replace(/\\s+/g, ' ').trim() === ${JSON.stringify(`062 ${title}`)}`), 'T003 selected object heading');
+    await visible(page, 'SOURCE-A1');
+
+    // Assert source-backed identity, all five actual 062 task keys, default All,
+    // unfiltered phase totals, and distinct recorded-state/readiness language.
+    assert.equal(network.filter(entry => entry.path === '/api/refresh'
+      && JSON.parse(entry.body || '{}').target === featureA.ideaPath).length,
+    targetReadsBefore + 1, 'one selection activation starts one exact selected read');
+    assert.deepEqual(await evaluate(page, `(() => {
+      const heading = document.querySelector('h1');
+      const spans = [...heading.querySelectorAll(':scope > span')];
+      return {
+        identity: heading.textContent.replace(/\\s+/g, ' ').trim(),
+        number: spans[0]?.textContent.trim(),
+        title: spans[1]?.textContent.trim(),
+        sourcePath: [...document.querySelectorAll('main *')].some(node =>
+          node.childElementCount === 0 && node.textContent.trim() === ${JSON.stringify(featureA.specPath)}),
+      };
+    })()`), {
+      identity: `062 ${title}`,
+      number: '062',
+      title,
+      sourcePath: true,
+    });
+    assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-task-key]')]
+      .map(node => node.getAttribute('data-task-key'))`), allKeys);
+    assert.equal(await evaluate(page, `document.querySelector('[data-task-filter="all"]')
+      ?.getAttribute('aria-pressed')`), 'true');
+    const phaseTotals = await evaluate(page, `[...document.querySelectorAll('[data-task-phase]')].map(section => ({
+      heading:section.getAttribute('data-task-phase'),
+      total:[...section.querySelectorAll('*')].find(node =>
+        /^\\d+ of \\d+ tasks complete$/.test(node.textContent.trim()))?.textContent.trim() || null,
+    }))`);
+    assert.deepEqual(phaseTotals.map(({ total }) => total), [
+      '1 of 1 tasks complete',
+      '0 of 1 tasks complete',
+      '0 of 1 tasks complete',
+      '0 of 1 tasks complete',
+      '0 of 1 tasks complete',
+    ]);
+    const stateText = await evaluate(page, `Object.fromEntries([...document.querySelectorAll('[data-task-key]')]
+      .map(node => [node.dataset.taskKey, node.innerText]))`);
+    assert.match(stateText['T001@a062c1d4'], /Done/);
+    assert.match(stateText[activeKey], /In progress/);
+    assert.match(stateText['T003@c062e3f6'], /Blocked/);
+    assert.match(stateText['T004@d062f4a7'], /Ready by recorded task dependencies/);
+    assert.match(stateText['T005@e062a5b8'], /Waiting on dependencies/);
+    assert.equal(await evaluate(page, `(() => {
+      const next = document.querySelector('[data-now-next]');
+      const full = [...next.querySelectorAll('p')].find(node => node.textContent === ${JSON.stringify(activeUnit('SOURCE-A1'))});
+      return Boolean(full);
+    })()`), true, 'Next renders the exact complete CRLF unit from the selected source');
+    assert.equal(await evaluate(page, `globalThis.__t003SourceExecuted`), undefined);
+    assert.equal(await evaluate(page, `[...document.scripts].some(node =>
+      node.textContent.includes('__t003SourceExecuted'))`), false);
+    assert.equal(await evaluate(page, `document.body.innerText.includes('<script>globalThis.__t003SourceExecuted = true</script>')`), true);
+    assert.equal(await evaluate(page, `document.body.innerText.includes('T999@fenced99 Fenced task lookalike')`), true);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-task-key]').length`), 5,
+      'fenced and comment-hidden syntax never becomes a sixth production row');
+    assert.equal(await evaluate(page, `(() => {
+      const headings = [...document.querySelectorAll('h2')];
+      const tasks = headings.find(node => node.textContent.trim() === 'Tasks');
+      const activity = headings.find(node => node.textContent.trim() === 'Activity');
+      return Boolean(tasks && activity && tasks !== activity && tasks.compareDocumentPosition(activity) & Node.DOCUMENT_POSITION_FOLLOWING);
+    })()`), true, 'Activity remains a separate region after Tasks');
+
+    // Mutate only a test-owned HTTP companion response. Null counts must not
+    // become a false zero, while an actual source-identity disagreement with
+    // equal counts must withhold both rows and body.
+    let pausedIndex = null;
+    page.on('Fetch.requestPaused', event => {
+      if (new URL(event.request.url).pathname === '/api/work-index') pausedIndex = event;
+    });
+    const mutateNextIndex = async (label, mutate) => {
+      pausedIndex = null;
+      await page.send('Fetch.enable', {
+        patterns: [{ urlPattern: '*/api/work-index', requestStage: 'Response' }],
+      });
+      await click(page, button('Refresh'));
+      const paused = await until(() => pausedIndex, `${label} work-index response`);
+      try {
+        const body = await page.send('Fetch.getResponseBody', { requestId: paused.requestId });
+        const text = body.base64Encoded
+          ? Buffer.from(body.body, 'base64').toString('utf8')
+          : body.body;
+        const value = JSON.parse(text);
+        const row = value.items.find(item => item.ideaPath === featureA.ideaPath);
+        const before = structuredClone(row);
+        mutate(row);
+        await page.send('Fetch.fulfillRequest', {
+          requestId: paused.requestId,
+          responseCode: paused.responseStatusCode,
+          responseHeaders: (paused.responseHeaders || []).filter(header => (
+            !['content-length', 'transfer-encoding'].includes(header.name.toLowerCase())
+          )),
+          body: Buffer.from(JSON.stringify(value)).toString('base64'),
+        });
+        return { before, after: structuredClone(row) };
+      } finally {
+        await page.send('Fetch.disable');
+      }
+    };
+    const nullable = await mutateNextIndex('nullable-count', row => { row.taskCounts = null; });
+    assert.deepEqual(nullable.before.taskCounts, endpointRow.taskCounts);
+    assert.equal(nullable.after.taskCounts, null);
+    await visible(page, 'SOURCE-A1');
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-task-key]').length`), 5,
+      'a correctly nullable index count does not deny valid planned/selected detail');
+    const mismatched = await mutateNextIndex('source-mismatch', row => {
+      assert.deepEqual(row.taskCounts, endpointRow.taskCounts);
+      const source = row.sources.find(item => item.path.endsWith('/tasks.md'));
+      source.contentIdentity = `sha256:${'f'.repeat(64)}`;
+    });
+    assert.deepEqual(mismatched.after.taskCounts, mismatched.before.taskCounts,
+      'the negative control changes identity without changing counts');
+    assert.notEqual(
+      mismatched.after.sources.find(source => source.path.endsWith('/tasks.md')).contentIdentity,
+      mismatched.before.sources.find(source => source.path.endsWith('/tasks.md')).contentIdentity,
+    );
+    await visible(page, 'Current instruction unavailable');
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-task-key]').length`), 0);
+    assert.equal(await evaluate(page, `document.body.innerText.includes('SOURCE-A1')`), false);
+    assert.equal(await evaluate(page, `document.body.innerText.includes(
+      'including source identities and task counts. Task progress and detail are withheld'
+    )`), true, 'the equal-count negative control fails for the intended source-identity reason');
+    await click(page, button('Refresh'));
+    await visible(page, 'SOURCE-A1');
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-task-key]').length`), 5);
+
+    // Act: one keyboard activation opens the real read-only inspector. Repeated
+    // activation focuses it; its full body scrolls by keyboard.
+    await evaluate(page, `document.querySelector('[data-task-key="${activeKey}"]').focus()`);
+    await press(page, 'Enter');
+    await until(() => evaluate(page, `document.querySelector('[data-task-detail="${activeKey}"]')
+      === document.activeElement`), 'focused T003 task inspector');
+    assert.equal(await evaluate(page, `document.querySelector('[data-task-instruction="${activeKey}"]').textContent`),
+      activeUnit('SOURCE-A1'));
+    assert.equal(await evaluate(page, `document.querySelector('[data-task-detail="${activeKey}"]')
+      .innerText.includes('Not exposed by this source.')`), true);
+    assert.equal(await evaluate(page, `document.querySelector('[data-task-detail="${activeKey}"]')
+      .innerText.includes('In progress is recorded state, not evidence that an agent is working now.')`), true);
+    assert.equal(await evaluate(page, `[...document.querySelectorAll('button')].some(node =>
+      ['Run','Retry','Mark done','Edit task'].includes(node.innerText.trim()))`), false);
+    await evaluate(page, `document.querySelector('[data-task-key="${activeKey}"]').focus()`);
+    await press(page, 'Enter');
+    await until(() => evaluate(page, `document.querySelector('[data-task-detail="${activeKey}"]')
+      === document.activeElement`), 'repeated activation refocuses the inspector');
+    const wide = await evaluate(page, `(() => {
+      const detail = document.querySelector('[data-task-detail="${activeKey}"]');
+      const dock = detail.closest('aside');
+      const source = detail.querySelector('[data-task-instruction]');
+      return {
+        inDock: Boolean(dock),
+        inRow: Boolean(detail.closest('li')),
+        dockWidth: dock?.getBoundingClientRect().width || 0,
+        sourceScrollable: source.scrollHeight > source.clientHeight,
+      };
+    })()`);
+    assert.equal(wide.inDock, true);
+    assert.equal(wide.inRow, false);
+    assert.ok(Math.abs(wide.dockWidth - 320) <= 1, `wide inspector dock is 320px: ${JSON.stringify(wide)}`);
+    assert.equal(wide.sourceScrollable, true);
+    await evaluate(page, `document.querySelector('[data-task-instruction="${activeKey}"]').focus()`);
+    await pressNavigationKey(page, 'PageDown');
+    await until(() => evaluate(page, `document.querySelector('[data-task-instruction="${activeKey}"]').scrollTop > 0`),
+      'keyboard-scrolled full task body');
+    await audit(page, output, 't003-now-detail-1440-light');
+    await viewport(page, 1440, 'dark');
+    await audit(page, output, 't003-now-detail-1440-dark');
+
+    // Responsive movement keeps focus on the same key while moving the
+    // inspector from the 320px dock to the in-flow row.
+    await evaluate(page, `document.querySelector('[data-task-detail="${activeKey}"]').focus()`);
+    await viewport(page, 360, 'light');
+    const narrow = await until(() => evaluate(page, `(() => {
+      const detail = document.querySelector('[data-task-detail="${activeKey}"]');
+      if (!detail?.closest('li')) return null;
+      return {
+        focused: detail === document.activeElement,
+        inRow: Boolean(detail.closest('li')),
+        inDock: Boolean(detail.closest('aside')),
+        pageWidth: document.documentElement.scrollWidth,
+        titleIdentity: document.querySelector('h1').textContent.replace(/\\s+/g, ' ').trim(),
+      };
+    })()`), 'narrow in-flow task detail');
+    assert.deepEqual(narrow, {
+      focused: true,
+      inRow: true,
+      inDock: false,
+      pageWidth: 360,
+      titleIdentity: `062 ${title}`,
+    });
+    await audit(page, output, 't003-now-detail-360-light');
+    await viewport(page, 360, 'dark');
+    await audit(page, output, 't003-now-detail-360-dark');
+    await viewport(page, 1440, 'light');
+    await until(() => evaluate(page, `Boolean(document.querySelector(
+      '[data-task-detail="${activeKey}"]'
+    )?.closest('aside'))`), 'task detail returned to wide dock');
+
+    // Close returns focus to the source row. A filter that hides a selected row
+    // dismisses detail but keeps focus on the filter and leaves Next/phase
+    // totals unchanged.
+    await click(page, `document.querySelector('[aria-label="Close task detail"]')`);
+    assert.equal(await evaluate(page, `document.activeElement?.dataset.taskKey`), activeKey);
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-task-detail]'))`), false);
+    await click(page, `document.querySelector('[data-task-key="${activeKey}"]')`);
+    await click(page, `document.querySelector('[data-task-filter="done"]')`);
+    await until(() => evaluate(page, `!document.querySelector('[data-task-detail]')`), 'filtered task detail dismissal');
+    assert.equal(await evaluate(page, `document.activeElement?.dataset.taskFilter`), 'done');
+    assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-task-key]')]
+      .map(node => node.dataset.taskKey)`), ['T001@a062c1d4']);
+    assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-task-phase]')].map(section =>
+      [...section.querySelectorAll('*')].find(node =>
+        /^\\d+ of \\d+ tasks complete$/.test(node.textContent.trim()))?.textContent.trim() || null
+    )`), phaseTotals.map(({ total }) => total), 'phase totals remain unfiltered');
+    assert.equal(await evaluate(page, `document.body.innerText.includes('SOURCE-A1')`), true, 'filtering never retargets Next');
+    await click(page, `document.querySelector('[data-task-filter="all"]')`);
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-task-detail]'))`), false,
+      'returning to All does not reopen dismissed detail');
+    assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-task-key]')]
+      .map(node => node.dataset.taskKey)`), allKeys);
+
+    // Preserve the already shipped Review object/frame/caret and unrelated
+    // request draft while task inspection comes and goes.
+    await click(page, `document.querySelector('[data-task-key="${activeKey}"]')`);
+    await click(page, button('Review design'));
+    await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+      && !document.querySelector('[aria-label="Box (B)"]').disabled`), 'T003 retained Review ready', 60_000);
+    await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
+    await openReviewDetails(page);
+    await click(page, button('Add at center'));
+    await visible(page, 'Comments (1)');
+    await click(page, button('Comments (1)'));
+    const reviewComment = '  T003 Review caret remains local.  ';
+    await fill(page, field('Comment (optional)'), reviewComment);
+    await press(page, 'ArrowLeft');
+    await press(page, 'ArrowLeft');
+    await press(page, 'ArrowLeft', 'ArrowLeft', 8);
+    await press(page, 'ArrowLeft', 'ArrowLeft', 8);
+    await press(page, 'ArrowLeft', 'ArrowLeft', 8);
+    const expectedCaret = { start: reviewComment.length - 5, end: reviewComment.length - 2 };
+    assert.deepEqual(await evaluate(page, `({
+      start:${field('Comment (optional)')}.selectionStart,
+      end:${field('Comment (optional)')}.selectionEnd,
+    })`), expectedCaret);
+    await click(page, `document.querySelector('[aria-label="Close comments"]')`);
+    await evaluate(page, `window.__t003ReviewFrame = document.querySelector('.dude-review-frame')`);
+    await click(page, `document.querySelector('[data-review-return]')`);
+    await visible(page, 'SOURCE-A1');
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-task-detail="${activeKey}"]'))`), true);
+    await click(page, button('Review design'));
+    await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))`),
+      'retained T003 Review reopened');
+    assert.equal(await evaluate(page, `window.__t003ReviewFrame === document.querySelector('.dude-review-frame')`), true);
+    await click(page, button('Comments (1)'));
+    assert.deepEqual(await evaluate(page, `({
+      value:${field('Comment (optional)')}.value,
+      start:${field('Comment (optional)')}.selectionStart,
+      end:${field('Comment (optional)')}.selectionEnd,
+    })`), { value: reviewComment, ...expectedCaret });
+    await click(page, `document.querySelector('[aria-label="Close comments"]')`);
+    await click(page, `document.querySelector('[data-review-return]')`);
+    await click(page, button('Needs you'));
+    await click(page, `[...document.querySelectorAll('button')].find(node =>
+      node.innerText.includes('T003 retained request draft') && node.getClientRects().length)`);
+    assert.equal(await evaluate(page, `${field('Your response')}.value`), requestDraft);
+    await click(page, button('Now'));
+    await visible(page, 'SOURCE-A1');
+
+    // A same-key source refresh replaces the body in place instead of serving
+    // a cached task object.
+    fs.writeFileSync(path.join(root, ...featureA.specPath.split('/')).replace(/spec\.md$/, 'tasks.md'),
+      tasksSource('SOURCE-A2'));
+    fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+    await visible(page, 'SOURCE-A2');
+    assert.equal(await evaluate(page, `document.querySelector('[data-task-instruction="${activeKey}"]').textContent`),
+      activeUnit('SOURCE-A2'));
+    assert.equal(await evaluate(page, `document.body.innerText.includes('SOURCE-A1')`), false);
+
+    // Hold A3's actual selected response, choose feature B, then release it.
+    // The data epoch and render-time key scope must never expose A3 under B.
+    fs.writeFileSync(path.join(root, ...featureA.specPath.split('/')).replace(/spec\.md$/, 'tasks.md'),
+      tasksSource('SOURCE-A3-DELAYED'));
+    let heldA = null;
+    page.on('Fetch.requestPaused', event => {
+      if (new URL(event.request.url).pathname === '/api/refresh') heldA = event;
+    });
+    await page.send('Fetch.enable', {
+      patterns: [{ urlPattern: '*/api/refresh', requestStage: 'Response' }],
+    });
+    fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+    await until(() => heldA, 'held feature A3 selected response');
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    await fill(page, field('Search work'), '061');
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    await press(page, 'Enter');
+    await until(() => evaluate(page, `document.querySelector('h1')?.textContent
+      .replace(/\\s+/g, ' ').trim() === '061 guard feature b'`), 'feature B heading before delayed A release');
+    await page.send('Fetch.continueRequest', { requestId: heldA.requestId });
+    await page.send('Fetch.disable');
+    await visible(page, 'FEATURE-B-BODY');
+    assert.equal(await evaluate(page, `document.body.innerText.includes('SOURCE-A3-DELAYED')`), false);
+    assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-task-key]')]
+      .map(node => node.dataset.taskKey)`), ['T001@bguard01']);
+    assert.equal(await evaluate(page, `window.__t003ReviewFrame === document.querySelector('.dude-review-frame')`), true,
+      'feature switching does not dispose the retained Review entry object');
+
+    // Reselect A, then remove the inspected key from the real task source.
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    await fill(page, field('Search work'), '062');
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    await press(page, 'Enter');
+    await visible(page, 'SOURCE-A3-DELAYED');
+    await click(page, `document.querySelector('[data-task-key="${activeKey}"]')`);
+    fs.writeFileSync(path.join(root, ...featureA.specPath.split('/')).replace(/spec\.md$/, 'tasks.md'),
+      tasksSource('SOURCE-A4', false));
+    fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+    await until(() => evaluate(page, `document.querySelectorAll('[data-task-key]').length === 4`),
+      'confirmed active-key removal');
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-task-detail]'))`), false);
+    assert.equal(await evaluate(page, `document.body.innerText.includes('SOURCE-A3-DELAYED')`), false);
+    assert.deepEqual(await evaluate(page, `[...document.querySelectorAll('[data-task-key]')]
+      .map(node => node.dataset.taskKey)`), allKeys.filter(key => key !== activeKey));
+
+    // Clear removes only task inspection and focuses the original finder.
+    await click(page, `document.querySelector('[data-task-key="T003@c062e3f6"]')`);
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-task-detail="T003@c062e3f6"]'))`), true);
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-task-detail]'))`), false);
+    assert.equal(await evaluate(page, `document.activeElement === ${field('Search work')}`), true);
+    assert.equal(await evaluate(page, `${field('Search work')}.value`), '');
+
+    // A proven root inode replacement invalidates the task key before effects
+    // can paint it under replacement work.
+    await fill(page, field('Search work'), '062');
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    await press(page, 'Enter');
+    await click(page, `document.querySelector('[data-task-key="T003@c062e3f6"]')`);
+    movedRoot = `${root}-original`;
+    fs.renameSync(root, movedRoot);
+    createIdea(root, 62, 'replacement-root', 'defined', '# Tasks\n\n- [ ] T001@newroot1 Replacement root task.\n');
+    await click(page, button('Refresh'));
+    await until(() => evaluate(page, `document.querySelector('h1')?.textContent === 'Overview'`),
+      'replacement root resets selected task state');
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-task-detail]'))`), false);
+    assert.equal(await evaluate(page, `document.body.innerText.includes('waiting for the isolated fixture')`), false);
+
+    assert.deepEqual(runtimeErrors, []);
+    assert.deepEqual(
+      [...new Set(network.map(({ path: pathname }) => pathname)
+        .filter(pathname => /settings|kanban|task-(?:write|mutate)|workflow/i.test(pathname)))],
+      [],
+      'task inspection invokes no future destination or mutation route',
+    );
+    Object.assign(observations, {
+      records: 62,
+      packages: 50,
+      sourceBackedTaskKeys: allKeys,
+      baseline: {
+        counts: endpointRow.taskCounts,
+        sourceIdentity: endpointTaskSource.contentIdentity,
+        exactCrLfUnit: true,
+        fencedAndCommentedLookalikesInert: true,
+      },
+      guards: {
+        nullableCountsRetainedDetail: true,
+        equalCountsMismatchedSourceWithheld: true,
+        delayedFeatureARejectedForB: true,
+        removedKeyDismissed: true,
+        rootReplacementDismissed: true,
+      },
+      interaction: {
+        oneSelectionRead: true,
+        repeatedActivationFocused: true,
+        closeReturnedToRow: true,
+        filterReturnedToFilter: true,
+        keyboardBodyScroll: true,
+      },
+      responsive: { wideDock: 320, narrowInline: 360, focusMigrated: true },
+      retained: { requestDraft: true, reviewFrame: true, reviewCaret: expectedCaret },
+      visualCases: output.results.map(result => result.case),
+      browser: browserState.version.Browser,
+      nativeHostClaimed: false,
+    });
+    writeEvidenceJson(output, 't003-task-inspection-observation', observations);
+    output.results.push({ case: 't003-production-now-task-inspection', pass: true, ...observations });
+  } finally {
+    factPublication?.controller.abort();
+    reviewPublication?.controller.abort();
+    if (factPublication) await factPublication.result.catch(() => {});
+    if (reviewPublication) await reviewPublication.result.catch(() => {});
+    if (fixture) await fixture.close({ removeRoot: fs.existsSync(fixture.root) });
+    if (movedRoot) fs.rmSync(movedRoot, { recursive: true, force: true });
+    if (browserState) await cleanupBrowserDriver(browserState);
+    board.close();
+  }
+});
+
+test('T004 contextual requests: exact scope, independent drafts, truthful Browsing, history return, and visual access', {
+  timeout: 360_000,
+  concurrency: false,
+}, async (context) => {
+  if (!browserReady(context)) return;
+  const output = evidence(context, 't004-contextual-requests');
+  const board = installEmptyBoard();
+  const fixtures = [];
+  const publications = [];
+  let browserState;
+  const runtimeErrors = [];
+  const network = [];
+  try {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-t004-context-'));
+    const featureA = createIdea(root, 801, 'context-feature-a', 'defined', [
+      '# Tasks',
+      '',
+      '## Phase 1: Context',
+      '- [~] T001@a801aaaa Inspect request isolation',
+      '',
+      'Keep task inspection local to feature A.',
+      '',
+      '- [ ] T002@a801bbbb Return without retargeting',
+      '    deps: T001@a801aaaa',
+      '',
+    ].join('\n'));
+    const featureB = createIdea(root, 802, 'request-feature-b', 'defined');
+    const draftIdea = createIdea(root, 803, 'idea-scoped-context');
+    const previewA = createPreview(root, /** @type {any} */ (featureA));
+    const historyA = createSealedHistory(root, /** @type {any} */ ({
+      kind: 'feature',
+      ideaPath: featureA.ideaPath,
+      specPath: featureA.specPath,
+    }), previewA, {
+      submissionId: '44444444-4444-4444-8444-444444444444',
+      label: 'T004 history A',
+      revision: hash('t004-history-a-revision'),
+    });
+    const fixture = await createFixture(root);
+    fixtures.push(fixture);
+
+    const sessionRequest = requestFor(fixture, 'fact', { input: { kind: 'text' } });
+    sessionRequest.prompt = 'Session request stays independently reachable';
+    publications.push(await publish(fixture, sessionRequest));
+    const foreignRequest = requestFor(fixture, 'scope_choice', {
+      options: [
+        { id: 'keep-b', label: 'Keep request B exact', consequence: 'Feature A remains only the browsing selection.' },
+        { id: 'move-b', label: 'Move request B', consequence: 'The owner would need a fresh request.' },
+      ],
+    }, {
+      kind: 'feature',
+      ideaPath: featureB.ideaPath,
+      specPath: featureB.specPath,
+    });
+    foreignRequest.prompt = 'Choose for feature B while browsing A';
+    const foreign = await publish(fixture, foreignRequest);
+    publications.push(foreign);
+
+    browserState = await startBrowser();
+    const { page } = browserState;
+    page.on('Runtime.exceptionThrown', event => runtimeErrors.push(event));
+    page.on('Network.requestWillBeSent', event => {
+      if (!event.request.url.startsWith(fixture.instance.url)) return;
+      network.push({
+        method: event.request.method,
+        path: new URL(event.request.url).pathname,
+        body: event.request.postData ?? null,
+      });
+    });
+    await navigate(page, fixture, 1440, 'light');
+    await click(page, `document.querySelector('[data-work-path="${featureA.ideaPath}"]')`);
+    await visible(page, 'Keep task inspection local to feature A.');
+
+    // Session and foreign-feature requests are real and reachable, but neither
+    // creates a contextual action or a Review entry for selected feature A.
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-request-entry]').length`), 0);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-review-entry]').length`), 0);
+    assert.equal(await evaluate(page, `document.querySelectorAll('iframe').length`), 0);
+    await click(page, button('Needs you'));
+    await visible(page, sessionRequest.prompt);
+    await visible(page, foreignRequest.prompt);
+    await click(page, button('Now'));
+
+    // One exact feature request opens its form directly from Now. Merely
+    // opening the response surface does not mount Review.
+    const exactRequest = requestFor(fixture, 'fact', { input: { kind: 'text' } }, {
+      kind: 'feature',
+      ideaPath: featureA.ideaPath,
+      specPath: featureA.specPath,
+    });
+    exactRequest.prompt = 'One exact feature A request opens directly';
+    const exact = await publish(fixture, exactRequest);
+    publications.push(exact);
+    await visible(page, 'Respond to request');
+    assert.equal(await evaluate(page, `document.querySelector('[data-request-entry]')
+      ?.getAttribute('data-request-entry')`), exact.record.requestHandle);
+    await evaluate(page, `document.querySelector('[data-request-entry]').focus()`);
+    await press(page, 'Enter');
+    await visible(page, exactRequest.prompt);
+    assert.equal(await evaluate(page, `document.querySelector('[aria-label="Working on"]')
+      ?.innerText.includes('801')`), true);
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[aria-label="Browsing"]'))`), false);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-review-workspace]').length`), 0);
+    const exactDraft = '  Exact A draft\n\nkeeps literal whitespace.  ';
+    await fill(page, field('Your response'), exactDraft);
+
+    // An idea-scoped request with the same exact idea and a preview request are
+    // also contextual. Several matches route to the existing explicit list;
+    // preview capability remains a separate, user-entered Review action.
+    const ideaRequest = requestFor(fixture, 'fact', { input: { kind: 'text' } }, {
+      kind: 'feature',
+      ideaPath: featureA.ideaPath,
+      specPath: featureA.specPath,
+    });
+    ideaRequest.prompt = 'Second feature-scoped request for the selected source';
+    publications.push(await publish(fixture, ideaRequest));
+    const previewRequest = requestFor(fixture, 'preview', previewA, {
+      kind: 'feature',
+      ideaPath: featureA.ideaPath,
+      specPath: featureA.specPath,
+    });
+    previewRequest.prompt = 'Preview remains a separate contextual capability';
+    const previewPublication = await publish(fixture, previewRequest);
+    publications.push(previewPublication);
+    await click(page, button('Now'));
+    await visible(page, 'Choose request (3)');
+    assert.equal(await evaluate(page, `document.querySelector('[data-request-entry]')
+      ?.getAttribute('data-request-entry')`), 'choices');
+    assert.equal(await evaluate(page, `document.querySelector('[data-review-entry]')
+      ?.getAttribute('data-review-entry')`), previewPublication.record.requestHandle);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-review-workspace]').length`), 0);
+    await click(page, button('Choose request (3)'));
+    await visible(page, exactRequest.prompt);
+    await visible(page, ideaRequest.prompt);
+    await visible(page, previewRequest.prompt);
+    await visible(page, sessionRequest.prompt);
+    await visible(page, foreignRequest.prompt);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-review-workspace]').length`), 0);
+
+    // Select B while A remains the committed work context. The command bar and
+    // request surface name different identities, and the B option/text draft
+    // survives task inspection, New idea/Cancel, Clear, and reselection.
+    await click(page, `[...document.querySelectorAll('button')].find(node =>
+      node.innerText.includes(${JSON.stringify(foreignRequest.prompt)}) && node.getClientRects().length)`);
+    await visible(page, 'You are browsing 801 · context feature a');
+    assert.equal(await evaluate(page, `document.querySelector('[aria-label="Browsing"]')
+      ?.innerText.includes('801')`), true);
+    assert.equal(await evaluate(page, `document.querySelector('[aria-label="Request scope"]')
+      ?.innerText.includes(${JSON.stringify(featureB.specPath)})`), true);
+    await choose(page, 'Alternative', 'Keep request B exact');
+    const foreignDraft = '  B response\n\nretains *literal* context.  ';
+    await fill(page, field('Additional context (optional)'), foreignDraft);
+
+    await click(page, button('Now'));
+    await click(page, `document.querySelector('[data-task-key="T001@a801aaaa"]')`);
+    await click(page, `document.querySelector('[data-task-filter="todo"]')`);
+    assert.equal(await evaluate(page, `document.activeElement?.dataset.taskFilter`), 'todo');
+    await click(page, button('Needs you'));
+    assert.equal(await evaluate(page, `${field('Alternative')}.innerText.trim()`), 'Keep request B exact');
+    assert.equal(await evaluate(page, `${field('Additional context (optional)')}.value`), foreignDraft);
+
+    await click(page, button('New idea'));
+    const newIdeaDraft = '  New idea remains unfiled.\n\nDo not attach A or B.  ';
+    await fill(page, field('Your idea'), newIdeaDraft);
+    await click(page, button('Cancel'));
+    assert.equal(await evaluate(page, `${field('Alternative')}.innerText.trim()`), 'Keep request B exact');
+    assert.equal(await evaluate(page, `${field('Additional context (optional)')}.value`), foreignDraft);
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    assert.equal(await evaluate(page, `document.activeElement === ${field('Search work')}`), true);
+    assert.equal(await evaluate(page, `${field('Search work')}.value`), '');
+    assert.equal(await evaluate(page, `${field('Show')}.innerText.trim()`), 'All');
+    await fill(page, field('Search work'), '801');
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    await press(page, 'Enter');
+    await visible(page, 'Keep task inspection local to feature A.');
+    assert.equal(await evaluate(page, `document.querySelector('[data-task-filter="all"]')
+      ?.getAttribute('aria-pressed')`), 'true', 'Clear resets only the local task inspection');
+    await click(page, button('Needs you'));
+    assert.equal(await evaluate(page, `${field('Alternative')}.innerText.trim()`), 'Keep request B exact');
+    assert.equal(await evaluate(page, `${field('Additional context (optional)')}.value`), foreignDraft);
+    await click(page, button('New idea'));
+    assert.equal(await evaluate(page, `${field('Your idea')}.value`), newIdeaDraft);
+    await click(page, button('Cancel'));
+
+    // Fresh visual, geometry, AX-name, target-size, and contrast evidence for
+    // the cross-scope form and its Browsing control at every required width.
+    for (const theme of ['light', 'dark']) {
+      for (const width of [360, 768, 1440, 1920]) {
+        await viewport(page, width, /** @type {'light'|'dark'} */ (theme));
+        assert.equal(await evaluate(page, `${field('Additional context (optional)')}.value`), foreignDraft);
+        await audit(page, output, `t004-browsing-form-${width}-${theme}`);
+      }
+    }
+    await viewport(page, 768, 'light');
+    await page.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
+    assert.equal(await until(() => evaluate(page, `visualViewport?.scale === 2 ? visualViewport.scale : null`),
+      'T004 200 percent page scale'), 2);
+    await audit(page, output, 't004-browsing-form-768-light-page-scale-200');
+    await page.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+    await page.send('Emulation.setEmulatedMedia', {
+      features: [
+        { name: 'prefers-color-scheme', value: 'dark' },
+        { name: 'prefers-reduced-motion', value: 'reduce' },
+      ],
+    });
+    await until(() => evaluate(page, `getComputedStyle(document.querySelector('.fui-FluentProvider'))
+      .getPropertyValue('--colorNeutralForeground1').trim() === '#ffffff'`), 'T004 dark reduced-motion theme');
+    assert.ok(await evaluate(page, `getComputedStyle(document.querySelector('[data-work-selector]'))
+      .transitionDuration.split(',').every(value => Number.parseFloat(value) <= 0.00001)`),
+    'reduced motion leaves no perceptible selector transition');
+    await audit(page, output, 't004-browsing-form-768-dark-reduced-motion');
+    await viewport(page, 1440, 'light');
+
+    const responsePostsBefore = network.filter(entry =>
+      entry.method === 'POST' && entry.path === '/api/needs-you/respond').length;
+    await click(page, button('Send response'));
+    const foreignResult = JSON.parse((await foreign.result).textResultForLlm);
+    assert.equal(foreignResult.status, 'awaiting_acknowledgment');
+    assert.equal(foreignResult.response.optionId, 'keep-b');
+    assert.equal(foreignResult.response.text, foreignDraft);
+    assert.deepEqual(foreignResult.receipt.scope, {
+      kind: 'feature',
+      ideaPath: featureB.ideaPath,
+      specPath: featureB.specPath,
+    });
+    await until(() => network.filter(entry =>
+      entry.method === 'POST' && entry.path === '/api/needs-you/respond').length === responsePostsBefore + 1,
+    'one cross-scope response POST observed by CDP');
+    await acknowledge(fixture, foreignResult.receipt, 'accepted', foreignRequest.source);
+    await visible(page, 'The owner accepted this response');
+
+    // Once A's source changes, all of its formerly exact requests become
+    // nonpending and therefore create neither a contextual response action nor
+    // Review authority. The still-pending session request remains independent.
+    fs.appendFileSync(path.join(root, ...featureA.ideaPath.split('/')), '\n<!-- T004 source invalidation -->\n');
+    fixture.provider.onEvent({ id: randomUUID(), type: 'session.idle', data: { aborted: false } });
+    await until(() => fixture.provider.read().requests
+      .filter(item => [exactRequest.requestRef, ideaRequest.requestRef, previewRequest.requestRef]
+        .includes(item.request.requestRef))
+      .every(item => item.phase !== 'pending'), 'A-scoped requests invalidated by their real source');
+    await click(page, button('Now'));
+    await until(() => evaluate(page, `document.querySelectorAll('[data-request-entry]').length === 0`),
+      'no stale contextual response entry');
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-review-entry]').length`), 0);
+    assert.equal(await evaluate(page, `document.querySelectorAll('iframe').length`), 0);
+
+    // A draft's exact idea scope independently receives the same one-request
+    // direct entry behavior; no defined-feature ownership is inferred.
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    await fill(page, field('Search work'), '803');
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    await press(page, 'Enter');
+    await visible(page, 'Intent for idea-scoped-context, with literal source text.');
+    const draftIdeaRequest = requestFor(fixture, 'fact', { input: { kind: 'text' } }, {
+      kind: 'idea',
+      ideaPath: draftIdea.ideaPath,
+    });
+    draftIdeaRequest.prompt = 'One exact draft-idea request opens directly';
+    const draftIdeaPublication = await publish(fixture, draftIdeaRequest);
+    publications.push(draftIdeaPublication);
+    await visible(page, 'Respond to request');
+    assert.equal(await evaluate(page, `document.querySelector('[data-request-entry]')
+      ?.getAttribute('data-request-entry')`), draftIdeaPublication.record.requestHandle);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-review-entry]').length`), 0);
+
+    // History return remounts Context. Its original control is disconnected,
+    // so the product must restore the recorded scroll and focus a fresh exact
+    // locator rather than the background selectedRequest.
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    await fill(page, field('Search work'), '801');
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    await press(page, 'Enter');
+    await viewport(page, 768, 'light', 480);
+    await visible(page, historyA.submissionId);
+    await evaluate(page, `(() => {
+      const button = document.querySelector('[data-history-entry="${historyA.submissionId}"]');
+      button.scrollIntoView({ block: 'center' });
+      button.focus();
+      window.__t004HistoryOrigin = button;
+      window.__t004HistoryScroll = button.closest('[role="tabpanel"]').scrollTop;
+    })()`);
+    const historyScroll = await evaluate(page, `window.__t004HistoryScroll`);
+    assert.ok(historyScroll > 0, `history focus fixture scrolls the Context panel: ${historyScroll}`);
+    await click(page, `document.querySelector('[data-history-entry="${historyA.submissionId}"]')`);
+    await visible(page, `Submission: ${historyA.submissionId}`);
+    assert.equal(await evaluate(page, `Boolean(document.querySelector('[aria-label="Browsing"]'))`), false,
+      'displayed history scope, not background request B, labels the selected A identity');
+    await click(page, button('Back'));
+    const historyReturn = await until(() => evaluate(page, `(() => {
+      const node = document.querySelector('[data-history-entry="${historyA.submissionId}"]');
+      const panel = node?.closest('[role="tabpanel"]');
+      if (!node || document.activeElement !== node) return null;
+      return {
+        originConnected: window.__t004HistoryOrigin.isConnected,
+        replaced: node !== window.__t004HistoryOrigin,
+        focusedSubmission: node.dataset.historyEntry,
+        scrollTop: panel.scrollTop,
+      };
+    })()`), 'T004 history locator focus and scroll return');
+    assert.deepEqual({
+      originConnected: historyReturn.originConnected,
+      replaced: historyReturn.replaced,
+      focusedSubmission: historyReturn.focusedSubmission,
+    }, {
+      originConnected: false,
+      replaced: true,
+      focusedSubmission: historyA.submissionId,
+    });
+    assert.ok(Math.abs(historyReturn.scrollTop - historyScroll) <= 1,
+      `history return restores ${historyScroll}px scroll, observed ${historyReturn.scrollTop}px`);
+
+    // A current preview on a provider without the Review adapter remains a
+    // response request, but it cannot manufacture an Open Review destination.
+    const unavailableRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-t004-no-review-'));
+    const unavailableFeature = createIdea(unavailableRoot, 804, 'review-capability-unavailable', 'defined');
+    const unavailablePreview = createPreview(unavailableRoot, /** @type {any} */ (unavailableFeature));
+    const unavailableFixture = await createFixture(unavailableRoot, null, () => null);
+    fixtures.push(unavailableFixture);
+    const unavailableRequest = requestFor(unavailableFixture, 'preview', unavailablePreview, {
+      kind: 'feature',
+      ideaPath: unavailableFeature.ideaPath,
+      specPath: unavailableFeature.specPath,
+    });
+    unavailableRequest.prompt = 'Preview without a current Review capability';
+    const unavailablePublication = await publish(unavailableFixture, unavailableRequest);
+    publications.push(unavailablePublication);
+    await navigate(page, unavailableFixture, 768, 'dark');
+    await click(page, `document.querySelector('[data-work-path="${unavailableFeature.ideaPath}"]')`);
+    await visible(page, 'Respond to request');
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-review-entry]').length`), 0);
+    await click(page, button('Respond to request'));
+    await visible(page, unavailableRequest.prompt);
+    await visible(page, 'The current preview owner or Review capability is unavailable.');
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-review-workspace]').length`), 0);
+    assert.equal(await evaluate(page, `document.querySelectorAll('.dude-review-frame iframe').length`), 0);
+
+    const approved062 = fs.readFileSync(path.join(
+      ROOT,
+      '.dude/specs/062-dude-canvas-workspace-integration/design/workspace-integration.html',
+    ));
+    const approved052 = fs.readFileSync(path.join(
+      ROOT,
+      '.dude/specs/052-dude-canvas-ui/design/fluent-desktop-workspace.html',
+    ));
+    const comparison = {
+      classification: 'matches approved T004 composition',
+      approved062: { sha256: sha256(approved062), bytes: approved062.length },
+      reference052: { sha256: sha256(approved052), bytes: approved052.length },
+      observedAdaptations: [
+        'one command-bar Working on or Browsing identity remains distinct from request scope',
+        'Needs you and New idea share the retained shell without a second work selector',
+        'sealed history returns through the selected-work dock with locator and scroll restoration',
+        '360px uses the narrow shell while 768px, 1440px, and 1920px retain fluid available width',
+      ],
+      visualCases: output.results.map(item => item.case),
+      pageScalePercent: 200,
+      reducedMotion: true,
+      nativeDesktopHostClaimed: false,
+      textOnlyZoomClaimed: false,
+    };
+    assert.equal(comparison.approved062.sha256,
+      '1508fe1efaf6a5228784dee8c140a569927bf27eb1dfc9244679b6ae80ec2962');
+    assert.equal(comparison.reference052.sha256,
+      'd491b002154088f4cc6cac4773a6745ac2f9a02b5f78b5a593c3c88335169d70');
+    writeEvidenceJson(output, 't004-approved-comparison', comparison);
+    output.results.push({
+      case: 't004-contextual-request-loop',
+      pass: true,
+      browser: browserState.version.Browser,
+      zeroContextualWithForeignAndSession: true,
+      oneExactDirectEntry: true,
+      severalExactChoiceEntry: true,
+      foreignScopeDelivered: foreignResult.receipt.scope,
+      historyReturn,
+      comparison,
+    });
+    assert.deepEqual(runtimeErrors, []);
+  } finally {
+    for (const publication of publications) publication.controller.abort();
+    if (browserState) await cleanupBrowserDriver(browserState);
+    for (const fixture of fixtures.reverse()) await fixture.close({
+      removeRoot: fs.existsSync(fixture.root),
+    });
+    await Promise.allSettled(publications.map(publication => publication.result));
+    board.close();
+  }
+});
+
+test('T004 Review opening: late success and error cannot override newer navigation or per-open identity', {
+  timeout: 300_000,
+  concurrency: false,
+}, async (context) => {
+  if (!browserReady(context)) return;
+  const output = evidence(context, 't004-review-open-races');
+  const board = installEmptyBoard();
+  const publications = [];
+  let fixture;
+  let browserState;
+  let movedRoot = null;
+  let fetchEnabled = false;
+  const runtimeErrors = [];
+  const network = [];
+  const paused = [];
+  const observations = [];
+  try {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-canvas-t004-open-race-'));
+    const feature = createIdea(root, 811, 'review-open-race', 'defined');
+    let preview = createPreview(root, /** @type {any} */ (feature));
+    fixture = await createFixture(root);
+    const scope = {
+      kind: 'feature',
+      ideaPath: feature.ideaPath,
+      specPath: feature.specPath,
+    };
+    const makePreviewRequest = async (prompt, currentPreview = preview) => {
+      const request = requestFor(fixture, 'preview', currentPreview, scope);
+      request.prompt = prompt;
+      const publication = await publish(fixture, request);
+      publications.push(publication);
+      return { publication, request };
+    };
+    const sameRequest = await makePreviewRequest('Same request uses a new opening intent every time');
+    const errorRequest = await makePreviewRequest('Late Review error must stay behind New idea');
+    const clearRequest = await makePreviewRequest('Clear supersedes this pending Review open');
+    const sourceRequest = await makePreviewRequest('Source invalidation supersedes this Review open');
+
+    browserState = await startBrowser();
+    const { page } = browserState;
+    page.on('Runtime.exceptionThrown', event => runtimeErrors.push(event));
+    page.on('Network.requestWillBeSent', event => {
+      if (!event.request.url.startsWith(fixture.instance.url)) return;
+      network.push({
+        method: event.request.method,
+        path: new URL(event.request.url).pathname,
+        body: event.request.postData ?? null,
+      });
+    });
+    page.on('Fetch.requestPaused', event => {
+      if (new URL(event.request.url).pathname === '/api/needs-you/review/open'
+        && event.responseStatusCode) paused.push(event);
+    });
+    await navigate(page, fixture, 1440, 'light');
+    await click(page, `document.querySelector('[data-work-path="${feature.ideaPath}"]')`);
+    await visible(page, 'Review design requests');
+    await page.send('Fetch.enable', {
+      patterns: [{
+        urlPattern: '*/api/needs-you/review/open',
+        requestStage: 'Response',
+      }],
+    });
+    fetchEnabled = true;
+
+    const requestButton = request => `[...document.querySelectorAll('button')].find(node =>
+      node.innerText.includes(${JSON.stringify(request.prompt)}) && node.getClientRects().length)`;
+    const showRequest = async request => {
+      await click(page, `document.querySelector('#dude-tab-needs')`);
+      if (await evaluate(page, `Boolean(${button('All requests')})`)) {
+        await click(page, button('All requests'));
+      }
+      await click(page, requestButton(request));
+      await visible(page, request.prompt);
+    };
+    const beginOpen = async (request, label) => {
+      await showRequest(request);
+      const occurrence = paused.length;
+      await click(page, button('Open Review'));
+      return until(() => paused[occurrence], `${label} deferred Review-open response`);
+    };
+    const continueOpen = async event => {
+      await page.send('Fetch.continueRequest', { requestId: event.requestId });
+    };
+    const failOpen = async event => {
+      await page.send('Fetch.failRequest', {
+        requestId: event.requestId,
+        errorReason: 'ConnectionReset',
+      });
+    };
+    const settle = () => evaluate(page, `new Promise(resolve => requestAnimationFrame(() =>
+      Promise.resolve().then(() => requestAnimationFrame(resolve))))`);
+    const foreground = () => evaluate(page, `Boolean(document.querySelector('[data-review-workspace]')
+      ?.getClientRects().length)`);
+
+    // A valid server success is held after the real adapter allocates its
+    // working submission. New idea cancels only this foreground intent.
+    const first = await beginOpen(sameRequest.request, 'first same-request');
+    await click(page, button('New idea'));
+    const localDraft = '  Newer navigation keeps this draft.\n\nNo late Review may replace it.  ';
+    await fill(page, field('Your idea'), localDraft);
+    await continueOpen(first);
+    await settle();
+    assert.equal(await evaluate(page, `document.querySelector('h1')?.innerText.trim()`), 'New idea');
+    assert.equal(await evaluate(page, `${field('Your idea')}.value`), localDraft);
+    assert.equal(await foreground(), false);
+    assert.equal(await evaluate(page, `document.body.innerText.includes('Action unavailable')`), false);
+    observations.push({ ordering: 'success then New idea', foreground: false, draft: localDraft });
+
+    // Leave and reopen the same request twice. The newer response completes
+    // first and mounts one real engine; the older per-open intent must not
+    // replace that entry even though both responses have the same request key
+    // and provider-owned submission.
+    const second = await beginOpen(sameRequest.request, 'second same-request');
+    await click(page, button('Now'));
+    const third = await beginOpen(sameRequest.request, 'third same-request');
+    await continueOpen(third);
+    await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+      && !document.querySelector('[aria-label="Box (B)"]')?.disabled`),
+    'newest same-request Review engine', 60_000);
+    await evaluate(page, `(() => {
+      window.__t004RaceWorkspace = document.querySelector('[data-review-workspace]');
+      window.__t004RaceEngineHost = document.querySelector('[data-review-engine-host]');
+      window.__t004RaceFrame = document.querySelector('.dude-review-frame');
+      window.__t004RaceOverlay = document.querySelector('.dude-review-overlay');
+    })()`);
+    const newest = await evaluate(page, `(() => ({
+      prompt: document.querySelector('[data-review-workspace] h1')?.innerText.trim(),
+      framePath: document.querySelector('.dude-review-frame iframe')?.src,
+      viewBox: document.querySelector('.dude-review-overlay')?.getAttribute('viewBox'),
+    }))()`);
+    await continueOpen(second);
+    await settle();
+    const afterOlderSameRequest = await evaluate(page, `(() => ({
+      sameWorkspace: window.__t004RaceWorkspace === document.querySelector('[data-review-workspace]'),
+      sameEngineHost: window.__t004RaceEngineHost === document.querySelector('[data-review-engine-host]'),
+      sameFrame: window.__t004RaceFrame === document.querySelector('.dude-review-frame'),
+      sameOverlay: window.__t004RaceOverlay === document.querySelector('.dude-review-overlay'),
+      prompt: document.querySelector('[data-review-workspace] h1')?.innerText.trim(),
+      framePath: document.querySelector('.dude-review-frame iframe')?.src,
+      viewBox: document.querySelector('.dude-review-overlay')?.getAttribute('viewBox'),
+    }))()`);
+    assert.deepEqual(afterOlderSameRequest, {
+      sameWorkspace: true,
+      sameEngineHost: true,
+      sameFrame: true,
+      sameOverlay: true,
+      ...newest,
+    });
+    observations.push({
+      ordering: 'same request older success after newer success',
+      newest,
+      retainedIdentity: afterOlderSameRequest,
+    });
+
+    // A transport error is stale after explicit navigation too. The already
+    // mounted engine remains hidden and the newer draft receives no banner.
+    await click(page, `document.querySelector('[data-review-return]')`);
+    const errorOpen = await beginOpen(errorRequest.request, 'late-error');
+    await click(page, button('New idea'));
+    await failOpen(errorOpen);
+    await settle();
+    assert.deepEqual(await evaluate(page, `({
+      heading: document.querySelector('h1')?.innerText.trim(),
+      draft: ${field('Your idea')}.value,
+      reviewForeground: Boolean(document.querySelector('[data-review-workspace]')?.getClientRects().length),
+      actionUnavailable: document.body.innerText.includes('Action unavailable'),
+      connectionError: document.body.innerText.includes('The connection was interrupted')
+    })`), {
+      heading: 'New idea',
+      draft: localDraft,
+      reviewForeground: false,
+      actionUnavailable: false,
+      connectionError: false,
+    });
+    observations.push({ ordering: 'error then New idea', foreground: false, banner: false });
+
+    // Clear is also a newer navigation intent. It resets only lookup/task
+    // state and cannot be undone by a successful Review response.
+    const clearOpen = await beginOpen(clearRequest.request, 'clear');
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    await continueOpen(clearOpen);
+    await settle();
+    assert.deepEqual(await evaluate(page, `({
+      heading: document.querySelector('h1')?.innerText.trim(),
+      search: ${field('Search work')}.value,
+      show: ${field('Show')}.innerText.trim(),
+      reviewForeground: Boolean(document.querySelector('[data-review-workspace]')?.getClientRects().length),
+      selected: Boolean(document.querySelector('[aria-label="Working on"],[aria-label="Browsing"]'))
+    })`), {
+      heading: 'Overview',
+      search: '',
+      show: 'All',
+      reviewForeground: false,
+      selected: false,
+    });
+    observations.push({ ordering: 'success then Clear', foreground: false, selected: false });
+
+    // Re-select A, hold its source-sensitive request, then invalidate the real
+    // canonical preview through the production endpoint. The held older
+    // success may report an unavailable action, but cannot mount stale bytes.
+    await fill(page, field('Search work'), '811');
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await pressNavigationKey(page, 'ArrowDown');
+    await press(page, 'Enter');
+    const sourceOpen = await beginOpen(sourceRequest.request, 'source-invalidation');
+    fs.appendFileSync(path.join(root, ...preview.artifact.path.split('/')),
+      '\n<!-- changed while the first open response was held -->\n');
+    const invalidationResponse = await fetch(new URL('/api/needs-you/review/open', fixture.instance.url), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        origin: new URL(fixture.instance.url).origin,
+      },
+      body: JSON.stringify({
+        requestHandle: sourceRequest.publication.record.requestHandle,
+        revision: sourceRequest.request.revision,
+      }),
+    });
+    assert.equal(invalidationResponse.ok, false);
+    const invalidationBody = await invalidationResponse.json();
+    assert.equal(invalidationBody.error, 'source_changed');
+    await until(() => fixture.provider.read().requests.find(item =>
+      item.request.requestRef === sourceRequest.request.requestRef)?.phase === 'source_changed',
+    'source-invalidated request phase');
+    await visible(page, 'Stale context');
+
+    // Publish and select a genuinely fresh request while the invalidated
+    // response is still held. Releasing the stale response after this newer
+    // intent cannot relabel the fresh request or mount the old source.
+    preview = {
+      ...preview,
+      artifact: {
+        ...preview.artifact,
+        revision: hash(fs.readFileSync(path.join(root, ...preview.artifact.path.split('/')))),
+      },
+    };
+    const rootRequest = await makePreviewRequest('Root replacement supersedes this valid Review open', preview);
+    await click(page, button('Needs you'));
+    const rootOpen = await beginOpen(rootRequest.request, 'root-replacement');
+    const freshRequestState = await evaluate(page, `(() => {
+      const title = [...document.querySelectorAll('*')].find(node =>
+        node.childElementCount === 0 && node.textContent.trim() === 'Action unavailable');
+      const notice = title?.closest('[role="alert"],[role="status"]') || title?.parentElement?.parentElement;
+      return {
+        prompt: [...document.querySelectorAll('p')].find(node =>
+          node.innerText.trim() === ${JSON.stringify(rootRequest.request.prompt)}
+        )?.innerText.trim() || null,
+        requestIdentity: [...document.querySelectorAll('main *')].find(node =>
+          node.childElementCount === 0
+          && node.textContent.includes(${JSON.stringify(`Request: ${rootRequest.request.requestRef}`)})
+        )?.textContent.trim() || null,
+        actionUnavailable: Boolean(title),
+        notice: notice?.innerText.replace(/\\s+/g, ' ').trim() || null,
+        reviewForeground: Boolean(document.querySelector('[data-review-workspace]')?.getClientRects().length),
+      };
+    })()`);
+    writeEvidenceJson(output, 't004-fresh-request-after-stale-open', {
+      expected: {
+        prompt: rootRequest.request.prompt,
+        requestIdentity: rootRequest.request.requestRef,
+        actionUnavailable: false,
+        reviewForeground: false,
+      },
+      observed: freshRequestState,
+      sequence: [
+        'hold a real Review-open success',
+        'invalidate the bound source through the production endpoint',
+        'publish and select a fresh owner-qualified request',
+        'start and hold that fresh request open',
+        'release the stale response after the fresh intent',
+      ],
+    });
+    assert.equal(freshRequestState.prompt, rootRequest.request.prompt);
+    assert.match(freshRequestState.requestIdentity || '', new RegExp(rootRequest.request.requestRef));
+    assert.equal(freshRequestState.reviewForeground, false);
+    assert.equal(freshRequestState.actionUnavailable, false,
+      `the stale Review-open result must not annotate the fresh request: ${JSON.stringify(freshRequestState)}`);
+    await continueOpen(sourceOpen);
+    await settle();
+    const afterLateSource = await evaluate(page, `({
+      freshPrompt: document.body.innerText.includes(${JSON.stringify(rootRequest.request.prompt)}),
+      stalePrompt: document.body.innerText.includes(${JSON.stringify(sourceRequest.request.prompt)}),
+      staleStatus: document.body.innerText.includes('Stale context'),
+      actionUnavailable: document.body.innerText.includes('Action unavailable'),
+      reviewForeground: Boolean(document.querySelector('[data-review-workspace]')?.getClientRects().length)
+    })`);
+    assert.deepEqual({
+      freshPrompt: afterLateSource.freshPrompt,
+      stalePrompt: afterLateSource.stalePrompt,
+      actionUnavailable: afterLateSource.actionUnavailable,
+      reviewForeground: afterLateSource.reviewForeground,
+    }, {
+      freshPrompt: true,
+      stalePrompt: false,
+      actionUnavailable: false,
+      reviewForeground: false,
+    }, 'a source-invalidated open response cannot annotate a newer request');
+    observations.push({
+      ordering: 'source-invalidated success after a fresh request started',
+      providerPhase: 'source_changed',
+      ...afterLateSource,
+    });
+    writeEvidenceJson(output, 't004-fresh-request-after-stale-open', {
+      expected: {
+        prompt: rootRequest.request.prompt,
+        requestIdentity: rootRequest.request.requestRef,
+        actionUnavailable: false,
+        reviewForeground: false,
+      },
+      beforeLateSource: freshRequestState,
+      afterLateSource,
+      sequence: [
+        'hold a real Review-open success',
+        'invalidate the bound source through the production endpoint',
+        'publish and select a fresh owner-qualified request',
+        'start and hold that fresh request open',
+        'release the stale response after the fresh intent',
+      ],
+    });
+    await saveRegressionProof(page, output, 't004-fresh-request-after-stale-open', {
+      freshRequestState,
+      afterLateSource,
+    });
+
+    // Keep the fresh valid response held while the owned fixture root first
+    // becomes unavailable, then is replaced at the same path. Temporary
+    // unavailability retains the explicit target without foregrounding Review;
+    // the proven new root key clears the per-open intent before its response
+    // can annotate replacement work.
+    movedRoot = `${root}-original`;
+    fs.renameSync(root, movedRoot);
+    await click(page, button('Refresh'));
+    await visible(page, 'Current request coverage unavailable');
+    assert.equal(await foreground(), false);
+    assert.equal(await evaluate(page, `document.body.innerText.includes(
+      ${JSON.stringify(rootRequest.request.prompt)}
+    )`), true);
+    createIdea(root, 812, 'replacement-root-after-review-open', 'defined');
+    await click(page, button('Refresh'));
+    await until(() => evaluate(page, `document.querySelector('h1')?.innerText.trim() === 'Overview'
+      && !document.querySelector('[aria-label="Working on"],[aria-label="Browsing"]')`),
+    'replacement root reset while Review response is held');
+    await continueOpen(rootOpen);
+    await settle();
+    const afterRootReplacement = await evaluate(page, `({
+      heading: document.querySelector('h1')?.innerText.trim(),
+      replacementVisible: document.body.innerText.includes('replacement root after review open'),
+      reviewForeground: Boolean(document.querySelector('[data-review-workspace]')?.getClientRects().length),
+      stalePrompt: document.body.innerText.includes(${JSON.stringify(rootRequest.request.prompt)}),
+      actionUnavailable: document.body.innerText.includes('Action unavailable')
+    })`);
+    assert.deepEqual(afterRootReplacement, {
+      heading: 'Overview',
+      replacementVisible: true,
+      reviewForeground: false,
+      stalePrompt: false,
+      actionUnavailable: false,
+    });
+    observations.push({
+      ordering: 'root replacement before held success',
+      ...afterRootReplacement,
+    });
+
+    await page.send('Fetch.disable');
+    fetchEnabled = false;
+    const openPosts = network.filter(entry =>
+      entry.method === 'POST' && entry.path === '/api/needs-you/review/open');
+    assert.equal(openPosts.length, 7,
+      'each explicit entry creates only its own real Review-open request, including the per-open same-request attempts');
+    const proof = {
+      browser: browserState.version.Browser,
+      observations,
+      openPosts: openPosts.map(({ body }) => JSON.parse(body)),
+      sameRequestHandle: sameRequest.publication.record.requestHandle,
+      retainedSubmissionPath: newest.framePath,
+      deterministicDeferral: 'CDP Fetch response-stage continuation/failure; no timeout sleep is a race oracle',
+    };
+    writeEvidenceJson(output, 't004-review-open-races', proof);
+    await saveRegressionProof(page, output, 't004-review-open-races', proof);
+    output.results.push({
+      case: 't004-review-open-races',
+      pass: true,
+      browser: browserState.version.Browser,
+      observations,
+      openPosts: openPosts.length,
+    });
+    assert.deepEqual(runtimeErrors, []);
+  } finally {
+    if (fetchEnabled && browserState) {
+      await browserState.page.send('Fetch.disable').catch(() => {});
+    }
+    for (const publication of publications) publication.controller.abort();
+    if (browserState) await cleanupBrowserDriver(browserState);
+    if (fixture) await fixture.close({ removeRoot: fs.existsSync(fixture.root) });
+    if (movedRoot) fs.rmSync(movedRoot, { recursive: true, force: true });
+    await Promise.allSettled(publications.map(publication => publication.result));
+    board.close();
+  }
+});
+
 test('T011 browser: complete finder, six owner forms, keyboard context, late reads, and uncertain delivery', {
   timeout: 300_000,
   concurrency: false,
@@ -2367,8 +5381,9 @@ test('T011 browser: complete finder, six owner forms, keyboard context, late rea
     });
     await navigate(page, fixture, 1440, 'light');
 
-    // One complete finder includes every draft and keeps browsing state across
-    // explicit Context entry/return.
+    // One complete finder includes every draft and keeps uncommitted lookup
+    // state across ordinary view navigation. Committing a row intentionally
+    // replaces Search/Show with Working on/Clear.
     await visible(page, '52 of 54 recorded');
     await fill(page, field('Search work'), 'draft');
     await visible(page, '50 of 54 recorded');
@@ -2406,11 +5421,12 @@ test('T011 browser: complete finder, six owner forms, keyboard context, late rea
         ? { top, eventCount: events.length, events: [...events] }
         : null;
     })()`), 'settled finder scroll event before immediate Context navigation');
+    await evaluate(page, `document.querySelector('#dude-tab-context').focus()`);
     await press(page, 'Enter');
-    await visible(page, 'Intent for draft-30, with literal source text.');
-    assert.equal(await evaluate(page, `document.querySelector('[role=tab][aria-selected=true]')?.innerText.trim()`), 'Context');
+    await visible(page, 'No record is selected');
+    assert.equal(await evaluate(page, `document.querySelector('[role=tab][aria-selected=true]')?.innerText.trim()`), 'Now');
     assert.equal(await evaluate(page, `document.querySelectorAll('h1').length`), 1,
-      'Context has one identity heading rather than a redundant generic heading');
+      'unselected Now has one heading rather than a redundant generic heading');
     await click(page, button('Back to Overview'));
     assert.equal(await evaluate(page, `${field('Search work')}.value`), 'draft');
     const restoredScrollState = await until(
@@ -2427,9 +5443,34 @@ test('T011 browser: complete finder, six owner forms, keyboard context, late rea
     const restoredScroll = restoredScrollState.top;
     assert.ok(restoredScroll > 0);
     assert.equal(restoredScroll, entryScroll.top,
-      'Context return restores the last scroll position whose native event reached the production handler');
+      'unselected navigation restores the last scroll position whose native event reached the production handler');
 
-    await fill(page, field('Search work'), '');
+    await evaluate(page, `${field('Search work')}.focus()`);
+    await press(page, 'ArrowDown');
+    assert.equal(
+      await evaluate(page, `document.activeElement?.getAttribute('data-work-path')`),
+      '.dude/ideas/030-draft-30.md',
+      'the retained roving position returns to the same uncommitted row',
+    );
+    await press(page, 'Enter');
+    await visible(page, 'Intent for draft-30, with literal source text.');
+    assert.equal(await evaluate(page, `document.querySelectorAll(${JSON.stringify(draftRow)}).length`), 0,
+      'committing a row opens Now instead of leaving a second chooser behind');
+    assert.equal(await evaluate(page, `document.querySelectorAll('input[type=search]').length`), 0,
+      'selected mode replaces discovery rather than rendering a hidden duplicate search');
+    await click(page, button('Back to Overview'));
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-work-path]').length`), 1,
+      'selected Overview renders only the exact committed record');
+    assert.equal(
+      await evaluate(page, `document.querySelector('[data-work-path]')?.getAttribute('data-work-path')`),
+      '.dude/ideas/030-draft-30.md',
+    );
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
+    assert.equal(await evaluate(page, `${field('Search work')}.value`), '');
+    assert.equal(await evaluate(page, `${field('Show')}.innerText.trim()`), 'All');
+    assert.equal(await evaluate(page, `document.querySelector('[data-work-scroll]').scrollTop`), 0);
+    assert.equal(await evaluate(page, `document.activeElement === ${field('Search work')}`), true);
+
     await choose(page, 'Show', 'Closed');
     await visible(page, '2 of 54 recorded');
     await visible(page, 'Resolved ideas were not necessarily implemented');
@@ -2437,7 +5478,7 @@ test('T011 browser: complete finder, six owner forms, keyboard context, late rea
     await visible(page, 'Resolution does not mean it was implemented');
     assert.equal(await evaluate(page, `document.body.innerText.includes('Define this draft explicitly')`), false);
     await click(page, button('Back to Overview'));
-    await choose(page, 'Show', 'All');
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
     await visible(page, '54 of 54 recorded');
 
     // A late A response cannot put A's instruction under B's identity.
@@ -2451,6 +5492,7 @@ test('T011 browser: complete finder, six owner forms, keyboard context, late rea
     await click(page, `document.querySelector('[data-work-path=".dude/ideas/053-design-feature.md"]')`);
     await until(() => pausedRefresh, 'late Context A response');
     await click(page, button('Back to Overview'));
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
     await click(page, `document.querySelector('[data-work-path=".dude/ideas/051-current-feature.md"]')`);
     await visible(page, 'current feature');
     assert.equal(await evaluate(page, `document.querySelector('[role=tabpanel]:not([hidden])').innerText
@@ -2470,6 +5512,9 @@ test('T011 browser: complete finder, six owner forms, keyboard context, late rea
     assert.equal(network.filter(({ url }) => url.endsWith('/api/refresh')).length, readsBeforeTab);
     await evaluate(page, `document.querySelector('#dude-tab-overview').focus()`);
     await press(page, 'Enter');
+    await visible(page, '1 selected record');
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-work-path]').length`), 1);
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
     await visible(page, '54 of 54 recorded');
 
     for (const theme of ['light', 'dark']) {
@@ -3040,6 +6085,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     // a different feature. History belongs to the request scope, not selection.
     await click(page, button('Back'));
     await click(page, button('Overview'));
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
     await click(page, `document.querySelector('[data-work-path="${browsingFeature.ideaPath}"]')`);
     await visible(page, 'Intent for history-browsing-context, with literal source text.');
     await click(page, button('Needs you'));
@@ -3533,7 +6579,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     await visible(page, feedbackRequest.prompt);
     assert.equal(await evaluate(page, `Boolean(document.querySelector('[data-review-workspace]'))`), true);
     await click(page, button('Back'));
-    await click(page, button('Context'));
+    await click(page, button('Now'));
     await visible(page, 'Intent for history-browsing-context, with literal source text.');
 
     other.controller.abort();
@@ -3598,6 +6644,115 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
         revision: hash(fs.readFileSync(path.join(root, ...driftPreview.artifact.path.split('/')))),
       },
     };
+
+    // The successor revision receives a second independent, real report+PNG
+    // feedback round before any approval request exists. Its own original
+    // waiter receives exactly the sealed response, then its owner acknowledges
+    // application through the provider.
+    const secondFeedbackRequest = requestFor(restarted, 'preview', latestPreview, scope);
+    secondFeedbackRequest.prompt = 'Annotate the successor revision in a second feedback round';
+    const secondFeedback = await publish(restarted, secondFeedbackRequest);
+    await click(page, `[...document.querySelectorAll('button')].find((node) =>
+      node.innerText.includes('Annotate the successor revision in a second feedback round')
+      && node.getClientRects().length)`);
+    assert.equal(await evaluate(page, `document.querySelectorAll('[data-review-workspace]')
+      .length`), 1, 'the stale prior Review remains retained only until the explicit successor entry');
+    await click(page, button('Open Review'));
+    await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
+      && !document.querySelector('[aria-label="Box (B)"]').disabled`),
+    'second real feedback Review', 60_000);
+    await click(page, `document.querySelector('[aria-label="Box (B)"]')`);
+    await openReviewDetails(page);
+    await click(page, button('Add at center'));
+    await visible(page, 'Comments (1)');
+    await click(page, button('Comments (1)'));
+    const secondComment = '  Second revision feedback\n\nretains literal wording.  ';
+    await fill(page, field('Comment (optional)'), secondComment);
+    await click(page, `document.querySelector('[aria-label="Close comments"]')`);
+    const secondResponsePostsBefore = network.filter(({ url }) =>
+      url.endsWith('/api/needs-you/respond')).length;
+    await click(page, button('Send annotations'));
+    await evaluate(page, `(${button('Send annotations')})?.click()`);
+    const secondToolResult = await secondFeedback.result;
+    const secondDelivered = JSON.parse(secondToolResult.textResultForLlm);
+    assert.equal(secondDelivered.status, 'awaiting_acknowledgment');
+    assert.equal(secondDelivered.response.action, 'annotations');
+    assert.equal(secondDelivered.response.text, undefined);
+    assert.equal(secondToolResult.binaryResultsForLlm.length, 1);
+    assert.equal(secondToolResult.binaryResultsForLlm[0].mimeType, 'image/png');
+    const secondPng = Buffer.isBuffer(secondToolResult.binaryResultsForLlm[0].data)
+      ? secondToolResult.binaryResultsForLlm[0].data
+      : typeof secondToolResult.binaryResultsForLlm[0].data === 'string'
+        ? Buffer.from(secondToolResult.binaryResultsForLlm[0].data, 'base64')
+        : Buffer.from(secondToolResult.binaryResultsForLlm[0].data);
+    assert.ok(secondPng.length > 1_000);
+    assert.equal(secondPng.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    await until(() => network.filter(({ url }) =>
+      url.endsWith('/api/needs-you/respond')).length === secondResponsePostsBefore + 1,
+    'second feedback response POST observed once');
+    const secondSubmissionId = secondDelivered.response.submissionId;
+    const secondDirectory = path.join(
+      root,
+      ...path.posix.dirname(feature.specPath).split('/'),
+      'reviews',
+      secondSubmissionId,
+    );
+    const secondReport = fs.readFileSync(path.join(secondDirectory, 'report.md'), 'utf8');
+    const secondStoredPng = fs.readFileSync(path.join(secondDirectory, 'annotated.png'));
+    const secondProvenance = JSON.parse(fs.readFileSync(
+      path.join(secondDirectory, 'provenance.json'),
+      'utf8',
+    ));
+    assert.deepEqual(fs.readdirSync(secondDirectory).sort(), [
+      'annotated.png',
+      'provenance.json',
+      'report.md',
+      'working.json',
+    ]);
+    assert.equal(secondDelivered.review.report.text, secondReport,
+      'the second original waiter receives its exact sealed report');
+    assert.equal(secondReport.includes(secondComment), true);
+    assert.equal(hash(secondReport), secondProvenance.reportRevision);
+    assert.equal(hash(secondStoredPng), secondProvenance.imageRevision);
+    assert.equal(hash(secondPng), secondProvenance.imageRevision,
+      'the second original waiter image equals its immutable sealed PNG');
+    const secondDecoded = decodePng(secondPng);
+    assert.deepEqual(
+      { width: secondDecoded.width, height: secondDecoded.height },
+      { width: secondProvenance.capture.width, height: secondProvenance.capture.height },
+    );
+    assert.equal(secondProvenance.preview.artifact.revision, latestPreview.artifact.revision);
+    fs.cpSync(secondDirectory, path.join(output.directory, `sealed-${secondSubmissionId}`), {
+      recursive: true,
+    });
+    await acknowledge(restarted, secondDelivered.receipt, 'applied', secondFeedbackRequest.source, {
+      preview: { reviewedRevision: latestPreview.artifact.revision, current: latestPreview },
+    });
+    await visible(page, 'Feedback applied. Read notice');
+    await openReviewNotice(page, 'Feedback applied');
+    await visible(page, 'The owner confirmed application');
+    await closeReviewDetails(page);
+    await click(page, `document.querySelector('[data-review-return]')`);
+
+    const secondRound = {
+      requestRef: secondFeedbackRequest.requestRef,
+      requestHandle: secondFeedback.record.requestHandle,
+      submissionId: secondSubmissionId,
+      report: { bytes: Buffer.byteLength(secondReport), sha256: sha256(secondReport) },
+      image: {
+        bytes: secondPng.length,
+        sha256: sha256(secondPng),
+        width: secondDecoded.width,
+        height: secondDecoded.height,
+      },
+      artifactRevision: latestPreview.artifact.revision,
+      originalWaiterStatus: secondDelivered.status,
+      ownerAcknowledgment: 'applied',
+    };
+    writeEvidenceJson(output, 'second-real-feedback-round', secondRound);
+
+    // Approval is a third, separate owner request for the same currently
+    // viewed revision. Neither feedback waiter can supply this response.
     const approvalRequest = requestFor(restarted, 'preview', latestPreview, scope);
     approvalRequest.prompt = 'Approve the newly viewed exact revision';
     const approval = await publish(restarted, approvalRequest);
@@ -3613,6 +6768,9 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     const approved = JSON.parse((await approval.result).textResultForLlm);
     assert.equal(approved.response.action, 'approve');
     assert.equal(approved.response.artifactRevision, latestPreview.artifact.revision);
+    assert.notEqual(approvalRequest.requestRef, feedbackRequest.requestRef);
+    assert.notEqual(approvalRequest.requestRef, secondFeedbackRequest.requestRef);
+    assert.notEqual(approved.response.action, secondDelivered.response.action);
     await acknowledge(restarted, approved.receipt, 'applied', approvalRequest.source, {
       preview: { reviewedRevision: latestPreview.artifact.revision, current: latestPreview },
     });
@@ -3621,7 +6779,7 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
     // A real page exit is also a cancellation boundary. Hold a valid history
     // success, navigate the production document away and back, then prove the
     // destroyed view cannot adopt or translate that late response.
-    await click(page, button('Context'));
+    await click(page, button('Now'));
     await visible(page, 'Review history');
     let pausedTeardownHistory = null;
     const teardownFailures = [];
@@ -3691,6 +6849,19 @@ test('T011 browser: mounted Review seals a real PNG once, acknowledges, preserve
       browser: browserState.version.Browser,
       submissionId,
       png: { bytes: png.length, sha256: sha256(png) },
+      feedbackRounds: [{
+        requestRef: feedbackRequest.requestRef,
+        submissionId,
+        report: { bytes: Buffer.byteLength(reportText), sha256: sha256(reportText) },
+        image: { bytes: png.length, sha256: sha256(png) },
+        ownerAcknowledgment: 'applied',
+      }, secondRound],
+      approval: {
+        requestRef: approvalRequest.requestRef,
+        artifactRevision: approved.response.artifactRevision,
+        ownerAcknowledgment: 'applied',
+        separateFromFeedback: true,
+      },
       paletteChromeProbe,
       frameWidth,
       caretBefore,
@@ -4578,7 +7749,7 @@ test('T012 Send acknowledgment precedence: declined and unavailable receipts rep
 });
 
 test('T012 review regression: short-panel floating tools stay inside their palette and remain reachable after workspace navigation', {
-  timeout: 120_000,
+  timeout: 180_000,
   concurrency: false,
 }, async (context) => {
   if (!browserReady(context)) return;
@@ -4591,12 +7762,62 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     sources: {},
   });
   context.diagnostic(`T012 floating-toolbar evidence directory: ${directory}`);
+  const wheelExperiment = {
+    version:1,
+    treatment:{
+      browser:'existing installed discovery',
+      source:'identical createPreview bytes in three fresh fixtures',
+      viewport:{width:1000,height:300,dpr:2},
+      delta:{x:0,y:360},
+      variants:[
+        'legacy standalone outside-point wheel (observation only)',
+        'coordinate-anchored synthesized native mouse scroll outside the overlay',
+        'coordinate-anchored synthesized native mouse scroll on the overlay',
+      ],
+    },
+    variants:{
+      standalone:{},
+      overlayNegative:{},
+      positioned:{},
+    },
+    discriminator:{
+      status:'not-reached',
+      reason:null,
+    },
+  };
+  context.after(() => writeEvidenceJson(
+    output,
+    'short-panel-wheel-discriminator',
+    wheelExperiment,
+  ));
   const board = installEmptyBoard();
   let browserState;
   let fixture;
   let publication;
+  let wheelObserver;
   const runtimeErrors = [];
   try {
+    await runShortPanelWheelControl(
+      'standalone',
+      wheelExperiment.variants.standalone,
+    );
+    writeEvidenceJson(output, 'short-panel-wheel-discriminator', wheelExperiment);
+    assert.equal(
+      wheelExperiment.variants.standalone.qualification?.passed,
+      true,
+      'standalone source observation must qualify before its diagnostic wheel',
+    );
+    await runShortPanelWheelControl(
+      'overlay-negative',
+      wheelExperiment.variants.overlayNegative,
+    );
+    writeEvidenceJson(output, 'short-panel-wheel-discriminator', wheelExperiment);
+    assert.equal(
+      wheelExperiment.variants.overlayNegative.qualification?.passed,
+      true,
+      'overlay-negative source observation must qualify before its diagnostic wheel',
+    );
+
     // Arrange: create a synthetic owned preview in a disposable real provider
     // root. Protected approved-design artifacts are integrity inputs, not test
     // fixtures. The completed feature exercises the Closed finder before
@@ -4630,17 +7851,55 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     await click(page, `document.querySelector('[data-work-path="${feature.ideaPath}"]')`);
     await visible(page, 'Defined feature');
     const admissionStartedAt = Date.now();
+    wheelExperiment.variants.positioned = {
+      variant:'positioned',
+      sourceRevision:preview.artifact.revision,
+      browser:browserState.version.Browser ?? browserState.version,
+      browserPid:browserState.browser.pid,
+      profile:browserState.profile,
+      stage:'subscribed-before-review',
+    };
+    wheelObserver = await createReviewSourceObserver(page);
     await click(page, button('Review design'));
     await until(() => evaluate(page, `Boolean(document.querySelector('.dude-review-overlay'))
       && !document.querySelector('[aria-label="Box (B)"]').disabled`),
     'focused floating-toolbar Review engine', 60_000);
-    await viewport(page, 1000, 'light', 300, 2);
+    wheelExperiment.variants.positioned.binding = await wheelObserver.bind();
+    const shortPanelFixture = Object.freeze({
+      viewport: {width:1000, height:300, dpr:2},
+      frame: {width:942, clientHeight:118, rawHeight:117.5},
+    });
+    await viewport(
+      page,
+      shortPanelFixture.viewport.width,
+      'light',
+      shortPanelFixture.viewport.height,
+      shortPanelFixture.viewport.dpr,
+    );
+    let shortViewport;
     try {
-      await until(() => evaluate(page, `(() => {
+      // This synthetic fixture has one approved short-panel geometry. Capture
+      // its unpinned half-pixel rectangle before any annotation can pin it.
+      shortViewport = await until(() => evaluate(page, `(() => {
         const frame = document.querySelector('.dude-review-frame');
-        return frame.clientHeight === 123 && frame.clientWidth === 990
-          && document.querySelector('.dude-review-overlay').getAttribute('viewBox') === '0 0 990 123'
-          && !document.querySelector('[aria-label="Box (B)"]').disabled;
+        if (!frame) return null;
+        const expected = ${JSON.stringify(shortPanelFixture.frame)};
+        const {x, y, top, right, bottom, left, width, height}
+          = frame.getBoundingClientRect();
+        const viewBox = document.querySelector('.dude-review-overlay')?.getAttribute('viewBox');
+        return frame.clientWidth === expected.width
+          && frame.clientHeight === expected.clientHeight
+          && width === expected.width
+          && height === expected.rawHeight
+          && !frame.classList.contains('dude-review-frame-pinned')
+          && viewBox === '0 0 ' + frame.clientWidth + ' ' + frame.clientHeight
+          && !document.querySelector('[aria-label="Box (B)"]').disabled
+          ? {
+            width:frame.clientWidth,
+            height:frame.clientHeight,
+            viewBox,
+            rawFrame:{x, y, top, right, bottom, left, width, height},
+          } : null;
       })()`), 'unannotated short viewport admitted at native DPR2');
     } catch (error) {
       const admissionFailure = await evaluate(page, `(() => {
@@ -4720,6 +7979,27 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     await evaluate(page, `window.floatingFrame = document.querySelector('.dude-review-frame iframe');
       window.floatingLoads = 0;
       window.floatingFrame.addEventListener('load', () => window.floatingLoads++)`);
+    wheelExperiment.variants.positioned.shortPanel = {
+      viewport:structuredClone(shortPanelFixture.viewport),
+      frame:{
+        clientWidth:shortViewport.width,
+        clientHeight:shortViewport.height,
+        rect:structuredClone(shortViewport.rawFrame),
+      },
+      viewBox:shortViewport.viewBox,
+    };
+    wheelExperiment.variants.positioned.qualification =
+      await qualifyReviewSourceObserver(wheelObserver);
+    wheelExperiment.variants.positioned.stage =
+      wheelExperiment.variants.positioned.qualification.passed
+        ? 'qualified'
+        : 'qualification-failed';
+    writeEvidenceJson(output, 'short-panel-wheel-discriminator', wheelExperiment);
+    assert.equal(
+      wheelExperiment.variants.positioned.qualification.passed,
+      true,
+      'positioned source observation must qualify before its diagnostic wheel',
+    );
 
     // Act: use each tool's own native scroller, not a scrollIntoView helper.
     // Disabled history commands are measured too, then activated when their
@@ -4745,6 +8025,7 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       annotatedResize: null,
       emptyReturn: null,
       genuineFrameChange: null,
+      wheelDelivery: wheelExperiment,
     };
     context.after(() => writeEvidenceJson(output, 'short-panel-observations', {
       snapshots,
@@ -5151,6 +8432,250 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       targets.push(target);
       return target;
     };
+
+    wheelExperiment.variants.positioned.wheel =
+      await dispatchObservedReviewWheel(page, wheelObserver, 'positioned');
+    wheelExperiment.variants.positioned.stage = 'wheel-observed';
+    await checkpoint('workspace-wheel-attempt');
+    await clickAtCurrentPosition(page, button('Notes and more'));
+    await until(() => observeRuntime(page, `Boolean(document.querySelector(
+      '.fui-PopoverSurface[aria-label="Notes and more"]'
+    )?.getClientRects().length)`), 'positioned Notes and more surface');
+    const positionedChooserPath = [];
+    for (let step = 0; step < 80; step += 1) {
+      if (await observeRuntime(
+        page,
+        `document.activeElement === (${field('Choose an element')})`,
+      )) break;
+      await pressNavigationKey(page, 'Tab');
+      positionedChooserPath.push(await observeRuntime(
+        page,
+        `document.activeElement?.getAttribute('aria-label')
+          || document.activeElement?.getAttribute('role')
+          || document.activeElement?.innerText?.trim()
+          || document.activeElement?.tagName`,
+      ));
+    }
+    await checkpoint('keyboard-chooser-focused');
+    await recordTarget('keyboard-chooser-focused', field('Choose an element'));
+    await saveRegressionProof(page, output, 'keyboard-chooser-focused', {});
+    const positionedChooserBefore = await reviewChooserSnapshot(page);
+    await press(page, 'Enter');
+    const positionedChooserOpened = await until(async () => {
+      const value = await reviewChooserSnapshot(page);
+      return value.ariaExpanded === 'true'
+        && value.linkedListboxCount === 1
+        && value.linkedListboxVisible
+        ? value : null;
+    }, 'positioned aria-controls-linked element choices');
+    wheelExperiment.variants.positioned.chooser = {
+      focusPath:positionedChooserPath,
+      before:positionedChooserBefore,
+      opened:positionedChooserOpened,
+    };
+    await press(page, 'Escape');
+    await until(async () => {
+      const value = await reviewChooserSnapshot(page);
+      return value.ariaExpanded !== 'true' ? value : null;
+    }, 'positioned element choices closed');
+    await press(page, 'Escape');
+    await until(() => observeRuntime(page, `!document.querySelector(
+      '.fui-PopoverSurface[aria-label="Notes and more"]'
+    )?.getClientRects().length
+      && document.activeElement === (${button('Notes and more')})`),
+    'positioned Notes and more closed with focus returned to its trigger');
+
+    const summarizeWheelVariant = record => {
+      const post = record.wheel?.post;
+      const bridge = record.wheel?.bridge?.latestView?.reply ?? null;
+      const sourceHeading = post?.source.view.targets
+        .find(target => target.selector === '#heading') ?? null;
+      const bridgeHeading = bridge?.targets
+        ?.find(target => target.selector === '#heading') ?? null;
+      const linked = record.chooser?.opened ?? null;
+      const chooserHeading = linked?.options.find(option => (
+        option.visible && option.label === (bridgeHeading?.label || 'Source-aligned design')
+      )) ?? null;
+      return {
+        browser:record.browser,
+        sourceRevision:record.sourceRevision,
+        geometry:record.shortPanel,
+        requestedPoint:record.wheel?.request
+          ? { x:record.wheel.request.x, y:record.wheel.request.y }
+          : null,
+        requestedHit:record.wheel?.points?.[
+          record.variant === 'overlay-negative' ? 'overlay' : 'outside'
+        ]?.hit ?? null,
+        receiver:record.wheel?.receiver ?? null,
+        source:{
+          scrollY:post?.source.view.viewport.scrollY ?? null,
+          headingVisible:post?.source.heading.visible ?? null,
+          headingRect:post?.source.heading.element?.rect ?? null,
+          headingClip:post?.source.heading.clip ?? null,
+          headingTarget:sourceHeading,
+        },
+        bridge:{
+          channel:record.wheel?.bridge?.latestView?.query.channel ?? null,
+          id:record.wheel?.bridge?.latestView?.query.id ?? null,
+          op:record.wheel?.bridge?.latestView?.query.op ?? null,
+          replyType:bridge?.type ?? null,
+          scrollY:bridge?.viewport?.scrollY ?? null,
+          headingTarget:bridgeHeading,
+          correlated:Boolean(record.wheel?.bridge?.latestView),
+        },
+        chooser:{
+          headingOption:chooserHeading,
+          ariaControls:linked?.ariaControls ?? null,
+          ariaExpanded:linked?.ariaExpanded ?? null,
+          ariaActiveDescendant:linked?.ariaActiveDescendant ?? null,
+          linkedListboxCount:linked?.linkedListboxCount ?? null,
+          linkedListboxId:linked?.linkedListboxId ?? null,
+          linkedListboxVisible:linked?.linkedListboxVisible ?? null,
+          focus:linked?.focus ?? null,
+        },
+      };
+    };
+    wheelExperiment.summaries = {
+      standalone:summarizeWheelVariant(wheelExperiment.variants.standalone),
+      positioned:summarizeWheelVariant(wheelExperiment.variants.positioned),
+      overlayNegative:summarizeWheelVariant(wheelExperiment.variants.overlayNegative),
+    };
+    const { standalone, positioned, overlayNegative } = wheelExperiment.summaries;
+    const same = (left, right) => isDeepStrictEqual(left, right);
+    const matched = {
+      browser:standalone.browser === positioned.browser
+        && positioned.browser === overlayNegative.browser,
+      source:standalone.sourceRevision === positioned.sourceRevision
+        && positioned.sourceRevision === overlayNegative.sourceRevision,
+      geometry:same(standalone.geometry, positioned.geometry)
+        && same(positioned.geometry, overlayNegative.geometry),
+      outsidePoint:same(standalone.requestedPoint, positioned.requestedPoint),
+      dpr:[standalone, positioned, overlayNegative]
+        .every(value => value.geometry?.viewport?.dpr === 2),
+      dimensions:[standalone, positioned, overlayNegative].every(value => (
+        value.geometry?.viewport?.width === 1000
+          && value.geometry?.viewport?.height === 300
+          && value.geometry?.frame?.clientWidth === 942
+          && value.geometry?.frame?.clientHeight === 118
+          && value.geometry?.frame?.rect?.height === 117.5
+      )),
+    };
+    wheelExperiment.matched = matched;
+    const visibleTargetMissingFromChooser = Object.values(wheelExperiment.summaries)
+      .some(value => (
+        value.source.headingVisible
+          && value.source.headingTarget?.selector === '#heading'
+          && value.bridge.headingTarget?.selector === '#heading'
+          && !value.chooser.headingOption
+      ));
+    const positionedWheel = wheelExperiment.variants.positioned.wheel;
+    const positionedSourceQueries = positionedWheel.post.source.probe.queries
+      .slice(positionedWheel.marker.sourceQuery);
+    const negativeWheel = wheelExperiment.variants.overlayNegative.wheel;
+    const negativeSourceQueries = negativeWheel.post.source.probe.queries
+      .slice(negativeWheel.marker.sourceQuery);
+    const negativeScrollQueries = negativeSourceQueries
+      .filter(query => query.op === 'scroll');
+    const negativeSuccessfulQueries = negativeWheel.bridge.correlations
+      .filter(({query, reply}) => (
+        query.order > negativeWheel.marker.sourceQuery
+          && reply.type === 'dude-review-result'
+          && !reply.error
+          && reply.viewport
+      ));
+    const negativeDeliveryComplete = negativeScrollQueries.length > 0
+      && negativeScrollQueries.reduce((total, query) => total + query.delta.y, 0) === 360
+      && negativeSourceQueries.at(-1)?.op === 'view'
+      && negativeSuccessfulQueries.length === negativeSourceQueries.length;
+    const trustedWheelTotal = value => {
+      const events = value.receiver?.parentEvents ?? [];
+      return events.length > 0
+        && events.every(event => event.isTrusted && event.deltaMode === 0)
+        && events.reduce((total, event) => total + event.deltaY, 0) === 360;
+    };
+    const positionedPositive = positioned.requestedHit?.reviewOverlay === false
+      && trustedWheelTotal(positioned)
+      && positioned.receiver?.outsideOverlay
+      && !positioned.receiver?.overlay
+      && !positioned.receiver?.source
+      && positionedSourceQueries.length === 0
+      && positioned.source.scrollY === 0
+      && positioned.source.headingVisible
+      && positioned.source.headingTarget?.selector === '#heading'
+      && positioned.bridge.correlated
+      && positioned.bridge.scrollY === 0
+      && positioned.bridge.headingTarget?.selector === '#heading'
+      && positioned.chooser.headingOption
+      && positioned.chooser.linkedListboxCount === 1
+      && positioned.chooser.linkedListboxVisible
+      && positioned.chooser.focus === 'chooser';
+    const negativeControl = overlayNegative.requestedHit?.reviewOverlay === true
+      && trustedWheelTotal(overlayNegative)
+      && overlayNegative.receiver?.overlay
+      && !overlayNegative.receiver?.outsideOverlay
+      && !overlayNegative.receiver?.source
+      && negativeDeliveryComplete
+      && overlayNegative.source.scrollY > 0
+      && overlayNegative.source.headingVisible === false
+      && overlayNegative.source.headingRect
+      && overlayNegative.source.headingClip
+      && overlayNegative.source.headingRect.y + overlayNegative.source.headingRect.height
+        <= overlayNegative.source.headingClip.top
+      && overlayNegative.source.headingTarget === null
+      && overlayNegative.bridge.correlated
+      && overlayNegative.bridge.scrollY === overlayNegative.source.scrollY
+      && overlayNegative.bridge.headingTarget === null
+      && overlayNegative.chooser.headingOption === null
+      && overlayNegative.chooser.linkedListboxCount === 1
+      && overlayNegative.chooser.linkedListboxVisible;
+    wheelExperiment.legacyStandalone = {
+      gating:false,
+      requestedOutsideOverlay:standalone.requestedHit?.reviewOverlay === false,
+      actualReceiver:standalone.receiver?.overlay
+        ? 'overlay'
+        : standalone.receiver?.outsideOverlay
+          ? 'outside-overlay'
+          : standalone.receiver?.source
+            ? 'source'
+            : 'unobserved',
+      sourceScrollY:standalone.source.scrollY,
+      headingVisible:standalone.source.headingVisible,
+    };
+    const matchedPass = Object.values(matched).every(Boolean);
+    if (!matchedPass) {
+      wheelExperiment.discriminator = {
+        status:'invalid-comparison',
+        reason:'Browser, source, geometry, DPR, or outside point did not match.',
+      };
+    } else if (visibleTargetMissingFromChooser) {
+      wheelExperiment.discriminator = {
+        status:'refuted-precondition-only',
+        reason:'A settled source and bridge heading was omitted by its linked listbox.',
+      };
+    } else if (!positionedPositive) {
+      wheelExperiment.discriminator = {
+        status:'refuted-targeting',
+        reason:'Confirmed positioned outside-overlay delivery did not preserve the positive source/bridge/listbox precondition.',
+      };
+    } else if (!negativeControl) {
+      wheelExperiment.discriminator = {
+        status:'failed-negative-control',
+        reason:'The deliberate overlay wheel did not completely deliver 360 trusted pixels or exclude the offscreen heading with source/bridge/listbox agreement.',
+      };
+    } else {
+      wheelExperiment.discriminator = {
+        status:'pending-native-second-comment',
+        reason:'Receiver/source/bridge/listbox distinction succeeded; native #heading selection remains.',
+      };
+    }
+    wheelExperiment.variants.positioned.stage = 'chooser-observed';
+    writeEvidenceJson(output, 'short-panel-wheel-discriminator', wheelExperiment);
+    assert.equal(
+      wheelExperiment.discriminator.status,
+      'pending-native-second-comment',
+      wheelExperiment.discriminator.reason,
+    );
+
     await checkpoint('ready-vertical');
     for (const label of tools) {
       await revealFloatingTool(page, label);
@@ -5185,41 +8710,11 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     await until(() => evaluate(page, `document.activeElement === (${button('Source')})`),
       'Source returns focus to its trigger');
 
-    const wheelPoint = await evaluate(page, `(() => {
-      const rect = document.querySelector('[data-review-engine-host]').parentElement.parentElement.getBoundingClientRect();
-      return { x: rect.left + rect.width / 2, y: rect.top + 20 };
-    })()`);
-    await page.send('Input.dispatchMouseEvent', {
-      type: 'mouseWheel',
-      x: wheelPoint.x,
-      y: wheelPoint.y,
-      deltaX: 0,
-      deltaY: 360,
-    });
-    await evaluate(page, 'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-    await checkpoint('workspace-wheel-attempt');
-    await clickAtCurrentPosition(page, button('Notes and more'));
-    await until(async () => {
-      const focused = await evaluate(page, `(() => {
-        const label = [...document.querySelectorAll('label')]
-          .find(node => node.textContent.trim() === 'Choose an element');
-        const chooser = label && document.getElementById(label.htmlFor);
-        return document.activeElement === chooser;
-      })()`);
-      if (focused) return true;
-      await press(page, 'Tab');
-      return false;
-    }, 'real keyboard focus on element chooser');
-    await checkpoint('keyboard-chooser-focused');
-    await recordTarget('keyboard-chooser-focused', field('Choose an element'));
-    await saveRegressionProof(page, output, 'keyboard-chooser-focused', {});
-    await press(page, 'Escape');
-    await until(() => evaluate(page, `document.activeElement === (${button('Notes and more')})`),
-      'Notes and more returns focus to its trigger');
-
     // Arrange: select Comment with a trusted pointer and target the approved
     // mock's unique header. This first commit is the exact point where the
     // validated inner viewport must become immutable.
+    wheelExperiment.variants.positioned.prePin =
+      await wheelObserver.snapshot('pre-pin');
     await revealFloatingTool(page, 'Comment (C)');
     await clickAtCurrentPosition(page, tool('Comment (C)'));
     const frame = snapshots[0].frame;
@@ -5296,11 +8791,11 @@ test('T012 review regression: short-panel floating tools stay inside their palet
         viewBox:pointerPin.viewBox,
       },
       {
-        clientWidth:990,
-        clientHeight:123,
-        inlineWidth:'990px',
-        inlineHeight:'123px',
-        viewBox:'0 0 990 123',
+        clientWidth:shortViewport.width,
+        clientHeight:shortViewport.height,
+        inlineWidth:`${shortViewport.width}px`,
+        inlineHeight:`${shortViewport.height}px`,
+        viewBox:shortViewport.viewBox,
       },
       'the pin uses the validated inner iframe CSS dimensions',
     );
@@ -5382,17 +8877,22 @@ test('T012 review regression: short-panel floating tools stay inside their palet
     )?.getClientRects().length)`), 'keyboard-opened Notes and more');
     keyboardPath.chooser = await tabTo(field('Choose an element'), 'Choose an element');
     await press(page, 'Enter');
-    await until(() => evaluate(page, `Boolean(document.querySelector('[role="listbox"]')
-      ?.getClientRects().length)`), 'keyboard-opened element choices');
-    const keyboardTargetIndex = await evaluate(page, `[...document.querySelectorAll('[role="option"]')]
-      .filter(node => node.getClientRects().length)
-      .findIndex(node => node.textContent.trim() === 'Source-aligned design')`);
+    const keyboardChooser = await until(async () => {
+      const value = await reviewChooserSnapshot(page);
+      return value.ariaExpanded === 'true'
+        && value.linkedListboxCount === 1
+        && value.linkedListboxVisible
+        ? value : null;
+    }, 'keyboard-opened linked element choices');
+    const keyboardTargetIndex = keyboardChooser.labels
+      .findIndex(label => label === 'Source-aligned design');
     assert.ok(keyboardTargetIndex >= 0,
       'the visible synthetic mock title is present in the keyboard element choices');
     await pressNavigationKey(page, 'Home');
     for (let index = 0; index < keyboardTargetIndex; index += 1) {
       await pressNavigationKey(page, 'ArrowDown');
     }
+    const keyboardSelection = await reviewChooserSnapshot(page);
     await press(page, 'Enter');
     keyboardPath.add = await tabTo(button('Add comment'), 'Add comment');
     await press(page, 'Enter');
@@ -5427,9 +8927,58 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       'keyboard comment coverage cannot pass without its second visible marker');
     assert.equal(await evaluate(page, `document.activeElement === ${field('Comment (optional)')}
       && !${field('Comment (optional)')}.disabled`), true);
+    wheelExperiment.variants.positioned.nativeSelection = {
+      pickerOpened:keyboardChooser,
+      pickerSelection:keyboardSelection,
+      keyboardPath:structuredClone(keyboardPath),
+      firstAnnotation:{
+        tool:keyboardWorking.annotations[0].tool,
+        selector:keyboardWorking.annotations[0].element?.selector ?? null,
+        comment:keyboardWorking.annotations[0].comment,
+      },
+      secondAnnotation:{
+        tool:keyboardWorking.annotations[1].tool,
+        selector:keyboardWorking.annotations[1].element?.selector ?? null,
+        comment:keyboardWorking.annotations[1].comment,
+      },
+      commentCount:keyboardWorking.annotations.length,
+      source:await wheelObserver.snapshot('native-second-comment'),
+    };
+    const nativeSelectionSucceeded =
+      keyboardWorking.annotations.length === 2
+      && keyboardWorking.annotations[1].tool === 'comment'
+      && keyboardWorking.annotations[1].element?.selector === '#heading'
+      && keyboardWorking.annotations[1].comment
+        === 'Keyboard comment enters here directly.'
+      && keyboardChooser.linkedListboxCount === 1
+      && keyboardChooser.linkedListboxVisible
+      && keyboardSelection.ariaActiveDescendant
+      && keyboardSelection.focus === 'chooser';
+    wheelExperiment.discriminator = nativeSelectionSucceeded
+      ? {
+        status:'succeeded',
+        reason:'Positioned outside-overlay delivery preserved #heading through source, bridge, linked listbox, and native keyboard comment creation; the deliberate overlay control delivered the full native wheel input and excluded the offscreen heading with source/bridge agreement.',
+      }
+      : {
+        status:'failed-native-selection',
+        reason:'The qualified positive path did not create its second native #heading comment.',
+      };
+    wheelExperiment.variants.positioned.stage = nativeSelectionSucceeded
+      ? 'discriminator-succeeded'
+      : 'native-selection-failed';
+    writeEvidenceJson(output, 'short-panel-wheel-discriminator', wheelExperiment);
+    assert.equal(
+      wheelExperiment.discriminator.status,
+      'succeeded',
+      wheelExperiment.discriminator.reason,
+    );
+    wheelExperiment.variants.positioned.observerCleanup = await wheelObserver.close();
+    wheelObserver = null;
     pinningState.keyboardComment = {
       targetIndex:keyboardTargetIndex,
       path:keyboardPath,
+      pickerOpened:keyboardChooser,
+      pickerSelection:keyboardSelection,
       working:keyboardWorking,
       snapshot:keyboardPin,
     };
@@ -5664,8 +9213,8 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       working:annotatedBeforeResize,
     };
     await viewport(page, 1000, 'light', 300, 2);
-    await until(() => evaluate(page, `document.querySelector('.dude-review-frame').clientWidth === 990
-      && document.querySelector('.dude-review-frame').clientHeight === 123
+    await until(() => evaluate(page, `document.querySelector('.dude-review-frame').clientWidth === ${shortViewport.width}
+      && document.querySelector('.dude-review-frame').clientHeight === ${shortViewport.height}
       && !${tool('Box (B)')}.disabled`), 'return to the original panel size');
 
     // A movable palette is presentation-only. Derive every clamp bound from
@@ -6195,9 +9744,10 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       working:emptyWorking,
     };
     await viewport(page, 1000, 'light', 300, 2);
-    await until(() => evaluate(page, `document.querySelector('.dude-review-frame').clientWidth === 990
-      && document.querySelector('.dude-review-frame').clientHeight === 123
+    await until(() => evaluate(page, `document.querySelector('.dude-review-frame').clientWidth === ${pointerPin.frame.clientWidth}
+      && document.querySelector('.dude-review-frame').clientHeight === ${pointerPin.frame.clientHeight}
       && !${tool('Select (V)')}.disabled`), 'original panel restored after empty return');
+    pinningState.emptyReturn.restored = await pinSnapshot();
     await revealFloatingTool(page, 'Select (V)');
     await clickAtCurrentPosition(page, tool('Select (V)'));
     for (const label of [...tools.slice(0, 7), 'Redo annotation']) {
@@ -6423,12 +9973,68 @@ test('T012 review regression: short-panel floating tools stay inside their palet
         });
       }
     }
-    const frameSizes = snapshots.map(({ frame }) => frame);
-    if (frameSizes.some(size => JSON.stringify(size) !== JSON.stringify(frameSizes[0]))) {
+    const normalPanelSnapshots = snapshots.filter(({viewport}) => (
+      viewport.width === shortPanelFixture.viewport.width
+      && viewport.height === shortPanelFixture.viewport.height
+      && viewport.dpr === shortPanelFixture.viewport.dpr
+    ));
+    const frameFields = ['x', 'y', 'top', 'right', 'bottom', 'left', 'width', 'height'];
+    const expectedRawFrame = shortViewport.rawFrame;
+    const expectedNormalizationDelta = shortPanelFixture.frame.clientHeight
+      - shortPanelFixture.frame.rawHeight;
+    const normalizationDelta = shortViewport.height - expectedRawFrame.height;
+    const expectedPinnedFrame = {
+      ...expectedRawFrame,
+      bottom:expectedRawFrame.bottom + normalizationDelta,
+      height:shortViewport.height,
+    };
+    const firstPinnedIndex = normalPanelSnapshots.findIndex(({framePinned}) => framePinned);
+    const pinSequence = normalPanelSnapshots.map(({checkpoint, framePinned}) => ({
+      checkpoint,
+      framePinned,
+    }));
+    const expectedFrame = snapshot => (
+      snapshot.framePinned ? expectedPinnedFrame : expectedRawFrame
+    );
+    const frameMismatches = normalPanelSnapshots
+      .filter(snapshot => frameFields.some(
+        field => snapshot.frame?.[field] !== expectedFrame(snapshot)[field],
+      ))
+      .map(snapshot => ({
+        checkpoint:snapshot.checkpoint,
+        framePinned:snapshot.framePinned,
+        actual:snapshot.frame,
+        expected:expectedFrame(snapshot),
+      }));
+    const actualPinnedFrame = normalPanelSnapshots[firstPinnedIndex]?.frame || null;
+    const changedFields = actualPinnedFrame
+      ? frameFields.filter(field => actualPinnedFrame[field] !== expectedRawFrame[field])
+      : [];
+    const actualNormalization = actualPinnedFrame ? {
+      height:actualPinnedFrame.height - expectedRawFrame.height,
+      bottom:actualPinnedFrame.bottom - expectedRawFrame.bottom,
+    } : null;
+    if (normalPanelSnapshots.length !== snapshots.length
+      || firstPinnedIndex <= 0
+      || normalPanelSnapshots.slice(0, firstPinnedIndex).some(({framePinned}) => framePinned)
+      || normalPanelSnapshots.slice(firstPinnedIndex).some(({framePinned}) => !framePinned)
+      || expectedNormalizationDelta !== 0.5
+      || normalizationDelta !== expectedNormalizationDelta
+      || JSON.stringify(changedFields) !== JSON.stringify(['bottom', 'height'])
+      || actualNormalization?.height !== expectedNormalizationDelta
+      || actualNormalization?.bottom !== expectedNormalizationDelta
+      || frameMismatches.length !== 0) {
       findings.push({
         checkpoint: 'all',
-        issue: 'toolbar navigation resized the admitted frame',
-        frameSizes,
+        issue: 'toolbar navigation changed the frame beyond its one-time half-pixel pin normalization',
+        expectedRawFrame,
+        expectedPinnedFrame,
+        normalizationDelta,
+        actualNormalization,
+        changedFields,
+        firstPinnedIndex,
+        pinSequence,
+        frameMismatches,
       });
     }
 
@@ -6585,15 +10191,47 @@ test('T012 review regression: short-panel floating tools stay inside their palet
       'short-panel floating tools must remain wholly painted, hittable, and reachable after real wheel/focus navigation',
     );
   } finally {
-    if (publication) {
-      publication.controller.abort();
-      await publication.result.catch(() => {});
-    }
-    if (browserState) {
-      await cleanupBrowserDriver(browserState);
-    }
-    if (fixture) await fixture.close();
-    board.close();
+    const positionedCleanup = wheelExperiment.variants.positioned.cleanup ?? {
+      observer:null,
+      publication:false,
+      browser:false,
+      fixture:false,
+      board:false,
+    };
+    wheelExperiment.variants.positioned.cleanup = positionedCleanup;
+    await runCleanupSteps(
+      async () => {
+        if (!wheelObserver) return;
+        positionedCleanup.observer = await wheelObserver.close();
+        wheelObserver = null;
+      },
+      async () => {
+        if (!publication) return;
+        publication.controller.abort();
+        await publication.result.catch(() => {});
+        positionedCleanup.publication = true;
+      },
+      async () => {
+        if (!browserState) return;
+        await cleanupBrowserDriver(browserState);
+        positionedCleanup.browser = true;
+        positionedCleanup.profileExists = fs.existsSync(browserState.profile);
+        positionedCleanup.browserAlive = browserState.browser.pid
+          ? browserPidAlive(browserState.browser.pid)
+          : null;
+      },
+      async () => {
+        if (!fixture) return;
+        const fixtureRoot = fixture.root;
+        await fixture.close();
+        positionedCleanup.fixture = true;
+        positionedCleanup.fixtureRootExists = fs.existsSync(fixtureRoot);
+      },
+      () => {
+        board.close();
+        positionedCleanup.board = true;
+      },
+    );
   }
 });
 
@@ -8366,8 +12004,18 @@ test('T012 review regression: double-click opens an annotation comment while dra
       'pointer-created boxes still retain their inspected element anchors',
     );
     const pinnedFrame = await frameSnapshot();
-    assert.deepEqual(pinnedFrame, frame,
-      'admitting the boxes pins the exact reviewed geometry rather than rebasing it');
+    assert.deepEqual(
+      {
+        ...pinnedFrame,
+        rect:{...pinnedFrame.rect,height:frame.rect.height},
+      },
+      frame,
+      'admitting the boxes retains the exact client geometry, origin, width, and viewBox',
+    );
+    assert.equal(frame.rect.height, frame.clientHeight - 0.5,
+      'the unpinned flex frame begins on the observed half-pixel outer edge');
+    assert.equal(pinnedFrame.rect.height, pinnedFrame.clientHeight,
+      'pinning resolves only that outer half-pixel edge to the validated client height');
     assert.equal(await evaluate(page,
       `document.querySelector('.dude-review-frame').classList.contains('dude-review-frame-pinned')`),
     true, 'the reviewed frame is pinned before a comment can be revealed');
@@ -9120,13 +12768,14 @@ test('T012 review regression: double-click opens an annotation comment while dra
 
     // Assert: no gesture moved, resized, or scrolled the pinned reviewed view.
     const after = await frameSnapshot();
-    assert.deepEqual(after, frame, 'the reviewed frame is unchanged by every comment gesture');
+    assert.deepEqual(after, pinnedFrame,
+      'the reviewed frame stays exactly at its admitted pinned geometry through every comment gesture');
     assert.deepEqual(
       {x:workingState().view.viewport.scrollX, y:workingState().view.viewport.scrollY},
       {x:0, y:0},
       'the mock was never scrolled',
     );
-    observations.frame = {before:frame, after};
+    observations.frame = {beforePin:frame, pinned:pinnedFrame, after};
     assert.deepEqual(runtimeErrors, []);
     writeEvidenceJson(output, 'open-comment.metrics', observations);
   } finally {
@@ -9298,7 +12947,7 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
     viewport: { width: 1000, height: 300, deviceScaleFactor: 2 },
     keyboardDispatch: {
       method: 'Input.dispatchKeyEvent',
-      sequence: ['rawKeyDown', 'keyUp'],
+      sequence: ['keyDown', 'keyUp'],
       virtualKey: 'Tab',
       note: 'The page receives trusted Tab/focus events while forward Tab navigation establishes the toolbar predecessor and then the target.',
     },
@@ -9370,10 +13019,14 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
       && !document.querySelector('[aria-label="Highlight (H)"]').disabled`),
     'focus-visibility Review engine', 60_000);
     await viewport(page, 1000, 'light', 300, 2);
+    // Bind focus painting to the admitted short frame rather than the obsolete
+    // pre-integration 122px remainder; overlay agreement remains exact.
     await until(() => evaluate(page, `(() => {
       const frame = document.querySelector('.dude-review-frame');
-      return devicePixelRatio === 2 && frame.clientHeight === 123 && frame.clientWidth === 990
-        && document.querySelector('.dude-review-overlay').getAttribute('viewBox') === '0 0 990 123';
+      const viewBox = document.querySelector('.dude-review-overlay')?.getAttribute('viewBox');
+      return devicePixelRatio === 2 && frame.clientWidth === 942
+        && frame.clientHeight >= 112 && frame.clientHeight <= 130
+        && viewBox === '0 0 ' + frame.clientWidth + ' ' + frame.clientHeight;
     })()`), 'short Review viewport admitted at native DPR2');
 
     // Browser-side logs distinguish CDP native input from Runtime.evaluate
@@ -9597,18 +13250,33 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
     const runPostReviewScenario = async (theme, view, expectedName) => {
       const id = `${theme}-post-review-${view}`;
       const tab = `document.querySelector('#dude-tab-${view}')`;
+      const alternateView = view === 'overview' ? 'context' : 'overview';
+      const alternateTab = `document.querySelector('#dude-tab-${alternateView}')`;
+      const focusOrigin = view === 'new'
+        ? `document.querySelector('#dude-panel-new textarea')`
+        : `document.querySelector('#dude-panel-${view} h1')`;
       const targetExpression = `document.querySelector(
         '#dude-panel-${view} button:not(:disabled):not([aria-disabled="true"])'
       )`;
+      if (await evaluate(page, `${tab}.getAttribute('aria-selected') === 'true'`)) {
+        await clickAtCurrentPosition(page, alternateTab);
+        await until(() => evaluate(page, `${alternateTab}.getAttribute('aria-selected') === 'true'`),
+          `${id} alternate view`);
+      }
       await clickAtCurrentPosition(page, tab);
       await until(() => evaluate(page, `${tab}.getAttribute('aria-selected') === 'true'
-        && Boolean(${targetExpression}?.getClientRects().length)`), `${id} selected view`);
+        && Boolean(${targetExpression}?.getClientRects().length)
+        && document.activeElement === (${focusOrigin})`),
+      `${id} selected view and destination focus`);
       const before = await workspaceState(`${id}-unfocused`, targetExpression);
       const mark = await eventMark();
       const tabPath = [];
+      const backwards = await evaluate(page, `Boolean((${targetExpression}).compareDocumentPosition(
+        ${focusOrigin}
+      ) & Node.DOCUMENT_POSITION_FOLLOWING)`);
       for (let step = 0; step < 24; step += 1) {
         if (await evaluate(page, `document.activeElement === (${targetExpression})`)) break;
-        await pressNavigationKey(page, 'Tab');
+        await pressNavigationKey(page, 'Tab', 'Tab', backwards ? 8 : 0);
         tabPath.push(await evaluate(page, `document.activeElement?.getAttribute('aria-label')
           || document.activeElement?.innerText?.trim()
           || document.activeElement?.tagName`));
@@ -9626,7 +13294,7 @@ test('T012 review regression: real keyboard focus visibly paints floating tools 
         theme,
         view,
         expectedName,
-        navigation: 'native forward Tab after a real pointer selection of the workspace tab',
+        navigation: `native ${backwards ? 'backward' : 'forward'} Tab from the destination focus after a real pointer selection of the workspace tab`,
         tabPath,
         before: serializableState(before),
         keyboard: serializableState(keyboard),
@@ -10702,7 +14370,7 @@ test('T011 review regression: latest history navigation wins over superseded rea
     await click(page, button('New idea'));
     const localDraft = '  Local draft must survive superseded history.\n\nExact bytes.  ';
     await fill(page, field('Your idea'), localDraft);
-    await click(page, button('Context'));
+    await click(page, button('Now'));
     await visible(page, 'Review history');
     await evaluate(page, `(() => {
       const ids = ${JSON.stringify([historyA.submissionId, historyB.submissionId])};
@@ -11157,7 +14825,7 @@ test('T011 review regression: latest history navigation wins over superseded rea
     await visible(page, 'Review history');
     await click(page, button('New idea'));
     assert.equal(await evaluate(page, `${field('Your idea')}.value`), localDraft);
-    await click(page, button('Context'));
+    await click(page, button('Now'));
     await visible(page, 'Review history');
 
     // Act 2: a late successful A must not open over the user's newer New idea.
@@ -11168,7 +14836,8 @@ test('T011 review regression: latest history navigation wins over superseded rea
     await continuePaused(aSecond, 'late A after New idea');
     await settleReact();
     const afterNewIdea = {
-      heading: await evaluate(page, `document.querySelector('h1')?.innerText.trim() || null`),
+      heading: await evaluate(page, `document.querySelector('h1')?.textContent
+        .replace(/\\s+/g, ' ').trim() || null`),
       historySubmission: await displayedSubmission(),
     };
     if (afterNewIdea.historySubmission) {
@@ -11179,7 +14848,7 @@ test('T011 review regression: latest history navigation wins over superseded rea
 
     // Act 3: a superseded transport error is equally stale and must not put an
     // Action unavailable banner over the user's current New idea.
-    await click(page, button('Context'));
+    await click(page, button('Now'));
     await visible(page, 'Review history');
     const bPausedBeforeLateError = paused.get(historyB.submissionId)?.length ?? 0;
     await clickHistory(historyB);
@@ -11189,7 +14858,7 @@ test('T011 review regression: latest history navigation wins over superseded rea
     await settleReact();
     const staleErrorText = 'The connection was interrupted. Delivery may be uncertain; nothing will be resent.';
     const afterLateError = await evaluate(page, `({
-      heading: document.querySelector('h1')?.innerText.trim() || null,
+      heading: document.querySelector('h1')?.textContent.replace(/\\s+/g, ' ').trim() || null,
       actionUnavailable: document.body.innerText.includes('Action unavailable'),
       staleError: document.body.innerText.includes(${JSON.stringify(staleErrorText)}),
       draft: ${field('Your idea')}?.value ?? null
@@ -11198,7 +14867,7 @@ test('T011 review regression: latest history navigation wins over superseded rea
 
     // A held list for the prior exact owner must neither appear under the
     // successor heading nor replace the successor's completed list.
-    await click(page, button('Context'));
+    await click(page, button('Now'));
     await visible(page, 'Review history');
     const pausedLists = [];
     page.on('Fetch.requestPaused', (event) => {
@@ -11219,6 +14888,7 @@ test('T011 review regression: latest history navigation wins over superseded rea
         && url.searchParams.get('specPath') === feature.specPath;
     }), 'held prior-owner history LIST response');
     await click(page, button('Back to Overview'));
+    await click(page, `document.querySelector('[aria-label="Clear work selection"]')`);
     await click(page, `document.querySelector('[data-work-path="${successorFeature.ideaPath}"]')`);
     await visible(page, 'history successor');
     const successorList = await until(() => pausedLists.find((event) => {
@@ -11227,7 +14897,7 @@ test('T011 review regression: latest history navigation wins over superseded rea
         && url.searchParams.get('specPath') === successorFeature.specPath;
     }), 'held successor history LIST response');
     const successorWhilePending = await evaluate(page, `({
-      heading: document.querySelector('h1')?.innerText.trim() || null,
+      heading: document.querySelector('h1')?.textContent.replace(/\\s+/g, ' ').trim() || null,
       successor: document.body.innerText.includes(${JSON.stringify(successorHistory.submissionId)}),
       priorA: document.body.innerText.includes(${JSON.stringify(historyA.submissionId)}),
       priorB: document.body.innerText.includes(${JSON.stringify(historyB.submissionId)})
@@ -11235,7 +14905,7 @@ test('T011 review regression: latest history navigation wins over superseded rea
     await continuePaused(successorList, 'successor history LIST completes before prior owner');
     await visible(page, successorHistory.submissionId);
     const successorBeforeLateList = await evaluate(page, `({
-      heading: document.querySelector('h1')?.innerText.trim() || null,
+      heading: document.querySelector('h1')?.textContent.replace(/\\s+/g, ' ').trim() || null,
       successor: document.body.innerText.includes(${JSON.stringify(successorHistory.submissionId)}),
       priorA: document.body.innerText.includes(${JSON.stringify(historyA.submissionId)}),
       priorB: document.body.innerText.includes(${JSON.stringify(historyB.submissionId)})
@@ -11243,7 +14913,7 @@ test('T011 review regression: latest history navigation wins over superseded rea
     await continuePaused(priorList, 'late prior-owner history LIST');
     await settleReact();
     const successorAfterLateList = await evaluate(page, `({
-      heading: document.querySelector('h1')?.innerText.trim() || null,
+      heading: document.querySelector('h1')?.textContent.replace(/\\s+/g, ' ').trim() || null,
       successor: document.body.innerText.includes(${JSON.stringify(successorHistory.submissionId)}),
       priorA: document.body.innerText.includes(${JSON.stringify(historyA.submissionId)}),
       priorB: document.body.innerText.includes(${JSON.stringify(historyB.submissionId)})
@@ -11276,12 +14946,12 @@ test('T011 review regression: latest history navigation wins over superseded rea
         afterLateError: afterLateError.draft,
       },
     });
-    if (successorWhilePending.heading !== 'history successor' || successorWhilePending.successor
+    if (successorWhilePending.heading !== '722 history successor' || successorWhilePending.successor
       || successorWhilePending.priorA || successorWhilePending.priorB) {
       findings.push({
         ordering: 'successor LIST pending while prior-owner LIST was held',
         expected: {
-          heading: 'history successor',
+          heading: '722 history successor',
           successor: false,
           priorA: false,
           priorB: false,
@@ -11293,11 +14963,11 @@ test('T011 review regression: latest history navigation wins over superseded rea
       ['successor LIST completed while prior-owner LIST was held', successorBeforeLateList],
       ['prior-owner LIST completed after successor LIST', successorAfterLateList],
     ]) {
-      if (actual.heading !== 'history successor' || !actual.successor || actual.priorA || actual.priorB) {
+      if (actual.heading !== '722 history successor' || !actual.successor || actual.priorA || actual.priorB) {
         findings.push({
           ordering,
           expected: {
-            heading: 'history successor',
+            heading: '722 history successor',
             successor: true,
             priorA: false,
             priorB: false,

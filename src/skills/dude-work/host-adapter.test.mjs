@@ -23,10 +23,12 @@ import {
   classifyOutcomeReason,
   commitLaneReceiptV2,
   contentDescriptor,
+  currentRunCapture,
   deriveEarliestRepeatRelationshipV1,
   deriveFailedApproachSetV1,
   describeUnattendedHalt,
   inspect,
+  inspectRetainedOccurrencesV2,
   modelPacket,
   normalizeIndependentReviewEnvelopeV2,
   normalizeVerificationEnvelopeV2,
@@ -68,6 +70,7 @@ const {
   createHostAdapter: createAuthorizedHostAdapter,
   createTemporaryCheckpointStore,
   handoffHostWorker,
+  prepareSpecialistResult,
   resumeHostAdapter,
   validateHostAdapterRequest,
   validateHostAdapterResult,
@@ -336,6 +339,7 @@ nodeTest('sealed public API removes caller-authored incidents and low-level rout
     'createHostAdapter',
     'createTemporaryCheckpointStore',
     'handoffHostWorker',
+    'prepareSpecialistResult',
     'resumeHostAdapter',
     'validateHostAdapterRequest',
     'validateHostAdapterResult',
@@ -2416,6 +2420,7 @@ function requiredGovernanceFixture(root) {
   const governedEvents = [...flow.allEvents, ...flow.governanceEvents];
   return {
     state: accepted.session.acceptedState,
+    unprojectedState: clone(flow.governance.session.pendingEffect.provisionalState),
     governedEvents,
     streams: flow.streams,
   };
@@ -4100,7 +4105,7 @@ nodeTest('an ordinary autonomous request cannot choose a low-level capture or fi
   });
 });
 
-nodeTest('a sole specialist result the builder refuses stops before any trusted capture', () => {
+nodeTest('a sole specialist result the builder refuses offers only local no-effect correction before capture', () => {
   withSealedWorkspace((root) => {
     const state = pendingState('autonomous');
     const base = specialistResult('builder-refusal', 'accepted');
@@ -4143,8 +4148,9 @@ nodeTest('a sole specialist result the builder refuses stops before any trusted 
       const refused = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
         attemptResult: { input: sealedRecordInput(root), result },
       }));
-      assert.equal(refused.outcome, 'hard-stop', label);
-      assert.equal(refused.reason, 'attempt-result-contract-mismatch', label);
+      assert.equal(refused.outcome, 'closed-refusal', label);
+      assert.equal(refused.reason, 'malformed-request', label);
+      assert.equal(refused.next.kind, 'correction', label);
       // The refusal precedes the low-level route, so no capture, completion,
       // effect, permit, receipt, or close authority can exist.
       assert.equal(runtimeInvocations, 0, label);
@@ -5921,10 +5927,16 @@ function focusedCancelResponse(challenge) {
 /**
  * @typedef {{
  *   result:Record<string, unknown>,
+ *   assessment:Record<string, unknown>,
  *   specialistResult:Record<string, unknown>,
+ *   specialistResultBytes:string,
+ *   preimages:Record<string, Buffer>,
  *   checkpoint:ReturnType<typeof memoryCheckpointStore>,
+ *   runtimeCalls:{command:string,mode:string}[],
  *   runtimeErrors:string[],
  *   captures:{completion:Record<string, unknown>,input:Record<string, unknown>}[],
+ *   laneApplications:Record<string, unknown>[],
+ *   challenges:Record<string, unknown>[],
  *   exchangeKinds:string[],
  * }} FocusedTrustedCompletionRun
  */
@@ -5939,14 +5951,23 @@ function focusedCancelResponse(challenge) {
  */
 async function runFocusedTrustedCompletion(root, label, makeSpecialistResult) {
   writeSealedTaskState(root);
+  const preimages = feature060Preimages(root);
   const request = focusedRunnerRequest(root);
+  const assessment = clone(request.assessment);
   const specialistResult = makeSpecialistResult(request.assessment);
+  const specialistResultBytes = canonicalJson(specialistResult);
   request.specialistResult = specialistResult;
   const checkpoint = memoryCheckpointStore();
+  /** @type {{command:string,mode:string}[]} */
+  const runtimeCalls = [];
   /** @type {string[]} */
   const runtimeErrors = [];
   /** @type {{completion:Record<string, unknown>,input:Record<string, unknown>}[]} */
   const captures = [];
+  /** @type {Record<string, unknown>[]} */
+  const laneApplications = [];
+  /** @type {Record<string, unknown>[]} */
+  const challenges = [];
   /** @type {string[]} */
   const exchangeKinds = [];
 
@@ -5955,6 +5976,7 @@ async function runFocusedTrustedCompletion(root, label, makeSpecialistResult) {
     runtime: {
       identity: sha256(`runner-trusted-completion-outcome:${label}`),
       invoke(command, lowLevelRequest) {
+        runtimeCalls.push({ command, mode: lowLevelRequest.mode || 'ordinary' });
         if (command === 'complete' && lowLevelRequest.mode === 'capture') {
           captures.push({
             completion: clone(lowLevelRequest.completion),
@@ -5969,14 +5991,35 @@ async function runFocusedTrustedCompletion(root, label, makeSpecialistResult) {
         }
       },
     },
+    laneOwner: {
+      identity: sha256(`runner-trusted-completion-lane-owner:${label}`),
+      apply(requestValue) {
+        laneApplications.push(clone(requestValue));
+        return applyLightweightWorkRequest(requestValue);
+      },
+    },
     exchange(challenge) {
+      challenges.push(clone(challenge));
       exchangeKinds.push(challenge.kind);
       assert.equal(challenge.kind, 'specialist-pair', `${label}: replacement challenge kind`);
       return focusedCancelResponse(challenge);
     },
   });
 
-  return { result, specialistResult, checkpoint, runtimeErrors, captures, exchangeKinds };
+  return {
+    result,
+    assessment,
+    specialistResult,
+    specialistResultBytes,
+    preimages,
+    checkpoint,
+    runtimeCalls,
+    runtimeErrors,
+    captures,
+    laneApplications,
+    challenges,
+    exchangeKinds,
+  };
 }
 
 /** @param {Record<string, unknown>} capture */
@@ -6086,15 +6129,133 @@ function assertFocusedTrustedCompletionSettled(root, label, observed, outcome) {
  * @param {FocusedTrustedCompletionRun} observed
  * @param {string} outcome
  * @param {RegExp} expectedError
+ * @param {{
+ *   outcome:string,
+ *   operations:string[],
+ *   changedTargets:string[],
+ *   verificationOutcomes:string[],
+ *   reviewVerdict:string,
+ * }} validCompanion
  */
-function assertFocusedTrustedCompletionRejected(root, label, observed, outcome, expectedError) {
-  assert.equal(observed.runtimeErrors.length, 2, `${label}: initial call and offered correction`);
-  for (const error of observed.runtimeErrors) assert.match(error, expectedError, label);
-  assert.equal(observed.captures.length, 2, `${label}: both rejected captures observed`);
-  for (const capture of observed.captures) {
-    assert.equal(capture.completion.outcome, outcome, `${label}: rejected outcome stays exact`);
+function assertFocusedTrustedCompletionRejected(
+  root,
+  label,
+  observed,
+  outcome,
+  expectedError,
+  validCompanion,
+) {
+  const authorizationRows = observed.result.steps.filter((step) => step.reason === 'authorized');
+  const rejectionRows = observed.result.steps.filter((step) => step.outcome === 'closed-refusal');
+  const reinspectionRows = observed.result.steps.filter((step) => (
+    step.step.endsWith(':reinspect') && step.reason === 'inspection-refreshed'
+  ));
+  assert.equal(authorizationRows.length, 1, `${label}: one charged authorization`);
+  assert.equal(rejectionRows.length, 1, `${label}: one inert preflight rejection`);
+  assert.equal(reinspectionRows.length, 1, `${label}: one fresh inspection after rejection`);
+  const authorization = authorizationRows[0];
+  const rejection = rejectionRows[0];
+  const reinspection = reinspectionRows[0];
+  assert.equal(rejection.reason, 'malformed-request', `${label}: receiver classifies inert preflight`);
+
+  const acceptedBytes = Buffer.from(authorization.stateBase64, 'base64').toString('utf8');
+  const acceptedState = focusedRunnerAcceptedState(authorization);
+  assert.equal(acceptedBytes, canonicalJson(acceptedState), `${label}: accepted bytes stay canonical`);
+  assert.equal(authorization.stateHash, sha256(acceptedBytes), `${label}: accepted hash binds bytes`);
+  assert.equal(authorization.acceptedRevision, 1, `${label}: authorization is the sole accepted revision`);
+  assert.equal(acceptedState.overallUsed, 1, `${label}: one attempt remains charged`);
+  assert.deepEqual(acceptedState.recoveryUsed, [], `${label}: recovery counter stays empty`);
+  assert.equal(acceptedState.pending.length, 1, `${label}: one attempt remains pending`);
+  assert.deepEqual(acceptedState.pending[0].target, TARGET, `${label}: pending target stays exact`);
+  assert.deepEqual(
+    acceptedState.pending[0].materialInputs,
+    MATERIAL_INPUTS,
+    `${label}: pending material inputs stay exact`,
+  );
+  assert.deepEqual(acceptedState.completed, [], `${label}: no completion is accepted`);
+
+  assert.throws(
+    () => prepareSpecialistResult(acceptedState, observed.specialistResult),
+    (error) => {
+      assert.ok(error instanceof TypeError, `${label}: preflight returns a typed rejection`);
+      assert.match(error.message, expectedError, `${label}: exact preflight rejection`);
+      return true;
+    },
+    `${label}: exact contradiction is rejected by state-bound preflight`,
+  );
+  const companion = { ...clone(observed.specialistResult), outcome: validCompanion.outcome };
+  const prepared = prepareSpecialistResult(acceptedState, companion);
+  assert.deepEqual(prepared.result, companion, `${label}: changing only the contradiction is admissible`);
+  assert.deepEqual({
+    outcome: companion.outcome,
+    operations: companion.operations,
+    changedTargets: companion.changedTargets,
+    verificationOutcomes: companion.verification.checks.map((check) => check.outcome),
+    reviewVerdict: companion.review.verdict,
+  }, validCompanion, `${label}: every companion input is valid and explicit`);
+  assert.equal(
+    canonicalJson(observed.specialistResult),
+    observed.specialistResultBytes,
+    `${label}: rejected raw result stays exact`,
+  );
+  assert.equal(observed.specialistResult.outcome, outcome, `${label}: rejected outcome stays exact`);
+
+  for (const [stage, row] of [
+    ['rejection', rejection],
+    ['reinspection', reinspection],
+    ['cancellation', observed.result],
+  ]) {
+    assert.equal(row.stateBase64, authorization.stateBase64, `${label}: ${stage} preserves accepted bytes`);
+    assert.equal(row.stateHash, authorization.stateHash, `${label}: ${stage} preserves accepted hash`);
+    assert.equal(
+      row.acceptedRevision,
+      authorization.acceptedRevision,
+      `${label}: ${stage} preserves accepted revision`,
+    );
+    const state = focusedRunnerAcceptedState(row);
+    assert.equal(state.overallUsed, acceptedState.overallUsed, `${label}: ${stage} preserves overall counter`);
+    assert.deepEqual(
+      state.recoveryUsed,
+      acceptedState.recoveryUsed,
+      `${label}: ${stage} preserves recovery counters`,
+    );
+    assert.deepEqual(state.pending, acceptedState.pending, `${label}: ${stage} preserves pending attempt`);
+    assert.deepEqual(state.completed, [], `${label}: ${stage} accepts no completion`);
   }
+
+  assert.deepEqual(observed.runtimeErrors, [], `${label}: inert preflight throws no runtime error`);
+  assert.deepEqual(
+    observed.runtimeCalls.filter((call) => call.command === 'complete'),
+    [],
+    `${label}: completion port is never entered`,
+  );
+  assert.deepEqual(observed.captures, [], `${label}: no trusted capture is produced`);
+  assert.deepEqual(observed.laneApplications, [], `${label}: lane owner is never entered`);
   assert.deepEqual(observed.exchangeKinds, ['specialist-pair'], `${label}: replacement is cancelled`);
+  assert.equal(observed.challenges.length, 1, `${label}: one replacement challenge`);
+  const challenge = observed.challenges[0];
+  assert.equal(challenge.kind, 'specialist-pair', `${label}: exact replacement owner`);
+  assert.deepEqual(challenge.target, TARGET, `${label}: replacement target binding`);
+  assert.equal(
+    challenge.assessmentIdentity,
+    sha256(canonicalJson(observed.assessment)),
+    `${label}: replacement Assessment binding`,
+  );
+  assert.equal(challenge.stateBase64, authorization.stateBase64, `${label}: challenge accepted bytes`);
+  assert.equal(challenge.stateHash, authorization.stateHash, `${label}: challenge accepted hash`);
+  assert.equal(
+    challenge.acceptedRevision,
+    authorization.acceptedRevision,
+    `${label}: challenge accepted revision`,
+  );
+  assert.match(challenge.attemptIdentity, /^[0-9a-f]{64}$/, `${label}: bound attempt identity`);
+  assert.match(challenge.challengeIdentity, /^[0-9a-f]{64}$/, `${label}: opaque challenge identity`);
+  const { challengeIdentity, bindingIdentity, ...challengeBody } = challenge;
+  assert.equal(
+    bindingIdentity,
+    sha256(canonicalJson(challengeBody)),
+    `${label}: challenge body binding`,
+  );
   assert.equal(observed.result.outcome, 'ended', `${label}:${observed.result.reason}`);
   assert.equal(observed.result.reason, 'cancelled', label);
   assert.equal(observed.result.haltReport, null, label);
@@ -6103,10 +6264,18 @@ function assertFocusedTrustedCompletionRejected(root, label, observed, outcome, 
   assert.deepEqual(state.completed, [], `${label}: rejected target is not completed`);
   assert.equal(state.pending.length, 1, `${label}: authorized attempt remains pending`);
   assert.deepEqual(state.pending[0].target, TARGET, `${label}: exact pending target`);
-  assert.equal(
-    observed.result.steps.some((step) => step.step === 'commit-lane-receipt'),
-    false,
-    `${label}: no lane receipt is committed`,
+  assert.deepEqual(
+    observed.result.steps.filter((step) => (
+      step.step.includes(':completion')
+      || step.step.includes(':governance')
+      || step.step.includes('projection')
+      || ['audit-run', 'authorize-lane-effect', 'apply-lane-effect',
+        'commit-lane-receipt', 'final-audit', 'end'].includes(step.step)
+      || ['completed', 'task-settled', 'lane-permit-issued',
+        'lane-mutation-applied', 'lane-receipt-committed'].includes(step.reason)
+    )),
+    [],
+    `${label}: no completion, projection, receipt, audit, or task close`,
   );
   assert.match(
     fs.readFileSync(path.join(root, TASKS_PATH), 'utf8'),
@@ -6118,6 +6287,11 @@ function assertFocusedTrustedCompletionRejected(root, label, observed, outcome, 
       .glyphs[TARGET.taskKey],
     '~',
     `${label}: pending snapshot glyph`,
+  );
+  assert.deepEqual(
+    feature060Preimages(root),
+    observed.preimages,
+    `${label}: owner, definition, task, and snapshot preimages stay exact`,
   );
   assert.deepEqual(
     observed.checkpoint.pair,
@@ -6560,6 +6734,13 @@ for (const outcome of /** @type {const} */ (['succeeded', 'no-change'])) {
  *   outcome:string,
  *   makeResult:(assessment:Record<string, unknown>)=>Record<string, unknown>,
  *   expectedError:RegExp,
+ *   validCompanion:{
+ *     outcome:string,
+ *     operations:string[],
+ *     changedTargets:string[],
+ *     verificationOutcomes:string[],
+ *     reviewVerdict:string,
+ *   },
  * }[]}
  */
 const rejectedTrustedCompletionCases = [
@@ -6571,35 +6752,72 @@ const rejectedTrustedCompletionCases = [
       changedTargets: [MATERIAL_INPUTS.targets[0]],
     }),
     expectedError: /^completion v2 does not match the exact pending action and result route$/,
+    validCompanion: {
+      outcome: 'succeeded',
+      operations: [...MATERIAL_INPUTS.operations],
+      changedTargets: [MATERIAL_INPUTS.targets[0]],
+      verificationOutcomes: ['passed'],
+      reviewVerdict: 'accepted',
+    },
   },
   {
     label: 'no-change with failed verification',
     outcome: 'no-change',
     makeResult: (assessment) => focusedFailedSpecialistPair(assessment, 'failed-verification'),
     expectedError: /^completion v2 outcome must be failed for failed verification$/,
+    validCompanion: {
+      outcome: 'failed',
+      operations: [...MATERIAL_INPUTS.operations],
+      changedTargets: [],
+      verificationOutcomes: ['failed'],
+      reviewVerdict: 'accepted',
+    },
   },
   {
     label: 'no-change with rejected review',
     outcome: 'no-change',
     makeResult: (assessment) => focusedSpecialistPair(assessment, 'rejected-review', 'rejected'),
     expectedError: /^completion v2 outcome must be blocked for rejected review$/,
+    validCompanion: {
+      outcome: 'blocked',
+      operations: [...MATERIAL_INPUTS.operations],
+      changedTargets: [],
+      verificationOutcomes: ['passed'],
+      reviewVerdict: 'rejected',
+    },
   },
   {
     label: 'blocked with passed verification and accepted review',
     outcome: 'blocked',
     makeResult: (assessment) => focusedSpecialistPair(assessment, 'trusted-success'),
     expectedError: /^completion v2 outcome must be succeeded(?: or no-change)? for accepted trusted evidence$/,
+    validCompanion: {
+      outcome: 'succeeded',
+      operations: [...MATERIAL_INPUTS.operations],
+      changedTargets: [],
+      verificationOutcomes: ['passed'],
+      reviewVerdict: 'accepted',
+    },
   },
 ];
 
-for (const { label, outcome, makeResult, expectedError } of rejectedTrustedCompletionCases) {
-  nodeTest(`runner trusted completion outcomes: ${label} is rejected by its existing guard`, async () => {
+for (const {
+  label, outcome, makeResult, expectedError, validCompanion,
+} of rejectedTrustedCompletionCases) {
+  nodeTest(`runner trusted completion outcomes: ${label} is rejected by state-bound preflight before effects`, async () => {
     await withSealedWorkspace(async (root) => {
       const observed = await runFocusedTrustedCompletion(root, label.replaceAll(' ', '-'), (assessment) => ({
         ...makeResult(assessment),
         outcome,
       }));
-      assertFocusedTrustedCompletionRejected(root, label, observed, outcome, expectedError);
+      assertFocusedTrustedCompletionRejected(
+        root,
+        label,
+        observed,
+        outcome,
+        expectedError,
+        validCompanion,
+      );
     });
   });
 }
@@ -14124,5 +14342,2089 @@ nodeTest('cross-invocation retention conflicts: exact captures, dual surfaces an
     assert.deepEqual(acceptedAuthorityTuple(replayed.session), acceptedAuthorityTuple(prior));
     assert.deepEqual(laneSurfaceDigests(root), appliedFiles);
     fixture.end('hard-stop-recorded');
+  });
+});
+
+const RETAINED_STREAMS = ['currentRun', 'verification', 'review', 'lint'];
+
+/** @param {number} count */
+function feature060Checks(count) {
+  return Array.from({ length: count }, (_, index) => ({
+    definition: `Feature060 obligation ${index + 1}`,
+    outcome: 'passed',
+    evidence: `obligation:${index + 1}:passed`,
+  }));
+}
+
+/** Explicit synthetic actual-owner reformulation, never performed by the runtime. */
+function feature060OwnerCorrectedChecks() {
+  return [
+    ...feature060Checks(14),
+    { definition: 'owner combined 15 and 16', outcome: 'passed', evidence: 'obligation:15:passed; obligation:16:passed' },
+    { definition: 'owner combined 17 and 18', outcome: 'passed', evidence: 'obligation:17:passed; obligation:18:passed' },
+  ];
+}
+
+/** @param {string} root */
+function feature060Preimages(root) {
+  return Object.fromEntries([
+    IDEA_PATH, TARGET.specPath, TARGET.specPath.replace(/spec\.md$/, 'plan.md'), TASKS_PATH, TASK_STATE_PATH,
+  ].map(relative => [relative, fs.readFileSync(path.join(root, relative))]));
+}
+
+nodeTest('Feature 060 T002: full state-bound preflight accepts 16 rows and rejects 17/18 without evidence loss', () => {
+  const state = pendingState('autonomous');
+  const adapter = createHostAdapter(sealedInitial({ state }));
+  for (const count of [16, 17, 18]) {
+    const result = specialistResult(`full-preflight-${count}`, 'accepted');
+    result.verification.checks = feature060Checks(count);
+    const request = sealedResultRequest(adapter, result);
+    const before = canonicalJson(request);
+    if (count === 16) {
+      assert.deepEqual(validateHostAdapterRequest(request, state), request);
+    } else {
+      assert.throws(
+        () => validateHostAdapterRequest(request, state),
+        /checks.*1 through 16/,
+        `${count} complete rows must reach the builder`,
+      );
+    }
+    assert.equal(canonicalJson(request), before);
+    assert.equal(result.verification.checks.length, count);
+  }
+  assert.deepEqual(acceptedAuthorityTuple(adapter.snapshot()), acceptedAuthorityTuple({
+    acceptedState: state,
+    acceptedStateBytes: canonicalJson(state),
+    acceptedStateHash: sha256(canonicalJson(state)),
+    acceptedRevision: 0,
+  }));
+});
+
+nodeTest('Feature 060 T002: preflight rejects omitted writer files, wrong operations, and contradictory trusted outcomes', () => {
+  const state = pendingState('autonomous');
+  const adapter = createHostAdapter(sealedInitial({ state }));
+  const valid = specialistResult('pending-scope', 'accepted');
+  valid.changedTargets = clone(MATERIAL_INPUTS.targets);
+  assert.doesNotThrow(() => validateHostAdapterRequest(sealedResultRequest(adapter, valid), state));
+  for (const [label, result, pattern] of [
+    ['omitted test file', {
+      ...valid, changedTargets: [...MATERIAL_INPUTS.targets, 'src/skills/dude-work/host-adapter.test.mjs'],
+    }, /pending action/],
+    ['wrong operation', { ...valid, operations: ['retry-task'] }, /pending action/],
+    ['failed evidence labeled success', {
+      ...valid, verification: { checks: [{ ...valid.verification.checks[0], outcome: 'failed' }] },
+    }, /must be failed/],
+    ['no-change with a changed file', { ...valid, outcome: 'no-change' }, /pending action/],
+  ]) {
+    const request = sealedResultRequest(adapter, result);
+    const before = canonicalJson(request);
+    assert.throws(() => validateHostAdapterRequest(request, state), pattern, label);
+    assert.equal(canonicalJson(request), before, label);
+  }
+  assert.throws(
+    () => validateHostAdapterRequest(sealedResultRequest(adapter, valid)),
+    /current accepted RunState/,
+  );
+  assert.throws(
+    () => validateHostAdapterRequest(sealedResultRequest(adapter, guardedResult()), state),
+    /current policy result contract/,
+  );
+});
+
+nodeTest('Feature 060 T002: inert local rejection preserves canonical files and permits one same-attempt correction', () => {
+  withSealedWorkspace(root => {
+    writeSealedTaskState(root);
+    const state = pendingState('autonomous');
+    const checkpoint = memoryCheckpointStore();
+    let runtimeCalls = 0;
+    let laneCalls = 0;
+    let probeCalls = 0;
+    const noEffect = sealedNoEffectAuthority();
+    let completionInput;
+    const adapter = createHostAdapter(checkpointInitial({ state }), {
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('Feature060T002 local-preflight-runtime'),
+        invoke(command, request) {
+          runtimeCalls += 1;
+          if (command === 'complete' && request.mode === 'capture') completionInput = clone(request.input);
+          return { status: 'returned', value: runCommand(command, request) };
+        },
+      },
+      laneOwner: {
+        identity: sha256('Feature060T002 local-preflight-lane'),
+        apply() { laneCalls += 1; throw new Error('no lane application expected'); },
+      },
+      noEffectAuthority: {
+        ...noEffect,
+        capture(request) { probeCalls += 1; return noEffect.capture(request); },
+      },
+    });
+    const result = specialistResult('local-preflight', 'accepted');
+    result.verification.checks = feature060Checks(18);
+    const request = sealedRequest(adapter, 'record-attempt-result', {
+      attemptResult: { input: sealedRecordInput(root), result },
+    });
+    const before = canonicalJson(request);
+    const accepted = acceptedAuthorityTuple(adapter.snapshot());
+    const preimages = feature060Preimages(root);
+    const checkpointBefore = canonicalJson(checkpoint.pair);
+    assert.throws(() => validateHostAdapterRequest(request, state), /checks.*1 through 16/);
+    assert.equal(canonicalJson(checkpoint.pair), checkpointBefore, 'pure preflight writes no checkpoint');
+    const refused = adapter.run(request);
+    assert.equal(refused.outcome, 'closed-refusal');
+    assert.equal(refused.incidentClass, 'malformed-request');
+    assert.equal(refused.next.kind, 'correction');
+    assert.deepEqual(acceptedAuthorityTuple(refused.session), accepted);
+    assert.equal(canonicalJson(request), before);
+    assert.deepEqual(feature060Preimages(root), preimages);
+    assert.equal(refused.session.pendingEffect, null);
+    assert.equal(runtimeCalls, 0);
+    assert.equal(laneCalls, 0);
+    assert.equal(probeCalls, 0);
+    assert.equal(checkpoint.pair.checkpoint.acceptedStateBytes, accepted.acceptedStateBytes);
+    assert.equal(checkpoint.pair.checkpoint.acceptedStateHash, accepted.acceptedStateHash);
+    assert.equal(checkpoint.pair.checkpoint.inFlight, null);
+
+    const corrected = clone(result);
+    corrected.verification.checks = feature060OwnerCorrectedChecks();
+    const captured = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
+      attemptResult: { input: sealedRecordInput(root), result: corrected },
+    }, { correctionIdentity: refused.next.correctionIdentity }));
+    assert.equal(captured.outcome, 'effect-required', captured.reason);
+    assert.equal(captured.session.correction.consumed, true);
+    assert.equal(Object.hasOwn(captured, 'recoveryNotice'), false);
+    assert.deepEqual(acceptedAuthorityTuple(captured.session), accepted);
+    assert.deepEqual(feature060Preimages(root), preimages);
+    assert.equal(runtimeCalls, 1);
+    assert.equal(probeCalls, 1);
+    assert.equal(laneCalls, 0);
+    const streams = Object.fromEntries(['verification', 'review'].map(field => [
+      field, completionInput[field].map(entry => ({
+        ...entry, bytes: Buffer.from(entry.bytes.base64, 'base64'),
+      })),
+    ]));
+    const events = captured.effect.projectionBatch.events;
+    const retained = sealedRetentionInput(root, events, events, streams);
+    const needsInspection = adapter.run(sealedRequest(adapter, 'settle-effect', { input: retained }));
+    assert.equal(needsInspection.outcome, 'reinspect-required');
+    assert.equal(Object.hasOwn(needsInspection, 'recoveryNotice'), false);
+    const resumed = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input: retained }));
+    assert.equal(resumed.outcome, 'accepted');
+    assert.deepEqual(resumed.recoveryNotice, {
+      incidentClassification: 'malformed-request', statePreserved: true, resumedAction: 'record-attempt-result',
+    });
+    const settled = adapter.run(sealedRequest(adapter, 'settle-effect', { input: retained }));
+    assert.equal(settled.outcome, 'accepted');
+    assert.equal(settled.reason, 'completed');
+    assert.equal(settled.session.acceptedState.overallUsed, accepted.overallUsed);
+    assert.equal(Object.hasOwn(settled, 'recoveryNotice'), false);
+    const later = adapter.run(sealedRequest(adapter, 'fresh-inspection', { input: retained }));
+    assert.equal(later.outcome, 'accepted');
+    assert.equal(Object.hasOwn(later, 'recoveryNotice'), false);
+    adapter.end('cancelled');
+  });
+});
+
+nodeTest('Feature 060 T002: runner obtains a fresh bound specialist pair without replaying an invalid result or charging again', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const request = focusedRunnerRequest(root);
+    request.specialistResult.verification.checks = feature060Checks(18);
+    const invalidBytes = canonicalJson(request.specialistResult);
+    const checkpoint = memoryCheckpointStore();
+    const captures = [];
+    const challenges = [];
+    const preimages = feature060Preimages(root);
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('Feature060T002 same-attempt-runner'),
+        invoke(command, input) {
+          if (command === 'complete' && input.mode === 'capture') captures.push(clone(input));
+          return { status: 'returned', value: runCommand(command, input) };
+        },
+      },
+      exchange(challenge) {
+        challenges.push(clone(challenge));
+        assert.equal(challenge.kind, 'specialist-pair');
+        const pending = focusedRunnerAcceptedState(challenge);
+        assert.equal(pending.overallUsed, 1);
+        assert.equal(pending.pending.length, 1);
+        assert.deepEqual(pending.pending[0].materialInputs, request.assessment.materialInputs);
+        assert.equal(captures.length, 0, 'the known-invalid result must never enter the runtime');
+        assert.deepEqual(feature060Preimages(root), preimages);
+        // Synthetic actual-owner response: all 18 obligations remain explicit.
+        // The runner must neither make this semantic decision nor reuse the old review.
+        const corrected = focusedSpecialistPair(request.assessment, 'owner-corrected', 'accepted');
+        corrected.verification.checks = feature060OwnerCorrectedChecks();
+        assert.equal(corrected.verification.checks.length, 16);
+        for (let ordinal = 1; ordinal <= 18; ordinal += 1) {
+          assert.ok(corrected.verification.checks.some(check => check.evidence.includes(`obligation:${ordinal}:passed`)));
+        }
+        return focusedChallengeResponse(challenge, 'specialistResult', corrected);
+      },
+    });
+    assert.equal(result.outcome, 'ended', `${result.reason}: ${result.detail ?? ''}`);
+    assert.equal(result.reason, 'task-settled');
+    assert.equal(challenges.length, 1);
+    assert.equal(captures.length, 1);
+    assert.equal(canonicalJson(request.specialistResult), invalidBytes);
+    assert.equal(focusedRunnerAcceptedState(result).overallUsed, 1);
+    assert.equal(result.steps.filter(step => step.reason === 'authorized').length, 1);
+    assert.equal(result.steps.filter(step => step.outcome === 'closed-refusal').length, 1);
+    const authorization = result.steps.find(step => step.reason === 'authorized');
+    const rejection = result.steps.find(step => step.outcome === 'closed-refusal');
+    for (const field of ['stateBase64', 'stateHash', 'acceptedRevision', 'workerGeneration']) {
+      assert.equal(rejection[field], authorization[field], `${field} survives the rejected handoff`);
+    }
+    assert.equal(challenges[0].stateHash, authorization.stateHash);
+    assert.equal(challenges[0].acceptedRevision, authorization.acceptedRevision);
+    assert.equal(captures[0].state.overallUsed, 1);
+    assert.equal(result.steps.some(step => step.step.endsWith(':correction')), false);
+    assert.ok(result.steps.some(step => step.step.endsWith(':reinspect') && step.reason === 'inspection-refreshed'));
+    const notice = result.steps.filter(step => Object.hasOwn(step, 'recoveryNotice'));
+    assert.equal(notice.length, 1);
+    assert.equal(notice[0].outcome, 'accepted');
+    assert.deepEqual(notice[0].recoveryNotice, {
+      incidentClassification: 'malformed-request', statePreserved: true, resumedAction: 'fresh-inspection',
+    });
+    assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+  });
+});
+
+nodeTest('Feature 060 T002: receiver revalidates pending target and writer scope after pure preparation', () => {
+  const state = pendingState('autonomous');
+  const result = specialistResult('revalidate-scope', 'accepted');
+  result.changedTargets = clone(state.pending[0].materialInputs.targets);
+  const prepared = prepareSpecialistResult(state, result);
+  assert.deepEqual(prepared.result, result);
+  const narrowed = clone(state);
+  narrowed.pending[0].materialInputs.targets = ['src/other-authorized-file.mjs'];
+  narrowed.pending[0].approachHash = approachHash({
+    action: narrowed.pending[0].action, materialInputs: narrowed.pending[0].materialInputs,
+  });
+  validateRunState(narrowed);
+  let calls = 0;
+  for (const [label, current, input] of [
+    ['new pending scope', narrowed, {}],
+    ['foreign target', state, { target: SECOND_TARGET }],
+    ['foreign package', state, { specPath: '.dude/specs/999-foreign/spec.md' }],
+  ]) {
+    const adapter = createHostAdapter(sealedInitial({ state: current }), sealedPorts(() => { calls += 1; }));
+    const request = sealedRequest(adapter, 'record-attempt-result', {
+      attemptResult: { input, result: prepared.result },
+    });
+    const before = acceptedAuthorityTuple(adapter.snapshot());
+    assert.throws(() => validateHostAdapterRequest(request, current), /pending (action|attempt target)/, label);
+    const rejected = adapter.run(request);
+    assert.equal(rejected.outcome, 'closed-refusal', label);
+    assert.deepEqual(acceptedAuthorityTuple(rejected.session), before, label);
+  }
+  assert.equal(calls, 0);
+  assert.deepEqual(prepared.result, result, 'scope refusal cannot hide the changed file');
+});
+
+nodeTest('Feature 060 T002: inert snapshots cannot erase an own prototype-named data field before validation', () => {
+  const state = pendingState('autonomous');
+  for (const location of ['result', 'check', 'review']) {
+    const result = specialistResult(`own-data-key-${location}`, 'accepted');
+    const record = location === 'result' ? result
+      : location === 'check' ? result.verification.checks[0] : result.review;
+    Object.defineProperty(record, '__proto__', { value: null, enumerable: true });
+    const before = JSON.stringify(result);
+    assert.throws(() => prepareSpecialistResult(state, result), /unknown field '__proto__'/, location);
+    let calls = 0;
+    const adapter = createHostAdapter(sealedInitial({ state }), sealedPorts(() => { calls += 1; }));
+    const request = sealedResultRequest(adapter, result);
+    assert.throws(() => validateHostAdapterRequest(request, state), /unknown field '__proto__'/, location);
+    const refused = adapter.run(request);
+    assert.equal(refused.outcome, 'closed-refusal', location);
+    assert.equal(calls, 0);
+    assert.equal(JSON.stringify(result), before, location);
+    assert.equal(Object.hasOwn(record, '__proto__'), true, location);
+  }
+});
+
+nodeTest('Feature 060 T002: raw specialist accessors, proxies, and hidden data never run before rejection', async () => {
+  for (const source of ['initial', 'exchange']) {
+    for (const kind of ['accessor', 'proxy', 'hidden']) {
+      await withSealedWorkspace(async root => {
+        writeSealedTaskState(root);
+        const request = focusedRunnerRequest(root);
+        const raw = specialistResult(`inert-${source}-${kind}`, 'accepted');
+        let reads = 0;
+        if (kind === 'accessor') {
+          Object.defineProperty(raw.verification.checks[0], 'evidence', {
+            enumerable: true,
+            get() { reads += 1; throw new Error('caller accessor must stay inert'); },
+          });
+        } else if (kind === 'proxy') {
+          raw.verification.checks = new Proxy(raw.verification.checks, {
+            get(target, key, receiver) { reads += 1; return Reflect.get(target, key, receiver); },
+          });
+        } else {
+          Object.defineProperty(raw.verification.checks[0], 'hidden', { value: 'not JSON data' });
+        }
+        const state = pendingState('autonomous');
+        assert.throws(() => prepareSpecialistResult(state, raw), TypeError);
+        assert.equal(reads, 0);
+        if (source === 'initial') request.specialistResult = raw;
+        else delete request.specialistResult;
+        let captures = 0;
+        const checkpoint = memoryCheckpointStore();
+        const preimages = feature060Preimages(root);
+        const result = await runHostAdapter(request, {
+          checkpoint: checkpoint.port,
+          runtime: {
+            identity: sha256(`Feature060T002 inert:${source}:${kind}`),
+            invoke(command, input) {
+              if (command === 'complete') captures += 1;
+              return { status: 'returned', value: runCommand(command, input) };
+            },
+          },
+          exchange(challenge) {
+            return focusedRawChallengeResponse(challenge, 'specialistResult', raw);
+          },
+        });
+        assert.equal(result.outcome, 'hard-stop', `${source}:${kind}`);
+        assert.equal(result.reason, 'request-not-authorized');
+        assert.equal(reads, 0);
+        assert.equal(captures, 0);
+        assert.equal(focusedRunnerAcceptedState(result).overallUsed, 1);
+        assert.equal(result.steps.some(step => step.outcome === 'closed-refusal'), false);
+        assert.deepEqual(feature060Preimages(root), preimages);
+      });
+    }
+  }
+});
+
+nodeTest('Feature 060 T002: consumed correction and metadata churn require reinspection without a new allowance', () => {
+  withSealedWorkspace(root => {
+    writeSealedTaskState(root);
+    const checkpoint = memoryCheckpointStore();
+    const adapter = createHostAdapter(checkpointInitial({ state: pendingState('autonomous') }), {
+      checkpoint: checkpoint.port,
+    });
+    const result = specialistResult('spent-local-correction', 'accepted');
+    result.verification.checks = feature060Checks(17);
+    const payload = { attemptResult: { input: sealedRecordInput(root), result } };
+    const before = acceptedAuthorityTuple(adapter.snapshot());
+    const preimages = feature060Preimages(root);
+    const first = adapter.run(sealedRequest(adapter, 'record-attempt-result', payload));
+    const correction = first.next.correctionIdentity;
+    const consumed = adapter.run(sealedRequest(adapter, 'record-attempt-result', payload, {
+      correctionIdentity: correction,
+    }));
+    assert.equal(consumed.outcome, 'closed-refusal');
+    assert.equal(consumed.next.kind, 'inspect');
+    assert.equal(consumed.session.correction.consumed, true);
+    const consumedIdentity = consumed.session.correction.identity;
+    for (let revision = 0; revision < 3; revision += 1) {
+      const repeated = adapter.run(sealedRequest(adapter, 'record-attempt-result', payload, {
+        correctionIdentity: consumedIdentity,
+      }));
+      assert.equal(repeated.outcome, 'reinspect-required');
+      assert.equal(repeated.session.correction.identity, consumedIdentity);
+      assert.deepEqual(acceptedAuthorityTuple(repeated.session), before);
+      assert.equal(checkpoint.pair.checkpoint.correction.identity, consumedIdentity);
+      assert.equal(Object.hasOwn(repeated, 'recoveryNotice'), false);
+    }
+    const refreshed = adapter.run(sealedRequest(adapter, 'fresh-inspection', {
+      input: sealedTransportInput(sealedInspectionInput(root, { policyMode: 'autonomous' })),
+    }));
+    assert.equal(refreshed.outcome, 'accepted');
+    assert.equal(refreshed.session.correction, null);
+    assert.deepEqual(acceptedAuthorityTuple(refreshed.session), before);
+    const stale = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
+      attemptResult: { input: sealedRecordInput(root), result: specialistResult('valid-after-inspection', 'accepted') },
+    }, { correctionIdentity: correction }));
+    assert.equal(stale.outcome, 'hard-stop');
+    assert.equal(stale.reason, 'correction-not-authorized');
+    assert.deepEqual(feature060Preimages(root), preimages);
+  });
+});
+
+nodeTest('Feature 060 T002: stale session, revisions, checkpoint hashes, tokens, and generations cannot offer or consume correction', () => {
+  for (const phase of ['offer', 'consume']) {
+    for (const field of [
+      'expectedSessionIdentity', 'expectedAcceptedRevision', 'expectedHostRevision',
+      'acceptedStateHash', 'acceptedRevision', 'hostRevision', 'workerToken', 'workerGeneration', 'invocationIdentity',
+    ]) {
+      const checkpoint = memoryCheckpointStore();
+      let calls = 0;
+      const adapter = createHostAdapter(checkpointInitial({ state: pendingState('autonomous') }), {
+        checkpoint: checkpoint.port,
+        ...sealedPorts(() => { calls += 1; throw new Error('stale authority reached runtime'); }),
+      });
+      const invalid = specialistResult('stale-local', 'accepted');
+      invalid.verification.checks = feature060Checks(18);
+      const pending = acceptedAuthorityTuple(adapter.snapshot());
+      let correctionIdentity;
+      if (phase === 'consume') {
+        const first = adapter.run(sealedResultRequest(adapter, invalid));
+        assert.equal(first.outcome, 'closed-refusal', field);
+        correctionIdentity = first.next.correctionIdentity;
+      }
+      const request = sealedResultRequest(adapter,
+        phase === 'offer' ? invalid : specialistResult('stale-corrected', 'accepted'));
+      if (correctionIdentity) request.correctionIdentity = correctionIdentity;
+      if (field.startsWith('expected')) {
+        request[field] = typeof request[field] === 'number' ? request[field] + 1 : sha256(`stale:${field}`);
+      } else {
+        checkpoint.pair.checkpoint[field] = typeof checkpoint.pair.checkpoint[field] === 'number'
+          ? checkpoint.pair.checkpoint[field] + 1 : sha256(`stale:${field}`);
+        const { recordHash, ...body } = checkpoint.pair.checkpoint;
+        checkpoint.pair.checkpoint.recordHash = sha256(canonicalJson(body));
+      }
+      const stopped = adapter.run(request);
+      assert.equal(stopped.outcome, 'hard-stop', `${phase}:${field}`);
+      assert.deepEqual(acceptedAuthorityTuple(stopped.session), pending, `${phase}:${field}`);
+      assert.equal(Object.hasOwn(stopped, 'recoveryNotice'), false);
+      assert.equal(calls, 0);
+    }
+  }
+});
+
+nodeTest('Feature 060 T002: lost supervisor and cancellation stop local correction before effects', () => {
+  for (const phase of ['offer', 'consume']) {
+    for (const loss of ['supervisor', 'cancel']) {
+      const supervisor = sealedSupervisorSession();
+      const checkpoint = memoryCheckpointStore();
+      let calls = 0;
+      const adapter = createHostAdapter(checkpointInitial({ state: pendingState('autonomous') }), {
+        checkpoint: checkpoint.port,
+        supervisorSession: supervisor,
+        ...sealedPorts(() => { calls += 1; }),
+      });
+      const invalid = specialistResult('lost-supervisor', 'accepted');
+      invalid.review.verdict = 'invalid';
+      const before = acceptedAuthorityTuple(adapter.snapshot());
+      let correctionIdentity;
+      if (phase === 'consume') correctionIdentity = adapter.run(sealedResultRequest(adapter, invalid)).next.correctionIdentity;
+      if (loss === 'supervisor') delete supervisor.admit;
+      else adapter.end('cancelled');
+      const result = adapter.run({
+        ...sealedResultRequest(adapter, phase === 'offer' ? invalid : specialistResult('after-loss', 'accepted')),
+        ...(correctionIdentity ? { correctionIdentity } : {}),
+      });
+      assert.equal(result.outcome, loss === 'supervisor' ? 'hard-stop' : 'ended', `${phase}:${loss}`);
+      assert.deepEqual(acceptedAuthorityTuple(result.session), before);
+      assert.equal(calls, 0);
+      assert.equal(Object.hasOwn(result, 'recoveryNotice'), false);
+    }
+  }
+});
+
+for (const phase of ['offer', 'consume-valid', 'consume-malformed']) {
+  for (const authority of ['unavailable', 'revoked']) {
+    nodeTest(`Feature 060 T002 resumed supervisor: ${phase} refuses ${authority} current authority`, context => {
+      let fixtureRoot;
+      try {
+        withSealedWorkspace(root => {
+          fixtureRoot = root;
+          writeSealedTaskState(root);
+          const checkpoint = memoryCheckpointStore();
+          const supervisor = sealedSupervisorSession();
+          const handoffPorts = supervisorPorts(checkpoint.port);
+          const calls = { runtime: 0, lane: 0, probe: 0 };
+          const noEffect = sealedNoEffectAuthority();
+          const ports = {
+            ...sealedPorts((command, request) => {
+              calls.runtime += 1;
+              return { status: 'returned', value: runCommand(command, request) };
+            }),
+            noEffectAuthority: {
+              ...noEffect,
+              capture(request) { calls.probe += 1; return noEffect.capture(request); },
+            },
+            laneOwner: {
+              identity: sha256('Feature060T002 resumed-local-lane'),
+              apply() { calls.lane += 1; throw new Error('local validation must not apply a lane effect'); },
+            },
+          };
+          const worker = createHostAdapter(checkpointInitial({ state: pendingState('autonomous') }), {
+            ...ports, checkpoint: checkpoint.port, supervisorSession: supervisor,
+          });
+          const inspection = sealedTransportInput(sealedInspectionInput(root, { policyMode: 'autonomous' }));
+          assert.equal(worker.run(sealedRequest(worker, 'fresh-inspection', { input: inspection })).outcome, 'accepted');
+          const malformed = specialistResult('resumed-local', 'accepted');
+          malformed.verification.checks = feature060Checks(18);
+          const attempt = result => ({ attemptResult: { input: sealedRecordInput(root), result } });
+          let correctionIdentity;
+          if (phase !== 'offer') {
+            const offered = worker.run(sealedRequest(worker, 'record-attempt-result', attempt(malformed)));
+            assert.equal(offered.outcome, 'closed-refusal');
+            assert.equal(offered.incidentClass, 'malformed-request');
+            assert.equal(offered.next.kind, 'correction');
+            correctionIdentity = offered.next.correctionIdentity;
+          }
+          const active = worker.snapshot();
+          const handed = handoffHostWorker(handoffInput(active.invocationIdentity, active), handoffPorts);
+          assert.equal(handed.outcome, 'handed-off');
+          const resumed = resumeHostAdapter(resumeInput(handed.receipt), resumePorts(checkpoint.port, ports));
+          assert.equal(resumed.outcome, 'resumed', resumed.reason);
+          const replacement = resumed.adapter;
+          try {
+            assert.deepEqual(acceptedAuthorityTuple(replacement.snapshot()), acceptedAuthorityTuple(active));
+            assert.equal(replacement.snapshot().workerToken, handed.receipt.workerToken);
+            assert.equal(replacement.snapshot().workerGeneration, active.workerGeneration + 1);
+            if (phase === 'offer') {
+              const fresh = replacement.run(sealedRequest(replacement, 'fresh-inspection', { input: inspection }));
+              assert.equal(fresh.outcome, 'accepted', fresh.reason);
+            } else {
+              // Exercise the existing carried correction before inspection clears it.
+              assert.equal(replacement.snapshot().correction.identity, correctionIdentity);
+              assert.equal(replacement.snapshot().correction.consumed, false);
+            }
+            if (authority === 'revoked') {
+              delete supervisor.admit;
+              delete handoffPorts.supervisorSession.admit;
+            }
+            const before = replacement.snapshot();
+            const files = feature060Preimages(root);
+            const checkpointBefore = canonicalJson(checkpoint.pair);
+            const callsBefore = { ...calls };
+            const corrected = specialistResult('resumed-local', 'accepted');
+            corrected.verification.checks = feature060OwnerCorrectedChecks();
+            const request = sealedRequest(replacement, 'record-attempt-result',
+              attempt(phase === 'consume-valid' ? corrected : malformed),
+              correctionIdentity ? { correctionIdentity } : {});
+            if (phase === 'consume-valid') {
+              assert.doesNotThrow(() => validateHostAdapterRequest(request, before.acceptedState));
+            } else {
+              assert.throws(() => validateHostAdapterRequest(request, before.acceptedState), /checks.*1 through 16/);
+            }
+            const requestBytes = canonicalJson(request);
+            const result = replacement.run(request);
+            context.diagnostic(canonicalJson({
+              phase, authority, outcome: result.outcome, reason: result.reason,
+              correctionConsumed: result.session.correction?.consumed ?? null,
+              runtimeDelta: calls.runtime - callsBefore.runtime,
+            }));
+            assert.equal(result.outcome, 'hard-stop');
+            assert.equal(result.reason, 'supervisor-identity-missing');
+            assert.deepEqual(acceptedAuthorityTuple(result.session), acceptedAuthorityTuple(before));
+            assert.deepEqual(result.session.correction, before.correction, 'no allowance is offered or consumed');
+            assert.equal(result.session.pendingEffect, null);
+            assert.equal(Object.hasOwn(result, 'recoveryNotice'), false);
+            assert.equal(Object.hasOwn(result, 'next'), false);
+            assert.equal(canonicalJson(request), requestBytes);
+            assert.equal(canonicalJson(checkpoint.pair), checkpointBefore);
+            assert.deepEqual(feature060Preimages(root), files);
+            assert.deepEqual(calls, callsBefore, 'no runtime, no-effect probe, or lane entry');
+          } finally {
+            const ended = replacement.end(replacement.snapshot().status === 'hard-stop' ? 'hard-stop-recorded' : 'cancelled');
+            assert.equal(ended.outcome, 'ended', ended.reason);
+            assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+            context.diagnostic('fixture cleanup: checkpoint pair cleared');
+          }
+        });
+      } finally {
+        assert.ok(fixtureRoot);
+        assert.equal(fs.existsSync(fixtureRoot), false);
+        context.diagnostic('fixture cleanup: temporary workspace removed');
+      }
+    });
+  }
+}
+
+for (const mode of ['ordinary', 'entered-port-correction']) {
+  nodeTest(`Feature 060 T002 resumed supervisor: ${mode} remains supported after handoff`, context => {
+    let fixtureRoot;
+    try {
+      withSealedWorkspace(root => {
+        fixtureRoot = root;
+        writeSealedTaskState(root);
+        const checkpoint = memoryCheckpointStore();
+        let completionCalls = 0;
+        const ports = sealedPorts((command, request) => {
+          if (command === 'complete') {
+            completionCalls += 1;
+            if (mode === 'entered-port-correction' && completionCalls === 1) return { status: 'empty' };
+          }
+          return { status: 'returned', value: runCommand(command, request) };
+        });
+        const worker = createHostAdapter(checkpointInitial({ state: pendingState('autonomous') }), {
+          ...ports, checkpoint: checkpoint.port,
+        });
+        const active = worker.snapshot();
+        const handed = handoffHostWorker(handoffInput(active.invocationIdentity, active), supervisorPorts(checkpoint.port));
+        assert.equal(handed.outcome, 'handed-off');
+        const resumed = resumeHostAdapter(resumeInput(handed.receipt), resumePorts(checkpoint.port, ports));
+        assert.equal(resumed.outcome, 'resumed', resumed.reason);
+        const replacement = resumed.adapter;
+        try {
+          const fresh = replacement.run(sealedRequest(replacement, 'fresh-inspection', {
+            input: sealedTransportInput(sealedInspectionInput(root, { policyMode: 'autonomous' })),
+          }));
+          assert.equal(fresh.outcome, 'accepted', fresh.reason);
+          const before = acceptedAuthorityTuple(replacement.snapshot());
+          const files = feature060Preimages(root);
+          const payload = { attemptResult: { input: sealedRecordInput(root), result: specialistResult('resumed-control', 'accepted') } };
+          let result = replacement.run(sealedRequest(replacement, 'record-attempt-result', payload));
+          if (mode === 'entered-port-correction') {
+            assert.equal(result.outcome, 'closed-refusal');
+            assert.equal(result.incidentClass, 'empty-output');
+            assert.equal(result.next.kind, 'correction');
+            assert.deepEqual(acceptedAuthorityTuple(result.session), before);
+            result = replacement.run(sealedRequest(replacement, 'record-attempt-result', payload, {
+              correctionIdentity: result.next.correctionIdentity,
+            }));
+            assert.equal(result.session.correction.consumed, true);
+          }
+          assert.equal(result.outcome, 'effect-required', result.reason);
+          assert.equal(completionCalls, mode === 'ordinary' ? 1 : 2);
+          assert.deepEqual(acceptedAuthorityTuple(result.session), before);
+          assert.deepEqual(feature060Preimages(root), files);
+          assert.equal(Object.hasOwn(result, 'recoveryNotice'), false);
+        } finally {
+          const ended = replacement.end(replacement.snapshot().status === 'hard-stop' ? 'hard-stop-recorded' : 'cancelled');
+          assert.equal(ended.outcome, 'ended', ended.reason);
+          assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+          context.diagnostic('fixture cleanup: checkpoint pair cleared');
+        }
+      });
+    } finally {
+      assert.ok(fixtureRoot);
+      assert.equal(fs.existsSync(fixtureRoot), false);
+      context.diagnostic('fixture cleanup: temporary workspace removed');
+    }
+  });
+}
+
+nodeTest('Feature 060 T002: pending or unverified completion effects never qualify as local no-effect rejection', () => {
+  withSealedWorkspace(root => {
+    writeSealedTaskState(root);
+    const state = pendingState('autonomous');
+    const fixture = sealedTrustedFixture(state, 'pending-not-inert', 'accepted');
+    const { adapter, captured } = captureAdapter(state, fixture, root);
+    const before = acceptedAuthorityTuple(captured.session);
+    const heldEffect = clone(captured.session.pendingEffect);
+    const preimages = feature060Preimages(root);
+    const malformed = specialistResult('bad-after-effect', 'accepted');
+    malformed.verification.checks = feature060Checks(18);
+    const stopped = adapter.run(sealedResultRequest(adapter, malformed));
+    assert.equal(stopped.outcome, 'hard-stop');
+    assert.equal(stopped.reason, 'effect-unverified');
+    assert.deepEqual(stopped.session.pendingEffect, heldEffect);
+    assert.deepEqual(acceptedAuthorityTuple(stopped.session), before);
+    assert.deepEqual(feature060Preimages(root), preimages);
+
+    const unverified = createHostAdapter(sealedInitial({ state: heldEffect.provisionalState }));
+    const refused = unverified.run(sealedResultRequest(unverified, malformed));
+    assert.equal(refused.outcome, 'hard-stop');
+    assert.equal(refused.reason, 'effect-unverified');
+    assert.equal(refused.session.acceptedStateBytes, heldEffect.provisionalStateBytes);
+    assert.deepEqual(feature060Preimages(root), preimages);
+  });
+});
+
+nodeTest('Feature 060 T002: entered runtime ports need fresh no-effect proof and surviving authority', () => {
+  for (const mode of ['no-effect', 'effect-observed', 'indeterminate', 'missing', 'stale', 'mismatched', 'supervisor-lost']) {
+    withSealedWorkspace(root => {
+      writeSealedTaskState(root);
+      const supervisor = sealedSupervisorSession();
+      let calls = 0;
+      const adapter = createHostAdapter(sealedInitial({ state: pendingState('autonomous') }), {
+        supervisorSession: supervisor,
+        noEffectAuthority: ['no-effect', 'supervisor-lost'].includes(mode)
+          ? sealedNoEffectAuthority() : refusingNoEffectAuthority(mode),
+        ...sealedPorts(() => {
+          calls += 1;
+          if (mode === 'effect-observed') fs.appendFileSync(path.join(root, TASKS_PATH), '\nObserved injected port effect.\n');
+          if (mode === 'supervisor-lost') delete supervisor.admit;
+          return { status: 'empty' };
+        }),
+      });
+      const before = acceptedAuthorityTuple(adapter.snapshot());
+      const files = feature060Preimages(root);
+      const result = adapter.run(sealedRequest(adapter, 'record-attempt-result', {
+        attemptResult: { input: sealedRecordInput(root), result: specialistResult(`port-${mode}`, 'accepted') },
+      }));
+      assert.equal(result.outcome, mode === 'no-effect' ? 'closed-refusal' : 'hard-stop', mode);
+      assert.deepEqual(acceptedAuthorityTuple(result.session), before, mode);
+      assert.equal(calls, 1, mode);
+      assert.equal(Object.hasOwn(result, 'recoveryNotice'), false, mode);
+      if (mode !== 'effect-observed') assert.deepEqual(feature060Preimages(root), files, mode);
+      else assert.notDeepEqual(feature060Preimages(root), files, 'an effect is not rolled back or excused by equal state');
+    });
+  }
+});
+
+nodeTest('Feature 060 T002: unsupported definition reconciliation remains a hard stop before attestation', () => {
+  const state = pendingActionState('reconcile-derived-definition', ['lint', 'review', 'verification']);
+  const result = specialistResult('unsupported-definition', 'accepted');
+  result.operations = ['reconcile-derived-definition'];
+  result.verification.checks = feature060Checks(18);
+  let calls = 0;
+  const adapter = createHostAdapter(sealedInitial({ state }), sealedPorts(() => { calls += 1; }));
+  const request = sealedResultRequest(adapter, result);
+  assert.throws(() => validateHostAdapterRequest(request, state), /definition-reconciliation-attestation-unsupported/);
+  const stopped = adapter.run(request);
+  assert.equal(stopped.outcome, 'hard-stop');
+  assert.equal(stopped.reason, 'definition-reconciliation-attestation-unsupported');
+  assert.equal(stopped.session.correction, null);
+  assert.equal(stopped.session.acceptedStateBytes, canonicalJson(state));
+  assert.equal(calls, 0);
+});
+
+nodeTest('Feature 060 T002: fresh specialist exchanges keep replay, order, cancellation, context-loss, and challenge bounds', async () => {
+  for (const mode of ['replay', 'foreign', 'order', 'cancel', 'lost', 'bounded']) {
+    await withSealedWorkspace(async root => {
+      writeSealedTaskState(root);
+      const request = focusedRunnerRequest(root);
+      delete request.specialistResult;
+      const checkpoint = memoryCheckpointStore();
+      const preimages = feature060Preimages(root);
+      const challenges = [];
+      let firstResponse;
+      const result = await runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        exchange(challenge) {
+          assert.equal(challenge.kind, 'specialist-pair');
+          const state = focusedRunnerAcceptedState(challenge);
+          assert.equal(state.overallUsed, 1);
+          assert.equal(state.pending.length, 1);
+          challenges.push(clone(challenge));
+          if (challenges.length === 1) {
+            const invalid = specialistResult('invalid-owner-response', 'accepted');
+            invalid.verification.checks = feature060Checks(18);
+            firstResponse = focusedChallengeResponse(challenge, 'specialistResult', invalid);
+            return firstResponse;
+          }
+          assert.equal(challenge.attemptIdentity, challenges[0].attemptIdentity);
+          assert.equal(challenge.stateHash, challenges[0].stateHash);
+          assert.notEqual(challenge.challengeIdentity, challenges[0].challengeIdentity);
+          assert.notEqual(challenge.bindingIdentity, challenges[0].bindingIdentity);
+          if (mode === 'replay') return firstResponse;
+          if (mode === 'cancel') return focusedCancelResponse(challenge);
+          if (mode === 'lost') return null;
+          const response = focusedChallengeResponse(challenge, 'specialistResult',
+            mode === 'bounded' ? firstResponse.specialistResult : specialistResult('correct-owner-response', 'accepted'));
+          if (mode === 'foreign') response.challengeIdentity = sha256('foreign-correction');
+          if (mode === 'order') response.kind = 'assessment';
+          return response;
+        },
+      });
+      const expected = {
+        replay: 'challenge-response-replayed',
+        foreign: 'challenge-response-foreign',
+        order: 'challenge-response-out-of-order',
+        cancel: 'cancelled',
+        lost: 'exchange-context-lost',
+        bounded: 'challenge-budget-exhausted',
+      }[mode];
+      assert.equal(result.reason, expected, mode);
+      assert.equal(result.outcome, mode === 'cancel' ? 'ended' : 'hard-stop', mode);
+      assert.equal(challenges.length, mode === 'bounded' ? 10 : 2, mode);
+      assert.equal(focusedRunnerAcceptedState(result).overallUsed, 1, mode);
+      assert.equal(result.steps.some(step => step.step.endsWith(':correction')), false, mode);
+      assert.deepEqual(feature060Preimages(root), preimages, mode);
+      assert.equal(checkpoint.pair.checkpoint === null, mode === 'cancel', mode);
+    });
+  }
+});
+
+nodeTest('Feature 060 T002: real verification and review failures remain Work outcomes rather than host incidents', async () => {
+  for (const failure of ['verification-failed', 'review-rejected']) {
+    await withSealedWorkspace(async root => {
+      writeSealedTaskState(root);
+      const request = focusedRunnerRequest(root);
+      request.specialistResult = failure === 'verification-failed'
+        ? focusedFailedSpecialistPair(request.assessment, 'genuine-failure')
+        : focusedSpecialistPair(request.assessment, 'genuine-failure', 'rejected');
+      const result = await runHostAdapter(request, {
+        checkpoint: memoryCheckpointStore().port,
+        exchange(challenge) {
+          assert.equal(challenge.kind, 'assessment');
+          const state = focusedRunnerAcceptedState(challenge);
+          assert.equal(state.overallUsed, 1);
+          assert.equal(state.pending.length, 0);
+          assert.equal(state.completed.length, 1);
+          return focusedCancelResponse(challenge);
+        },
+      });
+      assert.equal(result.outcome, 'ended');
+      assert.equal(result.reason, 'cancelled');
+      assert.ok(result.steps.some(step => step.outcome === 'accepted' && step.reason === failure));
+      assert.equal(result.steps.some(step => step.outcome === 'closed-refusal'), false);
+      assert.equal(result.steps.some(step => Object.hasOwn(step, 'recoveryNotice')), false);
+      assert.equal(t003LaneEvents(root, TARGET).target[0].occurrence.disposition, failure);
+    });
+  }
+});
+
+/**
+ * Observe original runtime-port inputs from real disposable runner attempts,
+ * then end by cancellation. This supplies no historical incident or old state.
+ * @param {string} root @param {string} label @param {number[]} findingCounts
+ * @param {Record<string, unknown>} [retainedEvidence]
+ */
+async function observedRunnerHistory(root, label, findingCounts, retainedEvidence) {
+  const request = focusedRunnerRequest(root, retainedEvidence ? { retainedEvidence } : {});
+  delete request.assessment;
+  delete request.specialistResult;
+  const checkpoint = memoryCheckpointStore();
+  const observations = [];
+  let ordinal = 0;
+  let assessment;
+  const result = await runHostAdapter(request, {
+    checkpoint: checkpoint.port,
+    runtime: {
+      identity: sha256(`observed-history:${label}`),
+      invoke(command, lowLevelRequest) {
+        const original = clone(lowLevelRequest);
+        const value = runCommand(command, lowLevelRequest);
+        observations.push({ command, request: original, value: clone(value) });
+        return { status: 'returned', value };
+      },
+    },
+    exchange(challenge) {
+      if (challenge.kind === 'assessment') {
+        if (ordinal === findingCounts.length) return focusedCancelResponse(challenge);
+        assessment = focusedChallengeAssessment(challenge, {
+          materialInputs: focusedMaterialInputs([`src/${label}-${ordinal}.mjs`]),
+        });
+        return focusedChallengeResponse(challenge, 'assessment', assessment);
+      }
+      assert.equal(challenge.kind, 'specialist-pair');
+      const count = findingCounts[ordinal];
+      const pair = count === 0
+        ? focusedFailedSpecialistPair(assessment, `${label}-${ordinal}`)
+        : focusedSpecialistPair(assessment, `${label}-${ordinal}`, 'rejected');
+      if (count > 0) {
+        const finding = pair.review.findings[0];
+        pair.review.findings = Array.from({ length: count }, (_, index) => ({
+          ...clone(finding),
+          basis: {
+            ...clone(finding.basis),
+            expectation: { kind: 'governing-rule', reference: `${label}-${ordinal}-${index}` },
+          },
+        }));
+      }
+      ordinal += 1;
+      return focusedChallengeResponse(challenge, 'specialistResult', pair);
+    },
+  });
+  assert.equal(result.outcome, 'ended', `${label}: ${result.reason}: ${result.detail ?? ''}`);
+  assert.equal(result.reason, 'cancelled', label);
+  assert.equal(focusedRunnerAcceptedState(result).overallUsed, findingCounts.length);
+  assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+  const input = observations.at(-1).request.input;
+  return {
+    result, observations,
+    retainedEvidence: Object.fromEntries(RETAINED_STREAMS.map(field => [field, clone(input[field])])),
+  };
+}
+
+nodeTest('Feature 060 T001: original runtime-port captures seed a fresh run without adopting old authority', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const historical = await observedRunnerHistory(root, 'retained-authority', [0, 0]);
+    const retained = historical.retainedEvidence;
+    const before = canonicalJson(retained);
+    const oldEvents = t003LaneEvents(root, TARGET).target;
+    assert.equal(oldEvents.length, 2);
+    const request = focusedRunnerRequest(root, { retainedEvidence: retained });
+    delete request.assessment;
+    delete request.specialistResult;
+    const calls = [];
+    const checkpoint = memoryCheckpointStore();
+    let assessment;
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('fresh-retained-authority'),
+        invoke(command, lowLevelRequest) {
+          calls.push({ command, request: clone(lowLevelRequest) });
+          return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+        },
+      },
+      exchange(challenge) {
+        if (challenge.kind === 'assessment') {
+          assert.deepEqual(focusedRunnerAcceptedState(challenge), emptyState('autonomous'));
+          assert.equal(challenge.inspection.items.find(item => item.source === 'session').status, 'missing');
+          assessment = focusedChallengeAssessment(challenge);
+          return focusedChallengeResponse(challenge, 'assessment', assessment);
+        }
+        assert.equal(challenge.kind, 'specialist-pair');
+        const state = focusedRunnerAcceptedState(challenge);
+        assert.equal(state.overallUsed, 1);
+        assert.equal(state.pending.length, 1);
+        assert.deepEqual(state.completed, []);
+        return focusedChallengeResponse(challenge, 'specialistResult',
+          focusedSpecialistPair(assessment, 'fresh-retained-authority'));
+      },
+    });
+    assert.equal(result.reason, 'task-settled', `${result.reason}: ${result.detail ?? ''}`);
+    assert.equal(canonicalJson(retained), before);
+    assert.equal(calls[0].request.input.currentRun.length, retained.currentRun.length + 1);
+    assert.deepEqual(JSON.parse(Buffer.from(
+      calls[0].request.input.currentRun.at(-1).bytes.base64, 'base64',
+    )).records, []);
+    for (const { command, request: call } of calls) {
+      for (const field of RETAINED_STREAMS) {
+        if (command === 'complete' && call.mode === 'capture' && field !== 'currentRun') continue;
+        assert.deepEqual(call.input[field].slice(0, retained[field].length), retained[field],
+          `${command}:${call.mode ?? ''}:${field}`);
+      }
+    }
+    const state = focusedRunnerAcceptedState(result);
+    assert.equal(state.overallUsed, 1);
+    assert.equal(state.completed.length, 1);
+    assert.deepEqual(state.pending, []);
+    assert.deepEqual(state.recoveryUsed, []);
+    const events = t003LaneEvents(root, TARGET).target;
+    assert.deepEqual(events.slice(0, oldEvents.length), oldEvents);
+    assert.equal(events.at(-1).occurrence.chronology.attemptOrdinal, 1);
+    assert.notEqual(events.at(-1).occurrence.attemptIdentity, oldEvents[0].occurrence.attemptIdentity);
+    assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+  });
+});
+
+nodeTest('Feature 060 T001: 21 retained events with absent original captures refuse before ownership or dispatch', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    await observedRunnerHistory(root, 'missing-history', [16, 3]);
+    assert.equal(t003LaneEvents(root, TARGET).target.length, 21);
+    const before = laneSurfaceDigests(root);
+    for (const supplied of [false, true]) {
+      const checkpoint = memoryCheckpointStore();
+      let runtimeCalls = 0;
+      let exchanges = 0;
+      const request = focusedRunnerRequest(root, supplied ? {
+        retainedEvidence: { currentRun: [], verification: [], review: [], lint: [] },
+      } : {});
+      const result = await runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        runtime: {
+          identity: sha256('missing-history-admission'),
+          invoke(command, input) {
+            runtimeCalls += 1;
+            return { status: 'returned', value: runCommand(command, input) };
+          },
+        },
+        exchange() { exchanges += 1; throw new Error('missing history dispatched'); },
+      });
+      assert.equal(result.reason, 'evidence-incomplete');
+      assert.deepEqual(checkpoint.calls, [], 'no checkpoint claim or update');
+      assert.equal(runtimeCalls, 0);
+      assert.equal(exchanges, 0);
+      assert.equal(result.acceptedRevision, 0);
+      assert.equal(result.hostRevision, 0);
+      assert.deepEqual(focusedRunnerAcceptedState(result), request.state);
+      assert.equal(result.detail, 'retainedEvidence: missing current-run');
+      assert.equal(result.haltReport.subject, 'occurrence-retention');
+      assert.equal(result.haltReport.evidenceHash, request.assessment.evidenceHash);
+      assert.deepEqual(laneSurfaceDigests(root), before);
+    }
+  });
+});
+
+/** @param {Record<string, unknown>} entry @param {(body:Record<string, unknown>)=>void} mutate */
+function changedRetainedCapture(entry, mutate) {
+  const body = JSON.parse(Buffer.from(entry.bytes.base64, 'base64'));
+  mutate(body);
+  const records = body.records.map(record => record.substantive);
+  return sealedTransportInput({
+    lane: { kind: 'lightweight' },
+    currentRun: [sealedCapture(body.target, body.state, records)],
+  }).currentRun[0];
+}
+
+nodeTest('Feature 060 T001: missing, conflicting, and wrongly bound original sources refuse before admission', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const observed = await observedRunnerHistory(root, 'source-bindings', [1]);
+    const original = observed.retainedEvidence;
+    const files = laneSurfaceDigests(root);
+    const cases = [
+      ['missing current-run', value => { value.currentRun = []; }, 'missing current-run'],
+      ['missing verification', value => { value.verification = []; }, 'missing verification'],
+      ['missing review', value => { value.review = []; }, 'missing review'],
+      ['partial history', value => {
+        value.currentRun[0] = changedRetainedCapture(value.currentRun[0], body => { body.records.pop(); });
+      }, 'invalid current-run'],
+      ['wrong target', value => { value.currentRun[0].target = clone(SECOND_TARGET); }, 'invalid current-run'],
+      ['wrong capture state', value => { value.currentRun[0].state = 'passed'; }, 'invalid current-run'],
+      ['wrong outcome hash', value => { value.currentRun[0].outcomeHash = sha256('wrong retained hash'); }, 'invalid current-run'],
+      ['wrong trusted hash', value => {
+        value.verification[0] = changedRetainedCapture(value.verification[0], body => {
+          body.records[0].substantive.bytes.sha256 = sha256('wrong trusted bytes');
+        });
+      }, 'invalid verification'],
+      ['wrong attempt', value => {
+        value.verification[0] = changedRetainedCapture(value.verification[0], body => {
+          const capture = body.records[0].substantive;
+          const { envelopeIdentity, ...envelope } = JSON.parse(Buffer.from(capture.bytes.base64, 'base64'));
+          envelope.attemptIdentity = sha256('another attempt');
+          capture.bytes = capturedBytesV1(Buffer.from(canonicalJson({
+            ...envelope, envelopeIdentity: sha256(canonicalJson(envelope)),
+          })));
+        });
+      }, 'invalid verification/review'],
+      ['wrong reviewer provenance', value => {
+        value.review[0] = changedRetainedCapture(value.review[0], body => {
+          body.records[0].substantive.authority.authorityIdentity = sha256('another reviewer authority');
+        });
+      }, 'invalid review'],
+      ['wrong review verification binding', value => {
+        value.review[0] = changedRetainedCapture(value.review[0], body => {
+          const capture = body.records[0].substantive;
+          const { envelopeIdentity, ...envelope } = JSON.parse(Buffer.from(capture.bytes.base64, 'base64'));
+          envelope.verificationEnvelopeIdentity = sha256('another verification');
+          capture.bytes = capturedBytesV1(Buffer.from(canonicalJson({
+            ...envelope, envelopeIdentity: sha256(canonicalJson(envelope)),
+          })));
+        });
+      }, 'invalid verification/review'],
+      ['conflicting occurrence', value => {
+        value.currentRun.push(changedRetainedCapture(value.currentRun[0], body => {
+          const event = body.records[0].substantive.event;
+          body.records = [{ substantive: { event: buildApproachOccurrenceEventV1({
+            target: event.target, basis: event.basis,
+            attemptIdentity: event.occurrence.attemptIdentity,
+            authorizationEvidenceHash: event.occurrence.authorizationEvidenceHash,
+            resultIdentity: sha256('conflicting result'),
+            disposition: event.occurrence.disposition,
+            attemptOrdinal: event.occurrence.chronology.attemptOrdinal,
+            verificationEnvelopeIdentity: event.verificationEnvelopeIdentity,
+            reviewEnvelopeIdentity: event.reviewEnvelopeIdentity,
+          }) } }];
+        }));
+      }, 'invalid current-run'],
+      ['duplicate trusted source', value => { value.review.push(clone(value.review[0])); }, 'invalid review'],
+      ['normalized text is not a capture', value => {
+        value.currentRun[0].bytes = { base64: Buffer.from(
+          observed.observations.at(-1).value.inspection.items.find(item => item.source === 'current-run').text,
+        ).toString('base64') };
+      }, 'invalid current-run'],
+    ];
+    for (const [label, mutate, detail] of cases) {
+      const retainedEvidence = clone(original);
+      mutate(retainedEvidence);
+      const checkpoint = memoryCheckpointStore();
+      let calls = 0;
+      const request = focusedRunnerRequest(root, { retainedEvidence });
+      const result = await runHostAdapter(request, {
+        checkpoint: checkpoint.port,
+        runtime: {
+          identity: sha256(`retained-invalid:${label}`),
+          invoke() { calls += 1; throw new Error('invalid source reached runtime'); },
+        },
+        exchange() { calls += 1; throw new Error('invalid source dispatched'); },
+      });
+      assert.equal(result.outcome, 'hard-stop', label);
+      assert.equal(result.reason, 'evidence-incomplete', label);
+      assert.equal(result.detail, `retainedEvidence: ${detail}`, label);
+      assert.equal(calls, 0, label);
+      assert.deepEqual(checkpoint.calls, [], label);
+      assert.deepEqual(focusedRunnerAcceptedState(result), request.state, label);
+      assert.equal(result.acceptedRevision, 0, label);
+      assert.equal(result.hostRevision, 0, label);
+      assert.deepEqual(laneSurfaceDigests(root), files, label);
+    }
+  });
+});
+
+nodeTest('Feature 060 T001: retainedEvidence is closed canonical transport and never accepts reconstructed or extra state', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const observed = await observedRunnerHistory(root, 'transport-contract', [0]);
+    const cases = [
+      ['missing stream', value => { delete value.review; }],
+      ['extra state', value => { value.state = emptyState('autonomous'); }],
+      ['session is not a retained stream', value => { value.session = { availability: 'unavailable' }; }],
+      ['not an array', value => { value.lint = {}; }, 'lint'],
+      ['noncanonical base64', value => { value.currentRun[0].bytes = { base64: 'YR==' }; }, 'current-run'],
+      ['unpadded base64', value => { value.currentRun[0].bytes = { base64: 'YQ' }; }, 'current-run'],
+      ['extra byte field', value => { value.currentRun[0].bytes.hash = sha256('extra'); }, 'current-run'],
+      ['internal bytes are not runner transport', value => {
+        value.currentRun[0].bytes = Buffer.from(value.currentRun[0].bytes.base64, 'base64');
+      }, 'current-run'],
+      ['extra capture field', value => { value.currentRun[0].archive = 'not-a-source'; }, 'current-run'],
+    ];
+    for (const [label, mutate, source = 'current-run/verification/review/lint input'] of cases) {
+      const retainedEvidence = clone(observed.retainedEvidence);
+      mutate(retainedEvidence);
+      const checkpoint = memoryCheckpointStore();
+      const result = await runHostAdapter(focusedRunnerRequest(root, { retainedEvidence }), {
+        checkpoint: checkpoint.port,
+        exchange() { assert.fail(`${label}: reached exchange`); },
+      });
+      assert.equal(result.reason, 'evidence-incomplete', label);
+      assert.equal(result.detail, `retainedEvidence: invalid ${source}`, label);
+      assert.deepEqual(checkpoint.calls, [], label);
+      assert.equal(result.haltReport.resolved, false, 'invalid transport supplies no Inspection hash');
+    }
+    const checkpoint = memoryCheckpointStore();
+    const wrongOwner = focusedRunnerRequest(root, {
+      owner: { ideaPath: '.dude/ideas/999-not-the-owner.md', specPath: TARGET.specPath },
+      retainedEvidence: { untrusted: 'bad input' },
+    });
+    const refused = await runHostAdapter(wrongOwner, { checkpoint: checkpoint.port });
+    assert.equal(refused.reason, 'runner-refused');
+    assert.equal(refused.detail, 'owner-resolution-failed', 'owner precedence survives invalid captures');
+    assert.deepEqual(checkpoint.calls, []);
+  });
+});
+
+nodeTest('Feature 060 T001: duplicate current-run sources keep their multiplicity and caller mutation cannot rewrite history', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const observed = await observedRunnerHistory(root, 'immutable-history', [0]);
+    const retainedEvidence = clone(observed.retainedEvidence);
+    retainedEvidence.currentRun.push(clone(retainedEvidence.currentRun[0]));
+    const original = clone(retainedEvidence);
+    const calls = [];
+    let assessment;
+    const request = focusedRunnerRequest(root, { retainedEvidence });
+    delete request.assessment;
+    delete request.specialistResult;
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port,
+      runtime: {
+        identity: sha256('immutable-history'),
+        invoke(command, lowLevelRequest) {
+          calls.push({ command, request: clone(lowLevelRequest) });
+          return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+        },
+      },
+      exchange(challenge) {
+        if (challenge.kind === 'assessment') {
+          assessment = focusedChallengeAssessment(challenge);
+          retainedEvidence.currentRun.length = 0;
+          retainedEvidence.verification[0].outcomeHash = sha256('changed after admission');
+          return focusedChallengeResponse(challenge, 'assessment', assessment);
+        }
+        return focusedChallengeResponse(challenge, 'specialistResult',
+          focusedSpecialistPair(assessment, 'immutable-history-fresh'));
+      },
+    });
+    assert.equal(result.reason, 'task-settled', result.detail ?? result.reason);
+    for (const call of calls) {
+      assert.deepEqual(call.request.input.currentRun.slice(0, 2), original.currentRun);
+      assert.equal(call.request.input.currentRun.length, 3, 'only the final live capture changes');
+      if (call.command !== 'complete' || call.request.mode !== 'capture') {
+        assert.deepEqual(call.request.input.verification.slice(0, 1), original.verification);
+      }
+    }
+  });
+});
+
+nodeTest('Feature 060 T001: distinct historical attempts may reuse invocation-local ordinals in a fresh run', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const first = await observedRunnerHistory(root, 'historical-first', [0]);
+    const second = await observedRunnerHistory(root, 'historical-second', [0], first.retainedEvidence);
+    const third = await observedRunnerHistory(root, 'historical-third', [0], second.retainedEvidence);
+    const events = t003LaneEvents(root, TARGET).target;
+    assert.deepEqual(events.map(event => event.occurrence.chronology.attemptOrdinal), [1, 1, 1]);
+    assert.equal(new Set(events.map(event => event.occurrence.attemptIdentity)).size, 3);
+    assert.deepEqual(second.retainedEvidence.currentRun.slice(0, 1), first.retainedEvidence.currentRun);
+    assert.deepEqual(third.retainedEvidence.currentRun.slice(0, 2), second.retainedEvidence.currentRun);
+    assert.equal(third.retainedEvidence.verification.length, 3);
+    assert.equal(third.retainedEvidence.review.length, 3);
+    assert.equal(focusedRunnerAcceptedState(third.result).overallUsed, 1);
+    assert.equal(focusedRunnerAcceptedState(third.result).completed.length, 1);
+  });
+});
+
+nodeTest('Feature 060 T001: pending tasks require permit, apply, receipt, setup end, then fresh runner bindings', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    fs.writeFileSync(path.join(root, TASKS_PATH),
+      fs.readFileSync(path.join(root, TASKS_PATH), 'utf8').replace('- [~]', '- [ ]'));
+    const snapshot = JSON.parse(fs.readFileSync(path.join(root, TASK_STATE_PATH), 'utf8'));
+    snapshot[TASKS_PATH].glyphs[TARGET.taskKey] = ' ';
+    fs.writeFileSync(path.join(root, TASK_STATE_PATH), `${JSON.stringify(snapshot, null, 2)}\n`);
+    const checkpoint = memoryCheckpointStore();
+    const pendingFiles = laneSurfaceDigests(root);
+    const direct = await runHostAdapter(focusedRunnerRequest(root), { checkpoint: checkpoint.port });
+    assert.equal(direct.reason, 'runner-refused');
+    assert.equal(direct.detail, 'lane-prestate-mismatch');
+    assert.deepEqual(checkpoint.calls, []);
+    assert.deepEqual(laneSurfaceDigests(root), pendingFiles);
+
+    const state = emptyState('autonomous');
+    const input = sealedTransportInput(sealedInspectionInput(root, { policyMode: 'autonomous' }));
+    const inspection = runCommand('inspect', { trigger: 'explicit-inspection', input }).inspection;
+    assert.equal(inspectRetainedOccurrencesV2(inspection).blocker, null);
+    const binding = sealedLaneBinding(root);
+    binding.lanePrestate.glyph = ' ';
+    const workspace = {
+      workspaceIdentity: sha256(canonicalJson({ version: 1, root })),
+      ownerIdentity: sha256(canonicalJson({ version: 1, owner: binding.application.owner })),
+      taskPrestateIdentity: sha256(canonicalJson({
+        version: 1, target: canonicalTarget(TARGET), glyph: ' ', blockedBy: null,
+        tasksDescriptor: binding.targetMapping.tasksDescriptor,
+      })),
+      lanePrestateIdentity: sha256(canonicalJson(binding.lanePrestate)),
+    };
+    const setup = createHostAdapter(sealedInitial({
+      state, workspace, inspectionIdentity: sha256(canonicalJson(inspection)),
+    }), { checkpoint: checkpoint.port });
+    const setupIdentity = setup.snapshot().invocationIdentity;
+    assert.equal(setup.run(sealedRequest(setup, 'fresh-inspection', { input })).reason, 'inspection-refreshed');
+    const mutation = {
+      ...clone(LANE_MUTATION), kind: 'claim', reason: 'initial-claim', fromGlyph: ' ', toGlyph: '~',
+    };
+    const issued = setup.run(sealedRequest(setup, 'authorize-lane-effect', {
+      laneEffect: { input, mutation, lanePrestate: binding.lanePrestate, targetMapping: binding.targetMapping },
+    }));
+    assert.equal(issued.reason, 'lane-permit-issued', issued.reason);
+    assert.deepEqual(laneSurfaceDigests(root), pendingFiles, 'issuing a permit is not the claim mutation');
+    const permit = issued.product.permit;
+    const applied = setup.run(sealedRequest(setup, 'apply-lane-effect', {
+      laneApplication: { ...binding.application, mutation, permit },
+    }));
+    assert.equal(applied.reason, 'lane-mutation-applied', applied.reason);
+    assert.equal(t003ParsedTargetTask(root, TARGET).glyph, '~');
+    assert.equal(t003SnapshotGlyph(root, TARGET), '~');
+    const committed = setup.run(sealedRequest(setup, 'commit-lane-receipt', {
+      laneReceipt: { input, permit, receipt: applied.product.receipt },
+    }));
+    assert.equal(committed.reason, 'lane-receipt-committed', committed.reason);
+    assert.equal(committed.session.acceptedStateBytes, canonicalJson(state));
+    assert.equal(committed.session.acceptedRevision, 0);
+    const ended = setup.end('controlled-end');
+    assert.equal(ended.outcome, 'ended');
+    assert.equal(ended.reason, 'controlled-end');
+    assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+    let freshIdentity;
+    const result = await runHostAdapter(focusedRunnerRequest(root, { state: ended.session.acceptedState }), {
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('post-claim-fresh-runtime'),
+        invoke(command, request) {
+          freshIdentity ??= checkpoint.pair.claim.invocationIdentity;
+          assert.notEqual(freshIdentity, setupIdentity);
+          return { status: 'returned', value: runCommand(command, request) };
+        },
+      },
+    });
+    assert.equal(result.reason, 'task-settled', result.detail ?? result.reason);
+    assert.equal(checkpoint.calls.filter(call => call === 'claim').length, 2);
+    assert.equal(checkpoint.calls.filter(call => call === 'clear').length, 2);
+    assert.deepEqual(checkpoint.pair, { claim: null, checkpoint: null });
+  });
+});
+
+/** @param {string} root @param {Record<string, unknown>} retained */
+function seededRunnerInput(root, retained) {
+  const input = {
+    ...sealedTransportInput(sealedInspectionInput(root, { policyMode: 'autonomous' })),
+    ...clone(retained),
+  };
+  if (retained.currentRun.length > 0) {
+    input.currentRun.push(sealedTransportInput({
+      lane: { kind: 'lightweight' }, currentRun: [currentRunCapture(TARGET, [])],
+    }).currentRun[0]);
+  }
+  return input;
+}
+
+/** @param {string} root @param {Record<string, unknown>} retainedEvidence @param {boolean} [authorize] */
+async function probeRetainedAdmission(root, retainedEvidence, authorize = false) {
+  const checkpoint = memoryCheckpointStore();
+  const kinds = [];
+  const inputs = [];
+  const request = focusedRunnerRequest(root, { retainedEvidence });
+  delete request.assessment;
+  delete request.specialistResult;
+  const files = laneSurfaceDigests(root);
+  const result = await runHostAdapter(request, {
+    checkpoint: checkpoint.port,
+    runtime: {
+      identity: sha256('retained-capacity-probe'),
+      invoke(command, lowLevelRequest) {
+        inputs.push(clone(lowLevelRequest.input));
+        return { status: 'returned', value: runCommand(command, lowLevelRequest) };
+      },
+    },
+    exchange(challenge) {
+      kinds.push(challenge.kind);
+      return authorize && challenge.kind === 'assessment'
+        ? focusedChallengeResponse(challenge, 'assessment', focusedChallengeAssessment(challenge))
+        : focusedCancelResponse(challenge);
+    },
+  });
+  assert.deepEqual(laneSurfaceDigests(root), files);
+  return { result, checkpoint, kinds, inputs };
+}
+
+nodeTest('Feature 060 T001: seeded sources pay the empty live capture and exact source/descriptor completion reservations', async context => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const history = (await observedRunnerHistory(root, 'capacity-history', [0])).retainedEvidence;
+    const observations = [];
+    for (const [count, required] of [[55, 64], [56, 65], [57, 66]]) {
+      const retained = clone(history);
+      retained.currentRun = Array.from({ length: count }, () => clone(history.currentRun[0]));
+      const input = seededRunnerInput(root, retained);
+      assert.equal(rawSourceCount(input), required - 2);
+      const probe = await probeRetainedAdmission(root, retained, true);
+      assert.ok(probe.checkpoint.calls.includes('claim'), 'acquired sources fit before completion reservation');
+      assert.deepEqual(probe.inputs[0], input);
+      assert.equal(probe.result.reason, required === 64 ? 'cancelled' : 'evidence-incomplete');
+      if (required === 64) {
+        assert.deepEqual(probe.kinds, ['assessment', 'specialist-pair']);
+        assert.equal(focusedRunnerAcceptedState(probe.result).overallUsed, 1);
+      } else {
+        assert.deepEqual(probe.kinds, ['assessment'], 'no specialist dispatch without completion headroom');
+        assert.deepEqual(probe.result.capacity, {
+          budget: 'source-entries', limit: 64, required,
+          source: required === 65 ? 'review' : 'verification', target: canonicalTarget(TARGET),
+        });
+        assert.deepEqual(focusedRunnerAcceptedState(probe.result), emptyState('autonomous'));
+      }
+      observations.push({ budget: 'mandatory-source-entries', required, reason: probe.result.reason });
+    }
+    const excessive = clone(history);
+    excessive.currentRun = Array.from({ length: 58 }, () => clone(history.currentRun[0]));
+    let reads = 0;
+    Object.defineProperty(excessive.currentRun[0], 'bytes', {
+      enumerable: true, get() { reads += 1; throw new Error('source body must not be acquired'); },
+    });
+    const overflow = await probeRetainedAdmission(root, excessive);
+    assert.deepEqual(overflow.result.capacity, {
+      budget: 'source-entries', limit: 64, required: 65, source: 'verification', target: canonicalTarget(TARGET),
+    });
+    assert.equal(reads, 0, 'original acquisition count precedes capture bodies');
+    assert.deepEqual(overflow.checkpoint.calls, []);
+    assert.deepEqual(overflow.kinds, []);
+
+    for (const [count, required] of [[52, 63], [53, 64], [54, 65]]) {
+      const retained = clone(history);
+      retained.lint = sealedTransportInput({
+        lane: { kind: 'lightweight' },
+        lint: Array.from({ length: count }, (_, index) => sealedCapture(TARGET, 'passed', [{ fixture: index }])),
+      }).lint;
+      const input = seededRunnerInput(root, retained);
+      const inspection = runCommand('inspect', { trigger: 'explicit-inspection', input }).inspection;
+      assert.equal(inspection.items.length + 2, required);
+      assert.equal(rawSourceCount(input) + 2, required - 1, 'source capacity does not mask descriptor capacity');
+      const probe = await probeRetainedAdmission(root, retained, true);
+      assert.equal(probe.result.reason, required <= 64 ? 'cancelled' : 'evidence-incomplete');
+      if (required <= 64) assert.deepEqual(probe.kinds, ['assessment', 'specialist-pair']);
+      else {
+        assert.deepEqual(probe.kinds, ['assessment']);
+        assert.deepEqual(probe.result.capacity, {
+          budget: 'retained-descriptors', limit: 64, required: 65,
+          source: 'model-packet', target: canonicalTarget(TARGET),
+        });
+        assert.deepEqual(focusedRunnerAcceptedState(probe.result), emptyState('autonomous'));
+      }
+      observations.push({ budget: 'mandatory-retained-descriptors', required, reason: probe.result.reason });
+    }
+    for (const count of [55, 56]) {
+      const retained = clone(history);
+      retained.lint = sealedTransportInput({
+        lane: { kind: 'lightweight' },
+        lint: Array.from({ length: count }, (_, index) => sealedCapture(TARGET, 'passed', [{ fixture: index }])),
+      }).lint;
+      const probe = await probeRetainedAdmission(root, retained);
+      assert.equal(probe.result.reason, count === 55 ? 'cancelled' : 'evidence-incomplete');
+      if (count === 56) {
+        assert.deepEqual(probe.result.capacity, {
+          budget: 'retained-descriptors', limit: 64, required: 65, source: 'session', target: null,
+        });
+        assert.deepEqual(probe.checkpoint.calls, []);
+      } else assert.equal(probe.inputs[0].lint.length, 55);
+    }
+    context.diagnostic(canonicalJson({ seededHistoryAccounting: observations }));
+  });
+});
+
+/** Synthetic boundary padding in the existing excluded presentation field. @param {Record<string, unknown>} entry @param {number} byteLength */
+function sizedRetainedPresentation(entry, byteLength) {
+  const body = JSON.parse(Buffer.from(entry.bytes.base64, 'base64'));
+  body.records[0].presentation = { summary: '' };
+  const base = Buffer.byteLength(canonicalJson(body));
+  assert.ok(byteLength >= base);
+  body.records[0].presentation.summary = 'x'.repeat(byteLength - base);
+  const bytes = Buffer.from(canonicalJson(body));
+  assert.equal(bytes.byteLength, byteLength);
+  return { ...clone(entry), bytes: { base64: bytes.toString('base64') } };
+}
+
+nodeTest('Feature 060 T001: seeded original bytes retain exact individual and aggregate body ceilings', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const history = (await observedRunnerHistory(root, 'body-history', [0])).retainedEvidence;
+    const retained = clone(history);
+    retained.currentRun[0] = sizedRetainedPresentation(history.currentRun[0], 1_048_576);
+    const exact = await probeRetainedAdmission(root, retained);
+    assert.equal(exact.result.reason, 'cancelled');
+    assert.deepEqual(exact.inputs[0].currentRun[0], retained.currentRun[0]);
+    retained.currentRun[0] = sizedRetainedPresentation(history.currentRun[0], 1_048_577);
+    const excessive = await probeRetainedAdmission(root, retained);
+    assert.deepEqual(excessive.result.capacity, {
+      budget: 'source-body-bytes', limit: 1_048_576, required: 1_048_577,
+      source: 'current-run', target: canonicalTarget(TARGET),
+    });
+    assert.deepEqual(excessive.checkpoint.calls, []);
+
+    const aggregate = clone(history);
+    aggregate.currentRun = Array.from({ length: 4 }, () => clone(history.currentRun[0]));
+    const input = seededRunnerInput(root, aggregate);
+    const workspaceBytes = [IDEA_PATH, TASKS_PATH, TARGET.specPath, TARGET.specPath.replace('/spec.md', '/plan.md')]
+      .reduce((total, relative) => total + fs.statSync(path.join(root, relative)).size, 0);
+    const otherBytes = RETAINED_STREAMS.flatMap(field => input[field])
+      .slice(aggregate.currentRun.length)
+      .reduce((total, entry) => total + Buffer.from(entry.bytes.base64, 'base64').byteLength, 0);
+    const totalCurrent = 4_194_304 - workspaceBytes - otherBytes;
+    const base = Math.floor(totalCurrent / 4);
+    aggregate.currentRun = aggregate.currentRun.map((entry, index) => sizedRetainedPresentation(
+      entry, base + (index < totalCurrent % 4 ? 1 : 0),
+    ));
+    const aggregateInput = seededRunnerInput(root, aggregate);
+    const bodyBytes = RETAINED_STREAMS.flatMap(field => aggregateInput[field])
+      .reduce((total, entry) => total + Buffer.from(entry.bytes.base64, 'base64').byteLength, 0);
+    assert.equal(workspaceBytes + bodyBytes, 4_194_304);
+    const admitted = await probeRetainedAdmission(root, aggregate);
+    assert.equal(admitted.result.reason, 'cancelled', admitted.result.detail);
+    assert.deepEqual(admitted.inputs[0].currentRun.slice(0, 4), aggregate.currentRun);
+    const last = aggregate.currentRun.at(-1);
+    aggregate.currentRun[3] = sizedRetainedPresentation(last, Buffer.from(last.bytes.base64, 'base64').byteLength + 1);
+    const refused = await probeRetainedAdmission(root, aggregate);
+    assert.deepEqual(refused.result.capacity, {
+      budget: 'inspection-body-bytes', limit: 4_194_304, required: 4_194_305,
+      source: 'verification', target: canonicalTarget(TARGET),
+    });
+    assert.deepEqual(refused.checkpoint.calls, []);
+  });
+});
+
+nodeTest('Feature 060 T001: seeded model packets admit exactly 131072 bytes and refuse 131073 before ownership', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    fs.writeFileSync(path.join(root, IDEA_PATH),
+      fs.readFileSync(path.join(root, IDEA_PATH), 'utf8').replace('- 2026-08-10 exact owner event', ''));
+    const history = (await observedRunnerHistory(root, 'packet-history', [0])).retainedEvidence;
+    let length = 110_000;
+    let retained;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      retained = clone(history);
+      retained.lint = sealedTransportInput({
+        lane: { kind: 'lightweight' }, lint: [sealedCapture(TARGET, 'passed', [{ padding: 'x'.repeat(length) }])],
+      }).lint;
+      const measured = await measurePrivateModelView(seededRunnerInput(root, retained));
+      if (measured.modelBytes === 131_072) break;
+      length += 131_072 - measured.modelBytes;
+    }
+    const exact = await measurePrivateModelView(seededRunnerInput(root, retained));
+    assert.equal(exact.modelBytes, 131_072);
+    assert.equal(exact.inspection.overflow, false);
+    const admitted = await probeRetainedAdmission(root, retained);
+    assert.equal(admitted.result.reason, 'cancelled');
+    retained.lint[0] = changedRetainedCapture(retained.lint[0], body => { body.records[0].substantive.padding += 'x'; });
+    const extra = await measurePrivateModelView(seededRunnerInput(root, retained));
+    assert.equal(extra.modelBytes, 131_073);
+    assert.equal(extra.inspection.overflow, true);
+    const refused = await probeRetainedAdmission(root, retained);
+    assert.equal(refused.result.reason, 'evidence-incomplete');
+    assert.deepEqual(refused.result.blocker, extra.inspection.blockers[0], 'existing blocker precedence is unchanged');
+    assert.equal(refused.result.haltReport.evidenceHash, extra.inspection.evidenceHash);
+    assert.deepEqual(refused.checkpoint.calls, []);
+  });
+});
+
+nodeTest('Feature 060 T001: seeded lane-first and receipt predictions match the runner original-source layout', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const history = (await observedRunnerHistory(root, 'footprint-history', [0])).retainedEvidence;
+    const files = [IDEA_PATH, TASKS_PATH, TASK_STATE_PATH, TARGET.specPath, TARGET.specPath.replace('/spec.md', '/plan.md')];
+    const preparations = [];
+    const applications = [];
+    let assessment;
+    let dispatched = false;
+    const request = focusedRunnerRequest(root, { retainedEvidence: history });
+    delete request.assessment;
+    delete request.specialistResult;
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port,
+      runtime: {
+        identity: sha256('seeded-footprint-runtime'),
+        invoke(command, lowLevelRequest) {
+          if (lowLevelRequest.mode === 'prepare-projection') {
+            preparations.push({
+              request: clone(lowLevelRequest),
+              files: files.map(relative => [relative, fs.readFileSync(path.join(root, relative))]),
+            });
+          }
+          const value = runCommand(command, lowLevelRequest);
+          if (lowLevelRequest.mode === 'commit-lane-receipt') {
+            applications.at(-1).receipt = { request: clone(lowLevelRequest), inspection: clone(value.inspection) };
+          }
+          return { status: 'returned', value };
+        },
+      },
+      laneOwner: {
+        identity: sha256('seeded-footprint-lane'),
+        apply(application) {
+          const preparation = preparations.at(-1);
+          const applied = applyLightweightWorkRequest(application);
+          assert.equal(applied.ok, true, canonicalJson(applied));
+          const inspection = runCommand('inspect', {
+            trigger: 'explicit-inspection', input: preparation.request.input,
+          }).inspection;
+          assert.deepEqual(inspection.blockers, [], 'lane-first Inspection is still legitimate');
+          applications.push({ preparation, inspection });
+          return applied;
+        },
+      },
+      exchange(challenge) {
+        if (challenge.kind === 'assessment') {
+          if (dispatched) return focusedCancelResponse(challenge);
+          assessment = focusedChallengeAssessment(challenge);
+          return focusedChallengeResponse(challenge, 'assessment', assessment);
+        }
+        dispatched = true;
+        return focusedChallengeResponse(challenge, 'specialistResult',
+          focusedSpecialistPair(assessment, 'seeded-footprint', 'rejected'));
+      },
+    });
+    assert.equal(result.reason, 'cancelled', result.detail ?? result.reason);
+    assert.equal(applications.length, 2);
+    for (const [index, application] of applications.entries()) {
+      const { preparation, inspection, receipt } = application;
+      const before = preparation.request.input;
+      assert.deepEqual(before.currentRun.slice(0, -1), history.currentRun);
+      assert.deepEqual(receipt.request.input.currentRun.slice(0, -1), history.currentRun);
+      assert.equal(before.currentRun.length, history.currentRun.length + 1);
+      assert.equal(receipt.request.input.currentRun.length, before.currentRun.length);
+      assert.equal(rawSourceCount(before), rawSourceCount(receipt.request.input));
+      assert.equal(JSON.parse(Buffer.from(before.currentRun.at(-1).bytes.base64, 'base64')).records.length, index);
+      assert.equal(JSON.parse(Buffer.from(receipt.request.input.currentRun.at(-1).bytes.base64, 'base64')).records.length, index + 1);
+      await withSealedWorkspace(async measurementRoot => {
+        for (const [relative, bytes] of preparation.files) {
+          fs.mkdirSync(path.dirname(path.join(measurementRoot, relative)), { recursive: true });
+          fs.writeFileSync(path.join(measurementRoot, relative), bytes);
+        }
+        const predicted = await measurePrivatePreflight({
+          state: preparation.request.state,
+          input: { ...before, root: measurementRoot },
+          batch: preparation.request.projectionBatch,
+          laneBinding: {
+            lanePrestate: preparation.request.lanePrestate,
+            targetMapping: preparation.request.targetMapping,
+            operationTime: preparation.request.operationTime,
+          },
+        });
+        assert.equal(predicted.capacity, null);
+        assert.equal(predicted.result.transition.reason, 'projection-prepared');
+        assert.deepEqual(predicted.measurements[1].inspection, inspection);
+        assert.deepEqual(predicted.measurements[2].inspection, receipt.inspection);
+        assert.equal(predicted.measurements[1].modelBytes, Buffer.byteLength(canonicalJson(modelPacket(inspection))));
+        assert.equal(predicted.measurements[2].modelBytes, Buffer.byteLength(canonicalJson(modelPacket(receipt.inspection))));
+      });
+    }
+  });
+});
+
+nodeTest('Feature 060 T001: foreground JSON accepts retained inputs without changing the one-megabyte request ceiling', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const history = (await observedRunnerHistory(root, 'cli-history', [0])).retainedEvidence;
+    const request = focusedRunnerRequest(root, { retainedEvidence: history });
+    request.assessment.evidenceHash = runCommand('inspect', {
+      trigger: 'explicit-inspection', input: seededRunnerInput(root, history),
+    }).inspection.evidenceHash;
+    const text = canonicalJson(request);
+    const exact = `${text}${' '.repeat(1_048_576 - Buffer.byteLength(text))}`;
+    assert.equal(Buffer.byteLength(exact), 1_048_576);
+    withTemporaryRoot(temporary => {
+      const run = input => spawnSync(process.execPath, [
+        fileURLToPath(new URL('./host-adapter-runner.mjs', import.meta.url)),
+      ], {
+        input, encoding: 'utf8', env: { ...process.env, TMPDIR: temporary, TMP: temporary, TEMP: temporary },
+      });
+      const before = laneSurfaceDigests(root);
+      const refused = run(`${exact} \n`);
+      assert.equal(refused.status, 1);
+      assert.match(refused.stderr, /request must contain 1 through 1048576 bytes/);
+      assert.equal(refused.stdout, '');
+      assert.deepEqual(laneSurfaceDigests(root), before);
+      const accepted = run(`${exact}\n`);
+      assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
+      const result = JSON.parse(accepted.stdout.trim());
+      assert.equal(result.reason, 'task-settled');
+      assert.equal(focusedRunnerAcceptedState(result).overallUsed, 1);
+      assert.equal(focusedRunnerAcceptedState(result).completed.length, 1);
+      assert.equal(t003ParsedTargetTask(root, TARGET).glyph, 'x');
+    });
+  });
+});
+
+nodeTest('Feature 060 T003: authorization preserves the runtime occurrence-retention blocker without changing accepted authority', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    await observedRunnerHistory(root, 't003-blocker-history', [0]);
+    const input = sealedTransportInput(sealedInspectionInput(root, { policyMode: 'autonomous' }));
+    const inspection = runCommand('inspect', { trigger: 'explicit-inspection', input }).inspection;
+    assert.deepEqual(inspection.blockers, [], 'the missing dual retention is an authorization check');
+    const assessment = focusedChallengeAssessment({ inspection });
+    validateAssessment(TARGET, inspection, assessment);
+    const state = emptyState('autonomous');
+    const direct = runCommand('authorize', { trigger: 'resume', state, input, assessment, mode: 'ordinary' });
+    const blocker = {
+      code: 'evidence-incomplete',
+      subject: 'occurrence-retention',
+      evidenceHash: inspection.evidenceHash,
+    };
+    assert.equal(direct.authorization.authorized, false);
+    assert.equal(direct.authorization.reason, blocker.code);
+    assert.deepEqual(direct.authorization.blocker, blocker);
+
+    const adapter = createHostAdapter(sealedInitial({
+      state, inspectionIdentity: sha256(canonicalJson(inspection)),
+    }));
+    const before = adapter.snapshot();
+    const files = feature060Preimages(root);
+    const result = adapter.run(sealedRequest(adapter, 'authorize-attempt', {
+      authorization: { input, assessment },
+    }));
+    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(result.reason, blocker.code);
+    assert.deepEqual(acceptedAuthorityTuple(result.session), acceptedAuthorityTuple(before));
+    assert.equal(result.session.pendingEffect, null);
+    assert.equal(result.session.correction, null);
+    assert.deepEqual(feature060Preimages(root), files);
+    assert.deepEqual(result.blocker, blocker);
+    assert.equal(Object.hasOwn(result, 'capacity'), false);
+    assert.deepEqual(describeUnattendedHalt({
+      state: result.session.acceptedState, reason: result.reason, blocker: result.blocker,
+    }, inspection), {
+      halted: true, resolved: true, reason: blocker.code, stopClass: 'hard-stop',
+      target: canonicalTarget(TARGET), subject: blocker.subject,
+      nextAction: 'request-human-input', evidenceHash: inspection.evidenceHash,
+    });
+    assert.equal(Object.hasOwn(result.session, 'blocker'), false);
+    assert.equal(Object.hasOwn(result.session.acceptedState, 'blocker'), false);
+  });
+});
+
+nodeTest('Feature 060 T003: the runner carries a late occurrence-retention refusal into its step and terminal report', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const clean = feature060Preimages(root);
+    await observedRunnerHistory(root, 't003-late-history', [0]);
+    const historical = feature060Preimages(root);
+    for (const relative of [TASKS_PATH, TASK_STATE_PATH]) {
+      fs.writeFileSync(path.join(root, relative), clean[relative]);
+    }
+    const request = focusedRunnerRequest(root);
+    delete request.assessment;
+    delete request.specialistResult;
+    const checkpoint = memoryCheckpointStore();
+    const observations = [];
+    const kinds = [];
+    const result = await runHostAdapter(request, {
+      checkpoint: checkpoint.port,
+      runtime: {
+        identity: sha256('t003-late-history-runtime'),
+        invoke(command, lowLevelRequest) {
+          if (observations.length === 0) {
+            // Fixture history arrives after pre-claim inspection. Its original
+            // captures exist but are not part of this invocation's handoff.
+            assert.equal(command, 'inspect');
+            for (const relative of [TASKS_PATH, TASK_STATE_PATH]) {
+              fs.writeFileSync(path.join(root, relative), historical[relative]);
+            }
+          }
+          const value = runCommand(command, lowLevelRequest);
+          observations.push({ command, value: clone(value) });
+          return { status: 'returned', value };
+        },
+      },
+      exchange(challenge) {
+        kinds.push(challenge.kind);
+        assert.equal(challenge.kind, 'assessment', 'no specialist dispatch on refusal');
+        return focusedChallengeResponse(challenge, 'assessment', focusedChallengeAssessment(challenge));
+      },
+    });
+    const last = observations.at(-1);
+    assert.equal(last.command, 'authorize');
+    assert.equal(last.value.authorization.reason, 'evidence-incomplete');
+    assert.equal(last.value.authorization.blocker.subject, 'occurrence-retention');
+    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(result.reason, last.value.authorization.reason);
+    assert.deepEqual(result.blocker, last.value.authorization.blocker);
+    assert.deepEqual(result.steps.at(-1).blocker, result.blocker);
+    assert.deepEqual(result.haltReport, describeUnattendedHalt(
+      last.value.authorization, last.value.inspection,
+    ));
+    assert.equal(result.haltReport.subject, 'occurrence-retention');
+    assert.equal(result.haltReport.nextAction, 'request-human-input');
+    assert.equal(result.haltReport.evidenceHash, last.value.inspection.evidenceHash);
+    assert.deepEqual(focusedRunnerAcceptedState(result), request.state);
+    assert.equal(result.acceptedRevision, 0);
+    assert.deepEqual(kinds, ['assessment']);
+    assert.deepEqual(feature060Preimages(root), historical);
+    assert.equal(Object.hasOwn(result, 'capacity'), false);
+    assert.equal(checkpoint.calls.filter(call => call === 'claim').length, 1);
+    assert.equal(checkpoint.calls.includes('clear'), false, 'a hard stop grants no cleanup');
+    assert.equal(canonicalJson(checkpoint.pair).includes('"blocker"'), false);
+  });
+});
+
+nodeTest('Feature 060 T003: blocker shape and reason are closed while capacity remains independent', () => {
+  withSealedWorkspace(root => {
+    const input = sealedTransportInput(sealedInspectionInput(root, {
+      policyMode: 'autonomous',
+      currentRun: feature061RepeatedCapture(TARGET, 59, 't003-headroom'),
+    }));
+    const inspection = runCommand('inspect', { trigger: 'explicit-inspection', input }).inspection;
+    const assessment = focusedChallengeAssessment({ inspection });
+    const adapter = createHostAdapter(sealedInitial({ state: emptyState('autonomous') }));
+    const active = adapter.snapshot();
+    const result = adapter.run(sealedRequest(adapter, 'authorize-attempt', {
+      authorization: { input, assessment },
+    }));
+    const direct = runCommand('authorize', {
+      trigger: 'resume', state: active.acceptedState, input, assessment, mode: 'ordinary',
+    }).authorization;
+    assert.equal(result.outcome, 'hard-stop');
+    assert.deepEqual(result.blocker, direct.blocker);
+    assert.deepEqual(result.capacity, direct.capacity);
+    assert.equal(result.capacity.budget, 'source-entries');
+    assert.equal(result.capacity.required, 65);
+    assert.equal(result.blocker.evidenceHash, inspection.evidenceHash);
+    assert.doesNotThrow(() => validateHostAdapterResult(result));
+    const { blocker, ...capacityOnly } = result;
+    const { capacity, ...blockerOnly } = result;
+    assert.doesNotThrow(() => validateHostAdapterResult(capacityOnly));
+    assert.doesNotThrow(() => validateHostAdapterResult(blockerOnly));
+    for (const [label, bad] of [
+      ['null', null],
+      ['missing field', { code: blocker.code, subject: blocker.subject }],
+      ['unknown code', { ...blocker, code: 'T003_UNTRUSTED_CODE' }],
+      ['mismatching reason', { ...blocker, code: 'approval-required' }],
+      ['invalid subject', { ...blocker, subject: 'bad\u0001subject' }],
+      ['invalid evidence hash', { ...blocker, evidenceHash: 'not-a-hash' }],
+      ['unknown field', { ...blocker, T003_UNTRUSTED_FIELD: 'not diagnostic authority' }],
+    ]) {
+      assert.throws(() => validateHostAdapterResult({ ...result, blocker: bad }), TypeError, label);
+    }
+    let reads = 0;
+    const accessor = { ...blocker };
+    Object.defineProperty(accessor, 'subject', { enumerable: true, get() { reads += 1; return 'untrusted'; } });
+    assert.throws(() => validateHostAdapterResult({ ...result, blocker: accessor }), TypeError);
+    assert.equal(reads, 0);
+    const accepted = { version: 1, outcome: 'accepted', reason: 'inspection-refreshed', session: active };
+    assert.doesNotThrow(() => validateHostAdapterResult(accepted));
+    assert.throws(() => validateHostAdapterResult({ ...accepted, blocker }), /unknown field/);
+  });
+});
+
+nodeTest('Feature 060 T003: foreign runtime blockers and stale evidence never become accepted diagnostic facts', () => {
+  withSealedWorkspace(root => {
+    const input = sealedTransportInput(sealedInspectionInput(root, { policyMode: 'autonomous' }));
+    const prior = runCommand('inspect', { trigger: 'explicit-inspection', input }).inspection;
+    fs.appendFileSync(path.join(root, TASKS_PATH), '\nCurrent fixture evidence.\n');
+    const inspection = runCommand('inspect', { trigger: 'explicit-inspection', input }).inspection;
+    assert.notEqual(inspection.evidenceHash, prior.evidenceHash);
+    const assessment = focusedChallengeAssessment({ inspection }, { intent: 'changed' });
+    const state = emptyState('autonomous');
+    const request = { trigger: 'resume', state, input, assessment, mode: 'ordinary' };
+    const current = runCommand('authorize', request);
+    assert.equal(current.authorization.reason, 'clarification-required');
+    const foreign = runCommand('inspect', {
+      trigger: 'explicit-inspection', input: { ...input, target: clone(SECOND_TARGET) },
+    }).inspection;
+    const attacks = [
+      ['missing subject', response => { delete response.authorization.blocker.subject; }],
+      ['unknown code', response => { response.authorization.blocker.code = 'T003_FOREIGN_CODE'; }],
+      ['wrong reason', response => { response.authorization.blocker.code = 'evidence-incomplete'; }],
+      ['foreign subject', response => { response.authorization.blocker.subject = 'T003_FOREIGN_SUBJECT'; }],
+      ['wrong evidence', response => { response.authorization.blocker.evidenceHash = sha256('unrelated-evidence'); }],
+      ['stale evidence', response => { response.authorization.blocker.evidenceHash = prior.evidenceHash; }],
+      ['stale valid inspection', response => {
+        response.inspection = prior;
+        response.authorization.blocker.evidenceHash = prior.evidenceHash;
+      }],
+      ['foreign target', response => {
+        response.inspection = foreign;
+        response.authorization.blocker.evidenceHash = foreign.evidenceHash;
+      }],
+      ['unknown field', response => { response.authorization.blocker.T003_FOREIGN_FIELD = 'untrusted'; }],
+    ];
+    for (const [label, mutate] of attacks) {
+      const runtime = sealedPorts((command, lowLevelRequest) => {
+        const response = runCommand(command, lowLevelRequest);
+        mutate(response);
+        assert.throws(() => validateRecoveryRuntimeResultV1(command, lowLevelRequest, response),
+          /must equal the recovery-owned result/, label);
+        return { status: 'returned', value: response };
+      });
+      const adapter = createHostAdapter(sealedInitial({
+        state, inspectionIdentity: sha256(canonicalJson(inspection)),
+      }), runtime);
+      const before = adapter.snapshot();
+      const result = adapter.run(sealedRequest(adapter, 'authorize-attempt', {
+        authorization: { input, assessment },
+      }));
+      assert.equal(result.outcome, 'closed-refusal', label);
+      assert.equal(result.reason, 'runtime-result-not-authoritative', label);
+      assert.deepEqual(acceptedAuthorityTuple(result.session), acceptedAuthorityTuple(before), label);
+      assert.equal(Object.hasOwn(result, 'blocker'), false, label);
+      assert.equal(Object.hasOwn(result, 'capacity'), false, label);
+      assert.equal(canonicalJson(result).includes('T003_FOREIGN'), false, label);
+    }
+    // Current operation evidence is valid even when the session's last explicit
+    // Inspection identity differs. It must not bind to that older identity.
+    const adapter = createHostAdapter(sealedInitial({ state, inspectionIdentity: sha256('earlier-inspection') }));
+    const result = adapter.run(sealedRequest(adapter, 'authorize-attempt', { authorization: { input, assessment } }));
+    assert.equal(result.outcome, 'hard-stop');
+    assert.deepEqual(result.blocker, current.authorization.blocker);
+    assert.equal(result.blocker.evidenceHash, inspection.evidenceHash);
+  });
+});
+
+nodeTest('Feature 060 T003: runner headroom refusal preserves both the blocker and its independent capacity diagnostic', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const input = sealedTransportInput(sealedInspectionInput(root, {
+      currentRun: feature061RepeatedCapture(TARGET, 58, 't003-runner-headroom'),
+    }));
+    const retained = Object.fromEntries(RETAINED_STREAMS.map(field => [field, input[field]]));
+    const before = canonicalJson(retained);
+    const probe = await probeRetainedAdmission(root, retained, true);
+    const result = probe.result;
+    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(result.reason, 'evidence-incomplete');
+    assert.deepEqual(result.capacity, {
+      budget: 'source-entries', limit: 64, required: 65, source: 'review', target: canonicalTarget(TARGET),
+    });
+    const inspection = runCommand('inspect', {
+      trigger: 'explicit-inspection', input: probe.inputs.at(-1),
+    }).inspection;
+    assert.deepEqual(result.blocker, {
+      code: 'evidence-incomplete', subject: 'capacity:source-entries:review:65', evidenceHash: inspection.evidenceHash,
+    });
+    assert.deepEqual(result.steps.at(-1).blocker, result.blocker);
+    assert.deepEqual(result.steps.at(-1).capacity, result.capacity);
+    assert.equal(result.haltReport.subject, result.blocker.subject);
+    assert.equal(result.haltReport.evidenceHash, inspection.evidenceHash);
+    assert.equal(result.haltReport.nextAction, 'request-human-input');
+    assert.deepEqual(focusedRunnerAcceptedState(result), emptyState('autonomous'));
+    assert.deepEqual(probe.kinds, ['assessment']);
+    assert.equal(canonicalJson(retained), before);
+  });
+});
+
+nodeTest('Feature 060 T003: early source refusals preserve bound facts through the runner and foreground CLI without a claim', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const retained = (await observedRunnerHistory(root, 't003-early-history', [0])).retainedEvidence;
+    const original = canonicalJson(retained);
+    const files = feature060Preimages(root);
+    for (const field of ['currentRun', 'verification', 'review']) {
+      const incomplete = { ...clone(retained), [field]: [] };
+      const probe = await probeRetainedAdmission(root, incomplete);
+      const result = probe.result;
+      assert.equal(result.reason, 'evidence-incomplete', field);
+      assert.equal(result.blocker.subject, 'occurrence-retention', field);
+      assert.equal(result.haltReport.subject, result.blocker.subject, field);
+      assert.equal(result.haltReport.evidenceHash, result.blocker.evidenceHash, field);
+      assert.equal(result.detail, `retainedEvidence: missing ${field === 'currentRun' ? 'current-run' : field}`);
+      assert.deepEqual(probe.checkpoint.calls, [], field);
+      assert.deepEqual(probe.inputs, [], field);
+      assert.deepEqual(probe.kinds, [], field);
+      assert.deepEqual(focusedRunnerAcceptedState(result), emptyState('autonomous'), field);
+      assert.equal(Object.hasOwn(result, 'capacity'), false, field);
+    }
+    const temp = fs.mkdtempSync(path.join(root, 't003-cli-'));
+    const execution = await runFocusedRunnerCli(focusedRunnerRequest(root), () => {
+      assert.fail('missing sources must refuse before a challenge');
+    }, { env: { TMPDIR: temp, TMP: temp, TEMP: temp } });
+    assert.equal(execution.code, 1);
+    assert.equal(execution.stderr, '');
+    assert.equal(execution.rows.length, 1);
+    const terminal = execution.rows[0];
+    assert.equal(terminal.outcome, 'hard-stop');
+    assert.equal(terminal.reason, 'evidence-incomplete');
+    assert.equal(terminal.detail, 'retainedEvidence: missing current-run');
+    assert.equal(terminal.blocker.subject, 'occurrence-retention');
+    assert.equal(terminal.haltReport.subject, terminal.blocker.subject);
+    assert.equal(terminal.haltReport.evidenceHash, terminal.blocker.evidenceHash);
+    assert.equal(terminal.haltReport.nextAction, 'request-human-input');
+    assert.equal(terminal.hostRevision, 0);
+    assert.equal(terminal.acceptedRevision, 0);
+    assert.deepEqual(fs.readdirSync(temp), [], 'pre-claim refusal creates no checkpoint files');
+    assert.deepEqual(feature060Preimages(root), files);
+    assert.equal(canonicalJson(retained), original);
+  });
+});
+
+nodeTest('Feature 060 T003: descriptor-only evidence is current while unvalidated or unavailable evidence stays unresolved', async () => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const request = focusedRunnerRequest(root);
+    const priorHash = request.assessment.evidenceHash;
+    fs.appendFileSync(path.join(root, TASKS_PATH), 'x'.repeat(131_072));
+    const inspection = runCommand('inspect', {
+      trigger: 'explicit-inspection', input: sealedInspectionInput(root, { policyMode: 'autonomous' }),
+    }).inspection;
+    assert.equal(inspection.overflow, true);
+    const checkpoint = memoryCheckpointStore();
+    const result = await runHostAdapter(request, { checkpoint: checkpoint.port });
+    assert.equal(result.reason, 'evidence-incomplete');
+    assert.deepEqual(result.blocker, inspection.blockers[0]);
+    assert.equal(result.haltReport.evidenceHash, inspection.evidenceHash);
+    assert.notEqual(result.haltReport.evidenceHash, priorHash);
+    assert.ok(inspection.blockers.some(blocker => blocker.subject === 'model-packet'));
+    assert.equal(result.haltReport.subject, inspection.blockers[0].subject, 'keep the runtime blocker order');
+    assert.equal(Object.hasOwn(result, 'capacity'), false);
+    assert.deepEqual(checkpoint.calls, []);
+  });
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const request = focusedRunnerRequest(root, {
+      retainedEvidence: { currentRun: [{ bytes: { base64: '?' } }], verification: [], review: [], lint: [] },
+    });
+    const checkpoint = memoryCheckpointStore();
+    const result = await runHostAdapter(request, { checkpoint: checkpoint.port });
+    assert.equal(result.reason, 'evidence-incomplete');
+    assert.equal(Object.hasOwn(result, 'blocker'), false);
+    assert.deepEqual(result.haltReport, { halted: true, resolved: false, unresolved: ['target', 'subject'] });
+    assert.deepEqual(checkpoint.calls, []);
+  });
+  for (const mode of ['stale-inspection', 'foreign-inspection', 'accessor', 'unknown-field', 'exception']) {
+    await withSealedWorkspace(async root => {
+      writeSealedTaskState(root);
+      const prior = runCommand('inspect', {
+        trigger: 'explicit-inspection', input: sealedInspectionInput(root, { policyMode: 'autonomous' }),
+      }).inspection;
+      fs.appendFileSync(path.join(root, TASKS_PATH), '\nCurrent fixture evidence.\n');
+      let calls = 0;
+      let reads = 0;
+      const request = focusedRunnerRequest(root);
+      const result = await runHostAdapter(request, {
+        checkpoint: memoryCheckpointStore().port,
+        runtime: {
+          identity: sha256(`t003-observation:${mode}`),
+          invoke(command, lowLevelRequest) {
+            calls += 1;
+            const value = runCommand(command, lowLevelRequest);
+            if (calls === 1) return { status: 'returned', value };
+            assert.equal(command, 'inspect');
+            if (mode === 'exception') throw new Error('T003_PRIVATE_EXCEPTION');
+            if (mode === 'stale-inspection') {
+              assert.notEqual(value.inspection.evidenceHash, prior.evidenceHash);
+              value.inspection = prior;
+            } else if (mode === 'foreign-inspection') {
+              value.inspection = runCommand(command, {
+                ...lowLevelRequest, input: { ...lowLevelRequest.input, target: clone(SECOND_TARGET) },
+              }).inspection;
+            } else if (mode === 'accessor') {
+              Object.defineProperty(value, 'inspection', {
+                enumerable: true,
+                get() { reads += 1; throw new Error('T003_PRIVATE_ACCESSOR'); },
+              });
+            } else {
+              value.inspection.T003_PRIVATE_FIELD = 'not trusted evidence';
+            }
+            return { status: 'returned', value };
+          },
+        },
+        exchange() { assert.fail('a rejected fresh Inspection must not dispatch'); },
+      });
+      assert.equal(result.outcome, 'hard-stop', mode);
+      assert.equal(result.reason, 'inspection-incomplete', mode);
+      assert.equal(result.haltReport.resolved, false, mode);
+      assert.equal(Object.hasOwn(result.haltReport, 'evidenceHash'), false, mode);
+      assert.equal(Object.hasOwn(result, 'blocker'), false, mode);
+      assert.equal(Object.hasOwn(result, 'capacity'), false, mode);
+      assert.equal(canonicalJson(result).includes('T003_PRIVATE'), false, mode);
+      assert.equal(reads, 0, mode);
+      assert.equal(calls, 2, mode);
+      assert.deepEqual(focusedRunnerAcceptedState(result), request.state, mode);
+    });
+  }
+});
+
+nodeTest('Feature 060 T003: a synthetic non-overflow governance refusal preserves known facts without authorizing a retry', async context => {
+  await withSealedWorkspace(async root => {
+    writeSealedTaskState(root);
+    const required = requiredGovernanceFixture(root);
+    // Synthetic contract case: retain complete occurrence proof but omit the
+    // governance projection. This is not the unavailable historical 062 preimage.
+    const occurrences = required.governedEvents.filter(event => event.type.endsWith('occurrence'));
+    const input = sealedRetentionInput(root, occurrences, occurrences, required.streams);
+    const sized = sizedHostPacketInput(input, 131_020);
+    const runtime = runCommand('transition', {
+      mode: 'resume-governance', state: required.state, input: sized,
+    });
+    assert.equal(feature029PacketBytes(runtime.inspection), 131_020);
+    assert.equal(runtime.inspection.overflow, false);
+    assert.deepEqual(runtime.inspection.blockers, []);
+    assert.equal(inspectRetainedOccurrencesV2(runtime.inspection).blocker, null);
+    assert.equal(runtime.transition.reason, 'governance-unresolved');
+    const files = feature060Preimages(root);
+    const adapter = createHostAdapter(sealedInitial({ state: required.state }));
+    const before = adapter.snapshot();
+    const refused = adapter.run(sealedRequest(adapter, 'advance-governance', {
+      governance: { action: 'resume-learning', input: sized },
+    }));
+    assert.equal(refused.outcome, 'hard-stop');
+    assert.equal(refused.reason, runtime.transition.reason);
+    assert.deepEqual(acceptedAuthorityTuple(refused.session), acceptedAuthorityTuple(before));
+    assert.equal(refused.session.correction, null);
+    assert.equal(refused.session.pendingEffect, null);
+    assert.equal(Object.hasOwn(refused, 'capacity'), false);
+    assert.equal(Object.hasOwn(refused, 'blocker'), false);
+    // Keep the closed report classifications. The raw reason and accepted
+    // governance phase remain known; no supported causing subject is invented.
+    const unresolved = { halted: true, resolved: false, unresolved: ['reason', 'subject'] };
+    assert.deepEqual(describeUnattendedHalt(runtime.transition, runtime.inspection), unresolved);
+
+    // The runner has no resume-learning intent. Exercise its supported review
+    // route with the real reducer's still-unprojected state instead: that route
+    // refuses an outstanding projection commitment, not a missing old snapshot.
+    const initialState = required.unprojectedState;
+    validateRunState(initialState);
+    assert.ok(Object.hasOwn(initialState.learningGovernance, 'projectionCommitment'));
+    const retainedEvidence = Object.fromEntries(RETAINED_STREAMS.map(field => [field, clone(input[field])]));
+    const request = focusedRunnerRequest(root, { state: initialState, retainedEvidence });
+    const kinds = [];
+    const respond = challenge => {
+      kinds.push(challenge.kind);
+      assert.equal(challenge.kind, 'learning-review');
+      return focusedChallengeResponse(challenge, 'review', governanceReview(initialState, 'selected-alternative').review);
+    };
+    const result = await runHostAdapter(request, {
+      checkpoint: memoryCheckpointStore().port, exchange: respond,
+    });
+    context.diagnostic(JSON.stringify({
+      syntheticRoute: 'review-learning', kinds, terminal: result.reason,
+      operations: result.steps.map(step => ({ step: step.step, reason: step.reason })),
+    }));
+    assert.equal(result.outcome, 'hard-stop');
+    assert.equal(result.reason, 'governance-unresolved');
+    assert.equal(result.steps.at(-1).step, 'advance-governance:review-learning');
+    assert.equal(result.steps.at(-1).reason, result.reason);
+    assert.equal(result.acceptedRevision, 0);
+    assert.deepEqual(focusedRunnerAcceptedState(result), initialState);
+    assert.deepEqual(result.haltReport, unresolved);
+    assert.equal(Object.hasOwn(result, 'capacity'), false);
+    assert.equal(Object.hasOwn(result, 'blocker'), false);
+    assert.deepEqual(kinds, ['learning-review']);
+    const temp = fs.mkdtempSync(path.join(root, 't003-governance-cli-'));
+    const execution = await runFocusedRunnerCli(request, respond, {
+      env: { TMPDIR: temp, TMP: temp, TEMP: temp },
+    });
+    assert.equal(execution.code, 1);
+    assert.equal(execution.stderr, '');
+    const terminal = execution.rows.at(-1);
+    assert.equal(terminal.reason, result.reason);
+    assert.deepEqual(terminal.haltReport, unresolved);
+    assert.deepEqual(focusedRunnerAcceptedState(terminal), initialState);
+    assert.equal(Object.hasOwn(terminal, 'capacity'), false);
+    assert.deepEqual(kinds, ['learning-review', 'learning-review']);
+    assert.deepEqual(feature060Preimages(root), files);
+    context.diagnostic('Synthetic contracts only: resume-learning packet=131020, overflow=false, missing governance projection; runner/CLI review-learning refuses an outstanding projection commitment without optional session padding. Historical 062 cause remains unisolated.');
   });
 });

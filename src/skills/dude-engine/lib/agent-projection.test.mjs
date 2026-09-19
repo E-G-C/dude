@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadAgentModelConfig, resolveCopilotModel } from './agent-model-map.mjs';
+import { listProvide } from './pack-manifest.mjs';
 import * as projection from './agent-projection.mjs';
 
 const CONFIG_PATH = fileURLToPath(new URL('../../../config/agent-models.json', import.meta.url));
@@ -17,6 +18,46 @@ const COPILOT_TOOLS = Object.freeze([
   'read', 'edit', 'search', 'execute', 'todo', 'agent', 'dude_needs_you', 'workiq/*', 'workiq2/*',
 ]);
 const DEFAULT_TOOLS = Object.freeze(['read', 'edit', 'search', 'execute', 'todo', 'agent']);
+const CODING_AGENT_APPLY_TO = '.github/agents/dude-pack-coding-*.agent.md';
+const CODING_STANDARDS_PATH =
+  '.github/instructions/dude-pack-coding-engineering-standards.instructions.md';
+const CODING_STANDARDS_ID = 'dude-pack-coding-engineering-standards';
+const CODING_HOST_CONTROLS_ID = 'dude-pack-coding-host-controls';
+const CODING_PROFILES = Object.freeze([
+  {
+    role: 'Architect',
+    stem: 'dude-pack-coding-architect',
+    displayName: 'Architect',
+    modelClass: 'reasoning',
+    tools: ['read', 'edit', 'search'],
+  },
+  {
+    role: 'Engineer',
+    stem: 'dude-pack-coding-coder',
+    displayName: 'Coder',
+    modelClass: 'coding',
+    tools: ['read', 'edit', 'execute', 'search'],
+  },
+  {
+    role: 'Tester',
+    stem: 'dude-pack-coding-tester',
+    displayName: 'Tester',
+    modelClass: 'balanced',
+    tools: ['read', 'edit', 'execute', 'search'],
+  },
+  {
+    role: 'Reviewer',
+    stem: 'dude-pack-coding-reviewer',
+    displayName: 'Code Reviewer',
+    modelClass: 'reasoning',
+    tools: ['read', 'search'],
+  },
+]);
+const CANONICAL_COORDINATOR_PARAGRAPH = [
+  '**Coordinator-only artifacts:** do not edit `## Coordinator Log`, task-state glyphs in',
+  '`tasks.md`, fenced regions (`<!-- dude:managed:* -->`, `<!-- dude:board:* -->`), or',
+  '`status:` / `spec_path:` frontmatter. Report changes back to `@dude` instead.',
+].join(' ');
 
 /**
  * The T005-approved catalog metadata. Logical classes and source tool selectors
@@ -67,7 +108,7 @@ const PACK_CATALOG = Object.freeze({
     ],
     agents: {
       'dude-pack-coding-architect': {
-        modelClass: 'reasoning', tools: ['read', 'edit', 'execute', 'search'],
+        modelClass: 'reasoning', tools: ['read', 'edit', 'search'],
       },
       'dude-pack-coding-coder': {
         modelClass: 'coding', tools: ['read', 'edit', 'execute', 'search'],
@@ -330,6 +371,61 @@ function parseManifestMetadata(text, pack) {
     name: name[1],
     agents: values ? values.split(',').map((value) => value.trim()) : [],
   };
+}
+
+/** @param {string} markdown @param {string} heading @param {string} artifact */
+function secondLevelSection(markdown, heading, artifact) {
+  const lines = markdown.split(/\r?\n/);
+  const marker = `## ${heading}`;
+  const starts = lines
+    .map((line, index) => (line === marker ? index : -1))
+    .filter((index) => index !== -1);
+  assert.equal(starts.length, 1, `${artifact} has exactly one ${marker} section`);
+  const start = starts[0];
+  const next = lines.findIndex((line, index) => index > start && line.startsWith('## '));
+  return lines.slice(start + 1, next === -1 ? lines.length : next).join('\n').trim();
+}
+
+/** @param {string} text @param {string} literal */
+function countLiteral(text, literal) {
+  let count = 0;
+  let offset = 0;
+  while ((offset = text.indexOf(literal, offset)) !== -1) {
+    count += 1;
+    offset += literal.length;
+  }
+  return count;
+}
+
+/** @param {string} rendered @param {string} stem */
+function renderedMetadata(rendered, stem) {
+  const closing = rendered.indexOf('\n---\n', 4);
+  assert.notEqual(closing, -1, `${stem} rendered profile closes its frontmatter`);
+  return rendered.slice(0, closing + 4);
+}
+
+/** @param {string} markdown */
+function parseCodingRoleRows(markdown) {
+  const section = secondLevelSection(markdown, 'Agent selection', CODING_STANDARDS_ID);
+  const lines = section.split(/\r?\n/);
+  const header = lines.indexOf('| Role | Canonical agent | Display name |');
+  assert.notEqual(header, -1, `${CODING_STANDARDS_ID} has the canonical role table`);
+  assert.equal(lines[header + 1], '| --- | --- | --- |');
+
+  const rows = [];
+  for (let index = header + 2; index < lines.length && lines[index].startsWith('|'); index += 1) {
+    const match = /^\| ([^|]+?) \| `([a-z][a-z0-9-]*)` \| ([^|]+?) \|$/.exec(lines[index]);
+    assert.ok(match, `${CODING_STANDARDS_ID} has a canonical role row`);
+    rows.push({ role: match[1], stem: match[2], displayName: match[3] });
+  }
+  return rows;
+}
+
+/** @param {string} text @param {string} artifact */
+function leadingFrontmatterLines(text, artifact) {
+  const block = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+  assert.ok(block, `${artifact} has leading frontmatter`);
+  return block[1].split(/\r?\n/);
 }
 
 test('exports only the neutral parser, set validator, Copilot path, and Copilot renderer', () => {
@@ -664,6 +760,199 @@ test('preserves the T005 catalog manifests, source metadata, and local delegatio
     assert.doesNotThrow(() => projection.validateAgentSet(records), `${pack} local source set`);
   }
   assert.equal(sourceCount, 31, 'the complete catalog retains its 31 authoritative pack sources');
+});
+
+test('keeps coding roles on stable leaf identities and canonical Copilot projections', async () => {
+  // Arrange
+  const codingDirectory = join(PACKS_DIRECTORY, 'coding');
+  const expectedFiles = CODING_PROFILES
+    .map(({ stem }) => `${stem}.agent.md`)
+    .sort();
+  const sourceEntries = await readdir(join(codingDirectory, 'agents'), { withFileTypes: true });
+  const sourceBytes = await Promise.all(CODING_PROFILES.map(async (expected) => ({
+    expected,
+    bytes: await readFile(join(codingDirectory, 'agents', `${expected.stem}.agent.md`)),
+  })));
+  const standards = await readFile(
+    join(codingDirectory, 'instructions', `${CODING_STANDARDS_ID}.instructions.md`),
+    'utf8',
+  );
+
+  // Act
+  const profiles = sourceBytes.map(({ expected, bytes }) => {
+    const parsed = parse(bytes, expected.stem);
+    const rendered = projection.renderCopilotAgent(parsed, CONFIG).toString('utf8');
+    return { expected, parsed, metadata: renderedMetadata(rendered, expected.stem) };
+  });
+  const roleRows = parseCodingRoleRows(standards);
+  const profilesByStem = new Map(profiles.map((profile) => [profile.expected.stem, profile]));
+
+  // Assert
+  assert.equal(
+    sourceEntries.every((entry) => entry.isFile() && entry.name.endsWith('.agent.md')),
+    true,
+    'coding agent sources use only canonical files',
+  );
+  assert.deepEqual(sourceEntries.map((entry) => entry.name).sort(), expectedFiles);
+  assert.doesNotThrow(
+    () => projection.validateAgentSet(profiles.map(({ parsed }) => parsed)),
+    'coding roles resolve to unique source stems and display names',
+  );
+  assert.deepEqual(
+    roleRows,
+    CODING_PROFILES.map(({ role, stem, displayName }) => ({ role, stem, displayName })),
+  );
+  assert.equal(new Set(roleRows.map(({ role }) => role)).size, CODING_PROFILES.length);
+  assert.equal(new Set(roleRows.map(({ stem }) => stem)).size, CODING_PROFILES.length);
+  assert.equal(new Set(roleRows.map(({ displayName }) => displayName)).size, CODING_PROFILES.length);
+
+  for (const { expected, parsed, metadata } of profiles) {
+    const model = resolveCopilotModel(CONFIG, expected.modelClass).model;
+    const expectedMetadata = [
+      '---',
+      `name: ${JSON.stringify(expected.displayName)}`,
+      `description: ${JSON.stringify(parsed.frontmatter.description)}`,
+      `tools: [${expected.tools.map((tool) => JSON.stringify(tool)).join(', ')}]`,
+      'user-invocable: false',
+      ...(model ? [`model: ${model}`] : []),
+      '---',
+    ].join('\n');
+
+    assert.equal(parsed.frontmatter.name, expected.displayName, `${expected.stem} display name`);
+    assert.equal(parsed.frontmatter['model-class'], expected.modelClass, `${expected.stem} class`);
+    assert.equal(parsed.frontmatter['user-invocable'], false, `${expected.stem} visibility`);
+    assert.deepEqual(parsed.frontmatter.tools, expected.tools, `${expected.stem} tool boundary`);
+    assert.equal(Object.hasOwn(parsed.frontmatter, 'agents'), false, `${expected.stem} is a leaf`);
+    assert.equal(
+      /** @type {string[]} */ (parsed.frontmatter.tools).includes('agent'),
+      false,
+      `${expected.stem} has no agent tool`,
+    );
+    assert.equal(
+      projection.copilotAgentPath(expected.stem),
+      `.github/agents/${expected.stem}.agent.md`,
+      `${expected.stem} generated path`,
+    );
+    assert.equal(metadata, expectedMetadata, `${expected.stem} generated metadata`);
+  }
+
+  for (const { stem, displayName } of roleRows) {
+    assert.equal(
+      profilesByStem.get(stem)?.parsed.frontmatter.name,
+      displayName,
+      `${stem} role resolves to its source profile`,
+    );
+  }
+});
+
+test('keeps coding profile scope, shared-standard loading, and coordinator ownership canonical', async () => {
+  // Arrange
+  const codingAgentsDirectory = join(PACKS_DIRECTORY, 'coding', 'agents');
+  const standardsReference = `\`${CODING_STANDARDS_PATH}\``;
+  const sources = await Promise.all(CODING_PROFILES.map(async ({ stem }) => ({
+    stem,
+    bytes: await readFile(join(codingAgentsDirectory, `${stem}.agent.md`)),
+  })));
+
+  // Act
+  const structures = sources.map(({ stem, bytes }) => {
+    const parsed = parse(bytes, stem);
+    const coordinatorParagraphs = parsed.body
+      .split(/\r?\n[ \t]*\r?\n/)
+      .map((paragraph) => paragraph.trim())
+      .filter((paragraph) => paragraph.startsWith('**Coordinator-only artifacts:**'));
+    return {
+      stem,
+      body: parsed.body,
+      scope: secondLevelSection(parsed.body, 'Scope', stem),
+      sharedStandards: secondLevelSection(parsed.body, 'Required shared standards', stem),
+      coordinatorParagraphs,
+    };
+  });
+
+  // Assert
+  for (const { stem, body, scope, sharedStandards, coordinatorParagraphs } of structures) {
+    assert.notEqual(scope, '', `${stem} has a nonempty Scope section`);
+    assert.deepEqual(
+      coordinatorParagraphs,
+      [CANONICAL_COORDINATOR_PARAGRAPH],
+      `${stem} has exactly one canonical coordinator paragraph`,
+    );
+    assert.equal(countLiteral(body, standardsReference), 1, `${stem} has one exact standards path`);
+    assert.equal(
+      sharedStandards.startsWith(`Before substantive work, read ${standardsReference} `),
+      true,
+      `${stem} explicitly reads the shared standards`,
+    );
+  }
+});
+
+test('keeps coding shared instructions manifested, colocated, and narrowly applied', async () => {
+  // Arrange
+  const codingDirectory = join(PACKS_DIRECTORY, 'coding');
+  const instructionIds = [CODING_STANDARDS_ID, CODING_HOST_CONTROLS_ID];
+  const expectedInstructionFiles = instructionIds.map((id) => `${id}.instructions.md`);
+  const manifest = await readFile(join(codingDirectory, 'pack.md'), 'utf8');
+  const instructionEntries = await readdir(join(codingDirectory, 'instructions'), {
+    withFileTypes: true,
+  });
+  const instructionSources = await Promise.all(expectedInstructionFiles.map(async (filename) => ({
+    filename,
+    text: await readFile(join(codingDirectory, 'instructions', filename), 'utf8'),
+  })));
+  const specArtifactSkill = await readFile(
+    join(codingDirectory, 'skills', 'dude-pack-coding-spec-artifacts', 'SKILL.md'),
+    'utf8',
+  );
+
+  // Act
+  const provides = {
+    agents: listProvide(manifest, 'agents'),
+    instructions: listProvide(manifest, 'instructions'),
+    skills: listProvide(manifest, 'skills'),
+  };
+  const instructionMetadata = instructionSources.map(({ filename, text }) => ({
+    filename,
+    applyTo: leadingFrontmatterLines(text, filename)
+      .filter((line) => line.startsWith('applyTo: ')),
+  }));
+  const standards = instructionSources.find(
+    ({ filename }) => filename === `${CODING_STANDARDS_ID}.instructions.md`,
+  )?.text;
+  const hostControlsLink =
+    `[host control requirements](${CODING_HOST_CONTROLS_ID}.instructions.md)`;
+
+  // Assert
+  assert.deepEqual(
+    provides.agents,
+    CODING_PROFILES.map(({ stem }) => stem).sort(),
+    'manifest provides the exact coding profile roster',
+  );
+  assert.deepEqual(provides.instructions, instructionIds);
+  assert.deepEqual(provides.skills, ['dude-pack-coding-spec-artifacts']);
+  assert.equal(specArtifactSkill.trim().length > 0, true, 'the existing spec-artifacts skill remains');
+  assert.equal(instructionEntries.every((entry) => entry.isFile()), true);
+  assert.deepEqual(instructionEntries.map((entry) => entry.name).sort(), expectedInstructionFiles);
+  for (const { filename, applyTo } of instructionMetadata) {
+    assert.deepEqual(
+      applyTo,
+      [`applyTo: ${JSON.stringify(CODING_AGENT_APPLY_TO)}`],
+      `${filename} has one narrow coding-profile scope`,
+    );
+  }
+  assert.equal(typeof standards, 'string', 'the standards instruction is present');
+  assert.equal(
+    countLiteral(/** @type {string} */ (standards), hostControlsLink),
+    1,
+    'the standards instruction has one exact colocated host-controls link',
+  );
+  assert.equal(
+    /** @type {string} */ (standards).includes(
+      `Read the colocated ${hostControlsLink} unless already in context;`,
+    ),
+    true,
+    'the standards instruction explicitly loads host controls',
+  );
 });
 
 test('keeps the Technical Docs Writer roster exact and retains its agent selector', async () => {

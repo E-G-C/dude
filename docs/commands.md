@@ -455,6 +455,30 @@ review accepts the result. It settles through the same receipt and close path as
 A `no-change` result that claims changed files is rejected. Failed verification,
 rejected review, and other contradictory outcomes still prevent acceptance.
 
+The autonomous Lightweight runner accepts only an unblocked in-progress task.
+For an eligible pending task, the coordinator checks ownership, dependencies,
+and required evidence, then uses the existing setup adapter's `fresh-inspection`,
+`authorize-lane-effect` for `initial-claim`, `apply-lane-effect`, and
+`commit-lane-receipt`. After the receipt settles, end setup through its permitted
+`end('controlled-end')`, reacquire the exact owner, mapping, and `[~]` poststate,
+and enter the runner with fresh bindings and the unchanged accepted state and
+policy. Failed setup or cleanup stops; direct glyph edits, the board CLI, and
+a second claim are not substitutes.
+
+A separately authorized fresh runner request may supply `retainedEvidence` with
+exactly four arrays: `currentRun`, `verification`, `review`, and `lint`. Entries
+are existing captures with canonical `{base64}` bytes, retained unchanged from
+the host's actual runtime-port inputs. Known missing or invalid historical proof
+refuses before runner ownership; perform that read-only check before pending-task
+claim setup too. The default CLI exports no complete capture archive and scans
+no files to recover one. If a host omitted captures it retained, correct that
+handoff; if the source was never retained, report it as unavailable. Do not
+reconstruct proof from normalized Inspection text, model packets, stdout, task
+history alone, or checkpoints. Historical input preserves order and multiplicity,
+restores no old state or authority, and replaces no fresh verification or review.
+Seeded history includes a separately charged live current-run capture, initially
+empty, so later records never rewrite historical captures.
+
 Before every task start or resume, and again after every block or failure, Work
 inspects all available current-format history exactly bound to that task and
 feature. Under `autonomous`, that Inspection additionally acquires exactly one
@@ -816,10 +840,48 @@ run. Use `@dude self-check` if you want the full roster on demand.
 
 ### Canvas
 
+Canvas opens in Overview with no work selected and Show set to Open. The command
+bar has the one work search; use a capture number, title, slug, or source path
+to find a record. Rows show capture order, not priority or execution order.
+Choose a row to open Now for that exact record.
+
+Working on and Clear replace search and Show while work is selected, including
+in Overview, which shows only that record. Clear returns to Overview, focuses
+the same search, empties its query, and shows All records from the start. It
+does not change requests, drafts, or Review work. The navigation pane expands
+inline on desktop widths and opens a dismissible overlay on narrow widths.
+
+Now shows the selected feature's recorded progress and phase-grouped Tasks.
+Tasks starts at All; its status filter affects only task rows, not Next or the
+work finder. Select a task to read its full available instruction, dependencies,
+and explicit blocker in the properties dock, or below the row on narrow screens.
+Task text is inert, including markup and fenced examples. Clear or changing
+work dismisses task inspection; Refresh resolves it from the new agreeing read.
+
+All-open definitions show planned tasks without starting execution. In progress
+is recorded state, not proof that an agent is working now. Dependency readiness
+does not grant Work admission, and waiting on dependencies is distinct from an
+explicit blocker. Tracked work uses its imported description; missing original
+body, phase, or readiness stays unexposed, with no markdown backfill. Task
+verification and review results are **Not exposed by this source**: Done,
+acceptance wording, Activity, and design-review history do not establish them.
+Offline previews remain frozen. Task inspection offers no execution or editing
+controls.
+
+Now's Respond to request opens a single current matching request directly.
+When several match, Choose request opens the existing Needs you choices.
+Session requests and requests for other work remain reachable through Needs you.
+Opening a preview form does not automatically enter Review.
+
 Each Needs you request identifies its owner, source, current revision, why your
 input is needed, and what it unblocks. Blank answer slots, task failures, and
 history do not create requests. Missing or stale coverage is shown explicitly,
 not reported as an empty inbox.
+
+When a displayed request, Review, or sealed history belongs to different work,
+the command bar says Browsing. The open surface names its actual scope; your
+work selection stays separate. Clear, task inspection, and navigation cannot
+retarget a response or discard its unsent draft. New idea remains unfiled.
 
 Sending a response leaves it awaiting acknowledgment. Accepted means the owner
 accepted the response; Applied requires owner confirmation and a fresh source

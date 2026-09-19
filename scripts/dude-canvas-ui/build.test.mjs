@@ -799,10 +799,10 @@ test('built runtime is a committed ESM bundle with legal notice and no runtime d
   assert.ok(application.length > 100_000, 'the application bundle must contain the browser runtime');
   const gzip = gzipSync(applicationBytes, { level: 9 });
   const repeatedGzip = gzipSync(applicationBytes, { level: 9 });
-  assert.equal(applicationBytes.length, 880_010, 'committed app.js raw byte size');
+  assert.equal(applicationBytes.length, 916_082, 'committed app.js raw byte size');
   assert.equal(
     sha256(applicationBytes),
-    '8a571800c96c8e55fb7eba4ac06e31a345334bf7ae9cc338d753fd7371a9055c',
+    'fcf3f9102f8eabd36f9bd0494a84695fda2891e1d53a7f05b03a1be2088a9463',
     'committed app.js raw SHA-256',
   );
   assertPortableGzip(gzip, repeatedGzip, applicationBytes, 'Node zlib level-9 app.js');
@@ -876,7 +876,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-menu',
       version: '9.25.4',
       inputCount: 36,
-      bytesInOutput: 31_640,
+      bytesInOutput: 31_649,
     },
     {
       name: '@fluentui/react-motion-components-preview',
@@ -888,7 +888,7 @@ test('metafile-derived legal inventory contains every contributing package and c
       name: '@fluentui/react-tooltip',
       version: '9.10.5',
       inputCount: 6,
-      bytesInOutput: 8_332,
+      bytesInOutput: 8_329,
     },
   ], 'the shipped menu, motion implementation, and tooltip contribute real app.js bytes');
   for (const { name, version } of menuGraphPackages) {
@@ -1101,13 +1101,15 @@ function t011Sources() {
 
 function assertT011WorkspaceContract() {
   const { app, hook, needs, review, styles, theme } = t011Sources();
-  assert.match(app, /const TABS = \[\['overview', 'Overview'\], \['context', 'Context'\], \['needs', 'Needs you'\], \['new', 'New idea'\]\]/);
+  assert.match(app, /const TABS = \[\['overview', 'Overview'\], \['context', 'Now'\], \['needs', 'Needs you'\], \['new', 'New idea'\]\]/);
   assert.equal((app.match(/<WorkFinder\b/g) ?? []).length, 1);
   assert.equal((app.match(/<FluentProvider\b/g) ?? []).length, 1);
   assert.match(app, /<TabList[\s\S]*?aria-label="Workspace views"[\s\S]*?selectTabOnFocus=\{false\}/);
-  assert.match(app, /<main ref=\{main\} className=\{s\.product\}>/);
-  assert.match(app, /<footer className=\{s\.footer\}>/);
-  assert.doesNotMatch(app, /ActivityRail|FeatureChooser|Details|Browse features|Dude — Now/);
+  assert.match(app, /<header className=\{s\.commands\}>[\s\S]*?<WorkFinder[\s\S]*?<\/header>[\s\S]*?<ActivityRail[\s\S]*?<main ref=\{main\} className=\{s\.product\} aria-label="Workspace">/);
+  assert.match(app, /<main ref=\{main\} className=\{s\.product\} aria-label="Workspace">/);
+  assert.match(app, /<footer className=\{mergeClasses\(s\.footer, reviewActive && s\.focusedFooter\)\}[\s\S]*?aria-label="Workspace status"/);
+  assert.match(app, /<ReviewWorkspace[\s\S]*?active=\{reviewActive && !history\}/);
+  assert.doesNotMatch(app, /FeatureChooser|Browse features|Switch work|Settings|Kanban|Dude — Now/);
   assert.match(styles, /makeStyles\(/);
   assert.match(theme, /webDarkTheme, webLightTheme/);
   assert.match(needs, /MessageBar[\s\S]*?layout="multiline"/);
@@ -1142,9 +1144,12 @@ function assertT011AccessibleTokens() {
 
 function assertT011CompiledBorders() {
   const { styles, bundle } = t011Sources();
-  for (const name of ['titlebar', 'commands', 'workScroll', 'focal', 'scope', 'drawingToolbar', 'historyImage']) {
+  for (const name of [
+    'titlebar', 'commands', 'rail', 'navOverlay', 'workingOn', 'workScroll',
+    'scope', 'drawingToolbar', 'historyImage',
+  ]) {
     const rule = styleRule(styles, name);
-    assert.match(rule, /\bborder(?:Bottom|Left)?:/);
+    assert.match(rule, /\bborder(?:Block|Inline|Top|Right|Bottom|Left)?(?:Start|End)?:/);
   }
   assert.match(bundle, /colorNeutralStroke2/);
   assert.doesNotMatch(styles, /border:\s*['"`][^'"`]*(?:#|rgb|hsl)/i);
@@ -1167,7 +1172,7 @@ function assertT011LiteralProse() {
   assert.match(styleRule(styles, 'prose'), /whiteSpace: 'pre-wrap'/);
   assert.match(styleRule(styles, 'instruction'), /whiteSpace: 'pre-wrap'/);
   assert.match(styleRule(styles, 'code'), /whiteSpace: 'pre-wrap'/);
-  assert.match(app, /<p className=\{s\.prose\}>\{instruction\(orientation\)\}<\/p>/);
+  assert.match(app, /<p className=\{s\.instruction\}>\{instruction\(orientation\)\}<\/p>/);
   assert.match(needs, /new TextEncoder\(\)\.encode\(value\)\.length/);
   assert.match(needs, /your text has not been truncated/);
   assert.doesNotMatch(`${app}\n${needs}`, /\.trim\(\)\s*\}\s*\)\s*;\s*void data\.(?:respond|capture)/);
@@ -1176,14 +1181,21 @@ function assertT011LiteralProse() {
 function assertT011SingleFinder() {
   const { app } = t011Sources();
   const finder = app.slice(app.indexOf('function WorkFinder'), app.indexOf('function ReviewEntry'));
-  assert.match(finder, /Field label="Search work"/);
-  assert.match(finder, /SelectField label="Show"/);
-  assert.match(finder, /\[\[ 'open', 'Open' \], \[ 'closed', 'Closed' \], \[ 'all', 'All' \]\]/);
+  const rows = app.slice(app.indexOf('function rowsFor'), app.indexOf('function currentOrientation'));
+  assert.match(finder, /return selection \? <div[\s\S]*?aria-label=\{browsing \? 'Browsing' : 'Working on'\}[\s\S]*?<Button[\s\S]*?aria-label="Clear work selection"[\s\S]*?>Clear<\/Button>[\s\S]*?: <div/);
+  assert.match(finder, /<Field className=\{s\.searchField\} label=\{\{ children: 'Search work', className: s\.visuallyHidden \}\}>[\s\S]*?<Input[\s\S]*?type="search"/);
+  assert.match(finder, /<Field className=\{s\.scopeField\} label="Show" orientation="horizontal">[\s\S]*?<Dropdown[\s\S]*?\binlinePopup\b/);
+  assert.match(app, /const SCOPES = \[\['open', 'Open'\], \['closed', 'Closed'\], \['all', 'All'\]\]/);
   assert.match(finder, /data-work-scroll/);
   assert.match(finder, /Nothing has been removed/);
-  assert.match(finder, /alphabetical, not priority order/);
+  assert.match(finder, /capture order, oldest first/);
+  assert.match(rows, /\.sort\(\(a, b\) => \(a\.number \? Number\(a\.number\) : Infinity\) - \(b\.number \? Number\(b\.number\) : Infinity\)[\s\S]*?\|\| a\.ideaPath\.localeCompare\(b\.ideaPath\)\)/);
+  assert.match(finder, /const visible = rows\.filter\(row => selection \? sameContext\(row\.context, selection\)/);
+  assert.match(finder, /\[row\.number, row\.context\.title, row\.context\.slug, row\.ideaPath, row\.context\.specPath\]/);
   assert.doesNotMatch(finder, /(?:slice|splice)\(/);
-  assert.doesNotMatch(app, /FeatureChooser|Browse|Details/);
+  assert.equal((app.match(/<Input\b/g) ?? []).length, 1, 'App owns one native search input');
+  assert.equal((app.match(/<Dropdown\b/g) ?? []).length, 1, 'App owns one Show control');
+  assert.doesNotMatch(app, /FeatureChooser|Browse features|Switch work/);
 }
 
 function assertT011EpochAndFocus() {
@@ -1222,11 +1234,24 @@ function assertT011ExactIdentity() {
 
 function assertT011StableNavigation() {
   const { app } = t011Sources();
+  const rail = app.slice(app.indexOf('function ActivityRail'), app.indexOf('function App'));
+  const appBody = app.slice(app.indexOf('function App'));
   assert.equal((app.match(/const TABS =/g) ?? []).length, 1);
-  assert.match(app, /TABS\.map\(\(\[value, label\]\) => <Tab/);
-  assert.doesNotMatch(app.slice(app.indexOf('TABS.map(([value, label])'), app.indexOf('</TabList>')), /\bdisabled\b/);
-  assert.match(app, /!reviewActive && !history && <nav/);
+  assert.match(app, /const TAB_ICONS = \{ overview: GridRegular, context: RecordRegular, needs: CommentRegular, new: AddRegular \}/);
+  assert.match(rail, /TABS\.map\(\(\[value, label\]\) => \{[\s\S]*?return <Tab/);
+  assert.doesNotMatch(rail.slice(rail.indexOf('TABS.map(([value, label])'), rail.indexOf('</TabList>')), /\bdisabled\b/);
+  assert.match(rail, /<nav[\s\S]*?aria-label="Workspace navigation" data-navigation-pane>/);
+  assert.match(rail, /aria-expanded=\{expanded\} aria-controls=\{id\}/);
+  assert.match(rail, /role=\{modal \? 'dialog' : undefined\} aria-modal=\{modal \? true : undefined\}/);
+  assert.match(rail, /if \(event\.key === 'Escape'\)[\s\S]*?dismiss\(\)/);
+  assert.match(rail, /else if \(event\.key === 'Tab'\)[\s\S]*?event\.shiftKey[\s\S]*?stops\[next\]\?\.focus/);
+  assert.match(rail, /toggle\.current\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(appBody, /<ActivityRail tab=\{reviewActive \|\| history \? 'needs' : tab\}/);
   assert.match(app, /setReviewActive\(false\); setTab\(returning\?\.tab \|\| 'needs'\)/);
+  assert.match(appBody, /setHistory\(null\); setReviewActive\(false\); setFinderOpen\(false\)/);
+  assert.match(appBody, /\{review && <ReviewWorkspace[\s\S]*?active=\{reviewActive && !history\}/);
+  assert.doesNotMatch(appBody.slice(appBody.indexOf('const navigate'), appBody.indexOf('const closeFinder')), /setReview\(null\)/);
+  assert.doesNotMatch(rail, /Settings|Switch work|Kanban/);
 }
 
 function assertT011CurrentWorkAuthority() {
@@ -1237,19 +1262,69 @@ function assertT011CurrentWorkAuthority() {
   assert.match(orientation, /row\?\.lane === 'tracked'/);
   assert.match(app, /Current task instruction/);
   assert.match(app, /Only a current owner-qualified request belongs in Needs you/);
-  assert.match(app, /This is not a statement about current human requests/);
+  assert.match(app, /No other record has been selected and no previous feature's instruction is shown here/);
+  assert.match(app, /These are recorded work blockers\. Only a current owner-qualified request belongs in Needs you/);
+}
+
+function assertT003TaskInspectionContract() {
+  const { app, hook, styles, bundle } = t011Sources();
+  const orientation = app.slice(app.indexOf('function currentOrientation'), app.indexOf('function instruction'));
+  const taskDetail = app.slice(app.indexOf('function TaskDetail'), app.indexOf('function WorkName'));
+  const context = app.slice(app.indexOf('function Context'), app.indexOf('function ActivityRail'));
+  const appState = app.slice(app.indexOf('function App()'));
+
+  assert.match(orientation, /row\?\.sources\.some\(source => !projection\.sources\.some\(candidate => candidate\.path === source\.path[\s\S]*?candidate\.contentIdentity === source\.contentIdentity\)\)/);
+  assert.match(orientation, /if \(row\?\.taskCounts && projection\.tasks[\s\S]*?row\.taskCounts\[key\] !== projection\.tasks\[key\]\)/,
+    'nullable index counts do not become a competing zero, while exposed counts must agree');
+  assert.match(appState, /useState\(\{ scope: null, taskKey: null, filter: 'all' \}\)/);
+  assert.match(appState, /JSON\.stringify\(\[data\.rootKey, selection\.ideaPath, selection\.specPath\]\)/);
+  assert.match(appState, /Resolve from this render's agreed read, not an effect-delayed task object/);
+  assert.doesNotMatch(appState, /setTaskView\(\{[^}]*\btask\s*:/,
+    'inspection state retains a key and filter, never a cached task object');
+
+  assert.match(context, /data-task-filter=\{value\}/);
+  assert.match(context, /data-task-key=\{task\.taskKey\}/);
+  assert.match(taskDetail, /data-task-detail=\{task\.taskKey\}/);
+  assert.match(context, /Planned task definitions; execution has not started/);
+  assert.match(taskDetail, /\{task\.instruction\.text\}/);
+  assert.match(taskDetail, /Not exposed by this source\./);
+  assert.match(taskDetail, /Done is recorded state, not a verification or review result\./);
+  assert.match(taskDetail, /In progress is recorded state, not evidence that an agent is working now\./);
+  assert.doesNotMatch(`${app}\n${hook}`, /dangerouslySetInnerHTML|\/api\/tasks?\b|\/api\/work-index\/[^'`"]+/);
+  assert.doesNotMatch(taskDetail, />\s*(?:Run|Retry|Mark done|Edit task)\s*</i);
+
+  assert.match(styleRule(styles, 'contextGrid'), /gridTemplateColumns: 'minmax\(0, 1fr\) 320px'/);
+  assert.match(styleRule(styles, 'contextGrid'), /@media \(max-width: 1079px\)[\s\S]*gridTemplateColumns: 'minmax\(0, 1fr\)'/);
+  assert.match(styleRule(styles, 'taskSource'), /whiteSpace: 'pre-wrap'/);
+  assert.match(styleRule(styles, 'taskSource'), /overflowWrap: 'anywhere'/);
+  assert.match(styleRule(styles, 'taskDetailDock'), /maxHeight: '38dvh'[\s\S]*overflowY: 'auto'/);
+  for (const marker of [
+    'Task detail · read only',
+    'Full canonical unit',
+    'Only imported description available',
+    'Verification and review results',
+    'Not exposed by this source.',
+  ]) {
+    assert.equal(bundle.includes(marker), true, `published app.js retains T003 marker: ${marker}`);
+  }
 }
 
 function assertT011CompleteRowSemantics() {
   const { app } = t011Sources();
   const rows = app.slice(app.indexOf('function rowsFor'), app.indexOf('function currentOrientation'));
+  const results = app.slice(app.indexOf('function WorkResults'), app.indexOf('function ReviewEntry'));
+  assert.match(app, /function captureNumber\(context\) \{ return context\.ideaPath\?\.match\(\/\^\\\.dude\\\/ideas\\\/\(\\d\{3\}\)-\/\)\?\.\[1\] \|\| ''; \}/);
   assert.match(rows, /data\.index\?\.contexts \|\| data\.projection\?\.contexts/);
   assert.match(rows, /new Map\(data\.index\.items\.map\(item => \[item\.ideaPath, item\]\)\)/);
   assert.match(rows, /candidate\.availability\.state === 'current'/);
   assert.match(rows, /context\.status === 'resolved' \? 'Resolved idea'/);
-  assert.match(rows, /\.sort\(\(a, b\) => a\.title\.localeCompare/);
-  assert.match(app, /const fallback = finder\.scope !== 'all' && rows\.some\(row => row\.open === null\)/);
+  assert.match(rows, /\.sort\(\(a, b\) => \(a\.number \? Number\(a\.number\) : Infinity\) - \(b\.number \? Number\(b\.number\) : Infinity\)/);
+  assert.match(results, /const fallback = !selection && finder\.scope !== 'all' && rows\.some\(row => row\.open === null\)/);
+  assert.match(results, /const label = row => `\$\{row\.number \|\| 'Number unavailable'\}\. \$\{row\.title\}\. \$\{row\.status\}\. \$\{progressText\(row\)\}\. \$\{row\.ideaPath\}`/);
+  assert.match(results, /data-work-path=\{item\.ideaPath\} aria-label=\{label\(item\)\} aria-current=\{selection \? 'true' : undefined\}/);
+  assert.match(results, /!visible\.length && selection[\s\S]*?The selected source is unavailable[\s\S]*?Its exact identity is retained\. No other record has been selected/);
   assert.match(app, /Unknown records are included so missing progress cannot hide work/);
+  assert.doesNotMatch(rows, /title\.localeCompare/);
 }
 
 function assertT011ClosedForms() {
@@ -1322,6 +1397,18 @@ test('T011 static frontend matches the approved interactive Fluent workspace con
   assert.match(app, /if \(payload\.replaced === true\)/);
   assert.doesNotMatch(freshnessCheck, /setProjection/);
   assert.deepEqual(fetchedPaths, ['/api/projection', '/api/freshness', '/api/refresh']);
+});
+
+test('T003 static task inspection stays selected-only, inert, read-only, and freshness-bound', () => {
+  // Arrange
+  const sourceApp = read('src/extensions/dude/frontend/app.jsx');
+  const publishedApp = fs.readFileSync(path.join(ASSET_ROOT, 'app.js'), 'utf8');
+
+  // Act
+  assertT003TaskInspectionContract();
+
+  // Assert
+  assert.ok(sourceApp.length > 0 && publishedApp.length > 0);
 });
 
 test('T012 comment drawer names local capture without claiming delivery', () => {

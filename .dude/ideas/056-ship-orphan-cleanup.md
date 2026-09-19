@@ -20,6 +20,10 @@ proceeding through Ship, with browser reliability first: "Do not over engineer
 it, keep it simple. YAGNI". Never resurrect lost RunState, revive a dead
 invocation, seize live ownership, or infer safety from age or a PID alone.
 
+### Refresh Request (2026-09-19T11:01:43.096-04:00)
+
+> Do a reconciliation analysis between all your findings and then go ahead and update 060 and 056 accordingly.Always prefer deterministic when possible.
+
 ## Open Questions
 
 1. What existing, independently verifiable host evidence can prove that no
@@ -42,12 +46,12 @@ Working assumptions, not additional user answers:
   Browser-first does not create a dependency or derive order from numbering.
 
 <!-- dude:managed:start -->
-## Current Evidence And Contract Change
+## Retained Evidence And Contract Change
 
-- The last `.dude/memory/context.md` entry reports an explicit Ship stop that
-  required another human authorization after the coordinator reportedly proved
-  the supervisor absent. That report supplies motivation, not an independently
-  established proof mechanism for this feature.
+- The original capture cited a then-current `.dude/memory/context.md` report of
+  an explicit Ship stop requiring another human authorization after the
+  coordinator reportedly proved the supervisor absent. That report supplies
+  historical motivation, not an independently established proof mechanism.
 - `.dude/ideas/018-autonomous-runstate-continuity.md:50-110` deliberately requires
   confirmed manual orphan cleanup in v1. Supervisor, context, or independently
   retained invocation-identity loss terminates the invocation.
@@ -64,8 +68,9 @@ Working assumptions, not additional user answers:
   only where reachable behavior requires them. Global Ship pre-Work policy
   cannot override Work hard stops.
 
-Architect source inspection (read-only) found a real unresolved evidence and
-authority boundary; paths below are under `src/skills/dude-work/`:
+The September 4 read-only Architect inspection found an unresolved evidence and
+authority boundary. These retained source locations are historical, not a fresh
+inspection; paths below are under `src/skills/dude-work/`:
 
 - `SKILL.md:74-80` identifies the active coordinator as supervisor. Child exit
   is not supervisor death; true supervisor/context/identity loss is terminal.
@@ -84,16 +89,19 @@ authority boundary; paths below are under `src/skills/dude-work/`:
   not an independent unchanged snapshot of both orphan artifacts. Admission
   (`3804-3845`) refuses occupied ownership; absence checks are not liveness
   evidence.
-- No production-supported combination of terminal result, externally retained
-  identity, and observed child exit establishes original supervisor loss.
-  A caller "dead" boolean, age/PID inference, or test-only injected proof would
-  invent the missing basis. The live adapter can finalize through
-  `end('hard-stop-recorded')` (`3941-3955`), but live-owner terminal finalization
-  is a different, narrower outcome, not proof for the accepted orphan goal.
+- That inspection established no production-supported proof of original
+  supervisor loss from terminal result, externally retained identity, and
+  observed child exit. A caller "dead" boolean, age/PID inference, or test-only
+  injected proof would invent the missing basis. The live adapter can finalize
+  through `end('hard-stop-recorded')` (`3941-3955`), but live-owner terminal
+  finalization is a different, narrower outcome, not proof for the accepted
+  orphan goal.
 
-No real orphan files or host processes were inspected or removed. The 018 v1
-manual-orphan contract, 039 pre-Work answerability, and 040 same-invocation
-continuity remain unchanged.
+The September 19 reconciliation supplies no missing production proof. Child
+exit, PID, age, EOF, empty-looking state, and model assertions still cannot
+establish supervisor absence. No real orphan files or host processes were
+inspected or removed. The 018 v1 manual-orphan contract, 039 pre-Work
+answerability, and 040 same-invocation continuity remain unchanged.
 
 ## Bounded Outcome
 
@@ -103,21 +111,53 @@ newly defined Work-owned authorization rule. Explicit Ship may supply that
 bounded cleanup and new-claim authority only after the rule's prerequisites
 pass. This authority is proposed, not already granted by the old contract.
 
-Preserve fresh post-clean validation proving both artifacts absent before a
-new exclusive claim. Partial cleanup, changed artifacts, reappearance,
-operation failure, or failed absence validation continue to block replacement.
-Keep target selection, exact ownership, lane, verification, review, settlement,
-and other safety gates intact.
+- Mechanical checks should enforce the exact workspace-target and owner-derived
+  pair identity, unchanged artifact revisions, established authority, evidence
+  freshness, and effects bounded to that pair. Reuse existing parsers,
+  identity/hash checks, accounting, legal state transitions, and structured
+  reason/subject/next-owner reporting.
+- Cleanup and new-claim mechanics become eligible only after independent
+  supervisor-absence proof and legitimate cleanup/new-claim authority exist.
+  Deterministic checks consume that evidence and permission; proposing them
+  supplies neither. Require fresh post-clean proof that both artifacts are
+  absent before an exclusive new claim. Partial cleanup, changed artifacts,
+  reappearance, operation failure, or failed absence validation block
+  replacement.
+- Semantic intent and readiness judgments remain with their owners. Ambiguous
+  live ownership, UI approval, changed intent, cancellation, and genuinely
+  destructive or unrelated effects keep their human/owner gates. No score,
+  heuristic confidence permission, or blanket failure allowlist replaces them.
 
 Loss of the original supervisor, context, identity, or authoritative RunState
 still terminates that invocation. Any authorized replacement starts clean with
-fresh authority; it never resumes the orphan or reconstructs its lost state.
-The proposal does not authorize generic retries around returned Work stops.
+fresh authority. Preserve the selected goal and policy context subject to fresh
+ownership, lane, and evidence checks; never revive old RunState, ownership,
+counters, or permits. Keep verification, independent review, settlement, and
+close gates, exact limits, and full historical bytes intact.
 
 Success means no extra user echo for the narrowly proven-safe case, while
 ambiguous, live, unproven, or destructive cases retain confirmation or refusal
-under their existing owners. Show the distinction in focused coverage at the
-existing integration boundary; do not claim proof from a mock-only capability.
+under their existing owners. A mock-only capability cannot establish production
+proof.
+
+## Relationship To Handoff Prevention
+
+[060 recoverable handoffs](060-recoverable-work-handoffs.md) records the detailed
+September 19 reconciliation. It addresses complete, ordered, validated Work
+handoffs upstream, including a fresh authorized run's missing historical-evidence
+handoff and lost diagnostics. It should prevent avoidable
+halt -> orphan -> cleanup-confirmation cycles; 056 handles a genuine orphan
+only after independent proof and legitimate authority. Neither handoff errors
+nor zero attempted work establish a dead supervisor.
+
+040 and Work `Iterate` already require continued next-ready selection within
+the same surviving autonomous invocation. After a hard stop, general automatic
+goal continuation or a fresh invocation without an orphan is outside this
+proposal. The later browser repair did not restart Ship. Neither draft changes
+learning policy or supplies automatic semantic redefinition to keep going.
+This relationship creates no dependency, priority, or execution order from
+lifecycle numbers. Existing 055 browser reliability remains independent; 056 is
+not a dependency or blocker in its task graph.
 
 ## Definition Boundary
 
@@ -131,20 +171,22 @@ The material user choice is to defer 056 and preserve manual confirmation for
 true orphan cases, OR explicitly narrow/recapture it around surviving-coordinator
 terminal finalization and new-claim authority after its own scope and safety
 analysis. Neither option is selected here; bounded delegation cannot silently
-substitute the narrower outcome. Keep draft status and an empty package path,
-without marking the feature blocked or resolved.
+substitute the narrower outcome. These are later-definition choices, not
+questions blocking this record-only refresh. Keep draft status and an empty
+package path, without marking the feature blocked or resolved.
 
 YAGNI forbids inventing a liveness service, registry, leases, timers, persistent
 state, or recovery platform merely to finish this package. Add no TTL, lock
-service, daemon, batch cleanup, new user command, speculative cross-machine
-recovery, broad automatic cleanup, or ownership takeover. Do not inspect or
-delete actual orphan/checkpoint files during definition.
-
-Existing 055 browser reliability remains independent; 056 is not a dependency
-or blocker in its task graph.
+service, daemon, database, duplicate evidence store, scheduler, batch cleanup,
+new workflow/command, speculative cross-machine recovery, broad automatic
+cleanup, or ownership takeover. No generic retries around returned Work stops.
+Do not inspect or delete actual orphan/checkpoint files during definition.
+This refresh authorizes no package, implementation, live Canvas/provider or
+process inspection, cleanup, or execution.
 
 ## Coordinator Log
 
 - 2026-09-04T21:22:30-04:00 - Brainstorm capture staged for `ship-orphan-cleanup` as a distinct proposed Work-owned contract amendment; safe independent proof remains unresolved. Awaiting first-capture publication and a separate explicit definition subaction; no lifecycle number or package path assigned.
 - 2026-09-04T21:40:41-04:00 - Brainstorm-evidence refresh of the published 056 draft: recorded Architect source inspection and the unresolved supervisor-loss/exact-pair authority boundary. Existing question remains unanswered; defer/manual confirmation versus explicit narrower recapture remains a user choice, with no autonomous disposition. Preserved user-controlled sections, draft status, and empty spec_path; no package, tasks, or execution changes.
+- 2026-09-19T15:03:42Z - Brainstorm refresh (coordinator-supplied timestamp): retained the proven-dead exact-pair goal and unresolved supervisor-absence proof; separated deterministic cleanup checks from evidence/authority and 060's upstream handoffs. Draft and empty spec_path preserved; no cleanup, new invocation, or package.
 <!-- dude:managed:end -->

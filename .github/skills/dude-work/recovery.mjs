@@ -8063,6 +8063,65 @@ function completionDispositionV2(completion, verification, review) {
   return 'accepted';
 }
 
+/** @param {unknown} value */
+function completionV2Record(value) {
+  return assertExactRecord(
+    value,
+    ['version', 'target', 'attemptIdentity', 'route', 'outcome', 'operations', 'changedTargets', 'resultIdentity', 'verificationEnvelopeIdentity', 'reviewEnvelopeIdentity', 'findingIdentities'],
+    [],
+    'completion v2',
+  );
+}
+
+/**
+ * Pure completion contract shared by host preflight and capture at use. The
+ * caller supplies envelopes, not trusted-source authority; only capture's fresh
+ * Inspection can establish that authority and admit the result.
+ * @param {unknown} stateValue @param {unknown} completionValue
+ * @param {unknown} verificationValue @param {unknown} reviewValue
+ */
+export function validateCompletionV2(stateValue, completionValue, verificationValue, reviewValue) {
+  const state = /** @type {Record<string, unknown>} */ (validateRunState(stateValue));
+  if (/** @type {Record<string, unknown>} */ (state.policy).mode !== 'autonomous') {
+    invalid('completion v2', 'requires autonomous policy');
+  }
+  const pendingRows = /** @type {Record<string, unknown>[]} */ (state.pending);
+  if (pendingRows.length !== 1) invalid('completion v2', 'requires exactly one pending attempt');
+  const pending = pendingRows[0];
+  const completion = completionV2Record(completionValue);
+  const binding = validateCompletionV2Binding(pending, completion, 'completion v2');
+  const context = completionApproachContextV2(state, pending);
+  if (completion.attemptIdentity !== context.attemptIdentity) {
+    invalid('completion v2.attemptIdentity', 'must reference the derived pending attempt identity');
+  }
+  const verification = /** @type {Record<string, unknown>} */ (
+    validateVerificationEnvelopeV2(verificationValue)
+  );
+  const review = /** @type {Record<string, unknown>} */ (
+    validateIndependentReviewEnvelopeV2(reviewValue, verification)
+  );
+  if (verification.envelopeIdentity !== completion.verificationEnvelopeIdentity
+    || review.envelopeIdentity !== completion.reviewEnvelopeIdentity) {
+    invalid('completion v2', 'must match the exact verification and review envelope identities');
+  }
+  if (review.attemptOrdinal !== context.attemptOrdinal) {
+    invalid('completion v2 attempt chronology', 'must match the authorized attempt ordinal');
+  }
+  for (const envelope of [verification, review]) {
+    if (envelope.attemptIdentity !== completion.attemptIdentity
+      || envelope.resultIdentity !== completion.resultIdentity
+      || envelope.inspectedEvidenceHash !== pending.evidenceHash
+      || canonicalJson(envelope.target) !== canonicalJson(binding.target)) {
+      invalid('completion v2', 'must match trusted target, attempt, result, and pending authorization Inspection evidence');
+    }
+  }
+  const findings = /** @type {Record<string, unknown>[]} */ (review.findings);
+  if (canonicalJson(binding.findingIdentities) !== canonicalJson(findings.map(finding => finding.findingIdentity))) {
+    invalid('completion v2.findingIdentities', 'must equal the complete trusted review finding set');
+  }
+  return { binding, context, disposition: completionDispositionV2(completion, verification, review) };
+}
+
 /**
  * Capture one autonomous completion from trusted rows inside a fresh Inspection.
  * The semantic completion value contains identities only.
@@ -8084,12 +8143,7 @@ export function captureCompletionV2(stateValue, inputValue, completionValue, dep
   if (/** @type {unknown[]} */ (inspection.blockers).length > 0) {
     invalid('captureCompletionV2 inspection', 'must be complete and unblocked');
   }
-  const completion = assertExactRecord(
-    completionValue,
-    ['version', 'target', 'attemptIdentity', 'route', 'outcome', 'operations', 'changedTargets', 'resultIdentity', 'verificationEnvelopeIdentity', 'reviewEnvelopeIdentity', 'findingIdentities'],
-    [],
-    'completion v2',
-  );
+  const completion = completionV2Record(completionValue);
   const completionTarget = canonicalTarget(validateAffectedTargetV2(completion.target, 'completion v2.target'));
   const pendingRows = /** @type {Record<string, unknown>[]} */ (state.pending);
   if (pendingRows.length !== 1) invalid('captureCompletionV2', 'requires exactly one pending attempt');
@@ -8162,24 +8216,8 @@ export function captureCompletionV2(stateValue, inputValue, completionValue, dep
   const reviewRow = trusted.reviews.get(/** @type {string} */ (completion.reviewEnvelopeIdentity));
   if (!reviewRow) invalid('completion v2.reviewEnvelopeIdentity', 'must select exactly one trusted independent-review capture');
   const review = /** @type {Record<string, unknown>} */ (reviewRow.envelope);
-  validateIndependentReviewEnvelopeV2(review, verification);
-  if (review.attemptOrdinal !== context.attemptOrdinal) {
-    invalid('completion v2 attempt chronology', 'must match the authorized attempt ordinal');
-  }
-  for (const envelope of [verification, review]) {
-    if (envelope.attemptIdentity !== completion.attemptIdentity
-      || envelope.resultIdentity !== completion.resultIdentity
-      || envelope.inspectedEvidenceHash !== pending.evidenceHash
-      || canonicalJson(envelope.target) !== canonicalJson(binding.target)) {
-      invalid('completion v2', 'must match trusted target, attempt, result, and pending authorization Inspection evidence');
-    }
-  }
+  const { disposition } = validateCompletionV2(state, completion, verification, review);
   const reviewFindings = /** @type {Record<string, unknown>[]} */ (review.findings);
-  const normalizedFindingIdentities = reviewFindings.map((finding) => finding.findingIdentity);
-  if (canonicalJson(binding.findingIdentities) !== canonicalJson(normalizedFindingIdentities)) {
-    invalid('completion v2.findingIdentities', 'must equal the complete trusted review finding set');
-  }
-  const disposition = completionDispositionV2(completion, verification, review);
   const approachEvent = buildApproachOccurrenceEventV1({
     target: binding.target,
     basis: context.basis,
@@ -8612,6 +8650,34 @@ function validateRetainedOccurrenceAuthorityV2(events, trusted) {
       || matchingOccurrence.resultIdentity !== reviewEnvelope.resultIdentity) {
       invalid(`retained occurrence events[${index}]`, 'conflicts with its retained attempt approach occurrence');
     }
+  }
+}
+
+/**
+ * Read-only admission check over a fresh Inspection. Projection prefixes may be
+ * legitimately one-sided, so this is not a general Inspection invariant.
+ * @param {Record<string, unknown>} inspection
+ */
+export function inspectRetainedOccurrencesV2(inspection) {
+  let source = 'current-run';
+  try {
+    const retained = dualRetainedOccurrenceEventsV2(inspection).retained;
+    if (retained.length > 0) {
+      source = 'verification/review';
+      validateRetainedOccurrenceAuthorityV2(retained, trustedEnvelopeIndexFromInspectionV2(inspection));
+    }
+    return { retained, blocker: null, source: null };
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    return {
+      retained: [],
+      blocker: {
+        code: 'evidence-incomplete',
+        subject: 'occurrence-retention',
+        evidenceHash: inspection.evidenceHash,
+      },
+      source,
+    };
   }
 }
 
@@ -9668,22 +9734,12 @@ function authorizeInspectedAttempt(state, target, inspection, assessmentValue, m
   /** @type {Record<string, unknown>[]} */
   let retainedV2Approaches = [];
   if (policy.mode === 'autonomous') {
-    try {
-      const retained = dualRetainedOccurrenceEventsV2(inspection).retained;
-      if (retained.length > 0) {
-        const trusted = trustedEnvelopeIndexFromInspectionV2(inspection);
-        validateRetainedOccurrenceAuthorityV2(retained, trusted);
-      }
-      retainedV2Approaches = retained
-        .filter((event) => event.type === 'approach-occurrence');
-    } catch {
-      const blocker = {
-        code: 'evidence-incomplete',
-        subject: 'occurrence-retention',
-        evidenceHash: inspection.evidenceHash,
-      };
-      return authorizationRefusal(state, 'evidence-incomplete', blocker);
+    const retention = inspectRetainedOccurrencesV2(inspection);
+    if (retention.blocker) {
+      return authorizationRefusal(state, 'evidence-incomplete', retention.blocker);
     }
+    retainedV2Approaches = retention.retained
+      .filter((event) => event.type === 'approach-occurrence');
   }
   const legacyCompleted = completed.filter((entry) => !retainedV2Approaches.some((event) => {
     const occurrence = /** @type {Record<string, unknown>} */ (event.occurrence);

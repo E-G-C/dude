@@ -55,6 +55,7 @@ import {
   descriptor,
   evidenceHash,
   inspect,
+  inspectRetainedOccurrencesV2,
   limits,
   mayContinueAutonomously,
   modelPacket,
@@ -8435,6 +8436,119 @@ function t002PendingFixture(overrides = {}) {
   return { target, attemptOrdinal, materialInputs, pending, state, approachBasis, attemptIdentity, completion, ...envelopes };
 }
 
+test('Feature 060 T002: pure completion preflight and receiving capture enforce the same pending bindings', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), root => {
+    const fixture = t002PendingFixture({ checkOutcome: 'passed', verdict: 'accepted' });
+    const stateBytes = canonicalJson(fixture.state);
+    const input = autonomousInspectInput(root, t002TrustedStreams([fixture]));
+    const checked = recoveryRuntime.validateCompletionV2(
+      fixture.state, fixture.completion, fixture.verification, fixture.review,
+    );
+    assert.equal(checked.disposition, 'accepted');
+    assert.equal(checked.context.attemptIdentity, fixture.attemptIdentity);
+    assert.deepEqual(checked.binding.changedTargets, fixture.materialInputs.targets);
+    assert.equal(canonicalJson(fixture.state), stateBytes);
+    assert.equal(Object.hasOwn(fixture.state, 'pendingCompletion'), false, 'validation grants no acceptance');
+
+    const cases = [
+      ['omitted changed file', {
+        ...fixture.completion, changedTargets: ['src/t002-result.test.mjs'],
+      }, /pending action/],
+      ['wrong action', { ...fixture.completion, operations: ['execute-task'] }, /pending action/],
+      ['wrong target', { ...fixture.completion, target: SECOND_TARGET }, /pending attempt target/],
+      ['stale attempt', { ...fixture.completion, attemptIdentity: t002Hash('stale-preflight-attempt') }, /derived pending attempt/],
+      ['wrong result', { ...fixture.completion, resultIdentity: t002Hash('wrong-preflight-result') }, /trusted target, attempt, result/],
+      ['contradictory outcome', { ...fixture.completion, outcome: 'failed' }, /succeeded or no-change/],
+      ['extra trusted finding', { ...fixture.completion, findingIdentities: [t002Hash('extra-preflight-finding')] }, /complete trusted review finding set/],
+    ];
+    for (const [label, completion, pattern] of cases) {
+      const before = canonicalJson(completion);
+      assert.throws(
+        () => recoveryRuntime.validateCompletionV2(
+          fixture.state, completion, fixture.verification, fixture.review,
+        ),
+        pattern, label,
+      );
+      assert.throws(
+        () => recoveryRuntime.captureCompletionV2(fixture.state, input, completion),
+        pattern, label,
+      );
+      assert.equal(canonicalJson(completion), before, label);
+      assert.equal(canonicalJson(fixture.state), stateBytes, label);
+    }
+    const captured = recoveryRuntime.captureCompletionV2(fixture.state, input, fixture.completion);
+    assert.equal(captured.captured, true);
+    assert.equal(captured.finalized, false);
+    assert.deepEqual(captured.state.pending, fixture.state.pending);
+    assert.equal(captured.state.overallUsed, fixture.state.overallUsed);
+  });
+});
+
+test('Feature 060 T002: completion preflight binds the entire trusted pair and preserves genuine failure dispositions', () => {
+  for (const [checkOutcome, verdict, disposition] of [
+    ['passed', 'accepted', 'accepted'],
+    ['failed', 'accepted', 'verification-failed'],
+    ['passed', 'rejected', 'review-rejected'],
+    ['failed', 'rejected', 'verification-failed'],
+  ]) {
+    const fixture = t002PendingFixture({ checkOutcome, verdict });
+    const before = canonicalJson(fixture);
+    assert.equal(recoveryRuntime.validateCompletionV2(
+      fixture.state, fixture.completion, fixture.verification, fixture.review,
+    ).disposition, disposition);
+    assert.equal(t002CapturePendingFixture(fixture).occurrenceEvents[0].occurrence.disposition, disposition);
+    for (const field of ['verificationEnvelopeIdentity', 'reviewEnvelopeIdentity']) {
+      assert.throws(
+        () => recoveryRuntime.validateCompletionV2(
+          fixture.state, { ...fixture.completion, [field]: t002Hash(`foreign-${field}`) },
+          fixture.verification, fixture.review,
+        ),
+        /exact verification and review envelope identities/,
+      );
+    }
+    const staleState = clone(fixture.state);
+    staleState.pending[0].evidenceHash = t002Hash('another-authorization');
+    assert.throws(
+      () => recoveryRuntime.validateCompletionV2(
+        staleState, fixture.completion, fixture.verification, fixture.review,
+      ),
+      /derived pending attempt/,
+    );
+    const staleVerification = t002ReidentifyEnvelope({
+      ...fixture.verification, inspectedEvidenceHash: t002Hash('stale-specialist-inspection'),
+    });
+    const staleReview = t002ReidentifyEnvelope({
+      ...fixture.review,
+      inspectedEvidenceHash: staleVerification.inspectedEvidenceHash,
+      verificationEnvelopeIdentity: staleVerification.envelopeIdentity,
+    });
+    assert.throws(
+      () => recoveryRuntime.validateCompletionV2(
+        fixture.state,
+        {
+          ...fixture.completion,
+          verificationEnvelopeIdentity: staleVerification.envelopeIdentity,
+          reviewEnvelopeIdentity: staleReview.envelopeIdentity,
+        },
+        staleVerification,
+        staleReview,
+      ),
+      /pending authorization Inspection evidence/,
+      'a structurally valid, cross-bound pair still needs the authorizing Inspection hash',
+    );
+    const wrongReview = t002ReidentifyEnvelope({
+      ...fixture.review, verificationEnvelopeIdentity: t002Hash('foreign-verification'),
+    });
+    assert.throws(
+      () => recoveryRuntime.validateCompletionV2(
+        fixture.state, fixture.completion, fixture.verification, wrongReview,
+      ),
+      /verification/,
+    );
+    assert.equal(canonicalJson(fixture), before);
+  }
+});
+
 /** @param {ReturnType<typeof t002PendingFixture>} fixture */
 function t002CapturePendingFixture(fixture) {
   let captured;
@@ -9248,6 +9362,120 @@ test('T002 Lightweight retention keeps same-target completeness and wrong-target
     assert.equal(laneOnly.blocker.subject, 'occurrence-retention');
     assert.equal(wrongTargetResult.finalized, false);
     assert.equal(wrongTargetResult.reason, 'occurrence-retention-conflict');
+  });
+});
+
+test('Feature 060 T001: read-only retention preflight shares authorization checks, not global Inspection invariants', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), root => {
+    const fixture = t002PendingFixture();
+    const captured = recoveryRuntime.captureCompletionV2(
+      fixture.state, autonomousInspectInput(root, t002TrustedStreams([fixture])), fixture.completion,
+    );
+    const events = captured.occurrenceEvents;
+    const state = emptyState({ mode: 'autonomous', recover: true });
+    const before = canonicalJson(state);
+    for (const [label, current, trusted, source] of [
+      ['complete', events, [fixture], null],
+      ['lane-first prefix', [], [fixture], 'current-run'],
+      ['missing trusted captures', events, [], 'verification/review'],
+      ['duplicate event keeps existing admission semantics', [...events, events[0]], [fixture], null],
+    ]) {
+      const input = t002RetentionInput(root, current, events, trusted);
+      const inspection = inspect(input);
+      const inspectionBytes = canonicalJson(inspection);
+      assert.deepEqual(inspection.blockers, [], label);
+      assert.ok(modelPacket(inspection), label);
+      assert.doesNotThrow(() => validateInspection(inspection), label);
+      const retention = inspectRetainedOccurrencesV2(inspection);
+      assert.equal(retention.source, source, label);
+      const candidate = {
+        ...transitionAssessment('execute-task'), evidenceHash: inspection.evidenceHash,
+      };
+      const authorize = (overrides = {}) => recoveryRuntime.runCommand('authorize', {
+        trigger: 'resume', state, input, assessment: candidate, mode: 'ordinary', ...overrides,
+      }).authorization;
+      const authorization = authorize();
+      if (source === null) {
+        assert.equal(retention.blocker, null, label);
+        assert.deepEqual(retention.retained, events, label);
+        assert.equal(authorization.authorized, true, label);
+      } else {
+        assert.deepEqual(retention.blocker, {
+          code: 'evidence-incomplete', subject: 'occurrence-retention', evidenceHash: inspection.evidenceHash,
+        }, label);
+        assert.equal(authorization.authorized, false, label);
+        assert.deepEqual(authorization.blocker, retention.blocker, label);
+        assert.deepEqual(authorization.state, state, label);
+        assert.equal(authorize({
+          assessment: { ...candidate, evidenceHash: sha256('stale admission assessment') },
+        }).reason, 'evidence-drift', 'Assessment drift still precedes retention');
+        assert.equal(authorize({
+          state: {
+            ...fixture.state,
+            policy: { ...fixture.state.policy, overall: fixture.state.overallUsed },
+          },
+        }).reason, 'overall-exhausted', 'budget exhaustion still precedes retention');
+        assert.equal(authorize({
+          assessment: { ...candidate, intent: 'changed' },
+        }).reason, 'clarification-required', 'intent authority still precedes retention');
+      }
+      assert.equal(canonicalJson(inspection), inspectionBytes, label);
+      assert.equal(canonicalJson(state), before, label);
+    }
+  });
+});
+
+test('Feature 060 T003: occurrence-retention reporting requires the current runtime blocker and leaves unavailable facts unresolved', () => {
+  withAutonomousWorkspace(noRegistryPlanBytes(SPEC_PATH), root => {
+    const fixture = t002PendingFixture();
+    const captured = recoveryRuntime.captureCompletionV2(
+      fixture.state, autonomousInspectInput(root, t002TrustedStreams([fixture])), fixture.completion,
+    );
+    const prior = inspect(t002RetentionInput(root, [], [], [fixture]));
+    const input = t002RetentionInput(root, [], captured.occurrenceEvents, [fixture]);
+    const inspection = inspect(input);
+    assert.deepEqual(inspection.blockers, []);
+    assert.notEqual(inspection.evidenceHash, prior.evidenceHash);
+    const state = emptyState({ mode: 'autonomous', recover: true });
+    const before = canonicalJson(state);
+    const assessment = { ...transitionAssessment('execute-task'), evidenceHash: inspection.evidenceHash };
+    validateAssessment(TARGET, inspection, assessment);
+    const { authorization } = recoveryRuntime.runCommand('authorize', {
+      trigger: 'resume', state, input, assessment, mode: 'ordinary',
+    });
+    assert.equal(authorization.authorized, false);
+    assert.equal(authorization.reason, 'evidence-incomplete');
+    assert.deepEqual(authorization.blocker, {
+      code: 'evidence-incomplete', subject: 'occurrence-retention', evidenceHash: inspection.evidenceHash,
+    });
+    assert.deepEqual(describeUnattendedHalt(authorization, inspection), {
+      halted: true, resolved: true, reason: 'evidence-incomplete', stopClass: 'hard-stop',
+      target: canonicalTarget(TARGET), subject: 'occurrence-retention',
+      nextAction: 'request-human-input', evidenceHash: inspection.evidenceHash,
+    });
+    for (const [label, blocker] of [
+      ['absent', undefined],
+      ['null', null],
+      ['missing subject', { code: 'evidence-incomplete', evidenceHash: inspection.evidenceHash }],
+      ['unknown code', { ...authorization.blocker, code: 'foreign-refusal' }],
+      ['wrong reason', { ...authorization.blocker, code: 'approval-required' }],
+      ['invalid subject', { ...authorization.blocker, subject: '\u0000' }],
+      ['unknown field', { ...authorization.blocker, foreign: true }],
+      ['stale inspection hash', { ...authorization.blocker, evidenceHash: prior.evidenceHash }],
+    ]) {
+      assert.deepEqual(describeUnattendedHalt({ ...authorization, blocker }, inspection), {
+        halted: true, resolved: false, unresolved: ['subject'],
+      }, label);
+    }
+    assert.deepEqual(describeUnattendedHalt(authorization, null), {
+      halted: true, resolved: false, unresolved: ['target', 'subject'],
+    });
+    assert.deepEqual(describeUnattendedHalt(authorization, prior), {
+      halted: true, resolved: false, unresolved: ['subject'],
+    });
+    assert.equal(Object.hasOwn(authorization, 'capacity'), false);
+    assert.equal(canonicalJson(authorization.state), before);
+    assert.equal(canonicalJson(state), before);
   });
 });
 
