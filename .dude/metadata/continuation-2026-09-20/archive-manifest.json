@@ -1,0 +1,72 @@
+{
+  "purpose": "Reconstruct exact gzip archives by concatenating the numbered parts in listed order.",
+  "archives": [
+    {
+      "path": "supporting-evidence.tar.gz",
+      "sha256": "0ce0d1af1dcf6372dc747925bda634d42ed2e8fd9ab8801b3d792cac8049395d",
+      "bytes": 297220287,
+      "members": 9459,
+      "duplicateMembersPreservedAsTarHardlinks": 2400,
+      "uniqueContentBytes": 1150866430,
+      "parts": [
+        {
+          "path": "archives/supporting-evidence.tar.gz.part-001",
+          "bytes": 41943040,
+          "sha256": "416e1221fa5104fdc736f7db55f4356b3c6af0f7216ebc32b40120dbc6860ed9"
+        },
+        {
+          "path": "archives/supporting-evidence.tar.gz.part-002",
+          "bytes": 41943040,
+          "sha256": "b806ab4811bc248a1657bd5add1dfc761258cb5c0ee2c1c425394d36816d4ee5"
+        },
+        {
+          "path": "archives/supporting-evidence.tar.gz.part-003",
+          "bytes": 41943040,
+          "sha256": "1cb5d59eba90413d1a3ba9ce5233ece16400635ac255109b27579a4a07c14565"
+        },
+        {
+          "path": "archives/supporting-evidence.tar.gz.part-004",
+          "bytes": 41943040,
+          "sha256": "0e1b193ea2b1765af8797a9acda2962ed36c723f7ee91dd2f285ee45c73aa7c5"
+        },
+        {
+          "path": "archives/supporting-evidence.tar.gz.part-005",
+          "bytes": 41943040,
+          "sha256": "5e391b2b5736b596533f02e3bbb393e9af9ee5ea986f922a50bc55a899e6ce0a"
+        },
+        {
+          "path": "archives/supporting-evidence.tar.gz.part-006",
+          "bytes": 41943040,
+          "sha256": "0a3b6857c14e18dd9786e8ea4639f86c79041c419ab0e4751510211c13317a02"
+        },
+        {
+          "path": "archives/supporting-evidence.tar.gz.part-007",
+          "bytes": 41943040,
+          "sha256": "95f9209560afe0a54786ae5b114aaecf914701b6b4c0e7ac82dc1cb9128439c6"
+        },
+        {
+          "path": "archives/supporting-evidence.tar.gz.part-008",
+          "bytes": 3619007,
+          "sha256": "071bb8e52048d0465304decef939195b31a577984c94a922d1cb3db41cab69d8"
+        }
+      ],
+      "fileManifest": "supporting-evidence-files.json"
+    },
+    {
+      "path": "additional-evidence.tar.gz",
+      "sha256": "73a103fc693f997fba182505132d3a45cbf185a9493688a054f9c0c7733c07e0",
+      "bytes": 31765560,
+      "members": 985,
+      "duplicateMembersPreservedAsTarHardlinks": 121,
+      "uniqueContentBytes": 154621140,
+      "parts": [
+        {
+          "path": "archives/additional-evidence.tar.gz.part-001",
+          "bytes": 31765560,
+          "sha256": "73a103fc693f997fba182505132d3a45cbf185a9493688a054f9c0c7733c07e0"
+        }
+      ],
+      "fileManifest": "additional-evidence-files.json"
+    }
+  ]
+}

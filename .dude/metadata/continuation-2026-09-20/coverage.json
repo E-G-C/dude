@@ -1,0 +1,2735 @@
+{
+  "purpose": "Frozen one-time continuation export; not a task authority, automatic loader, or authorization to resume old workers.",
+  "createdAt": "2026-09-20T00:27:05.109Z",
+  "repository": "E-G-C/dude",
+  "baseCommit": "db6350a91877f8ac9dbdac18b2ce57d6ab192cdf",
+  "originalSession": "6548ab4a-a610-4b77-bce6-4f630599ef4c",
+  "summary": {
+    "ideas": 65,
+    "definedPackages": 56,
+    "canonicalTasks": 305,
+    "doneTasks": 303,
+    "eventTargets": 67,
+    "recordedEvents": 150,
+    "completeOriginalCaptureTargets": 9,
+    "missingOriginalCaptureTargets": 57,
+    "auditOnlyTargets": 1,
+    "supportingFiles": 10444,
+    "archiveBytes": 328985847,
+    "entireHistoricalEvidenceSetRecovered": false,
+    "ancillaryFiles": 6
+  },
+  "features": [
+    {
+      "ideaPath": ".dude/ideas/001-brainstorm-ideas-intake.md",
+      "slug": "brainstorm-ideas-intake",
+      "number": "001",
+      "status": "defined",
+      "specPath": ".dude/specs/001-brainstorm-ideas-intake/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 13,
+        "done": 13,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/002-remove-legacy-compatibility.md",
+      "slug": "remove-legacy-compatibility",
+      "number": "002",
+      "status": "defined",
+      "specPath": ".dude/specs/002-remove-legacy-compatibility/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 36,
+        "done": 36,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/003-guarded-directory-artifact-import.md",
+      "slug": "guarded-directory-artifact-import",
+      "number": "003",
+      "status": "defined",
+      "specPath": ".dude/specs/003-guarded-directory-artifact-import/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 10,
+        "done": 10,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/004-pre-work-log-learning.md",
+      "slug": "pre-work-log-learning",
+      "number": "004",
+      "status": "defined",
+      "specPath": ".dude/specs/004-pre-work-log-learning/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 8,
+        "done": 8,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/005-autonomous-work-modes.md",
+      "slug": "autonomous-work-modes",
+      "number": "005",
+      "status": "defined",
+      "specPath": ".dude/specs/005-autonomous-work-modes/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 8,
+        "done": 8,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/006-simplify-context-footprint-audit.md",
+      "slug": "simplify-context-footprint-audit",
+      "number": "006",
+      "status": "defined",
+      "specPath": ".dude/specs/006-simplify-context-footprint-audit/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 2,
+        "done": 2,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/007-technical-docs-pack-remediation.md",
+      "slug": "technical-docs-pack-remediation",
+      "number": "007",
+      "status": "defined",
+      "specPath": ".dude/specs/007-technical-docs-pack-remediation/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 9,
+        "done": 9,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/007-technical-docs-pack-remediation/spec.md",
+            "taskKey": "T001@00709e37"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "b2ae4707d645d55063bb53a69bac66aa602c7b4dc12ff5a6b60bd40ce8d24ce5"
+          ],
+          "eventTypes": [
+            "incident-supersession"
+          ],
+          "evidence": {
+            "state": "audit-only-history",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/008-automatic-core-dogfood-promotion.md",
+      "slug": "automatic-core-dogfood-promotion",
+      "number": "008",
+      "status": "defined",
+      "specPath": ".dude/specs/008-automatic-core-dogfood-promotion/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 7,
+        "done": 7,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/009-autonomous-learning-governance.md",
+      "slug": "autonomous-learning-governance",
+      "number": "009",
+      "status": "defined",
+      "specPath": ".dude/specs/009-autonomous-learning-governance/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 9,
+        "done": 9,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/010-core-autonomous-event-round-trip.md",
+      "slug": "core-autonomous-event-round-trip",
+      "number": "010",
+      "status": "defined",
+      "specPath": ".dude/specs/010-core-autonomous-event-round-trip/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 4,
+        "done": 4,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/011-historical-core-dogfood-fixture-repair.md",
+      "slug": "historical-core-dogfood-fixture-repair",
+      "number": "011",
+      "status": "defined",
+      "specPath": ".dude/specs/011-historical-core-dogfood-fixture-repair/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 2,
+        "done": 2,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/012-core-dogfood-close-simplification.md",
+      "slug": "core-dogfood-close-simplification",
+      "number": "012",
+      "status": "defined",
+      "specPath": ".dude/specs/012-core-dogfood-close-simplification/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/013-unattended-work-continuity.md",
+      "slug": "unattended-work-continuity",
+      "number": "013",
+      "status": "defined",
+      "specPath": ".dude/specs/013-unattended-work-continuity/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 6,
+        "done": 6,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/014-autonomous-review-escalation-precedence.md",
+      "slug": "autonomous-review-escalation-precedence",
+      "number": "014",
+      "status": "defined",
+      "specPath": ".dude/specs/014-autonomous-review-escalation-precedence/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/015-automatic-unchanged-intent-redefinition.md",
+      "slug": "automatic-unchanged-intent-redefinition",
+      "number": "015",
+      "status": "defined",
+      "specPath": ".dude/specs/015-automatic-unchanged-intent-redefinition/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 6,
+        "done": 6,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/016-simplify-work-command.md",
+      "slug": "simplify-work-command",
+      "number": "016",
+      "status": "defined",
+      "specPath": ".dude/specs/016-simplify-work-command/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/017-ship-command.md",
+      "slug": "ship-command",
+      "number": "017",
+      "status": "defined",
+      "specPath": ".dude/specs/017-ship-command/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/017-ship-command/spec.md",
+            "taskKey": "T001@73686970"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "5be7e0516d9d1c33fd8a87e511c7f0295c6eb389433d2dfe4c02fb63e179aeb1"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/017-ship-command/spec.md",
+            "taskKey": "T002@646f6373"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "ea8b6b8c7d8989eacaa39c11aa7a7baf4da62ca05866096b2e44f3d7f320c4f7"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/017-ship-command/spec.md",
+            "taskKey": "T003@76616c69"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "3f986bdd933c4ad0271c0666acb4b8af3da4a961914d908167c200812499f1f6"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/018-autonomous-runstate-continuity.md",
+      "slug": "autonomous-runstate-continuity",
+      "number": "018",
+      "status": "defined",
+      "specPath": ".dude/specs/018-autonomous-runstate-continuity/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 7,
+        "done": 7,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/018-autonomous-runstate-continuity/spec.md",
+            "taskKey": "T001@62726964"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "2e4192ab9798b271410eeaca65e532a318a23f8bce9173fe9bc83c58e0e57079"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/018-autonomous-runstate-continuity/spec.md",
+            "taskKey": "T002@63686b70"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "13c7cb3c9db7c54c2960ccdc88f362a77cdc37b1c2720845591dd06bbb103b40"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/018-autonomous-runstate-continuity/spec.md",
+            "taskKey": "T003@696e7467"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "8f3315020a08a299c8edb50d975f5964a35487d2fbfccd3ba9d6f77741199ca5"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/018-autonomous-runstate-continuity/spec.md",
+            "taskKey": "T004@76616c69"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "196d0642265500ecd36f20e02b0c7c739be26965b6249795c1d0c52b71788355"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/018-autonomous-runstate-continuity/spec.md",
+            "taskKey": "T004@72756e72"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "ea4617764da324cff1d5f6f3a4c5d9b0fb103c63c06b10f6b8e1e6fcd7d991b2"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/018-autonomous-runstate-continuity/spec.md",
+            "taskKey": "T005@6173736d"
+          },
+          "eventCount": 4,
+          "eventHashes": [
+            "1d0e8beb53b3789b99162d8b874bb548972129c5e5ae5c8da83b93fecd1842f0",
+            "ea3addd05481ba52cf6f2fd2b51b069bdaa0c8623750ed99632beb80a8dd2932",
+            "8c361e4a5bf26ac8b82120aa6afa8f3fbacb8d418eed97ccd3a2a4b07af792c0",
+            "0625de359bb7028a17ef38aad9d82d9dc54ce0093eeb4f6f6361df613421e0dd"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/018-autonomous-runstate-continuity/spec.md",
+            "taskKey": "T006@61737376"
+          },
+          "eventCount": 2,
+          "eventHashes": [
+            "7107d33f2b26d36ae44d35882ee1daa5abd2409e8dd282bfd62684997c74458c",
+            "229f75d166784ddcaa9fc175aa45d6f6877309162696204ba426e63caf3d11e7"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/018-autonomous-runstate-continuity/spec.md",
+            "taskKey": "T007@6d726b72"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "6c55f001a3915327d09b01ecd3c0dd1f06593e0442b046c5427fb1d7720d83d7"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/018-autonomous-runstate-continuity/spec.md",
+            "taskKey": "T008@6d756c74"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "d53e3be6703496b00d4c2b44e7345d3bb225d14323ca8fc2430b452b0cf7ffc3"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/018-autonomous-runstate-continuity/spec.md",
+            "taskKey": "T010@7061636b"
+          },
+          "eventCount": 3,
+          "eventHashes": [
+            "9b95dc984b35cea220db56141ad4e6a0f5e48c5a960d3b45629e1d4f6f915705",
+            "e0adcc3eab2c0fa89081871e097dac524e866384e9a31d2230e203176e61eca9",
+            "bad85776f3144442b11983ff626c9ccccf88d5db60f2bf6066fab58bf4cbc294"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/018-autonomous-runstate-continuity/spec.md",
+            "taskKey": "T009@6c696e74"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "cc832a863d4c20b99c22e146c8f0ab87ec217a145b504207d4085ed6550cb1d7"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/019-specialist-attestation-producer.md",
+      "slug": "specialist-attestation-producer",
+      "number": "019",
+      "status": "defined",
+      "specPath": ".dude/specs/019-specialist-attestation-producer/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/020-task-scoped-skill-resolution.md",
+      "slug": "task-scoped-skill-resolution",
+      "number": "020",
+      "status": "defined",
+      "specPath": ".dude/specs/020-task-scoped-skill-resolution/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/021-topology-first-enforcement-reset.md",
+      "slug": "topology-first-enforcement-reset",
+      "number": "021",
+      "status": "defined",
+      "specPath": ".dude/specs/021-topology-first-enforcement-reset/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/022-runner-reason-code-coverage-fix.md",
+      "slug": "runner-reason-code-coverage-fix",
+      "number": "022",
+      "status": "defined",
+      "specPath": ".dude/specs/022-runner-reason-code-coverage-fix/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/023-first-definition-publish.md",
+      "slug": "first-definition-publish",
+      "number": "023",
+      "status": "defined",
+      "specPath": ".dude/specs/023-first-definition-publish/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/024-feature-focus-order.md",
+      "slug": "feature-focus-order",
+      "number": "024",
+      "status": "defined",
+      "specPath": ".dude/specs/024-feature-focus-order/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 5,
+        "done": 5,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/025-backlog-report.md",
+      "slug": "backlog-report",
+      "number": "025",
+      "status": "defined",
+      "specPath": ".dude/specs/025-backlog-report/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 7,
+        "done": 7,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/026-remove-unused-authority-surfaces.md",
+      "slug": "remove-unused-authority-surfaces",
+      "number": "026",
+      "status": "defined",
+      "specPath": ".dude/specs/026-remove-unused-authority-surfaces/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 5,
+        "done": 5,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/027-backlog-report-usability.md",
+      "slug": "backlog-report-usability",
+      "number": "027",
+      "status": "defined",
+      "specPath": ".dude/specs/027-backlog-report-usability/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 6,
+        "done": 6,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/028-agent-orchestration-metadata.md",
+      "slug": "agent-orchestration-metadata",
+      "number": "028",
+      "status": "defined",
+      "specPath": ".dude/specs/028-agent-orchestration-metadata/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 12,
+        "done": 12,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/028-agent-orchestration-metadata/spec.md",
+            "taskKey": "T001@6d617073"
+          },
+          "eventCount": 2,
+          "eventHashes": [
+            "d87515908261723eae76620df0e931ef6e64a2c1f6b8f5ed378c5116f8aa9288",
+            "2f9b3c0f6d323b5d4b146fefadcab671726c19d1a9c5fb3c2a9e16271771fd97"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/029-bounded-owner-log-projection.md",
+      "slug": "bounded-owner-log-projection",
+      "number": "029",
+      "status": "defined",
+      "specPath": ".dude/specs/029-bounded-owner-log-projection/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/030-backlog-lifecycle-sync.md",
+      "slug": "backlog-lifecycle-sync",
+      "number": "030",
+      "status": "defined",
+      "specPath": ".dude/specs/030-backlog-lifecycle-sync/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/031-transactional-pack-refresh.md",
+      "slug": "transactional-pack-refresh",
+      "number": "031",
+      "status": "defined",
+      "specPath": ".dude/specs/031-transactional-pack-refresh/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/032-theme-agnostic-design-workflow.md",
+      "slug": "theme-agnostic-design-workflow",
+      "number": "032",
+      "status": "defined",
+      "specPath": ".dude/specs/032-theme-agnostic-design-workflow/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/032-theme-agnostic-design-workflow/spec.md",
+            "taskKey": "T001@6465736e"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "256657efa552b37b7babecdb9fabd23baba1229cb53b510607a6c2ea78f8d161"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/032-theme-agnostic-design-workflow/spec.md",
+            "taskKey": "T002@73747261"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "883a1ff4835a856078aa9c6310b8940066016ef1275fff93d648ddd48b9820a8"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/032-theme-agnostic-design-workflow/spec.md",
+            "taskKey": "T003@72667368"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "7552899b3e4e8f142da82953da47483136d829ebdb58360810db7a3ab032d145"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/033-conversational-brainstorm-intake.md",
+      "slug": "conversational-brainstorm-intake",
+      "number": "033",
+      "status": "defined",
+      "specPath": ".dude/specs/033-conversational-brainstorm-intake/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 2,
+        "done": 2,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/034-github-issue-work-intake.md",
+      "slug": "github-issue-work-intake",
+      "number": "034",
+      "status": "defined",
+      "specPath": ".dude/specs/034-github-issue-work-intake/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/035-pack-catalog-refetch.md",
+      "slug": "pack-catalog-refetch",
+      "number": "035",
+      "status": "defined",
+      "specPath": ".dude/specs/035-pack-catalog-refetch/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 4,
+        "done": 4,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/036-upgrade-pack-guidance-correction.md",
+      "slug": "upgrade-pack-guidance-correction",
+      "number": "036",
+      "status": "defined",
+      "specPath": ".dude/specs/036-upgrade-pack-guidance-correction/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 1,
+        "done": 1,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/037-simplify-pack-updates.md",
+      "slug": "simplify-pack-updates",
+      "number": "037",
+      "status": "defined",
+      "specPath": ".dude/specs/037-simplify-pack-updates/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 6,
+        "done": 6,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/038-bulk-pack-refresh.md",
+      "slug": "bulk-pack-refresh",
+      "number": "038",
+      "status": "defined",
+      "specPath": ".dude/specs/038-bulk-pack-refresh/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 8,
+        "done": 8,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/039-ship-checkpoint-autonomy.md",
+      "slug": "ship-checkpoint-autonomy",
+      "number": "039",
+      "status": "defined",
+      "specPath": ".dude/specs/039-ship-checkpoint-autonomy/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 7,
+        "done": 7,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/039-ship-checkpoint-autonomy/spec.md",
+            "taskKey": "T001@736b696c"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "98de10270cc02bacfb9fb186127fff1c5f4b4f7538c0c4ef2a7acbbf572cd469"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/039-ship-checkpoint-autonomy/spec.md",
+            "taskKey": "T002@6167656e"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "08746a171fe6f81e933577cc2436e6e3d57a5e2d0b00ca22ac0af7f1bfbb0b0c"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/039-ship-checkpoint-autonomy/spec.md",
+            "taskKey": "T003@6d656d6f"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "f7b09106c25dad7619a64bd80adc66412cc7defd8958744fc3135d3d646cc9ba"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/039-ship-checkpoint-autonomy/spec.md",
+            "taskKey": "T004@74657374"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "a807d6103f508ef0e814a9f4a123054d7c2ca6dc567cfa8182e41b83119ed092"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/039-ship-checkpoint-autonomy/spec.md",
+            "taskKey": "T005@696e7467"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "3d146511244000dd078458489c42fbe6fc3a9bf9043b8eeb7ee201cf6f712e7e"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/039-ship-checkpoint-autonomy/spec.md",
+            "taskKey": "T006@76657269"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "6f9e97e0e13b80691edb4b3c23ea3d391131139f9a47390c3081f6866c234f04"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/039-ship-checkpoint-autonomy/spec.md",
+            "taskKey": "T007@72657677"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "9a911db8d74cbf5c39e0fa6978c16330fb73ee05fb13ad1b76db32356e0f8d04"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/040-recovery-continuation.md",
+      "slug": "recovery-continuation",
+      "number": "040",
+      "status": "defined",
+      "specPath": ".dude/specs/040-recovery-continuation/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/040-recovery-continuation/spec.md",
+            "taskKey": "T001@74657374"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "4aa7ec886802e9e42af849fd9c9b61e30494a295e3d5d02a9fb5c84979770e15"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/040-recovery-continuation/spec.md",
+            "taskKey": "T002@736b696c"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "01fd31378c382725155096797e83799ee20fefc279c93a5cf69a511cee6935d2"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/040-recovery-continuation/spec.md",
+            "taskKey": "T003@76657269"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "508bcf809f950aa98eea9f9ab0b3a7f54d94c8474b9c4cf8d505c7cae0d59632"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/041-pack-discovery-metadata.md",
+      "slug": "pack-discovery-metadata",
+      "number": "041",
+      "status": "defined",
+      "specPath": ".dude/specs/041-pack-discovery-metadata/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 4,
+        "done": 4,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/041-pack-discovery-metadata/spec.md",
+            "taskKey": "T001@6d616e69"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "2f0fc00b75bff1e439074ee96c6d436aa11787375e99f860ca4f7301705a9158"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/041-pack-discovery-metadata/spec.md",
+            "taskKey": "T002@6c697374"
+          },
+          "eventCount": 3,
+          "eventHashes": [
+            "e7d95e5a16ef0070f9889d981b1e77a0e1ea0b2a0d43f6ab8e2cc2b0795e4424",
+            "79177e6ff753cba1eda9290bab33e0ebd56745d8b9e03c94f9d702aaf7de2455",
+            "2525cd7e48682402706e14c812cadbb252493b37ef8be59f05d2a18c94cf52ee"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/041-pack-discovery-metadata/spec.md",
+            "taskKey": "T003@63617461"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "dcf0daec9194eff1f5736ebe23d0dd02b24db39cd5f77dc7a73dc3fdaf8aa154"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/041-pack-discovery-metadata/spec.md",
+            "taskKey": "T004@70726f6a"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "3bb55013b8c6961d395d4f270257e5cfe554dec8b55c2b2cd077912da62e5bae"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/042-pack-visual-neutrality.md",
+      "slug": "pack-visual-neutrality",
+      "number": "042",
+      "status": "defined",
+      "specPath": ".dude/specs/042-pack-visual-neutrality/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 2,
+        "done": 2,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/042-pack-visual-neutrality/spec.md",
+            "taskKey": "T001@70757267"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "da088ccf62e7d93a6ae0351cbfc35183ae47bc02c458ee7231ee332b8dbaa2ed"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/042-pack-visual-neutrality/spec.md",
+            "taskKey": "T002@76657266"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "3119ef553702ca86595d47bddd7830fc1fc2f7ccb4902d5cf9de7d044fa610c4"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/043-github-issue-intake-guidance.md",
+      "slug": "github-issue-intake-guidance",
+      "number": "043",
+      "status": "defined",
+      "specPath": ".dude/specs/043-github-issue-intake-guidance/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 2,
+        "done": 2,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/043-github-issue-intake-guidance/spec.md",
+            "taskKey": "T001@4c8e2a71"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "d403c054b477098420a64f2cb714038d8f0f17f744f114a2e0e4a669b738994e"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/043-github-issue-intake-guidance/spec.md",
+            "taskKey": "T002@91d5b603"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "b0c15677edbbfeef6b7558e61406a2a8242ba554217cb14364ad4dad45b44184"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/044-persistent-design-mockups.md",
+      "slug": "persistent-design-mockups",
+      "number": "044",
+      "status": "defined",
+      "specPath": ".dude/specs/044-persistent-design-mockups/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 4,
+        "done": 4,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/044-persistent-design-mockups/spec.md",
+            "taskKey": "T001@c4a91e72"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "59553d5c4ee347e4b9ffc2f8c63364cc29e7678cecf79e0b48e5a27ba1a1f083"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/044-persistent-design-mockups/spec.md",
+            "taskKey": "T002@6f38b2d5"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "7058738af28241a7caed0a33a57d36c1a8967a645895b3c4ff43e38a4fc8ce84"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/044-persistent-design-mockups/spec.md",
+            "taskKey": "T003@a17d5c84"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "6a470480f35d16cdd83e3731d7de8a16c97300aae5ca1e55170b83697fa2c992"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/044-persistent-design-mockups/spec.md",
+            "taskKey": "T004@e92b704f"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "8e3eeda2f6922b17787e65b4cbbef00c81d8b889ef95ae4d5df7deebaeaaaa58"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/045-chronological-idea-numbering.md",
+      "slug": "chronological-idea-numbering",
+      "number": "045",
+      "status": "defined",
+      "specPath": ".dude/specs/045-chronological-idea-numbering/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 5,
+        "done": 5,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/045-chronological-idea-numbering/spec.md",
+            "taskKey": "T001@6964656e"
+          },
+          "eventCount": 9,
+          "eventHashes": [
+            "a96a983cfa6126a181e7b4ef95ef336a885aa51f2c34885284ac5f97b1eb1178",
+            "5b4de6d30520b2754e35edd4f6bd2e806abdb89cbaf4622287fd4e563612efa6",
+            "641b72abe637787c638825f489c19c51d9b97600a9c1ef57af88533b39e9d5fe",
+            "979cc3b030f04548e311f40a4348d1ef95c39623b83111bc35ff1bb17e5a4f65",
+            "a7adc5752179a43e3effc43f4fd14a77ce93acab574b90169128065375b99211",
+            "399eb8af42dbce9c9343b2a8aa8b29a73ed264370cce2db5970a146e4b7d1af9",
+            "8ae7cd0ac15625409745a0d060f70b9dea67e5e6f688e4d30398aa600fefe018",
+            "4c70cff1c722b1973aaf51bc0def35dcec20675fcfc24eca78f08bca97a8777d",
+            "301dd423f77c35a82a957977b3c33df2dc8ef3e2cd3cab3905602bf8f71b97fb"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence",
+            "learning-governance",
+            "learning-review"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/045-chronological-idea-numbering/spec.md",
+            "taskKey": "T002@6d696772"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "6c51ca3e880da4809b0c9371f69b04d5cf90ff0de65e395281d05b4295353bdc"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/045-chronological-idea-numbering/spec.md",
+            "taskKey": "T003@67756964"
+          },
+          "eventCount": 5,
+          "eventHashes": [
+            "17b481144d03512ebdeea4e5fbd7825e3d0bde0f16bc51c8e84ff82624fd9edb",
+            "9896b138725b5216dca8fc44444abfc17d7f3a88be8daf890bc2fd09c669e2b3",
+            "f0e0bd2b2fc1f58bab0a8da1878baa3a3e5ba50100e3d73e5138d64b9ea7f0e8",
+            "e839ebf3ec9c78503dfd7ac60d838417b8a50ba123c70f8045c0e843f7e656f0",
+            "771bb23f95fb05aef5bdd306929d5204c36448ec10d7847186375fee1aee5c47"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/045-chronological-idea-numbering/spec.md",
+            "taskKey": "T004@74657374"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "db5a36c8fe1b03ec249a36ce1dec2887c11e274ed5c0b5871346ce3f2aa18647"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/045-chronological-idea-numbering/spec.md",
+            "taskKey": "T005@61636370"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "4a046787dd97e50a7c4ff738b8c261f7ee9f6209276cb9426dd161484d075303"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/046-good-enough-delivery.md",
+      "slug": "good-enough-delivery",
+      "number": "046",
+      "status": "resolved",
+      "specPath": null,
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": null,
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/047-core-dogfood-preview.md",
+      "slug": "core-dogfood-preview",
+      "number": "047",
+      "status": "resolved",
+      "specPath": null,
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": null,
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/048-backlog-canvas.md",
+      "slug": "backlog-canvas",
+      "number": "048",
+      "status": "resolved",
+      "specPath": null,
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": null,
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/049-visual-systems-pack.md",
+      "slug": "visual-systems-pack",
+      "number": "049",
+      "status": "resolved",
+      "specPath": null,
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": null,
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/050-completion-closeout-report.md",
+      "slug": "completion-closeout-report",
+      "number": "050",
+      "status": "defined",
+      "specPath": ".dude/specs/050-completion-closeout-report/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 4,
+        "done": 4,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/051-retrospective-rubber-duck-pack.md",
+      "slug": "retrospective-rubber-duck-pack",
+      "number": "051",
+      "status": "defined",
+      "specPath": ".dude/specs/051-retrospective-rubber-duck-pack/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 5,
+        "done": 5,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/052-dude-canvas-ui.md",
+      "slug": "dude-canvas-ui",
+      "number": "052",
+      "status": "defined",
+      "specPath": ".dude/specs/052-dude-canvas-ui/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 13,
+        "done": 13,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/052-dude-canvas-ui/spec.md",
+            "taskKey": "T003@052read3"
+          },
+          "eventCount": 5,
+          "eventHashes": [
+            "647e68c320f7190a562e94db560ebdfb7835c05d7654c3662c7aa05635373de2",
+            "ac319bbcc595dab4d11042b48ba816c19c5e4b7a04c9410334c856f69b023201",
+            "84e71a3134aaf4e86d1c45da8cfa8a9e29139dca6dd520bae5400322180f92ec",
+            "c6cb9ff5c7f09cc8ac735b7a19a47b801e04a37b26182c1a88f6cf65a153e9d1",
+            "879477ed248a994b85aca8fe85dc4c88dd141e3c2572dd24ea1563fe88979048"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/052-dude-canvas-ui/spec.md",
+            "taskKey": "T004@052send4"
+          },
+          "eventCount": 2,
+          "eventHashes": [
+            "dac938204b4a46ec911a27b2d3530abf43d74f533e10fc844e8986ed140f2d5b",
+            "2c9196e405405508ca06356635953afad96c750c2f1f977745693ff2c153a4d4"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/052-dude-canvas-ui/spec.md",
+            "taskKey": "T014@052host4"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "2eb4f863c33eea5f2f40886ed08ddc3630d34a4ec48de0c1be62df6221d0ded9"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/052-dude-canvas-ui/spec.md",
+            "taskKey": "T008@052proj8"
+          },
+          "eventCount": 4,
+          "eventHashes": [
+            "9eddaded648f4329276f528d26bf4d75d38ecc137a46b8fd7e40c548545dbadf",
+            "6f9a0c90fd111b261e324e13a9637932744563dcdeaca88e8c2e81d8675e0526",
+            "626f991b2cb12bcadf439700080e004d5ea7053323f257525e6a8e8f15a25e18",
+            "a9c4a40bc756aedc8e840f51a6e07c1e99a8def417f6a98da7f764a73570e013"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/052-dude-canvas-ui/spec.md",
+            "taskKey": "T009@052core9"
+          },
+          "eventCount": 2,
+          "eventHashes": [
+            "aa1a026850c78ee880cd56f73998b51f446ecb5cb2a701d64278473a55b1a94b",
+            "7ddc9f449d666fefbf370b9b6f4a827cd1e2fcb921f278693b72a275bcc0046b"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/052-dude-canvas-ui/spec.md",
+            "taskKey": "T011@052a11y1"
+          },
+          "eventCount": 5,
+          "eventHashes": [
+            "27577c0c745f1e0a816d0d825d2d689800b2f00e6d6c86af6746034a48cfc775",
+            "7f9c6340c9f27c2f5d7f2634dafc85b48859bb31b7db870124ebc914d30119d6",
+            "894da2954246bb924ac91c97e78caf5321eb04c2cc708a583b6c60c7e521df0f",
+            "72a14e6908991efb00476c71310767cc15e91ed375f4298d57cf122102a236eb",
+            "663b28b6d34250b42a9ec8809320e98602e02e01ba4f40f4e77dc432fbabc68e"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/053-design-stage-critique.md",
+      "slug": "design-stage-critique",
+      "number": "053",
+      "status": "draft",
+      "specPath": null,
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": null,
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/054-mockup-opens-in-review.md",
+      "slug": "mockup-opens-in-review",
+      "number": "054",
+      "status": "draft",
+      "specPath": null,
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": null,
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/055-canvas-acceptance-reliability.md",
+      "slug": "canvas-acceptance-reliability",
+      "number": "055",
+      "status": "defined",
+      "specPath": ".dude/specs/055-canvas-acceptance-reliability/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 3,
+        "done": 3,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/055-canvas-acceptance-reliability/spec.md",
+            "taskKey": "T001@055ci001"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "59799fffb5fd102f842fe7781a80145cec6d6e1e8281966bedf285b94cc3d4a6"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/055-canvas-acceptance-reliability/spec.md",
+            "taskKey": "T002@055real2"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "ffe9087db1cb7b84bd1e85fc51e4447ae46370d601631e4d670dc7799d77a42c"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/055-canvas-acceptance-reliability/spec.md",
+            "taskKey": "T003@055grid3"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "2fce77e4f166fbb34aada3ea4025f936475e826e942c2bc8f67b81da22d2fb78"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/056-ship-orphan-cleanup.md",
+      "slug": "ship-orphan-cleanup",
+      "number": "056",
+      "status": "draft",
+      "specPath": null,
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": null,
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/057-dude-canvas-needs-you.md",
+      "slug": "dude-canvas-needs-you",
+      "number": "057",
+      "status": "defined",
+      "specPath": ".dude/specs/057-dude-canvas-needs-you/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 8,
+        "done": 8,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/058-outcome-aligned-intake.md",
+      "slug": "outcome-aligned-intake",
+      "number": "058",
+      "status": "draft",
+      "specPath": null,
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": null,
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/059-annotation-direct-manipulation.md",
+      "slug": "annotation-direct-manipulation",
+      "number": "059",
+      "status": "defined",
+      "specPath": ".dude/specs/059-annotation-direct-manipulation/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 4,
+        "done": 4,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/060-recoverable-work-handoffs.md",
+      "slug": "recoverable-work-handoffs",
+      "number": "060",
+      "status": "defined",
+      "specPath": ".dude/specs/060-recoverable-work-handoffs/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 4,
+        "done": 4,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/060-recoverable-work-handoffs/spec.md",
+            "taskKey": "T001@d060a101"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "a406e68f46723709adc1dcfb0d17e17c839e6945af6f6d4aecd2b8918569d30a"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/060-recoverable-work-handoffs/spec.md",
+            "taskKey": "T002@d060b202"
+          },
+          "eventCount": 3,
+          "eventHashes": [
+            "cc08192990345bf90546eaafc4a02b0d70271537cc09b8bca17aab2943ae8ae0",
+            "306d9e56adfaace323f47c78673f7df162d4cb1b1afc86811378d9796a73f5be",
+            "592d089174291efbabeb7a2df670688ca5b6d3ee48fd6765a6888e3df326c7fe"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/060-recoverable-work-handoffs/spec.md",
+            "taskKey": "T003@d060c303"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "536a6391b79cd1671b2652b76371c223a5fa8e9ee9b214192c8258057eca6a84"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-not-found",
+            "reason": "No complete original four-stream input was found in the bounded available source search. Canonical history remains preserved; do not synthesize captures from it."
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/060-recoverable-work-handoffs/spec.md",
+            "taskKey": "T004@d060d404"
+          },
+          "eventCount": 4,
+          "eventHashes": [
+            "4e81c42a40c1eaf2e96c9733f866a0634e1eb025d2f7280968f7e3c908080a00",
+            "9b6d7ed0c356457427b26f4d00ead3364d6ef89ac8d6564e6ed6ef78530d8398",
+            "0dd5ce3b8e8850286b6b24e7608da621a807387533ddaacd4bdb9e0be1a04d5b",
+            "650e71f8a254aeff0c22d33a8ae19a08316ed0e35db05fd4a2b7ca8740e289b5"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-available",
+            "file": "captures/060-recoverable-work-handoffs/T004@d060d404.json",
+            "sha256": "11c6374f4fc49387736bd425a5b28e6571af3b7512398c425e975b5cb53d50d0",
+            "bytes": 35812,
+            "source": {
+              "session": "6548ab4a-a610-4b77-bce6-4f630599ef4c",
+              "path": "060-ship-FlK1vV/t004/result-30.json",
+              "fileSha256": "61593f2313598ed591cb81d3b67a09bcabe4c6de1d1e46a788a2111f666778b6",
+              "field": "input.currentRun/verification/review/lint"
+            },
+            "streams": {
+              "currentRun": 1,
+              "verification": 2,
+              "review": 2,
+              "lint": 1
+            },
+            "matchingCanonicalEvents": 4,
+            "validatedApproachAndFindingOccurrences": 4,
+            "originalReadOnlyValidation": {
+              "evidenceHash": "f5b89406f3335d3a5e0c0f25f5fe80a3b8722fbf488a8883915bdc1245a5461a",
+              "blockers": [],
+              "overflow": false,
+              "permitsOrExecutionCreated": false
+            }
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/061-work-inspection-source-capacity.md",
+      "slug": "work-inspection-source-capacity",
+      "number": "061",
+      "status": "defined",
+      "specPath": ".dude/specs/061-work-inspection-source-capacity/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 1,
+        "done": 1,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/062-dude-canvas-workspace-integration.md",
+      "slug": "dude-canvas-workspace-integration",
+      "number": "062",
+      "status": "defined",
+      "specPath": ".dude/specs/062-dude-canvas-workspace-integration/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 5,
+        "done": 3,
+        "inProgress": [
+          "T004@d062f4a7"
+        ],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/062-dude-canvas-workspace-integration/spec.md",
+            "taskKey": "T003@c062e3f6"
+          },
+          "eventCount": 8,
+          "eventHashes": [
+            "e03df97b1ec78405cb480ab544e0f20731e707712d7d06dde781ea832d9ce5b5",
+            "3b122145f70691342f106aa7601f2c46480188475423ce861af5a25709711db6",
+            "6597e4ebcae40c20a91e98b2fccbc1a6d792aaf0f669cefc255dddbcce1890d6",
+            "08d166f4525e015f5f77ef408b1a3b06145ecbad982f40c3d187c03012db552a",
+            "6c16cccc5cdcbaefc433a518b8ad6c4551b015b1b4b4a9b7ce68d0586c92eb74",
+            "292095dc294fb017a44dc0c317f205cb29c5166a187f92e9f1652ddff16d9423",
+            "5b7b38bf4c67f0a1874887906797cd0c907068e7deb96e434c64f3d8d853fab2",
+            "5975a27d2905bb69ca6eab5824d014f1707235bf81f5f007c32f322285a62494"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-available",
+            "file": "captures/062-dude-canvas-workspace-integration/T003@c062e3f6.json",
+            "sha256": "242be010887c5e616acbfaf74443742c121d85938993b66396ba50f1cf8f263a",
+            "bytes": 53780,
+            "source": {
+              "session": "6548ab4a-a610-4b77-bce6-4f630599ef4c",
+              "path": "062-ship-execution-nbXQyc/result-50.json",
+              "fileSha256": "e9444b72bf56d1530b9006c66c567d9f5dcde5bf34e61473cace9cd1d469326e",
+              "field": "input.currentRun/verification/review/lint"
+            },
+            "streams": {
+              "currentRun": 1,
+              "verification": 2,
+              "review": 2,
+              "lint": 1
+            },
+            "matchingCanonicalEvents": 8,
+            "validatedApproachAndFindingOccurrences": 8,
+            "originalReadOnlyValidation": {
+              "evidenceHash": "ccc4cf35954a7f3d60e69a5bfbd7b6f6628eac5118bf907c77e100c0defbb3cc",
+              "blockers": [],
+              "overflow": false,
+              "permitsOrExecutionCreated": false
+            }
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/062-dude-canvas-workspace-integration/spec.md",
+            "taskKey": "T004@d062f4a7"
+          },
+          "eventCount": 21,
+          "eventHashes": [
+            "8f6482e0cf99473be31e91f208911830ba52748819cc88e2222c03f148224419",
+            "e7b34f6c72ca121807b3cd7b0c42288bd6e1e093f510469dff0ad29902b11c3c",
+            "323c07123c8232865b17d08bbf3da8cd35571e54cdf769274e012f9043823e92",
+            "8253bcc8c778c7d8421ec2340d8ba63d1f6700af19cf02ce388ed130137a3b24",
+            "baf76319bfc6e3046f5befe87f63f97fc45903c788989a2e3a3ccd55f7422a43",
+            "388948edf77e510a2a9c5121df257d2233bef46527330cac7c7bcf7b9c4463ce",
+            "c24a2a719fa2b810d56f1ddd53a0482166ad7b9ec0861b1053b337288d231407",
+            "283fd22b5f34c52e1a9bf61041dc3f935ddef07d693979dabbb412a2dd1c2c92",
+            "f0079d77a4ab3ca48161fda52e52c10da69b8b4d409b73d07ba6dff043dddd62",
+            "b98c1d98623a0cdd2491669f4fe13215aa9a4c60102ca5d407952c641d7adbd3",
+            "1b45b11db29092a10a268742076778df108e222086eb0695d08ca30f89511f46",
+            "9a97dd8b43ee0dc7da60153b88e139c8effd07156b1ad6dacba192512cf8aa94",
+            "52b26bb6f2256ef84facb6bf403e99068e99b8a6879f96aabf99ad3a1d37d0e7",
+            "37c8e296f94264d90a647fef1dae24307f221044c1178ee10a87338e569e3ab5",
+            "740f6f5110681fe29e20118c96ff68b41d687a344ddeb2668f39fb16c4bcc53d",
+            "f6d42cc25cf1bdebc34b2eb0b1a03c3e26dc55523fda98797873fffee769d9d3",
+            "8cde625e0d9e77e6ee008da6be8a3c7b68db00c21330abed0b81dd24e45dc1db",
+            "de77d1cd59d0122e8202fb248fc98c37564457729d8b722cab87ff388d41242c",
+            "0d445a3d4f8986699493969bc6f4bf3f9f10ed49b99d220d857c113adb18f1ba",
+            "bfe15969238789dafe92a2b3864d14b3cc7bbab95e3b6b72f9e2dedc3e1f5b64",
+            "737a32ab7b48275d7394e28e5dc53a8654d0a58461d1cc292c024571031b5dfc"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence",
+            "learning-governance",
+            "learning-review"
+          ],
+          "evidence": {
+            "state": "original-captures-available",
+            "file": "captures/062-dude-canvas-workspace-integration/T004@d062f4a7.json",
+            "sha256": "5f01a12f409233d09f6ec7ccdae226193e347769b5c3585533f52331d3fc289a",
+            "bytes": 175484,
+            "source": {
+              "session": "6548ab4a-a610-4b77-bce6-4f630599ef4c",
+              "path": "062-post-compaction-ship-WHH7K2/t004/result-39.json",
+              "fileSha256": "c969e9aacc9b215ebb54e07e70957dd570ca3c15e72b1e8b6d71e9d42e64f16b",
+              "field": "input.currentRun/verification/review/lint"
+            },
+            "streams": {
+              "currentRun": 1,
+              "verification": 6,
+              "review": 6,
+              "lint": 5
+            },
+            "matchingCanonicalEvents": 21,
+            "validatedApproachAndFindingOccurrences": 14,
+            "originalReadOnlyValidation": {
+              "evidenceHash": "45de28594664482f12833c1c35dcd40580875d26f9766f08d3ca60033bb55fc5",
+              "blockers": [],
+              "overflow": false,
+              "permitsOrExecutionCreated": false
+            }
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/063-dude-canvas-settings.md",
+      "slug": "dude-canvas-settings",
+      "number": "063",
+      "status": "draft",
+      "specPath": null,
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": null,
+      "runtimeHistory": [],
+      "noRecordedRuntimeEvents": true
+    },
+    {
+      "ideaPath": ".dude/ideas/064-work-receipt-overflow-handling.md",
+      "slug": "work-receipt-overflow-handling",
+      "number": "064",
+      "status": "defined",
+      "specPath": ".dude/specs/064-work-receipt-overflow-handling/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 4,
+        "done": 4,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/064-work-receipt-overflow-handling/spec.md",
+            "taskKey": "T001@c064a71e"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "c40415ed17f4165a86a16c353f7dd3cd5a45305b6d9541f2d0caeb45fb86aa74"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-available",
+            "file": "captures/064-work-receipt-overflow-handling/T001@c064a71e.json",
+            "sha256": "c3c39aa7a02ba98d964548ea92492c51d85647f6924e8a3c3e0e87e9e0191770",
+            "bytes": 13397,
+            "source": {
+              "session": "6548ab4a-a610-4b77-bce6-4f630599ef4c",
+              "path": "064-ship-yzlEHC/t001/result-17.json",
+              "fileSha256": "22612fd34435c0ef87ca9ec71bdbcaf3b5fbd242c462fa4c68aa095383064d22",
+              "field": "input.currentRun/verification/review/lint"
+            },
+            "streams": {
+              "currentRun": 1,
+              "verification": 1,
+              "review": 1,
+              "lint": 0
+            },
+            "matchingCanonicalEvents": 1,
+            "validatedApproachAndFindingOccurrences": 1,
+            "originalReadOnlyValidation": {
+              "evidenceHash": "997f4eca36a7ec4c9e1251008b0aa1ce0dedc581dceca36bffdb64af20f4a84f",
+              "blockers": [],
+              "overflow": false,
+              "permitsOrExecutionCreated": false
+            }
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/064-work-receipt-overflow-handling/spec.md",
+            "taskKey": "T002@c064b82f"
+          },
+          "eventCount": 3,
+          "eventHashes": [
+            "6a11ecac50e72c2ae24941c347d28707750718525adf6d3fc3443161fbb0dfc6",
+            "061de0c4f7a581a87f5948d3c7d8cf90b4778e5f57270d1fca5ce70d7e9b922d",
+            "746a699aa528845c7f27f474d142c949938de258caa89f90c4c157aa5a1da127"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-available",
+            "file": "captures/064-work-receipt-overflow-handling/T002@c064b82f.json",
+            "sha256": "b3ac3edddc3e5a4c1083d7ba0c1fc5d49aa09cfe5688bcf2a01d016d46c4d1fd",
+            "bytes": 39606,
+            "source": {
+              "session": "6548ab4a-a610-4b77-bce6-4f630599ef4c",
+              "path": "064-ship-yzlEHC/t002/result-28.json",
+              "fileSha256": "b3e10afd181ceed40b9a9d81c045d76127375db2521d0bc2a32441baf9f2b60d",
+              "field": "input.currentRun/verification/review/lint"
+            },
+            "streams": {
+              "currentRun": 1,
+              "verification": 2,
+              "review": 2,
+              "lint": 1
+            },
+            "matchingCanonicalEvents": 3,
+            "validatedApproachAndFindingOccurrences": 3,
+            "originalReadOnlyValidation": {
+              "evidenceHash": "00b0d1a16ae2c9dbb1e3cb846642a3ec4b3aa81d8eff761b22c56e8f8e07ea24",
+              "blockers": [],
+              "overflow": false,
+              "permitsOrExecutionCreated": false
+            }
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/064-work-receipt-overflow-handling/spec.md",
+            "taskKey": "T003@c064c930"
+          },
+          "eventCount": 9,
+          "eventHashes": [
+            "b336aa0ff4ae4ab57fa474a2138c511d03c92774e60cd54cbdc8f21d9895c9eb",
+            "25612d1118c8e25ccd7af24bc9d05254bed23daf0737f167841df4a3d070317e",
+            "4c929667a6c7f2fd27a79cfecbc77ce7e98d539f2cd1d334c69992146372dc00",
+            "95d0fac351010f5567927e3a76ed87d7a6b372d5c322e2866e1e7e9de17703b0",
+            "82b0808fe7221db222c59149777f9c08806765ba02683d28dea3cf3d33e42dc5",
+            "9a10a92e9b5e10d004c86719245753a435915c58995e8cc633d5ead539d120ed",
+            "d65365506f87e74eda4f49522f6ef6541a9cf642620cb36e050a25a81d6c0bdf",
+            "74267c15f85abab0dd7b7949f085e3a7879057b0d01a133b947c4b500d551efa",
+            "a57a7c350a9c30a04f7dffd576913849784cbe0ee356d6f6aeb1b6255a9cc7a9"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence",
+            "learning-governance",
+            "learning-review"
+          ],
+          "evidence": {
+            "state": "original-captures-available",
+            "file": "captures/064-work-receipt-overflow-handling/T003@c064c930.json",
+            "sha256": "65a344b0d8cbf1ae6a15c1520ab328f6abeede68e257fa502ef7b654851145b3",
+            "bytes": 91215,
+            "source": {
+              "session": "6548ab4a-a610-4b77-bce6-4f630599ef4c",
+              "path": "064-ship-yzlEHC/t003/result-64.json",
+              "fileSha256": "32b167dd91767d0e2e92ab5b0698e95a130747f6d603671deeec27e67b247cda",
+              "field": "input.currentRun/verification/review/lint"
+            },
+            "streams": {
+              "currentRun": 1,
+              "verification": 4,
+              "review": 4,
+              "lint": 0
+            },
+            "matchingCanonicalEvents": 9,
+            "validatedApproachAndFindingOccurrences": 6,
+            "originalReadOnlyValidation": {
+              "evidenceHash": "f13c6efbabd99e09e6f20594f930d3db4cae2d7269c343fc63bdaa629decfcf6",
+              "blockers": [],
+              "overflow": false,
+              "permitsOrExecutionCreated": false
+            }
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/064-work-receipt-overflow-handling/spec.md",
+            "taskKey": "T004@c064da41"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "3aaea9d604b5063c5b13c31cba74341c9620178a3770c3c3103a7e6bf25af0aa"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-available",
+            "file": "captures/064-work-receipt-overflow-handling/T004@c064da41.json",
+            "sha256": "86deb6319d2e297419d0294d84f182aa5de8cb29e33b976d7fa72f79d96a4ae1",
+            "bytes": 12745,
+            "source": {
+              "session": "6548ab4a-a610-4b77-bce6-4f630599ef4c",
+              "path": "064-ship-yzlEHC/t004/result-17.json",
+              "fileSha256": "d493f53c30a264d52364f4ea00497807ab8f00348640c99423abbff1e695c10f",
+              "field": "input.currentRun/verification/review/lint"
+            },
+            "streams": {
+              "currentRun": 1,
+              "verification": 1,
+              "review": 1,
+              "lint": 0
+            },
+            "matchingCanonicalEvents": 1,
+            "validatedApproachAndFindingOccurrences": 1,
+            "originalReadOnlyValidation": {
+              "evidenceHash": "30a747e7aa8cc170b23975a1d8deeae4009da143af5f31324122b04da00c1898",
+              "blockers": [],
+              "overflow": false,
+              "permitsOrExecutionCreated": false
+            }
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    },
+    {
+      "ideaPath": ".dude/ideas/065-work-history-event-compaction.md",
+      "slug": "work-history-event-compaction",
+      "number": "065",
+      "status": "defined",
+      "specPath": ".dude/specs/065-work-history-event-compaction/spec.md",
+      "canonicalState": "preserved-in-original-repository-paths",
+      "tasks": {
+        "total": 2,
+        "done": 2,
+        "inProgress": [],
+        "blocked": []
+      },
+      "runtimeHistory": [
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/065-work-history-event-compaction/spec.md",
+            "taskKey": "T001@e065a1c8"
+          },
+          "eventCount": 1,
+          "eventHashes": [
+            "835b8ea75f9aa6428ef174f8287ec049dae57a3afc339735f14ba25d3cd370d0"
+          ],
+          "eventTypes": [
+            "approach-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-available",
+            "file": "captures/065-work-history-event-compaction/T001@e065a1c8.json",
+            "sha256": "08ff737359874738ff581bc3c0fa0701750da59013fad4da70f80eb58953362a",
+            "bytes": 8394,
+            "source": {
+              "session": "6548ab4a-a610-4b77-bce6-4f630599ef4c",
+              "path": "065-ship-Jmrxwg/t001/result-17.json",
+              "fileSha256": "81c095972fcfee80ce29a584675fa213de55b7c619a166bd21075283ba5557f7",
+              "field": "input.currentRun/verification/review/lint"
+            },
+            "streams": {
+              "currentRun": 1,
+              "verification": 1,
+              "review": 1,
+              "lint": 0
+            },
+            "matchingCanonicalEvents": 1,
+            "validatedApproachAndFindingOccurrences": 1,
+            "originalReadOnlyValidation": {
+              "evidenceHash": "1d19baaf152afa33410eebb3507c9eb244bd5ca4ee2186cce6b48fe158b91618",
+              "blockers": [],
+              "overflow": false,
+              "permitsOrExecutionCreated": false
+            }
+          }
+        },
+        {
+          "target": {
+            "lane": "lightweight",
+            "specPath": ".dude/specs/065-work-history-event-compaction/spec.md",
+            "taskKey": "T002@e065b2d9"
+          },
+          "eventCount": 8,
+          "eventHashes": [
+            "e5ed48ca2a50559d91beb4aa179a949738d7cf55c521c4177a3d9587bd061d06",
+            "1d9726d2f98ddb5301945c598b26046facc2ac28e8c9989d0385d3145da601b5",
+            "304265d3ae64a26a063a906b8f27e41aa0008d118a7bdeb5132b2be61f8578b4",
+            "13b05638ab2e26dcfb0a3edabffd6a3715509e03012d6eefc7568fdc49a2484f",
+            "f1f42fe95cdf08688cac0eabb9cd6212324e2b559407943d9d8f161ae1e94bf2",
+            "fb5b4085f613dbe5bf546702b11c3be28d3f6b3195aeda91e15c7c2e4476dfda",
+            "9aa1f7ca826d244c35cd6ccac473499e14d0397f91c07572f11a307bc2f78381",
+            "2ce4f670c4880d8d68e8d0fb613339c4b308d863e15bd17935c1de9f2542502e"
+          ],
+          "eventTypes": [
+            "approach-occurrence",
+            "finding-occurrence"
+          ],
+          "evidence": {
+            "state": "original-captures-available",
+            "file": "captures/065-work-history-event-compaction/T002@e065b2d9.json",
+            "sha256": "ab43897b9eb84ae4dd8176944841a9c354e453b5fe87f3149d930d5213cea135",
+            "bytes": 61772,
+            "source": {
+              "session": "6548ab4a-a610-4b77-bce6-4f630599ef4c",
+              "path": "065-final-ship-wewpIj/t002/result-14.json",
+              "fileSha256": "6a39751be3e6e1bdbdd54bbca0b7f254ae223bd47c55fc3815a82219e652faa8",
+              "field": "input.currentRun/verification/review/lint"
+            },
+            "streams": {
+              "currentRun": 1,
+              "verification": 4,
+              "review": 4,
+              "lint": 1
+            },
+            "matchingCanonicalEvents": 8,
+            "validatedApproachAndFindingOccurrences": 8,
+            "originalReadOnlyValidation": {
+              "evidenceHash": "299cb0f06ea167f7119a37e2650b7b8224c2910b381795f3fa46ab44a4b6d428",
+              "blockers": [],
+              "overflow": false,
+              "permitsOrExecutionCreated": false
+            }
+          }
+        }
+      ],
+      "noRecordedRuntimeEvents": false
+    }
+  ],
+  "searchScope": {
+    "currentOriginalSession": "/Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files",
+    "candidateScan": {
+      "filesConsidered": 969,
+      "bytesRead": 151123003,
+      "parsed": 969,
+      "excludedDirectories": 2983
+    },
+    "availableReferencedSessionRoots": [
+      "6548ab4a-a610-4b77-bce6-4f630599ef4c"
+    ],
+    "unavailableReferencedSessionRoots": [
+      "dba9e5c0-ebf6-4e64-b964-2ec0d6ad20de",
+      "5c18f926-9e5b-4303-b236-cb926acfde82"
+    ],
+    "qualification": "A bounded search of project-referenced originals. Absence does not prove that no other explicitly identified original source could exist."
+  },
+  "exclusions": {
+    "publicationHolds": [
+      {
+        "path": "062-post-repair-kMi6Lf/end.json",
+        "sha256": "a6e03628aa4bf6b14ef507f473b737ad380f1b2b5efcf1711946090ef423ab2f",
+        "reason": "historical control request, retained locally rather than exported"
+      },
+      {
+        "path": "062-post-repair-kMi6Lf/hard-stop-recorded.json",
+        "sha256": "763163a6d38b46a203c476831bdc72aad5f20fb6374b65ff06939c6140ff0ca5",
+        "reason": "historical control request, retained locally rather than exported"
+      },
+      {
+        "path": "060-ship-FlK1vV/t001/accepted-state.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "11425a2d6fd755b09ae0b144b53ffa752bc41d51172987d19f0baf12d5d587de"
+      },
+      {
+        "path": "060-ship-FlK1vV/t001/terminal-result.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "33059c61be8ba9ffa98d0b795b5dad61df0d52156c980afe1b45baa88e6afdb9"
+      },
+      {
+        "path": "060-ship-FlK1vV/t002/accepted-state.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "0f684a4877d7e03141dedb2cc1080abcddc8a12c91f72525f7d2b93e35f1c59e"
+      },
+      {
+        "path": "060-ship-FlK1vV/t002/terminal-result.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "151025a2f6ad46e63bd0fa4d6c591b33102c561bb56774b0e2b7d5da992789e8"
+      },
+      {
+        "path": "060-ship-FlK1vV/t003/accepted-state.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "4ac78b34c5f5f8cd8ad9e9ac4826e07cccef7bb0c21e966d784b80f06f3932ce"
+      },
+      {
+        "path": "060-ship-FlK1vV/t003/terminal-result.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "8b30dee036bdaf4cde31691d1beac926e2d1a6ce2f8fd84f19b6dfb62ed79c26"
+      },
+      {
+        "path": "060-ship-FlK1vV/t004/close-mutation.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "7166770fdbe8b6dcb88d26c82b9e63553c8c6765bb2b1f98d5a1ee9b4a43eb69"
+      },
+      {
+        "path": "062-fresh-ship-jzPGE6/hard-stop-recorded.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "d6326a1e51900331df3dd3e88bbd53b83c325635449aa789e46ccf61b03f02e3"
+      },
+      {
+        "path": "062-ship-execution-nbXQyc/close-t003-mutation.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "9f0fc4bb68b53c295ad062dfb12f133887b382ef2a1dafb381a9e2fd1bc8a80c"
+      },
+      {
+        "path": "062-ship-execution-nbXQyc/initial-claim-mutation.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "9f4a9bb6012c5b99322bed9b74b99cfc6892258ff9c698ec631beb5616305da4"
+      },
+      {
+        "path": "062-work-admission-inspection-corrected.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "0a26f636378de67515ced3aa3d96e7c934abc9f117b7688c73c4446437af5075"
+      },
+      {
+        "path": "064-ship-yzlEHC/t002/2-authorize-claim.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "5ec52ed5273d6bd10db7e1d4a123628566907ee4817637e1373252bd684677ee"
+      },
+      {
+        "path": "064-ship-yzlEHC/t002/3-apply-claim.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "2db58b67bc60ada29e404569093e2c99c50288045e94372f38bd217dd0e9a8b8"
+      },
+      {
+        "path": "064-ship-yzlEHC/t002/4-commit-claim.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "f648bd74be5b5638c607fa25db5e11079f9bf56f562f96e93a380732effa33cb"
+      },
+      {
+        "path": "064-ship-yzlEHC/t003/2-authorize-claim.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "db0bfdbb7c41f778961f4a68a23eb8ec20a74d7ea627034413785f2aacb80996"
+      },
+      {
+        "path": "064-ship-yzlEHC/t003/3-apply-claim.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "a890591484452867ddc48c99d57847cb461fab93d350cce7a23c00bddcb8671b"
+      },
+      {
+        "path": "064-ship-yzlEHC/t003/4-commit-claim.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "1423930fe15585f9fb7f71d83875e817e95b9028ae9dfc76df6a99fe2979a23b"
+      },
+      {
+        "path": "064-ship-yzlEHC/t004/2-authorize-claim.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "f19d994abd670c0f85ce0aa33085bcdec72253db3c9bd6e70633713c403d6002"
+      },
+      {
+        "path": "064-ship-yzlEHC/t004/3-apply-claim.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "20b70c13af74d0cbe3b5207ab0bd152415b87ceb922453d562b24e7ea60d2b11"
+      },
+      {
+        "path": "064-ship-yzlEHC/t004/4-commit-claim.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "0251d830890db19aad1dc7a393ffb7f4b86cc240b1b17f97fd9cfd5de8371d97"
+      },
+      {
+        "path": "065-ship-Jmrxwg/supervisor.json",
+        "reason": "live authority or saved control-state envelope; original retained locally",
+        "sha256": "5c59a4f5b003e55de1b6196ff3fe75b5afa0f23b82e8fe7df34545555ff00346"
+      }
+    ],
+    "categories": [
+      "Private conversation transcripts and hidden runtime context",
+      "Worker/supervisor credentials, ownership claims, saved control-state envelopes and live runtime secrets",
+      "Installed dependencies, copied repository fixtures, Git object copies, build caches and OS temporary data",
+      "Evidence from unavailable prior session directories",
+      "Work created only on another machine after this base commit"
+    ],
+    "originalFilesDeleted": false,
+    "sourceCaptureBytesRewritten": false
+  },
+  "limitations": [
+    "Only 062 has unfinished canonical tasks in this snapshot; its T004 input contains all 21 recorded events and matching trusted captures.",
+    "The 14 value returned by occurrence validation for 062 is its approach/finding subset; seven additional learning/governance events remain in the full original input.",
+    "060 T001-T003 semantic reports survive in supporting archives, but no complete original post-completion four-stream inputs were found.",
+    "No old RunState, pending permit, worker, or checkpoint becomes live on another machine.",
+    "Fresh destination ownership, limits, learning policy, verification, and user authorization still apply."
+  ],
+  "ancillaryFiles": [
+    {
+      "path": "ancillary/052-comparison/approved-052-mock.png",
+      "bytes": 200704,
+      "sha256": "20e91799ee01428272e42da4c4b05bc083f3226e0a13ea02e27743d7f372d9a1"
+    },
+    {
+      "path": "ancillary/052-comparison/comparison.json",
+      "bytes": 26990,
+      "sha256": "dc558450eb96e23346eab36338153a92b281e21ddf0368adb67cda52fe5fec7f"
+    },
+    {
+      "path": "ancillary/052-comparison/comparison.png",
+      "bytes": 561386,
+      "sha256": "ffcb578848102508ac0d64cda0ef4311661382aa67412ba578fd4e32ef95dbcb"
+    },
+    {
+      "path": "ancillary/052-comparison/current-052-context.png",
+      "bytes": 156016,
+      "sha256": "5c98f802b64822b149b715f30d1eca95aae6cd03b6f22d563b424ba937dc86cd"
+    },
+    {
+      "path": "ancillary/052-comparison/current-overview.png",
+      "bytes": 134455,
+      "sha256": "056ed03d8d6b70a3db211fa4b33403f932a7509839c285beca943a099efd41d5"
+    },
+    {
+      "path": "ancillary/052-comparison/original-052-build.png",
+      "bytes": 213245,
+      "sha256": "74adbebdba4d494d8a7f0ab978ea114d14610bb657f1e8fa5658c78615c5dd98"
+    }
+  ]
+}

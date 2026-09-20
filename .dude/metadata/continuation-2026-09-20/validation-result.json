@@ -1,0 +1,90 @@
+{
+  "ELIGIBLE_PUBLICATION": "PASS",
+  "EXPORT_INTEGRITY": "PASS",
+  "GLOBAL_COMPLETENESS": "KNOWN_INCOMPLETE",
+  "branch": "chore/portable-work-evidence-20260920",
+  "checks": {
+    "ancillary-052-direct-source-equivalence": "pass",
+    "canonical-current-and-base-identities": "pass",
+    "coverage-source-and-manifest-equivalence": "pass",
+    "current-runtime-capture-and-event-validation": "pass",
+    "export-file-tree-and-files-manifest": "pass",
+    "final-preservation": "pass",
+    "git-initial-state": "pass",
+    "readme-safety-and-openness": "pass",
+    "required-root-dude-lint": "pass",
+    "streamed-archive-integrity-and-hygiene": "pass"
+  },
+  "counts": {
+    "ancillaryFiles": 6,
+    "archiveCompressedBytes": 328985847,
+    "archiveMembers": 10444,
+    "captureFiles": 9,
+    "completeCaptureEvents": 56,
+    "completeCaptureTargets": 9,
+    "doneTasks": 303,
+    "eventTargets": 67,
+    "events": 150,
+    "ideas": 65,
+    "lintFailures": 0,
+    "lintWarnings": 2,
+    "newExportFiles": 32,
+    "packages": 56,
+    "tasks": 305
+  },
+  "headAndBase": "db6350a91877f8ac9dbdac18b2ce57d6ab192cdf",
+  "knownGaps": {
+    "auditOnlyTargets": 1,
+    "entireHistoricalEvidenceSetRecovered": false,
+    "globalCompleteness": "known-incomplete",
+    "missingOriginalTrustedCaptureTargets": 57,
+    "olderAuditTargets": 55,
+    "olderOriginalCaptureSetsFound": 0,
+    "postBaseOtherComputerWork": "outside this known snapshot; not assessed as mutation loss",
+    "semanticReportsWithoutTrustedEnvelopeTargets": [
+      "060 T001@d060a101",
+      "060 T002@d060b202",
+      "060 T003@d060c303"
+    ],
+    "unavailableReferencedSessionRoots": 2
+  },
+  "observedAt": "2026-09-20T00:50:15.383000+00:00",
+  "preservation": {
+    "branch": "chore/portable-work-evidence-20260920",
+    "canonicalAggregate": "bb9d4a9dd5998bba0cb3428db9f803847b85bb2482acd0df5e7a0a78ad78f538",
+    "canonicalFilesUnchanged": 2079,
+    "exportTreeUnchanged": true,
+    "gitMutationByVerifier": false,
+    "head": "db6350a91877f8ac9dbdac18b2ce57d6ab192cdf",
+    "index": {
+      "bytes": 360333,
+      "mode": 420,
+      "mtimeNs": 1789858729603621952,
+      "path": ".git/index",
+      "sha256": "7eb53fdd11a0e82b9befcbe6feedcfde8d049f1115843096c4a69266e2f9bf8b"
+    },
+    "repositoryWritesByVerifier": false,
+    "statusLines": 32,
+    "statusUnchanged": true
+  },
+  "publicationBlockers": [],
+  "reviewApproval": "not claimed; final Reviewer owns semantic readiness",
+  "schema": "one-time-export-independent-verification-result-v1",
+  "scope": {
+    "archivedCommandsExecuted": false,
+    "archivesExtracted": false,
+    "dependenciesInstalled": false,
+    "fullSoftwareOrBrowserTestsRun": false,
+    "gitMutatedOrPushed": false,
+    "olderBroadSearchRepeated": false,
+    "repositoryEdited": false,
+    "workflowInvoked": false
+  },
+  "scratchArtifacts": {
+    "commands": "/Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/all-feature-portability-PfXSSK/verification/commands.jsonl",
+    "compactResult": "/Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/all-feature-portability-PfXSSK/verification/result.json",
+    "fullResults": "/Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/all-feature-portability-PfXSSK/verification/full-results.json",
+    "nodeCaptureHelper": "/Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/all-feature-portability-PfXSSK/verification/verify-captures.mjs",
+    "pythonVerifier": "/Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/all-feature-portability-PfXSSK/verification/verify_export.py"
+  }
+}
