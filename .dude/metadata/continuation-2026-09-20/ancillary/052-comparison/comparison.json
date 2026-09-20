@@ -1,0 +1,492 @@
+{
+  "viewport": {
+    "width": 1440,
+    "height": 1000,
+    "deviceScaleFactor": 1,
+    "theme": "light"
+  },
+  "historicalRef": "378669f06",
+  "mockPath": ".dude/specs/052-dude-canvas-ui/design/fluent-desktop-workspace.html",
+  "mockHash": "d491b002154088f4cc6cac4773a6745ac2f9a02b5f78b5a593c3c88335169d70",
+  "boundary": "Same-browser rendering, not native Copilot iframe evidence. Current runtime uses a separate production server over this repository with no joined response authority. Historical browser assets use the same real current Feature 052 projection.",
+  "captures": [
+    {
+      "label": "approved-052-mock",
+      "file": "/Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/canvas-052-comparison-lH5jXI/approved-052-mock.png",
+      "title": "Dude — Now (Fluent 2, desktop application shell)",
+      "text": "Prototype controls\nFixture: Current\nDude — Now\n\nDude\nNow\n\nFEATURE\nRefresh\nDude\nFeatures\nDude Canvas UI\nNow\nDude Canvas UI\nBlocked\n052-dude-canvas-ui\nNEXT STEP\n\nOpen the Dude canvas to finish host verification\n\nProvider registration is confirmed. Rendering, viewport, reopen, and close evidence are still required.\n\nCURRENT PHASE\n\nHost verification\n\nWHY\n\nProvider registration is confirmed. Rendering, viewport, reopen, and close evidence are still required.\n\nLIFECYCLE\nIdea\nComplete\nDefined\nComplete\n3\nIn progress\nCurrent\n4\nVerified\nNot started\n4\ndone\n0\nin progress\n1\nblocked\n8\nopen\n\n13 tasks make up this feature.\n\nPHASES\n\nDefinition review\n\n1 of 1 done\n\nDesign and approval\n\n3 of 3 done\n\nHost verification\nCurrent phase\n\n0 of 3 done · 1 blocked\n\nState reading\n\n0 of 2 done\n\nRead-only Now cockpit\n\n0 of 1 done\n\nFinal verification and release\n\n0 of 3 done\n\n13 tasks across 6 phases — 4 done, 0 in progress, 1 blocked, 8 open. This is a progress summary; individual tasks are not shown here.\n\nACTIVITY\nMost recent first\n\n2 SEPTEMBER 2026\n\nThe approved desktop design was made current across the feature.\n\n2 SEPTEMBER 2026\n\nThe Dude canvas was recognized; opening and closing evidence is still needed.\n\n1 SEPTEMBER 2026\n\nThe desktop application shell was approved after comparison and centre-column revision.\n\n1 SEPTEMBER 2026\n\nThe Fluent design and build approach was recorded with a fluid full-width layout.\n\n1 SEPTEMBER 2026\n\nCorrection recorded that narrow-first was never the intent.\n\nShowing the 5 most recent of 29 recorded events. The full text of every event is in Evidence → Source details.\n\nDetails\nATTENTION\n\nHost verification is waiting\n\nProvider registration is confirmed. Open, reopen, and close the Dude canvas to collect the remaining host evidence.\n\nThe exact blocker and source are in Evidence → Source details.\n\n0 unanswered questions\nFRESHNESS\n\nRead just now\n\nEvery source was read completely.\n\nRefresh is in the toolbar at the top of the window.\n\nPROPERTIES\nStage\nBlocked\nPhase\nHost verification\nQuestions\n0 unanswered\nBlockers\n1 recorded — Host verification\nTasks\n13 total — 4 done, 0 in progress, 1 blocked, 8 open\nLast read\nJust now\nSURFACES\nNow\nOpen\nWork\nLater\nArtifacts\nLater\nReview\nLater\nMemory\nLater\nTeam\nLater\n\nNow is the only surface in this cycle. The others arrive later and cannot be opened yet.\n\nEVIDENCE\nSource details\nBlocked\n4 done · 1 blocked · 8 open\nTab moves · Enter activates\nRead just now\nProject state verified",
+      "headings": [
+        {
+          "text": "Dude — Now",
+          "x": -1,
+          "y": 40,
+          "width": 1,
+          "height": 1,
+          "fontSize": "28px"
+        },
+        {
+          "text": "Dude Canvas UI",
+          "x": 64,
+          "y": 119,
+          "width": 119.71875,
+          "height": 22,
+          "fontSize": "16px"
+        },
+        {
+          "text": "NEXT STEP",
+          "x": 84,
+          "y": 175,
+          "width": 983,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "LIFECYCLE",
+          "x": 64,
+          "y": 378,
+          "width": 82.65625,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "PHASES",
+          "x": 64,
+          "y": 534,
+          "width": 60.984375,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "ACTIVITY",
+          "x": 64,
+          "y": 883,
+          "width": 72.359375,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "Details",
+          "x": 1112,
+          "y": 85,
+          "width": 1,
+          "height": 1,
+          "fontSize": "21px"
+        },
+        {
+          "text": "ATTENTION",
+          "x": 1113,
+          "y": 98,
+          "width": 315,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "FRESHNESS",
+          "x": 1113,
+          "y": 291,
+          "width": 315,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "PROPERTIES",
+          "x": 1113,
+          "y": 408,
+          "width": 315,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "SURFACES",
+          "x": 1113,
+          "y": 599,
+          "width": 315,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "EVIDENCE",
+          "x": 1113,
+          "y": 804,
+          "width": 315,
+          "height": 16,
+          "fontSize": "12px"
+        }
+      ],
+      "regions": [
+        {
+          "tag": "HEADER",
+          "label": null,
+          "x": 0,
+          "y": 41,
+          "width": 1440,
+          "height": 45
+        },
+        {
+          "tag": "NAV",
+          "label": "Surfaces",
+          "x": 0,
+          "y": 86,
+          "width": 48,
+          "height": 1131
+        },
+        {
+          "tag": "MAIN",
+          "label": "Now",
+          "x": 48,
+          "y": 86,
+          "width": 1052,
+          "height": 1131
+        },
+        {
+          "tag": "NAV",
+          "label": "Breadcrumb",
+          "x": 64,
+          "y": 90,
+          "width": 243.171875,
+          "height": 16
+        },
+        {
+          "tag": "ASIDE",
+          "label": "Details",
+          "x": 1100,
+          "y": 86,
+          "width": 340,
+          "height": 1131
+        },
+        {
+          "tag": "FOOTER",
+          "label": "Status",
+          "x": 0,
+          "y": 974,
+          "width": 1440,
+          "height": 26
+        }
+      ]
+    },
+    {
+      "label": "original-052-build",
+      "file": "/Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/canvas-052-comparison-lH5jXI/original-052-build.png",
+      "title": "Dude — Now",
+      "text": "Dude — Now\n\nRepository state read.\n\nDude\nNow\n\nFEATURE\nRefresh\nDude\nFeatures\nDude Canvas UI\nNow\nDude Canvas UI\nVerified\n052-dude-canvas-ui\nNEXT STEP\n\nNext step unavailable\n\nWHY\nAll canonical tasks are complete.\nLIFECYCLE\nIdea\nComplete\nDefined\nComplete\nIn progress\nComplete\nVerified\nComplete\n13\ndone\n0\nin progress\n0\nblocked\n0\nopen\n13 tasks make up this feature.\nPHASES\n\nD1-D3 Definition Review\n\n1 of 1 done\n\nResponsive Fluent Design And Approval\n\n3 of 3 done\n\nI0 Architecture-Risk Proof\n\n3 of 3 done\n\nFoundational Projection And Core Path\n\n2 of 2 done\n\nRead-Only Now Cockpit\n\n1 of 1 done\n\nVerification, Dogfood, And Release\n\n3 of 3 done\n\nThis is a progress summary; individual task keys remain in Source details.\nACTIVITY\nMost recent first\n\n2026-09-04T21:58:56Z\n\nClosed task and completed Feature 052 after final unchanged-revision verification and independent approval. Exact `npm ci` left the lock unchanged and audit found zero vulnerabilities; two clean builds matched committed and deployed bytes (`app.js` 635,624 bytes, SHA-256 `c2a9e3bb15be3487373d8414bab0cff570586450ed29ab4dde5cd8a1cddb1731`, gzip 180,230 of 358,400; complete legal notices 60,027 bytes, SHA-256 `b6c7ada06bc1777c08965b0f6941f246cffa7e34998bd357450f3faa0501bc70`). The installed recursive suite passed 2,556 with four platform skips, and a history-preserving dependency-free clone passed 2,525 with fifteen expected skips; lint, Compose, backlog, board, and diff hygiene had zero failures. All 13 canonical tasks are ``; the completion-only advisory retrospective dispatch was recorded without changing closure authority.\n\n2026-09-04T21:52:46Z\n\nFinal independent review approved task after the different reviser completed the five-surface upgrade contract, including `docs/commands.md`: global `@dude status` remains workflow orientation, the upgrade workflow's internal `upgrade.mjs status` is ref-only, `plan` is byte-authoritative, `.github/extensions/dude/**` is the exact core extension tree, every other extension is preserved, and historical same-ref repair requires a second fresh plan and confirmation. The approved revision also retains complete metafile-derived licenses, clean-checkout-safe test loading, partial-install failure behavior, and the concise Next card with exact source text in Evidence. Fresh coordinator completion verification remains before close.\n\n2026-09-04T21:39:26Z\n\ntask re-review repeated the upgrade-documentation finding after clean-checkout test loading, complete licenses, historical bootstrap behavior, and the concise Next card passed. `docs/commands.md` still omitted the core Dude extension from its exhaustive ownership list, and several surfaces incorrectly called the upgrader's ref-only script status `@dude status`, which is the separate workflow-orientation command. Under the active autonomous Ship policy, the repeated finding is retained without another permission prompt and routed to a different reviser for complete command-reference coverage and precise `upgrade.mjs status` terminology.\n\n2026-09-04T20:41:11Z\n\ntask re-review accepted the complete metafile-derived license notices and the concise Next-card presentation, then rejected two newly exposed release-contract gaps. The browser harness imports Fluent packages before its missing-Edge skip, so a clean dependency-free CI checkout fails at module load; upgrade guidance and the seeded bundle manifest still describe only agents, skills, and instructions as upstream-owned even though the engine also owns `.github/extensions/dude/**`, and `docs/upgrading.md` still treats ref difference as the sole trigger. T013 remains `` for clean-checkout-safe test loading and one consistent public ownership/byte-completeness contract.\n\n2026-09-04T19:57:29Z\n\nIndependent review rejected task on two release gaps: the linked legal file names MIT licenses without shipping their complete permission terms, and the historical-upgrader test performs a second current-engine plan that the supported same-ref workflow would not reach. The user also identified a final cockpit defect: the focal Next surface renders T013's entire internal verification contract as one `Title3`, including dependency wording and raw backticks. Source inspection confirmed that `FocalRegion` uses the full projected task description as its headline while `orientationText` removes only workflow tokens. T013 remains `` for bounded release and presentation revisions followed by fresh verification and re-review.\n\nShowing source-backed lifecycle events. Exact source details remain in the evidence dock.\nDetails\nATTENTION\n\nNo blockers are recorded.\n\n0 unanswered questions\nFRESHNESS\n\nCurrent complete read\n\nEvery authoritative source matches the last complete read.\nLast complete read: Sep 13, 2026, 8:12 PM\nRefresh is in the command bar.\nPROPERTIES\nStage\nVerified\nPhase\nNot available\nQuestions\n0 unanswered\nBlockers\n0 recorded\nTasks\n13 done · 0 in progress · 0 blocked · 0 open\nLast read\nSep 13, 2026, 8:12 PM\nSURFACES\nNow\nOpen\nWork\nLater\nArtifacts\nLater\nReview\nLater\nMemory\nLater\nTeam\nLater\nNow is the only surface in this cycle. The others arrive later and cannot be opened yet.\nEVIDENCE\nSource details\nVerified\n13 done · 0 in progress · 0 blocked · 0 open\nTab moves · Enter activates\nCurrent complete read\nComplete projection",
+      "headings": [
+        {
+          "text": "Dude — Now",
+          "x": -1,
+          "y": -1,
+          "width": 1,
+          "height": 1,
+          "fontSize": "28px"
+        },
+        {
+          "text": "Dude Canvas UI",
+          "x": 64,
+          "y": 77,
+          "width": 119.71875,
+          "height": 22,
+          "fontSize": "16px"
+        },
+        {
+          "text": "NEXT STEP",
+          "x": 83,
+          "y": 132,
+          "width": 985,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "LIFECYCLE",
+          "x": 64,
+          "y": 274,
+          "width": 82.65625,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "PHASES",
+          "x": 64,
+          "y": 454,
+          "width": 60.984375,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "ACTIVITY",
+          "x": 64,
+          "y": 766,
+          "width": 72.359375,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "Details",
+          "x": 1112,
+          "y": 43,
+          "width": 1,
+          "height": 1,
+          "fontSize": "21px"
+        },
+        {
+          "text": "ATTENTION",
+          "x": 1113,
+          "y": 56,
+          "width": 315,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "FRESHNESS",
+          "x": 1113,
+          "y": 133,
+          "width": 315,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "PROPERTIES",
+          "x": 1113,
+          "y": 258,
+          "width": 315,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "SURFACES",
+          "x": 1113,
+          "y": 495,
+          "width": 315,
+          "height": 16,
+          "fontSize": "12px"
+        },
+        {
+          "text": "EVIDENCE",
+          "x": 1113,
+          "y": 744,
+          "width": 315,
+          "height": 16,
+          "fontSize": "12px"
+        }
+      ],
+      "regions": [
+        {
+          "tag": "HEADER",
+          "label": null,
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 44
+        },
+        {
+          "tag": "NAV",
+          "label": "Surfaces",
+          "x": 0,
+          "y": 44,
+          "width": 48,
+          "height": 1855
+        },
+        {
+          "tag": "MAIN",
+          "label": "Now",
+          "x": 48,
+          "y": 44,
+          "width": 1052,
+          "height": 1855
+        },
+        {
+          "tag": "NAV",
+          "label": "Breadcrumb",
+          "x": 64,
+          "y": 48,
+          "width": 1020,
+          "height": 16
+        },
+        {
+          "tag": "ASIDE",
+          "label": "Details",
+          "x": 1100,
+          "y": 44,
+          "width": 340,
+          "height": 1855
+        },
+        {
+          "tag": "FOOTER",
+          "label": "Status",
+          "x": 0,
+          "y": 974,
+          "width": 1440,
+          "height": 26
+        }
+      ]
+    },
+    {
+      "label": "current-overview",
+      "file": "/Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/canvas-052-comparison-lH5jXI/current-overview.png",
+      "title": "Dude",
+      "text": "Dude\nJoined workspace\nOverview\nContext\nNeeds you\nNew idea\nRefresh\nOverview\nRecorded work · read Sep 13, 2026, 8:12 PM\nNew idea\nNo recorded work is in progressIdeas and defined work remain available in the finder below. This is not a statement about current human requests.\nWork\nSearch work\nShow\nOpen\n7 of 61 recorded ideas and features · alphabetical, not priority order\nClosed records include 50 completed features and 4 resolved ideas. Resolved ideas were not necessarily implemented.\nClick a row or focus it and press Enter to open its exact record in Context.\nName\nStatus\nProgress\nAnnotation Direct Manipulation\nannotation-direct-manipulation\nAwaiting definition\nProgress not established\nDesign-Stage Critique\ndesign-stage-critique\nAwaiting definition\nProgress not established\nMockup Opens in Review\nmockup-opens-in-review\nAwaiting definition\nProgress not established\nOutcome-Aligned Intake\noutcome-aligned-intake\nAwaiting definition\nProgress not established\nRecoverable Work Handoffs\nrecoverable-work-handoffs\nAwaiting definition\nProgress not established\nShip Orphan Cleanup\nship-orphan-cleanup\nAwaiting definition\nProgress not established\nWork Inspection Source Capacity\nwork-inspection-source-capacity\nAwaiting definition\nProgress not established\nWork coverage: current\nCurrent request coverage unavailable\nConnected\nNo recorded work is in progressIdeas and defined work remain available in the finder below. This is not a statement about current human requests..",
+      "headings": [
+        {
+          "text": "Overview",
+          "x": 24,
+          "y": 110,
+          "width": 250.421875,
+          "height": 28,
+          "fontSize": "20px"
+        },
+        {
+          "text": "Work",
+          "x": 24,
+          "y": 242,
+          "width": 1120,
+          "height": 22,
+          "fontSize": "16px"
+        }
+      ],
+      "regions": [
+        {
+          "tag": "HEADER",
+          "label": null,
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 86
+        },
+        {
+          "tag": "NAV",
+          "label": "Workspace navigation",
+          "x": 0,
+          "y": 37,
+          "width": 1440,
+          "height": 49
+        },
+        {
+          "tag": "MAIN",
+          "label": null,
+          "x": 0,
+          "y": 86,
+          "width": 1440,
+          "height": 889
+        },
+        {
+          "tag": "HEADER",
+          "label": null,
+          "x": 24,
+          "y": 110,
+          "width": 1120,
+          "height": 52
+        },
+        {
+          "tag": "FOOTER",
+          "label": null,
+          "x": 0,
+          "y": 975,
+          "width": 1440,
+          "height": 25
+        }
+      ]
+    },
+    {
+      "label": "current-052-context",
+      "file": "/Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/canvas-052-comparison-lH5jXI/current-052-context.png",
+      "title": "Dude",
+      "text": "Dude\nJoined workspace\nOverview\nContext\nNeeds you\nNew idea\nRefresh\nBack to Overview\nDefined feature\nDude Canvas UI\n.dude/ideas/052-dude-canvas-ui.md\n.dude/specs/052-dude-canvas-ui/spec.md\nCompleted\n13 of 13 tasks\nRecorded feature work is completeAll recorded tasks are complete in the authoritative lane. No further task is invented.\n\nAll canonical tasks are complete.\n\nThe current preview owner or Review capability is unavailable.\nCaptured intent\n\n### Authoritative CURRENT feature boundary — 052 ships I1\n\nThis accepted boundary supersedes the broad original scope only as the\ncompletion boundary for lifecycle 052. It does not delete the original brief or\nlater user intent. The full brief and capability inventory below remain\npreserved as long-term product direction and source material for the Dude\ncanvas. Capabilities deferred here are not 052 acceptance criteria and must not\nbecome tasks required to close 052.\n\n> 052 is complete when a user can open the Dude canvas, select a feature, and see its authoritative stage, next step, blockers, unanswered-question count, and freshness without running a command or reading raw files.\n\n#### Included in 052\n\n- **I0 — internal plumbing only.** I0 is technical spike and plumbing work\n  inside 052. It may produce internal technical tasks needed to deliver I1, but\n  it is not a release, product increment, or separately accepted user outcome.\n- **I1 — the shipped outcome.** 052 ships the read-only **Now cockpit** for one\n  selected feature. It shows authoritative stage, next step, blockers,\n  unanswered-question count, and honest freshness without requiring a command\n  or raw-file reading. I\n\nExcerpt only. The exact idea ledger holds the original.\nRecorded task progress\nD1-D3 Definition Review\n1 of 1 tasks complete\nResponsive Fluent Design And Approval\n3 of 3 tasks complete\nI0 Architecture-Risk Proof\n3 of 3 tasks complete\nFoundational Projection And Core Path\n2 of 2 tasks complete\nRead-Only Now Cockpit\n1 of 1 tasks complete\nVerification, Dogfood, And Release\n3 of 3 tasks complete\nReview history unavailableThe provider could not complete this operation. Your input is retained.\nRecorded activity\n2026-09-04T21:58:56Z\n\nClosed task and completed Feature 052 after final unchanged-revision verification and independent approval. Exact `npm ci` left the lock unchanged and audit found zero vulnerabilities; two clean builds matched committed and deployed bytes (`app.js` 635,624 bytes, SHA-256 `c2a9e3bb15be3487373d8414bab0cff570586450ed29ab4dde5cd8a1cddb1731`, gzip 180,230 of 358,400; complete legal notices 60,027 bytes, SHA-256 `b6c7ada06bc1777c08965b0f6941f246cffa7e34998bd357450f3faa0501bc70`). The installed recursive suite passed 2,556 with four platform skips, and a history-preserving dependency-free clone passed 2,525 with fifteen expected skips; lint, Compose, backlog, board, and diff hygiene had zero failures. All 13 canonical tasks are ``; the completion-only advisory retrospective dispatch was recorded without changing closure authority.\n\n2026-09-04T21:52:46Z\n\nFinal independent review approved task after the different reviser completed the five-surface upgrade contract, including `docs/commands.md`: global `@dude status` remains workflow orientation, the upgrade workflow's internal `upgrade.mjs status` is ref-only, `plan` is byte-authoritative, `.github/extensions/dude/**` is the exact core extension tree, every other extension is preserved, and historical same-ref repair requires a second fresh plan and confirmation. The approved revision also retains complete metafile-derived licenses, clean-checkout-safe test loading, partial-install failure behavior, and the concise Next card with exact source text in Evidence. Fresh coordinator completion verification remains before close.\n\n2026-09-04T21:39:26Z\n\ntask re-review repeated the upgrade-documentation finding after clean-checkout test loading, complete licenses, historical bootstrap behavior, and the concise Next card passed. `docs/commands.md` still omitted the core Dude extension from its exhaustive ownership list, and several surfaces incorrectly called the upgrader's ref-only script status `@dude status`, which is the separate workflow-orientation command. Under the active autonomous Ship policy, the repeated finding is retained without another permission prompt and routed to a different reviser for complete command-reference coverage and precise `upgrade.mjs status` terminology.\n\n2026-09-04T20:41:11Z\n\ntask re-review accepted the complete metafile-derived license notices and the concise Next-card presentation, then rejected two newly exposed release-contract gaps. The browser harness imports Fluent packages before its missing-Edge skip, so a clean dependency-free CI checkout fails at module load; upgrade guidance and the seeded bundle manifest still describe only agents, skills, and instructions as upstream-owned even though the engine also owns `.github/extensions/dude/**`, and `docs/upgrading.md` still treats ref difference as the sole trigger. T013 remains `` for clean-checkout-safe test loading and one consistent public ownership/byte-completeness contract.\n\n2026-09-04T19:57:29Z\n\nIndependent review rejected task on two release gaps: the linked legal file names MIT licenses without shipping their complete permission terms, and the historical-upgrader test performs a second current-engine plan that the supported same-ref workflow would not reach. The user also identified a final cockpit defect: the focal Next surface renders T013's entire internal verification contract as one `Title3`, including dependency wording and raw backticks. Source inspection confirmed that `FocalRegion` uses the full projected task description as its headline while `orientationText` removes only workflow tokens. T013 remains `` for bounded release and presentation revisions followed by fresh verification and re-review.\n\nWork coverage: current\nCurrent request coverage unavailable\nConnected\nNo recorded work is in progressIdeas and defined work remain available in the finder below. This is not a statement about current human requests..",
+      "headings": [
+        {
+          "text": "Dude Canvas UI",
+          "x": 24,
+          "y": 182,
+          "width": 670.1875,
+          "height": 28,
+          "fontSize": "20px"
+        },
+        {
+          "text": "Captured intent",
+          "x": 24,
+          "y": 454,
+          "width": 670.1875,
+          "height": 22,
+          "fontSize": "16px"
+        },
+        {
+          "text": "Recorded task progress",
+          "x": 24,
+          "y": 972,
+          "width": 670.1875,
+          "height": 22,
+          "fontSize": "16px"
+        },
+        {
+          "text": "Recorded activity",
+          "x": 24,
+          "y": 1278,
+          "width": 670.1875,
+          "height": 22,
+          "fontSize": "16px"
+        }
+      ],
+      "regions": [
+        {
+          "tag": "HEADER",
+          "label": null,
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 86
+        },
+        {
+          "tag": "NAV",
+          "label": "Workspace navigation",
+          "x": 0,
+          "y": 37,
+          "width": 1440,
+          "height": 49
+        },
+        {
+          "tag": "MAIN",
+          "label": null,
+          "x": 0,
+          "y": 86,
+          "width": 1440,
+          "height": 889
+        },
+        {
+          "tag": "HEADER",
+          "label": null,
+          "x": 24,
+          "y": 158,
+          "width": 670.1875,
+          "height": 100
+        },
+        {
+          "tag": "FOOTER",
+          "label": null,
+          "x": 0,
+          "y": 975,
+          "width": 1440,
+          "height": 25
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "projection": {
+    "selected": {
+      "title": "Dude Canvas UI",
+      "ideaPath": ".dude/ideas/052-dude-canvas-ui.md",
+      "slug": "dude-canvas-ui",
+      "specPath": ".dude/specs/052-dude-canvas-ui/spec.md",
+      "explicit": true
+    },
+    "stage": "Verified",
+    "tasks": {
+      "total": 13,
+      "open": 0,
+      "inProgress": 0,
+      "blocked": 0,
+      "done": 13
+    }
+  },
+  "historicalBundleHash": "c2a9e3bb15be3487373d8414bab0cff570586450ed29ab4dde5cd8a1cddb1731",
+  "browser": "Edg/133.0.3065.69",
+  "contactSheet": "/Users/eg/.copilot/session-state/6548ab4a-a610-4b77-bce6-4f630599ef4c/files/canvas-052-comparison-lH5jXI/comparison.png",
+  "worktreeUnchanged": true
+}

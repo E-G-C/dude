@@ -1,0 +1,41 @@
+{
+  "owner": "Tester",
+  "scope": "Bounded read-only availability audit of canonical features 001-058 and explicitly referenced original evidence locations.",
+  "canonical": {
+    "baseCommit": "db6350a91877f8ac9dbdac18b2ce57d6ab192cdf",
+    "ideaLedgers": 58,
+    "definedPackages": 50,
+    "resolvedIdeas": 4,
+    "draftIdeas": 4,
+    "trackedCanonicalFiles": 755,
+    "currentTasks": 285,
+    "doneTasks": 285,
+    "activeTasks": 0,
+    "blockedTasks": 0,
+    "pathGitBlobManifestSha256": "b9ee68233719c747ab758a2a99d4231b73417cef3ab8c9107551b1620e7d2d5f"
+  },
+  "history": {
+    "eventTargets": 55,
+    "events": 89,
+    "originalCaptureTargetsFound": 0,
+    "disposition": "Canonical history is committed. Original trusted current-run, verification, review, and lint capture sets were not found in the authorized bounded search. This does not erase or reopen completed tasks.",
+    "qualification": "This is not proof that originals never existed or cannot exist at another explicitly identified location. Canonical history, model packets, normalized Inspection output, repository copies, and reconstructed fixtures are not original capture sources."
+  },
+  "unavailableReferencedSessions": [
+    "dba9e5c0-ebf6-4e64-b964-2ec0d6ad20de",
+    "5c18f926-9e5b-4303-b236-cb926acfde82"
+  ],
+  "availableAncillaryComparison": {
+    "source": "canvas-052-comparison-lH5jXI",
+    "files": 6,
+    "manifestSha256": "8f05f31d53ee2c7b408f49dc47b7fd45e456ab9755b8f5c2638723c1961456a5",
+    "limit": "Same-browser visual comparison only; neither native-host proof nor original trusted runtime captures."
+  },
+  "safety": {
+    "repositoryWrites": false,
+    "workflowExecution": false,
+    "unrelatedSessionStoresRead": false,
+    "liveProcessesOrCheckpointAuthorityInspected": false,
+    "remoteDeliveryVerifiedByThisAudit": false
+  }
+}
