@@ -1152,7 +1152,12 @@ test('plain-language writing reaches definitions and replies without replacing e
     /When installed, load `dude-pack-writing-style`.*`dude-pack-writing-avoid-ai-tropes`/,
     /Without the writing pack, use these defaults/,
     /Lead with the answer, result, or decision needed/,
+    /Keep it concise; skip preambles, tangents, recaps, and pleasantries/,
+    /bounded numbered steps for ordered work/,
+    /five or fewer items per group/,
     /without hiding decision-relevant information/,
+    /one next action if work remains/,
+    /For failures, say what failed, the cause if known, and the fix or next diagnostic step/,
     /Preserve requirements, uncertainty, evidence, exact identifiers, required formats, and safety confirmations/,
     /Brevity must not make incomplete work sound complete/,
   ]) {
