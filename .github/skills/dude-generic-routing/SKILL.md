@@ -25,7 +25,7 @@ After the agent resolves, select the installed `.github/skills/*/SKILL.md` entri
 - A description match alone does not activate an opt-in discipline, a destructive procedure, or an authority-bearing procedure; those require explicit user intent or an explicit contract.
 - When nothing matches, emit nothing: no section, no placeholder, no added step.
 
-A task that authors or revises human-facing documentation prose carries `dude-pack-writing-avoid-ai-tropes` and `dude-pack-writing-style` while they are installed.
+A task that authors, revises, or reviews human-facing prose carries `dude-pack-writing-avoid-ai-tropes` and `dude-pack-writing-style` while they are installed. This includes generated documentation, feature definitions, specs, plans, user replies, questions, progress reports, reviews, and specialist handoffs. Their absence does not block the task; use the shared plain-language defaults.
 
 ## Tie Breakers
 

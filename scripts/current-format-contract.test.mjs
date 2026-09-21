@@ -1123,6 +1123,65 @@ test('generated dispatch guidance scopes applicable skills and the verdict cover
   );
 });
 
+test('plain-language writing reaches definitions and replies without replacing existing contracts', () => {
+  const writingSource = 'library/packs/writing/skills/dude-pack-writing-style/SKILL.md';
+  const writingGenerated = '.github/skills/dude-pack-writing-style/SKILL.md';
+  for (const [source, generated] of [
+    [writingSource, writingGenerated],
+    ['src/instructions/dude.instructions.md', '.github/instructions/dude.instructions.md'],
+    ['src/skills/dude-feature-definition/SKILL.md', '.github/skills/dude-feature-definition/SKILL.md'],
+    ['src/skills/dude-generic-routing/SKILL.md', '.github/skills/dude-generic-routing/SKILL.md'],
+  ]) {
+    assert.deepEqual(
+      fs.readFileSync(path.join(ROOT, generated)),
+      fs.readFileSync(path.join(ROOT, source)),
+      `${generated} matches its authoritative source`,
+    );
+  }
+
+  assert.deepEqual(
+    fs.readdirSync(path.join(ROOT, 'library/packs/writing/skills')).sort(),
+    ['dude-pack-writing-avoid-ai-tropes', 'dude-pack-writing-style'],
+    'readability extends existing skills rather than importing a new skill',
+  );
+  assert.match(read('library/packs/writing/pack.md'), /https:\/\/github\.com\/ayghri\/i-have-adhd\/blob\/main\/skills\/i-have-adhd\/SKILL\.md/);
+
+  const shared = normalizeMarkdownBlock(markdownSection(read('src/instructions/dude.instructions.md'), '## Human-facing Writing'));
+  for (const pattern of [
+    /user replies, generated documentation, definitions, reviews, and handoffs/,
+    /When installed, load `dude-pack-writing-style`.*`dude-pack-writing-avoid-ai-tropes`/,
+    /Without the writing pack, use these defaults/,
+    /Lead with the answer, result, or decision needed/,
+    /without hiding decision-relevant information/,
+    /Preserve requirements, uncertainty, evidence, exact identifiers, required formats, and safety confirmations/,
+    /Brevity must not make incomplete work sound complete/,
+  ]) {
+    assert.match(shared, pattern);
+  }
+
+  const definition = normalizeMarkdownBlock(markdownSection(read('src/skills/dude-feature-definition/SKILL.md'), '## Writing Definitions'));
+  assert.match(definition, /when installed, `dude-pack-writing-style` and `dude-pack-writing-avoid-ai-tropes`/);
+  assert.match(definition, /one testable obligation per requirement.*actor, action, and condition/);
+  assert.match(definition, /never authorizes rewriting user-owned text or history, or skipping definition gates/);
+
+  const routing = normalizeMarkdownBlock(markdownSection(read('src/skills/dude-generic-routing/SKILL.md'), '## Applicable Skills'));
+  assert.match(routing, /authors, revises, or reviews human-facing prose/);
+  assert.match(routing, /generated documentation, feature definitions, specs, plans, user replies, questions, progress reports, reviews, and specialist handoffs/);
+  assert.match(routing, /absence does not block the task/);
+
+  const writing = read(writingSource);
+  assert.match(writing, /^description:.*generated documentation, feature definitions, specs, plans, user replies/m);
+  const guidance = normalizeMarkdownBlock(markdownSection(writing, '## Definitions and generated documentation'));
+  assert.match(guidance, /Preserve the same obligation when simplifying/);
+  assert.match(guidance, /Shorter prose must not weaken a contract/);
+  const actions = normalizeMarkdownBlock(markdownSection(writing, '## Action-oriented guidance'));
+  assert.match(actions, /five or fewer items per group when useful, not a hard limit/);
+  assert.match(actions, /Never hide requirements, findings, options, or risks/);
+  assert.match(actions, /does not limit investigation or evidence/);
+  assert.match(actions, /Give time estimates only when the reader asks for one or needs one to choose a path/);
+  assert.match(actions, /Do not manufacture a next step after the task is complete/);
+});
+
 const REPETITION_SKILL = '.github/skills/dude-pack-writing-avoid-ai-tropes/SKILL.md';
 const REPETITION_TOOL = '.github/skills/dude-pack-writing-avoid-ai-tropes/repetition.mjs';
 const REPETITION_SECTION = '## Cross-file repetition check';

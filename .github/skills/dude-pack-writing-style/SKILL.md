@@ -1,6 +1,6 @@
 ---
 name: dude-pack-writing-style
-description: "Use when drafting, revising, or reviewing professional documents and action-oriented guidance where tone, structure, readability, concision, or scannability matters. Triggers: 'improve the writing style', 'make this more professional', 'make this easier to follow', 'tighten this document', 'make this actionable', or 'write for an ADHD reader'."
+description: "Use when drafting, revising, or reviewing human-facing prose: generated documentation, feature definitions, specs, plans, user replies, questions, progress reports, reviews, and handoffs. Triggers: 'improve the writing style', 'make this more professional', 'make this easier to follow', 'less verbose', 'plain language', 'tighten this document', 'make this actionable', or 'write for an ADHD reader'."
 ---
 
 # Professional Writing Style
@@ -9,6 +9,10 @@ Use this skill to make human-facing writing clear, cohesive, and easy to act on.
 It defines positive choices for voice, structure, and task readability. Defer to
 `dude-pack-writing-avoid-ai-tropes` for the bundle's canonical catalog of AI
 writing tells and patterns to remove.
+
+Apply these readability defaults without assuming a diagnosis or starting a
+special session mode. They supplement existing writing guidance and never
+replace the task's requirements.
 
 ## Match the form to the reader's job
 
@@ -41,6 +45,9 @@ neutral, and appropriate for the audience rather than robotic or promotional.
 - Use standard American English, a single space after periods, and Oxford
   commas. Avoid exclamation points unless the quoted content requires one.
 - Expand unfamiliar acronyms on first use and keep terminology consistent.
+- Prefer familiar words: "use", "before", and "if" rather than "utilize",
+  "prior to", and "in the event that". Keep necessary technical terms and
+  explain them once. Professional does not mean legalistic.
 
 ## Concision with context
 
@@ -60,6 +67,10 @@ understandable. The clearest version is not always the shortest version.
   substantive point or a concrete next action.
 - Preserve honest uncertainty. Remove empty hedging, but never turn an unknown
   into a confident claim.
+- Put the decision or useful result before supporting detail. Keep background
+  and reference material in the sections or linked artifacts that need it,
+  rather than repeating them in the opening and handoff. Keep risks and
+  qualifications beside the claims they limit.
 
 ## Document structure
 
@@ -80,6 +91,24 @@ in stages. Structure should help retrieval rather than advertise the template.
   or complex routing. Use prose or numbered steps for a simple linear sequence.
 - Keep planning notes, audits, and drafting scaffolds out of the final artifact.
 
+## Definitions and generated documentation
+
+Make specs, plans, tasks, and generated docs understandable on the first read.
+Use their required structure; do not add an executive summary to every section.
+
+- Start with the user outcome and scope. Keep WHAT and WHY in the spec and HOW
+  in the plan.
+- State one testable obligation per requirement. Name who acts, what they do,
+  and the condition that matters; separate exceptions instead of nesting them.
+- Use direct wording: "If saving fails, keep the draft and show the error."
+  Avoid "In the event of a persistence failure, retention of the draft shall
+  be ensured." Preserve the same obligation when simplifying.
+- Define shared rules once and cross-reference them where needed. Keep enough
+  local context to understand each requirement without searching several files.
+- Preserve acceptance criteria, safety constraints, exact identifiers,
+  ownership, and required sections. Shorter prose must not weaken a contract or
+  authorize changes to user-owned text or historical records.
+
 ## Action-oriented guidance
 
 When the reader needs to complete work, optimize for starting and resuming. Keep
@@ -95,8 +124,16 @@ the current state visible so the response does not depend on working memory.
 
 Keep short lists short. When a list becomes difficult to scan, group it by
 priority or by "do now" and "later" instead of presenting one long unranked set.
+Aim for five or fewer items per group when useful, not a hard limit. Never hide
+requirements, findings, options, or risks to meet a presentation target; this
+guidance does not limit investigation or evidence.
 If work remains for the reader, end with one action they can start immediately.
 Do not manufacture a next step after the task is complete.
+
+For progress updates and resumed work, name the current result or blocker and
+the next needed action without retelling the history. If a visible checklist
+already gives that state, do not repeat it as a second plan. Brief answers need
+no stock status wrapper.
 
 Give time estimates only when the reader asks for one or needs one to choose a
 path. Use concrete units, state the assumptions that affect the estimate, and
@@ -124,7 +161,7 @@ Before sending or publishing, check that:
 2. The structure matches the reader's job and uses prose, lists, tables, code,
    and diagrams deliberately.
 3. Each fact appears once, terminology is consistent, and uncertainty remains
-   explicit.
+   explicit. Formal wording has not hidden a simple actor, action, or condition.
 4. The completed result or current state is visible without reconstructing prior
    messages.
 5. The ending contains the last substantive point or one concrete next action,

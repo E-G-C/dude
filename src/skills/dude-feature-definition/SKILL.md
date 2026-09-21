@@ -14,6 +14,14 @@ description: "Use for brainstorm idea capture, explicit feature definition, spec
 - A defined feature's identity is the workspace-relative `.dude/specs/<NNN>-<slug>/spec.md` path, not its slug, directory, title, lifecycle number, or another artifact.
 - For re-definition, rendered task validation, and execution handoff, require exactly one `status: defined` owner by exact `spec_path:`. Any resolver diagnostic, no owner, or multiple owners stops before mutation. Never infer or fall back from slug, directory, or name.
 
+## Writing Definitions
+
+Use the shared plain-language defaults and, when installed, `dude-pack-writing-style` and `dude-pack-writing-avoid-ai-tropes`. Write for the person deciding what to build: put the user outcome and scope first within the required sections, then the detail needed to implement or judge it.
+
+State one testable obligation per requirement, with a clear actor, action, and condition. Prefer "Wait for approval before running this step" to "Execution shall not proceed absent the requisite approval." Keep WHAT and WHY in the spec and HOW in the plan.
+
+Preserve required sections, exact identifiers, acceptance criteria, safety rules, and uncertainty. Cross-reference shared rules rather than repeating whole contracts, but keep the conditions needed to understand each requirement beside it. This style guidance never authorizes rewriting user-owned text or history, or skipping definition gates.
+
 ## Brainstorm
 
 `brainstorm <idea>` creates or refreshes exactly one direct `.dude/ideas/<NNN>-<slug>.md`; brainstorm does not create or write `.dude/specs/`.
