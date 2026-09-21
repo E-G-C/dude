@@ -23,6 +23,14 @@ description: "Universal Dude authority, safety, and execution rules."
 
 Load detailed procedures only when their mode applies: `dude-feature-definition`, `dude-lightweight-execution`, installed tracked execution, `dude-work`, `dude-parallel-dispatch`, `dude-verification-before-completion`, and the review skills. The only exception is Work-authorized unchanged-intent derived-artifact repair in an existing Lightweight package through `dude-work`; tracked definition recovery refuses before writes.
 
+## Persisted Datetimes
+
+- Write each new agent-authored persisted Dude datetime in ISO 8601 UTC at seconds precision: `YYYY-MM-DDTHH:mm:ssZ`.
+- When existing event-authority rules authorize a new `## Coordinator Log` entry, use exactly `- <timestamp> - <event>`. Put ` - ` after the timestamp, never an attached colon. Example: `- 2026-09-21T13:28:51Z - <event>` (structure only, not execution evidence).
+- Read the current clock through available permitted tooling, or accurately convert a supplied offset timestamp to UTC. If no clock or timestamp evidence is available, say so instead of inventing an event time.
+- Treat this as instruction-level discipline for new agent-authored values, not deterministic validation or a new machine timestamp schema. Existing serializers and field-specific contracts still control machine-generated formats and precision; do not round or rewrite their output or change their schemas.
+- Preserve user-supplied, quoted, or external source timestamps, fixed identifiers and paths, recorded evidence, and all existing logs exactly. Do not migrate or normalize history. Use `YYYY-MM-DD` for an actual calendar-only fact or source date without a time; do not invent a time or precision.
+
 ## Human-facing Writing
 
 Use plain language for user replies, generated documentation, definitions, reviews, and handoffs. When installed, load `dude-pack-writing-style` for readability and `dude-pack-writing-avoid-ai-tropes` for prose cleanup. Without the writing pack, use these defaults:

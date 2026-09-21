@@ -23967,15 +23967,57 @@ test('Coordinator Log delimiters: date-colon capture and definition inspect with
   }
 });
 
+test('Coordinator Log delimiters: 069 timestamp-colon first entries inspect without rewriting files', () => {
+  for (const timestamp of [
+    '2026-09-21T12:36:29Z', // The actual 069 first-entry timestamp and delimiter.
+    '2026-09-19T12:34:56Z', // Previously rejected by the timestamp-colon negative.
+    '2026-09-21T12:36:29.6Z',
+    '2026-09-21T12:36:29.615123456Z',
+    '2026-09-21T08:36:29-04:00',
+    '2026-09-21T18:06:29+05:30',
+    '2026-09-21T08:36:29.615-04:00',
+    '2026-09-21T18:06:29.615123456+05:30',
+  ]) {
+    withWorkspace((root) => {
+      const events = [
+        `- ${timestamp}: First capture staged as a draft.\n`,
+        `- 2026-09-21T12:43:57Z: First definition staged for ${SPEC_PATH}.\n`,
+        '- 2026-09-21T13:28:51Z - Canonical new agent-authored entry.\n',
+      ];
+      const fullLog = `## Coordinator Log\n\n${events.join('')}`;
+      const ownerPath = path.join(root, IDEA_PATH);
+      const tasksPath = path.join(root, path.dirname(SPEC_PATH), 'tasks.md');
+      fs.writeFileSync(ownerPath, ideaBytes(SPEC_PATH, events.join('')));
+      fs.writeFileSync(tasksPath, transitionTasksBytes([{ id: TASK_KEY }]));
+      const sourcePaths = [ownerPath, tasksPath, path.join(root, SPEC_PATH)];
+      const before = sourcePaths.map(feature029FileFingerprint);
+      const beforeEntries = fs.readdirSync(root, { recursive: true }).sort();
+
+      const inspection = inspect(publicInspectionInput(root));
+
+      const { item, body } = feature029Owner(inspection);
+      assert.equal(inspection.overflow, false, timestamp);
+      assert.deepEqual(inspection.blockers, [], timestamp);
+      assert.deepEqual(body.events, events, timestamp);
+      assert.equal(item.text, ownerLogProjectionText(fullLog, events, events), timestamp);
+      assert.deepEqual(sourcePaths.map(feature029FileFingerprint), before, timestamp);
+      assert.deepEqual(fs.readdirSync(root, { recursive: true }).sort(), beforeEntries, timestamp);
+    });
+  }
+});
+
 test('Coordinator Log delimiters: mixed events preserve multiline bytes, order, and duplicates', () => {
-  const duplicate = '- 2026-09-21:\tFirst definition. \t\r\n  Definition detail.\r\n';
+  const duplicate = '- 2026-09-21T12:43:57Z:\tFirst definition. \t\r\n  Definition detail.\r\n';
   const events = [
     '- 2026-09-18 Existing whitespace-delimited date.\r\tContinuation. \t\r\r',
     '- 2026-09-19: First capture: café e\u0301 🚀.  \n  - Indented detail.\n\n',
     duplicate,
     '- 2026-09-21T01:24:00.615+05:30\tOffset timestamp.\r\n  Inline <!-- note --> stays.  \r\n',
     '- 2026-09-21T01:24:00Z UTC timestamp.\n',
+    '- 2026-09-21T08:36:29.615123456-04:00: Offset timestamp-colon.\r  Detail. \t\r',
+    '- 2026-09-21T13:28:51Z - Canonical new agent-authored entry.\n',
     duplicate,
+    '- 2026-09-22T00:00:00Z:\r\n',
     '- 2026-09-22: Final event without a line ending.  \t',
   ];
   const log = [
@@ -24006,10 +24048,16 @@ test('Coordinator Log delimiters: undated prose and malformed date or timestamp 
     '- 2026-09-19prose: Not a date delimiter.',
     '- 2026-09-19T12:34: Missing seconds and zone.',
     '- 2026-09-19T12:34:56: Missing zone.',
+    '- 2026-09-19T12:34:56.615: Missing fractional timestamp zone.',
     '- 2026-09-19T12:34:56.Z Empty fraction.',
+    '- 2026-09-19T12:34:56.Z: Empty fraction before timestamp colon.',
     '- 2026-09-19T12:34:56+04: Offset missing minutes.',
+    '- 2026-09-19T12:34:56+0400: Offset missing separator.',
     '- 2026-09-19T12:34:56Zprose Missing timestamp separator.',
-    '- 2026-09-19T12:34:56Z: Timestamp colon is not a date delimiter.',
+    '- 2026-09-19T12:34:56Z:Attached prose without separator whitespace.',
+    '- 2026-09-19T12:34:56Z:: Repeated timestamp delimiter.',
+    '- 2026-09-19T12:34:56+04:00:Attached prose without separator whitespace.',
+    '- 2026-09-19T12:34:56.615-04:00:: Repeated offset timestamp delimiter.',
   ];
   for (const prefix of prefixes) {
     const log = [

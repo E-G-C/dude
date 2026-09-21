@@ -1123,6 +1123,44 @@ test('generated dispatch guidance scopes applicable skills and the verdict cover
   );
 });
 
+test('persisted datetimes: shared instructions keep new agent values canonical and preserve existing evidence', () => {
+  const source = 'src/instructions/dude.instructions.md';
+  const generated = '.github/instructions/dude.instructions.md';
+  const section = markdownSection(read(source), '## Persisted Datetimes');
+
+  // This proves retention of the written rule, not model compliance or runtime validation.
+  assertShipParagraphRequirements(section, [
+    ['canonical new agent format', 'Write each new agent-authored persisted Dude datetime', [
+      /ISO 8601 UTC at seconds precision: `YYYY-MM-DDTHH:mm:ssZ`/,
+    ]],
+    ['authorized event shape', 'When existing event-authority rules authorize a new `## Coordinator Log` entry', [
+      /use exactly `- <timestamp> - <event>`/,
+      /Put ` - ` after the timestamp, never an attached colon/,
+      /structure only, not execution evidence/,
+    ]],
+    ['clock evidence', 'Read the current clock', [
+      /through available permitted tooling, or accurately convert a supplied offset timestamp to UTC/,
+      /If no clock or timestamp evidence is available, say so instead of inventing an event time/,
+    ]],
+    ['instruction and machine boundaries', 'Treat this as instruction-level discipline', [
+      /for new agent-authored values, not deterministic validation or a new machine timestamp schema/,
+      /Existing serializers and field-specific contracts still control machine-generated formats and precision/,
+      /do not round or rewrite their output or change their schemas/,
+    ]],
+    ['history and calendar-only boundaries', 'Preserve user-supplied, quoted, or external source timestamps', [
+      /fixed identifiers and paths, recorded evidence, and all existing logs exactly/,
+      /Do not migrate or normalize history/,
+      /Use `YYYY-MM-DD` for an actual calendar-only fact or source date without a time/,
+      /do not invent a time or precision/,
+    ]],
+  ], `${source} ## Persisted Datetimes`);
+
+  assert.ok(
+    fs.readFileSync(path.join(ROOT, generated)).equals(fs.readFileSync(path.join(ROOT, source))),
+    `${generated} matches its authoritative source byte-for-byte`,
+  );
+});
+
 test('plain-language writing reaches definitions and replies without replacing existing contracts', () => {
   const writingSource = 'library/packs/writing/skills/dude-pack-writing-style/SKILL.md';
   const writingGenerated = '.github/skills/dude-pack-writing-style/SKILL.md';
