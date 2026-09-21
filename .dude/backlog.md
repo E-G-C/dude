@@ -6,9 +6,9 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **1** (1 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **5**
+- Ideas awaiting definition: **6**
 - Defined awaiting work: **0**
-- Completed: **59**
+- Completed: **60**
 
 ## Current
 
@@ -35,6 +35,7 @@ kanban
 - `056` · `ship-orphan-cleanup` — Ship Orphan Cleanup (`.dude/ideas/056-ship-orphan-cleanup.md`)
 - `058` · `outcome-aligned-intake` — Outcome-Aligned Intake (`.dude/ideas/058-outcome-aligned-intake.md`)
 - `063` · `dude-canvas-settings` — Dude Canvas Settings (`.dude/ideas/063-dude-canvas-settings.md`)
+- `068` · `agent-to-agent-communication` — Local and remote agent communication (`.dude/ideas/068-agent-to-agent-communication.md`)
 
 ## Completed
 
@@ -97,6 +98,7 @@ kanban
 - `061` · `work-inspection-source-capacity` — Work Inspection Source Capacity (`.dude/ideas/061-work-inspection-source-capacity.md`)
 - `064` · `work-receipt-overflow-handling` — Work Receipt Overflow Handling (`.dude/ideas/064-work-receipt-overflow-handling.md`)
 - `065` · `work-history-event-compaction` — Work History Event Compaction (`.dude/ideas/065-work-history-event-compaction.md`)
+- `066` · `canvas-without-beads` — Canvas Without Beads (`.dude/ideas/066-canvas-without-beads.md`)
 
 ## Dependency and order notes
 

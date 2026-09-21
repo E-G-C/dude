@@ -9,6 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -22,6 +23,15 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 /** @returns {string} */
 function temporaryRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'dude-work-index-'));
+}
+
+function optionalBeadsRoot() {
+  // A real .beads in the Windows user profile also covers its usual temp
+  // directory. Keep absence fixtures outside that inherited authority without
+  // deleting it, changing permissions, or weakening ancestor discovery.
+  const parent = process.platform === 'win32' && process.env.SystemRoot
+    ? path.join(process.env.SystemRoot, 'Temp') : fs.realpathSync(os.tmpdir());
+  return fs.mkdtempSync(path.join(parent, 'dude-work-index-066-'));
 }
 
 /** @param {string} root @param {string} relative @param {string|Buffer} value */
@@ -81,6 +91,41 @@ function feature(root, number, slug, tasks = '- [ ] T001@aaaaaaaa Open work.\n')
 
 function emptyBoard() {
   return { status: 0, stdout: '[]', stderr: '' };
+}
+
+/**
+ * Exercise the default execFile runner in a child with no command search path
+ * or inherited tracking overrides. Never change the test host's environment,
+ * and never substitute a .cmd shim for a real missing executable on Windows.
+ * @param {string} root
+ * @param {string} body
+ * @param {{generated?:boolean, env?:Record<string,string>}} [options]
+ */
+function optionalBeadsChild(root, body, { generated = false, env = {} } = {}) {
+  const inherited = Object.fromEntries(Object.entries(process.env)
+    .filter(([key]) => !/^(?:PATH$|BEADS_|GIT_)/i.test(key)));
+  const moduleUrl = new URL(generated
+    ? '../../../.github/extensions/dude/lib/projection.mjs'
+    : './lib/projection.mjs', import.meta.url).href;
+  return JSON.parse(execFileSync(process.execPath, ['--input-type=module', '--eval', `
+    import assert from 'node:assert/strict';
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import { execFile } from 'node:child_process';
+    const root = ${JSON.stringify(root)};
+    const reader = await import(${JSON.stringify(moduleUrl)});
+    const missing = await new Promise(resolve => execFile('bd', ${JSON.stringify(BD_LIST)},
+      { cwd: root, shell: false, timeout: 5000 }, error => resolve(error)));
+    assert.equal(missing?.code, 'ENOENT', 'the real default executable must be missing');
+    assert.equal(fs.lstatSync(root).isDirectory(), true, 'cwd must remain valid');
+    ${body}
+  `], {
+    cwd: root,
+    env: { ...inherited, PATH: root, ...env },
+    encoding: 'utf8',
+    timeout: 30_000,
+    maxBuffer: 8 * 1024 * 1024,
+  }));
 }
 
 /** @param {string|Buffer} value */
@@ -224,6 +269,833 @@ function fileInventory(root) {
   visit(root);
   return result;
 }
+
+/** Include empty directories and link targets as well as every file's bytes. */
+function optionalBeadsSnapshot(root) {
+  return {
+    entries: fs.readdirSync(root, { recursive: true }).sort(),
+    files: fileInventory(root).map(entry => ({
+      ...entry,
+      identity: entry.size < 0 ? fs.readlinkSync(path.join(root, entry.path))
+        : sha256(fs.readFileSync(path.join(root, entry.path))),
+    })),
+  };
+}
+
+/** Standard linked-worktree metadata, without invoking or mutating Git. */
+function optionalBeadsWorktree(parent, root) {
+  const main = path.join(parent, 'main-parent', 'main');
+  const gitDirectory = path.join(main, '.git', 'worktrees', 'linked');
+  write(root, '.git', `gitdir: ${path.relative(root, gitDirectory)}\n`);
+  write(gitDirectory, 'commondir', '../..\n');
+  write(gitDirectory, 'gitdir', `${path.join(root, '.git')}\n`);
+  return { main, gitDirectory };
+}
+
+/** @param {any} pair @param {{ideaPath:string}} owned */
+function assertOptionalUnavailable(pair, owned) {
+  assert.equal(pair.index.coverage.inventory.state, 'current');
+  assert.equal(pair.index.coverage.work.state, 'partial');
+  const row = pair.index.items.find(item => item.ideaPath === owned.ideaPath);
+  assert.equal(row.lane, null);
+  assert.equal(row.taskCounts, null);
+  assert.equal(row.basis, 'not-established');
+  assert.equal(row.availability.state, 'unavailable');
+  assert.equal(pair.selected.complete, false);
+  assert.equal(pair.selected.tasks, null);
+  assert.equal(pair.selected.next, null);
+  assert.equal(pair.selected.taskDetails.items, null);
+  assert.deepEqual(pair.selected.diagnostics.map(({ code }) => code), ['TRACKED_AUTHORITY_UNAVAILABLE']);
+}
+
+test('066 optional-Beads real missing executable restores source and generated four-state reads without writes', async (t) => {
+  const root = optionalBeadsRoot();
+  try {
+    const activeUnit = '- [~] T002@bbbbbbbb Continue recorded work.\n\nFull current instruction.\n\n';
+    const owned = feature(root, '066', 'optional-beads', [
+      '<!-- dude:board:start -->',
+      '- [!] T900@board000 Derived task lookalike.',
+      '<!-- dude:board:end -->',
+      '',
+      '## Phase 1: Work',
+      '- [ ] T001@aaaaaaaa Start recorded work.',
+      '',
+      activeUnit.trimEnd(),
+      '',
+      '- [!] T003@cccccccc Waiting on a recorded blocker.',
+      '    blocked-by: external-dependency: Waiting for fixture input.',
+      '',
+      '- [x] T004@dddddddd Completed recorded work.',
+      '```md',
+      '- [~] T901@fenced00 Hidden task lookalike.',
+      '```',
+      '<!-- - [!] T902@hidden00 Hidden task lookalike. -->',
+      '',
+      '## Lightweight Execution History',
+      '- [x] T903@archive0 Archived task lookalike.',
+      '',
+    ].join('\n'));
+    const expected = { total: 4, open: 1, inProgress: 1, blocked: 1, done: 1 };
+    const before = optionalBeadsSnapshot(root);
+    for (const generated of [false, true]) {
+      await t.test(generated ? 'generated default runner' : 'source default runner', () => {
+        const result = optionalBeadsChild(root, `
+          const input = { root, target: ${JSON.stringify(owned.ideaPath)} };
+          const index = await reader.readWorkIndex({ root });
+          const selected = await reader.readNowProjection(input);
+          const freshness = await reader.checkProjectionFreshness({ root, projection: selected });
+          const refreshed = await reader.refreshNowProjection({ ...input, previous: selected });
+          // A distinctly injected control disproves invalid canonical input as
+          // the reason for the missing-executable regression.
+          const injectedEmptyControl = await reader.readNowProjection(input, {
+            runBd: () => ({ status: 0, stdout: '[]', stderr: '' }),
+          });
+          console.log(JSON.stringify({ index, selected, freshness, refreshed, injectedEmptyControl }));
+        `, { generated });
+        t.diagnostic(`${generated ? 'generated' : 'source'}: real bd probe ENOENT in valid cwd; injected empty-list control complete=${result.injectedEmptyControl.complete}`);
+        assert.equal(result.injectedEmptyControl.complete, true);
+        assert.deepEqual(result.injectedEmptyControl.tasks, expected);
+        const row = result.index.items.find(item => item.ideaPath === owned.ideaPath);
+        assert.equal(result.index.coverage.inventory.state, 'current');
+        assert.equal(result.index.coverage.work.state, 'current');
+        assert.equal(row.specPath, owned.specPath);
+        assert.equal(row.lane, 'lightweight');
+        assert.equal(row.basis, 'canonical-lifecycle');
+        assert.equal(row.group, 'blocked');
+        assert.deepEqual(row.taskCounts, expected);
+        assert.deepEqual(row.availability, { state: 'current', reason: null });
+        const selected = result.selected;
+        assert.equal(selected.complete, true);
+        assert.equal(selected.status, 'ok');
+        assert.equal(selected.authority, 'lightweight');
+        assert.equal(selected.stage, 'Blocked');
+        assert.deepEqual(selected.tasks, row.taskCounts);
+        assert.equal(selected.taskDetails.coverage.state, 'available');
+        assert.deepEqual(selected.taskDetails.items.map(task => task.taskKey),
+          ['T001@aaaaaaaa', 'T002@bbbbbbbb', 'T003@cccccccc', 'T004@dddddddd']);
+        assert.equal(selected.taskDetails.items[1].instruction.text, activeUnit);
+        assert.equal(selected.next.source.taskKey, 'T002@bbbbbbbb');
+        assert.equal(selected.next.description, 'Continue recorded work.');
+        assert.equal(selected.blockers[0].classification, 'external-dependency');
+        assert.equal(selected.blockers[0].reason, 'Waiting for fixture input.');
+        assert.deepEqual(selected.diagnostics, []);
+        assert.deepEqual(selected.attention, []);
+        assert.deepEqual(result.index.coverage.work.diagnostics, []);
+        assert.equal(result.freshness.state, 'current');
+        assert.equal(result.refreshed.replaced, true);
+        assert.equal(result.refreshed.freshness.state, 'current');
+        assert.deepEqual(result.refreshed.projection.tasks, expected);
+        const source = selected.sources.find(source => source.command === 'bd list --all --limit 0 --json');
+        assert.equal(source.label, 'Optional tracker absence');
+        assert.equal(source.role, 'authority-check');
+        assert.notEqual(source.contentIdentity, result.injectedEmptyControl.sources
+          .find(source => source.command === 'bd list --all --limit 0 --json').contentIdentity,
+        'absence evidence must not claim a successful empty-board capture');
+        assert.deepEqual(result.index.sources.find(candidate => candidate.command === source.command), source);
+        assert.equal(row.sources.find(source => source.path === owned.tasksPath).contentIdentity,
+          selected.taskDetails.items[0].source.contentIdentity);
+        assert.deepEqual(optionalBeadsSnapshot(root), before, 'opening, selecting, freshness and refresh change no bytes or inventory');
+      });
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('066 optional-Beads injected empty and exact no-database controls preserve canonical lifecycle and source identity', async (t) => {
+  const root = optionalBeadsRoot();
+  try {
+    const active = feature(root, '061', 'four-states', [
+      '- [ ] T001@aaaaaaaa Open.',
+      '- [~] T002@bbbbbbbb Active.',
+      '- [!] T003@cccccccc Blocked.',
+      '    blocked-by: external-dependency: Recorded wait.',
+      '- [x] T004@dddddddd Done.',
+      '',
+    ].join('\n'));
+    const planned = feature(root, '062', 'planned');
+    const draft = idea(root, '063', 'draft');
+    const resolved = idea(root, '064', 'resolved', 'resolved');
+    const before = optionalBeadsSnapshot(root);
+    for (const [label, reply] of [
+      ['successful []', emptyBoard()],
+      ['exact no database LF', { status: 1, stdout: '', stderr: "Error: no beads database found\nHint: Run 'bd init'.\n" }],
+      ['exact no database CRLF', { status: 1, stdout: ' \r\n', stderr: '\r\n \t\r\nError: no beads database found\r\nHint: unused optional tool\r\n' }],
+    ]) {
+      await t.test(label, () => {
+        const result = optionalBeadsChild(root, `
+          const calls = [];
+          const options = { runBd(args) { calls.push(args); return ${JSON.stringify(reply)}; } };
+          const index = await reader.readWorkIndex({ root }, options);
+          const selected = [];
+          for (const target of ${JSON.stringify([active, planned, draft, resolved].map(item => item.ideaPath))}) {
+            selected.push(await reader.readNowProjection({ root, target }, options));
+          }
+          const emptyControl = await reader.readNowProjection({ root, target: selected[0].selected.ideaPath },
+            { runBd: () => ({ status: 0, stdout: '[]', stderr: '' }) });
+          const freshness = await reader.checkProjectionFreshness({ root, projection: emptyControl }, options);
+          const refreshed = await reader.refreshNowProjection({
+            root, target: emptyControl.selected.ideaPath, previous: emptyControl,
+          }, options);
+          console.log(JSON.stringify({ index, selected, emptyControl, freshness, refreshed, calls }));
+        `);
+        assert.equal(result.index.coverage.work.state, 'current');
+        for (let index = 0; index < result.selected.length; index += 1) {
+          const selected = result.selected[index];
+          const row = result.index.items.find(item => item.ideaPath === selected.selected.ideaPath);
+          assert.equal(selected.complete, true);
+          assert.equal(row.availability.state, 'current');
+          assert.deepEqual(selected.tasks, row.taskCounts);
+          assert.deepEqual(selected.diagnostics, []);
+        }
+        assert.deepEqual(result.selected[0].tasks, {
+          total: 4, open: 1, inProgress: 1, blocked: 1, done: 1,
+        });
+        assert.equal(result.selected[0].authority, 'lightweight');
+        assert.equal(result.selected[1].authority, 'definition');
+        assert.equal(result.selected[1].stage, 'Defined');
+        assert.equal(result.selected[1].next, null);
+        assert.equal(result.index.items.find(item => item.ideaPath === planned.ideaPath).group, 'defined-awaiting-work');
+        assert.equal(result.index.items.find(item => item.ideaPath === draft.ideaPath).group, 'awaiting-definition');
+        assert.equal(result.index.items.find(item => item.ideaPath === resolved.ideaPath).group, 'completed');
+        assert.equal(result.freshness.state, 'current');
+        assert.equal(result.refreshed.replaced, true);
+        assert.equal(result.refreshed.freshness.state, 'current');
+        const authority = projection => projection.sources.find(source => source.command === 'bd list --all --limit 0 --json');
+        assert.deepEqual(authority(result.selected[0]), authority(result.emptyControl));
+        assert.ok(result.calls.every(args => JSON.stringify(args) === JSON.stringify(BD_LIST)));
+        assert.deepEqual(optionalBeadsSnapshot(root), before);
+      });
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('066 optional-Beads local and linked absence must be safe while footprints and uncertainty forbid fallback', async (t) => {
+  const layouts = [
+    { name: 'non-Git root', available: true },
+    { name: 'ordinary Git root', available: true, setup: (_parent, root) => write(root, '.git/HEAD', 'ref: refs/heads/main\n') },
+    { name: 'nested ordinary Git root', available: true, setup: parent => write(parent, '.git/HEAD', 'ref: refs/heads/main\n') },
+    { name: 'linked worktree', available: true, setup: optionalBeadsWorktree },
+    { name: 'absolute linked pointer and CRLF metadata with native path equivalence', available: true, setup(parent, root) {
+      const { gitDirectory } = optionalBeadsWorktree(parent, root);
+      write(root, '.git', `gitdir: ${gitDirectory}\r\n`);
+      write(gitDirectory, 'commondir', '../..\r\n');
+      const backlink = path.join(root, '.git');
+      write(gitDirectory, 'gitdir', `${process.platform === 'win32' ? backlink.toLowerCase() : backlink}\r\n`);
+    } },
+    { name: 'local .beads directory', setup: (_parent, root) => write(root, '.beads/config.yaml', 'fixture: true\n') },
+    { name: 'local .beads file', setup: (_parent, root) => write(root, '.beads', 'footprint\n') },
+    { name: 'ancestor .beads despite a local Git root', setup(parent, root) {
+      write(parent, '.beads/config.yaml', 'fixture: true\n');
+      write(root, '.git/HEAD', 'ref: refs/heads/main\n');
+    } },
+    { name: 'main worktree .beads', setup(parent, root) {
+      const { main } = optionalBeadsWorktree(parent, root);
+      write(main, '.beads/config.yaml', 'fixture: true\n');
+    } },
+    { name: 'main worktree ancestor .beads', setup(parent, root) {
+      const { main } = optionalBeadsWorktree(parent, root);
+      write(path.dirname(main), '.beads/config.yaml', 'fixture: true\n');
+    } },
+    { name: 'dangling .beads link', setup: (parent, root) => fs.symlinkSync(
+      path.join(parent, 'missing-tracker'), path.join(root, '.beads'), process.platform === 'win32' ? 'junction' : 'dir',
+    ) },
+    { name: 'linked .git directory', setup(parent, root) {
+      const external = path.join(parent, 'external-git');
+      fs.mkdirSync(external);
+      fs.symlinkSync(external, path.join(root, '.git'), process.platform === 'win32' ? 'junction' : 'dir');
+    } },
+    { name: 'malformed .git pointer', setup: (_parent, root) => write(root, '.git', 'not a gitdir pointer\n') },
+    { name: 'unresolved .git pointer', setup: (_parent, root) => write(root, '.git', 'gitdir: ../missing/.git/worktrees/linked\n') },
+    { name: 'network Git indirection', setup: (_parent, root) => write(root, '.git', 'gitdir: //fixture.invalid/share/main/.git/worktrees/linked\n') },
+    { name: 'drive-relative Git indirection', setup: (_parent, root) => write(root, '.git', 'gitdir: C:main/.git/worktrees/linked\n') },
+    { name: 'nonstandard Git common location', setup: (_parent, root) => write(root, '.git/commondir', '../external\n') },
+    { name: 'conflicting linked commondir', setup(parent, root) {
+      const { gitDirectory } = optionalBeadsWorktree(parent, root);
+      write(gitDirectory, 'commondir', '../wrong-common-dir\n');
+    } },
+    { name: 'conflicting linked backlink', setup(parent, root) {
+      const { gitDirectory } = optionalBeadsWorktree(parent, root);
+      write(gitDirectory, 'gitdir', `${path.join(parent, 'another-worktree', '.git')}\n`);
+    } },
+    { name: 'wrong-type linked metadata', setup(parent, root) {
+      const { gitDirectory } = optionalBeadsWorktree(parent, root);
+      fs.rmSync(path.join(gitDirectory, 'commondir'));
+      fs.mkdirSync(path.join(gitDirectory, 'commondir'));
+    } },
+    { name: 'oversized Git metadata', setup: (_parent, root) => write(root, '.git', Buffer.alloc(8 * 1024 * 1024 + 1, 'x')) },
+    { name: 'injected unreadable footprint stat', fault: `
+      const lstat = fs.lstatSync;
+      fs.lstatSync = function(file, ...args) {
+        if (path.resolve(String(file)) === path.join(root, '.beads')) throw Object.assign(new Error('private stat'), { code: 'EACCES' });
+        return lstat.call(fs, file, ...args);
+      };
+    ` },
+    { name: 'injected unreadable linked metadata', setup: optionalBeadsWorktree, fault: `
+      const open = fs.openSync;
+      fs.openSync = function(file, ...args) {
+        if (String(file).endsWith('commondir')) throw Object.assign(new Error('private metadata'), { code: 'EACCES' });
+        return open.call(fs, file, ...args);
+      };
+    ` },
+  ];
+  for (const layout of layouts) {
+    await t.test(layout.name, () => {
+      const parent = optionalBeadsRoot();
+      const root = path.join(parent, 'workspace');
+      try {
+        fs.mkdirSync(root);
+        const owned = feature(root, '066', 'authority-basis', '- [~] T001@aaaaaaaa Canonical instruction.\n');
+        const draft = idea(root, '067', 'independent-draft');
+        const resolved = idea(root, '068', 'independent-resolved', 'resolved');
+        layout.setup?.(parent, root);
+        const before = optionalBeadsSnapshot(parent);
+        const result = optionalBeadsChild(root, `
+          ${layout.fault ?? ''}
+          const input = { root, target: ${JSON.stringify(owned.ideaPath)} };
+          const pair = async options => ({
+            index: await reader.readWorkIndex({ root }, options),
+            selected: await reader.readNowProjection(input, options),
+          });
+          const absent = await pair();
+          const injectedNoDatabase = await pair({ runBd: () => ({
+            status: 1, stdout: '', stderr: 'Error: no beads database found\\n',
+          }) });
+          const injectedEmpty = await pair({ runBd: () => ({ status: 0, stdout: '[]', stderr: '' }) });
+          console.log(JSON.stringify({ absent, injectedNoDatabase, injectedEmpty }));
+        `);
+        for (const pair of [result.absent, result.injectedNoDatabase]) {
+          if (layout.available) {
+            assert.equal(pair.index.coverage.work.state, 'current');
+            assert.equal(pair.selected.complete, true);
+            assert.equal(pair.selected.authority, 'lightweight');
+            assert.deepEqual(pair.selected.tasks, pair.index.items.find(item => item.ideaPath === owned.ideaPath).taskCounts);
+            assert.equal(pair.selected.tasks.inProgress, 1);
+            assert.deepEqual(pair.selected.diagnostics, []);
+          } else {
+            assertOptionalUnavailable(pair, owned);
+            assert.doesNotMatch(JSON.stringify(pair), /Canonical instruction|private stat|private metadata|EACCES/);
+          }
+          assert.equal(pair.index.items.find(item => item.ideaPath === draft.ideaPath).availability.state, 'current');
+          assert.equal(pair.index.items.find(item => item.ideaPath === resolved.ideaPath).group, 'completed');
+          assert.equal(JSON.stringify(pair).includes(parent), false, 'no host locations escape in diagnostics');
+        }
+        assert.equal(result.injectedEmpty.selected.complete, true, 'a successful parsed [] still establishes an empty board');
+        assert.equal(result.injectedEmpty.index.coverage.work.state, 'current');
+        assert.equal(result.injectedEmpty.selected.authority, 'lightweight', 'a marker alone does not select the tracked lane');
+        assert.deepEqual(optionalBeadsSnapshot(parent), before);
+      } finally {
+        fs.rmSync(parent, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('066 optional-Beads inherited configuration disqualifies absence but not a successful empty board', async (t) => {
+  const root = optionalBeadsRoot();
+  try {
+    const owned = feature(root, '066', 'configuration', '- [~] T001@aaaaaaaa Canonical instruction.\n');
+    const before = optionalBeadsSnapshot(root);
+    for (const [key, value] of [
+      ['BEADS_DIR', ''], ['BEADS_DIR', '../external'], ['BEADS_DB', '../external.db'],
+      ['BEADS_DOLT_SERVER_HOST', 'fixture.invalid'], ['BEADS_FUTURE_SETTING', ' '],
+      ['GIT_DIR', '../external.git'], ['GIT_COMMON_DIR', '../external-common'],
+      ['GIT_WORK_TREE', '../external-worktree'],
+      ['GIT_CONFIG', '../external-config'], ['GIT_CONFIG_COUNT', '1'],
+      ['GIT_CONFIG_PARAMETERS', "'core.worktree=../external-worktree'"],
+    ]) {
+      await t.test(`${key} ${value === '' ? 'empty control' : 'configured'}`, () => {
+        const result = optionalBeadsChild(root, `
+          const pair = async options => ({
+            index: await reader.readWorkIndex({ root }, options),
+            selected: await reader.readNowProjection({ root, target: ${JSON.stringify(owned.ideaPath)} }, options),
+          });
+          console.log(JSON.stringify({
+            absent: await pair(),
+            injectedNoDatabase: await pair({ runBd: () => ({ status: 1, stdout: '', stderr: 'Error: no beads database found' }) }),
+            injectedEmpty: await pair({ runBd: () => ({ status: 0, stdout: '[]', stderr: '' }) }),
+          }));
+        `, { env: { [key]: value } });
+        for (const pair of [result.absent, result.injectedNoDatabase]) {
+          if (value === '') {
+            assert.equal(pair.selected.complete, true);
+            assert.equal(pair.index.coverage.work.state, 'current');
+          } else {
+            assertOptionalUnavailable(pair, owned);
+          }
+        }
+        assert.equal(result.injectedEmpty.selected.complete, true);
+        assert.equal(result.injectedEmpty.index.coverage.work.state, 'current');
+        assert.deepEqual(optionalBeadsSnapshot(root), before);
+      });
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('066 optional-Beads injected final-capture races recheck absence and counted bytes in both readers', async (t) => {
+  for (const change of ['local footprint', 'main-worktree footprint', 'Git location evidence', 'same-mtime task bytes']) {
+    for (const method of ['readWorkIndex', 'readNowProjection']) {
+      await t.test(`${change}: ${method}`, () => {
+        const parent = optionalBeadsRoot();
+        const root = path.join(parent, 'workspace');
+        try {
+          fs.mkdirSync(root);
+          const owned = feature(root, '066', 'absence-race', '- [~] T001@aaaaaaaa Before.\n');
+          const draft = idea(root, '067', 'independent-draft');
+          const linked = change === 'main-worktree footprint' ? optionalBeadsWorktree(parent, root) : null;
+          const mutation = change === 'local footprint'
+            ? "fs.mkdirSync(path.join(root, '.beads'));"
+            : change === 'main-worktree footprint'
+              ? `fs.mkdirSync(${JSON.stringify(path.join(linked.main, '.beads'))});`
+              : change === 'Git location evidence'
+                ? "fs.mkdirSync(path.join(root, '.git'));"
+                : `const file = path.join(root, ${JSON.stringify(owned.tasksPath)});
+                  const stat = fs.statSync(file);
+                  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('[~]', '[x]'));
+                  fs.utimesSync(file, stat.atime, stat.mtime);`;
+          const result = optionalBeadsChild(root, `
+            const input = { root, target: ${JSON.stringify(owned.ideaPath)} };
+            const control = await reader.readNowProjection(input);
+            const calls = [];
+            const options = { runBd(args) {
+              calls.push(args);
+              if (calls.length === 2) { ${mutation} }
+              return { status: null, error: Object.assign(new Error('injected missing executable'), { code: 'ENOENT' }) };
+            } };
+            const result = await reader.${method}(input, options);
+            console.log(JSON.stringify({ control, result, calls }));
+          `);
+          assert.equal(result.control.complete, true, 'default absent-tool control reaches a healthy canonical read');
+          assert.deepEqual(result.calls, [BD_LIST, BD_LIST]);
+          if (method === 'readWorkIndex') {
+            const row = result.result.items.find(item => item.ideaPath === owned.ideaPath);
+            assert.equal(row.taskCounts, null);
+            assert.equal(row.availability.state, 'stale');
+            assert.equal(result.result.items.find(item => item.ideaPath === draft.ideaPath).availability.state, 'current');
+            assert.equal(result.result.coverage.inventory.state, 'current');
+          } else {
+            assert.equal(result.result.complete, false);
+            assert.equal(result.result.tasks, null);
+            assert.equal(result.result.next, null);
+            assert.deepEqual(result.result.diagnostics.map(({ code }) => code),
+              [change.includes('footprint') ? 'TRACKED_AUTHORITY_UNAVAILABLE' : 'PROJECTION_READ_CONFLICT']);
+          }
+          assert.equal(JSON.stringify(result.result).includes(parent), false);
+          if (change === 'same-mtime task bytes') {
+            assert.match(fs.readFileSync(path.join(root, owned.tasksPath), 'utf8'), /\[x\]/,
+              'readers do not overwrite the fixture-authored concurrent edit');
+          }
+        } finally {
+          fs.rmSync(parent, { recursive: true, force: true });
+        }
+      });
+    }
+  }
+});
+
+test('066 optional-Beads default freshness and failed refresh recheck the absence basis and preserve the complete view', async (t) => {
+  for (const change of ['new footprint', 'new inherited override', 'changed Git metadata']) {
+    await t.test(change, () => {
+      const root = optionalBeadsRoot();
+      try {
+        const owned = feature(root, '066', 'absence-freshness', '- [~] T001@aaaaaaaa Current instruction.\n');
+        const result = optionalBeadsChild(root, `
+          const input = { root, target: ${JSON.stringify(owned.ideaPath)} };
+          const previous = await reader.readNowProjection(input);
+          assert.equal(previous.complete, true);
+          ${change === 'new footprint' ? "fs.mkdirSync(path.join(root, '.beads'));"
+            : change === 'new inherited override' ? "process.env.BEADS_DIR = '../unavailable';"
+              : "fs.mkdirSync(path.join(root, '.git'));"}
+          const freshness = await reader.checkProjectionFreshness({ root, projection: previous });
+          const refreshed = await reader.refreshNowProjection({ ...input, previous });
+          console.log(JSON.stringify({
+            previous, freshness, refreshed, sameObject: previous === refreshed.projection,
+          }));
+        `);
+        if (change === 'changed Git metadata') {
+          assert.equal(result.freshness.state, 'changed');
+          assert.equal(result.refreshed.replaced, true, 'a fresh, fully checked absence basis can replace the old one');
+          assert.equal(result.refreshed.freshness.state, 'current');
+        } else {
+          assert.equal(result.freshness.state, 'unavailable');
+          assert.equal(result.refreshed.replaced, false);
+          assert.equal(result.refreshed.freshness.state, 'unavailable');
+          assert.equal(result.sameObject, true);
+          assert.equal(result.refreshed.projection.readAt, result.previous.readAt);
+        }
+        assert.equal(result.refreshed.projection.next.description, 'Current instruction.');
+        assert.equal(JSON.stringify(result).includes(root), false);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('066 optional-Beads previously populated authority forbids missing-tool and no-database refresh fallback globally', async (t) => {
+  const root = optionalBeadsRoot();
+  try {
+    const owned = feature(root, '066', 'required-authority', '- [~] T001@aaaaaaaa Mirror must not become live.\n');
+    const before = optionalBeadsSnapshot(root);
+    for (const [label, issue] of [
+      ['in-progress exact task', { status: 'in_progress', issue_type: 'task' }],
+      ['all-done exact task', { status: 'closed', issue_type: 'task' }],
+      ['grouping-only board', { status: 'open', issue_type: 'epic' }],
+      ['selected-feature mismatch', { status: 'closed', issue_type: 'task', description: 'spec: .dude/specs/999-other/spec.md' }],
+    ]) {
+      await t.test(label, () => {
+        const board = [{
+          id: 'required', title: 'Authoritative work',
+          description: `spec: ${owned.specPath}\nTask: T001@aaaaaaaa`,
+          ...issue,
+        }];
+        const result = optionalBeadsChild(root, `
+          const input = { root, target: ${JSON.stringify(owned.ideaPath)} };
+          const reply = { status: 0, stdout: ${JSON.stringify(JSON.stringify(board))}, stderr: '' };
+          const empty = { status: 0, stdout: '[]', stderr: '' };
+          const noDatabase = { status: 1, stdout: '', stderr: 'Error: no beads database found' };
+          const optionalControl = await reader.readNowProjection(input);
+          const noDatabaseControl = await reader.readNowProjection(input, { runBd: () => noDatabase });
+          const previous = await reader.readNowProjection(input, { runBd: args => args[0] === 'list' ? reply : empty });
+          const failures = [];
+          for (const options of [undefined, { runBd: () => noDatabase }]) {
+            const freshness = await reader.checkProjectionFreshness({ root, projection: previous }, options);
+            const refreshed = await reader.refreshNowProjection({ ...input, previous }, options);
+            failures.push({ freshness, refreshed, sameObject: previous === refreshed.projection });
+          }
+          // A successful empty list remains an actual new board capture, not an
+          // acquisition failure inferred away from a prior tracked view.
+          const emptied = await reader.refreshNowProjection({ ...input, previous }, { runBd: () => empty });
+          const finalFailures = [];
+          for (const failure of [
+            { status: null, error: Object.assign(new Error('injected disappearance'), { code: 'ENOENT' }) },
+            noDatabase,
+          ]) {
+            for (const method of ['readWorkIndex', 'readNowProjection']) {
+              let lists = 0;
+              finalFailures.push({ method, result: await reader[method](input, { runBd(args) {
+                if (args[0] !== 'list') return empty;
+                return ++lists === 1 ? reply : failure;
+              } }) });
+            }
+          }
+          console.log(JSON.stringify({ optionalControl, noDatabaseControl, previous, failures, emptied, finalFailures }));
+        `);
+        assert.equal(result.optionalControl.complete, true);
+        assert.equal(result.noDatabaseControl.complete, true,
+          'without earlier positive facts, exact no-database is otherwise admissible on this same root');
+        assert.equal(result.previous.complete, true);
+        assert.equal(result.previous.authority, 'tracked');
+        for (const failure of result.failures) {
+          assert.equal(failure.freshness.state, 'unavailable');
+          assert.equal(failure.refreshed.replaced, false);
+          assert.equal(failure.sameObject, true);
+          assert.equal(failure.refreshed.freshness.state, 'unavailable');
+          assert.equal(failure.refreshed.projection.readAt, result.previous.readAt);
+          assert.doesNotMatch(JSON.stringify(failure), /Mirror must not become live/);
+        }
+        assert.equal(result.emptied.replaced, true);
+        assert.equal(result.emptied.projection.authority, 'lightweight');
+        for (const { method, result: failure } of result.finalFailures) {
+          if (method === 'readNowProjection') {
+            assert.equal(failure.complete, false);
+            assert.equal(failure.tasks, null);
+            assert.deepEqual(failure.diagnostics.map(({ code }) => code), ['TRACKED_AUTHORITY_UNAVAILABLE']);
+          } else {
+            assert.equal(failure.items[0].taskCounts, null);
+            assert.equal(failure.items[0].availability.state, 'stale');
+            assert.equal(failure.items[0].lane, 'tracked');
+          }
+          assert.doesNotMatch(JSON.stringify(failure), /Mirror must not become live/);
+        }
+        assert.deepEqual(optionalBeadsSnapshot(root), before);
+      });
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('066 optional-Beads incomplete tracked predecessor refuses absence refresh but allows a successful empty board', async (t) => {
+  const root = optionalBeadsRoot();
+  try {
+    const owned = feature(root, '066', 'incomplete-authority', '- [~] T001@aaaaaaaa Mirror must not become live after readiness fails.\n');
+    const board = [{
+      id: 'required', title: 'Authoritative work', status: 'open', issue_type: 'task',
+      description: `spec: ${owned.specPath}\nTask: T001@aaaaaaaa`,
+    }];
+    const before = optionalBeadsSnapshot(root);
+    for (const generated of [false, true]) {
+      for (const label of ['missing executable', 'exact no-database', 'successful []']) {
+        await t.test(`${generated ? 'generated' : 'source'}: ${label}`, () => {
+          const result = optionalBeadsChild(root, `
+            const input = { root, target: ${JSON.stringify(owned.ideaPath)} };
+            const list = ${JSON.stringify(BD_LIST)};
+            const empty = { status: 0, stdout: '[]', stderr: '' };
+            const noDatabase = { status: 1, stdout: '', stderr: 'Error: no beads database found' };
+            // These controls must admit absence on this exact root. A stray
+            // ancestor footprint must not make the negative pass accidentally.
+            const optionalControl = await reader.readNowProjection(input);
+            const noDatabaseCalls = [];
+            const noDatabaseControl = await reader.readNowProjection(input, { runBd(args) {
+              noDatabaseCalls.push(args);
+              return noDatabase;
+            } });
+            for (const control of [optionalControl, noDatabaseControl]) {
+              assert.equal(control.complete, true, 'absence is otherwise admissible on this root');
+              assert.equal(control.authority, 'lightweight');
+              assert.equal(control.tasks.inProgress, 1);
+            }
+            assert.deepEqual(noDatabaseCalls, [list, list]);
+
+            const predecessorCalls = [];
+            const previous = await reader.readNowProjection(input, { runBd(args) {
+              predecessorCalls.push(args);
+              if (args[0] === 'list') return {
+                status: 0, stdout: ${JSON.stringify(JSON.stringify(board))}, stderr: '',
+              };
+              assert.deepEqual(args, ['ready', '--json']);
+              return { status: 1, stdout: '', stderr: 'injected readiness failure' };
+            } });
+            assert.deepEqual(predecessorCalls, [list, ['ready', '--json']]);
+            assert.equal(previous.selected.specPath, ${JSON.stringify(owned.specPath)});
+            assert.equal(previous.complete, false);
+            assert.equal(previous.status, 'unavailable');
+            assert.equal(previous.authority, 'tracked');
+            assert.equal(previous.readAt, null);
+            assert.deepEqual(previous.sources, []);
+            assert.equal(previous.tasks, null);
+            assert.equal(previous.next, null);
+            assert.equal(previous.taskDetails.items, null);
+            assert.deepEqual(previous.diagnostics.map(({ code }) => code), ['TRACKED_READINESS_UNAVAILABLE']);
+
+            const scenario = ${JSON.stringify(label)};
+            const reply = scenario === 'missing executable'
+              ? { status: null, error: Object.assign(new Error('injected missing executable'), { code: 'ENOENT' }) }
+              : scenario === 'exact no-database' ? noDatabase : empty;
+            const refreshCalls = [];
+            const refreshed = await reader.refreshNowProjection({ ...input, previous }, { runBd(args) {
+              refreshCalls.push(args);
+              return reply;
+            } });
+            assert.deepEqual(refreshCalls[0], list, 'refresh reaches the authoritative list query');
+            console.log(JSON.stringify({
+              previous, predecessorCalls, refreshCalls, refreshed,
+              optionalControl, noDatabaseControl, sameObject: previous === refreshed.projection,
+            }));
+          `, { generated });
+          t.diagnostic([
+            `${generated ? 'generated' : 'source'} ${label}: controls complete=${result.optionalControl.complete}/${result.noDatabaseControl.complete}`,
+            `predecessor complete=${result.previous.complete}, authority=${result.previous.authority}, sources=${result.previous.sources.length}, calls=${result.predecessorCalls.map(args => args[0]).join('/')}`,
+            `refresh calls=${result.refreshCalls.map(args => args[0]).join('/')}, replaced=${result.refreshed.replaced}`,
+            `authority=${result.refreshed.projection.authority}, complete=${result.refreshed.projection.complete}, freshness=${result.refreshed.freshness.state}`,
+          ].join('; '));
+          assert.deepEqual(optionalBeadsSnapshot(root), before, 'the chained reads change no bytes or inventory');
+          if (label === 'successful []') {
+            assert.equal(result.refreshed.replaced, true, 'a newly captured empty board still permits canonical work');
+            assert.equal(result.sameObject, false);
+            assert.equal(result.refreshed.projection.complete, true);
+            assert.equal(result.refreshed.projection.authority, 'lightweight');
+            assert.equal(result.refreshed.freshness.state, 'current');
+            assert.deepEqual(result.refreshed.projection.tasks, result.optionalControl.tasks);
+            assert.equal(result.refreshed.projection.next.description, 'Mirror must not become live after readiness fails.');
+            assert.deepEqual(result.refreshed.projection.diagnostics, []);
+            assert.deepEqual(result.refreshCalls, [BD_LIST, BD_LIST]);
+          } else {
+            assert.equal(result.refreshed.replaced, false, 'failed tracked acquisition must not promote the markdown mirror');
+            assert.equal(result.sameObject, true);
+            assert.deepEqual(result.refreshed.projection, result.previous);
+            assert.equal(result.refreshed.freshness.state, 'unavailable');
+            assert.deepEqual(result.refreshed.freshness.diagnostics.map(({ code }) => code), ['TRACKED_AUTHORITY_UNAVAILABLE']);
+            assert.doesNotMatch(JSON.stringify(result.refreshed), /Mirror must not become live/);
+            assert.deepEqual(result.refreshCalls, [BD_LIST]);
+          }
+        });
+      }
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('066 optional-Beads injected nonmissing acquisition failures and no-database near-misses stay unavailable', async (t) => {
+  const root = optionalBeadsRoot();
+  try {
+    const owned = feature(root, '066', 'failure-classification', '- [~] T001@aaaaaaaa Canonical instruction must not leak.\n');
+    const before = optionalBeadsSnapshot(root);
+    const result = optionalBeadsChild(root, `
+      const input = { root, target: ${JSON.stringify(owned.ideaPath)} };
+      const failure = code => Object.assign(new Error('private command ENOENT /host/detail'), { code });
+      const missingReply = { status: null, error: failure('ENOENT') };
+      const noDatabase = { status: 1, stdout: '', stderr: 'Error: no beads database found' };
+      const pair = async options => ({
+        index: await reader.readWorkIndex({ root }, options),
+        selected: await reader.readNowProjection(input, options),
+      });
+      const optionalControl = await pair();
+      const exactControl = await pair({ runBd: () => noDatabase });
+      const thrownMissingControl = await pair({ runBd() { throw failure('ENOENT'); } });
+      const overflow = Buffer.alloc(8 * 1024 * 1024 + 1, 'x');
+      const fixtures = [
+        ['permission denied', { status: null, error: failure('EACCES') }],
+        ['operation not permitted', { status: null, error: failure('EPERM') }],
+        ['not a directory', { status: null, error: failure('ENOTDIR') }],
+        ['ordinary nonzero exit', { status: 2, stdout: '', stderr: 'private command error' }],
+        ['missing plus successful status', { ...missingReply, status: 0 }],
+        ['missing plus output', { ...missingReply, stdout: '[]' }],
+        ['missing plus signal', { ...missingReply, signal: 'SIGTERM' }],
+        ['missing plus timeout', { ...missingReply, timeout: true }],
+        ['missing plus oversized output', { ...missingReply, stdout: overflow }],
+        ['oversized stderr', { ...noDatabase, stderr: overflow }],
+        ['malformed JSON', { status: 0, stdout: '{', stderr: '' }],
+        ['unrecognized payload', { status: 0, stdout: '{}', stderr: '' }],
+        ['malformed issue', { status: 0, stdout: '[{"description":1}]', stderr: '' }],
+        ['no database with output', { ...noDatabase, stdout: '[]' }],
+        ['no database with zero exit and no JSON', { ...noDatabase, status: 0 }],
+        ['no database altered case', { ...noDatabase, stderr: 'error: no beads database found' }],
+        ['no database altered wording', { ...noDatabase, stderr: 'Error: no beads database is available' }],
+        ['no database prefix', { ...noDatabase, stderr: 'bd: Error: no beads database found' }],
+        ['no database suffix', { ...noDatabase, stderr: 'Error: no beads database found here' }],
+        ['no database indentation', { ...noDatabase, stderr: ' Error: no beads database found' }],
+        ['no database after other output', { ...noDatabase, stderr: 'other error\\nError: no beads database found' }],
+      ];
+      const failures = [];
+      for (const [name, reply] of fixtures) {
+        failures.push({ name, pair: await pair({ runBd: () => reply }) });
+      }
+      failures.push({ name: 'thrown nonmissing error mentioning ENOENT', pair: await pair({ runBd() { throw failure('EIO'); } }) });
+      console.log(JSON.stringify({ optionalControl, exactControl, thrownMissingControl, failures }));
+    `);
+    for (const pair of [result.optionalControl, result.exactControl, result.thrownMissingControl]) {
+      assert.equal(pair.selected.complete, true);
+      assert.equal(pair.index.coverage.work.state, 'current',
+        'all failure cases use the same otherwise-admissible absence root');
+    }
+    for (const { name, pair } of result.failures) {
+      await t.test(name, () => {
+        assertOptionalUnavailable(pair, owned);
+        assert.doesNotMatch(JSON.stringify(pair), /Canonical instruction must not leak|private command|\/host\/detail|ENOENT|EACCES|EPERM|ENOTDIR/);
+        assert.equal(JSON.stringify(pair).includes(root), false);
+      });
+    }
+    assert.deepEqual(optionalBeadsSnapshot(root), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('066 optional-Beads absence inspection shares the acquisition deadline and rejects cancelled missing results', () => {
+  const root = optionalBeadsRoot();
+  try {
+    const owned = feature(root, '066', 'absence-budget', '- [~] T001@aaaaaaaa Private canonical instruction.\n');
+    const before = optionalBeadsSnapshot(root);
+    const result = optionalBeadsChild(root, `
+      const input = { root, target: ${JSON.stringify(owned.ideaPath)} };
+      const control = await reader.readNowProjection(input);
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'performance');
+      const attempts = [];
+      for (const method of ['readWorkIndex', 'readNowProjection']) {
+        for (const mode of ['deadline', 'cancellation']) {
+          let now = 0;
+          const controller = new AbortController();
+          const calls = [];
+          if (mode === 'deadline') Object.defineProperty(globalThis, 'performance', {
+            configurable: true, value: { now: () => now++ },
+          });
+          try {
+            const projection = await reader[method](input, {
+              timeoutMs: mode === 'deadline' ? 5 : 5000,
+              signal: controller.signal,
+              runBd(args, options) {
+                calls.push({ args, timeout: options.timeout });
+                if (mode === 'cancellation') controller.abort();
+                return { status: null, error: Object.assign(new Error('injected missing executable'), { code: 'ENOENT' }) };
+              },
+            });
+            attempts.push({ method, mode, projection, calls });
+          } finally {
+            Object.defineProperty(globalThis, 'performance', descriptor);
+          }
+        }
+      }
+      console.log(JSON.stringify({ control, attempts }));
+    `);
+    assert.equal(result.control.complete, true);
+    for (const { method, mode, projection, calls } of result.attempts) {
+      assert.equal(calls.length, 1);
+      assert.deepEqual(calls[0].args, BD_LIST);
+      assert.ok(calls[0].timeout <= (mode === 'deadline' ? 5 : 5000));
+      if (method === 'readNowProjection') {
+        assert.equal(projection.complete, false);
+        assert.deepEqual(projection.diagnostics.map(({ code }) => code), ['TRACKED_AUTHORITY_UNAVAILABLE']);
+        assert.equal(projection.tasks, null);
+      } else {
+        assert.equal(projection.items[0].taskCounts, null);
+        assert.equal(projection.coverage.work.state, 'partial');
+      }
+      assert.doesNotMatch(JSON.stringify(projection), /Private canonical instruction|injected missing executable/);
+    }
+    assert.deepEqual(optionalBeadsSnapshot(root), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('066 optional-Beads Git metadata growth is bounded and every opened descriptor is closed', () => {
+  const root = optionalBeadsRoot();
+  try {
+    const owned = feature(root, '066', 'metadata-growth', '- [~] T001@aaaaaaaa Private canonical instruction.\n');
+    write(root, '.git', Buffer.alloc(8 * 1024 * 1024 + 1, 'x'));
+    const before = optionalBeadsSnapshot(root);
+    const result = optionalBeadsChild(root, `
+      const git = path.join(root, '.git');
+      const original = { stat: fs.lstatSync, open: fs.openSync, read: fs.readSync, whole: fs.readFileSync, close: fs.closeSync };
+      const descriptors = new Set();
+      let opened = 0, closed = 0, largestRead = 0, wholeReads = 0;
+      fs.lstatSync = function(file, ...args) {
+        const stat = original.stat.call(fs, file, ...args);
+        if (path.resolve(String(file)) === git) stat.size = 8; // injected pre-growth observation
+        return stat;
+      };
+      fs.openSync = function(file, ...args) {
+        const descriptor = original.open.call(fs, file, ...args);
+        if (path.resolve(String(file)) === git) { descriptors.add(descriptor); opened += 1; }
+        return descriptor;
+      };
+      fs.readFileSync = function(file, ...args) {
+        if (path.resolve(String(file)) === git) {
+          wholeReads += 1;
+          throw new Error('an unbounded metadata read was attempted');
+        }
+        return original.whole.call(fs, file, ...args);
+      };
+      fs.readSync = function(descriptor, buffer, offset, length, position) {
+        if (descriptors.has(descriptor)) largestRead = Math.max(largestRead, length);
+        return original.read.call(fs, descriptor, buffer, offset, length, position);
+      };
+      fs.closeSync = function(descriptor) {
+        if (descriptors.delete(descriptor)) closed += 1;
+        return original.close.call(fs, descriptor);
+      };
+      const index = await reader.readWorkIndex({ root });
+      const selected = await reader.readNowProjection({ root, target: ${JSON.stringify(owned.ideaPath)} });
+      console.log(JSON.stringify({ index, selected, opened, closed, outstanding: descriptors.size, largestRead, wholeReads }));
+    `);
+    assertOptionalUnavailable(result, owned);
+    assert.equal(result.opened, 2);
+    assert.equal(result.closed, result.opened);
+    assert.equal(result.outstanding, 0);
+    assert.equal(result.wholeReads, 0);
+    assert.equal(result.largestRead, 9, 'only the captured size plus a growth-detection byte is read');
+    assert.deepEqual(optionalBeadsSnapshot(root), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('T011 work index publishes the exact flat DTO with complete 50-draft and 41-package discovery and dynamic canonical counts', {
   timeout: 30_000,

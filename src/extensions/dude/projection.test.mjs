@@ -11,6 +11,7 @@ import {
   checkProjectionFreshness,
   initialProjectionFreshness,
   readNowProjection,
+  readWorkIndex,
   refreshNowProjection,
 } from './lib/projection.mjs';
 
@@ -239,6 +240,146 @@ async function observeReadPaths(operation) {
 const emptyTrackedBoard = {
   runBd: async () => ({ status: 0, stdout: '[]', stderr: '' }),
 };
+
+test('066 optional-Beads injected populated boards retain global precedence and never backfill instructions', async (t) => {
+  const root = temporaryRoot();
+  try {
+    const owned = define(root, '066', 'populated-authority', {
+      tasks: '- [~] T001@aaaaaaaa Mirror instruction must stay private.\n',
+    });
+    const task = {
+      id: 'authority-task', title: 'Authoritative instruction', issue_type: 'task', status: 'in_progress',
+      description: `spec: ${owned.specPath}\nTask: T002@bbbbbbbb\n\nImported instruction.`,
+    };
+    const cases = [
+      { name: 'exact active task', board: [task], counts: { total: 1, open: 0, inProgress: 1, blocked: 0, done: 0 } },
+      { name: 'selected feature absent globally', board: [{ ...task, description: 'spec: .dude/specs/999-other/spec.md' }], counts: null },
+      { name: 'all closed', board: [{ ...task, status: 'closed' }], counts: { total: 1, open: 0, inProgress: 0, blocked: 0, done: 1 } },
+      { name: 'grouping only', board: [{ ...task, issue_type: 'epic' }], counts: null },
+      { name: 'missing task mapping', board: [{ ...task, description: `spec: ${owned.specPath}\nUnmapped imported body.` }],
+        counts: { total: 1, open: 0, inProgress: 1, blocked: 0, done: 0 } },
+      { name: 'unsupported tracked status', board: [{ ...task, status: 'unknown-state' }], counts: null,
+        error: 'TRACKED_STATUS_UNSUPPORTED' },
+      { name: 'missing ready executable', board: [{ ...task, status: 'open' }],
+        ready: { status: null, error: Object.assign(new Error('private missing ready'), { code: 'ENOENT' }) },
+        counts: { total: 1, open: 1, inProgress: 0, blocked: 0, done: 0 }, error: 'TRACKED_READINESS_UNAVAILABLE' },
+      { name: 'exact no-database ready failure', board: [{ ...task, status: 'closed' }],
+        ready: { status: 1, stdout: '', stderr: 'Error: no beads database found' },
+        counts: { total: 1, open: 0, inProgress: 0, blocked: 0, done: 1 }, error: 'TRACKED_READINESS_UNAVAILABLE' },
+    ];
+    const before = contentSnapshot(root);
+    for (const scenario of cases) {
+      await t.test(scenario.name, async () => {
+        const calls = [];
+        const options = { runBd(args) {
+          calls.push(args);
+          return args[0] === 'list'
+            ? { status: 0, stdout: JSON.stringify(scenario.board), stderr: '' }
+            : scenario.ready ?? { status: 0, stdout: '[]', stderr: '' };
+        } };
+        const index = await readWorkIndex({ root }, options);
+        const selected = await readNowProjection({ root, target: owned.ideaPath }, options);
+        const row = index.items.find(item => item.ideaPath === owned.ideaPath);
+        assert.equal(row.lane, 'tracked', 'populated authority wins without requiring a local marker');
+        assert.deepEqual(row.taskCounts, scenario.counts);
+        assert.equal(selected.authority, 'tracked');
+        if (scenario.error) {
+          assert.equal(selected.complete, false);
+          assert.equal(selected.tasks, null);
+          assert.equal(selected.next, null);
+          assert.deepEqual(selected.diagnostics.map(({ code }) => code), [scenario.error]);
+        } else {
+          assertComplete(selected);
+          assert.deepEqual(selected.tasks, scenario.name === 'grouping only'
+            ? { total: 0, open: 0, inProgress: 0, blocked: 0, done: 0 } : scenario.counts);
+          if (scenario.name === 'all closed') {
+            assert.equal(selected.stage, 'Verified');
+            assert.equal(selected.next, null);
+          }
+          if (scenario.name === 'exact active task') {
+            assert.equal(selected.taskDetails.items[0].taskKey, 'T002@bbbbbbbb');
+            assert.equal(selected.taskDetails.items[0].instruction.text, task.description);
+            assert.deepEqual(calls, [BD_LIST_CALL, BD_LIST_CALL, BD_LIST_CALL, BD_LIST_CALL]);
+          }
+          if (scenario.name === 'missing task mapping') {
+            assert.equal(selected.taskDetails.coverage.state, 'unavailable');
+            assert.equal(selected.taskDetails.items, null);
+          }
+        }
+        assert.doesNotMatch(JSON.stringify({ index, selected }), /Mirror instruction must stay private|private missing ready|ENOENT/);
+        assert.equal(JSON.stringify({ index, selected }).includes(root), false);
+        assert.ok(calls.every(args => [BD_LIST_CALL, BD_READY_CALL]
+          .some(allowed => JSON.stringify(args) === JSON.stringify(allowed))), 'only list and ready are ever invoked');
+        assert.deepEqual(contentSnapshot(root), before);
+      });
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('066 optional-Beads invalid or inaccessible cwd cannot masquerade as a missing executable', async (t) => {
+  const root = temporaryRoot();
+  try {
+    const owned = define(root, '066', 'cwd-validation', { tasks: '- [~] T001@aaaaaaaa Live instruction.\n' });
+    const control = await readNowProjection({ root, target: owned.ideaPath }, emptyTrackedBoard);
+    assertComplete(control);
+    const alias = path.join(root, 'root-alias');
+    const outside = temporaryRoot();
+    try {
+      fs.symlinkSync(outside, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      for (const [label, invalidRoot] of [
+        ['missing directory', path.join(root, 'absent')],
+        ['regular file', path.join(root, owned.tasksPath)],
+        ['symbolic-link directory', alias],
+      ]) {
+        await t.test(label, async () => {
+          let calls = 0;
+          const options = { runBd() {
+            calls += 1;
+            return { status: null, error: Object.assign(new Error('private cwd failure'), { code: 'ENOENT' }) };
+          } };
+          const selected = await readNowProjection({ root: invalidRoot, target: owned.ideaPath }, options);
+          const index = await readWorkIndex({ root: invalidRoot }, options);
+          assert.equal(calls, 0);
+          assert.equal(selected.complete, false);
+          assert.equal(selected.tasks, null);
+          assert.equal(index.coverage.work.state, 'unavailable');
+          assert.equal(JSON.stringify({ selected, index }).includes(root), false);
+        });
+      }
+    } finally {
+      fs.rmSync(alias, { force: true, recursive: true });
+      fs.rmSync(outside, { force: true, recursive: true });
+    }
+    await t.test('injected inaccessible cwd', async () => {
+      const access = fs.accessSync;
+      let calls = 0;
+      fs.accessSync = function(file, ...args) {
+        if (path.resolve(String(file)) === root) throw Object.assign(new Error('private root access'), { code: 'EACCES' });
+        return access.call(fs, file, ...args);
+      };
+      try {
+        const options = { runBd() {
+          calls += 1;
+          return { status: null, error: Object.assign(new Error('injected missing executable'), { code: 'ENOENT' }) };
+        } };
+        const selected = await readNowProjection({ root, target: owned.ideaPath }, options);
+        const index = await readWorkIndex({ root }, options);
+        assert.equal(calls, 0, 'cwd is validated before attempting bd');
+        assert.equal(selected.complete, false);
+        assert.deepEqual(selected.diagnostics.map(({ code }) => code), ['TRACKED_AUTHORITY_UNAVAILABLE']);
+        assert.equal(index.items[0].taskCounts, null);
+        assert.equal(index.coverage.inventory.state, 'current');
+        assert.doesNotMatch(JSON.stringify({ selected, index }), /private root access|EACCES|injected missing/);
+      } finally {
+        fs.accessSync = access;
+      }
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 /** @param {string} body */
 function managed(body) {

@@ -23937,6 +23937,99 @@ test('Feature 029: small zero, one, and several-event logs retain every event an
   }
 });
 
+test('Coordinator Log delimiters: date-colon capture and definition inspect without rewriting files', () => {
+  for (const delimiter of [' ', ': ']) {
+    withWorkspace((root) => {
+      const events = [
+        `- 2026-09-19${delimiter}First capture staged as a draft.\n`,
+        `- 2026-09-21${delimiter}First definition staged for ${SPEC_PATH}.\n`,
+      ];
+      const fullLog = `## Coordinator Log\n\n${events.join('')}`;
+      const ownerPath = path.join(root, IDEA_PATH);
+      const tasksPath = path.join(root, path.dirname(SPEC_PATH), 'tasks.md');
+      fs.writeFileSync(ownerPath, ideaBytes(SPEC_PATH, events.join('')));
+      fs.writeFileSync(tasksPath, transitionTasksBytes([{ id: TASK_KEY }]));
+      const before = [ownerPath, tasksPath].map(feature029FileFingerprint);
+
+      const inspection = inspect(publicInspectionInput(root));
+
+      const { item, body } = feature029Owner(inspection);
+      assert.equal(inspection.overflow, false, delimiter);
+      assert.equal(inspection.blockers.some((blocker) => blocker.subject === 'owner-log'), false, delimiter);
+      assert.deepEqual(body.events, events, delimiter);
+      assert.equal(item.text, ownerLogProjectionText(fullLog, events, events), delimiter);
+      assert.deepEqual(
+        [ownerPath, tasksPath].map(feature029FileFingerprint),
+        before,
+        'inspection must not rewrite the owner ledger or tasks',
+      );
+    });
+  }
+});
+
+test('Coordinator Log delimiters: mixed events preserve multiline bytes, order, and duplicates', () => {
+  const duplicate = '- 2026-09-21:\tFirst definition. \t\r\n  Definition detail.\r\n';
+  const events = [
+    '- 2026-09-18 Existing whitespace-delimited date.\r\tContinuation. \t\r\r',
+    '- 2026-09-19: First capture: café e\u0301 🚀.  \n  - Indented detail.\n\n',
+    duplicate,
+    '- 2026-09-21T01:24:00.615+05:30\tOffset timestamp.\r\n  Inline <!-- note --> stays.  \r\n',
+    '- 2026-09-21T01:24:00Z UTC timestamp.\n',
+    duplicate,
+    '- 2026-09-22: Final event without a line ending.  \t',
+  ];
+  const log = [
+    '<!-- leading framing -->\r\n',
+    events[0],
+    '\t<!-- between-event framing --> \t\r',
+    ...events.slice(1),
+  ].join('');
+  const fullLog = `## Coordinator Log\n\n${log}`;
+  const bytes = ideaBytes(SPEC_PATH, log);
+
+  const inspection = feature029Inspection(TARGET, IDEA_PATH, bytes);
+
+  const { item, body } = feature029Owner(inspection);
+  assert.equal(inspection.overflow, false);
+  assert.equal(inspection.blockers.some((blocker) => blocker.subject === 'owner-log'), false);
+  assert.deepEqual(body.events, events, 'preserve exact event bytes, excluding standalone framing');
+  assert.equal(item.text, ownerLogProjectionText(fullLog, events, events));
+});
+
+test('Coordinator Log delimiters: undated prose and malformed date or timestamp prefixes still refuse', () => {
+  const prefixes = [
+    'Undated content is not an event.',
+    '- First capture without a date.',
+    '- 2026-9-19: Incomplete date.',
+    '- 2026-09-19:First capture without separator whitespace.',
+    '- 2026-09-19:: Repeated delimiter.',
+    '- 2026-09-19prose: Not a date delimiter.',
+    '- 2026-09-19T12:34: Missing seconds and zone.',
+    '- 2026-09-19T12:34:56: Missing zone.',
+    '- 2026-09-19T12:34:56.Z Empty fraction.',
+    '- 2026-09-19T12:34:56+04: Offset missing minutes.',
+    '- 2026-09-19T12:34:56Zprose Missing timestamp separator.',
+    '- 2026-09-19T12:34:56Z: Timestamp colon is not a date delimiter.',
+  ];
+  for (const prefix of prefixes) {
+    const log = [
+      '<!-- allowed framing -->',
+      '',
+      prefix,
+      '- 2026-09-21T01:24:00Z A later valid event cannot repair the prefix.',
+      '',
+    ].join('\n');
+
+    const inspection = feature029Inspection(TARGET, IDEA_PATH, ideaBytes(SPEC_PATH, log));
+
+    const owner = inspection.items.find((item) => item.source === 'owner-log');
+    assert.equal(owner?.status, 'malformed', prefix);
+    assert.ok(inspection.blockers.some((blocker) => (
+      blocker.code === 'evidence-incomplete' && blocker.subject === 'owner-log'
+    )), prefix);
+  }
+});
+
 test('Coordinator Log ISO: offset-first inspection preserves exact events', () => {
   withWorkspace((root) => {
     // Arrange: the failing Work055 shape starts with an offset, not a legacy date.

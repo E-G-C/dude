@@ -868,6 +868,11 @@ acceptance wording, Activity, and design-review history do not establish them.
 Offline previews remain frozen. Task inspection offers no execution or editing
 controls.
 
+Canvas shows normal Lightweight status without a Beads warning when tracking is
+confirmed unused, even if `bd` is missing. A populated Beads board remains
+authoritative. If configured or uncertain tracking cannot be read, work status
+stays unavailable rather than using a markdown mirror.
+
 Now's Respond to request opens a single current matching request directly.
 When several match, Choose request opens the existing Needs you choices.
 Session requests and requests for other work remain reachable through Needs you.

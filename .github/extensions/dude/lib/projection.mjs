@@ -38,6 +38,7 @@ const READY_COMMAND = `bd ${BD_READY_ARGS.join(' ')}`;
 const NO_BEADS_DATABASE = 'Error: no beads database found';
 const PROJECTION_DEADLINE_MS = 5_000;
 const MAX_BD_BUFFER = 8 * 1024 * 1024;
+const EMPTY_TRACKED_IDENTITY = contentIdentity('[]');
 const INTENT_EXCERPT_LIMIT = 1_200;
 const DISPOSITION_EXCERPT_LIMIT = 4_000;
 const REFRESH_ACTION = Object.freeze({
@@ -128,9 +129,12 @@ class ProjectionInputError extends Error {
 }
 
 class TrackedQueryError extends Error {
-  /** @param {'TRACKED_AUTHORITY_UNAVAILABLE'|'TRACKED_READINESS_UNAVAILABLE'} code */
-  constructor(code) {
-    super(code);
+  /**
+   * @param {'TRACKED_AUTHORITY_UNAVAILABLE'|'TRACKED_READINESS_UNAVAILABLE'} code
+   * @param {unknown} [cause]
+   */
+  constructor(code, cause) {
+    super(code, { cause });
     this.code = code;
   }
 }
@@ -253,6 +257,15 @@ async function invokeBd(operation, root, args, unavailableCode) {
 
   let result;
   try {
+    // ENOENT can name cwd rather than bd. Do not classify a bad working root
+    // as an optional missing executable, even with an injected command runner.
+    const stat = fs.lstatSync(root);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('unsafe root');
+    fs.accessSync(root, fs.constants.R_OK | fs.constants.X_OK);
+  } catch {
+    throw new TrackedQueryError(unavailableCode);
+  }
+  try {
     result = await operation.runBd(args, {
       cwd: root,
       detached: false,
@@ -263,20 +276,23 @@ async function invokeBd(operation, root, args, unavailableCode) {
       signal: operation.signal,
       timeout: Math.max(1, Math.ceil(remaining)),
     });
-  } catch {
-    throw new TrackedQueryError(unavailableCode);
+  } catch (error) {
+    result = { error, status: null, stdout: '', stderr: '' };
   }
   const stdout = result?.stdout ?? '';
   const stderr = result?.stderr ?? '';
   if (operation.signal.aborted
     || operation.remaining() <= 0
-    || result?.error
     || result?.signal
     || result?.timeout
-    || !Number.isInteger(result?.status)
     || Buffer.byteLength(String(stdout)) > MAX_BD_BUFFER
     || Buffer.byteLength(String(stderr)) > MAX_BD_BUFFER) {
     throw new TrackedQueryError(unavailableCode);
+  }
+  if (result?.error || !Number.isInteger(result?.status)) {
+    const missing = result?.status === null && String(stdout) === '' && String(stderr) === ''
+      && isMissing(result?.error);
+    throw new TrackedQueryError(unavailableCode, missing ? result.error : undefined);
   }
   return { status: result.status, stdout, stderr };
 }
@@ -295,6 +311,91 @@ function isAbsentDatabaseResult(result) {
 /** @param {unknown} error */
 function isMissing(error) {
   return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT');
+}
+
+/**
+ * Establish absence only for default local discovery, not a replacement for
+ * bd's database resolver. A footprint (including a dangling link) or uncertain
+ * location requires a working authority read. Only hashes leave this check.
+ * @param {string} root
+ * @param {ReturnType<typeof projectionOperation>} operation
+ */
+function trackingAbsenceIdentity(root, operation) {
+  const unavailable = () => new TrackedQueryError('TRACKED_AUTHORITY_UNAVAILABLE');
+  // Git configuration overrides can also redirect core.worktree. Their
+  // contents remain Git's responsibility; do not parse external configuration.
+  if (Object.entries(process.env).some(([key, value]) => value
+    && (/^BEADS_/i.test(key) || /^GIT_(?:DIR|COMMON_DIR|WORK_TREE|CONFIG(?:_.*)?)$/i.test(key)))) {
+    throw unavailable();
+  }
+  /** @param {string} location */
+  const statOrMissing = (location) => {
+    try { return fs.lstatSync(location); } catch (error) {
+      if (isMissing(error)) return null;
+      throw error;
+    }
+  };
+  /** @param {string} directory @param {string} relative */
+  const metadata = (directory, relative) => {
+    const bytes = readSafeFile(directory, relative, MAX_BD_BUFFER);
+    const text = bytes.toString('utf8');
+    if (!Buffer.from(text).equals(bytes) || !/^[^\r\n\0]+\r?\n?$/.test(text)) throw unavailable();
+    return text.replace(/\r?\n$/, '');
+  };
+  const pending = [path.resolve(root)];
+  const visited = new Set();
+  const evidence = [];
+  try {
+    while (pending.length) {
+      let directory = pending.pop();
+      while (!visited.has(directory)) {
+        if (operation.signal.aborted || operation.remaining() <= 0) throw unavailable();
+        visited.add(directory);
+        const stat = fs.lstatSync(directory);
+        if (!stat.isDirectory() || stat.isSymbolicLink()
+          || path.relative(directory, fs.realpathSync(directory)) !== '') throw unavailable();
+        if (statOrMissing(path.join(directory, '.beads'))) throw unavailable();
+        const git = statOrMissing(path.join(directory, '.git'));
+        let gitEvidence = null;
+        if (git) {
+          resolveMutationPath(directory, '.git');
+          if (git.isDirectory()) {
+            // A nonstandard common-dir layout cannot establish local absence.
+            if (statOrMissing(path.join(directory, '.git', 'commondir'))) throw unavailable();
+            gitEvidence = [git.dev, git.ino];
+          } else if (git.isFile()) {
+            const pointer = metadata(directory, '.git');
+            const match = /^gitdir: (.+)$/.exec(pointer);
+            // Do not turn ambiguous drive-relative or network indirection into
+            // new filesystem probes outside the local discovery basis.
+            if (!match || /^[\\/]{2}/.test(match[1]) || /^[A-Za-z]:(?:$|[^\\/])/.test(match[1])
+              || (process.platform !== 'win32' && path.win32.isAbsolute(match[1]))) throw unavailable();
+            const gitDirectory = path.resolve(directory, match[1]);
+            const commonDirectory = path.dirname(path.dirname(gitDirectory));
+            const mainRoot = path.dirname(commonDirectory);
+            if (path.basename(path.dirname(gitDirectory)) !== 'worktrees'
+              || path.basename(commonDirectory) !== '.git'
+              || path.relative(mainRoot, fs.realpathSync(mainRoot)) !== '') throw unavailable();
+            const relative = path.relative(mainRoot, gitDirectory).split(path.sep).join('/');
+            const common = metadata(mainRoot, `${relative}/commondir`);
+            const backlink = metadata(mainRoot, `${relative}/gitdir`);
+            if (path.relative(commonDirectory, path.resolve(gitDirectory, common)) !== ''
+              || path.relative(path.join(directory, '.git'), path.resolve(gitDirectory, backlink)) !== '') throw unavailable();
+            gitEvidence = [pointer, common, backlink];
+            pending.push(mainRoot);
+          } else {
+            throw unavailable();
+          }
+        }
+        evidence.push([directory, stat.dev, stat.ino, gitEvidence]);
+        directory = path.dirname(directory);
+      }
+    }
+    if (operation.signal.aborted || operation.remaining() <= 0) throw unavailable();
+    return contentIdentity(JSON.stringify({ missingExecutable: true, locations: evidence }));
+  } catch {
+    throw unavailable();
+  }
 }
 
 /**
@@ -350,8 +451,9 @@ function projectionErrorDiagnostic(error) {
  * no-symbolic-link path boundary.
  * @param {string} root
  * @param {string} relativePath
+ * @param {number} [maximumBytes]
  */
-function readSafeFile(root, relativePath) {
+function readSafeFile(root, relativePath, maximumBytes) {
   let absolutePath;
   try {
     absolutePath = resolveMutationPath(root, relativePath);
@@ -383,7 +485,23 @@ function readSafeFile(root, relativePath) {
     );
   }
   try {
-    return fs.readFileSync(absolutePath);
+    if (maximumBytes === undefined) return fs.readFileSync(absolutePath);
+    if (stat.size > maximumBytes) throw new Error('input exceeds the read bound');
+    const descriptor = fs.openSync(absolutePath, 'r');
+    try {
+      // One extra byte detects growth after stat without an unbounded read or
+      // a success-shaped truncated metadata line.
+      const bytes = Buffer.alloc(stat.size + 1);
+      let length = 0;
+      while (length < bytes.length) {
+        const count = fs.readSync(descriptor, bytes, length, bytes.length - length, null);
+        if (count === 0) return bytes.subarray(0, length);
+        length += count;
+      }
+      throw new Error('input grew during the bounded read');
+    } finally {
+      fs.closeSync(descriptor);
+    }
   } catch {
     throw new ProjectionInputError(
       'PROJECTION_INPUT_UNREADABLE',
@@ -450,21 +568,41 @@ function parseTrackedIssues(bytes) {
  * failures and must not fall through to markdown.
  * @param {string} root
  * @param {ReturnType<typeof projectionOperation>} operation
+ * @param {Record<string, any>} [previousSource]
+ * @param {boolean} [previouslyTracked]
  */
-async function queryTrackedIssues(root, operation) {
-  const result = await invokeBd(operation, root, BD_LIST_ARGS, 'TRACKED_AUTHORITY_UNAVAILABLE');
-  const stdout = result.status === 0
-    ? result.stdout
-    : isAbsentDatabaseResult(result)
-      ? '[]'
-      : null;
-  if (stdout === null) throw new TrackedQueryError('TRACKED_AUTHORITY_UNAVAILABLE');
+async function queryTrackedIssues(root, operation, previousSource, previouslyTracked = false) {
+  const established = previouslyTracked || (previousSource?.role === 'authority'
+    && previousSource.contentIdentity !== EMPTY_TRACKED_IDENTITY);
+  let result;
   try {
-    const issues = parseTrackedIssues(stdout);
+    result = await invokeBd(operation, root, BD_LIST_ARGS, 'TRACKED_AUTHORITY_UNAVAILABLE');
+  } catch (error) {
+    if (!(error instanceof TrackedQueryError) || !isMissing(error.cause) || established) throw error;
+    return { issues: [], identity: trackingAbsenceIdentity(root, operation), optionalAbsent: true };
+  }
+  if (result.status !== 0) {
+    if (!isAbsentDatabaseResult(result) || established) throw new TrackedQueryError('TRACKED_AUTHORITY_UNAVAILABLE');
+    trackingAbsenceIdentity(root, operation);
+    // Preserve the existing semantic identity of exact no-database and [].
+    return { issues: [], identity: EMPTY_TRACKED_IDENTITY };
+  }
+  try {
+    const issues = parseTrackedIssues(result.stdout);
     return { issues, identity: contentIdentity(JSON.stringify(issues)) };
   } catch {
     throw new TrackedQueryError('TRACKED_AUTHORITY_UNAVAILABLE');
   }
+}
+
+/** @param {Awaited<ReturnType<typeof queryTrackedIssues>>} board */
+function trackedBoardSource(board) {
+  return trackedSource(
+    board.optionalAbsent ? 'Optional tracker absence' : 'Tracked board',
+    TRACKED_COMMAND,
+    board.optionalAbsent ? 'authority-check' : 'authority',
+    board.identity,
+  );
 }
 
 /**
@@ -490,7 +628,7 @@ async function queryReadyIssues(root, operation) {
  * @param {ReturnType<typeof projectionOperation>} operation
  */
 async function currentTrackedIdentity(root, source, operation) {
-  if (source.command === TRACKED_COMMAND) return (await queryTrackedIssues(root, operation)).identity;
+  if (source.command === TRACKED_COMMAND) return (await queryTrackedIssues(root, operation, source)).identity;
   if (source.command === READY_COMMAND) return (await queryReadyIssues(root, operation)).identity;
   throw new Error('tracked projection source is unsupported');
 }
@@ -1481,7 +1619,15 @@ export async function refreshNowProjection(input, options = {}) {
   const operation = projectionOperation(options);
   try {
     const { root, target, previous } = input;
-    const successor = await readNowProjectionWithOperation({ root, target }, operation);
+    const previousSource = previous && typeof previous === 'object' && Array.isArray(previous.sources)
+      ? previous.sources.find(source => source.kind === 'tracked' && source.command === TRACKED_COMMAND)
+      : undefined;
+    // Failed reads clear source captures but can still establish tracked authority.
+    const previouslyTracked = Boolean(previous && typeof previous === 'object'
+      && previous.authority === 'tracked');
+    const successor = await readNowProjectionWithOperation(
+      { root, target }, operation, previousSource, previouslyTracked,
+    );
     if (successor.complete === true) {
       return deepFreeze({
         replaced: true,
@@ -1566,7 +1712,7 @@ export async function readWorkIndex({ root }, options = {}) {
     let board;
     try {
       board = await queryTrackedIssues(root, operation);
-      sources.push(trackedSource('Tracked board', TRACKED_COMMAND, 'authority', board.identity));
+      sources.push(trackedBoardSource(board));
     } catch {
       diagnostics.push(trackedUnavailableDiagnostic('TRACKED_AUTHORITY_UNAVAILABLE'));
     }
@@ -1724,7 +1870,7 @@ export async function readWorkIndex({ root }, options = {}) {
     });
     if (board) {
       try {
-        if ((await queryTrackedIssues(root, operation)).identity !== board.identity) throw new Error('lane changed');
+        if ((await queryTrackedIssues(root, operation, trackedBoardSource(board))).identity !== board.identity) throw new Error('lane changed');
       } catch {
         items = items.map((item, index) => base.contexts[index].kind === 'idea' ? item
           : unavailable(item, 'The execution authority changed during the read.', 'stale'));
@@ -1786,8 +1932,10 @@ export async function readWorkIndex({ root }, options = {}) {
 /**
  * @param {{root:string,target?:string}} input
  * @param {ReturnType<typeof projectionOperation>} operation
+ * @param {Record<string, any>} [previousSource]
+ * @param {boolean} [previouslyTracked]
  */
-async function readNowProjectionWithOperation({ root, target }, operation) {
+async function readNowProjectionWithOperation({ root, target }, operation, previousSource, previouslyTracked) {
   let base = projectionBase();
 
   try {
@@ -1901,7 +2049,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
 
     let tracked;
     try {
-      tracked = await queryTrackedIssues(root, operation);
+      tracked = await queryTrackedIssues(root, operation, previousSource, previouslyTracked);
     } catch (error) {
       const diagnostic = error instanceof TrackedQueryError
         ? trackedUnavailableDiagnostic(error.code)
@@ -1913,7 +2061,7 @@ async function readNowProjectionWithOperation({ root, target }, operation) {
         latestEvent,
       });
     }
-    sources.push(trackedSource('Tracked board', TRACKED_COMMAND, 'authority', tracked.identity));
+    sources.push(trackedBoardSource(tracked));
     const { issues } = tracked;
 
     if (issues.length > 0) {

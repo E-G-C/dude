@@ -6,6 +6,23 @@ computer. It supplements the canonical `.dude/ideas/`, `.dude/specs/`,
 to this repository. It is a frozen archive, not another task board or runtime
 evidence store.
 
+## Archive retention
+
+The nine split archive payloads, totaling 328,985,847 bytes, have been removed
+from the current checkout. They held supporting reports and screenshots, not
+runtime inputs. All nine standalone files under `captures/` remain unchanged,
+along with the ancillary comparisons and historical metadata.
+
+The original archive bytes remain in Git commit
+`80f468f281398f39b9c547f279c9ebc17bfa1308`. Removing them from the working tree
+does not remove them from Git history or shrink existing Git object storage.
+
+The inventories, archive manifest, publication review, and validation result
+describe the original export, not the current filesystem inventory. Their
+original paths and hashes are preserved. The handoff notes below are historical;
+restore the archive parts from that commit before using their reassembly
+instructions.
+
 ## What to read first
 
 1. Read `coverage.json` for every recorded idea and package, including completed
