@@ -313,6 +313,95 @@ function isMissing(error) {
   return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT');
 }
 
+/** @param {string} key @param {string|null} value */
+function isHostGitConfig(key, value) {
+  // These exact settings affect credentials, transport or repository safety,
+  // not discovery locations. Only the disabled fsmonitor form is needed here.
+  if (/[\x00-\x1f\x7f\u2028\u2029]/.test(key)) return false;
+  return /^(?:safe\.(?:barerepository|directory)|credential\.interactive)$/i.test(key)
+    || /^(?:credential(?:\.[^\x00-\x1f\x7f]*)?\.helper|http(?:\.[^\x00-\x1f\x7f]*)?\.extraheader)$/i.test(key)
+    || (key.toLowerCase() === 'core.fsmonitor' && value === '');
+}
+
+/**
+ * Classify only the host's command-scope overlay, without resolving config
+ * files or executing helpers. Unknown settings/selectors remain fail-closed.
+ */
+function gitConfigAllowsLocalDiscovery() {
+  const config = new Map();
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!/^GIT_CONFIG(?:_.*)?$/i.test(key)) continue;
+    const name = key.toUpperCase();
+    if (config.has(name)) return false;
+    if (name === 'GIT_CONFIG_COUNT' || name === 'GIT_CONFIG_PARAMETERS'
+      || /^GIT_CONFIG_(?:KEY|VALUE)_(?:0|[1-9][0-9]*)$/.test(name)) {
+      config.set(name, value ?? '');
+    } else if (value || /^GIT_CONFIG_(?:KEY|VALUE)(?:_|$)/.test(name)) {
+      return false;
+    }
+  }
+  const countText = config.get('GIT_CONFIG_COUNT') ?? '';
+  const parameters = config.get('GIT_CONFIG_PARAMETERS') ?? '';
+  config.delete('GIT_CONFIG_COUNT');
+  config.delete('GIT_CONFIG_PARAMETERS');
+  const count = countText === '' ? 0
+    : countText.trimEnd() === countText && /^[ \t\r\n\v\f]*[+-]?[0-9]+$/.test(countText)
+      ? Number(countText) : NaN;
+  // Bound iteration by actual supplied entries, not an untrusted numeric count
+  // or a new product ceiling. Require every pair and refuse orphaned entries.
+  if (!Number.isInteger(count) || count < 0 || config.size !== count * 2) return false;
+  for (let index = 0; index < count; index += 1) {
+    const key = config.get(`GIT_CONFIG_KEY_${index}`);
+    const value = config.get(`GIT_CONFIG_VALUE_${index}`);
+    if (key === undefined || value === undefined || !isHostGitConfig(key, value)) return false;
+  }
+
+  // GIT_CONFIG_PARAMETERS uses Git's single-quote encoding, not shell syntax:
+  // old 'key=value' and new 'key'='value', with only '\'' and '\!' escapes.
+  // Decode one word at a time; never interpret its value as another directive.
+  let cursor = 0;
+  const quoted = () => {
+    if (parameters[cursor] !== "'") return null;
+    cursor += 1;
+    const parts = [];
+    while (cursor < parameters.length) {
+      const end = parameters.indexOf("'", cursor);
+      if (end < 0) return null;
+      parts.push(parameters.slice(cursor, end));
+      cursor = end + 1;
+      if (parameters[cursor] !== '\\') return parts.join('');
+      const escaped = parameters[cursor + 1];
+      if ((escaped !== "'" && escaped !== '!') || parameters[cursor + 2] !== "'") return null;
+      parts.push(escaped);
+      cursor += 3;
+    }
+    return null;
+  };
+  while (cursor < parameters.length) {
+    const word = quoted();
+    if (word === null) return false;
+    let key = word;
+    let value = null;
+    if (parameters[cursor] === '=') {
+      cursor += 1;
+      if (parameters[cursor] === "'") {
+        value = quoted();
+        if (value === null) return false;
+      }
+    } else {
+      const equals = word.indexOf('=');
+      if (equals >= 0) {
+        key = word.slice(0, equals);
+        value = word.slice(equals + 1);
+      }
+    }
+    if (!isHostGitConfig(key, value)
+      || (cursor < parameters.length && !/[ \t\r\n]/.test(parameters[cursor]))) return false;
+    while (cursor < parameters.length && /[ \t\r\n]/.test(parameters[cursor])) cursor += 1;
+  }
+  return true;
+}
+
 /**
  * Establish absence only for default local discovery, not a replacement for
  * bd's database resolver. A footprint (including a dangling link) or uncertain
@@ -322,10 +411,9 @@ function isMissing(error) {
  */
 function trackingAbsenceIdentity(root, operation) {
   const unavailable = () => new TrackedQueryError('TRACKED_AUTHORITY_UNAVAILABLE');
-  // Git configuration overrides can also redirect core.worktree. Their
-  // contents remain Git's responsibility; do not parse external configuration.
   if (Object.entries(process.env).some(([key, value]) => value
-    && (/^BEADS_/i.test(key) || /^GIT_(?:DIR|COMMON_DIR|WORK_TREE|CONFIG(?:_.*)?)$/i.test(key)))) {
+    && (/^BEADS_/i.test(key) || /^GIT_(?:DIR|COMMON_DIR|WORK_TREE)$/i.test(key)))
+    || !gitConfigAllowsLocalDiscovery()) {
     throw unavailable();
   }
   /** @param {string} location */

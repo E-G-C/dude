@@ -19,6 +19,17 @@ import { readNowProjection, readWorkIndex } from './lib/projection.mjs';
 
 const BD_LIST = ['list', '--all', '--limit', '0', '--json'];
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+// Same key/form overlay as the app host; no real credential values or helpers.
+const OPTIONAL_BEADS_APP_GIT_ENV = {
+  GIT_CONFIG_COUNT: '3',
+  GIT_CONFIG_KEY_0: 'safe.barerepository',
+  GIT_CONFIG_VALUE_0: 'explicit',
+  GIT_CONFIG_KEY_1: 'credential.interactive',
+  GIT_CONFIG_VALUE_1: 'never',
+  GIT_CONFIG_KEY_2: 'core.fsmonitor',
+  GIT_CONFIG_VALUE_2: '',
+  GIT_CONFIG_PARAMETERS: "'credential.https://fixture.invalid.helper=' 'credential.https://fixture.invalid.helper=!must-not-execute-fixture-helper'",
+};
 
 /** @returns {string} */
 function temporaryRoot() {
@@ -94,16 +105,18 @@ function emptyBoard() {
 }
 
 /**
- * Exercise the default execFile runner in a child with no command search path
- * or inherited tracking overrides. Never change the test host's environment,
- * and never substitute a .cmd shim for a real missing executable on Windows.
+ * Exercise the default execFile runner in a controlled child. Git overlays
+ * must be supplied explicitly: stripping inherited GIT_* alone missed the app
+ * host regression. Native mode keeps only the host's command search path.
+ * Never change the host environment or substitute a .cmd shim on Windows.
  * @param {string} root
  * @param {string} body
- * @param {{generated?:boolean, env?:Record<string,string>}} [options]
+ * @param {{generated?:boolean, native?:boolean, env?:Record<string,string>}} [options]
  */
-function optionalBeadsChild(root, body, { generated = false, env = {} } = {}) {
+function optionalBeadsChild(root, body, { generated = false, native = false, env = {} } = {}) {
   const inherited = Object.fromEntries(Object.entries(process.env)
     .filter(([key]) => !/^(?:PATH$|BEADS_|GIT_)/i.test(key)));
+  const nativePath = Object.entries(process.env).find(([key]) => /^PATH$/i.test(key))?.[1] ?? '';
   const moduleUrl = new URL(generated
     ? '../../../.github/extensions/dude/lib/projection.mjs'
     : './lib/projection.mjs', import.meta.url).href;
@@ -112,16 +125,36 @@ function optionalBeadsChild(root, body, { generated = false, env = {} } = {}) {
     import fs from 'node:fs';
     import path from 'node:path';
     import { execFile } from 'node:child_process';
+    import { createHash } from 'node:crypto';
     const root = ${JSON.stringify(root)};
     const reader = await import(${JSON.stringify(moduleUrl)});
-    const missing = await new Promise(resolve => execFile('bd', ${JSON.stringify(BD_LIST)},
-      { cwd: root, shell: false, timeout: 5000 }, error => resolve(error)));
-    assert.equal(missing?.code, 'ENOENT', 'the real default executable must be missing');
+    const probe = await new Promise(resolve => execFile('bd', ${JSON.stringify(BD_LIST)},
+      { cwd: root, shell: false, timeout: 5000 },
+      (error, stdout, stderr) => resolve({ code: error?.code ?? null, stdout, stderr })));
+    if (${native} && probe.code === 'ENOENT') {
+      console.log(JSON.stringify({ nativeUnavailable: true }));
+      process.exit(0);
+    }
+    if (${native}) {
+      assert.equal(probe.code, 1, 'the installed bd must report no database');
+      assert.equal(probe.stdout, '', 'the native no-database result has no stdout');
+      assert.ok(probe.stderr.split(/\\r?\\n/)[0] === 'Error: no beads database found',
+        'the installed bd must reach the exact no-database boundary');
+    } else {
+      assert.equal(probe.code, 'ENOENT', 'the real default executable must be missing');
+    }
+    const commandBoundary = {
+      code: probe.code,
+      stdoutBytes: Buffer.byteLength(probe.stdout),
+      stderrBytes: Buffer.byteLength(probe.stderr),
+      stdoutSha256: createHash('sha256').update(probe.stdout).digest('hex'),
+      stderrSha256: createHash('sha256').update(probe.stderr).digest('hex'),
+    };
     assert.equal(fs.lstatSync(root).isDirectory(), true, 'cwd must remain valid');
     ${body}
   `], {
     cwd: root,
-    env: { ...inherited, PATH: root, ...env },
+    env: { ...inherited, PATH: native ? nativePath : root, ...env },
     encoding: 'utf8',
     timeout: 30_000,
     maxBuffer: 8 * 1024 * 1024,
@@ -308,6 +341,21 @@ function assertOptionalUnavailable(pair, owned) {
   assert.deepEqual(pair.selected.diagnostics.map(({ code }) => code), ['TRACKED_AUTHORITY_UNAVAILABLE']);
 }
 
+/** @param {any} pair @param {{ideaPath:string}} owned @param {object} counts */
+function assertOptionalCounts(pair, owned, counts) {
+  assert.equal(pair.index.coverage.inventory.state, 'current');
+  assert.equal(pair.index.coverage.work.state, 'current');
+  const row = pair.index.items.find(item => item.ideaPath === owned.ideaPath);
+  assert.equal(row.lane, 'lightweight');
+  assert.equal(row.basis, 'canonical-lifecycle');
+  assert.equal(row.availability.state, 'current');
+  assert.deepEqual(row.taskCounts, counts);
+  assert.equal(pair.selected.complete, true);
+  assert.equal(pair.selected.authority, 'lightweight');
+  assert.deepEqual(pair.selected.tasks, row.taskCounts);
+  assert.deepEqual(pair.selected.diagnostics, []);
+}
+
 test('066 optional-Beads real missing executable restores source and generated four-state reads without writes', async (t) => {
   const root = optionalBeadsRoot();
   try {
@@ -396,6 +444,179 @@ test('066 optional-Beads real missing executable restores source and generated f
           selected.taskDetails.items[0].source.contentIdentity);
         assert.deepEqual(optionalBeadsSnapshot(root), before, 'opening, selecting, freshness and refresh change no bytes or inventory');
       });
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('066 optional-Beads Git configuration preserves app-like and zero-count default reads', async (t) => {
+  const expected = { total: 4, open: 1, inProgress: 1, blocked: 1, done: 1 };
+  for (const linked of [false, true]) {
+    const parent = optionalBeadsRoot();
+    const root = path.join(parent, 'workspace');
+    try {
+      fs.mkdirSync(root);
+      const owned = feature(root, '066', 'host-configuration', [
+        '- [ ] T001@aaaaaaaa Open.',
+        '- [~] T002@bbbbbbbb Active.',
+        '- [!] T003@cccccccc Blocked.',
+        '    blocked-by: external-dependency: Recorded wait.',
+        '- [x] T004@dddddddd Done.',
+        '',
+      ].join('\n'));
+      idea(root, '067', 'independent-draft');
+      idea(root, '068', 'independent-resolved', 'resolved');
+      const { main, gitDirectory } = linked
+        ? optionalBeadsWorktree(parent, root) : { main: root, gitDirectory: path.join(root, '.git') };
+      write(gitDirectory, 'HEAD', 'ref: refs/heads/fixture\n');
+      write(main, '.git/HEAD', 'ref: refs/heads/fixture\n');
+      fs.mkdirSync(path.join(main, '.git', 'objects'), { recursive: true });
+      fs.mkdirSync(path.join(main, '.git', 'refs', 'heads'), { recursive: true });
+      const before = optionalBeadsSnapshot(parent);
+      const body = `
+        const input = { root, target: ${JSON.stringify(owned.ideaPath)} };
+        const index = await reader.readWorkIndex({ root });
+        const selected = await reader.readNowProjection(input);
+        const freshness = await reader.checkProjectionFreshness({ root, projection: selected });
+        const refreshed = await reader.refreshNowProjection({ ...input, previous: selected });
+        console.log(JSON.stringify({ index, selected, freshness, refreshed, commandBoundary }));
+      `;
+      for (const generated of [false, true]) {
+        for (const native of [false, true]) {
+          const control = optionalBeadsChild(root, body, { generated, native });
+          if (!control.nativeUnavailable) assertOptionalCounts(control, owned, expected);
+          for (const [label, env] of [
+            ['app counted plus old quoted helpers', OPTIONAL_BEADS_APP_GIT_ENV],
+            ['count zero', { GIT_CONFIG_COUNT: '0' }],
+          ]) {
+            await t.test(`${linked ? 'linked' : 'ordinary'} / ${generated ? 'generated' : 'source'} / ${native ? 'native no database' : 'real ENOENT'} / ${label}`, (t) => {
+              if (control.nativeUnavailable) return t.skip('installed native bd is unavailable; real ENOENT is tested separately');
+              const result = optionalBeadsChild(root, `
+                for (const [key, value] of Object.entries(${JSON.stringify(env)})) {
+                  assert.ok(process.env[key] === value, 'the explicit host-like overlay reaches the production reader');
+                }
+                ${body}
+              `, { generated, native, env });
+              assert.deepEqual(result.commandBoundary, control.commandBoundary,
+                'only the Git overlay changes, not the real bd result bytes');
+              t.diagnostic(`default runner ${result.commandBoundary.code}; stderr bytes=${result.commandBoundary.stderrBytes}, sha256=${result.commandBoundary.stderrSha256}; control work=current`);
+              assert.deepEqual(optionalBeadsSnapshot(parent), before, 'native commands and readers change no files or directories');
+              assertOptionalCounts(result, owned, expected);
+              assert.deepEqual(result.index.coverage.inventory, {
+                state: 'current', ideas: 3, readable: 3, packages: 1, diagnostics: [],
+              });
+              assert.equal(result.index.items.length, 3);
+              assert.equal(result.freshness.state, 'current');
+              assert.equal(result.refreshed.replaced, true);
+              assert.equal(result.refreshed.freshness.state, 'current');
+              assert.deepEqual(result.refreshed.projection.tasks, expected);
+            });
+          }
+        }
+      }
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  }
+});
+
+test('066 optional-Beads Git configuration validates complete keys and quoting without executing values', async (t) => {
+  const counted = (key, value) => ({
+    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: key, GIT_CONFIG_VALUE_0: value,
+  });
+  const parameters = value => ({ GIT_CONFIG_PARAMETERS: value });
+  const cases = [
+    ['leading zero count', { GIT_CONFIG_COUNT: '00' }, true],
+    ['signed whitespace zero count', { GIT_CONFIG_COUNT: '\t+00' }, true],
+    ['empty count', { GIT_CONFIG_COUNT: '' }, true],
+    ['counted key case', counted('SaFe.BareRepository', 'explicit'), true],
+    ['host transport header', counted('http.https://fixture.invalid.extraHeader', 'inert-fixture-header'), true],
+    ['host safe directory', counted('safe.directory', '/inert-fixture-location'), true],
+    ['new quoted helpers', parameters("'credential.helper'='' 'credential.https://fixture.invalid.helper'='!must-not-execute-fixture-helper'"), true],
+    ['old quoted apostrophe and bang', parameters(String.raw`'credential.https://fixture.invalid/owner'\''s.helper=!inert'\!'helper'`), true],
+    ['new quoted equals in subsection', parameters("'credential.https://fixture.invalid/a=b.helper'=''"), true],
+    ['directive-looking subsection and value', parameters("'credential.core.worktree.helper'='include.path=not-a-directive core.worktree=not-a-location'"), true],
+    ['null value and whitespace separators', parameters("'credential.interactive'=\t'credential.helper'=''\r\n"), true],
+    ['negative count', { GIT_CONFIG_COUNT: '-1' }],
+    ['nondecimal count', { GIT_CONFIG_COUNT: '1e0' }],
+    ['trailing count whitespace', { GIT_CONFIG_COUNT: '0 ' }],
+    ['trailing count newline', { GIT_CONFIG_COUNT: '0\n' }],
+    ['count beyond supplied entries', { GIT_CONFIG_COUNT: '99999999999999999999' }],
+    ['missing counted key', { GIT_CONFIG_COUNT: '1', GIT_CONFIG_VALUE_0: '' }],
+    ['missing counted value', { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper' }],
+    ['orphaned entries', { GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '' }],
+    ['zero count with entries', { ...counted('credential.helper', ''), GIT_CONFIG_COUNT: '0' }],
+    ['noncanonical numbered key', { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_00: 'credential.helper', GIT_CONFIG_VALUE_0: '' }],
+    ['empty malformed numbered key', { GIT_CONFIG_COUNT: '0', GIT_CONFIG_KEY_bad: '' }],
+    ['out of range numbered key', { ...counted('credential.helper', ''), GIT_CONFIG_KEY_1: 'core.worktree' }],
+    ['counted worktree redirect', counted('CoRe.WorkTree', '../external')],
+    ['counted include', counted('include.path', '../external-config')],
+    ['counted conditional include', counted('includeIf.gitdir:fixture.path', '../external-config')],
+    ['unclassified key', counted('unknown.setting', 'value')],
+    ['disabled fsmonitor only', counted('core.fsmonitor', '!must-not-execute-fixture-helper')],
+    ['key prefix is not classification', counted('credential.helper.core.worktree', '../external')],
+    ['newline in key', counted('credential.fixture\ninclude.path.helper', '')],
+    ['newline after exact key', counted('safe.barerepository\n', 'explicit')],
+    ['newline after quoted key', parameters("'credential.interactive\n=never'")],
+    ['Unicode line separator after exact key', counted('safe.barerepository\u2028', 'explicit')],
+    ['Unicode paragraph separator after quoted key', parameters("'credential.helper\u2029='")],
+    ['old quoted redirect after safe key', parameters("'credential.helper=' 'core.worktree=../external'")],
+    ['new quoted include after safe key', parameters("'credential.helper'='' 'include.path'='../external-config'")],
+    ['conditional quoted include', parameters("'includeIf.gitdir:fixture.path=../external-config'")],
+    ['old equals inside subsection', parameters("'credential.https://fixture.invalid/a=b.helper=value'")],
+    ['unquoted parameters', parameters('credential.helper=')],
+    ['double quoted parameters', parameters('"credential.helper="')],
+    ['unterminated quote', parameters("'credential.helper=")],
+    ['unsupported escape', parameters(String.raw`'credential.helper=a'\x'b'`)],
+    ['trailing unquoted input', parameters("'credential.helper='core.worktree=../external")],
+    ['adjacent quoted input', parameters("'credential.helper=''core.worktree=../external'")],
+    ['leading parameter whitespace', parameters(" 'credential.helper='")],
+    ['invalid separator', parameters("'credential.helper='\v'credential.interactive=never'")],
+    ['space before equals', parameters("'credential.helper' =''")],
+    ['space after equals', parameters("'credential.helper'= ''")],
+    ['extra equals', parameters("'credential.helper'==''")],
+    ...['GIT_CONFIG', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_FUTURE']
+      .map(key => [key, { ...OPTIONAL_BEADS_APP_GIT_ENV, [key]: 'inert-override' }]),
+  ];
+  const root = optionalBeadsRoot();
+  try {
+    const owned = feature(root, '066', 'bounded-configuration', '- [~] T001@aaaaaaaa Canonical instruction.\n');
+    const counts = { total: 1, open: 0, inProgress: 1, blocked: 0, done: 0 };
+    const before = optionalBeadsSnapshot(root);
+    for (const generated of [false, true]) {
+      const control = optionalBeadsChild(root, `
+        console.log(JSON.stringify({
+          index: await reader.readWorkIndex({ root }),
+          selected: await reader.readNowProjection({ root, target: ${JSON.stringify(owned.ideaPath)} }),
+        }));
+      `, { generated });
+      assertOptionalCounts(control, owned, counts);
+      for (const [label, env, available] of cases) {
+        await t.test(`${generated ? 'generated' : 'source'} / ${label}`, () => {
+          const result = optionalBeadsChild(root, `
+            const input = { root, target: ${JSON.stringify(owned.ideaPath)} };
+            const pair = async options => ({
+              index: await reader.readWorkIndex({ root }, options),
+              selected: await reader.readNowProjection(input, options),
+            });
+            console.log(JSON.stringify({
+              missing: await pair(),
+              injectedNoDatabase: await pair({ runBd: () => ({
+                status: 1, stdout: '', stderr: 'Error: no beads database found\\n',
+              }) }),
+              injectedEmpty: await pair({ runBd: () => ({ status: 0, stdout: '[]', stderr: '' }) }),
+            }));
+          `, { generated, env });
+          assert.deepEqual(optionalBeadsSnapshot(root), before);
+          assertOptionalCounts(result.injectedEmpty, owned, counts);
+          for (const pair of [result.missing, result.injectedNoDatabase]) {
+            if (available) assertOptionalCounts(pair, owned, counts);
+            else assertOptionalUnavailable(pair, owned);
+            assert.doesNotMatch(JSON.stringify(pair), /fixture-helper|inert-fixture-header|external-config/);
+          }
+        });
+      }
     }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -565,7 +786,7 @@ test('066 optional-Beads local and linked absence must be safe while footprints 
           }) });
           const injectedEmpty = await pair({ runBd: () => ({ status: 0, stdout: '[]', stderr: '' }) });
           console.log(JSON.stringify({ absent, injectedNoDatabase, injectedEmpty }));
-        `);
+        `, { env: OPTIONAL_BEADS_APP_GIT_ENV });
         for (const pair of [result.absent, result.injectedNoDatabase]) {
           if (layout.available) {
             assert.equal(pair.index.coverage.work.state, 'current');
@@ -617,7 +838,7 @@ test('066 optional-Beads inherited configuration disqualifies absence but not a 
             injectedNoDatabase: await pair({ runBd: () => ({ status: 1, stdout: '', stderr: 'Error: no beads database found' }) }),
             injectedEmpty: await pair({ runBd: () => ({ status: 0, stdout: '[]', stderr: '' }) }),
           }));
-        `, { env: { [key]: value } });
+        `, { env: { ...OPTIONAL_BEADS_APP_GIT_ENV, [key]: value } });
         for (const pair of [result.absent, result.injectedNoDatabase]) {
           if (value === '') {
             assert.equal(pair.selected.complete, true);
@@ -784,7 +1005,7 @@ test('066 optional-Beads previously populated authority forbids missing-tool and
             }
           }
           console.log(JSON.stringify({ optionalControl, noDatabaseControl, previous, failures, emptied, finalFailures }));
-        `);
+        `, { env: OPTIONAL_BEADS_APP_GIT_ENV });
         assert.equal(result.optionalControl.complete, true);
         assert.equal(result.noDatabaseControl.complete, true,
           'without earlier positive facts, exact no-database is otherwise admissible on this same root');
@@ -887,7 +1108,7 @@ test('066 optional-Beads incomplete tracked predecessor refuses absence refresh 
               previous, predecessorCalls, refreshCalls, refreshed,
               optionalControl, noDatabaseControl, sameObject: previous === refreshed.projection,
             }));
-          `, { generated });
+          `, { generated, env: OPTIONAL_BEADS_APP_GIT_ENV });
           t.diagnostic([
             `${generated ? 'generated' : 'source'} ${label}: controls complete=${result.optionalControl.complete}/${result.noDatabaseControl.complete}`,
             `predecessor complete=${result.previous.complete}, authority=${result.previous.authority}, sources=${result.previous.sources.length}, calls=${result.predecessorCalls.map(args => args[0]).join('/')}`,
