@@ -4,7 +4,7 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 ## Where are we?
 
-- Current work: **1** (1 active, 0 blocked)
+- Current work: **2** (2 active, 0 blocked)
 - Ready / Next: **0**
 - Ideas awaiting definition: **6**
 - Defined awaiting work: **0**
@@ -12,11 +12,12 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 ## Current
 
-Blocked 0 · Active 1 · Next 0
+Blocked 0 · Active 2 · Next 0
 
 ### Active
 
 - `062` · `dude-canvas-workspace-integration` — Dude Canvas Workspace Integration (`.dude/ideas/062-dude-canvas-workspace-integration.md`)
+- `069` · `a2a-library-foundation` — A2A library foundation (`.dude/ideas/069-a2a-library-foundation.md`)
 
 ### Current work map
 
@@ -24,6 +25,7 @@ Blocked 0 · Active 1 · Next 0
 kanban
   active[Active]
     work_1[062 dude-canvas-workspace-integration]
+    work_2[069 a2a-library-foundation]
 ```
 
 ## Planned

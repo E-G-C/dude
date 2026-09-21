@@ -30,6 +30,7 @@ namespace, which the engine treats as a distinct ownership tier:
 | `rust` | Rust specialist agent + Tauri development skill | you write Rust or build Tauri desktop/mobile apps |
 | `fluent-ui` | Fluent UI React v9 specialist agent | you build UIs with `@fluentui/react-components` |
 | `copilot-sdk` | GitHub Copilot SDK specialist agent | you build apps on the Copilot SDK |
+| `a2a` | one read-only A2A JavaScript advisor + protocol and JavaScript knowledge skills in catalog source | after disposable Compose and actual-advice validation, you need source-backed A2A protocol or JavaScript SDK advice |
 | `newsroom` | newsroom writer + event deep-fetcher agents + article / calendar-event / static-safe-time skills | you publish news & events to a Hugo/Docsy site's News section |
 | `writing` | avoid-AI-writing-tropes and professional-style prose-quality skills | you want a canonical guard against AI writing tells and consistent prose voice |
 | `design` | design-proposal workflow + frontend-aesthetics judgment guidance | you want a visual design workflow overlaid on the task lifecycle |
@@ -39,6 +40,12 @@ namespace, which the engine treats as a distinct ownership tier:
 | `rubber-duck` | read-only retrospective agent; no skills or external dependencies | you want one advisory record at a pending successful feature completion reached through direct feature work or a Ship invocation that completes its feature |
 
 Packs are added to this table as they are migrated out of core.
+
+`a2a` now contains its complete planned provider set in catalog source. That
+source availability does not make the providers available to an installed host.
+The pack is not installed in this repository, full Compose verification remains
+pending, and no fresh installed discovery or actual advice request has yet
+proved use.
 
 ## Layout
 

@@ -556,5 +556,16 @@
       "T001@c066b7a1": "x"
     },
     "updated_at": "2026-09-21T03:16:41.000Z"
+  },
+  ".dude/specs/069-a2a-library-foundation/tasks.md": {
+    "glyphs": {
+      "T001@8b1c2a60": "x",
+      "T002@63d7e4b1": "x",
+      "T003@c9a5402e": "x",
+      "T004@7f06b3d8": "x",
+      "T005@e4129c65": "~",
+      "T006@2a8d70f3": " "
+    },
+    "updated_at": "2026-09-21T19:41:39.000Z"
   }
 }
