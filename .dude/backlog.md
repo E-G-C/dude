@@ -6,8 +6,8 @@ A read-only view built from idea files, linked feature files, task records, and 
 
 - Current work: **1** (1 active, 0 blocked)
 - Ready / Next: **0**
-- Ideas awaiting definition: **5**
-- Defined awaiting work: **0**
+- Ideas awaiting definition: **4**
+- Defined awaiting work: **1**
 - Completed: **62**
 
 ## Current
@@ -34,6 +34,9 @@ kanban
 - `054` · `mockup-opens-in-review` — Mockup Opens in Review (`.dude/ideas/054-mockup-opens-in-review.md`)
 - `058` · `outcome-aligned-intake` — Outcome-Aligned Intake (`.dude/ideas/058-outcome-aligned-intake.md`)
 - `063` · `dude-canvas-settings` — Dude Canvas Settings (`.dude/ideas/063-dude-canvas-settings.md`)
+
+### Defined awaiting work
+
 - `068` · `agent-to-agent-communication` — Local and remote agent communication (`.dude/ideas/068-agent-to-agent-communication.md`)
 
 ## Completed

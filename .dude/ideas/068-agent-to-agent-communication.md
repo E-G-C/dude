@@ -1,8 +1,8 @@
 ---
 title: Local and remote agent communication
 slug: agent-to-agent-communication
-status: draft
-spec_path:
+status: defined
+spec_path: .dude/specs/068-agent-to-agent-communication/spec.md
 ---
 
 # Idea: Local and remote agent communication
@@ -38,11 +38,17 @@ For future definition; these questions do not block capture.
 1. A2A is the requested research and specialist direction. Which protocol and SDK versions and compatibility requirements should apply, and is any additional protocol support needed?
    Answer:
 2. Which hosts and agents should interoperate? The other Dude session's host is still unknown: Copilot app, VS Code, standalone CLI, or another host.
-   Answer:
+   Answer: User text (verbatim):
+
+```text
+I guess any other app supporting A2A  
+First main use case will be  Other Dudes running on  GitHub Copilot desktop app 
+```
+
 3. For collaboration, should communication itself be limited to read-only questions and evidence exchange, or should delegated actions be allowed? What permissions would apply?
-   Answer:
+   Answer: Selected option `exchange-only`, "Read-only questions and evidence exchange". User text (verbatim): "However set the foundations for further enhancements as the proposes exchange and delegations."
 4. What connection and trust requirements should apply locally and remotely, including authentication, privacy, and access to shared information?
-   Answer:
+   Answer: User chat reply (verbatim): `2`. Selected option `approve-connection-scope`, "Approve a sharing scope for the connection", for `v1-sharing-approval`: approve a connection-specific sharing scope, then let agents automatically exchange read-only questions, answers, and existing evidence within it. Expanding that scope requires renewed approval.
 5. How should cooperating coordinators identify the single authoritative work state, avoid duplicate or conflicting ownership, and reconcile messages with that authority?
    Answer:
 6. Who should own code integration and review across separately implemented features?
@@ -52,6 +58,22 @@ For future definition; these questions do not block capture.
 8. Which reusable A2A library assets are actually needed for the initial cycle, and which existing bundle mechanism should project or install them for dogfood?
    Answer:
 
+9. For v1, is a session reserved for read-only serving with evidence-bounded answers sufficient, or must it provide free-form answers, serve alongside other work in that session, or both?
+   Answer: User chat reply at 2026-09-22T23:10:55Z (verbatim): `1`. Selected option `foreground-bounded`, "Set-aside session, evidence only".
+10. How do different computers reach each other in v1?
+   Answer: User chat reply at 2026-09-22T23:08:59Z (verbatim):
+
+```text
+**how do two computers reach each other?** **assume lan for now( does it makes a diference as long as they can communicate?)**
+```
+
+11. In the asking session, how should Dude treat a received answer that contains embedded instructions, including when the session runs autonomously or with tools approved in advance?
+   Answer: User chat reply at 2026-09-22T23:43:42Z (verbatim): `its 1 then`. Selected option 1, "Treat it like any file or web page. The agent uses answers under the approvals the session already has. Nothing in an answer can grant new permissions or start anything by itself." Preceding user message at 2026-09-22T23:42:33Z (verbatim):
+
+```text
+help me to find the right answer, I'd like to set the foundations for a collaborarive environment ofr my dude agents, so the answer shouldn't be treated as a peer and take actions on it? what do you think
+```
+
 ## Assumptions
 
 No user-supplied assumptions recorded.
@@ -59,42 +81,29 @@ No user-supplied assumptions recorded.
 <!-- dude:managed:start -->
 ## Unresolved Discussion
 
-The coordinator previously suggested read-only evidence exchange, an authenticated/private connection, supporting artifacts tied to their source and revision, and an adapter into the actual running session. These remain unresolved suggestions, not user decisions, accepted assumptions, or requirements.
+No v1 product clarification remains. Open Question 1 is an agent-owned technical version selection recorded in the plan; its user answer remains blank. Questions 5 and 6 concern distributed work authority, code integration, and review, which are outside v1. Questions 7 and 8 belong to Feature 069, [A2A library foundation](069-a2a-library-foundation.md).
 
-### Proposals And Open Considerations
-
-- Agent communication could cover questions, dependency and interface clarification, handoffs, progress, and evidence. Messages alone would not assign work or establish authority.
-- Work state remains a separate concern. Today, canonical `tasks.md` task units are the live board in Lightweight; after tracked import, Beads is authoritative and markdown is only a one-way, non-authoritative mirror. For cooperating coordinators, a shared logical Beads project or a designated single owner of the canonical Lightweight tasks board are options to evaluate, not chosen contracts. Beads networking and deployment capabilities still need validation.
-- Code integration could use isolated work areas, with an explicit integration owner and independent review. This is a possible approach, not an adopted design.
-
-Communication location and execution lane are separate choices: local participation does not automatically mean Lightweight, and internet-separated participation does not automatically select Beads. The local networking arrangement remains unclear; no topology has been selected.
-
-Messaging or a shared database alone does not solve duplicate assignment, conflicting ownership, concurrent writes, stale or offline state, review, or merges. Independent per-machine markdown copies are not safely synchronized merely because agents can message.
-
-### Envisioned Collaboration Scenario
-
-For example, one Dude agent could work on a reporting feature while another works on a separate export feature for the same project. They clarify a dependency on a shared data format, exchange progress and evidence, and coordinate integration and review. Participants could be local or separated by the internet. This is an envisioned use case, not implemented behavior or execution permission.
-
-### Intended A2A Library And Dogfood Sequence
-
-The four linked sources in `## Idea` are inputs for later research; none was inspected in this refresh. These are brainstorm steps, not executable tasks, a plan, or a new workflow.
-
-1. Inspect the official A2A project, documentation, and site, plus the JavaScript SDK, for the initial protocol and SDK guidance.
-2. Capture reusable knowledge and references as durable Dude library guidance, with only the A2A-specialized agents, skills, harness support, or other assets needed for the initial work. Not every artifact type is required.
-3. Project or install the library capabilities through the appropriate existing bundle mechanism, then rebuild dogfood so those capabilities are available there.
-4. Use the resulting specialists and capabilities to develop distributed local/remote Dude communication and collaboration features.
-
-Other-language SDK learning is on demand: when a language is needed, inspect its official SDK guidance and create a corresponding specialized library agent. Do not pre-create unused language specialists or make them prerequisites for the initial JavaScript/dogfood cycle.
-
-"Learn" means durable library guidance and specialist capabilities, not model training or permanent model memory. Reference-driven maintenance covers both A2A protocol guidance and SDK-specific guidance; cadence, triggers, ownership, version policy, and update validation remain TBD. No automatic updater is selected.
+The broader software-factory vision remains future intent. Messaging does not resolve work ownership, shared Beads deployment, synchronization, or integration. Local versus remote participation does not select an execution lane. Internet-separated collaboration is not included in this first communication increment.
 
 ## Scope And Boundaries
 
-Local and remote are two connection contexts of this agent-communication idea. Asking the originating session about missing work evidence and collaborating on separate features of one project are both motivating use cases; they do not settle the full scope of permitted communication.
+V1 exchanges read-only questions, evidence-bounded answers, and existing evidence. Open Question 4 selects a sharing scope approved for each connection, with automatic in-scope questions and replies and renewed approval for expansion. Each participant controls its own disclosure. Authentication, recipient verification, and encryption remain required on the same computer and on the LAN.
 
-The software-factory vision does not select a platform architecture. The user's literal chat reply `1` at 2026-09-21T12:36:29Z selected separate features with the library first. The reusable A2A/JavaScript specialists, knowledge maintenance, on-demand language onboarding, and dogfood availability are captured in [A2A library foundation](069-a2a-library-foundation.md), at `.dude/ideas/069-a2a-library-foundation.md`. This original ledger remains a distinct draft for later definition of live local/remote communication and collaboration. Its library motivation and sequence remain here as context; the split does not mean live integration has shipped.
+Open Question 9 selects a session set aside only for answering, with no project work while it serves. The user may walk away or work in a different session. Answers use approved existing file fields, exact quotes, checkable facts, and fixed notices. Free-form answers and serving alongside other work in the same session are outside v1. Successive exchanges do not require per-payload approval, but an unavailable session does not queue questions or redirect them elsewhere.
 
-Existing workflow, permission, and evidence rules still apply. Execution-lane and task-state changes, plus closure, remain coordinator-owned. Another agent's claims alone are not fresh verification. This capture does not authorize research, creating agents or other library assets, refreshing packs, installing capabilities, builds, remote execution, task ownership transfer or takeover, cross-session Work recovery, continuation of stopped Work, or automatic completion. A2A is the requested research and specialist direction; the runtime and SDK integration architecture is not decided. No new workflow, daemon, or registry is selected.
+Open Question 10 limits different-computer connections to the same local network in v1. Public internet exposure and relays are out of scope. A mesh VPN might provide similar reachability but is not promised without qualification.
+
+Open Question 11 treats an answer in the asking session like content from a file or web page. The session may use that information under its existing user request and approvals; receiving an answer does not make it read-only. The answer grants no permission and starts no activity by itself. The asking session retains the same embedded-instruction exposure as other content it reads, including under blanket tool approval or autonomous Work. Information can flow between agents, but authority does not travel inside messages. Delegation remains a later, explicitly approved capability.
+
+Other Dude sessions in the GitHub Copilot desktop app remain the first concrete use case from Question 2. Other A2A-compatible apps are a possible direction, not a universal-compatibility claim or a Copilot-only boundary. Actual host, OS, runtime, peer identity, address, and effective controls must be established for each supported combination.
+
+Delegated implementation, new verification work for an exchange, task-state changes, ownership transfer, work recovery, code integration, review approval, and closure remain outside communication authority. Add no registry, daemon, persistent store, delegation mechanism, hidden session, or generic framework for future needs. The library motivation remains in the user's Idea; reusable guidance, maintenance, language onboarding, and dogfood composition belong to Feature 069 rather than expanding this package.
+
+## Definition Assessment And Prerequisite
+
+The core package at `.dude/specs/068-agent-to-agent-communication/` records the accepted scope, qualification-first plan, and proposed tasks. The plan contains the version basis and host research. Source evidence suggests that restrictions can be refreshed for a running session, but their whole-session effect and lifetime are not yet proven. Those host restrictions apply to serving; asking-side answer delivery preserves the session's existing authority.
+
+The first execution gate must record GO before anything that serves peers is built or enabled. A NO-GO leaves communication unavailable and stops for a user decision. Real sessions, connections, and a second computer require separate user authorization; this definition grants none. No runtime qualification or live interoperability is claimed. The ordinary-chat answers in Questions 9 through 11 resolve the product choices; no Canvas answer, receipt, or acknowledgment is inferred.
 <!-- dude:managed:end -->
 
 ## Coordinator Log
@@ -103,3 +112,14 @@ Existing workflow, permission, and evidence rules still apply. Execution-lane an
 - 2026-09-20T00:20:49Z: Brainstorm refreshed with the user's software-factory collaboration vision for local and internet-separated Dude agents implementing different features of one project. Beads and local/Lightweight work-state options remain undecided; ownership, integration, and possible definition-time scope separation remain open. This refresh authorizes no definition or execution.
 - 2026-09-21T05:12:00Z: Brainstorm refreshed with the user's A2A library and dogfood direction, retaining four supplied sources for later research, JavaScript SDK guidance first, periodic protocol and SDK knowledge updates with cadence TBD, and on-demand language specialists. Captured later library projection/install, dogfood rebuild, and use of those capabilities for distributed local/remote communication and collaboration; no research, implementation, or execution was performed.
 - 2026-09-21T12:43:57Z: Brainstorm refreshed for the accepted split from literal reply `1` at 2026-09-21T12:36:29Z, linking the published foundation capture `.dude/ideas/069-a2a-library-foundation.md` and recording library-first definition order. This ledger retains its draft status, empty spec_path, user-controlled sections, and prior history for separate later communication/collaboration definition; no live integration or execution is claimed.
+- 2026-09-22T11:11:43Z - Ordinary definition resumed after the user's `exchange-only` selection. Recorded the option label and verbatim sentence in Open Question 3 and updated the related v1 scope note without adopting an implementation architecture or delegation capability. The other Dude session's host remains a material clarification; retained draft status and empty spec_path, with no definition package created.
+- 2026-09-22T11:25:10Z - Ordinary definition clarification recorded the peer-host answer verbatim in Open Question 2. Clarified other Dude sessions in the GitHub Copilot desktop app as the first concrete v1 use case and other A2A-compatible apps as a tentative interoperability direction, without adopting universal compatibility or a Copilot-only requirement. Protocol, SDK, transport, and host integration assessment remain agent-owned; connection, trust, and privacy scope remain unresolved. Retained draft status and empty spec_path, with no definition package created.
+- 2026-09-22T12:45:21Z - Ordinary definition clarification recorded the current chat-fallback reply `2` in Open Question 4 as `approve-connection-scope`, "Approve a sharing scope for the connection", for `v1-sharing-approval`. Updated the related boundary for automatic read-only questions, answers, and existing-evidence exchange within a preapproved connection-specific sharing scope, with renewed approval for expansion. This product-policy choice grants no live connection, sending, or session-access permission and leaves authentication, networking, and other trust questions unresolved. Retained draft status and empty spec_path, with no definition package created.
+- 2026-09-22T13:48:29Z - Ordinary definition assessment recorded the retained source-backed A2A/JavaScript fit and bounded Architect/Tester findings. Retained draft status and empty spec_path; first publication awaits a supported existing-session enforcement approach and evidence from the Architect/planning and Copilot host-capability owners. No package was created or implementation architecture adopted. This continuation stops without active qualification, a new human prompt, or automatic further specialist work.
+- 2026-09-22T17:05:33Z - Ordinary definition assessment recorded the Architect's bounded existing-session receive/reply candidate and single allowlist-contract recheck. Narrowed the technical plan-gap to the Copilot desktop host-capability owner's supported application, activation, and lifetime contract for a read-only serving restriction, with Architect planning ownership. Bounded evidence-backed reply forms remain an unapproved product tradeoff. Retained draft status and empty spec_path; no partial package, runtime action, new permission prompt, or further specialist loop.
+- 2026-09-22T19:06:04Z - Ordinary definition assessment recorded a staged spec draft and Architect support for a host-source-backed qualification-first receive/reply plan. The current gate is unchosen C1 (answer form and serving alongside work), replacing the earlier blanket plan-gap; effective controls remain a go/no-go before serving. Canvas yielded no typed answer or receipt; the same question moves to ordinary chat fallback without inferred choice, cancellation, or acknowledgment. Retained draft status and empty spec_path; no plan/tasks or full package was created, and no runtime qualification occurred.
+- 2026-09-22T23:30:10Z - Ordinary definition clarification recorded the current chat-fallback replies in new Open Questions 9 and 10: literal `1` selecting `foreground-bounded`, "Set-aside session, evidence only", and the verbatim same-LAN answer. No Canvas answer, receipt, or acknowledgment is inferred; definition remains draft pending the revised stage.
+- 2026-09-22T23:44:06Z - Ordinary definition clarification recorded the current chat reply `its 1 then` in new Open Question 11, selecting option 1, "Treat it like any file or web page", with the preceding user message verbatim. Definition remains draft pending the revised stage.
+- 2026-09-22T23:50:28Z - First definition records the accepted serving, same-LAN, and asking-session boundaries in the core package at .dude/specs/068-agent-to-agent-communication/spec.md. The qualification-first plan separates restricted serving from invocation-bound answer delivery under existing local authority. Host-control GO and separately authorized live acceptance remain required; no implementation, runtime qualification, live connection, new execution authority, or task completion is claimed.
+- 2026-09-22T23:57:54Z - Re-defined wording in FR-009a/FR-009b and US2 scenarios 4 and 7 to separate serving restrictions from asking-side answer delivery, preserving Q11's existing-authority policy. User intent, scope, plan, and all 12 task meanings remain unchanged.
+- 2026-09-22T23:58:56Z - Re-definition reconciliation applied for .dude/specs/068-agent-to-agent-communication/spec.md: 12 tasks kept, 0 changed, 0 dropped, 0 new. No task state, task metadata, board, archive, discovered work, or execution history changed.
