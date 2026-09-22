@@ -488,6 +488,14 @@
     },
     "updated_at": "2026-09-05T03:43:01.000Z"
   },
+  ".dude/specs/056-ship-orphan-cleanup/tasks.md": {
+    "glyphs": {
+      "T001@6f3a2c18": "x",
+      "T002@4b7d9e02": "x",
+      "T003@c581e6af": "x"
+    },
+    "updated_at": "2026-09-22T01:21:47.727Z"
+  },
   ".dude/specs/057-dude-canvas-needs-you/tasks.md": {
     "glyphs": {
       "T007@a57c0707": "x",

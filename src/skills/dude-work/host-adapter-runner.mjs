@@ -83,6 +83,19 @@ const CHALLENGE_ENVELOPE_INVALID_DETAIL = 'challenge-response-envelope';
 // evidence bytes, and hashes never reach a result.
 const ASSESSMENT_INVALID_DETAIL = 'Assessment: invalid-contract';
 
+const OWNER_FINALIZATION_REFUSALS = new Set([
+  'supervisor-identity-missing',
+  'supervisor-identity-mismatch',
+  'stale-worker',
+  'checkpoint-absent',
+  'checkpoint-corrupt',
+  'checkpoint-load-failed',
+  'checkpoint-drift',
+  'checkpoint-revision-conflict',
+  'effect-unverified',
+  'checkpoint-cleanup-failed',
+]);
+
 /** Only closed source classes, never validator text or rejected capture bytes. @param {TypeError} error */
 function retainedInputFailureDetail(error) {
   const message = utilTypes.isProxy(error) ? null : Object.getOwnPropertyDescriptor(error, 'message')?.value;
@@ -448,6 +461,8 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
   let occurrenceIdentity = null;
   /** @type {ReturnType<typeof createHostAdapter>|null} */
   let adapter = null;
+  /** @type {((terminal:Record<string, unknown>)=>Record<string, unknown>)|undefined} */
+  let finalizeInitialAssessmentRejection;
   /** @type {Record<string, unknown>|null} */
   let currentInspection = null;
   /** The terminal operation's evidence, separate from the model's last explicit Inspection. @type {Record<string, unknown>|null} */
@@ -501,15 +516,16 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
    * decoded, or an absent/undescribable Inspection, fails closed to the exact
    * unresolved report shape `describeUnattendedHalt` itself returns.
    * @param {Record<string, unknown>} row
+   * @param {(terminal:Record<string, unknown>)=>Record<string, unknown>} [finalizeRejectedAssessment]
    */
-  const finish = (row) => {
+  const finish = (row, finalizeRejectedAssessment) => {
     if (!['ended', 'hard-stop'].includes(/** @type {string} */ (row.outcome))) {
       throw new TypeError('runner attempted to return a nonterminal result');
     }
     let haltReport = null;
+    let validDiagnostics = false;
     if (row.outcome === 'hard-stop') {
       haltReport = { halted: true, resolved: false, unresolved: ['reason', 'subject'] };
-      let validDiagnostics = false;
       try {
         const haltState = JSON.parse(
           Buffer.from(/** @type {string} */ (row.stateBase64), 'base64').toString('utf8'),
@@ -552,13 +568,21 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
         }
       }
     }
-    return {
+    const terminal = {
       ...row,
       type: 'result',
       step: 'result',
       occurrenceIdentity,
       steps,
       haltReport,
+    };
+    if (finalizeRejectedAssessment === undefined) return terminal;
+    // Retain the Work stop and its halt attribution before any resource release.
+    return {
+      ...terminal,
+      ...(validDiagnostics
+        ? finalizeRejectedAssessment(terminal)
+        : { cleanupReason: 'terminal-report-unavailable' }),
     };
   };
 
@@ -602,8 +626,11 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     return row;
   };
 
-  /** @param {string} reason @param {string} detail */
-  const orphan = (reason, detail) => {
+  /**
+   * @param {string} reason @param {string} detail
+   * @param {(terminal:Record<string, unknown>)=>Record<string, unknown>} [finalizeRejectedAssessment]
+   */
+  const orphan = (reason, detail, finalizeRejectedAssessment) => {
     reportInspection = null;
     carriedBlocker = null;
     carriedCapacity = null;
@@ -619,7 +646,7 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
         ...(adapter.ownership() === null ? {} : { ownership: adapter.ownership() }),
       });
     steps.push(row);
-    return finish(row);
+    return finish(row, finalizeRejectedAssessment);
   };
 
   /** @param {Record<string, unknown>|null} blocker @param {string} detail */
@@ -1111,9 +1138,14 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
       /** @type {Record<string, unknown>} */ (currentInspection),
     );
     if (assessment.status === 'valid') return { value: assessment.assessment, initial: false };
+    // Only a matched first exchange's rejected payload can nominate owner cleanup.
+    const finalize = allowInitial && challengeCount === 1
+      && consumedChallenges.size === 1 && outstandingChallenge === null
+      ? finalizeInitialAssessmentRejection
+      : undefined;
     return assessment.status === 'stale'
-      ? { terminal: orphan('challenge-response-stale', 'assessment') }
-      : { terminal: orphan('challenge-response-invalid', assessment.detail) };
+      ? { terminal: orphan('challenge-response-stale', 'assessment', finalize) }
+      : { terminal: orphan('challenge-response-invalid', assessment.detail, finalize) };
   };
 
   /** @param {boolean} allowInitial @param {Record<string, unknown>} assessment */
@@ -1248,6 +1280,69 @@ export async function runHostAdapter(requestValue, dependenciesValue) {
     });
     steps.push(admittedRow);
     if (admitted.status !== 'active') return finish(admittedRow);
+
+    const admittedAdapter = adapter;
+    const admittedWorkspace = checkpointWorkspace(initialBinding, root);
+    finalizeInitialAssessmentRejection = (terminal) => {
+      const refuse = (cleanupReason) => ({ cleanup: 'not-attempted', cleanupReason });
+      if (adapter !== admittedAdapter) return refuse('owner-context-changed');
+      const current = admittedAdapter.snapshot();
+      if (current.status !== 'active'
+        || current.invocationIdentity !== admitted.invocationIdentity
+        || current.workerToken !== admitted.workerToken
+        || current.workerGeneration !== admitted.workerGeneration
+        || canonicalJson(current.authorities) !== canonicalJson(admitted.authorities)
+        || canonicalJson(current.target) !== canonicalJson(target)) {
+        return refuse('owner-context-changed');
+      }
+      if (current.acceptedStateBytes !== admitted.acceptedStateBytes
+        || current.acceptedStateHash !== admitted.acceptedStateHash
+        || current.acceptedRevision !== admitted.acceptedRevision
+        || terminal.stateBase64 !== admittedRow.stateBase64
+        || terminal.stateHash !== admittedRow.stateHash
+        || terminal.acceptedRevision !== admittedRow.acceptedRevision) {
+        return refuse('accepted-state-changed');
+      }
+      // Step provenance detects authorization entry even when it changed no counters.
+      if (!steps.slice(1, -1).every(step => (
+        ['fresh-inspection', 'attempt:1:fresh-inspection'].includes(/** @type {string} */ (step.step))
+        && step.outcome === 'accepted' && step.reason === 'inspection-refreshed'
+      ))) return refuse('claim-phase-changed');
+      const accepted = /** @type {Record<string, unknown>} */ (current.acceptedState);
+      if (current.pendingEffect !== null || current.correction !== null || current.recoveryNotice !== null
+        || /** @type {unknown[]} */ (accepted.pending).length !== 0
+        || Object.hasOwn(accepted, 'pendingCompletion') || Object.hasOwn(accepted, 'learningGovernance')
+        || (Object.hasOwn(accepted, 'evaluationSequences')
+          && /** @type {unknown[]} */ (accepted.evaluationSequences).length !== 0)
+        || currentRun.length !== 0 || occurrenceIdentity !== null
+        || Object.values(observedStreams).some(rows => rows.length !== 0)) {
+        return refuse('owner-obligations-pending');
+      }
+      try {
+        if (fs.realpathSync(root) !== root
+          || fs.realpathSync(path.resolve(/** @type {string} */ (request.root))) !== root
+          || canonicalJson(checkpointWorkspace(freshLaneBinding(root, target, owner), root))
+            !== canonicalJson(admittedWorkspace)) {
+          return refuse('owner-binding-changed');
+        }
+      } catch {
+        return refuse('owner-binding-unavailable');
+      }
+      const ended = admittedAdapter.end('hard-stop-recorded');
+      const cleanupReason = OWNER_FINALIZATION_REFUSALS.has(/** @type {string} */ (ended.reason))
+        ? ended.reason
+        : 'owner-finalization-refused';
+      return {
+        hostRevision: /** @type {Record<string, unknown>} */ (ended.session).hostRevision,
+        ...(ended.outcome === 'ended' && ended.reason === 'hard-stop-recorded'
+          ? { cleanup: 'cleared', orphan: false }
+          : {
+            cleanup: cleanupReason === 'checkpoint-cleanup-failed' ? 'failed' : 'not-attempted',
+            cleanupReason,
+            ...(admittedAdapter.ownership() === null ? {} : { ownership: admittedAdapter.ownership() }),
+          }),
+      };
+    };
 
     const inspected = refreshInspection('fresh-inspection');
     if (inspected.terminal) return inspected.terminal;
